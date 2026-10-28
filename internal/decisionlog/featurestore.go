@@ -43,7 +43,7 @@ CREATE TABLE IF NOT EXISTS pull_sync(
 CREATE TABLE IF NOT EXISTS feature_version(
   id INTEGER PRIMARY KEY AUTOINCREMENT, repository TEXT NOT NULL, state TEXT NOT NULL,
   created_at INTEGER NOT NULL, switched_at INTEGER, stopped TEXT NOT NULL DEFAULT '',
-  spent_usd REAL NOT NULL DEFAULT 0, total INTEGER NOT NULL DEFAULT 0, placed INTEGER NOT NULL DEFAULT 0, consolidated_at INTEGER);
+  spent_usd REAL NOT NULL DEFAULT 0, total INTEGER NOT NULL DEFAULT 0, placed INTEGER NOT NULL DEFAULT 0);
 CREATE UNIQUE INDEX IF NOT EXISTS feature_version_current ON feature_version(repository) WHERE state='current';
 CREATE UNIQUE INDEX IF NOT EXISTS feature_version_building ON feature_version(repository) WHERE state='building';
 CREATE TABLE IF NOT EXISTS feature(
@@ -85,8 +85,8 @@ const (
 
 // migrate brings a store an earlier release made up to the schema, in one
 // transaction: the ledger's stage, item and rejections columns, and the pull
-// requests' fork and default branch columns, the features' split time and
-// the versions' consolidation time, added when missing. Pull
+// requests' fork and default branch columns, and the features' split time,
+// added when missing. Pull
 // requests listed before the latter are listed again: the sync state's ETag
 // and cursor are reset. The columns are read without a lock; only when one is
 // missing is the write lock taken and they are read again, so a store two
@@ -146,7 +146,6 @@ var migrations = []migration{
 	{"pull_request", "cross_repository", `ALTER TABLE pull_request ADD COLUMN cross_repository INTEGER NOT NULL DEFAULT 0`, true},
 	{"pull_request", "default_branch", `ALTER TABLE pull_request ADD COLUMN default_branch TEXT NOT NULL DEFAULT ''`, true},
 	{"feature", "split_at", `ALTER TABLE feature ADD COLUMN split_at INTEGER`, false},
-	{"feature_version", "consolidated_at", `ALTER TABLE feature_version ADD COLUMN consolidated_at INTEGER`, false},
 }
 
 // missingColumns are the migrations whose column the store lacks.
@@ -154,7 +153,7 @@ func missingColumns(ctx context.Context, q interface {
 	QueryContext(context.Context, string, ...any) (*sql.Rows, error)
 }) ([]migration, error) {
 	have := map[string]bool{}
-	for _, table := range []string{"capture_attempt", "pull_request", "feature", "feature_version"} {
+	for _, table := range []string{"capture_attempt", "pull_request", "feature"} {
 		names, err := collect(scanString)(q.QueryContext(ctx, `SELECT name FROM pragma_table_info(?)`, table))
 		if err != nil {
 			return nil, err

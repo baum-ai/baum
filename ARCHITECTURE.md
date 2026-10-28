@@ -2994,8 +2994,9 @@ fingerprint changed, consolidates them (`FeatureWorker.Consolidate`,
 made before a write, each write checked against the membership versions it
 read). A first build (`FeatureWorker.Build`) places a repository's history
 in a `building` version with the batch prompt (`assign.Public.RenderBatch`),
-reusing placement's candidate ranking and writes, the text stage and one
-consolidation pass, then switches it to current in one transaction; it runs
+reusing placement's candidate ranking and writes and the text stage, then
+switches it to current in one transaction, after which the weekly pass
+consolidates it on its next run; it runs
 as a confirmed job (`jobs.KindFeatureBuild`, through `jobs.FeatureBuilder`)
 or from `baum internal features build`. Every stage calls through the same
 helper as capture (`caller` in `model.go`: backend and model resolution,

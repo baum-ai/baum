@@ -2,92 +2,17 @@ package decisionlog
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"fmt"
 	"testing"
 	"time"
 
 	"github.com/baum-ai/baum/agent"
+	"github.com/baum-ai/baum/features/consolidate"
 )
 
-// A build's pass that a cap refuses, here for want of room for the merge
-// and the splits after it, is tried once: the build switches without
-// recording it, and a resume of such a version makes no merge call. A pass
-// the gate refuses waits for the next run.
-func TestBuildPassTriedOnce(t *testing.T) {
-	f := newFeatureFixture(t)
-	f.clock.now = t0.Add(80 * 24 * time.Hour)
-	f.history(70)
-	// The second batch joins the first's feature, which then needs a split
-	// call after the merge.
-	batches := 0
-	f.backend.batch = func(user string) (string, error) {
-		if batches++; batches == 2 {
-			return batchReply(t, user, "F1"), nil
-		}
-		return batchReply(t, user, ""), nil
-	}
-	f.backend.merge = func(string) (string, error) { return `{"groups":[]}`, nil }
-	report := f.build(BuildOptions{MaxCostUSD: 0.03})
-	if !report.Current || f.backend.calls["merge"] != 0 || report.Consolidation == nil || report.Consolidation.Stopped != ReasonBuildCap {
-		t.Fatalf("report = %+v, merge calls %d", report, f.backend.calls["merge"])
-	}
-	var at int64
-	if err := f.store.db.QueryRow(`SELECT consolidated_at FROM feature_version WHERE id=?`, report.Version).Scan(&at); err != nil || at != 0 {
-		t.Fatalf("consolidated_at = %d, %v", at, err)
-	}
-	if last, _, _ := f.store.consolidation(context.Background(), repo); !last.IsZero() {
-		t.Fatal("the pass is recorded")
-	}
-
-	// A version resumed after its pass was tried switches without a merge.
-	g := newFeatureFixture(t)
-	g.clock.now = t0.Add(60 * 24 * time.Hour)
-	version, err := featureVersion(context.Background(), g.store.db, repo, VersionBuilding, true, g.clock.now)
-	if err != nil {
-		t.Fatal(err)
-	}
-	g.pull(1, "One", g.clock.now.Add(-time.Hour), "h1", []string{"a.go"})
-	g.pull(2, "Two", g.clock.now.Add(-time.Hour), "h2", []string{"b.go"})
-	g.feature(version, "A", 1)
-	g.feature(version, "B", 2)
-	g.exec(`UPDATE feature_version SET consolidated_at=0 WHERE id=?`, version)
-	g.backend.merge = func(string) (string, error) { return `{"groups":[]}`, nil }
-	if resumed := g.build(BuildOptions{MaxCostUSD: 1}); !resumed.Current || g.backend.calls["merge"] != 0 {
-		t.Fatalf("resumed = %+v, merge calls %d", resumed, g.backend.calls["merge"])
-	}
-	if last, _, _ := g.store.consolidation(context.Background(), repo); !last.IsZero() {
-		t.Fatal("the resumed version's untried pass is recorded")
-	}
-
-	// Turned off at the pass: the build stops and its pass waits.
-	h := newFeatureFixture(t)
-	h.clock.now = t0.Add(60 * 24 * time.Hour)
-	h.history(50)
-	h.backend.batch = func(user string) (string, error) { return batchReply(t, user, ""), nil }
-	h.backend.merge = func(string) (string, error) { return `{"groups":[]}`, nil }
-	calls := 0
-	h.backend.onCall = func() {
-		// Two batches and two texts, then the repository is turned off.
-		if calls++; calls == 4 {
-			h.off = true
-		}
-	}
-	stopped := h.build(BuildOptions{Gated: true, MaxCostUSD: 1})
-	var pending sql.NullInt64
-	_ = h.store.db.QueryRow(`SELECT consolidated_at FROM feature_version WHERE id=?`, stopped.Version).Scan(&pending)
-	if stopped.Current || stopped.Stopped != ReasonDisabled || pending.Valid {
-		t.Fatalf("stopped = %+v, consolidated_at %v", stopped, pending)
-	}
-	h.off = false
-	if again := h.build(BuildOptions{Gated: true, MaxCostUSD: 1}); !again.Current || h.backend.calls["merge"] != 1 {
-		t.Fatalf("again = %+v", again)
-	}
-}
-
 // A resumed version's estimate counts its features behind and their pull
-// requests' summaries, and the pass only until it was tried.
+// requests' summaries.
 func TestBuildEstimateOfAResumedVersion(t *testing.T) {
 	f := newFeatureFixture(t)
 	f.clock.now = t0.Add(60 * 24 * time.Hour)
@@ -107,23 +32,17 @@ func TestBuildEstimateOfAResumedVersion(t *testing.T) {
 		}
 		return *e.EstimateUSD
 	}
-	clean := cost()
-	if clean <= 0 {
-		t.Fatal("the pass is not estimated")
+	if clean := cost(); clean != 0 {
+		t.Fatalf("a version with nothing left is estimated at %f", clean)
 	}
 	f.exec(`UPDATE feature SET membership_version=1`)
 	behind := cost()
-	if behind <= clean {
-		t.Fatalf("features behind %f, clean %f", behind, clean)
+	if behind <= 0 {
+		t.Fatal("features behind are not estimated")
 	}
 	f.exec(`INSERT INTO pr_summary(repository, number, content_hash, summary, created_at) SELECT repository, number, 'h', 's', 0 FROM pull_request`)
 	if summarized := cost(); summarized >= behind {
 		t.Fatalf("pull requests already summarized are estimated again: %f, %f", summarized, behind)
-	}
-	f.exec(`UPDATE feature SET membership_version=0`)
-	f.exec(`UPDATE feature_version SET consolidated_at=0 WHERE id=?`, version)
-	if tried := cost(); tried != 0 {
-		t.Fatalf("a tried pass is estimated again: %f", tried)
 	}
 }
 
@@ -175,7 +94,7 @@ func TestLiveRunStopsOnARetiredVersion(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err := f.store.switchVersion(context.Background(), repo, building, false, f.clock.now); err != nil {
+		if err := f.store.switchVersion(context.Background(), repo, building, f.clock.now); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -203,7 +122,7 @@ func TestLiveRunStopsOnARetiredVersion(t *testing.T) {
 	text := g.backend.text
 	g.backend.text = func() (string, error) {
 		building, _ := featureVersion(context.Background(), g.store.db, repo, VersionBuilding, true, g.clock.now)
-		if err := g.store.switchVersion(context.Background(), repo, building, false, g.clock.now); err != nil {
+		if err := g.store.switchVersion(context.Background(), repo, building, g.clock.now); err != nil {
 			t.Fatal(err)
 		}
 		return text()
@@ -248,7 +167,7 @@ func TestConsolidationRetiredBetweenCalls(t *testing.T) {
 	f.backend.merge = func(user string) (string, error) {
 		refs := mergeRefs(t, user)
 		building, _ := featureVersion(context.Background(), f.store.db, repo, VersionBuilding, true, f.clock.now)
-		if err := f.store.switchVersion(context.Background(), repo, building, false, f.clock.now); err != nil {
+		if err := f.store.switchVersion(context.Background(), repo, building, f.clock.now); err != nil {
 			t.Fatal(err)
 		}
 		return mergeReply(refs["Feature A"], refs["Feature B"]), nil
@@ -275,12 +194,67 @@ func TestPlacementChecksItsVersionBeforeEachItem(t *testing.T) {
 	f.live()
 	f.backend.assign = func(string) (string, error) {
 		building, _ := featureVersion(context.Background(), f.store.db, repo, VersionBuilding, true, f.clock.now)
-		if err := f.store.switchVersion(context.Background(), repo, building, false, f.clock.now); err != nil {
+		if err := f.store.switchVersion(context.Background(), repo, building, f.clock.now); err != nil {
 			t.Fatal(err)
 		}
 		return choose("skip", "", ""), nil
 	}
 	if report := f.assign(FeatureOptions{Manual: true}); report.Stopped != ReasonVersionRetired || f.backend.calls["assign"] != 1 || len(report.Items) != 1 {
 		t.Fatalf("report = %+v", report)
+	}
+}
+
+// A build stopped in its last text pass, its pass already tried and no pull
+// request left, resumes with the default cap: the cap has room for a text
+// call held to its whole reply bound.
+func TestBuildResumedInItsLastTextPass(t *testing.T) {
+	f := newFeatureFixture(t)
+	f.clock.now = t0.Add(60 * 24 * time.Hour)
+	version, err := featureVersion(context.Background(), f.store.db, repo, VersionBuilding, true, f.clock.now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 1; i <= 3; i++ {
+		f.pull(i, fmt.Sprintf("Change %d", i), f.clock.now.Add(-time.Hour), fmt.Sprintf("h%d", i), []string{"a.go"}, "A description.")
+		f.feature(version, fmt.Sprintf("F%d", i), i)
+	}
+	f.exec(`UPDATE feature SET membership_version=1`)
+	f.exec(`UPDATE feature_version SET spent_usd=0.5 WHERE id=?`, version)
+	estimate, err := f.worker.EstimateBuild(context.Background(), repo, "", BuildOptions{})
+	if err != nil || estimate.PullRequests != 0 || estimate.ReservedUSD <= 0 {
+		t.Fatalf("estimate = %+v, %v", estimate, err)
+	}
+	report := f.build(BuildOptions{})
+	if !report.Current || f.backend.calls["text"] != 3 || f.backend.calls["merge"] != 0 {
+		t.Fatalf("report = %+v, calls %v", report, f.backend.calls)
+	}
+}
+
+// Merge, split and the pass's record write nothing to a retired version.
+func TestConsolidationWritesNothingToARetiredVersion(t *testing.T) {
+	f := newFeatureFixture(t)
+	version := f.live()
+	for i := 1; i <= 3; i++ {
+		f.pull(i, fmt.Sprintf("Change %d", i), t0, fmt.Sprintf("h%d", i), []string{"a.go"})
+	}
+	f.feature(version, "A", 1, 2)
+	f.feature(version, "B", 3)
+	f.exec(`UPDATE feature_version SET state=? WHERE id=?`, VersionRetired, version)
+	ctx := context.Background()
+	expected := map[string]int64{"A": 0, "B": 0}
+	if done, err := f.store.mergeFeature(ctx, version, repo, "A", "B", expected, t0); err != nil || done {
+		t.Fatalf("merge = %v, %v", done, err)
+	}
+	pulls := []consolidationPull{{Number: 1}, {Number: 2}}
+	partition := consolidate.Partition{Parts: []consolidate.Part{{Title: "One", Description: "One.", PullRequests: []int{0}},
+		{Title: "Two", Description: "Two.", PullRequests: []int{1}}}}
+	if created, err := f.store.splitFeature(ctx, version, repo, "A", pulls, partition, expected, t0); err != nil || created != -1 {
+		t.Fatalf("split = %d, %v", created, err)
+	}
+	if err := recordConsolidation(ctx, f.store.db, version, repo, "fingerprint", t0); err != nil {
+		t.Fatal(err)
+	}
+	if last, _, _ := f.store.consolidation(ctx, repo); !last.IsZero() || f.featureOf(3) != "B" || f.featureOf(2) != "A" {
+		t.Fatal("a retired version was written")
 	}
 }

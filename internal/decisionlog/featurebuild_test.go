@@ -109,7 +109,7 @@ func TestBuildPlacesTextsConsolidatesAndSwitches(t *testing.T) {
 	if !report.Current || report.Placed != 110 || report.Created != 5 || report.PullRequests != 110 || report.LeftOut != 0 {
 		t.Fatalf("report = %+v", report)
 	}
-	if want := []string{"batch", "batch", "batch", "text", "batch", "batch", "text", "merge"}; !slices.Equal(order, want) {
+	if want := []string{"batch", "batch", "batch", "text", "batch", "batch", "text"}; !slices.Equal(order, want) {
 		t.Fatalf("calls = %v, want %v", order, want)
 	}
 	if state, _ := f.versionState(live); state != VersionRetired {
@@ -126,8 +126,10 @@ func TestBuildPlacesTextsConsolidatesAndSwitches(t *testing.T) {
 	if err != nil || !resolved.Archived {
 		t.Fatalf("a feature of the retired version resolves to %+v, %v", resolved, err)
 	}
-	if last, fingerprint, _ := f.store.consolidation(context.Background(), repo); !last.Equal(f.clock.now) || fingerprint == "" {
-		t.Fatalf("the switch is not recorded as the last pass: %v %q", last, fingerprint)
+	// The weekly pass, due though one ran this week, consolidates the new
+	// version on its next run.
+	if pass := f.consolidate(FeatureOptions{}); pass.Outcome != ConsolidationDone || pass.Features != report.Features || f.backend.calls["merge"] != 1 {
+		t.Fatalf("the next weekly pass = %+v", pass)
 	}
 	var excluded int
 	_ = f.store.db.QueryRow(`SELECT COUNT(*) FROM feature_pull WHERE version_id=? AND number IN (200, 201, 202, 300)`, report.Version).Scan(&excluded)
@@ -232,29 +234,7 @@ func TestBuildStoppedInTheTextResumesWithTheDefaultCap(t *testing.T) {
 	if err != nil || estimate.PullRequests != 0 || estimate.EstimateUSD == nil || *estimate.EstimateUSD <= 0 || estimate.Cap() <= estimate.SpentUSD {
 		t.Fatalf("estimate = %+v, %v", estimate, err)
 	}
-	if second := f.build(BuildOptions{}); !second.Current || second.Consolidation == nil {
+	if second := f.build(BuildOptions{}); !second.Current {
 		t.Fatalf("second = %+v", second)
-	}
-}
-
-// A build whose pass failed still switches, without recording the pass, so
-// the weekly pass takes the version on its next run.
-func TestBuildWithAFailedPassSwitchesUnrecorded(t *testing.T) {
-	f := newFeatureFixture(t)
-	f.clock.now = t0.Add(60 * 24 * time.Hour)
-	f.history(50)
-	f.backend.batch = func(user string) (string, error) { return batchReply(t, user, ""), nil }
-	f.backend.merge = func(string) (string, error) { return "", errors.New("refused") }
-	report := f.build(BuildOptions{})
-	if !report.Current || report.Consolidation == nil || report.Consolidation.Outcome != FeatureDeferred {
-		t.Fatalf("report = %+v", report)
-	}
-	if last, _, _ := f.store.consolidation(context.Background(), repo); !last.IsZero() {
-		t.Fatal("the failed pass is recorded")
-	}
-	f.backend.merge = func(string) (string, error) { return `{"groups":[]}`, nil }
-	f.clock.now = f.clock.now.Add(FeatureBackoff + time.Minute)
-	if pass := f.consolidate(FeatureOptions{}); pass.Outcome != ConsolidationDone {
-		t.Fatalf("the weekly pass = %+v", pass)
 	}
 }

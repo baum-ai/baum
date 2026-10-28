@@ -15,7 +15,6 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/baum-ai/baum/decisions"
 	"github.com/baum-ai/baum/features/consolidate"
 )
 
@@ -238,23 +237,6 @@ func (r *featureRun) shownSummary(ctx context.Context, number int, generated map
 	return generated[number].Summary
 }
 
-// oversized counts the features a split may be offered before the merges:
-// more than FeatureSplitPulls pull requests or opened more than
-// FeatureSplitAge apart, not checked at their membership.
-func oversized(found []*consolidationFeature) int {
-	n := 0
-	for _, f := range found {
-		pulls := f.pulls
-		if len(pulls) == 0 || (f.checked > 0 && f.checked == f.membership) {
-			continue
-		}
-		if len(pulls) > FeatureSplitPulls || pulls[len(pulls)-1].Opened.Sub(pulls[0].Opened) > FeatureSplitAge {
-			n++
-		}
-	}
-	return n
-}
-
 // heldApart reports whether a merge of a and b would undo a split of the
 // last FeatureSplitHold: one is a part of the other, or both are parts of
 // one split.
@@ -351,20 +333,6 @@ func (r *featureRun) consolidate(ctx context.Context, gated bool) (ConsolidateRe
 		request, err := consolidate.Public.Request(ConsolidateVersion, consolidate.Merge, rendered.Input, FeatureConsolidateOutputTokens)
 		if err != nil {
 			return report, err
-		}
-		// A build pays for a merge only with room for the splits after it,
-		// which a split that cannot be made would discard.
-		split, err := consolidate.Public.Request(ConsolidateVersion, consolidate.Split, "", FeatureConsolidateOutputTokens)
-		if err != nil {
-			return report, err
-		}
-		calls := [][2]int64{{decisions.MaxRequestTokens(request), FeatureConsolidateOutputTokens}}
-		for range min(FeatureMaxSplits, oversized(found)) {
-			calls = append(calls, [2]int64{decisions.MaxRequestTokens(split) + FeatureEstimateSplitBytes, FeatureConsolidateOutputTokens})
-		}
-		if !r.calls.allows(ctx, r.opts.Backend, r.opts.Model, calls...) {
-			report.Stopped = ReasonBuildCap
-			return report, nil
 		}
 		result, callErr := r.calls.complete(ctx, r.opts.Backend, r.opts.Model,
 			Attempt{Repository: r.repository, Stage: StageConsolidate, Item: "merge"}, request)
@@ -528,7 +496,8 @@ func (r *featureRun) consolidate(ctx context.Context, gated bool) (ConsolidateRe
 	for _, planned := range splits {
 		f := planned.feature
 		if planned.checked {
-			if _, err := s.db.ExecContext(write, `UPDATE feature SET split_checked_version=membership_version WHERE id=? AND membership_version=?`,
+			if _, err := s.db.ExecContext(write, `UPDATE feature SET split_checked_version=membership_version WHERE id=? AND membership_version=?
+AND version_id IN (SELECT id FROM feature_version WHERE state != 'retired')`,
 				f.ID, expected[f.ID]); err != nil {
 				return r.consolidationFailed(write, report, fingerprint, 0, err)
 			}
@@ -546,9 +515,6 @@ func (r *featureRun) consolidate(ctx context.Context, gated bool) (ConsolidateRe
 		report.NewFeatures += created
 	}
 	report.Outcome = ConsolidationDone
-	if r.opts.building {
-		return report, nil
-	}
 	if err := recordConsolidation(write, s.db, r.version, r.repository, fingerprint, r.now); err != nil {
 		return report, err
 	}

@@ -366,18 +366,19 @@ hosted rebuild does, by a first build: a job of the job queue
 (`jobs.KindFeatureBuild`) that runs only from a confirmed estimate, or `baum
 internal features build`.
 
-- **Estimate.** The pull requests left to place, a resumed version's
+- **Estimate.** The pull requests left to place and a resumed version's
   features whose text is behind (with their pull requests' summaries still
-  to write) and its pass unless it was tried are counted, and their calls
-  priced from their sizes at the configured backend and model: a batch call
-  per 25 (the items' titles, descriptions and paths, and candidates for the
-  features placed so far, a feature per 3 pull requests), the new features'
-  text twice, a summary of each pull request with a description, and one
-  merge and up to three split calls. The cap of the version's spend over all
-  its runs is what it spent and the estimate times 1.25, with room for at
-  least one more batch call beyond the estimate. A repository whose
-  decisions are not captured, or whose model cannot be priced or called, is
-  not estimated.
+  to write) are counted, and their calls priced from their sizes at the
+  configured backend and model: a batch call per 25 (the items' titles,
+  descriptions and paths, and candidates for the features placed so far, a
+  feature per 3 pull requests), the new features' text twice and a summary
+  of each pull request with a description. The cap of the version's spend
+  over all its runs is what it spent and the estimate times 1.25, and never
+  less than what it spent and the largest call the remaining work makes (a
+  batch, or a text or pull request summary at its input's bound) priced as
+  the call is checked, so a confirmed resume can always make progress. A
+  repository whose decisions are not captured, or whose model cannot be
+  priced or called, is not estimated.
 - **Building.** The build makes the repository's `building` version, or
   resumes the one there is, and places in it the merged and open pull
   requests of the last 180 days not opened by a bot, in no feature of the
@@ -394,31 +395,22 @@ internal features build`.
   still fails is tried once more with the others after the last batch, in
   batches of 25, and then left out (settled in the version as `left_out`). A
   failed store write stops the build.
-- **Text and consolidation.** Every 3 batches and after the last, the text
-  of every feature of the version behind its members is written, without the
-  debounce; a feature whose text fails backs off and is left for the text
-  stage. Then the version's consolidation pass is tried once
-  (`consolidated_at`: its time when it was made, 0 when it failed or a cap
-  refused it), and the changed features' text is written again. The merge
-  call is made only when the cap leaves room for it and the split calls
-  that may follow (the merges are discarded when a split call cannot be
-  made); otherwise the cap refuses the pass. A pass that fails or that a cap
-  refuses is not recorded and the build goes on; it is never tried again on
-  a resume. A pass the gate or a missing backend refuses stops the build,
-  and a resume tries it. The weekly pass then takes the version once it is
-  current, 7 days after the last recorded pass and after any backoff.
+- **Text.** Every 3 batches and after the last, the text of every feature
+  of the version behind its members is written, without the debounce; a
+  feature whose text fails backs off and is left for the text stage. A
+  build makes no consolidation pass.
 - **Switching.** The building version becomes current in one transaction:
   the current one is retired, the skips become placement's settlements, the
   pull requests left out lose theirs so placement takes those within its
-  lookback, and, when its pass was made, the switch is recorded as the
-  repository's last consolidation. A live stage that raced the switch never
-  writes the retired version: its run stops at its next item or write
-  (`version_retired`), and a consolidation pass writes and records nothing,
-  each write checking the version in its own transaction.
-  Work the live stages placed in the old version is in no feature of the new
-  one; placement takes what is within its lookback. A
-  retired version is kept, and a link to one of its features resolves as
-  archived.
+  lookback, and the repository's last consolidation pass is forgotten, so
+  the weekly pass consolidates the new version on its next run, a minute or
+  so after the switch. A live stage that raced the switch never writes the
+  retired version: its run stops at its next item or write
+  (`version_retired`), and a consolidation pass writes, records and settles
+  nothing, each write checking the version in its own transaction. Work the
+  live stages placed in the old version is in no feature of the new one;
+  placement takes what is within its lookback. A retired version is kept,
+  and a link to one of its features resolves as archived.
 - **Stopping.** A build stops before a call whose estimate (as hosted: its
   prompt at two bytes a token and its whole reply bound) would take the
   version's spend (`spent_usd`, added after every call: its cost, else

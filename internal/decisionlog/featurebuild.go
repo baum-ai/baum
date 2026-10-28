@@ -10,8 +10,8 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/baum-ai/baum/decisions"
 	"github.com/baum-ai/baum/features/assign"
-	"github.com/baum-ai/baum/features/consolidate"
 	"github.com/baum-ai/baum/features/summary"
 )
 
@@ -25,10 +25,9 @@ const outcomeLeftOut = "left_out"
 
 // Phases of a build.
 const (
-	BuildPlacing       = "placing"
-	BuildSummarizing   = "summarizing"
-	BuildConsolidating = "consolidating"
-	BuildSwitching     = "switching"
+	BuildPlacing     = "placing"
+	BuildSummarizing = "summarizing"
+	BuildSwitching   = "switching"
 )
 
 // BuildOptions change a first build.
@@ -70,21 +69,22 @@ type BuildEstimate struct {
 	// priced; SpentUSD what the version's earlier runs spent.
 	EstimateUSD *float64 `json:"estimate_usd"`
 	SpentUSD    float64  `json:"spent_usd"`
-	// ReservedUSD is the most a batch call of the build is held to under the
-	// cap.
+	// ReservedUSD is the most one call of the build (a batch, text or pull
+	// request summary) is held to under the cap.
 	ReservedUSD float64 `json:"reserved_usd"`
 	// Reason is why no call could be made (a backend or price reason).
 	Reason string `json:"reason,omitempty"`
 }
 
 // Cap is the version's spend cap a build confirmed for the estimate holds:
-// what it spent and the estimate times FeatureBuildCapFactor, and at least
-// room for one more batch call beyond the estimate.
+// what it spent and the estimate times FeatureBuildCapFactor, never less
+// than what it spent and the largest call left, so a confirmed resume can
+// always make progress.
 func (e BuildEstimate) Cap() float64 {
 	if e.EstimateUSD == nil {
 		return e.SpentUSD
 	}
-	return e.SpentUSD + max(*e.EstimateUSD*FeatureBuildCapFactor, *e.EstimateUSD+e.ReservedUSD)
+	return e.SpentUSD + max(*e.EstimateUSD*FeatureBuildCapFactor, e.ReservedUSD)
 }
 
 // BuildReport says what Build did; no pull request, feature or reply text.
@@ -102,8 +102,6 @@ type BuildReport struct {
 	LeftOut  int `json:"left_out"`
 	Calls    int `json:"calls"`
 	Features int `json:"features"`
-	// Consolidation is the pass made, if one was.
-	Consolidation *ConsolidateReport `json:"consolidation,omitempty"`
 	// Current says the version became current; otherwise Stopped says why
 	// not (a cap or backend reason, or "failed").
 	Current         bool    `json:"current"`
@@ -199,9 +197,9 @@ func (w *FeatureWorker) EstimateBuild(ctx context.Context, repository, dir strin
 // estimateCost prices the calls a build of items would make, from the
 // sizes of their inputs (README.md, "First build"): the batches, the new
 // features' text twice and the text of a resumed version's features behind
-// their members, a summary of every pull request with a description, and
-// the consolidation pass unless the version tried it; with the most a batch
-// call is held to under the cap.
+// their members, and a summary of every pull request with a description;
+// with the most one call the remaining work makes (a batch, text or pull
+// request summary) is held to under the cap, priced as complete checks it.
 func (r *featureRun) estimateCost(ctx context.Context, items []buildItem, p planned) (float64, float64, bool, error) {
 	batchVersion, _ := assign.Public.BatchVersion(AssignVersion)
 	batchRequest, err := assign.Public.Request(batchVersion, "", assign.MaxBatchOutputTokens)
@@ -227,10 +225,9 @@ func (r *featureRun) estimateCost(ctx context.Context, items []buildItem, p plan
 		}
 		sizes[i] = size{bytes, len(pull.Body)}
 	}
-	// What a resumed version already holds: its features, those whose text
-	// is behind, and whether its pass was tried.
+	// What a resumed version already holds: its features and those whose
+	// text is behind.
 	var existing, behind, unsummarized int
-	var consolidated bool
 	if r.version != 0 {
 		// Their pull requests with a description and no generated summary
 		// get one with the text.
@@ -240,9 +237,18 @@ func (r *featureRun) estimateCost(ctx context.Context, items []buildItem, p plan
 (SELECT COUNT(*) FROM feature f JOIN feature_pull fp ON fp.feature_id=f.id
   JOIN pull_request p ON p.repository=fp.repository AND p.number=fp.number
   WHERE f.version_id=?1 AND f.merged_into IS NULL AND f.summarized_version < f.membership_version AND p.body != ''
-  AND NOT EXISTS (SELECT 1 FROM pr_summary s WHERE s.repository=p.repository AND s.number=p.number)),
-(SELECT consolidated_at IS NOT NULL FROM feature_version WHERE id=?1)`, r.version).Scan(&existing, &behind, &unsummarized, &consolidated); err != nil {
+  AND NOT EXISTS (SELECT 1 FROM pr_summary s WHERE s.repository=p.repository AND s.number=p.number))`, r.version).
+			Scan(&existing, &behind, &unsummarized); err != nil {
 			return 0, 0, false, err
+		}
+	}
+	// hold makes room under the cap for the largest call of a kind the
+	// remaining work makes, held to its estimate as complete holds it, with
+	// inputBytes of input.
+	hold := func(request decisions.ModelRequest, inputBytes int) {
+		if cost, ok := callCost(r.calls.prices, p.Backend, p.Model, (decisions.MaxRequestTokens(request)+int64(inputBytes))/FeatureBuildBytesPerToken,
+			request.MaxOutputTokens); ok {
+			reserved = max(reserved, cost)
 		}
 	}
 	features, created := existing, 0
@@ -254,9 +260,7 @@ func (r *featureRun) estimateCost(ctx context.Context, items []buildItem, p plan
 		}
 		bytes += min(FeatureBuildCandidates, features) * FeatureEstimateCandidateBytes
 		add(tokens(bytes), int64(len(batch)*FeatureEstimateItemOutputTokens))
-		if cost, ok := callCost(r.calls.prices, p.Backend, p.Model, int64(bytes/FeatureBuildBytesPerToken), assign.MaxBatchOutputTokens); ok {
-			reserved = max(reserved, cost)
-		}
+		hold(batchRequest, bytes-len(batchRequest.System))
 		created = (start + len(batch) + FeatureEstimatePullsPerFeature - 1) / FeatureEstimatePullsPerFeature
 		features = existing + created
 	}
@@ -264,12 +268,18 @@ func (r *featureRun) estimateCost(ctx context.Context, items []buildItem, p plan
 	if err != nil {
 		return 0, 0, false, err
 	}
-	for range created*FeatureEstimateTextPasses + behind {
-		add(tokens(len(textRequest.System)+FeatureEstimateTextBytes), FeatureEstimateTextOutputTokens)
+	if texts := created*FeatureEstimateTextPasses + behind; texts > 0 {
+		hold(textRequest, summary.DefaultMaxInputBytes)
+		for range texts {
+			add(tokens(len(textRequest.System)+FeatureEstimateTextBytes), FeatureEstimateTextOutputTokens)
+		}
 	}
 	pullRequest, err := summary.Public.Request(SummaryVersion, summary.PullRequest, "", summary.MaxOutputTokens)
 	if err != nil {
 		return 0, 0, false, err
+	}
+	if unsummarized > 0 || slices.ContainsFunc(sizes, func(s size) bool { return s.body > 0 }) {
+		hold(pullRequest, summary.MaxPullRequestInputBytes())
 	}
 	for _, s := range sizes {
 		if s.body > 0 {
@@ -278,16 +288,6 @@ func (r *featureRun) estimateCost(ctx context.Context, items []buildItem, p plan
 	}
 	for range unsummarized {
 		add(tokens(len(pullRequest.System)+3000), FeatureEstimatePullOutputTokens)
-	}
-	if features > 0 && !consolidated {
-		merge, err := consolidate.Public.Request(ConsolidateVersion, consolidate.Merge, "", FeatureConsolidateOutputTokens)
-		if err != nil {
-			return 0, 0, false, err
-		}
-		add(tokens(len(merge.System)+min(features*FeatureEstimateCandidateBytes, consolidate.DefaultMaxInputBytes)), FeatureEstimateMergeOutputTokens)
-		for range min(FeatureMaxSplits, features) {
-			add(tokens(len(merge.System)+FeatureEstimateSplitBytes), FeatureEstimateSplitOutputTokens)
-		}
 	}
 	return math.Round(total*10000) / 10000, reserved, priced, nil
 }
@@ -336,13 +336,12 @@ func (w *FeatureWorker) Build(ctx context.Context, repository, dir string, o Bui
 	report.Version = r.version
 	b := &buildRun{featureRun: r, report: &report, progress: o.Progress}
 	b.batch, _ = assign.Public.BatchVersion(AssignVersion)
-	var consolidated sql.NullInt64
-	if err := w.Store.db.QueryRowContext(ctx, `UPDATE feature_version SET stopped='' WHERE id=? RETURNING spent_usd, consolidated_at`, r.version).
-		Scan(&report.VersionSpentUSD, &consolidated); err != nil {
+	if err := w.Store.db.QueryRowContext(ctx, `UPDATE feature_version SET stopped='' WHERE id=? RETURNING spent_usd`, r.version).
+		Scan(&report.VersionSpentUSD); err != nil {
 		return report, err
 	}
 	r.calls.budget = &buildBudget{version: r.version, cap: report.MaxCostUSD, spent: report.VersionSpentUSD}
-	err = b.run(ctx, consolidated)
+	err = b.run(ctx)
 	report.SpentUSD, report.Calls = r.calls.budget.run, r.calls.budget.calls
 	report.VersionSpentUSD += report.SpentUSD
 	var stop errBuildStop
@@ -365,9 +364,9 @@ func (w *FeatureWorker) Build(ctx context.Context, repository, dir string, o Bui
 	return report, err
 }
 
-// run places what is left, writes the text, makes the version's one
-// consolidation pass unless consolidated, and switches the version.
-func (b *buildRun) run(ctx context.Context, consolidated sql.NullInt64) error {
+// run places what is left, writes the text and switches the version; the
+// weekly pass consolidates it on its next run.
+func (b *buildRun) run(ctx context.Context) error {
 	var err error
 	if b.items, err = b.buildItems(ctx); err != nil {
 		return err
@@ -400,36 +399,8 @@ func (b *buildRun) run(ctx context.Context, consolidated sql.NullInt64) error {
 			return err
 		}
 	}
-	// consolidated_at is NULL before the pass, the pass's time once it was
-	// made, and 0 once it failed or a cap refused it: it is tried once.
-	if !consolidated.Valid {
-		b.notify(BuildConsolidating)
-		pass, err := b.consolidate(ctx, false)
-		b.report.Consolidation = &pass
-		switch {
-		case err != nil:
-			return err
-		case pass.Stopped != "" && pass.Stopped != ReasonBuildCap && pass.Stopped != ReasonDailyCap:
-			// Turned off, or no backend now: the pass waits for the next run.
-			return errBuildStop{pass.Stopped}
-		}
-		// A pass that failed or was refused by a cap is not recorded: the
-		// build still switches, and the weekly pass takes the version once
-		// FeatureConsolidateEvery has passed since the last recorded pass
-		// and its backoff has.
-		consolidated = sql.NullInt64{Valid: true}
-		if pass.Outcome == ConsolidationDone {
-			consolidated.Int64 = b.now.UnixMilli()
-		}
-		if _, err := b.w.Store.db.ExecContext(ctx, `UPDATE feature_version SET consolidated_at=? WHERE id=?`, consolidated.Int64, b.version); err != nil {
-			return err
-		}
-		if err := b.summarizeAll(ctx); err != nil {
-			return err
-		}
-	}
 	b.notify(BuildSwitching)
-	if err := b.w.Store.switchVersion(context.WithoutCancel(ctx), b.repository, b.version, consolidated.Int64 > 0, b.now); err != nil {
+	if err := b.w.Store.switchVersion(context.WithoutCancel(ctx), b.repository, b.version, b.now); err != nil {
 		return err
 	}
 	b.report.Current = true
@@ -665,10 +636,10 @@ func (b *buildRun) callBatch(ctx context.Context, items []buildItem) error {
 
 // switchVersion makes the building version current in one transaction: the
 // current one is retired, the pull requests left out lose their
-// settlement so the live placement takes them, and, when its pass was made
-// (consolidated), the switch is recorded as the repository's last
-// consolidation pass.
-func (s *Store) switchVersion(ctx context.Context, repository string, version int64, consolidated bool, now time.Time) error {
+// settlement so the live placement takes them, and the repository's last
+// consolidation pass is forgotten, so the weekly pass consolidates the new
+// version on its next run.
+func (s *Store) switchVersion(ctx context.Context, repository string, version int64, now time.Time) error {
 	return s.inTx(ctx, func(tx *sql.Tx) error {
 		if _, err := tx.ExecContext(ctx, `UPDATE feature_version SET state=? WHERE repository=? AND state=?`, VersionRetired, repository, VersionCurrent); err != nil {
 			return err
@@ -684,14 +655,8 @@ func (s *Store) switchVersion(ctx context.Context, repository string, version in
 		if _, err := tx.ExecContext(ctx, `DELETE FROM feature_settle WHERE version_id=? AND outcome=?`, version, outcomeLeftOut); err != nil {
 			return err
 		}
-		if !consolidated {
-			return nil
-		}
-		fingerprint, err := featuresFingerprint(ctx, tx, version, repository)
-		if err != nil {
-			return err
-		}
-		return recordConsolidation(ctx, tx, version, repository, fingerprint, now)
+		_, err = tx.ExecContext(ctx, `DELETE FROM feature_consolidation WHERE repository=?`, repository)
+		return err
 	})
 }
 
