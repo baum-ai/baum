@@ -229,7 +229,9 @@ is open and `viewer_can_push` is true. Each opens a small confirmation
 the first names the two branches, the second lists the failed GitHub Actions
 workflow runs it will re-run and, under "Not re-runnable from baum", the
 failing checks of other apps; with no failed run it has nothing to confirm.
-Confirming posts `POST /api/prs/update-branch` or `POST /api/prs/rerun-checks`
+Both dialogs put the focus on the confirm button once GitHub allows the write,
+so `Enter` confirms and `Esc` cancels without Tab. Confirming posts
+`POST /api/prs/update-branch` or `POST /api/prs/rerun-checks`
 with the head commit the page showed (labels turn to "Updating…" and
 "Re-running…" in the same frame), so a moved branch is refused in words
 (`{code, message}`, shown inline). A successful update stays open until Closed
