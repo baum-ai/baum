@@ -90,57 +90,82 @@ const (
 // and cursor are reset. The write lock is taken first, so a store two
 // processes open at once is migrated by one of them.
 func migrate(ctx context.Context, db *sql.DB) error {
-	tx, err := db.Conn(ctx)
+	// A migrated store is read without the write lock.
+	if missing, err := missingColumns(ctx, db); err != nil || len(missing) == 0 {
+		return err
+	}
+	conn, err := db.Conn(ctx)
 	if err != nil {
 		return err
 	}
-	defer func() { _ = tx.Close() }()
-	if _, err := tx.ExecContext(ctx, `BEGIN IMMEDIATE`); err != nil {
+	defer func() { _ = conn.Close() }()
+	if _, err := conn.ExecContext(ctx, `BEGIN IMMEDIATE`); err != nil {
 		return err
 	}
 	committed := false
 	defer func() {
 		if !committed {
-			_, _ = tx.ExecContext(context.WithoutCancel(ctx), `ROLLBACK`)
+			_, _ = conn.ExecContext(context.WithoutCancel(ctx), `ROLLBACK`)
 		}
 	}()
-	have := map[string]bool{}
-	for _, table := range []string{"capture_attempt", "pull_request"} {
-		names, err := collect(scanString)(tx.QueryContext(ctx, `SELECT name FROM pragma_table_info(?)`, table))
-		if err != nil {
-			return err
-		}
-		for _, name := range names {
-			have[table+"."+name] = true
-		}
+	// Read again under the lock: another process may have migrated it.
+	missing, err := missingColumns(ctx, conn)
+	if err != nil {
+		return err
 	}
 	relist := false
-	for _, column := range []struct {
-		name, ddl string
-		relist    bool
-	}{
-		{"capture_attempt.stage", `ALTER TABLE capture_attempt ADD COLUMN stage TEXT NOT NULL DEFAULT 'capture'`, false},
-		{"capture_attempt.item", `ALTER TABLE capture_attempt ADD COLUMN item TEXT`, false},
-		{"capture_attempt.rejections", `ALTER TABLE capture_attempt ADD COLUMN rejections INTEGER NOT NULL DEFAULT 0`, false},
-		{"pull_request.cross_repository", `ALTER TABLE pull_request ADD COLUMN cross_repository INTEGER NOT NULL DEFAULT 0`, true},
-		{"pull_request.default_branch", `ALTER TABLE pull_request ADD COLUMN default_branch TEXT NOT NULL DEFAULT ''`, true},
-	} {
-		if have[column.name] {
-			continue
-		}
-		if _, err := tx.ExecContext(ctx, column.ddl); err != nil {
+	for _, column := range missing {
+		if _, err := conn.ExecContext(ctx, column.ddl); err != nil {
 			return err
 		}
 		relist = relist || column.relist
 	}
 	if relist {
-		if _, err := tx.ExecContext(ctx, `UPDATE pull_sync SET etag='', cursor_updated_at=NULL`); err != nil {
+		if _, err := conn.ExecContext(ctx, `UPDATE pull_sync SET etag='', cursor_updated_at=NULL`); err != nil {
 			return err
 		}
 	}
-	_, err = tx.ExecContext(ctx, `COMMIT`)
+	_, err = conn.ExecContext(ctx, `COMMIT`)
 	committed = err == nil
 	return err
+}
+
+// migration is a column migrate adds, and whether adding it lists the pull
+// requests again.
+type migration struct {
+	table, name, ddl string
+	relist           bool
+}
+
+var migrations = []migration{
+	{"capture_attempt", "stage", `ALTER TABLE capture_attempt ADD COLUMN stage TEXT NOT NULL DEFAULT 'capture'`, false},
+	{"capture_attempt", "item", `ALTER TABLE capture_attempt ADD COLUMN item TEXT`, false},
+	{"capture_attempt", "rejections", `ALTER TABLE capture_attempt ADD COLUMN rejections INTEGER NOT NULL DEFAULT 0`, false},
+	{"pull_request", "cross_repository", `ALTER TABLE pull_request ADD COLUMN cross_repository INTEGER NOT NULL DEFAULT 0`, true},
+	{"pull_request", "default_branch", `ALTER TABLE pull_request ADD COLUMN default_branch TEXT NOT NULL DEFAULT ''`, true},
+}
+
+// missingColumns are the migrations whose column the store lacks.
+func missingColumns(ctx context.Context, q interface {
+	QueryContext(context.Context, string, ...any) (*sql.Rows, error)
+}) ([]migration, error) {
+	have := map[string]bool{}
+	for _, table := range []string{"capture_attempt", "pull_request"} {
+		names, err := collect(scanString)(q.QueryContext(ctx, `SELECT name FROM pragma_table_info(?)`, table))
+		if err != nil {
+			return nil, err
+		}
+		for _, name := range names {
+			have[table+"."+name] = true
+		}
+	}
+	var missing []migration
+	for _, m := range migrations {
+		if !have[m.table+"."+m.name] {
+			missing = append(missing, m)
+		}
+	}
+	return missing, nil
 }
 
 // querier is a *sql.DB or *sql.Tx.

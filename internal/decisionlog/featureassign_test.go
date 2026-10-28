@@ -738,7 +738,7 @@ func TestReservationsWithinTheCapAreAtomic(t *testing.T) {
 	made := make(chan bool, 2)
 	for range 2 {
 		wg.Go(func() {
-			_, ok, err := s.beginWithin(context.Background(), Attempt{Backend: "claude", Model: "m", Reserved: 0.6, Stage: StageAssign}, &limit, t0)
+			_, ok, err := s.beginWithin(context.Background(), Attempt{Backend: "claude", Model: "m", Reserved: 0.6, Stage: StageAssign}, &limit, nil, t0)
 			if err != nil {
 				t.Error(err)
 			}
@@ -757,5 +757,20 @@ func TestReservationsWithinTheCapAreAtomic(t *testing.T) {
 	_ = s.db.QueryRow(`SELECT COUNT(*) FROM capture_attempt`).Scan(&rows)
 	if n != 1 || rows != 1 {
 		t.Fatalf("%d reservations made, %d rows", n, rows)
+	}
+	// A session's own bound holds the same way, whatever the daily cap.
+	session := 0.25
+	for range 2 {
+		wg.Go(func() {
+			if _, _, err := s.beginWithin(context.Background(), Attempt{Agent: "claude-code", ID: "s1", Backend: "claude", Model: "m", Reserved: 0.2},
+				nil, &session, t0); err != nil {
+				t.Error(err)
+			}
+		})
+	}
+	wg.Wait()
+	_ = s.db.QueryRow(`SELECT COUNT(*) FROM capture_attempt WHERE session_id='s1'`).Scan(&rows)
+	if rows != 1 {
+		t.Fatalf("%d session reservations made", rows)
 	}
 }

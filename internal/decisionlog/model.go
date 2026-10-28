@@ -215,8 +215,11 @@ type caller struct {
 	log      *slog.Logger
 	now      time.Time
 	// gate reads the preferences and the repository's settings before each
-	// feature stage call, and whether calls may be made.
-	gate func(context.Context) (repos.Preferences, repos.Settings, bool, error)
+	// feature stage call, and whether calls may be made; nil is on, with
+	// prefs and settings.
+	gate     func(context.Context) (repos.Preferences, repos.Settings, bool, error)
+	prefs    repos.Preferences
+	settings repos.Settings
 }
 
 // Reasons a feature stage call was not made, besides the skip reasons.
@@ -278,10 +281,11 @@ func (c caller) overDailyCap(ctx context.Context, prefs repos.Preferences, reser
 }
 
 // begin selects the planned backend's completer and records the attempt as
-// pending with its reservation, within the daily cap in the same statement.
-// A backend that no longer passes its check, or cannot complete, and a
-// reservation past the cap are skips and record nothing.
-func (c caller) begin(ctx context.Context, p planned, a Attempt, prefs repos.Preferences) (*completerModel, int64, string, error) {
+// pending with its reservation, within the daily cap and sessionCap (a
+// session's own, none when nil) in the same statement. A backend that no
+// longer passes its check, or cannot complete, and a reservation past a cap
+// are skips and record nothing.
+func (c caller) begin(ctx context.Context, p planned, a Attempt, prefs repos.Preferences, sessionCap *float64) (*completerModel, int64, string, error) {
 	selected, err := generate.Select(ctx, config.Backend(p.Backend), p.Model, p.backends, io.Discard)
 	if err != nil {
 		c.log.Info("decision log backend unavailable", "backend", p.Backend, "error", err)
@@ -292,8 +296,19 @@ func (c caller) begin(ctx context.Context, p planned, a Attempt, prefs repos.Pre
 		return nil, 0, ReasonUnsupported, nil
 	}
 	a.Backend, a.Model, a.Reserved = p.Backend, p.Model, p.Reserved
-	id, ok, err := c.store.beginWithin(ctx, a, prefs.Decisions.DailyCap, startOfDay(c.now))
+	day := startOfDay(c.now)
+	id, ok, err := c.store.beginWithin(ctx, a, prefs.Decisions.DailyCap, sessionCap, day)
 	if err == nil && !ok {
+		// Which cap refused it, read after the fact for the reason only.
+		if sessionCap != nil {
+			st, err := c.store.Stats(ctx, a.Agent, a.ID, day)
+			if err != nil {
+				return nil, 0, "", err
+			}
+			if st.Spent+a.Reserved > *sessionCap {
+				return nil, 0, ReasonOverCostCap, nil
+			}
+		}
 		return nil, 0, ReasonDailyCap, nil
 	}
 	return &completerModel{completer: completer, redactor: c.redactor, attempt: a}, id, "", err
@@ -341,7 +356,10 @@ type callResult struct {
 // or a ledger write.
 func (c caller) complete(ctx context.Context, backend, model string, a Attempt, req decisions.ModelRequest) (callResult, error) {
 	// The gate and the cap are read again before every call.
-	prefs, settings, on, err := c.gate(ctx)
+	prefs, settings, on, err := c.prefs, c.settings, true, error(nil)
+	if c.gate != nil {
+		prefs, settings, on, err = c.gate(ctx)
+	}
 	switch {
 	case err != nil:
 		return callResult{Skip: ReasonPreferences}, err
@@ -352,10 +370,7 @@ func (c caller) complete(ctx context.Context, backend, model string, a Attempt, 
 	if skip != "" {
 		return callResult{Skip: skip}, nil
 	}
-	if over, err := c.overDailyCap(ctx, prefs, p.Reserved); err != nil || over {
-		return callResult{Skip: ReasonDailyCap}, err
-	}
-	m, id, skip, err := c.begin(ctx, p, a, prefs)
+	m, id, skip, err := c.begin(ctx, p, a, prefs, nil)
 	if err != nil || skip != "" {
 		return callResult{Skip: skip}, err
 	}

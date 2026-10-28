@@ -143,11 +143,13 @@ func (w *FeatureWorker) Assign(ctx context.Context, repository, dir string, o Fe
 		if placed.Cost != nil {
 			report.Spent += *placed.Cost
 		}
+		if placed.Outcome == "" && placed.Reason != "" {
+			report.Stopped = placed.Reason
+		}
 		if err != nil {
 			return report, err
 		}
 		if placed.Outcome == "" {
-			report.Stopped = placed.Reason
 			break
 		}
 		report.Items = append(report.Items, placed)

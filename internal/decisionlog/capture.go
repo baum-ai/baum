@@ -331,7 +331,8 @@ func (c *Capturer) Capture(ctx context.Context, t Target, o Options) (Report, er
 		report.Decisions = len(extraction.Decisions)
 		return report, c.Store.Save(ctx, extraction)
 	}
-	calls := caller{store: c.Store, config: c.Config, backends: c.Backends, prices: c.prices(), redactor: c.redactor, log: c.logger(), now: now}
+	calls := caller{store: c.Store, config: c.Config, backends: c.Backends, prices: c.prices(), redactor: c.redactor, log: c.logger(), now: now,
+		prefs: prefs, settings: settings}
 	planned, reason := calls.plan(ctx, prefs, settings, o.Backend, o.Model, report.MaxTokens, MaxOutputTokens)
 	report.Backend, report.Model, report.Reserved = planned.Backend, planned.Model, planned.Reserved
 	extraction.Backend, extraction.Model = report.Backend, report.Model
@@ -355,7 +356,8 @@ func (c *Capturer) Capture(ctx context.Context, t Target, o Options) (Report, er
 		return report, nil
 	}
 
-	model, attempt, reason, err := calls.begin(ctx, planned, Attempt{Agent: t.Agent, ID: t.ID, Repository: t.Repository, Mode: report.Mode}, prefs)
+	model, attempt, reason, err := calls.begin(ctx, planned, Attempt{Agent: t.Agent, ID: t.ID, Repository: t.Repository, Mode: report.Mode},
+		prefs, new(float64(SessionDailyCap)))
 	if err != nil {
 		return report, err
 	}

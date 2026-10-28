@@ -95,11 +95,13 @@ func (w *FeatureWorker) Summarize(ctx context.Context, repository, dir string, o
 		if out.Cost != nil {
 			report.Spent += *out.Cost
 		}
+		if out.Outcome == "" && out.Reason != "" {
+			report.Stopped = out.Reason
+		}
 		if err != nil {
 			return report, err
 		}
 		if out.Outcome == "" {
-			report.Stopped = out.Reason
 			break
 		}
 		report.Features = append(report.Features, out)
