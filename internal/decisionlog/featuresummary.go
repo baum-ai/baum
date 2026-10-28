@@ -91,9 +91,11 @@ func (r *featureRun) summarizePending(ctx context.Context, quiet time.Time, limi
 		if ctx.Err() != nil {
 			return report, ctx.Err()
 		}
-		if retired, err := r.retired(ctx); err != nil || retired {
-			report.Stopped = ReasonVersionRetired
+		if retired, err := r.retired(ctx); err != nil {
 			return report, err
+		} else if retired {
+			report.Stopped = ReasonVersionRetired
+			return report, nil
 		}
 		if on, err := r.refresh(ctx); err != nil {
 			report.Stopped = ReasonPreferences

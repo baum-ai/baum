@@ -259,6 +259,36 @@ type buildBudget struct {
 	unrecorded bool
 }
 
+// allows reports whether a build's cap leaves room for calls of the given
+// prompt and reply tokens, each held to its estimate as complete holds it;
+// true without a build, or when the calls cannot be planned or priced (each
+// call then reports why).
+func (c caller) allows(ctx context.Context, backend, model string, calls ...[2]int64) bool {
+	b := c.budget
+	if b == nil {
+		return true
+	}
+	prefs, settings := c.prefs, c.settings
+	if c.gate != nil {
+		if p, s, _, err := c.gate(ctx); err == nil {
+			prefs, settings = p, s
+		}
+	}
+	p, skip := c.plan(ctx, prefs, settings, backend, model, 1, 1)
+	if skip != "" {
+		return true
+	}
+	total := 0.0
+	for _, call := range calls {
+		next, ok := callCost(c.prices, p.Backend, p.Model, call[0]/FeatureBuildBytesPerToken, call[1])
+		if !ok {
+			return true
+		}
+		total += next
+	}
+	return !b.full && b.spent+total <= b.cap
+}
+
 // ReasonSpendUnrecorded stops a first build whose version did not record a
 // call's spend.
 const ReasonSpendUnrecorded = "spend_unrecorded"

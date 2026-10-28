@@ -15,6 +15,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/baum-ai/baum/decisions"
 	"github.com/baum-ai/baum/features/consolidate"
 )
 
@@ -101,11 +102,13 @@ func (s *Store) consolidation(ctx context.Context, repository string) (time.Time
 	return time.UnixMilli(at.Int64), fingerprint, err
 }
 
-// recordConsolidation records a pass started at with the features'
-// fingerprint then.
-func recordConsolidation(ctx context.Context, q querier, repository, fingerprint string, at time.Time) error {
-	_, err := q.ExecContext(ctx, `INSERT INTO feature_consolidation(repository, last_pass_at, fingerprint) VALUES (?,?,?)
-ON CONFLICT(repository) DO UPDATE SET last_pass_at=excluded.last_pass_at, fingerprint=excluded.fingerprint`, repository, at.UnixMilli(), fingerprint)
+// recordConsolidation records a pass over version started at with the
+// features' fingerprint then.
+func recordConsolidation(ctx context.Context, q querier, version int64, repository, fingerprint string, at time.Time) error {
+	// Never for a version a build's switch retired.
+	_, err := q.ExecContext(ctx, `INSERT INTO feature_consolidation(repository, last_pass_at, fingerprint)
+SELECT ?1, ?2, ?3 WHERE EXISTS (SELECT 1 FROM feature_version WHERE id=?4 AND state != 'retired')
+ON CONFLICT(repository) DO UPDATE SET last_pass_at=excluded.last_pass_at, fingerprint=excluded.fingerprint`, repository, at.UnixMilli(), fingerprint, version)
 	return err
 }
 
@@ -235,6 +238,23 @@ func (r *featureRun) shownSummary(ctx context.Context, number int, generated map
 	return generated[number].Summary
 }
 
+// oversized counts the features a split may be offered before the merges:
+// more than FeatureSplitPulls pull requests or opened more than
+// FeatureSplitAge apart, not checked at their membership.
+func oversized(found []*consolidationFeature) int {
+	n := 0
+	for _, f := range found {
+		pulls := f.pulls
+		if len(pulls) == 0 || (f.checked > 0 && f.checked == f.membership) {
+			continue
+		}
+		if len(pulls) > FeatureSplitPulls || pulls[len(pulls)-1].Opened.Sub(pulls[0].Opened) > FeatureSplitAge {
+			n++
+		}
+	}
+	return n
+}
+
 // heldApart reports whether a merge of a and b would undo a split of the
 // last FeatureSplitHold: one is a part of the other, or both are parts of
 // one split.
@@ -331,6 +351,20 @@ func (r *featureRun) consolidate(ctx context.Context, gated bool) (ConsolidateRe
 		request, err := consolidate.Public.Request(ConsolidateVersion, consolidate.Merge, rendered.Input, FeatureConsolidateOutputTokens)
 		if err != nil {
 			return report, err
+		}
+		// A build pays for a merge only with room for the splits after it,
+		// which a split that cannot be made would discard.
+		split, err := consolidate.Public.Request(ConsolidateVersion, consolidate.Split, "", FeatureConsolidateOutputTokens)
+		if err != nil {
+			return report, err
+		}
+		calls := [][2]int64{{decisions.MaxRequestTokens(request), FeatureConsolidateOutputTokens}}
+		for range min(FeatureMaxSplits, oversized(found)) {
+			calls = append(calls, [2]int64{decisions.MaxRequestTokens(split) + FeatureEstimateSplitBytes, FeatureConsolidateOutputTokens})
+		}
+		if !r.calls.allows(ctx, r.opts.Backend, r.opts.Model, calls...) {
+			report.Stopped = ReasonBuildCap
+			return report, nil
 		}
 		result, callErr := r.calls.complete(ctx, r.opts.Backend, r.opts.Model,
 			Attempt{Repository: r.repository, Stage: StageConsolidate, Item: "merge"}, request)
@@ -468,9 +502,11 @@ func (r *featureRun) consolidate(ctx context.Context, gated bool) (ConsolidateRe
 	// The writes, each only while its features are as they were read, and
 	// none when a build's switch retired the version meanwhile.
 	write := context.WithoutCancel(ctx)
-	if retired, err := r.retired(write); err != nil || retired {
-		report.Stopped = ReasonVersionRetired
+	if retired, err := r.retired(write); err != nil {
 		return report, err
+	} else if retired {
+		report.Stopped = ReasonVersionRetired
+		return report, nil
 	}
 	expected := map[string]int64{}
 	for _, f := range found {
@@ -513,7 +549,7 @@ func (r *featureRun) consolidate(ctx context.Context, gated bool) (ConsolidateRe
 	if r.opts.building {
 		return report, nil
 	}
-	if err := recordConsolidation(write, s.db, r.repository, fingerprint, r.now); err != nil {
+	if err := recordConsolidation(write, s.db, r.version, r.repository, fingerprint, r.now); err != nil {
 		return report, err
 	}
 	r.w.logger().Info("feature consolidation", "repository", r.repository, "outcome", report.Outcome, "features", report.Features,
@@ -569,6 +605,16 @@ JOIN session_commit sc ON sc.repository=pc.repository AND sc.sha=pc.sha WHERE pc
 	return sessionFeatures(ctx, tx, version, repository, sessions)
 }
 
+// writable reports whether version may still be written: a build's switch
+// has not retired it.
+func writable(ctx context.Context, tx *sql.Tx, version int64) (bool, error) {
+	var state string
+	if err := tx.QueryRowContext(ctx, `SELECT state FROM feature_version WHERE id=?`, version).Scan(&state); err != nil {
+		return false, err
+	}
+	return state != VersionRetired, nil
+}
+
 // mergeFeature merges duplicate into survivor while both are at the
 // membership versions expected and neither is merged: its pull requests and
 // sessions move to the survivor as consolidation's, it points at the
@@ -577,6 +623,9 @@ JOIN session_commit sc ON sc.repository=pc.repository AND sc.sha=pc.sha WHERE pc
 func (s *Store) mergeFeature(ctx context.Context, version int64, repository, survivor, duplicate string, expected map[string]int64, now time.Time) (bool, error) {
 	done := false
 	err := s.inTx(ctx, func(tx *sql.Tx) error {
+		if live, err := writable(ctx, tx, version); err != nil || !live {
+			return err
+		}
 		for _, id := range []string{survivor, duplicate} {
 			var membership int64
 			var into sql.NullString
@@ -626,6 +675,9 @@ func (s *Store) splitFeature(ctx context.Context, version int64, repository, id 
 	expected map[string]int64, now time.Time) (int, error) {
 	created := -1
 	err := s.inTx(ctx, func(tx *sql.Tx) error {
+		if live, err := writable(ctx, tx, version); err != nil || !live {
+			return err
+		}
 		var membership int64
 		var into sql.NullString
 		err := tx.QueryRowContext(ctx, `SELECT membership_version, merged_into FROM feature WHERE id=? AND version_id=?`, id, version).Scan(&membership, &into)

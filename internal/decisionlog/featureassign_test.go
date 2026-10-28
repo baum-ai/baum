@@ -38,6 +38,8 @@ type scriptBackend struct {
 	rejections int
 	// textInput is the last feature call's input.
 	textInput string
+	// maxOutput are the calls' reply bounds, in order.
+	maxOutput []int
 }
 
 func (b *scriptBackend) Name() string                          { return agent.BackendClaude }
@@ -50,6 +52,7 @@ func (b *scriptBackend) Complete(_ context.Context, req agent.CompleteRequest) (
 	if b.onCall != nil {
 		b.onCall()
 	}
+	b.maxOutput = append(b.maxOutput, req.MaxOutputTokens)
 	out := agent.Completion{Model: "claude-haiku-5-5", Usage: agent.Usage{Input: 1000, Output: 100}, Rejections: b.rejections}
 	if b.usage != nil {
 		out.Usage = *b.usage

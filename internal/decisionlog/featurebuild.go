@@ -284,9 +284,9 @@ func (r *featureRun) estimateCost(ctx context.Context, items []buildItem, p plan
 		if err != nil {
 			return 0, 0, false, err
 		}
-		add(tokens(len(merge.System)+min(features*FeatureEstimateCandidateBytes, consolidate.DefaultMaxInputBytes)), FeatureEstimateConsolidateOutputTokens)
+		add(tokens(len(merge.System)+min(features*FeatureEstimateCandidateBytes, consolidate.DefaultMaxInputBytes)), FeatureEstimateMergeOutputTokens)
 		for range min(FeatureMaxSplits, features) {
-			add(tokens(len(merge.System)+FeatureEstimateSplitBytes), FeatureEstimateConsolidateOutputTokens)
+			add(tokens(len(merge.System)+FeatureEstimateSplitBytes), FeatureEstimateSplitOutputTokens)
 		}
 	}
 	return math.Round(total*10000) / 10000, reserved, priced, nil
@@ -401,18 +401,22 @@ func (b *buildRun) run(ctx context.Context, consolidated sql.NullInt64) error {
 		}
 	}
 	// consolidated_at is NULL before the pass, the pass's time once it was
-	// made, and 0 once it was tried and not made: it is tried once.
+	// made, and 0 once it failed or a cap refused it: it is tried once.
 	if !consolidated.Valid {
 		b.notify(BuildConsolidating)
 		pass, err := b.consolidate(ctx, false)
 		b.report.Consolidation = &pass
-		if err != nil {
+		switch {
+		case err != nil:
 			return err
+		case pass.Stopped != "" && pass.Stopped != ReasonBuildCap && pass.Stopped != ReasonDailyCap:
+			// Turned off, or no backend now: the pass waits for the next run.
+			return errBuildStop{pass.Stopped}
 		}
-		// A pass that failed or could not call (a cap included) is not
-		// recorded: the build still switches, and the weekly pass takes the
-		// version once FeatureConsolidateEvery has passed since the last
-		// recorded pass and its backoff has.
+		// A pass that failed or was refused by a cap is not recorded: the
+		// build still switches, and the weekly pass takes the version once
+		// FeatureConsolidateEvery has passed since the last recorded pass
+		// and its backoff has.
 		consolidated = sql.NullInt64{Valid: true}
 		if pass.Outcome == ConsolidationDone {
 			consolidated.Int64 = b.now.UnixMilli()
@@ -687,7 +691,7 @@ func (s *Store) switchVersion(ctx context.Context, repository string, version in
 		if err != nil {
 			return err
 		}
-		return recordConsolidation(ctx, tx, repository, fingerprint, now)
+		return recordConsolidation(ctx, tx, version, repository, fingerprint, now)
 	})
 }
 

@@ -398,10 +398,14 @@ internal features build`.
   of every feature of the version behind its members is written, without the
   debounce; a feature whose text fails backs off and is left for the text
   stage. Then the version's consolidation pass is tried once
-  (`consolidated_at`: its time when it was made, 0 when it was not), and the
-  changed features' text is written again. A pass that fails or cannot call
-  (the cap included) is not recorded and the build goes on; it is never
-  tried again on a resume. The weekly pass then takes the version once it is
+  (`consolidated_at`: its time when it was made, 0 when it failed or a cap
+  refused it), and the changed features' text is written again. The merge
+  call is made only when the cap leaves room for it and the split calls
+  that may follow (the merges are discarded when a split call cannot be
+  made); otherwise the cap refuses the pass. A pass that fails or that a cap
+  refuses is not recorded and the build goes on; it is never tried again on
+  a resume. A pass the gate or a missing backend refuses stops the build,
+  and a resume tries it. The weekly pass then takes the version once it is
   current, 7 days after the last recorded pass and after any backoff.
 - **Switching.** The building version becomes current in one transaction:
   the current one is retired, the skips become placement's settlements, the
@@ -409,7 +413,8 @@ internal features build`.
   lookback, and, when its pass was made, the switch is recorded as the
   repository's last consolidation. A live stage that raced the switch never
   writes the retired version: its run stops at its next item or write
-  (`version_retired`), and a consolidation pass writes and records nothing.
+  (`version_retired`), and a consolidation pass writes and records nothing,
+  each write checking the version in its own transaction.
   Work the live stages placed in the old version is in no feature of the new
   one; placement takes what is within its lookback. A
   retired version is kept, and a link to one of its features resolves as

@@ -98,14 +98,15 @@ const (
 // The sizes a build's estimate assumes of what it cannot know beforehand
 // (local only; hosted builds have no estimate).
 const (
-	FeatureEstimateBytesPerToken           = 3
-	FeatureEstimateCandidateBytes          = 4000
-	FeatureEstimateItemOutputTokens        = 550
-	FeatureEstimatePullsPerFeature         = 3
-	FeatureEstimateTextPasses              = 2
-	FeatureEstimateTextBytes               = 20000
-	FeatureEstimateTextOutputTokens        = 1000
-	FeatureEstimatePullOutputTokens        = 300
-	FeatureEstimateSplitBytes              = 30000
-	FeatureEstimateConsolidateOutputTokens = 3000
+	FeatureEstimateBytesPerToken     = 3
+	FeatureEstimateCandidateBytes    = 4000
+	FeatureEstimateItemOutputTokens  = 550
+	FeatureEstimatePullsPerFeature   = 3
+	FeatureEstimateTextPasses        = 2
+	FeatureEstimateTextBytes         = 20000
+	FeatureEstimateTextOutputTokens  = 1000
+	FeatureEstimatePullOutputTokens  = 300
+	FeatureEstimateSplitBytes        = 30000
+	FeatureEstimateMergeOutputTokens = 14000
+	FeatureEstimateSplitOutputTokens = 4000
 )
