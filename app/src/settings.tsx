@@ -592,11 +592,7 @@ function DecisionSettingsSection({ defaults }: { defaults: ReviewDefaults }) {
         <p role="status" className="text-xs text-(--text-tertiary)">
           {done ? "Saved." : dirty ? "You have unsaved changes." : ""}
         </p>
-        <Button
-          size="compact"
-          disabled={!dirty || pending}
-          onClick={() => void save()}
-        >
+        <Button size="compact" disabled={!dirty || pending} onClick={() => void save()}>
           {pending ? "Saving…" : "Save decision capture"}
         </Button>
       </footer>
