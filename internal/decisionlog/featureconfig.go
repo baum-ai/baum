@@ -84,6 +84,10 @@ const (
 	// FeatureBuildCapFactor makes a confirmed build's cost cap from its
 	// estimate.
 	FeatureBuildCapFactor = 1.25
+	// FeatureBuildBytesPerToken bounds a build call's prompt tokens from its
+	// bytes for the cap, as hosted: JSON of paths and identifiers runs at
+	// about three bytes a token.
+	FeatureBuildBytesPerToken = 2
 )
 
 // The sizes a build's estimate assumes of what it cannot know beforehand
@@ -91,11 +95,11 @@ const (
 const (
 	FeatureEstimateBytesPerToken           = 3
 	FeatureEstimateCandidateBytes          = 1500
-	FeatureEstimateItemOutputTokens        = 150
+	FeatureEstimateItemOutputTokens        = 550
 	FeatureEstimatePullsPerFeature         = 3
 	FeatureEstimateTextPasses              = 2
 	FeatureEstimateTextBytes               = 9000
-	FeatureEstimateTextOutputTokens        = 800
+	FeatureEstimateTextOutputTokens        = 1000
 	FeatureEstimatePullOutputTokens        = 300
 	FeatureEstimateSplitBytes              = 30000
 	FeatureEstimateConsolidateOutputTokens = 3000

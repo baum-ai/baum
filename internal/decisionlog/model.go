@@ -244,8 +244,8 @@ type caller struct {
 const ReasonBuildCap = "cost_cap"
 
 // buildBudget is a first build's version's spend over all its runs against
-// the build's cap. A call is made only while its reservation keeps the
-// spend within the cap; its cost, else its reservation, is added to the
+// the build's cap. A call is made only while its estimate keeps the spend
+// within the cap; its cost, else its reservation, is added to the
 // version's.
 type buildBudget struct {
 	version    int64
@@ -404,9 +404,14 @@ func (c caller) complete(ctx context.Context, backend, model string, a Attempt, 
 	if skip != "" {
 		return callResult{Skip: skip}, nil
 	}
-	if b := c.budget; b != nil && (b.full || b.spent+p.Reserved > b.cap) {
-		b.full = true
-		return callResult{Skip: ReasonBuildCap}, nil
+	if b := c.budget; b != nil {
+		// As hosted, a build's call is held to an estimate rather than the
+		// byte bound: its prompt at two bytes a token and its whole reply.
+		next, ok := callCost(c.prices, p.Backend, p.Model, decisions.MaxRequestTokens(req)/FeatureBuildBytesPerToken, req.MaxOutputTokens)
+		if !ok || b.full || b.spent+next > b.cap {
+			b.full = true
+			return callResult{Skip: ReasonBuildCap}, nil
+		}
 	}
 	m, id, skip, err := c.begin(ctx, p, a, prefs, nil)
 	if err != nil || skip != "" {

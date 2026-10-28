@@ -369,7 +369,7 @@ internal features build`.
   twice, a summary of each pull request with a description, and one merge
   and up to three split calls. The cap of the version's spend over all its
   runs is what it spent and the estimate times 1.25, with room for at least
-  one more batch call's reservation beyond the estimate. A repository whose
+  one more batch call beyond the estimate. A repository whose
   decisions are not captured, or whose model cannot be priced or called, is
   not estimated.
 - **Building.** The build makes the repository's `building` version, or
@@ -403,7 +403,8 @@ internal features build`.
   feature of the new one; placement takes what is within its lookback. A
   retired version is kept, and a link to one of its features resolves as
   archived.
-- **Stopping.** A build stops before a call whose reservation would take the
+- **Stopping.** A build stops before a call whose estimate (as hosted: its
+  prompt at two bytes a token and its whole reply bound) would take the
   version's spend (`spent_usd`, added after every call: its cost, else its
   reservation) past the cap, or that cannot be made, leaving the version
   `building` with `stopped` set to why; confirming it again resumes it. Its

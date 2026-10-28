@@ -70,8 +70,8 @@ type BuildEstimate struct {
 	// priced; SpentUSD what the version's earlier runs spent.
 	EstimateUSD *float64 `json:"estimate_usd"`
 	SpentUSD    float64  `json:"spent_usd"`
-	// ReservedUSD is the most one call of the build reserves, which a call
-	// needs left under the cap.
+	// ReservedUSD is the most a batch call of the build is held to under the
+	// cap.
 	ReservedUSD float64 `json:"reserved_usd"`
 	// Reason is why no call could be made (a backend or price reason).
 	Reason string `json:"reason,omitempty"`
@@ -79,7 +79,7 @@ type BuildEstimate struct {
 
 // Cap is the version's spend cap a build confirmed for the estimate holds:
 // what it spent and the estimate times FeatureBuildCapFactor, and at least
-// room for one more call's reservation beyond the estimate.
+// room for one more batch call beyond the estimate.
 func (e BuildEstimate) Cap() float64 {
 	if e.EstimateUSD == nil {
 		return e.SpentUSD
@@ -199,8 +199,8 @@ func (w *FeatureWorker) EstimateBuild(ctx context.Context, repository, dir strin
 // estimateCost prices the calls a build of items would make, from the
 // sizes of their inputs (README.md, "First build"): the batches, the
 // features' text twice, a summary of every pull request with a
-// description, and one consolidation pass; with the largest reservation of
-// a batch call.
+// description, and one consolidation pass; with the most a
+// batch call is held to under the cap.
 func (r *featureRun) estimateCost(ctx context.Context, items []buildItem, p planned) (float64, float64, bool, error) {
 	batchVersion, _ := assign.Public.BatchVersion(AssignVersion)
 	batchRequest, err := assign.Public.Request(batchVersion, "", assign.MaxBatchOutputTokens)
@@ -235,7 +235,7 @@ func (r *featureRun) estimateCost(ctx context.Context, items []buildItem, p plan
 		}
 		bytes += min(FeatureBuildCandidates, features) * FeatureEstimateCandidateBytes
 		add(tokens(bytes), int64(len(batch)*FeatureEstimateItemOutputTokens))
-		if cost, ok := reserveFor(r.calls.prices, p.Backend, p.Model, int64(bytes), assign.MaxBatchOutputTokens); ok {
+		if cost, ok := callCost(r.calls.prices, p.Backend, p.Model, int64(bytes/FeatureBuildBytesPerToken), assign.MaxBatchOutputTokens); ok {
 			reserved = max(reserved, cost)
 		}
 		features = (start + len(batch) + FeatureEstimatePullsPerFeature - 1) / FeatureEstimatePullsPerFeature
