@@ -37,9 +37,12 @@ const UP_NEXT_SHORTCUTS = [
 ];
 /** The walkthrough's keys, which `Walkthrough` handles itself. */
 const WALKTHROUGH_SHORTCUTS = [
-  { keys: ["ArrowRight", "j"], label: "Next stop" },
-  { keys: ["ArrowLeft", "k"], label: "Previous stop" },
-  { keys: ["c"], label: "Comment on the stop" },
+  { keys: ["j", "ArrowDown"], label: "Next behaviour" },
+  { keys: ["k", "ArrowUp"], label: "Previous behaviour" },
+  { keys: ["ArrowRight"], label: "Next chapter" },
+  { keys: ["ArrowLeft"], label: "Previous chapter" },
+  { keys: ["o"], label: "Show the behaviour's code" },
+  { keys: ["c"], label: "Comment on the behaviour" },
 ];
 /** The keys of every other list (Sessions, Jobs, Repositories), which
  *  `listKeys` handles. */

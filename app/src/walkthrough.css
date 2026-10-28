@@ -178,18 +178,32 @@
   display: flex;
   align-items: center;
   gap: 8px;
+  margin: 0;
   padding: 4px 10px 6px;
 }
-.walk-group-head h2 {
+/* A chapter's heading opens its page. */
+.walkthrough .walk-group-open {
   flex: 1;
   min-width: 0;
-  margin: 0;
+  margin: -3px -6px;
+  padding: 3px 6px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
   color: var(--un-muted);
   font-size: 11.5px;
   font-weight: 600;
   line-height: 1.4;
   letter-spacing: 0.08em;
+  text-align: left;
   text-transform: uppercase;
+}
+.walkthrough .walk-group-open:hover {
+  background: var(--un-hover);
+  color: var(--un-ink);
+}
+.walkthrough .walk-group-open.on {
+  color: var(--un-ink);
 }
 .walk-row {
   display: flex;
@@ -403,7 +417,7 @@
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
-  margin: -8px 0 0;
+  margin: 0;
   padding: 0;
   list-style: none;
 }
@@ -602,6 +616,148 @@
   margin: 0;
   font-size: 14.5px;
   line-height: 1.5;
+}
+
+/* The chapter's own risks, under its reason */
+.walk-risks {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 4px 0 0;
+  padding: 10px 0 0;
+  border-top: 1px solid var(--un-hairline);
+  list-style: none;
+}
+.walk-risks li {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  font-size: 14px;
+  line-height: 1.5;
+}
+.walk-tier {
+  flex: none;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: var(--un-clone-bg);
+  color: var(--un-clone);
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: capitalize;
+}
+.walk-tier.medium {
+  background: var(--un-review-bg);
+  color: var(--un-review);
+}
+.walk-tier:is(.high, .critical) {
+  background: var(--un-score4-bg);
+  color: var(--un-score4);
+}
+
+/* The chapter's behaviours, the picked one raised as the list's current row */
+.walk-behaviours {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0 -14px;
+  padding: 0;
+  list-style: none;
+}
+.walk-behaviour {
+  display: flex;
+  gap: 12px;
+  padding: 14px;
+  border-radius: 10px;
+  cursor: pointer;
+  scroll-margin: 16px;
+}
+.walk-behaviour + .walk-behaviour {
+  box-shadow: 0 -1px 0 var(--un-hairline);
+}
+.walk-behaviour:hover:not(.picked) {
+  background: color-mix(in srgb, var(--un-hover) 55%, transparent);
+}
+.walk-behaviour.picked {
+  background: var(--un-card);
+  box-shadow:
+    inset 3px 0 0 var(--un-done),
+    var(--un-shadow-selected);
+  cursor: default;
+}
+.walk-behaviour.picked + .walk-behaviour {
+  box-shadow: none;
+}
+.walk-behaviour-number {
+  display: flex;
+  width: 22px;
+  height: 22px;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  border: 1.5px solid var(--un-mark);
+  border-radius: 50%;
+  color: var(--un-muted);
+  font-size: 11.5px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+.walk-behaviour-number.seen {
+  border-color: var(--un-done);
+  background: var(--un-done);
+  color: var(--un-on-hot);
+}
+.walk-behaviour.commented .walk-behaviour-number {
+  border-color: var(--un-risk-mid);
+  background: var(--un-risk-mid);
+  color: var(--un-on-hot);
+}
+.walk-behaviour-body {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+.walk-behaviour-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 4px 12px;
+}
+.walk-behaviour-head h4 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+  line-height: 1.35;
+}
+.walk-behaviour-text {
+  color: var(--un-ink-soft);
+  font-size: 14.5px;
+  line-height: 1.55;
+}
+.walk-behaviour-text p {
+  margin: 0;
+}
+.walk-behaviour-foot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+}
+.walk-behaviour-foot .walk-code {
+  flex: 1;
+  min-width: 0;
+}
+.walk-behaviour-foot .walk-small {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.walk-page-foot {
+  padding-top: 8px;
+  border-top: 1px solid var(--un-hairline);
 }
 
 /* Labelled blocks of rows */

@@ -44,13 +44,14 @@ const plural = (count: number, one: string, many = `${one}s`) =>
  *  written before steps had titles does. */
 const echoes = (stop: Stop) => stop.text.replace(/[.!?]\s*$/, "") === stop.title;
 
-/** The review as a guided tour of its behaviours, riskiest chapter first.
- *  Nobody has to sign off on every behaviour:
- *  moving past a stop counts as having looked at it,
+/** The review as a guided tour, one page per chapter, riskiest first: the
+ *  chapter's intent and risk once at the top, then its behaviours, one of
+ *  them picked out for the keys. Nobody has to sign off on every behaviour:
+ *  moving past one, or leaving its chapter, counts as having looked at it,
  *  and a comment is the only way to say something looks off. The comments go
  *  to GitHub as one review, each on the line its behaviour cites. It is drawn
- *  as the inbox is: the stops listed on the left, the one being read beside
- *  them. */
+ *  as the inbox is: the chapters and their behaviours listed on the left, the
+ *  page being read beside them. */
 export function Walkthrough({
   entry,
   document,
@@ -82,42 +83,100 @@ export function Walkthrough({
   const setNote = (stop: Stop, note: string) =>
     setProgress((current) => ({ ...current, notes: { ...current.notes, [stop.id]: note } }));
 
-  const last = tour.stops.length + 1;
-  // 0 is the introduction, 1… the stops, `last` the wrap-up.
-  const [step, setStep] = useState(0);
+  const last = tour.chapters.length + 1;
+  // 0 is the overview, 1… the chapters, `last` the wrap-up.
+  const [page, setPage] = useState(0);
+  // The behaviour the keys act on, an index into `tour.stops`.
+  const [cur, setCur] = useState(0);
   const [editing, setEditing] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
   const detail = useRef<HTMLDivElement>(null);
-  // Each stop starts at its top, as a new page would.
+  // Each page starts at its top, as a new page would.
   useEffect(() => {
     detail.current?.scrollTo?.({ top: 0 });
-  }, [step]);
+  }, [page]);
+  const chapter = page >= 1 && page < last ? tour.chapters[page - 1]! : null;
+  // A picked behaviour is brought into view; a chapter opened whole is read
+  // from its top.
+  const reveal = useRef(false);
+  useEffect(() => {
+    if (!chapter || !reveal.current) return;
+    window.document
+      .getElementById(`walk-behaviour-${tour.stops[cur]?.id}`)
+      ?.scrollIntoView?.({ block: "nearest" });
+  }, [cur, page]);
 
-  const go = (next: number) => {
+  /** Opens a page; on a chapter, picks `at` or the chapter's first
+   *  behaviour. Leaving a chapter counts all of it as looked at. */
+  const open = (next: number, at?: number) => {
     next = Math.max(0, Math.min(last, next));
-    const leaving = tour.stops[step - 1];
-    if (leaving && next !== step) markSeen(leaving);
-    setStep(next);
+    if (chapter && next !== page) markSeen(...chapter.stops.map((index) => tour.stops[index]!));
+    const target = tour.chapters[next - 1];
+    if (target) setCur(at ?? target.stops[0]!);
+    reveal.current = at !== undefined;
+    setPage(next);
     setEditing(null);
   };
-  const forward = () => go(step + 1);
+  /** Picks a behaviour, opening its chapter; the one left counts as looked at. */
+  const pick = (at: number) => {
+    const stop = tour.stops[at];
+    if (!stop) return;
+    if (chapter && at !== cur) markSeen(tour.stops[cur]!);
+    if (stop.chapter + 1 !== page) open(stop.chapter + 1, at);
+    else setCur(at);
+    reveal.current = true;
+    if (editing && editing !== stop.id) setEditing(null);
+  };
+  // j and k walk the behaviours, across chapters; → and ← whole pages.
+  const down = () => {
+    if (!chapter) return open(page + 1);
+    const index = chapter.stops.indexOf(cur);
+    if (index < chapter.stops.length - 1) pick(chapter.stops[index + 1]!);
+    else open(page + 1);
+  };
+  const up = () => {
+    if (page === last) {
+      const final = tour.chapters[last - 2]!;
+      return open(last - 1, final.stops[final.stops.length - 1]);
+    }
+    if (!chapter) return;
+    const index = chapter.stops.indexOf(cur);
+    if (index > 0) return pick(chapter.stops[index - 1]!);
+    const previous = tour.chapters[page - 2];
+    open(page - 1, previous ? previous.stops[previous.stops.length - 1] : undefined);
+  };
   const startComment = (stop: Stop) => {
     setDraft(progress.notes[stop.id] ?? "");
     setEditing(stop.id);
   };
+  const toggleCode = (stop: Stop) => {
+    const details = window.document
+      .getElementById(`walk-behaviour-${stop.id}`)
+      ?.querySelector("details");
+    if (details) details.open = !details.open;
+  };
 
-  const claim = step >= 1 && step < last ? tour.stops[step - 1]! : null;
   useShortcuts((event) => {
     const key = event.key;
-    if (key === "ArrowRight" || key === "j") {
+    const stop = chapter ? tour.stops[cur] : undefined;
+    if (key === "j" || key === "ArrowDown") {
       event.preventDefault();
-      forward();
-    } else if (key === "ArrowLeft" || key === "k") {
+      down();
+    } else if (key === "k" || key === "ArrowUp") {
       event.preventDefault();
-      go(step - 1);
-    } else if (key === "c" && claim) {
+      up();
+    } else if (key === "ArrowRight") {
       event.preventDefault();
-      startComment(claim);
+      open(page + 1);
+    } else if (key === "ArrowLeft") {
+      event.preventDefault();
+      open(page - 1);
+    } else if (key === "c" && stop) {
+      event.preventDefault();
+      startComment(stop);
+    } else if (key === "o" && stop) {
+      event.preventDefault();
+      toggleCode(stop);
     }
   });
 
@@ -190,45 +249,42 @@ export function Walkthrough({
         <div className="walk-split">
           <StopList
             tour={tour}
-            step={step}
+            page={page}
+            cur={chapter ? cur : null}
             done={done}
             commented={commented}
             seenCount={seenCount}
             commentCount={commentCount}
-            go={go}
+            open={open}
+            pick={pick}
           />
           <div ref={detail} className="walk-detail">
-            {step === 0 ? (
-              <Intro
-                entry={entry}
-                document={document}
+            {page === 0 ? (
+              <Intro entry={entry} document={document} tour={tour} done={done} open={open} />
+            ) : chapter ? (
+              <ChapterPage
+                key={chapter.id}
                 tour={tour}
+                chapter={chapter}
+                page={page}
+                document={document}
+                cur={cur}
+                pick={pick}
                 done={done}
-                go={go}
-                start={forward}
-              />
-            ) : claim ? (
-              <Claim
-                key={claim.id}
-                tour={tour}
-                stop={claim}
-                document={document}
-                seen={seen.has(claim.id)}
-                note={progress.notes[claim.id] ?? ""}
-                editing={editing === claim.id}
+                notes={progress.notes}
+                editing={editing}
                 draft={draft}
                 setDraft={setDraft}
-                startComment={() => startComment(claim)}
-                saveComment={() => {
-                  setNote(claim, draft.trim());
-                  markSeen(claim);
+                startComment={startComment}
+                saveComment={(stop) => {
+                  setNote(stop, draft.trim());
+                  markSeen(stop);
                   setEditing(null);
                 }}
                 cancelComment={() => setEditing(null)}
-                removeComment={() => setNote(claim, "")}
-                next={forward}
-                back={() => go(step - 1)}
-                nextLabel={step === tour.stops.length ? "Wrap up" : "Next"}
+                removeComment={(stop) => setNote(stop, "")}
+                next={() => open(page + 1)}
+                back={() => open(page - 1)}
               />
             ) : (
               <WrapUp
@@ -236,7 +292,7 @@ export function Walkthrough({
                 unseen={unseen}
                 seenCount={seenCount}
                 commentCount={commentCount}
-                go={go}
+                pick={pick}
                 submit={
                   <Submit
                     entry={entry}
@@ -258,7 +314,7 @@ export function Walkthrough({
   );
 }
 
-/** A stop's state as the inbox marks a row: an empty ring, a tick once
+/** A behaviour's state as the inbox marks a row: an empty ring, a tick once
  *  looked at, or the comment mark once something looked off. */
 function Mark({ state }: { state: "seen" | "commented" | null }) {
   return (
@@ -314,36 +370,49 @@ function RiskCard({
   );
 }
 
-/** The tour's stops, grouped by chapter as the inbox groups its queue. */
+/** The chapters and their behaviours, grouped as the inbox groups its queue. */
 function StopList({
   tour,
-  step,
+  page,
+  cur,
   done,
   commented,
   seenCount,
   commentCount,
-  go,
+  open,
+  pick,
 }: {
   tour: Tour;
-  step: number;
+  page: number;
+  /** The picked behaviour, while a chapter is open. */
+  cur: number | null;
   done: (stop: Stop) => boolean;
   commented: (stop: Stop) => boolean;
   seenCount: number;
   commentCount: number;
-  go: (step: number) => void;
+  open: (page: number) => void;
+  pick: (at: number) => void;
 }) {
-  const last = tour.stops.length + 1;
+  const last = tour.chapters.length + 1;
   const list = useRef<HTMLElement>(null);
   useEffect(() => {
     list.current?.querySelector("[aria-current]")?.scrollIntoView?.({ block: "nearest" });
-  }, [step]);
-  const row = (at: number, title: string, sub: ReactNode, mark: ReactNode, label = title) => (
-    <li key={at}>
+  }, [page, cur]);
+  const row = (
+    key: string,
+    current: boolean,
+    go: () => void,
+    title: string,
+    sub: ReactNode,
+    mark: ReactNode,
+    label = title,
+  ) => (
+    <li key={key}>
       <button
         type="button"
-        onClick={() => go(at)}
+        onClick={go}
         aria-label={label}
-        aria-current={at === step ? "step" : undefined}
+        aria-current={current ? "step" : undefined}
         className="walk-row"
       >
         {mark}
@@ -359,7 +428,9 @@ function StopList({
       <div className="walk-list-body">
         <ul>
           {row(
-            0,
+            "overview",
+            page === 0,
+            () => open(0),
             "Overview",
             "What it does, and the route",
             <span aria-hidden className="walk-mark walk-mark-end">
@@ -369,18 +440,24 @@ function StopList({
         </ul>
         {tour.chapters.map((chapter, index) => (
           <section key={chapter.id} aria-label={chapter.title} className="walk-group">
-            <div className="walk-group-head">
-              <h2>
+            <h2 className="walk-group-head">
+              <button
+                type="button"
+                className={cn("walk-group-open", page === index + 1 && "on")}
+                onClick={() => open(index + 1)}
+              >
                 {index + 1} · {chapter.title}
-              </h2>
+              </button>
               <RiskBadge level={chapter.level} />
-            </div>
+            </h2>
             <ul>
               {chapter.stops.map((at) => {
                 const stop = tour.stops[at]!;
                 const state = commented(stop) ? "commented" : done(stop) ? "seen" : null;
                 return row(
-                  at + 1,
+                  stop.id,
+                  cur === at,
+                  () => pick(at),
                   stop.title,
                   state === "commented" ? (
                     <span className="walk-row-commented">Your comment</span>
@@ -402,7 +479,9 @@ function StopList({
         <section aria-label="Submit" className="walk-group">
           <ul>
             {row(
-              last,
+              "submit",
+              page === last,
+              () => open(last),
               "Send your review",
               `${seenCount} of ${tour.stops.length} looked at · ${commentCount ? plural(commentCount, "comment") : "no comments"}`,
               <span aria-hidden className="walk-mark walk-mark-end">
@@ -414,7 +493,13 @@ function StopList({
       </div>
       <footer className="walk-keys" aria-hidden>
         <span>
-          <kbd>←</kbd> <kbd>→</kbd> move
+          <kbd>j</kbd> <kbd>k</kbd> behaviour
+        </span>
+        <span>
+          <kbd>←</kbd> <kbd>→</kbd> chapter
+        </span>
+        <span>
+          <kbd>o</kbd> code
         </span>
         <span>
           <kbd>c</kbd> comment
@@ -429,15 +514,13 @@ function Intro({
   document,
   tour,
   done,
-  go,
-  start,
+  open,
 }: {
   entry: Entry;
   document: ReviewDocument;
   tour: Tour;
   done: (stop: Stop) => boolean;
-  go: (step: number) => void;
-  start: () => void;
+  open: (page: number) => void;
 }) {
   const level = tour.level;
   return (
@@ -455,7 +538,7 @@ function Intro({
       </h2>
       {tour.intro ? <p className="walk-why">{tour.intro}</p> : null}
       <div className="walk-actions">
-        <button type="button" className="walk-primary" onClick={start}>
+        <button type="button" className="walk-primary" onClick={() => open(1)}>
           Start the tour
           <kbd aria-hidden>→</kbd>
         </button>
@@ -467,12 +550,13 @@ function Intro({
             const linked =
               risk.stop !== null &&
               tour.risks.findIndex((other) => other.stop === risk.stop) === index;
+            const chapter = risk.stop === null ? null : tour.stops[risk.stop]!.chapter;
             return (
               <p key={risk.text}>
                 {risk.text}{" "}
-                {linked ? (
-                  <button type="button" className="walk-link" onClick={() => go(risk.stop! + 1)}>
-                    Go to {tour.chapters[tour.stops[risk.stop!]!.chapter]!.title} →
+                {linked && chapter !== null ? (
+                  <button type="button" className="walk-link" onClick={() => open(chapter + 1)}>
+                    Go to {tour.chapters[chapter]!.title} →
                   </button>
                 ) : null}
               </p>
@@ -485,11 +569,7 @@ function Intro({
         <ul>
           {tour.chapters.map((chapter, index) => (
             <li key={chapter.id}>
-              <button
-                type="button"
-                className="walk-block-row"
-                onClick={() => go(chapter.stops[0]! + 1)}
-              >
+              <button type="button" className="walk-block-row" onClick={() => open(index + 1)}>
                 <span className="walk-number">{index + 1}</span>
                 <span className="walk-block-text">
                   <span>{chapter.title}</span>
@@ -512,8 +592,9 @@ function Intro({
         </section>
       ) : null}
       <p className="walk-note">
-        Read each stop and move on. You only need to act when something looks off: leave a comment
-        and it goes into the review. The code is one click away when you want it.
+        Each chapter is one page: what it is for and how risky it is, then its behaviours. Read them
+        and move on. You only need to act when something looks off: leave a comment and it goes into
+        the review.
       </p>
     </article>
   );
@@ -536,12 +617,17 @@ function ChapterProgress({
   );
 }
 
-function Claim({
+/** One chapter: its intent and risk once, then its behaviours, as the full
+ *  review states them, the picked one with its actions. */
+function ChapterPage({
   tour,
-  stop,
+  chapter,
+  page,
   document,
-  seen,
-  note,
+  cur,
+  pick,
+  done,
+  notes,
   editing,
   draft,
   setDraft,
@@ -551,11 +637,124 @@ function Claim({
   removeComment,
   next,
   back,
-  nextLabel,
 }: {
   tour: Tour;
+  chapter: Chapter;
+  page: number;
+  document: ReviewDocument;
+  cur: number;
+  pick: (at: number) => void;
+  done: (stop: Stop) => boolean;
+  notes: Record<string, string>;
+  editing: string | null;
+  draft: string;
+  setDraft: (draft: string) => void;
+  startComment: (stop: Stop) => void;
+  saveComment: (stop: Stop) => void;
+  cancelComment: () => void;
+  removeComment: (stop: Stop) => void;
+  next: () => void;
+  back: () => void;
+}) {
+  const following = tour.chapters[page];
+  const looked = chapter.stops.filter((at) => done(tour.stops[at]!)).length;
+  return (
+    <article aria-labelledby={`walk-title-${chapter.id}`} className="walk-panel">
+      <div className="walk-meta">
+        <span className={cn("walk-chip", chapter.level && `risk-${chapter.level}`)}>
+          Chapter {page} of {tour.chapters.length}
+        </span>
+        <span className="walk-where">
+          {plural(chapter.stops.length, "behaviour")} · {looked} looked at
+        </span>
+      </div>
+      <h2 id={`walk-title-${chapter.id}`} className="walk-title">
+        {chapter.title}
+      </h2>
+      {chapter.summary ? <Markdown className="walk-why">{chapter.summary}</Markdown> : null}
+      {chapter.intent ? (
+        <section className="walk-block" aria-label="Intent">
+          <h3 className="walk-label">Intent</h3>
+          <Markdown className="walk-lead">{chapter.intent}</Markdown>
+        </section>
+      ) : null}
+      {chapter.why || chapter.level || chapter.risks.length ? (
+        <RiskCard level={chapter.level} meaning={chapter.meaning}>
+          {chapter.why ? <p>{chapter.why}</p> : null}
+          {chapter.risks.length ? (
+            <ul className="walk-risks">
+              {chapter.risks.map((risk) => (
+                <li key={risk.text}>
+                  <span className={cn("walk-tier", risk.tier)}>{risk.tier}</span>
+                  <span>{risk.text}</span>
+                </li>
+              ))}
+            </ul>
+          ) : null}
+        </RiskCard>
+      ) : null}
+      <section className="walk-block" aria-label="Behaviour">
+        <h3 className="walk-label">Behaviour</h3>
+        <ol className="walk-behaviours">
+          {chapter.stops.map((at, index) => {
+            const stop = tour.stops[at]!;
+            return (
+              <Behaviour
+                key={stop.id}
+                number={index + 1}
+                stop={stop}
+                document={document}
+                picked={at === cur}
+                pick={() => pick(at)}
+                seen={done(stop)}
+                note={notes[stop.id] ?? ""}
+                editing={editing === stop.id}
+                draft={draft}
+                setDraft={setDraft}
+                startComment={() => startComment(stop)}
+                saveComment={() => saveComment(stop)}
+                cancelComment={cancelComment}
+                removeComment={() => removeComment(stop)}
+              />
+            );
+          })}
+        </ol>
+      </section>
+      <div className="walk-actions walk-page-foot">
+        <button type="button" className="walk-primary" onClick={next}>
+          {following ? `Next: ${following.title}` : "Wrap up"}
+          <kbd aria-hidden>→</kbd>
+        </button>
+        <button type="button" className="walk-secondary" onClick={back}>
+          <ChevronLeftIcon size={14} />
+          Back
+        </button>
+      </div>
+    </article>
+  );
+}
+
+function Behaviour({
+  number,
+  stop,
+  document,
+  picked,
+  pick,
+  seen,
+  note,
+  editing,
+  draft,
+  setDraft,
+  startComment,
+  saveComment,
+  cancelComment,
+  removeComment,
+}: {
+  number: number;
   stop: Stop;
   document: ReviewDocument;
+  picked: boolean;
+  pick: () => void;
   seen: boolean;
   note: string;
   editing: boolean;
@@ -565,138 +764,104 @@ function Claim({
   saveComment: () => void;
   cancelComment: () => void;
   removeComment: () => void;
-  next: () => void;
-  back: () => void;
-  nextLabel: string;
 }) {
-  const chapter = tour.chapters[stop.chapter]!;
   const hasNote = Boolean(note.trim());
   const target = stop.where || "the review";
-  const position = chapter.stops.indexOf(tour.stops.indexOf(stop)) + 1;
   return (
-    <article aria-labelledby={`walk-title-${stop.id}`} className="walk-panel">
-      <div className="walk-meta">
-        <span className={cn("walk-chip", chapter.level && `risk-${chapter.level}`)}>
-          Chapter {stop.chapter + 1} · {chapter.title}
-        </span>
-        <span className="walk-where">
-          Behaviour {position} of {chapter.stops.length}
-        </span>
-        {hasNote ? (
-          <span className="walk-state commented">Your comment</span>
-        ) : seen ? (
-          <span className="walk-state">
-            <CheckIcon size={12} /> Looked at
-          </span>
+    // Picking is also on the keys and in the list; the click is a shortcut.
+    <li
+      id={`walk-behaviour-${stop.id}`}
+      aria-current={picked ? "true" : undefined}
+      className={cn("walk-behaviour", picked && "picked", hasNote && "commented")}
+      onClick={pick}
+    >
+      <span className={cn("walk-behaviour-number", seen && "seen")}>{number}</span>
+      <div className="walk-behaviour-body">
+        <div className="walk-behaviour-head">
+          <h4>{stop.title}</h4>
+          {stop.evidence.length ? (
+            <ul className="walk-evidence" aria-label="Supporting evidence">
+              {stop.evidence.map((item) => (
+                <li key={item.id}>
+                  <EvidenceBadge evidence={item} compact />
+                </li>
+              ))}
+            </ul>
+          ) : null}
+        </div>
+        {stop.text && !echoes(stop) ? (
+          <Markdown className="walk-behaviour-text">{stop.text}</Markdown>
         ) : null}
-      </div>
-      <h2
-        id={`walk-title-${stop.id}`}
-        className={cn("walk-title", stop.title.length > 90 && "long")}
-      >
-        {stop.title}
-      </h2>
-      {stop.text && !echoes(stop) ? <Markdown className="walk-why">{stop.text}</Markdown> : null}
-      {stop.evidence.length ? (
-        <ul className="walk-evidence" aria-label="Supporting evidence">
-          {stop.evidence.map((item) => (
-            <li key={item.id}>
-              <EvidenceBadge evidence={item} compact />
-            </li>
-          ))}
-        </ul>
-      ) : null}
-      {editing ? null : (
-        <div className="walk-actions">
-          <button type="button" className="walk-primary" onClick={next}>
-            {nextLabel}
-            <kbd aria-hidden>→</kbd>
-          </button>
-          {hasNote ? null : (
-            <button type="button" className="walk-secondary" onClick={startComment}>
-              <CommentsIcon size={14} />
+        <div className="walk-behaviour-foot">
+          {stop.anchors.length ? (
+            <div className="walk-code">
+              <HunkEvidence document={document} anchors={stop.anchors} />
+            </div>
+          ) : null}
+          {picked && !editing && !hasNote ? (
+            <button
+              type="button"
+              className="walk-small"
+              onClick={(event) => {
+                event.stopPropagation();
+                startComment();
+              }}
+            >
+              <CommentsIcon size={12} />
               Something looks off
               <kbd aria-hidden>c</kbd>
             </button>
-          )}
-          <button type="button" className="walk-secondary" onClick={back}>
-            <ChevronLeftIcon size={14} />
-            Back
-          </button>
-        </div>
-      )}
-      {editing ? (
-        <div className="walk-comment">
-          <label htmlFor={`walk-draft-${stop.id}`}>
-            What looks off? It goes into the review, attached to {target}.
-          </label>
-          <textarea
-            id={`walk-draft-${stop.id}`}
-            // The reader asked for the box: it takes the typing at once.
-            autoFocus
-            value={draft}
-            placeholder={stop.question ?? ""}
-            onChange={(event) => setDraft(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) saveComment();
-              if (event.key === "Escape") cancelComment();
-            }}
-            className="walk-textarea"
-          />
-          <div className="walk-actions">
-            <button
-              type="button"
-              className="walk-primary"
-              onClick={saveComment}
-              disabled={!draft.trim()}
-            >
-              Save comment
-            </button>
-            <button type="button" className="walk-secondary" onClick={cancelComment}>
-              {hasNote ? "Cancel" : "Never mind"}
-            </button>
-          </div>
-        </div>
-      ) : hasNote ? (
-        <div className="walk-comment saved">
-          <CommentsIcon size={16} className="walk-comment-icon" />
-          <div className="walk-comment-body">
-            <span className="walk-comment-where">Your comment on {target}</span>
-            <p>{note}</p>
-          </div>
-          <button type="button" className="walk-small" onClick={startComment}>
-            Edit
-          </button>
-          <button type="button" className="walk-small" onClick={removeComment}>
-            Remove
-          </button>
-        </div>
-      ) : null}
-      {chapter.intent ? (
-        <section className="walk-block" aria-label="Intent">
-          <h3 className="walk-label">Intent</h3>
-          <Markdown className="walk-lead">{chapter.intent}</Markdown>
-        </section>
-      ) : null}
-      {stop.anchors.length ? (
-        <section className="walk-block walk-code" aria-label="The code">
-          <h3 className="walk-label">
-            The code{stop.where ? <span className="walk-label-where"> · {stop.where}</span> : null}
-          </h3>
-          <HunkEvidence document={document} anchors={stop.anchors} />
-        </section>
-      ) : null}
-      {chapter.why || chapter.level ? (
-        <RiskCard level={chapter.level} meaning={chapter.meaning}>
-          {chapter.why ? (
-            <p>
-              <strong>{chapter.title}. </strong>
-              {chapter.why}
-            </p>
           ) : null}
-        </RiskCard>
-      ) : null}
-    </article>
+        </div>
+        {editing ? (
+          <div className="walk-comment">
+            <label htmlFor={`walk-draft-${stop.id}`}>
+              What looks off? It goes into the review, attached to {target}.
+            </label>
+            <textarea
+              id={`walk-draft-${stop.id}`}
+              // The reader asked for the box: it takes the typing at once.
+              autoFocus
+              value={draft}
+              placeholder={stop.question ?? ""}
+              onChange={(event) => setDraft(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) saveComment();
+                if (event.key === "Escape") cancelComment();
+              }}
+              className="walk-textarea"
+            />
+            <div className="walk-actions">
+              <button
+                type="button"
+                className="walk-primary"
+                onClick={saveComment}
+                disabled={!draft.trim()}
+              >
+                Save comment
+              </button>
+              <button type="button" className="walk-secondary" onClick={cancelComment}>
+                {hasNote ? "Cancel" : "Never mind"}
+              </button>
+            </div>
+          </div>
+        ) : hasNote ? (
+          <div className="walk-comment saved">
+            <CommentsIcon size={16} className="walk-comment-icon" />
+            <div className="walk-comment-body">
+              <span className="walk-comment-where">Your comment on {target}</span>
+              <p>{note}</p>
+            </div>
+            <button type="button" className="walk-small" onClick={startComment}>
+              Edit
+            </button>
+            <button type="button" className="walk-small" onClick={removeComment}>
+              Remove
+            </button>
+          </div>
+        ) : null}
+      </div>
+    </li>
   );
 }
 
@@ -705,14 +870,14 @@ function WrapUp({
   unseen,
   seenCount,
   commentCount,
-  go,
+  pick,
   submit,
 }: {
   tour: Tour;
   unseen: Stop[];
   seenCount: number;
   commentCount: number;
-  go: (step: number) => void;
+  pick: (at: number) => void;
   submit: ReactNode;
 }) {
   return (
@@ -744,7 +909,7 @@ function WrapUp({
                 <button
                   type="button"
                   className="walk-block-row"
-                  onClick={() => go(tour.stops.indexOf(stop) + 1)}
+                  onClick={() => pick(tour.stops.indexOf(stop))}
                 >
                   <Mark state={null} />
                   <span className="walk-block-text">

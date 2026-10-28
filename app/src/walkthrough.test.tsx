@@ -156,26 +156,41 @@ const type = (field: HTMLTextAreaElement, value: string) =>
 const key = (k: string) =>
   act(() => window.dispatchEvent(new KeyboardEvent("keydown", { key: k, bubbles: true })));
 
-it("walks the stops in order and marks what was passed as looked at", () => {
+it("walks chapter by chapter and behaviour by behaviour, marking what was passed", () => {
   render();
   expect(node.textContent).toContain("The route · riskiest first");
   click("Start the tour");
+  const tour = buildTour(doc);
+  const [first, second] = tour.chapters;
   const title = () => node.querySelector("h2.walk-title")?.textContent;
-  const stops = buildTour(doc).stops;
-  expect(title()).toBe(stops[0]!.title);
-  key("ArrowRight");
-  expect(node.textContent).toContain("1 of");
-  key("ArrowLeft");
-  key("ArrowLeft");
-  // Next visits every stop, the ones already looked at too.
-  key("ArrowRight");
-  key("ArrowRight");
-  expect(title()).toBe(stops[1]!.title);
+  const picked = () => node.querySelector("li[aria-current]")?.id;
+  const id = (at: number) => `walk-behaviour-${tour.stops[at]!.id}`;
+  expect(title()).toBe(first!.title);
+  expect(picked()).toBe(id(first!.stops[0]!));
+  // j moves the pick down the chapter, and past its end to the next one.
+  for (const at of first!.stops.slice(1)) {
+    key("j");
+    expect(picked()).toBe(id(at));
+  }
+  expect(loadProgress(progressKey(doc)).seen).toContain(tour.stops[first!.stops[0]!]!.id);
   key("j");
-  expect(title()).toBe(stops[2]!.title);
+  expect(title()).toBe(second!.title);
+  expect(picked()).toBe(id(second!.stops[0]!));
+  // Leaving a chapter counts all of it as looked at.
+  expect(loadProgress(progressKey(doc)).seen).toEqual(
+    expect.arrayContaining(first!.stops.map((at) => tour.stops[at]!.id)),
+  );
+  // k goes back to the previous chapter's last behaviour; arrows move pages.
+  key("k");
+  expect(picked()).toBe(id(first!.stops[first!.stops.length - 1]!));
+  key("ArrowRight");
+  expect(title()).toBe(second!.title);
+  key("ArrowLeft");
+  key("ArrowLeft");
+  expect(node.textContent).toContain("The route · riskiest first");
 });
 
-// Comments on the first stop, then goes to the wrap-up.
+// Comments on the first behaviour, then goes to the wrap-up.
 const commentAndWrapUp = (text: string) => {
   click("Start the tour");
   key("c");

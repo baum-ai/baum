@@ -859,8 +859,8 @@ test("walks through a review, comments on a behaviour and submits the review", a
   expect(page.url()).toContain("walk=tour");
   await walk.screenshot({ path: "test-results/walkthrough-intro.png", animations: "disabled" });
   await walk.getByRole("button", { name: "Start the tour", exact: true }).click();
-  await expect(walk.getByRole("article")).toContainText(
-    "Chapter 1 · Operator-only dead-letter endpoints",
+  await expect(walk.getByRole("article").getByRole("heading", { level: 2 })).toHaveText(
+    "Operator-only dead-letter endpoints",
   );
   await walk.getByRole("button", { name: /Something looks off/ }).click();
   await page.keyboard.type("Trusts a client-supplied header");

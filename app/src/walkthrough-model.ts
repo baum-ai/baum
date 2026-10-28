@@ -8,6 +8,7 @@ import {
   type IndexedHunk,
   type ReviewDocument,
   type RiskScoreLevel,
+  type RiskTier,
   type Section,
 } from "@baum/viewer/review-document";
 
@@ -47,9 +48,13 @@ export type Chapter = {
   meaning: string | null;
   /** Why the section carries its level. */
   why: string;
+  /** What the section changes, in a sentence or three. */
+  summary: string;
   /** What the change set out to do, as the pull request and its sessions
    *  say, when the review found it. */
   intent: string | null;
+  /** The section's open risks, worst first. */
+  risks: { text: string; tier: RiskTier }[];
   /** Indexes into `Tour.stops`. */
   stops: number[];
 };
@@ -66,6 +71,8 @@ export type Tour = {
   /** The review's reading estimate, in whole minutes. */
   minutes: number | null;
 };
+
+const TIERS: RiskTier[] = ["critical", "high", "medium", "low", "mechanical"];
 
 const text = (value: unknown) => (typeof value === "string" ? value.trim() : "");
 
@@ -183,6 +190,11 @@ export function buildTour(document: ReviewDocument): Tour {
       level,
       meaning: level ? RISK_SCORE_MEANING[level] : null,
       why: sectionWhy(section),
+      summary: text(section.summary?.text),
+      risks: (section.risks ?? [])
+        .filter((risk) => risk.state !== "mitigated" && text(risk.text))
+        .map((risk) => ({ text: text(risk.text), tier: risk.tier }))
+        .sort((a, b) => TIERS.indexOf(a.tier) - TIERS.indexOf(b.tier)),
       intent:
         (section.blocks ?? [])
           .flatMap((block: Block) =>
