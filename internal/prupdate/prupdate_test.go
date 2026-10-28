@@ -78,7 +78,11 @@ func (f *fakeGitHub) client() *github.Client {
 				return answer(f.updateStatus, f.updateBody)
 			}
 			var id int
-			_, _ = fmt.Sscanf(path[strings.Index(path, "/runs/"):], "/runs/%d/rerun-failed-jobs", &id)
+			if i := strings.Index(path, "/jobs/"); i >= 0 {
+				_, _ = fmt.Sscanf(path[i:], "/jobs/%d/rerun", &id)
+			} else {
+				_, _ = fmt.Sscanf(path[strings.Index(path, "/runs/"):], "/runs/%d/rerun-failed-jobs", &id)
+			}
 			status := 201
 			if s, ok := f.rerunStatus[id]; ok {
 				status = s
@@ -415,7 +419,7 @@ func TestFailingChecks(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := Checks{HeadSHA: "abc", Checks: []FailingCheck{
-		{Name: "test", Conclusion: "failure", Title: "2 tests failed in pkg", URL: "https://github.com/acme/app/runs/21", Actions: true},
+		{Name: "test", Conclusion: "failure", Title: "2 tests failed in pkg", URL: "https://github.com/acme/app/runs/21", JobID: 21},
 		{Name: "ci/circle", Conclusion: "timed_out", Title: "Timed out after 1h", URL: "https://circleci.com/x"},
 	}}
 	if fmt.Sprint(got) != fmt.Sprint(want) {
@@ -447,5 +451,33 @@ func TestFailingChecks(t *testing.T) {
 	now = now.Add(DefaultChecksTTL)
 	if _, err := s.FailingChecks(ctx, repo, 7, "abc"); err != nil || reads() != before+2 {
 		t.Fatalf("expired checks kept: %d reads, %v", reads()-before, err)
+	}
+}
+
+func TestRerunJob(t *testing.T) {
+	failing := `{"id":21,"name":"test","conclusion":"failure","app":{"slug":"github-actions"},"output":{}}`
+	other := `{"id":23,"name":"ci/circle","conclusion":"failure","app":{"slug":"circleci"},"output":{}}`
+	cases := []struct {
+		name   string
+		fake   fakeGitHub
+		job    int64
+		code   string
+		writes int
+	}{
+		{"reruns the job", fakeGitHub{head: "abc", canPush: true, checks: []string{failing}}, 21, "", 1},
+		{"head moved", fakeGitHub{head: "new", canPush: true, checks: []string{failing}}, 21, HeadMoved, 0},
+		{"cannot push", fakeGitHub{head: "abc", checks: []string{failing}}, 21, Forbidden, 0},
+		{"not a failing job", fakeGitHub{head: "abc", canPush: true, checks: []string{failing}}, 99, NotFound, 0},
+		{"another app's check", fakeGitHub{head: "abc", canPush: true, checks: []string{other}}, 23, NotFound, 0},
+		{"refused by GitHub", fakeGitHub{head: "abc", canPush: true, checks: []string{failing}, rerunStatus: map[int]int{21: 403}, rerunBody: map[int]string{21: `{"message":"Resource not accessible"}`}}, 21, Forbidden, 1},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			s := Service{Client: c.fake.client(), Cache: &Cache{}}
+			code(t, s.RerunJob(context.Background(), repo, 7, "abc", c.job), c.code)
+			if len(c.fake.writes) != c.writes || (c.writes == 1 && c.fake.writes[0] != "POST /repos/acme/app/actions/jobs/21/rerun") {
+				t.Fatalf("writes %v, want %d", c.fake.writes, c.writes)
+			}
+		})
 	}
 }

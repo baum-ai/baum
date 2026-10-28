@@ -23,9 +23,17 @@ func (f *fakeUpdater) ReviewThreads(_ context.Context, _ github.Repository, _, u
 	return prupdate.Threads{Threads: []prupdate.Thread{{ID: "RT_1", Path: "a.go", Line: 3, Author: "alice", Excerpt: "Rename this.", Comments: 1, URL: "u", CanResolve: true}}}, f.err
 }
 
+func (f *fakeUpdater) RerunJob(_ context.Context, r github.Repository, number int, head string, job int64) error {
+	if f.err != nil {
+		return f.err
+	}
+	f.calls = append(f.calls, fmt.Sprintf("rerun job %s#%d %s %d", r, number, head, job))
+	return nil
+}
+
 func (f *fakeUpdater) FailingChecks(_ context.Context, _ github.Repository, _ int, head string) (prupdate.Checks, error) {
 	f.calls = append(f.calls, "checks "+head)
-	return prupdate.Checks{HeadSHA: "abc", Checks: []prupdate.FailingCheck{{Name: "test", Conclusion: "failure", Title: "2 tests failed", URL: "u", Actions: true}}}, f.err
+	return prupdate.Checks{HeadSHA: "abc", Checks: []prupdate.FailingCheck{{Name: "test", Conclusion: "failure", Title: "2 tests failed", URL: "u", JobID: 21}}}, f.err
 }
 
 func (f *fakeUpdater) ResolveThread(_ context.Context, r github.Repository, number int, id string) error {
@@ -169,6 +177,20 @@ func TestUpdateHandlerReviewThreads(t *testing.T) {
 	if w := do("GET", "/api/prs/failing-checks?repository=acme/other&pr=7", ""); w.Code != 404 {
 		t.Fatalf("unpicked checks: %d", w.Code)
 	}
+	updater.calls = nil
+	for body, code := range map[string]int{
+		`{"repository":"acme/other","pr":7,"head_sha":"abc","job_id":21}`: 404,
+		`{"repository":"acme/bare","pr":7,"head_sha":"abc"}`:              400,
+		`{"repository":"acme/bare","pr":7,"job_id":21}`:                   400,
+	} {
+		if w := do("POST", "/api/prs/rerun-job", body); w.Code != code {
+			t.Fatalf("rerun job %s: %d, want %d", body, w.Code, code)
+		}
+	}
+	if w := do("POST", "/api/prs/rerun-job", `{"repository":"acme/bare","pr":7,"head_sha":"abc","job_id":21}`); w.Code != 200 || strings.Join(updater.calls, ",") != "rerun job acme/bare#7 abc 21" || refreshed != 1 || changed != 1 {
+		t.Fatalf("rerun job: %d %s %v", w.Code, w.Body.String(), updater.calls)
+	}
+	refreshed, changed = 0, 0
 	updater.calls = nil
 	if w := do("GET", "/api/prs/review-threads?repository=acme/other&pr=7", ""); w.Code != 404 {
 		t.Fatalf("unpicked threads: %d", w.Code)

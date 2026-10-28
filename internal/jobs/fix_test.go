@@ -384,6 +384,35 @@ func TestPrepareFixOffersReviewCommentsOnTheViewersPullRequest(t *testing.T) {
 	}
 }
 
+func TestPrepareFixOfTheChecksAloneLeavesConflictsAndThreads(t *testing.T) {
+	r := newFixRepositories(t)
+	ctx := context.Background()
+	g := &fakeGitHub{head: r.head, headRepository: "owner/repo", push: true, authored: true, failing: true, threads: reviewThreads()}
+	local := fixRunner(t, r, g, &fixBackend{name: agent.BackendClaude})
+	item := Item{Clone: r.clone.ID, PR: 1, Kind: KindFix, Only: FixOnlyChecks}
+	p, _, err := local.Prepare(ctx, item)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.BlockedReason != "" || p.Fix != (FixInputs{Checks: true, HeadRef: "feature", BaseRef: "main"}) || p.FixThreads != nil || p.Item != item {
+		t.Fatalf("prepared %+v", p)
+	}
+	// With the checks passing there is nothing left for it to fix.
+	g.failing = false
+	if p, _, err = local.Prepare(ctx, item); err != nil || p.BlockedReason != fix.ReasonNothingToFix {
+		t.Fatalf("prepared %+v err %v", p, err)
+	}
+}
+
+func TestEstimateRefusesAnUnknownFixScope(t *testing.T) {
+	q := &Queue{}
+	for _, item := range []Item{{Clone: "c", PR: 1, Kind: KindFix, Only: "conflicts"}, {Clone: "c", PR: 1, Only: FixOnlyChecks}} {
+		if _, err := q.estimate(context.Background(), []Item{item}, "single", false); err == nil || err.Error() != "invalid generation selection" {
+			t.Fatalf("%+v: %v", item, err)
+		}
+	}
+}
+
 // answerThreads is an agent's final message that addresses T1 and skips T2,
 // with the answer fence its prompt gives.
 func answerThreads(prompt string) string {

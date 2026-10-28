@@ -670,12 +670,15 @@ export function threadOutcomesSummary(outcomes: ThreadOutcome[] | undefined): st
 }
 /** Prepares a fix of the pull request: what it would fix, with which harness
  *  and model, and on which branch, or why it cannot run. */
-export async function estimateFix(clone: string, pr: number): Promise<Estimate> {
+export async function estimateFix(clone: string, pr: number, only?: FixOnly): Promise<Estimate> {
   return request<Estimate>("api/jobs/estimate", {
-    items: [{ clone, pr, kind: "fix" }],
+    items: [{ clone, pr, kind: "fix", ...(only ? { only } : {}) }],
     mode: "single",
   });
 }
+/** What a fix may be limited to: "checks" fixes the failing checks alone,
+ *  leaving conflicts and review comments. */
+export type FixOnly = "checks";
 /** Starts a fix the person confirmed. */
 export async function startFix(estimate: Estimate): Promise<Job[]> {
   const answer = await request<{ jobs: Job[] }>("api/jobs", {

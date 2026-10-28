@@ -583,32 +583,61 @@ it("lists the failing checks of the head it shows, each linking to its details",
   entries = [mine(2, { checks: "failing" })];
   const original = vi.mocked(fetch).getMockImplementation()!;
   vi.mocked(fetch).mockImplementation(async (...args) =>
-    String(args[0]).includes("api/prs/failing-checks")
+    String(args[0]).endsWith("api/jobs/estimate")
       ? Response.json({
-          head_sha: "head",
-          checks: [
-            {
-              name: "test",
-              conclusion: "failure",
-              title: "2 tests failed in pkg",
-              url: "https://github.com/acme/demo/runs/21",
-              actions: true,
-            },
-            { name: "ci/circle", conclusion: "timed_out", actions: false },
+          id: "estimate",
+          items: [
+            { clone: "clone", pr: 2, kind: "fix", fix: { checks: true, head_ref: "feature" } },
           ],
         })
-      : original(...args),
+      : String(args[0]).includes("api/prs/failing-checks")
+        ? Response.json({
+            head_sha: "head",
+            checks: [
+              {
+                name: "test",
+                conclusion: "failure",
+                title: "2 tests failed in pkg",
+                url: "https://github.com/acme/demo/runs/21",
+                job_id: 21,
+              },
+              { name: "ci/circle", conclusion: "timed_out" },
+            ],
+          })
+        : original(...args),
   );
   await render();
   expect(shown()).toBe("Change 2");
   const items = Array.from(panel().querySelectorAll('[aria-label="Failing checks"] li'));
   expect(items.map((item) => item.textContent)).toEqual([
-    "testFailed · 2 tests failed in pkgDetails",
+    "testFailed · 2 tests failed in pkgRetryDetails",
     "ci/circleTimed out",
   ]);
   expect(items[0]!.querySelector("a")!.getAttribute("href")).toBe(
     "https://github.com/acme/demo/runs/21",
   );
+  // Retry re-runs that one job at once; another app's check has none.
+  await act(async () => button("Retry").click());
+  const reruns = vi
+    .mocked(fetch)
+    .mock.calls.filter(([path]) => String(path).endsWith("api/prs/rerun-job"))
+    .map(([, init]) => JSON.parse(String((init as RequestInit).body)));
+  expect(reruns).toEqual([{ repository: "acme/demo", pr: 2, head_sha: "head", job_id: 21 }]);
+  expect(panel().querySelector('[aria-label="Failing checks"] li')!.textContent).toBe(
+    "testRe-running on GitHubDetails",
+  );
+  // The row's Fix CI asks for a fix of the checks alone.
+  const row = panel().querySelector<HTMLButtonElement>("li.upnext-has-threads > button")!;
+  expect(row.textContent).toBe("Fix CI");
+  await act(async () => row.click());
+  const estimates = vi
+    .mocked(fetch)
+    .mock.calls.filter(([path]) => String(path).endsWith("api/jobs/estimate"))
+    .map(([, init]) => JSON.parse(String((init as RequestInit).body)));
+  expect(estimates).toEqual([
+    { items: [{ clone: "clone", pr: 2, kind: "fix", only: "checks" }], mode: "single" },
+  ]);
+  expect(node.querySelector("dialog h2")!.textContent).toBe("Fix CI");
   const asked = vi
     .mocked(fetch)
     .mock.calls.map(([path]) => String(path))

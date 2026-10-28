@@ -32,6 +32,9 @@ type Item struct {
 	Group string `json:"group,omitempty"`
 	// Kind is KindFix for a fix, empty for a review.
 	Kind string `json:"kind,omitempty"`
+	// Only limits a fix to one of what it fixes: FixOnlyChecks fixes the
+	// failing checks and leaves conflicts and review comments alone.
+	Only string `json:"only,omitempty"`
 }
 
 // KindFix is the Item.Kind of a fix: an agent with write access to a
@@ -40,6 +43,9 @@ type Item struct {
 // the result and replies on the review threads it addressed (internal/fix). A
 // fix is never automatic and runs only from a confirmed estimate.
 const KindFix = "fix"
+
+// FixOnlyChecks is the Item.Only of a fix of the failing checks alone.
+const FixOnlyChecks = "checks"
 
 // FixInputs are what a fix job was confirmed for: what it fixes, the branch
 // it pushes to and the base branch it merges.
@@ -423,8 +429,11 @@ func (q *Queue) estimate(ctx context.Context, items []Item, mode string, isolati
 	if items[0].Kind != "" && (mode != "single" || items[0].Kind != KindFix) {
 		return Estimate{}, errors.New("invalid generation selection")
 	}
+	if items[0].Only != "" && (items[0].Kind != KindFix || items[0].Only != FixOnlyChecks) {
+		return Estimate{}, errors.New("invalid generation selection")
+	}
 	for _, item := range items[1:] {
-		if item.Kind != "" {
+		if item.Kind != "" || item.Only != "" {
 			return Estimate{}, errors.New("invalid generation selection")
 		}
 	}

@@ -2908,6 +2908,11 @@ kbd.key-hint {
   padding: 5px 10px;
   font-size: 13px;
 }
+.upnext-check-actions {
+  display: flex;
+  flex: none;
+  gap: 6px;
+}
 .upnext-page .upnext-thread-resolve:disabled {
   cursor: progress;
   opacity: 0.7;

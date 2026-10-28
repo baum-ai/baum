@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"slices"
 	"strings"
 	"unicode/utf8"
 
@@ -407,8 +408,9 @@ type FailingCheck struct {
 	// Title is the check's own one-line account of the failure, if any.
 	Title string `json:"title,omitempty"`
 	URL   string `json:"url,omitempty"`
-	// Actions: a GitHub Actions job, which Re-run checks can re-run.
-	Actions bool `json:"actions"`
+	// JobID is the GitHub Actions job behind a check run, which RerunJob
+	// re-runs; absent for other apps' checks and commit statuses.
+	JobID int64 `json:"job_id,omitempty"`
 }
 
 // Checks lists a head commit's failing checks.
@@ -447,10 +449,43 @@ func (s Service) FailingChecks(ctx context.Context, repository github.Repository
 	}
 	out := Checks{HeadSHA: head, Checks: []FailingCheck{}}
 	for _, check := range list {
-		out.Checks = append(out.Checks, FailingCheck{Name: check.Name, Conclusion: check.Conclusion, Title: checkTitle(check), URL: check.URL, Actions: check.JobID != 0})
+		out.Checks = append(out.Checks, FailingCheck{Name: check.Name, Conclusion: check.Conclusion, Title: checkTitle(check), URL: check.URL, JobID: check.JobID})
 	}
 	s.Cache.storeChecks(headKey(repository, head), gen, out)
 	return out, nil
+}
+
+// RerunJob re-runs one failed GitHub Actions job of the head commit the user
+// saw, as GitHub's Re-run job button does. The job must be one of that
+// head's failing checks, read here, so a request cannot name another job.
+func (s Service) RerunJob(ctx context.Context, repository github.Repository, number int, expectedHead string, job int64) error {
+	read, err := s.open(ctx, repository, number)
+	if err != nil {
+		return err
+	}
+	if read.pull.HeadSHA != expectedHead {
+		return &Error{HeadMoved, headMovedMessage}
+	}
+	if err := canPush(ctx, read.reader, repository); err != nil {
+		return err
+	}
+	checks, err := fix.FailingChecks(ctx, read.reader, repository, expectedHead)
+	if err != nil {
+		return &Error{Failed, "baum could not read the failing checks from GitHub."}
+	}
+	if job == 0 || !slices.ContainsFunc(checks, func(c fix.Check) bool { return c.JobID == job }) {
+		return &Error{NotFound, "This check is no longer failing on this commit, or GitHub Actions did not run it."}
+	}
+	path := fmt.Sprintf("%s/actions/jobs/%d/rerun", repositoryPath(repository), job)
+	status, body, err := read.reader.Write(ctx, http.MethodPost, path, nil)
+	if err != nil {
+		return &Error{Failed, unreachable}
+	}
+	if status != http.StatusCreated {
+		return rerunError(status, message(body))
+	}
+	s.Cache.rerun(headKey(repository, expectedHead))
+	return nil
 }
 
 // checkTitle is a check's output title, else the headline of its summary (a

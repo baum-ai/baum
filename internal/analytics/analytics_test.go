@@ -636,6 +636,9 @@ func (f fakeWrites) ReviewThreads(context.Context, github.Repository, int, int) 
 func (f fakeWrites) ResolveThread(context.Context, github.Repository, int, string) error {
 	return f.result()
 }
+func (f fakeWrites) RerunJob(context.Context, github.Repository, int, string, int64) error {
+	return f.result()
+}
 func (f fakeWrites) FailingChecks(context.Context, github.Repository, int, string) (prupdate.Checks, error) {
 	return prupdate.Checks{}, nil
 }

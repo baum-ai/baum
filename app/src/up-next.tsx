@@ -20,6 +20,7 @@ import {
   liveFor,
   request,
   type Entry,
+  type FixOnly,
   type Job,
   type LiveSession,
 } from "./api";
@@ -542,8 +543,8 @@ export function UpNextPage({
   loading: boolean;
   hasRepositories: boolean;
   cloneFor: (entry: Entry) => string;
-  /** Opens the fix confirmation. */
-  fix: (entry: Entry) => void;
+  /** Opens the fix confirmation, of the failing checks alone with "checks". */
+  fix: (entry: Entry, only?: FixOnly) => void;
   /** Reloads the inbox after a write to GitHub. */
   changed: () => Promise<void>;
   Link: ComponentType<ViewerLinkProps>;
@@ -837,6 +838,13 @@ export function UpNextPage({
                   ? () => fix(selected.entry)
                   : undefined
               }
+              fixChecks={
+                fixLabel(selected.entry) &&
+                cloneFor(selected.entry) &&
+                selected.entry.checks === "failing"
+                  ? () => fix(selected.entry, "checks")
+                  : undefined
+              }
               merge={() => setMerging(selected.entry)}
               update={() => setUpdating(selected.entry)}
               menu={menu}
@@ -1052,6 +1060,7 @@ function Panel({
   href,
   Link,
   fix,
+  fixChecks,
   merge,
   update,
   menu,
@@ -1065,6 +1074,8 @@ function Panel({
   href: string;
   Link: ComponentType<ViewerLinkProps>;
   fix?: () => void;
+  /** Opens the fix of the failing checks alone. */
+  fixChecks?: () => void;
   merge: () => void;
   update: () => void;
   menu: boolean;
@@ -1264,6 +1275,15 @@ function Panel({
                     url={pr.url}
                   />
                 ) : null}
+                {line.checks && fixChecks ? (
+                  <button
+                    type="button"
+                    className="upnext-secondary upnext-thread-resolve"
+                    onClick={fixChecks}
+                  >
+                    Fix CI
+                  </button>
+                ) : null}
                 {line.checks ? (
                   <FailingChecks
                     key={`${pr.repository}#${pr.number}`}
@@ -1271,6 +1291,7 @@ function Panel({
                     number={pr.number}
                     head={pr.head_sha}
                     url={pr.url}
+                    canRetry={pr.viewer_can_push === true}
                   />
                 ) : null}
               </li>

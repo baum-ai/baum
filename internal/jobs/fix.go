@@ -95,8 +95,12 @@ func (l *Local) prepareFix(ctx context.Context, item Item) (Prepared, string, er
 			return Prepared{}, "", err
 		}
 		p.Fix.Conflicts, p.Fix.Checks = pr.Conflicts(), len(checks) > 0
-		threads, err := l.fixThreads(ctx, repository, item.PR)
-		if err != nil {
+		var threads fix.Selection
+		if item.Only == FixOnlyChecks {
+			// A fix of the checks alone leaves the conflicts and the
+			// review threads to another fix.
+			p.Fix.Conflicts = false
+		} else if threads, err = l.fixThreads(ctx, repository, item.PR); err != nil {
 			return Prepared{}, "", err
 		}
 		p.Fix.Threads = fix.Digest(threads.Threads)

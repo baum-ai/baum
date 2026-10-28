@@ -607,7 +607,7 @@ What remains:
 ## Writes to GitHub
 
 The local application writes to GitHub only when you click and confirm, one
-pull request at a time, with the credential you saved for baum. There are six
+pull request at a time, with the credential you saved for baum. There are seven
 writes and no others:
 
 - **Merge** (`internal/github/merge.go`): GraphQL `mergePullRequest` with
@@ -630,12 +630,18 @@ writes and no others:
   confirmation, since GitHub undoes it with one click; the daemon first reads
   the thread and refuses one that is not on that pull request or that GitHub
   says your account cannot resolve. It posts no reply.
+- **Re-run one job** (`internal/prupdate`): `POST
+  /repos/{owner}/{repo}/actions/jobs/{job_id}/rerun` for the one GitHub Actions
+  job you clicked **Retry** on in the Inbox. Like Resolve, the click is the
+  confirmation. The daemon re-reads the head commit's failing checks and
+  refuses a job that is not one of them, so a request cannot re-run any other
+  job.
 
 Each write goes through the daemon's authenticated, CSRF-checked local API,
 only for repositories you picked, and is re-checked against GitHub just before
 it is sent: the pull request is open, the head is still the one you confirmed
-and, for update branch and re-run, your account can push to the repository
-(`permissions.push`). Resolving a thread checks the thread instead, as above. Update branch also refuses a fork's branch and a
+and, for update branch and both re-runs, your account can push to the
+repository (`permissions.push`). Resolving a thread checks the thread instead, as above. Update branch also refuses a fork's branch and a
 conflicting pull request. None is retried, and none is ever started by an agent
 or automatically: thread replies follow only the fix you confirmed.
 

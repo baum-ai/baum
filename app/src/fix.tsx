@@ -16,6 +16,7 @@ import {
   type Entry,
   type Estimate,
   type FixInputs,
+  type FixOnly,
   type FixThread,
   type Job,
 } from "./api";
@@ -117,11 +118,14 @@ function FixThreads({ item }: { item: Estimate["items"][number] }) {
 export function FixDialog({
   entry,
   clone,
+  only,
   close,
   started,
 }: {
   entry: Entry;
   clone: string;
+  /** Limits the fix, as Fix CI on the Inbox's failing checks does. */
+  only?: FixOnly;
   close: () => void;
   started: () => Promise<void>;
 }) {
@@ -134,7 +138,7 @@ export function FixDialog({
   }, []);
   useEffect(() => {
     let active = true;
-    estimateFix(clone, entry.pull_request.number).then(
+    estimateFix(clone, entry.pull_request.number, only).then(
       (answer) => {
         if (active) setEstimate(answer);
       },
@@ -145,7 +149,7 @@ export function FixDialog({
     return () => {
       active = false;
     };
-  }, [clone, entry.pull_request.number]);
+  }, [clone, entry.pull_request.number, only]);
   const item = estimate?.items[0];
   const fix = item?.fix ?? {};
   const title = item && !item.blocked_reason ? fixName(fix) : "Fix this pull request";

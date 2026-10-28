@@ -25,12 +25,13 @@ type PullRequestUpdater interface {
 	ReviewThreads(ctx context.Context, repository github.Repository, number, unresolved int) (prupdate.Threads, error)
 	ResolveThread(ctx context.Context, repository github.Repository, number int, id string) error
 	FailingChecks(ctx context.Context, repository github.Repository, number int, head string) (prupdate.Checks, error)
+	RerunJob(ctx context.Context, repository github.Repository, number int, expectedHead string, job int64) error
 }
 
 // UpdateHandler serves /api/prs/update-branch(-options),
 // /api/prs/rerun-checks(-options), /api/prs/review-threads,
-// /api/prs/resolve-thread and /api/prs/failing-checks for picked repositories
-// only. refresh
+// /api/prs/resolve-thread, /api/prs/failing-checks and /api/prs/rerun-job for
+// picked repositories only. refresh
 // re-reads the repository's pull requests after a write so the inbox shows the
 // new state; its failure never turns a write into an error.
 func UpdateHandler(registry *repos.Registry, updater PullRequestUpdater, refresh func(context.Context, github.Repository), changed func()) http.Handler {
@@ -117,6 +118,31 @@ func UpdateHandler(registry *repos.Registry, updater PullRequestUpdater, refresh
 	mux.HandleFunc("GET /api/prs/failing-checks", options(func(ctx context.Context, repo github.Repository, number int, query url.Values) (any, error) {
 		return updater.FailingChecks(ctx, repo, number, query.Get("head_sha"))
 	}))
+	mux.HandleFunc("POST /api/prs/rerun-job", func(w http.ResponseWriter, r *http.Request) {
+		r.Body = http.MaxBytesReader(w, r.Body, 4096)
+		var body struct {
+			Repository string `json:"repository"`
+			PR         int    `json:"pr"`
+			HeadSHA    string `json:"head_sha"`
+			JobID      int64  `json:"job_id"`
+		}
+		d := json.NewDecoder(r.Body)
+		d.DisallowUnknownFields()
+		if d.Decode(&body) != nil || d.Decode(new(any)) != io.EOF || body.PR < 1 || body.HeadSHA == "" || body.JobID < 1 {
+			http.Error(w, "repository, pr, head_sha and job_id are required", http.StatusBadRequest)
+			return
+		}
+		repo, ok := picked(w, r, body.Repository)
+		if !ok {
+			return
+		}
+		if err := updater.RerunJob(r.Context(), repo, body.PR, body.HeadSHA, body.JobID); err != nil {
+			updateFailure(w, err)
+			return
+		}
+		written(r.Context(), repo)
+		writeJSON(w, map[string]bool{"rerun": true})
+	})
 	mux.HandleFunc("POST /api/prs/resolve-thread", func(w http.ResponseWriter, r *http.Request) {
 		r.Body = http.MaxBytesReader(w, r.Body, 4096)
 		var body struct {

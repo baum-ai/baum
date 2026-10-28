@@ -2065,9 +2065,16 @@ of their latest attempt whose conclusion is `failure`, `timed_out`,
 `conclusion`, `title` (its output title, else the headline of its summary or a
 status's description, cut to 160 characters), `url` (`details_url`, else
 `html_url`, or a status's `target_url`; the fix prompt leaves it out) and
-`actions` (a GitHub Actions job). `prupdate.Cache` keeps a head's list for 2
-minutes, forgets it when Re-run checks starts a run of that head, and is
-emptied with the threads on an account change.
+`job_id` (the GitHub Actions job behind a check run). `prupdate.Cache` keeps a
+head's list for 2 minutes, forgets it when either re-run starts a run of that
+head, and is emptied with the threads on an account change.
+
+`POST /api/prs/rerun-job` takes `{repository, pr, head_sha, job_id}`,
+re-checks that the pull request is open, its head is `head_sha` and the
+account can push, re-reads the head's failing checks and refuses a `job_id`
+that is not one of their jobs (`not_found`, `404`), then posts
+`.../actions/jobs/{id}/rerun` once (GitHub answers `201`; refusals are worded
+as a workflow run's). It is recorded as a check re-run in analytics.
 
 The review index exposes discovery states for all open rows, including rows
 without a saved review or with an unreadable store. Saved review time comes from
@@ -2195,7 +2202,10 @@ linked sessions or commits.
 A job has a kind: a review (`Item.Kind` empty) or a fix (`"fix"`), which
 shares the queue, journal, concurrency, progress events and cancellation with
 reviews and shows in the same Jobs list. A fix is estimated alone
-(`POST /api/jobs/estimate` with `{"items":[{"clone","pr","kind":"fix"}],"mode":"single"}`)
+(`POST /api/jobs/estimate` with `{"items":[{"clone","pr","kind":"fix"}],"mode":"single"}`;
+`"only":"checks"` on the item, the Inbox's Fix CI, limits it to the failing
+checks: preparation leaves `conflicts` false and reads no review threads, and
+any other `only` is refused)
 and queued only from that confirmed estimate (`POST /api/jobs` with
 `estimate_id`); a direct request is `400` (`ErrFixNeedsConfirmation`), and
 automatic generation never queues one. A review and a fix of one pull request

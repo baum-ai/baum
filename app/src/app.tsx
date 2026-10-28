@@ -64,6 +64,7 @@ import {
   type Clone,
   type Repository,
   type Entry,
+  type FixOnly,
   type Snapshot,
   type Job,
   type LiveSession,
@@ -195,7 +196,8 @@ function Workspace({ url }: { url: UrlState }) {
   // A generation that includes a fork, waiting for the user's confirmation.
   const [fork, setFork] = useState<{ entries: Entry[]; mode: "single" | "batch" } | null>(null);
   // A fix waiting for the user's confirmation.
-  const [fixing, setFixing] = useState<Entry | null>(null);
+  const [fixing, setFixing] = useState<{ entry: Entry; only?: FixOnly } | null>(null);
+  const openFix = (entry: Entry, only?: FixOnly) => setFixing({ entry, only });
   const [shortcuts, setShortcuts] = useState(false);
   const [goingTo, setGoingTo] = useState(false);
   const [rates, setRates] = useState<
@@ -760,7 +762,7 @@ function Workspace({ url }: { url: UrlState }) {
               )}
               generate={() => void generate([selectedEntry], "single")}
               starting={starting.has(rowKey(selectedEntry))}
-              fix={cloneFor(selectedEntry) ? () => setFixing(selectedEntry) : undefined}
+              fix={cloneFor(selectedEntry) ? () => openFix(selectedEntry) : undefined}
               fixJob={fixJob(selectedEntry, jobs)}
             />
           ) : page !== "pulls" ? (
@@ -770,7 +772,7 @@ function Workspace({ url }: { url: UrlState }) {
               loading={revision === 0}
               hasRepositories={picked.length > 0 || clones.length > 0}
               cloneFor={cloneFor}
-              fix={setFixing}
+              fix={openFix}
               changed={reload}
               Link={LocalLink}
             />
@@ -928,7 +930,7 @@ function Workspace({ url }: { url: UrlState }) {
                   live={live}
                   changed={reload}
                   groups={groups}
-                  fix={setFixing}
+                  fix={openFix}
                   jobs={jobs}
                   generate={(entry) => void generate([entry], "single")}
                   refresh={loading ? undefined : () => void refresh()}
@@ -974,13 +976,14 @@ function Workspace({ url }: { url: UrlState }) {
               pending={generating}
             />
           ) : null}
-          {fixing && cloneFor(fixing) ? (
+          {fixing && cloneFor(fixing.entry) ? (
             <FixDialog
               // The review it opens from is a sibling keyed by the same row;
               // a shared key leaves copies of that page behind.
-              key={`fix:${rowKey(fixing)}`}
-              entry={fixing}
-              clone={cloneFor(fixing)}
+              key={`fix:${rowKey(fixing.entry)}:${fixing.only ?? ""}`}
+              entry={fixing.entry}
+              clone={cloneFor(fixing.entry)}
+              only={fixing.only}
               close={() => setFixing(null)}
               started={reload}
             />

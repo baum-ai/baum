@@ -93,6 +93,12 @@ Under "Checks failing" the panel lists the head's failing checks
 api/prs/failing-checks` and the head commit it shows (`head_sha`), again when
 that head changes. Each shows the check's name, its conclusion in words
 (`conclusionText`), its title when it has one and a **Details** link (`url`).
+A check with a `job_id` has **Retry** when discovery says the account can push
+(`viewer_can_push`): it posts `api/prs/rerun-job` at once, reads **Retrying…**,
+then shows "Re-running on GitHub"; a refusal is shown under the check. When the
+pull request offers a fix, the row has **Fix CI**, which opens `FixDialog` with
+`only="checks"` (`estimateFix(clone, pr, "checks")`), a fix of the failing
+checks alone.
 
 A pull request with a merge conflict (`merge` is `conflict`), failing checks
 (`checks` is `failing`) or, on the person's own pull request

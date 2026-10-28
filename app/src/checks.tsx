@@ -9,8 +9,9 @@ export type FailingCheck = {
   conclusion: string;
   title?: string;
   url?: string;
-  /** A GitHub Actions job, which Re-run checks re-runs. */
-  actions: boolean;
+  /** The GitHub Actions job behind the check, which Retry re-runs; absent
+   *  for other apps' checks and commit statuses. */
+  job_id?: number;
 };
 
 const CONCLUSIONS: Record<string, string> = {
@@ -29,19 +30,26 @@ export function conclusionText(conclusion: string): string {
 type Read = { checks?: FailingCheck[]; error?: string };
 
 /** The failing checks of the head commit the panel shows, read from GitHub
- *  (the daemon keeps them for a short while), each linking to its details. */
+ *  (the daemon keeps them for a short while), each linking to its details.
+ *  When the signed-in account may push (`canRetry`), a GitHub Actions job has
+ *  Retry, which re-runs that job at once. */
 export function FailingChecks({
   repository,
   number,
   head,
   url,
+  canRetry,
 }: {
   repository: string;
   number: number;
   head: string;
   url: string;
+  canRetry: boolean;
 }) {
   const [read, setRead] = useState<Read>({});
+  const [retrying, setRetrying] = useState<Set<number>>(new Set());
+  const [retried, setRetried] = useState<Set<number>>(new Set());
+  const [failed, setFailed] = useState<Record<number, string>>({});
   useEffect(() => {
     const abort = new AbortController();
     request<{ checks: FailingCheck[] }>(
@@ -60,6 +68,28 @@ export function FailingChecks({
       });
     return () => abort.abort();
   }, [repository, number, head]);
+
+  const retry = async (job: number) => {
+    setRetrying((ids) => new Set(ids).add(job));
+    setFailed((all) =>
+      Object.fromEntries(Object.entries(all).filter(([id]) => Number(id) !== job)),
+    );
+    try {
+      await request("api/prs/rerun-job", { repository, pr: number, head_sha: head, job_id: job });
+      setRetried((ids) => new Set(ids).add(job));
+    } catch (error) {
+      setFailed((all) => ({
+        ...all,
+        [job]: error instanceof Error ? error.message : String(error),
+      }));
+    } finally {
+      setRetrying((ids) => {
+        const next = new Set(ids);
+        next.delete(job);
+        return next;
+      });
+    }
+  };
 
   if (!read.checks) {
     return read.error ? (
@@ -85,27 +115,50 @@ export function FailingChecks({
   return (
     <div className="upnext-threads">
       <ul aria-label="Failing checks">
-        {read.checks.map((check, index) => (
-          <li key={`${check.name}-${index}`}>
-            <span className="upnext-block-text">
-              <span className="upnext-thread-excerpt">{check.name}</span>
-              <span className="upnext-block-sub">
-                {conclusionText(check.conclusion)}
-                {check.title ? ` · ${check.title}` : ""}
+        {read.checks.map((check, index) => {
+          const job = check.job_id;
+          const busy = job != null && retrying.has(job);
+          const done = job != null && retried.has(job);
+          return (
+            <li key={`${check.name}-${index}`}>
+              <span className="upnext-block-text">
+                <span className="upnext-thread-excerpt">{check.name}</span>
+                <span className="upnext-block-sub">
+                  {done ? "Re-running on GitHub" : conclusionText(check.conclusion)}
+                  {!done && check.title ? ` · ${check.title}` : ""}
+                </span>
+                {job != null && failed[job] ? (
+                  <span className="upnext-thread-error" role="alert">
+                    {failed[job]}
+                  </span>
+                ) : null}
               </span>
-            </span>
-            {check.url ? (
-              <a
-                href={check.url}
-                target="_blank"
-                rel="noreferrer"
-                className="upnext-secondary upnext-thread-resolve"
-              >
-                Details
-              </a>
-            ) : null}
-          </li>
-        ))}
+              <span className="upnext-check-actions">
+                {canRetry && job != null && !done ? (
+                  <button
+                    type="button"
+                    className="upnext-secondary upnext-thread-resolve"
+                    disabled={busy}
+                    aria-busy={busy}
+                    onClick={() => void retry(job)}
+                  >
+                    {busy ? "Retrying…" : "Retry"}
+                  </button>
+                ) : null}
+                {check.url ? (
+                  <a
+                    href={check.url}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="upnext-secondary upnext-thread-resolve"
+                  >
+                    Details
+                  </a>
+                ) : null}
+              </span>
+            </li>
+          );
+        })}
       </ul>
     </div>
   );

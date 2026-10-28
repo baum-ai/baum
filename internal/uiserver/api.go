@@ -119,6 +119,7 @@ func (a LocalAPI) Handler() *LocalHandler {
 	mux.Handle("GET /api/prs/review-threads", update)
 	mux.Handle("POST /api/prs/resolve-thread", update)
 	mux.Handle("GET /api/prs/failing-checks", update)
+	mux.Handle("POST /api/prs/rerun-job", update)
 	mux.Handle("/api/prs", provider(a.PRs, "discovery_unavailable"))
 	mux.Handle("/api/prs/", provider(a.PRs, "discovery_unavailable"))
 	mux.Handle("/api/background", provider(a.Background, "background_unavailable"))
