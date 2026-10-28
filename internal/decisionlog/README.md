@@ -154,10 +154,10 @@ minutes.
   and a base by its id into `refs/baum/pull/<N>/base`, both force-updated,
   100 refspecs to a `git fetch`. So each such pull request of the 180 days
   before activation, and every one after, gets refs in the clone; they are
-  kept, not pruned, as they may back saved reviews. Each pull request's commits, from its base to its head,
-  are then read from the clone's own objects, never fetched. Its paths are
-  the files its commits change; its commits replace those recorded. A new
-  base has them read again. GitHub's file list is never read.
+  kept, not pruned, as they may back saved reviews. Each pull request's
+  commits, from its base to its head, are then read from the clone's own
+  objects, never fetched. Its paths are the files its commits change; its
+  commits replace those recorded. A new base has them read again. GitHub's file list is never read.
 - When a fetch fails, the remote is asked for its HEAD (`git ls-remote`).
   When it does not answer, the pass stops, nothing is counted against any
   pull request and the repository waits; when it answers, the refs of the

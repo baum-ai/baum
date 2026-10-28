@@ -213,7 +213,7 @@ func (s *Store) SavePulls(ctx context.Context, repository string, pulls []github
 			if _, err := tx.ExecContext(ctx, `INSERT INTO pull_request(repository, number, title, body, state, draft, author, bot,
 head_ref, head_sha, base_ref, base_sha, merge_commit_sha, created_at, updated_at, merged_at, closed_at)
 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(repository, number) DO UPDATE SET
-paths_head_sha=CASE WHEN base_sha=excluded.base_sha THEN paths_head_sha ELSE '' END,
+paths_head_sha=CASE WHEN base_sha=excluded.base_sha OR head_sha!=excluded.head_sha THEN paths_head_sha ELSE '' END,
 paths_failures=CASE WHEN head_sha=excluded.head_sha AND base_sha=excluded.base_sha THEN paths_failures ELSE 0 END,
 paths_retry_at=CASE WHEN head_sha=excluded.head_sha AND base_sha=excluded.base_sha THEN paths_retry_at END, title=excluded.title, body=excluded.body,
 state=excluded.state, draft=excluded.draft, author=excluded.author, bot=excluded.bot, head_ref=excluded.head_ref, head_sha=excluded.head_sha,
@@ -249,7 +249,7 @@ AND bot=0 AND (state='open' OR merged_at IS NOT NULL) AND (paths_retry_at IS NUL
 }
 
 // PathsFailed counts a failed read of the pull request's commits at head
-// (a new head starts the count again, SavePulls). It is tried again after
+// (a new head or base starts the count again, SavePulls). It is tried again after
 // FeatureQuiet; after FeaturePathTries failures its paths are unknown at
 // that head, and true is returned.
 func (s *Store) PathsFailed(ctx context.Context, repository string, number int, head string) (bool, error) {
@@ -284,8 +284,9 @@ WHERE repository=? AND paths_json IS NULL AND paths_head_sha != ''`, repository)
 // PullsWithCommitsSince lists the pull requests holding a recorded commit
 // made at or after since, at the head their commits were recorded at, so
 // they are linked again while a newer head cannot be read.
-// The base is the current one: with a new base too, the range is read from
-// it (rare, and the next read of the new head records it right).
+// The base is the current one. A new base with the same head has the pull
+// request read again (SavePulls); with a new head too, the recorded head is
+// kept until the new one is read.
 func (s *Store) PullsWithCommitsSince(ctx context.Context, repository string, since time.Time) ([]StoredPull, error) {
 	return s.pulls(ctx, `SELECT number, CASE WHEN paths_head_sha != '' THEN paths_head_sha ELSE head_sha END, base_sha, base_ref
 FROM pull_request p WHERE repository=?1 AND EXISTS

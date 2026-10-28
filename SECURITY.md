@@ -57,8 +57,9 @@ feature log was activated for the repository, and every one after, gets
 refs in the clone, which are kept and not pruned. When a fetch fails it
 asks the remote for its HEAD (`git ls-remote`); when the remote answers,
 the failed batch is fetched again one ref at a time, and otherwise the
-fetch is tried again after 15 minutes. It keeps the pull requests' titles, descriptions,
-authors, commits and changed paths in the private decision store, and links
+fetch is tried again after 15 minutes. A pull request whose commits still
+cannot be read is tried again after 15 minutes. It keeps the pull
+requests' titles, descriptions, authors, commits and changed paths in the private decision store, and links
 the commits to the sessions on this machine there; these rows are not
 pruned.
 
