@@ -138,11 +138,8 @@ export function SettingsPage({
           <LoadingStatus block>Reading your review settings…</LoadingStatus>
         )}
         {defaults ? (
-          // A new review harness or model changes what capture resolves to.
-          <DecisionSettingsSection
-            key={`${defaults.backend}:${defaults.model}`}
-            defaults={defaults}
-          />
+          // A new review harness changes what capture resolves to.
+          <DecisionSettingsSection key={defaults.backend} defaults={defaults} />
         ) : null}
         <AgentEnvSection />
         <p className="px-1 text-xs text-(--text-tertiary)">

@@ -461,7 +461,7 @@ api/settings/decisions` and saved with `PUT api/settings/decisions`
 with what the daemon makes of them: the harness capture resolves to, its model
 and whether the saved model is ignored (unknown, with a note that capture
 does not run, when no harness resolves); the section reads them again when
-the review harness or model changes. A saved model it ignores is listed as
+the review harness changes. A saved model it ignores is listed as
 "<model> (not used)" with a note naming the harness, so choosing the default
 clears it. When the harness cannot be resolved the section says so, apart
 from a check that did not answer in time. A repository's dialog turns capture off for it (`decisions: false`; on sends

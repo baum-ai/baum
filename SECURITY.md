@@ -1015,7 +1015,9 @@ model replied. Each session comes with its agent and id, its capture state
 (coverage, skip reason, when it last changed, whether a call is in flight and
 why capture is off), and for a pull request whether it is in progress and, for
 a session the saved review links, its title as the PR page's sessions list
-shows it. Evidence quotes, turns, branches and repositories stay in the store.
+shows it, and when the saved review the provisional marks are relative to was
+generated. Evidence quotes, turns, branches and repositories stay in the
+store.
 The `decisions` event carries no data. Its settings change only through the authenticated
 `PUT /api/settings/decisions` and repository settings routes.
 

@@ -187,8 +187,9 @@ func TestLinkedSessionsOfAnOversizedReview(t *testing.T) {
 	}
 }
 
-// A viewer that stops before its sessions are linked links none, but the
-// review's time still dates the provisional marks.
+// A viewer closed while it links sessions links none, whichever way the
+// computation ends (the viewer stopping, or the link failing as its context
+// ends), and the review's time still dates the provisional marks.
 func TestLinkedSessionsWhenTheViewerStops(t *testing.T) {
 	ctx := context.Background()
 	registry, clone := decisionsRegistry(t)
@@ -208,7 +209,11 @@ func TestLinkedSessionsWhenTheViewerStops(t *testing.T) {
 		return locallink.Result{}, ctx.Err()
 	}
 	go func() {
-		<-started
+		select {
+		case <-started:
+		case <-time.After(10 * time.Second):
+			t.Error("the sessions computation did not start")
+		}
 		cache.close()
 	}()
 	sessions, generated, err := LocalAPI{Registry: registry}.linkedSessions(cache)(ctx, "owner/repo", 7)
