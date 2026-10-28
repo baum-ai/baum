@@ -249,6 +249,10 @@
      commits, "Other" rollups, and the held-previous-render state. */
   --data-muted: var(--ink-400);
 
+  /* A step firmer than --data-muted: the held-previous-render state of a
+     chart, and the dot of a decision category past the eighth. */
+  --data-muted-strong: var(--ink-500);
+
   /* ---- Radii — flat. Surfaces are rectangles divided by hairlines; only
      controls keep a 2px softening, and only Tag/Badge is pill-shaped. ---- */
   --radius-xs: 0;
