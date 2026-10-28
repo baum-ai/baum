@@ -105,13 +105,14 @@ changes; other skips only when it changes.
   consecutive failures.
 - `decision` and the `current_decision` view, `decision_file`: the decision
   log. A decision is upserted by ID; decisions a newer extraction no longer
-  holds get `obsolete_at` and are never deleted while current. A decision is
+  holds get `obsolete_at` and are never deleted. A decision is
   dated by its first cited turn's time, else the date its ID had, else the
   extraction's time.
 - `capture_attempt`: the ledger of calls (backend, model, full or extend,
   reservation, cost, tokens, state).
 
-Settled attempts and obsolete decisions older than 90 days are pruned daily.
+Settled attempts older than 90 days are pruned daily; decisions, obsolete
+ones included, are kept for good, as hosted extraction keeps them.
 The store holds decisions, rationale and evidence quotes derived from redacted
 transcripts, never the transcripts themselves.
 

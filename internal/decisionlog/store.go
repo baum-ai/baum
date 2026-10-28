@@ -35,8 +35,8 @@ const (
 	AttemptAbandoned = "abandoned"
 )
 
-// Retention: settled attempts and obsolete decisions older than this are
-// pruned.
+// Retention: settled ledger attempts older than this are pruned. Decisions,
+// obsolete ones included, are kept for good.
 const Retention = 90 * 24 * time.Hour
 
 const schema = `
@@ -468,19 +468,10 @@ FROM capture_attempt WHERE agent=?1 AND session_id=?2`, agent, id, AttemptFailed
 	return st, err
 }
 
-// Prune deletes settled attempts and obsolete decisions older than Retention.
+// Prune deletes settled attempts older than Retention.
 func (s *Store) Prune(ctx context.Context) error {
-	before := s.now().Add(-Retention).UnixMilli()
-	return s.inTx(ctx, func(tx *sql.Tx) error {
-		if _, err := tx.ExecContext(ctx, `DELETE FROM capture_attempt WHERE state != ? AND started_at < ?`, AttemptPending, before); err != nil {
-			return err
-		}
-		if _, err := tx.ExecContext(ctx, `DELETE FROM decision_file WHERE decision_id IN (SELECT decision_id FROM decision WHERE obsolete_at < ?)`, before); err != nil {
-			return err
-		}
-		_, err := tx.ExecContext(ctx, `DELETE FROM decision WHERE obsolete_at < ?`, before)
-		return err
-	})
+	_, err := s.db.ExecContext(ctx, `DELETE FROM capture_attempt WHERE state != ? AND started_at < ?`, AttemptPending, s.now().Add(-Retention).UnixMilli())
+	return err
 }
 
 // Decision is a current decision as the log keeps it.
