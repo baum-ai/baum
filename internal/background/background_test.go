@@ -47,6 +47,8 @@ type fakeDiscovery struct {
 	next         time.Time
 	// updated is open pull request 1's last update on GitHub.
 	updated time.Time
+	// settling reports a poll that found a new head.
+	settling bool
 }
 
 // Poll lists pull request 1 as open, with the latest observation of each
@@ -61,7 +63,7 @@ func (f *fakeDiscovery) Poll(_ context.Context, repo github.Repository) (discove
 	for _, o := range latest {
 		observations = append(observations, o)
 	}
-	return discovery.Snapshot{Repository: repo.String(), NextPoll: f.next, PullRequests: []discovery.PullRequest{{Number: 1, HeadSHA: "new", UpdatedAt: f.updated}}, Observations: observations}, f.err
+	return discovery.Snapshot{Repository: repo.String(), NextPoll: f.next, Settling: f.settling, PullRequests: []discovery.PullRequest{{Number: 1, HeadSHA: "new", UpdatedAt: f.updated}}, Observations: observations}, f.err
 }
 func (f *fakeDiscovery) PollNow(ctx context.Context, repo github.Repository) (discovery.Snapshot, error) {
 	f.forced = append(f.forced, repo.String())
@@ -430,5 +432,30 @@ func TestFailedReadBacksOff(t *testing.T) {
 			t.Fatalf("pass %d: calls=%d, want %d", i, calls, want)
 		}
 		now = now.Add(time.Minute)
+	}
+}
+
+// A poll that found a new head is due again at discovery's sooner deadline,
+// and Run wakes for it; otherwise the interval holds.
+func TestSettlingPollIsDueSooner(t *testing.T) {
+	now := time.Now()
+	d := &fakeDiscovery{next: now.Add(15 * time.Second), settling: true}
+	s := &Service{Registry: registry{{Repository: "acme/app"}}, Discovery: d, Now: func() time.Time { return now }, Interval: time.Minute, Saved: func(context.Context, repos.Clone) ([]int, error) { return nil, nil }}
+	s.Sync(context.Background())
+	if next := s.state("acme/app").NextRefresh; !next.Equal(d.next) {
+		t.Fatalf("next refresh in %v, want 15s", next.Sub(now))
+	}
+	if wait := s.wait(); wait != 15*time.Second {
+		t.Fatalf("Run waits %v, want 15s", wait)
+	}
+	now = now.Add(15 * time.Second)
+	d.settling = false
+	d.next = now.Add(15 * time.Second)
+	s.Sync(context.Background())
+	if d.polls != 2 || !s.state("acme/app").NextRefresh.Equal(now.Add(time.Minute)) {
+		t.Fatalf("polls=%d next refresh in %v", d.polls, s.state("acme/app").NextRefresh.Sub(now))
+	}
+	if wait := s.wait(); wait != 30*time.Second {
+		t.Fatalf("Run waits %v, want 30s", wait)
 	}
 }

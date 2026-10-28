@@ -690,3 +690,53 @@ func TestUnresolvedRecordsTheAppsCount(t *testing.T) {
 		}
 	}
 }
+
+// A poll that finds a new head polls again after settleInterval, and so do up
+// to maxSettles more while GitHub has not worked out the mergeability.
+func TestNewHeadPollsAgainSoonWhileMergeabilitySettles(t *testing.T) {
+	t.Setenv("GH_HOST", "github.com")
+	head, mergeable, state := "one", "CONFLICTING", "DIRTY"
+	client := github.New(func(context.Context, string) (string, error) { return "synthetic", nil }, github.Options{Transport: roundTrip(func(r *http.Request) (*http.Response, error) {
+		body := `[]`
+		if r.Method == http.MethodPost {
+			body = fmt.Sprintf(`{"data":{"viewer":{"login":"viewer"},"repository":{"pullRequests":{"nodes":[{"number":1,"title":"PR","headRefOid":%q,"mergeable":%q,"mergeStateStatus":%q,"author":{"login":"viewer"},"headRepository":{"databaseId":1,"nameWithOwner":"acme/app"},"baseRepository":{"databaseId":1,"nameWithOwner":"acme/app"}}],"pageInfo":{"hasNextPage":false}}}}}`, head, mergeable, state)
+		} else if strings.Contains(r.URL.Path, "/permission") {
+			body = `{"permission":"write"}`
+		}
+		return &http.Response{StatusCode: 200, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(body))}, nil
+	})})
+	s := New(client, t.TempDir())
+	now := time.Date(2026, 10, 28, 15, 0, 0, 0, time.UTC)
+	s.now = func() time.Time { return now }
+	poll := func() Snapshot {
+		t.Helper()
+		snapshot, err := s.PollNow(context.Background(), testRepo)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return snapshot
+	}
+	// The first poll has no earlier head to compare with.
+	if first := poll(); first.Settling || !first.NextPoll.Equal(now.Add(30*time.Second)) {
+		t.Fatalf("first poll settling=%v next=%v", first.Settling, first.NextPoll)
+	}
+	head, mergeable, state = "two", "UNKNOWN", "UNKNOWN"
+	for i := range 1 + maxSettles {
+		if got := poll(); !got.Settling || !got.NextPoll.Equal(now.Add(settleInterval)) {
+			t.Fatalf("poll %d after the push: settling=%v next=%v", i, got.Settling, got.NextPoll.Sub(now))
+		}
+	}
+	// GitHub never worked it out: the usual backoff goes on.
+	if got := poll(); got.Settling || !got.NextPoll.After(now.Add(settleInterval)) {
+		t.Fatalf("after %d settles: settling=%v next=%v", maxSettles, got.Settling, got.NextPoll.Sub(now))
+	}
+	// Worked out after one quick poll: the next one is the usual.
+	head = "three"
+	if got := poll(); !got.Settling {
+		t.Fatal("new head did not settle")
+	}
+	mergeable, state = "MERGEABLE", "CLEAN"
+	if got := poll(); got.Settling || got.PullRequests[0].Merge == "conflict" {
+		t.Fatalf("settled poll settling=%v merge=%q", got.Settling, got.PullRequests[0].Merge)
+	}
+}

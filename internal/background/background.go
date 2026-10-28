@@ -129,19 +129,34 @@ func (s *Service) Handler() http.Handler {
 // from HTTP startup; a slow/offline GitHub never holds the cached inbox hostage.
 // One worker bounds both GitHub and local session reads across all repositories.
 func (s *Service) Run(ctx context.Context) {
-	ticker := time.NewTicker(min(s.interval(), 30*time.Second))
-	defer ticker.Stop()
 	for {
 		if ctx.Err() != nil {
 			return
 		}
 		s.Sync(ctx)
+		timer := time.NewTimer(s.wait())
 		select {
 		case <-ctx.Done():
+			timer.Stop()
 			return
-		case <-ticker.C:
+		case <-timer.C:
 		}
 	}
+}
+
+// wait is how long Run sleeps between passes: at most 30 seconds, less when a
+// repository is due sooner, as one settling after a new head is. A deadline
+// past by more than the interval is a repository no longer picked.
+func (s *Service) wait() time.Duration {
+	wait := min(s.interval(), 30*time.Second)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, state := range s.states {
+		if until := state.NextRefresh.Sub(s.now()); until < wait && until > -s.interval() {
+			wait = max(until, time.Second)
+		}
+	}
+	return wait
 }
 
 // How long a saved review's evidence goes unread while GitHub reports no
@@ -306,6 +321,10 @@ func (s *Service) Sync(ctx context.Context) {
 			s.Discovered(ctx, snapshot)
 		}
 		p.next = s.now().Add(s.interval())
+		// A new head: discovery reads its mergeability again soon.
+		if pollErr == nil && snapshot.Settling && snapshot.NextPoll.Before(p.next) {
+			p.next = snapshot.NextPoll
+		}
 		if pollErr != nil {
 			p.state.Error = "discovery_unavailable"
 			p.state.Failures = previous.Failures + 1

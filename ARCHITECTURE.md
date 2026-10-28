@@ -1977,7 +1977,14 @@ the backoff. Resolving a review thread does not move a pull request's update
 time, so the probe misses it; the next scheduled poll, or the app reading the
 threads (below), shows it. Each polled pull request keeps GitHub's
 `updated_at`, which the background refresh compares with its last read; it is
-left out of the unchanged comparison, so it does not reset the backoff. A repository never polled or not returned waits for its scheduled
+left out of the unchanged comparison, so it does not reset the backoff. GitHub
+works out a pull request's mergeability in the background after a push, so a
+poll right after one can read the old conflict or none. A poll that finds a
+new head, or a new pull request, sets the next poll `settleInterval` (15 s)
+away (or GitHub's polling interval, if longer), as do up to `maxSettles` (3)
+more while a non-draft pull request's `mergeable` or `mergeStateStatus` is
+still `UNKNOWN`; the snapshot says `settling`, and the background worker polls
+the repository at that deadline instead of its interval. A repository never polled or not returned waits for its scheduled
 poll; the probe assumes one credential, leaving out any repository whose
 credential differs from the first's.
 GraphQL cost, remaining points and reset time map to the public rate projection.
@@ -2340,7 +2347,8 @@ or closed one unread for `closedReadAge` (1 h), the longest unread first. A
 failed read is retried after the interval, doubling to 15 minutes, without
 backing off the repository's polls; a rate-limited one stays due and goes
 first after the reset, so a small renewed budget still reaches every pull
-request. Linked worktrees are deduplicated by common git directory. No-review PRs fetch only a header and checks;
+request. `Run` passes every 30 seconds, or sooner when a repository is due
+sooner, as a settling one is. Linked worktrees are deduplicated by common git directory. No-review PRs fetch only a header and checks;
 saved reviews use `refresh.Refresher` and `Store.RefreshCurrent`'s exact-byte CAS.
 `Service.RefreshNow` refreshes named PRs of one clone the same way outside
 that schedule (see "Refresh on hook events"), and its reads count as the

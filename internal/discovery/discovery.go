@@ -94,6 +94,9 @@ type Snapshot struct {
 	NextPoll     time.Time     `json:"next_poll"`
 	Rate         RateLimit     `json:"rate"`
 	Error        string        `json:"error,omitempty"`
+	// Settling: this poll found a new head, or GitHub still works out a
+	// mergeability since one, so NextPoll comes after settleInterval.
+	Settling bool `json:"settling,omitempty"`
 }
 
 type cachedResponse struct {
@@ -110,7 +113,19 @@ type diskCache struct {
 	Interval    time.Duration
 	// Fingerprint is the last complete poll's, which Probe compares with.
 	Fingerprint fingerprint
+	// Settling counts the quick polls since one found a new head (settle).
+	Settling int `json:",omitempty"`
 }
+
+// After a push GitHub works out in the background whether the pull request
+// still merges cleanly, and a poll right after it can read the old answer or
+// none. A poll that finds a new head, or a new pull request, so polls again
+// after settleInterval, as do up to maxSettles more while GitHub still
+// reports a mergeability it has not worked out. Then the usual backoff goes on.
+const (
+	settleInterval = 15 * time.Second
+	maxSettles     = 3
+)
 
 // cacheFormat changes when the minimal responses keep more fields: 1 added
 // the pull requests' head branch. A 304 answer reuses the stored body, which
@@ -258,6 +273,11 @@ type poll struct {
 	now       time.Time
 	unchanged bool
 	minimum   time.Duration
+	// server is the polling interval GitHub asked for, if any.
+	server time.Duration
+	// moved: a pull request has a head the last poll did not see. unknown: a
+	// non-draft one has a mergeability GitHub has not worked out yet.
+	moved, unknown bool
 	// fingerprint is the open pull requests' when all pages were read.
 	fingerprint fingerprint
 }
@@ -281,6 +301,7 @@ func (p *poll) get(ctx context.Context, path string, into any) error {
 	}
 	if seconds, err := strconv.Atoi(headers.Get("X-Poll-Interval")); err == nil && seconds > 0 {
 		p.minimum = max(p.minimum, time.Duration(seconds)*time.Second)
+		p.server = max(p.server, time.Duration(seconds)*time.Second)
 	}
 	if status == 429 || status == 403 && (headers.Get("X-RateLimit-Remaining") == "0" || headers.Get("Retry-After") != "") {
 		resume := p.now.Add(time.Minute)
@@ -455,6 +476,19 @@ func (s *Service) poll(ctx context.Context, repository github.Repository, force 
 			interval = min(max(cache.Interval, 30*time.Second)*2, 15*time.Minute)
 		}
 		interval = max(interval, p.minimum)
+		switch {
+		case p.moved:
+			p.cache.Settling = 1
+		case p.unknown && p.cache.Settling > 0 && p.cache.Settling <= maxSettles:
+			p.cache.Settling++
+		default:
+			p.cache.Settling = 0
+		}
+		if p.cache.Settling > 0 {
+			// Saved as the interval, so the backoff starts again from it.
+			snapshot.Settling = true
+			interval = max(settleInterval, p.server)
+		}
 		snapshot.Observations = cache.Snapshot.Observations
 		snapshot.FetchedAt = now
 		snapshot.NextPoll = maxTime(now.Add(interval), p.ResetIfExhausted())
@@ -499,6 +533,16 @@ func (p *poll) discover(ctx context.Context, repository github.Repository) (Snap
 		return snapshot, errors.New("GitHub token has no user identity")
 	}
 	snapshot.Viewer = viewer.Login
+	if !p.cache.Snapshot.FetchedAt.IsZero() {
+		heads := map[int]string{}
+		for _, pr := range p.cache.Snapshot.PullRequests {
+			heads[pr.Number] = pr.HeadSHA
+		}
+		for _, row := range prs {
+			p.moved = p.moved || heads[row.Number] != row.HeadRefOid
+			p.unknown = p.unknown || !row.IsDraft && (row.Mergeable == "UNKNOWN" || row.MergeStateStatus == "UNKNOWN")
+		}
+	}
 	prefix := "/repos/" + url.PathEscape(repository.Owner) + "/" + url.PathEscape(repository.Name)
 
 	teams, teamErr := collect[team](ctx, p, "/user/teams")
