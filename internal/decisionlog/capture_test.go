@@ -260,6 +260,9 @@ func TestCaptureSkipsAndCaps(t *testing.T) {
 			if row.SkipReason != tc.want || row.Coverage != CoverageSkipped {
 				t.Fatalf("%+v", row)
 			}
+			if tc.want == ReasonMismatch && row.Path != "" {
+				t.Fatalf("a transcript of another session was stored: %q", row.Path)
+			}
 		})
 	}
 }
@@ -495,15 +498,23 @@ func TestDebugDirKeepsOnlyThisCapturesFiles(t *testing.T) {
 	}
 }
 
-// A Codex session whose hooks named no transcript is looked up in the store
-// once; later captures read the path the first one stored.
-func TestCaptureLooksACodexSessionUpOnce(t *testing.T) {
-	f := newFixture(t)
-	const id = "019f0000-0000-7000-8000-000000000001"
-	write(t, filepath.Join(f.home, ".codex", "sessions", "2026", "10", "20", "rollout-2026-10-20T09-00-00-"+id+".jsonl"),
-		`{"timestamp":"2026-10-20T09:00:00.000Z","type":"session_meta","payload":{"id":"`+id+`","cwd":"/work/demo","cli_version":"0.69.0","model_provider":"openai"}}
+// codexRollout writes a root Codex rollout of session id under dir in the
+// fixture's store and returns its path.
+func (f *fixture) codexRollout(t *testing.T, dir, id string) string {
+	t.Helper()
+	path := filepath.Join(f.home, ".codex", "sessions", "2026", "10", dir, "rollout-2026-10-20T09-00-00-"+id+".jsonl")
+	write(t, path, `{"timestamp":"2026-10-20T09:00:00.000Z","type":"session_meta","payload":{"id":"`+id+`","cwd":"/work/demo","cli_version":"0.69.0","model_provider":"openai"}}
 {"timestamp":"2026-10-20T09:00:05.000Z","type":"event_msg","payload":{"type":"user_message","message":"Keep the flag name."}}
 `)
+	return path
+}
+
+const codexID = "019f0000-0000-7000-8000-000000000001"
+
+// codexFixture tracks a Codex session whose hooks name no transcript, and
+// counts the lookups by id, which scan the store.
+func codexFixture(t *testing.T) (*fixture, *int, *[]string) {
+	f := newFixture(t)
 	scans, paths := 0, []string{}
 	f.capturer.locate = func(home, cursorStore, agent, id, path string) (livesessions.Location, error) {
 		if path == "" {
@@ -512,27 +523,99 @@ func TestCaptureLooksACodexSessionUpOnce(t *testing.T) {
 		paths = append(paths, path)
 		return livesessions.Locate(home, cursorStore, agent, id, path)
 	}
-	f.target = Target{Agent: "codex", ID: id, Repository: "o/r"}
+	f.target = Target{Agent: "codex", ID: codexID, Repository: "o/r"}
+	return f, &scans, &paths
+}
+
+func (f *fixture) storedPath(t *testing.T) string {
+	t.Helper()
+	row, _, err := f.store.Session(context.Background(), "codex", codexID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return row.Path
+}
+
+func (f *fixture) setStoredPath(t *testing.T, path string) {
+	t.Helper()
+	if _, err := f.store.db.Exec(`UPDATE capture_session SET transcript_path=? WHERE agent='codex'`, path); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// A Codex session whose hooks named no transcript is looked up in the store
+// once; later captures read the path the first one stored.
+func TestCaptureLooksACodexSessionUpOnce(t *testing.T) {
+	f, scans, paths := codexFixture(t)
+	rollout := f.codexRollout(t, "20", codexID)
 	if report := f.capture(t, Options{}); report.Outcome != OutcomeExtracted {
 		t.Fatalf("%+v", report)
 	}
-	row, _, _ := f.store.Session(context.Background(), "codex", id)
-	if !strings.HasSuffix(row.Path, id+".jsonl") {
-		t.Fatalf("stored path %q", row.Path)
+	if got := f.storedPath(t); got != rollout {
+		t.Fatalf("stored path %q", got)
 	}
 	f.later(MinInterval)
 	if report := f.capture(t, Options{}); report.Outcome != OutcomeUnchanged {
 		t.Fatalf("%+v", report)
 	}
-	if scans != 1 || paths[1] != row.Path {
-		t.Fatalf("%d scans, paths %q", scans, paths)
+	if *scans != 1 || len(*paths) != 2 || (*paths)[1] != rollout {
+		t.Fatalf("%d scans, paths %q", *scans, *paths)
 	}
-	// A stored path that no longer holds the session is looked up afresh.
-	if _, err := f.store.db.Exec(`UPDATE capture_session SET transcript_path=? WHERE agent='codex'`, filepath.Join(f.home, ".codex", "sessions", "gone.jsonl")); err != nil {
+}
+
+func TestCaptureLooksASessionUpAgainWhenItsStoredPathFails(t *testing.T) {
+	cases := map[string]func(t *testing.T, f *fixture, rollout string){
+		// Codex moved the rollout: the old path is gone.
+		"moved": func(t *testing.T, f *fixture, rollout string) {
+			if err := os.Remove(rollout); err != nil {
+				t.Fatal(err)
+			}
+		},
+		"outside the store": func(t *testing.T, f *fixture, _ string) {
+			outside := filepath.Join(t.TempDir(), "rollout-2026-10-20T09-00-00-"+codexID+".jsonl")
+			write(t, outside, "{}\n")
+			f.setStoredPath(t, outside)
+		},
+		"another session": func(t *testing.T, f *fixture, _ string) {
+			f.setStoredPath(t, f.codexRollout(t, "21", "019f0000-0000-7000-8000-000000000002"))
+		},
+	}
+	for name, edit := range cases {
+		t.Run(name, func(t *testing.T) {
+			f, scans, _ := codexFixture(t)
+			rollout := f.codexRollout(t, "20", codexID)
+			if report := f.capture(t, Options{}); report.Outcome != OutcomeExtracted {
+				t.Fatalf("%+v", report)
+			}
+			edit(t, f, rollout)
+			want := rollout
+			if name == "moved" {
+				want = f.codexRollout(t, "22", codexID)
+			}
+			f.later(MinInterval)
+			report := f.capture(t, Options{Force: true})
+			if report.Outcome != OutcomeHit || *scans != 2 {
+				t.Fatalf("%+v, %d scans", report, *scans)
+			}
+			if got := f.storedPath(t); got != want {
+				t.Fatalf("stored path %q, want %q", got, want)
+			}
+		})
+	}
+}
+
+func TestCaptureKeepsTheFirstLookupError(t *testing.T) {
+	f, scans, _ := codexFixture(t)
+	f.codexRollout(t, "20", codexID)
+	if report := f.capture(t, Options{}); report.Outcome != OutcomeExtracted {
+		t.Fatalf("%+v", report)
+	}
+	if err := os.RemoveAll(filepath.Join(f.home, ".codex", "sessions", "2026")); err != nil {
 		t.Fatal(err)
 	}
 	f.later(MinInterval)
-	if report := f.capture(t, Options{}); report.Outcome != OutcomeUnchanged || scans != 2 {
-		t.Fatalf("%+v, %d scans", report, scans)
+	report := f.capture(t, Options{})
+	if report.Outcome != OutcomeUnavailable || report.Reason != "The transcript file is not there any more." || *scans != 2 {
+		t.Fatalf("%+v, %d scans", report, *scans)
 	}
 }

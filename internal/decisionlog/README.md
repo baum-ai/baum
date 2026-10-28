@@ -45,11 +45,12 @@ not a failure.
 
 1. The transcript is located as the live session view locates it: a regular
    file inside the agent's own session store, symbolic links resolved. A
-   session whose hooks named no transcript (a Codex one is then found by id,
-   which scans the store) is read from the path the last capture stored,
-   checked the same way, and looked up again only when that path no longer
-   holds it. Its mapped root session must be the hook event's session. A session whose own
-   files exceed 64 MiB is skipped (`too_large`).
+   session whose hooks named no transcript, Claude Code or Codex, is read from
+   the path the last capture stored, checked the same way; only when that path
+   no longer holds it is it looked up as the hooks name it (a Codex session by
+   id, which scans the store; a Claude Code one cannot be found without a
+   path). A path is stored only once its transcript maps to the hook event's
+   session. A session whose own files exceed 64 MiB is skipped (`too_large`).
 2. When the stored fingerprint (size and modification time of its files) is
    unchanged and the session is covered, nothing happens.
 3. baum's own generation runs are skipped (`generation_run`).
@@ -60,39 +61,37 @@ not a failure.
    after the turns the head's prefix covered; existing decisions keep their
    IDs. Otherwise the call reads the whole transcript.
 5. A prompt estimated over 272,000 tokens is skipped (`over_token_cap`).
-6. The backend is the one reviews use (config file, app preferences,
-   repository settings), and `auto` resolves as for reviews: the first of
-   claude, codex and anthropic that passes its check, never cursor-agent; none
-   is `backend_unavailable`. The model follows the resolved backend:
+6. The backend is the one reviews use (config file, app preferences, repository
+   settings), and `auto` resolves as for reviews: the first of claude, codex
+   and anthropic that passes its check, never cursor-agent; none is
+   `backend_unavailable`. The model follows the resolved backend:
    `preferences.decisions.model` unless it names another provider's family,
-   else `claude-haiku-5-5` for claude and anthropic and `gpt-6-luna` for
-   codex. cursor-agent cannot make a single
-   structured call (`backend_unsupported`); a backend that does not pass its
-   check is `backend_unavailable`.
+   else `claude-haiku-5-5` for claude and anthropic and `gpt-6-luna` for codex.
+   cursor-agent cannot make a single structured call (`backend_unsupported`); a
+   backend that does not pass its check is `backend_unavailable`.
 7. The cost is reserved before the call: the prompt's byte bound and 16,384
    output tokens at the model's list price. Claude Code caches the prompt, so
    claude's call is reserved at the cache-write rate when that is higher. It
    may make a second call, after the harness rejected its first reply against
    the schema; that resends the cached prompt, so it is reserved at the
-   cache-read rate plus another reply. The Codex CLI has no option capping
-   the reply, so its 16,384 tokens are an estimate rather than a limit. A model the price list does not price
-   is skipped (`unpriced_model`). A session's spend, this reservation
-   included, may not pass $0.25 a day (`over_cost_cap`), and all capture's
-   spend may not pass `preferences.decisions.daily_cap` when set
+   cache-read rate plus another reply. The Codex CLI has no option capping the
+   reply, so its 16,384 tokens are an estimate rather than a limit. A model the
+   price list does not price is skipped (`unpriced_model`). A session's spend,
+   this reservation included, may not pass $0.25 a day (`over_cost_cap`), and
+   all capture's spend may not pass `preferences.decisions.daily_cap` when set
    (`daily_cap`; no default). No call is made for either, so the session is
    tried again the next day or when it changes; a session whose reservation
-   alone exceeds the allowance stays skipped at no cost, since every try
-   stops before the call.
-8. The attempt is recorded as pending and the completion made: one request
-   for anthropic; `claude -p` with no tools besides its structured reply,
-   which normally ends after one call and may retry a rejected reply once; or
-   one `codex exec` turn with its shell tools off, normally one request (a
-   call to a tool Codex still offers, such as its patch or plan tool, makes
-   another within the turn). The attempt
-   is settled with its cost from the reported usage, or none when it cannot be
-   priced. Spend counts the cost, else the reservation. An attempt still
-   pending when the daemon starts is settled as abandoned and its reservation
-   counts.
+   alone exceeds the allowance stays skipped at no cost, since every try stops
+   before the call.
+8. The attempt is recorded as pending and the completion made: one request for
+   anthropic; `claude -p` with no tools besides its structured reply, which
+   normally ends after one call and may retry a rejected reply once; or one
+   `codex exec` turn with its shell tools off, normally one request (a call to
+   a tool Codex still offers, such as its patch or plan tool, makes another
+   within the turn). The attempt is settled with its cost from the reported
+   usage, or none when it cannot be priced. Spend counts the cost, else the
+   reservation. An attempt still pending when the daemon starts is settled as
+   abandoned and its reservation counts.
 9. The reply is masked for secrets before it is parsed, validated against the
    transcript, given IDs and saved.
 

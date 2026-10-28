@@ -1,6 +1,7 @@
 package decisionlog
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -265,46 +266,58 @@ func (c *Capturer) Capture(ctx context.Context, t Target, o Options) (Report, er
 		return report, err
 	}
 	// A session whose hooks named no transcript (a Codex one is then looked up
-	// by id, a scan of its whole store) is read from where the last capture
-	// found it, checked again; only a path that no longer holds it is looked
-	// up afresh.
+	// by id, a scan of its whole store) is read from the path the last capture
+	// confirmed, checked again; when that path no longer holds it, it is
+	// looked up as the hooks name it. A path is stored only once the
+	// transcript there is the session's.
 	locate := c.locate
 	if locate == nil {
 		locate = livesessions.Locate
 	}
-	path := t.Path
-	if path == "" && found {
-		path = head.Path
+	candidates := []string{t.Path}
+	if t.Path == "" && found && head.Path != "" {
+		candidates = []string{head.Path, ""}
+		meta.Path = head.Path
 	}
-	loc, err := locate(c.home(), c.cursorStore(), t.Agent, t.ID, path)
-	if err != nil && path != t.Path {
-		loc, err = locate(c.home(), c.cursorStore(), t.Agent, t.ID, t.Path)
-	}
-	if err != nil {
-		return Report{Outcome: OutcomeUnavailable, Reason: err.Error()}, nil
+	var loc livesessions.Location
+	var graph *session.Graph
+	var firstErr error
+	for i, path := range candidates {
+		last := i == len(candidates)-1
+		if loc, err = locate(c.home(), c.cursorStore(), t.Agent, t.ID, path); err != nil {
+			firstErr = cmp.Or(firstErr, err)
+			if last {
+				return Report{Outcome: OutcomeUnavailable, Reason: firstErr.Error()}, nil
+			}
+			continue
+		}
+		if meta.Fingerprint, err = loc.Version(); err != nil {
+			return Report{Outcome: OutcomeUnavailable, Reason: "The transcript file is not there any more."}, nil
+		}
+		size, err := loc.Size()
+		if err != nil {
+			return Report{Outcome: OutcomeUnavailable, Reason: "The transcript file is not there any more."}, nil
+		}
+		if size > MaxTranscriptBytes {
+			return skip(ReasonTooLarge)
+		}
+		if found && !o.Force && covered(head, meta.Fingerprint, day) {
+			return Report{Outcome: OutcomeUnchanged}, nil
+		}
+		graph, err = loc.Graph()
+		if err != nil || graph == nil {
+			c.logger().Info("session transcript not read for decision capture", "agent", t.Agent, "error", err)
+			return skip(ReasonUnreadable)
+		}
+		if isSession(graph, t.ID) {
+			break
+		}
+		if last {
+			meta.Path = ""
+			return skip(ReasonMismatch)
+		}
 	}
 	meta.Path = loc.Path()
-	if meta.Fingerprint, err = loc.Version(); err != nil {
-		return Report{Outcome: OutcomeUnavailable, Reason: "The transcript file is not there any more."}, nil
-	}
-	size, err := loc.Size()
-	if err != nil {
-		return Report{Outcome: OutcomeUnavailable, Reason: "The transcript file is not there any more."}, nil
-	}
-	if size > MaxTranscriptBytes {
-		return skip(ReasonTooLarge)
-	}
-	if found && !o.Force && covered(head, meta.Fingerprint, day) {
-		return Report{Outcome: OutcomeUnchanged}, nil
-	}
-	graph, err := loc.Graph()
-	if err != nil || graph == nil {
-		c.logger().Info("session transcript not read for decision capture", "agent", t.Agent, "error", err)
-		return skip(ReasonUnreadable)
-	}
-	if !isSession(graph, t.ID) {
-		return skip(ReasonMismatch)
-	}
 	if sessions.IsGenerationRun(graph) {
 		return skip(ReasonGenerationRun)
 	}
