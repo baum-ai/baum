@@ -486,7 +486,10 @@ func localApplication(paths daemon.Paths, concurrency int, log *slog.Logger) fun
 			// are; only the Codex setting is kept, in the state directory.
 			// The app reads them with the live sessions.
 			requests = &agentrequests.Store{Sessions: live, Mask: live.Mask, StateDir: paths.State, Log: log,
-				Notify: func() { _ = server.Publish("live", struct{}{}) }}
+				Notify: func() { _ = server.Publish("live", struct{}{}) },
+				// The store's own Notify, as the request goes, tells the app.
+				Interrupted: func(agent, session string, at time.Time) { live.Interrupted(agent, session, at) },
+				Answered:    func(agent, session string, at time.Time) { live.Answered(agent, session, at) }}
 			requestEvents, unsubscribeRequests = events.Subscribe(256, agentrequests.Match)
 			requestsAPI = requests.Handler()
 		}

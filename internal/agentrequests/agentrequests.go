@@ -86,6 +86,9 @@ const (
 	// the hook prints nothing and Codex asks in its terminal: the hook's
 	// own timeout is 30 seconds.
 	DefaultCodexWait = 25 * time.Second
+	// ClaudeHold is the timeout of Claude Code's permission-request hook
+	// (its agenthooks placement), after which Claude Code kills the hook.
+	ClaudeHold = time.Hour
 	// recentFor and maxRecent bound the turn boundaries and finished tool
 	// calls remembered for a request that arrives after them.
 	recentFor = 10 * time.Minute
@@ -244,6 +247,15 @@ type Store struct {
 	StateDir string
 	// CodexWait replaces DefaultCodexWait.
 	CodexWait time.Duration
+	// Interrupted, when set, is told of a Claude Code session whose main
+	// agent's request ended with its hook well before ClaudeHold: Claude
+	// Code kills the hook when the user turns the request down in the
+	// terminal, which interrupts the turn without a stop.
+	Interrupted func(agent, session string, at time.Time)
+	// Answered, when set, is told of a session the app answered a request
+	// of: it works again, though the agent reports nothing until the tool
+	// call ends.
+	Answered func(agent, session string, at time.Time)
 	// Now is the clock; nil is time.Now.
 	Now func() time.Time
 	Log *slog.Logger
@@ -376,9 +388,29 @@ func (s *Store) Ask(ctx context.Context, ask Ask) (Decision, error) {
 		return d, nil
 	case <-p.gone:
 	case <-ctx.Done():
+		s.interrupted(p)
 	case <-timeout:
 	}
 	return Decision{}, nil
+}
+
+// interrupted tells Interrupted of a request whose hook went away: a Claude
+// Code main agent's that was neither answered nor withdrawn, ended earlier
+// than a minute before ClaudeHold (a hook Claude Code timed out leaves its
+// dialog asking).
+func (s *Store) interrupted(p *pending) {
+	if s.Interrupted == nil || p.Agent != AgentClaudeCode || p.agentID != "" {
+		return
+	}
+	select {
+	case <-p.gone:
+		return
+	default:
+	}
+	now := s.now()
+	if now.Sub(p.startedAt) < ClaudeHold-time.Minute {
+		s.Interrupted(p.Agent, p.SessionID, now)
+	}
 }
 
 func (a Ask) check() error {
@@ -501,6 +533,9 @@ func (s *Store) Answer(id string, reply Reply) error {
 	delete(s.pending, id)
 	p.decided <- d
 	s.mu.Unlock()
+	if s.Answered != nil {
+		s.Answered(p.Agent, p.SessionID, s.now())
+	}
 	s.notify()
 	return nil
 }

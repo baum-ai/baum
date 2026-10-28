@@ -579,6 +579,46 @@ func (t *Tracker) Apply(_ context.Context, e hookevents.Event) bool {
 	return changed
 }
 
+// Interrupted records that a session's user turned down, in the terminal, the
+// permission or answer it waited for, at at: Claude Code interrupts the turn
+// and sends no stop, so the session waits for its user's next prompt, as at
+// the end of a turn. A session with an event newer than at, or that waits for
+// nothing else, is left as it is. It reports whether the session changed.
+func (t *Tracker) Interrupted(agent, id string, at time.Time) bool {
+	return t.endWait(agent, id, at, EventStop, WaitTurnFinished)
+}
+
+// Answered records that the app answered the permission or question a
+// session waited for, at at: it works again, though the agent reports nothing
+// until the tool call ends. A session with an event newer than at, or that
+// waits for nothing else, is left as it is. It reports whether the session
+// changed.
+func (t *Tracker) Answered(agent, id string, at time.Time) bool {
+	return t.endWait(agent, id, at, EventTool, "")
+}
+
+// endWait ends a session's permission or input wait at at, with kind as its
+// last event and reason as its new wait, unless the session has an event
+// newer than at.
+func (t *Tracker) endWait(agent, id string, at time.Time, kind, reason string) bool {
+	t.init()
+	now := t.now()
+	at = at.UTC()
+	if at.After(now) {
+		at = now
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	s := t.sessions[key{agent, id}]
+	if s == nil || s.ended || at.Before(s.LastActivityAt) || (s.WaitingReason != WaitPermission && s.WaitingReason != WaitInput) {
+		return false
+	}
+	s.LastActivityAt, s.LastEvent = at, kind
+	s.wait(reason, at, "")
+	s.State = s.state(now)
+	return true
+}
+
 // announceLocked queues the session's wait for Waiting when it is one to
 // announce and was not announced yet.
 func (t *Tracker) announceLocked(k key, now time.Time) {
@@ -796,6 +836,12 @@ func (t *Tracker) applyEvent(e hookevents.Event, now time.Time) {
 	}
 	if at.Before(s.LastActivityAt) {
 		// A late delivery of an older event tells nothing newer.
+		return
+	}
+	if e.Name == "subagent-stop" && s.WaitingReason != "" {
+		// A subagent that finished says nothing of a session waiting on its
+		// user: Claude Code runs one after every stop, and a background one
+		// can finish while its session waits.
 		return
 	}
 	s.LastActivityAt, s.LastEvent = at, kind

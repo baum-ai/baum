@@ -2772,7 +2772,10 @@ replace it.
   `elicitation_response`, `agent_completed`, `quota_auto_resume_fired`,
   `quota_auto_resume_disabled`, `plugin_notification`) are ignored. The same
   reason again keeps the wait (and its start); a start, prompt or tool event,
-  or the end, clears it. A notification's `message` becomes
+  or the end, clears it, except a `subagent-stop`, which is ignored while the
+  session waits: Claude Code runs a subagent after every stop (its
+  SubagentStop arrives a second or two after the Stop), and a background
+  subagent can finish while its session waits. A notification's `message` becomes
   `waiting_message`: format characters dropped, control characters and runs of
   spaces made one space, masked as transcripts are (`transcript.Renderer.Mask`,
   before it is cut), and cut to 160 characters. Claude Code says nothing when
@@ -2993,6 +2996,21 @@ saved, in `agent-requests.json` in the state directory.
   for an identical call. The last 512 such marks (10 minutes) are kept so a
   request that arrives after its tool call finished, or its turn ended, is
   answered nothing at once.
+- **Turned down in the terminal.** Claude Code kills a waiting hook when the
+  user turns its request down in the terminal (No, or Esc), and interrupts
+  the turn without a Stop (checked with Claude Code 2.1.311): the
+  disconnect withdraws the request. When a main agent's request ends so,
+  neither answered nor withdrawn and more than a minute before `ClaudeHold`
+  (the hook's one-hour timeout, after which the terminal's dialog still
+  asks), the store calls `Interrupted`, and the tracker's
+  `Tracker.Interrupted` makes the session's `permission` or `input` wait a
+  `turn_finished` one from then (unless an event since is newer): it waits
+  for its user's next prompt. Likewise a request the app answered calls
+  `Answered`, and `Tracker.Answered` ends the session's wait as a tool event
+  would: the agent goes on (after a denial too) but reports nothing until
+  the tool call ends, which for a long command would leave it shown waiting.
+  A daemon restart rebuilds the session from the record, which has no event
+  for either, so it shows its earlier wait until the next event.
 - **Messages.** At most one per session, replaced by a new one, accepted only
   for a listed session that has not ended and is not waiting for its next
   prompt (`turn_finished`): a Stop hook will come. `agent.take-message`

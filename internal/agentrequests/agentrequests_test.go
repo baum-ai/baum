@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -210,6 +211,70 @@ func TestWithdrawals(t *testing.T) {
 		}
 		if notified.Load() == before {
 			t.Fatal("the app was not told")
+		}
+	})
+	t.Run("the hook went away: interrupted, unless it timed out", func(t *testing.T) {
+		for _, c := range []struct {
+			name   string
+			ask    func() Ask
+			cancel bool
+			want   bool
+		}{
+			{"turned down in the terminal", func() Ask { return bash("make") }, true, true},
+			{"timed out", func() Ask { a := bash("make"); a.StartedAt = time.Now().Add(-ClaudeHold); return a }, true, false},
+			{"a subagent's", func() Ask { a := bash("make"); a.AgentID = "sub"; return a }, true, false},
+			{"withdrawn", func() Ask { return bash("make") }, false, false},
+		} {
+			t.Run(c.name, func(t *testing.T) {
+				s, _ := newStore(t)
+				var got []string
+				var mu sync.Mutex
+				s.Interrupted = func(agent, session string, _ time.Time) {
+					mu.Lock()
+					defer mu.Unlock()
+					got = append(got, agent+"/"+session)
+				}
+				ctx, cancel := context.WithCancel(context.Background())
+				defer cancel()
+				a := c.ask()
+				ch, _ := ask(t, ctx, s, a)
+				if c.cancel {
+					cancel()
+				} else {
+					s.Observe(event("post-tool-use", a.Digest))
+				}
+				decision(t, ch)
+				mu.Lock()
+				defer mu.Unlock()
+				if want := c.want; (len(got) == 1 && got[0] == "claude-code/s1") != want || (!want && len(got) != 0) {
+					t.Fatalf("interrupted %v, want %v", got, want)
+				}
+			})
+		}
+	})
+	t.Run("answered in the app", func(t *testing.T) {
+		s, _ := newStore(t)
+		var answered, interrupted []string
+		var mu sync.Mutex
+		s.Answered = func(agent, session string, _ time.Time) {
+			mu.Lock()
+			defer mu.Unlock()
+			answered = append(answered, agent+"/"+session)
+		}
+		s.Interrupted = func(agent, session string, _ time.Time) {
+			mu.Lock()
+			defer mu.Unlock()
+			interrupted = append(interrupted, agent+"/"+session)
+		}
+		ch, id := ask(t, context.Background(), s, bash("make"))
+		if err := s.Answer(id, Reply{Behavior: BehaviorDeny}); err != nil {
+			t.Fatal(err)
+		}
+		decision(t, ch)
+		mu.Lock()
+		defer mu.Unlock()
+		if len(answered) != 1 || answered[0] != "claude-code/s1" || len(interrupted) != 0 {
+			t.Fatalf("answered %v, interrupted %v", answered, interrupted)
 		}
 	})
 	t.Run("answered in the terminal before the request arrived", func(t *testing.T) {
