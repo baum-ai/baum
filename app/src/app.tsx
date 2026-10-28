@@ -1005,24 +1005,30 @@ function JobRow({ job, cancel }: { job: Job; cancel: () => Promise<void> }) {
     <li id={`job-${job.id}`} className="local-job-row">
       <JobState job={job} />
       <div className="min-w-0">
-        <LocalLink
-          href={appURL(
-            job.group
-              ? `?group=${encodeURIComponent(job.group)}`
-              : `?${job.clone ? `clone=${encodeURIComponent(job.clone)}` : `repository=${encodeURIComponent(job.repository)}`}&pr=${job.pr}`,
-          )}
-          className="local-job-title"
-        >
-          {job.group ? (
-            <>
-              Review group: {job.group_name || job.group} <span>{job.repository}</span>
-            </>
-          ) : (
-            <>
-              {job.repository} <span>#{job.pr}</span>
-            </>
-          )}
-        </LocalLink>
+        {job.kind === "feature_build" ? (
+          <span className="local-job-title">
+            Feature build <span>· {job.repository}</span>
+          </span>
+        ) : (
+          <LocalLink
+            href={appURL(
+              job.group
+                ? `?group=${encodeURIComponent(job.group)}`
+                : `?${job.clone ? `clone=${encodeURIComponent(job.clone)}` : `repository=${encodeURIComponent(job.repository)}`}&pr=${job.pr}`,
+            )}
+            className="local-job-title"
+          >
+            {job.group ? (
+              <>
+                Review group: {job.group_name || job.group} <span>{job.repository}</span>
+              </>
+            ) : (
+              <>
+                {job.repository} <span>#{job.pr}</span>
+              </>
+            )}
+          </LocalLink>
+        )}
         <p className="local-job-meta">
           {job.kind === "fix" ? `${fixName(job.fix ?? {})} · ` : null}
           {started ?? "Started by you"}

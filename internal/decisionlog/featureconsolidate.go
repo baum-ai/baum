@@ -238,7 +238,7 @@ func (r *featureRun) shownSummary(ctx context.Context, number int, generated map
 func heldApart(a, b *consolidationFeature, now time.Time) bool {
 	recent := func(f *consolidationFeature) bool { return f.splitFrom != "" && now.Sub(f.splitAt) < FeatureSplitHold }
 	return (recent(a) && a.splitFrom == b.ID) || (recent(b) && b.splitFrom == a.ID) ||
-		(recent(a) && recent(b) && a.splitFrom == b.splitFrom)
+		((recent(a) || recent(b)) && a.splitFrom != "" && a.splitFrom == b.splitFrom)
 }
 
 // plannedSplit is a split call's feature and its validated reply.
@@ -397,8 +397,9 @@ func (r *featureRun) consolidate(ctx context.Context, gated bool) (ConsolidateRe
 		return cmp.Or(cmp.Compare(len(after[b]), len(after[a])), cmp.Compare(found[a].ID, found[b].ID))
 	})
 	var splits []plannedSplit
+	slots := 0
 	for _, i := range offered {
-		if report.Stopped != "" || len(splits) >= FeatureMaxSplits {
+		if slots >= FeatureMaxSplits {
 			break
 		}
 		f, pulls := found[i], after[i]
@@ -423,26 +424,27 @@ func (r *featureRun) consolidate(ctx context.Context, gated bool) (ConsolidateRe
 		if err != nil {
 			return report, err
 		}
+		// A call takes a slot whatever its outcome.
+		slots++
 		result, callErr := r.calls.complete(ctx, r.opts.Backend, r.opts.Model,
 			Attempt{Repository: r.repository, Stage: StageConsolidate, Item: kindFeature + ":" + f.ID}, request)
 		addCall(result)
 		switch {
 		case result.Skip != "":
-			// What was called is still written; the rest wait for a later
-			// pass.
+			// A call refused defers the pass: nothing is written.
 			report.Stopped = result.Skip
-			continue
+			return report, callErr
 		case callErr != nil && ctx.Err() != nil:
 			return report, ctx.Err()
+		case callErr != nil:
+			// A failed call defers the pass too.
+			return r.consolidationFailed(ctx, report, fingerprint, map[bool]int{true: 1}[result.Called], callErr)
 		}
-		var partition consolidate.Partition
-		if callErr == nil {
-			partition, callErr = consolidate.ParseSplitReply(result.JSON, rendered)
-		}
-		if callErr != nil {
+		partition, err := consolidate.ParseSplitReply(result.JSON, rendered)
+		if err != nil {
 			// Left whole and offered again once it changes.
 			report.InvalidSplits++
-			r.w.logger().Warn("feature log: split not made", "repository", r.repository, "error", callErr)
+			r.w.logger().Warn("feature log: split not made", "repository", r.repository, "error", err)
 			continue
 		}
 		planned := plannedSplit{feature: f, pulls: pulls, checked: len(partition.Parts) == 1}

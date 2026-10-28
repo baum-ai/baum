@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -235,8 +236,9 @@ func (b *featureBuilder) BuildFeatures(ctx context.Context, repository, dir stri
 	report, err := w.Build(ctx, repository, dir, decisionlog.BuildOptions{MaxCostUSD: capUSD, Gated: true, Progress: func(p decisionlog.BuildProgress) {
 		progress(jobs.Progress{Phase: p.Phase, Calls: p.Calls})
 	}})
-	if err == nil && !report.Current {
-		err = &jobs.StoppedError{Reason: report.Stopped}
+	if !report.Current && ctx.Err() == nil {
+		// A store error stops it too, as failed.
+		err = &jobs.StoppedError{Reason: cmp.Or(report.Stopped, "failed"), Err: err}
 	}
 	return report.SpentUSD, err
 }

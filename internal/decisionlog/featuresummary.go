@@ -258,7 +258,8 @@ WHERE fs.feature_id=?1 ORDER BY 2, 3, 1`, featureID))
 }
 
 // storeSummary writes a feature's text when its members did not change
-// since version was read, and reports whether it did. Complete text makes
+// since version was read and its version is not retired, and reports
+// whether it did. Complete text makes
 // the feature clean; incomplete text (written without a pull request's
 // summary) leaves it behind.
 func (s *Store) storeSummary(ctx context.Context, featureID string, version int64, text featureText, complete bool) (bool, error) {
@@ -271,7 +272,7 @@ func (s *Store) storeSummary(ctx context.Context, featureID string, version int6
 	}
 	result, err := s.db.ExecContext(ctx, `UPDATE feature SET title=?1, description=?2, digest=?3, key_decisions_json=?4, summary_input_hash=?5,
 summarized_version=CASE WHEN ?6 THEN ?7 ELSE summarized_version END, dirty_since=CASE WHEN ?6 THEN NULL ELSE dirty_since END
-WHERE id=?8 AND membership_version=?7`, text.Title, text.Description, text.Digest, string(keys), text.InputHash, complete, version, featureID)
+WHERE id=?8 AND membership_version=?7 AND version_id IN (SELECT id FROM feature_version WHERE state != 'retired')`, text.Title, text.Description, text.Digest, string(keys), text.InputHash, complete, version, featureID)
 	if err != nil {
 		return false, err
 	}

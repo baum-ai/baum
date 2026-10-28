@@ -197,10 +197,11 @@ func (w *FeatureWorker) EstimateBuild(ctx context.Context, repository, dir strin
 }
 
 // estimateCost prices the calls a build of items would make, from the
-// sizes of their inputs (README.md, "First build"): the batches, the
-// features' text twice, a summary of every pull request with a
-// description, and one consolidation pass; with the most a
-// batch call is held to under the cap.
+// sizes of their inputs (README.md, "First build"): the batches, the new
+// features' text twice and the text of a resumed version's features behind
+// their members, a summary of every pull request with a description, and
+// the consolidation pass unless the version had it; with the most a batch
+// call is held to under the cap.
 func (r *featureRun) estimateCost(ctx context.Context, items []buildItem, p planned) (float64, float64, bool, error) {
 	batchVersion, _ := assign.Public.BatchVersion(AssignVersion)
 	batchRequest, err := assign.Public.Request(batchVersion, "", assign.MaxBatchOutputTokens)
@@ -226,7 +227,19 @@ func (r *featureRun) estimateCost(ctx context.Context, items []buildItem, p plan
 		}
 		sizes[i] = size{bytes, len(pull.Body)}
 	}
-	features := 0
+	// What a resumed version already holds: its features, those whose text
+	// is behind, and whether its pass was made.
+	var existing, behind int
+	var consolidated bool
+	if r.version != 0 {
+		if err := r.w.Store.db.QueryRowContext(ctx, `SELECT
+(SELECT COUNT(*) FROM feature WHERE version_id=?1 AND merged_into IS NULL),
+(SELECT COUNT(*) FROM feature WHERE version_id=?1 AND merged_into IS NULL AND summarized_version < membership_version),
+(SELECT consolidated_at IS NOT NULL FROM feature_version WHERE id=?1)`, r.version).Scan(&existing, &behind, &consolidated); err != nil {
+			return 0, 0, false, err
+		}
+	}
+	features, created := existing, 0
 	for start := 0; start < len(items); start += FeatureBatch {
 		bytes := len(batchRequest.System) + 2000
 		batch := sizes[start:min(len(sizes), start+FeatureBatch)]
@@ -238,13 +251,14 @@ func (r *featureRun) estimateCost(ctx context.Context, items []buildItem, p plan
 		if cost, ok := callCost(r.calls.prices, p.Backend, p.Model, int64(bytes/FeatureBuildBytesPerToken), assign.MaxBatchOutputTokens); ok {
 			reserved = max(reserved, cost)
 		}
-		features = (start + len(batch) + FeatureEstimatePullsPerFeature - 1) / FeatureEstimatePullsPerFeature
+		created = (start + len(batch) + FeatureEstimatePullsPerFeature - 1) / FeatureEstimatePullsPerFeature
+		features = existing + created
 	}
 	textRequest, err := summary.Public.Request(SummaryVersion, summary.Feature, "", summary.MaxOutputTokens)
 	if err != nil {
 		return 0, 0, false, err
 	}
-	for range features * FeatureEstimateTextPasses {
+	for range created*FeatureEstimateTextPasses + behind {
 		add(tokens(len(textRequest.System)+FeatureEstimateTextBytes), FeatureEstimateTextOutputTokens)
 	}
 	pullRequest, err := summary.Public.Request(SummaryVersion, summary.PullRequest, "", summary.MaxOutputTokens)
@@ -256,7 +270,7 @@ func (r *featureRun) estimateCost(ctx context.Context, items []buildItem, p plan
 			add(tokens(len(pullRequest.System)+min(s.body, 4000)+1000), FeatureEstimatePullOutputTokens)
 		}
 	}
-	if features > 0 {
+	if features > 0 && !consolidated {
 		merge, err := consolidate.Public.Request(ConsolidateVersion, consolidate.Merge, "", consolidate.MaxOutputTokens)
 		if err != nil {
 			return 0, 0, false, err
@@ -387,17 +401,20 @@ func (b *buildRun) run(ctx context.Context, consolidated bool) error {
 		case pass.Stopped != "":
 			return errBuildStop{pass.Stopped}
 		}
-		// A pass that failed or could not call is not made again: the
-		// weekly pass takes the version once it is current.
-		if _, err := b.w.Store.db.ExecContext(ctx, `UPDATE feature_version SET consolidated_at=? WHERE id=?`, b.now.UnixMilli(), b.version); err != nil {
-			return err
+		// A pass that failed is not recorded: the build still switches, and
+		// the weekly pass takes the version on its next run.
+		consolidated = pass.Outcome == ConsolidationDone
+		if consolidated {
+			if _, err := b.w.Store.db.ExecContext(ctx, `UPDATE feature_version SET consolidated_at=? WHERE id=?`, b.now.UnixMilli(), b.version); err != nil {
+				return err
+			}
 		}
 		if err := b.summarizeAll(ctx); err != nil {
 			return err
 		}
 	}
 	b.notify(BuildSwitching)
-	if err := b.w.Store.switchVersion(context.WithoutCancel(ctx), b.repository, b.version, b.now); err != nil {
+	if err := b.w.Store.switchVersion(context.WithoutCancel(ctx), b.repository, b.version, consolidated, b.now); err != nil {
 		return err
 	}
 	b.report.Current = true
@@ -633,9 +650,10 @@ func (b *buildRun) callBatch(ctx context.Context, items []buildItem) error {
 
 // switchVersion makes the building version current in one transaction: the
 // current one is retired, the pull requests left out lose their
-// settlement so the live placement takes them, and the switch is recorded
-// as the repository's last consolidation pass.
-func (s *Store) switchVersion(ctx context.Context, repository string, version int64, now time.Time) error {
+// settlement so the live placement takes them, and, when its pass was made
+// (consolidated), the switch is recorded as the repository's last
+// consolidation pass.
+func (s *Store) switchVersion(ctx context.Context, repository string, version int64, consolidated bool, now time.Time) error {
 	return s.inTx(ctx, func(tx *sql.Tx) error {
 		if _, err := tx.ExecContext(ctx, `UPDATE feature_version SET state=? WHERE repository=? AND state=?`, VersionRetired, repository, VersionCurrent); err != nil {
 			return err
@@ -650,6 +668,9 @@ func (s *Store) switchVersion(ctx context.Context, repository string, version in
 		}
 		if _, err := tx.ExecContext(ctx, `DELETE FROM feature_settle WHERE version_id=? AND outcome=?`, version, outcomeLeftOut); err != nil {
 			return err
+		}
+		if !consolidated {
+			return nil
 		}
 		fingerprint, err := featuresFingerprint(ctx, tx, version, repository)
 		if err != nil {

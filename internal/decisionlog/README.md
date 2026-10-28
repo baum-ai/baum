@@ -328,7 +328,8 @@ in the last 90 days (as placement's candidates), most recently active first.
   merged into another feature passes its origin and split time on.
 - **Split.** At most 3 features, as they will be after the merges, with more
   than 30 pull requests or pull requests opened more than 8 weeks apart,
-  largest first, get one split call each with their pull requests' text,
+  largest first, get one split call each (a call takes its slot whatever its
+  outcome) with their pull requests' text,
   state, opening date, placed paths and summaries. A feature kept whole, or
   too large to offer (over 200 pull requests or its input over its bound,
   which takes no slot), is recorded as checked (`split_checked_version`) and
@@ -346,13 +347,12 @@ in the last 90 days (as placement's candidates), most recently active first.
   partitioned; otherwise that one is skipped and the pass goes on. Writes
   mark every feature they change and the features of the sessions linked to
   the pull requests they move, for the text stage.
-- **Failures.** A merge call that fails, or whose reply does not decode,
-  writes nothing and backs the pass off as placement's failures do, counted
-  against the fingerprint. A split call that fails or replies invalidly
-  leaves that feature whole and unchecked. A merge call that cannot be made
-  (a backend, price or cap reason) stops the pass until the next run; a split
-  call that cannot be made stops the remaining split calls, and what was
-  called is written and the pass recorded.
+- **Failures.** A call that fails, or a merge reply that does not decode,
+  defers the whole pass: nothing is written, and the pass backs off as
+  placement's failures do, counted against the fingerprint. A split reply
+  that is invalid leaves only that feature whole and unchecked. A call that
+  cannot be made (a backend, price or cap reason) also writes nothing; the
+  pass is made again on the next run.
 
 ### First build
 
@@ -362,8 +362,9 @@ hosted rebuild does, by a first build: a job of the job queue
 (`jobs.KindFeatureBuild`) that runs only from a confirmed estimate, or `baum
 internal features build`.
 
-- **Estimate.** The pull requests left to place are counted and their calls
-  priced from their sizes at the configured backend and model: a batch call
+- **Estimate.** The pull requests left to place, and a resumed version's
+  features whose text is behind and its pass unless it was made, are
+  counted and their calls priced from their sizes at the configured backend and model: a batch call
   per 25 (the items' titles, descriptions and paths, and candidates for the
   features placed so far, a feature per 3 pull requests), the features' text
   twice, a summary of each pull request with a description, and one merge
@@ -393,21 +394,28 @@ internal features build`.
   debounce; a feature whose text fails backs off and is left for the text
   stage. Then the version gets its one consolidation pass
   (`consolidated_at`), whose changed features' text is written again; a pass
-  that fails is not made again, the weekly pass taking the version once it
-  is current.
+  that fails is not recorded and the build goes on, so the weekly pass takes
+  the version on its next run once it is current.
 - **Switching.** The building version becomes current in one transaction:
   the current one is retired, the skips become placement's settlements, the
   pull requests left out lose theirs so placement takes those within its
-  lookback, and the switch is recorded as the repository's last
-  consolidation. Work the live stages placed in the old version is in no
+  lookback, and, when its pass was made, the switch is recorded as the
+  repository's last consolidation. A live stage that raced the switch never
+  writes the retired version: a placement there fails and is retried, a
+  text write is dropped. Work the live stages placed in the old version is in no
   feature of the new one; placement takes what is within its lookback. A
   retired version is kept, and a link to one of its features resolves as
   archived.
 - **Stopping.** A build stops before a call whose estimate (as hosted: its
   prompt at two bytes a token and its whole reply bound) would take the
-  version's spend (`spent_usd`, added after every call: its cost, else its
-  reservation) past the cap, or that cannot be made, leaving the version
-  `building` with `stopped` set to why; confirming it again resumes it. Its
+  version's spend (`spent_usd`, added after every call: its cost, else
+  the estimate it was held to; nothing for a failed call that reported no
+  usage) past the cap, or that cannot be made (`cost_cap`, `unpriced_model`,
+  `spend_unrecorded` when a spend could not be recorded, `disabled`, a
+  backend or daily cap reason; `failed` for a store error), leaving the
+  version `building` with `stopped` set to why; confirming it again resumes
+  it. A backend that may make a further call within one completion (claude
+  retrying a rejected reply) can take the spend past the cap by that call. Its
   job then fails with that reason. Progress (phase, calls) is reported to
   the job and the version records its pull requests placed of the total.
 

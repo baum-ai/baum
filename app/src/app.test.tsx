@@ -951,6 +951,37 @@ it("marks automatically started jobs in the jobs list", async () => {
     "job-a",
   ]);
 });
+it("names a feature build by its repository in the jobs list", async () => {
+  history.replaceState(null, "", "/s/test-ns/?page=jobs");
+  const original = vi.mocked(fetch).getMockImplementation()!;
+  vi.mocked(fetch).mockImplementation((...args) =>
+    String(args[0]) === "/s/test-ns/api/jobs"
+      ? Promise.resolve(
+          Response.json({
+            jobs: [
+              {
+                id: "build",
+                clone: "clone",
+                repository: "acme/demo",
+                pr: 0,
+                kind: "feature_build",
+                state: "running",
+                phase: "placing",
+                calls: 3,
+                tokens: 0,
+                repairs: 0,
+                actual_cost_usd: null,
+              },
+            ],
+          }),
+        )
+      : original(...args),
+  );
+  await act(async () => root.render(<App />));
+  const row = node.querySelector("#job-build")!;
+  expect(row.querySelector(".local-job-title")!.textContent).toBe("Feature build · acme/demo");
+  expect(row.textContent).not.toContain("#0");
+});
 it("shows a diagnostics error with a retry that recovers", async () => {
   history.replaceState(null, "", "/s/test-ns/?page=diagnostics");
   let ok = false;

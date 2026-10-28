@@ -662,6 +662,10 @@ WHERE item.repository=?1 AND item.number=?2 AND other.number != item.number`,
 	return links, nil
 }
 
+// errVersionRetired is a write to a feature version a build's switch
+// retired.
+var errVersionRetired = errors.New("the feature version was retired")
+
 // placeTarget is an existing feature, or a new one's provisional text.
 type placeTarget struct {
 	FeatureID          string
@@ -669,8 +673,17 @@ type placeTarget struct {
 }
 
 // target resolves an existing feature, followed to the feature it was
-// merged into, or creates a new one.
+// merged into, or creates a new one; errVersionRetired for a retired
+// version.
 func target(ctx context.Context, tx *sql.Tx, version int64, repository string, t placeTarget, now time.Time) (string, error) {
+	// A run that raced a build's switch never writes the retired version.
+	var state string
+	if err := tx.QueryRowContext(ctx, `SELECT state FROM feature_version WHERE id=?`, version).Scan(&state); err != nil {
+		return "", err
+	}
+	if state == VersionRetired {
+		return "", errVersionRetired
+	}
 	if t.FeatureID == "" {
 		id := uuid.NewString()
 		_, err := tx.ExecContext(ctx, `INSERT INTO feature(id, version_id, repository, title, description, changed_at, created_at, updated_at)

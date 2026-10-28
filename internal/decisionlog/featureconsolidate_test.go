@@ -3,6 +3,7 @@ package decisionlog
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
@@ -209,5 +210,75 @@ func TestConsolidationSplit(t *testing.T) {
 	f.consolidate(FeatureOptions{Manual: true})
 	if f.backend.calls["split"] != 3 {
 		t.Fatal("a feature kept whole is not offered again once it changed")
+	}
+}
+
+// A failed split call defers the whole pass: nothing is written.
+func TestConsolidationFailedSplitDefersThePass(t *testing.T) {
+	f := newFeatureFixture(t)
+	version := f.live()
+	var numbers []int
+	for i := 1; i <= 31; i++ {
+		f.pull(i, fmt.Sprintf("Change %d", i), t0, fmt.Sprintf("h%d", i), []string{"a.go"})
+		numbers = append(numbers, i)
+	}
+	f.pull(40, "Other", t0, "h40", []string{"a.go"})
+	f.feature(version, "A", numbers...)
+	f.feature(version, "B", 40)
+	f.backend.merge = func(user string) (string, error) {
+		refs := mergeRefs(t, user)
+		return mergeReply(refs["Feature A"], refs["Feature B"]), nil
+	}
+	f.backend.split = func(string) (string, error) { return "", errors.New("refused") }
+	got := f.consolidate(FeatureOptions{})
+	if got.Outcome != FeatureDeferred || got.Merged != 0 || f.featureOf(40) != "B" {
+		t.Fatalf("report = %+v, pull request 40 in %s", got, f.featureOf(40))
+	}
+	if last, _, _ := f.store.consolidation(context.Background(), repo); !last.IsZero() {
+		t.Fatal("a deferred pass is recorded")
+	}
+}
+
+// At most three split calls a pass, the largest first; a feature too large
+// to offer takes no slot, and a call whose reply is invalid takes one.
+func TestConsolidationSplitSlots(t *testing.T) {
+	f := newFeatureFixture(t)
+	version := f.live()
+	n := 0
+	add := func(id string, count int) {
+		var numbers []int
+		for range count {
+			n++
+			f.pull(n, fmt.Sprintf("Change %d", n), t0, fmt.Sprintf("h%d", n), []string{"a.go"})
+			numbers = append(numbers, n)
+		}
+		f.feature(version, id, numbers...)
+	}
+	add("Huge", 201)
+	for _, id := range []string{"A", "B", "C", "D"} {
+		add(id, 31)
+	}
+	f.backend.merge = func(string) (string, error) { return `{"groups":[]}`, nil }
+	f.backend.split = func(string) (string, error) { return `{"parts":[]}`, nil }
+	got := f.consolidate(FeatureOptions{})
+	if f.backend.calls["split"] != 3 || got.InvalidSplits != 3 || got.KeptWhole != 1 {
+		t.Fatalf("split calls %d, report %+v", f.backend.calls["split"], got)
+	}
+}
+
+// Two parts of one split are held apart while either is within the hold.
+func TestHeldApartSiblings(t *testing.T) {
+	now := t0
+	part := func(id string, age time.Duration) *consolidationFeature {
+		return &consolidationFeature{candidateFeature: &candidateFeature{ID: id}, splitFrom: "O", splitAt: now.Add(-age)}
+	}
+	if !heldApart(part("a", 60*24*time.Hour), part("b", time.Hour), now) {
+		t.Fatal("a recent part merges into an older sibling")
+	}
+	if heldApart(part("a", 60*24*time.Hour), part("b", 60*24*time.Hour), now) {
+		t.Fatal("parts of an old split are held apart")
+	}
+	if heldApart(&consolidationFeature{candidateFeature: &candidateFeature{ID: "x"}}, &consolidationFeature{candidateFeature: &candidateFeature{ID: "y"}}, now) {
+		t.Fatal("features never split are held apart")
 	}
 }

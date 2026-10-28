@@ -212,3 +212,49 @@ func TestGatedBuildStopsWhenTurnedOff(t *testing.T) {
 		t.Fatalf("a build of a repository turned off = %+v", again)
 	}
 }
+
+// A build stopped at its cap while writing the text resumes with the
+// default cap: the estimate counts the version's text and pass still to do.
+func TestBuildStoppedInTheTextResumesWithTheDefaultCap(t *testing.T) {
+	f := newFeatureFixture(t)
+	f.clock.now = t0.Add(60 * 24 * time.Hour)
+	f.history(25)
+	f.backend.usage = &agent.Usage{Input: 1000, Output: 100_000}
+	f.backend.merge = func(string) (string, error) { return `{"groups":[]}`, nil }
+	f.backend.batch = func(user string) (string, error) { return batchReply(t, user, ""), nil }
+	// Room for the batch call, not the text call after it.
+	first := f.build(BuildOptions{MaxCostUSD: 0.052})
+	if first.Current || first.Stopped != ReasonBuildCap || first.Placed != 25 || f.backend.calls["text"] != 0 {
+		t.Fatalf("first = %+v", first)
+	}
+	f.backend.usage = nil
+	estimate, err := f.worker.EstimateBuild(context.Background(), repo, "", BuildOptions{})
+	if err != nil || estimate.PullRequests != 0 || estimate.EstimateUSD == nil || *estimate.EstimateUSD <= 0 || estimate.Cap() <= estimate.SpentUSD {
+		t.Fatalf("estimate = %+v, %v", estimate, err)
+	}
+	if second := f.build(BuildOptions{}); !second.Current || second.Consolidation == nil {
+		t.Fatalf("second = %+v", second)
+	}
+}
+
+// A build whose pass failed still switches, without recording the pass, so
+// the weekly pass takes the version on its next run.
+func TestBuildWithAFailedPassSwitchesUnrecorded(t *testing.T) {
+	f := newFeatureFixture(t)
+	f.clock.now = t0.Add(60 * 24 * time.Hour)
+	f.history(50)
+	f.backend.batch = func(user string) (string, error) { return batchReply(t, user, ""), nil }
+	f.backend.merge = func(string) (string, error) { return "", errors.New("refused") }
+	report := f.build(BuildOptions{})
+	if !report.Current || report.Consolidation == nil || report.Consolidation.Outcome != FeatureDeferred {
+		t.Fatalf("report = %+v", report)
+	}
+	if last, _, _ := f.store.consolidation(context.Background(), repo); !last.IsZero() {
+		t.Fatal("the failed pass is recorded")
+	}
+	f.backend.merge = func(string) (string, error) { return `{"groups":[]}`, nil }
+	f.clock.now = f.clock.now.Add(FeatureBackoff + time.Minute)
+	if pass := f.consolidate(FeatureOptions{}); pass.Outcome != ConsolidationDone {
+		t.Fatalf("the weekly pass = %+v", pass)
+	}
+}

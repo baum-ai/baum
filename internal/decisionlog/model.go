@@ -254,7 +254,14 @@ type buildBudget struct {
 	run   float64
 	calls int
 	full  bool
+	// unrecorded is set once a call's spend could not be added to the
+	// version's.
+	unrecorded bool
 }
+
+// ReasonSpendUnrecorded stops a first build whose version did not record a
+// call's spend.
+const ReasonSpendUnrecorded = "spend_unrecorded"
 
 // Reasons a feature stage call was not made, besides the skip reasons.
 const (
@@ -404,11 +411,19 @@ func (c caller) complete(ctx context.Context, backend, model string, a Attempt, 
 	if skip != "" {
 		return callResult{Skip: skip}, nil
 	}
+	// next is what a build's call is held to under its cap.
+	var next float64
 	if b := c.budget; b != nil {
 		// As hosted, a build's call is held to an estimate rather than the
 		// byte bound: its prompt at two bytes a token and its whole reply.
-		next, ok := callCost(c.prices, p.Backend, p.Model, decisions.MaxRequestTokens(req)/FeatureBuildBytesPerToken, req.MaxOutputTokens)
-		if !ok || b.full || b.spent+next > b.cap {
+		var ok bool
+		if next, ok = callCost(c.prices, p.Backend, p.Model, decisions.MaxRequestTokens(req)/FeatureBuildBytesPerToken, req.MaxOutputTokens); !ok {
+			return callResult{Skip: ReasonUnpriced}, nil
+		}
+		if b.unrecorded {
+			return callResult{Skip: ReasonSpendUnrecorded}, nil
+		}
+		if b.full || b.spent+next > b.cap {
 			b.full = true
 			return callResult{Skip: ReasonBuildCap}, nil
 		}
@@ -422,14 +437,19 @@ func (c caller) complete(ctx context.Context, backend, model string, a Attempt, 
 	_, spent, _, err := c.finish(context.WithoutCancel(ctx), id, m, callErr, ctx.Err() != nil)
 	result := callResult{JSON: response.JSON, Called: m.called, Cost: spent}
 	if b := c.budget; b != nil && m.called {
-		paid := p.Reserved
-		if spent != nil {
+		// A call whose cost is unknown is charged the estimate it was held
+		// to; a failed one that reported no usage spent nothing.
+		paid := next
+		switch {
+		case spent != nil:
 			paid = *spent
+		case callErr != nil && m.usage.IsZero():
+			paid = 0
 		}
 		b.spent, b.run, b.calls = b.spent+paid, b.run+paid, b.calls+1
 		if recordErr := c.store.addVersionSpend(context.WithoutCancel(ctx), b.version, paid); recordErr != nil {
 			// A spend the version did not record stops the build.
-			b.full = true
+			b.unrecorded = true
 			c.log.Warn("decision log: build spend not recorded", "error", recordErr)
 		}
 	}

@@ -75,11 +75,17 @@ type FeatureBuilder interface {
 // StoppedError is a feature build that stopped before it finished, for
 // Reason (a cost or daily cap, an unavailable backend, or "failed"); the
 // job fails with that reason.
-type StoppedError struct{ Reason string }
+type StoppedError struct {
+	Reason string
+	// Err is the error that stopped it, if one did.
+	Err error
+}
 
 func (e *StoppedError) Error() string {
 	return "the feature build stopped (" + e.Reason + "); confirm it again to resume"
 }
+
+func (e *StoppedError) Unwrap() error { return e.Err }
 
 // FixInputs are what a fix job was confirmed for: what it fixes, the branch
 // it pushes to and the base branch it merges.
@@ -598,7 +604,7 @@ func (q *Queue) SubmitConfirmed(ctx context.Context, estimateID string, c Confir
 		if err != nil {
 			return nil, err
 		}
-		if current.ConfigDigest != p.ConfigDigest || current.HeadSHA != p.HeadSHA || current.Members != p.Members || current.Backend != p.Backend || current.Model != p.Model || current.RequiresIsolationConfirmation != p.RequiresIsolationConfirmation || current.BlockedReason != "" || version != e.PriceVersion || !sameEstimate(current, p) || current.Fix != p.Fix {
+		if current.ConfigDigest != p.ConfigDigest || current.HeadSHA != p.HeadSHA || current.Members != p.Members || current.Backend != p.Backend || current.Model != p.Model || current.RequiresIsolationConfirmation != p.RequiresIsolationConfirmation || current.BlockedReason != "" || version != e.PriceVersion || !sameEstimate(current, p) || current.Fix != p.Fix || current.BuildCapUSD != p.BuildCapUSD {
 			return nil, errors.New("generation inputs changed; estimate again")
 		}
 		prepared = append(prepared, current)
