@@ -55,7 +55,8 @@ decision. A pull request without a summary gets one from its own call.
 `consolidate` renders a repository's features for a merge call, which groups
 duplicates, and one oversized feature's pull requests for a split call, which
 partitions them. A reply places every member at most once (merge) or exactly
-once (split).
+once (split). A reply is bounded by `MaxOutputTokens` unless the host asks for
+more, up to `MaxHostOutputTokens`.
 
 ## Decision attribution
 

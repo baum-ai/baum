@@ -280,13 +280,13 @@ func (r *featureRun) estimateCost(ctx context.Context, items []buildItem, p plan
 		add(tokens(len(pullRequest.System)+3000), FeatureEstimatePullOutputTokens)
 	}
 	if features > 0 && !consolidated {
-		merge, err := consolidate.Public.Request(ConsolidateVersion, consolidate.Merge, "", consolidate.MaxOutputTokens)
+		merge, err := consolidate.Public.Request(ConsolidateVersion, consolidate.Merge, "", FeatureConsolidateOutputTokens)
 		if err != nil {
 			return 0, 0, false, err
 		}
 		bytes := len(merge.System) + min(features*FeatureEstimateCandidateBytes, consolidate.DefaultMaxInputBytes)
 		add(tokens(bytes), FeatureEstimateConsolidateOutputTokens)
-		if cost, ok := callCost(r.calls.prices, p.Backend, p.Model, int64(bytes/FeatureBuildBytesPerToken), consolidate.MaxOutputTokens); ok {
+		if cost, ok := callCost(r.calls.prices, p.Backend, p.Model, int64(bytes/FeatureBuildBytesPerToken), FeatureConsolidateOutputTokens); ok {
 			reserved = max(reserved, cost)
 		}
 		for range min(FeatureMaxSplits, features) {

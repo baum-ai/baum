@@ -68,6 +68,11 @@ const (
 	FeatureSplitPulls = 30
 	FeatureSplitAge   = 8 * 7 * 24 * time.Hour
 	FeatureMaxSplits  = 3
+	// FeatureConsolidateOutputTokens bounds a merge or split reply. Hosted
+	// uses consolidate.MaxOutputTokens; locally Claude Code's models think
+	// within the reply's bound whatever thinking is set to, and a merge over a
+	// first build's features ran out of it, so local calls get more room.
+	FeatureConsolidateOutputTokens = 4 * consolidate.MaxOutputTokens
 	// FeatureSplitHold is how long after a split a merge undoing it is not
 	// applied.
 	FeatureSplitHold = 4 * 7 * 24 * time.Hour

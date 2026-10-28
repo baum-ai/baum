@@ -105,6 +105,23 @@ its debounce, and prints each feature taken as JSON.`,
 		},
 	}
 	callFlags(summarize)
+	consolidate := &cobra.Command{
+		Use:   "consolidate",
+		Short: "Consolidate the repository's features once",
+		Long: `Consolidate makes one consolidation pass over the repository's current
+features, without its gate, weekly interval or fingerprint check, and prints
+what it did as JSON.`,
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			o.Manual = true
+			return runFeatures(cmd, repository, clone, 0, true, func(ctx context.Context, w *decisionlog.FeatureWorker, dir string) (any, error) {
+				return w.Consolidate(ctx, repository, dir, o)
+			})
+		},
+	}
+	flags(consolidate)
+	consolidate.Flags().StringVar(&o.Backend, "backend", "", "backend to call instead of the configured one")
+	consolidate.Flags().StringVar(&o.Model, "model", "", "model to call instead of the configured one")
 	var build decisionlog.BuildOptions
 	buildCmd := &cobra.Command{
 		Use:   "build",
@@ -136,7 +153,7 @@ the daemon stopped.`,
 	buildCmd.Flags().BoolVar(&build.DryRun, "dry-run", false, "print the estimate; write nothing")
 	buildCmd.Flags().StringVar(&build.Backend, "backend", "", "backend to call instead of the configured one")
 	buildCmd.Flags().StringVar(&build.Model, "model", "", "model to call instead of the configured one")
-	cmd.AddCommand(sync, link, place, summarize, buildCmd)
+	cmd.AddCommand(sync, link, place, summarize, consolidate, buildCmd)
 	return cmd
 }
 

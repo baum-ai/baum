@@ -203,7 +203,7 @@ session with no capture row has none.
 Placement, feature text and consolidation call as capture does (steps 6 to
 8 above): the same backend, model, reservation (the request's byte bound and
 the call's reply bound: 4,096 tokens for a placement, 32,768 for a batch,
-8,192 for a text, pull request summary, merge or split), daily cap and
+merge or split, 8,192 for a text or pull request summary), daily cap and
 ledger, each attempt recorded with its stage (`feature_assign`,
 `feature_summary`, `pr_summary` or `feature_consolidate`) and item. Rejected
 replies and a ledger that cannot be written are handled as capture's. The
@@ -314,6 +314,9 @@ changed since the last pass (`feature_consolidation`). A pass's own merges
 and splits are changes, so one that changed features is followed by another
 a week later. A pass reads the features not merged into another and active
 in the last 90 days (as placement's candidates), most recently active first.
+Its calls' replies may run to 32,768 tokens rather than hosted's 8,192:
+Claude Code's models think within the reply's bound even with thinking
+turned off, and a merge over a first build's features needs the room.
 
 - **Merge.** With two features or more, one call sees each feature's text,
   digest, paths, pull requests with their summaries (the saved review's,
@@ -457,6 +460,9 @@ once, ignoring the activation, and prints each item; `--dry-run` prints each
 item's candidates and input size, makes no call and writes nothing.
 `baum internal features summarize` takes the same flags but `--dry-run` and
 writes the text of the features behind, without the debounce. `baum
+internal features consolidate` takes `--repo`, `--clone`, `--backend` and
+`--model` and makes one pass over the current features without the
+interval or fingerprint check. `baum
 internal features build --repo <owner/name> [--clone <path>]
 [--max-cost-usd N] [--dry-run] [--backend <b>] [--model <m>]` runs a first
 build without the gate, a line a batch on standard error and its report as

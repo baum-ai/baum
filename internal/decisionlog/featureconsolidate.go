@@ -325,7 +325,7 @@ func (r *featureRun) consolidate(ctx context.Context, gated bool) (ConsolidateRe
 		if err != nil {
 			return report, err
 		}
-		request, err := consolidate.Public.Request(ConsolidateVersion, consolidate.Merge, rendered.Input, consolidate.MaxOutputTokens)
+		request, err := consolidate.Public.Request(ConsolidateVersion, consolidate.Merge, rendered.Input, FeatureConsolidateOutputTokens)
 		if err != nil {
 			return report, err
 		}
@@ -420,7 +420,7 @@ func (r *featureRun) consolidate(ctx context.Context, gated bool) (ConsolidateRe
 		if err != nil {
 			return report, err
 		}
-		request, err := consolidate.Public.Request(ConsolidateVersion, consolidate.Split, rendered.Input, consolidate.MaxOutputTokens)
+		request, err := consolidate.Public.Request(ConsolidateVersion, consolidate.Split, rendered.Input, FeatureConsolidateOutputTokens)
 		if err != nil {
 			return report, err
 		}
