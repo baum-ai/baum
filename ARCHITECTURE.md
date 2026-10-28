@@ -2117,9 +2117,10 @@ pull request GitHub now reports as a draft (the queue marks its inputs
 `Interrupted` ignore it, and `Refused` lists it while it is the latest job for
 its head.
 
-`internal/pricing` ports the platform's pure pricing implementation and baseline
-into the independent OSS module; its signature, tier and normalization tests are
-retained. Keep these copied core files synchronized with the platform package.
+`pricing` owns the shared pricing implementation and compiled baseline used by
+the local product and hosted platform. Signature, tier and normalization tests
+live with that implementation; `internal/pricing` is a stateless import facade
+for local callers.
 A bounded HTTPS downloader refuses redirects, verifies the existing release
 signing key, rejects flattened lists and installs only newer full-format lists.
 An installed download is stored with its signature in the job state directory.
