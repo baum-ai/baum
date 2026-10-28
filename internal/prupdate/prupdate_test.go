@@ -43,6 +43,8 @@ type fakeGitHub struct {
 
 	writes []string
 	bodies []string
+	// gets are the REST reads it answered.
+	gets []string
 }
 
 func (f *fakeGitHub) client() *github.Client {
@@ -51,6 +53,9 @@ func (f *fakeGitHub) client() *github.Client {
 			return &http.Response{StatusCode: status, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(body)), Request: r}, nil
 		}
 		path := r.URL.Path
+		if r.Method == "GET" {
+			f.gets = append(f.gets, path)
+		}
 		switch {
 		case path == "/graphql":
 			var body struct {
@@ -313,7 +318,7 @@ func TestReviewThreadsAreCachedWhileTheCountMatches(t *testing.T) {
 		return `{"data":{"repository":{"pullRequest":{"headRefOid":"abc","reviewThreads":{"pageInfo":{"hasNextPage":false},"nodes":[` + threads + `]}}}}}`
 	}}
 	now := time.Date(2026, 10, 28, 12, 0, 0, 0, time.UTC)
-	s := Service{Client: fake.client(), Threads: &ThreadCache{Now: func() time.Time { return now }}}
+	s := Service{Client: fake.client(), Cache: &Cache{Now: func() time.Time { return now }}}
 	ctx := context.Background()
 	list := func(unresolved int) []string {
 		t.Helper()
@@ -356,7 +361,7 @@ func TestReviewThreadsAreCachedWhileTheCountMatches(t *testing.T) {
 
 func TestReviewThreadsForgetAnAccountChange(t *testing.T) {
 	reads := 0
-	var cache *ThreadCache
+	var cache *Cache
 	resetDuringRead := false
 	fake := fakeGitHub{graphql: func(string, map[string]any) string {
 		reads++
@@ -366,8 +371,8 @@ func TestReviewThreadsForgetAnAccountChange(t *testing.T) {
 		return `{"data":{"repository":{"pullRequest":{"headRefOid":"abc","reviewThreads":{"pageInfo":{"hasNextPage":false},"nodes":[
 			{"id":"RT_1","path":"a.go","line":1,"isResolved":false,"viewerCanResolve":true,"comments":{"totalCount":1,"nodes":[{"state":"SUBMITTED","body":"One.","author":{"__typename":"User","login":"alice"}}]}}]}}}}}`
 	}}
-	cache = &ThreadCache{}
-	s := Service{Client: fake.client(), Threads: cache}
+	cache = &Cache{}
+	s := Service{Client: fake.client(), Cache: cache}
 	ctx := context.Background()
 	read := func() {
 		t.Helper()
@@ -393,5 +398,54 @@ func TestReviewThreadsForgetAnAccountChange(t *testing.T) {
 	read()
 	if reads != 4 {
 		t.Fatalf("read across an account change was kept: %d reads, want 4", reads)
+	}
+}
+
+func TestFailingChecks(t *testing.T) {
+	fake := fakeGitHub{head: "abc", canPush: true, runs: []string{run(11, "CI", "completed", "failure")}, checks: []string{
+		`{"id":21,"name":"test","conclusion":"failure","html_url":"https://github.com/acme/app/runs/21","app":{"slug":"github-actions"},"output":{"title":"","summary":"**2 tests failed** in ` + "`pkg`" + `"}}`,
+		`{"id":22,"name":"lint","conclusion":"success","app":{"slug":"github-actions"},"output":{}}`,
+		`{"id":23,"name":"ci/circle","conclusion":"timed_out","details_url":"https://circleci.com/x","html_url":"https://github.com/acme/app/runs/23","app":{"slug":"circleci"},"output":{"title":"Timed out after 1h"}}`,
+	}}
+	now := time.Date(2026, 10, 28, 12, 0, 0, 0, time.UTC)
+	s := Service{Client: fake.client(), Cache: &Cache{Now: func() time.Time { return now }}}
+	ctx := context.Background()
+	got, err := s.FailingChecks(ctx, repo, 7, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := Checks{HeadSHA: "abc", Checks: []FailingCheck{
+		{Name: "test", Conclusion: "failure", Title: "2 tests failed in pkg", URL: "https://github.com/acme/app/runs/21", Actions: true},
+		{Name: "ci/circle", Conclusion: "timed_out", Title: "Timed out after 1h", URL: "https://circleci.com/x"},
+	}}
+	if fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Fatalf("checks %+v, want %+v", got, want)
+	}
+	reads := func() int {
+		n := 0
+		for _, path := range fake.gets {
+			if strings.HasSuffix(path, "/check-runs") {
+				n++
+			}
+		}
+		return n
+	}
+	// With no head the pull request was read for it, so nothing is cached under "".
+	if _, err := s.FailingChecks(ctx, repo, 7, "abc"); err != nil || reads() != 1 {
+		t.Fatalf("cached checks read again: %d reads, %v", reads(), err)
+	}
+	if _, err := s.FailingChecks(ctx, repo, 7, "other"); err != nil || reads() != 2 {
+		t.Fatalf("another head: %d reads, %v", reads(), err)
+	}
+	if _, err := s.RerunFailedChecks(ctx, repo, 7, "abc"); err != nil {
+		t.Fatal(err)
+	}
+	before := reads()
+	if _, err := s.FailingChecks(ctx, repo, 7, "abc"); err != nil || reads() != before+1 {
+		t.Fatalf("checks kept after a re-run: %d reads, %v", reads()-before, err)
+	}
+	now = now.Add(DefaultChecksTTL)
+	if _, err := s.FailingChecks(ctx, repo, 7, "abc"); err != nil || reads() != before+2 {
+		t.Fatalf("expired checks kept: %d reads, %v", reads()-before, err)
 	}
 }

@@ -2034,7 +2034,7 @@ publishes an index change.
 
 The same handler lists and resolves review threads for the Inbox's panel. `GET
 /api/prs/review-threads?repository=&pr=&unresolved=` answers `{threads,
-capped}`. `prupdate.ThreadCache` keeps each pull request's list in memory for
+capped}`. `prupdate.Cache` keeps each pull request's list in memory for
 10 minutes and serves it while it holds as many threads as `unresolved`,
 discovery's count (absent: not compared; a capped list is never compared), so
 a thread opened or resolved on GitHub is read again once discovery sees it; an
@@ -2055,6 +2055,19 @@ resolve (`forbidden`); a thread already resolved answers success without a
 write. Otherwise it sends `resolveReviewThread` once and, like the other writes,
 polls discovery and publishes an index change. No reply is posted. A thread
 resolved from the app, or found resolved, leaves the cached list at once.
+
+`GET /api/prs/failing-checks?repository=&pr=&head_sha=` lists the failing
+checks of `head_sha` (the head the app shows; absent, the pull request's head
+is read first) with `fix.FailingChecks`, the fix's evidence read: check runs
+of their latest attempt whose conclusion is `failure`, `timed_out`,
+`startup_failure` or `action_required`, and commit statuses in `error` or
+`failure`, at most 20. It answers `{head_sha, checks}`, each check's `name`,
+`conclusion`, `title` (its output title, else the headline of its summary or a
+status's description, cut to 160 characters), `url` (`details_url`, else
+`html_url`, or a status's `target_url`; the fix prompt leaves it out) and
+`actions` (a GitHub Actions job). `prupdate.Cache` keeps a head's list for 2
+minutes, forgets it when Re-run checks starts a run of that head, and is
+emptied with the threads on an account change.
 
 The review index exposes discovery states for all open rows, including rows
 without a saved review or with an unreadable store. Saved review time comes from

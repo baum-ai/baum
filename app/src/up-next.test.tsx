@@ -578,3 +578,42 @@ it("says why resolving a review thread failed and keeps it", async () => {
   expect(alert.textContent).toBe("Your GitHub account cannot resolve this review thread.");
   expect(button("Resolve").disabled).toBe(false);
 });
+
+it("lists the failing checks of the head it shows, each linking to its details", async () => {
+  entries = [mine(2, { checks: "failing" })];
+  const original = vi.mocked(fetch).getMockImplementation()!;
+  vi.mocked(fetch).mockImplementation(async (...args) =>
+    String(args[0]).includes("api/prs/failing-checks")
+      ? Response.json({
+          head_sha: "head",
+          checks: [
+            {
+              name: "test",
+              conclusion: "failure",
+              title: "2 tests failed in pkg",
+              url: "https://github.com/acme/demo/runs/21",
+              actions: true,
+            },
+            { name: "ci/circle", conclusion: "timed_out", actions: false },
+          ],
+        })
+      : original(...args),
+  );
+  await render();
+  expect(shown()).toBe("Change 2");
+  const items = Array.from(panel().querySelectorAll('[aria-label="Failing checks"] li'));
+  expect(items.map((item) => item.textContent)).toEqual([
+    "testFailed · 2 tests failed in pkgDetails",
+    "ci/circleTimed out",
+  ]);
+  expect(items[0]!.querySelector("a")!.getAttribute("href")).toBe(
+    "https://github.com/acme/demo/runs/21",
+  );
+  const asked = vi
+    .mocked(fetch)
+    .mock.calls.map(([path]) => String(path))
+    .filter((path) => path.includes("api/prs/failing-checks"));
+  expect(asked).toEqual([
+    "/s/test-ns/api/prs/failing-checks?repository=acme%2Fdemo&pr=2&head_sha=head",
+  ]);
+});

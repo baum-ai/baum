@@ -80,13 +80,19 @@ The Inbox's panel lists a fix's unresolved review threads under the row that
 counts them (`ReviewThreads` in `src/threads.tsx`), asked for with `GET
 api/prs/review-threads` and discovery's `unresolved` count when the panel shows
 the pull request and again when that count changes. The daemon answers from
-its cache while the count matches (see `prupdate.ThreadCache`), so moving
+its cache while the count matches (see `prupdate.Cache`), so moving
 through the Inbox does not read GitHub each time. Each shows its first comment's
 headline (at most two lines), its author, its file and line linked to the thread on GitHub, whether
 it is outdated and how many comments it has. A thread the signed-in account
 may resolve (`can_resolve`) has a **Resolve** button that posts `api/prs/resolve-thread`
 at once, without a dialog, reads **Resolving…** meanwhile, and removes the thread
 from the list once GitHub confirms; a refusal is shown under the thread.
+
+Under "Checks failing" the panel lists the head's failing checks
+(`FailingChecks` in `src/checks.tsx`), asked for with `GET
+api/prs/failing-checks` and the head commit it shows (`head_sha`), again when
+that head changes. Each shows the check's name, its conclusion in words
+(`conclusionText`), its title when it has one and a **Details** link (`url`).
 
 A pull request with a merge conflict (`merge` is `conflict`), failing checks
 (`checks` is `failing`) or, on the person's own pull request

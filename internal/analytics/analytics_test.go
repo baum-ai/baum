@@ -636,6 +636,9 @@ func (f fakeWrites) ReviewThreads(context.Context, github.Repository, int, int) 
 func (f fakeWrites) ResolveThread(context.Context, github.Repository, int, string) error {
 	return f.result()
 }
+func (f fakeWrites) FailingChecks(context.Context, github.Repository, int, string) (prupdate.Checks, error) {
+	return prupdate.Checks{}, nil
+}
 
 func TestActionsRecordOnlyWritesThatSucceeded(t *testing.T) {
 	actions := &Actions{Path: filepath.Join(t.TempDir(), "actions.json")}

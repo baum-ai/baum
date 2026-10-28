@@ -484,9 +484,10 @@ func localApplication(paths daemon.Paths, concurrency int, log *slog.Logger) fun
 			Health: config.GitHubAuth.Health, Home: home, Context: ctx, Changed: settingsChanged,
 		}
 		// The delivery figures' searches, cached per repository, and the
-		// review threads the Inbox lists; an account change forgets both.
+		// review threads and failing checks the Inbox lists; an account
+		// change forgets both.
 		delivery := &analytics.Delivery{Search: github.NewFromConfig(cfg, github.Options{})}
-		threads := &prupdate.ThreadCache{}
+		panelCache := &prupdate.Cache{}
 		beginIdentityChange := func() func(bool) {
 			if token, _ := cfg.ExplicitGitHubTokenSource("github.com"); token != "" {
 				return func(bool) {}
@@ -501,7 +502,7 @@ func localApplication(paths daemon.Paths, concurrency int, log *slog.Logger) fun
 					notify.ResetIdentity()
 					pickList.ResetIdentity()
 					delivery.Reset()
-					threads.ResetIdentity()
+					panelCache.ResetIdentity()
 				}
 				finish(changedAccount)
 			}
@@ -523,7 +524,7 @@ func localApplication(paths daemon.Paths, concurrency int, log *slog.Logger) fun
 		endedSessions, unsubscribeEnded := events.Subscribe(4, func(e hookevents.Event) bool {
 			return e.Kind == hookevents.KindAgent && e.Name == "session-end"
 		})
-		api := uiserver.LocalAPI{GitHubAuth: githubConnection.Handler(), Registry: registry, Config: cfg, PRs: uiserver.DiscoveryHandler(registry, discover, changed), Index: index.Handler(), Jobs: queue.Handler(), Background: worker.Handler(), Automatic: scheduler.Handler(), Live: liveAPI, Clones: clones.Handler(), GitHubRepositories: pickList.Handler(), PlanUsage: plans.Handler(), Analytics: insights.Handler(), Merge: uiserver.MergeHandler(registry, actions.RecordMerges(githubClient), refreshRepository, changed), Update: uiserver.UpdateHandler(registry, actions.RecordUpdates(prupdate.Service{Client: githubClient, Threads: threads}), refreshRepository, changed), Changed: settingsChanged,
+		api := uiserver.LocalAPI{GitHubAuth: githubConnection.Handler(), Registry: registry, Config: cfg, PRs: uiserver.DiscoveryHandler(registry, discover, changed), Index: index.Handler(), Jobs: queue.Handler(), Background: worker.Handler(), Automatic: scheduler.Handler(), Live: liveAPI, Clones: clones.Handler(), GitHubRepositories: pickList.Handler(), PlanUsage: plans.Handler(), Analytics: insights.Handler(), Merge: uiserver.MergeHandler(registry, actions.RecordMerges(githubClient), refreshRepository, changed), Update: uiserver.UpdateHandler(registry, actions.RecordUpdates(prupdate.Service{Client: githubClient, Cache: panelCache}), refreshRepository, changed), Changed: settingsChanged,
 			Groups:      (&reviewgroups.API{Store: groups, Registry: registry, Index: index.Build, Changed: changed}).Handler(),
 			Diagnostics: uiDiagnostics}.Handler()
 		return daemon.App{

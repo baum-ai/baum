@@ -35,6 +35,7 @@ import {
 } from "./merge";
 import { LoadingStatus, NineDots } from "./nine-dots";
 import { onBody, useShortcuts } from "./shortcuts";
+import { FailingChecks } from "./checks";
 import { ReviewThreads } from "./threads";
 import { canUpdateBranch, UpdateBranchDialog } from "./unblock";
 
@@ -933,6 +934,8 @@ type PanelRow = {
   lines?: { additions: number; deletions: number };
   /** The row lists the unresolved review threads under it. */
   threads?: boolean;
+  /** The row lists the failing checks under it. */
+  checks?: boolean;
 };
 type PanelBlock = { title: string; lead?: string; rows: PanelRow[]; more?: string };
 
@@ -1005,7 +1008,7 @@ function blocks(row: Row, doc: ReviewDocument | null): PanelBlock[] {
                   },
                 ]
               : []),
-            ...(entry.checks === "failing" ? [{ main: "Checks failing" }] : []),
+            ...(entry.checks === "failing" ? [{ main: "Checks failing", checks: true }] : []),
           ],
         },
         ...changes,
@@ -1229,7 +1232,10 @@ function Panel({
           {block.lead ? <p className="upnext-lead">{block.lead}</p> : null}
           <ul>
             {block.rows.map((line) => (
-              <li key={line.main} className={line.threads ? "upnext-has-threads" : undefined}>
+              <li
+                key={line.main}
+                className={line.threads || line.checks ? "upnext-has-threads" : undefined}
+              >
                 {line.badge ? (
                   <span
                     className={`upnext-badge upnext-badge-${line.badge === "✓" ? "done" : line.badge}`}
@@ -1255,6 +1261,15 @@ function Panel({
                     repository={pr.repository}
                     number={pr.number}
                     unresolved={entry.unresolved ?? 0}
+                    url={pr.url}
+                  />
+                ) : null}
+                {line.checks ? (
+                  <FailingChecks
+                    key={`${pr.repository}#${pr.number}`}
+                    repository={pr.repository}
+                    number={pr.number}
+                    head={pr.head_sha}
                     url={pr.url}
                   />
                 ) : null}

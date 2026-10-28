@@ -24,11 +24,13 @@ type PullRequestUpdater interface {
 	RerunFailedChecks(ctx context.Context, repository github.Repository, number int, expectedHead string) (prupdate.RerunResult, error)
 	ReviewThreads(ctx context.Context, repository github.Repository, number, unresolved int) (prupdate.Threads, error)
 	ResolveThread(ctx context.Context, repository github.Repository, number int, id string) error
+	FailingChecks(ctx context.Context, repository github.Repository, number int, head string) (prupdate.Checks, error)
 }
 
 // UpdateHandler serves /api/prs/update-branch(-options),
-// /api/prs/rerun-checks(-options), /api/prs/review-threads and
-// /api/prs/resolve-thread for picked repositories only. refresh
+// /api/prs/rerun-checks(-options), /api/prs/review-threads,
+// /api/prs/resolve-thread and /api/prs/failing-checks for picked repositories
+// only. refresh
 // re-reads the repository's pull requests after a write so the inbox shows the
 // new state; its failure never turns a write into an error.
 func UpdateHandler(registry *repos.Registry, updater PullRequestUpdater, refresh func(context.Context, github.Repository), changed func()) http.Handler {
@@ -109,6 +111,11 @@ func UpdateHandler(registry *repos.Registry, updater PullRequestUpdater, refresh
 			unresolved = -1
 		}
 		return updater.ReviewThreads(ctx, repo, number, unresolved)
+	}))
+	// failing-checks takes the head commit the app shows, so the list is of
+	// the checks it counts as failing.
+	mux.HandleFunc("GET /api/prs/failing-checks", options(func(ctx context.Context, repo github.Repository, number int, query url.Values) (any, error) {
+		return updater.FailingChecks(ctx, repo, number, query.Get("head_sha"))
 	}))
 	mux.HandleFunc("POST /api/prs/resolve-thread", func(w http.ResponseWriter, r *http.Request) {
 		r.Body = http.MaxBytesReader(w, r.Body, 4096)

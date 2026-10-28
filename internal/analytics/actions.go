@@ -108,6 +108,7 @@ type Updater interface {
 	RerunFailedChecks(ctx context.Context, repository github.Repository, number int, expectedHead string) (prupdate.RerunResult, error)
 	ReviewThreads(ctx context.Context, repository github.Repository, number, unresolved int) (prupdate.Threads, error)
 	ResolveThread(ctx context.Context, repository github.Repository, number int, id string) error
+	FailingChecks(ctx context.Context, repository github.Repository, number int, head string) (prupdate.Checks, error)
 }
 
 // RecordMerges records each merge m makes.
