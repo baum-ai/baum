@@ -46,8 +46,8 @@ type gqlPR struct {
 	Number                         int
 	Title, HeadRefOid, HeadRefName string
 	IsDraft                        bool
-	// UpdatedAt feeds the probe's fingerprint only; it is cleared before the
-	// unchanged comparison so the backoff is unaffected.
+	// UpdatedAt feeds the probe's fingerprint and the snapshot; it is left
+	// out of the unchanged comparison so the backoff is unaffected.
 	UpdatedAt      time.Time `json:",omitzero"`
 	Author         actor
 	HeadRepository *gqlRepository
@@ -306,13 +306,13 @@ func (p *poll) openPullPages(ctx context.Context, repository github.Repository) 
 		result = append(result, pulls.Nodes...)
 		if !pulls.PageInfo.HasNextPage {
 			p.fingerprint = fingerprint{Open: len(result)}
-			for i := range result {
-				p.fingerprint.Newest = max(p.fingerprint.Newest, result[i].Number)
-				p.fingerprint.Updated = maxTime(p.fingerprint.Updated, result[i].UpdatedAt)
-				result[i].UpdatedAt = time.Time{}
+			stable := append([]gqlPR(nil), result...)
+			for i := range stable {
+				p.fingerprint.Newest = max(p.fingerprint.Newest, stable[i].Number)
+				p.fingerprint.Updated = maxTime(p.fingerprint.Updated, stable[i].UpdatedAt)
+				stable[i].UpdatedAt = time.Time{}
 			}
 			// Compare only the typed, minimal result: no raw GraphQL payload is cached.
-			stable := append([]gqlPR(nil), result...)
 			sort.Slice(stable, func(i, j int) bool { return stable[i].Number < stable[j].Number })
 			minimal, _ := json.Marshal(stable)
 			const cacheKey = "graphql:open-pulls"

@@ -13,9 +13,11 @@ import (
 
 // How long the Inbox panel's reads are served without asking GitHub again:
 // a pull request's review threads while their count still matches
-// discovery's, and a head commit's failing checks.
+// discovery's, and a head commit's failing checks. Threads resolved on GitHub
+// do not change what discovery's probe sees, so the panel reads them again
+// soon, when shown.
 const (
-	DefaultThreadTTL = 10 * time.Minute
+	DefaultThreadTTL = time.Minute
 	DefaultChecksTTL = 2 * time.Minute
 )
 

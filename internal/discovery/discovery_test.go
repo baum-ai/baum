@@ -619,3 +619,74 @@ func TestObservationCannotMoveToAnotherAccountPartition(t *testing.T) {
 		}
 	}
 }
+
+// A merge from the app leaves the open pull requests at once and is observed
+// merged under the title discovery knew.
+func TestMergedLeavesTheOpenPullRequests(t *testing.T) {
+	s, _ := service(t, recordedFixture())
+	if _, err := s.Poll(context.Background(), testRepo); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Merged(context.Background(), testRepo, 3, "head3"); err != nil {
+		t.Fatal(err)
+	}
+	// A read that began before the merge and ends after it does not undo it.
+	if err := s.Observe(context.Background(), testRepo, Observation{Number: 3, HeadSHA: "head3", Title: "Direct request", State: "OPEN", FetchedAt: s.now().Add(-time.Second)}); err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := s.Cached(context.Background(), testRepo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, pr := range snapshot.PullRequests {
+		if pr.Number == 3 {
+			t.Fatal("merged pull request still listed open")
+		}
+	}
+	if len(snapshot.Observations) != 1 {
+		t.Fatalf("observations %+v", snapshot.Observations)
+	}
+	if o := snapshot.Observations[0]; o.Number != 3 || o.HeadSHA != "head3" || o.Title != "Direct request" || o.State != "MERGED" || !o.FetchedAt.Equal(s.now()) {
+		t.Fatalf("observation %+v", o)
+	}
+}
+
+// The app's read of a pull request's threads replaces discovery's count
+// until the next poll; a count discovery capped is left alone.
+func TestUnresolvedRecordsTheAppsCount(t *testing.T) {
+	t.Setenv("GH_HOST", "github.com")
+	client := github.New(func(context.Context, string) (string, error) { return "synthetic", nil }, github.Options{Transport: roundTrip(func(r *http.Request) (*http.Response, error) {
+		body := `[]`
+		if r.Method == http.MethodPost {
+			node := func(number int, threads string, more bool) string {
+				return fmt.Sprintf(`{"number":%d,"title":"PR","headRefOid":"head","author":{"login":"viewer"},"headRepository":{"databaseId":1,"nameWithOwner":"acme/app"},"baseRepository":{"databaseId":1,"nameWithOwner":"acme/app"},"reviewThreads":{"nodes":[%s],"pageInfo":{"hasNextPage":%t}}}`, number, threads, more)
+			}
+			two := `{"isResolved":false},{"isResolved":false}`
+			body = `{"data":{"viewer":{"login":"viewer"},"repository":{"pullRequests":{"nodes":[` + node(1, two, false) + `,` + node(2, two, true) + `],"pageInfo":{"hasNextPage":false}}}}}`
+		} else if strings.Contains(r.URL.Path, "/permission") {
+			body = `{"permission":"write"}`
+		}
+		return &http.Response{StatusCode: 200, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(body))}, nil
+	})})
+	s := New(client, t.TempDir())
+	if _, err := s.Poll(context.Background(), testRepo); err != nil {
+		t.Fatal(err)
+	}
+	for _, step := range []struct {
+		number, count int
+		moved         bool
+	}{{1, 2, false}, {1, 0, true}, {1, 0, false}, {2, 0, false}, {9, 0, false}} {
+		if moved, err := s.Unresolved(context.Background(), testRepo, step.number, step.count); err != nil || moved != step.moved {
+			t.Fatalf("pull request %d at %d: moved=%v err=%v", step.number, step.count, moved, err)
+		}
+	}
+	snapshot, err := s.Cached(context.Background(), testRepo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, pr := range snapshot.PullRequests {
+		if want := map[int]int{1: 0, 2: 2}[pr.Number]; pr.Unresolved == nil || *pr.Unresolved != want {
+			t.Fatalf("pull request %d unresolved %v, want %d", pr.Number, pr.Unresolved, want)
+		}
+	}
+}

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -44,11 +45,23 @@ type fakeDiscovery struct {
 	observations []discovery.Observation
 	err          error
 	next         time.Time
+	// updated is open pull request 1's last update on GitHub.
+	updated time.Time
 }
 
+// Poll lists pull request 1 as open, with the latest observation of each
+// pull request, as discovery's cache keeps them.
 func (f *fakeDiscovery) Poll(_ context.Context, repo github.Repository) (discovery.Snapshot, error) {
 	f.polls++
-	return discovery.Snapshot{Repository: repo.String(), NextPoll: f.next, PullRequests: []discovery.PullRequest{{Number: 1, HeadSHA: "new"}}}, f.err
+	latest := map[int]discovery.Observation{}
+	for _, o := range f.observations {
+		latest[o.Number] = o
+	}
+	var observations []discovery.Observation
+	for _, o := range latest {
+		observations = append(observations, o)
+	}
+	return discovery.Snapshot{Repository: repo.String(), NextPoll: f.next, PullRequests: []discovery.PullRequest{{Number: 1, HeadSHA: "new", UpdatedAt: f.updated}}, Observations: observations}, f.err
 }
 func (f *fakeDiscovery) PollNow(ctx context.Context, repo github.Repository) (discovery.Snapshot, error) {
 	f.forced = append(f.forced, repo.String())
@@ -85,8 +98,21 @@ func TestPeriodicDiscoverySavedHistoryAndDedup(t *testing.T) {
 	}
 	now = now.Add(time.Minute)
 	s.Sync(context.Background())
-	if d.polls != 2 || len(calls) != 4 {
-		t.Fatal("did not poll periodically")
+	if d.polls != 2 || len(calls) != 2 {
+		t.Fatalf("polls=%d calls=%v, want a poll and no read of unchanged pull requests", d.polls, calls)
+	}
+	// An update on GitHub reads that pull request at the next poll.
+	d.updated = now
+	now = now.Add(time.Minute)
+	s.Sync(context.Background())
+	if len(calls) != 3 || calls[2] != 1 {
+		t.Fatalf("calls=%v, want the updated pull request read", calls)
+	}
+	// Unchanged ones are read again once their evidence is old.
+	now = now.Add(closedReadAge)
+	s.Sync(context.Background())
+	if len(calls) != 5 {
+		t.Fatalf("calls=%v, want both read again after %v", calls, closedReadAge)
 	}
 	// There is deliberately no job queue or backend capability in Service.
 	response := httptest.NewRecorder()
@@ -326,5 +352,83 @@ func TestProbedChangePollsBeforeItsSchedule(t *testing.T) {
 	s.Sync(context.Background())
 	if d.probes != 2 || d.polls != 3 || len(d.forced) != 1 || d.forced[0] != "acme/b" {
 		t.Fatalf("changed repository not polled now: probes=%d polls=%d forced=%v", d.probes, d.polls, d.forced)
+	}
+}
+
+// A saved pull request observed open that left the open ones is read at the
+// next pass to learn whether it merged or closed, and not again until old.
+func TestPullRequestThatLeftTheOpenOnesIsReadOnce(t *testing.T) {
+	now := time.Now()
+	d := &fakeDiscovery{observations: []discovery.Observation{{Number: 5, HeadSHA: "h", State: "OPEN", FetchedAt: now.Add(-time.Minute)}}}
+	var calls []int
+	s := &Service{Registry: registry{{Repository: "acme/app", CommonDir: "a", Available: true}}, Discovery: d, Now: func() time.Time { return now }, Saved: func(context.Context, repos.Clone) ([]int, error) { return []int{5}, nil }, Refresh: func(_ context.Context, _ repos.Clone, n int) (discovery.Observation, error) {
+		calls = append(calls, n)
+		return discovery.Observation{Number: n, HeadSHA: "h", State: "MERGED", FetchedAt: now}, nil
+	}}
+	s.Sync(context.Background())
+	if len(calls) != 2 || !slices.Contains(calls, 5) {
+		t.Fatalf("calls=%v, want the pull request that left the open ones read", calls)
+	}
+	now = now.Add(time.Minute)
+	s.Sync(context.Background())
+	if len(calls) != 2 {
+		t.Fatalf("calls=%v, want no read of a merged pull request", calls)
+	}
+}
+
+// Every due repository is polled before any pull request is read, so one
+// repository's reads never hold back another's poll.
+func TestRepositoriesArePolledBeforeReads(t *testing.T) {
+	now := time.Now()
+	d := &fakeDiscovery{}
+	var pollsAtFirstRead int
+	s := &Service{Registry: registry{{Repository: "acme/a", CommonDir: "a", Available: true}, {Repository: "acme/b", CommonDir: "b", Available: true}}, Discovery: d, Now: func() time.Time { return now }, Saved: func(context.Context, repos.Clone) ([]int, error) { return nil, nil }, Refresh: func(context.Context, repos.Clone, int) (discovery.Observation, error) {
+		if pollsAtFirstRead == 0 {
+			pollsAtFirstRead = d.polls
+		}
+		return discovery.Observation{}, nil
+	}}
+	s.Sync(context.Background())
+	if pollsAtFirstRead != 2 {
+		t.Fatalf("first read after %d polls, want 2", pollsAtFirstRead)
+	}
+}
+
+// A pass stops starting reads after refreshBudget; the rest go first next pass.
+func TestReadsStopAtTheBudget(t *testing.T) {
+	now := time.Now()
+	d := &fakeDiscovery{}
+	var calls []int
+	s := &Service{Registry: registry{{Repository: "acme/app", CommonDir: "a", Available: true}}, Discovery: d, Now: func() time.Time { return now }, Saved: func(context.Context, repos.Clone) ([]int, error) { return []int{2, 3}, nil }, Refresh: func(_ context.Context, _ repos.Clone, n int) (discovery.Observation, error) {
+		calls = append(calls, n)
+		now = now.Add(refreshBudget / 2)
+		return discovery.Observation{}, nil
+	}}
+	s.Sync(context.Background())
+	if len(calls) != 2 {
+		t.Fatalf("calls=%v, want two reads within the budget", calls)
+	}
+	now = now.Add(time.Minute)
+	s.Sync(context.Background())
+	if len(calls) != 3 || calls[2] != 3 {
+		t.Fatalf("calls=%v, want the deferred read next", calls)
+	}
+}
+
+// A failed read is retried with a growing backoff, not every pass.
+func TestFailedReadBacksOff(t *testing.T) {
+	now := time.Now()
+	d := &fakeDiscovery{}
+	calls := 0
+	s := &Service{Registry: registry{{Repository: "acme/app", CommonDir: "a", Available: true}}, Discovery: d, Now: func() time.Time { return now }, Interval: time.Minute, Saved: func(context.Context, repos.Clone) ([]int, error) { return nil, nil }, Refresh: func(context.Context, repos.Clone, int) (discovery.Observation, error) {
+		calls++
+		return discovery.Observation{}, errors.New("git objects missing")
+	}}
+	for i, want := range []int{1, 2, 2, 3, 3, 3, 3, 4} {
+		s.Sync(context.Background())
+		if calls != want {
+			t.Fatalf("pass %d: calls=%d, want %d", i, calls, want)
+		}
+		now = now.Add(time.Minute)
 	}
 }

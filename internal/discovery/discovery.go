@@ -3,6 +3,7 @@
 package discovery
 
 import (
+	"cmp"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -13,6 +14,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -55,6 +57,10 @@ type PullRequest struct {
 	Behind           bool `json:"behind"`
 	Unresolved       *int `json:"unresolved"`
 	UnresolvedCapped bool `json:"unresolved_capped"`
+	// UpdatedAt is GitHub's last update of the pull request: a push, an edit,
+	// a review or a comment. The background refresh re-reads a saved review's
+	// evidence when it is newer than the last read.
+	UpdatedAt time.Time `json:"updated_at,omitzero"`
 }
 
 // Observation contains only safe current GitHub metadata, never description
@@ -551,6 +557,7 @@ func (p *poll) discover(ctx context.Context, repository github.Repository) (Snap
 		item.ViewerCanPush = canPush
 		item.Review, item.Checks, item.Merge, item.Unresolved, item.UnresolvedCapped = row.states()
 		item.Behind = row.behind()
+		item.UpdatedAt = row.UpdatedAt
 		snapshot.PullRequests = append(snapshot.PullRequests, item)
 	}
 	return snapshot, nil
@@ -558,6 +565,8 @@ func (p *poll) discover(ctx context.Context, repository github.Repository) (Snap
 
 // Observe retains fresh free metadata for open and saved historical PRs. A
 // separate service instance still treats the disk cache as stale on startup.
+// An observation older than the one kept is dropped: a read under way when
+// the app merged the pull request (Merged) does not undo it.
 func (s *Service) Observe(ctx context.Context, repository github.Repository, value Observation) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -578,12 +587,84 @@ func (s *Service) Observe(ctx context.Context, repository github.Repository, val
 	}
 	for i, old := range cache.Snapshot.Observations {
 		if old.Number == value.Number {
+			if old.FetchedAt.After(value.FetchedAt) {
+				return nil
+			}
 			cache.Snapshot.Observations[i] = value
 			return save(path, cache)
 		}
 	}
 	cache.Snapshot.Observations = append(cache.Snapshot.Observations, value)
 	return save(path, cache)
+}
+
+// Merged records that the app just merged the pull request at head: GitHub
+// accepted the merge, so it leaves the open pull requests and is observed
+// merged without another read. Its title and draft state are the cached ones.
+func (s *Service) Merged(ctx context.Context, repository github.Repository, number int, head string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	reader, err := s.client.REST(ctx, repository)
+	if err != nil {
+		return err
+	}
+	path, err := s.path(reader.CacheIdentity(), repository.String())
+	if err != nil {
+		return err
+	}
+	cache, err := load(path)
+	if err != nil {
+		return err
+	}
+	observation := Observation{Number: number, HeadSHA: head, State: "MERGED", FetchedAt: s.now()}
+	for _, pr := range cache.Snapshot.PullRequests {
+		if pr.Number == number {
+			observation.Title = pr.Title
+			observation.Checks = pr.Checks
+		}
+	}
+	cache.Snapshot.PullRequests = slices.DeleteFunc(cache.Snapshot.PullRequests, func(pr PullRequest) bool { return pr.Number == number })
+	for i, old := range cache.Snapshot.Observations {
+		if old.Number == number {
+			observation.Title = cmp.Or(observation.Title, old.Title)
+			if old.HeadSHA == head {
+				observation.Checks = cmp.Or(observation.Checks, old.Checks)
+			}
+			cache.Snapshot.Observations[i] = observation
+			return save(path, cache)
+		}
+	}
+	cache.Snapshot.Observations = append(cache.Snapshot.Observations, observation)
+	return save(path, cache)
+}
+
+// Unresolved records the count of an open pull request's unresolved review
+// threads that the app just read from GitHub, ahead of the next poll: GitHub
+// reports no update to a pull request when a thread is resolved, so a probe
+// cannot see it. It reports whether the count changed.
+func (s *Service) Unresolved(ctx context.Context, repository github.Repository, number, count int) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	reader, err := s.client.REST(ctx, repository)
+	if err != nil {
+		return false, err
+	}
+	path, err := s.path(reader.CacheIdentity(), repository.String())
+	if err != nil {
+		return false, err
+	}
+	cache, err := load(path)
+	if err != nil {
+		return false, err
+	}
+	for i, pr := range cache.Snapshot.PullRequests {
+		if pr.Number != number || pr.UnresolvedCapped || pr.Unresolved == nil || *pr.Unresolved == count {
+			continue
+		}
+		cache.Snapshot.PullRequests[i].Unresolved = &count
+		return true, save(path, cache)
+	}
+	return false, nil
 }
 
 func (s *Service) isValidated(path string) bool {

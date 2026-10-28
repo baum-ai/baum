@@ -825,8 +825,10 @@ What it runs while it is up:
   control socket only your user can open;
 - every minute or so, free GitHub reads with your token for registered clones:
   open pull requests, the authenticated user and teams, author permissions,
-  and the latest saved review's checks, conversation and head, with
-  conditional requests and backoff (see "What baum sends where");
+  and, when GitHub reports its pull request changed or it has not been read
+  for 15 minutes (an hour once closed), the latest saved review's checks,
+  conversation and head, with conditional requests and backoff (see "What
+  baum sends where");
 - once when it starts, the signed price list download;
 - the record of the events agent and Git hooks report (above), from which it
   also tracks the agent sessions in progress for the app (below);
