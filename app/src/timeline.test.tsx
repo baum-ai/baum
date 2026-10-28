@@ -262,3 +262,25 @@ it("says when the decision store or the decisions switch is off", async () => {
   await show();
   expect(node.textContent).toContain("Decisions are turned off for acme/demo.");
 });
+
+it("reads again as many rows as were loaded when the log changes", async () => {
+  const many = (from: number, n: number) =>
+    Array.from({ length: n }, (_, i) => ({ ...feature, id: `F${from + i}`, key_decisions: [] }));
+  answers["api/timeline/features"] = { features: many(0, 50), next_cursor: "1|F49" };
+  await show();
+  answers["api/timeline/features"] = { features: many(50, 20), next_cursor: null };
+  const more = [...node.querySelectorAll("button")].find(
+    (b) => b.textContent === "Load more features",
+  )!;
+  await act(async () => more.click());
+  await act(async () => {});
+  expect(node.querySelectorAll("li[data-feature]").length).toBe(70);
+  requests.length = 0;
+  answers["api/timeline/features"] = { features: many(0, 70), next_cursor: null };
+  await act(async () => root.render(<Harness initial="page=timeline" revision={1} />));
+  await act(async () => {});
+  expect(requests.filter((path) => path.includes("features"))).toEqual([
+    "/s/test-ns/api/timeline/features?repository=acme%2Fdemo&limit=70",
+  ]);
+  expect(node.querySelectorAll("li[data-feature]").length).toBe(70);
+});

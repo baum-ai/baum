@@ -2,6 +2,7 @@ package decisionlog
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -460,5 +461,26 @@ func TestTimelineSearchIndex(t *testing.T) {
 	}
 	if _, err := s.db.Exec(`INSERT INTO decision_search(decision_search) VALUES ('integrity-check')`); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// The set queries read the sessions by their (agent, session_id) index.
+func TestCurrentOfUsesTheSessionIndex(t *testing.T) {
+	s := openStore(t, &clock{t0})
+	set, err := sessionSet([]SessionKey{{Agent: "claude-code", ID: "s1"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan, err := collect(func(rows *sql.Rows) (string, error) {
+		var id, parent, unused int
+		var detail string
+		return detail, rows.Scan(&id, &parent, &unused, &detail)
+	})(s.db.Query(`EXPLAIN QUERY PLAN SELECT decision_id FROM current_decision
+WHERE (agent, session_id) IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?))`, set))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(strings.Join(plan, "\n"), "decision_session") {
+		t.Fatalf("plan = %v", plan)
 	}
 }

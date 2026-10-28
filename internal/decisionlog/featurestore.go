@@ -691,7 +691,7 @@ JOIN capture_session cs ON cs.agent=sc.agent AND cs.session_id=sc.session_id
 JOIN pull_commit pc ON pc.repository=sc.repository AND pc.sha=sc.sha
 JOIN feature_pull fp ON fp.version_id=?1 AND fp.repository=pc.repository AND fp.number=pc.number
 JOIN pull_request pr ON pr.repository=pc.repository AND pr.number=pc.number
-WHERE sc.repository=?2 AND sc.agent||char(31)||sc.session_id IN (SELECT value FROM json_each(?3))
+WHERE sc.repository=?2 AND (sc.agent, sc.session_id) IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?3))
 ORDER BY sc.agent, sc.session_id, pr.number, sc.sha`, version, repository, set))
 	if err != nil {
 		return nil, err
@@ -728,7 +728,7 @@ ORDER BY sc.agent, sc.session_id, pr.number, sc.sha`, version, repository, set))
 		return r, rows.Scan(&r.key.Agent, &r.key.ID, &r.feature)
 	})(s.db.QueryContext(ctx, `SELECT fs.agent, fs.session_id, fs.feature_id FROM feature_session fs
 JOIN capture_session cs ON cs.agent=fs.agent AND cs.session_id=fs.session_id
-WHERE fs.version_id=? AND fs.repository=? AND fs.agent||char(31)||fs.session_id IN (SELECT value FROM json_each(?))`, version, repository, set))
+WHERE fs.version_id=? AND fs.repository=? AND (fs.agent, fs.session_id) IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?))`, version, repository, set))
 	if err != nil {
 		return nil, err
 	}
@@ -740,12 +740,13 @@ WHERE fs.version_id=? AND fs.repository=? AND fs.agent||char(31)||fs.session_id 
 	return out, nil
 }
 
-// sessionSet is the sessions as a JSON array of agent, unit separator and
-// id, which a query reads with json_each.
+// sessionSet is the sessions as a JSON array of [agent, id] pairs, which a
+// query reads as a row-value set with json_each, so it uses the
+// (agent, session_id) indexes.
 func sessionSet(keys []SessionKey) (string, error) {
-	values := make([]string, len(keys))
+	values := make([][2]string, len(keys))
 	for i, key := range keys {
-		values[i] = key.Agent + "\x1f" + key.ID
+		values[i] = [2]string{key.Agent, key.ID}
 	}
 	encoded, err := json.Marshal(values)
 	return string(encoded), err

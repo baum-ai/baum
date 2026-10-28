@@ -63,7 +63,7 @@ const TABS: { value: TimelineTab; label: string }[] = [
 ];
 const FEATURE_PANEL = "timeline-feature-panel";
 const SEARCH_DELAY_MS = 300;
-/** Rows a list reads at a time, and the most it reads again at once. */
+/** Rows a list reads at a time, and the most one request reads. */
 const PAGE = 50;
 const MAX_PAGE = 500;
 
@@ -219,6 +219,7 @@ function usePages<T>(
   });
   const latest = useRef(state);
   latest.current = state;
+  const more = useRef<AbortController | null>(null);
   useEffect(() => {
     // Only the tab shown reads its list.
     if (!active) return;
@@ -228,38 +229,52 @@ function usePages<T>(
     // it had loaded.
     const again = base.query === query && base.loaded;
     if (again && base.revision === revision) return;
-    const limit = again ? Math.min(MAX_PAGE, Math.max(PAGE, base.rows.length)) : PAGE;
+    // A load of more rows started before is for the old list.
+    more.current?.abort();
+    const want = again ? Math.max(PAGE, base.rows.length) : PAGE;
     setState((current) => ({ ...current, status: "loading" }));
-    request<Record<string, unknown>>(
-      `${path}?${query}${limit === PAGE ? "" : `&limit=${limit}`}`,
-      undefined,
-      "GET",
-      abort.signal,
-    )
-      .then((body) =>
-        setState({
-          query,
-          revision,
-          rows: (body[key] as T[]) ?? [],
-          cursor: (body.next_cursor as string | null) ?? null,
-          status: "idle",
-          loaded: true,
-          coverage: (body.coverage as Coverage | undefined) ?? null,
-        }),
-      )
-      .catch(() => {
-        if (!abort.signal.aborted) setState((current) => ({ ...current, status: "failed" }));
-      });
+    const read = async () => {
+      // As many pages as it takes, each at most MAX_PAGE rows.
+      let rows: T[] = [];
+      let cursor: string | null = null;
+      let coverage: Coverage | null = null;
+      do {
+        const limit = Math.min(MAX_PAGE, want - rows.length);
+        const params = new URLSearchParams(query);
+        if (limit !== PAGE) params.set("limit", String(limit));
+        if (cursor) params.set("cursor", cursor);
+        const body = await request<Record<string, unknown>>(
+          `${path}?${params}`,
+          undefined,
+          "GET",
+          abort.signal,
+        );
+        rows = [...rows, ...((body[key] as T[]) ?? [])];
+        cursor = (body.next_cursor as string | null) ?? null;
+        coverage = (body.coverage as Coverage | undefined) ?? null;
+      } while (cursor && rows.length < want);
+      setState({ query, revision, rows, cursor, status: "idle", loaded: true, coverage });
+    };
+    read().catch(() => {
+      if (!abort.signal.aborted) setState((current) => ({ ...current, status: "failed" }));
+    });
     return () => abort.abort();
   }, [path, query, key, revision, active]);
   const loadMore = useCallback(() => {
     const base = latest.current;
     if (!base.cursor || base.status === "loading") return;
+    const abort = new AbortController();
+    more.current = abort;
     setState({ ...base, status: "loading" });
-    request<Record<string, unknown>>(`${path}?${query}&cursor=${encodeURIComponent(base.cursor)}`)
+    request<Record<string, unknown>>(
+      `${path}?${query}&cursor=${encodeURIComponent(base.cursor)}`,
+      undefined,
+      "GET",
+      abort.signal,
+    )
       .then((body) =>
         setState((current) =>
-          current.query !== base.query
+          current.query !== base.query || current.revision !== base.revision
             ? current
             : {
                 ...current,
@@ -269,7 +284,9 @@ function usePages<T>(
               },
         ),
       )
-      .catch(() => setState((current) => ({ ...current, status: "failed" })));
+      .catch(() => {
+        if (!abort.signal.aborted) setState((current) => ({ ...current, status: "failed" }));
+      });
   }, [path, query, key]);
   return { ...state, loaded: state.loaded && state.query === query, loadMore };
 }

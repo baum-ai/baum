@@ -298,7 +298,13 @@ function Workspace({ url }: { url: UrlState }) {
     const refreshTimeline = () => setTimelineTick((n) => n + 1);
     source.addEventListener("timeline", refreshTimeline);
     source.addEventListener("reset", refreshTimeline);
-    source.addEventListener("open", refreshTimeline);
+    // The first connection is the page's first read; a later one may have
+    // missed events.
+    let connected = false;
+    source.addEventListener("open", () => {
+      if (connected) refreshTimeline();
+      connected = true;
+    });
     return () => source.close();
   }, [reload, reloadLive]);
   const authChanged = () => {
