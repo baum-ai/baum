@@ -39,11 +39,9 @@ const (
 	ReasonUnsupported = "backend_unsupported"
 	ReasonUnavailable = "backend_unavailable"
 	ReasonUnpriced    = "unpriced_model"
-	ReasonOverCostCap = "over_cost_cap"
-	ReasonDailyCap    = "daily_cap"
 )
 
-var transient = map[string]bool{ReasonUnsupported: true, ReasonUnavailable: true, ReasonUnpriced: true, ReasonOverCostCap: true, ReasonDailyCap: true}
+var transient = map[string]bool{ReasonUnsupported: true, ReasonUnavailable: true, ReasonUnpriced: true}
 
 // Outcomes of a capture.
 const (
@@ -118,8 +116,7 @@ type Target struct {
 type Options struct {
 	// DryRun stops before the call and writes nothing.
 	DryRun bool
-	// Force skips the gate, the throttle and the unchanged check, not the
-	// caps.
+	// Force skips the gate, the throttle and the unchanged check.
 	Force bool
 	// Backend and Model, when set, replace the configured ones.
 	Backend, Model string
@@ -398,16 +395,6 @@ func (c *Capturer) Capture(ctx context.Context, t Target, o Options) (Report, er
 		return skip(ReasonUnpriced)
 	}
 	report.Reserved = reserved
-	st, err := c.Store.Stats(ctx, t.Agent, t.ID, day)
-	if err != nil {
-		return report, err
-	}
-	if st.Spent+reserved > SessionDailyCap {
-		return skip(ReasonOverCostCap)
-	}
-	if limit := prefs.Decisions.DailyCap; limit != nil && st.AllSpent+reserved > *limit {
-		return skip(ReasonDailyCap)
-	}
 	if o.DryRun {
 		report.Outcome = OutcomeDryRun
 		return report, nil

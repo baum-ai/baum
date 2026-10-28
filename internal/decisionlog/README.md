@@ -78,28 +78,22 @@ not a failure.
    the schema; that resends the cached prompt, so it is reserved at the
    cache-read rate plus another reply. The Codex CLI has no option capping the
    reply, so its 16,384 tokens are an estimate rather than a limit. A model the
-   price list does not price is skipped (`unpriced_model`). A session's spend,
-   this reservation included, may not pass $0.25 a day (`over_cost_cap`), and
-   all capture's spend may not pass `preferences.decisions.daily_cap` when set
-   (`daily_cap`; no default). No call is made for either, so the session is
-   tried again the next day or when it changes; a session whose reservation
-   alone exceeds the allowance stays skipped at no cost, since every try stops
-   before the call.
+   price list does not price is skipped (`unpriced_model`). There is no
+   spending cap: as for reviews, each call keeps its token and time budgets.
 8. The attempt is recorded as pending and the completion made: one request for
    anthropic; `claude -p` with no tools besides its structured reply, which
    normally ends after one call and may retry a rejected reply once; or one
    `codex exec` turn with its shell tools off, normally one request (a call to
    a tool Codex still offers, such as its patch or plan tool, makes another
    within the turn). The attempt is settled with its cost from the reported
-   usage, or none when it cannot be priced. Spend counts the cost, else the
-   reservation. An attempt still pending when the daemon starts is settled as
-   abandoned and its reservation counts.
+   usage, or none when it cannot be priced. An attempt still pending when the
+   daemon starts is settled as abandoned.
 9. The reply is masked for secrets before it is parsed, validated against the
    transcript, given IDs and saved.
 
 A failed call is not cached. After 3 failures in a row the session is marked
-`extraction_failed` until its transcript changes. Skips for a missing backend,
-an unpriced model or a cap are tried again the next day or when the transcript
+`extraction_failed` until its transcript changes. Skips for a missing backend
+or an unpriced model are tried again the next day or when the transcript
 changes; other skips only when it changes.
 
 ## Stored data

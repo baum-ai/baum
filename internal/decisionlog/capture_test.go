@@ -230,22 +230,15 @@ func TestCaptureGate(t *testing.T) {
 	}
 }
 
-func TestCaptureSkipsAndCaps(t *testing.T) {
+func TestCaptureSkips(t *testing.T) {
 	cursor := config.BackendCursorAgent
 	unknown := "no-such-model"
-	tiny := 0.000001
 	cases := map[string]struct {
 		edit func(*testing.T, *fixture)
 		want string
 	}{
 		"cursor-agent": {func(_ *testing.T, f *fixture) { f.registry.prefs.Backend = &cursor }, ReasonUnsupported},
 		"unpriced":     {func(_ *testing.T, f *fixture) { f.registry.prefs.Decisions.Model = &unknown }, ReasonUnpriced},
-		"daily cap":    {func(_ *testing.T, f *fixture) { f.registry.prefs.Decisions.DailyCap = &tiny }, ReasonDailyCap},
-		"session cap": {func(t *testing.T, f *fixture) {
-			id, _ := f.store.Begin(context.Background(), Attempt{Agent: "claude-code", ID: "s1", Backend: "claude", Model: "m", Mode: "full", Reserved: SessionDailyCap})
-			_ = f.store.Settle(context.Background(), id, AttemptSucceeded, "", nil, decisionUsage(agent.Usage{}))
-			f.later(MinInterval)
-		}, ReasonOverCostCap},
 		"generation run": {func(t *testing.T, f *fixture) {
 			write(t, f.path, claudeTurn("s1", 1, sessions.GenerationRunMarker+"\nReview the pull request.", "Done."))
 		}, ReasonGenerationRun},
@@ -437,30 +430,14 @@ func TestDecisionModelFollowsTheBackend(t *testing.T) {
 	}
 }
 
-// TestReservationFitsMidSizedSessions prices sessions of realistic rendered
-// sizes as Capture reserves them (decisions.Extractor.MaxTokens: one token
-// per byte of the prompt, the transcript and the schema, plus framing).
-func TestReservationFitsMidSizedSessions(t *testing.T) {
+// TestReservationCountsClaudesRetry prices a session as Capture reserves it
+// (decisions.Extractor.MaxTokens: one token per byte of the prompt, the
+// transcript and the schema, plus framing).
+func TestReservationCountsClaudesRetry(t *testing.T) {
 	extractor := newExtractor()
 	schema, _ := json.Marshal(decisions.ExtractSchema())
 	bound := func(rendered int) int64 {
 		return int64(len(extractor.SystemPrompt()) + rendered + len(schema) + decisions.FramingTokens)
-	}
-	for _, tc := range []struct {
-		backend, model string
-		rendered       int
-	}{
-		{agent.BackendClaude, "claude-haiku-5-5", 100_000},
-		{agent.BackendClaude, "claude-haiku-5-5", 200_000},
-		{agent.BackendClaude, "claude-haiku-5-5", 235_000},
-		{agent.BackendAnthropic, "claude-haiku-5-5", 300_000},
-		{agent.BackendCodex, "gpt-6-luna", 300_000},
-		{agent.BackendCodex, "gpt-6-luna", 1_000_000},
-	} {
-		reserved, ok := reserve(pricing.Active(), tc.backend, tc.model, bound(tc.rendered))
-		if !ok || reserved > SessionDailyCap {
-			t.Errorf("%s %s, %d bytes rendered: reserved $%.4f, priced %v", tc.backend, tc.model, tc.rendered, reserved, ok)
-		}
 	}
 	// claude caches its prompt and may retry once with the cached prompt:
 	// more than one plain call, less than two.
@@ -468,23 +445,6 @@ func TestReservationFitsMidSizedSessions(t *testing.T) {
 	double, _ := reserve(pricing.Active(), agent.BackendClaude, "claude-haiku-5-5", bound(250_000))
 	if double <= single || double >= 2*single {
 		t.Fatalf("claude reserves $%.4f against one call's $%.4f", double, single)
-	}
-}
-
-func TestCaptureOverTheSessionAllowanceIsRetried(t *testing.T) {
-	f := newFixture(t)
-	expensive := "claude-opus-5"
-	f.registry.prefs.Decisions.Model = &expensive
-	f.capturer.Store.now = f.clock.Now
-	write(t, f.path, claudeTurn("s1", 1, strings.Repeat("Use SQLite for the cache. ", 12_000), "Done."))
-	report := f.capture(t, Options{})
-	if report.Outcome != OutcomeSkipped || report.Reason != ReasonOverCostCap || f.backend.calls != 0 {
-		t.Fatalf("%+v", report)
-	}
-	row, _, _ := f.store.Session(context.Background(), "claude-code", "s1")
-	f.later(24 * time.Hour)
-	if covered(row, row.Fingerprint, startOfDay(f.clock.now)) {
-		t.Fatal("a session over the allowance is never tried again")
 	}
 }
 

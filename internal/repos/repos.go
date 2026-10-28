@@ -81,12 +81,10 @@ func (s Settings) DecisionsEnabled(p Preferences) bool {
 
 // DecisionPreferences are the global choices for local decision capture. A
 // nil Enabled is on. Model, when set, replaces the backend's default decision
-// model. DailyCap, when set, bounds the day's decision capture spending in
-// US dollars across repositories; nil is no global cap.
+// model.
 type DecisionPreferences struct {
-	Enabled  *bool    `json:"enabled,omitempty"`
-	Model    *string  `json:"model,omitempty"`
-	DailyCap *float64 `json:"daily_cap,omitempty"`
+	Enabled *bool   `json:"enabled,omitempty"`
+	Model   *string `json:"model,omitempty"`
 }
 
 // Preferences are the registry's global choices, edited in the app.
@@ -142,9 +140,6 @@ func (p Preferences) Validate() error {
 	}
 	if p.Model != nil && len(*p.Model) > 256 {
 		return errors.New("model must be at most 256 bytes")
-	}
-	if c := p.Decisions.DailyCap; c != nil && (math.IsNaN(*c) || math.IsInf(*c, 0) || *c < 0) {
-		return errors.New("decisions daily cap must be finite and nonnegative")
 	}
 	if m := p.Decisions.Model; m != nil && len(*m) > 256 {
 		return errors.New("decisions model must be at most 256 bytes")
