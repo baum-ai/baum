@@ -490,14 +490,15 @@ and never writes it.
   repositories: their sessions extracted, skipped by reason, and being read
   (a capture attempt pending). `file` is the path or anything
   under it; `who` and `category` repeat or are comma separated; superseded
-  decisions show only with `superseded=1`. On both lists `from`
+  decisions show only with `superseded=1` (or `true`). On both lists `from`
   (inclusive) and `to` (exclusive) are RFC 3339 times or dates, a date
   being the local day's start; another value is a 400.
 - **`GET /files?repository=&prefix=&limit=`**: `files`, the paths the
   repositories' current decisions cite that start with `prefix`, and their
   folders (ending in `/`) that do, each with its `kind` (`file` or
   `folder`) and `decision_count`, the decisions citing it or anything under
-  it, each counted once: most first, folders before files, then by path; 20
+  it, each counted once (superseded ones included, as hosted counts them):
+  most first, folders before files, then by path; 20
   (`limit`, at most 50).
 - **`GET /decisions/{id}`**: its session (`<agent>:<id>`, as the app's
   session page names it, branch and person), the session's current
@@ -512,8 +513,8 @@ and never writes it.
   `bundle.Redactor`): the harness's wrappers stripped, secrets and
   identities masked, and a turn that was only wrappers left out. A session's
   prompts are kept by its transcript's version (`Location.Version`), the 16
-  sessions last read. When the transcript is no longer on this computer, or
-  cannot be read, `prompts_withheld` is true and `turns` empty. No
+  sessions last read. When the transcript is no longer on this computer,
+  cannot be read, or its files are over capture's `MaxTranscriptBytes`, `prompts_withheld` is true and `turns` empty. No
   rationale or evidence is served.
 - **`GET /sessions/{agent}:{id}/transcript`**: a captured session's
   transcript, as `GET /api/live-sessions/{agent}/{id}/transcript` answers
@@ -542,8 +543,9 @@ and they are the login's person. It is read at most every 30 seconds. A
 pull request's author is named by their login's address.
 
 - **`GET /people?repository=`**: `people`, the user with
-  `decision_count`, the repositories' current decisions; nobody without a
-  decision or a known user.
+  `decision_count`, the repositories' current decisions, superseded ones
+  included as hosted counts them (the list hides those unless asked);
+  nobody without a decision or a known user.
 - **`GET /features/people?repository=`**: `people`, everyone among the
   repositories' features' people with `feature_count`, most first, then by
   address.

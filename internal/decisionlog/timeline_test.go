@@ -642,6 +642,15 @@ func TestTimelineCitedPrompts(t *testing.T) {
 		t.Fatalf("a session of a repository turned off = %d", code)
 	}
 	f.registry.list[0].Settings.Decisions = nil
+	// Over capture's cap: not read, as capture would not read it.
+	if err := os.Truncate(path, MaxTranscriptBytes+1); err != nil {
+		t.Fatal(err)
+	}
+	got = detail{}
+	f.get("/api/timeline/decisions/d-p1", nil, &got)
+	if !got.PromptsWithheld || len(got.Turns) != 0 {
+		t.Fatalf("over the cap = %+v", got)
+	}
 	// Gone from this computer: the prompts are withheld.
 	if err := os.Remove(path); err != nil {
 		t.Fatal(err)

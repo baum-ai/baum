@@ -58,6 +58,11 @@ func (p *timelinePrompts) read(ctx context.Context, home, cursorStore string, ke
 	if err != nil {
 		return nil, false
 	}
+	// Capture's cap: a transcript too large to capture is not read here
+	// either.
+	if size, err := loc.Size(); err != nil || size > MaxTranscriptBytes {
+		return nil, false
+	}
 	p.mu.Lock()
 	if c := p.cache[key]; c != nil && c.version == version {
 		c.used = time.Now()

@@ -798,15 +798,30 @@ price list.
 ### Timeline
 
 The Timeline page (`GET /api/timeline/...`, behind the app's authentication)
-reads only the private decision store and the clones: the picked repositories
-whose decisions are not turned off, their features of the version in use (text,
+reads the private decision store, the clones and, for a decision's session,
+that session's transcript on this computer: the picked repositories whose
+decisions are not turned off, their features of the version in use (text,
 status, pull requests' numbers, titles, states and authors' logins, counts and
-key decisions), their sessions' current decisions (summary, category, who
-decided, rejected alternative, cited files, branch) and, per pull request, the
-summary of the latest review saved in the clone or the generated one. A
-session's person is the clone's `user.email`. It serves no prompt, transcript,
-rationale or quoted evidence (`prompts_withheld` is always true) and makes no
-network request; a repository not picked, or with its decisions off, is refused.
+key decisions), their sessions' decisions (summary, category, who decided,
+rejected alternative, cited files, branch; current ones, and a decision a later
+capture replaced when it is opened by its id, with those replaced with it) and,
+per pull request, the summary of the latest review saved in the clone or the
+generated one. The sessions' person is the user: the first served clone's git
+`user.email` and `user.name`, named also by every served clone's `user.email`
+and by their GitHub login's `@users.noreply.github.com` address. A decision's
+detail shows the human prompts its decisions cite, read from the session's
+transcript where capture stored its path, under the same rules as the Sessions
+page's transcripts (`livesessions.Locate`: a regular file inside the agent's own
+session folder, links resolved; a transcript over the capture size cap is not
+read) and redacted as decision capture renders them (secrets and identities
+masked, the harness's wrappers stripped); without a readable transcript they
+are withheld. The redacted prompts of at most 16 sessions are held in memory
+(`MaxCachedPrompts`), keyed by the transcript's size and modification time, and
+are not served once the file can no longer be located. A session's transcript
+opens through `GET /api/timeline/sessions/{agent}:{id}/transcript`, as
+described below. No rationale or quoted evidence is served, and the Timeline
+makes no network request; a repository not picked, or with its decisions off,
+is refused.
 
 ### Finding clones on this computer
 
