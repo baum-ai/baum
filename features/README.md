@@ -17,6 +17,7 @@ new version. Each package also embeds published versions, `Public`:
 | `assign` | `feature-assign-public-v1`, its batch version `-batch` and seeded form `-batch-2` | may skip a small change; lists each candidate's digest and pull requests |
 | `summary` | `feature-summary-public-v1` | the feature call reads the feature's current text; owns its pull request prompt |
 | `consolidate` | `feature-consolidate-public-v1` | the merge call sees each feature's digest and pull request summaries |
+| `discover` | `feature-discover-public-v1` | composed from `feature-assign-public-v1`'s definition of a feature |
 
 A version's name is part of what a host keys stored results on (for example
 `summary.ContentHash`), so published and hosted results never mix.
@@ -57,6 +58,29 @@ duplicates, and one oversized feature's pull requests for a split call, which
 partitions them. A reply places every member at most once (merge) or exactly
 once (split). A reply is bounded by `MaxOutputTokens` unless the host asks for
 more, up to `MaxHostOutputTokens`.
+
+## Discovery
+
+`discover` holds feature discovery's pure parts. Discovery is an agent task
+over a read-only checkout of the default branch (`head/`) and
+`history.jsonl`, the repository's pull request history digest. Its reply is
+a taxonomy: at most 300 features, each with a title of at most 120 and a
+description of at most 1000 characters, the path prefixes its code lives
+under and example pull requests. `ComposePrompt` sets the definition of a
+feature of an assigner prompt, cut out unchanged, in a frame, so discovery
+and assignment group at the same level.
+
+The digest is JSON Lines: a header with the repository, its counts and what
+was trimmed, then one pull request per line, oldest first, with its number,
+date opened, state, title, branch and the files its commits touched. Over
+4 MiB it drops every branch, then replaces each pull request's files with the
+five directories (three levels deep) holding most of them, oldest first, then
+drops the oldest pull requests, each until it fits. It holds no description.
+
+A build seeds its version with the taxonomy's features. A seed is offered to
+a pull request by its path score (`PathScores`): over the item's distinct
+paths under a seed's prefixes (`Under`), one over the number of seeds holding
+the path.
 
 ## Decision attribution
 
