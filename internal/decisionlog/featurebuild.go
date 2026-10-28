@@ -70,8 +70,8 @@ type BuildEstimate struct {
 	// priced; SpentUSD what the version's earlier runs spent.
 	EstimateUSD *float64 `json:"estimate_usd"`
 	SpentUSD    float64  `json:"spent_usd"`
-	// ReservedUSD is the most a batch call of the build is held to under the
-	// cap.
+	// ReservedUSD is the most a batch or merge call of the build is held to
+	// under the cap.
 	ReservedUSD float64 `json:"reserved_usd"`
 	// Reason is why no call could be made (a backend or price reason).
 	Reason string `json:"reason,omitempty"`
@@ -79,7 +79,7 @@ type BuildEstimate struct {
 
 // Cap is the version's spend cap a build confirmed for the estimate holds:
 // what it spent and the estimate times FeatureBuildCapFactor, and at least
-// room for one more batch call beyond the estimate.
+// room for one more batch or merge call beyond the estimate.
 func (e BuildEstimate) Cap() float64 {
 	if e.EstimateUSD == nil {
 		return e.SpentUSD
@@ -201,7 +201,7 @@ func (w *FeatureWorker) EstimateBuild(ctx context.Context, repository, dir strin
 // features' text twice and the text of a resumed version's features behind
 // their members, a summary of every pull request with a description, and
 // the consolidation pass unless the version had it; with the most a batch
-// call is held to under the cap.
+// or merge call is held to under the cap.
 func (r *featureRun) estimateCost(ctx context.Context, items []buildItem, p planned) (float64, float64, bool, error) {
 	batchVersion, _ := assign.Public.BatchVersion(AssignVersion)
 	batchRequest, err := assign.Public.Request(batchVersion, "", assign.MaxBatchOutputTokens)
@@ -229,13 +229,19 @@ func (r *featureRun) estimateCost(ctx context.Context, items []buildItem, p plan
 	}
 	// What a resumed version already holds: its features, those whose text
 	// is behind, and whether its pass was made.
-	var existing, behind int
+	var existing, behind, unsummarized int
 	var consolidated bool
 	if r.version != 0 {
+		// Their pull requests with a description and no generated summary
+		// get one with the text.
 		if err := r.w.Store.db.QueryRowContext(ctx, `SELECT
 (SELECT COUNT(*) FROM feature WHERE version_id=?1 AND merged_into IS NULL),
 (SELECT COUNT(*) FROM feature WHERE version_id=?1 AND merged_into IS NULL AND summarized_version < membership_version),
-(SELECT consolidated_at IS NOT NULL FROM feature_version WHERE id=?1)`, r.version).Scan(&existing, &behind, &consolidated); err != nil {
+(SELECT COUNT(*) FROM feature f JOIN feature_pull fp ON fp.feature_id=f.id
+  JOIN pull_request p ON p.repository=fp.repository AND p.number=fp.number
+  WHERE f.version_id=?1 AND f.merged_into IS NULL AND f.summarized_version < f.membership_version AND p.body != ''
+  AND NOT EXISTS (SELECT 1 FROM pr_summary s WHERE s.repository=p.repository AND s.number=p.number)),
+(SELECT consolidated_at IS NOT NULL FROM feature_version WHERE id=?1)`, r.version).Scan(&existing, &behind, &unsummarized, &consolidated); err != nil {
 			return 0, 0, false, err
 		}
 	}
@@ -270,12 +276,19 @@ func (r *featureRun) estimateCost(ctx context.Context, items []buildItem, p plan
 			add(tokens(len(pullRequest.System)+min(s.body, 4000)+1000), FeatureEstimatePullOutputTokens)
 		}
 	}
+	for range unsummarized {
+		add(tokens(len(pullRequest.System)+3000), FeatureEstimatePullOutputTokens)
+	}
 	if features > 0 && !consolidated {
 		merge, err := consolidate.Public.Request(ConsolidateVersion, consolidate.Merge, "", consolidate.MaxOutputTokens)
 		if err != nil {
 			return 0, 0, false, err
 		}
-		add(tokens(len(merge.System)+min(features*FeatureEstimateCandidateBytes, consolidate.DefaultMaxInputBytes)), FeatureEstimateConsolidateOutputTokens)
+		bytes := len(merge.System) + min(features*FeatureEstimateCandidateBytes, consolidate.DefaultMaxInputBytes)
+		add(tokens(bytes), FeatureEstimateConsolidateOutputTokens)
+		if cost, ok := callCost(r.calls.prices, p.Backend, p.Model, int64(bytes/FeatureBuildBytesPerToken), consolidate.MaxOutputTokens); ok {
+			reserved = max(reserved, cost)
+		}
 		for range min(FeatureMaxSplits, features) {
 			add(tokens(len(merge.System)+FeatureEstimateSplitBytes), FeatureEstimateConsolidateOutputTokens)
 		}

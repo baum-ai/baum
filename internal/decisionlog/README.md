@@ -363,14 +363,14 @@ hosted rebuild does, by a first build: a job of the job queue
 internal features build`.
 
 - **Estimate.** The pull requests left to place, and a resumed version's
-  features whose text is behind and its pass unless it was made, are
-  counted and their calls priced from their sizes at the configured backend and model: a batch call
+  features whose text is behind (with their pull requests' summaries still
+  to write) and its pass unless it was made, are counted and their calls priced from their sizes at the configured backend and model: a batch call
   per 25 (the items' titles, descriptions and paths, and candidates for the
   features placed so far, a feature per 3 pull requests), the features' text
   twice, a summary of each pull request with a description, and one merge
   and up to three split calls. The cap of the version's spend over all its
   runs is what it spent and the estimate times 1.25, with room for at least
-  one more batch call beyond the estimate. A repository whose
+  one more batch or merge call beyond the estimate. A repository whose
   decisions are not captured, or whose model cannot be priced or called, is
   not estimated.
 - **Building.** The build makes the repository's `building` version, or
