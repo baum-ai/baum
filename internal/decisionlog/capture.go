@@ -289,6 +289,8 @@ func (c *Capturer) Capture(ctx context.Context, t Target, o Options) (Report, er
 			if last {
 				return Report{Outcome: OutcomeUnavailable, Reason: firstErr.Error()}, nil
 			}
+			// The stored path was just shown wrong: a skip must not keep it.
+			meta.Path = ""
 			continue
 		}
 		if meta.Fingerprint, err = loc.Version(); err != nil {
@@ -302,6 +304,12 @@ func (c *Capturer) Capture(ctx context.Context, t Target, o Options) (Report, er
 			return skip(ReasonTooLarge)
 		}
 		if found && !o.Force && covered(head, meta.Fingerprint, day) {
+			// The file the head covers, found again by the hooks' path after
+			// the stored one failed: the path the fingerprint names is
+			// repaired.
+			if i > 0 && !o.DryRun {
+				return Report{Outcome: OutcomeUnchanged}, c.Store.SetPath(ctx, t.Agent, t.ID, loc.Path())
+			}
 			return Report{Outcome: OutcomeUnchanged}, nil
 		}
 		graph, err = loc.Graph()
@@ -312,8 +320,8 @@ func (c *Capturer) Capture(ctx context.Context, t Target, o Options) (Report, er
 		if isSession(graph, t.ID) {
 			break
 		}
+		meta.Path = ""
 		if last {
-			meta.Path = ""
 			return skip(ReasonMismatch)
 		}
 	}

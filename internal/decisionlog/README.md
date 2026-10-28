@@ -44,13 +44,14 @@ not a failure.
 ## Capture
 
 1. The transcript is located as the live session view locates it: a regular
-   file inside the agent's own session store, symbolic links resolved. A
-   session whose hooks named no transcript, Claude Code or Codex, is read from
-   the path the last capture stored, checked the same way; only when that path
-   no longer holds it is it looked up as the hooks name it (a Codex session by
-   id, which scans the store; a Claude Code one cannot be found without a
-   path). A path is stored only once its transcript maps to the hook event's
-   session. A session whose own files exceed 64 MiB is skipped (`too_large`).
+   file inside the agent's own session store, symbolic links resolved. When
+   the hooks named no transcript, the path the last capture stored is tried
+   first, Claude Code and Codex alike; if it no longer holds the session, a
+   Codex session is looked up by id, which scans the store (a Claude Code one
+   cannot be found without a path). The transcript must map to the hook
+   event's session, otherwise the session is skipped (`session_mismatch`); a
+   path is stored only once it does. A session whose own files exceed 64 MiB
+   is skipped (`too_large`).
 2. When the stored fingerprint (size and modification time of its files) is
    unchanged and the session is covered, nothing happens.
 3. baum's own generation runs are skipped (`generation_run`).

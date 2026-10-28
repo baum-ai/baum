@@ -581,26 +581,54 @@ func TestCaptureLooksASessionUpAgainWhenItsStoredPathFails(t *testing.T) {
 		},
 	}
 	for name, edit := range cases {
-		t.Run(name, func(t *testing.T) {
-			f, scans, _ := codexFixture(t)
-			rollout := f.codexRollout(t, "20", codexID)
-			if report := f.capture(t, Options{}); report.Outcome != OutcomeExtracted {
-				t.Fatalf("%+v", report)
-			}
-			edit(t, f, rollout)
-			want := rollout
-			if name == "moved" {
-				want = f.codexRollout(t, "22", codexID)
-			}
-			f.later(MinInterval)
-			report := f.capture(t, Options{Force: true})
-			if report.Outcome != OutcomeHit || *scans != 2 {
-				t.Fatalf("%+v, %d scans", report, *scans)
-			}
-			if got := f.storedPath(t); got != want {
-				t.Fatalf("stored path %q, want %q", got, want)
-			}
-		})
+		for _, force := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s, force %v", name, force), func(t *testing.T) {
+				f, scans, _ := codexFixture(t)
+				rollout := f.codexRollout(t, "20", codexID)
+				if report := f.capture(t, Options{}); report.Outcome != OutcomeExtracted {
+					t.Fatalf("%+v", report)
+				}
+				edit(t, f, rollout)
+				want := rollout
+				if name == "moved" {
+					want = f.codexRollout(t, "22", codexID)
+				}
+				f.later(MinInterval)
+				// A rollout that moved has a new fingerprint and is a hit;
+				// the file the head covers, found again, is unchanged.
+				// Either way the stored path is repaired.
+				report := f.capture(t, Options{Force: force})
+				outcome := OutcomeUnchanged
+				if force || name == "moved" {
+					outcome = OutcomeHit
+				}
+				if report.Outcome != outcome || *scans != 2 {
+					t.Fatalf("%+v, %d scans", report, *scans)
+				}
+				if got := f.storedPath(t); got != want {
+					t.Fatalf("stored path %q, want %q", got, want)
+				}
+			})
+		}
+	}
+}
+
+func TestCaptureForgetsAStoredPathShownWrong(t *testing.T) {
+	f, _, _ := codexFixture(t)
+	rollout := f.codexRollout(t, "20", codexID)
+	if report := f.capture(t, Options{}); report.Outcome != OutcomeExtracted {
+		t.Fatalf("%+v", report)
+	}
+	f.setStoredPath(t, f.codexRollout(t, "21", "019f0000-0000-7000-8000-000000000002"))
+	if err := os.Truncate(rollout, MaxTranscriptBytes+1); err != nil {
+		t.Fatal(err)
+	}
+	f.later(MinInterval)
+	if report := f.capture(t, Options{}); report.Outcome != OutcomeSkipped || report.Reason != ReasonTooLarge {
+		t.Fatalf("%+v", report)
+	}
+	if got := f.storedPath(t); got != "" {
+		t.Fatalf("stored path %q", got)
 	}
 }
 
