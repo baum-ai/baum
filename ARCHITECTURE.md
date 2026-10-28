@@ -1688,12 +1688,12 @@ to the pull request, read from the local session stores with `sessions` and
 document's own session metadata.
 
 Estimated cost comes from a price list at
-`https://static.usebaum.com/pricing/prices.json`. baum verifies its `.sig`
+`https://static.usebaum.com/pricing/v2/prices.json`. baum verifies its `.sig`
 with a public key embedded in the binary and falls back to a snapshot embedded
-at release when the list cannot be fetched or verified. Nothing is cached on
-disk: a fetched list replaces the embedded one for the life of the process, and
-`pricing.CurrentSource` says which is active (`embedded` or `fetched`), its
-version, when it was fetched and why the last refresh failed.
+at release when no newer verified list is available. The daemon can persist a
+verified signed list beside its job journal and reload it on restart.
+`pricing.CurrentSource` says which is active (`embedded`, `fetched` or `cached`),
+its version, when it was fetched and why the last refresh failed.
 
 ## Diagnostics
 
