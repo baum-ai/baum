@@ -382,10 +382,13 @@ links to the session's page (`?page=sessions&session=<agent>:<id>`, which has it
 while the session is tracked); a pull request links to its PR page
 (`?repository=&pr=`). Only the tab shown reads its list, 50 rows at a time
 with a button for more. The app's event stream counts `timeline` events and
-its reconnections after the first; on each the page reads its repositories,
-list (as many rows as it had loaded, in requests of at most 500) and open
-details again, and a load of more rows still under way is dropped. With no features yet, the
-page explains that features appear as pull requests and sessions are placed and
+every connection after the first; on each the page reads its repositories, list
+(as many rows as it had loaded, in requests of at most 500) and open details
+again. A load of more rows or a detail still under way from before is dropped,
+so an older answer never replaces a newer one. A feature in the address that
+the loaded list does not hold (further down, filtered out, archived or gone)
+shows above the list as the opened feature. With no features yet, the page
+explains that features appear as pull requests and sessions are placed and
 offers All decisions. It says so when the daemon has no decision store, when
 the decisions switch is off, and which picked repositories have their decisions
 turned off.

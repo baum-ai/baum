@@ -125,9 +125,9 @@ beforeEach(() => {
     vi.fn(async (path: string) => {
       requests.push(path);
       const key = path.replace("/s/test-ns/", "").split("?")[0]!;
-      return key in answers
-        ? Response.json(answers[key])
-        : new Response("missing", { status: 404 });
+      const answer = answers[key];
+      if (typeof answer === "function") return (answer as () => Promise<Response>)();
+      return key in answers ? Response.json(answer) : new Response("missing", { status: 404 });
     }),
   );
 });
@@ -283,4 +283,113 @@ it("reads again as many rows as were loaded when the log changes", async () => {
     "/s/test-ns/api/timeline/features?repository=acme%2Fdemo&limit=70",
   ]);
   expect(node.querySelectorAll("li[data-feature]").length).toBe(70);
+});
+
+/** A response the test sends when it chooses. */
+function deferred() {
+  let send: (body: unknown) => void = () => {};
+  const promise = new Promise<Response>((resolve) => {
+    send = (body) => resolve(Response.json(body));
+  });
+  return { promise, send };
+}
+
+it("keeps the newest detail when an older one answers last", async () => {
+  const old = deferred();
+  answers["api/timeline/decisions/d1"] = () => old.promise;
+  await show("page=timeline&tab=all&open=d1");
+  // The log changes while the first read is under way; the second answers
+  // first, with the newer detail.
+  answers["api/timeline/decisions/d1"] = {
+    ...decisionDetail,
+    decisions: [{ ...decisionDetail.decisions[0]!, rejected_alternative: "The newer alternative" }],
+  };
+  await act(async () =>
+    root.render(<Harness initial="page=timeline&tab=all&open=d1" revision={1} />),
+  );
+  await act(async () => {});
+  expect(node.textContent).toContain("The newer alternative");
+  await act(async () => old.send(decisionDetail));
+  await act(async () => {});
+  expect(node.textContent).toContain("The newer alternative");
+  expect(node.textContent).not.toContain("A hosted-only page");
+  expect(node.textContent).not.toContain("Loading this decision");
+});
+
+it("shows an opened feature the list does not hold, and one that is gone", async () => {
+  answers["api/timeline/features/F9"] = {
+    ...featureDetail,
+    feature: { ...featureDetail.feature, id: "F9", title: "An older feature" },
+  };
+  await show("page=timeline&feature=F9");
+  const opened = node.querySelector('section[aria-label="Opened feature"]');
+  expect(opened?.textContent).toContain("An older feature");
+  expect(opened?.textContent).toContain("Add the timeline page");
+  await act(async () => root.unmount());
+  root = createRoot(node);
+  await show("page=timeline&feature=F404");
+  expect(node.querySelector('section[aria-label="Opened feature"]')?.textContent).toContain(
+    "This feature no longer exists.",
+  );
+  await act(async () => root.unmount());
+  root = createRoot(node);
+  answers["api/timeline/features/F8"] = { archived: true };
+  await show("page=timeline&feature=F8");
+  expect(node.querySelector('section[aria-label="Opened feature"]')?.textContent).toContain(
+    "This feature is archived",
+  );
+});
+
+it("drops rows a load of more brings after the list was read again", async () => {
+  const many = (from: number, n: number) =>
+    Array.from({ length: n }, (_, i) => ({ ...feature, id: `F${from + i}`, key_decisions: [] }));
+  answers["api/timeline/features"] = { features: many(0, 50), next_cursor: "1|F49" };
+  await show();
+  const later = deferred();
+  answers["api/timeline/features"] = () => later.promise;
+  const more = [...node.querySelectorAll("button")].find(
+    (b) => b.textContent === "Load more features",
+  )!;
+  await act(async () => more.click());
+  // The log changes; the list is read again and that answer lands first.
+  answers["api/timeline/features"] = { features: many(100, 3), next_cursor: null };
+  await act(async () => root.render(<Harness initial="page=timeline" revision={1} />));
+  await act(async () => {});
+  expect(node.querySelectorAll("li[data-feature]").length).toBe(3);
+  // Then the old load of more answers: its rows are not appended.
+  await act(async () => later.send({ features: many(50, 20), next_cursor: null }));
+  await act(async () => {});
+  expect(node.querySelectorAll("li[data-feature]").length).toBe(3);
+  // Nor is it a failure: the list ends as read.
+  expect(node.textContent).toContain("No more features.");
+});
+
+it("reads more than 500 rows again in requests that follow the cursor", async () => {
+  const many = (from: number, n: number) =>
+    Array.from({ length: n }, (_, i) => ({ ...feature, id: `F${from + i}`, key_decisions: [] }));
+  answers["api/timeline/features"] = { features: many(0, 50), next_cursor: "1|F49" };
+  await show();
+  answers["api/timeline/features"] = { features: many(50, 550), next_cursor: null };
+  const more = [...node.querySelectorAll("button")].find(
+    (b) => b.textContent === "Load more features",
+  )!;
+  await act(async () => more.click());
+  await act(async () => {});
+  expect(node.querySelectorAll("li[data-feature]").length).toBe(600);
+  requests.length = 0;
+  let page = 0;
+  answers["api/timeline/features"] = async () =>
+    Response.json(
+      page++ === 0
+        ? { features: many(0, 500), next_cursor: "1|F499" }
+        : { features: many(500, 100), next_cursor: null },
+    );
+  await act(async () => root.render(<Harness initial="page=timeline" revision={1} />));
+  await act(async () => {});
+  await act(async () => {});
+  expect(requests.filter((path) => path.includes("features"))).toEqual([
+    "/s/test-ns/api/timeline/features?repository=acme%2Fdemo&limit=500",
+    "/s/test-ns/api/timeline/features?repository=acme%2Fdemo&limit=100&cursor=1%7CF499",
+  ]);
+  expect(node.querySelectorAll("li[data-feature]").length).toBe(600);
 });

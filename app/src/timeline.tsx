@@ -220,6 +220,9 @@ function usePages<T>(
   const latest = useRef(state);
   latest.current = state;
   const more = useRef<AbortController | null>(null);
+  // Counts the list's reads from its first page: a load of more rows
+  // belongs to the one it started in and is dropped after another.
+  const generation = useRef(0);
   useEffect(() => {
     // Only the tab shown reads its list.
     if (!active) return;
@@ -231,6 +234,7 @@ function usePages<T>(
     if (again && base.revision === revision) return;
     // A load of more rows started before is for the old list.
     more.current?.abort();
+    generation.current += 1;
     const want = again ? Math.max(PAGE, base.rows.length) : PAGE;
     setState((current) => ({ ...current, status: "loading" }));
     const read = async () => {
@@ -265,6 +269,7 @@ function usePages<T>(
     if (!base.cursor || base.status === "loading") return;
     const abort = new AbortController();
     more.current = abort;
+    const started = generation.current;
     setState({ ...base, status: "loading" });
     request<Record<string, unknown>>(
       `${path}?${query}&cursor=${encodeURIComponent(base.cursor)}`,
@@ -274,7 +279,7 @@ function usePages<T>(
     )
       .then((body) =>
         setState((current) =>
-          current.query !== base.query || current.revision !== base.revision
+          generation.current !== started || current.query !== base.query
             ? current
             : {
                 ...current,
@@ -285,7 +290,8 @@ function usePages<T>(
         ),
       )
       .catch(() => {
-        if (!abort.signal.aborted) setState((current) => ({ ...current, status: "failed" }));
+        if (!abort.signal.aborted && generation.current === started)
+          setState((current) => ({ ...current, status: "failed" }));
       });
   }, [path, query, key]);
   return { ...state, loaded: state.loaded && state.query === query, loadMore };
@@ -294,7 +300,7 @@ function usePages<T>(
 /** Details read once per revision and kept, so closing and reopening one
  *  costs no request. */
 function useDetails<S>(
-  read: (id: string) => Promise<S>,
+  read: (id: string, signal: AbortSignal) => Promise<S>,
   revision: number,
 ): [
   Record<string, S | { status: "loading" } | { status: "failed" }>,
@@ -302,31 +308,53 @@ function useDetails<S>(
 ] {
   type Known = Record<string, S | { status: "loading" } | { status: "failed" }>;
   const [known, setKnown] = useState<{ revision: number; states: Known }>({ revision, states: {} });
-  const requested = useRef(new Map<string, number>());
+  // Each id's latest request, which alone may write its state: a newer one
+  // (a new revision or a retry) aborts it.
+  const requests = useRef(new Map<string, { revision: number; abort: AbortController }>());
+  useEffect(
+    () => () => {
+      for (const each of requests.current.values()) each.abort.abort();
+    },
+    [],
+  );
   const states = known.revision === revision ? known.states : {};
   const load = useCallback(
     (id: string, force = false) => {
-      if (requested.current.get(id) === revision && !force) return;
-      requested.current.set(id, revision);
-      const set = (state: Known[string]) =>
-        setKnown((current) => ({
-          revision,
-          states: { ...(current.revision === revision ? current.states : {}), [id]: state },
-        }));
+      const previous = requests.current.get(id);
+      if (previous?.revision === revision && !force) return;
+      previous?.abort.abort();
+      const request = { revision, abort: new AbortController() };
+      requests.current.set(id, request);
+      const set = (state: Known[string]) => {
+        if (requests.current.get(id) !== request) return;
+        setKnown((current) =>
+          current.revision > revision
+            ? current
+            : {
+                revision,
+                states: { ...(current.revision === revision ? current.states : {}), [id]: state },
+              },
+        );
+      };
       set({ status: "loading" });
-      read(id)
+      read(id, request.abort.signal)
         .then(set)
-        .catch(() => set({ status: "failed" }));
+        .catch(() => {
+          if (!request.abort.signal.aborted) set({ status: "failed" });
+        });
     },
     [read, revision],
   );
   return [states, load];
 }
 
-const readDecision = async (id: string): Promise<DetailState> => {
+const readDecision = async (id: string, signal: AbortSignal): Promise<DetailState> => {
   try {
     const detail = await request<DecisionDetail>(
       `api/timeline/decisions/${encodeURIComponent(id)}`,
+      undefined,
+      "GET",
+      signal,
     );
     return { status: "ready", detail };
   } catch (e) {
@@ -335,10 +363,13 @@ const readDecision = async (id: string): Promise<DetailState> => {
   }
 };
 
-const readFeature = async (id: string): Promise<FeatureState> => {
+const readFeature = async (id: string, signal: AbortSignal): Promise<FeatureState> => {
   try {
     const body = await request<FeatureDetail | { archived: true }>(
       `api/timeline/features/${encodeURIComponent(id)}`,
+      undefined,
+      "GET",
+      signal,
     );
     if ("archived" in body) return { status: "archived" };
     // A feature merged into another answers with the one it was merged into.
@@ -486,81 +517,111 @@ function TimelineLog({
       {drillDown(feature.id)}
     </FeatureItem>
   );
+  // A feature in the address the loaded list does not show: further down,
+  // filtered out, archived or gone.
+  const openFeatureListed = features.rows.some((f) => f.id === openFeature);
+  const openedFeature =
+    openFeature && features.loaded && !openFeatureListed ? (
+      <section aria-label="Opened feature" className="mb-6">
+        <h2 className="mb-2 text-xs tracking-[0.08em] text-(--text-tertiary) uppercase">
+          Opened feature
+        </h2>
+        {openState?.status === "ready" ? (
+          <ol>
+            <FeatureItem
+              feature={openState.detail.feature}
+              expanded
+              onToggle={() => writeFeature(null, null)}
+              onKeyDecision={(decision) => writeFeature(openFeature, decision)}
+            >
+              {drillDown(openFeature)}
+            </FeatureItem>
+          </ol>
+        ) : (
+          <Card size="panel" className="p-4">
+            {drillDown(openFeature)}
+          </Card>
+        )}
+      </section>
+    ) : null;
   const featureFiltered = Boolean(q || status);
   const decisionFiltered = Boolean(q || category || file);
   const clear = () => write({ q: null, status: null, category: null, file: null });
 
   const featuresBody = (
-    <Stale pending={features.status === "loading" && features.loaded}>
-      {features.status === "failed" && !features.loaded ? (
-        <Failed>The features could not be loaded.</Failed>
-      ) : !features.loaded ? (
-        <LoadingStatus block>Loading features…</LoadingStatus>
-      ) : features.rows.length === 0 ? (
-        featureFiltered ? (
-          <Empty title="No features match these filters">
-            <Button variant="secondary" size="tiny" className="mt-2" onClick={clear}>
-              Clear filters
-            </Button>
-          </Empty>
-        ) : (
-          <Empty title="No features yet">
-            Features appear here as baum places this repository's pull requests and agent sessions
-            in them. The decisions read so far are under All decisions.
-            <span className="mt-3 flex justify-center">
-              <Button variant="secondary" size="tiny" onClick={() => write({ tab: "all" })}>
-                Show all decisions
+    <>
+      {openedFeature}
+      <Stale pending={features.status === "loading" && features.loaded}>
+        {features.status === "failed" && !features.loaded ? (
+          <Failed>The features could not be loaded.</Failed>
+        ) : !features.loaded ? (
+          <LoadingStatus block>Loading features…</LoadingStatus>
+        ) : features.rows.length === 0 ? (
+          featureFiltered ? (
+            <Empty title="No features match these filters">
+              <Button variant="secondary" size="tiny" className="mt-2" onClick={clear}>
+                Clear filters
               </Button>
-            </span>
-          </Empty>
-        )
-      ) : (
-        <div
-          className={cn(
-            "grid items-start gap-6",
-            sideFeature && "grid-cols-[minmax(0,1fr)_minmax(0,1fr)]",
-          )}
-        >
-          <div className={cn("flex min-w-0 flex-col gap-6", !sideFeature && "max-w-7xl")}>
-            <ol aria-label="Features" className="pt-1">
-              {features.rows.map((feature, index) => {
-                // A feature with no activity yet takes no heading, so the
-                // next one compares with the last that had one.
-                const previous = features.rows
-                  .slice(0, index)
-                  .findLast((each) => featureDay(each) !== null);
-                const month = featureMonth(feature);
-                const day = featureDay(feature);
-                const startsDay = day !== null && day !== featureDay(previous);
-                return (
-                  <Fragment key={feature.id}>
-                    {month !== null && month !== featureMonth(previous) ? (
-                      <TimelineHeading level="month" iso={month} />
-                    ) : null}
-                    {startsDay ? <TimelineHeading level="day" iso={day} /> : null}
-                    {featureItem(feature, startsDay ? day : null)}
-                  </Fragment>
-                );
-              })}
-            </ol>
-            <MorePages
-              pages={features}
-              action="Load more features"
-              end={features.rows.length > 0 ? "No more features." : null}
-            />
+            </Empty>
+          ) : (
+            <Empty title="No features yet">
+              Features appear here as baum places this repository's pull requests and agent sessions
+              in them. The decisions read so far are under All decisions.
+              <span className="mt-3 flex justify-center">
+                <Button variant="secondary" size="tiny" onClick={() => write({ tab: "all" })}>
+                  Show all decisions
+                </Button>
+              </span>
+            </Empty>
+          )
+        ) : (
+          <div
+            className={cn(
+              "grid items-start gap-6",
+              sideFeature && "grid-cols-[minmax(0,1fr)_minmax(0,1fr)]",
+            )}
+          >
+            <div className={cn("flex min-w-0 flex-col gap-6", !sideFeature && "max-w-7xl")}>
+              <ol aria-label="Features" className="pt-1">
+                {features.rows.map((feature, index) => {
+                  // A feature with no activity yet takes no heading, so the
+                  // next one compares with the last that had one.
+                  const previous = features.rows
+                    .slice(0, index)
+                    .findLast((each) => featureDay(each) !== null);
+                  const month = featureMonth(feature);
+                  const day = featureDay(feature);
+                  const startsDay = day !== null && day !== featureDay(previous);
+                  return (
+                    <Fragment key={feature.id}>
+                      {month !== null && month !== featureMonth(previous) ? (
+                        <TimelineHeading level="month" iso={month} />
+                      ) : null}
+                      {startsDay ? <TimelineHeading level="day" iso={day} /> : null}
+                      {featureItem(feature, startsDay ? day : null)}
+                    </Fragment>
+                  );
+                })}
+              </ol>
+              <MorePages
+                pages={features}
+                action="Load more features"
+                end={features.rows.length > 0 ? "No more features." : null}
+              />
+            </div>
+            {sideFeature ? (
+              <FeatureSidePanel
+                id={FEATURE_PANEL}
+                feature={sideFeature}
+                onClose={() => toggleFeature(sideFeature)}
+              >
+                {drillDown(sideFeature.id)}
+              </FeatureSidePanel>
+            ) : null}
           </div>
-          {sideFeature ? (
-            <FeatureSidePanel
-              id={FEATURE_PANEL}
-              feature={sideFeature}
-              onClose={() => toggleFeature(sideFeature)}
-            >
-              {drillDown(sideFeature.id)}
-            </FeatureSidePanel>
-          ) : null}
-        </div>
-      )}
-    </Stale>
+        )}
+      </Stale>
+    </>
   );
 
   const openRow = open && tab === "all" ? decisions.rows.find((d) => d.id === open) : undefined;

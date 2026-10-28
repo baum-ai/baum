@@ -691,7 +691,7 @@ JOIN capture_session cs ON cs.agent=sc.agent AND cs.session_id=sc.session_id
 JOIN pull_commit pc ON pc.repository=sc.repository AND pc.sha=sc.sha
 JOIN feature_pull fp ON fp.version_id=?1 AND fp.repository=pc.repository AND fp.number=pc.number
 JOIN pull_request pr ON pr.repository=pc.repository AND pr.number=pc.number
-WHERE sc.repository=?2 AND (sc.agent, sc.session_id) IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?3))
+WHERE sc.repository=?2 AND (sc.agent, sc.session_id)`+inSessions+`
 ORDER BY sc.agent, sc.session_id, pr.number, sc.sha`, version, repository, set))
 	if err != nil {
 		return nil, err
@@ -728,7 +728,7 @@ ORDER BY sc.agent, sc.session_id, pr.number, sc.sha`, version, repository, set))
 		return r, rows.Scan(&r.key.Agent, &r.key.ID, &r.feature)
 	})(s.db.QueryContext(ctx, `SELECT fs.agent, fs.session_id, fs.feature_id FROM feature_session fs
 JOIN capture_session cs ON cs.agent=fs.agent AND cs.session_id=fs.session_id
-WHERE fs.version_id=? AND fs.repository=? AND (fs.agent, fs.session_id) IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?))`, version, repository, set))
+WHERE fs.version_id=? AND fs.repository=? AND (fs.agent, fs.session_id)`+inSessions, version, repository, set))
 	if err != nil {
 		return nil, err
 	}
@@ -739,6 +739,11 @@ WHERE fs.version_id=? AND fs.repository=? AND (fs.agent, fs.session_id) IN (SELE
 	}
 	return out, nil
 }
+
+// inSessions follows an (agent, session_id) row value: it is in the
+// sessions sessionSet encodes, bound to the next parameter, so the query
+// uses the (agent, session_id) indexes.
+const inSessions = ` IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?))`
 
 // sessionSet is the sessions as a JSON array of [agent, id] pairs, which a
 // query reads as a row-value set with json_each, so it uses the

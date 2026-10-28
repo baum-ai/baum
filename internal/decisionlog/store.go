@@ -605,7 +605,7 @@ func (s *Store) currentOf(ctx context.Context, sessions []SessionKey) (map[Sessi
 		return d, json.Unmarshal([]byte(turns), &d.Turns)
 	})(s.db.QueryContext(ctx, `SELECT agent, session_id, decision_id, repository, title, summary, category, who, trigger, rationale,
 rejected_alternative, evidence, superseded, turns_json, decided_turn, decided_at, branch FROM current_decision
-WHERE (agent, session_id) IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) ORDER BY agent, session_id, ordinal`, set))
+WHERE (agent, session_id)`+inSessions+` ORDER BY agent, session_id, ordinal`, set))
 	if err != nil {
 		return nil, err
 	}
@@ -613,7 +613,7 @@ WHERE (agent, session_id) IN (SELECT json_extract(value, '$[0]'), json_extract(v
 		var f [2]string
 		return f, rows.Scan(&f[0], &f[1])
 	})(s.db.QueryContext(ctx, `SELECT f.decision_id, f.path FROM decision_file f JOIN current_decision d ON d.decision_id=f.decision_id
-WHERE (d.agent, d.session_id) IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) ORDER BY f.decision_id, f.path`, set))
+WHERE (d.agent, d.session_id)`+inSessions+` ORDER BY f.decision_id, f.path`, set))
 	if err != nil {
 		return nil, err
 	}

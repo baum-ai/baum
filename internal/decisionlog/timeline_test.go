@@ -476,7 +476,7 @@ func TestCurrentOfUsesTheSessionIndex(t *testing.T) {
 		var detail string
 		return detail, rows.Scan(&id, &parent, &unused, &detail)
 	})(s.db.Query(`EXPLAIN QUERY PLAN SELECT decision_id FROM current_decision
-WHERE (agent, session_id) IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?))`, set))
+WHERE (agent, session_id)`+inSessions, set))
 	if err != nil {
 		t.Fatal(err)
 	}
