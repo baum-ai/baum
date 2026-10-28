@@ -152,6 +152,12 @@ it("peeks at the saved review under its row and closes it again", async () => {
   expect(button("Peek at acme/demo #1")!.getAttribute("aria-expanded")).toBe("true");
   await act(async () => button("Peek at acme/demo #1")!.click());
   expect(node.querySelector(".inbox-peek-panel")).toBeNull();
+  // Opened again, it shows the review already read, without reading it again.
+  await act(async () => button("Peek at acme/demo #1")!.click());
+  expect(node.querySelector(".inbox-peek-panel")?.textContent).toContain(
+    "Retries failed jobs with backoff.",
+  );
+  expect(requests.filter((path) => path.includes("api/document"))).toHaveLength(1);
 });
 
 it("opens the focused row's peek with Space", async () => {

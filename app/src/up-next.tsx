@@ -1,4 +1,12 @@
-import { useEffect, useLayoutEffect, useRef, useState, type ComponentType } from "react";
+import {
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type ComponentType,
+  type Dispatch,
+  type SetStateAction,
+} from "react";
 import { formatCount } from "@baum/viewer/components/format";
 import { Lines } from "@baum/viewer/components/review-parts";
 import { Alert, Button } from "@baum/viewer/components/ui";
@@ -501,11 +509,17 @@ const sumMinutes = (items: { minutes?: number | null }[]) =>
  *  own that an agent is fixing now. */
 type Row = { key: string; entry: Entry; item?: UpNextItem; job?: Job };
 
+/** Saved reviews read so far, by clone, number and version. */
+type SavedReviewDocs = Record<string, ReviewDocument | "failed">;
+export type SavedReviews = [SavedReviewDocs, Dispatch<SetStateAction<SavedReviewDocs>>];
+
 /** The saved review of a pull request, once read, or "failed"; read again
  *  only when a new version is saved. Nothing while it is read, or for a pull
- *  request without a saved review. */
-export function useSavedReview(entry: Entry | undefined, clone: string) {
-  const [docs, setDocs] = useState<Record<string, ReviewDocument | "failed">>({});
+ *  request without a saved review. `shared` keeps what was read for a parent
+ *  that outlives the caller, as the Pull requests list does for its peeks. */
+export function useSavedReview(entry: Entry | undefined, clone: string, shared?: SavedReviews) {
+  const own = useState<SavedReviewDocs>({});
+  const [docs, setDocs] = shared ?? own;
   const id =
     entry && clone && entry.version_count > 0
       ? `${clone}#${entry.pull_request.number}@${entry.latest?.version ?? 0}`

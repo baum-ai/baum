@@ -48,7 +48,7 @@ import { LiveBadge, useNow } from "./live";
 import { LoadingStatus, NineDots } from "./nine-dots";
 import { canMerge, MergeDialog } from "./merge";
 import { inboxAction, moveFocus, onBody, useShortcuts } from "./shortcuts";
-import { MergeReadyDialog, useSavedReview } from "./up-next";
+import { MergeReadyDialog, useSavedReview, type SavedReviews } from "./up-next";
 
 /** One row the keyboard can reach: a pull request or a review group. */
 type Item = { id: string; entry?: Entry; group?: ReviewGroup };
@@ -196,6 +196,8 @@ export function Inbox({
   const [mergingAll, setMergingAll] = useState<Entry[] | null>(null);
   // The rows whose peek is open, by row key.
   const [peeked, setPeeked] = useState(new Set<string>());
+  // The saved reviews peeks have read, kept when a peek closes.
+  const savedReviews: SavedReviews = useState({});
   const changedRows = useChangedRows(rows);
   // Review groups start collapsed.
   const [expanded, setExpanded] = useState(new Set<string>());
@@ -341,6 +343,7 @@ export function Inbox({
       fixing={isActiveJob(fixJob(entry, jobs))}
       peeked={peeked.has(rowKey(entry))}
       peek={() => peek(rowKey(entry))}
+      savedReviews={savedReviews}
       changed={changedRows.has(rowKey(entry))}
       generate={generate && cloneFor(entry) ? () => generate(entry) : undefined}
     />
@@ -848,6 +851,7 @@ function RowPeek({
   href,
   Link,
   generate,
+  savedReviews,
 }: {
   id: string;
   entry: Entry;
@@ -855,8 +859,9 @@ function RowPeek({
   href: string;
   Link: ComponentType<ViewerLinkProps>;
   generate?: () => void;
+  savedReviews: SavedReviews;
 }) {
-  const saved = useSavedReview(entry, clone);
+  const saved = useSavedReview(entry, clone, savedReviews);
   const doc = saved && saved !== "failed" ? saved : null;
   const pr = entry.pull_request;
   const reason = doc?.summary.risk_score?.reasons[0];
@@ -1073,6 +1078,7 @@ function InboxRow({
   fixing,
   peeked,
   peek,
+  savedReviews,
   changed,
   generate,
 }: {
@@ -1092,6 +1098,7 @@ function InboxRow({
   fixing: boolean;
   peeked: boolean;
   peek: () => void;
+  savedReviews: SavedReviews;
   /** Its state changed in the latest read. */
   changed: boolean;
   generate?: () => void;
@@ -1161,6 +1168,7 @@ function InboxRow({
           href={href}
           Link={Link}
           generate={generate}
+          savedReviews={savedReviews}
         />
       ) : null}
     </li>

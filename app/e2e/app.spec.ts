@@ -853,3 +853,118 @@ test("Analytics shows what the agents did, cost and delivered", async ({ page })
   );
   expect(errors).toEqual([]);
 });
+
+// Every page from the keyboard alone: the command key with a number (Ctrl
+// here, which is not a Mac), Go to, each list's keys, a pull request's
+// section keys, back and forward, and the sheet that lists them.
+test("the whole app can be used from the keyboard", async ({ page }) => {
+  const errors: string[] = [];
+  page.on("pageerror", (e) => errors.push(e.message));
+  const marker = join(process.env.BAUM_APP_STATE_DIR ?? "", "live-transcript");
+  await writeFile(marker, "running\nWalk the app by keyboard\n");
+  await page.goto(await launchURL());
+  const heading = (name: string) => page.getByRole("heading", { level: 1, name, exact: true });
+  const search = () => new URL(page.url()).searchParams;
+  await expect(heading("Up next")).toBeVisible();
+
+  await page.keyboard.press("Control+2");
+  await expect(heading("Pull requests")).toBeVisible();
+  await expect(page.getByRole("link", { name: /Reuse the existing PR page/ })).toBeVisible();
+  // l and h move along the views.
+  await page.keyboard.press("l");
+  await expect.poll(() => search().get("filter")).toBe("requested");
+  await page.keyboard.press("h");
+  await expect.poll(() => search().get("filter")).toBe("inbox");
+  await page.keyboard.press("j");
+  await expect(page.locator(".inbox-row[data-focused]")).toHaveCount(1);
+  await page.keyboard.press("Escape");
+  await expect(page.locator(".inbox-row[data-focused]")).toHaveCount(0);
+
+  // Go to finds a pull request by its words and opens it.
+  await page.keyboard.press("Control+k");
+  const goTo = page.getByRole("dialog", { name: "Go to" });
+  await expect(goTo).toBeVisible();
+  await page.keyboard.type("existing pr page");
+  await expect(goTo.getByRole("option", { selected: true })).toContainText(
+    "Reuse the existing PR page",
+  );
+  await page.keyboard.press("Enter");
+  await expect(goTo).toHaveCount(0);
+  await expect(page.locator("[data-review-page]")).toBeVisible();
+  await expect.poll(() => search().get("pr")).toBe("7");
+  // j and k step through the review in reading order, from the Summary, once
+  // the review has loaded its sections.
+  const rail = page.getByRole("navigation", { name: "Review sections" });
+  await expect(rail.getByRole("button", { name: "Summary", pressed: true })).toBeVisible();
+  await expect(rail.getByRole("button", { name: "Retry policy and backoff" })).toBeVisible();
+  await expect.poll(() => search().get("pane")).toBeNull();
+  await page.keyboard.press("j");
+  await expect.poll(() => search().get("pane")).not.toBeNull();
+  await page.keyboard.press("k");
+  await expect.poll(() => search().get("pane")).toBeNull();
+  await page.keyboard.press("u");
+  await expect(heading("Up next")).toBeVisible();
+
+  // Sessions: j focuses the row, Enter opens its transcript, u comes back.
+  await page.keyboard.press("Control+3");
+  await expect(heading("Sessions")).toBeVisible();
+  // The fixture's one session keeps the title an earlier story gave it, so
+  // the row is found by its link, not its words.
+  await expect(
+    page
+      .getByRole("region", { name: "Running now", exact: true })
+      .getByRole("link", { name: /^Open transcript/ }),
+  ).toBeVisible({ timeout: 10000 });
+  await page.keyboard.press("j");
+  await expect(page.locator(".local-session-row[data-focused]")).toHaveCount(1);
+  await page.keyboard.press("Enter");
+  await expect.poll(() => search().get("session")).not.toBeNull();
+  await expect(page.getByRole("region", { name: "Transcript", exact: true })).toBeVisible();
+  await page.keyboard.press("u");
+  await expect(heading("Sessions")).toBeVisible();
+
+  await page.keyboard.press("Control+6");
+  await expect(heading("Jobs")).toBeVisible();
+  await page.keyboard.press("Control+4");
+  await expect(heading("Analytics")).toBeVisible();
+  // Repositories: a opens the picker with its search focused.
+  await page.keyboard.press("Control+5");
+  await expect(heading("Repositories")).toBeVisible();
+  await page.keyboard.press("a");
+  await expect(page.getByRole("searchbox")).toBeFocused();
+  // The app's keys still work in a text field; Settings is ⌘, too.
+  await page.keyboard.press("Control+,");
+  await expect(page).toHaveURL(/\?page=settings$/);
+  // Back and forward walk the history the keys made.
+  await page.keyboard.press("Alt+ArrowLeft");
+  await expect(heading("Repositories")).toBeVisible();
+  await page.keyboard.press("Alt+ArrowLeft");
+  await expect(heading("Analytics")).toBeVisible();
+  await page.keyboard.press("Alt+ArrowRight");
+  await expect(heading("Repositories")).toBeVisible();
+
+  // The sheet lists the page's own keys first; Escape closes it.
+  await page.keyboard.press("Control+3");
+  await expect(heading("Sessions")).toBeVisible();
+  await page.keyboard.press("?");
+  const sheet = page.getByRole("dialog", { name: "Keyboard shortcuts" });
+  await expect(sheet.locator("h3").first()).toHaveText("Sessions");
+  // It opens at its top, on the page's own keys.
+  await expect(sheet.locator("h3").first()).toBeInViewport();
+  expect(await sheet.evaluate((dialog) => dialog.scrollTop)).toBe(0);
+  await expect(sheet).toContainText("Ctrl+K");
+  await page.screenshot({ path: "test-results/shortcuts-sheet.png", animations: "disabled" });
+  await page.keyboard.press("Escape");
+  await expect(sheet).toHaveCount(0);
+  await page.keyboard.press("Control+k");
+  await expect(goTo).toBeVisible();
+  await page.screenshot({ path: "test-results/go-to.png", animations: "disabled" });
+  await page.keyboard.press("Escape");
+  await expect(goTo).toHaveCount(0);
+  await page.keyboard.down("Alt");
+  await expect(page.locator(".local-rail-key").first()).toBeVisible();
+  await page.screenshot({ path: "test-results/sidebar-keys.png", animations: "disabled" });
+  await page.keyboard.up("Alt");
+  await writeFile(marker, "ended\nWalk the app by keyboard\n");
+  expect(errors).toEqual([]);
+});

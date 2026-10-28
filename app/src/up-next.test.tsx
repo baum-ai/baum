@@ -282,7 +282,7 @@ it("groups what waits on the person and opens on the first", async () => {
     a.textContent?.startsWith("Inbox"),
   )!;
   expect(inbox.getAttribute("aria-current")).toBe("page");
-  expect(inbox.textContent).toBe("Inbox4");
+  expect(inbox.querySelector(".local-rail-badge")?.textContent).toBe("4");
 });
 
 it("moves with j and k, opens with Enter and merges with m", async () => {

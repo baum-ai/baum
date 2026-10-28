@@ -7,7 +7,7 @@ import {
   useRef,
   useState,
 } from "react";
-import { ReviewViewer } from "@baum/viewer/components/review-viewer";
+import { ReviewViewer, type ReviewSteps } from "@baum/viewer/components/review-viewer";
 import { sessionsSlot, commitsSlot } from "@baum/viewer/components/list-slots";
 import { SessionCard } from "@baum/viewer/components/session-card";
 import { Alert, Button, LiveDot } from "@baum/viewer/components/ui";
@@ -40,6 +40,7 @@ import { Notice } from "./shell";
 import { LiveSessions } from "./sessions";
 import { LoadingStatus } from "./nine-dots";
 import { canMerge, MergeDialog } from "./merge";
+import { useShortcuts } from "./shortcuts";
 import { PullRequestState, pullRequestStates } from "./inbox";
 import { canRerunChecks, canUpdateBranch, RerunChecksDialog, UpdateBranchDialog } from "./unblock";
 function Transcript({ id, query }: { id: string; query: string }) {
@@ -158,6 +159,26 @@ export function LocalReview({
   const [versions, setVersions] = useState<number[]>([]);
   const [historyFailed, setHistoryFailed] = useState(false);
   const [sessions, setSessions] = useState<SessionsLoad>({ state: "loading" });
+  // The page's keys: j and k step through the review as the navigator does,
+  // and the header's actions have the list's keys.
+  const steps = useRef<ReviewSteps>(null);
+  useShortcuts((event) => {
+    const step =
+      event.key === "j" ? steps.current?.next : event.key === "k" ? steps.current?.previous : null;
+    if (step) {
+      event.preventDefault();
+      step.go();
+    } else if (event.key === "m" && canMerge(entry)) {
+      event.preventDefault();
+      setMerging(true);
+    } else if (event.key === "f" && fix && fixLabelText && !fixing) {
+      event.preventDefault();
+      fix();
+    } else if (event.key === "g" && !generating && !entry.needs_clone) {
+      event.preventDefault();
+      generate();
+    }
+  });
   const loadVersion = useCallback(
     async (version: number): Promise<ReviewVersionState> => {
       try {
@@ -248,6 +269,7 @@ export function LocalReview({
           versions={versions.filter((v) => v !== doc?.review.version)}
           loadVersion={loadVersion}
           versionsFailed={historyFailed ? { retry: () => setRetry((n) => n + 1) } : undefined}
+          steps={steps}
           header={{
             pullRequest: {
               number: pr.number,
