@@ -213,8 +213,9 @@ var effectiveTimeout = 5 * time.Second
 // (resolveModel), from the config file with the app's preferences over it; a
 // repository's own backend can still differ. Backends zero builds them from
 // the configuration and list nil is pricing.Active. With auto it runs the
-// backends' checks, for at most effectiveTimeout; no backend, or none in
-// time, is the zero Effective: unknown, and nothing is ignored.
+// backends' checks, for at most effectiveTimeout. No usable backend leaves
+// the Effective empty; checks that do not answer in time leave it empty but
+// Undetermined. Either way the model is unknown and nothing is ignored.
 func EffectiveModel(ctx context.Context, file config.Config, prefs repos.Preferences, backends generate.Backends, list *pricing.List) Effective {
 	cfg := prefs.Resolve(file)
 	if backends.Claude == nil {

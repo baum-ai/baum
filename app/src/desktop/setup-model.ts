@@ -179,3 +179,10 @@ export function storedReviews(settings: ReviewSettings): ReviewSettings {
     ? { ...saved, decisions_model: "" }
     : saved;
 }
+
+/** The harness the setup shows for saved settings: "auto" has no tile, so it
+ *  is the harness the daemon resolved it to, else the screen's guess. */
+export function shownHarness(settings: ReviewSettings, guess: string): string {
+  if (settings.backend !== "auto") return settings.backend;
+  return settings.decisions_backend || guess;
+}

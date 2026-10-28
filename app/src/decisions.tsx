@@ -22,7 +22,7 @@ export const DecisionsRevision = createContext(0);
 function useDecisions<T extends object>(
   path: string,
   pick: (body: unknown) => T | null,
-  again = 0,
+  again: number | string = 0,
 ): T | null {
   const revision = useContext(DecisionsRevision);
   const [answer, setAnswer] = useState<{ path: string; value: T | null } | null>(null);
@@ -163,8 +163,9 @@ export function PullRequestDecisionsList({
   number: number;
   /** Titles of the sessions in progress, which the answer leaves out. */
   live: LiveSession[];
-  /** Changes when the page's linked sessions may have changed. */
-  revision: number;
+  /** Changes when the page's linked sessions or its latest saved review
+   *  may have changed. */
+  revision: number | string;
 }) {
   const now = useNow();
   const answer = useDecisions(

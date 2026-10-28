@@ -396,7 +396,8 @@ export function LocalReview({
                 repository={pr.repository}
                 number={pr.number}
                 live={running}
-                revision={ended}
+                // A newly saved review moves the provisional marks.
+                revision={`${ended}:${doc?.review.version ?? 0}`}
               />
               {entry.needs_clone && doc ? (
                 <Notice>

@@ -139,7 +139,10 @@ export function SettingsPage({
         )}
         {defaults ? (
           // A new review harness or model changes what capture resolves to.
-          <DecisionSettingsSection key={JSON.stringify(defaults)} defaults={defaults} />
+          <DecisionSettingsSection
+            key={`${defaults.backend}:${defaults.model}`}
+            defaults={defaults}
+          />
         ) : null}
         <AgentEnvSection />
         <p className="px-1 text-xs text-(--text-tertiary)">

@@ -3,6 +3,7 @@ import {
   describeCommand,
   displayPath,
   repositoryPath,
+  shownHarness,
   storedReviews,
   withModel,
 } from "./setup-model";
@@ -50,4 +51,13 @@ it("keeps a chosen decision model and saves the harness's default as none", () =
       decisions_model_ignored: false,
     }),
   ).toEqual({ ...base, decisions_model: "gpt-6-sol" });
+});
+
+it("shows auto as the harness the daemon resolved, else the screen's guess", () => {
+  const auto = { backend: "auto", model: "", automatic: true, pull_requests: "both" as const };
+  expect(shownHarness({ ...auto, decisions_backend: "codex" }, "claude")).toBe("codex");
+  expect(shownHarness({ ...auto, decisions_backend: "" }, "claude")).toBe("claude");
+  expect(
+    shownHarness({ ...auto, backend: "anthropic", decisions_backend: "codex" }, "claude"),
+  ).toBe("anthropic");
 });

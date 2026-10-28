@@ -187,6 +187,36 @@ func TestLinkedSessionsOfAnOversizedReview(t *testing.T) {
 	}
 }
 
+// A viewer that stops before its sessions are linked links none, but the
+// review's time still dates the provisional marks.
+func TestLinkedSessionsWhenTheViewerStops(t *testing.T) {
+	ctx := context.Background()
+	registry, clone := decisionsRegistry(t)
+	versions, err := store.Open(clone.CommonDir, "", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	document := []byte(`{"review":{"repository":"owner/repo","pull_request":7,"version":1,"head":"1111111111111111111111111111111111111111","base":"2222222222222222222222222222222222222222","generated_at":"2026-10-20T09:00:00Z"}}`)
+	if err = versions.Put(ctx, store.Key{Repository: "owner/repo", Number: 7}, store.Version{}, store.Version{Metadata: store.Metadata{Version: 1}, Document: document}); err != nil {
+		t.Fatal(err)
+	}
+	cache := newDocumentCache()
+	started := make(chan struct{})
+	cache.resolve = func(ctx context.Context, _ locallink.Request) (locallink.Result, error) {
+		close(started)
+		<-ctx.Done()
+		return locallink.Result{}, ctx.Err()
+	}
+	go func() {
+		<-started
+		cache.close()
+	}()
+	sessions, generated, err := LocalAPI{Registry: registry}.linkedSessions(cache)(ctx, "owner/repo", 7)
+	if err != nil || sessions != nil || !generated.Equal(time.Date(2026, 10, 20, 9, 0, 0, 0, time.UTC)) {
+		t.Fatalf("%+v %v %v", sessions, generated, err)
+	}
+}
+
 func TestDecisionsUnavailableWithoutCapture(t *testing.T) {
 	registry, _ := decisionsRegistry(t)
 	handler := LocalAPI{Registry: registry, Config: config.Default()}.Handler()
