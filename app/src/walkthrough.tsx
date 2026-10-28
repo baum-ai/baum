@@ -144,9 +144,11 @@ export function Walkthrough({
     setEditing(stop.id);
   };
 
+  // Not looked at keeps the row the reader is on, which opening its details
+  // or its comment has just marked looked at.
   const visible = tour.stops.flatMap((stop, index) =>
     filter === "all" ||
-    (filter === "unseen" && !done(stop)) ||
+    (filter === "unseen" && (!done(stop) || index === cur)) ||
     (filter === "commented" && commented(stop))
       ? [index]
       : [],
@@ -1163,13 +1165,23 @@ function Submit({
   const empty = event !== "APPROVE" && count === 0 && !hasNote;
   const send = async (inline: boolean) => {
     setSending({ state: "sending" });
+    const sent = progress;
     try {
       const answer = await request<{ url: string }>(
         "api/prs/review",
-        reviewSubmission(document, tour, progress, event, inline),
+        reviewSubmission(document, tour, sent, event, inline),
       );
-      // What was said is on GitHub now; what was looked at stays.
-      setProgress((current) => ({ ...current, notes: {}, note: "" }));
+      // What was said is on GitHub now; what was looked at stays, and so
+      // does anything written while it was being sent.
+      setProgress((current) => ({
+        ...current,
+        notes: Object.fromEntries(
+          Object.entries(current.notes).filter(
+            ([id, note]) => note.trim() && note !== sent.notes[id],
+          ),
+        ),
+        note: current.note === sent.note ? "" : current.note,
+      }));
       setPicked(null);
       setSending({ state: "sent", url: answer.url });
       void changed();

@@ -222,6 +222,36 @@ it("offers to fold comments into the body when GitHub can't place them", async (
   expect((posted[1] as { body: string }).body).toContain("Odd");
 });
 
+it("keeps the row being read in Not looked at", () => {
+  view = "all";
+  render();
+  click("Not looked at");
+  click("Details and evidence");
+  expect(button("Details and evidence").getAttribute("aria-expanded")).toBe("true");
+  expect(node.querySelector("textarea[id^='walk-note-']")).not.toBeNull();
+});
+
+it("keeps what was written while the review was being sent", async () => {
+  view = "all";
+  render();
+  act(() => exact("Comment").click());
+  const note = node.querySelector<HTMLTextAreaElement>("textarea[id^='walk-note-']")!;
+  type(note, "Odd");
+  let respond!: (answer: Response) => void;
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(() => new Promise<Response>((resolve) => (respond = resolve))),
+  );
+  act(() => exact("Send comments").click());
+  type(note, "Odd, and the docs too");
+  type([...node.querySelectorAll("textarea")].find((field) => !field.id)!, "Thanks");
+  await act(async () => respond(Response.json({ url: "https://github.com/x" })));
+  expect(node.textContent).toContain("Your review is on GitHub.");
+  const kept = loadProgress(progressKey(doc));
+  expect(Object.values(kept.notes)).toEqual(["Odd, and the docs too"]);
+  expect(kept.note).toBe("Thanks");
+});
+
 it("returns to the tour after sending a review", async () => {
   view = "all";
   render();

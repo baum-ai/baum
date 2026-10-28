@@ -277,7 +277,9 @@ export function LocalReview({
     <ReviewBoundary key={`${clone}:${pr.number}`}>
       <AttachmentUrlProvider resolve={attachments}>
         {walkView && doc ? (
+          // A new version starts afresh, with that version's own progress.
           <Walkthrough
+            key={doc.review.version}
             entry={entry}
             document={doc}
             view={walkView}
