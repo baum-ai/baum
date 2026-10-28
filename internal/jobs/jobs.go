@@ -59,6 +59,9 @@ type FeatureBuildEstimate struct {
 	// first, besides EstimateUSD, with the token budget DiscoveryUSD buys at
 	// the review model's base price (cache reads not counted: not a cap).
 	DiscoveryUSD float64
+	// HistoryTruncated says the history listing stopped at its bound: the
+	// least recently updated pull requests are missing.
+	HistoryTruncated bool
 	// EstimateUSD is the cost of what is left, nil when it cannot be
 	// priced.
 	EstimateUSD *float64
@@ -168,8 +171,11 @@ type Prepared struct {
 	// requests left to place, and BuildDiscoveryUSD, when not zero, the
 	// dollars whose worth of tokens (at the review model's base price) the
 	// feature discovery it runs first may use besides EstimateUSD.
-	BuildPullRequests int     `json:"build_pull_requests,omitempty"`
-	BuildDiscoveryUSD float64 `json:"build_discovery_usd,omitempty"`
+	// BuildHistoryTruncated says its history listing stopped at its bound,
+	// so the least recently updated pull requests are not among them.
+	BuildPullRequests     int     `json:"build_pull_requests,omitempty"`
+	BuildDiscoveryUSD     float64 `json:"build_discovery_usd,omitempty"`
+	BuildHistoryTruncated bool    `json:"build_history_truncated,omitempty"`
 }
 
 // sameConfirmedInputs reports whether two confirmations authorize the same

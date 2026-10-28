@@ -278,7 +278,7 @@ func (b *featureBuilder) EstimateFeatureBuild(ctx context.Context, repository, d
 	}
 	e, err := w.EstimateBuild(ctx, repository, dir, decisionlog.BuildOptions{Gated: true})
 	return jobs.FeatureBuildEstimate{Backend: e.Backend, Model: e.Model, PullRequests: e.PullRequests, EstimateUSD: e.EstimateUSD,
-		DiscoveryUSD: e.DiscoveryUSD, Reason: e.Reason}, err
+		DiscoveryUSD: e.DiscoveryUSD, HistoryTruncated: e.HistoryTruncated, Reason: e.Reason}, err
 }
 
 func (b *featureBuilder) BuildFeatures(ctx context.Context, repository, dir string, progress func(jobs.Progress)) (float64, error) {

@@ -160,13 +160,15 @@ func (fixtureClone) Person(context.Context) *decisionlog.Person {
 
 func (fixtureClone) Review(context.Context, int, string) (string, string) { return "", "none" }
 
-// fixtureBuilder estimates every feature build at 42 pull requests and
+// fixtureBuilder estimates every feature build at 42 pull requests of a
+// truncated history, with discovery first, and
 // stops each one at once, as a build whose backend went away.
 type fixtureBuilder struct{}
 
 func (fixtureBuilder) EstimateFeatureBuild(context.Context, string, string) (jobs.FeatureBuildEstimate, error) {
 	estimate := 0.84
-	return jobs.FeatureBuildEstimate{Backend: "claude", Model: "claude-haiku-5-5", PullRequests: 42, EstimateUSD: &estimate}, nil
+	return jobs.FeatureBuildEstimate{Backend: "claude", Model: "claude-haiku-5-5", PullRequests: 42, EstimateUSD: &estimate, DiscoveryUSD: 5,
+		HistoryTruncated: true}, nil
 }
 
 func (fixtureBuilder) BuildFeatures(context.Context, string, string, func(jobs.Progress)) (float64, error) {

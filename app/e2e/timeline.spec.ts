@@ -203,6 +203,9 @@ for (const scheme of ["light", "dark"] as const) {
     const dialog = page.getByRole("dialog", { name: "Build feature history" });
     await expect(dialog).toContainText("42 to place");
     await expect(dialog).toContainText("About $0.84");
+    await expect(dialog).toContainText("baum first discovers this repository's features");
+    await expect(dialog).toContainText("its least recently updated pull requests are left out");
+    await expect(dialog).toContainText("a token budget of what about $5.00 buys");
     await shot(page, `build-confirm-${scheme}`);
     await dialog.getByRole("button", { name: "Build feature history", exact: true }).click();
     await expect(dialog.getByRole("link", { name: "View it in Jobs" })).toHaveAttribute(

@@ -29,7 +29,7 @@ func TestFeatureBuildJob(t *testing.T) {
 	registry, clone := registeredClone(t)
 	price := 1.0
 	builder := &fakeBuilder{ran: make(chan struct{}, 2), result: &StoppedError{Reason: "backend_unavailable"},
-		estimate: FeatureBuildEstimate{Backend: "claude", Model: "claude-haiku-5-5", PullRequests: 40, EstimateUSD: &price, DiscoveryUSD: 5}}
+		estimate: FeatureBuildEstimate{Backend: "claude", Model: "claude-haiku-5-5", PullRequests: 40, EstimateUSD: &price, DiscoveryUSD: 5, HistoryTruncated: true}}
 	q, err := Open(filepath.Join(privateDir(t), "jobs.json"), &Local{Registry: registry, Features: builder}, 1, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -43,7 +43,7 @@ func TestFeatureBuildJob(t *testing.T) {
 		t.Fatalf("a feature build runs without a confirmation: %v", err)
 	}
 	e := estimate(t, q, "single", item)
-	if p := e.Items[0]; p.BuildPullRequests != 40 || p.BuildDiscoveryUSD != 5 || p.Repository != "owner/repo" || p.BlockedReason != "" {
+	if p := e.Items[0]; p.BuildPullRequests != 40 || p.BuildDiscoveryUSD != 5 || !p.BuildHistoryTruncated || p.Repository != "owner/repo" || p.BlockedReason != "" {
 		t.Fatalf("prepared = %+v", p)
 	}
 	jobs, err := q.Submit(context.Background(), e.ID, true, false)

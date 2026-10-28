@@ -329,6 +329,12 @@ export type Estimate = {
     fix?: FixInputs;
     /** A feature build's pull requests left to place. */
     build_pull_requests?: number;
+    /** The feature discovery a feature build runs first: the tokens about
+     *  this many dollars buy, not a dollar cap. */
+    build_discovery_usd?: number;
+    /** The history listing stopped at its bound: the least recently updated
+     *  pull requests are left out. */
+    build_history_truncated?: boolean;
     /** The review threads a fix would address; capped when there were more
      *  than baum includes, and how many were left out because an account
      *  without access to the repository started them. */

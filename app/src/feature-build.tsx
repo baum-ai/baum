@@ -271,15 +271,27 @@ export function FeatureBuildDialog({
       ) : item ? (
         <div className="local-fix-confirmation">
           <p>
-            baum places this repository's merged and open pull requests of the last 180 days in
-            features, beside the features in use, and writes their text. The new features replace
-            the current ones in one step once the build finishes, and the weekly pass consolidates
-            them (merging duplicates, splitting oversized ones) right after. If it stops, confirming
-            again resumes it.
+            {item.build_discovery_usd
+              ? "baum first discovers this repository's features from its default branch and history, as a hosted rebuild does, then places "
+              : "baum places "}
+            this repository's merged and open pull requests of its whole history in features, beside
+            the features in use, and writes their text. The new features replace the current ones in
+            one step once the build finishes, and the weekly pass consolidates them (merging
+            duplicates, splitting oversized ones) right after. If it stops, confirming again resumes
+            it.
           </p>
+          {item.build_history_truncated ? (
+            <p>
+              The history is longer than baum lists: its least recently updated pull requests are
+              left out.
+            </p>
+          ) : null}
           <dl className="local-fix-facts">
             <dt>Pull requests</dt>
-            <dd>{formatCount(item.build_pull_requests ?? 0)} to place</dd>
+            <dd>
+              {formatCount(item.build_pull_requests ?? 0)} to place
+              {item.build_history_truncated ? " (the most recently updated)" : ""}
+            </dd>
             <dt>Harness</dt>
             <dd>{harnessName(item.backend ?? "")}</dd>
             <dt>Model</dt>
@@ -288,6 +300,16 @@ export function FeatureBuildDialog({
             <dd>
               {item.estimate_usd == null ? "Cost unknown" : `About ${cost(item.estimate_usd)}`}
             </dd>
+            {item.build_discovery_usd ? (
+              <>
+                <dt>Discovery</dt>
+                <dd>
+                  Besides the estimate, feature discovery runs first with a token budget of what
+                  about {cost(item.build_discovery_usd)} buys at the model's base price; it is not a
+                  dollar cap.
+                </dd>
+              </>
+            ) : null}
           </dl>
         </div>
       ) : null}

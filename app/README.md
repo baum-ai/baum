@@ -416,7 +416,13 @@ features at all (whatever the filters), the page bar offers a quieter
 **Rebuild feature history**. Either estimates a `feature_build` job for the
 repository's clone (`src/feature-build.tsx`, `POST api/jobs/estimate` with
 `kind: "feature_build"`), shows the pull requests to place, harness, model
-and estimate, says that the weekly consolidation pass takes the
+and estimate. The build places the merged and open pull requests of the
+repository's whole history; when the listing stopped at its bound
+(`build_history_truncated`) the dialog says the least recently updated ones are
+left out. When the build first runs feature discovery (`build_discovery_usd`),
+the dialog says so and states discovery's token budget, what about that many
+dollars buys at the model's base price, besides the estimate and not a dollar
+cap. It says that the weekly consolidation pass takes the
 new features right after they become current, and starts it only when
 confirmed; it then links to the job in Jobs. A start refused for an expired or
 changed estimate offers **Estimate again**, and the dialog cannot be closed

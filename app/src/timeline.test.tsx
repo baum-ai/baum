@@ -543,6 +543,8 @@ it("builds a repository's feature history from the empty state after its estimat
         pr: 0,
         kind: "feature_build",
         build_pull_requests: 40,
+        build_discovery_usd: 5,
+        build_history_truncated: true,
         head_sha: "",
         backend: "claude",
         model: "claude-haiku-5-5",
@@ -567,8 +569,15 @@ it("builds a repository's feature history from the empty state after its estimat
     mode: "single",
   });
   const dialog = node.querySelector("dialog")!;
-  expect(dialog.textContent).toContain("40 to place");
+  expect(dialog.textContent).toContain("40 to place (the most recently updated)");
   expect(dialog.textContent).toContain("About $1.20");
+  // The whole history, with discovery first on a token budget.
+  expect(dialog.textContent).toContain("baum first discovers this repository's features");
+  expect(dialog.textContent).toContain("pull requests of its whole history");
+  expect(dialog.textContent).toContain("its least recently updated pull requests are left out");
+  expect(dialog.textContent).toContain(
+    "feature discovery runs first with a token budget of what about $5.00 buys",
+  );
   const confirm = [...dialog.querySelectorAll("button")].find(
     (b) => b.textContent === "Build feature history",
   )!;
