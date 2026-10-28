@@ -1,6 +1,6 @@
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
-import { type Panel, TrayPanelView } from "./tray";
+import { menuKey, type Panel, TrayPanelView } from "./tray";
 
 const now = Date.parse("2026-10-26T12:00:00Z");
 const panel: Panel = {
@@ -77,4 +77,35 @@ it("leaves plan usage out when no agent could be read, and says when reviews are
   expect(html).not.toContain("Claude Code");
   expect(html).toContain("Automatic reviews paused");
   expect(html).toContain("Resume automatic reviews");
+});
+
+it("moves through the menu's items with the arrows, wrapping, and closes with Escape", () => {
+  const menu = document.createElement("div");
+  menu.innerHTML = renderToStaticMarkup(
+    <TrayPanelView panel={{ ...panel, automatic: null }} now={now} act={() => {}} />,
+  );
+  document.body.append(menu);
+  const close = vi.fn();
+  const press = (key: string) => menuKey(new KeyboardEvent("keydown", { key }), menu, close);
+  const focused = () => document.activeElement?.textContent;
+  // From nothing, down starts at the first item and up at the last.
+  press("ArrowDown");
+  expect(focused()).toContain("Claude needs your permission");
+  press("ArrowUp");
+  expect(focused()).toBe("Quit and stop background reviews");
+  press("ArrowUp");
+  // Pause is disabled while the daemon's state is unknown, so it is skipped.
+  expect(focused()).toBe("Open baum");
+  press("ArrowDown");
+  expect(focused()).toBe("Quit and stop background reviews");
+  press("ArrowDown");
+  expect(focused()).toContain("Claude needs your permission");
+  press("End");
+  expect(focused()).toBe("Quit and stop background reviews");
+  press("Home");
+  expect(focused()).toContain("Claude needs your permission");
+  expect(close).not.toHaveBeenCalled();
+  press("Escape");
+  expect(close).toHaveBeenCalledTimes(1);
+  menu.remove();
 });

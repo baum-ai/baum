@@ -24,6 +24,35 @@ export type Panel = {
 /** How often the open panel asks again; the tray polls the daemon itself. */
 const REFRESH_MS = 2000;
 
+/** The menu's keys, as a native menu's: ↓ and ↑ move through its items,
+ *  wrapping, from the first or the last when none has the focus yet; Home
+ *  and End go to the first and last, and Escape closes the panel. Enter and
+ *  Space press the focused item, as buttons do. */
+export function menuKey(event: KeyboardEvent, menu: HTMLElement, close: () => void) {
+  const items = Array.from(
+    menu.querySelectorAll<HTMLButtonElement>('[role="menuitem"]:not(:disabled)'),
+  );
+  const at = items.indexOf(document.activeElement as HTMLButtonElement);
+  const last = items.length - 1;
+  const target =
+    event.key === "ArrowDown"
+      ? items[at < 0 || at === last ? 0 : at + 1]
+      : event.key === "ArrowUp"
+        ? items[at <= 0 ? last : at - 1]
+        : event.key === "Home"
+          ? items[0]
+          : event.key === "End"
+            ? items[last]
+            : null;
+  if (target) {
+    event.preventDefault();
+    target.focus();
+  } else if (event.key === "Escape") {
+    event.preventDefault();
+    close();
+  }
+}
+
 /** The tray panel's content. Pure so it renders without the app. */
 export function TrayPanelView({
   panel,
@@ -152,6 +181,15 @@ export function TrayPanel() {
       window.clearInterval(timer);
       window.removeEventListener("focus", load);
     };
+  }, []);
+  // The window takes the keys, so the first arrow reaches the menu before
+  // any item has the focus.
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (root.current) menuKey(event, root.current, () => act("close"));
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
   }, []);
   useEffect(() => {
     const element = root.current;
