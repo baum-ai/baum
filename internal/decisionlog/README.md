@@ -199,15 +199,13 @@ session with no capture row has none.
 Placement and feature text call as capture does (steps 6 to 8 above): the
 same backend, model, reservation (the request's byte bound and the call's
 reply bound: 4,096 tokens for a placement, 8,192 for a text or pull request
-summary), daily cap and ledger, each attempt recorded with its stage
+summary) and ledger, each attempt recorded with its stage
 (`feature_assign`, `feature_summary` or `pr_summary`) and item. Rejected
 replies and a ledger that cannot be written are handled as capture's. The
 preferences and the repository's settings are read again before every call,
 so a repository turned off makes no further call. A repository turned off,
-a missing backend, an unpriced model or the daily cap stops the stage until
-its next run, with no failure counted. The daily cap is checked in the same
-statement that records the attempt, so capture and the feature log
-reserving at once cannot together pass it.
+a missing backend or an unpriced model stops the stage until its next run,
+with no failure counted.
 
 ### Placement
 
@@ -255,8 +253,7 @@ failed write after a call backs the item off for 10 minutes; after 3 counted
 failures for one trigger it waits for the next.
 
 The preferences and the repository's settings are read again before each
-item, so a repository turned off stops the run and a lowered daily cap
-holds for the next call. A call cut short by the daemon stopping counts no
+item, so a repository turned off stops the run. A call cut short by the daemon stopping counts no
 failure. A pull request placed at its head before its paths were known gets
 them as the paths it was placed with once they are recorded, with no call.
 

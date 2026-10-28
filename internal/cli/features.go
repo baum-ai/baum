@@ -107,8 +107,7 @@ its debounce, and prints each feature taken as JSON.`,
 }
 
 // runFeatures runs one stage; calls, for placement and text, reads the
-// preferences and the repository's settings, which choose the backend and
-// hold the daily cap.
+// preferences and the repository's settings, which choose the backend.
 func runFeatures(cmd *cobra.Command, repository, clone string, days int, calls bool, stage func(context.Context, *decisionlog.FeatureWorker, string) (any, error)) error {
 	ctx := cmd.Context()
 	parsed, err := github.ParseRepository(repository)

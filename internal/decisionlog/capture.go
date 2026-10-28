@@ -381,8 +381,7 @@ func (c *Capturer) Capture(ctx context.Context, t Target, o Options) (Report, er
 		return report, nil
 	}
 
-	model, attempt, reason, err := calls.begin(ctx, planned, Attempt{Agent: t.Agent, ID: t.ID, Repository: t.Repository, Mode: report.Mode},
-		prefs, new(float64(SessionDailyCap)))
+	model, attempt, reason, err := calls.begin(ctx, planned, Attempt{Agent: t.Agent, ID: t.ID, Repository: t.Repository, Mode: report.Mode})
 	if err != nil {
 		return report, err
 	}

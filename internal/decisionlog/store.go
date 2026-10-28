@@ -83,8 +83,8 @@ type Store struct {
 // OpenOptions choose how Open opens the store.
 type OpenOptions struct {
 	// AbandonPending settles the attempts a previous run left pending as
-	// abandoned. Only the daemon, the one
-	// writer that makes calls unattended, sets it.
+	// abandoned. Only the daemon, the one writer that makes calls unattended,
+	// sets it.
 	AbandonPending bool
 	// ReadOnly opens an existing store without writing to it, and an empty
 	// in-memory one when there is none, for a dry run.
@@ -446,16 +446,6 @@ type Attempt struct {
 
 // Begin records an attempt as pending before its call, with its reservation.
 func (s *Store) Begin(ctx context.Context, a Attempt) (int64, error) {
-	id, _, err := s.beginWithin(ctx, a, nil, nil, time.Time{})
-	return id, err
-}
-
-// beginWithin is Begin when every stage's spend since day, the reservation
-// included, stays within limit, and the session's within sessionLimit (each
-// none when nil); false, recording nothing, when it would not. The checks
-// and the insert are one statement, so two workers reserving at once cannot
-// both pass a cap.
-func (s *Store) beginWithin(ctx context.Context, a Attempt, limit, sessionLimit *float64, day time.Time) (int64, bool, error) {
 	var id int64
 	stage := a.Stage
 	if stage == "" {
@@ -465,24 +455,9 @@ func (s *Store) beginWithin(ctx context.Context, a Attempt, limit, sessionLimit 
 	if a.Item != "" {
 		item = a.Item
 	}
-	var bound, sessionBound any
-	if limit != nil {
-		bound = *limit
-	}
-	if sessionLimit != nil {
-		sessionBound = *sessionLimit
-	}
 	err := s.db.QueryRowContext(ctx, `INSERT INTO capture_attempt(agent, session_id, repository, backend, model, mode, started_at, state, reserved_usd, stage, item)
-SELECT ?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11 WHERE (?12 IS NULL OR
-  (SELECT COALESCE(SUM(COALESCE(cost_usd, reserved_usd)), 0) FROM capture_attempt WHERE started_at >= ?13) + ?9 <= ?12)
-AND (?14 IS NULL OR (SELECT COALESCE(SUM(COALESCE(cost_usd, reserved_usd)), 0) FROM capture_attempt
-  WHERE agent=?1 AND session_id=?2 AND started_at >= ?13) + ?9 <= ?14) RETURNING id`,
-		a.Agent, a.ID, a.Repository, a.Backend, a.Model, a.Mode, s.now().UnixMilli(), AttemptPending, a.Reserved, stage, item, bound, day.UnixMilli(),
-		sessionBound).Scan(&id)
-	if errors.Is(err, sql.ErrNoRows) {
-		return 0, false, nil
-	}
-	return id, err == nil, err
+VALUES (?,?,?,?,?,?,?,?,?,?,?) RETURNING id`, a.Agent, a.ID, a.Repository, a.Backend, a.Model, a.Mode, s.now().UnixMilli(), AttemptPending, a.Reserved, stage, item).Scan(&id)
+	return id, err
 }
 
 // Settle records how an attempt ended. A nil cost is unknown.

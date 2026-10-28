@@ -2986,9 +2986,8 @@ of the hosted weighted candidate ranking, `assign.Public`) and writes the
 text of features whose members changed (`FeatureWorker.Summarize`,
 `summary.Public`, reusing text and generated pull request summaries whose
 input hash is unchanged). Both stages call through the same helper as
-capture (`caller` in `model.go`: backend and model resolution, reservation,
-the one daily cap and the `capture_attempt` ledger, with the call's stage
-and item). The constants are in `featureconfig.go` and the live feature
+capture (`caller` in `model.go`: backend and model resolution, reservation
+and the `capture_attempt` ledger, with the call's stage and item). The constants are in `featureconfig.go` and the live feature
 version of a repository is chosen in one place (`liveVersion`). See
 [its README](internal/decisionlog/README.md#feature-log).
 
