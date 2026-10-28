@@ -3,6 +3,7 @@ package claudesession
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/baum-ai/baum/sessions/traceprocessing"
 	"time"
 
 	"github.com/baum-ai/baum/sessions/claudetranscript"
@@ -13,6 +14,7 @@ import (
 // This is mostly due to the way claude can queue user messages etc.
 type queuedInput struct {
 	row               *session.UserInput
+	operations        []any
 	attachmentSeen    bool
 	terminalOperation bool
 	normalSeen        bool
@@ -49,6 +51,10 @@ func (f *fileState) mergeOrdinaryCarrier(line claudetranscript.Line, text string
 		return false
 	}
 	queued.normalSeen = true
+	if f.b.profile == traceprocessing.Hosted && kind == session.KindOther {
+		// The row says another agent sent it, which the queue alone may not.
+		queued.row.Kind, queued.row.Origin = session.KindOther, session.OriginSystem
+	}
 	f.activateQueued(queued)
 	f.mergeQueuedMetadata(queued, inputMetadata(line))
 	f.vendorRow(queued.row.ID, session.EntityUserInput, "uuid", line.UUID, line.Ordinal)
@@ -66,7 +72,7 @@ func (f *fileState) attachmentLine(line claudetranscript.Line) {
 		f.b.report.discard("attachment/queued_command (no prompt)")
 		return
 	}
-	if _, notification := parseNotification(attachment.Prompt); notification || !humanQueuedAttachment(attachment) {
+	if _, notification := parseNotification(attachment.Prompt); notification || !queuedPromptAttachment(attachment) {
 		f.b.report.discard("attachment/queued_command (non-human)")
 		return
 	}
@@ -84,6 +90,9 @@ func (f *fileState) attachmentLine(line claudetranscript.Line) {
 			return !q.attachmentSeen && !q.normalSeen
 		}),
 	)
+	if f.b.profile == traceprocessing.Hosted && peerOrigin(attachment.Origin) {
+		queued.row.Kind, queued.row.Origin = session.KindOther, session.OriginSystem
+	}
 	f.addQueuedAttachmentMetadata(queued, attachment)
 	f.vendorRow(queued.row.ID, session.EntityUserInput, "uuid", line.UUID, line.Ordinal)
 	queued.attachmentSeen = true
@@ -95,14 +104,10 @@ func (f *fileState) attachmentLine(line claudetranscript.Line) {
 	}
 }
 
-func humanQueuedAttachment(attachment claudetranscript.Attachment) bool {
-	if attachment.CommandMode == "prompt" {
-		return true
-	}
-	var origin struct {
-		Kind string `json:"kind"`
-	}
-	return len(attachment.Origin) > 0 && json.Unmarshal(attachment.Origin, &origin) == nil && origin.Kind == "human"
+// queuedPromptAttachment is whether a queued command is queued as a prompt:
+// one a person typed, or another agent's message queued the same way.
+func queuedPromptAttachment(attachment claudetranscript.Attachment) bool {
+	return attachment.CommandMode == "prompt" || originKind(attachment.Origin) == "human"
 }
 
 func (f *fileState) findOrCreateQueued(identity, text string, at *time.Time, fallback *queuedInput) (*queuedInput, bool) {
@@ -122,6 +127,11 @@ func (f *fileState) addQueuedInput(identity, text string, at *time.Time) *queued
 		Ordinal: f.ordinal, Text: text, TriggeredAt: at,
 		Kind: session.KindPrompt, Origin: session.OriginHuman,
 		Metadata: json.RawMessage(`{"queued":true}`),
+	}
+	if _, _, fromAgent := agentMessage(text); f.b.profile == traceprocessing.Hosted && fromAgent {
+		// Another agent's message, a subagent's hand-back or a SendMessage, is
+		// queued like a prompt, but no person wrote it.
+		row.Kind, row.Origin = session.KindOther, session.OriginSystem
 	}
 	queued := &queuedInput{row: row}
 	f.inputs = append(f.inputs, row)
@@ -152,14 +162,24 @@ func (f *fileState) activateQueued(queued *queuedInput) {
 }
 
 func (f *fileState) addQueueOperationMetadata(queued *queuedInput, operation string, at *time.Time, ordinal int) {
-	metadata := decodeMetadata(queued.row.Metadata)
-	operations, _ := metadata["queueOperations"].([]any)
 	entry := map[string]any{"operation": operation, "sourceOrdinal": ordinal}
 	if at != nil {
 		entry["timestamp"] = at.UTC().Format(time.RFC3339Nano)
 	}
-	metadata["queueOperations"] = append(operations, entry)
-	queued.row.Metadata = encodeMetadata(metadata)
+	queued.operations = append(queued.operations, entry)
+}
+
+// flushQueueOperations writes each queued input's operations into its metadata
+// once, rather than re-encoding the growing list on every operation.
+func (f *fileState) flushQueueOperations() {
+	for _, queued := range f.queuedByIdentity {
+		if len(queued.operations) == 0 {
+			continue
+		}
+		metadata := decodeMetadata(queued.row.Metadata)
+		metadata["queueOperations"] = queued.operations
+		queued.row.Metadata = encodeMetadata(metadata)
+	}
 }
 
 func (f *fileState) addQueuedAttachmentMetadata(queued *queuedInput, attachment claudetranscript.Attachment) {
@@ -168,7 +188,7 @@ func (f *fileState) addQueuedAttachmentMetadata(queued *queuedInput, attachment 
 		metadata["commandMode"] = attachment.CommandMode
 	}
 	if len(attachment.Origin) > 0 {
-		metadata["origin"] = attachment.Origin
+		metadata["origin"] = json.RawMessage(attachment.Origin)
 	}
 	queued.row.Metadata = encodeMetadata(metadata)
 }

@@ -3,6 +3,7 @@ package claudetranscript
 import (
 	"strings"
 	"testing"
+	"time"
 )
 
 // envelope is a minimal well-formed assistant line; tests remove from it.
@@ -179,6 +180,19 @@ func TestMessageTextReadsBothShapes(t *testing.T) {
 	array := Message{Content: []byte(`[{"type":"text","text":"first"},{"type":"thinking"},{"type":"text","text":"second"}]`)}
 	if got := array.Text(); got != "first\nsecond" {
 		t.Fatalf("array content text = %q, want the text blocks joined", got)
+	}
+}
+
+func TestMessageTextJoinsManyBlocksInLinearTime(t *testing.T) {
+	const blocks = 200_000
+	content := "[" + strings.Repeat(`{"type":"text","text":"x"},`, blocks-1) + `{"type":"text","text":"x"}]`
+	started := time.Now()
+	text := (&Message{Content: []byte(content)}).Text()
+	if elapsed := time.Since(started); elapsed > 5*time.Second {
+		t.Fatalf("joining %d text blocks took %v", blocks, elapsed)
+	}
+	if len(text) != 2*blocks-1 {
+		t.Fatalf("text length = %d, want %d", len(text), 2*blocks-1)
 	}
 }
 

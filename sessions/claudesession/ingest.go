@@ -13,27 +13,25 @@ import (
 
 const Vendor = "claude_code"
 
-// Build maps a transcript tree into one session tree. Its report includes the
-// transcript's shape (versions, content shapes, keys the decoder left unread).
+// Build maps a transcript tree into one session tree.
 func Build(tree *claudetranscript.Tree) (*session.Graph, *Report, error) {
 	return BuildWith(tree, BuildOptions{Survey: true})
 }
 
-// BuildOptions choose what Build reports beyond the graph and its accounting.
+// BuildOptions preserves product-specific interpretation independently from
+// the optional transcript-shape diagnostic. Its zero value keeps local mapping.
 type BuildOptions struct {
-	// Survey fills Report.Transcript, which re-reads every line to describe
-	// the transcript's shape: a diagnostic, and a large part of the cost of
-	// mapping a long session.
-	Survey bool
+	Profile traceprocessing.MappingProfile
+	Survey  bool
 }
 
-// BuildWith is Build with options.
 func BuildWith(tree *claudetranscript.Tree, opts BuildOptions) (*session.Graph, *Report, error) {
 	if tree == nil || tree.Main == nil {
 		return nil, nil, fmt.Errorf("building session: no transcript")
 	}
 
 	b := &builder{
+		profile: opts.Profile,
 		tree:    tree,
 		graph:   &session.Graph{},
 		report:  &Report{},
@@ -65,6 +63,7 @@ func BuildWith(tree *claudetranscript.Tree, opts BuildOptions) (*session.Graph, 
 
 // builder holds what is true for a whole tree.
 type builder struct {
+	profile traceprocessing.MappingProfile
 	tree    *claudetranscript.Tree
 	graph   *session.Graph
 	report  *Report
@@ -149,9 +148,14 @@ type fileState struct {
 	queuedByIdentity    map[string]*queuedInput
 	queuedByText        map[string][]*queuedInput
 
-	spawns   []spawnedTranscript
-	pending  []pendingAttribute
-	seenNote map[string]bool
+	spawns  []spawnedTranscript
+	pending []pendingAttribute
+
+	// slotByTool and agentSlots hold the calls waiting for a subagent's report
+	// (reports.go), by vendor tool use id and by agent id.
+	slotByTool map[string]*reportSlot
+	agentSlots map[string][]*reportSlot
+	seenNote   map[string]bool
 
 	ordinal          int
 	times            traceprocessing.TimeBounds
@@ -196,6 +200,8 @@ func newFileState(b *builder, file *claudetranscript.File, spawn *session.SpawnL
 		queuedByIdentity:    map[string]*queuedInput{},
 		queuedByText:        map[string][]*queuedInput{},
 		seenNote:            map[string]bool{},
+		slotByTool:          map[string]*reportSlot{},
+		agentSlots:          map[string][]*reportSlot{},
 	}
 
 	kind, vendorID := "sessionId", file.SessionID
@@ -291,6 +297,11 @@ func (f *fileState) finish() {
 	f.session.Title = optional(f.title)
 	f.session.Outcome = f.outcome()
 	f.resolveAttributes()
+	spawned := make(map[string]bool, len(f.spawns))
+	for _, spawn := range f.spawns {
+		spawned[spawn.vendorToolUseID] = true
+	}
+	f.markSubagentDetail(spawned)
 }
 
 func (f *fileState) outcome() session.Outcome {
@@ -312,6 +323,7 @@ func (f *fileState) flush() {
 		f.vendorRow(f.owners[promptID], session.EntityUserInput, "promptId", promptID, f.promptOrdinal[promptID])
 	}
 
+	f.flushQueueOperations()
 	traceprocessing.AppendSessionRows(f.b.graph, f.session, nil, f.inputs, f.invocations, f.messages,
 		f.toolUses, f.results, f.touches, nil, f.vendorIDs)
 }

@@ -35,7 +35,7 @@ func (f *fileState) applyResult(
 		Timestamp:   line.Timestamp,
 	}
 	if evidence.Present {
-		row.Output = evidence.Raw
+		row.Output = json.RawMessage(evidence.Raw)
 	}
 	assignResultText(row, block, evidence, text)
 
@@ -50,6 +50,7 @@ func (f *fileState) applyResult(
 
 	use.Status = status
 	f.lastToolStatus = status
+	f.trackSubagentCall(use, evidence, row)
 	f.refineTouches(use, evidence)
 	f.noteCommit(use, evidence, text, status)
 }

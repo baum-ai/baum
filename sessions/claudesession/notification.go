@@ -21,6 +21,7 @@ var (
 		"status":     regexp.MustCompile(`(?s)<status>(.*?)</status>`),
 		"summary":    regexp.MustCompile(`(?s)<summary>(.*?)</summary>`),
 		"outputFile": regexp.MustCompile(`(?s)<output-file>(.*?)</output-file>`),
+		"result":     regexp.MustCompile(`(?s)<result>(.*?)</result>`),
 	}
 )
 
@@ -30,6 +31,9 @@ type notification struct {
 	Status     string `json:"status,omitempty"`
 	Summary    string `json:"summary,omitempty"`
 	OutputFile string `json:"output-file,omitempty"`
+	// Result is a subagent's <result>. It is not kept in the notification
+	// copy on the tool result: when it is the report, it is the output text.
+	Result string `json:"-"`
 }
 
 func parseNotification(content string) (notification, bool) {
@@ -49,6 +53,7 @@ func parseNotification(content string) (notification, bool) {
 		Status:     field("status"),
 		Summary:    field("summary"),
 		OutputFile: field("outputFile"),
+		Result:     field("result"),
 	}, true
 }
 
@@ -61,6 +66,7 @@ func (f *fileState) queueOperation(line claudetranscript.Line) error {
 	}
 	parsed, ok := parseNotification(line.Control.Content)
 	if !ok {
+		f.handbackOperation(line)
 		if line.Control.Operation == "dequeue" {
 			f.b.report.discard("control/queue-operation (dequeue)")
 			return nil
@@ -121,9 +127,13 @@ func (f *fileState) applyNotification(use *session.ToolUse, parsed notification)
 	result.Status = status
 	use.Status = status
 	f.lastToolStatus = status
-	if parsed.Summary != "" {
+	slot := f.slotByTool[f.toolUseVendor[use.ID]]
+	if parsed.Summary != "" && (slot == nil || slot.source == reportNone) {
 		summary := parsed.Summary
 		result.OutputText = &summary
+	}
+	if slot != nil {
+		f.attachReport(slot.agentID, notificationReport(parsed.Result), reportNotification, carrierNotification, "", 0)
 	}
 	result.Output = mergeNotificationOutput(result.Output, parsed)
 	use.Metadata = mergeNotificationMetadata(use.Metadata, parsed)
@@ -145,7 +155,7 @@ func mergeNotificationOutput(existing json.RawMessage, parsed notification) json
 	bag := map[string]any{}
 	if len(existing) > 0 {
 		if err := json.Unmarshal(existing, &bag); err != nil {
-			bag = map[string]any{"backgroundHandoff": existing}
+			bag = map[string]any{"backgroundHandoff": json.RawMessage(existing)}
 		}
 	}
 	bag["taskNotification"] = parsed

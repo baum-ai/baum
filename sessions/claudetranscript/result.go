@@ -17,10 +17,12 @@ type ResultEvidence struct {
 	StructuredPatch []PatchHunk
 	StartLine       *int
 	NumLines        *int
-	// AgentID names the subagent a spawn created.
-	AgentID string
-	Status  string
-	Raw     json.RawMessage
+	// AgentID names the subagent a spawn created. ResumedAgentID names the one a
+	// SendMessage call woke up again.
+	AgentID        string
+	ResumedAgentID string
+	Status         string
+	Raw            json.RawMessage
 }
 
 type PatchHunk struct {
@@ -67,6 +69,7 @@ func DecodeResultEvidence(raw json.RawMessage) ResultEvidence {
 	evidence.Interrupted = boolField(fields, "interrupted")
 	evidence.FilePath = stringField(fields, "filePath")
 	evidence.AgentID = stringField(fields, "agentId")
+	evidence.ResumedAgentID = stringField(fields, "resumedAgentId")
 	evidence.Status = stringField(fields, "status")
 
 	for _, key := range exitCodeKeys {
