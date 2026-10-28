@@ -87,7 +87,8 @@ const (
 // transaction: the ledger's stage, item and rejections columns, and the pull
 // requests' fork and default branch columns, added when missing. Pull
 // requests listed before the latter are listed again: the sync state's ETag
-// and cursor are reset. The write lock is taken first, so a store two
+// and cursor are reset. The columns are read without a lock; only when one is
+// missing is the write lock taken and they are read again, so a store two
 // processes open at once is migrated by one of them.
 func migrate(ctx context.Context, db *sql.DB) error {
 	// A migrated store is read without the write lock.

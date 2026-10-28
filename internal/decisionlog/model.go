@@ -351,8 +351,8 @@ type callResult struct {
 	Cost   *float64
 }
 
-// complete makes one feature stage call with plan, overDailyCap, begin and
-// finish; the attempt names its stage and item. An error is a failed call
+// complete makes one feature stage call with plan, begin (which holds the
+// caps) and finish; the attempt names its stage and item. An error is a failed call
 // or a ledger write.
 func (c caller) complete(ctx context.Context, backend, model string, a Attempt, req decisions.ModelRequest) (callResult, error) {
 	// The gate and the cap are read again before every call.
