@@ -482,12 +482,14 @@ and never writes it.
   attributed decisions fall under none of its pull requests. The id is
   resolved by `Store.ResolveFeature`: a feature merged into another answers
   with the survivor's detail, one of a retired version `{"archived": true}`,
-  and one of a version being built is not found.
+  and one of a version being built, or a chain of merges too long to follow
+  (`ErrMergeChain`), is not found.
 - **`GET /build?repository=`**: `building`, the repository's first build in
   progress (its `building` version: pull requests `placed` of `total`, why
   it `stopped`, `""` while it may go on, and `spent_usd` over all its
-  runs), null without one. Its features are not listed until it is
-  current.
+  runs), null without one, and `has_features`, whether the current version
+  has a feature not merged into another. A building version's features are
+  not listed until it is current.
 - **`GET /decisions?repository=&q=&file=&who=&category=&superseded=&from=&to=&cursor=&limit=`**:
   the current decisions of the repository's captured sessions, newest first
   and then by id, paged as features are, with `coverage`: its sessions extracted, skipped by reason, and

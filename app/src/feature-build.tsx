@@ -32,43 +32,84 @@ export function buildJobOf(jobs: Job[], repository: string): Job | undefined {
   );
 }
 
-/** The repository's building version, read again when the log or the build
- *  job moves on. */
-export function useBuilding(repository: string, key: string): Building | null {
-  const [building, setBuilding] = useState<Building | null>(null);
+/** What `api/timeline/build` says of the repository: its building version
+ *  and whether it has features at all, whatever the lists' filters. */
+export type BuildState = { building: Building | null; hasFeatures: boolean };
+
+/** The repository's build state, read again when the log or the build job
+ *  moves on. A read that fails keeps the last state. */
+export function useBuildState(repository: string, key: string): BuildState {
+  const [state, setState] = useState<BuildState>({ building: null, hasFeatures: false });
   useEffect(() => {
     const abort = new AbortController();
-    request<{ building?: Building | null }>(
+    request<{ building?: Building | null; has_features?: boolean }>(
       `api/timeline/build?repository=${encodeURIComponent(repository)}`,
       undefined,
       "GET",
       abort.signal,
     )
-      .then((body) => setBuilding(body.building ?? null))
+      .then((body) =>
+        setState({ building: body.building ?? null, hasFeatures: body.has_features === true }),
+      )
       .catch(() => {
-        // An older daemon, or a failed read: no build to show.
-        if (!abort.signal.aborted) setBuilding(null);
+        // A transient failure, or an older daemon: what was shown stays.
       });
     return () => abort.abort();
   }, [repository, key]);
-  return building;
+  return state;
+}
+
+/** Why a feature build stopped or cannot run, in its own words; reasons
+ *  shared with other jobs read as they do. */
+const buildReasons: Record<string, string> = {
+  cost_cap:
+    "It reached its spending cap before it finished. Confirm it again to resume where it stopped.",
+  spend_unrecorded: "baum could not record what one of its calls spent, so it stopped.",
+  unpriced_model:
+    "The model has no price in baum's price list, so the build's cost cannot be capped.",
+  unknown_model_price:
+    "The model has no price in baum's price list, so the build's cost cannot be capped.",
+  daily_cap: "The decision log's daily spending cap is reached. It can go on tomorrow.",
+  disabled: "Decisions are turned off for this repository, so it cannot be built.",
+  preferences_unreadable: "baum could not read its preferences, so it did not make a call.",
+  backend_unavailable: "The model backend is not available on this computer.",
+  backend_unsupported: "The configured backend cannot make the feature log's calls.",
+  failed: "It failed before it finished. Confirm it again to resume.",
+};
+
+export function buildReasonText(reason: string): string {
+  return buildReasons[reason] ?? jobReasonText(reason);
 }
 
 export function jobHref(job: Job): string {
   return appURL(`?page=jobs&job=${encodeURIComponent(job.id)}`);
 }
 
-/** A build running or stopped, above the features it does not replace
- *  until it finishes. */
+/** A build running, stopped or failed, above the features it does not
+ *  replace until it finishes. `onBuild` opens the confirmation, as a resume
+ *  or a new build; without a clone it is offered disabled. */
 export function BuildStatus({
   job,
   building,
-  onResume,
+  clone,
+  onBuild,
 }: {
   job: Job | undefined;
   building: Building | null;
-  onResume: (() => void) | null;
+  clone: string | null;
+  onBuild: (resume: boolean) => void;
 }) {
+  const action = (label: string, resume: boolean) => (
+    <Button
+      variant="secondary"
+      size="compact"
+      disabled={!clone}
+      title={clone ? undefined : NO_CLONE}
+      onClick={() => onBuild(resume)}
+    >
+      {label}
+    </Button>
+  );
   if (isActiveJob(job)) {
     const counted = building && building.total > 0;
     return (
@@ -85,34 +126,48 @@ export function BuildStatus({
       </section>
     );
   }
-  if (!building) return null;
-  const capped = building.stopped === "cost_cap";
+  const failed = job?.state === "failed" ? (job.reason ?? "failed") : "";
+  if (!building) {
+    // The latest build failed before it made its version.
+    if (!failed) return null;
+    return (
+      <section aria-label="Feature build" className="local-job-outcome">
+        <p role="status" className="min-w-0 flex-1 font-medium">
+          The last feature history build failed: {buildReasonText(failed)}
+        </p>
+        <ViewerLink href={jobHref(job!)}>View in Jobs</ViewerLink>
+        {action("Try again", false)}
+      </section>
+    );
+  }
+  const reason = building.stopped || failed;
+  const progress = (
+    <p className="text-xs text-(--text-tertiary)">
+      {building.total > 0
+        ? `${formatCount(building.placed)} of ${formatCount(building.total)} pull requests placed, `
+        : null}
+      {cost(building.spent_usd)} spent. The features shown stay until it finishes.
+    </p>
+  );
   return (
     <section aria-label="Feature build" className="local-job-outcome">
       <div className="min-w-0 flex-1">
         <p role="status" className="font-medium">
-          {capped
+          {reason === "cost_cap"
             ? "The feature history build stopped at its spending cap — confirm again to resume"
-            : building.stopped
-              ? `The feature history build stopped: ${jobReasonText(building.stopped)}`
-              : "The feature history build stopped before it finished"}
+            : reason
+              ? `The feature history build stopped. ${buildReasonText(reason)}`
+              : "A feature history build is in progress or stopped"}
         </p>
-        <p className="text-xs text-(--text-tertiary)">
-          {building.total > 0
-            ? `${formatCount(building.placed)} of ${formatCount(building.total)} pull requests placed, `
-            : null}
-          {cost(building.spent_usd)} spent. The features shown stay until it finishes.
-        </p>
+        {progress}
       </div>
       {job ? <ViewerLink href={jobHref(job)}>View in Jobs</ViewerLink> : null}
-      {onResume ? (
-        <Button variant="secondary" size="compact" onClick={onResume}>
-          Resume build
-        </Button>
-      ) : null}
+      {reason ? action("Resume build", true) : null}
     </section>
   );
 }
+
+export const NO_CLONE = "Needs a local clone of the repository";
 
 function errorText(error: unknown) {
   return error instanceof Error ? error.message : "Local request failed.";
@@ -139,6 +194,8 @@ export function FeatureBuildDialog({
   const [error, setError] = useState("");
   const [pending, setPending] = useState(false);
   const [job, setJob] = useState<Job | null>(null);
+  // Counts estimates, so "Estimate again" asks for a new one.
+  const [attempt, setAttempt] = useState(0);
   useEffect(() => {
     dialog.current?.showModal?.();
   }, []);
@@ -155,7 +212,16 @@ export function FeatureBuildDialog({
     return () => {
       active = false;
     };
-  }, [clone]);
+  }, [clone, attempt]);
+  // The estimate a start was refused for (expired, or its inputs changed)
+  // is not confirmed again: it is estimated afresh.
+  const [refused, setRefused] = useState(false);
+  const estimateAgain = () => {
+    setEstimate(null);
+    setError("");
+    setRefused(false);
+    setAttempt((n) => n + 1);
+  };
   const item = estimate?.items[0];
   const title = resume ? "Resume the feature history build" : "Build feature history";
   const confirm = async () => {
@@ -168,12 +234,21 @@ export function FeatureBuildDialog({
       started();
     } catch (e) {
       setError(errorText(e));
+      setRefused(true);
     } finally {
       setPending(false);
     }
   };
   return (
-    <dialog ref={dialog} onCancel={close} aria-labelledby="build-title">
+    <dialog
+      ref={dialog}
+      onCancel={(event) => {
+        // Escape waits for the start request.
+        if (pending) event.preventDefault();
+        else close();
+      }}
+      aria-labelledby="build-title"
+    >
       <div className="local-dialog-head">
         <div>
           <h2 id="build-title">{title}</h2>
@@ -189,7 +264,7 @@ export function FeatureBuildDialog({
       ) : !item && !error ? (
         <LoadingStatus block>Estimating the build…</LoadingStatus>
       ) : item?.blocked_reason ? (
-        <p className="my-3">{jobReasonText(item.blocked_reason)}</p>
+        <p className="my-3">{buildReasonText(item.blocked_reason)}</p>
       ) : item ? (
         <div className="local-fix-confirmation">
           <p>
@@ -216,10 +291,14 @@ export function FeatureBuildDialog({
         </div>
       ) : null}
       <div className="local-dialog-actions">
-        <Button variant="ghost" size="compact" onClick={close}>
+        <Button variant="ghost" size="compact" disabled={pending} onClick={close}>
           {job || item?.blocked_reason ? "Close" : "Cancel"}
         </Button>
-        {item && !item.blocked_reason && !job ? (
+        {refused ? (
+          <Button size="compact" onClick={estimateAgain}>
+            Estimate again
+          </Button>
+        ) : item && !item.blocked_reason && !job ? (
           <Button size="compact" disabled={pending} onClick={() => void confirm()}>
             {pending ? "Starting…" : resume ? "Resume build" : "Build feature history"}
           </Button>

@@ -712,6 +712,10 @@ type ResolvedFeature struct {
 	Archived bool `json:"archived,omitempty"`
 }
 
+// ErrMergeChain is a feature merged into others too many times over to
+// follow: a broken chain.
+var ErrMergeChain = errors.New("merged too many times over")
+
 // ResolveFeature is the feature a link to id shows: followed to the feature
 // it was merged into, archived when its version was retired.
 // sql.ErrNoRows for an unknown feature or one of a version being built.
@@ -733,5 +737,5 @@ WHERE f.id=?`, id).Scan(&out.Repository, &into, &state); err != nil {
 		}
 		id = into.String
 	}
-	return out, errors.New("feature " + strconv.Quote(id) + " is merged too many times over")
+	return out, fmt.Errorf("feature %s: %w", strconv.Quote(id), ErrMergeChain)
 }

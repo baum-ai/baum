@@ -517,9 +517,138 @@ it("shows a build in progress above the features it keeps, and offers to resume 
   expect(node.textContent).toContain("Local timeline");
 });
 
-it("offers a quieter rebuild when there are features and no build", async () => {
-  await show();
+it("offers a quieter rebuild when the repository has features, whatever the filters", async () => {
+  answers["api/timeline/build"] = { building: null, has_features: true };
+  answers["api/timeline/features"] = { features: [], next_cursor: null };
+  await show("page=timeline&status=abandoned");
   expect(
     [...node.querySelectorAll("button")].some((b) => b.textContent === "Rebuild feature history"),
   ).toBe(true);
+});
+
+const estimateOf = (item: Record<string, unknown>) => ({
+  id: "est-1",
+  estimate_usd: 1.2,
+  price_version: "v1",
+  expires_at: "2026-10-28T12:00:00Z",
+  items: [
+    {
+      clone: "clone-1",
+      pr: 0,
+      kind: "feature_build",
+      build_pull_requests: 40,
+      build_cap_usd: 1.5,
+      head_sha: "",
+      backend: "claude",
+      model: "claude-haiku-5-5",
+      estimate_usd: 1.2,
+      max_tokens: 0,
+      max_calls: 0,
+      requires_isolation_confirmation: false,
+      ...item,
+    },
+  ],
+});
+
+const button = (label: string, within: ParentNode = node) =>
+  [...within.querySelectorAll("button")].find((b) => b.textContent === label);
+
+it("says why a build cannot run, in the build's words", async () => {
+  answers["api/timeline/features"] = { features: [], next_cursor: null };
+  answers["api/jobs/estimate"] = estimateOf({
+    blocked_reason: "unknown_model_price",
+    estimate_usd: null,
+  });
+  await show();
+  await act(async () => button("Build feature history")!.click());
+  await act(async () => {});
+  const dialog = node.querySelector("dialog")!;
+  expect(dialog.textContent).toContain("so the build's cost cannot be capped");
+  expect(button("Build feature history", dialog)).toBeUndefined();
+  expect(button("Close", dialog)).toBeDefined();
+});
+
+it("estimates again when starting a build is refused", async () => {
+  answers["api/timeline/features"] = { features: [], next_cursor: null };
+  answers["api/jobs/estimate"] = estimateOf({});
+  answers["api/jobs"] = async () => new Response("estimate expired", { status: 409 });
+  bodies.length = 0;
+  await show();
+  await act(async () => button("Build feature history")!.click());
+  await act(async () => {});
+  const dialog = node.querySelector("dialog")!;
+  await act(async () => button("Build feature history", dialog)!.click());
+  await act(async () => {});
+  expect(dialog.textContent).toContain("estimate expired");
+  expect(button("Build feature history", dialog)).toBeUndefined();
+  await act(async () => button("Estimate again", dialog)!.click());
+  await act(async () => {});
+  expect(bodies.filter((body) => JSON.stringify(body).includes("feature_build"))).toHaveLength(2);
+  expect(button("Build feature history", dialog)).toBeDefined();
+  expect(dialog.textContent).not.toContain("estimate expired");
+});
+
+it("resumes a build that stopped, and says a failed or unexplained one in its own words", async () => {
+  answers["api/timeline/build"] = {
+    building: { placed: 30, total: 40, stopped: "cost_cap", spent_usd: 1.5 },
+    has_features: true,
+  };
+  answers["api/jobs/estimate"] = estimateOf({ build_pull_requests: 10 });
+  await show();
+  await act(async () => button("Resume build")!.click());
+  await act(async () => {});
+  const dialog = node.querySelector("dialog")!;
+  expect(dialog.textContent).toContain("Resume the feature history build");
+  expect(button("Resume build", dialog)).toBeDefined();
+  await act(async () => root.unmount());
+  root = createRoot(node);
+  // Its version records no reason: the failed job's is read.
+  answers["api/timeline/build"] = {
+    building: { placed: 30, total: 40, stopped: "", spent_usd: 1.5 },
+    has_features: true,
+  };
+  await act(async () =>
+    root.render(
+      <Harness initial="page=timeline" jobs={[{ ...buildJob("failed"), reason: "daily_cap" }]} />,
+    ),
+  );
+  await act(async () => {});
+  await act(async () => {});
+  expect(node.textContent).toContain("The decision log's daily spending cap is reached.");
+  expect(button("Resume build")).toBeDefined();
+  // A building version with no job claims neither.
+  await act(async () => root.render(<Harness initial="page=timeline" />));
+  await act(async () => {});
+  await act(async () => {});
+  expect(node.textContent).toContain("A feature history build is in progress or stopped");
+  expect(button("Resume build")).toBeUndefined();
+  // A failed build with no version is shown too.
+  answers["api/timeline/build"] = { building: null, has_features: true };
+  await act(async () =>
+    root.render(
+      <Harness
+        initial="page=timeline"
+        revision={2}
+        jobs={[{ ...buildJob("failed"), reason: "disabled" }]}
+      />,
+    ),
+  );
+  await act(async () => {});
+  await act(async () => {});
+  expect(node.textContent).toContain("The last feature history build failed");
+  expect(node.textContent).toContain("so it cannot be built");
+  expect(button("Try again")).toBeDefined();
+});
+
+it("keeps the build state shown when a read of it fails", async () => {
+  answers["api/timeline/build"] = {
+    building: { placed: 30, total: 40, stopped: "cost_cap", spent_usd: 1.5 },
+    has_features: true,
+  };
+  await show();
+  expect(node.textContent).toContain("stopped at its spending cap");
+  answers["api/timeline/build"] = async () => new Response("busy", { status: 500 });
+  await act(async () => root.render(<Harness initial="page=timeline" revision={1} />));
+  await act(async () => {});
+  expect(node.textContent).toContain("stopped at its spending cap");
 });

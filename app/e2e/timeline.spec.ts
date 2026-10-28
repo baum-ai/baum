@@ -109,6 +109,15 @@ for (const scheme of ["light", "dark"] as const) {
     );
     await dialog.getByRole("button", { name: "Close", exact: true }).click();
     await expect(dialog).toBeHidden();
+    // The fixture's build stops at once; the empty state stays, with the
+    // failed build above it.
+    await expect(page.getByRole("region", { name: "Feature build" })).toContainText(
+      "The last feature history build failed",
+    );
+    await expect(page.getByText("No features yet")).toBeVisible();
+    await expect(
+      page.getByRole("button", { name: "Build feature history", exact: true }),
+    ).toBeVisible();
 
     // Narrow: the page folds without scrolling sideways, the feature opens
     // in place.

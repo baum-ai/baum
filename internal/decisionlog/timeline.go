@@ -192,7 +192,12 @@ func (t *Timeline) Handler() http.Handler {
 			timelineError(w, err)
 			return
 		}
-		writeTimeline(w, map[string]any{"building": building})
+		features, err := t.hasFeatures(r.Context(), repository)
+		if err != nil {
+			timelineError(w, err)
+			return
+		}
+		writeTimeline(w, map[string]any{"building": building, "has_features": features})
 	})
 	mux.HandleFunc("GET /api/timeline/decisions", func(w http.ResponseWriter, r *http.Request) {
 		repository, page, ok := t.listQuery(w, r)
@@ -682,7 +687,7 @@ func (f *snapshotFeature) summarize(self *Person) {
 // version as archived, one of a version being built is not found.
 func (t *Timeline) feature(ctx context.Context, id string) (any, error) {
 	resolved, err := t.Store.ResolveFeature(ctx, id)
-	if errors.Is(err, sql.ErrNoRows) {
+	if errors.Is(err, sql.ErrNoRows) || errors.Is(err, ErrMergeChain) {
 		return nil, errTimelineNotFound
 	}
 	if err != nil {
@@ -1078,4 +1083,13 @@ func (t *Timeline) build(ctx context.Context, repository string) (*timelineBuild
 		return nil, nil
 	}
 	return &b, err
+}
+
+// hasFeatures reports whether the repository's current version has a
+// feature not merged into another, whatever a list's filters.
+func (t *Timeline) hasFeatures(ctx context.Context, repository string) (bool, error) {
+	var found bool
+	err := t.Store.db.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM feature f JOIN feature_version v ON v.id=f.version_id
+WHERE f.repository=? AND v.state=? AND f.merged_into IS NULL)`, repository, VersionCurrent).Scan(&found)
+	return found, err
 }

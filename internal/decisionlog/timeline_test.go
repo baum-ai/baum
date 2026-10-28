@@ -490,11 +490,12 @@ WHERE (agent, session_id)`+inSessions, set))
 func TestTimelineBuildState(t *testing.T) {
 	f := newTimelineFixture(t)
 	var answer struct {
-		Building *timelineBuild `json:"building"`
+		Building    *timelineBuild `json:"building"`
+		HasFeatures bool           `json:"has_features"`
 	}
 	f.get("/api/timeline/build", url.Values{"repository": {repo}}, &answer)
-	if answer.Building != nil {
-		t.Fatalf("building = %+v", answer.Building)
+	if answer.Building != nil || !answer.HasFeatures {
+		t.Fatalf("build = %+v", answer)
 	}
 	f.exec(`INSERT INTO feature_version(repository, state, created_at, total, placed, stopped, spent_usd) VALUES (?, 'building', 0, 40, 12, 'cost_cap', 0.5)`, repo)
 	f.exec(`INSERT INTO feature(id, version_id, repository, title, changed_at, created_at, updated_at)
@@ -513,5 +514,14 @@ VALUES ('B1', (SELECT id FROM feature_version WHERE state='building'), ?, 'Being
 	}
 	if code := f.get("/api/timeline/build", url.Values{"repository": {"acme/off"}}, nil); code != http.StatusBadRequest {
 		t.Fatalf("build of a repository turned off = %d", code)
+	}
+}
+
+// A chain of merges too long to follow is not found.
+func TestTimelineBrokenMergeChain(t *testing.T) {
+	f := newTimelineFixture(t)
+	f.exec(`UPDATE feature SET merged_into='F3' WHERE id='F1'`)
+	if code := f.get("/api/timeline/features/F3", nil, nil); code != http.StatusNotFound {
+		t.Fatalf("a merge cycle = %d", code)
 	}
 }

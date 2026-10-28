@@ -253,15 +253,6 @@ const jobReasons: Record<string, string> = {
     "The agent changed a GitHub workflow or action, which a fix of review comments never pushes. Nothing was pushed.",
   push_rejected:
     "GitHub refused the push, usually because the branch moved on. Nothing was force-pushed.",
-  cost_cap:
-    "The feature build reached its spending cap before it finished. Confirm it again to resume where it stopped.",
-  spend_unrecorded: "baum could not record what a call of the feature build spent, so it stopped.",
-  unpriced_model: "The model has no price in baum's price list, so its cost cannot be capped.",
-  daily_cap: "The decision log's daily spending cap is reached. It can go on tomorrow.",
-  disabled: "Decisions are turned off for this repository.",
-  backend_unavailable: "The model backend is not available on this computer.",
-  backend_unsupported: "The configured backend cannot make the decision log's calls.",
-  failed: "The run stopped before it finished.",
   push_failed: "The push failed. Check that git can push to this repository from your clone.",
 };
 /** What a finished job's reason means, in a sentence. */
@@ -690,7 +681,6 @@ export async function estimateFix(clone: string, pr: number): Promise<Estimate> 
     mode: "single",
   });
 }
-/** Starts a fix the person confirmed. */
 /** Estimates a feature build of the clone's repository: its first build,
  *  or the rest of one that stopped. */
 export async function estimateFeatureBuild(clone: string): Promise<Estimate> {

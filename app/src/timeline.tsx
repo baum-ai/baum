@@ -32,7 +32,13 @@ import {
 import { useUrlState, ViewerLink } from "@baum/viewer/navigation";
 import { humanize } from "@baum/viewer/review-document";
 import { appURL, isActiveJob, request, type Job } from "./api";
-import { BuildStatus, buildJobOf, FeatureBuildDialog, useBuilding } from "./feature-build";
+import {
+  BuildStatus,
+  buildJobOf,
+  FeatureBuildDialog,
+  NO_CLONE,
+  useBuildState,
+} from "./feature-build";
 import { LoadingStatus } from "./nine-dots";
 import { PageBar } from "./shell";
 import "./timeline.css";
@@ -430,7 +436,7 @@ function TimelineLog({
     wasActive.current = buildActive;
   }, [buildActive]);
   const revision = logRevision + buildFinished;
-  const building = useBuilding(
+  const { building, hasFeatures } = useBuildState(
     repository,
     `${revision}:${buildJob?.id ?? ""}:${buildJob?.state ?? ""}:${buildJob?.calls ?? 0}`,
   );
@@ -598,7 +604,8 @@ function TimelineLog({
       <BuildStatus
         job={buildJob}
         building={building}
-        onResume={clone && !buildActive ? () => setBuildDialog("resume") : null}
+        clone={clone}
+        onBuild={(resume) => setBuildDialog(resume ? "resume" : "build")}
       />
       {openedFeature}
       <Stale pending={features.status === "loading" && features.loaded}>
@@ -623,7 +630,7 @@ function TimelineLog({
                   <Button
                     size="tiny"
                     disabled={!clone}
-                    title={clone ? undefined : "Needs a local clone of the repository"}
+                    title={clone ? undefined : NO_CLONE}
                     onClick={() => setBuildDialog("build")}
                   >
                     Build feature history
@@ -738,8 +745,9 @@ function TimelineLog({
     </>
   );
 
-  const canRebuild =
-    clone !== null && !buildActive && !building && features.loaded && features.rows.length > 0;
+  // Whether the repository has features at all, not whether the filters
+  // leave any.
+  const canRebuild = clone !== null && !buildActive && !building && hasFeatures;
   return (
     <>
       <PageBar
