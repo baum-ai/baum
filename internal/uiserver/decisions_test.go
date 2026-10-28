@@ -114,7 +114,7 @@ func TestDecisionSettingsAndRoute(t *testing.T) {
 		}
 		return got.Decisions
 	}
-	if got := settings(); !got.Enabled || got.Model != "" || got.DailyCap != nil {
+	if got := settings(); !got.Enabled || got.Model != "" {
 		t.Fatalf("defaults %+v", got)
 	}
 	// GET /api/settings, which the app reads on every reload, leaves them out.
@@ -124,11 +124,11 @@ func TestDecisionSettingsAndRoute(t *testing.T) {
 	if changes != 0 {
 		t.Fatalf("a read published %d changes", changes)
 	}
-	if code, body := serve("PUT", "/api/settings/decisions", `{"enabled":false,"model":" gpt-6-luna ","daily_cap":1.5}`); code != 200 ||
-		body != `{"decisions":{"enabled":false,"model":"gpt-6-luna","daily_cap":1.5,"backend":"codex","backend_undetermined":false,"effective_model":"gpt-6-luna","model_ignored":false}}`+"\n" {
+	if code, body := serve("PUT", "/api/settings/decisions", `{"enabled":false,"model":" gpt-6-luna "}`); code != 200 ||
+		body != `{"decisions":{"enabled":false,"model":"gpt-6-luna","backend":"codex","backend_undetermined":false,"effective_model":"gpt-6-luna","model_ignored":false}}`+"\n" {
 		t.Fatalf("put %d %q", code, body)
 	}
-	if got := settings(); got.Enabled || got.Model != "gpt-6-luna" || got.DailyCap == nil || *got.DailyCap != 1.5 {
+	if got := settings(); got.Enabled || got.Model != "gpt-6-luna" {
 		t.Fatalf("after put %+v", got)
 	}
 	// Saving the settings, or a repository's, changes what capture does.
@@ -139,21 +139,21 @@ func TestDecisionSettingsAndRoute(t *testing.T) {
 		t.Fatalf("a repository change: %d, %d changes", code, changes)
 	}
 	// The settings' own route also says what capture makes of them.
-	if code, body := serve("PUT", "/api/settings/decisions", `{"enabled":true,"model":"claude-haiku-5-5","daily_cap":null}`); code != 200 ||
+	if code, body := serve("PUT", "/api/settings/decisions", `{"enabled":true,"model":"claude-haiku-5-5"}`); code != 200 ||
 		!strings.Contains(body, `"effective_model":"gpt-6-luna","model_ignored":true`) {
 		t.Fatalf("put an ignored model %d %s", code, body)
 	}
 	if code, body := serve("GET", "/api/settings/decisions", ""); code != 200 ||
-		body != `{"decisions":{"enabled":true,"model":"claude-haiku-5-5","daily_cap":null,"backend":"codex","backend_undetermined":false,"effective_model":"gpt-6-luna","model_ignored":true}}`+"\n" {
+		body != `{"decisions":{"enabled":true,"model":"claude-haiku-5-5","backend":"codex","backend_undetermined":false,"effective_model":"gpt-6-luna","model_ignored":true}}`+"\n" {
 		t.Fatalf("get %d %s", code, body)
 	}
-	for _, body := range []string{`{"enabled":true,"daily_cap":-1}`, `{"model":"x"}`, `{"enabled":true,"other":1}`} {
+	for _, body := range []string{`{"model":"x"}`, `{"enabled":true,"other":1}`} {
 		if code, _ := serve("PUT", "/api/settings/decisions", body); code != http.StatusBadRequest {
 			t.Errorf("%s answered %d", body, code)
 		}
 	}
-	// A whole replacement: on, the default model and no cap.
-	if code, _ := serve("PUT", "/api/settings/decisions", `{"enabled":true,"model":"","daily_cap":null}`); code != 200 {
+	// A whole replacement: on and the default model.
+	if code, _ := serve("PUT", "/api/settings/decisions", `{"enabled":true,"model":""}`); code != 200 {
 		t.Fatal(code)
 	}
 	prefs, _ := registry.Preferences(context.Background())

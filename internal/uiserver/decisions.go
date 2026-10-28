@@ -96,12 +96,10 @@ func (a LocalAPI) linkedSessions(cache *documentCache) LinkedSessions {
 }
 
 // decisionSettings are the app's decision capture preferences as the app
-// edits them: a switch, a model (empty is the backend's default) and an
-// optional daily cap in US dollars.
+// edits them: a switch and a model (empty is the backend's default).
 type decisionSettings struct {
-	Enabled  bool     `json:"enabled"`
-	Model    string   `json:"model"`
-	DailyCap *float64 `json:"daily_cap"`
+	Enabled bool   `json:"enabled"`
+	Model   string `json:"model"`
 }
 
 // DecisionModel is the backend and decision model capture uses
@@ -142,7 +140,7 @@ func (a LocalAPI) getDecisionSettings(w http.ResponseWriter, r *http.Request) {
 
 func decisionSettingsOf(p repos.Preferences) decisionSettings {
 	d := p.Decisions
-	out := decisionSettings{Enabled: d.Enabled == nil || *d.Enabled, DailyCap: d.DailyCap}
+	out := decisionSettings{Enabled: d.Enabled == nil || *d.Enabled}
 	if d.Model != nil {
 		out.Model = *d.Model
 	}
@@ -153,9 +151,8 @@ func decisionSettingsOf(p repos.Preferences) decisionSettings {
 // whole decision capture preferences.
 func (a LocalAPI) putDecisionSettings(w http.ResponseWriter, r *http.Request) {
 	var input struct {
-		Enabled  *bool    `json:"enabled"`
-		Model    *string  `json:"model"`
-		DailyCap *float64 `json:"daily_cap"`
+		Enabled *bool   `json:"enabled"`
+		Model   *string `json:"model"`
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, 4<<10)
 	d := json.NewDecoder(r.Body)
@@ -167,7 +164,7 @@ func (a LocalAPI) putDecisionSettings(w http.ResponseWriter, r *http.Request) {
 	var invalid error
 	prefs, err := a.Registry.UpdatePreferences(r.Context(), func(p repos.Preferences) repos.Preferences {
 		next := p
-		next.Decisions = repos.DecisionPreferences{DailyCap: input.DailyCap}
+		next.Decisions = repos.DecisionPreferences{}
 		if !*input.Enabled {
 			next.Decisions.Enabled = new(false)
 		}

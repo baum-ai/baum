@@ -458,7 +458,6 @@ export type PullRequestDecisions = {
 export type DecisionSettings = {
   enabled: boolean;
   model: string;
-  daily_cap: number | null;
   /** What the daemon makes of them (`api/settings/decisions` only): the
    *  harness capture resolves to, its model, and whether `model` is ignored. */
   backend?: string;
@@ -478,8 +477,6 @@ const skipReasons: Record<string, string> = {
     "Cursor Agent can't capture decisions. Choose Claude Code, Codex or the Anthropic API for reviews to capture them.",
   backend_unavailable: "No harness that can capture decisions is available on this computer.",
   unpriced_model: "The decision model has no known price, so it is not called.",
-  over_cost_cap: "This session reached its daily capture spend of $0.25.",
-  daily_cap: "Decision capture reached its daily spending cap.",
 };
 /** Why a session's decisions were not captured, in words. */
 export function skipReasonText(reason: string | undefined): string {

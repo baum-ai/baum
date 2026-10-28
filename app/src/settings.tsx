@@ -496,18 +496,16 @@ function ReviewSettingsSection({
   );
 }
 
-/** Decision capture: the switch, the model and an optional daily cap. */
+/** Decision capture: the switch and the model. */
 function DecisionSettingsSection({ defaults }: { defaults: ReviewDefaults }) {
   const [saved, setSaved] = useState<DecisionSettings | null>(null);
   const [draft, setDraft] = useState<DecisionSettings | null>(null);
-  const [cap, setCap] = useState("");
   const [pending, setPending] = useState(false);
   const [done, setDone] = useState(false);
   const [error, setError] = useState("");
   const load = (settings: DecisionSettings) => {
     setSaved(settings);
     setDraft(settings);
-    setCap(settings.daily_cap === null ? "" : String(settings.daily_cap));
   };
   useEffect(() => {
     request<{ decisions?: DecisionSettings }>("api/settings/decisions").then(
@@ -520,16 +518,8 @@ function DecisionSettingsSection({ defaults }: { defaults: ReviewDefaults }) {
   if (!saved || !draft) return error ? <Alert>{error}</Alert> : null;
   // The daemon resolves the harness capture uses, auto included.
   const backend = saved.backend || shownBackend(defaults.backend);
-  const capValue = cap.trim() === "" ? null : Number(cap);
-  const capInvalid = capValue !== null && (!Number.isFinite(capValue) || capValue < 0);
-  const next = {
-    enabled: draft.enabled,
-    model: draft.model,
-    daily_cap: capInvalid ? draft.daily_cap : capValue,
-  };
-  const dirty =
-    JSON.stringify(next) !==
-    JSON.stringify({ enabled: saved.enabled, model: saved.model, daily_cap: saved.daily_cap });
+  const next = { enabled: draft.enabled, model: draft.model };
+  const dirty = next.enabled !== saved.enabled || next.model !== saved.model;
   const save = async () => {
     setPending(true);
     setError("");
@@ -595,29 +585,6 @@ function DecisionSettingsSection({ defaults }: { defaults: ReviewDefaults }) {
           </div>
         ) : null}
         <div className="review-section">
-          <label htmlFor="decisions-cap" className="review-label">
-            Daily spending cap (US$)
-          </label>
-          <input
-            id="decisions-cap"
-            className="local-field"
-            inputMode="decimal"
-            placeholder="No cap"
-            value={cap}
-            disabled={pending || !draft.enabled}
-            aria-invalid={capInvalid || undefined}
-            onChange={(event) => {
-              setDone(false);
-              setCap(event.target.value);
-            }}
-          />
-          <p className="review-note">
-            {capInvalid
-              ? "Enter an amount of zero or more, or leave it empty for no cap."
-              : "Across all sessions. Each session is also held to $0.25 a day."}
-          </p>
-        </div>
-        <div className="review-section">
           <DecisionsDisclosure />
         </div>
       </div>
@@ -627,7 +594,7 @@ function DecisionSettingsSection({ defaults }: { defaults: ReviewDefaults }) {
         </p>
         <Button
           size="compact"
-          disabled={!dirty || pending || capInvalid}
+          disabled={!dirty || pending}
           onClick={() => void save()}
         >
           {pending ? "Saving…" : "Save decision capture"}

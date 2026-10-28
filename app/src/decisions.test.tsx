@@ -197,8 +197,8 @@ it("shows a session whose first capture is in flight on the pull request", async
 it("puts where a capture stands in words", () => {
   const now = Date.now();
   expect(captureState(captured({ capturing: true }), now)).toBe("Capturing…");
-  expect(captureState(captured({ coverage: "skipped", skip_reason: "daily_cap" }), now)).toBe(
-    "Decision capture reached its daily spending cap.",
+  expect(captureState(captured({ coverage: "skipped", skip_reason: "unpriced_model" }), now)).toBe(
+    "The decision model has no known price, so it is not called.",
   );
   expect(captureState(captured({ coverage: "skipped", skip_reason: "new_reason" }), now)).toBe(
     "Not captured.",

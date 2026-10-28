@@ -455,9 +455,8 @@ a capture state or a capture in flight. Both read again on the `decisions`
 event, which carries no data (events within 250 ms make one read), and when
 the event stream opens or resets or the automatic switch changes. Settings' **Decision capture** section holds
 the switch, the decision log model (the harness's cheap default, or another
-of its models) and an optional daily cap, read with `GET
-api/settings/decisions` and saved with `PUT api/settings/decisions`
-(`enabled`, `model`, `daily_cap`; the whole object). Only these two answer
+of its models), read with `GET api/settings/decisions` and saved with `PUT
+api/settings/decisions` (`enabled`, `model`; the whole object). Only these two answer
 with what the daemon makes of them: the harness capture resolves to, its model
 and whether the saved model is ignored (unknown, with a note that capture
 does not run, when no harness resolves); the section reads them again when

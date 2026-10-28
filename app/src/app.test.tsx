@@ -865,7 +865,6 @@ it("shows a saved decision model capture ignores, and lets it be cleared", async
             decisions: {
               enabled: true,
               model: "claude-sonnet-5-5",
-              daily_cap: null,
               backend: "codex",
               effective_model: "gpt-6-luna",
               model_ignored: true,
@@ -890,7 +889,7 @@ it("shows a saved decision model capture ignores, and lets it be cleared", async
   );
   expect(puts.at(-1)).toEqual({
     path: "/s/test-ns/api/settings/decisions",
-    body: { enabled: true, model: "", daily_cap: null },
+    body: { enabled: true, model: "" },
   });
 });
 it("says when the harness capture uses could not be determined in time", async () => {
@@ -902,7 +901,6 @@ it("says when the harness capture uses could not be determined in time", async (
     decisions: {
       enabled: true,
       model: "",
-      daily_cap: null,
       backend: "",
       backend_undetermined: true,
       effective_model: "",
@@ -914,13 +912,13 @@ it("says when the harness capture uses could not be determined in time", async (
   expect(section.textContent).toContain("could not be determined");
   expect(section.textContent).not.toContain("No harness that can capture");
 });
-it("saves the decision capture switch, model and daily cap", async () => {
+it("saves the decision capture switch and model", async () => {
   history.replaceState(null, "", "/s/test-ns/?page=settings");
   stubDiagnostics(async () => Response.json({ local: true, report: diagnosticsReport }));
   const puts = stubAutomatic(demoClone, automaticOverview, {
     backend: "codex",
     model: "gpt-6-sol",
-    decisions: { enabled: true, model: "", daily_cap: null },
+    decisions: { enabled: true, model: "" },
   });
   await act(async () => root.render(<App />));
   const section = () => node.querySelector('[aria-labelledby="decisions-heading"]')!;
@@ -932,16 +930,6 @@ it("saves the decision capture switch, model and daily cap", async () => {
   expect(model.selectedOptions[0]!.textContent).toBe("Default (gpt-6-luna)");
   expect(section().textContent).toContain("never tool output or file contents");
   expect(save().disabled).toBe(true);
-  const cap = section().querySelector<HTMLInputElement>("#decisions-cap")!;
-  const type = async (value: string) =>
-    act(async () => {
-      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(cap, value);
-      cap.dispatchEvent(new Event("input", { bubbles: true }));
-    });
-  await type("-1");
-  expect(section().textContent).toContain("Enter an amount of zero or more");
-  expect(save().disabled).toBe(true);
-  await type("2.5");
   await act(async () => {
     model.value = "gpt-6-sol";
     model.dispatchEvent(new Event("change", { bubbles: true }));
@@ -949,7 +937,7 @@ it("saves the decision capture switch, model and daily cap", async () => {
   await act(async () => save().click());
   expect(puts).toContainEqual({
     path: "/s/test-ns/api/settings/decisions",
-    body: { enabled: true, model: "gpt-6-sol", daily_cap: 2.5 },
+    body: { enabled: true, model: "gpt-6-sol" },
   });
   expect(section().textContent).toContain("Saved.");
   await act(async () => section().querySelector<HTMLInputElement>('input[role="switch"]')!.click());
@@ -957,7 +945,7 @@ it("saves the decision capture switch, model and daily cap", async () => {
   await act(async () => save().click());
   expect(puts.at(-1)).toEqual({
     path: "/s/test-ns/api/settings/decisions",
-    body: { enabled: false, model: "gpt-6-sol", daily_cap: 2.5 },
+    body: { enabled: false, model: "gpt-6-sol" },
   });
 });
 /** Opens a repository's settings dialog and returns it. */
