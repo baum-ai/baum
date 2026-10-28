@@ -58,6 +58,16 @@ func NewGitHubAuthentication(ctx context.Context, manager *githubauth.Manager, c
 	return a
 }
 
+// Login is the connected GitHub account's login, "" without one.
+func (a *GitHubAuthentication) Login() string {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.status.State != "connected" {
+		return ""
+	}
+	return a.status.Login
+}
+
 func (a *GitHubAuthentication) setError(err error) {
 	a.status.Error, a.status.Message = "", ""
 	if err == nil {

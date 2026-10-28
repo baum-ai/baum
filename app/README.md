@@ -361,7 +361,7 @@ The app's sidebar leads to the Inbox, Pull requests, Timeline, Sessions, Analyti
 and Settings; the Inbox shows how many things wait on the person there, and Sessions shows the number of agent sessions waiting on the person (in the caution tone), or
 else the number working now.
 
-The Timeline page (`?page=timeline&repo=&tab=all&q=&status=&category=&file=&feature=&open=`,
+The Timeline page (`?page=timeline&repo=&tab=all&q=&person=&status=&category=&file=&feature=&open=`,
 `src/timeline.tsx`) is the hosted Timeline over the local decision log. It reads
 the daemon's `api/timeline` routes (see the
 [decision log README](../internal/decisionlog/README.md#timeline-api)) and draws
@@ -372,7 +372,10 @@ on, as the hosted Timeline shows all of an organisation's, or those named by
 `repo=` (repeated). Its bar holds, with more than one such repository, a
 popover of a box per repository (the last one ticked cannot be cleared;
 ticking them all, or **All repositories**, drops `repo=`), a search box
-applied 300 ms after typing stops, and a status select on Features or a
+applied 300 ms after typing stops, a person select (`person=`) offering
+those with decisions on All decisions and those among the features' people
+on Features (`api/timeline/people`, `api/timeline/features/people`; the
+user is one person, whichever address or login names them), and a status select on Features or a
 category select on All decisions; a file chosen from a decision's detail
 shows as a removable pill. Everything lives in the address. Over several
 repositories each row names its repository and links its pull requests to

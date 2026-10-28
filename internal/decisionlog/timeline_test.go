@@ -1,6 +1,7 @@
 package decisionlog
 
 import (
+	"cmp"
 	"context"
 	"database/sql"
 	"encoding/json"
@@ -31,16 +32,20 @@ func (r timelineRegistry) Repositories(context.Context) ([]repos.Repository, err
 type timelineFixture struct {
 	*featureFixture
 	handler  http.Handler
+	timeline *Timeline
 	registry *timelineRegistry
 	// clones counts the clones opened, one per request.
 	clones int
 }
 
-// fakeClone names the sessions' person and has a current review of pull
-// request 1 at h1.
-type fakeClone struct{}
+// fakeClone names the sessions' person by its address, Ada by default, and
+// has a current review of pull request 1 at h1.
+type fakeClone struct{ email string }
 
-func (fakeClone) Person(context.Context) *Person { return &Person{Email: "me@example.com"} }
+func (c fakeClone) Person(context.Context) *Person {
+	name := "Ada"
+	return &Person{Email: cmp.Or(c.email, "me@example.com"), Name: &name}
+}
 func (fakeClone) Review(_ context.Context, number int, head string) (string, string) {
 	if number == 1 && head == "h1" {
 		return "Reviewed export.", "current"
@@ -110,12 +115,16 @@ changed_at, created_at, updated_at) VALUES ('G1',?,?,'Gadget counts','About coun
 	off := false
 	f.registry = &timelineRegistry{prefs: repos.DefaultPreferences(),
 		list: []repos.Repository{{Repository: repo}, {Repository: gadgets}, {Repository: "acme/off", Settings: repos.Settings{Decisions: &off}}}}
-	timeline := &Timeline{Store: f.store, Registry: f.registry,
-		Clone: func(context.Context, string) TimelineClone {
+	f.timeline = &Timeline{Store: f.store, Registry: f.registry,
+		Clone: func(_ context.Context, repository string) TimelineClone {
 			f.clones++
+			// acme/gadgets, served first, names the user.
+			if repository == repo {
+				return fakeClone{email: "ada@widgets.example"}
+			}
 			return fakeClone{}
 		}}
-	f.handler = timeline.Handler()
+	f.handler = f.timeline.Handler()
 	return f
 }
 
@@ -228,7 +237,7 @@ func TestTimelineFeatures(t *testing.T) {
 	if len(one.KeyDecisions) != 1 || one.KeyDecisions[0].ID != "d-s1" || one.KeyDecisions[0].SessionID != "claude-code:s1" {
 		t.Fatalf("F1 key decisions = %+v", one.KeyDecisions)
 	}
-	if len(one.People) != 2 || one.People[0].Email != "me@example.com" || *one.People[1].Login != "octo" {
+	if len(one.People) != 2 || one.People[0].Email != "me@example.com" || *one.People[0].Name != "Ada" || *one.People[1].Login != "octo" {
 		t.Fatalf("F1 people = %+v", one.People)
 	}
 	if two.Title != nil || !two.SummaryPending || two.SessionCount != 1 || two.DecisionCount != 2 {
@@ -428,6 +437,64 @@ func TestTimelineAcrossRepositories(t *testing.T) {
 	f.get("/api/timeline/decisions/d-g1", nil, &detail)
 	if detail.Repository == nil || detail.Repository.FullName != gadgets {
 		t.Fatalf("d-g1 = %+v", detail)
+	}
+}
+
+// The user is one person: the first clone's address and name, every clone's
+// address and their login's GitHub address naming them too, with the pull
+// requests they opened folded in once their login is known.
+func TestTimelinePeople(t *testing.T) {
+	f := newTimelineFixture(t)
+	type counted struct {
+		Email         string  `json:"email"`
+		Name          *string `json:"name"`
+		Login         *string `json:"login"`
+		DecisionCount int     `json:"decision_count"`
+		FeatureCount  int     `json:"feature_count"`
+	}
+	var people struct{ People []counted }
+	f.get("/api/timeline/people", nil, &people)
+	if len(people.People) != 1 || people.People[0].Email != "me@example.com" || *people.People[0].Name != "Ada" || people.People[0].DecisionCount != 4 {
+		t.Fatalf("people = %+v", people)
+	}
+	f.get("/api/timeline/features/people", nil, &people)
+	if len(people.People) != 2 || people.People[0].Email != "me@example.com" || people.People[0].FeatureCount != 3 ||
+		people.People[1].Email != "octo@users.noreply.github.com" || people.People[1].FeatureCount != 1 {
+		t.Fatalf("feature people = %+v", people)
+	}
+	decisionIDs := func(person string) int {
+		var page struct{ Decisions []timelineDecision }
+		f.get("/api/timeline/decisions", url.Values{"person": {person}}, &page)
+		return len(page.Decisions)
+	}
+	featureIDs := func(person string) string {
+		var page featurePage
+		f.get("/api/timeline/features", url.Values{"person": {person}}, &page)
+		return page.ids()
+	}
+	if decisionIDs("ME@example.com") != 3 || decisionIDs("ada@widgets.example") != 3 || decisionIDs("octo@users.noreply.github.com") != 0 {
+		t.Fatal("the decisions of a person")
+	}
+	if got := featureIDs("ada@widgets.example"); got != "F1,F2,G1" {
+		t.Fatalf("the user's features = %s", got)
+	}
+	if got := featureIDs("octo@users.noreply.github.com"); got != "F1" {
+		t.Fatalf("octo's features = %s", got)
+	}
+	// Once their login is known, octo is the user.
+	f.timeline.Login = func(context.Context) string { return "octo" }
+	f.timeline.selfAt = time.Time{}
+	f.get("/api/timeline/features/people", nil, &people)
+	if len(people.People) != 1 || people.People[0].Email != "me@example.com" || *people.People[0].Login != "octo" || people.People[0].FeatureCount != 3 {
+		t.Fatalf("feature people with the login = %+v", people)
+	}
+	if decisionIDs("octo@users.noreply.github.com") != 3 {
+		t.Fatal("the login's address does not name the user")
+	}
+	// A feature with only their pull requests is theirs.
+	f.exec(`DELETE FROM session_commit`)
+	if got := featureIDs("octo@users.noreply.github.com"); got != "F1,F2,G1" {
+		t.Fatalf("features by the login = %s", got)
 	}
 }
 

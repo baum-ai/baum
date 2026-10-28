@@ -456,9 +456,9 @@ and never writes it.
   description (null while none is written; `summary_pending` while it is
   behind its members), the status (`features.DeriveStatus` over its pull
   requests), the first and last activity (its pull requests' opening and
-  last update and its decisions' times), `people` (the clone's git
-  `user.email` when it has a session, then its pull requests' authors not
-  opened by a bot, by login), the counts of pull requests, sessions (the
+  last update and its decisions' times), `people` (the user, when it has a
+  session or a pull request they opened, then its other pull requests'
+  authors not opened by a bot, by login), the counts of pull requests, sessions (the
   repository's captured sessions linked to its pull requests' commits, or in
   it on their own) and decisions, and
   its key decisions, read as the text names them (`currentKeys`). A
@@ -506,11 +506,34 @@ request's number. The index (`decision_search`, `feature_search`,
 `pull_search`) is kept by triggers on those tables and built from the rows
 already stored when a store without it is opened.
 
+Every captured session is this computer's user's, so the Timeline knows one
+person besides the pull requests' authors: the user, named by the first
+served repository's clone (git `user.email` and `user.name`; avatars are
+never read, the app draws initials). Every served clone's address names
+them too, and so does their GitHub login's address
+(`<login>@users.noreply.github.com`) once `Login` knows the login (the
+daemon's is the viewer of a picked repository's cached discovery snapshot,
+else the GitHub connection's): the pull requests they opened are then theirs,
+and they are the login's person. It is read at most every 30 seconds. A
+pull request's author is named by their login's address.
+
+- **`GET /people?repository=`**: `people`, the user with
+  `decision_count`, the repositories' current decisions; nobody without a
+  decision or a known user.
+- **`GET /features/people?repository=`**: `people`, everyone among the
+  repositories' features' people with `feature_count`, most first, then by
+  address.
+- `person=` (an address, any case) on `/features` keeps the features that
+  person is among the people of: the user (by any of their addresses) those
+  with their sessions or pull requests, anyone else those with a pull
+  request they opened. On `/decisions` the user keeps every decision, anyone
+  else none.
+
 A request reads its features' sessions' current decisions and links in a
 few set queries (`Store.Current` and `SessionLinks` read the same way), a
-feature's detail only that feature's, and opens the repository's clone once
-(`LocalClones`): its git `user.email` and its review store are each read
-at most once.
+feature's detail only that feature's, and opens each repository's clone at
+most once (`LocalClones`): its git identity and its review store are each
+read at most once.
 
 `Changed` is called by the capturer once a capture's call is recorded as
 pending, by the capture scheduler after a capture that saved decisions,

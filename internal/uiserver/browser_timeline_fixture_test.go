@@ -101,6 +101,8 @@ VALUES (?,?,?,?,'author',?,'base',?,?,?)`, repo, number, title, state, "head-"+t
 	pull(12, "Serve the decision log locally", "closed", &shipped, day(2, 9), shipped)
 	pull(7, "Reuse the existing PR page", "open", nil, day(1, 9), day(1, 12))
 	pull(13, "A hosted-only Timeline", "closed", nil, day(10, 9), day(8, 9))
+	// The user opened pull request 12: their login folds it into them.
+	exec(`UPDATE pull_request SET author='ada-l' WHERE number=12`)
 	feature := func(id, title, description, keys string, behind bool, updated time.Time) {
 		summarized := 1
 		if behind {
@@ -132,7 +134,8 @@ changed_at, created_at, updated_at) VALUES (?,?,?,?,?,?,?,1,?,?,?,?)`, id, versi
 	exec(`INSERT INTO session_commit(agent, session_id, repository, sha, method, confidence) VALUES ('claude-code','timeline-1',?,'commit-1','checkpoint',1)`, repo)
 	exec(`INSERT INTO pr_summary(repository, number, content_hash, summary, created_at) VALUES (?,12,'h','Adds the local Timeline API and page.',?)`, repo, ms(day(1, 16)))
 	return (&decisionlog.Timeline{Store: store, Registry: registry,
-		Clone: func(context.Context, string) decisionlog.TimelineClone { return fixtureClone{} }}).Handler()
+		Clone: func(context.Context, string) decisionlog.TimelineClone { return fixtureClone{} },
+		Login: func(context.Context) string { return "ada-l" }}).Handler()
 }
 
 // fixtureClone names the sessions' person and has no saved reviews.

@@ -498,6 +498,8 @@ func localApplication(paths daemon.Paths, concurrency int, log *slog.Logger) fun
 		var capture *decisionlog.Scheduler
 		var decisionStore *decisionlog.Store
 		var timeline http.Handler
+		// The GitHub connection's login, once it exists below.
+		var connectionLogin func() string
 		if live != nil {
 			if decisionStore, err = decisionlog.Open(filepath.Join(state, "decisions", "decisions.sqlite"), decisionlog.OpenOptions{AbandonPending: true}); err != nil {
 				log.Warn("decision capture is off: its store did not open", "error", err)
@@ -506,7 +508,8 @@ func localApplication(paths daemon.Paths, concurrency int, log *slog.Logger) fun
 					Worker: &decisionlog.Capturer{Store: decisionStore, Registry: registry, Config: cfg, Log: log, Changed: timelineChanged}}
 				featureLog = &decisionlog.FeatureWorker{Store: decisionStore, Registry: registry, GitHub: githubReaders(cfg), Config: cfg, Log: log, Changed: timelineChanged}
 				builds.worker.Store(featureLog)
-				timeline = (&decisionlog.Timeline{Store: decisionStore, Registry: registry, Clone: decisionlog.LocalClones(registry)}).Handler()
+				timeline = (&decisionlog.Timeline{Store: decisionStore, Registry: registry, Clone: decisionlog.LocalClones(registry),
+					Login: func(ctx context.Context) string { return viewerLogin(ctx, registry, discover.Cached, connectionLogin) }}).Handler()
 			}
 		}
 		home, _ := os.UserHomeDir()
@@ -537,6 +540,7 @@ func localApplication(paths daemon.Paths, concurrency int, log *slog.Logger) fun
 			}
 		}
 		githubConnection := uiserver.NewGitHubAuthentication(ctx, config.GitHubAuth, cfg, changed, beginIdentityChange)
+		connectionLogin = githubConnection.Login
 		// A write to a pull request re-reads the repository's pull requests so
 		// the inbox shows its new state.
 		githubClient := github.NewFromConfig(cfg, github.Options{})
@@ -780,4 +784,26 @@ func coalesce(every time.Duration, f func()) func() {
 			f()
 		})
 	}
+}
+
+// viewerLogin is the user's GitHub login for the Timeline: the viewer of a
+// picked repository's cached discovery snapshot, which follows the token
+// actually in use, else the GitHub connection's; "" when neither knows.
+func viewerLogin(ctx context.Context, registry *repos.Registry, cached func(context.Context, github.Repository) (discovery.Snapshot, error), connection func() string) string {
+	list, err := registry.Repositories(ctx)
+	if err == nil {
+		for _, r := range list {
+			repo, err := github.ParseRepository(r.Repository)
+			if err != nil {
+				continue
+			}
+			if snapshot, err := cached(ctx, repo); err == nil && snapshot.Viewer != "" {
+				return snapshot.Viewer
+			}
+		}
+	}
+	if connection != nil {
+		return connection()
+	}
+	return ""
 }

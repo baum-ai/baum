@@ -267,6 +267,23 @@ it("shows every repository at once, or those ticked, each row naming its own", a
   expect(last.disabled).toBe(true);
 });
 
+it("filters by a person the tab offers", async () => {
+  answers["api/timeline/features/people"] = {
+    people: [{ ...me, name: "Ada", login: "ada", feature_count: 2 }],
+  };
+  await show();
+  const select = node.querySelector('select[value=""], label select') as HTMLSelectElement;
+  const options = [...select.querySelectorAll("option")].map((o) => o.textContent);
+  expect(options).toEqual(["Everyone", "Ada (2)"]);
+  await act(async () => {
+    select.value = "me@example.com";
+    select.dispatchEvent(new Event("change", { bubbles: true }));
+  });
+  await act(async () => {});
+  expect(current.get("person")).toBe("me@example.com");
+  expect(requests).toContain("/s/test-ns/api/timeline/features?person=me%40example.com");
+});
+
 it("explains a Timeline with no repositories", async () => {
   answers["api/timeline/repositories"] = { repositories: [] };
   await show();
@@ -337,7 +354,7 @@ it("reads again as many rows as were loaded when the log changes", async () => {
   answers["api/timeline/features"] = { features: many(0, 70), next_cursor: null };
   await act(async () => root.render(<Harness initial="page=timeline" revision={1} />));
   await act(async () => {});
-  expect(requests.filter((path) => path.includes("features"))).toEqual([
+  expect(requests.filter((path) => path.includes("features") && !path.includes("people"))).toEqual([
     "/s/test-ns/api/timeline/features?limit=70",
   ]);
   expect(node.querySelectorAll("li[data-feature]").length).toBe(70);
@@ -455,7 +472,7 @@ it("reads more than 500 rows again in requests that follow the cursor", async ()
   await act(async () => root.render(<Harness initial="page=timeline" revision={1} />));
   await act(async () => {});
   await act(async () => {});
-  expect(requests.filter((path) => path.includes("features"))).toEqual([
+  expect(requests.filter((path) => path.includes("features") && !path.includes("people"))).toEqual([
     "/s/test-ns/api/timeline/features?limit=500",
     "/s/test-ns/api/timeline/features?limit=100&cursor=1%7CF499",
   ]);

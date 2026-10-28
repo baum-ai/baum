@@ -22,12 +22,14 @@ import { Button, Card, SegmentedControl, Spinner } from "@baum/viewer/components
 import {
   CATEGORIES,
   type DecisionDetail,
+  type DecisionPerson,
   type DecisionSummary,
   FEATURE_STATUSES,
   type FeatureDetail,
   type FeatureSummary,
   type KeyDecision,
   localDayKey,
+  personLabel,
 } from "@baum/viewer/decision-log";
 import { useUrlState, ViewerLink } from "@baum/viewer/navigation";
 import { humanize } from "@baum/viewer/review-document";
@@ -464,6 +466,7 @@ function TimelineLog({
   const category = search.get("category") ?? "";
   const status = search.get("status") ?? "";
   const file = search.get("file") ?? "";
+  const person = search.get("person") ?? "";
   const open = search.get("open");
   const openFeature = tab === "features" ? search.get("feature") : null;
   const write = useCallback(
@@ -484,6 +487,7 @@ function TimelineLog({
   const base = new URLSearchParams();
   if (!all) for (const name of scope) base.append("repository", name);
   if (q) base.set("q", q);
+  if (person) base.set("person", person);
   const featureQuery = new URLSearchParams(base);
   if (status) featureQuery.set("status", status);
   const decisionQuery = new URLSearchParams(base);
@@ -546,18 +550,18 @@ function TimelineLog({
           </p>
         ) : null}
         <DecisionDetailBody
-        state={state}
-        decisionId={id}
-        at={at ? { sessionId: at.session_id, turn: at.turn } : undefined}
-        withSummary={withSummary}
-        pullRequestHref={(number) => pullRequestHref(repository, number)}
-        openSession={OPEN_SESSION}
-        onFile={(path) => write({ tab: "all", file: path, feature: null })}
-        onRetry={() => loadDetail(id, true)}
-        withheldNote={
-          <WithheldNote sessionId={state?.status === "ready" ? state.detail.session.id : null} />
-        }
-      />
+          state={state}
+          decisionId={id}
+          at={at ? { sessionId: at.session_id, turn: at.turn } : undefined}
+          withSummary={withSummary}
+          pullRequestHref={(number) => pullRequestHref(repository, number)}
+          openSession={OPEN_SESSION}
+          onFile={(path) => write({ tab: "all", file: path, feature: null })}
+          onRetry={() => loadDetail(id, true)}
+          withheldNote={
+            <WithheldNote sessionId={state?.status === "ready" ? state.detail.session.id : null} />
+          }
+        />
       </>
     );
   };
@@ -637,9 +641,10 @@ function TimelineLog({
         )}
       </section>
     ) : null;
-  const featureFiltered = Boolean(q || status);
-  const decisionFiltered = Boolean(q || category || file);
-  const clear = () => write({ q: null, status: null, category: null, file: null });
+  const featureFiltered = Boolean(q || status || person);
+  const decisionFiltered = Boolean(q || category || file || person);
+  const clear = () => write({ q: null, status: null, category: null, file: null, person: null });
+  const people = usePeople(tab, scopeQuery(scope, all), revision);
   // Another set of repositories keeps the tab and filters; what was open
   // was one of the old set's.
   const openRepositories = (names: string[]) =>
@@ -849,6 +854,22 @@ function TimelineLog({
             value={q}
             onChange={(value) => write({ q: value })}
           />
+          <label className="local-repo-filter">
+            <span className="sr-only">Person</span>
+            <select value={person} onChange={(e) => write({ person: e.target.value })}>
+              <option value="">Everyone</option>
+              {person &&
+              !people.some((each) => each.email.toLowerCase() === person.toLowerCase()) ? (
+                <option value={person}>{person}</option>
+              ) : null}
+              {people.map((each) => (
+                <option key={each.email} value={each.email}>
+                  {personLabel(each)} ({formatCount(each.decision_count ?? each.feature_count ?? 0)}
+                  )
+                </option>
+              ))}
+            </select>
+          </label>
           {tab === "features" ? (
             <label className="local-repo-filter">
               <span className="sr-only">Status</span>
@@ -1002,6 +1023,39 @@ function RepositoryPicker({
       </fieldset>
     </details>
   );
+}
+
+/** The repositories a list reads: none named when it is all of them. */
+function scopeQuery(scope: string[], all: boolean): string {
+  const params = new URLSearchParams();
+  if (!all) for (const name of scope) params.append("repository", name);
+  return params.toString();
+}
+
+type CountedPerson = DecisionPerson & { decision_count?: number; feature_count?: number };
+
+/** The people the person filter offers: those with decisions on All
+ *  decisions, those among the features' people on Features. A failed read
+ *  keeps the list shown. */
+function usePeople(tab: TimelineTab, query: string, revision: number): CountedPerson[] {
+  const [people, setPeople] = useState<{ key: string; people: CountedPerson[] }>({
+    key: "",
+    people: [],
+  });
+  const path = tab === "features" ? "api/timeline/features/people" : "api/timeline/people";
+  useEffect(() => {
+    const abort = new AbortController();
+    request<{ people?: CountedPerson[] }>(
+      withQuery(path, new URLSearchParams(query)),
+      undefined,
+      "GET",
+      abort.signal,
+    )
+      .then((body) => setPeople({ key: path, people: body.people ?? [] }))
+      .catch(() => {});
+    return () => abort.abort();
+  }, [path, query, revision]);
+  return people.key === path ? people.people : [];
 }
 
 /** What capture made of the repository's sessions, above its decisions. */

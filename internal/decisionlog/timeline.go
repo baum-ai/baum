@@ -40,18 +40,35 @@ type TimelineRegistry interface {
 	Repositories(context.Context) ([]repos.Repository, error)
 }
 
-// Person is who a session or pull request belongs to.
+// Person is who a session or pull request belongs to. The avatar is never
+// read: the app draws initials.
 type Person struct {
 	Email     string  `json:"email"`
 	Name      *string `json:"name"`
 	Login     *string `json:"login"`
 	AvatarURL *string `json:"avatar_url"`
+	// aliases are the lower-cased addresses that name the same person.
+	aliases []string
 }
+
+// is reports whether email names the person.
+func (p *Person) is(email string) bool {
+	email = strings.ToLower(strings.TrimSpace(email))
+	return p != nil && email != "" && (strings.EqualFold(p.Email, email) || slices.Contains(p.aliases, email))
+}
+
+// noReply is the GitHub address of a login, which names a pull request's
+// author: the store knows no other.
+func noReply(login string) string { return login + "@users.noreply.github.com" }
+
+// selfTTL is how long the user's identity, read from every clone, is kept.
+const selfTTL = 30 * time.Second
 
 // TimelineClone is what one request reads of a repository's clone; it reads
 // each once.
 type TimelineClone interface {
-	// Person is who this machine's sessions belong to, nil when unknown.
+	// Person is who sessions in this clone belong to, by its git
+	// user.email and user.name; nil when it has no address.
 	Person(ctx context.Context) *Person
 	// Review is the summary of the pull request's latest saved review and
 	// its state against head ("current" or "outdated"), "" and "none"
@@ -66,6 +83,13 @@ type Timeline struct {
 	// Clone opens the repository's clone for a request; nil, or a nil
 	// answer, reads nobody and no review.
 	Clone func(ctx context.Context, repository string) TimelineClone
+	// Login is the user's GitHub login, "" when unknown; it folds the pull
+	// requests they opened into them.
+	Login func(ctx context.Context) string
+
+	selfMu sync.Mutex
+	selfAt time.Time
+	self   *Person
 }
 
 // timelineRepository names the repository a row is listed under, as the
@@ -166,6 +190,23 @@ func (t *Timeline) Handler() http.Handler {
 		}
 		writeTimeline(w, answer)
 	})
+	for path, read := range map[string]func(context.Context, []string) ([]personCount, error){
+		"/api/timeline/people": t.people, "/api/timeline/features/people": t.featurePeople,
+	} {
+		mux.HandleFunc("GET "+path, func(w http.ResponseWriter, r *http.Request) {
+			repositories, err := t.scope(r.Context(), r.URL.Query()["repository"])
+			if err != nil {
+				timelineError(w, err)
+				return
+			}
+			people, err := read(r.Context(), repositories)
+			if err != nil {
+				timelineError(w, err)
+				return
+			}
+			writeTimeline(w, map[string]any{"people": people})
+		})
+	}
 	mux.HandleFunc("GET /api/timeline/features/{id}", func(w http.ResponseWriter, r *http.Request) {
 		detail, err := t.feature(r.Context(), r.PathValue("id"))
 		if err != nil {
@@ -434,13 +475,50 @@ func (r *timelineReader) clone(ctx context.Context, repository string) TimelineC
 	return c
 }
 
-// self is who this machine's sessions in the repository belong to.
-func (r *timelineReader) self(ctx context.Context, repository string) *Person {
-	clone := r.clone(ctx, repository)
-	if clone == nil {
-		return nil
+// self is who this machine's sessions belong to, nil when unknown: one
+// person, named by the first served repository's clone, whose aliases are
+// every clone's address and the GitHub address of their login (Login), which
+// folds their pull requests into them. It is read at most every selfTTL.
+func (r *timelineReader) self(ctx context.Context) *Person {
+	t := r.t
+	t.selfMu.Lock()
+	defer t.selfMu.Unlock()
+	now := time.Now()
+	if !t.selfAt.IsZero() && now.Sub(t.selfAt) < selfTTL {
+		return t.self
 	}
-	return clone.Person(ctx)
+	served, err := t.served(ctx)
+	if err != nil {
+		return t.self
+	}
+	var self *Person
+	for _, repository := range served {
+		clone := r.clone(ctx, repository)
+		if clone == nil {
+			continue
+		}
+		p := clone.Person(ctx)
+		if p == nil || p.Email == "" {
+			continue
+		}
+		if self == nil {
+			self = &Person{Email: p.Email, Name: p.Name}
+		}
+		if email := strings.ToLower(p.Email); !slices.Contains(self.aliases, email) {
+			self.aliases = append(self.aliases, email)
+		}
+	}
+	if t.Login != nil {
+		if login := t.Login(ctx); login != "" {
+			if self == nil {
+				self = &Person{Email: noReply(login)}
+			}
+			self.Login = &login
+			self.aliases = append(self.aliases, strings.ToLower(noReply(login)))
+		}
+	}
+	t.self, t.selfAt = self, now
+	return self
 }
 
 func summaryRow(d Decision, repository string, person *Person) timelineDecision {
@@ -658,7 +736,7 @@ WHERE fs.version_id=?1 AND fs.repository=?2 AND (?3='' OR fs.feature_id=?3) ORDE
 		}
 	}
 	snap.clone = reader.clone(ctx, repository)
-	snap.self = reader.self(ctx, repository)
+	snap.self = reader.self(ctx)
 	for _, f := range snap.features {
 		f.summarize(snap.self)
 	}
@@ -668,16 +746,10 @@ WHERE fs.version_id=?1 AND fs.repository=?2 AND (?3='' OR fs.feature_id=?3) ORDE
 // features is a page of the repositories' features, merged in featureOrder.
 func (t *Timeline) features(ctx context.Context, repositories []string, q url.Values, page listPage) (map[string]any, error) {
 	statuses := multi(q, "status")
-	reader := t.reader()
-	var listed []*snapshotFeature
-	for _, repository := range repositories {
-		snap, err := t.snapshot(ctx, reader, repository, q.Get("q"), "")
-		if err != nil {
-			return nil, err
-		}
-		listed = append(listed, snap.matched()...)
+	listed, err := t.listed(ctx, repositories, q)
+	if err != nil {
+		return nil, err
 	}
-	slices.SortFunc(listed, featureOrder)
 	var after *snapshotFeature
 	if page.after != nil {
 		after = &snapshotFeature{createdAt: page.after.at, row: timelineFeature{ID: page.after.id}}
@@ -702,6 +774,88 @@ func (t *Timeline) features(ctx context.Context, repositories []string, q url.Va
 	return map[string]any{"features": rows, "next_cursor": next, "order": "newest"}, nil
 }
 
+// listed is the repositories' features a list's filters keep, in
+// featureOrder. A person keeps the features they are among the people of:
+// the user's (self, by any alias) those with their sessions or pull
+// requests, anyone else's those with a pull request they opened.
+func (t *Timeline) listed(ctx context.Context, repositories []string, q url.Values) ([]*snapshotFeature, error) {
+	reader := t.reader()
+	var listed []*snapshotFeature
+	for _, repository := range repositories {
+		snap, err := t.snapshot(ctx, reader, repository, q.Get("q"), "")
+		if err != nil {
+			return nil, err
+		}
+		listed = append(listed, snap.matched()...)
+	}
+	if person := strings.ToLower(strings.TrimSpace(q.Get("person"))); person != "" {
+		self := reader.self(ctx)
+		if self.is(person) {
+			person = strings.ToLower(self.Email)
+		}
+		listed = slices.DeleteFunc(listed, func(f *snapshotFeature) bool {
+			return !slices.ContainsFunc(f.row.People, func(p Person) bool { return strings.EqualFold(p.Email, person) })
+		})
+	}
+	slices.SortFunc(listed, featureOrder)
+	return listed, nil
+}
+
+// personCount is a person with how many decisions or features they have.
+type personCount struct {
+	Person
+	DecisionCount *int `json:"decision_count,omitempty"`
+	FeatureCount  *int `json:"feature_count,omitempty"`
+}
+
+// people answers /people: the user, when known, with the repositories'
+// current decisions, all of them their sessions'; nobody without any.
+func (t *Timeline) people(ctx context.Context, repositories []string) ([]personCount, error) {
+	people := []personCount{}
+	self := t.reader().self(ctx)
+	if self == nil || len(repositories) == 0 {
+		return people, nil
+	}
+	var n int
+	if err := t.Store.db.QueryRowContext(ctx, `SELECT count(*) FROM decision d
+JOIN capture_session cs ON cs.agent=d.agent AND cs.session_id=d.session_id
+WHERE d.obsolete_at IS NULL AND cs.repository `+inList(len(repositories)), anyOf(repositories)...).Scan(&n); err != nil {
+		return nil, err
+	}
+	if n > 0 {
+		people = append(people, personCount{Person: *self, DecisionCount: &n})
+	}
+	return people, nil
+}
+
+// featurePeople answers /features/people: everyone among the people of the
+// repositories' features, with how many, most first, then by address.
+func (t *Timeline) featurePeople(ctx context.Context, repositories []string) ([]personCount, error) {
+	listed, err := t.listed(ctx, repositories, url.Values{})
+	if err != nil {
+		return nil, err
+	}
+	counts := map[string]*personCount{}
+	for _, f := range listed {
+		for _, p := range f.row.People {
+			key := strings.ToLower(p.Email)
+			if counts[key] == nil {
+				zero := 0
+				counts[key] = &personCount{Person: p, FeatureCount: &zero}
+			}
+			*counts[key].FeatureCount++
+		}
+	}
+	people := make([]personCount, 0, len(counts))
+	for _, p := range counts {
+		people = append(people, *p)
+	}
+	slices.SortFunc(people, func(a, b personCount) int {
+		return cmp.Or(cmp.Compare(*b.FeatureCount, *a.FeatureCount), strings.Compare(strings.ToLower(a.Email), strings.ToLower(b.Email)))
+	})
+	return people, nil
+}
+
 // summarize fills the feature's row from its members.
 func (f *snapshotFeature) summarize(self *Person) {
 	// Key decisions resolve over the decisions as the feature's text reads
@@ -723,13 +877,14 @@ func (f *snapshotFeature) summarize(self *Person) {
 	}
 	open, merged := 0, 0
 	logins := map[string]bool{}
-	if self != nil && len(f.sessions) > 0 {
-		f.row.People = append(f.row.People, *self)
-		if self.Login != nil {
-			logins[strings.ToLower(*self.Login)] = true
-		}
+	mine := self != nil && len(f.sessions) > 0
+	if self != nil && self.Login != nil {
+		logins[strings.ToLower(*self.Login)] = true
 	}
 	for _, p := range f.pulls {
+		if self != nil && self.Login != nil && !p.bot && strings.EqualFold(p.author, *self.Login) {
+			mine = true
+		}
 		active(p.createdAt)
 		active(p.activeUntil)
 		switch {
@@ -743,11 +898,14 @@ func (f *snapshotFeature) summarize(self *Person) {
 			login := p.author
 			// A pull request author has no address the store knows; the
 			// login's GitHub address keeps people apart.
-			f.row.People = append(f.row.People, Person{Email: login + "@users.noreply.github.com", Login: &login})
+			f.row.People = append(f.row.People, Person{Email: noReply(login), Login: &login})
 		}
 	}
 	for _, d := range f.decisions {
 		active(d.DecidedAt)
+	}
+	if mine {
+		f.row.People = append([]Person{*self}, f.row.People...)
 	}
 	if !first.IsZero() {
 		f.row.FirstActivityAt, f.row.LastActivityAt = &first, &last
@@ -911,6 +1069,12 @@ func (t *Timeline) decisions(ctx context.Context, repositories []string, q url.V
 		where = append(where, "d.rowid IN (SELECT rowid FROM decision_search WHERE decision_search MATCH ?)")
 		args = append(args, match)
 	}
+	self := t.reader().self(ctx)
+	// Every captured session is this machine's user's: their decisions are
+	// all of them, anyone else's none.
+	if person := get("person"); person != "" && !self.is(person) {
+		where = append(where, "0")
+	}
 	if file := strings.TrimSuffix(get("file"), "/"); file != "" {
 		where = append(where, `EXISTS (SELECT 1 FROM decision_file f WHERE f.decision_id=d.decision_id AND (f.path=? OR f.path LIKE ? ESCAPE '\'))`)
 		args = append(args, file, likeEscape(file)+"/%")
@@ -956,11 +1120,10 @@ WHERE `+strings.Join(where, " AND ")+` ORDER BY d.decided_at DESC, d.decision_id
 	if err != nil {
 		return nil, err
 	}
-	reader := t.reader()
 	for _, r := range rows[:min(len(rows), page.limit)] {
 		d := r.decision
 		d.Repository, d.ID, d.SessionID, d.Vendor = repositoryRef(r.repository), r.id, sessionID(r.agent, r.session), harness(r.agent)
-		d.DecidedAt, d.Person = time.UnixMilli(r.decided), reader.self(ctx, r.repository)
+		d.DecidedAt, d.Person = time.UnixMilli(r.decided), self
 		list = append(list, d)
 	}
 	if len(rows) > page.limit {
@@ -1090,7 +1253,7 @@ WHERE sc.agent=? AND sc.session_id=? AND sc.repository=? ORDER BY p.number DESC`
 	}
 	return map[string]any{
 		"repository": repositoryRef(repository),
-		"session":    sessionOf(key, branch, reader.self(ctx, repository)),
+		"session":    sessionOf(key, branch, reader.self(ctx)),
 		"decisions":  list,
 		"replaced":   obsolete.Valid,
 		// The Timeline serves no transcript text.
@@ -1141,6 +1304,9 @@ func (c *localClone) Person(ctx context.Context) *Person {
 		defer func() { _ = repo.Close() }()
 		if email, err := repo.UserEmail(ctx); err == nil && email != "" {
 			c.person = &Person{Email: email}
+			if name, err := repo.UserName(ctx); err == nil && name != "" {
+				c.person.Name = &name
+			}
 		}
 	})
 	return c.person
