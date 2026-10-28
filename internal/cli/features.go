@@ -130,11 +130,8 @@ what it did as JSON.`,
 gate, and prints what it did as JSON, with a line a batch on standard error.
 It builds a new version of the repository's features from its pull requests
 of the last 180 days, or resumes the one being built, and makes it current.
---max-cost-usd caps the version's spend over all its runs; the default is
-what it spent and the estimate of what is left times 1.25, never less than
-the largest remaining call. --dry-run prints the estimate and writes
-nothing. It writes the daemon's store: run it with
-the daemon stopped.`,
+--dry-run prints the estimate and writes nothing. It writes the daemon's
+store: run it with the daemon stopped.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return runFeatures(cmd, repository, clone, 0, true, func(ctx context.Context, w *decisionlog.FeatureWorker, dir string) (any, error) {
@@ -149,7 +146,6 @@ the daemon stopped.`,
 		},
 	}
 	flags(buildCmd)
-	buildCmd.Flags().Float64Var(&build.MaxCostUSD, "max-cost-usd", 0, "cap of the version's spend over all its runs; default the estimate's")
 	buildCmd.Flags().BoolVar(&build.DryRun, "dry-run", false, "print the estimate; write nothing")
 	buildCmd.Flags().StringVar(&build.Backend, "backend", "", "backend to call instead of the configured one")
 	buildCmd.Flags().StringVar(&build.Model, "model", "", "model to call instead of the configured one")
@@ -158,8 +154,7 @@ the daemon stopped.`,
 }
 
 // runFeatures runs one stage; calls, for placement and text, reads the
-// preferences and the repository's settings, which choose the backend and
-// hold the daily cap.
+// preferences and the repository's settings, which choose the backend.
 func runFeatures(cmd *cobra.Command, repository, clone string, days int, calls bool, stage func(context.Context, *decisionlog.FeatureWorker, string) (any, error)) error {
 	ctx := cmd.Context()
 	parsed, err := github.ParseRepository(repository)
@@ -242,15 +237,15 @@ func (b *featureBuilder) EstimateFeatureBuild(ctx context.Context, repository, d
 	}
 	e, err := w.EstimateBuild(ctx, repository, dir, decisionlog.BuildOptions{Gated: true})
 	return jobs.FeatureBuildEstimate{Backend: e.Backend, Model: e.Model, PullRequests: e.PullRequests, EstimateUSD: e.EstimateUSD,
-		CapUSD: e.Cap(), Reason: e.Reason}, err
+		Reason: e.Reason}, err
 }
 
-func (b *featureBuilder) BuildFeatures(ctx context.Context, repository, dir string, capUSD float64, progress func(jobs.Progress)) (float64, error) {
+func (b *featureBuilder) BuildFeatures(ctx context.Context, repository, dir string, progress func(jobs.Progress)) (float64, error) {
 	w := b.worker.Load()
 	if w == nil {
 		return 0, errFeatureLogOff
 	}
-	report, err := w.Build(ctx, repository, dir, decisionlog.BuildOptions{MaxCostUSD: capUSD, Gated: true, Progress: func(p decisionlog.BuildProgress) {
+	report, err := w.Build(ctx, repository, dir, decisionlog.BuildOptions{Gated: true, Progress: func(p decisionlog.BuildProgress) {
 		progress(jobs.Progress{Phase: p.Phase, Calls: p.Calls})
 	}})
 	if !report.Current && ctx.Err() == nil {

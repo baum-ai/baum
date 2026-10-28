@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"slices"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
@@ -501,37 +500,18 @@ func TestPlacementCandidateLinks(t *testing.T) {
 	}
 }
 
-// One daily cap holds capture's and the feature log's spend together.
-func TestFeatureCallsShareTheDailyCap(t *testing.T) {
+// A feature call is recorded in the capture ledger with its stage and item.
+func TestFeatureCallsShareTheLedger(t *testing.T) {
 	f := newFeatureFixture(t)
 	f.clock.now = t0.Add(time.Hour)
 	f.pull(1, "Export widgets", t0.Add(time.Minute), "h1", []string{"a"})
-	limit := 1.0
-	f.prefs.Decisions.DailyCap = &limit
-	id, err := f.store.Begin(context.Background(), Attempt{Agent: "claude-code", ID: "s1", Backend: "claude", Model: "m", Mode: "full", Reserved: 1})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := f.store.Settle(context.Background(), id, AttemptSucceeded, "", new(1.0), decisions.Usage{}); err != nil {
-		t.Fatal(err)
-	}
-	report := f.assign(FeatureOptions{})
-	if report.Stopped != ReasonDailyCap || len(report.Items) != 0 || f.backend.calls["assign"] != 0 {
-		t.Fatalf("report = %+v", report)
-	}
-	limit = 5
-	if report = f.assign(FeatureOptions{}); len(report.Items) != 1 {
+	if report := f.assign(FeatureOptions{}); len(report.Items) != 1 {
 		t.Fatalf("report = %+v", report)
 	}
 	var stage, item string
 	if err := f.store.db.QueryRow(`SELECT stage, item FROM capture_attempt ORDER BY id DESC LIMIT 1`).Scan(&stage, &item); err != nil ||
 		stage != StageAssign || item != "pull:1" {
 		t.Fatalf("ledger %s %s %v", stage, item, err)
-	}
-	// Capture counts the feature log's spend.
-	st, err := f.store.Stats(context.Background(), "", "", startOfDay(f.clock.now))
-	if err != nil || st.AllSpent <= 1 {
-		t.Fatalf("all spent %v, %v", st.AllSpent, err)
 	}
 }
 
@@ -629,9 +609,9 @@ SELECT version_id, repository, 'claude-code', 's1', ?, 0 FROM feature WHERE id=?
 	}
 }
 
-// A repository turned off, or a daily cap reached, during a run stops it
-// before the next item; a run cut short counts no failure.
-func TestPlacementRereadsTheGateAndCap(t *testing.T) {
+// A repository turned off during a run stops it before the next item; a run
+// cut short counts no failure.
+func TestPlacementRereadsTheGate(t *testing.T) {
 	f := newFeatureFixture(t)
 	f.clock.now = t0.Add(time.Hour)
 	f.pull(1, "One", t0.Add(time.Minute), "h1", []string{"a"})
@@ -642,13 +622,6 @@ func TestPlacementRereadsTheGateAndCap(t *testing.T) {
 		t.Fatalf("report = %+v", report)
 	}
 	f.off = false
-	limit := 100.0
-	f.prefs.Decisions.DailyCap = &limit
-	f.backend.onCall = func() { limit = 0 }
-	if report := f.assign(FeatureOptions{}); len(report.Items) != 1 || report.Stopped != ReasonDailyCap {
-		t.Fatalf("report = %+v", report)
-	}
-	limit = 100
 	ctx, cancel := context.WithCancel(context.Background())
 	f.backend.onCall = cancel
 	f.backend.assign = func(string) (string, error) { return "", context.Canceled }
@@ -657,7 +630,7 @@ func TestPlacementRereadsTheGateAndCap(t *testing.T) {
 	}
 	var failures int
 	_ = f.store.db.QueryRow(`SELECT COALESCE(SUM(failures), 0) FROM feature_settle`).Scan(&failures)
-	if failures != 0 || !slices.Equal(f.pending(), []string{"opened:3"}) {
+	if failures != 0 || !slices.Equal(f.pending(), []string{"opened:2", "opened:3"}) {
 		t.Fatalf("failures %d, pending %v", failures, f.pending())
 	}
 }
@@ -745,51 +718,5 @@ func TestRelinkManyCommitsMarksTheirFeatures(t *testing.T) {
 	}
 	if f.membership(feature) != before+1 {
 		t.Fatalf("membership %d, want %d", f.membership(feature), before+1)
-	}
-}
-
-// The daily cap check and the reservation are one: of two reservations at
-// once that together pass the cap, one is made.
-func TestReservationsWithinTheCapAreAtomic(t *testing.T) {
-	s := openStore(t, &clock{t0})
-	limit := 1.0
-	var wg sync.WaitGroup
-	made := make(chan bool, 2)
-	for range 2 {
-		wg.Go(func() {
-			_, ok, err := s.beginWithin(context.Background(), Attempt{Backend: "claude", Model: "m", Reserved: 0.6, Stage: StageAssign}, &limit, nil, t0)
-			if err != nil {
-				t.Error(err)
-			}
-			made <- ok
-		})
-	}
-	wg.Wait()
-	close(made)
-	n := 0
-	for ok := range made {
-		if ok {
-			n++
-		}
-	}
-	var rows int
-	_ = s.db.QueryRow(`SELECT COUNT(*) FROM capture_attempt`).Scan(&rows)
-	if n != 1 || rows != 1 {
-		t.Fatalf("%d reservations made, %d rows", n, rows)
-	}
-	// A session's own bound holds the same way, whatever the daily cap.
-	session := 0.25
-	for range 2 {
-		wg.Go(func() {
-			if _, _, err := s.beginWithin(context.Background(), Attempt{Agent: "claude-code", ID: "s1", Backend: "claude", Model: "m", Reserved: 0.2},
-				nil, &session, t0); err != nil {
-				t.Error(err)
-			}
-		})
-	}
-	wg.Wait()
-	_ = s.db.QueryRow(`SELECT COUNT(*) FROM capture_attempt WHERE session_id='s1'`).Scan(&rows)
-	if rows != 1 {
-		t.Fatalf("%d session reservations made", rows)
 	}
 }

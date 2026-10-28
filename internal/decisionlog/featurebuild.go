@@ -10,7 +10,6 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/baum-ai/baum/decisions"
 	"github.com/baum-ai/baum/features/assign"
 	"github.com/baum-ai/baum/features/summary"
 )
@@ -32,11 +31,6 @@ const (
 
 // BuildOptions change a first build.
 type BuildOptions struct {
-	// MaxCostUSD caps the building version's spend over all its runs; zero
-	// is the estimate's cap (BuildEstimate.Cap): what it spent and its
-	// estimate times FeatureBuildCapFactor, never less than what it spent
-	// and the largest remaining call.
-	MaxCostUSD float64
 	// DryRun estimates and writes nothing.
 	DryRun bool
 	// Backend and Model, when set, replace the configured ones.
@@ -71,22 +65,8 @@ type BuildEstimate struct {
 	// priced; SpentUSD what the version's earlier runs spent.
 	EstimateUSD *float64 `json:"estimate_usd"`
 	SpentUSD    float64  `json:"spent_usd"`
-	// ReservedUSD is the most one call of the build (a batch, text or pull
-	// request summary) is held to under the cap.
-	ReservedUSD float64 `json:"reserved_usd"`
 	// Reason is why no call could be made (a backend or price reason).
 	Reason string `json:"reason,omitempty"`
-}
-
-// Cap is the version's spend cap a build confirmed for the estimate holds:
-// what it spent and the estimate times FeatureBuildCapFactor, never less
-// than what it spent and the largest call left, so a confirmed resume can
-// always make progress.
-func (e BuildEstimate) Cap() float64 {
-	if e.EstimateUSD == nil {
-		return e.SpentUSD
-	}
-	return e.SpentUSD + max(*e.EstimateUSD*FeatureBuildCapFactor, e.ReservedUSD)
 }
 
 // BuildReport says what Build did; no pull request, feature or reply text.
@@ -105,10 +85,9 @@ type BuildReport struct {
 	Calls    int `json:"calls"`
 	Features int `json:"features"`
 	// Current says the version became current; otherwise Stopped says why
-	// not (a cap or backend reason, or "failed").
+	// not (a backend or price reason, or "failed").
 	Current         bool    `json:"current"`
 	Stopped         string  `json:"stopped,omitempty"`
-	MaxCostUSD      float64 `json:"max_cost_usd"`
 	SpentUSD        float64 `json:"spent_usd"`
 	VersionSpentUSD float64 `json:"version_spent_usd"`
 }
@@ -186,8 +165,7 @@ func (w *FeatureWorker) EstimateBuild(ctx context.Context, repository, dir strin
 	if skip != "" {
 		return estimate, nil
 	}
-	cost, reserved, ok, err := r.estimateCost(ctx, items, p)
-	estimate.ReservedUSD = reserved
+	cost, ok, err := r.estimateCost(ctx, items, p)
 	if ok {
 		estimate.EstimateUSD = &cost
 	} else if err == nil {
@@ -199,28 +177,15 @@ func (w *FeatureWorker) EstimateBuild(ctx context.Context, repository, dir strin
 // estimateCost prices the calls a build of items would make, from the
 // sizes of their inputs (README.md, "First build"): the batches, the new
 // features' text twice and the text of a resumed version's features behind
-// their members, and a summary of every pull request with a description;
-// with the most one call the remaining work makes is held to under the cap
-// (a batch, text or pull request summary at its input's bound), priced as
-// complete checks it.
-func (r *featureRun) estimateCost(ctx context.Context, items []buildItem, p planned) (float64, float64, bool, error) {
+// their members, and a summary of every pull request with a description.
+func (r *featureRun) estimateCost(ctx context.Context, items []buildItem, p planned) (float64, bool, error) {
 	batchVersion, _ := assign.Public.BatchVersion(AssignVersion)
 	batchRequest, err := assign.Public.Request(batchVersion, "", assign.MaxBatchOutputTokens)
 	if err != nil {
-		return 0, 0, false, err
-	}
-	// The batch held under the cap is the longer of the plain and seeded
-	// prompts at the input bound RenderBatch enforces.
-	seededRequest, err := assign.Public.Request(assign.Public.SeededBatch(batchVersion), "", assign.MaxBatchOutputTokens)
-	if err != nil {
-		return 0, 0, false, err
-	}
-	heldBatch := batchRequest
-	if len(seededRequest.System) > len(heldBatch.System) {
-		heldBatch = seededRequest
+		return 0, false, err
 	}
 	tokens := func(bytes int) int64 { return int64(bytes/FeatureEstimateBytesPerToken) + 1 }
-	total, reserved, priced := 0.0, 0.0, true
+	total, priced := 0.0, true
 	add := func(in, out int64) {
 		cost, ok := callCost(r.calls.prices, p.Backend, p.Model, in, out)
 		total, priced = total+cost, priced && ok
@@ -230,7 +195,7 @@ func (r *featureRun) estimateCost(ctx context.Context, items []buildItem, p plan
 	for i, item := range items {
 		pull, err := r.w.Store.placedPull(ctx, r.version, r.repository, item.Number)
 		if err != nil {
-			return 0, 0, false, err
+			return 0, false, err
 		}
 		bytes := min(len(pull.Title), 200) + min(len(pull.Body), 2000) + 100
 		for _, path := range pull.Paths[:min(len(pull.Paths), 40)] {
@@ -252,20 +217,8 @@ func (r *featureRun) estimateCost(ctx context.Context, items []buildItem, p plan
   WHERE f.version_id=?1 AND f.merged_into IS NULL AND f.summarized_version < f.membership_version AND p.body != ''
   AND NOT EXISTS (SELECT 1 FROM pr_summary s WHERE s.repository=p.repository AND s.number=p.number))`, r.version).
 			Scan(&existing, &behind, &unsummarized); err != nil {
-			return 0, 0, false, err
+			return 0, false, err
 		}
-	}
-	// hold makes room under the cap for the largest call of a kind the
-	// remaining work makes, held to its estimate as complete holds it, with
-	// inputBytes of input.
-	hold := func(request decisions.ModelRequest, inputBytes int) {
-		if cost, ok := callCost(r.calls.prices, p.Backend, p.Model, (decisions.MaxRequestTokens(request)+int64(inputBytes))/FeatureBuildBytesPerToken,
-			request.MaxOutputTokens); ok {
-			reserved = max(reserved, cost)
-		}
-	}
-	if len(items) > 0 {
-		hold(heldBatch, assign.MaxBatchInputBytes)
 	}
 	features, created := existing, 0
 	for start := 0; start < len(items); start += FeatureBatch {
@@ -281,20 +234,14 @@ func (r *featureRun) estimateCost(ctx context.Context, items []buildItem, p plan
 	}
 	textRequest, err := summary.Public.Request(SummaryVersion, summary.Feature, "", summary.MaxOutputTokens)
 	if err != nil {
-		return 0, 0, false, err
+		return 0, false, err
 	}
-	if texts := created*FeatureEstimateTextPasses + behind; texts > 0 {
-		hold(textRequest, summary.DefaultMaxInputBytes)
-		for range texts {
-			add(tokens(len(textRequest.System)+FeatureEstimateTextBytes), FeatureEstimateTextOutputTokens)
-		}
+	for range created*FeatureEstimateTextPasses + behind {
+		add(tokens(len(textRequest.System)+FeatureEstimateTextBytes), FeatureEstimateTextOutputTokens)
 	}
 	pullRequest, err := summary.Public.Request(SummaryVersion, summary.PullRequest, "", summary.MaxOutputTokens)
 	if err != nil {
-		return 0, 0, false, err
-	}
-	if unsummarized > 0 || slices.ContainsFunc(sizes, func(s size) bool { return s.body > 0 }) {
-		hold(pullRequest, summary.MaxPullRequestInputBytes())
+		return 0, false, err
 	}
 	for _, s := range sizes {
 		if s.body > 0 {
@@ -304,7 +251,7 @@ func (r *featureRun) estimateCost(ctx context.Context, items []buildItem, p plan
 	for range unsummarized {
 		add(tokens(len(pullRequest.System)+3000), FeatureEstimatePullOutputTokens)
 	}
-	return math.Round(total*10000) / 10000, reserved, priced, nil
+	return math.Round(total*10000) / 10000, priced, nil
 }
 
 // buildRun is one run of a build.
@@ -321,8 +268,7 @@ type buildRun struct {
 // Build builds the repository's features from its pull request history in
 // its building version, made or resumed, and makes that version current
 // (README.md, "First build"). It stops, leaving the version building, when
-// the next call would take the version's spend past the cap, when a call
-// cannot be made, or on a store error; running it again resumes the
+// a call cannot be made or on a store error; running it again resumes the
 // version. A dry run reports the estimate in Stopped's place and writes
 // nothing.
 func (w *FeatureWorker) Build(ctx context.Context, repository, dir string, o BuildOptions) (BuildReport, error) {
@@ -331,10 +277,7 @@ func (w *FeatureWorker) Build(ctx context.Context, repository, dir string, o Bui
 	if err != nil {
 		return report, err
 	}
-	report.PullRequests, report.MaxCostUSD = estimate.PullRequests, o.MaxCostUSD
-	if report.MaxCostUSD <= 0 {
-		report.MaxCostUSD = estimate.Cap()
-	}
+	report.PullRequests = estimate.PullRequests
 	if o.DryRun {
 		report.Version, report.VersionSpentUSD, report.Stopped = estimate.Version, estimate.SpentUSD, FeatureDryRun
 		return report, nil
@@ -355,9 +298,9 @@ func (w *FeatureWorker) Build(ctx context.Context, repository, dir string, o Bui
 		Scan(&report.VersionSpentUSD); err != nil {
 		return report, err
 	}
-	r.calls.budget = &buildBudget{version: r.version, cap: report.MaxCostUSD, spent: report.VersionSpentUSD}
+	r.calls.build = &buildSpend{version: r.version}
 	err = b.run(ctx)
-	report.SpentUSD, report.Calls = r.calls.budget.run, r.calls.budget.calls
+	report.SpentUSD, report.Calls = r.calls.build.run, r.calls.build.calls
 	report.VersionSpentUSD += report.SpentUSD
 	var stop errBuildStop
 	switch {
@@ -424,7 +367,7 @@ func (b *buildRun) run(ctx context.Context) error {
 
 func (b *buildRun) notify(phase string) {
 	if b.progress != nil {
-		b.progress(BuildProgress{Phase: phase, Placed: b.placed, Total: len(b.items), Calls: b.calls.budget.calls, SpentUSD: b.calls.budget.run})
+		b.progress(BuildProgress{Phase: phase, Placed: b.placed, Total: len(b.items), Calls: b.calls.build.calls, SpentUSD: b.calls.build.run})
 	}
 }
 

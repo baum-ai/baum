@@ -81,8 +81,8 @@ type AssignReport struct {
 	// SmallUpdates are the heads judged too small a change to place again.
 	SmallUpdates int          `json:"small_updates"`
 	Items        []PlacedItem `json:"items"`
-	// Stopped is the reason no further call was made (a backend, price or
-	// cap reason).
+	// Stopped is the reason no further call was made (a backend or price
+	// reason).
 	Stopped string  `json:"stopped,omitempty"`
 	Spent   float64 `json:"spent_usd"`
 }
@@ -108,7 +108,7 @@ type PlacedItem struct {
 
 // Assign places the repository's pending pull requests and sessions, oldest
 // trigger first, at most FeatureAssignRunLimit (or o.Limit) of them. A
-// backend, price or cap reason stops it until the next run.
+// backend or price reason stops it until the next run.
 func (w *FeatureWorker) Assign(ctx context.Context, repository, dir string, o FeatureOptions) (AssignReport, error) {
 	report := AssignReport{Repository: repository, Items: []PlacedItem{}}
 	r, err := w.newRun(ctx, repository, dir, o)

@@ -9,7 +9,7 @@ import (
 
 type fakeBuilder struct {
 	estimate FeatureBuildEstimate
-	caps     chan float64
+	ran      chan struct{}
 	result   error
 }
 
@@ -17,20 +17,19 @@ func (b *fakeBuilder) EstimateFeatureBuild(context.Context, string, string) (Fea
 	return b.estimate, nil
 }
 
-func (b *fakeBuilder) BuildFeatures(_ context.Context, _, _ string, capUSD float64, progress func(Progress)) (float64, error) {
+func (b *fakeBuilder) BuildFeatures(_ context.Context, _, _ string, progress func(Progress)) (float64, error) {
 	progress(Progress{Phase: "placing", Calls: 1})
-	b.caps <- capUSD
+	b.ran <- struct{}{}
 	return 0.5, b.result
 }
 
-// A feature build is confirmed on its own from an estimate, runs with the
-// estimate's cap, is one job per repository, and fails with the reason it
-// stopped for.
+// A feature build is confirmed on its own from an estimate, is one job per
+// repository, and fails with the reason it stopped for.
 func TestFeatureBuildJob(t *testing.T) {
 	registry, clone := registeredClone(t)
 	price := 1.0
-	builder := &fakeBuilder{caps: make(chan float64, 2), result: &StoppedError{Reason: "cost_cap"},
-		estimate: FeatureBuildEstimate{Backend: "claude", Model: "claude-haiku-5-5", PullRequests: 40, EstimateUSD: &price, CapUSD: 1.4}}
+	builder := &fakeBuilder{ran: make(chan struct{}, 2), result: &StoppedError{Reason: "backend_unavailable"},
+		estimate: FeatureBuildEstimate{Backend: "claude", Model: "claude-haiku-5-5", PullRequests: 40, EstimateUSD: &price}}
 	q, err := Open(filepath.Join(privateDir(t), "jobs.json"), &Local{Registry: registry, Features: builder}, 1, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -44,24 +43,16 @@ func TestFeatureBuildJob(t *testing.T) {
 		t.Fatalf("a feature build runs without a confirmation: %v", err)
 	}
 	e := estimate(t, q, "single", item)
-	if p := e.Items[0]; p.BuildCapUSD != 1.4 || p.BuildPullRequests != 40 || p.Repository != "owner/repo" || p.BlockedReason != "" {
+	if p := e.Items[0]; p.BuildPullRequests != 40 || p.Repository != "owner/repo" || p.BlockedReason != "" {
 		t.Fatalf("prepared = %+v", p)
 	}
-	builder.estimate.CapUSD = 2
-	if _, err := q.Submit(context.Background(), e.ID, true, false); err == nil {
-		t.Fatal("a build whose cap changed since its estimate is queued")
-	}
-	builder.estimate.CapUSD = 1.4
-	e = estimate(t, q, "single", item)
 	jobs, err := q.Submit(context.Background(), e.ID, true, false)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := <-builder.caps; got != 1.4 {
-		t.Fatalf("cap = %v", got)
-	}
+	<-builder.ran
 	done := waitState(t, q, jobs[0].ID, "failed")
-	if done.Reason != "cost_cap" || done.ActualCostUSD == nil || *done.ActualCostUSD != 0.5 {
+	if done.Reason != "backend_unavailable" || done.ActualCostUSD == nil || *done.ActualCostUSD != 0.5 {
 		t.Fatalf("job = %+v", done)
 	}
 	builder.estimate.EstimateUSD = nil

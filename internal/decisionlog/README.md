@@ -44,11 +44,17 @@ not a failure.
 ## Capture
 
 1. The transcript is located as the live session view locates it: a regular
-   file inside the agent's own session store, symbolic links resolved. Its
-   mapped root session must be the hook event's session. A session whose own
-   files exceed 64 MiB is skipped (`too_large`).
+   file inside the agent's own session store, symbolic links resolved. When
+   the hooks named no transcript, the path the last capture stored is tried
+   first, Claude Code and Codex alike; if it no longer holds the session, a
+   Codex session is looked up by id, which scans the store (a Claude Code one
+   cannot be found without a path). The transcript must map to the hook
+   event's session, otherwise the session is skipped (`session_mismatch`); a
+   path is stored only once it does. A session whose own files exceed 64 MiB
+   is skipped (`too_large`).
 2. When the stored fingerprint (size and modification time of its files) is
-   unchanged and the session is covered, nothing happens.
+   unchanged and the session is covered, nothing happens, except that a
+   stored path that failed is replaced by the one found.
 3. baum's own generation runs are skipped (`generation_run`).
 4. The transcript is rendered and redacted. When it has the head extraction's
    content hash (an empty head included), the head still covers it and no call
@@ -57,49 +63,40 @@ not a failure.
    after the turns the head's prefix covered; existing decisions keep their
    IDs. Otherwise the call reads the whole transcript.
 5. A prompt estimated over 272,000 tokens is skipped (`over_token_cap`).
-6. The backend is the one reviews use (config file, app preferences,
-   repository settings), and `auto` resolves as for reviews: the first of
-   claude, codex and anthropic that passes its check, never cursor-agent; none
-   is `backend_unavailable`. The model follows the resolved backend:
+6. The backend is the one reviews use (config file, app preferences, repository
+   settings), and `auto` resolves as for reviews: the first of claude, codex
+   and anthropic that passes its check, never cursor-agent; none is
+   `backend_unavailable`. The model follows the resolved backend:
    `preferences.decisions.model` unless it names another provider's family,
-   else `claude-haiku-5-5` for claude and anthropic and `gpt-6-luna` for
-   codex. cursor-agent cannot make a single
-   structured call (`backend_unsupported`); a backend that does not pass its
-   check is `backend_unavailable`.
+   else `claude-haiku-5-5` for claude and anthropic and `gpt-6-luna` for codex.
+   cursor-agent cannot make a single structured call (`backend_unsupported`); a
+   backend that does not pass its check is `backend_unavailable`.
 7. The cost is reserved before the call: the prompt's byte bound and 16,384
    output tokens at the model's list price. Claude Code caches the prompt, so
    claude's call is reserved at the cache-write rate when that is higher. It
    may make a second call, after the harness rejected its first reply against
    the schema; that resends the cached prompt, so it is reserved at the
-   cache-read rate plus another reply. The Codex CLI has no option capping
-   the reply, so its 16,384 tokens are an estimate rather than a limit. A model the price list does not price
-   is skipped (`unpriced_model`). A session's spend, this reservation
-   included, may not pass $0.25 a day (`over_cost_cap`), and all capture's
-   spend, the feature log's calls included, may not pass
-   `preferences.decisions.daily_cap` when set
-   (`daily_cap`; no default). No call is made for either, so the session is
-   tried again the next day or when it changes; a session whose reservation
-   alone exceeds the allowance stays skipped at no cost, since every try
-   stops before the call.
-8. The attempt is recorded as pending and the completion made: one request
-   for anthropic; `claude -p` with no tools besides its structured reply,
-   which normally ends after one call and may retry a rejected reply once; or
-   one `codex exec` turn with its shell tools off, normally one request (a
-   call to a tool Codex still offers, such as its patch or plan tool, makes
-   another within the turn). The attempt
-   is settled with its cost from the reported usage, or none when it cannot be
-   priced, and with how many replies the harness rejected against the schema
-   (`rejections`; the last one's reason goes to the private log with the
-   attempt's stage, item and id). Spend counts the cost, else the
-   reservation. An attempt still pending when the daemon starts is settled as
-   abandoned and its reservation counts. A reply stands when the ledger
-   cannot be written after it; the failure is logged.
+   cache-read rate plus another reply. The Codex CLI has no option capping the
+   reply, so its 16,384 tokens are an estimate rather than a limit. A model the
+   price list does not price is skipped (`unpriced_model`). There is no
+   spending cap: as for reviews, each call keeps its token and time budgets.
+8. The attempt is recorded as pending and the completion made: one request for
+   anthropic; `claude -p` with no tools besides its structured reply, which
+   normally ends after one call and may retry a rejected reply once; or one
+   `codex exec` turn with its shell tools off, normally one request (a call to
+   a tool Codex still offers, such as its patch or plan tool, makes another
+   within the turn). The attempt is settled with its cost from the reported
+   usage, or none when it cannot be priced, and with how many replies the
+   harness rejected against the schema (`rejections`; the last one's reason
+   goes to the private log with the attempt's stage, item and id). An attempt
+   still pending when the daemon starts is settled as abandoned. A reply
+   stands when the ledger cannot be written after it; the failure is logged.
 9. The reply is masked for secrets before it is parsed, validated against the
    transcript, given IDs and saved.
 
 A failed call is not cached. After 3 failures in a row the session is marked
-`extraction_failed` until its transcript changes. Skips for a missing backend,
-an unpriced model or a cap are tried again the next day or when the transcript
+`extraction_failed` until its transcript changes. Skips for a missing backend
+or an unpriced model are tried again the next day or when the transcript
 changes; other skips only when it changes.
 
 ## Stored data
@@ -111,14 +108,15 @@ changes; other skips only when it changes.
   consecutive failures.
 - `decision` and the `current_decision` view, `decision_file`: the decision
   log. A decision is upserted by ID; decisions a newer extraction no longer
-  holds get `obsolete_at` and are never deleted while current. A decision is
+  holds get `obsolete_at` and are never deleted. A decision is
   dated by its first cited turn's time, else the date its ID had, else the
   extraction's time.
 - `capture_attempt`: the ledger of calls (backend, model, full or extend,
   reservation, cost, tokens, state, failure reason, rejected replies), with the `stage` that made the call
   (`capture`, or a feature log stage) and the `item` it was about.
 
-Settled attempts and obsolete decisions older than 90 days are pruned daily.
+Settled attempts older than 90 days are pruned daily; decisions, obsolete
+ones included, are kept for good, as hosted extraction keeps them.
 The store holds decisions, rationale and evidence quotes derived from redacted
 transcripts, never the transcripts themselves.
 
@@ -203,16 +201,14 @@ session with no capture row has none.
 Placement, feature text and consolidation call as capture does (steps 6 to
 8 above): the same backend, model, reservation (the request's byte bound and
 the call's reply bound: 4,096 tokens for a placement, 32,768 for a batch,
-merge or split, 8,192 for a text or pull request summary), daily cap and
-ledger, each attempt recorded with its stage (`feature_assign`,
-`feature_summary`, `pr_summary` or `feature_consolidate`) and item. Rejected
+merge or split, 8,192 for a text or pull request summary) and ledger, each
+attempt recorded with its stage (`feature_assign`, `feature_summary`,
+`pr_summary` or `feature_consolidate`) and item. Rejected
 replies and a ledger that cannot be written are handled as capture's. The
 preferences and the repository's settings are read again before every call,
 so a repository turned off makes no further call. A repository turned off,
-a missing backend, an unpriced model or the daily cap stops the stage until
-its next run, with no failure counted. The daily cap is checked in the same
-statement that records the attempt, so capture and the feature log
-reserving at once cannot together pass it.
+a missing backend or an unpriced model stops the stage until its next run,
+with no failure counted.
 
 ### Placement
 
@@ -260,8 +256,7 @@ failed write after a call backs the item off for 10 minutes; after 3 counted
 failures for one trigger it waits for the next.
 
 The preferences and the repository's settings are read again before each
-item, so a repository turned off stops the run and a lowered daily cap
-holds for the next call. A call cut short by the daemon stopping counts no
+item, so a repository turned off stops the run. A call cut short by the daemon stopping counts no
 failure. A pull request placed at its head before its paths were known gets
 them as the paths it was placed with once they are recorded, with no call.
 
@@ -355,7 +350,7 @@ turned off, and a merge over a first build's features needs the room.
   refusal discards the merges paid for, which are logged and counted), and
   the pass backs off as placement's failures do, counted against the
   fingerprint. A split reply that is invalid leaves only that feature whole
-  and unchecked. A call that cannot be made (a backend, price or cap reason)
+  and unchecked. A call that cannot be made (a backend or price reason)
   also writes nothing; the pass is made again on the next run.
 
 ### First build
@@ -372,15 +367,10 @@ internal features build`.
   configured backend and model: a batch call per 25 (the items' titles,
   descriptions and paths, and candidates for the features placed so far, a
   feature per 3 pull requests), the new features' text twice and a summary
-  of each pull request with a description. The cap of the version's spend
-  over all its runs is what it spent and the estimate times 1.25, and never
-  less than what it spent and the largest call the remaining work makes (a
-  text or pull request summary, or a batch with the longer of its plain and
-  seeded prompts, each at its input's bound) priced as the call is checked,
-  so a confirmed resume can always make progress. For a small build that
-  floor, roughly what it spent and $0.50 with the default model, is a
-  ceiling, not spend. A repository whose decisions are not captured, or
-  whose model cannot be priced or called, is not estimated.
+  of each pull request with a description. As for a requested review, there
+  is no spending cap: the estimate is what the user confirms, and the build
+  runs to the end. A repository whose decisions are not captured, or whose
+  model cannot be priced or called, is not estimated.
 - **Building.** The build makes the repository's `building` version, or
   resumes the one there is, and places in it the merged and open pull
   requests of the last 180 days not opened by a bot, in no feature of the
@@ -413,18 +403,13 @@ internal features build`.
   live stages placed in the old version is in no feature of the new one;
   placement takes what is within its lookback. A retired version is kept,
   and a link to one of its features resolves as archived.
-- **Stopping.** A build stops before a call whose estimate (as hosted: its
-  prompt at two bytes a token and its whole reply bound) would take the
-  version's spend (`spent_usd`, added after every call: its cost, else
-  the estimate it was held to; nothing for a failed call that reported no
-  usage) past the cap, or that cannot be made (`cost_cap`, `unpriced_model`,
-  `spend_unrecorded` when a spend could not be recorded, `disabled`, a
-  backend or daily cap reason; `failed` for a store error), leaving the
-  version `building` with `stopped` set to why; confirming it again resumes
-  it. A backend that may make a further call within one completion (claude
-  retrying a rejected reply) can take the spend past the cap by that call. Its
+- **Stopping.** A build stops before a call that cannot be made
+  (`unpriced_model`, `disabled` or a backend reason; `failed` for a store
+  error), or when it is cancelled or the daemon stops, leaving the version
+  `building` with `stopped` set to why; confirming it again resumes it. Its
   job then fails with that reason. Progress (phase, calls) is reported to
-  the job and the version records its pull requests placed of the total.
+  the job, and the version records its pull requests placed of the total
+  and its spend over all its runs (`spent_usd`, each call's known cost).
 
 ### Stored data
 
@@ -552,11 +537,10 @@ writes the text of the features behind, without the debounce. `baum
 internal features consolidate` takes `--repo`, `--clone`, `--backend` and
 `--model` and makes one pass over the current features without the
 interval or fingerprint check. `baum
-internal features build --repo <owner/name> [--clone <path>]
-[--max-cost-usd N] [--dry-run] [--backend <b>] [--model <m>]` runs a first
-build without the gate, a line a batch on standard error and its report as
-JSON; `--max-cost-usd` caps the version's spend over all its runs (default
-the estimate's cap) and `--dry-run` prints the estimate and writes nothing.
+internal features build --repo <owner/name> [--clone <path>] [--dry-run]
+[--backend <b>] [--model <m>]` runs a first build without the gate, a line a
+batch on standard error and its report as JSON; `--dry-run` prints the
+estimate and writes nothing.
 These read the preferences and the repository's settings and fail when they
 cannot; `sync`
 and `link` read neither. The clone

@@ -15,7 +15,7 @@ metadata only and contacts nothing.
   rewriting it.
 - `picked(identity)`: repositories picked by name, possibly without a clone.
 - `preferences(key, value)`: the global preferences as one JSON row. Its
-  `decisions` object (`enabled`, `model`, `daily_cap`) configures local
+  `decisions` object (`enabled`, `model`) configures local
   decision capture; `Settings.DecisionsEnabled` combines it with the automatic
   master switch and the repository's `decisions` (nil is on). See
   [`decisionlog`](../decisionlog/README.md).

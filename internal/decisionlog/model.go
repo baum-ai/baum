@@ -27,8 +27,6 @@ const (
 	MaxOutputTokens = 16_384
 	// MaxTranscriptBytes caps the session's own files.
 	MaxTranscriptBytes = 64 << 20
-	// SessionDailyCap bounds one session's spend per day, in US dollars.
-	SessionDailyCap = 0.25
 )
 
 // newExtractor is the extractor of the published decision prompt.
@@ -219,8 +217,7 @@ func maxCalls(backend string) int {
 
 // caller makes the decision log's model calls, decision capture's and the
 // feature log's (README.md, "Capture", steps 6 to 8): it resolves the
-// backend and model, reserves the cost, holds the daily cap, which every
-// stage's spend counts against, and records each call in the ledger.
+// backend and model, reserves the cost and records each call in the ledger.
 type caller struct {
 	store    *Store
 	config   config.Config
@@ -235,35 +232,19 @@ type caller struct {
 	gate     func(context.Context) (repos.Preferences, repos.Settings, bool, error)
 	prefs    repos.Preferences
 	settings repos.Settings
-	// budget, when set, is a first build's cost cap.
-	budget *buildBudget
+	// build, when set, counts a first build's calls and spend.
+	build *buildSpend
 	// begun is called once an attempt is recorded as pending.
 	begun func()
 }
 
-// ReasonBuildCap stops a first build whose next call would take its
-// version's spend past the build's cap.
-const ReasonBuildCap = "cost_cap"
-
-// buildBudget is a first build's version's spend over all its runs against
-// the build's cap. A call is made only while its estimate keeps the spend
-// within the cap; its cost, else its reservation, is added to the
-// version's.
-type buildBudget struct {
-	version    int64
-	cap, spent float64
-	// run is this run's spend, and calls its calls.
-	run   float64
-	calls int
-	full  bool
-	// unrecorded is set once a call's spend could not be added to the
-	// version's.
-	unrecorded bool
+// buildSpend is a first build's run's calls and known spend, which are also
+// added to its version's spend.
+type buildSpend struct {
+	version int64
+	run     float64
+	calls   int
 }
-
-// ReasonSpendUnrecorded stops a first build whose version did not record a
-// call's spend.
-const ReasonSpendUnrecorded = "spend_unrecorded"
 
 // Reasons a feature stage call was not made, besides the skip reasons.
 const (
@@ -312,23 +293,10 @@ func (c caller) plan(ctx context.Context, prefs repos.Preferences, settings repo
 	return p, ""
 }
 
-// overDailyCap reports whether reserved would take the day's spend of every
-// stage past preferences.decisions.daily_cap; there is none when unset.
-func (c caller) overDailyCap(ctx context.Context, prefs repos.Preferences, reserved float64) (bool, error) {
-	limit := prefs.Decisions.DailyCap
-	if limit == nil {
-		return false, nil
-	}
-	st, err := c.store.Stats(ctx, "", "", startOfDay(c.now))
-	return st.AllSpent+reserved > *limit, err
-}
-
 // begin selects the planned backend's completer and records the attempt as
-// pending with its reservation, within the daily cap and sessionCap (a
-// session's own, none when nil) in the same statement. A backend that no
-// longer passes its check, or cannot complete, and a reservation past a cap
-// are skips and record nothing.
-func (c caller) begin(ctx context.Context, p planned, a Attempt, prefs repos.Preferences, sessionCap *float64) (*completerModel, int64, string, error) {
+// pending with its reservation. A backend that no longer passes its check,
+// or cannot complete, is a skip and records nothing.
+func (c caller) begin(ctx context.Context, p planned, a Attempt) (*completerModel, int64, string, error) {
 	selected, err := generate.Select(ctx, config.Backend(p.Backend), p.Model, p.backends, io.Discard)
 	if err != nil {
 		c.log.Info("decision log backend unavailable", "backend", p.Backend, "error", err)
@@ -339,21 +307,7 @@ func (c caller) begin(ctx context.Context, p planned, a Attempt, prefs repos.Pre
 		return nil, 0, ReasonUnsupported, nil
 	}
 	a.Backend, a.Model, a.Reserved = p.Backend, p.Model, p.Reserved
-	day := startOfDay(c.now)
-	id, ok, err := c.store.beginWithin(ctx, a, prefs.Decisions.DailyCap, sessionCap, day)
-	if err == nil && !ok {
-		// Which cap refused it, read after the fact for the reason only.
-		if sessionCap != nil {
-			st, err := c.store.Stats(ctx, a.Agent, a.ID, day)
-			if err != nil {
-				return nil, 0, "", err
-			}
-			if st.Spent+a.Reserved > *sessionCap {
-				return nil, 0, ReasonOverCostCap, nil
-			}
-		}
-		return nil, 0, ReasonDailyCap, nil
-	}
+	id, err := c.store.Begin(ctx, a)
 	if err == nil && c.begun != nil {
 		c.begun()
 	}
@@ -389,7 +343,7 @@ func (c caller) finish(ctx context.Context, id int64, m *completerModel, callErr
 // callResult is one feature stage call: its reply, or why none was made.
 type callResult struct {
 	JSON []byte
-	// Skip is the reason no call was made (a backend, price or cap reason).
+	// Skip is the reason no call was made (a backend or price reason).
 	Skip string
 	// Called is set once the backend was called, so a failure may have been
 	// billed.
@@ -397,11 +351,11 @@ type callResult struct {
 	Cost   *float64
 }
 
-// complete makes one feature stage call with plan, begin (which holds the
-// caps) and finish; the attempt names its stage and item. An error is a failed call
-// or a ledger write.
+// complete makes one feature stage call with plan, begin and finish; the
+// attempt names its stage and item. An error is a failed call or a ledger
+// write.
 func (c caller) complete(ctx context.Context, backend, model string, a Attempt, req decisions.ModelRequest) (callResult, error) {
-	// The gate and the cap are read again before every call.
+	// The gate is read again before every call.
 	prefs, settings, on, err := c.prefs, c.settings, true, error(nil)
 	if c.gate != nil {
 		prefs, settings, on, err = c.gate(ctx)
@@ -416,24 +370,7 @@ func (c caller) complete(ctx context.Context, backend, model string, a Attempt, 
 	if skip != "" {
 		return callResult{Skip: skip}, nil
 	}
-	// next is what a build's call is held to under its cap.
-	var next float64
-	if b := c.budget; b != nil {
-		// As hosted, a build's call is held to an estimate rather than the
-		// byte bound: its prompt at two bytes a token and its whole reply.
-		var ok bool
-		if next, ok = callCost(c.prices, p.Backend, p.Model, decisions.MaxRequestTokens(req)/FeatureBuildBytesPerToken, req.MaxOutputTokens); !ok {
-			return callResult{Skip: ReasonUnpriced}, nil
-		}
-		if b.unrecorded {
-			return callResult{Skip: ReasonSpendUnrecorded}, nil
-		}
-		if b.full || b.spent+next > b.cap {
-			b.full = true
-			return callResult{Skip: ReasonBuildCap}, nil
-		}
-	}
-	m, id, skip, err := c.begin(ctx, p, a, prefs, nil)
+	m, id, skip, err := c.begin(ctx, p, a)
 	if err != nil || skip != "" {
 		return callResult{Skip: skip}, err
 	}
@@ -441,21 +378,13 @@ func (c caller) complete(ctx context.Context, backend, model string, a Attempt, 
 	// The ledger outlives a cancelled call: it may be paid for.
 	_, spent, _, err := c.finish(context.WithoutCancel(ctx), id, m, callErr, ctx.Err() != nil)
 	result := callResult{JSON: response.JSON, Called: m.called, Cost: spent}
-	if b := c.budget; b != nil && m.called {
-		// A call whose cost is unknown is charged the estimate it was held
-		// to; a failed one that reported no usage spent nothing.
-		paid := next
-		switch {
-		case spent != nil:
-			paid = *spent
-		case callErr != nil && m.usage.IsZero():
-			paid = 0
-		}
-		b.spent, b.run, b.calls = b.spent+paid, b.run+paid, b.calls+1
-		if recordErr := c.store.addVersionSpend(context.WithoutCancel(ctx), b.version, paid); recordErr != nil {
-			// A spend the version did not record stops the build.
-			b.unrecorded = true
-			c.log.Warn("decision log: build spend not recorded", "error", recordErr)
+	if b := c.build; b != nil && m.called {
+		b.calls++
+		if spent != nil {
+			b.run += *spent
+			if recordErr := c.store.addVersionSpend(context.WithoutCancel(ctx), b.version, *spent); recordErr != nil {
+				c.log.Warn("decision log: build spend not recorded", "error", recordErr)
+			}
 		}
 	}
 	if err != nil {

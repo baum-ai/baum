@@ -27,8 +27,8 @@ const (
 type SummaryReport struct {
 	Repository string              `json:"repository"`
 	Features   []SummarizedFeature `json:"features"`
-	// Stopped is the reason no further call was made (a backend, price or
-	// cap reason).
+	// Stopped is the reason no further call was made (a backend or price
+	// reason).
 	Stopped string  `json:"stopped,omitempty"`
 	Spent   float64 `json:"spent_usd"`
 }
@@ -55,7 +55,7 @@ type SummarizedFeature struct {
 // Summarize writes the text of the repository's features whose members
 // changed and have been unchanged for FeatureQuiet (not with o.Manual),
 // longest behind first, at most FeatureSummaryRunLimit (or o.Limit). A
-// backend, price or cap reason stops it until the next run.
+// backend or price reason stops it until the next run.
 func (w *FeatureWorker) Summarize(ctx context.Context, repository, dir string, o FeatureOptions) (SummaryReport, error) {
 	o.DryRun = false
 	r, err := w.newRun(ctx, repository, dir, o)
