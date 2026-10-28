@@ -17,7 +17,6 @@
     "./components/chat": "./src/components/chat.tsx",
     "./components/classnames": "./src/components/classnames.ts",
     "./components/code-file-link": "./src/components/code-file-link.tsx",
-    "./combobox": "./src/combobox.ts",
     "./components/combobox": "./src/components/combobox.tsx",
     "./components/commit-list": "./src/components/commit-list.tsx",
     "./components/decision-filters": "./src/components/decision-filters.tsx",
