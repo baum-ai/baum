@@ -82,7 +82,7 @@ type Store struct {
 // OpenOptions choose how Open opens the store.
 type OpenOptions struct {
 	// AbandonPending settles the attempts a previous run left pending as
-	// abandoned: their reservation counts as spent. Only the daemon, the one
+	// abandoned. Only the daemon, the one
 	// writer that makes calls unattended, sets it.
 	AbandonPending bool
 	// ReadOnly opens an existing store without writing to it, and an empty
@@ -277,6 +277,12 @@ func (s *Store) Covered(ctx context.Context, m Meta) error {
 	})
 }
 
+// SetPath records where the session's transcript is.
+func (s *Store) SetPath(ctx context.Context, agent, id, path string) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE capture_session SET transcript_path=? WHERE agent=? AND session_id=?`, path, agent, id)
+	return err
+}
+
 // Failed counts a failed extraction of the session and returns how many
 // followed its last success.
 func (s *Store) Failed(ctx context.Context, m Meta) (int, error) {
@@ -444,8 +450,7 @@ VALUES (?,?,?,?,?,?,?,?,?,?,?) RETURNING id`, a.Agent, a.ID, a.Repository, a.Bac
 	return id, err
 }
 
-// Settle records how an attempt ended. A nil cost is unknown, and the
-// attempt's reservation counts as its spend.
+// Settle records how an attempt ended. A nil cost is unknown.
 func (s *Store) Settle(ctx context.Context, id int64, state, reason string, cost *float64, usage decisions.Usage) error {
 	var value any
 	if cost != nil {
@@ -456,29 +461,21 @@ WHERE id=?`, state, reason, value, s.now().UnixMilli(), usage.InputTokens, usage
 	return err
 }
 
-// Stats are what the throttle and the caps read from the ledger.
+// Stats are what the throttle reads from the ledger.
 type Stats struct {
-	// Count and Spent are the session's attempts and spend since the day's
-	// start; LastStart is its latest attempt and LastFail its latest failed
-	// one, zero for none.
+	// Count is the session's attempts since the day's start; LastStart is its
+	// latest attempt and LastFail its latest failed one, zero for none.
 	Count     int
-	Spent     float64
 	LastStart time.Time
 	LastFail  time.Time
-	// AllSpent is every session's spend since the day's start.
-	AllSpent float64
 }
 
-// Stats reads the ledger for the session since day. An attempt's spend is
-// its cost, or its reservation when the cost is unknown.
+// Stats reads the ledger for the session since day.
 func (s *Store) Stats(ctx context.Context, agent, id string, day time.Time) (Stats, error) {
 	var st Stats
 	var last, failed sql.NullInt64
-	err := s.db.QueryRowContext(ctx, `SELECT
-  COUNT(*) FILTER (WHERE agent=?1 AND session_id=?2),
-  COALESCE(SUM(COALESCE(cost_usd, reserved_usd)) FILTER (WHERE agent=?1 AND session_id=?2), 0),
-  COALESCE(SUM(COALESCE(cost_usd, reserved_usd)), 0)
-FROM capture_attempt WHERE started_at >= ?3`, agent, id, day.UnixMilli()).Scan(&st.Count, &st.Spent, &st.AllSpent)
+	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM capture_attempt WHERE agent=?1 AND session_id=?2 AND started_at >= ?3`,
+		agent, id, day.UnixMilli()).Scan(&st.Count)
 	if err != nil {
 		return st, err
 	}
