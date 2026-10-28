@@ -65,6 +65,9 @@ type ConsolidateReport struct {
 	NewFeatures   int `json:"new_features"`
 	KeptWhole     int `json:"kept_whole"`
 	InvalidSplits int `json:"invalid_splits"`
+	// DiscardedMerges counts the merge reply's groups not written because a
+	// split call failed or was refused.
+	DiscardedMerges int `json:"discarded_merges,omitempty"`
 	// Changed counts the merges and splits not written because their
 	// features changed after they were read.
 	Changed int     `json:"changed"`
@@ -431,13 +434,19 @@ func (r *featureRun) consolidate(ctx context.Context, gated bool) (ConsolidateRe
 		addCall(result)
 		switch {
 		case result.Skip != "":
-			// A call refused defers the pass: nothing is written.
-			report.Stopped = result.Skip
+			// A call refused defers the pass: nothing is written, the merges
+			// paid for included.
+			report.Stopped, report.DiscardedMerges = result.Skip, len(groups)
+			if len(groups) > 0 {
+				r.w.logger().Warn("feature log: merges discarded, a split call was refused", "repository", r.repository,
+					"groups", len(groups), "reason", result.Skip)
+			}
 			return report, callErr
 		case callErr != nil && ctx.Err() != nil:
 			return report, ctx.Err()
 		case callErr != nil:
 			// A failed call defers the pass too.
+			report.DiscardedMerges = len(groups)
 			return r.consolidationFailed(ctx, report, fingerprint, map[bool]int{true: 1}[result.Called], callErr)
 		}
 		partition, err := consolidate.ParseSplitReply(result.JSON, rendered)
@@ -456,8 +465,13 @@ func (r *featureRun) consolidate(ctx context.Context, gated bool) (ConsolidateRe
 		splits = append(splits, planned)
 	}
 
-	// The writes, each only while its features are as they were read.
+	// The writes, each only while its features are as they were read, and
+	// none when a build's switch retired the version meanwhile.
 	write := context.WithoutCancel(ctx)
+	if retired, err := r.retired(write); err != nil || retired {
+		report.Stopped = ReasonVersionRetired
+		return report, err
+	}
 	expected := map[string]int64{}
 	for _, f := range found {
 		expected[f.ID] = f.membership

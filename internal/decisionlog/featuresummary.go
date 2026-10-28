@@ -91,6 +91,10 @@ func (r *featureRun) summarizePending(ctx context.Context, quiet time.Time, limi
 		if ctx.Err() != nil {
 			return report, ctx.Err()
 		}
+		if retired, err := r.retired(ctx); err != nil || retired {
+			report.Stopped = ReasonVersionRetired
+			return report, err
+		}
 		if on, err := r.refresh(ctx); err != nil {
 			report.Stopped = ReasonPreferences
 			return report, err
@@ -101,6 +105,10 @@ func (r *featureRun) summarizePending(ctx context.Context, quiet time.Time, limi
 		out, err := r.summarize(ctx, p[0])
 		if out.Cost != nil {
 			report.Spent += *out.Cost
+		}
+		if errors.Is(err, errVersionRetired) {
+			report.Stopped = ReasonVersionRetired
+			return report, nil
 		}
 		if out.Outcome == "" && out.Reason != "" {
 			report.Stopped = out.Reason
@@ -258,8 +266,8 @@ WHERE fs.feature_id=?1 ORDER BY 2, 3, 1`, featureID))
 }
 
 // storeSummary writes a feature's text when its members did not change
-// since version was read and its version is not retired, and reports
-// whether it did. Complete text makes
+// since version was read, and reports whether it did; errVersionRetired
+// when a build's switch retired its version. Complete text makes
 // the feature clean; incomplete text (written without a pull request's
 // summary) leaves it behind.
 func (s *Store) storeSummary(ctx context.Context, featureID string, version int64, text featureText, complete bool) (bool, error) {
@@ -277,7 +285,18 @@ WHERE id=?8 AND membership_version=?7 AND version_id IN (SELECT id FROM feature_
 		return false, err
 	}
 	n, err := result.RowsAffected()
-	return n == 1, err
+	if err != nil || n == 1 {
+		return n == 1, err
+	}
+	var state string
+	if err := s.db.QueryRowContext(ctx, `SELECT v.state FROM feature f JOIN feature_version v ON v.id=f.version_id WHERE f.id=?`, featureID).
+		Scan(&state); err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return false, err
+	}
+	if state == VersionRetired {
+		return false, errVersionRetired
+	}
+	return false, nil
 }
 
 // storePullSummary keeps a pull request's generated summary with the hash

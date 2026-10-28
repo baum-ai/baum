@@ -351,11 +351,12 @@ turned off, and a merge over a first build's features needs the room.
   mark every feature they change and the features of the sessions linked to
   the pull requests they move, for the text stage.
 - **Failures.** A call that fails, or a merge reply that does not decode,
-  defers the whole pass: nothing is written, and the pass backs off as
-  placement's failures do, counted against the fingerprint. A split reply
-  that is invalid leaves only that feature whole and unchecked. A call that
-  cannot be made (a backend, price or cap reason) also writes nothing; the
-  pass is made again on the next run.
+  defers the whole pass: nothing is written (a split call's failure or
+  refusal discards the merges paid for, which are logged and counted), and
+  the pass backs off as placement's failures do, counted against the
+  fingerprint. A split reply that is invalid leaves only that feature whole
+  and unchecked. A call that cannot be made (a backend, price or cap reason)
+  also writes nothing; the pass is made again on the next run.
 
 ### First build
 
@@ -365,15 +366,16 @@ hosted rebuild does, by a first build: a job of the job queue
 (`jobs.KindFeatureBuild`) that runs only from a confirmed estimate, or `baum
 internal features build`.
 
-- **Estimate.** The pull requests left to place, and a resumed version's
+- **Estimate.** The pull requests left to place, a resumed version's
   features whose text is behind (with their pull requests' summaries still
-  to write) and its pass unless it was made, are counted and their calls priced from their sizes at the configured backend and model: a batch call
+  to write) and its pass unless it was tried are counted, and their calls
+  priced from their sizes at the configured backend and model: a batch call
   per 25 (the items' titles, descriptions and paths, and candidates for the
-  features placed so far, a feature per 3 pull requests), the features' text
-  twice, a summary of each pull request with a description, and one merge
-  and up to three split calls. The cap of the version's spend over all its
-  runs is what it spent and the estimate times 1.25, with room for at least
-  one more batch or merge call beyond the estimate. A repository whose
+  features placed so far, a feature per 3 pull requests), the new features'
+  text twice, a summary of each pull request with a description, and one
+  merge and up to three split calls. The cap of the version's spend over all
+  its runs is what it spent and the estimate times 1.25, with room for at
+  least one more batch call beyond the estimate. A repository whose
   decisions are not captured, or whose model cannot be priced or called, is
   not estimated.
 - **Building.** The build makes the repository's `building` version, or
@@ -395,18 +397,21 @@ internal features build`.
 - **Text and consolidation.** Every 3 batches and after the last, the text
   of every feature of the version behind its members is written, without the
   debounce; a feature whose text fails backs off and is left for the text
-  stage. Then the version gets its one consolidation pass
-  (`consolidated_at`), whose changed features' text is written again; a pass
-  that fails is not recorded and the build goes on, so the weekly pass takes
-  the version on its next run once it is current.
+  stage. Then the version's consolidation pass is tried once
+  (`consolidated_at`: its time when it was made, 0 when it was not), and the
+  changed features' text is written again. A pass that fails or cannot call
+  (the cap included) is not recorded and the build goes on; it is never
+  tried again on a resume. The weekly pass then takes the version once it is
+  current, 7 days after the last recorded pass and after any backoff.
 - **Switching.** The building version becomes current in one transaction:
   the current one is retired, the skips become placement's settlements, the
   pull requests left out lose theirs so placement takes those within its
   lookback, and, when its pass was made, the switch is recorded as the
   repository's last consolidation. A live stage that raced the switch never
-  writes the retired version: a placement there fails and is retried, a
-  text write is dropped. Work the live stages placed in the old version is in no
-  feature of the new one; placement takes what is within its lookback. A
+  writes the retired version: its run stops at its next item or write
+  (`version_retired`), and a consolidation pass writes and records nothing.
+  Work the live stages placed in the old version is in no feature of the new
+  one; placement takes what is within its lookback. A
   retired version is kept, and a link to one of its features resolves as
   archived.
 - **Stopping.** A build stops before a call whose estimate (as hosted: its

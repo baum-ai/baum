@@ -82,7 +82,11 @@ type StoppedError struct {
 }
 
 func (e *StoppedError) Error() string {
-	return "the feature build stopped (" + e.Reason + "); confirm it again to resume"
+	message := "the feature build stopped (" + e.Reason + ")"
+	if e.Err != nil {
+		message += ": " + e.Err.Error()
+	}
+	return message + "; confirm it again to resume"
 }
 
 func (e *StoppedError) Unwrap() error { return e.Err }

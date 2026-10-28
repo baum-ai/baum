@@ -132,6 +132,10 @@ func (w *FeatureWorker) Assign(ctx context.Context, repository, dir string, o Fe
 		if ctx.Err() != nil {
 			return report, ctx.Err()
 		}
+		if retired, err := r.retired(ctx); err != nil || retired {
+			report.Stopped = ReasonVersionRetired
+			return report, err
+		}
 		if on, err := r.refresh(ctx); err != nil {
 			report.Stopped = ReasonPreferences
 			return report, err
@@ -391,6 +395,11 @@ func (r *featureRun) place(ctx context.Context, item assignItem) (PlacedItem, er
 		out.Feature, err = r.w.Store.placePull(write, r.version, r.repository, pull, target, r.now)
 	} else {
 		out.Feature, err = r.w.Store.placeSession(write, r.version, r.repository, item.Session, target.FeatureID, r.now)
+	}
+	if errors.Is(err, errVersionRetired) {
+		// A build's switch retired the version: the run stops.
+		out.Reason = ReasonVersionRetired
+		return out, nil
 	}
 	if err != nil {
 		// Paid for but not kept.
@@ -665,6 +674,20 @@ WHERE item.repository=?1 AND item.number=?2 AND other.number != item.number`,
 // errVersionRetired is a write to a feature version a build's switch
 // retired.
 var errVersionRetired = errors.New("the feature version was retired")
+
+// ReasonVersionRetired stops a live run whose version a build's switch
+// retired; the next run uses the new current version.
+const ReasonVersionRetired = "version_retired"
+
+// retired reports whether a build's switch retired the run's version.
+func (r *featureRun) retired(ctx context.Context) (bool, error) {
+	var state string
+	err := r.w.Store.db.QueryRowContext(ctx, `SELECT state FROM feature_version WHERE id=?`, r.version).Scan(&state)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	return state == VersionRetired, err
+}
 
 // placeTarget is an existing feature, or a new one's provisional text.
 type placeTarget struct {
