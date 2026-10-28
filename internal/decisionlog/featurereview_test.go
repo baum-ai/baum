@@ -8,7 +8,10 @@ import (
 	"time"
 
 	"github.com/baum-ai/baum/agent"
+	"github.com/baum-ai/baum/decisions"
+	"github.com/baum-ai/baum/features/assign"
 	"github.com/baum-ai/baum/features/consolidate"
+	"github.com/baum-ai/baum/internal/pricing"
 )
 
 // A resumed version's estimate counts its features behind and their pull
@@ -268,8 +271,24 @@ func TestBuildSmallRemainderWithTheDefaultCap(t *testing.T) {
 	f.backend.batch = func(user string) (string, error) { return batchReply(t, user, ""), nil }
 	f.exec(`INSERT INTO feature_version(repository, state, created_at, spent_usd) VALUES (?, ?, ?, 1.5)`, repo, VersionBuilding, t0.UnixMilli())
 	estimate, err := f.worker.EstimateBuild(context.Background(), repo, "", BuildOptions{})
-	if err != nil || estimate.PullRequests != 3 || estimate.EstimateUSD == nil || estimate.Cap()-estimate.SpentUSD < estimate.ReservedUSD {
+	if err != nil || estimate.PullRequests != 3 || estimate.EstimateUSD == nil {
 		t.Fatalf("estimate = %+v, %v", estimate, err)
+	}
+	// The most complete would hold a batch call to: the longer prompt at
+	// the batch input's bound.
+	batchVersion, _ := assign.Public.BatchVersion(AssignVersion)
+	var longest int64
+	for _, version := range []string{batchVersion, assign.Public.SeededBatch(batchVersion)} {
+		request, err := assign.Public.Request(version, "", assign.MaxBatchOutputTokens)
+		if err != nil {
+			t.Fatal(err)
+		}
+		longest = max(longest, decisions.MaxRequestTokens(request))
+	}
+	held, ok := callCost(pricing.Active(), agent.BackendClaude, "claude-haiku-5-5", (longest+assign.MaxBatchInputBytes)/FeatureBuildBytesPerToken,
+		assign.MaxBatchOutputTokens)
+	if !ok || estimate.ReservedUSD < held || estimate.Cap() < estimate.SpentUSD+held {
+		t.Fatalf("reserved %f, cap %f, a batch call is held to %f", estimate.ReservedUSD, estimate.Cap(), held)
 	}
 	if report := f.build(BuildOptions{}); !report.Current || report.Placed != 3 {
 		t.Fatalf("report = %+v", report)
