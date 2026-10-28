@@ -71,26 +71,36 @@
 /* The header: what is being reviewed, how far the reader is, and the views */
 .walk-head {
   position: relative;
+  padding-top: 14px;
+  border-bottom: 1px solid var(--un-line);
+}
+/* On the page's column, so the tour lines up with the overview it left. */
+.walk-head-inner {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
   gap: 10px 20px;
-  padding: 14px 20px 15px;
-  border-bottom: 1px solid var(--un-line);
+  max-width: 780px;
+  margin: 0 auto;
+  padding: 0 40px;
 }
 .walk-head-text {
   display: flex;
+  flex: 1 1 0;
   flex-direction: column;
   gap: 3px;
   min-width: 0;
 }
+/* One line: the overview it came from has the title in full. */
 .walk-head h1 {
   margin: 0;
+  overflow: hidden;
   font-size: 18px;
   font-weight: 600;
   line-height: 1.3;
-  overflow-wrap: anywhere;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .walk-head-number {
   color: var(--un-muted);
@@ -143,121 +153,79 @@
   font-size: 13px;
 }
 
-.walk-split {
+/* The tour's pages in a row under the header */
+.walk-steps {
   display: flex;
-  flex: 1;
-  min-height: 0;
+  flex-basis: 100%;
+  gap: 2px;
+  margin-top: 2px;
+  overflow-x: auto;
+  scrollbar-width: none;
 }
-
-/* The list of stops */
-.walk-list {
+.walkthrough .walk-step {
   display: flex;
-  flex: 0 0 340px;
+  flex: 1 1 0;
   flex-direction: column;
-  min-width: 0;
-  border-right: 1px solid var(--un-line);
-  background: var(--un-list);
-}
-.walk-list-body {
-  flex: 1;
-  min-height: 0;
-  padding: 8px 8px 12px;
-  overflow: auto;
-}
-.walk-list ul {
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-.walk-group {
-  display: flex;
-  flex-direction: column;
-  padding-top: 10px;
-}
-.walk-group-head {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin: 0;
-  padding: 4px 10px 6px;
-}
-/* A chapter's heading opens its page. */
-.walkthrough .walk-group-open {
-  flex: 1;
-  min-width: 0;
-  margin: -3px -6px;
-  padding: 3px 6px;
+  gap: 7px;
+  min-width: 84px;
+  padding: 8px 10px 10px;
   border: 0;
-  border-radius: 6px;
+  border-bottom: 2px solid transparent;
+  border-radius: 8px 8px 0 0;
   background: transparent;
-  color: var(--un-muted);
-  font-size: 11.5px;
-  font-weight: 600;
-  line-height: 1.4;
-  letter-spacing: 0.08em;
+  color: var(--un-ink-soft);
   text-align: left;
-  text-transform: uppercase;
 }
-.walkthrough .walk-group-open:hover {
+.walkthrough .walk-step:hover {
   background: var(--un-hover);
+}
+.walkthrough .walk-step[aria-current] {
+  border-bottom-color: var(--un-ink);
   color: var(--un-ink);
 }
-.walkthrough .walk-group-open.on {
-  color: var(--un-ink);
+.walkthrough .walk-step-end {
+  flex: none;
+  flex-direction: row;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  color: var(--un-muted);
+  font-size: 13px;
 }
-.walk-row {
+.walk-step-name {
   display: flex;
   align-items: flex-start;
-  gap: 10px;
-  width: 100%;
-  padding: 9px 10px;
-  border: 0;
-  border-radius: 8px;
-  background: transparent;
-  text-align: left;
-}
-.walk-row:hover {
-  background: var(--un-hover);
-}
-.walk-row[aria-current] {
-  background: var(--un-card);
-  box-shadow: var(--un-shadow-selected);
-}
-.walk-row:active {
-  transform: translateY(1px);
-}
-.walk-row .walk-mark {
-  margin-top: 1px;
-}
-.walk-row-text {
-  display: flex;
-  flex: 1;
-  flex-direction: column;
-  gap: 2px;
+  gap: 7px;
   min-width: 0;
 }
-.walk-row-title {
+.walk-step-title {
   display: -webkit-box;
   overflow: hidden;
-  font-size: 14px;
+  font-size: 13px;
   font-weight: 500;
   line-height: 1.35;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;
 }
-.walk-row[aria-current] .walk-row-title {
+.walk-step[aria-current] .walk-step-title {
   font-weight: 600;
 }
-.walk-row-sub {
-  overflow: hidden;
-  color: var(--un-muted);
-  font-size: 12px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+.walk-step-dots {
+  display: flex;
+  gap: 3px;
+  padding-left: 1px;
 }
-.walk-row-commented {
-  color: var(--un-working);
-  font-weight: 600;
+.walk-step-dots span {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--un-line);
+}
+.walk-step-dots .seen {
+  background: var(--un-done);
+}
+.walk-step-dots .commented {
+  background: var(--un-risk-mid);
 }
 .walk-mark {
   display: flex;
@@ -279,21 +247,6 @@
   border: 0;
   background: var(--un-risk-mid);
 }
-.walk-mark-end {
-  border: 0;
-  background: var(--un-hairline);
-  color: var(--un-ink-soft);
-}
-.walk-keys {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px 12px;
-  padding: 9px 16px;
-  border-top: 1px solid var(--un-line);
-  color: var(--un-muted);
-  font-size: 11.5px;
-}
-
 /* Risk, as the inbox's numbered badges show it */
 .walk-badge {
   display: flex;
@@ -323,11 +276,6 @@
 }
 
 /* The panel */
-.walk-detail {
-  flex: 1;
-  min-width: 0;
-  overflow: auto;
-}
 .walk-panel {
   display: flex;
   flex-direction: column;
@@ -480,7 +428,7 @@
   background: var(--un-hover);
   color: var(--un-ink);
 }
-.walkthrough :is(.walk-primary, .walk-secondary, .walk-small, .walk-row):active:not(:disabled) {
+.walkthrough :is(.walk-primary, .walk-secondary, .walk-small, .walk-step):active:not(:disabled) {
   transform: translateY(1px);
 }
 .walkthrough :is(.walk-primary, .walk-secondary):disabled {
@@ -979,24 +927,10 @@
   gap: 4px;
 }
 
-/* A narrow window stacks the list over the panel and scrolls them as one. */
+/* A narrow window keeps the steps in their row, scrolled to the current. */
 @container (width < 760px) {
-  .walk-split {
-    flex-direction: column;
-    overflow: auto;
-  }
-  .walk-list {
-    flex: none;
-    border-right: 0;
-    border-bottom: 1px solid var(--un-line);
-  }
-  .walk-list-body,
-  .walk-detail {
-    overflow: visible;
-  }
-  .walk-list-body {
-    max-height: 40vh;
-    overflow: auto;
+  .walk-head-inner {
+    padding: 0 20px;
   }
   .walk-panel {
     padding: 24px 20px 60px;
@@ -1006,9 +940,6 @@
   }
   .walk-title.long {
     font-size: 19px;
-  }
-  .walk-keys {
-    display: none;
   }
 }
 @media (prefers-reduced-motion: reduce) {

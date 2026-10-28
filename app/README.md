@@ -100,8 +100,9 @@ and its sessions say the change is for), its risk reason and its open risks. A b
 `HunkEvidence` for the step's hunk anchors, reading omitted excerpts through the
 page's patch source. The walkthrough is drawn as the inbox is, with the Up next
 design's `--un-*` colours (`src/walkthrough.css`). It is one guided tour, a
-page per chapter: the overview, the chapters with their behaviours and the
-wrap-up are listed on the left, and the page being read is beside them. A
+page per chapter, in the overview's column: a row of steps under the header
+leads back to the overview, names each chapter (shortened to fit, with a dot per
+behaviour: looked at, commented or not yet) and ends at the wrap-up. A
 chapter's page states its summary, intent and risk once, then lists its
 behaviours as the full review does (title, statement, evidence badges, code);
 one is picked, and only the picked one offers Something looks off. The

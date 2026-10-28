@@ -203,7 +203,7 @@ const commentAndWrapUp = (text: string) => {
   key("c");
   type(node.querySelector("textarea")!, text);
   click("Save comment");
-  click("Send your review");
+  click("Send review");
 };
 
 it("sends one review with each comment on its line", async () => {
@@ -213,7 +213,7 @@ it("sends one review with each comment on its line", async () => {
   type(node.querySelector("textarea")!, "Trusts a client header");
   click("Save comment");
   expect(node.textContent).toContain("Your comment on");
-  click("Send your review");
+  click("Send review");
   expect(button("Approve").getAttribute("aria-disabled")).toBe("true");
   expect(button("Request changes").getAttribute("aria-disabled")).toBe("false");
   click("Request changes");
@@ -233,7 +233,7 @@ it("sends one review with each comment on its line", async () => {
 it("offers neither a verdict on the reader's own pull request", () => {
   render(true);
   click("Start the review");
-  click("Send your review");
+  click("Send review");
   expect(button("Approve").getAttribute("aria-disabled")).toBe("true");
   expect(node.textContent).toContain("GitHub doesn’t let you approve your own pull request");
 });

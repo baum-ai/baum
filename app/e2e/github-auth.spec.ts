@@ -106,6 +106,7 @@ test("GitHub device lifecycle, recovery and saved reviews through the real daemo
   await expect(panel.getByLabel("GitHub sign-in code")).toHaveCount(0);
   await page.getByRole("link", { name: "Pull requests", exact: true }).first().click();
   await page.getByRole("link", { name: /Reuse the existing PR page/ }).click();
+  await page.getByRole("button", { name: "Full review", exact: true }).click();
   await page.getByRole("button", { name: "Regenerate review", exact: true }).click();
   await expect(page.getByRole("button", { name: "Regenerate review", exact: true })).toBeEnabled();
   await expect.poll(() => readFile(join(state, "github-consumed-account"), "utf8")).toBe("bob");

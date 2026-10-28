@@ -11,7 +11,6 @@ import {
   ChevronRightIcon,
   CommentsIcon,
   ExternalLinkIcon,
-  SearchIcon,
 } from "@baum/viewer/components/icons";
 import { Markdown } from "@baum/viewer/components/markdown";
 import { ViewerLink } from "@baum/viewer/navigation";
@@ -269,28 +268,30 @@ export function Walkthrough({
   return (
     <section aria-label="Walkthrough" className="walkthrough">
       <header className="walk-head">
-        <div className="walk-head-text">
-          <h1>
-            <span className="walk-head-number">#{entry.pull_request.number}</span>{" "}
-            {entry.pull_request.title}
-          </h1>
-          <p>
-            {entry.pull_request.repository} · Review v{document.review.version} ·{" "}
-            {plural(total, "behaviour")} · {left} ·{" "}
-            <strong>
-              {seenCount} of {total} looked at
-            </strong>{" "}
-            ·{" "}
-            <span className={commentCount ? "walk-head-comments" : undefined}>
-              {commentCount ? plural(commentCount, "comment") : "no comments"}
-            </span>
-          </p>
-        </div>
-        <div className="walk-head-actions">
-          <button type="button" className="walk-secondary" onClick={close}>
-            Full review
-            <kbd aria-hidden>v</kbd>
-          </button>
+        <div className="walk-head-inner">
+          <div className="walk-head-text">
+            <h1 title={entry.pull_request.title}>
+              <span className="walk-head-number">#{entry.pull_request.number}</span>{" "}
+              {entry.pull_request.title}
+            </h1>
+            <p>
+              {plural(total, "behaviour")} · {left} ·{" "}
+              <strong>
+                {seenCount} of {total} looked at
+              </strong>{" "}
+              ·{" "}
+              <span className={commentCount ? "walk-head-comments" : undefined}>
+                {commentCount ? plural(commentCount, "comment") : "no comments"}
+              </span>
+            </p>
+          </div>
+          <div className="walk-head-actions">
+            <button type="button" className="walk-secondary" onClick={close}>
+              Full review
+              <kbd aria-hidden>v</kbd>
+            </button>
+          </div>
+          <ChapterSteps tour={tour} page={page} done={done} commented={commented} open={open} />
         </div>
         <div aria-hidden className="walk-head-bar">
           <span
@@ -310,66 +311,53 @@ export function Walkthrough({
         </p>
       ) : null}
       <HunkPatchProvider source={patches}>
-        <div className="walk-split">
-          <StopList
-            tour={tour}
-            page={page}
-            cur={chapter ? cur : null}
-            done={done}
-            commented={commented}
-            seenCount={seenCount}
-            commentCount={commentCount}
-            open={open}
-            pick={pick}
-          />
-          <div ref={detail} className="walk-detail">
-            {chapter ? (
-              <ChapterPage
-                key={chapter.id}
-                tour={tour}
-                chapter={chapter}
-                page={page}
-                document={document}
-                cur={cur}
-                pick={pick}
-                done={done}
-                notes={progress.notes}
-                editing={editing}
-                draft={draft}
-                setDraft={setDraft}
-                startComment={startComment}
-                saveComment={(stop) => {
-                  setNote(stop, draft.trim());
-                  markSeen(stop);
-                  setEditing(null);
-                }}
-                cancelComment={() => setEditing(null)}
-                removeComment={(stop) => setNote(stop, "")}
-                next={() => open(page + 1)}
-                back={() => open(page - 1)}
-              />
-            ) : (
-              <WrapUp
-                tour={tour}
-                unseen={unseen}
-                seenCount={seenCount}
-                commentCount={commentCount}
-                pick={pick}
-                submit={
-                  <Submit
-                    entry={entry}
-                    document={document}
-                    tour={tour}
-                    progress={progress}
-                    setProgress={setProgress}
-                    seenCount={seenCount}
-                    unseen={unseen.length}
-                    changed={changed}
-                  />
-                }
-              />
-            )}
-          </div>
+        <div ref={detail} className="walk-landing">
+          {chapter ? (
+            <ChapterPage
+              key={chapter.id}
+              tour={tour}
+              chapter={chapter}
+              page={page}
+              document={document}
+              cur={cur}
+              pick={pick}
+              done={done}
+              notes={progress.notes}
+              editing={editing}
+              draft={draft}
+              setDraft={setDraft}
+              startComment={startComment}
+              saveComment={(stop) => {
+                setNote(stop, draft.trim());
+                markSeen(stop);
+                setEditing(null);
+              }}
+              cancelComment={() => setEditing(null)}
+              removeComment={(stop) => setNote(stop, "")}
+              next={() => open(page + 1)}
+              back={() => open(page - 1)}
+            />
+          ) : (
+            <WrapUp
+              tour={tour}
+              unseen={unseen}
+              seenCount={seenCount}
+              commentCount={commentCount}
+              pick={pick}
+              submit={
+                <Submit
+                  entry={entry}
+                  document={document}
+                  tour={tour}
+                  progress={progress}
+                  setProgress={setProgress}
+                  seenCount={seenCount}
+                  unseen={unseen.length}
+                  changed={changed}
+                />
+              }
+            />
+          )}
         </div>
       </HunkPatchProvider>
     </section>
@@ -432,141 +420,71 @@ function RiskCard({
   );
 }
 
-/** The chapters and their behaviours, grouped as the inbox groups its queue. */
-function StopList({
+/** The tour's pages in a row: the way back to the overview, each chapter
+ *  by name, shortened to fit, with a dot per behaviour, and the wrap-up. */
+function ChapterSteps({
   tour,
   page,
-  cur,
   done,
   commented,
-  seenCount,
-  commentCount,
   open,
-  pick,
 }: {
   tour: Tour;
   page: number;
-  /** The picked behaviour, while a chapter is open. */
-  cur: number | null;
   done: (stop: Stop) => boolean;
   commented: (stop: Stop) => boolean;
-  seenCount: number;
-  commentCount: number;
   open: (page: number) => void;
-  pick: (at: number) => void;
 }) {
   const last = tour.chapters.length + 1;
-  const list = useRef<HTMLElement>(null);
+  const steps = useRef<HTMLElement>(null);
   useEffect(() => {
-    list.current?.querySelector("[aria-current]")?.scrollIntoView?.({ block: "nearest" });
-  }, [page, cur]);
-  const row = (
-    key: string,
-    current: boolean,
-    go: () => void,
-    title: string,
-    sub: ReactNode,
-    mark: ReactNode,
-    label = title,
-  ) => (
-    <li key={key}>
+    steps.current
+      ?.querySelector("[aria-current]")
+      ?.scrollIntoView?.({ inline: "nearest", block: "nearest" });
+  }, [page]);
+  return (
+    <nav ref={steps} aria-label="Tour stops" className="walk-steps">
+      <button type="button" className="walk-step walk-step-end" onClick={() => open(0)}>
+        <ChevronLeftIcon size={13} />
+        Overview
+      </button>
+      {tour.chapters.map((chapter, index) => {
+        const stops = chapter.stops.map((at) => tour.stops[at]!);
+        const looked = stops.filter(done).length;
+        return (
+          <button
+            key={chapter.id}
+            type="button"
+            title={chapter.title}
+            aria-label={`${chapter.title}, ${looked} of ${stops.length} looked at`}
+            aria-current={page === index + 1 ? "step" : undefined}
+            className="walk-step"
+            onClick={() => open(index + 1)}
+          >
+            <span className="walk-step-name">
+              <RiskBadge level={chapter.level} />
+              <span className="walk-step-title">{chapter.title}</span>
+            </span>
+            <span aria-hidden className="walk-step-dots">
+              {stops.map((stop) => (
+                <span
+                  key={stop.id}
+                  className={commented(stop) ? "commented" : done(stop) ? "seen" : undefined}
+                />
+              ))}
+            </span>
+          </button>
+        );
+      })}
       <button
         type="button"
-        onClick={go}
-        aria-label={label}
-        aria-current={current ? "step" : undefined}
-        className="walk-row"
+        aria-current={page === last ? "step" : undefined}
+        className="walk-step walk-step-end"
+        onClick={() => open(last)}
       >
-        {mark}
-        <span className="walk-row-text">
-          <span className="walk-row-title">{title}</span>
-          {sub ? <span className="walk-row-sub">{sub}</span> : null}
-        </span>
+        Send review
+        <ChevronRightIcon size={13} />
       </button>
-    </li>
-  );
-  return (
-    <nav ref={list} aria-label="Tour stops" className="walk-list">
-      <div className="walk-list-body">
-        <ul>
-          {row(
-            "overview",
-            false,
-            () => open(0),
-            "Overview",
-            "What it does, and the route",
-            <span aria-hidden className="walk-mark walk-mark-end">
-              <SearchIcon size={10} />
-            </span>,
-          )}
-        </ul>
-        {tour.chapters.map((chapter, index) => (
-          <section key={chapter.id} aria-label={chapter.title} className="walk-group">
-            <h2 className="walk-group-head">
-              <button
-                type="button"
-                className={cn("walk-group-open", page === index + 1 && "on")}
-                onClick={() => open(index + 1)}
-              >
-                {index + 1} · {chapter.title}
-              </button>
-              <RiskBadge level={chapter.level} />
-            </h2>
-            <ul>
-              {chapter.stops.map((at) => {
-                const stop = tour.stops[at]!;
-                const state = commented(stop) ? "commented" : done(stop) ? "seen" : null;
-                return row(
-                  stop.id,
-                  cur === at,
-                  () => pick(at),
-                  stop.title,
-                  state === "commented" ? (
-                    <span className="walk-row-commented">Your comment</span>
-                  ) : (
-                    stop.where
-                  ),
-                  <Mark state={state} />,
-                  stop.title +
-                    (state === "commented"
-                      ? ", has your comment"
-                      : state === "seen"
-                        ? ", looked at"
-                        : ""),
-                );
-              })}
-            </ul>
-          </section>
-        ))}
-        <section aria-label="Submit" className="walk-group">
-          <ul>
-            {row(
-              "submit",
-              page === last,
-              () => open(last),
-              "Send your review",
-              `${seenCount} of ${tour.stops.length} looked at · ${commentCount ? plural(commentCount, "comment") : "no comments"}`,
-              <span aria-hidden className="walk-mark walk-mark-end">
-                <ChevronRightIcon size={10} />
-              </span>,
-            )}
-          </ul>
-        </section>
-      </div>
-      <footer className="walk-keys" aria-hidden>
-        <span>
-          <kbd>j</kbd> <kbd>k</kbd> behaviour
-        </span>
-        <span>
-          <kbd>←</kbd> <kbd>→</kbd> chapter
-        </span>
-        <span>
-          <kbd>o</kbd> code
-        </span>
-        <span>
-          <kbd>c</kbd> comment
-        </span>
-      </footer>
     </nav>
   );
 }

@@ -217,7 +217,9 @@ test("local inbox, reused PR viewer, versions, generation and settings", async (
   await expect(
     page.getByText("Adds notes, settings and a renamed guide.", { exact: true }),
   ).toBeVisible({ timeout: 30000 });
-  // The review links to the job that generated it, where its usage is.
+  // The finished review opens on its overview; the full review links to the
+  // job that generated it, where its usage is.
+  await page.getByRole("button", { name: "Full review", exact: true }).click();
   await page.getByRole("link", { name: "View job", exact: true }).click();
   const job = page.getByRole("region", { name: "Generation jobs" }).getByRole("listitem").first();
   await expect(job.getByText("Completed")).toBeVisible();
@@ -239,6 +241,7 @@ test("local inbox, reused PR viewer, versions, generation and settings", async (
   await page.setViewportSize({ width: 1280, height: 900 });
   await page.getByRole("link", { name: "Pull requests", exact: true }).first().click();
   await page.getByRole("link", { name: /A pull request without a review/ }).click();
+  await page.getByRole("button", { name: "Full review", exact: true }).click();
   await page.getByRole("button", { name: "Regenerate review", exact: true }).click();
   await expect(
     page.getByText("Adds notes, settings and a renamed guide.", { exact: true }),
@@ -873,7 +876,7 @@ test("walks through a review, comments on a behaviour and submits the review", a
   await page.reload();
   await expect(walk.getByText("1 comment", { exact: true })).toBeVisible();
   await expect(page).toHaveURL(/walk=tour/);
-  await walk.getByRole("button", { name: "Send your review", exact: true }).click();
+  await walk.getByRole("button", { name: "Send review", exact: true }).click();
   await walk.getByRole("radio", { name: /Request changes/ }).click();
   await walk.screenshot({ path: "test-results/walkthrough-submit.png", animations: "disabled" });
   await walk.getByRole("button", { name: "Request changes", exact: true }).click();
@@ -890,12 +893,7 @@ test("walks through a review, comments on a behaviour and submits the review", a
   ]);
   // Narrow: no sideways scroll.
   await page.setViewportSize({ width: 390, height: 844 });
-  await walk
-    .getByRole("button", {
-      name: "Retries wait longer after each failure, up to a cap",
-      exact: true,
-    })
-    .click();
+  await walk.getByRole("button", { name: /^Retry policy and backoff,/ }).click();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(
     true,
   );
