@@ -2,9 +2,7 @@ package decisionlog
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"log/slog"
 	"slices"
@@ -170,15 +168,22 @@ func (w *FeatureWorker) RunOnce(ctx context.Context) {
 // enabled reads the gate again for the repository during a long sync; a
 // worker without a registry (the command line's) has none.
 func (w *FeatureWorker) enabled(ctx context.Context, repository string) bool {
+	_, _, on, err := w.gate(ctx, repository)
+	return err == nil && on
+}
+
+// gate reads the preferences and the repository's settings, and whether
+// its decisions are captured; with no registry, the defaults and on.
+func (w *FeatureWorker) gate(ctx context.Context, repository string) (repos.Preferences, repos.Settings, bool, error) {
 	if w.Registry == nil {
-		return true
+		return repos.DefaultPreferences(), repos.Settings{}, true, nil
 	}
 	prefs, err := w.Registry.Preferences(ctx)
 	if err != nil {
-		return false
+		return prefs, repos.Settings{}, false, err
 	}
 	settings, picked, err := w.Registry.RepositorySettings(ctx, repository)
-	return err == nil && picked && settings.DecisionsEnabled(prefs)
+	return prefs, settings, err == nil && picked && settings.DecisionsEnabled(prefs), err
 }
 
 // SyncReport says what Sync did.
@@ -501,7 +506,7 @@ func (w *FeatureWorker) newRun(ctx context.Context, repository, dir string, o Fe
 	if w.initErr != nil {
 		return nil, w.initErr
 	}
-	r := &featureRun{w: w, repository: repository, dir: dir, opts: o, now: w.now(), reviews: map[int]string{}, prefs: repos.DefaultPreferences()}
+	r := &featureRun{w: w, repository: repository, dir: dir, opts: o, now: w.now(), reviews: map[int]string{}}
 	if _, err := r.refresh(ctx); err != nil {
 		return nil, err
 	}
@@ -520,34 +525,19 @@ func (w *FeatureWorker) newRun(ctx context.Context, repository, dir string, o Fe
 // whether the repository's decisions are still captured; a manual run
 // ignores the gate.
 func (r *featureRun) refresh(ctx context.Context) (bool, error) {
-	if r.w.Registry == nil {
-		return true, nil
-	}
-	prefs, err := r.w.Registry.Preferences(ctx)
-	if err != nil {
-		return false, err
-	}
-	settings, picked, err := r.w.Registry.RepositorySettings(ctx, r.repository)
+	prefs, settings, on, err := r.w.gate(ctx, r.repository)
 	if err != nil {
 		return false, err
 	}
 	r.prefs, r.settings = prefs, settings
-	return r.opts.Manual || (picked && settings.DecisionsEnabled(prefs)), nil
+	return r.opts.Manual || on, nil
 }
 
 // activation is when placement was turned on for the repository, recorded
-// the first time; zero for a manual run. A dry run records nothing.
+// the first time; zero for a manual run, which records nothing.
 func (r *featureRun) activation(ctx context.Context) (time.Time, error) {
-	switch {
-	case r.opts.Manual:
+	if r.opts.Manual {
 		return time.Time{}, nil
-	case r.opts.DryRun:
-		var at int64
-		err := r.w.Store.db.QueryRowContext(ctx, `SELECT activated_at FROM pull_sync WHERE repository=?`, r.repository).Scan(&at)
-		if errors.Is(err, sql.ErrNoRows) {
-			return r.now, nil
-		}
-		return time.UnixMilli(at), err
 	}
 	state, err := r.w.Store.Activate(ctx, r.repository)
 	return state.ActivatedAt, err

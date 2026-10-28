@@ -58,7 +58,7 @@ func TestFeatureTextDebounceReuseAndPullSummaries(t *testing.T) {
 		t.Fatalf("report = %+v", report)
 	}
 	title, keys, clean := f.text(feature)
-	if title != "Widget export" || keys != `["d-s1"]` || !clean {
+	if title != "Widget export" || keys != `[{"id":"d-s1","agent":"claude-code","session":"s1","turn":1}]` || !clean {
 		t.Fatalf("text %q %s clean %v", title, keys, clean)
 	}
 
@@ -147,15 +147,15 @@ func TestFeatureTextInputAndFailures(t *testing.T) {
 }
 
 // Decisions extracted again under new IDs keep the text without a call, as
-// they are hashed by session and first cited turn; a feature gone since is
-// skipped.
+// they are hashed by session and first cited turn, and a key decision takes
+// its new ID; a feature gone since is skipped.
 func TestFeatureTextHashesDecisionsByAddress(t *testing.T) {
 	f := newFeatureFixture(t)
 	feature := f.placed()
-	f.backend.text = func() (string, error) {
-		return `{"title":"Widget export","description":"Exports widgets.","digest":"D.","key_decisions":[]}`, nil
-	}
 	f.summarize(FeatureOptions{Manual: true})
+	if _, keys, _ := f.text(feature); !strings.Contains(keys, `"id":"d-s1"`) {
+		t.Fatalf("key decisions %s", keys)
+	}
 	d := decisions.Decision{ID: "renamed", Summary: "Export as CSV.", Category: decisions.CategoryImplementation, Who: decisions.WhoHuman,
 		Turns: []int{1}, Files: []string{"export.go"}}
 	if err := f.store.Save(context.Background(), Extraction{Meta: Meta{Agent: "claude-code", ID: "s1", Repository: repo},
@@ -166,8 +166,11 @@ func TestFeatureTextHashesDecisionsByAddress(t *testing.T) {
 		t.Fatal("new decisions did not mark the feature")
 	}
 	report := f.summarize(FeatureOptions{Manual: true})
-	if report.Features[0].Outcome != FeatureReused || f.backend.calls["text"] != 1 {
+	if report.Features[0].Outcome != FeatureReused || f.backend.calls["text"] != 1 || report.Features[0].KeyDecisions != 1 {
 		t.Fatalf("report = %+v, calls %v", report, f.backend.calls)
+	}
+	if _, keys, clean := f.text(feature); keys != `[{"id":"renamed","agent":"claude-code","session":"s1","turn":1}]` || !clean {
+		t.Fatalf("key decisions %s, clean %v", keys, clean)
 	}
 	r, err := f.worker.newRun(context.Background(), repo, "", FeatureOptions{})
 	if err != nil {

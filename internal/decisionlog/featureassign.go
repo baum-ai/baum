@@ -132,9 +132,12 @@ func (w *FeatureWorker) Assign(ctx context.Context, repository, dir string, o Fe
 		if ctx.Err() != nil {
 			return report, ctx.Err()
 		}
-		if on, err := r.refresh(ctx); err != nil || !on {
-			report.Stopped = "disabled"
+		if on, err := r.refresh(ctx); err != nil {
+			report.Stopped = "preferences_unreadable"
 			return report, err
+		} else if !on {
+			report.Stopped = "disabled"
+			return report, nil
 		}
 		placed, err := r.place(ctx, item)
 		if placed.Cost != nil {
@@ -460,12 +463,10 @@ func (r *featureRun) candidates(ctx context.Context, input assign.Item, pull pla
 			}
 		}
 	}
-	generated, err := s.pullSummaries(ctx, r.repository)
-	if err != nil {
-		return nil, err
-	}
 	ranked := rankCandidates(found, input.Paths(), pull.Feature, FeatureCandidates, FeaturePathSlots)
 	out := make([]assign.Candidate, len(ranked))
+	// Only the sample the input shows needs its summaries.
+	sampled := map[int]bool{}
 	for i, f := range ranked {
 		out[i] = assign.Candidate{ID: f.ID, Title: f.Title, Description: f.Description, Paths: f.Paths, Current: f.current,
 			Digest: f.Digest, Links: f.Links}
@@ -473,7 +474,15 @@ func (r *featureRun) candidates(ctx context.Context, input assign.Item, pull pla
 		for j, p := range f.PullRequests {
 			out[i].PullRequests[j].Title = p.Title
 		}
-		// Only the sample the input shows needs its summaries.
+		for _, j := range assign.SampledPullRequests(len(f.PullRequests)) {
+			sampled[f.PullRequests[j].Number] = true
+		}
+	}
+	generated, err := s.pullSummaries(ctx, r.repository, slices.Collect(maps.Keys(sampled)))
+	if err != nil {
+		return nil, err
+	}
+	for i, f := range ranked {
 		for _, j := range assign.SampledPullRequests(len(f.PullRequests)) {
 			number := f.PullRequests[j].Number
 			if out[i].PullRequests[j].Summary = r.reviewSummary(ctx, number); out[i].PullRequests[j].Summary == "" {
@@ -895,8 +904,17 @@ type generatedSummary struct {
 	Hash, Summary string
 }
 
-// pullSummaries reads the repository's generated pull request summaries.
-func (s *Store) pullSummaries(ctx context.Context, repository string) (map[int]generatedSummary, error) {
+// pullSummaries reads the generated summaries of the repository's pull
+// requests numbers.
+func (s *Store) pullSummaries(ctx context.Context, repository string, numbers []int) (map[int]generatedSummary, error) {
+	out := map[int]generatedSummary{}
+	if len(numbers) == 0 {
+		return out, nil
+	}
+	args := []any{repository}
+	for _, n := range numbers {
+		args = append(args, n)
+	}
 	type row struct {
 		number  int
 		summary generatedSummary
@@ -904,8 +922,8 @@ func (s *Store) pullSummaries(ctx context.Context, repository string) (map[int]g
 	rows, err := collect(func(rows *sql.Rows) (row, error) {
 		var r row
 		return r, rows.Scan(&r.number, &r.summary.Hash, &r.summary.Summary)
-	})(s.db.QueryContext(ctx, `SELECT number, content_hash, summary FROM pr_summary WHERE repository=?`, repository))
-	out := map[int]generatedSummary{}
+	})(s.db.QueryContext(ctx, `SELECT number, content_hash, summary FROM pr_summary WHERE repository=?1 AND number IN (`+
+		placeholders(2, len(numbers))+`)`, args...))
 	for _, r := range rows {
 		out[r.number] = r.summary
 	}

@@ -15,6 +15,7 @@ import (
 	"github.com/baum-ai/baum/features/assign"
 	"github.com/baum-ai/baum/internal/config"
 	"github.com/baum-ai/baum/internal/generate"
+	"github.com/baum-ai/baum/internal/github"
 	"github.com/baum-ai/baum/internal/repos"
 )
 
@@ -28,6 +29,8 @@ type scriptBackend struct {
 	pull   func() (string, error)
 	calls  map[string]int
 	onCall func()
+	// rejections is reported with every reply.
+	rejections int
 	// textInput is the last feature call's input.
 	textInput string
 }
@@ -42,7 +45,7 @@ func (b *scriptBackend) Complete(_ context.Context, req agent.CompleteRequest) (
 	if b.onCall != nil {
 		b.onCall()
 	}
-	out := agent.Completion{Model: "claude-haiku-5-5", Usage: agent.Usage{Input: 1000, Output: 100}}
+	out := agent.Completion{Model: "claude-haiku-5-5", Usage: agent.Usage{Input: 1000, Output: 100}, Rejections: b.rejections}
 	schema := string(req.Schema)
 	var reply string
 	var err error
@@ -638,10 +641,35 @@ func TestPlacementDryRunWritesNothing(t *testing.T) {
 	f.exec(`DELETE FROM pull_sync`)
 	f.clock.now = t0.Add(time.Hour)
 	f.pull(1, "One", t0.Add(time.Minute), "h1", []string{"a"})
-	f.assign(FeatureOptions{DryRun: true})
+	f.assign(FeatureOptions{DryRun: true, Manual: true})
 	var rows int
 	_ = f.store.db.QueryRow(`SELECT (SELECT COUNT(*) FROM pull_sync) + (SELECT COUNT(*) FROM feature_version) + (SELECT COUNT(*) FROM feature_settle)`).Scan(&rows)
 	if rows != 0 {
 		t.Fatalf("a dry run wrote %d rows", rows)
+	}
+}
+
+// Sync keeps a pull request's fork flag and its base's default branch, and a
+// reply the harness rejected first is recorded with the attempt.
+func TestSavePullsKeepsForksAndLedgerKeepsRejections(t *testing.T) {
+	f := newFeatureFixture(t)
+	f.clock.now = t0.Add(time.Hour)
+	pull := github.ListedPull{Number: 9, Title: "From a fork", State: "open", HeadRef: "main", HeadSHA: "h9", BaseRef: "main", BaseSHA: "b",
+		CrossRepository: true, DefaultBranch: "main", CreatedAt: t0, UpdatedAt: t0}
+	if err := f.store.SavePulls(context.Background(), repo, []github.ListedPull{pull}, "", time.Time{}); err != nil {
+		t.Fatal(err)
+	}
+	var cross int
+	var branch string
+	if err := f.store.db.QueryRow(`SELECT cross_repository, default_branch FROM pull_request WHERE number=9`).Scan(&cross, &branch); err != nil ||
+		cross != 1 || branch != "main" {
+		t.Fatalf("stored %d %q, %v", cross, branch, err)
+	}
+	f.pull(1, "Export widgets", t0.Add(time.Minute), "h1", []string{"a"})
+	f.backend.rejections = 1
+	f.assign(FeatureOptions{})
+	var reason string
+	if err := f.store.db.QueryRow(`SELECT reason FROM capture_attempt WHERE stage=?`, StageAssign).Scan(&reason); err != nil || reason != "rejected_replies=1" {
+		t.Fatalf("reason %q, %v", reason, err)
 	}
 }

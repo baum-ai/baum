@@ -200,7 +200,10 @@ Placement and feature text call as capture does (steps 6 to 8 above): the
 same backend, model, reservation (the request's byte bound and the call's
 reply bound: 4,096 tokens for a placement, 8,192 for a text or pull request
 summary), daily cap and ledger, each attempt recorded with its stage
-(`feature_assign`, `feature_summary` or `pr_summary`) and item. A missing
+(`feature_assign`, `feature_summary` or `pr_summary`) and item. An attempt
+whose reply the harness rejected against the schema before the last records
+how many (`rejected_replies=N`), the rejection detail going to the private
+log. A reply stands when the ledger cannot be written after it. A missing
 backend, an unpriced model or the daily cap stops the stage until its next
 run, with no failure counted.
 
@@ -282,7 +285,8 @@ unchanged; one with neither a description nor such a decision gets none.
 
 The text is kept with the hash of its input and its own text, decisions
 named by session and first cited turn, so the same decisions extracted again
-under new IDs keep it. When a
+under new IDs keep it. Key decisions are kept by ID and address; reused
+text takes the IDs of the current decisions at their addresses. When a
 feature's input hash is unchanged, its text is kept and it is marked clean
 without a call. The text is stored only when the feature's members did not
 change during the call; otherwise it stays behind for the next run. Up to
@@ -326,9 +330,10 @@ days, default 180) and `baum internal features link --repo <owner/name>
 counts as JSON. `baum internal features assign --repo <owner/name> [--clone
 <path>] [--dry-run] [--limit N] [--backend <b>] [--model <m>]` runs placement
 once, ignoring the activation, and prints each item; `--dry-run` prints each
-item's candidates and input size, makes no call and writes nothing. Both fail
-when the preferences cannot be read.
+item's candidates and input size, makes no call and writes nothing.
 `baum internal features summarize` takes the same flags but `--dry-run` and
-writes the text of the features behind, without the debounce. The clone
+writes the text of the features behind, without the debounce. Both read the
+preferences and the repository's settings and fail when they cannot; `sync`
+and `link` read neither. The clone
 defaults to the repository's registered one. They are for testing, with the
 daemon stopped: they write the daemon's store.

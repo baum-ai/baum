@@ -687,3 +687,43 @@ func TestFeatureGateBeforeLinking(t *testing.T) {
 		t.Fatalf("state = %+v, %v; want linked", state, err)
 	}
 }
+
+// A store whose pull requests predate the fork and default branch columns
+// gets them, and lists its pull requests again.
+func TestOpenMigratesPullRequests(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "decisions")
+	if err := os.Mkdir(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "decisions.sqlite")
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`CREATE TABLE pull_request(repository TEXT NOT NULL, number INTEGER NOT NULL, title TEXT NOT NULL,
+body TEXT NOT NULL DEFAULT '', state TEXT NOT NULL, draft INTEGER NOT NULL DEFAULT 0, author TEXT NOT NULL DEFAULT '', bot INTEGER NOT NULL DEFAULT 0,
+head_ref TEXT NOT NULL DEFAULT '', head_sha TEXT NOT NULL, base_ref TEXT NOT NULL DEFAULT '', base_sha TEXT NOT NULL,
+merge_commit_sha TEXT NOT NULL DEFAULT '', created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, merged_at INTEGER, closed_at INTEGER,
+paths_head_sha TEXT NOT NULL DEFAULT '', paths_json TEXT, paths_failures INTEGER NOT NULL DEFAULT 0, paths_retry_at INTEGER,
+PRIMARY KEY(repository, number));
+CREATE TABLE pull_sync(repository TEXT PRIMARY KEY, etag TEXT NOT NULL DEFAULT '', cursor_updated_at INTEGER,
+activated_at INTEGER NOT NULL, relinked_at INTEGER);
+INSERT INTO pull_sync(repository, etag, cursor_updated_at, activated_at) VALUES ('acme/widgets', '"e1"', 5, 1)`); err != nil {
+		t.Fatal(err)
+	}
+	_ = db.Close()
+	for i, want := range []string{"", `"e2"`} { // and again, once migrated: no second reset
+		s, err := Open(path, OpenOptions{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		state, err := s.Activate(context.Background(), "acme/widgets")
+		if err != nil || state.ETag != want || (i == 0 && !state.Cursor.IsZero()) || state.ActivatedAt.UnixMilli() != 1 {
+			t.Fatalf("open %d: state %+v, %v", i, state, err)
+		}
+		if _, err := s.db.Exec(`UPDATE pull_request SET cross_repository=1, default_branch='main'; UPDATE pull_sync SET etag='"e2"'`); err != nil {
+			t.Fatal(err)
+		}
+		_ = s.Close()
+	}
+}

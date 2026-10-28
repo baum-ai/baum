@@ -84,9 +84,12 @@ func (w *FeatureWorker) Summarize(ctx context.Context, repository, dir string, o
 		if ctx.Err() != nil {
 			return report, ctx.Err()
 		}
-		if on, err := r.refresh(ctx); err != nil || !on {
-			report.Stopped = "disabled"
+		if on, err := r.refresh(ctx); err != nil {
+			report.Stopped = "preferences_unreadable"
 			return report, err
+		} else if !on {
+			report.Stopped = "disabled"
+			return report, nil
 		}
 		out, err := r.summarize(ctx, p[0])
 		if out.Cost != nil {
@@ -122,8 +125,8 @@ AND summarized_version < membership_version AND changed_at <= ? ORDER BY COALESC
 // featureText is a feature's stored text.
 type featureText struct {
 	Title, Description, Digest string
-	// KeyDecisions are decision IDs.
-	KeyDecisions []string
+	// KeyDecisions are the decisions the text names, each by ID and address.
+	KeyDecisions []keyDecision
 	// InputHash is featureTextHash's, "" when the text may not be reused.
 	InputHash string
 }
@@ -251,7 +254,7 @@ WHERE fs.feature_id=?1 ORDER BY 2, 3, 1`, featureID))
 // summary) leaves it behind.
 func (s *Store) storeSummary(ctx context.Context, featureID string, version int64, text featureText, complete bool) (bool, error) {
 	if text.KeyDecisions == nil {
-		text.KeyDecisions = []string{}
+		text.KeyDecisions = []keyDecision{}
 	}
 	keys, err := json.Marshal(text.KeyDecisions)
 	if err != nil {
@@ -304,7 +307,11 @@ func (r *featureRun) summarize(ctx context.Context, featureID string) (Summarize
 		out.Outcome = FeatureEmpty
 		return out, s.settleItem(write, r.version, r.repository, kindFeature, featureID, key, "")
 	}
-	generated, err := s.pullSummaries(ctx, r.repository)
+	numbers := make([]int, len(src.Pulls))
+	for i, pull := range src.Pulls {
+		numbers[i] = pull.Number
+	}
+	generated, err := s.pullSummaries(ctx, r.repository, numbers)
 	if err != nil {
 		return out, err
 	}
@@ -352,8 +359,10 @@ func (r *featureRun) summarize(ctx context.Context, featureID string) (Summarize
 	out.Decisions, out.InputBytes = len(rendered.Rendered), len(rendered.Input)
 	if hash := featureTextHash(inputHash, src.Text, src.Decisions); pullErr == nil && hash != "" && hash == src.Text.InputHash && src.Text.Title != "" {
 		// Written from this input already: a call would differ only in its
-		// wording.
-		written, err := s.storeSummary(write, featureID, src.Version, src.Text, true)
+		// wording. Key decisions extracted again under new IDs take them.
+		kept := src.Text
+		kept.KeyDecisions, _ = currentKeys(src.Text.KeyDecisions, src.Decisions)
+		written, err := s.storeSummary(write, featureID, src.Version, kept, true)
 		if err != nil {
 			return out, err
 		}
@@ -398,7 +407,7 @@ func (r *featureRun) summarize(ctx context.Context, featureID string) (Summarize
 		// One key decision per address, the first named.
 		if address := addressOf(src.Decisions[index]); !keyed[address] {
 			keyed[address] = true
-			stored.KeyDecisions = append(stored.KeyDecisions, src.Decisions[index].ID)
+			stored.KeyDecisions = append(stored.KeyDecisions, keyDecision{ID: src.Decisions[index].ID, decisionAddress: address})
 		}
 	}
 	if pullErr == nil {
@@ -506,13 +515,13 @@ func featureInputHash(rendered summary.RenderedFeature, decisions []Decision) st
 // decisions by address, so text stored any other way never matches; "" when
 // a key decision is none of decisions, so such text is never reused.
 func featureTextHash(inputHash string, text featureText, decisions []Decision) string {
+	current, ok := currentKeys(text.KeyDecisions, decisions)
+	if !ok {
+		return ""
+	}
 	keys := []decisionAddress{}
-	for _, id := range text.KeyDecisions {
-		i := slices.IndexFunc(decisions, func(d Decision) bool { return d.ID == id })
-		if i < 0 {
-			return ""
-		}
-		keys = append(keys, addressOf(decisions[i]))
+	for _, key := range current {
+		keys = append(keys, key.decisionAddress)
 	}
 	encoded, _ := json.Marshal(struct {
 		Title        string            `json:"title"`
@@ -521,6 +530,26 @@ func featureTextHash(inputHash string, text featureText, decisions []Decision) s
 		KeyDecisions []decisionAddress `json:"key_decisions"`
 	}{text.Title, text.Description, text.Digest, keys})
 	return summary.ContentHash(inputHash, string(encoded))
+}
+
+// keyDecision is a key decision as stored: its ID and its address.
+type keyDecision struct {
+	ID string `json:"id"`
+	decisionAddress
+}
+
+// currentKeys maps key decisions to the current decisions at their
+// addresses, with those decisions' IDs; false when one has none.
+func currentKeys(keys []keyDecision, decisions []Decision) ([]keyDecision, bool) {
+	out := make([]keyDecision, 0, len(keys))
+	for _, key := range keys {
+		i := slices.IndexFunc(decisions, func(d Decision) bool { return addressOf(d) == key.decisionAddress })
+		if i < 0 {
+			return nil, false
+		}
+		out = append(out, keyDecision{ID: decisions[i].ID, decisionAddress: key.decisionAddress})
+	}
+	return out, true
 }
 
 // addCost adds a call's cost, when known, to a total.

@@ -85,38 +85,43 @@ const (
 )
 
 // migrate brings a store an earlier release made up to the schema: the
-// ledger's stage and item columns, added when missing.
+// ledger's stage and item columns, and the pull requests' fork and default
+// branch columns, added when missing. Pull requests listed before the
+// latter are listed again: the sync state's ETag and cursor are reset.
 func migrate(ctx context.Context, db *sql.DB) error {
-	rows, err := db.QueryContext(ctx, `SELECT name FROM pragma_table_info('capture_attempt')`)
-	if err != nil {
-		return err
-	}
 	have := map[string]bool{}
-	for rows.Next() {
-		var name string
-		if err := rows.Scan(&name); err != nil {
-			_ = rows.Close()
+	for _, table := range []string{"capture_attempt", "pull_request"} {
+		names, err := collect(scanString)(db.QueryContext(ctx, `SELECT name FROM pragma_table_info(?)`, table))
+		if err != nil {
 			return err
 		}
-		have[name] = true
-	}
-	if err := rows.Err(); err != nil {
-		_ = rows.Close()
-		return err
-	}
-	if err := rows.Close(); err != nil {
-		return err
-	}
-	for _, column := range []struct{ name, ddl string }{
-		{"stage", `ALTER TABLE capture_attempt ADD COLUMN stage TEXT NOT NULL DEFAULT 'capture'`},
-		{"item", `ALTER TABLE capture_attempt ADD COLUMN item TEXT`},
-	} {
-		// Another process opening the store may add it first.
-		if !have[column.name] {
-			if _, err := db.ExecContext(ctx, column.ddl); err != nil && !strings.Contains(err.Error(), "duplicate column name") {
-				return err
-			}
+		for _, name := range names {
+			have[table+"."+name] = true
 		}
+	}
+	relist := false
+	for _, column := range []struct {
+		name, ddl string
+		relist    bool
+	}{
+		{"capture_attempt.stage", `ALTER TABLE capture_attempt ADD COLUMN stage TEXT NOT NULL DEFAULT 'capture'`, false},
+		{"capture_attempt.item", `ALTER TABLE capture_attempt ADD COLUMN item TEXT`, false},
+		{"pull_request.cross_repository", `ALTER TABLE pull_request ADD COLUMN cross_repository INTEGER NOT NULL DEFAULT 0`, true},
+		{"pull_request.default_branch", `ALTER TABLE pull_request ADD COLUMN default_branch TEXT NOT NULL DEFAULT ''`, true},
+	} {
+		if have[column.name] {
+			continue
+		}
+		// Another process opening the store may add it first.
+		_, err := db.ExecContext(ctx, column.ddl)
+		if err != nil && !strings.Contains(err.Error(), "duplicate column name") {
+			return err
+		}
+		relist = relist || (err == nil && column.relist)
+	}
+	if relist {
+		_, err := db.ExecContext(ctx, `UPDATE pull_sync SET etag='', cursor_updated_at=NULL`)
+		return err
 	}
 	return nil
 }
@@ -435,12 +440,26 @@ func (s *Store) ReplaceSessionCommits(ctx context.Context, repository string, sh
 	now := s.now()
 	return s.inTx(ctx, func(tx *sql.Tx) error {
 		before := map[string][]SessionKey{}
-		for _, sha := range shas {
-			sessions, err := commitSessions(ctx, tx, repository, []string{sha})
+		for chunk := range slices.Chunk(shas, 500) {
+			args := []any{repository}
+			for _, sha := range chunk {
+				args = append(args, sha)
+			}
+			type link struct {
+				sha string
+				key SessionKey
+			}
+			links, err := collect(func(rows *sql.Rows) (link, error) {
+				var l link
+				return l, rows.Scan(&l.sha, &l.key.Agent, &l.key.ID)
+			})(tx.QueryContext(ctx, `SELECT sha, agent, session_id FROM session_commit WHERE repository=?1 AND sha IN (`+
+				placeholders(2, len(chunk))+`)`, args...))
 			if err != nil {
 				return err
 			}
-			before[sha] = sessions
+			for _, l := range links {
+				before[l.sha] = append(before[l.sha], l.key)
+			}
 		}
 		after := map[string][]SessionKey{}
 		for _, l := range links {

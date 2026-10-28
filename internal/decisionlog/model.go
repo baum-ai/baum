@@ -3,9 +3,11 @@ package decisionlog
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log/slog"
 	"math"
+	"strings"
 	"time"
 
 	"github.com/baum-ai/baum/agent"
@@ -126,6 +128,10 @@ type completerModel struct {
 	user  string
 	model string
 	usage agent.Usage
+	// rejections counts the replies the harness rejected against the
+	// schema; log receives their detail.
+	rejections int
+	log        *slog.Logger
 }
 
 func (m *completerModel) Complete(ctx context.Context, req decisions.ModelRequest) (decisions.ModelResponse, error) {
@@ -134,8 +140,9 @@ func (m *completerModel) Complete(ctx context.Context, req decisions.ModelReques
 		return decisions.ModelResponse{}, err
 	}
 	m.called, m.user = true, req.User
-	out, err := m.completer.Complete(ctx, agent.CompleteRequest{System: req.System, User: req.User, Schema: schema, MaxOutputTokens: int(req.MaxOutputTokens)})
-	m.model, m.usage, m.raw = out.Model, out.Usage, out.Document
+	out, err := m.completer.Complete(ctx, agent.CompleteRequest{System: req.System, User: req.User, Schema: schema,
+		MaxOutputTokens: int(req.MaxOutputTokens), Logger: m.log})
+	m.model, m.usage, m.raw, m.rejections = out.Model, out.Usage, out.Document, out.Rejections
 	billed := func(err error) error {
 		return &decisions.BilledError{Model: out.Model, Usage: decisionUsage(out.Usage), Err: err}
 	}
@@ -275,7 +282,7 @@ func (c caller) begin(ctx context.Context, p planned, a Attempt) (*completerMode
 	}
 	a.Backend, a.Model, a.Reserved = p.Backend, p.Model, p.Reserved
 	id, err := c.store.Begin(ctx, a)
-	return &completerModel{completer: completer, redactor: c.redactor}, id, "", err
+	return &completerModel{completer: completer, redactor: c.redactor, log: c.log}, id, "", err
 }
 
 // finish settles the attempt once its call returned: abandoned when the
@@ -294,6 +301,11 @@ func (c caller) finish(ctx context.Context, id int64, m *completerModel, callErr
 		state, reason = AttemptAbandoned, "cancelled"
 	case callErr != nil:
 		state, reason = AttemptFailed, failureReason(callErr)
+	}
+	if m.rejections > 0 {
+		// The harness rejected a reply against the schema: kept with the
+		// attempt, the detail in the private log.
+		reason = strings.TrimPrefix(fmt.Sprintf("%s rejected_replies=%d", reason, m.rejections), " ")
 	}
 	return state, spent, usage, c.store.Settle(ctx, id, state, reason, spent, usage)
 }
@@ -328,8 +340,10 @@ func (c caller) complete(ctx context.Context, prefs repos.Preferences, settings 
 	// The ledger outlives a cancelled call: it may be paid for.
 	_, spent, _, err := c.finish(context.WithoutCancel(ctx), id, m, callErr, ctx.Err() != nil)
 	result := callResult{JSON: response.JSON, Called: m.called, Cost: spent}
-	if callErr != nil {
-		return result, callErr
+	if err != nil {
+		// The reply stands: a ledger that could not be written is not the
+		// call's failure.
+		c.log.Warn("decision log: model call not settled in the ledger", "stage", a.Stage, "error", err)
 	}
-	return result, err
+	return result, callErr
 }

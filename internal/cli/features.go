@@ -45,7 +45,7 @@ the last --days days. It writes the daemon's store: run it with the daemon
 stopped.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return runFeatures(cmd, repository, clone, days, func(ctx context.Context, w *decisionlog.FeatureWorker, dir string) (any, error) {
+			return runFeatures(cmd, repository, clone, days, false, func(ctx context.Context, w *decisionlog.FeatureWorker, dir string) (any, error) {
 				return w.Sync(ctx, repository, dir)
 			})
 		},
@@ -59,7 +59,7 @@ stopped.`,
 JSON. It writes the daemon's store: run it with the daemon stopped.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return runFeatures(cmd, repository, clone, 0, func(ctx context.Context, w *decisionlog.FeatureWorker, dir string) (any, error) {
+			return runFeatures(cmd, repository, clone, 0, false, func(ctx context.Context, w *decisionlog.FeatureWorker, dir string) (any, error) {
 				return w.Index(ctx, repository, dir, nil, true)
 			})
 		},
@@ -81,7 +81,7 @@ each item's candidates and input size and makes no call.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			o.Manual = true
-			return runFeatures(cmd, repository, clone, 0, func(ctx context.Context, w *decisionlog.FeatureWorker, dir string) (any, error) {
+			return runFeatures(cmd, repository, clone, 0, true, func(ctx context.Context, w *decisionlog.FeatureWorker, dir string) (any, error) {
 				return w.Assign(ctx, repository, dir, o)
 			})
 		},
@@ -96,7 +96,7 @@ its debounce, and prints each feature taken as JSON.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			o.Manual = true
-			return runFeatures(cmd, repository, clone, 0, func(ctx context.Context, w *decisionlog.FeatureWorker, dir string) (any, error) {
+			return runFeatures(cmd, repository, clone, 0, true, func(ctx context.Context, w *decisionlog.FeatureWorker, dir string) (any, error) {
 				return w.Summarize(ctx, repository, dir, o)
 			})
 		},
@@ -106,7 +106,10 @@ its debounce, and prints each feature taken as JSON.`,
 	return cmd
 }
 
-func runFeatures(cmd *cobra.Command, repository, clone string, days int, stage func(context.Context, *decisionlog.FeatureWorker, string) (any, error)) error {
+// runFeatures runs one stage; calls, for placement and text, reads the
+// preferences and the repository's settings, which choose the backend and
+// hold the daily cap.
+func runFeatures(cmd *cobra.Command, repository, clone string, days int, calls bool, stage func(context.Context, *decisionlog.FeatureWorker, string) (any, error)) error {
 	ctx := cmd.Context()
 	parsed, err := github.ParseRepository(repository)
 	if err != nil {
@@ -132,14 +135,14 @@ func runFeatures(cmd *cobra.Command, repository, clone string, days int, stage f
 	}
 	defer func() { _ = store.Close() }()
 	worker := &decisionlog.FeatureWorker{Store: store, GitHub: githubReaders(cfg), Config: cfg, Window: time.Duration(days) * 24 * time.Hour}
-	// The preferences and the repository's settings choose the backend and
-	// hold the daily cap.
-	registry, err := repos.OpenReadOnly("")
-	if err != nil {
-		return fmt.Errorf("reading the preferences: %w", err)
+	if calls {
+		registry, err := repos.OpenReadOnly("")
+		if err != nil {
+			return fmt.Errorf("reading the preferences: %w", err)
+		}
+		defer func() { _ = registry.Close() }()
+		worker.Registry = registry
 	}
-	defer func() { _ = registry.Close() }()
-	worker.Registry = registry
 	report, err := stage(ctx, worker, clone)
 	encoder := json.NewEncoder(cmd.OutOrStdout())
 	encoder.SetIndent("", "  ")

@@ -3,6 +3,7 @@ package claude
 import (
 	"bytes"
 	"context"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -57,5 +58,24 @@ func TestCompleteReportsUsageOfAFailedCall(t *testing.T) {
 	completion, err := (&Backend{Binary: script, versionOK: true}).Complete(context.Background(), agent.CompleteRequest{System: "s", User: "u", Schema: []byte(`{}`)})
 	if err == nil || completion.Usage.Input != 100 || completion.Model != "claude-haiku-5-5" {
 		t.Fatalf("%+v %v", completion, err)
+	}
+}
+
+// A rejected reply is counted and its detail goes to the request's logger.
+func TestCompleteReportsRejectedReplies(t *testing.T) {
+	script := filepath.Join(t.TempDir(), "claude")
+	events := []string{
+		`{"type":"assistant","message":{"id":"m1","model":"claude-haiku-5-5","usage":{"input_tokens":10,"output_tokens":2},"content":[{"type":"tool_use","id":"so1","name":"StructuredOutput","input":{}}]}}`,
+		`{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"so1","is_error":true,"content":"Output validation failed: choice"}]}}`,
+		`{"type":"result","subtype":"error_max_turns","usage":{"input_tokens":10,"output_tokens":2}}`,
+	}
+	if err := os.WriteFile(script, []byte("#!/bin/sh\ncat >/dev/null\ncat <<'EVENTS'\n"+strings.Join(events, "\n")+"\nEVENTS\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	var logs bytes.Buffer
+	completion, _ := (&Backend{Binary: script, versionOK: true}).Complete(context.Background(),
+		agent.CompleteRequest{System: "s", User: "u", Schema: []byte(`{}`), Logger: slog.New(slog.NewJSONHandler(&logs, nil))})
+	if completion.Rejections != 1 || !bytes.Contains(logs.Bytes(), []byte("Output validation failed: choice")) {
+		t.Fatalf("%+v, logs %s", completion, logs.String())
 	}
 }
