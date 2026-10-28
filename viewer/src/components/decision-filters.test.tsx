@@ -206,18 +206,18 @@ describe("the filter controls", () => {
     type(box, "platform/");
     expect(first.aborted).toBe(true);
     act(() => vi.advanceTimersByTime(100));
-    type(box, "platform/int");
+    type(box, "server/int");
     act(() => vi.advanceTimersByTime(149));
     expect(files).toHaveBeenCalledTimes(1);
     act(() => vi.advanceTimersByTime(1));
     expect(files).toHaveBeenCalledTimes(2);
-    expect(files.mock.calls[1]![0]).toBe("platform/int");
+    expect(files.mock.calls[1]![0]).toBe("server/int");
 
     await act(async () => {
-      answers.at(-1)!([{ path: "platform/internal/", kind: "folder", decision_count: 4 }]);
+      answers.at(-1)!([{ path: "server/internal/", kind: "folder", decision_count: 4 }]);
       await Promise.resolve();
     });
     const options = [...container.querySelectorAll('[role="option"]')];
-    expect(options.map((each) => each.textContent)).toEqual(["platform/internal/4"]);
+    expect(options.map((each) => each.textContent)).toEqual(["server/internal/4"]);
   });
 });

@@ -174,7 +174,7 @@ describe("decision filters in the address", () => {
     const filters = {
       ...NO_FILTERS,
       q: "cursor",
-      file: "ui/app/",
+      file: "web/app/",
       person: "ada@example.com",
       who: ["agent_proposed_human_approved" as const],
       categories: ["interface" as const],
@@ -300,7 +300,7 @@ describe("the feature filters", () => {
       {
         ...NO_FILTERS,
         q: "json",
-        file: "ui/app",
+        file: "web/app",
         person: "ada@example.com",
         from: "2026-10-01",
         to: "2026-10-02",
