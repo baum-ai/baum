@@ -236,21 +236,38 @@ func (l *List) Estimate(model string, maxTokens, maxCalls int) *float64 {
 	if model == "" || maxTokens <= 0 || maxCalls <= 0 {
 		return nil
 	}
-	m := l.Normalize(model, "")
-	entry, ok := l.entry(m.Canonical)
+	charged, read, ok := l.highestRates(model)
 	if !ok {
 		return nil
-	}
-	charged, read := 0.0, 0.0
-	for _, r := range []RateSet{entry.Base(), entry.Above.RateSet(), entry.Fast, entry.FastAbove.RateSet()} {
-		charged = math.Max(charged, math.Max(math.Max(r.Input, r.Output), math.Max(r.CacheWrite, r.CacheWrite1h)))
-		read = math.Max(read, r.CacheRead)
 	}
 	cost := float64(maxTokens) * (charged + float64(maxCalls)*read) / 1e6
 	if math.IsInf(cost, 0) || math.IsNaN(cost) {
 		return nil
 	}
 	return &cost
+}
+
+// HighestRate is the model's highest listed price per million charged
+// tokens (input, output or cache write) over all tiers and speeds, so no mix
+// of them costs more per token; false for a model the list does not know.
+func (l *List) HighestRate(model string) (float64, bool) {
+	charged, _, ok := l.highestRates(model)
+	return charged, ok && charged > 0
+}
+
+func (l *List) highestRates(model string) (charged, read float64, ok bool) {
+	if model == "" {
+		return 0, 0, false
+	}
+	entry, ok := l.entry(l.Normalize(model, "").Canonical)
+	if !ok {
+		return 0, 0, false
+	}
+	for _, r := range []RateSet{entry.Base(), entry.Above.RateSet(), entry.Fast, entry.FastAbove.RateSet()} {
+		charged = math.Max(charged, math.Max(math.Max(r.Input, r.Output), math.Max(r.CacheWrite, r.CacheWrite1h)))
+		read = math.Max(read, r.CacheRead)
+	}
+	return charged, read, true
 }
 
 // OutcomeCost keeps unknown or ambiguous usage unknown. Agent usage is already

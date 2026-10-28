@@ -30,8 +30,10 @@ func TestParseFeatureTaxonomyRefusesABadTaxonomy(t *testing.T) {
 		"too many features": func(t *FeatureTaxonomy) { t.Features = make([]TaxonomyFeature, MaxTaxonomyFeatures+1) },
 		"no title":          func(t *FeatureTaxonomy) { t.Features[0].Title = " " },
 		"long title":        func(t *FeatureTaxonomy) { t.Features[0].Title = strings.Repeat("x", MaxTaxonomyTitleRunes+1) },
-		"long description":  func(t *FeatureTaxonomy) { t.Features[1].Description = strings.Repeat("é", MaxTaxonomyDescriptionRunes+1) },
-		"NUL":               func(t *FeatureTaxonomy) { t.Features[1].Description = "a\x00b" },
+		"long description": func(t *FeatureTaxonomy) {
+			t.Features[1].Description = strings.Repeat("é", MaxTaxonomyDescriptionRunes+1)
+		},
+		"NUL": func(t *FeatureTaxonomy) { t.Features[1].Description = "a\x00b" },
 	} {
 		bad := good
 		bad.Features = append([]TaxonomyFeature(nil), good.Features...)

@@ -39,11 +39,12 @@ CREATE TABLE IF NOT EXISTS session_commit(
 CREATE INDEX IF NOT EXISTS session_commit_session ON session_commit(agent, session_id);
 CREATE TABLE IF NOT EXISTS pull_sync(
   repository TEXT PRIMARY KEY, etag TEXT NOT NULL DEFAULT '', cursor_updated_at INTEGER,
-  activated_at INTEGER NOT NULL, relinked_at INTEGER);
+  activated_at INTEGER NOT NULL, relinked_at INTEGER, history_listed_at INTEGER);
 CREATE TABLE IF NOT EXISTS feature_version(
   id INTEGER PRIMARY KEY AUTOINCREMENT, repository TEXT NOT NULL, state TEXT NOT NULL,
   created_at INTEGER NOT NULL, switched_at INTEGER, stopped TEXT NOT NULL DEFAULT '',
-  spent_usd REAL NOT NULL DEFAULT 0, total INTEGER NOT NULL DEFAULT 0, placed INTEGER NOT NULL DEFAULT 0);
+  spent_usd REAL NOT NULL DEFAULT 0, total INTEGER NOT NULL DEFAULT 0, placed INTEGER NOT NULL DEFAULT 0,
+  taxonomy_id INTEGER, unpriced_calls INTEGER NOT NULL DEFAULT 0);
 CREATE UNIQUE INDEX IF NOT EXISTS feature_version_current ON feature_version(repository) WHERE state='current';
 CREATE UNIQUE INDEX IF NOT EXISTS feature_version_building ON feature_version(repository) WHERE state='building';
 CREATE TABLE IF NOT EXISTS feature(
@@ -74,7 +75,14 @@ CREATE TABLE IF NOT EXISTS pr_summary(
   repository TEXT NOT NULL, number INTEGER NOT NULL, content_hash TEXT NOT NULL, summary TEXT NOT NULL, created_at INTEGER NOT NULL,
   PRIMARY KEY(repository, number));
 CREATE TABLE IF NOT EXISTS feature_consolidation(
-  repository TEXT PRIMARY KEY, last_pass_at INTEGER, fingerprint TEXT NOT NULL DEFAULT '');`
+  repository TEXT PRIMARY KEY, last_pass_at INTEGER, fingerprint TEXT NOT NULL DEFAULT '');
+CREATE TABLE IF NOT EXISTS feature_taxonomy(
+  id INTEGER PRIMARY KEY AUTOINCREMENT, repository TEXT NOT NULL, revision TEXT NOT NULL, created_at INTEGER NOT NULL,
+  document_json TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS feature_taxonomy_repository ON feature_taxonomy(repository, created_at);
+CREATE TABLE IF NOT EXISTS feature_seed(
+  version_id INTEGER NOT NULL, feature_id TEXT NOT NULL, entry INTEGER NOT NULL, paths_json TEXT NOT NULL,
+  PRIMARY KEY(version_id, feature_id));`
 
 // Feature version states.
 const (
@@ -86,6 +94,8 @@ const (
 // migrate brings a store an earlier release made up to the schema, in one
 // transaction: the ledger's stage, item and rejections columns, and the pull
 // requests' fork and default branch columns, and the features' split time,
+// the sync state's history listing and the feature versions' taxonomy and
+// unpriced calls,
 // added when missing. Pull
 // requests listed before the latter are listed again: the sync state's ETag
 // and cursor are reset. The columns are read without a lock; only when one is
@@ -146,6 +156,9 @@ var migrations = []migration{
 	{"pull_request", "cross_repository", `ALTER TABLE pull_request ADD COLUMN cross_repository INTEGER NOT NULL DEFAULT 0`, true},
 	{"pull_request", "default_branch", `ALTER TABLE pull_request ADD COLUMN default_branch TEXT NOT NULL DEFAULT ''`, true},
 	{"feature", "split_at", `ALTER TABLE feature ADD COLUMN split_at INTEGER`, false},
+	{"pull_sync", "history_listed_at", `ALTER TABLE pull_sync ADD COLUMN history_listed_at INTEGER`, false},
+	{"feature_version", "taxonomy_id", `ALTER TABLE feature_version ADD COLUMN taxonomy_id INTEGER`, false},
+	{"feature_version", "unpriced_calls", `ALTER TABLE feature_version ADD COLUMN unpriced_calls INTEGER NOT NULL DEFAULT 0`, false},
 }
 
 // missingColumns are the migrations whose column the store lacks.
@@ -153,7 +166,7 @@ func missingColumns(ctx context.Context, q interface {
 	QueryContext(context.Context, string, ...any) (*sql.Rows, error)
 }) ([]migration, error) {
 	have := map[string]bool{}
-	for _, table := range []string{"capture_attempt", "pull_request", "feature"} {
+	for _, table := range []string{"capture_attempt", "pull_request", "feature", "pull_sync", "feature_version"} {
 		names, err := collect(scanString)(q.QueryContext(ctx, `SELECT name FROM pragma_table_info(?)`, table))
 		if err != nil {
 			return nil, err
@@ -227,17 +240,20 @@ type PullSync struct {
 	ActivatedAt time.Time
 	// RelinkedAt is the last full re-link, zero for none.
 	RelinkedAt time.Time
+	// HistoryListedAt is when a first build listed the whole history, zero
+	// before.
+	HistoryListedAt time.Time
 }
 
 // Activate reads the repository's sync state, activating the repository the
 // first time.
 func (s *Store) Activate(ctx context.Context, repository string) (PullSync, error) {
 	var st PullSync
-	var cursor, relinked sql.NullInt64
+	var cursor, relinked, history sql.NullInt64
 	var activated int64
 	read := func() error {
-		return s.db.QueryRowContext(ctx, `SELECT etag, cursor_updated_at, activated_at, relinked_at FROM pull_sync WHERE repository=?`, repository).
-			Scan(&st.ETag, &cursor, &activated, &relinked)
+		return s.db.QueryRowContext(ctx, `SELECT etag, cursor_updated_at, activated_at, relinked_at, history_listed_at FROM pull_sync WHERE repository=?`,
+			repository).Scan(&st.ETag, &cursor, &activated, &relinked, &history)
 	}
 	err := read()
 	if errors.Is(err, sql.ErrNoRows) {
@@ -255,6 +271,9 @@ func (s *Store) Activate(ctx context.Context, repository string) (PullSync, erro
 	if relinked.Valid {
 		st.RelinkedAt = time.UnixMilli(relinked.Int64)
 	}
+	if history.Valid {
+		st.HistoryListedAt = time.UnixMilli(history.Int64)
+	}
 	return st, nil
 }
 
@@ -264,6 +283,28 @@ func (s *Store) Activate(ctx context.Context, repository string) (PullSync, erro
 // new head or base starts the count of failed reads again, and a new base
 // has the pull request's commits read again.
 func (s *Store) SavePulls(ctx context.Context, repository string, pulls []github.ListedPull, etag string, cursor time.Time) error {
+	return s.savePulls(ctx, repository, pulls, func(tx *sql.Tx) error {
+		if cursor.IsZero() {
+			return nil
+		}
+		_, err := tx.ExecContext(ctx, `UPDATE pull_sync SET etag=?, cursor_updated_at=MAX(COALESCE(cursor_updated_at, 0), ?) WHERE repository=?`,
+			etag, cursor.UnixMilli(), repository)
+		return err
+	})
+}
+
+// SaveHistoryPulls upserts a listing of the repository's whole history as
+// SavePulls does, leaving the sync's ETag and cursor as they are, and
+// records that the history was listed.
+func (s *Store) SaveHistoryPulls(ctx context.Context, repository string, pulls []github.ListedPull) error {
+	return s.savePulls(ctx, repository, pulls, func(tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx, `UPDATE pull_sync SET history_listed_at=? WHERE repository=?`, s.now().UnixMilli(), repository)
+		return err
+	})
+}
+
+// savePulls upserts pulls and then runs after, in one transaction.
+func (s *Store) savePulls(ctx context.Context, repository string, pulls []github.ListedPull, after func(*sql.Tx) error) error {
 	now := s.now()
 	return s.inTx(ctx, func(tx *sql.Tx) error {
 		version, err := liveVersion(ctx, tx, repository, false, now)
@@ -306,12 +347,7 @@ updated_at=excluded.updated_at, merged_at=excluded.merged_at, closed_at=excluded
 				return err
 			}
 		}
-		if cursor.IsZero() {
-			return nil
-		}
-		_, err = tx.ExecContext(ctx, `UPDATE pull_sync SET etag=?, cursor_updated_at=MAX(COALESCE(cursor_updated_at, 0), ?) WHERE repository=?`,
-			etag, cursor.UnixMilli(), repository)
-		return err
+		return after(tx)
 	})
 }
 

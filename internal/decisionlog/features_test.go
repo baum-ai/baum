@@ -764,3 +764,37 @@ func TestOpenKeepsACurrentStoresSyncState(t *testing.T) {
 		t.Fatalf("state %+v, %v", state, err)
 	}
 }
+
+// ListHistory lists every pull request once, whatever their age, and
+// leaves the sync's ETag and cursor as they were.
+func TestListHistoryOnce(t *testing.T) {
+	c := &clock{time.Date(2026, 7, 2, 9, 0, 0, 0, time.UTC)}
+	s := openStore(t, c)
+	reader := &fakeReader{}
+	old := pullJSON(1, strings.Repeat("a", 40), strings.Repeat("b", 40))
+	old["created_at"], old["updated_at"] = "2023-01-01T08:00:00Z", "2023-01-02T08:00:00Z"
+	reader.set(old, pullJSON(2, strings.Repeat("c", 40), strings.Repeat("b", 40)))
+	w := &FeatureWorker{Store: s, Now: c.Now,
+		GitHub: func(context.Context, github.Repository) (github.Reader, error) { return reader, nil }}
+	// The first sync lists the recent one; reading its paths fails, as the
+	// directory is no clone.
+	_, _ = w.Sync(context.Background(), "acme/widgets", t.TempDir())
+	before, err := s.Activate(context.Background(), "acme/widgets")
+	if err != nil || before.ETag == "" || before.Cursor.IsZero() {
+		t.Fatalf("state after the sync %+v, %v", before, err)
+	}
+	report, err := w.ListHistory(context.Background(), "acme/widgets")
+	if err != nil || !report.Listed || report.PullRequests != 2 {
+		t.Fatalf("report = %+v, %v", report, err)
+	}
+	after, err := s.Activate(context.Background(), "acme/widgets")
+	if err != nil || after.ETag != before.ETag || !after.Cursor.Equal(before.Cursor) || after.HistoryListedAt.IsZero() {
+		t.Fatalf("state %+v, then %+v, %v", before, after, err)
+	}
+	var stored int
+	_ = s.db.QueryRow(`SELECT COUNT(*) FROM pull_request WHERE repository='acme/widgets'`).Scan(&stored)
+	again, err := w.ListHistory(context.Background(), "acme/widgets")
+	if err != nil || again.Listed || again.Calls != 0 || stored != 2 {
+		t.Fatalf("second listing %+v, %v; %d stored", again, err, stored)
+	}
+}
