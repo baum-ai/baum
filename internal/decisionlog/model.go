@@ -27,8 +27,6 @@ const (
 	MaxOutputTokens = 16_384
 	// MaxTranscriptBytes caps the session's own files.
 	MaxTranscriptBytes = 64 << 20
-	// SessionDailyCap bounds one session's spend per day, in US dollars.
-	SessionDailyCap = 0.25
 )
 
 // newExtractor is the extractor of the published decision prompt.
