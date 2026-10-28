@@ -18,13 +18,18 @@ const DefaultThreadTTL = 10 * time.Minute
 // through the Inbox does not read GitHub every time a panel shows one. An
 // entry is served while it is younger than TTL and holds as many threads as
 // discovery counts unresolved; a thread resolved from the app leaves it at
-// once. It is safe for concurrent use; the zero value is ready.
+// once. What it holds was read with the signed-in account's credential, so
+// a change of account empties it (ResetIdentity). It is safe for concurrent
+// use; the zero value is ready.
 type ThreadCache struct {
 	TTL time.Duration
 	Now func() time.Time
 
 	mu      sync.Mutex
 	entries map[string]cachedThreads
+	// gen counts account changes, so a read that began before one is not
+	// stored.
+	gen uint64
 }
 
 type cachedThreads struct {
@@ -50,32 +55,46 @@ func (c *ThreadCache) ttl() time.Duration {
 	return DefaultThreadTTL
 }
 
-// get returns the cached threads of the pull request. unresolved is
-// discovery's count, or negative when unknown; a list that no longer matches
-// it is stale. A capped list is never compared.
-func (c *ThreadCache) get(key string, unresolved int) (Threads, bool) {
+// ResetIdentity forgets every list: the GitHub account changed or was
+// disconnected. A read already under way is not stored.
+func (c *ThreadCache) ResetIdentity() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.entries = nil
+	c.gen++
+}
+
+// get returns the cached threads of the pull request, or the generation a
+// read from GitHub must store under. unresolved is discovery's count, or
+// negative when unknown; a list that no longer matches it is stale. A capped
+// list is never compared.
+func (c *ThreadCache) get(key string, unresolved int) (Threads, uint64, bool) {
 	if c == nil {
-		return Threads{}, false
+		return Threads{}, 0, false
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	entry, ok := c.entries[key]
 	switch {
 	case !ok || c.now().Sub(entry.at) >= c.ttl():
-		return Threads{}, false
+		return Threads{}, c.gen, false
 	case unresolved >= 0 && !entry.threads.Capped && len(entry.threads.Threads) != unresolved:
-		return Threads{}, false
+		return Threads{}, c.gen, false
 	}
-	return entry.threads, true
+	return entry.threads, c.gen, true
 }
 
-// put stores what was just read, dropping expired entries.
-func (c *ThreadCache) put(key string, threads Threads) {
+// put stores what was just read, unless the account changed since the read
+// began (gen), dropping expired entries.
+func (c *ThreadCache) put(key string, gen uint64, threads Threads) {
 	if c == nil {
 		return
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if gen != c.gen {
+		return
+	}
 	now := c.now()
 	if c.entries == nil {
 		c.entries = map[string]cachedThreads{}

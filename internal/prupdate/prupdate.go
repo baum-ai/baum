@@ -347,7 +347,8 @@ const maxExcerpt = 200
 // when unknown), else read from GitHub.
 func (s Service) ReviewThreads(ctx context.Context, repository github.Repository, number, unresolved int) (Threads, error) {
 	key := threadKey(repository, number)
-	if cached, ok := s.Threads.get(key, unresolved); ok {
+	cached, gen, ok := s.Threads.get(key, unresolved)
+	if ok {
 		return cached, nil
 	}
 	list, err := s.Client.UnresolvedThreads(ctx, repository, number)
@@ -359,7 +360,7 @@ func (s Service) ReviewThreads(ctx context.Context, repository github.Repository
 		first := t.Comments[0]
 		out.Threads = append(out.Threads, Thread{ID: t.ID, Path: t.Path, Line: t.Line, Outdated: t.Outdated, Author: first.Author, Excerpt: excerpt(first.Body), Comments: max(t.Total, len(t.Comments)), URL: t.URL, CanResolve: t.CanResolve})
 	}
-	s.Threads.put(key, out)
+	s.Threads.put(key, gen, out)
 	return out, nil
 }
 

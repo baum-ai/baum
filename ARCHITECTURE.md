@@ -2038,7 +2038,9 @@ capped}`. `prupdate.ThreadCache` keeps each pull request's list in memory for
 10 minutes and serves it while it holds as many threads as `unresolved`,
 discovery's count (absent: not compared; a capped list is never compared), so
 a thread opened or resolved on GitHub is read again once discovery sees it; an
-edit within a thread shows once the entry expires. Otherwise the list is read
+edit within a thread shows once the entry expires. A change of GitHub account, or
+disconnecting, empties it with the daemon's other account-dependent caches
+(`ResetIdentity`), and a read under way when that happens is not stored. Otherwise the list is read
 with `github.Client.UnresolvedThreads` (the fix's `FixReviewThreads` document): each
 thread's node `id`, `path`, `line`, `outdated`, the first comment's `author`,
 its headline cut to 200 characters (`excerpt`: `fix.Headline`, the first

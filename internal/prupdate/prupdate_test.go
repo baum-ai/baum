@@ -353,3 +353,45 @@ func TestReviewThreadsAreCachedWhileTheCountMatches(t *testing.T) {
 		t.Fatalf("after resolving: %s after %d reads", got, reads)
 	}
 }
+
+func TestReviewThreadsForgetAnAccountChange(t *testing.T) {
+	reads := 0
+	var cache *ThreadCache
+	resetDuringRead := false
+	fake := fakeGitHub{graphql: func(string, map[string]any) string {
+		reads++
+		if resetDuringRead {
+			cache.ResetIdentity()
+		}
+		return `{"data":{"repository":{"pullRequest":{"headRefOid":"abc","reviewThreads":{"pageInfo":{"hasNextPage":false},"nodes":[
+			{"id":"RT_1","path":"a.go","line":1,"isResolved":false,"viewerCanResolve":true,"comments":{"totalCount":1,"nodes":[{"state":"SUBMITTED","body":"One.","author":{"__typename":"User","login":"alice"}}]}}]}}}}}`
+	}}
+	cache = &ThreadCache{}
+	s := Service{Client: fake.client(), Threads: cache}
+	ctx := context.Background()
+	read := func() {
+		t.Helper()
+		if _, err := s.ReviewThreads(ctx, repo, 7, 1); err != nil {
+			t.Fatal(err)
+		}
+	}
+	read()
+	read()
+	if reads != 1 {
+		t.Fatalf("cached list read %d times", reads)
+	}
+	cache.ResetIdentity()
+	read()
+	if reads != 2 {
+		t.Fatalf("after an account change: %d reads, want 2", reads)
+	}
+	// A read under way while the account changes is not kept.
+	cache.ResetIdentity()
+	resetDuringRead = true
+	read()
+	resetDuringRead = false
+	read()
+	if reads != 4 {
+		t.Fatalf("read across an account change was kept: %d reads, want 4", reads)
+	}
+}
