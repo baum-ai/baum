@@ -1973,7 +1973,18 @@ count and latest update, and reports those that differ from the fingerprint
 its last complete poll recorded. The background worker probes once a minute
 and polls a changed repository at once, so a pull request opened or pushed
 from anywhere shows within about a minute while unchanged repositories keep
-the backoff. A repository never polled or not returned waits for its scheduled
+the backoff. Resolving a review thread does not move a pull request's update
+time, so the probe misses it; the next scheduled poll, or the app reading the
+threads (below), shows it. Each polled pull request keeps GitHub's
+`updated_at`, which the background refresh compares with its last read; it is
+left out of the unchanged comparison, so it does not reset the backoff. GitHub
+works out a pull request's mergeability in the background after a push, so a
+poll right after one can read the old conflict or none. A poll that finds a
+new head, or a new pull request, sets the next poll `settleInterval` (15 s)
+away (or GitHub's polling interval, if longer), as do up to `maxSettles` (3)
+more while a non-draft pull request's `mergeable` or `mergeStateStatus` is
+still `UNKNOWN`; the snapshot says `settling`, and the background worker polls
+the repository at that deadline instead of its interval. A repository never polled or not returned waits for its scheduled
 poll; the probe assumes one credential, leaving out any repository whose
 credential differs from the first's.
 GraphQL cost, remaining points and reset time map to the public rate projection.
@@ -2005,8 +2016,11 @@ refuses a pull request whose head moved. Both accept only picked repositories
 errors to `{code, message}`: `head_moved` and `conflict` and `not_open` are
 `409`, `blocked` (required checks, reviews, branch protection) and
 `method_not_allowed` are `422`, `forbidden` is `403`, anything else `502`. After
-a merge the daemon runs `Service.PollNow` for the repository and publishes an
-index change so the inbox drops the pull request.
+a merge GitHub accepted, the daemon records it (`discovery.Service.Merged`:
+the pull request leaves the cached open ones and is observed `MERGED` at the
+merged head, with no read), runs `Service.PollNow` for the repository and
+publishes an index change, so the inbox shows it merged at once rather than
+when the background refresh next reads it.
 
 Two more confirmed writes live in `internal/prupdate`, served by
 `uiserver.UpdateHandler` on the same auth, CSRF and picked-repository rules as
@@ -2035,10 +2049,14 @@ publishes an index change.
 The same handler lists and resolves review threads for the Inbox's panel. `GET
 /api/prs/review-threads?repository=&pr=&unresolved=` answers `{threads,
 capped}`. `prupdate.Cache` keeps each pull request's list in memory for
-10 minutes and serves it while it holds as many threads as `unresolved`,
+a minute and serves it while it holds as many threads as `unresolved`,
 discovery's count (absent: not compared; a capped list is never compared), so
-a thread opened or resolved on GitHub is read again once discovery sees it; an
-edit within a thread shows once the entry expires. A change of GitHub account, or
+a thread opened or resolved on GitHub is read again once discovery sees it, or
+once the entry expires, as is an edit within a thread. A list read from GitHub
+whose uncapped count differs from `unresolved` replaces discovery's count for
+that pull request (`discovery.Service.Unresolved`, through `Service.Counted`)
+and publishes an index change, so the Inbox row agrees with the panel before
+the next poll. A change of GitHub account, or
 disconnecting, empties it with the daemon's other account-dependent caches
 (`ResetIdentity`), and a read under way when that happens is not stored. Otherwise the list is read
 with `github.Client.UnresolvedThreads` (the fix's `FixReviewThreads` document): each
@@ -2328,13 +2346,23 @@ conditional-cache deadlines, bounded requests, error backoff and host rate reset
 Every picked repository is polled, with or without a clone: discovery needs
 only `owner/name`. A repository without an available clone gets no per-PR
 refresh (that reads a store and the clone's saved reviews), and polling it
-still feeds `Service.Discovered`. Per-repository target cursors and repository rotation prevent a small renewed
-GitHub budget from perpetually serving only the first PRs. Linked worktrees are
-deduplicated by common git directory. No-review PRs fetch only a header and checks;
+still feeds `Service.Discovered`. A pass polls every due repository first and
+publishes an index change, so no repository's pull requests wait behind
+another's reads. It then reads, within `refreshBudget` (30 s), the pull
+requests that are due: never read, updated on GitHub since the last read
+(discovery's `updated_at`), at a head other than the last read's, or last
+observed open and no longer among the open ones (to learn that it merged or
+closed). Those go first; then any open one unread for `openReadAge` (15 min)
+or closed one unread for `closedReadAge` (1 h), the longest unread first. A
+failed read is retried after the interval, doubling to 15 minutes, without
+backing off the repository's polls; a rate-limited one stays due and goes
+first after the reset, so a small renewed budget still reaches every pull
+request. `Run` passes every 30 seconds, or sooner when a repository is due
+sooner, as a settling one is. Linked worktrees are deduplicated by common git directory. No-review PRs fetch only a header and checks;
 saved reviews use `refresh.Refresher` and `Store.RefreshCurrent`'s exact-byte CAS.
 `Service.RefreshNow` refreshes named PRs of one clone the same way outside
-that schedule (see "Refresh on hook events"); it shares the per-host rate
-pause with `Sync` in both directions.
+that schedule (see "Refresh on hook events"), and its reads count as the
+last read; it shares the per-host rate pause with `Sync` in both directions.
 
 Discovery's live freshness map uses its own short mutex; cached readers never
 wait behind a network poll. Disk-only startup remains stale. Minimized current

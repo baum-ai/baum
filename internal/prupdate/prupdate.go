@@ -53,9 +53,13 @@ const (
 
 // Service reads and writes through one GitHub client. Cache, when set,
 // keeps the review threads and failing checks it read for the Inbox panel.
+// Counted, when set, hears of a pull request's unresolved threads read from
+// GitHub that no longer number discovery's count, so the inbox shows the new
+// count before discovery's next poll.
 type Service struct {
-	Client *github.Client
-	Cache  *Cache
+	Client  *github.Client
+	Cache   *Cache
+	Counted func(ctx context.Context, repository github.Repository, number, unresolved int)
 }
 
 // session is one repository's REST access, with the pull request read once.
@@ -362,6 +366,9 @@ func (s Service) ReviewThreads(ctx context.Context, repository github.Repository
 		out.Threads = append(out.Threads, Thread{ID: t.ID, Path: t.Path, Line: t.Line, Outdated: t.Outdated, Author: first.Author, Excerpt: excerpt(first.Body), Comments: max(t.Total, len(t.Comments)), URL: t.URL, CanResolve: t.CanResolve})
 	}
 	s.Cache.storeThreads(key, gen, out)
+	if s.Counted != nil && unresolved >= 0 && !out.Capped && len(out.Threads) != unresolved {
+		s.Counted(ctx, repository, number, len(out.Threads))
+	}
 	return out, nil
 }
 

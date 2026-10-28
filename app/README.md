@@ -158,7 +158,8 @@ has moved. The daemon accepts only picked repositories and never retries. A
 refusal (head moved, conflicts, required checks or branch protection, no
 permission, method not allowed) comes back as `{code, message}` with a 409, 422
 or 403 status and shows inline in the dialog, in words; on success the daemon
-re-reads the repository's pull requests and the lists drop it.
+records the merge and re-reads the repository's pull requests, so the lists
+drop it at once.
 
 Keyboard shortcuts (`src/shortcuts.tsx`, one key table that both the handling and
 the sheet read). Every page is reached from the keyboard. With the command key

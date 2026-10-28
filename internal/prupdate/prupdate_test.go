@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -322,7 +323,10 @@ func TestReviewThreadsAreCachedWhileTheCountMatches(t *testing.T) {
 		return `{"data":{"repository":{"pullRequest":{"headRefOid":"abc","reviewThreads":{"pageInfo":{"hasNextPage":false},"nodes":[` + threads + `]}}}}}`
 	}}
 	now := time.Date(2026, 10, 28, 12, 0, 0, 0, time.UTC)
-	s := Service{Client: fake.client(), Cache: &Cache{Now: func() time.Time { return now }}}
+	var counted []int
+	s := Service{Client: fake.client(), Cache: &Cache{Now: func() time.Time { return now }}, Counted: func(_ context.Context, _ github.Repository, number, unresolved int) {
+		counted = append(counted, number, unresolved)
+	}}
 	ctx := context.Background()
 	list := func(unresolved int) []string {
 		t.Helper()
@@ -344,7 +348,7 @@ func TestReviewThreadsAreCachedWhileTheCountMatches(t *testing.T) {
 		reads      int
 	}{
 		{"first read", 2, 0, "RT_1,RT_2", 1},
-		{"same count", 2, time.Minute, "RT_1,RT_2", 1},
+		{"same count", 2, DefaultThreadTTL / 2, "RT_1,RT_2", 1},
 		{"count unknown", -1, 0, "RT_1,RT_2", 1},
 		{"count changed", 3, 0, "RT_1,RT_2", 2},
 		{"expired", 2, DefaultThreadTTL, "RT_1,RT_2", 3},
@@ -353,6 +357,10 @@ func TestReviewThreadsAreCachedWhileTheCountMatches(t *testing.T) {
 		if got := strings.Join(list(step.unresolved), ","); got != step.want || reads != step.reads {
 			t.Fatalf("%s: %s after %d reads, want %s after %d", step.name, got, reads, step.want, step.reads)
 		}
+	}
+	// Only the read that found other than discovery's count reports it.
+	if !slices.Equal(counted, []int{7, 2}) {
+		t.Fatalf("counted %v, want pull request 7 at 2", counted)
 	}
 	if err := s.ResolveThread(ctx, github.Repository{Host: "github.com", Owner: "Acme", Name: "App"}, 7, "RT_1"); err != nil {
 		t.Fatal(err)
