@@ -314,6 +314,9 @@ function useDetails<S>(
   useEffect(
     () => () => {
       for (const each of requests.current.values()) each.abort.abort();
+      // A remount of the effect reads them again rather than waiting on
+      // aborted requests.
+      requests.current.clear();
     },
     [],
   );

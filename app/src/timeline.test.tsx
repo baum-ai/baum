@@ -351,17 +351,27 @@ it("drops rows a load of more brings after the list was read again", async () =>
     (b) => b.textContent === "Load more features",
   )!;
   await act(async () => more.click());
-  // The log changes; the list is read again and that answer lands first.
-  answers["api/timeline/features"] = { features: many(100, 3), next_cursor: null };
-  await act(async () => root.render(<Harness initial="page=timeline" revision={1} />));
-  await act(async () => {});
-  expect(node.querySelectorAll("li[data-feature]").length).toBe(3);
-  // Then the old load of more answers: its rows are not appended.
+  // The filter changes and back while it is under way: the list is read
+  // twice for the same query and revision it had, and those answers land
+  // first.
+  answers["api/timeline/features"] = { features: many(0, 50), next_cursor: "1|F49" };
+  const select = [...node.querySelectorAll("select")].find((each) =>
+    [...each.options].some((option) => option.value === "shipped"),
+  )!;
+  for (const value of ["shipped", ""]) {
+    await act(async () => {
+      select.value = value;
+      select.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    await act(async () => {});
+  }
+  expect(node.querySelectorAll("li[data-feature]").length).toBe(50);
+  // Then the old load of more answers: only the read count tells it is
+  // stale, and its rows are not appended.
   await act(async () => later.send({ features: many(50, 20), next_cursor: null }));
   await act(async () => {});
-  expect(node.querySelectorAll("li[data-feature]").length).toBe(3);
-  // Nor is it a failure: the list ends as read.
-  expect(node.textContent).toContain("No more features.");
+  expect(node.querySelectorAll("li[data-feature]").length).toBe(50);
+  expect(node.textContent).toContain("Load more features");
 });
 
 it("reads more than 500 rows again in requests that follow the cursor", async () => {
