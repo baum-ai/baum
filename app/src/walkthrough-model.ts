@@ -66,10 +66,14 @@ export type Tour = {
 
 const text = (value: unknown) => (typeof value === "string" ? value.trim() : "");
 
-/** The first sentence, for a step written before steps had titles. */
+/** A headline for a step written before steps had titles: its first
+ *  sentence, cut at its first clause when the sentence strings several
+ *  together with semicolons. The whole statement is still shown beneath. */
 export function firstSentence(value: string): string {
   const match = /^(.+?[.!?])(\s|$)/.exec(value);
-  return (match ? match[1]! : value).replace(/[.!?]$/, "");
+  const sentence = (match ? match[1]! : value).replace(/[.!?]$/, "");
+  const clause = sentence.indexOf("; ");
+  return clause > 0 ? sentence.slice(0, clause) : sentence;
 }
 
 const basename = (path: string) => path.slice(path.lastIndexOf("/") + 1);

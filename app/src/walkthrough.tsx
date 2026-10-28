@@ -6,13 +6,19 @@ import {
   type HunkPatchSource,
 } from "@baum/viewer/components/hunk-evidence";
 import {
+  CheckIcon,
+  ChevronLeftIcon,
   ChevronRightIcon,
   CommentsIcon,
   ExternalLinkIcon,
   SearchIcon,
 } from "@baum/viewer/components/icons";
-import { Alert, Button, SegmentedControl } from "@baum/viewer/components/ui";
-import type { ReviewDocument, RiskScoreLevel } from "@baum/viewer/review-document";
+import { SegmentedControl } from "@baum/viewer/components/ui";
+import {
+  RISK_SCORE_MEANING,
+  type ReviewDocument,
+  type RiskScoreLevel,
+} from "@baum/viewer/review-document";
 import { LocalRequestError, request, type Entry } from "./api";
 import { useShortcuts } from "./shortcuts";
 import {
@@ -22,15 +28,18 @@ import {
   progressKey,
   reviewSubmission,
   saveProgress,
+  type Chapter,
   type Progress,
   type ReviewEvent,
   type Stop,
   type Tour,
 } from "./walkthrough-model";
+import "./walkthrough.css";
 
 export type WalkView = "tour" | "all";
 
-const LABEL = "text-xs font-semibold tracking-[0.08em] text-(--text-tertiary) uppercase";
+const plural = (count: number, one: string, many = `${one}s`) =>
+  `${count} ${count === 1 ? one : many}`;
 
 /** Whether `after` only repeats the title, as it does for a step written
  *  before steps had titles, whose title is its first sentence. */
@@ -40,7 +49,9 @@ const echoes = (stop: Stop) => !stop.before && stop.after.replace(/[.!?]\s*$/, "
  *  as one list of all of them. Nobody has to sign off on every behaviour:
  *  moving past a stop or opening its details counts as having looked at it,
  *  and a comment is the only way to say something looks off. The comments go
- *  to GitHub as one review, each on the line its behaviour cites. */
+ *  to GitHub as one review, each on the line its behaviour cites. It is drawn
+ *  as the inbox is: the stops listed on the left, the one being read beside
+ *  them. */
 export function Walkthrough({
   entry,
   document,
@@ -86,6 +97,11 @@ export function Walkthrough({
   const [draft, setDraft] = useState("");
   const [open, setOpen] = useState<Set<string>>(new Set());
   const [filter, setFilter] = useState<"all" | "unseen" | "commented">("all");
+  const detail = useRef<HTMLDivElement>(null);
+  // Each stop starts at its top, as a new page would.
+  useEffect(() => {
+    detail.current?.scrollTo?.({ top: 0 });
+  }, [step]);
 
   const go = (next: number, skip = 0) => {
     next = Math.max(0, Math.min(last, next));
@@ -96,8 +112,8 @@ export function Walkthrough({
     setSkipped(skip);
     setEditing(null);
   };
-  // Next jumps over stops already looked at; Back and the timeline still
-  // visit them.
+  // Next jumps over stops already looked at; Back and the list still visit
+  // them.
   const forward = () => {
     if (step >= last) return;
     const from = step;
@@ -209,86 +225,103 @@ export function Walkthrough({
 
   if (total === 0)
     return (
-      <div className="local-review-empty">
-        <h2>Nothing to walk through</h2>
-        <p>This review has no logical sections with changes to look at.</p>
-        <Button size="compact" onClick={close}>
-          Back to the full review
-        </Button>
+      <div className="walkthrough">
+        <div className="local-review-empty">
+          <h2>Nothing to walk through</h2>
+          <p>This review has no logical sections with changes to look at.</p>
+          <button type="button" className="walk-secondary" onClick={close}>
+            Back to the full review
+          </button>
+        </div>
       </div>
     );
 
+  const submit = (
+    <Submit
+      entry={entry}
+      document={document}
+      tour={tour}
+      progress={progress}
+      setProgress={setProgress}
+      seenCount={seenCount}
+      unseen={unseen.length}
+      changed={changed}
+    />
+  );
   return (
     <section aria-label="Walkthrough" className="walkthrough">
-      <header className="flex flex-col gap-3 border-b border-(--border-subtle) px-6 pt-4 pb-3">
-        <div className="flex flex-wrap items-center justify-between gap-4">
-          <div className="flex min-w-0 flex-col gap-1">
-            <h1 className="text-lg font-semibold">
-              <span className="text-(--text-tertiary)">#{entry.pull_request.number}</span>{" "}
-              {entry.pull_request.title}
-            </h1>
-            <p className="text-xs text-(--text-tertiary)">
-              {entry.pull_request.repository} · Review v{document.review.version} ·{" "}
-              {tour.chapters.length} {tour.chapters.length === 1 ? "chapter" : "chapters"}, {total}{" "}
-              {total === 1 ? "behaviour" : "behaviours"} · {left}
-            </p>
-          </div>
-          <div className="flex flex-wrap items-center gap-3">
-            <div className="flex min-w-44 flex-col gap-1">
-              <p className="flex gap-3 text-xs tabular-nums">
-                <span className="font-semibold">
-                  {seenCount} of {total} looked at
-                </span>
-                <span className="font-semibold text-(--status-caution)">
-                  {commentCount
-                    ? `${commentCount} ${commentCount === 1 ? "comment" : "comments"}`
-                    : "no comments"}
-                </span>
-              </p>
-              <div
-                aria-hidden
-                className="flex h-1.5 overflow-hidden rounded-full bg-(--surface-sunken)"
-              >
-                <span
-                  className="bg-(--status-positive) transition-[width] duration-300"
-                  style={{ width: `${(100 * (seenCount - commentCount)) / total}%` }}
-                />
-                <span
-                  className="bg-(--status-caution) transition-[width] duration-300"
-                  style={{ width: `${(100 * commentCount) / total}%` }}
-                />
-              </div>
-            </div>
-            <SegmentedControl
-              label="View"
-              value={view}
-              onChange={(next) => (next === "tour" ? toTour() : toAll())}
-              items={[
-                { value: "tour", label: "Guided tour" },
-                { value: "all", label: "Everything" },
-              ]}
-            />
-            <Button variant="secondary" size="compact" onClick={close}>
-              Full review
-            </Button>
-          </div>
+      <header className="walk-head">
+        <div className="walk-head-text">
+          <h1>
+            <span className="walk-head-number">#{entry.pull_request.number}</span>{" "}
+            {entry.pull_request.title}
+          </h1>
+          <p>
+            {entry.pull_request.repository} · Review v{document.review.version} ·{" "}
+            {plural(total, "behaviour")} · {left} ·{" "}
+            <strong>
+              {seenCount} of {total} looked at
+            </strong>{" "}
+            ·{" "}
+            <span className={commentCount ? "walk-head-comments" : undefined}>
+              {commentCount ? plural(commentCount, "comment") : "no comments"}
+            </span>
+          </p>
         </div>
-        {view === "tour" ? (
-          <Timeline tour={tour} step={step} done={done} commented={commented} go={go} />
-        ) : null}
+        <div className="walk-head-actions">
+          <SegmentedControl
+            label="View"
+            value={view}
+            onChange={(next) => (next === "tour" ? toTour() : toAll())}
+            items={[
+              { value: "tour", label: "Guided tour" },
+              { value: "all", label: "Everything" },
+            ]}
+          />
+          <button type="button" className="walk-secondary" onClick={close}>
+            Full review
+          </button>
+        </div>
+        <div aria-hidden className="walk-head-bar">
+          <span
+            className="walk-head-bar-seen"
+            style={{ width: `${(100 * (seenCount - commentCount)) / total}%` }}
+          />
+          <span
+            className="walk-head-bar-commented"
+            style={{ width: `${(100 * commentCount) / total}%` }}
+          />
+        </div>
       </header>
       {entry.pull_request.head_sha && entry.pull_request.head_sha !== document.review.head ? (
-        <p className="border-b border-(--border-subtle) bg-(--status-caution-bg) px-6 py-2 text-xs">
+        <p className="walk-stale">
           The pull request has new commits since this review was generated. Comments attach to the
           reviewed commit and may show as outdated on GitHub.
         </p>
       ) : null}
       <HunkPatchProvider source={patches}>
         {view === "tour" ? (
-          <div className="flex flex-1 flex-wrap">
-            <div className="flex min-w-0 flex-[999_1_40rem] flex-col gap-5 px-8 py-6">
+          <div className="walk-split">
+            <StopList
+              tour={tour}
+              step={step}
+              done={done}
+              commented={commented}
+              seenCount={seenCount}
+              commentCount={commentCount}
+              go={go}
+            />
+            <div ref={detail} className="walk-detail">
               {step === 0 ? (
-                <Intro tour={tour} done={done} go={go} toAll={toAll} />
+                <Intro
+                  entry={entry}
+                  document={document}
+                  tour={tour}
+                  done={done}
+                  go={go}
+                  start={forward}
+                  toAll={toAll}
+                />
               ) : claim ? (
                 <Claim
                   key={claim.id}
@@ -308,60 +341,28 @@ export function Walkthrough({
                   }}
                   cancelComment={() => setEditing(null)}
                   removeComment={() => setNote(claim, "")}
+                  next={forward}
+                  back={() => go(step - 1)}
+                  nextLabel={
+                    tour.stops.slice(step).some((stop) => !done(stop)) ? "Next" : "Wrap up"
+                  }
+                  skipped={skipped}
                 />
               ) : (
                 <WrapUp
                   tour={tour}
                   unseen={unseen}
+                  seenCount={seenCount}
+                  commentCount={commentCount}
                   go={go}
-                  submit={
-                    <Submit
-                      entry={entry}
-                      document={document}
-                      tour={tour}
-                      progress={progress}
-                      setProgress={setProgress}
-                      seenCount={seenCount}
-                      unseen={unseen.length}
-                      changed={changed}
-                    />
-                  }
+                  submit={submit}
                 />
               )}
-              <div className="mt-auto flex flex-wrap items-center gap-2 pt-2">
-                <Button variant="secondary" onClick={() => go(step - 1)} disabled={step === 0}>
-                  Back
-                </Button>
-                <Button onClick={forward} disabled={step === last}>
-                  {step === 0
-                    ? "Start the tour"
-                    : tour.stops.slice(step).some((stop) => !done(stop))
-                      ? "Next"
-                      : "Wrap up"}
-                </Button>
-                {skipped > 0 && step > 0 ? (
-                  <span className="text-xs text-(--text-secondary)">
-                    Skipped {skipped} {skipped === 1 ? "stop" : "stops"} you already looked at
-                  </span>
-                ) : null}
-                <span className="ml-auto flex gap-3 text-xs text-(--text-tertiary)">
-                  <span>
-                    <kbd>←</kbd> <kbd>→</kbd> move
-                  </span>
-                  <span>
-                    <kbd>c</kbd> comment
-                  </span>
-                  <span>
-                    <kbd>e</kbd> everything
-                  </span>
-                </span>
-              </div>
             </div>
-            <Rail tour={tour} stop={claim} done={done} commented={commented} go={go} />
           </div>
         ) : (
-          <div className="flex flex-1 flex-wrap">
-            <div className="flex min-w-0 flex-[999_1_42rem] flex-col">
+          <div className="walk-split">
+            <div className="walk-ledger">
               <Ledger
                 tour={tour}
                 document={document}
@@ -393,21 +394,9 @@ export function Walkthrough({
                 walk={toTour}
               />
             </div>
-            <aside
-              aria-label="Submit review"
-              className="flex min-w-0 flex-[1_1_20rem] flex-col gap-3 border-l border-(--border-subtle) px-5 py-5"
-            >
-              <h2 className={LABEL}>Submit review</h2>
-              <Submit
-                entry={entry}
-                document={document}
-                tour={tour}
-                progress={progress}
-                setProgress={setProgress}
-                seenCount={seenCount}
-                unseen={unseen.length}
-                changed={changed}
-              />
+            <aside aria-label="Submit review" className="walk-aside">
+              <h2 className="walk-label">Submit review</h2>
+              {submit}
             </aside>
           </div>
         )}
@@ -416,198 +405,296 @@ export function Walkthrough({
   );
 }
 
-function Timeline({
+/** A stop's state as the inbox marks a row: an empty ring, a tick once
+ *  looked at, or the comment mark once something looked off. */
+function Mark({ state }: { state: "seen" | "commented" | null }) {
+  return (
+    <span aria-hidden className={cn("walk-mark", state)}>
+      {state === "commented" ? (
+        <CommentsIcon size={9} />
+      ) : state === "seen" ? (
+        <CheckIcon size={10} />
+      ) : null}
+    </span>
+  );
+}
+
+function RiskBadge({ level }: { level: RiskScoreLevel | null }) {
+  if (!level) return null;
+  return (
+    <span
+      role="img"
+      aria-label={`Risk ${level} of 5`}
+      className={cn("walk-badge", `risk-${level}`)}
+    >
+      {level}
+    </span>
+  );
+}
+
+function RiskCard({
+  level,
+  meaning,
+  children,
+}: {
+  level: RiskScoreLevel | null;
+  meaning: string | null;
+  children: ReactNode;
+}) {
+  return (
+    <div className="walk-risk">
+      {level ? (
+        <div className="walk-risk-head">
+          <span className="walk-label">Risk</span>
+          <span className="walk-risk-blocks" aria-hidden>
+            {[1, 2, 3, 4, 5].map((n) => (
+              <span key={n} className={n <= level ? `on risk-${level}` : undefined} />
+            ))}
+          </span>
+          <span className="walk-risk-text">
+            {level} of 5{meaning ? ` · ${meaning}` : ""}
+          </span>
+        </div>
+      ) : null}
+      {children}
+    </div>
+  );
+}
+
+/** The tour's stops, grouped by chapter as the inbox groups its queue. */
+function StopList({
   tour,
   step,
   done,
   commented,
+  seenCount,
+  commentCount,
   go,
 }: {
   tour: Tour;
   step: number;
   done: (stop: Stop) => boolean;
   commented: (stop: Stop) => boolean;
+  seenCount: number;
+  commentCount: number;
   go: (step: number) => void;
 }) {
   const last = tour.stops.length + 1;
-  const dot = (at: number, label: string) => {
-    const stop = tour.stops[at - 1];
-    const state = stop ? (commented(stop) ? "commented" : done(stop) ? "seen" : null) : null;
-    return (
+  const list = useRef<HTMLElement>(null);
+  useEffect(() => {
+    list.current?.querySelector("[aria-current]")?.scrollIntoView?.({ block: "nearest" });
+  }, [step]);
+  const row = (at: number, title: string, sub: ReactNode, mark: ReactNode, label = title) => (
+    <li key={at}>
       <button
-        key={at}
         type="button"
         onClick={() => go(at)}
-        aria-label={
-          label +
-          (state === "commented" ? ", has your comment" : state === "seen" ? ", looked at" : "")
-        }
+        aria-label={label}
         aria-current={at === step ? "step" : undefined}
-        className={cn(
-          "walk-dot",
-          state === "commented" && "commented",
-          state === "seen" && "seen",
-          at === step && "current",
-        )}
-      />
-    );
-  };
+        className="walk-row"
+      >
+        {mark}
+        <span className="walk-row-text">
+          <span className="walk-row-title">{title}</span>
+          {sub ? <span className="walk-row-sub">{sub}</span> : null}
+        </span>
+      </button>
+    </li>
+  );
   return (
-    <nav aria-label="Tour stops" className="flex items-stretch gap-1.5">
-      <div className="flex w-12 flex-none flex-col gap-1.5">
-        <span className={cn(LABEL, "truncate")}>Intro</span>
-        <div className="flex">{dot(0, "Intro")}</div>
-      </div>
-      {tour.chapters.map((chapter, index) => {
-        const finished = chapter.stops.every((at) => done(tour.stops[at]!));
-        return (
-          <div
-            key={chapter.id}
-            className={cn("flex min-w-0 flex-col gap-1.5", finished && "opacity-70")}
-            style={{ flex: `${chapter.stops.length} 1 0` }}
-          >
-            <span className={cn(LABEL, "truncate")}>
-              {index + 1} · {finished ? "Done · " : ""}
-              {chapter.title}
-            </span>
-            <div className="flex gap-0.5">
-              {chapter.stops.map((at) => dot(at + 1, tour.stops[at]!.title))}
+    <nav ref={list} aria-label="Tour stops" className="walk-list">
+      <div className="walk-list-body">
+        <ul>
+          {row(
+            0,
+            "Overview",
+            "What it does, and the route",
+            <span aria-hidden className="walk-mark walk-mark-end">
+              <SearchIcon size={10} />
+            </span>,
+            "Intro",
+          )}
+        </ul>
+        {tour.chapters.map((chapter, index) => (
+          <section key={chapter.id} aria-label={chapter.title} className="walk-group">
+            <div className="walk-group-head">
+              <h2>
+                {index + 1} · {chapter.title}
+              </h2>
+              <RiskBadge level={chapter.level} />
             </div>
-          </div>
-        );
-      })}
-      <div className="flex w-14 flex-none flex-col gap-1.5">
-        <span className={cn(LABEL, "truncate")}>Submit</span>
-        <div className="flex">{dot(last, "Submit")}</div>
+            <ul>
+              {chapter.stops.map((at) => {
+                const stop = tour.stops[at]!;
+                const state = commented(stop) ? "commented" : done(stop) ? "seen" : null;
+                return row(
+                  at + 1,
+                  stop.title,
+                  state === "commented" ? (
+                    <span className="walk-row-commented">Your comment</span>
+                  ) : (
+                    stop.where
+                  ),
+                  <Mark state={state} />,
+                  stop.title +
+                    (state === "commented"
+                      ? ", has your comment"
+                      : state === "seen"
+                        ? ", looked at"
+                        : ""),
+                );
+              })}
+            </ul>
+          </section>
+        ))}
+        <section aria-label="Submit" className="walk-group">
+          <ul>
+            {row(
+              last,
+              "Send your review",
+              `${seenCount} of ${tour.stops.length} looked at · ${commentCount ? plural(commentCount, "comment") : "no comments"}`,
+              <span aria-hidden className="walk-mark walk-mark-end">
+                <ChevronRightIcon size={10} />
+              </span>,
+              "Submit",
+            )}
+          </ul>
+        </section>
       </div>
+      <footer className="walk-keys" aria-hidden>
+        <span>
+          <kbd>←</kbd> <kbd>→</kbd> move
+        </span>
+        <span>
+          <kbd>c</kbd> comment
+        </span>
+        <span>
+          <kbd>e</kbd> everything
+        </span>
+      </footer>
     </nav>
   );
 }
 
-function RiskBlocks({ level }: { level: RiskScoreLevel }) {
-  return (
-    <span aria-hidden className="flex gap-0.5">
-      {[1, 2, 3, 4, 5].map((n) => (
-        <span
-          key={n}
-          className={cn(
-            "h-1.5 w-4 rounded-sm",
-            n > level
-              ? "bg-(--surface-sunken)"
-              : level >= 3
-                ? "bg-(--status-caution)"
-                : "bg-(--text-tertiary)",
-          )}
-        />
-      ))}
-    </span>
-  );
-}
-
 function Intro({
+  entry,
+  document,
   tour,
   done,
   go,
+  start,
   toAll,
 }: {
+  entry: Entry;
+  document: ReviewDocument;
   tour: Tour;
   done: (stop: Stop) => boolean;
   go: (step: number, skip?: number) => void;
+  start: () => void;
   toAll: () => void;
 }) {
+  const level = tour.level;
   return (
-    <div className="flex max-w-3xl flex-col gap-5">
-      <h2 className={LABEL}>What this pull request does</h2>
-      <p className="text-2xl leading-normal">{tour.intro}</p>
-      <div className="flex flex-col gap-2.5">
-        <h2 className={LABEL}>The route · riskiest first</h2>
-        {tour.chapters.map((chapter, index) => {
-          const open = chapter.stops.filter((at) => !done(tour.stops[at]!));
-          const first = chapter.stops[0]!;
-          return (
-            <button
-              key={chapter.id}
-              type="button"
-              className="walk-route"
-              onClick={() => go((open[0] ?? first) + 1, open.length ? open[0]! - first : 0)}
-            >
-              <span className="walk-route-number">{index + 1}</span>
-              <span className="flex min-w-0 flex-1 flex-col gap-0.5">
-                <span className="font-semibold">{chapter.title}</span>
-                <span className="text-xs text-(--text-secondary)">
-                  {chapter.stops.length} {chapter.stops.length === 1 ? "behaviour" : "behaviours"}
-                  {chapter.meaning ? ` · ${chapter.meaning.toLowerCase()}` : ""}
-                </span>
-              </span>
-              <StopBar tour={tour} stops={chapter.stops} done={done} />
-              {chapter.level ? (
-                <span className={cn("walk-risk", chapter.level >= 3 && "high")}>
-                  Risk {chapter.level}
-                </span>
-              ) : null}
-            </button>
-          );
-        })}
+    <article aria-labelledby="walk-intro-title" className="walk-panel">
+      <div className="walk-meta">
+        <span className="walk-chip">Overview</span>
+        <span className="walk-where">
+          {entry.pull_request.repository} · #{entry.pull_request.number} · Review v
+          {document.review.version}
+        </span>
+        {tour.minutes ? <span className="walk-minutes">≈ {tour.minutes} min</span> : null}
       </div>
-      <p className="text-(--text-secondary)">
-        Read each stop and move on. You only need to act when something looks off: leave a comment
-        and it goes into the review. The code is one click away when you want it. Prefer to scan?{" "}
-        <button type="button" className="walk-link" onClick={toAll}>
-          See everything at once
+      <h2 id="walk-intro-title" className="walk-title">
+        What this pull request does
+      </h2>
+      {tour.intro ? <p className="walk-why">{tour.intro}</p> : null}
+      <div className="walk-actions">
+        <button type="button" className="walk-primary" onClick={start}>
+          Start the tour
+          <kbd aria-hidden>→</kbd>
         </button>
-        .
+        <button type="button" className="walk-secondary" onClick={toAll}>
+          See everything at once
+          <kbd aria-hidden>e</kbd>
+        </button>
+      </div>
+      {tour.risks.length || level ? (
+        <RiskCard level={level} meaning={level ? RISK_SCORE_MEANING[level] : null}>
+          {tour.risks.map((risk, index) => {
+            // Several reasons can name one chapter: the first carries its link.
+            const linked =
+              risk.stop !== null &&
+              tour.risks.findIndex((other) => other.stop === risk.stop) === index;
+            return (
+              <p key={risk.text}>
+                {risk.text}{" "}
+                {linked ? (
+                  <button type="button" className="walk-link" onClick={() => go(risk.stop! + 1)}>
+                    Go to {tour.chapters[tour.stops[risk.stop!]!.chapter]!.title} →
+                  </button>
+                ) : null}
+              </p>
+            );
+          })}
+        </RiskCard>
+      ) : null}
+      <section className="walk-block" aria-label="The route">
+        <h3 className="walk-label">The route · riskiest first</h3>
+        <ul>
+          {tour.chapters.map((chapter, index) => {
+            const open = chapter.stops.filter((at) => !done(tour.stops[at]!));
+            const first = chapter.stops[0]!;
+            return (
+              <li key={chapter.id}>
+                <button
+                  type="button"
+                  className="walk-block-row"
+                  onClick={() => go((open[0] ?? first) + 1, open.length ? open[0]! - first : 0)}
+                >
+                  <span className="walk-number">{index + 1}</span>
+                  <span className="walk-block-text">
+                    <span>{chapter.title}</span>
+                    <span className="walk-block-sub">
+                      {plural(chapter.stops.length, "behaviour")}
+                      {chapter.meaning ? ` · ${chapter.meaning.toLowerCase()}` : ""}
+                    </span>
+                  </span>
+                  <ChapterProgress tour={tour} chapter={chapter} done={done} />
+                  <RiskBadge level={chapter.level} />
+                </button>
+              </li>
+            );
+          })}
+        </ul>
+      </section>
+      {tour.releaseNote ? (
+        <section className="walk-block" aria-label="Release note">
+          <h3 className="walk-label">Release note</h3>
+          <p className="walk-lead">{tour.releaseNote}</p>
+        </section>
+      ) : null}
+      <p className="walk-note">
+        Read each stop and move on. You only need to act when something looks off: leave a comment
+        and it goes into the review. The code is one click away when you want it.
       </p>
-    </div>
+    </article>
   );
 }
 
-function StopBar({
+function ChapterProgress({
   tour,
-  stops,
+  chapter,
   done,
 }: {
   tour: Tour;
-  stops: number[];
+  chapter: Chapter;
   done: (stop: Stop) => boolean;
 }) {
+  const count = chapter.stops.filter((at) => done(tour.stops[at]!)).length;
   return (
-    <span aria-hidden className="flex w-20 flex-none gap-0.5">
-      {stops.map((at) => {
-        const stop = tour.stops[at]!;
-        return (
-          <span
-            key={stop.id}
-            className={cn(
-              "h-1.5 flex-1 rounded-sm",
-              done(stop) ? "bg-(--status-positive)" : "bg-(--surface-sunken)",
-            )}
-          />
-        );
-      })}
+    <span className="walk-block-right">
+      {count}/{chapter.stops.length}
     </span>
-  );
-}
-
-function BeforeAfter({ stop }: { stop: Stop }) {
-  if (echoes(stop)) return null;
-  return (
-    <div className="flex flex-wrap items-stretch gap-2.5">
-      {stop.before ? (
-        <>
-          <div className="walk-panel flex-[1_1_16rem]">
-            <h3 className={LABEL}>Before</h3>
-            <p>{stop.before}</p>
-          </div>
-          <span aria-hidden className="flex items-center text-(--text-tertiary)">
-            <ChevronRightIcon />
-          </span>
-        </>
-      ) : null}
-      <div className="walk-panel after flex-[1_1_16rem]">
-        <h3 className={LABEL}>{stop.before ? "After" : "New behaviour"}</h3>
-        <p>{stop.after}</p>
-      </div>
-    </div>
   );
 }
 
@@ -624,6 +711,10 @@ function Claim({
   saveComment,
   cancelComment,
   removeComment,
+  next,
+  back,
+  nextLabel,
+  skipped,
 }: {
   tour: Tour;
   stop: Stop;
@@ -637,43 +728,81 @@ function Claim({
   saveComment: () => void;
   cancelComment: () => void;
   removeComment: () => void;
+  next: () => void;
+  back: () => void;
+  nextLabel: string;
+  skipped: number;
 }) {
   const chapter = tour.chapters[stop.chapter]!;
   const hasNote = Boolean(note.trim());
   const target = stop.where || "the review";
+  const position = chapter.stops.indexOf(tour.stops.indexOf(stop)) + 1;
+  // The plain account of the behaviour, unless it only repeats the title.
+  const account = echoes(stop) ? null : stop.after;
   return (
-    <article aria-labelledby={`walk-title-${stop.id}`} className="flex max-w-3xl flex-col gap-5">
-      <div className="flex flex-col gap-2">
-        <div className="flex flex-wrap items-center gap-2.5">
-          <span className={LABEL}>
-            Chapter {stop.chapter + 1} · {chapter.title}
+    <article aria-labelledby={`walk-title-${stop.id}`} className="walk-panel">
+      <div className="walk-meta">
+        <span className={cn("walk-chip", chapter.level && `risk-${chapter.level}`)}>
+          Chapter {stop.chapter + 1} · {chapter.title}
+        </span>
+        <span className="walk-where">
+          Behaviour {position} of {chapter.stops.length}
+        </span>
+        {hasNote ? (
+          <span className="walk-state commented">Your comment</span>
+        ) : seen ? (
+          <span className="walk-state">
+            <CheckIcon size={12} /> Looked at
           </span>
-          {hasNote ? (
-            <span className="walk-badge commented">Your comment</span>
-          ) : seen ? (
-            <span className="walk-badge">Looked at</span>
-          ) : null}
-        </div>
-        <h2 id={`walk-title-${stop.id}`} className="text-2xl font-semibold">
-          {stop.title}
-        </h2>
-        {stop.text && stop.text !== stop.after ? (
-          <p className="text-(--text-secondary)">{stop.text}</p>
         ) : null}
       </div>
-      <BeforeAfter stop={stop} />
-      {stop.question ? (
-        <div className="walk-panel question">
-          <h3 className={cn(LABEL, "flex items-center gap-2")}>
-            <SearchIcon size={14} />
-            Ask yourself
-          </h3>
-          <p className="text-lg">{stop.question}</p>
+      <h2
+        id={`walk-title-${stop.id}`}
+        className={cn("walk-title", stop.title.length > 90 && "long")}
+      >
+        {stop.title}
+      </h2>
+      {stop.before ? (
+        <div className="walk-compare">
+          <div>
+            <h3 className="walk-label">Before</h3>
+            <p>{stop.before}</p>
+          </div>
+          <div className="now">
+            <h3 className="walk-label">Now</h3>
+            <p>{stop.after}</p>
+          </div>
         </div>
+      ) : account ? (
+        <p className="walk-why">{account}</p>
       ) : null}
+      {editing ? null : (
+        <div className="walk-actions">
+          <button type="button" className="walk-primary" onClick={next}>
+            {nextLabel}
+            <kbd aria-hidden>→</kbd>
+          </button>
+          {hasNote ? null : (
+            <button type="button" className="walk-secondary" onClick={startComment}>
+              <CommentsIcon size={14} />
+              Something looks off
+              <kbd aria-hidden>c</kbd>
+            </button>
+          )}
+          <button type="button" className="walk-secondary" onClick={back}>
+            <ChevronLeftIcon size={14} />
+            Back
+          </button>
+          {skipped > 0 ? (
+            <span className="walk-skipped">
+              Skipped {plural(skipped, "stop")} you already looked at
+            </span>
+          ) : null}
+        </div>
+      )}
       {editing ? (
-        <div className="walk-panel comment">
-          <label htmlFor={`walk-draft-${stop.id}`} className="font-semibold">
+        <div className="walk-comment">
+          <label htmlFor={`walk-draft-${stop.id}`}>
             What looks off? It goes into the review, attached to {target}.
           </label>
           <textarea
@@ -689,197 +818,150 @@ function Claim({
             }}
             className="walk-textarea"
           />
-          <div className="flex gap-2">
-            <Button size="compact" onClick={saveComment} disabled={!draft.trim()}>
+          <div className="walk-actions">
+            <button
+              type="button"
+              className="walk-primary"
+              onClick={saveComment}
+              disabled={!draft.trim()}
+            >
               Save comment
-            </Button>
-            <Button variant="secondary" size="compact" onClick={cancelComment}>
+            </button>
+            <button type="button" className="walk-secondary" onClick={cancelComment}>
               {hasNote ? "Cancel" : "Never mind"}
-            </Button>
+            </button>
           </div>
         </div>
       ) : hasNote ? (
-        <div className="walk-panel comment saved">
-          <CommentsIcon size={16} className="mt-0.5 flex-none text-(--status-caution)" />
-          <div className="flex min-w-0 flex-1 flex-col gap-1">
-            <span className="text-xs text-(--text-secondary)">Your comment on {target}</span>
-            <p className="whitespace-pre-line">{note}</p>
+        <div className="walk-comment saved">
+          <CommentsIcon size={16} className="walk-comment-icon" />
+          <div className="walk-comment-body">
+            <span className="walk-comment-where">Your comment on {target}</span>
+            <p>{note}</p>
           </div>
-          <Button variant="secondary" size="compact" onClick={startComment}>
+          <button type="button" className="walk-small" onClick={startComment}>
             Edit
-          </Button>
-          <Button variant="secondary" size="compact" onClick={removeComment}>
+          </button>
+          <button type="button" className="walk-small" onClick={removeComment}>
             Remove
-          </Button>
+          </button>
         </div>
-      ) : (
-        <div className="flex flex-wrap items-center gap-3">
-          <Button variant="secondary" onClick={startComment} className="gap-2">
-            <CommentsIcon size={15} />
-            Something looks off <kbd>c</kbd>
-          </Button>
-          <span className="text-xs text-(--text-secondary)">Nothing to say? Just move on.</span>
-        </div>
-      )}
+      ) : null}
+      {stop.question ? (
+        <section className="walk-ask" aria-label="Ask yourself">
+          <h3 className="walk-label">
+            <SearchIcon size={13} />
+            Ask yourself
+          </h3>
+          <p>{stop.question}</p>
+        </section>
+      ) : null}
+      {chapter.why || chapter.level ? (
+        <RiskCard level={chapter.level} meaning={chapter.meaning}>
+          {chapter.why ? (
+            <p>
+              <strong>{chapter.title}. </strong>
+              {chapter.why}
+            </p>
+          ) : null}
+        </RiskCard>
+      ) : null}
+      {stop.text && stop.text !== stop.after && stop.text !== stop.title ? (
+        <section className="walk-block" aria-label="In the review's words">
+          <h3 className="walk-label">In the review’s words</h3>
+          <p className="walk-lead">{stop.text}</p>
+        </section>
+      ) : null}
       {stop.anchors.length ? (
-        <div className="walk-evidence">
-          <h3 className={LABEL}>Evidence</h3>
+        <section className="walk-block walk-code" aria-label="The code">
+          <h3 className="walk-label">
+            The code{stop.where ? <span className="walk-label-where"> · {stop.where}</span> : null}
+          </h3>
           <HunkEvidence document={document} anchors={stop.anchors} />
-        </div>
+        </section>
+      ) : null}
+      {stop.tests.length ? (
+        <section className="walk-block" aria-label="Tests">
+          <h3 className="walk-label">Tests for this behaviour</h3>
+          <ul>
+            {stop.tests.map((test) => (
+              <li key={test}>
+                <code>{test}</code>
+              </li>
+            ))}
+          </ul>
+        </section>
       ) : null}
     </article>
-  );
-}
-
-function Rail({
-  tour,
-  stop,
-  done,
-  commented,
-  go,
-}: {
-  tour: Tour;
-  stop: Stop | null;
-  done: (stop: Stop) => boolean;
-  commented: (stop: Stop) => boolean;
-  go: (step: number) => void;
-}) {
-  const chapter = stop ? tour.chapters[stop.chapter]! : null;
-  const level = chapter ? chapter.level : tour.level;
-  return (
-    <aside
-      aria-label={chapter ? "Chapter" : "Pull request risk"}
-      className="flex min-w-0 flex-[1_1_20rem] flex-col gap-4 border-l border-(--border-subtle) bg-(--surface-aside) px-5 py-6"
-    >
-      <div className="flex flex-col gap-2">
-        <h2 className={LABEL}>
-          {chapter ? `Chapter ${stop!.chapter + 1} risk` : "Pull request risk"}
-        </h2>
-        <p className="font-semibold">{chapter ? chapter.title : "Risk score"}</p>
-        {level ? (
-          <p className="flex items-center gap-2.5 text-xs">
-            <RiskBlocks level={level} />
-            <span>
-              <strong>{level} of 5</strong>
-              {chapter?.meaning ? ` · ${chapter.meaning}` : ""}
-            </span>
-          </p>
-        ) : null}
-      </div>
-      {chapter ? (
-        chapter.why ? (
-          <p className="text-(--text-secondary)">{chapter.why}</p>
-        ) : null
-      ) : (
-        tour.risks.map((risk, index) => {
-          // Several reasons can name one chapter: the first carries its link.
-          const linked =
-            risk.stop !== null &&
-            tour.risks.findIndex((other) => other.stop === risk.stop) === index;
-          return (
-            <div key={risk.text} className="flex flex-col gap-1 text-(--text-secondary)">
-              <p>{risk.text}</p>
-              {linked ? (
-                <button
-                  type="button"
-                  className="walk-link self-start text-left"
-                  onClick={() => go(risk.stop! + 1)}
-                >
-                  Go to {tour.chapters[tour.stops[risk.stop!]!.chapter]!.title} →
-                </button>
-              ) : null}
-            </div>
-          );
-        })
-      )}
-      {!chapter && tour.releaseNote ? (
-        <div className="flex flex-col gap-1.5 border-t border-(--border-subtle) pt-3">
-          <h2 className={LABEL}>Release note</h2>
-          <p className="text-(--text-secondary)">{tour.releaseNote}</p>
-        </div>
-      ) : null}
-      {chapter && stop ? (
-        <>
-          <div className="flex flex-col gap-1 border-t border-(--border-subtle) pt-3">
-            <h2 className={cn(LABEL, "pb-1")}>In this chapter</h2>
-            {chapter.stops.map((at) => {
-              const other = tour.stops[at]!;
-              const state = commented(other) ? "commented" : done(other) ? "seen" : null;
-              return (
-                <button
-                  key={other.id}
-                  type="button"
-                  onClick={() => go(at + 1)}
-                  aria-current={other.id === stop.id ? "step" : undefined}
-                  className="walk-chapter-stop"
-                >
-                  <span aria-hidden className={cn("walk-state-dot", state)} />
-                  <span className="min-w-0 flex-1">{other.title}</span>
-                </button>
-              );
-            })}
-          </div>
-          {stop.tests.length ? (
-            <div className="flex flex-col gap-1.5 border-t border-(--border-subtle) pt-3">
-              <h2 className={LABEL}>Tests for this behaviour</h2>
-              <div className="flex flex-wrap gap-1.5">
-                {stop.tests.map((test) => (
-                  <code key={test} className="walk-chip">
-                    {test}
-                  </code>
-                ))}
-              </div>
-            </div>
-          ) : null}
-        </>
-      ) : null}
-    </aside>
   );
 }
 
 function WrapUp({
   tour,
   unseen,
+  seenCount,
+  commentCount,
   go,
   submit,
 }: {
   tour: Tour;
   unseen: Stop[];
+  seenCount: number;
+  commentCount: number;
   go: (step: number) => void;
   submit: ReactNode;
 }) {
   return (
-    <div className="flex max-w-2xl flex-col gap-4">
-      <h2 className={LABEL}>Wrap-up</h2>
-      <p className="text-lg">
-        That’s the whole change: {tour.stops.length}{" "}
-        {tour.stops.length === 1 ? "behaviour" : "behaviours"} in {tour.chapters.length}{" "}
-        {tour.chapters.length === 1 ? "chapter" : "chapters"}.
+    <article aria-labelledby="walk-wrap-title" className="walk-panel">
+      <div className="walk-meta">
+        <span className="walk-chip">Submit</span>
+        <span className="walk-where">
+          {seenCount} of {tour.stops.length} looked at ·{" "}
+          {commentCount ? plural(commentCount, "comment") : "no comments"}
+        </span>
+      </div>
+      <h2 id="walk-wrap-title" className="walk-title">
+        Send your review
+      </h2>
+      <p className="walk-why">
+        That’s the whole change: {plural(tour.stops.length, "behaviour")} in{" "}
+        {plural(tour.chapters.length, "chapter")}.
       </p>
       {unseen.length ? (
-        <div className="walk-panel">
-          <p className="font-semibold">
-            {unseen.length}{" "}
+        <section className="walk-block" aria-label="Not looked at yet">
+          <h3 className="walk-label">
             {unseen.length === 1
-              ? "behaviour you haven’t looked at:"
-              : "behaviours you haven’t looked at:"}
-          </p>
-          <div className="flex flex-wrap gap-1.5">
+              ? "1 behaviour you haven’t looked at"
+              : `${unseen.length} behaviours you haven’t looked at`}
+          </h3>
+          <ul>
             {unseen.map((stop) => (
-              <Button
-                key={stop.id}
-                variant="secondary"
-                size="compact"
-                onClick={() => go(tour.stops.indexOf(stop) + 1)}
-              >
-                {stop.title}
-              </Button>
+              <li key={stop.id}>
+                <button
+                  type="button"
+                  className="walk-block-row"
+                  onClick={() => go(tour.stops.indexOf(stop) + 1)}
+                >
+                  <Mark state={null} />
+                  <span className="walk-block-text">
+                    <span>{stop.title}</span>
+                    <span className="walk-block-sub">
+                      {tour.chapters[stop.chapter]!.title}
+                      {stop.where ? ` · ${stop.where}` : ""}
+                    </span>
+                  </span>
+                  <ChevronRightIcon size={14} className="walk-block-right" />
+                </button>
+              </li>
             ))}
-          </div>
-        </div>
+          </ul>
+        </section>
       ) : null}
-      {submit}
-    </div>
+      <section className="walk-block" aria-label="Your review">
+        <h3 className="walk-label">Your review</h3>
+        {submit}
+      </section>
+    </article>
   );
 }
 
@@ -932,7 +1014,7 @@ function Ledger({
   }, [cur]);
   return (
     <>
-      <div className="flex flex-wrap items-center gap-1.5 border-b border-(--border-subtle) px-6 py-3">
+      <div className="walk-filters">
         {(
           [
             ["all", "All"],
@@ -947,133 +1029,128 @@ function Ledger({
             onClick={() => setFilter(value)}
             className="walk-filter"
           >
-            {label} <span className="tabular-nums opacity-70">{counts[value]}</span>
+            {label} <span className="walk-filter-count">{counts[value]}</span>
           </button>
         ))}
-        <span className="ml-auto flex gap-1.5">
-          <Button variant="secondary" size="compact" onClick={markAllSeen}>
+        <span className="walk-filters-end">
+          <button type="button" className="walk-small" onClick={markAllSeen}>
             Mark all looked at
-          </Button>
-          <Button variant="secondary" size="compact" onClick={() => expandAll(!allOpen)}>
+          </button>
+          <button type="button" className="walk-small" onClick={() => expandAll(!allOpen)}>
             {allOpen ? "Collapse all details" : "Expand all details"}
-          </Button>
+          </button>
         </span>
       </div>
-      {tour.chapters.map((chapter, index) => {
-        const rows = chapter.stops.filter((at) => visible.includes(at));
-        if (rows.length === 0) return null;
-        return (
-          <section key={chapter.id} aria-label={chapter.title}>
-            <h2 className="flex items-center gap-3 border-b border-(--border-subtle) bg-(--surface-wash) px-6 py-2.5">
-              <span className="min-w-0 flex-1 font-semibold">
-                {index + 1} · {chapter.title}
-              </span>
-              {chapter.level ? (
-                <span className="text-xs text-(--text-secondary)">Risk {chapter.level}</span>
-              ) : null}
-              <StopBar tour={tour} stops={chapter.stops} done={done} />
-              <span className="w-9 text-right text-xs tabular-nums">
-                {chapter.stops.filter((at) => done(tour.stops[at]!)).length}/{chapter.stops.length}
-              </span>
-            </h2>
-            {rows.map((at) => {
-              const stop = tour.stops[at]!;
-              const isOpen = open.has(stop.id);
-              const isCommented = commented(stop);
-              const isSeen = !isCommented && done(stop);
-              return (
-                <div
-                  key={stop.id}
-                  ref={at === cur ? current : undefined}
-                  className={cn("walk-row", at === cur && "current", isCommented && "commented")}
-                >
-                  <div className="flex items-start gap-3.5 px-6 py-3">
-                    <span
-                      role="img"
-                      aria-label={
-                        isCommented
-                          ? "Has your comment"
-                          : isSeen
-                            ? "Looked at"
-                            : "Not looked at yet"
-                      }
-                      className={cn("walk-row-state", isCommented && "commented", isSeen && "seen")}
-                    >
-                      {isCommented ? <CommentsIcon size={13} /> : isSeen ? "✓" : null}
-                    </span>
-                    <div className="flex min-w-0 flex-1 flex-col gap-1.5">
-                      <h3 className="font-semibold">{stop.title}</h3>
-                      {echoes(stop) ? null : (
-                        <p className="text-(--text-secondary)">{stop.after}</p>
-                      )}
-                      {isCommented && !isOpen ? (
-                        <p className="walk-note whitespace-pre-line">{progress.notes[stop.id]}</p>
-                      ) : null}
-                      <div className="flex flex-wrap items-center gap-3 text-xs">
-                        <button
-                          type="button"
-                          aria-expanded={isOpen}
-                          onClick={() => toggle(at)}
-                          className="walk-link flex items-center gap-1"
-                        >
-                          <ChevronRightIcon
-                            size={12}
-                            className={cn("transition-transform", isOpen && "rotate-90")}
-                          />
-                          Details and evidence
-                        </button>
-                        <button type="button" onClick={() => walk(at)} className="walk-link muted">
-                          Walk me through it
-                        </button>
+      <div className="walk-ledger-body">
+        {tour.chapters.map((chapter, index) => {
+          const rows = chapter.stops.filter((at) => visible.includes(at));
+          if (rows.length === 0) return null;
+          return (
+            <section key={chapter.id} aria-label={chapter.title} className="walk-group">
+              <div className="walk-group-head">
+                <h2>
+                  {index + 1} · {chapter.title}
+                </h2>
+                <ChapterProgress tour={tour} chapter={chapter} done={done} />
+                <RiskBadge level={chapter.level} />
+              </div>
+              {rows.map((at) => {
+                const stop = tour.stops[at]!;
+                const isOpen = open.has(stop.id);
+                const isCommented = commented(stop);
+                const isSeen = !isCommented && done(stop);
+                return (
+                  <div
+                    key={stop.id}
+                    ref={at === cur ? current : undefined}
+                    className={cn("walk-entry", at === cur && "current")}
+                  >
+                    <div className="walk-entry-main">
+                      <span
+                        role="img"
+                        aria-label={
+                          isCommented
+                            ? "Has your comment"
+                            : isSeen
+                              ? "Looked at"
+                              : "Not looked at yet"
+                        }
+                        className="walk-entry-mark"
+                      >
+                        <Mark state={isCommented ? "commented" : isSeen ? "seen" : null} />
+                      </span>
+                      <div className="walk-entry-text">
+                        <h3>{stop.title}</h3>
+                        {echoes(stop) ? null : <p>{stop.after}</p>}
+                        {isCommented && !isOpen ? (
+                          <p className="walk-entry-note">{progress.notes[stop.id]}</p>
+                        ) : null}
+                        <div className="walk-entry-links">
+                          <button
+                            type="button"
+                            aria-expanded={isOpen}
+                            onClick={() => toggle(at)}
+                            className="walk-link"
+                          >
+                            <ChevronRightIcon
+                              size={12}
+                              className={cn("walk-chevron", isOpen && "open")}
+                            />
+                            Details and evidence
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => walk(at)}
+                            className="walk-link muted"
+                          >
+                            Walk me through it
+                          </button>
+                        </div>
                       </div>
+                      <button type="button" className="walk-small" onClick={() => comment(at)}>
+                        {isCommented ? "Edit comment" : "Comment"}
+                      </button>
                     </div>
-                    <Button variant="secondary" size="compact" onClick={() => comment(at)}>
-                      {isCommented ? "Edit comment" : "Comment"}
-                    </Button>
+                    {isOpen ? (
+                      <div className="walk-entry-details">
+                        {stop.before ? (
+                          <p>
+                            <strong>Before:</strong> {stop.before}
+                          </p>
+                        ) : null}
+                        {stop.question ? (
+                          <p>
+                            <strong>Ask yourself:</strong> {stop.question}
+                          </p>
+                        ) : null}
+                        {stop.text && stop.text !== stop.after ? (
+                          <p className="walk-entry-quote">The review states: “{stop.text}”</p>
+                        ) : null}
+                        {stop.anchors.length ? (
+                          <HunkEvidence document={document} anchors={stop.anchors} />
+                        ) : null}
+                        <label className="walk-entry-field">
+                          Comment{stop.where ? `, attached to ${stop.where}` : ""}. Leave it empty
+                          if nothing looks off.
+                          <textarea
+                            id={`walk-note-${stop.id}`}
+                            value={progress.notes[stop.id] ?? ""}
+                            placeholder={stop.question ?? ""}
+                            onChange={(event) => setNote(stop, event.target.value)}
+                            className="walk-textarea"
+                          />
+                        </label>
+                      </div>
+                    ) : null}
                   </div>
-                  {isOpen ? (
-                    <div className="flex flex-col gap-2.5 pr-6 pb-4 pl-15">
-                      {stop.before ? (
-                        <p>
-                          <strong>Before:</strong> {stop.before}
-                        </p>
-                      ) : null}
-                      {stop.question ? (
-                        <p>
-                          <strong>Ask yourself:</strong> {stop.question}
-                        </p>
-                      ) : null}
-                      {stop.text && stop.text !== stop.after ? (
-                        <p className="text-xs text-(--text-secondary)">
-                          The review states: “{stop.text}”
-                        </p>
-                      ) : null}
-                      {stop.anchors.length ? (
-                        <HunkEvidence document={document} anchors={stop.anchors} />
-                      ) : null}
-                      <label className="flex flex-col gap-1 text-xs">
-                        Comment{stop.where ? `, attached to ${stop.where}` : ""}. Leave it empty if
-                        nothing looks off.
-                        <textarea
-                          id={`walk-note-${stop.id}`}
-                          value={progress.notes[stop.id] ?? ""}
-                          placeholder={stop.question ?? ""}
-                          onChange={(event) => setNote(stop, event.target.value)}
-                          className="walk-textarea"
-                        />
-                      </label>
-                    </div>
-                  ) : null}
-                </div>
-              );
-            })}
-          </section>
-        );
-      })}
-      {visible.length === 0 ? (
-        <p className="px-6 py-7 text-(--text-secondary)">No behaviours in this view.</p>
-      ) : null}
-      <p className="mt-auto flex flex-wrap gap-3.5 border-t border-(--border-subtle) bg-(--surface-wash) px-6 py-2.5 text-xs text-(--text-secondary)">
+                );
+              })}
+            </section>
+          );
+        })}
+        {visible.length === 0 ? <p className="walk-empty">No behaviours in this view.</p> : null}
+      </div>
+      <footer className="walk-keys" aria-hidden>
         <span>
           <kbd>j</kbd> <kbd>k</kbd> move
         </span>
@@ -1090,7 +1167,7 @@ function Ledger({
           <kbd>e</kbd> back to the tour
         </span>
         <span>Opening details counts as looked at</span>
-      </p>
+      </footer>
     </>
   );
 }
@@ -1156,7 +1233,7 @@ function Submit({
       hint: own
         ? "GitHub doesn’t let you request changes on your own pull request"
         : count
-          ? `Ask the author to address ${count} ${count === 1 ? "comment" : "comments"}`
+          ? `Ask the author to address ${plural(count, "comment")}`
           : "Leave a comment first",
     },
   ];
@@ -1195,24 +1272,21 @@ function Submit({
   };
   if (sending.state === "sent")
     return (
-      <div role="status" className="walk-panel after">
-        <p className="font-semibold">Your review is on GitHub.</p>
-        <a href={sending.url} target="_blank" rel="noreferrer" className="flex items-center gap-1">
+      <div role="status" className="walk-sent">
+        <p>
+          <CheckIcon size={14} /> Your review is on GitHub.
+        </p>
+        <a href={sending.url} target="_blank" rel="noreferrer">
           Open it on GitHub <ExternalLinkIcon size={12} />
         </a>
-        <Button
-          variant="secondary"
-          size="compact"
-          className="self-start"
-          onClick={() => setSending({ state: "idle" })}
-        >
+        <button type="button" className="walk-small" onClick={() => setSending({ state: "idle" })}>
           Write another
-        </Button>
+        </button>
       </div>
     );
   return (
-    <div className="flex flex-col gap-3">
-      <div role="radiogroup" aria-label="Review verdict" className="flex flex-col gap-1.5">
+    <div className="walk-submit">
+      <div role="radiogroup" aria-label="Review verdict" className="walk-events">
         {events.map((e) => (
           <button
             key={e.id}
@@ -1224,14 +1298,14 @@ function Submit({
             className="walk-event"
           >
             <span aria-hidden className="walk-event-dot" />
-            <span className="flex flex-col gap-0.5 text-left">
-              <span className="font-semibold">{e.label}</span>
-              <span className="text-xs text-(--text-secondary)">{e.hint}</span>
+            <span className="walk-event-text">
+              <span className="walk-event-label">{e.label}</span>
+              <span className="walk-event-hint">{e.hint}</span>
             </span>
           </button>
         ))}
       </div>
-      <label className="flex flex-col gap-1 text-xs">
+      <label className="walk-field">
         Overall comment (optional)
         <textarea
           value={progress.note}
@@ -1243,38 +1317,38 @@ function Submit({
         />
       </label>
       {count ? (
-        <div className="flex flex-col gap-1.5">
-          <p className="text-xs text-(--text-secondary)">
-            {count} {count === 1 ? "comment" : "comments"}, each on its evidence line:
-          </p>
-          <ul className="flex flex-col gap-1.5">
+        <div className="walk-field">
+          <p>{plural(count, "comment")}, each on its evidence line:</p>
+          <ul className="walk-notes">
             {comments.map((stop) => (
-              <li key={stop.id} className="walk-note">
-                <span className="text-xs text-(--text-secondary)">
+              <li key={stop.id}>
+                <span>
                   {stop.title}
                   {stop.where ? ` · ${stop.where}` : " · in the review body"}
                 </span>
-                <p className="whitespace-pre-line">{progress.notes[stop.id]}</p>
+                <p>{progress.notes[stop.id]}</p>
               </li>
             ))}
           </ul>
         </div>
       ) : null}
       {sending.state === "failed" ? (
-        <Alert>
+        <p role="alert" className="walk-failed">
           {sending.message}
           {sending.code === "invalid_line" ? (
             <>
               {" "}
-              <Button variant="secondary" size="compact" onClick={() => void send(false)}>
+              <button type="button" className="walk-small" onClick={() => void send(false)}>
                 Put the comments in the review body instead
-              </Button>
+              </button>
             </>
           ) : null}
-        </Alert>
+        </p>
       ) : null}
-      <div className="flex flex-wrap items-center gap-2.5">
-        <Button
+      <div className="walk-actions">
+        <button
+          type="button"
+          className="walk-primary"
           onClick={() => void send(true)}
           disabled={sending.state === "sending" || seenCount === 0 || empty}
         >
@@ -1285,8 +1359,8 @@ function Submit({
               : event === "REQUEST_CHANGES"
                 ? "Request changes"
                 : "Send comments"}
-        </Button>
-        <span className="text-xs text-(--text-secondary)">
+        </button>
+        <span className="walk-skipped">
           {seenCount === 0
             ? "Look at a behaviour first"
             : empty

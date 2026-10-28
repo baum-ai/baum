@@ -65,6 +65,7 @@ it("reads a step's tour fields and falls back for steps and sections without the
 it("takes a step's first sentence as its title", () => {
   expect(firstSentence("Retries back off. Then they stop.")).toBe("Retries back off");
   expect(firstSentence("No full stop")).toBe("No full stop");
+  expect(firstSentence("A hook waits; the daemon answers. Later.")).toBe("A hook waits");
 });
 
 it("puts placed comments on their lines and the rest in the body", () => {
@@ -164,7 +165,7 @@ it("walks the stops, marks what was passed as looked at and skips it next time",
   render();
   expect(node.textContent).toContain("The route · riskiest first");
   click("Start the tour");
-  expect(node.querySelector("h2.text-2xl")?.textContent).toBe(buildTour(doc).stops[0]!.title);
+  expect(node.querySelector("h2.walk-title")?.textContent).toBe(buildTour(doc).stops[0]!.title);
   key("ArrowRight");
   expect(node.textContent).toContain("1 of");
   key("ArrowLeft");

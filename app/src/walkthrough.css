@@ -1,0 +1,1101 @@
+/* The walkthrough (walkthrough.tsx), drawn as the inbox is: its colours and
+   sizes are the Up next design's (the --un-* tokens in style.css), the stops
+   listed on the left and the one being read beside them. */
+
+/* The page fills the panel to the window's foot, and its list and panel
+   scroll on their own. */
+.local-shell:has(.walkthrough) {
+  height: 100vh;
+}
+.local-frame:has(.walkthrough) {
+  min-height: 0;
+  background: var(--un-panel);
+}
+.local-main:has(.walkthrough) {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+  padding-bottom: 0;
+  container-type: inline-size;
+}
+.walkthrough {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--un-panel);
+  color: var(--un-ink);
+  font-family: var(--font-sans);
+}
+.walkthrough a {
+  color: var(--un-link);
+}
+.walkthrough a:hover {
+  color: var(--un-link-hover);
+}
+.walkthrough button {
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+.walkthrough :is(button, a, textarea):focus-visible {
+  outline: 2px solid var(--un-focus);
+  outline-offset: 2px;
+}
+.walkthrough kbd {
+  padding: 1px 5px;
+  border: 1px solid currentColor;
+  border-radius: 4px;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 10.5px;
+  opacity: 0.6;
+}
+.walk-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  color: var(--un-muted);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.walk-label-where {
+  font-family: var(--font-mono, ui-monospace, monospace);
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+/* The header: what is being reviewed, how far the reader is, and the views */
+.walk-head {
+  position: relative;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px 20px;
+  padding: 14px 20px 15px;
+  border-bottom: 1px solid var(--un-line);
+}
+.walk-head-text {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+.walk-head h1 {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 600;
+  line-height: 1.3;
+  overflow-wrap: anywhere;
+}
+.walk-head-number {
+  color: var(--un-muted);
+  font-weight: 500;
+}
+.walk-head p {
+  margin: 0;
+  color: var(--un-muted);
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+.walk-head strong {
+  color: var(--un-ink-soft);
+  font-weight: 600;
+}
+.walk-head-comments {
+  color: var(--un-working);
+  font-weight: 600;
+}
+.walk-head-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+/* How much has been looked at, along the header's foot. */
+.walk-head-bar {
+  position: absolute;
+  right: 0;
+  bottom: -1px;
+  left: 0;
+  display: flex;
+  height: 3px;
+}
+.walk-head-bar span {
+  transition: width 0.4s;
+}
+.walk-head-bar-seen {
+  background: var(--un-done);
+}
+.walk-head-bar-commented {
+  background: var(--un-risk-mid);
+}
+.walk-stale {
+  margin: 0;
+  padding: 8px 20px;
+  border-bottom: 1px solid var(--un-working-line);
+  background: var(--un-working-bg);
+  color: var(--un-working-ink);
+  font-size: 13px;
+}
+
+.walk-split {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+
+/* The list of stops */
+.walk-list {
+  display: flex;
+  flex: 0 0 340px;
+  flex-direction: column;
+  min-width: 0;
+  border-right: 1px solid var(--un-line);
+  background: var(--un-list);
+}
+.walk-list-body {
+  flex: 1;
+  min-height: 0;
+  padding: 8px 8px 12px;
+  overflow: auto;
+}
+.walk-list ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.walk-group {
+  display: flex;
+  flex-direction: column;
+  padding-top: 10px;
+}
+.walk-group-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 10px 6px;
+}
+.walk-group-head h2 {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  color: var(--un-muted);
+  font-size: 11.5px;
+  font-weight: 600;
+  line-height: 1.4;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.walk-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  width: 100%;
+  padding: 9px 10px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  text-align: left;
+}
+.walk-row:hover {
+  background: var(--un-hover);
+}
+.walk-row[aria-current] {
+  background: var(--un-card);
+  box-shadow: var(--un-shadow-selected);
+}
+.walk-row:active {
+  transform: translateY(1px);
+}
+.walk-row .walk-mark {
+  margin-top: 1px;
+}
+.walk-row-text {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.walk-row-title {
+  display: -webkit-box;
+  overflow: hidden;
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 1.35;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+.walk-row[aria-current] .walk-row-title {
+  font-weight: 600;
+}
+.walk-row-sub {
+  overflow: hidden;
+  color: var(--un-muted);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.walk-row-commented {
+  color: var(--un-working);
+  font-weight: 600;
+}
+.walk-mark {
+  display: flex;
+  width: 16px;
+  height: 16px;
+  flex: none;
+  box-sizing: border-box;
+  align-items: center;
+  justify-content: center;
+  border: 1.5px solid var(--un-mark);
+  border-radius: 50%;
+  color: var(--un-on-hot);
+}
+.walk-mark.seen {
+  border: 0;
+  background: var(--un-done);
+}
+.walk-mark.commented {
+  border: 0;
+  background: var(--un-risk-mid);
+}
+.walk-mark-end {
+  border: 0;
+  background: var(--un-hairline);
+  color: var(--un-ink-soft);
+}
+.walk-keys {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  padding: 9px 16px;
+  border-top: 1px solid var(--un-line);
+  color: var(--un-muted);
+  font-size: 11.5px;
+}
+
+/* Risk, as the inbox's numbered badges show it */
+.walk-badge {
+  display: flex;
+  width: 22px;
+  height: 20px;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  background: var(--un-clone-bg);
+  color: var(--un-clone);
+  font-size: 11.5px;
+  font-weight: 700;
+  letter-spacing: 0;
+}
+.walk-badge.risk-3 {
+  background: var(--un-review-bg);
+  color: var(--un-review);
+}
+.walk-badge.risk-4 {
+  background: var(--un-score4-bg);
+  color: var(--un-score4);
+}
+.walk-badge.risk-5 {
+  background: var(--un-hot);
+  color: var(--un-on-hot);
+}
+
+/* The panel */
+.walk-detail {
+  flex: 1;
+  min-width: 0;
+  overflow: auto;
+}
+.walk-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  max-width: 780px;
+  padding: 30px 40px 80px;
+  animation: walk-rise 0.25s ease-out;
+}
+@keyframes walk-rise {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+}
+.walk-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+.walk-chip {
+  flex: none;
+  max-width: 100%;
+  padding: 2px 8px;
+  overflow: hidden;
+  border-radius: 4px;
+  background: var(--un-clone-bg);
+  color: var(--un-clone);
+  font-size: 12px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.walk-chip.risk-3 {
+  background: var(--un-review-bg);
+  color: var(--un-review);
+}
+.walk-chip:is(.risk-4, .risk-5) {
+  background: var(--un-score4-bg);
+  color: var(--un-score4);
+}
+.walk-where {
+  color: var(--un-muted);
+  font-size: 13.5px;
+}
+.walk-minutes {
+  margin-left: auto;
+  color: var(--un-ink-soft);
+  font-size: 13.5px;
+  white-space: nowrap;
+}
+.walk-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+  color: var(--un-done);
+  font-size: 13px;
+  font-weight: 600;
+}
+.walk-state.commented {
+  color: var(--un-working);
+}
+.walk-title {
+  margin: 0;
+  font-size: 28px;
+  font-weight: 600;
+  line-height: 1.2;
+  letter-spacing: -0.015em;
+  overflow-wrap: anywhere;
+}
+/* A step written before steps had short titles takes its first sentence;
+   at full size it would fill the screen. */
+.walk-title.long {
+  font-size: 22px;
+  line-height: 1.3;
+  letter-spacing: -0.01em;
+}
+.walk-why {
+  margin: 0;
+  color: var(--un-ink-soft);
+  font-size: 16px;
+  line-height: 1.6;
+}
+.walk-compare {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr));
+  overflow: hidden;
+  border: 1px solid var(--un-line);
+  border-radius: 12px;
+  background: var(--un-card);
+}
+.walk-compare > div {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 14px 16px;
+}
+.walk-compare > div + div {
+  border-left: 1px solid var(--un-hairline);
+}
+.walk-compare .now {
+  background: color-mix(in srgb, var(--un-merge-bg) 55%, transparent);
+}
+.walk-compare .now .walk-label {
+  color: var(--un-merge);
+}
+.walk-compare p {
+  margin: 0;
+  font-size: 15px;
+  line-height: 1.5;
+}
+.walk-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.walkthrough :is(.walk-primary, .walk-secondary) {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 8px 14px;
+  border-radius: 6px;
+  font-size: 14px;
+  line-height: 1.3;
+  white-space: nowrap;
+}
+.walkthrough .walk-primary {
+  border: 1px solid var(--un-primary-line);
+  background: var(--un-primary);
+  box-shadow: var(--un-shadow-primary);
+  color: var(--un-on-primary);
+  font-weight: 600;
+}
+.walkthrough .walk-secondary {
+  border: 1px solid var(--un-line);
+  background: var(--un-card);
+  box-shadow: var(--un-shadow-button);
+  color: var(--un-ink);
+  font-weight: 500;
+}
+.walkthrough .walk-primary:hover:not(:disabled) {
+  border-color: var(--un-on-primary);
+}
+.walkthrough .walk-secondary:hover:not(:disabled) {
+  border-color: var(--un-line-strong);
+  background: var(--un-list);
+}
+.walkthrough .walk-small {
+  flex: none;
+  padding: 3px 9px;
+  border: 1px solid var(--un-line);
+  border-radius: 6px;
+  background: var(--un-card);
+  box-shadow: var(--un-shadow-button);
+  color: var(--un-ink-soft);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.3;
+  white-space: nowrap;
+}
+.walkthrough .walk-small:hover {
+  border-color: var(--un-line-strong);
+  background: var(--un-hover);
+  color: var(--un-ink);
+}
+.walkthrough :is(.walk-primary, .walk-secondary, .walk-small, .walk-row):active:not(:disabled) {
+  transform: translateY(1px);
+}
+.walkthrough :is(.walk-primary, .walk-secondary):disabled {
+  box-shadow: none;
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.walk-skipped {
+  color: var(--un-muted);
+  font-size: 12.5px;
+}
+.walk-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--un-link);
+  font-weight: 600;
+  text-align: left;
+  text-decoration: underline;
+  text-decoration-color: color-mix(in srgb, currentColor 35%, transparent);
+  text-underline-offset: 2px;
+}
+.walk-link:hover {
+  color: var(--un-link-hover);
+  text-decoration-color: currentColor;
+}
+.walk-link.muted {
+  color: var(--un-muted);
+  font-weight: 500;
+  text-decoration: none;
+}
+.walk-chevron {
+  transition: transform 0.15s;
+}
+.walk-chevron.open {
+  transform: rotate(90deg);
+}
+
+/* A comment being written, or one saved */
+.walk-comment {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px 16px;
+  border: 1px solid var(--un-working-line);
+  border-radius: 12px;
+  background: var(--un-working-bg);
+  animation: walk-drop 0.15s ease-out;
+}
+@keyframes walk-drop {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+}
+.walk-comment label {
+  font-size: 14px;
+  font-weight: 600;
+}
+.walk-comment.saved {
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 10px;
+}
+.walk-comment-icon {
+  flex: none;
+  margin-top: 2px;
+  color: var(--un-working);
+}
+.walk-comment-body {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 12rem;
+}
+.walk-comment-where {
+  color: var(--un-muted);
+  font-size: 12.5px;
+}
+.walk-comment-body p {
+  margin: 0;
+  font-size: 15px;
+  line-height: 1.5;
+  white-space: pre-line;
+}
+.walk-textarea {
+  min-height: 84px;
+  padding: 8px 10px;
+  border: 1px solid var(--un-line-strong);
+  border-radius: 6px;
+  background: var(--un-card);
+  color: var(--un-ink);
+  font: inherit;
+  font-size: 14.5px;
+  line-height: 1.5;
+  resize: vertical;
+}
+
+/* The question to judge the behaviour by */
+.walk-ask {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 14px 16px;
+  border-left: 3px solid var(--un-risk-mid);
+  border-radius: 0 10px 10px 0;
+  background: var(--un-list);
+}
+.walk-ask p {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 500;
+  line-height: 1.5;
+}
+
+/* The risk card, as the inbox panel draws it */
+.walk-risk {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 14px 16px;
+  border: 1px solid var(--un-line);
+  border-radius: 12px;
+  background: var(--un-card);
+}
+.walk-risk-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+.walk-risk-blocks {
+  display: flex;
+  gap: 2px;
+}
+.walk-risk-blocks span {
+  width: 14px;
+  height: 7px;
+  border-radius: 2px;
+  background: var(--un-line);
+}
+.walk-risk-blocks .on {
+  background: var(--un-muted);
+}
+.walk-risk-blocks :is(.risk-3, .risk-4) {
+  background: var(--un-risk-mid);
+}
+.walk-risk-blocks .risk-5 {
+  background: var(--un-hot);
+}
+.walk-risk-text {
+  font-size: 13.5px;
+  font-weight: 600;
+}
+.walk-risk p {
+  margin: 0;
+  font-size: 14.5px;
+  line-height: 1.5;
+}
+
+/* Labelled blocks of rows */
+.walk-block {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.walk-block > .walk-label {
+  padding-bottom: 4px;
+}
+.walk-block ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.walk-block li {
+  border-top: 1px solid var(--un-hairline);
+  font-size: 14px;
+}
+.walk-block li:has(> code) {
+  padding: 8px 0;
+}
+.walk-block code {
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 13px;
+}
+.walk-block-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  width: 100%;
+  margin: 0 -8px;
+  padding: 9px 8px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  text-align: left;
+  box-sizing: content-box;
+}
+.walk-block-row:hover {
+  background: var(--un-hover);
+}
+.walk-block-row .walk-mark {
+  margin-top: 1px;
+}
+.walk-number {
+  display: flex;
+  width: 22px;
+  height: 20px;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  background: var(--un-hairline);
+  color: var(--un-ink-soft);
+  font-size: 11.5px;
+  font-weight: 700;
+}
+.walk-block-text {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  line-height: 1.4;
+}
+.walk-block-sub {
+  color: var(--un-muted);
+  font-size: 13px;
+  line-height: 1.45;
+}
+.walk-block-right {
+  flex: none;
+  align-self: center;
+  color: var(--un-ink-soft);
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+.walk-lead {
+  margin: 0;
+  color: var(--un-ink-soft);
+  font-size: 14.5px;
+  line-height: 1.5;
+}
+.walk-note {
+  margin: 0;
+  color: var(--un-muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+/* The code stays inside the panel's width and height: a long excerpt
+   scrolls in its own box rather than pushing the page miles down. */
+.walk-code details[open] > :not(summary) {
+  max-height: 70vh;
+  overflow: auto;
+  border: 1px solid var(--un-line);
+  border-radius: 8px;
+}
+
+/* Everything at once */
+.walk-ledger {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+}
+.walk-filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding: 12px 20px;
+  border-bottom: 1px solid var(--un-hairline);
+}
+.walkthrough .walk-filter {
+  padding: 4px 10px;
+  border: 1px solid var(--un-line);
+  border-radius: 6px;
+  background: var(--un-card);
+  box-shadow: var(--un-shadow-button);
+  font-size: 13px;
+  font-weight: 500;
+}
+.walkthrough .walk-filter:hover {
+  background: var(--un-hover);
+}
+.walkthrough .walk-filter:active {
+  transform: translateY(1px);
+}
+.walkthrough .walk-filter[aria-pressed="true"] {
+  border-color: var(--un-ink);
+  background: var(--un-ink);
+  color: var(--un-panel);
+}
+.walk-filter-count {
+  opacity: 0.65;
+  font-variant-numeric: tabular-nums;
+}
+.walk-filters-end {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-left: auto;
+}
+.walk-ledger-body {
+  flex: 1;
+  min-height: 0;
+  padding: 4px 12px 16px;
+  overflow: auto;
+}
+.walk-ledger-body .walk-group-head {
+  padding: 10px 10px 6px;
+}
+.walk-entry {
+  border-radius: 10px;
+}
+.walk-entry + .walk-entry {
+  border-top: 1px solid var(--un-hairline);
+}
+.walk-entry.current {
+  border-top-color: transparent;
+  background: var(--un-card);
+  box-shadow: var(--un-shadow-selected);
+}
+.walk-entry.current + .walk-entry {
+  border-top-color: transparent;
+}
+.walk-entry-main {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 12px 10px;
+}
+.walk-entry-mark {
+  display: flex;
+  padding-top: 2px;
+}
+.walk-entry-text {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 5px;
+  min-width: 0;
+}
+.walk-entry-text h3 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1.4;
+}
+.walk-entry-text p {
+  margin: 0;
+  color: var(--un-ink-soft);
+  font-size: 14px;
+  line-height: 1.5;
+}
+.walk-entry-text .walk-entry-note {
+  padding: 6px 10px;
+  border: 1px solid var(--un-working-line);
+  border-radius: 6px;
+  background: var(--un-working-bg);
+  color: var(--un-ink);
+  white-space: pre-line;
+}
+.walk-entry-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  font-size: 12.5px;
+}
+.walk-entry-details {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 0 10px 14px 38px;
+  font-size: 14px;
+  line-height: 1.5;
+}
+.walk-entry-details p {
+  margin: 0;
+}
+.walk-entry-quote {
+  color: var(--un-muted);
+  font-size: 13px;
+}
+.walk-entry-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  color: var(--un-muted);
+  font-size: 12.5px;
+}
+.walk-empty {
+  margin: 0;
+  padding: 24px 10px;
+  color: var(--un-muted);
+}
+.walk-aside {
+  display: flex;
+  flex: 0 0 360px;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+  padding: 20px 18px;
+  overflow: auto;
+  border-left: 1px solid var(--un-line);
+  background: var(--un-list);
+}
+
+/* Sending the review */
+.walk-submit {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.walk-events {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.walkthrough .walk-event {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--un-line);
+  border-radius: 8px;
+  background: var(--un-card);
+  box-shadow: var(--un-shadow-button);
+  text-align: left;
+}
+.walkthrough .walk-event:hover:not([aria-disabled="true"]) {
+  border-color: var(--un-line-strong);
+}
+.walkthrough .walk-event[aria-checked="true"] {
+  border-color: var(--un-primary-line);
+  background: var(--un-primary);
+}
+.walkthrough .walk-event[aria-disabled="true"] {
+  box-shadow: none;
+  background: transparent;
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+.walk-event-dot {
+  flex: none;
+  box-sizing: border-box;
+  width: 14px;
+  height: 14px;
+  margin-top: 2px;
+  border: 1.5px solid var(--un-mark);
+  border-radius: 50%;
+  background: var(--un-card);
+}
+.walk-event[aria-checked="true"] .walk-event-dot {
+  border: 4px solid var(--un-done);
+}
+.walk-event-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.walk-event-label {
+  font-size: 14px;
+  font-weight: 600;
+}
+.walk-event-hint {
+  color: var(--un-muted);
+  font-size: 12.5px;
+  line-height: 1.4;
+}
+.walk-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  color: var(--un-muted);
+  font-size: 12.5px;
+}
+.walk-field > p {
+  margin: 0;
+}
+.walk-notes {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.walk-notes li {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 10px;
+  border: 1px solid var(--un-working-line);
+  border-radius: 6px;
+  background: var(--un-working-bg);
+}
+.walk-notes p {
+  margin: 0;
+  color: var(--un-ink);
+  font-size: 14px;
+  white-space: pre-line;
+}
+.walk-failed {
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--un-line);
+  border-radius: 8px;
+  background: var(--un-fix-bg);
+  color: var(--un-fix);
+  font-size: 14px;
+}
+.walk-sent {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 14px 16px;
+  border: 1px solid var(--un-primary-line);
+  border-radius: 12px;
+  background: var(--un-primary);
+}
+.walk-sent p {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  color: var(--un-on-primary);
+  font-weight: 600;
+}
+.walk-sent a {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+/* A narrow window stacks the list over the panel and scrolls them as one. */
+@container (width < 760px) {
+  .walk-split {
+    flex-direction: column;
+    overflow: auto;
+  }
+  .walk-list,
+  .walk-aside {
+    flex: none;
+    border-right: 0;
+    border-left: 0;
+    border-bottom: 1px solid var(--un-line);
+  }
+  .walk-aside {
+    order: 1;
+    border-top: 1px solid var(--un-line);
+    border-bottom: 0;
+  }
+  .walk-list-body,
+  .walk-detail,
+  .walk-ledger-body {
+    overflow: visible;
+  }
+  .walk-list-body {
+    max-height: 40vh;
+    overflow: auto;
+  }
+  .walk-panel {
+    padding: 24px 20px 60px;
+  }
+  .walk-title {
+    font-size: 22px;
+  }
+  .walk-title.long {
+    font-size: 19px;
+  }
+  .walk-keys {
+    display: none;
+  }
+  .walk-compare > div + div {
+    border-top: 1px solid var(--un-hairline);
+    border-left: 0;
+  }
+  .walk-entry-details {
+    padding-left: 10px;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .walk-panel,
+  .walk-comment {
+    animation: none;
+  }
+  .walk-head-bar span,
+  .walk-chevron {
+    transition: none;
+  }
+}
+/* The code's disclosure reads as a control, not small print. */
+.walk-code summary {
+  align-self: flex-start;
+  gap: 6px;
+  padding: 7px 12px;
+  border: 1px solid var(--un-line);
+  border-radius: 6px;
+  background: var(--un-card);
+  box-shadow: var(--un-shadow-button);
+  color: var(--un-ink-soft);
+  font-size: 13.5px;
+}
+.walk-code summary:hover {
+  border-color: var(--un-line-strong);
+  color: var(--un-ink);
+}
+.walk-code details[open] > summary {
+  margin-bottom: 10px;
+}

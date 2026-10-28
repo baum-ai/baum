@@ -83,12 +83,17 @@ saved) opens the walkthrough (`src/walkthrough.tsx`): `?…&walk=tour` or
 logical sections with hunks in `sectionsInReviewOrder` (mechanical and obsolete
 sections are left out), and stops, one per behaviour step: its `title`,
 `before`, `after` and `question` (schema revision 2026-10-27.1), falling back to
-the step's `text` for a review written before them, and to the section summary
-for a section without steps. A stop's code is the viewer's `HunkEvidence` for
+the step's `text` for a review written before them (its first sentence, cut at
+the first semicolon, as the title), and to the section summary for a section
+without steps. A stop's code is the viewer's `HunkEvidence` for
 the step's hunk anchors, reading omitted excerpts through the page's patch
-source. **Guided tour** walks intro, stops and wrap-up; Next and → skip stops
-already looked at. **Everything** lists every stop by chapter with filters,
-details and a comment box per row, and the submit panel beside it. Leaving a
+source. The walkthrough is drawn as the inbox is, with the Up next design's
+`--un-*` colours (`src/walkthrough.css`). **Guided tour** lists the overview,
+every stop by chapter and the wrap-up on the left, and shows the one being
+read beside them: its title, its before and after, Next and Something looks
+off, the question to ask, the chapter's risk and its code. Next and → skip
+stops already looked at. **Everything** lists every stop by chapter with
+filters, details and a comment box per row, and the submit panel beside it. Leaving a
 stop, opening its details or commenting marks it looked at; seen marks and
 drafts are kept in `localStorage` (`baum.walkthrough`) per repository, pull
 request and review version, the 40 most recent. Submitting posts

@@ -6,6 +6,8 @@ import type { Plugin } from "vite";
 /** Keep login, cookies, CSRF and event streams on the frontend's origin.
  * The desktop writes only the daemon origin, never its launch capability. */
 export function desktopDevelopment(directory: string): Plugin {
+  // Another worktree's Vite can run beside the desktop's on its own port.
+  const port = Number(process.env.BAUM_DESKTOP_DEV_PORT) || 1420;
   function target(): string {
     const origin = readFileSync(join(directory, "daemon-origin"), "utf8");
     const url = new URL(origin);
@@ -21,7 +23,7 @@ export function desktopDevelopment(directory: string): Plugin {
         base: "/",
         server: {
           host: "127.0.0.1",
-          port: 1420,
+          port,
           strictPort: true,
           fs: {
             allow: [resolve(import.meta.dirname), resolve(import.meta.dirname, "../viewer")],
@@ -48,7 +50,8 @@ export function desktopDevelopment(directory: string): Plugin {
         }
         try {
           const origin = target();
-          if (request.headers.origin === "http://127.0.0.1:1420") request.headers.origin = origin;
+          if (request.headers.origin === `http://127.0.0.1:${port}`)
+            request.headers.origin = origin;
           proxy.web(request, response, { target: origin });
         } catch {
           response.writeHead(503);
