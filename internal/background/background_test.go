@@ -49,6 +49,8 @@ type fakeDiscovery struct {
 	updated time.Time
 	// settling reports a poll that found a new head.
 	settling bool
+	// closed leaves pull request 1 out of the open ones.
+	closed bool
 }
 
 // Poll lists pull request 1 as open, with the latest observation of each
@@ -63,7 +65,11 @@ func (f *fakeDiscovery) Poll(_ context.Context, repo github.Repository) (discove
 	for _, o := range latest {
 		observations = append(observations, o)
 	}
-	return discovery.Snapshot{Repository: repo.String(), NextPoll: f.next, Settling: f.settling, PullRequests: []discovery.PullRequest{{Number: 1, HeadSHA: "new", UpdatedAt: f.updated}}, Observations: observations}, f.err
+	open := []discovery.PullRequest{{Number: 1, HeadSHA: "new", UpdatedAt: f.updated}}
+	if f.closed {
+		open = nil
+	}
+	return discovery.Snapshot{Repository: repo.String(), NextPoll: f.next, Settling: f.settling, PullRequests: open, Observations: observations}, f.err
 }
 func (f *fakeDiscovery) PollNow(ctx context.Context, repo github.Repository) (discovery.Snapshot, error) {
 	f.forced = append(f.forced, repo.String())
@@ -457,5 +463,30 @@ func TestSettlingPollIsDueSooner(t *testing.T) {
 	}
 	if wait := s.wait(); wait != 30*time.Second {
 		t.Fatalf("Run waits %v, want 30s", wait)
+	}
+}
+
+// A pull request this worker read while open, and that then left the open
+// ones, is read once more to learn that it merged or closed.
+func TestPullRequestReadOpenIsReadAgainWhenItLeaves(t *testing.T) {
+	now := time.Now()
+	d := &fakeDiscovery{}
+	state := "OPEN"
+	calls := 0
+	s := &Service{Registry: registry{{Repository: "acme/app", CommonDir: "a", Available: true}}, Discovery: d, Now: func() time.Time { return now }, Saved: func(context.Context, repos.Clone) ([]int, error) { return []int{1}, nil }, Refresh: func(_ context.Context, _ repos.Clone, n int) (discovery.Observation, error) {
+		calls++
+		return discovery.Observation{Number: n, HeadSHA: "new", State: state, FetchedAt: now}, nil
+	}}
+	s.Sync(context.Background())
+	now = now.Add(time.Minute)
+	d.closed, state = true, "MERGED"
+	s.Sync(context.Background())
+	if calls != 2 {
+		t.Fatalf("calls=%d, want a read after it left the open ones", calls)
+	}
+	now = now.Add(time.Minute)
+	s.Sync(context.Background())
+	if calls != 2 {
+		t.Fatalf("calls=%d, want no read of a merged pull request", calls)
 	}
 }

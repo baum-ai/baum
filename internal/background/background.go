@@ -179,6 +179,11 @@ type read struct {
 	at time.Time
 	// failures counts the reads that failed since the last that did not.
 	failures int
+	// head and open are what discovery showed of the pull request when it was
+	// read: a change from them is what makes it due, so a GitHub that still
+	// reports the old state is not read every pass.
+	head string
+	open bool
 }
 
 func readKey(clone repos.Clone, number int) string {
@@ -191,8 +196,9 @@ func (s *Service) lastRead(key string) read {
 	return s.reads[key]
 }
 
-// recordRead notes a read that GitHub did not rate-limit.
-func (s *Service) recordRead(key string, err error, epoch uint64) {
+// recordRead notes a read that GitHub did not rate-limit, of a pull request
+// discovery showed at head, open or not.
+func (s *Service) recordRead(key string, err error, epoch uint64, head string, open bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if epoch != s.epoch {
@@ -201,7 +207,7 @@ func (s *Service) recordRead(key string, err error, epoch uint64) {
 	if s.reads == nil {
 		s.reads = map[string]read{}
 	}
-	r := read{at: s.now()}
+	r := read{at: s.now(), head: head, open: open}
 	// A conflict means a generation or another refresh published first, with
 	// fresh evidence of its own.
 	if err != nil && !errors.Is(err, store.ErrConflict) {
@@ -214,6 +220,11 @@ func (s *Service) recordRead(key string, err error, epoch uint64) {
 // whether first (urgent): GitHub reported a change since the last read.
 func (s *Service) due(r read, observation discovery.Observation, observed bool, pr discovery.PullRequest, open bool) (due, urgent bool) {
 	last := maxTime(observation.FetchedAt, r.at)
+	// Unread in this process: what was last observed stands for it.
+	head, wasOpen := r.head, r.open
+	if r.at.IsZero() {
+		head, wasOpen = observation.HeadSHA, true
+	}
 	switch {
 	case last.IsZero():
 		return true, true
@@ -221,11 +232,10 @@ func (s *Service) due(r read, observation discovery.Observation, observed bool, 
 		return true, true
 	case r.failures > 0:
 		return !s.now().Before(r.at.Add(min(s.interval()*time.Duration(1<<min(r.failures-1, 8)), openReadAge))), false
-	// Unless read since the observation: a GitHub that still
-	// reports the old state would otherwise be read every pass.
-	case open && observed && observation.HeadSHA != pr.HeadSHA && r.at.Before(observation.FetchedAt):
+	case open && observed && pr.HeadSHA != head:
 		return true, true
-	case !open && observed && observation.State == "OPEN" && r.at.Before(observation.FetchedAt):
+	// It left the open pull requests since it was read open: merged or closed.
+	case !open && observed && observation.State == "OPEN" && wasOpen:
 		return true, true
 	}
 	age := closedReadAge
@@ -293,6 +303,9 @@ func (s *Service) Sync(ctx context.Context) {
 		key    string
 		urgent bool
 		last   time.Time
+		// head and open are discovery's, for recordRead.
+		head string
+		open bool
 	}
 	var passed []*polled
 	var targets []target
@@ -373,7 +386,11 @@ func (s *Service) Sync(ctx context.Context) {
 				observation, observed := observations[number]
 				pr, isOpen := open[number]
 				if due, urgent := s.due(r, observation, observed, pr, isOpen); due {
-					targets = append(targets, target{p, clone, number, key, urgent, maxTime(observation.FetchedAt, r.at)})
+					head := pr.HeadSHA
+					if !isOpen {
+						head = observation.HeadSHA
+					}
+					targets = append(targets, target{p, clone, number, key, urgent, maxTime(observation.FetchedAt, r.at), head, isOpen})
 				}
 			}
 		}
@@ -428,7 +445,7 @@ func (s *Service) Sync(ctx context.Context) {
 			s.setPause(p.repo.Host, p.next, epoch)
 			continue
 		}
-		s.recordRead(current.key, err, epoch)
+		s.recordRead(current.key, err, epoch, current.head, current.open)
 		if err != nil && !errors.Is(err, store.ErrConflict) {
 			p.state.Error = "metadata_unavailable"
 			p.state.Problems = append(p.state.Problems, Problem{current.number, "metadata_unavailable"})
@@ -533,7 +550,7 @@ func (s *Service) RefreshNow(ctx context.Context, clone repos.Clone, numbers []i
 			s.setPause(repo.Host, limited.ResumeAt, epoch)
 			break
 		}
-		s.recordRead(readKey(clone, number), err, epoch)
+		s.recordRead(readKey(clone, number), err, epoch, observation.HeadSHA, observation.State == "OPEN" || observation.State == "")
 		if err != nil && !errors.Is(err, store.ErrConflict) {
 			errs = append(errs, err)
 		}
