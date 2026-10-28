@@ -106,7 +106,21 @@ export type Entity = {
   hunks: string[];
 };
 
-export type BehaviorStep = { id: string; text: string; anchors: Anchor[]; evidence: string[] };
+export type BehaviorStep = {
+  id: string;
+  /** A short plain headline of the new behaviour, as a reader would say it. */
+  title?: string;
+  /** How the system behaved before the change, in plain words. Absent for wholly new behaviour. */
+  before?: string;
+  /** How it behaves now, in plain words for a reader who has not read the code. */
+  after?: string;
+  /** One question the reviewer should ask to judge the step, answerable from the code. */
+  question?: string;
+  /** The precise technical statement of the behaviour. */
+  text: string;
+  anchors: Anchor[];
+  evidence: string[];
+};
 
 export type Decision = {
   id: string;

@@ -309,6 +309,7 @@ it("lists exactly the keys that work in the sheet", async () => {
     "Inbox",
     "Pull requests",
     "A pull request or group",
+    "Walkthrough",
     "Sessions",
     "Jobs",
     "Repositories",
@@ -350,6 +351,7 @@ it("lists exactly the keys that work in the sheet", async () => {
     "→",
   ]);
   expect(listed("A pull request or group")).toEqual(["j", "k", "m", "f", "g", "u", "Esc"]);
+  expect(listed("Walkthrough")).toEqual(["→", "j", "←", "k", "c", "o", "Enter", "t", "e"]);
   const list = ["j", "↓", "k", "↑", "Enter", "o", "Esc"];
   expect(listed("Sessions")).toEqual([...list, "p"]);
   expect(listed("Jobs")).toEqual([...list, "t"]);
@@ -377,6 +379,7 @@ it("lists the keys of where the sheet was opened first", async () => {
     "Anywhere",
     "Inbox",
     "A pull request or group",
+    "Walkthrough",
     "Sessions",
     "Jobs",
     "Repositories",

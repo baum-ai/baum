@@ -113,6 +113,53 @@ func TestValidateRejectsMalformedJSON(t *testing.T) {
 	}
 }
 
+// firstBehaviorStep returns the first behaviour step of the example.
+func firstBehaviorStep(t *testing.T, doc map[string]any) map[string]any {
+	t.Helper()
+	for _, rawSection := range doc["sections"].([]any) {
+		for _, rawBlock := range rawSection.(map[string]any)["blocks"].([]any) {
+			block := rawBlock.(map[string]any)
+			if block["kind"] == "behavior" {
+				return block["steps"].([]any)[0].(map[string]any)
+			}
+		}
+	}
+	t.Fatal("example has no behavior step")
+	return nil
+}
+
+func TestBehaviorStepTourFields(t *testing.T) {
+	marshal := func(doc map[string]any) []byte {
+		raw, err := json.Marshal(doc)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return raw
+	}
+	_, doc := readExample(t)
+	step := firstBehaviorStep(t, doc)
+	for _, key := range []string{"title", "before", "after", "question"} {
+		if _, ok := step[key].(string); !ok {
+			t.Fatalf("example step has no %s", key)
+		}
+	}
+	// The fields are optional: a step without them stays valid.
+	for _, key := range []string{"title", "before", "after", "question"} {
+		delete(step, key)
+	}
+	if err := Validate(marshal(doc)); err != nil {
+		t.Fatalf("step without tour fields rejected: %v", err)
+	}
+	step["title"] = strings.Repeat("x", 161)
+	if err := Validate(marshal(doc)); err == nil {
+		t.Error("a title over 160 characters was accepted")
+	}
+	step["title"] = 3
+	if err := Validate(marshal(doc)); err == nil {
+		t.Error("a non-string title was accepted")
+	}
+}
+
 func readExample(t *testing.T) ([]byte, map[string]any) {
 	t.Helper()
 	raw, err := os.ReadFile("review-example.json")

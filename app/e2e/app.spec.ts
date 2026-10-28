@@ -834,6 +834,74 @@ test("Analytics shows what the agents did, cost and delivered", async ({ page })
   expect(errors).toEqual([]);
 });
 
+test("walks through a review, comments on a behaviour and submits the review", async ({ page }) => {
+  const errors: string[] = [];
+  page.on("pageerror", (e) => errors.push(e.message));
+  // A render failure is caught by the page's boundary and only logged.
+  page.on("console", (m) => {
+    if (m.type() === "error" && !m.text().includes("Failed to load resource"))
+      errors.push(m.text());
+  });
+  const submitted: unknown[] = [];
+  // The fixture daemon has no GitHub to post to; the request is the evidence.
+  await page.route("**/api/prs/review", async (route) => {
+    submitted.push(route.request().postDataJSON());
+    await route.fulfill({
+      json: { url: "https://github.com/acme/demo/pull/7#pullrequestreview-1" },
+    });
+  });
+  await page.goto(await launchURL());
+  await page.getByRole("link", { name: "Pull requests", exact: true }).first().click();
+  await page.getByRole("link", { name: /Reuse the existing PR page/ }).click();
+  await page.getByRole("button", { name: "Walk through", exact: true }).click();
+  const walk = page.getByRole("region", { name: "Walkthrough" });
+  await expect(walk.getByText("The route · riskiest first")).toBeVisible();
+  expect(page.url()).toContain("walk=tour");
+  await walk.screenshot({ path: "test-results/walkthrough-intro.png", animations: "disabled" });
+  await walk.getByRole("button", { name: "Start the tour", exact: true }).click();
+  await expect(walk.getByRole("article")).toContainText(
+    "Chapter 1 · Operator-only dead-letter endpoints",
+  );
+  await walk.getByRole("button", { name: /Something looks off/ }).click();
+  await page.keyboard.type("Trusts a client-supplied header");
+  await walk.getByRole("button", { name: "Save comment", exact: true }).click();
+  await expect(walk.getByText("1 comment", { exact: true })).toBeVisible();
+  await walk.screenshot({ path: "test-results/walkthrough-stop.png", animations: "disabled" });
+  // A reload keeps the view, what was looked at and the comment.
+  await page.reload();
+  await expect(walk.getByText("1 comment", { exact: true })).toBeVisible();
+  await page.keyboard.press("e");
+  await expect(page).toHaveURL(/walk=all/);
+  await expect(walk.getByRole("button", { name: /^With comments/ })).toContainText("1");
+  await walk.getByRole("radio", { name: /Request changes/ }).click();
+  await walk.screenshot({
+    path: "test-results/walkthrough-everything.png",
+    animations: "disabled",
+  });
+  await walk.getByRole("button", { name: "Request changes", exact: true }).click();
+  await expect(walk.getByText("Your review is on GitHub.")).toBeVisible();
+  expect(submitted).toEqual([
+    expect.objectContaining({
+      repository: "acme/demo",
+      pr: 7,
+      event: "REQUEST_CHANGES",
+      comments: [
+        expect.objectContaining({ body: "Trusts a client-supplied header", side: "RIGHT" }),
+      ],
+    }),
+  ]);
+  // Narrow: no sideways scroll.
+  await page.setViewportSize({ width: 390, height: 844 });
+  await walk.getByRole("button", { name: "Guided tour", exact: true }).click();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(
+    true,
+  );
+  await page.screenshot({ path: "test-results/walkthrough-narrow.png", fullPage: true });
+  await walk.getByRole("button", { name: "Full review", exact: true }).click();
+  await expect(page).not.toHaveURL(/walk=/);
+  expect(errors).toEqual([]);
+});
+
 // Every page from the keyboard alone: the command key with a number (Ctrl
 // here, which is not a Mac), Go to, each list's keys, a pull request's
 // section keys, back and forward, and the sheet that lists them.
