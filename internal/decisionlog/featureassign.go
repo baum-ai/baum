@@ -454,15 +454,23 @@ type candidatePull struct {
 // candidates are the item's candidate features as the call shows them
 // (rankCandidates), each with its digest and its pull requests' summaries.
 func (r *featureRun) candidates(ctx context.Context, input assign.Item, pull placedPull) ([]assign.Candidate, error) {
+	candidates, _, err := r.scoredCandidates(ctx, input, pull)
+	return candidates, err
+}
+
+// scoredCandidates are candidates with each one's path score; the run's
+// excluded features (a build's unjoined seeds) are left out of the ranking.
+func (r *featureRun) scoredCandidates(ctx context.Context, input assign.Item, pull placedPull) ([]assign.Candidate, []float64, error) {
 	s := r.w.Store
 	found, err := s.candidateFeatures(ctx, r.version, r.repository, r.now.Add(-FeatureCandidateWindow), pull.Feature)
+	found = slices.DeleteFunc(found, func(f *candidateFeature) bool { return r.exclude[f.ID] })
 	if err != nil || len(found) == 0 {
-		return nil, err
+		return nil, nil, err
 	}
 	if input.PullRequest != nil {
 		links, err := s.pullLinks(ctx, r.repository, pull.Number, assign.MentionedPullRequests(pull.Title, pull.Body))
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		for _, f := range found {
 			for kind, list := range map[string]*[]int32{"stacked": &f.Links.Stacked, "sessions": &f.Links.SharedSessions, "mentioned": &f.Links.Mentioned} {
@@ -478,9 +486,11 @@ func (r *featureRun) candidates(ctx context.Context, input assign.Item, pull pla
 	}
 	ranked := rankCandidates(found, input.Paths(), pull.Feature, FeatureCandidates, FeaturePathSlots)
 	out := make([]assign.Candidate, len(ranked))
+	scores := make([]float64, len(ranked))
 	// Only the sample the input shows needs its summaries.
 	sampled := map[int]bool{}
 	for i, f := range ranked {
+		scores[i] = f.score
 		out[i] = assign.Candidate{ID: f.ID, Title: f.Title, Description: f.Description, Paths: f.Paths, Current: f.current,
 			Digest: f.Digest, Links: f.Links}
 		out[i].PullRequests = make([]assign.CandidatePullRequest, len(f.PullRequests))
@@ -493,7 +503,7 @@ func (r *featureRun) candidates(ctx context.Context, input assign.Item, pull pla
 	}
 	generated, err := s.pullSummaries(ctx, r.repository, slices.Collect(maps.Keys(sampled)))
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	for i, f := range ranked {
 		for _, j := range assign.SampledPullRequests(len(f.PullRequests)) {
@@ -503,7 +513,7 @@ func (r *featureRun) candidates(ctx context.Context, input assign.Item, pull pla
 			}
 		}
 	}
-	return out, nil
+	return out, scores, nil
 }
 
 // rankCandidates ranks features for an item touching paths, as the hosted

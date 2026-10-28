@@ -539,6 +539,40 @@ func (r *Repo) FetchPulls(ctx context.Context, remote string, prs []PullRequest)
 	return nil
 }
 
+// DefaultRef is the ref FetchBranch fetches a branch into.
+const DefaultRef = "refs/baum/default"
+
+// FetchBranch fetches branch from remote into DefaultRef and returns the
+// commit it points at.
+func (r *Repo) FetchBranch(ctx context.Context, remote, branch string) (string, error) {
+	if remote == "" {
+		remote = r.opts.Remote
+	}
+	if !validRemoteName(remote) || !validRefName(branch) {
+		return "", ErrInvalidInput
+	}
+	done, err := r.begin()
+	if err != nil {
+		return "", err
+	}
+	defer done()
+	if err := r.fetch(ctx, remote, []string{"+refs/heads/" + branch + ":" + DefaultRef}); err != nil {
+		return "", err
+	}
+	// The fetch writes the clone's refs, which the private mirror reads
+	// through its alternates by id only.
+	out, err := run(ctx, runSpec{dir: r.dir, env: userEnv(), limit: maxOIDOutputBytes, timeout: r.opts.CommandTimeout},
+		"rev-parse", "--verify", "--end-of-options", DefaultRef+"^{commit}")
+	if err != nil {
+		return "", err
+	}
+	oid := strings.TrimSpace(string(out))
+	if !validOID(oid) {
+		return "", fmt.Errorf("%w: %s", ErrObjectNotFound, DefaultRef)
+	}
+	return oid, nil
+}
+
 // lsRemote asks the remote for its HEAD with the credentials and limits a
 // fetch has, to tell a remote out of reach from refs it lacks.
 func (r *Repo) lsRemote(ctx context.Context, remote string) error {

@@ -76,9 +76,10 @@ const (
 	// FeatureSplitHold is how long after a split a merge undoing it is not
 	// applied.
 	FeatureSplitHold = 4 * 7 * 24 * time.Hour
-	// FeatureFirstBuildWindow is how far back a repository's first build
-	// reads its pull requests, and how far back the first sync lists them.
-	FeatureFirstBuildWindow = 180 * 24 * time.Hour
+	// FeatureFirstSyncWindow is how far back the first sync lists a
+	// repository's pull requests; a first build lists its whole history
+	// (FeatureWorker.ListHistory).
+	FeatureFirstSyncWindow = 180 * 24 * time.Hour
 	// FeatureBuildTries is how many times a first build makes a failed batch
 	// call before splitting it; FeatureBuildCandidates is the most
 	// candidates a batch call offers; FeatureBuildSummarizeEvery is how many

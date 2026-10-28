@@ -489,6 +489,12 @@ func (o orderedObject) MarshalJSON() ([]byte, error) {
 	return b.Bytes(), nil
 }
 
+// Prompt is single-item version version's prompt.
+func (p *Prompts) Prompt(version string) (string, bool) {
+	single, ok := p.single[version]
+	return single.Prompt, ok
+}
+
 // Request is the call for a rendered input under prompt version version, a
 // single-item or a batch version.
 func (p *Prompts) Request(version, input string, maxOutputTokens int64) (decisions.ModelRequest, error) {

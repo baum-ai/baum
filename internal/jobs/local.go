@@ -390,7 +390,7 @@ func (l *Local) prepareFeatureBuild(ctx context.Context, item Item) (Prepared, s
 	}
 	list := pricing.Active()
 	p := Prepared{Item: item, Repository: c.Repository, Backend: estimate.Backend, Model: estimate.Model, PriceVersion: list.Version(),
-		EstimateUSD: estimate.EstimateUSD, BuildPullRequests: estimate.PullRequests, BlockedReason: estimate.Reason}
+		EstimateUSD: estimate.EstimateUSD, BuildPullRequests: estimate.PullRequests, BuildDiscoveryUSD: estimate.DiscoveryUSD, BlockedReason: estimate.Reason}
 	if p.EstimateUSD == nil && p.BlockedReason == "" {
 		p.BlockedReason = "unknown_model_price"
 	}

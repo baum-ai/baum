@@ -39,12 +39,21 @@ type scriptBackend struct {
 	textInput string
 	// maxOutput are the calls' reply bounds, in order.
 	maxOutput []int
+	// batchSystems are the batch calls' prompts, in order.
+	batchSystems []string
+	// task answers a task run (discovery); runs counts them.
+	task func(agent.Request) (agent.Result, error)
+	runs int
 }
 
 func (b *scriptBackend) Name() string                          { return agent.BackendClaude }
 func (b *scriptBackend) Check(context.Context) (string, error) { return "1.0.0", nil }
-func (b *scriptBackend) Run(context.Context, agent.Request) (agent.Result, error) {
-	return agent.Result{}, errors.New("not used")
+func (b *scriptBackend) Run(_ context.Context, req agent.Request) (agent.Result, error) {
+	if b.task == nil {
+		return agent.Result{}, errors.New("not used")
+	}
+	b.runs++
+	return b.task(req)
 }
 
 func (b *scriptBackend) Complete(_ context.Context, req agent.CompleteRequest) (agent.Completion, error) {
@@ -62,6 +71,7 @@ func (b *scriptBackend) Complete(_ context.Context, req agent.CompleteRequest) (
 	switch {
 	case strings.Contains(schema, `"assignments"`):
 		b.calls["batch"]++
+		b.batchSystems = append(b.batchSystems, req.System)
 		reply, err = b.batch(req.User)
 	case strings.Contains(schema, `"groups"`):
 		b.calls["merge"]++
@@ -116,7 +126,8 @@ func newFeatureFixture(t *testing.T) *featureFixture {
 	f.worker = &FeatureWorker{Store: f.store, Now: f.clock.Now, Config: config.Config{Backend: config.BackendClaude},
 		Backends: generate.Backends{Claude: build, Codex: build, Anthropic: build, CursorAgent: build}}
 	f.worker.Registry = registryOf(f)
-	if _, err := f.store.db.Exec(`INSERT INTO pull_sync(repository, activated_at) VALUES (?, ?)`, repo, t0.UnixMilli()); err != nil {
+	// The whole history is listed: a build lists none.
+	if _, err := f.store.db.Exec(`INSERT INTO pull_sync(repository, activated_at, history_listed_at) VALUES (?, ?, ?)`, repo, t0.UnixMilli(), t0.UnixMilli()); err != nil {
 		t.Fatal(err)
 	}
 	return f

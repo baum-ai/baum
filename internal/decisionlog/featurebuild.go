@@ -24,6 +24,8 @@ const outcomeLeftOut = "left_out"
 
 // Phases of a build.
 const (
+	BuildReading     = "reading"
+	BuildDiscovering = "discovering"
 	BuildPlacing     = "placing"
 	BuildSummarizing = "summarizing"
 	BuildSwitching   = "switching"
@@ -40,7 +42,17 @@ type BuildOptions struct {
 	Gated bool
 	// Progress, when set, is told after every batch and stage.
 	Progress func(BuildProgress)
+	// Taxonomy chooses what a new version is seeded with: TaxonomyAuto
+	// (empty) a taxonomy made after the version, else a new discovery;
+	// TaxonomyNone nothing; LatestTaxonomy or an id a stored taxonomy.
+	Taxonomy string
 }
+
+// Taxonomy choices of a build besides LatestTaxonomy and an id.
+const (
+	TaxonomyAuto = "auto"
+	TaxonomyNone = "none"
+)
 
 // BuildProgress is a build's progress.
 type BuildProgress struct {
@@ -49,6 +61,9 @@ type BuildProgress struct {
 	Placed, Total int
 	Calls         int
 	SpentUSD      float64
+	// Unpriced counts the run's calls whose cost is unknown: SpentUSD is
+	// then a lower bound.
+	Unpriced int
 }
 
 // BuildEstimate is what a build of the repository would do and cost.
@@ -67,6 +82,16 @@ type BuildEstimate struct {
 	SpentUSD    float64  `json:"spent_usd"`
 	// Reason is why no call could be made (a backend or price reason).
 	Reason string `json:"reason,omitempty"`
+	// HistoryTruncated says the history listing stopped at its bound: the
+	// least recently updated pull requests are missing, and the listing is
+	// not retried.
+	HistoryTruncated bool `json:"history_truncated,omitempty"`
+	// Discovery says the build runs feature discovery first, besides the
+	// estimate, with hosted discovery's token budget: what DiscoveryUSD buys
+	// at the review model's base price. Cache reads are not counted, so it
+	// is not a dollar cap.
+	Discovery    bool    `json:"discovery,omitempty"`
+	DiscoveryUSD float64 `json:"discovery_usd,omitempty"`
 }
 
 // BuildReport says what Build did; no pull request, feature or reply text.
@@ -90,6 +115,22 @@ type BuildReport struct {
 	Stopped         string  `json:"stopped,omitempty"`
 	SpentUSD        float64 `json:"spent_usd"`
 	VersionSpentUSD float64 `json:"version_spent_usd"`
+	// UnpricedCalls are the version's calls whose cost is unknown: its spend
+	// is then at least VersionSpentUSD.
+	UnpricedCalls    int  `json:"unpriced_calls,omitempty"`
+	HistoryTruncated bool `json:"history_truncated,omitempty"`
+	// Taxonomy is the taxonomy the version was seeded with, 0 for none, and
+	// Seeds its features; SeedsJoined are those a pull request joined in
+	// this run and SeedsDeleted those deleted before the switch, still
+	// empty.
+	Taxonomy     int64 `json:"taxonomy,omitempty"`
+	Seeds        int   `json:"seeds,omitempty"`
+	SeedsJoined  int   `json:"seeds_joined,omitempty"`
+	SeedsDeleted int   `json:"seeds_deleted,omitempty"`
+	// Discovery is this run's discovery, nil for none; Unseeded says why a
+	// new version is built without seeds.
+	Discovery *DiscoverReport `json:"discovery,omitempty"`
+	Unseeded  string          `json:"unseeded,omitempty"`
 }
 
 // errBuildStop stops a build: a call was not made for the reason it gives.
@@ -111,8 +152,8 @@ type buildItem struct {
 }
 
 // buildItems are the pull requests a build of the run's version places,
-// oldest first: merged and open ones of the last FeatureFirstBuildWindow
-// not opened by a bot, in no feature of the version and not skipped or left
+// oldest first: merged and open ones of the whole history not opened by a
+// bot, in no feature of the version and not skipped or left
 // out of it at their head.
 func (r *featureRun) buildItems(ctx context.Context) ([]buildItem, error) {
 	s := r.w.Store
@@ -120,9 +161,9 @@ func (r *featureRun) buildItems(ctx context.Context) ([]buildItem, error) {
 		var item buildItem
 		return item, rows.Scan(&item.Number, &item.Head)
 	})(s.db.QueryContext(ctx, `SELECT number, head_sha FROM pull_request p WHERE repository=?1 AND bot=0
-AND (state='open' OR merged_at IS NOT NULL) AND created_at >= ?2
-AND NOT EXISTS (SELECT 1 FROM feature_pull fp WHERE fp.version_id=?3 AND fp.repository=p.repository AND fp.number=p.number)
-ORDER BY created_at, number`, r.repository, r.now.Add(-FeatureFirstBuildWindow).UnixMilli(), r.version))
+AND (state='open' OR merged_at IS NOT NULL)
+AND NOT EXISTS (SELECT 1 FROM feature_pull fp WHERE fp.version_id=?2 AND fp.repository=p.repository AND fp.number=p.number)
+ORDER BY created_at, number`, r.repository, r.version))
 	if err != nil {
 		return nil, err
 	}
@@ -144,15 +185,21 @@ func (w *FeatureWorker) EstimateBuild(ctx context.Context, repository, dir strin
 	if err != nil {
 		return estimate, err
 	}
+	if _, _, on, err := w.gate(ctx, repository); err != nil || (o.Gated && !on) {
+		estimate.Reason = ReasonDisabled
+		return estimate, err
+	}
+	// The estimate counts the whole history, listed once.
+	history, err := w.ListHistory(ctx, repository)
+	if err != nil {
+		return estimate, err
+	}
+	estimate.HistoryTruncated = history.Truncated
 	estimate.Version = r.version
 	if r.version != 0 {
 		if err := w.Store.db.QueryRowContext(ctx, `SELECT spent_usd FROM feature_version WHERE id=?`, r.version).Scan(&estimate.SpentUSD); err != nil {
 			return estimate, err
 		}
-	}
-	if _, _, on, err := w.gate(ctx, repository); err != nil || (o.Gated && !on) {
-		estimate.Reason = ReasonDisabled
-		return estimate, err
 	}
 	items, err := r.buildItems(ctx)
 	if err != nil {
@@ -164,6 +211,12 @@ func (w *FeatureWorker) EstimateBuild(ctx context.Context, repository, dir strin
 	estimate.Backend, estimate.Model, estimate.Reason = p.Backend, p.Model, skip
 	if skip != "" {
 		return estimate, nil
+	}
+	if estimate.Discovery, err = r.willDiscover(ctx, o.Taxonomy); err != nil {
+		return estimate, err
+	}
+	if estimate.Discovery {
+		estimate.DiscoveryUSD = FeatureDiscoveryUSD
 	}
 	cost, ok, err := r.estimateCost(ctx, items, p)
 	if ok {
@@ -263,6 +316,9 @@ type buildRun struct {
 	batch    string
 	progress func(BuildProgress)
 	placed   int
+	taxonomy string
+	// seeds are the version's seeded features no pull request has joined.
+	seeds []buildSeed
 }
 
 // Build builds the repository's features from its pull request history in
@@ -277,7 +333,7 @@ func (w *FeatureWorker) Build(ctx context.Context, repository, dir string, o Bui
 	if err != nil {
 		return report, err
 	}
-	report.PullRequests = estimate.PullRequests
+	report.PullRequests, report.HistoryTruncated = estimate.PullRequests, estimate.HistoryTruncated
 	if o.DryRun {
 		report.Version, report.VersionSpentUSD, report.Stopped = estimate.Version, estimate.SpentUSD, FeatureDryRun
 		return report, nil
@@ -292,7 +348,7 @@ func (w *FeatureWorker) Build(ctx context.Context, repository, dir string, o Bui
 		return report, err
 	}
 	report.Version = r.version
-	b := &buildRun{featureRun: r, report: &report, progress: o.Progress}
+	b := &buildRun{featureRun: r, report: &report, progress: o.Progress, taxonomy: o.Taxonomy}
 	b.batch, _ = assign.Public.BatchVersion(AssignVersion)
 	if err := w.Store.db.QueryRowContext(ctx, `UPDATE feature_version SET stopped='' WHERE id=? RETURNING spent_usd`, r.version).
 		Scan(&report.VersionSpentUSD); err != nil {
@@ -301,6 +357,10 @@ func (w *FeatureWorker) Build(ctx context.Context, repository, dir string, o Bui
 	r.calls.build = &buildSpend{version: r.version}
 	err = b.run(ctx)
 	report.SpentUSD, report.Calls = r.calls.build.run, r.calls.build.calls
+	if countErr := w.Store.db.QueryRowContext(context.WithoutCancel(ctx), `SELECT unpriced_calls FROM feature_version WHERE id=?`, r.version).
+		Scan(&report.UnpricedCalls); countErr != nil {
+		err = errors.Join(err, countErr)
+	}
 	report.VersionSpentUSD += report.SpentUSD
 	var stop errBuildStop
 	switch {
@@ -318,13 +378,36 @@ func (w *FeatureWorker) Build(ctx context.Context, repository, dir string, o Bui
 	_ = w.Store.db.QueryRowContext(context.WithoutCancel(ctx), `SELECT COUNT(*) FROM feature WHERE version_id=? AND merged_into IS NULL`, r.version).
 		Scan(&report.Features)
 	w.logger().Info("feature build", "repository", repository, "version", r.version, "current", report.Current, "stopped", report.Stopped,
-		"placed", report.Placed, "left_out", report.LeftOut, "spent_usd", report.SpentUSD)
+		"placed", report.Placed, "left_out", report.LeftOut, "spent_usd", report.SpentUSD, "unpriced_calls", report.UnpricedCalls)
 	return report, err
 }
 
 // run places what is left, writes the text and switches the version; the
 // weekly pass consolidates it on its next run.
 func (b *buildRun) run(ctx context.Context) error {
+	b.notify(BuildReading)
+	var paths SyncReport
+	if err := b.w.readPaths(ctx, b.repository, b.dir, &paths, func() bool {
+		on, err := b.refresh(ctx)
+		return err != nil || !on
+	}); err != nil {
+		return err
+	}
+	if paths.Stopped {
+		return errBuildStop{ReasonDisabled}
+	}
+	// The commits read are linked to this machine's sessions, as a sync's.
+	if len(paths.commits) > 0 {
+		if _, err := b.w.Index(ctx, b.repository, b.dir, paths.commits, false); err != nil {
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			b.w.logger().Warn("feature build: commits not linked to sessions", "repository", b.repository, "error", err)
+		}
+	}
+	if err := b.seed(ctx); err != nil {
+		return err
+	}
 	var err error
 	if b.items, err = b.buildItems(ctx); err != nil {
 		return err
@@ -358,6 +441,9 @@ func (b *buildRun) run(ctx context.Context) error {
 		}
 	}
 	b.notify(BuildSwitching)
+	if err := b.deleteEmptySeeds(context.WithoutCancel(ctx)); err != nil {
+		return err
+	}
 	if err := b.w.Store.switchVersion(context.WithoutCancel(ctx), b.repository, b.version, b.now); err != nil {
 		return err
 	}
@@ -367,7 +453,8 @@ func (b *buildRun) run(ctx context.Context) error {
 
 func (b *buildRun) notify(phase string) {
 	if b.progress != nil {
-		b.progress(BuildProgress{Phase: phase, Placed: b.placed, Total: len(b.items), Calls: b.calls.build.calls, SpentUSD: b.calls.build.run})
+		b.progress(BuildProgress{Phase: phase, Placed: b.placed, Total: len(b.items), Calls: b.calls.build.calls, SpentUSD: b.calls.build.run,
+			Unpriced: b.calls.build.unpriced})
 	}
 }
 
@@ -493,11 +580,11 @@ func (b *buildRun) callBatch(ctx context.Context, items []buildItem) error {
 			return &buildWriteError{err}
 		}
 		input := assign.Item{PullRequest: &assign.PullRequest{Title: pull.Title, Body: pull.Body, Branch: pull.HeadRef, Paths: pull.Paths}}
-		candidates, err := b.candidates(ctx, input, pull)
+		candidates, scores, err := b.scoredCandidates(ctx, input, pull)
 		if err != nil {
 			return &buildWriteError{err}
 		}
-		pulls, ranked = append(pulls, pull), append(ranked, candidates)
+		pulls, ranked = append(pulls, pull), append(ranked, withSeeds(candidates, scores, b.seeds, pull.Paths))
 	}
 	var union []assign.Candidate
 	offered := map[string]bool{}
@@ -587,6 +674,7 @@ func (b *buildRun) callBatch(ctx context.Context, items []buildItem) error {
 			created[choice.New] = id
 			b.report.Created++
 		}
+		b.joined(id)
 		b.report.Placed++
 	}
 	return nil
@@ -616,10 +704,4 @@ func (s *Store) switchVersion(ctx context.Context, repository string, version in
 		_, err = tx.ExecContext(ctx, `DELETE FROM feature_consolidation WHERE repository=?`, repository)
 		return err
 	})
-}
-
-// addVersionSpend adds a build's call's cost to its version's spend.
-func (s *Store) addVersionSpend(ctx context.Context, version int64, cost float64) error {
-	_, err := s.db.ExecContext(ctx, `UPDATE feature_version SET spent_usd=spent_usd+? WHERE id=?`, cost, version)
-	return err
 }

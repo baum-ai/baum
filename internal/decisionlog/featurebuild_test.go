@@ -63,7 +63,7 @@ func (f *featureFixture) versionState(id int64) (state, stopped string) {
 	return state, stopped
 }
 
-// A build places the window's merged and open pull requests by no bot in
+// A build places the whole history's merged and open pull requests by no bot in
 // batches, oldest first, writes the text every three batches and after the
 // last, and switches versions in one step; the live placement keeps writing
 // the current version meanwhile, and the weekly pass consolidates the new
@@ -75,7 +75,7 @@ func TestBuildPlacesTextsAndSwitches(t *testing.T) {
 	f.history(110)
 	f.pull(200, "By a bot", f.clock.now.Add(-time.Hour), "hb", []string{"a.go"})
 	f.pull(201, "Closed unmerged", f.clock.now.Add(-time.Hour), "hc", []string{"a.go"})
-	f.pull(202, "Too old", f.clock.now.Add(-190*24*time.Hour), "ho", []string{"a.go"})
+	f.pull(202, "Older than the first sync's window", f.clock.now.Add(-400*24*time.Hour), "ho", []string{"a.go"})
 	f.exec(`UPDATE pull_request SET bot=1 WHERE number=200`)
 	f.exec(`UPDATE pull_request SET state='closed', merged_at=NULL WHERE number=201`)
 	f.exec(`UPDATE pull_request SET merged_at=created_at, state='closed' WHERE number=202`)
@@ -107,12 +107,15 @@ func TestBuildPlacesTextsAndSwitches(t *testing.T) {
 		return text()
 	}
 	f.backend.merge = func(string) (string, error) { order = append(order, "merge"); return `{"groups":[]}`, nil }
+	// The first batch's feature spans the old pull request: an invalid split
+	// leaves it whole.
+	f.backend.split = func(string) (string, error) { return `{"parts":[]}`, nil }
 	estimate, err := f.worker.EstimateBuild(context.Background(), repo, "", BuildOptions{})
-	if err != nil || estimate.PullRequests != 110 || estimate.Batches != 5 || estimate.EstimateUSD == nil || *estimate.EstimateUSD <= 0 {
+	if err != nil || estimate.PullRequests != 111 || estimate.Batches != 5 || estimate.EstimateUSD == nil || *estimate.EstimateUSD <= 0 {
 		t.Fatalf("estimate = %+v, %v", estimate, err)
 	}
 	report := f.build(BuildOptions{})
-	if !report.Current || report.Placed != 110 || report.Created != 5 || report.PullRequests != 110 || report.LeftOut != 0 {
+	if !report.Current || report.Placed != 111 || report.Created != 5 || report.PullRequests != 111 || report.LeftOut != 0 {
 		t.Fatalf("report = %+v", report)
 	}
 	if want := []string{"batch", "batch", "batch", "text", "batch", "batch", "text"}; !slices.Equal(order, want) {
@@ -137,10 +140,13 @@ func TestBuildPlacesTextsAndSwitches(t *testing.T) {
 	if pass := f.consolidate(FeatureOptions{}); pass.Outcome != ConsolidationDone || pass.Features != report.Features || f.backend.calls["merge"] != 1 {
 		t.Fatalf("the next weekly pass = %+v", pass)
 	}
+	if f.featureOf(202) == "" {
+		t.Fatal("a pull request older than the first sync's window was left out")
+	}
 	var excluded int
-	_ = f.store.db.QueryRow(`SELECT COUNT(*) FROM feature_pull WHERE version_id=? AND number IN (200, 201, 202, 300)`, report.Version).Scan(&excluded)
+	_ = f.store.db.QueryRow(`SELECT COUNT(*) FROM feature_pull WHERE version_id=? AND number IN (200, 201, 300)`, report.Version).Scan(&excluded)
 	if excluded != 0 {
-		t.Fatal("the build placed a pull request by a bot, closed unmerged, outside the window or opened after it listed")
+		t.Fatal("the build placed a pull request by a bot, closed unmerged or opened after it listed")
 	}
 }
 

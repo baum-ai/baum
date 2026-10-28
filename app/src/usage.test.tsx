@@ -46,3 +46,10 @@ it("labels partial totals and keeps legacy usage unknown", () => {
   expect(legacy).toContain("Provider token breakdown unavailable");
   expect(legacy).not.toContain("Cache reads 0");
 });
+it("shows a cost with unpriced calls as a lower bound", () => {
+  const html = renderToStaticMarkup(
+    <UsageDetails charged={undefined} amount={1.5} reason="unpriced_calls" />,
+  );
+  expect(html).toContain("≥ ");
+  expect(html).toContain("at least the amount shown");
+});

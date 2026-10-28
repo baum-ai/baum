@@ -55,12 +55,20 @@ type FeatureBuildEstimate struct {
 	Backend, Model string
 	// PullRequests are those left to place.
 	PullRequests int
+	// DiscoveryUSD, when not zero, says the build runs feature discovery
+	// first, besides EstimateUSD, with the token budget DiscoveryUSD buys at
+	// the review model's base price (cache reads not counted: not a cap).
+	DiscoveryUSD float64
 	// EstimateUSD is the cost of what is left, nil when it cannot be
 	// priced.
 	EstimateUSD *float64
 	// Reason is why it cannot run now.
 	Reason string
 }
+
+// ReasonUnpricedCalls is the cost reason of a feature build some of whose
+// calls could not be priced: its recorded cost is a lower bound.
+const ReasonUnpricedCalls = "unpriced_calls"
 
 // FeatureBuilder estimates and runs feature builds.
 type FeatureBuilder interface {
@@ -157,8 +165,11 @@ type Prepared struct {
 	FixThreadsCapped    bool        `json:"fix_threads_capped,omitempty"`
 	FixThreadsUntrusted int         `json:"fix_threads_untrusted,omitempty"`
 	// BuildPullRequests are a feature build's (KindFeatureBuild) pull
-	// requests left to place.
-	BuildPullRequests int `json:"build_pull_requests,omitempty"`
+	// requests left to place, and BuildDiscoveryUSD, when not zero, the
+	// dollars whose worth of tokens (at the review model's base price) the
+	// feature discovery it runs first may use besides EstimateUSD.
+	BuildPullRequests int     `json:"build_pull_requests,omitempty"`
+	BuildDiscoveryUSD float64 `json:"build_discovery_usd,omitempty"`
 }
 
 // sameConfirmedInputs reports whether two confirmations authorize the same
