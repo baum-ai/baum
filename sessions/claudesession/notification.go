@@ -155,7 +155,7 @@ func mergeNotificationOutput(existing json.RawMessage, parsed notification) json
 	bag := map[string]any{}
 	if len(existing) > 0 {
 		if err := json.Unmarshal(existing, &bag); err != nil {
-			bag = map[string]any{"backgroundHandoff": json.RawMessage(existing)}
+			bag = map[string]any{"backgroundHandoff": existing}
 		}
 	}
 	bag["taskNotification"] = parsed

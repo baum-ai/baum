@@ -1,0 +1,1 @@
+Add recountable-cli to the hostname for the default token name

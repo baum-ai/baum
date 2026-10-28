@@ -1,0 +1,621 @@
+[
+  {
+    "graph": {
+      "sessions": [
+        {
+          "id": "299e08f1-3dfb-5f36-89a8-25fe3d94364f",
+          "parent_session_id": null,
+          "spawned_by_tool_use_id": null,
+          "started_at": "2026-09-10T17:31:48.977Z",
+          "ended_at": "2026-09-10T17:40:46.532Z",
+          "git_branch": "main",
+          "outcome": "committed"
+        }
+      ],
+      "session_attributes": [
+        {
+          "id": "8e801eaa-1cf2-5b36-b259-ec6779a25286",
+          "session_id": "299e08f1-3dfb-5f36-89a8-25fe3d94364f",
+          "key": "agent",
+          "value": "Pi",
+          "valid_from": "2026-09-17T09:32:03.377993Z"
+        },
+        {
+          "id": "6fa74cab-fe26-51b3-b0cf-6356b575727d",
+          "session_id": "299e08f1-3dfb-5f36-89a8-25fe3d94364f",
+          "key": "model",
+          "value": "deepseek-flash",
+          "valid_from": "2026-09-17T09:32:03.377993Z"
+        },
+        {
+          "id": "aaea4a1f-0594-5317-b9b5-bf950e219c6d",
+          "session_id": "299e08f1-3dfb-5f36-89a8-25fe3d94364f",
+          "key": "strategy",
+          "value": "manual-commit",
+          "valid_from": "2026-09-17T09:32:03.377993Z"
+        },
+        {
+          "id": "eb972935-b6b2-53b6-beef-a7fb8c24025b",
+          "session_id": "299e08f1-3dfb-5f36-89a8-25fe3d94364f",
+          "key": "cli_version",
+          "value": "0.10.6",
+          "valid_from": "2026-09-17T09:32:03.377993Z"
+        },
+        {
+          "id": "736a4eab-ac85-5b24-ba3d-9d027f239bfc",
+          "session_id": "299e08f1-3dfb-5f36-89a8-25fe3d94364f",
+          "key": "checkpoints_count",
+          "value": 1,
+          "valid_from": "2026-09-17T09:32:03.377993Z"
+        },
+        {
+          "id": "40a4c5d5-5e9c-5e89-a8ad-26482698f4df",
+          "session_id": "299e08f1-3dfb-5f36-89a8-25fe3d94364f",
+          "key": "save_step_count",
+          "value": 1,
+          "valid_from": "2026-09-17T09:32:03.377993Z"
+        },
+        {
+          "id": "eccd277e-a582-5ebf-bf62-d8518547715d",
+          "session_id": "299e08f1-3dfb-5f36-89a8-25fe3d94364f",
+          "key": "session_metrics",
+          "value": {
+            "turn_count": 1
+          },
+          "valid_from": "2026-09-17T09:32:03.377993Z"
+        },
+        {
+          "id": "2c8a0d19-2f15-56a1-ad5e-d3903ea1f2c4",
+          "session_id": "299e08f1-3dfb-5f36-89a8-25fe3d94364f",
+          "key": "token_usage",
+          "value": {
+            "input_tokens": 94114,
+            "cache_creation_tokens": 0,
+            "cache_read_tokens": 1937152,
+            "output_tokens": 26345,
+            "api_call_count": 38
+          },
+          "valid_from": "2026-09-17T09:32:03.377993Z"
+        }
+      ],
+      "user_inputs": [
+        {
+          "id": "846544dd-0b0c-5a80-a886-582fe702a2c4",
+          "session_id": "299e08f1-3dfb-5f36-89a8-25fe3d94364f",
+          "ordinal": 1,
+          "text": "Check the comments for PR #188 and fix if needed",
+          "triggered_at": "2026-09-10T17:31:48.977Z",
+          "interrupted": false,
+          "kind": "prompt",
+          "origin": "human",
+          "metadata": {
+            "agent": "pi",
+            "image": false
+          }
+        }
+      ],
+      "model_invocations": [
+        {
+          "id": "e59c11ff-bab3-55b1-a78f-1cbc1a8febb5",
+          "session_id": "299e08f1-3dfb-5f36-89a8-25fe3d94364f",
+          "user_input_id": "846544dd-0b0c-5a80-a886-582fe702a2c4",
+          "parent_model_invocation_id": null,
+          "model": "deepseek-flash",
+          "input_tokens": 0,
+          "output_tokens": 0,
+          "cache_read_tokens": 0,
+          "cache_write_tokens": 0,
+          "total_tokens": 0,
+          "started_at": "2026-09-10T17:31:56.497Z"
+        },
+        {
+          "id": "07de31e3-4032-5559-8101-e8d542284b96",
+          "session_id": "299e08f1-3dfb-5f36-89a8-25fe3d94364f",
+          "user_input_id": "846544dd-0b0c-5a80-a886-582fe702a2c4",
+          "parent_model_invocation_id": "e59c11ff-bab3-55b1-a78f-1cbc1a8febb5",
+          "model": "deepseek-flash",
+          "input_tokens": 0,
+          "output_tokens": 0,
+          "cache_read_tokens": 0,
+          "cache_write_tokens": 0,
+          "total_tokens": 0,
+          "started_at": "2026-09-10T17:32:26.905Z"
+        },
+        {
+          "id": "9c403478-4b00-543f-a06b-89f1170f8a99",
+          "session_id": "299e08f1-3dfb-5f36-89a8-25fe3d94364f",
+          "user_input_id": "846544dd-0b0c-5a80-a886-582fe702a2c4",
+          "parent_model_invocation_id": "07de31e3-4032-5559-8101-e8d542284b96",
+          "model": "deepseek-flash",
+          "input_tokens": 0,
+          "output_tokens": 0,
+          "cache_read_tokens": 0,
+          "cache_write_tokens": 0,
+          "total_tokens": 0,
+          "started_at": "2026-09-10T17:33:26.783Z"
+        },
+        {
+          "id": "cdb51e2d-6b05-5b8f-854f-4af95a4453b7",
+          "session_id": "299e08f1-3dfb-5f36-89a8-25fe3d94364f",
+          "user_input_id": "846544dd-0b0c-5a80-a886-582fe702a2c4",
+          "parent_model_invocation_id": "9c403478-4b00-543f-a06b-89f1170f8a99",
+          "model": "deepseek-flash",
+          "input_tokens": 0,
+          "output_tokens": 0,
+          "cache_read_tokens": 0,
+          "cache_write_tokens": 0,
+          "total_tokens": 0,
+          "started_at": "2026-09-10T17:33:46.519Z"
+        },
+        {
+          "id": "2aa56b9c-2ce2-5bae-a606-137c963d05c0",
+          "session_id": "299e08f1-3dfb-5f36-89a8-25fe3d94364f",
+          "user_input_id": "846544dd-0b0c-5a80-a886-582fe702a2c4",
+          "parent_model_invocation_id": "cdb51e2d-6b05-5b8f-854f-4af95a4453b7",
+          "model": "deepseek-flash",
+          "input_tokens": 0,
+          "output_tokens": 0,
+          "cache_read_tokens": 0,
+          "cache_write_tokens": 0,
+          "total_tokens": 0,
+          "started_at": "2026-09-10T17:35:20.438Z"
+        },
+        {
+          "id": "c41263e4-f02c-5dfa-ba32-188107c556e3",
+          "session_id": "299e08f1-3dfb-5f36-89a8-25fe3d94364f",
+          "user_input_id": "846544dd-0b0c-5a80-a886-582fe702a2c4",
+          "parent_model_invocation_id": "2aa56b9c-2ce2-5bae-a606-137c963d05c0",
+          "model": "deepseek-flash",
+          "input_tokens": 0,
+          "output_tokens": 0,
+          "cache_read_tokens": 0,
+          "cache_write_tokens": 0,
+          "total_tokens": 0,
+          "started_at": "2026-09-10T17:40:46.532Z"
+        }
+      ],
+      "assistant_messages": [
+        {
+          "id": "e1f57f4c-cb3d-544b-a0c0-98b44edf05d6",
+          "session_id": "299e08f1-3dfb-5f36-89a8-25fe3d94364f",
+          "user_input_id": "846544dd-0b0c-5a80-a886-582fe702a2c4",
+          "model_invocation_id": "9c403478-4b00-543f-a06b-89f1170f8a99",
+          "text": "Reproduced the reviewer's claim: the snippet exits 1 and never moves the session.",
+          "timestamp": "2026-09-10T17:33:26.783Z"
+        },
+        {
+          "id": "bc20f535-e30e-5905-9337-caa0e665faad",
+          "session_id": "299e08f1-3dfb-5f36-89a8-25fe3d94364f",
+          "user_input_id": "846544dd-0b0c-5a80-a886-582fe702a2c4",
+          "model_invocation_id": "cdb51e2d-6b05-5b8f-854f-4af95a4453b7",
+          "text": "Fixing the adopt snippet in both guides.",
+          "timestamp": "2026-09-10T17:33:46.519Z"
+        },
+        {
+          "id": "54a07aec-c893-5e25-bde6-e8496482f539",
+          "session_id": "299e08f1-3dfb-5f36-89a8-25fe3d94364f",
+          "user_input_id": "846544dd-0b0c-5a80-a886-582fe702a2c4",
+          "model_invocation_id": "c41263e4-f02c-5dfa-ba32-188107c556e3",
+          "text": "PR #188 comments addressed: the adopt snippet now passes `--from` and CI is green.",
+          "timestamp": "2026-09-10T17:40:46.532Z"
+        }
+      ],
+      "tool_uses": [
+        {
+          "id": "5a9bd79a-1a11-591f-83a0-930b82849ade",
+          "session_id": "299e08f1-3dfb-5f36-89a8-25fe3d94364f",
+          "user_input_id": "846544dd-0b0c-5a80-a886-582fe702a2c4",
+          "model_invocation_id": "e59c11ff-bab3-55b1-a78f-1cbc1a8febb5",
+          "name": "bash",
+          "verb": "execute",
+          "input": {
+            "command": "git diff origin/main..origin/cursor/require-entire-adopt-0ce1",
+            "i": "Diffing PR branch against main"
+          },
+          "status": "no_result",
+          "metadata": {},
+          "timestamp": "2026-09-10T17:31:56.497Z"
+        },
+        {
+          "id": "ee3b255b-c0b7-54d0-baf3-5374dba4ae9e",
+          "session_id": "299e08f1-3dfb-5f36-89a8-25fe3d94364f",
+          "user_input_id": "846544dd-0b0c-5a80-a886-582fe702a2c4",
+          "model_invocation_id": "07de31e3-4032-5559-8101-e8d542284b96",
+          "name": "grep",
+          "verb": "search",
+          "input": {
+            "i": "Finding existing session adopt instructions",
+            "pattern": "session adopt",
+            "path": ".agents",
+            "case": false,
+            "gitignore": false,
+            "skip": null
+          },
+          "status": "no_result",
+          "metadata": {},
+          "timestamp": "2026-09-10T17:32:26.905Z"
+        },
+        {
+          "id": "57c74a59-06c0-5007-9b8e-b55385868ad7",
+          "session_id": "299e08f1-3dfb-5f36-89a8-25fe3d94364f",
+          "user_input_id": "846544dd-0b0c-5a80-a886-582fe702a2c4",
+          "model_invocation_id": "07de31e3-4032-5559-8101-e8d542284b96",
+          "name": "bash",
+          "verb": "execute",
+          "input": {
+            "command": "grep -rn \"worktrees\" .gitignore; ls .entire 2\u003e/dev/null",
+            "i": "Checking gitignore and entire state location"
+          },
+          "status": "no_result",
+          "metadata": {},
+          "timestamp": "2026-09-10T17:32:26.905Z"
+        },
+        {
+          "id": "3dd0bef2-6019-5c87-b030-15e042ac2208",
+          "session_id": "299e08f1-3dfb-5f36-89a8-25fe3d94364f",
+          "user_input_id": "846544dd-0b0c-5a80-a886-582fe702a2c4",
+          "model_invocation_id": "9c403478-4b00-543f-a06b-89f1170f8a99",
+          "name": "Read",
+          "verb": "read",
+          "input": {
+            "i": "Reading worktree AGENTS.md",
+            "path": ".agents/worktrees/pr-188/AGENTS.md"
+          },
+          "status": "no_result",
+          "metadata": {},
+          "timestamp": "2026-09-10T17:33:26.783Z"
+        },
+        {
+          "id": "5090602b-1f65-5068-be84-50033fc4075d",
+          "session_id": "299e08f1-3dfb-5f36-89a8-25fe3d94364f",
+          "user_input_id": "846544dd-0b0c-5a80-a886-582fe702a2c4",
+          "model_invocation_id": "9c403478-4b00-543f-a06b-89f1170f8a99",
+          "name": "Read",
+          "verb": "read",
+          "input": {
+            "i": "Reading worktree repository guide",
+            "path": ".agents/worktrees/pr-188/.agents/guides/repository.md"
+          },
+          "status": "no_result",
+          "metadata": {},
+          "timestamp": "2026-09-10T17:33:26.783Z"
+        },
+        {
+          "id": "d0bdc8a8-ebfe-5a07-907c-14aafb93e437",
+          "session_id": "299e08f1-3dfb-5f36-89a8-25fe3d94364f",
+          "user_input_id": "846544dd-0b0c-5a80-a886-582fe702a2c4",
+          "model_invocation_id": "cdb51e2d-6b05-5b8f-854f-4af95a4453b7",
+          "name": "Edit",
+          "verb": "edit",
+          "input": {
+            "i": "Fixing adopt snippet",
+            "path": ".agents/worktrees/pr-188/AGENTS.md",
+            "oldText": "entire session adopt --yes",
+            "newText": "entire session adopt --from \"$SOURCE_WORKTREE\" --yes"
+          },
+          "status": "no_result",
+          "metadata": {},
+          "timestamp": "2026-09-10T17:33:46.519Z"
+        },
+        {
+          "id": "ac0401c8-dfa1-57e3-8760-6d046f77b6e8",
+          "session_id": "299e08f1-3dfb-5f36-89a8-25fe3d94364f",
+          "user_input_id": "846544dd-0b0c-5a80-a886-582fe702a2c4",
+          "model_invocation_id": "cdb51e2d-6b05-5b8f-854f-4af95a4453b7",
+          "name": "Write",
+          "verb": "edit",
+          "input": {
+            "i": "Writing the watchdog config",
+            "path": "WATCHDOG.yml",
+            "content": "entire:\n  adopt: required\n"
+          },
+          "status": "no_result",
+          "metadata": {},
+          "timestamp": "2026-09-10T17:33:46.519Z"
+        },
+        {
+          "id": "fff5b9bb-7e76-5b68-9569-148263f01aba",
+          "session_id": "299e08f1-3dfb-5f36-89a8-25fe3d94364f",
+          "user_input_id": "846544dd-0b0c-5a80-a886-582fe702a2c4",
+          "model_invocation_id": "2aa56b9c-2ce2-5bae-a606-137c963d05c0",
+          "name": "hub",
+          "verb": "other",
+          "input": {
+            "i": "Waiting for CI poll",
+            "op": "wait",
+            "ids": [
+              "bg_29"
+            ]
+          },
+          "status": "no_result",
+          "metadata": {},
+          "timestamp": "2026-09-10T17:35:20.438Z"
+        }
+      ],
+      "tool_results": null,
+      "file_touches": [
+        {
+          "id": "fe7696a6-3951-5805-a133-e046205ddcf0",
+          "tool_use_id": "3dd0bef2-6019-5c87-b030-15e042ac2208",
+          "user_input_id": "846544dd-0b0c-5a80-a886-582fe702a2c4",
+          "session_id": "299e08f1-3dfb-5f36-89a8-25fe3d94364f",
+          "path": ".agents/worktrees/pr-188/AGENTS.md",
+          "kind": "read"
+        },
+        {
+          "id": "81c6cd2f-ee9c-5b14-a723-18a256404592",
+          "tool_use_id": "5090602b-1f65-5068-be84-50033fc4075d",
+          "user_input_id": "846544dd-0b0c-5a80-a886-582fe702a2c4",
+          "session_id": "299e08f1-3dfb-5f36-89a8-25fe3d94364f",
+          "path": ".agents/worktrees/pr-188/.agents/guides/repository.md",
+          "kind": "read"
+        },
+        {
+          "id": "77c7989f-ba88-532d-bbfa-ab72baf3eeeb",
+          "tool_use_id": "d0bdc8a8-ebfe-5a07-907c-14aafb93e437",
+          "user_input_id": "846544dd-0b0c-5a80-a886-582fe702a2c4",
+          "session_id": "299e08f1-3dfb-5f36-89a8-25fe3d94364f",
+          "path": ".agents/worktrees/pr-188/AGENTS.md",
+          "kind": "edit"
+        },
+        {
+          "id": "cff93998-a2b7-54a5-b7a6-c4cc96a08873",
+          "tool_use_id": "ac0401c8-dfa1-57e3-8760-6d046f77b6e8",
+          "user_input_id": "846544dd-0b0c-5a80-a886-582fe702a2c4",
+          "session_id": "299e08f1-3dfb-5f36-89a8-25fe3d94364f",
+          "path": "WATCHDOG.yml",
+          "kind": "edit"
+        }
+      ],
+      "token_usage": [
+        {
+          "id": "3a903f1c-637f-553f-8c3d-cb165065e781",
+          "session_id": "299e08f1-3dfb-5f36-89a8-25fe3d94364f",
+          "user_input_id": null,
+          "scope": "session",
+          "model": "deepseek-flash",
+          "input_tokens": 94114,
+          "output_tokens": 26345,
+          "cache_read_tokens": 1937152,
+          "cache_write_tokens": 0,
+          "total_tokens": 2057611,
+          "api_call_count": 38
+        }
+      ],
+      "vendor_ids": [
+        {
+          "our_id": "846544dd-0b0c-5a80-a886-582fe702a2c4",
+          "our_type": "user_input",
+          "session_id": "299e08f1-3dfb-5f36-89a8-25fe3d94364f",
+          "vendor": "entire",
+          "vendor_id_kind": "line",
+          "vendor_id": "01a08c5f-f05a-770b-b4ff-fb4c42cd17db:transcript.jsonl:1",
+          "source_ref": "e28405f4dd57/0/transcript.jsonl:1"
+        },
+        {
+          "our_id": "e59c11ff-bab3-55b1-a78f-1cbc1a8febb5",
+          "our_type": "model_invocation",
+          "session_id": "299e08f1-3dfb-5f36-89a8-25fe3d94364f",
+          "vendor": "entire",
+          "vendor_id_kind": "message.id",
+          "vendor_id": "194b02b3",
+          "source_ref": "e28405f4dd57/0/transcript.jsonl:2"
+        },
+        {
+          "our_id": "5a9bd79a-1a11-591f-83a0-930b82849ade",
+          "our_type": "tool_use",
+          "session_id": "299e08f1-3dfb-5f36-89a8-25fe3d94364f",
+          "vendor": "entire",
+          "vendor_id_kind": "tool_use.id",
+          "vendor_id": "call_00_UEoCtBo3AdLsHMVRhyNE2797",
+          "source_ref": "e28405f4dd57/0/transcript.jsonl:2"
+        },
+        {
+          "our_id": "07de31e3-4032-5559-8101-e8d542284b96",
+          "our_type": "model_invocation",
+          "session_id": "299e08f1-3dfb-5f36-89a8-25fe3d94364f",
+          "vendor": "entire",
+          "vendor_id_kind": "message.id",
+          "vendor_id": "f308add8",
+          "source_ref": "e28405f4dd57/0/transcript.jsonl:3"
+        },
+        {
+          "our_id": "ee3b255b-c0b7-54d0-baf3-5374dba4ae9e",
+          "our_type": "tool_use",
+          "session_id": "299e08f1-3dfb-5f36-89a8-25fe3d94364f",
+          "vendor": "entire",
+          "vendor_id_kind": "tool_use.id",
+          "vendor_id": "call_00_gA2VQc8RRsQWGOA7lFLG3328",
+          "source_ref": "e28405f4dd57/0/transcript.jsonl:3"
+        },
+        {
+          "our_id": "57c74a59-06c0-5007-9b8e-b55385868ad7",
+          "our_type": "tool_use",
+          "session_id": "299e08f1-3dfb-5f36-89a8-25fe3d94364f",
+          "vendor": "entire",
+          "vendor_id_kind": "tool_use.id",
+          "vendor_id": "call_01_rI5IpFLxN0lgrZiMxKI40109",
+          "source_ref": "e28405f4dd57/0/transcript.jsonl:3"
+        },
+        {
+          "our_id": "9c403478-4b00-543f-a06b-89f1170f8a99",
+          "our_type": "model_invocation",
+          "session_id": "299e08f1-3dfb-5f36-89a8-25fe3d94364f",
+          "vendor": "entire",
+          "vendor_id_kind": "message.id",
+          "vendor_id": "41f7c128",
+          "source_ref": "e28405f4dd57/0/transcript.jsonl:4"
+        },
+        {
+          "our_id": "e1f57f4c-cb3d-544b-a0c0-98b44edf05d6",
+          "our_type": "assistant_message",
+          "session_id": "299e08f1-3dfb-5f36-89a8-25fe3d94364f",
+          "vendor": "entire",
+          "vendor_id_kind": "message.id.block",
+          "vendor_id": "41f7c128:0",
+          "source_ref": "e28405f4dd57/0/transcript.jsonl:4"
+        },
+        {
+          "our_id": "3dd0bef2-6019-5c87-b030-15e042ac2208",
+          "our_type": "tool_use",
+          "session_id": "299e08f1-3dfb-5f36-89a8-25fe3d94364f",
+          "vendor": "entire",
+          "vendor_id_kind": "tool_use.id",
+          "vendor_id": "call_00_QVqFmCi426doucEBUpRY1685",
+          "source_ref": "e28405f4dd57/0/transcript.jsonl:4"
+        },
+        {
+          "our_id": "fe7696a6-3951-5805-a133-e046205ddcf0",
+          "our_type": "file_touch",
+          "session_id": "299e08f1-3dfb-5f36-89a8-25fe3d94364f",
+          "vendor": "entire",
+          "vendor_id_kind": "tool_use.id.path",
+          "vendor_id": "call_00_QVqFmCi426doucEBUpRY1685:.agents/worktrees/pr-188/AGENTS.md",
+          "source_ref": "e28405f4dd57/0/transcript.jsonl:4"
+        },
+        {
+          "our_id": "5090602b-1f65-5068-be84-50033fc4075d",
+          "our_type": "tool_use",
+          "session_id": "299e08f1-3dfb-5f36-89a8-25fe3d94364f",
+          "vendor": "entire",
+          "vendor_id_kind": "tool_use.id",
+          "vendor_id": "call_01_YDl0Td9LRgfSi6srGjFm7392",
+          "source_ref": "e28405f4dd57/0/transcript.jsonl:4"
+        },
+        {
+          "our_id": "81c6cd2f-ee9c-5b14-a723-18a256404592",
+          "our_type": "file_touch",
+          "session_id": "299e08f1-3dfb-5f36-89a8-25fe3d94364f",
+          "vendor": "entire",
+          "vendor_id_kind": "tool_use.id.path",
+          "vendor_id": "call_01_YDl0Td9LRgfSi6srGjFm7392:.agents/worktrees/pr-188/.agents/guides/repository.md",
+          "source_ref": "e28405f4dd57/0/transcript.jsonl:4"
+        },
+        {
+          "our_id": "cdb51e2d-6b05-5b8f-854f-4af95a4453b7",
+          "our_type": "model_invocation",
+          "session_id": "299e08f1-3dfb-5f36-89a8-25fe3d94364f",
+          "vendor": "entire",
+          "vendor_id_kind": "message.id",
+          "vendor_id": "0d2c9e71",
+          "source_ref": "e28405f4dd57/0/transcript.jsonl:5"
+        },
+        {
+          "our_id": "bc20f535-e30e-5905-9337-caa0e665faad",
+          "our_type": "assistant_message",
+          "session_id": "299e08f1-3dfb-5f36-89a8-25fe3d94364f",
+          "vendor": "entire",
+          "vendor_id_kind": "message.id.block",
+          "vendor_id": "0d2c9e71:0",
+          "source_ref": "e28405f4dd57/0/transcript.jsonl:5"
+        },
+        {
+          "our_id": "d0bdc8a8-ebfe-5a07-907c-14aafb93e437",
+          "our_type": "tool_use",
+          "session_id": "299e08f1-3dfb-5f36-89a8-25fe3d94364f",
+          "vendor": "entire",
+          "vendor_id_kind": "tool_use.id",
+          "vendor_id": "call_00_edit1",
+          "source_ref": "e28405f4dd57/0/transcript.jsonl:5"
+        },
+        {
+          "our_id": "77c7989f-ba88-532d-bbfa-ab72baf3eeeb",
+          "our_type": "file_touch",
+          "session_id": "299e08f1-3dfb-5f36-89a8-25fe3d94364f",
+          "vendor": "entire",
+          "vendor_id_kind": "tool_use.id.path",
+          "vendor_id": "call_00_edit1:.agents/worktrees/pr-188/AGENTS.md",
+          "source_ref": "e28405f4dd57/0/transcript.jsonl:5"
+        },
+        {
+          "our_id": "ac0401c8-dfa1-57e3-8760-6d046f77b6e8",
+          "our_type": "tool_use",
+          "session_id": "299e08f1-3dfb-5f36-89a8-25fe3d94364f",
+          "vendor": "entire",
+          "vendor_id_kind": "tool_use.id",
+          "vendor_id": "call_01_write1",
+          "source_ref": "e28405f4dd57/0/transcript.jsonl:5"
+        },
+        {
+          "our_id": "cff93998-a2b7-54a5-b7a6-c4cc96a08873",
+          "our_type": "file_touch",
+          "session_id": "299e08f1-3dfb-5f36-89a8-25fe3d94364f",
+          "vendor": "entire",
+          "vendor_id_kind": "tool_use.id.path",
+          "vendor_id": "call_01_write1:WATCHDOG.yml",
+          "source_ref": "e28405f4dd57/0/transcript.jsonl:5"
+        },
+        {
+          "our_id": "2aa56b9c-2ce2-5bae-a606-137c963d05c0",
+          "our_type": "model_invocation",
+          "session_id": "299e08f1-3dfb-5f36-89a8-25fe3d94364f",
+          "vendor": "entire",
+          "vendor_id_kind": "message.id",
+          "vendor_id": "9007d245",
+          "source_ref": "e28405f4dd57/0/transcript.jsonl:6"
+        },
+        {
+          "our_id": "fff5b9bb-7e76-5b68-9569-148263f01aba",
+          "our_type": "tool_use",
+          "session_id": "299e08f1-3dfb-5f36-89a8-25fe3d94364f",
+          "vendor": "entire",
+          "vendor_id_kind": "tool_use.id",
+          "vendor_id": "call_00_ET_Iyi4Dugz7tNehgXiEBzc8294",
+          "source_ref": "e28405f4dd57/0/transcript.jsonl:6"
+        },
+        {
+          "our_id": "c41263e4-f02c-5dfa-ba32-188107c556e3",
+          "our_type": "model_invocation",
+          "session_id": "299e08f1-3dfb-5f36-89a8-25fe3d94364f",
+          "vendor": "entire",
+          "vendor_id_kind": "message.id",
+          "vendor_id": "cb5f58a7",
+          "source_ref": "e28405f4dd57/0/transcript.jsonl:7"
+        },
+        {
+          "our_id": "54a07aec-c893-5e25-bde6-e8496482f539",
+          "our_type": "assistant_message",
+          "session_id": "299e08f1-3dfb-5f36-89a8-25fe3d94364f",
+          "vendor": "entire",
+          "vendor_id_kind": "message.id.block",
+          "vendor_id": "cb5f58a7:0",
+          "source_ref": "e28405f4dd57/0/transcript.jsonl:7"
+        },
+        {
+          "our_id": "299e08f1-3dfb-5f36-89a8-25fe3d94364f",
+          "our_type": "session",
+          "session_id": "299e08f1-3dfb-5f36-89a8-25fe3d94364f",
+          "vendor": "entire",
+          "vendor_id_kind": "session_id",
+          "vendor_id": "01a08c5f-f05a-770b-b4ff-fb4c42cd17db",
+          "source_ref": "e28405f4dd57/0/metadata.json"
+        },
+        {
+          "our_id": "299e08f1-3dfb-5f36-89a8-25fe3d94364f",
+          "our_type": "session",
+          "session_id": "299e08f1-3dfb-5f36-89a8-25fe3d94364f",
+          "vendor": "entire",
+          "vendor_id_kind": "checkpoint_id",
+          "vendor_id": "e28405f4dd57",
+          "source_ref": "e28405f4dd57/0/metadata.json"
+        },
+        {
+          "our_id": "299e08f1-3dfb-5f36-89a8-25fe3d94364f",
+          "our_type": "session",
+          "session_id": "299e08f1-3dfb-5f36-89a8-25fe3d94364f",
+          "vendor": "entire",
+          "vendor_id_kind": "turn_id",
+          "vendor_id": "a9ce73b35563",
+          "source_ref": "e28405f4dd57/0/metadata.json"
+        }
+      ]
+    },
+    "session_id": "01a08c5f-f05a-770b-b4ff-fb4c42cd17db",
+    "vendor": "pi",
+    "checkpoint_id": "e28405f4dd57",
+    "created_at": "2026-09-17T09:32:03.377993218Z",
+    "checkpoints_count": 1,
+    "source_blob_hash": "sha256:58fef3aa93e9e3cc5837293767a43be8a2b4b080c575b44b55631876d867b2af",
+    "fidelity_rank": 3
+  }
+]

@@ -103,7 +103,7 @@ func (f *fileState) addMessage(line claudetranscript.Line, block claudetranscrip
 		SessionID:         f.sessionID,
 		UserInputID:       invocation.UserInputID,
 		ModelInvocationID: invocation.ID,
-		Content:           json.RawMessage(block.Raw),
+		Content:           block.Raw,
 		Timestamp:         line.Timestamp,
 	}
 	if block.Text != "" {

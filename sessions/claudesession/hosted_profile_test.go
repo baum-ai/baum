@@ -1,14 +1,15 @@
 package claudesession
 
 import (
-	"github.com/baum-ai/baum/sessions/claudetranscript"
-	"github.com/baum-ai/baum/sessions/session"
-	"github.com/baum-ai/baum/sessions/traceprocessing"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
 	"testing"
+
+	"github.com/baum-ai/baum/sessions/claudetranscript"
+	"github.com/baum-ai/baum/sessions/session"
+	"github.com/baum-ai/baum/sessions/traceprocessing"
 )
 
 const corpusEnv = "BAUM_CLAUDE_CORPUS"

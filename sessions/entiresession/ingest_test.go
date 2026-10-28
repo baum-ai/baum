@@ -149,7 +149,7 @@ func fixtureCheckpoint(t *testing.T, name string) *entirecheckpoint.Checkpoint {
 func TestCodexCompactSessionIDConvergesWithNativeRoot(t *testing.T) {
 	checkpoint := fixtureCheckpoint(t, "codex")
 	snapshot := checkpoint.Sessions[0]
-	native, _, err := delegateCodex(snapshot)
+	native, _, err := delegateCodex(snapshot, nil, traceprocessing.Local)
 	if err != nil {
 		t.Fatal(err)
 	}

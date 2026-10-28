@@ -2,9 +2,10 @@ package claudesession
 
 import (
 	"encoding/json"
-	"github.com/baum-ai/baum/sessions/traceprocessing"
 	"regexp"
 	"strings"
+
+	"github.com/baum-ai/baum/sessions/traceprocessing"
 
 	"github.com/baum-ai/baum/sessions/claudetranscript"
 	"github.com/baum-ai/baum/sessions/session"

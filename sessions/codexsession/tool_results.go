@@ -3,9 +3,10 @@ package codexsession
 import (
 	"encoding/json"
 	"fmt"
-	"github.com/baum-ai/baum/sessions/traceprocessing"
 	"sort"
 	"strings"
+
+	"github.com/baum-ai/baum/sessions/traceprocessing"
 
 	"github.com/baum-ai/baum/linkage/gitevidence"
 	"github.com/baum-ai/baum/sessions/codextranscript"
@@ -210,7 +211,7 @@ func (b *builder) finalizeTools() {
 			use.Status = status
 			output := map[string]any{}
 			if evidence.outputSeen {
-				output["response_output"] = json.RawMessage(evidence.output)
+				output["response_output"] = evidence.output
 			}
 			if len(evidence.completions) > 0 {
 				events := make([]json.RawMessage, len(evidence.completions))

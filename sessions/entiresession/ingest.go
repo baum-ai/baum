@@ -32,8 +32,8 @@ type Result struct {
 	CheckpointID     string    `json:"checkpoint_id"`
 	CreatedAt        time.Time `json:"created_at"`
 	CheckpointsCount int       `json:"checkpoints_count,omitempty"`
-	// SourceBlobHash is the checkpoint's recorded hash of the native
-	// transcript, empty when the snapshot carries none.
+	// SourceBlobHash is the hash of the transcript the snapshot was mapped
+	// from, computed from its bytes (sourceBlobHash), empty when it has none.
 	SourceBlobHash string       `json:"source_blob_hash,omitempty"`
 	Fidelity       FidelityRank `json:"fidelity_rank"`
 	Warnings       []string     `json:"warnings,omitempty"`
@@ -41,8 +41,8 @@ type Result struct {
 	Err            error        `json:"-"`
 	// Envelope is the Entire-owned metadata layer, already applied to Graph. A
 	// lower-fidelity arrival cannot replace a tree an upload owns, and this is
-	// what it contributes instead.
-	// Not serialized: it is a view of rows the graph above already
+	// what it contributes instead (entireingest/README.md, "Coexistence with
+	// uploads"). Not serialized: it is a view of rows the graph above already
 	// carries.
 	Envelope *EnvelopeData `json:"-"`
 }
@@ -74,14 +74,28 @@ func vendorSlug(agent string) string {
 // caller concern: Result exposes the stable identity and created_at needed to
 // choose the latest snapshot before persistence.
 func Build(checkpoint *entirecheckpoint.Checkpoint) ([]Result, *Report, error) {
+	return BuildWith(checkpoint, traceprocessing.Local)
+}
+
+// BuildWith maps with explicit product policy, including the delegated mappers.
+func BuildWith(checkpoint *entirecheckpoint.Checkpoint, profile traceprocessing.MappingProfile) ([]Result, *Report, error) {
 	if checkpoint == nil {
 		return nil, nil, fmt.Errorf("building Entire sessions: nil checkpoint")
 	}
 	report := &Report{}
+	report.Envelope.profile = profile
+	var tasks []*entirecheckpoint.Task
+	if profile == traceprocessing.Hosted {
+		report.Tasks = &Accounting{}
+		tasks = checkpoint.Tasks
+	}
 	accountCheckpointMetadata(report, checkpoint.Metadata)
 	results := make([]Result, 0, len(checkpoint.Sessions))
 	for _, snapshot := range checkpoint.Sessions {
-		results = append(results, mapSnapshot(report, checkpoint.Metadata.CheckpointID, snapshot, checkpoint.Sessions))
+		results = append(results, mapSnapshot(report, checkpoint.Metadata.CheckpointID, snapshot, checkpoint.Sessions, tasks, profile))
+	}
+	if profile == traceprocessing.Hosted {
+		accountTasks(report, tasks)
 	}
 	report.Sessions = len(results)
 	report.Shape = entirecheckpoint.Survey([]*entirecheckpoint.Checkpoint{checkpoint})
@@ -94,7 +108,10 @@ func Build(checkpoint *entirecheckpoint.Checkpoint) ([]Result, *Report, error) {
 	return results, report, nil
 }
 
-func mapSnapshot(report *Report, checkpointID string, snapshot *entirecheckpoint.SessionSnapshot, siblings []*entirecheckpoint.SessionSnapshot) Result {
+func mapSnapshot(
+	report *Report, checkpointID string, snapshot *entirecheckpoint.SessionSnapshot,
+	siblings []*entirecheckpoint.SessionSnapshot, tasks []*entirecheckpoint.Task, profile traceprocessing.MappingProfile,
+) Result {
 	if snapshot == nil {
 		return failSnapshot(report, nil, checkpointID, "nil_snapshot", fmt.Errorf("nil session snapshot"))
 	}
@@ -108,11 +125,11 @@ func mapSnapshot(report *Report, checkpointID string, snapshot *entirecheckpoint
 	}
 	createdAt = createdAt.UTC()
 
-	graph, delegated, fidelity, sourceWarnings, err := buildSource(snapshot)
+	graph, delegated, fidelity, sourceWarnings, err := buildSource(snapshot, tasks, profile)
 	if err != nil {
 		return failSnapshot(report, snapshot, checkpointID, "source", err)
 	}
-	envelope, err := Envelope(graph, snapshot, checkpointID, createdAt)
+	envelope, err := EnvelopeWith(graph, snapshot, checkpointID, createdAt, profile)
 	if err != nil {
 		return failSnapshot(report, snapshot, checkpointID, "envelope", err)
 	}
@@ -123,6 +140,9 @@ func mapSnapshot(report *Report, checkpointID string, snapshot *entirecheckpoint
 	envelope.Apply(graph)
 
 	warnings := append([]string(nil), sourceWarnings...)
+	if envelope.Report.AggregateUsageRejected > 0 {
+		warnings = append(warnings, "metadata token_usage has a negative count; kept as a session attribute, not as token usage")
+	}
 	if snapshot.Hash.Mismatch {
 		warnings = append(warnings, fmt.Sprintf("full.jsonl hash %s does not match recorded content hash %s", snapshot.Hash.Actual, snapshot.Hash.Recorded))
 	}
@@ -130,13 +150,43 @@ func mapSnapshot(report *Report, checkpointID string, snapshot *entirecheckpoint
 		return failSnapshot(report, snapshot, checkpointID, "validation", err)
 	}
 
-	accountMappedSnapshot(report, snapshot, delegated, fidelity, envelope, sourceWarnings)
+	accountWarnings := sourceWarnings
+	if profile == traceprocessing.Hosted {
+		accountWarnings = warnings
+	}
+	accountMappedSnapshot(report, snapshot, delegated, fidelity, envelope, accountWarnings)
 	report.addRows(traceprocessing.TallyRows(graph))
 	return Result{
 		Graph: graph, SessionID: smeta.SessionID, Vendor: vendorSlug(smeta.Agent),
 		CheckpointID: checkpointID, CreatedAt: createdAt, CheckpointsCount: smeta.CheckpointsCount,
-		SourceBlobHash: snapshot.ContentHash, Fidelity: fidelity, Warnings: warnings, Envelope: envelope,
+		SourceBlobHash: sourceBlobHashFor(snapshot, fidelity, profile), Fidelity: fidelity, Warnings: warnings, Envelope: envelope,
 	}
+}
+
+// sourceBlobHash hashes the bytes buildSource mapped, named by the fidelity
+// it returned, rather than taking content_hash.txt on trust: a mismatch is
+// only a warning, and a later checkpoint can change the transcript under the
+// same stale recorded hash. The ingest compares it to decide whether a remap
+// brought new source data.
+//
+// A delegated mapping read full.jsonl, whose hash is spelled as
+// content_hash.txt spells it: for a recorded hash that is right the value is
+// the recorded one, and trees stored before this hash was computed compare
+// equal. A compact mapping read the compact transcript, also when full.jsonl
+// is present but its delegate failed or there is none, and a metadata-only
+// one read prompt.txt.
+func sourceBlobHash(snapshot *entirecheckpoint.SessionSnapshot, fidelity FidelityRank) string {
+	switch {
+	case fidelity == FidelityDelegated && snapshot.Hash.Checked:
+		return snapshot.Hash.Actual
+	case fidelity == FidelityDelegated:
+		return entirecheckpoint.ContentHashOf(snapshot.Full)
+	case fidelity == FidelityCompact:
+		return entirecheckpoint.ContentHashOf(snapshot.CompactRaw)
+	case fidelity == FidelityMetadataOnly && snapshot.PromptPresent:
+		return entirecheckpoint.ContentHashOf(snapshot.Prompt)
+	}
+	return ""
 }
 
 func prepareSnapshotMetadata(snapshot *entirecheckpoint.SessionSnapshot, checkpointID string) error {
@@ -213,17 +263,17 @@ func accountFailedSnapshot(report *Report, snapshot *entirecheckpoint.SessionSna
 	}
 }
 
-func buildSource(snapshot *entirecheckpoint.SessionSnapshot) (*session.Graph, *DelegateReport, FidelityRank, []string, error) {
+func buildSource(snapshot *entirecheckpoint.SessionSnapshot, tasks []*entirecheckpoint.Task, profile traceprocessing.MappingProfile) (*session.Graph, *DelegateReport, FidelityRank, []string, error) {
 	if snapshot.FullPresent {
 		if delegate := delegates[snapshot.Metadata.Agent]; delegate != nil {
-			graph, inner, err := delegate(snapshot)
+			graph, inner, err := delegate(snapshot, tasks, profile)
 			if err == nil {
-				return graph, inner, FidelityDelegated, nil, nil
+				return graph, inner, FidelityDelegated, inner.Warnings, nil
 			}
 			if !snapshot.CompactPresent {
 				return nil, nil, 0, nil, err
 			}
-			graph, compactErr := buildCompact(snapshot)
+			graph, compactErr := buildCompactWith(snapshot, profile)
 			if compactErr != nil {
 				return nil, nil, 0, nil, fmt.Errorf("native delegate failed (%v), then compact fallback failed: %w", err, compactErr)
 			}
@@ -232,7 +282,7 @@ func buildSource(snapshot *entirecheckpoint.SessionSnapshot) (*session.Graph, *D
 		}
 	}
 	if snapshot.CompactPresent {
-		graph, err := buildCompact(snapshot)
+		graph, err := buildCompactWith(snapshot, profile)
 		return graph, nil, FidelityCompact, nil, err
 	}
 	graph, err := buildMetadataOnly(snapshot)
@@ -382,8 +432,16 @@ func mergeEnvelopeReport(into *EnvelopeReport, from EnvelopeReport) {
 	into.VendorIDsAdded += from.VendorIDsAdded
 	into.AggregateUsageAdded += from.AggregateUsageAdded
 	into.AggregateUsageAttributed += from.AggregateUsageAttributed
+	into.AggregateUsageRejected += from.AggregateUsageRejected
 	into.FilesConsidered += from.FilesConsidered
 	into.FilesAlreadyCovered += from.FilesAlreadyCovered
 	into.FilesUnrepresentable += from.FilesUnrepresentable
 	into.FilesShared += from.FilesShared
+}
+
+func sourceBlobHashFor(snapshot *entirecheckpoint.SessionSnapshot, fidelity FidelityRank, profile traceprocessing.MappingProfile) string {
+	if profile == traceprocessing.Hosted {
+		return sourceBlobHash(snapshot, fidelity)
+	}
+	return snapshot.ContentHash
 }

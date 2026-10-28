@@ -3,8 +3,9 @@ package claudesession
 import (
 	"encoding/json"
 	"fmt"
-	"github.com/baum-ai/baum/sessions/traceprocessing"
 	"time"
+
+	"github.com/baum-ai/baum/sessions/traceprocessing"
 
 	"github.com/baum-ai/baum/sessions/claudetranscript"
 	"github.com/baum-ai/baum/sessions/session"
@@ -188,7 +189,7 @@ func (f *fileState) addQueuedAttachmentMetadata(queued *queuedInput, attachment 
 		metadata["commandMode"] = attachment.CommandMode
 	}
 	if len(attachment.Origin) > 0 {
-		metadata["origin"] = json.RawMessage(attachment.Origin)
+		metadata["origin"] = attachment.Origin
 	}
 	queued.row.Metadata = encodeMetadata(metadata)
 }

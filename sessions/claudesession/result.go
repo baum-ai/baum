@@ -35,7 +35,7 @@ func (f *fileState) applyResult(
 		Timestamp:   line.Timestamp,
 	}
 	if evidence.Present {
-		row.Output = json.RawMessage(evidence.Raw)
+		row.Output = evidence.Raw
 	}
 	assignResultText(row, block, evidence, text)
 

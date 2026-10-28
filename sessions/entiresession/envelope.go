@@ -28,7 +28,8 @@ type EnvelopeData struct {
 	// edits: Entire records what changed while the session was active, and in a
 	// multi-session checkpoint it often hands every session the same list. No
 	// FileTouch row can carry them (see FilesUnrepresentable below); the ingest
-	// layer decides whether they become session-scoped evidence.
+	// layer decides whether they become session-scoped evidence
+	// (entireingest/README.md, "Metadata file lists").
 	MetadataFiles []string `json:"metadata_files,omitempty"`
 	// MetadataFilesShared is true when another session in the same checkpoint
 	// reports the identical non-empty files_touched list. The list is then the
@@ -43,6 +44,10 @@ type EnvelopeData struct {
 // Envelope computes the metadata layer without mutating graph. File evidence
 // is compared with graph here so enrichment remains path-boundary additive.
 func Envelope(graph *session.Graph, snapshot *entirecheckpoint.SessionSnapshot, checkpointID string, createdAt time.Time) (*EnvelopeData, error) {
+	return EnvelopeWith(graph, snapshot, checkpointID, createdAt, traceprocessing.Local)
+}
+
+func EnvelopeWith(graph *session.Graph, snapshot *entirecheckpoint.SessionSnapshot, checkpointID string, createdAt time.Time, profile traceprocessing.MappingProfile) (*EnvelopeData, error) {
 	if graph == nil || graph.Root() == nil {
 		return nil, fmt.Errorf("graph has no root session")
 	}
@@ -51,6 +56,7 @@ func Envelope(graph *session.Graph, snapshot *entirecheckpoint.SessionSnapshot, 
 	}
 	root := graph.Root()
 	data := &EnvelopeData{
+		Report:          EnvelopeReport{profile: profile},
 		Outcome:         session.OutcomeCommitted,
 		OutcomeEvidence: "entire checkpoint " + checkpointID,
 	}
@@ -81,10 +87,16 @@ func Envelope(graph *session.Graph, snapshot *entirecheckpoint.SessionSnapshot, 
 
 	if usage := snapshot.Metadata.TokenUsage; usage != nil {
 		value := fields["token_usage"]
-		if graphHasInvocationUsage(graph) {
-			data.Attributes = append(data.Attributes, envelopeAttribute(root.ID, "token_usage", value, attributeTime))
+		data.Attributes = append(data.Attributes, envelopeAttribute(root.ID, "token_usage", value, attributeTime))
+		switch {
+		case graphHasInvocationUsage(graph):
 			data.Report.AggregateUsageAttributed++
-		} else {
+		case profile == traceprocessing.Hosted && usage.Negative():
+			// The attribute above keeps the recorded numbers as provenance; a
+			// token_usage row must be a real count, and the store validates
+			// that, so the session ingests without one.
+			data.Report.AggregateUsageRejected++
+		default:
 			input, output := usage.InputTokens, usage.OutputTokens
 			cacheRead, cacheWrite := usage.CacheReadTokens, usage.CacheCreationTokens
 			total := input + output + cacheRead + cacheWrite
@@ -96,7 +108,6 @@ func Envelope(graph *session.Graph, snapshot *entirecheckpoint.SessionSnapshot, 
 				CacheReadTokens: &cacheRead, CacheWriteTokens: &cacheWrite, TotalTokens: &total, APICallCount: &usage.APICallCount,
 			})
 			data.Report.AggregateUsageAdded++
-			data.Attributes = append(data.Attributes, envelopeAttribute(root.ID, "token_usage", value, attributeTime))
 		}
 	}
 

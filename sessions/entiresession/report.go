@@ -1,6 +1,8 @@
 package entiresession
 
 import (
+	"encoding/json"
+
 	"github.com/baum-ai/baum/sessions/claudesession"
 	"github.com/baum-ai/baum/sessions/codexsession"
 	"github.com/baum-ai/baum/sessions/cursorsession"
@@ -11,15 +13,17 @@ import (
 // Report accounts for all Entire-owned source records and carries delegated
 // mapper reports without rewriting them.
 type Report struct {
-	Sessions        int                    `json:"sessions"`
-	FailedSnapshots int                    `json:"failed_snapshots"`
-	Rows            Rows                   `json:"rows"`
-	Compact         CompactAccounting      `json:"compact"`
-	Metadata        Accounting             `json:"metadata"`
-	Envelope        EnvelopeReport         `json:"envelope"`
-	Delegated       []DelegateReport       `json:"delegated,omitempty"`
-	Shape           entirecheckpoint.Shape `json:"shape"`
-	Findings        []string               `json:"findings,omitempty"`
+	Sessions        int               `json:"sessions"`
+	FailedSnapshots int               `json:"failed_snapshots"`
+	Rows            Rows              `json:"rows"`
+	Compact         CompactAccounting `json:"compact"`
+	Metadata        Accounting        `json:"metadata"`
+	Envelope        EnvelopeReport    `json:"envelope"`
+	Delegated       []DelegateReport  `json:"delegated,omitempty"`
+	// Tasks accounts for the checkpoint's subagent directories (tasks.go).
+	Tasks    *Accounting            `json:"tasks,omitempty"`
+	Shape    entirecheckpoint.Shape `json:"shape"`
+	Findings []string               `json:"findings,omitempty"`
 }
 
 type Rows struct {
@@ -71,13 +75,24 @@ type DelegateReport struct {
 	Claude    *claudesession.Report         `json:"claude,omitempty"`
 	Codex     *codexsession.Report          `json:"codex,omitempty"`
 	Cursor    *cursorsession.PortableReport `json:"cursor,omitempty"`
+	// Tasks are the checkpoint's subagent transcripts this session claimed,
+	// and whether each became a nested session.
+	Tasks    []DelegatedTask `json:"tasks,omitempty"`
+	Warnings []string        `json:"warnings,omitempty"`
+}
+
+type DelegatedTask struct {
+	Directory string `json:"directory"`
+	Nested    bool   `json:"nested"`
 }
 
 type EnvelopeReport struct {
+	profile                  traceprocessing.MappingProfile
 	AttributesAdded          int `json:"attributes_added"`
 	VendorIDsAdded           int `json:"vendor_ids_added"`
 	AggregateUsageAdded      int `json:"aggregate_usage_added"`
 	AggregateUsageAttributed int `json:"aggregate_usage_attributed"`
+	AggregateUsageRejected   int `json:"aggregate_usage_rejected"`
 	FilesConsidered          int `json:"files_considered"`
 	FilesAlreadyCovered      int `json:"files_already_covered"`
 	FilesUnrepresentable     int `json:"files_unrepresentable"`
@@ -87,7 +102,7 @@ type EnvelopeReport struct {
 }
 
 func (r *Report) Balanced() bool {
-	if r == nil || !r.Compact.Lines.Balanced() || !r.Compact.Blocks.Balanced() || !r.Metadata.Balanced() {
+	if r == nil || !r.Compact.Lines.Balanced() || !r.Compact.Blocks.Balanced() || !r.Metadata.Balanced() || (r.Tasks != nil && !r.Tasks.Balanced()) {
 		return false
 	}
 	for _, delegated := range r.Delegated {
@@ -120,4 +135,38 @@ func (r *Report) addRows(graphRows traceprocessing.RowTally) {
 	r.Rows.Attributes += rows.Attributes
 	r.Rows.TokenUsage += rows.TokenUsage
 	r.Rows.VendorIDs += rows.VendorIDs
+}
+
+// MarshalJSON keeps local report fields unchanged while hosted reports include
+// the rejected-aggregate counter even when zero.
+func (r EnvelopeReport) MarshalJSON() ([]byte, error) {
+	var rejected *int
+	if r.profile == traceprocessing.Hosted {
+		rejected = &r.AggregateUsageRejected
+	}
+	return json.Marshal(struct {
+		AttributesAdded          int  `json:"attributes_added"`
+		VendorIDsAdded           int  `json:"vendor_ids_added"`
+		AggregateUsageAdded      int  `json:"aggregate_usage_added"`
+		AggregateUsageAttributed int  `json:"aggregate_usage_attributed"`
+		AggregateUsageRejected   *int `json:"aggregate_usage_rejected,omitempty"`
+		FilesConsidered          int  `json:"files_considered"`
+		FilesAlreadyCovered      int  `json:"files_already_covered"`
+		FilesUnrepresentable     int  `json:"files_unrepresentable"`
+		FilesShared              int  `json:"files_shared"`
+		HashChecked              int  `json:"hash_checked"`
+		HashMismatches           int  `json:"hash_mismatches"`
+	}{
+		AttributesAdded:          r.AttributesAdded,
+		VendorIDsAdded:           r.VendorIDsAdded,
+		AggregateUsageAdded:      r.AggregateUsageAdded,
+		AggregateUsageAttributed: r.AggregateUsageAttributed,
+		AggregateUsageRejected:   rejected,
+		FilesConsidered:          r.FilesConsidered,
+		FilesAlreadyCovered:      r.FilesAlreadyCovered,
+		FilesUnrepresentable:     r.FilesUnrepresentable,
+		FilesShared:              r.FilesShared,
+		HashChecked:              r.HashChecked,
+		HashMismatches:           r.HashMismatches,
+	})
 }

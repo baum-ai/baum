@@ -1,12 +1,13 @@
 package codexsession
 
 import (
-	"github.com/baum-ai/baum/sessions/codextranscript"
-	"github.com/baum-ai/baum/sessions/session"
-	"github.com/baum-ai/baum/sessions/traceprocessing"
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/baum-ai/baum/sessions/codextranscript"
+	"github.com/baum-ai/baum/sessions/session"
+	"github.com/baum-ai/baum/sessions/traceprocessing"
 )
 
 func hostedBuild(tree *codextranscript.Tree) (*session.Graph, *Report, error) {

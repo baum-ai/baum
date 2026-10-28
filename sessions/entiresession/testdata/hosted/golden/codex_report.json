@@ -1,0 +1,184 @@
+{
+  "sessions": 1,
+  "failed_snapshots": 0,
+  "rows": {
+    "sessions": 1,
+    "user_inputs": 1,
+    "model_invocations": 9,
+    "assistant_messages": 4,
+    "tool_uses": 8,
+    "tool_results": 8,
+    "file_touches": 4,
+    "session_attributes": 31,
+    "token_usage": 0,
+    "vendor_ids": 67
+  },
+  "compact": {
+    "lines": {
+      "total": 9,
+      "mapped": 0,
+      "envelope_evidence": 0,
+      "discarded": {
+        "native delegate selected": 9
+      }
+    },
+    "blocks": {
+      "total": 13,
+      "mapped": 0,
+      "envelope_evidence": 0,
+      "discarded": {
+        "native delegate selected": 13
+      }
+    }
+  },
+  "metadata": {
+    "total": 25,
+    "mapped": 16,
+    "envelope_evidence": 3,
+    "discarded": {
+      "checkpoint metadata is not session-attributable: branch": 1,
+      "checkpoint metadata is not session-attributable: checkpoints_count": 1,
+      "checkpoint metadata is not session-attributable: cli_version": 1,
+      "checkpoint metadata is not session-attributable: files_touched": 1,
+      "checkpoint metadata is not session-attributable: strategy": 1,
+      "checkpoint metadata is not session-attributable: token_usage": 1
+    }
+  },
+  "envelope": {
+    "attributes_added": 10,
+    "vendor_ids_added": 3,
+    "aggregate_usage_added": 0,
+    "aggregate_usage_attributed": 1,
+    "aggregate_usage_rejected": 0,
+    "files_considered": 2,
+    "files_already_covered": 2,
+    "files_unrepresentable": 0,
+    "files_shared": 0,
+    "hash_checked": 1,
+    "hash_mismatches": 0
+  },
+  "delegated": [
+    {
+      "session_id": "019f4bee-154b-7c61-bbfc-9ff33eec7458",
+      "agent": "Codex",
+      "codex": {
+        "sessions": 1,
+        "rows": {
+          "user_inputs": 1,
+          "model_invocations": 9,
+          "assistant_messages": 4,
+          "tool_uses": 8,
+          "tool_results": 8,
+          "file_touches": 4,
+          "session_attributes": 21,
+          "token_usage": 0,
+          "vendor_ids": 64
+        },
+        "records": {
+          "total": 53,
+          "mapped": 24,
+          "attribute_bearing": 1,
+          "merged": 9,
+          "discarded": {
+            "context/agent_message_event_copy": 4,
+            "context/developer_message": 3,
+            "context/model_visible_user_copy": 2,
+            "context/reasoning": 7,
+            "context/turn_lifecycle": 2,
+            "context/world_state": 1
+          },
+          "torn_final_lines": 0
+        },
+        "tokens": {
+          "records": 9,
+          "assigned_invocations": 9,
+          "ambiguous_rows": 0,
+          "repeated_totals": 0
+        },
+        "unsupported_turns": 0,
+        "transcript": {
+          "cli_versions": {
+            "seen": {
+              "0.144.1": 1
+            },
+            "min": "0.144.1",
+            "max": "0.144.1"
+          },
+          "subtypes": {
+            "event_msg/agent_message": 4,
+            "event_msg/patch_apply_end": 2,
+            "event_msg/task_complete": 1,
+            "event_msg/task_started": 1,
+            "event_msg/token_count": 9,
+            "event_msg/user_message": 1,
+            "response_item/custom_tool_call": 8,
+            "response_item/custom_tool_call_output": 8,
+            "response_item/message": 9,
+            "response_item/reasoning": 7
+          }
+        },
+        "notes": [
+          "thread 019f4bee-154b-7c61-bbfc-9ff33eec7458 patch completion exec-b04c7f58-51a1-4ca5-b9ee-9c66a01d9832 produced file touches without a tool use",
+          "thread 019f4bee-154b-7c61-bbfc-9ff33eec7458 patch completion exec-ab7902f4-954f-4e69-9fed-09870cc754ff produced file touches without a tool use"
+        ]
+      }
+    }
+  ],
+  "tasks": {
+    "total": 0,
+    "mapped": 0,
+    "envelope_evidence": 0
+  },
+  "shape": {
+    "cli_versions": {
+      "seen": {
+        "0.8.42": 2
+      },
+      "min": "0.8.42",
+      "max": "0.8.42"
+    },
+    "checkpoint_keys": {
+      "branch": 1,
+      "checkpoint_id": 1,
+      "checkpoints_count": 1,
+      "cli_version": 1,
+      "files_touched": 1,
+      "sessions": 1,
+      "strategy": 1,
+      "token_usage": 1
+    },
+    "session_keys": {
+      "agent": 1,
+      "branch": 1,
+      "checkpoint_id": 1,
+      "checkpoints_count": 1,
+      "cli_version": 1,
+      "compact_transcript_start": 1,
+      "created_at": 1,
+      "files_touched": 1,
+      "initial_attribution": 1,
+      "model": 1,
+      "prompt_attributions": 1,
+      "save_step_count": 1,
+      "session_id": 1,
+      "session_metrics": 1,
+      "strategy": 1,
+      "token_usage": 1,
+      "turn_id": 1
+    },
+    "compact_record_types": {
+      "assistant": 8,
+      "user": 1
+    },
+    "compact_block_kinds": {
+      "assistant_text": 4,
+      "tool_use": 8,
+      "user_text": 1
+    },
+    "compact_agents": {
+      "codex": 9
+    },
+    "hash_checked": 1,
+    "hash_mismatches": 0
+  }
+}

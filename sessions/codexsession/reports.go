@@ -2,8 +2,9 @@ package codexsession
 
 import (
 	"encoding/json"
-	"github.com/baum-ai/baum/sessions/traceprocessing"
 	"strings"
+
+	"github.com/baum-ai/baum/sessions/traceprocessing"
 
 	"github.com/baum-ai/baum/sessions/codextranscript"
 	"github.com/baum-ai/baum/sessions/session"

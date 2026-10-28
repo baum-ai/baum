@@ -3,8 +3,9 @@ package claudesession
 import (
 	"encoding/json"
 	"fmt"
-	"github.com/baum-ai/baum/sessions/traceprocessing"
 	"strings"
+
+	"github.com/baum-ai/baum/sessions/traceprocessing"
 
 	"github.com/baum-ai/baum/sessions/claudetranscript"
 	"github.com/baum-ai/baum/sessions/prompttext"
@@ -200,7 +201,7 @@ func inputMetadata(line claudetranscript.Line) json.RawMessage {
 		bag["isMeta"] = true
 	}
 	if len(line.Origin) > 0 {
-		bag["origin"] = json.RawMessage(line.Origin)
+		bag["origin"] = line.Origin
 	}
 
 	raw, err := json.Marshal(bag)

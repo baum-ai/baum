@@ -3,8 +3,9 @@ package claudesession
 import (
 	"encoding/json"
 	"fmt"
-	"github.com/baum-ai/baum/sessions/traceprocessing"
 	"time"
+
+	"github.com/baum-ai/baum/sessions/traceprocessing"
 
 	"github.com/baum-ai/baum/sessions/claudetranscript"
 	"github.com/baum-ai/baum/sessions/session"

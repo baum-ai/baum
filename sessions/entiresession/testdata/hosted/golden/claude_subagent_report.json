@@ -1,0 +1,150 @@
+{
+  "sessions": 1,
+  "failed_snapshots": 0,
+  "rows": {
+    "sessions": 2,
+    "user_inputs": 5,
+    "model_invocations": 8,
+    "assistant_messages": 3,
+    "tool_uses": 6,
+    "tool_results": 6,
+    "file_touches": 1,
+    "session_attributes": 10,
+    "token_usage": 0,
+    "vendor_ids": 60
+  },
+  "compact": {
+    "lines": {
+      "total": 0,
+      "mapped": 0,
+      "envelope_evidence": 0
+    },
+    "blocks": {
+      "total": 0,
+      "mapped": 0,
+      "envelope_evidence": 0
+    }
+  },
+  "metadata": {
+    "total": 20,
+    "mapped": 12,
+    "envelope_evidence": 2,
+    "discarded": {
+      "checkpoint metadata is not session-attributable: branch": 1,
+      "checkpoint metadata is not session-attributable: checkpoints_count": 1,
+      "checkpoint metadata is not session-attributable: cli_version": 1,
+      "checkpoint metadata is not session-attributable: files_touched": 1,
+      "checkpoint metadata is not session-attributable: strategy": 1,
+      "checkpoint metadata is not session-attributable: token_usage": 1
+    }
+  },
+  "envelope": {
+    "attributes_added": 6,
+    "vendor_ids_added": 3,
+    "aggregate_usage_added": 0,
+    "aggregate_usage_attributed": 1,
+    "aggregate_usage_rejected": 0,
+    "files_considered": 0,
+    "files_already_covered": 0,
+    "files_unrepresentable": 0,
+    "files_shared": 0,
+    "hash_checked": 1,
+    "hash_mismatches": 0
+  },
+  "delegated": [
+    {
+      "session_id": "5b0c2a6e-1d2f-4c3b-9a8e-7f6d5c4b3a21",
+      "agent": "Claude Code",
+      "claude": {
+        "sessions": 2,
+        "rows": {
+          "user_inputs": 5,
+          "model_invocations": 8,
+          "assistant_messages": 3,
+          "tool_uses": 6,
+          "tool_results": 6,
+          "file_touches": 1,
+          "session_attributes": 4,
+          "vendor_ids": 57
+        },
+        "lines": {
+          "total": 21,
+          "mapped": 18,
+          "attribute_bearing": 0,
+          "merged": 3,
+          "torn_final_lines": 0
+        },
+        "transcript": {
+          "versions": {
+            "seen": {
+              "2.1.294": 16,
+              "unknown": 5
+            },
+            "min": "2.1.294",
+            "max": "2.1.294"
+          },
+          "content_shapes": {
+            "array": 13,
+            "string": 3
+          },
+          "unread_keys": {
+            "entrypoint": 16,
+            "userType": 16
+          }
+        }
+      },
+      "tasks": [
+        {
+          "directory": "toolu_review",
+          "nested": true
+        }
+      ]
+    }
+  ],
+  "tasks": {
+    "total": 2,
+    "mapped": 1,
+    "envelope_evidence": 0,
+    "discarded": {
+      "task.json only, no transcript": 1
+    }
+  },
+  "shape": {
+    "cli_versions": {
+      "seen": {
+        "0.11.4": 2
+      },
+      "min": "0.11.4",
+      "max": "0.11.4"
+    },
+    "checkpoint_keys": {
+      "branch": 1,
+      "checkpoint_id": 1,
+      "checkpoints_count": 1,
+      "cli_version": 1,
+      "files_touched": 1,
+      "sessions": 1,
+      "strategy": 1,
+      "token_usage": 1
+    },
+    "session_keys": {
+      "agent": 1,
+      "branch": 1,
+      "checkpoint_id": 1,
+      "checkpoints_count": 1,
+      "cli_version": 1,
+      "created_at": 1,
+      "files_touched": 1,
+      "model": 1,
+      "session_id": 1,
+      "strategy": 1,
+      "token_usage": 1,
+      "turn_id": 1
+    },
+    "compact_record_types": {},
+    "compact_block_kinds": {},
+    "compact_agents": {},
+    "hash_checked": 1,
+    "hash_mismatches": 0
+  }
+}

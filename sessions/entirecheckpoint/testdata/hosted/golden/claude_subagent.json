@@ -1,0 +1,89 @@
+{
+  "checkpoint_id": "a1b2c3d4e5f6",
+  "cli_version": "0.11.4",
+  "sessions": [
+    {
+      "index": 0,
+      "session_id": "5b0c2a6e-1d2f-4c3b-9a8e-7f6d5c4b3a21",
+      "agent": "Claude Code",
+      "full_bytes": 9897,
+      "compact_records": 0,
+      "block_kinds": {},
+      "prompt_present": true,
+      "skill_events": 0,
+      "hash": {
+        "recorded": "sha256:7e85fe4b551e97d6cbb4532ca79421a2fdeb45ae84c561872bbc5144a7cc53fd",
+        "actual": "sha256:7e85fe4b551e97d6cbb4532ca79421a2fdeb45ae84c561872bbc5144a7cc53fd",
+        "checked": true,
+        "mismatch": false
+      }
+    }
+  ],
+  "tasks": [
+    {
+      "directory": "toolu_lost",
+      "meta": {
+        "tool_use_id": "toolu_lost",
+        "agent_id": "a3333333333333333",
+        "subagent_type": "general-purpose",
+        "task_description": "Scan secrets",
+        "started_at": "2026-10-01T10:00:09Z",
+        "completed_at": "2026-10-01T10:00:12Z"
+      },
+      "meta_present": true,
+      "transcript_present": false
+    },
+    {
+      "directory": "toolu_review",
+      "meta": {
+        "tool_use_id": "toolu_review",
+        "agent_id": "a1111111111111111",
+        "subagent_type": "general-purpose",
+        "task_description": "Review parser",
+        "started_at": "2026-10-01T10:00:05Z",
+        "completed_at": "2026-10-01T10:00:11Z"
+      },
+      "meta_present": true,
+      "transcript_name": "agent-a1111111111111111.jsonl",
+      "transcript_present": true
+    }
+  ],
+  "shape": {
+    "cli_versions": {
+      "seen": {
+        "0.11.4": 2
+      },
+      "min": "0.11.4",
+      "max": "0.11.4"
+    },
+    "checkpoint_keys": {
+      "branch": 1,
+      "checkpoint_id": 1,
+      "checkpoints_count": 1,
+      "cli_version": 1,
+      "files_touched": 1,
+      "sessions": 1,
+      "strategy": 1,
+      "token_usage": 1
+    },
+    "session_keys": {
+      "agent": 1,
+      "branch": 1,
+      "checkpoint_id": 1,
+      "checkpoints_count": 1,
+      "cli_version": 1,
+      "created_at": 1,
+      "files_touched": 1,
+      "model": 1,
+      "session_id": 1,
+      "strategy": 1,
+      "token_usage": 1,
+      "turn_id": 1
+    },
+    "compact_record_types": {},
+    "compact_block_kinds": {},
+    "compact_agents": {},
+    "hash_checked": 1,
+    "hash_mismatches": 0
+  }
+}

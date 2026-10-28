@@ -6,9 +6,10 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/google/go-cmp/cmp"
+
 	"github.com/baum-ai/baum/sessions/cursorsession"
 	"github.com/baum-ai/baum/sessions/cursortranscript"
-	"github.com/google/go-cmp/cmp"
 )
 
 type hostedPayloadWire struct {

@@ -1,10 +1,11 @@
 package cursorsession
 
 import (
+	"time"
+
 	"github.com/baum-ai/baum/sessions/cursortranscript"
 	"github.com/baum-ai/baum/sessions/session"
 	"github.com/baum-ai/baum/sessions/traceprocessing"
-	"time"
 )
 
 func hostedBuild(tree *cursortranscript.Tree) (*session.Graph, *Report, error) {

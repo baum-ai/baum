@@ -1,0 +1,29 @@
+{
+  "cli_version": "0.10.6",
+  "checkpoint_id": "e28405f4dd57",
+  "session_id": "01a08c5f-f05a-770b-b4ff-fb4c42cd17db",
+  "strategy": "manual-commit",
+  "created_at": "2026-09-17T09:32:03.377993218Z",
+  "branch": "main",
+  "checkpoints_count": 1,
+  "save_step_count": 1,
+  "files_touched": [
+    ".agents/worktrees/pr-188/.agents/guides/repository.md",
+    ".agents/worktrees/pr-188/AGENTS.md",
+    "WATCHDOG.yml"
+  ],
+  "agent": "Pi",
+  "model": "deepseek-flash",
+  "turn_id": "a9ce73b35563",
+  "compact_transcript_start": 0,
+  "token_usage": {
+    "input_tokens": 94114,
+    "cache_creation_tokens": 0,
+    "cache_read_tokens": 1937152,
+    "output_tokens": 26345,
+    "api_call_count": 38
+  },
+  "session_metrics": {
+    "turn_count": 1
+  }
+}
