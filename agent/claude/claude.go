@@ -284,6 +284,9 @@ func (c *Backend) run(ctx context.Context, request agent.Request, args, env []st
 		total()
 	}
 	completed := false
+	// reported is set once the run's result event, the harness's own final
+	// accounting, arrived, whether the run succeeded or not.
+	reported := false
 	toolsSeen := map[string]string{}
 	titles := map[string]string{}
 	done := make(chan struct{})
@@ -439,6 +442,7 @@ func (c *Backend) run(ctx context.Context, request agent.Request, args, env []st
 			}
 		}
 		if event.Type == "result" {
+			reported = true
 			u := event.Usage
 			record(agent.Event{Kind: "result", Status: event.Subtype, Input: u.Input, Output: u.Output, CacheRead: u.CacheRead, CacheCreate: u.CacheCreate})
 			reportedTotal = u
@@ -524,7 +528,10 @@ func (c *Backend) run(ctx context.Context, request agent.Request, args, env []st
 	if !residual.IsZero() {
 		result.UsageAttempts = append(result.UsageAttempts, agent.UsageAttempt{Usage: residual, ChargedTokens: int(residual.Input + residual.Output + residual.CacheCreate), Failed: !completed})
 	}
-	if !completed {
+	// A run that ended before its result event may have made calls it did
+	// not report; one that ended with a failed result (out of turns, a
+	// provider error) reported them all.
+	if !completed && !reported {
 		result.Usage.Unreported = true
 	}
 	waitErr := cmd.Wait()
