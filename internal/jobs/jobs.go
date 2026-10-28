@@ -56,10 +56,8 @@ type FeatureBuildEstimate struct {
 	// PullRequests are those left to place.
 	PullRequests int
 	// EstimateUSD is the cost of what is left, nil when it cannot be
-	// priced; CapUSD the cap of the build's spend over all its runs a
-	// confirmation of it holds.
+	// priced.
 	EstimateUSD *float64
-	CapUSD      float64
 	// Reason is why it cannot run now.
 	Reason string
 }
@@ -67,14 +65,13 @@ type FeatureBuildEstimate struct {
 // FeatureBuilder estimates and runs feature builds.
 type FeatureBuilder interface {
 	EstimateFeatureBuild(ctx context.Context, repository, dir string) (FeatureBuildEstimate, error)
-	// BuildFeatures runs a build whose version's spend may reach capUSD,
-	// and returns the run's spend; a build that stops before its version
-	// is current returns a *StoppedError.
-	BuildFeatures(ctx context.Context, repository, dir string, capUSD float64, progress func(Progress)) (float64, error)
+	// BuildFeatures runs a build and returns the run's spend; a build that
+	// stops before its version is current returns a *StoppedError.
+	BuildFeatures(ctx context.Context, repository, dir string, progress func(Progress)) (float64, error)
 }
 
 // StoppedError is a feature build that stopped before it finished, for
-// Reason (a cost or daily cap, an unavailable backend, or "failed"); the
+// Reason (an unavailable backend or price, or "failed"); the
 // job fails with that reason.
 type StoppedError struct {
 	Reason string
@@ -159,11 +156,9 @@ type Prepared struct {
 	FixThreads          []FixThread `json:"fix_threads,omitempty"`
 	FixThreadsCapped    bool        `json:"fix_threads_capped,omitempty"`
 	FixThreadsUntrusted int         `json:"fix_threads_untrusted,omitempty"`
-	// BuildPullRequests and BuildCapUSD are a feature build's
-	// (KindFeatureBuild) pull requests left to place and the cap of its
-	// spend over all its runs.
-	BuildPullRequests int     `json:"build_pull_requests,omitempty"`
-	BuildCapUSD       float64 `json:"build_cap_usd,omitempty"`
+	// BuildPullRequests are a feature build's (KindFeatureBuild) pull
+	// requests left to place.
+	BuildPullRequests int `json:"build_pull_requests,omitempty"`
 }
 
 // sameConfirmedInputs reports whether two confirmations authorize the same
@@ -609,7 +604,7 @@ func (q *Queue) SubmitConfirmed(ctx context.Context, estimateID string, c Confir
 		if err != nil {
 			return nil, err
 		}
-		if current.ConfigDigest != p.ConfigDigest || current.HeadSHA != p.HeadSHA || current.Members != p.Members || current.Backend != p.Backend || current.Model != p.Model || current.RequiresIsolationConfirmation != p.RequiresIsolationConfirmation || current.BlockedReason != "" || version != e.PriceVersion || !sameEstimate(current, p) || current.Fix != p.Fix || current.BuildCapUSD != p.BuildCapUSD {
+		if current.ConfigDigest != p.ConfigDigest || current.HeadSHA != p.HeadSHA || current.Members != p.Members || current.Backend != p.Backend || current.Model != p.Model || current.RequiresIsolationConfirmation != p.RequiresIsolationConfirmation || current.BlockedReason != "" || version != e.PriceVersion || !sameEstimate(current, p) || current.Fix != p.Fix {
 			return nil, errors.New("generation inputs changed; estimate again")
 		}
 		prepared = append(prepared, current)

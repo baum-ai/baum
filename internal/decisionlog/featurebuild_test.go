@@ -173,74 +173,39 @@ func TestBuildRetriesSplitsAndLeavesOut(t *testing.T) {
 	}
 }
 
-// A build stops when the next call would pass its cap, leaving its version
-// building and stopped; built again with a higher cap it resumes the
-// version.
-func TestBuildStopsAtTheCapAndResumes(t *testing.T) {
-	f := newFeatureFixture(t)
-	f.clock.now = t0.Add(60 * 24 * time.Hour)
-	f.history(50)
-	f.backend.usage = &agent.Usage{Input: 1000, Output: 100_000}
-	f.backend.merge = func(string) (string, error) { return `{"groups":[]}`, nil }
-	f.backend.batch = func(user string) (string, error) { return batchReply(t, user, ""), nil }
-	first := f.build(BuildOptions{MaxCostUSD: 0.06})
-	if first.Current || first.Stopped != ReasonBuildCap || first.Placed != 25 || first.SpentUSD <= 0 || first.SpentUSD > 0.06 {
-		t.Fatalf("first = %+v", first)
-	}
-	if state, stopped := f.versionState(first.Version); state != VersionBuilding || stopped != ReasonBuildCap {
-		t.Fatalf("version %s, stopped %q", state, stopped)
-	}
-	second := f.build(BuildOptions{MaxCostUSD: 1})
-	if !second.Current || second.Version != first.Version || second.Placed != 25 || second.PullRequests != 25 {
-		t.Fatalf("second = %+v", second)
-	}
-	if want := first.SpentUSD + second.SpentUSD; second.VersionSpentUSD < want-1e-9 || second.VersionSpentUSD > want+1e-9 {
-		t.Fatalf("version spend %f, want %f", second.VersionSpentUSD, want)
-	}
-	if state, stopped := f.versionState(first.Version); state != VersionCurrent || stopped != "" {
-		t.Fatalf("version %s, stopped %q", state, stopped)
-	}
-}
-
 // A gated build, the job's, reads the gate before every call: a repository
-// turned off during the build stops it, its version still building.
-func TestGatedBuildStopsWhenTurnedOff(t *testing.T) {
+// turned off during the build stops it, its version still building. Built
+// again once on, it resumes the version and adds to its spend.
+func TestGatedBuildStopsWhenTurnedOffAndResumes(t *testing.T) {
 	f := newFeatureFixture(t)
 	f.clock.now = t0.Add(60 * 24 * time.Hour)
 	f.history(50)
+	f.backend.usage = &agent.Usage{Input: 1000, Output: 1000}
+	f.backend.merge = func(string) (string, error) { return `{"groups":[]}`, nil }
 	f.backend.batch = func(user string) (string, error) {
 		f.off = true
 		return batchReply(t, user, ""), nil
 	}
-	report := f.build(BuildOptions{Gated: true, MaxCostUSD: 1})
-	if report.Current || report.Stopped != ReasonDisabled || report.Placed != 25 || f.backend.calls["batch"] != 1 {
+	report := f.build(BuildOptions{Gated: true})
+	if report.Current || report.Stopped != ReasonDisabled || report.Placed != 25 || f.backend.calls["batch"] != 1 || report.SpentUSD <= 0 {
 		t.Fatalf("report = %+v", report)
 	}
-	if again := f.build(BuildOptions{Gated: true, MaxCostUSD: 1}); again.Stopped != ReasonDisabled || f.backend.calls["batch"] != 1 {
+	if state, stopped := f.versionState(report.Version); state != VersionBuilding || stopped != ReasonDisabled {
+		t.Fatalf("version %s, stopped %q", state, stopped)
+	}
+	if again := f.build(BuildOptions{Gated: true}); again.Stopped != ReasonDisabled || f.backend.calls["batch"] != 1 {
 		t.Fatalf("a build of a repository turned off = %+v", again)
 	}
-}
-
-// A build stopped at its cap while writing the text resumes with the
-// default cap: the estimate counts the version's text and pass still to do.
-func TestBuildStoppedInTheTextResumesWithTheDefaultCap(t *testing.T) {
-	f := newFeatureFixture(t)
-	f.clock.now = t0.Add(60 * 24 * time.Hour)
-	f.history(25)
-	f.backend.usage = &agent.Usage{Input: 1000, Output: 100_000}
-	f.backend.merge = func(string) (string, error) { return `{"groups":[]}`, nil }
+	f.off = false
 	f.backend.batch = func(user string) (string, error) { return batchReply(t, user, ""), nil }
-	// Room for the batch call, not the text call after it.
-	first := f.build(BuildOptions{MaxCostUSD: 0.052})
-	if first.Current || first.Stopped != ReasonBuildCap || first.Placed != 25 || f.backend.calls["text"] != 0 {
-		t.Fatalf("first = %+v", first)
-	}
-	f.backend.usage = nil
-	estimate, err := f.worker.EstimateBuild(context.Background(), repo, "", BuildOptions{})
-	if err != nil || estimate.PullRequests != 0 || estimate.EstimateUSD == nil || *estimate.EstimateUSD <= 0 || estimate.Cap() <= estimate.SpentUSD {
-		t.Fatalf("estimate = %+v, %v", estimate, err)
-	}
-	if second := f.build(BuildOptions{}); !second.Current {
+	second := f.build(BuildOptions{Gated: true})
+	if !second.Current || second.Version != report.Version || second.Placed != 25 || second.PullRequests != 25 {
 		t.Fatalf("second = %+v", second)
+	}
+	if want := report.SpentUSD + second.SpentUSD; second.VersionSpentUSD < want-1e-9 || second.VersionSpentUSD > want+1e-9 {
+		t.Fatalf("version spend %f, want %f", second.VersionSpentUSD, want)
+	}
+	if state, stopped := f.versionState(report.Version); state != VersionCurrent || stopped != "" {
+		t.Fatalf("version %s, stopped %q", state, stopped)
 	}
 }

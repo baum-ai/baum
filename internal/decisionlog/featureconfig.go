@@ -86,13 +86,6 @@ const (
 	FeatureBuildTries          = 2
 	FeatureBuildCandidates     = 40
 	FeatureBuildSummarizeEvery = 3
-	// FeatureBuildCapFactor makes a confirmed build's cost cap from its
-	// estimate.
-	FeatureBuildCapFactor = 1.25
-	// FeatureBuildBytesPerToken bounds a build call's prompt tokens from its
-	// bytes for the cap, as hosted: JSON of paths and identifiers runs at
-	// about three bytes a token.
-	FeatureBuildBytesPerToken = 2
 )
 
 // The sizes a build's estimate assumes of what it cannot know beforehand

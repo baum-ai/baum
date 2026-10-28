@@ -350,7 +350,7 @@ turned off, and a merge over a first build's features needs the room.
   refusal discards the merges paid for, which are logged and counted), and
   the pass backs off as placement's failures do, counted against the
   fingerprint. A split reply that is invalid leaves only that feature whole
-  and unchecked. A call that cannot be made (a backend, price or cap reason)
+  and unchecked. A call that cannot be made (a backend or price reason)
   also writes nothing; the pass is made again on the next run.
 
 ### First build
@@ -367,15 +367,10 @@ internal features build`.
   configured backend and model: a batch call per 25 (the items' titles,
   descriptions and paths, and candidates for the features placed so far, a
   feature per 3 pull requests), the new features' text twice and a summary
-  of each pull request with a description. The cap of the version's spend
-  over all its runs is what it spent and the estimate times 1.25, and never
-  less than what it spent and the largest call the remaining work makes (a
-  text or pull request summary, or a batch with the longer of its plain and
-  seeded prompts, each at its input's bound) priced as the call is checked,
-  so a confirmed resume can always make progress. For a small build that
-  floor, roughly what it spent and $0.50 with the default model, is a
-  ceiling, not spend. A repository whose decisions are not captured, or
-  whose model cannot be priced or called, is not estimated.
+  of each pull request with a description. As for a requested review, there
+  is no spending cap: the estimate is what the user confirms, and the build
+  runs to the end. A repository whose decisions are not captured, or whose
+  model cannot be priced or called, is not estimated.
 - **Building.** The build makes the repository's `building` version, or
   resumes the one there is, and places in it the merged and open pull
   requests of the last 180 days not opened by a bot, in no feature of the
@@ -408,18 +403,13 @@ internal features build`.
   live stages placed in the old version is in no feature of the new one;
   placement takes what is within its lookback. A retired version is kept,
   and a link to one of its features resolves as archived.
-- **Stopping.** A build stops before a call whose estimate (as hosted: its
-  prompt at two bytes a token and its whole reply bound) would take the
-  version's spend (`spent_usd`, added after every call: its cost, else
-  the estimate it was held to; nothing for a failed call that reported no
-  usage) past the cap, or that cannot be made (`cost_cap`, `unpriced_model`,
-  `spend_unrecorded` when a spend could not be recorded, `disabled`, a
-  backend or daily cap reason; `failed` for a store error), leaving the
-  version `building` with `stopped` set to why; confirming it again resumes
-  it. A backend that may make a further call within one completion (claude
-  retrying a rejected reply) can take the spend past the cap by that call. Its
+- **Stopping.** A build stops before a call that cannot be made
+  (`unpriced_model`, `disabled` or a backend reason; `failed` for a store
+  error), or when it is cancelled or the daemon stops, leaving the version
+  `building` with `stopped` set to why; confirming it again resumes it. Its
   job then fails with that reason. Progress (phase, calls) is reported to
-  the job and the version records its pull requests placed of the total.
+  the job, and the version records its pull requests placed of the total
+  and its spend over all its runs (`spent_usd`, each call's known cost).
 
 ### Stored data
 
@@ -462,11 +452,10 @@ writes the text of the features behind, without the debounce. `baum
 internal features consolidate` takes `--repo`, `--clone`, `--backend` and
 `--model` and makes one pass over the current features without the
 interval or fingerprint check. `baum
-internal features build --repo <owner/name> [--clone <path>]
-[--max-cost-usd N] [--dry-run] [--backend <b>] [--model <m>]` runs a first
-build without the gate, a line a batch on standard error and its report as
-JSON; `--max-cost-usd` caps the version's spend over all its runs (default
-the estimate's cap) and `--dry-run` prints the estimate and writes nothing.
+internal features build --repo <owner/name> [--clone <path>] [--dry-run]
+[--backend <b>] [--model <m>]` runs a first build without the gate, a line a
+batch on standard error and its report as JSON; `--dry-run` prints the
+estimate and writes nothing.
 These read the preferences and the repository's settings and fail when they
 cannot; `sync`
 and `link` read neither. The clone

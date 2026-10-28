@@ -8,10 +8,7 @@ import (
 	"time"
 
 	"github.com/baum-ai/baum/agent"
-	"github.com/baum-ai/baum/decisions"
-	"github.com/baum-ai/baum/features/assign"
 	"github.com/baum-ai/baum/features/consolidate"
-	"github.com/baum-ai/baum/internal/pricing"
 )
 
 // A resumed version's estimate counts its features behind and their pull
@@ -49,27 +46,26 @@ func TestBuildEstimateOfAResumedVersion(t *testing.T) {
 	}
 }
 
-// A failed call is charged the estimate it was held to when its cost is
-// unknown, and nothing when it reported no usage.
+// A failed call adds its cost to the version's spend when it reported one,
+// and nothing when its usage is unknown.
 func TestBuildChargesFailedCalls(t *testing.T) {
 	for _, tc := range []struct {
 		usage agent.Usage
 		paid  bool
-	}{{agent.Usage{Input: 1000, Output: 100, Unreported: true}, true}, {agent.Usage{}, false}} {
+	}{{agent.Usage{Input: 1000, Output: 100}, true}, {agent.Usage{Input: 1000, Output: 100, Unreported: true}, false}} {
 		f := newFeatureFixture(t)
 		f.clock.now = t0.Add(60 * 24 * time.Hour)
 		f.history(1)
 		f.backend.usage = &tc.usage
 		f.backend.batch = func(string) (string, error) { return "", errors.New("refused") }
-		report := f.build(BuildOptions{MaxCostUSD: 1})
+		report := f.build(BuildOptions{})
 		if !report.Current || report.LeftOut != 1 || (report.VersionSpentUSD > 0) != tc.paid {
 			t.Fatalf("usage %+v: report = %+v", tc.usage, report)
 		}
 	}
 }
 
-// A build stops when its model cannot be priced, or when a call's spend
-// could not be recorded.
+// A build stops when its model cannot be priced.
 func TestBuildStopReasons(t *testing.T) {
 	f := newFeatureFixture(t)
 	f.clock.now = t0.Add(60 * 24 * time.Hour)
@@ -77,10 +73,6 @@ func TestBuildStopReasons(t *testing.T) {
 	f.backend.batch = func(user string) (string, error) { return batchReply(t, user, ""), nil }
 	if report := f.build(BuildOptions{Model: "made-up-model"}); report.Stopped != ReasonUnpriced || f.backend.calls["batch"] != 0 {
 		t.Fatalf("unpriced = %+v", report)
-	}
-	f.exec(`CREATE TRIGGER no_spend BEFORE UPDATE OF spent_usd ON feature_version BEGIN SELECT RAISE(ABORT, 'no'); END`)
-	if report := f.build(BuildOptions{MaxCostUSD: 1}); report.Stopped != ReasonSpendUnrecorded || f.backend.calls["batch"] != 1 {
-		t.Fatalf("unrecorded = %+v", report)
 	}
 }
 
@@ -207,9 +199,8 @@ func TestPlacementChecksItsVersionBeforeEachItem(t *testing.T) {
 	}
 }
 
-// A build stopped in its last text pass, no pull request left, resumes with
-// the default cap: the cap has room for a text call held to its whole reply
-// bound.
+// A build stopped in its last text pass, no pull request left, resumes and
+// writes the text left.
 func TestBuildResumedInItsLastTextPass(t *testing.T) {
 	f := newFeatureFixture(t)
 	f.clock.now = t0.Add(60 * 24 * time.Hour)
@@ -224,7 +215,7 @@ func TestBuildResumedInItsLastTextPass(t *testing.T) {
 	f.exec(`UPDATE feature SET membership_version=1`)
 	f.exec(`UPDATE feature_version SET spent_usd=0.5 WHERE id=?`, version)
 	estimate, err := f.worker.EstimateBuild(context.Background(), repo, "", BuildOptions{})
-	if err != nil || estimate.PullRequests != 0 || estimate.ReservedUSD <= 0 {
+	if err != nil || estimate.PullRequests != 0 || estimate.EstimateUSD == nil || *estimate.EstimateUSD <= 0 {
 		t.Fatalf("estimate = %+v, %v", estimate, err)
 	}
 	report := f.build(BuildOptions{})
@@ -259,38 +250,5 @@ func TestConsolidationWritesNothingToARetiredVersion(t *testing.T) {
 	}
 	if last, _, _ := f.store.consolidation(ctx, repo); !last.IsZero() || f.featureOf(3) != "B" || f.featureOf(2) != "A" {
 		t.Fatal("a retired version was written")
-	}
-}
-
-// A build with a few pull requests left resumes with the default cap: the
-// cap has room for a batch call held to the batch input's bound.
-func TestBuildSmallRemainderWithTheDefaultCap(t *testing.T) {
-	f := newFeatureFixture(t)
-	f.clock.now = t0.Add(60 * 24 * time.Hour)
-	f.history(3)
-	f.backend.batch = func(user string) (string, error) { return batchReply(t, user, ""), nil }
-	f.exec(`INSERT INTO feature_version(repository, state, created_at, spent_usd) VALUES (?, ?, ?, 1.5)`, repo, VersionBuilding, t0.UnixMilli())
-	estimate, err := f.worker.EstimateBuild(context.Background(), repo, "", BuildOptions{})
-	if err != nil || estimate.PullRequests != 3 || estimate.EstimateUSD == nil {
-		t.Fatalf("estimate = %+v, %v", estimate, err)
-	}
-	// The most complete would hold a batch call to: the longer prompt at
-	// the batch input's bound.
-	batchVersion, _ := assign.Public.BatchVersion(AssignVersion)
-	var longest int64
-	for _, version := range []string{batchVersion, assign.Public.SeededBatch(batchVersion)} {
-		request, err := assign.Public.Request(version, "", assign.MaxBatchOutputTokens)
-		if err != nil {
-			t.Fatal(err)
-		}
-		longest = max(longest, decisions.MaxRequestTokens(request))
-	}
-	held, ok := callCost(pricing.Active(), agent.BackendClaude, "claude-haiku-5-5", (longest+assign.MaxBatchInputBytes)/FeatureBuildBytesPerToken,
-		assign.MaxBatchOutputTokens)
-	if !ok || estimate.ReservedUSD < held || estimate.Cap() < estimate.SpentUSD+held {
-		t.Fatalf("reserved %f, cap %f, a batch call is held to %f", estimate.ReservedUSD, estimate.Cap(), held)
-	}
-	if report := f.build(BuildOptions{}); !report.Current || report.Placed != 3 {
-		t.Fatalf("report = %+v", report)
 	}
 }

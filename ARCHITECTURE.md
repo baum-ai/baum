@@ -2998,8 +2998,8 @@ consolidates it on its next run; it runs
 as a confirmed job (`jobs.KindFeatureBuild`, through `jobs.FeatureBuilder`)
 or from `baum internal features build`. Every stage calls through the same
 helper as capture (`caller` in `model.go`: backend and model resolution,
-reservation, a build's cost cap and the
-`capture_attempt` ledger, with the call's stage and item). The constants
+reservation and the `capture_attempt` ledger, with the call's stage and
+item). The constants
 are in `featureconfig.go` and the feature version a stage uses is chosen in
 one place (`featureVersion`: the live stages' current one, a build's
 building one). See

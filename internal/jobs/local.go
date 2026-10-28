@@ -390,15 +390,14 @@ func (l *Local) prepareFeatureBuild(ctx context.Context, item Item) (Prepared, s
 	}
 	list := pricing.Active()
 	p := Prepared{Item: item, Repository: c.Repository, Backend: estimate.Backend, Model: estimate.Model, PriceVersion: list.Version(),
-		EstimateUSD: estimate.EstimateUSD, BuildPullRequests: estimate.PullRequests, BuildCapUSD: estimate.CapUSD, BlockedReason: estimate.Reason}
+		EstimateUSD: estimate.EstimateUSD, BuildPullRequests: estimate.PullRequests, BlockedReason: estimate.Reason}
 	if p.EstimateUSD == nil && p.BlockedReason == "" {
 		p.BlockedReason = "unknown_model_price"
 	}
 	return p, list.Version(), nil
 }
 
-// executeFeatureBuild runs a confirmed feature build, capped at its
-// estimate's cap.
+// executeFeatureBuild runs a confirmed feature build.
 func (l *Local) executeFeatureBuild(ctx context.Context, p Prepared, progress func(Progress)) (*float64, error) {
 	if l.Features == nil || p.EstimateUSD == nil {
 		return nil, errors.New("invalid feature build")
@@ -407,6 +406,6 @@ func (l *Local) executeFeatureBuild(ctx context.Context, p Prepared, progress fu
 	if e != nil {
 		return nil, e
 	}
-	spent, e := l.Features.BuildFeatures(ctx, c.Repository, c.Path, p.BuildCapUSD, progress)
+	spent, e := l.Features.BuildFeatures(ctx, c.Repository, c.Path, progress)
 	return &spent, e
 }
