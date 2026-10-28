@@ -13,6 +13,8 @@ import {
   ExternalLinkIcon,
   SearchIcon,
 } from "@baum/viewer/components/icons";
+import { Markdown } from "@baum/viewer/components/markdown";
+import { EvidenceBadge } from "@baum/viewer/components/review-section";
 import {
   RISK_SCORE_MEANING,
   type ReviewDocument,
@@ -38,9 +40,9 @@ import "./walkthrough.css";
 const plural = (count: number, one: string, many = `${one}s`) =>
   `${count} ${count === 1 ? one : many}`;
 
-/** Whether `after` only repeats the title, as it does for a step written
- *  before steps had titles, whose title is its first sentence. */
-const echoes = (stop: Stop) => !stop.before && stop.after.replace(/[.!?]\s*$/, "") === stop.title;
+/** Whether the statement only repeats the title, as a one-sentence step
+ *  written before steps had titles does. */
+const echoes = (stop: Stop) => stop.text.replace(/[.!?]\s*$/, "") === stop.title;
 
 /** The review as a guided tour of its behaviours, riskiest chapter first.
  *  Nobody has to sign off on every behaviour:
@@ -571,8 +573,6 @@ function Claim({
   const hasNote = Boolean(note.trim());
   const target = stop.where || "the review";
   const position = chapter.stops.indexOf(tour.stops.indexOf(stop)) + 1;
-  // The plain account of the behaviour, unless it only repeats the title.
-  const account = echoes(stop) ? null : stop.after;
   return (
     <article aria-labelledby={`walk-title-${stop.id}`} className="walk-panel">
       <div className="walk-meta">
@@ -596,19 +596,15 @@ function Claim({
       >
         {stop.title}
       </h2>
-      {stop.before ? (
-        <div className="walk-compare">
-          <div>
-            <h3 className="walk-label">Before</h3>
-            <p>{stop.before}</p>
-          </div>
-          <div className="now">
-            <h3 className="walk-label">Now</h3>
-            <p>{stop.after}</p>
-          </div>
-        </div>
-      ) : account ? (
-        <p className="walk-why">{account}</p>
+      {stop.text && !echoes(stop) ? <Markdown className="walk-why">{stop.text}</Markdown> : null}
+      {stop.evidence.length ? (
+        <ul className="walk-evidence" aria-label="Supporting evidence">
+          {stop.evidence.map((item) => (
+            <li key={item.id}>
+              <EvidenceBadge evidence={item} compact />
+            </li>
+          ))}
+        </ul>
       ) : null}
       {editing ? null : (
         <div className="walk-actions">
@@ -676,13 +672,18 @@ function Claim({
           </button>
         </div>
       ) : null}
-      {stop.question ? (
-        <section className="walk-ask" aria-label="Ask yourself">
+      {chapter.intent ? (
+        <section className="walk-block" aria-label="Intent">
+          <h3 className="walk-label">Intent</h3>
+          <Markdown className="walk-lead">{chapter.intent}</Markdown>
+        </section>
+      ) : null}
+      {stop.anchors.length ? (
+        <section className="walk-block walk-code" aria-label="The code">
           <h3 className="walk-label">
-            <SearchIcon size={13} />
-            Ask yourself
+            The code{stop.where ? <span className="walk-label-where"> · {stop.where}</span> : null}
           </h3>
-          <p>{stop.question}</p>
+          <HunkEvidence document={document} anchors={stop.anchors} />
         </section>
       ) : null}
       {chapter.why || chapter.level ? (
@@ -694,32 +695,6 @@ function Claim({
             </p>
           ) : null}
         </RiskCard>
-      ) : null}
-      {stop.text && stop.text !== stop.after && stop.text !== stop.title ? (
-        <section className="walk-block" aria-label="In the review's words">
-          <h3 className="walk-label">In the review’s words</h3>
-          <p className="walk-lead">{stop.text}</p>
-        </section>
-      ) : null}
-      {stop.anchors.length ? (
-        <section className="walk-block walk-code" aria-label="The code">
-          <h3 className="walk-label">
-            The code{stop.where ? <span className="walk-label-where"> · {stop.where}</span> : null}
-          </h3>
-          <HunkEvidence document={document} anchors={stop.anchors} />
-        </section>
-      ) : null}
-      {stop.tests.length ? (
-        <section className="walk-block" aria-label="Tests">
-          <h3 className="walk-label">Tests for this behaviour</h3>
-          <ul>
-            {stop.tests.map((test) => (
-              <li key={test}>
-                <code>{test}</code>
-              </li>
-            ))}
-          </ul>
-        </section>
       ) : null}
     </article>
   );

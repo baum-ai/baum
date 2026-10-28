@@ -82,17 +82,19 @@ retired `walk=all`), so a reload stays there, and **Full review** returns to
 the viewer.
 `buildTour` (`src/walkthrough-model.ts`) turns the document into chapters, the
 logical sections with hunks in `sectionsInReviewOrder` (mechanical and obsolete
-sections are left out), and stops, one per behaviour step: its `title`,
-`before`, `after` and `question` (schema revision 2026-10-27.1), falling back to
-the step's `text` for a review written before them (its first sentence, cut at
-the first semicolon, as the title), and to the section summary for a section
-without steps. A stop's code is the viewer's `HunkEvidence` for
+sections are left out), and stops, one per behaviour step: its `title` (schema revision 2026-10-27.1), its
+`text`, the evidence it cites and its `question`, offered as the comment box's
+prompt. A review written before titles takes the text's first sentence, cut at
+the first semicolon; a section without steps is one stop of its summary. A
+chapter carries its section's `intent` block, what the pull request and its
+sessions say the change is for. A stop's code is the viewer's `HunkEvidence` for
 the step's hunk anchors, reading omitted excerpts through the page's patch
 source. The walkthrough is drawn as the inbox is, with the Up next design's
 `--un-*` colours (`src/walkthrough.css`). It is one guided tour: the
 overview, every stop by chapter and the wrap-up are listed on the left, and
-the one being read is beside them: its title, its before and after, Next and
-Something looks off, the question to ask, the chapter's risk and its code. The
+the one being read is beside them, as the full review states a behaviour: its
+title and statement with the evidence badges, Next and Something looks off,
+the chapter's intent, the code and the chapter's risk. The
 wrap-up lists the stops not looked at and sends the review. Next and → go
 to the next stop, looked at or not. Leaving a stop or commenting on it marks it looked at; seen marks and
 drafts are kept in `localStorage` (`baum.walkthrough`) per repository, pull

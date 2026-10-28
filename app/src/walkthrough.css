@@ -398,33 +398,18 @@
   font-size: 16px;
   line-height: 1.6;
 }
-.walk-compare {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr));
-  overflow: hidden;
-  border: 1px solid var(--un-line);
-  border-radius: 12px;
-  background: var(--un-card);
-}
-.walk-compare > div {
+/* What backs the statement, as the full review badges it. */
+.walk-evidence {
   display: flex;
-  flex-direction: column;
+  flex-wrap: wrap;
   gap: 6px;
-  padding: 14px 16px;
+  margin: -8px 0 0;
+  padding: 0;
+  list-style: none;
 }
-.walk-compare > div + div {
-  border-left: 1px solid var(--un-hairline);
-}
-.walk-compare .now {
-  background: color-mix(in srgb, var(--un-merge-bg) 55%, transparent);
-}
-.walk-compare .now .walk-label {
-  color: var(--un-merge);
-}
-.walk-compare p {
+.walk-why p,
+.walk-lead p {
   margin: 0;
-  font-size: 15px;
-  line-height: 1.5;
 }
 .walk-actions {
   display: flex;
@@ -574,23 +559,6 @@
   resize: vertical;
 }
 
-/* The question to judge the behaviour by */
-.walk-ask {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  padding: 14px 16px;
-  border-left: 3px solid var(--un-risk-mid);
-  border-radius: 0 10px 10px 0;
-  background: var(--un-list);
-}
-.walk-ask p {
-  margin: 0;
-  font-size: 16px;
-  font-weight: 500;
-  line-height: 1.5;
-}
-
 /* The risk card, as the inbox panel draws it */
 .walk-risk {
   display: flex;
@@ -653,13 +621,6 @@
 .walk-block li {
   border-top: 1px solid var(--un-hairline);
   font-size: 14px;
-}
-.walk-block li:has(> code) {
-  padding: 8px 0;
-}
-.walk-block code {
-  font-family: var(--font-mono, ui-monospace, monospace);
-  font-size: 13px;
 }
 .walk-block-row {
   display: flex;
@@ -892,10 +853,6 @@
   }
   .walk-keys {
     display: none;
-  }
-  .walk-compare > div + div {
-    border-top: 1px solid var(--un-hairline);
-    border-left: 0;
   }
 }
 @media (prefers-reduced-motion: reduce) {

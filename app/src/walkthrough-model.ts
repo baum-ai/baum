@@ -4,6 +4,7 @@ import {
   sectionsInReviewOrder,
   type Anchor,
   type Block,
+  type Evidence,
   type IndexedHunk,
   type ReviewDocument,
   type RiskScoreLevel,
@@ -25,15 +26,14 @@ export type Stop = {
   id: string;
   chapter: number;
   title: string;
-  before: string | null;
-  after: string;
+  /** The question to judge it by, offered as the comment box's prompt. */
   question: string | null;
   /** The review's own statement of the behaviour. */
   text: string;
   /** The hunks that implement it. */
   anchors: Anchor[];
-  /** The test files its evidence names. */
-  tests: string[];
+  /** What backs the statement: tests, CI, runs, or what was only asserted. */
+  evidence: Evidence[];
   place: CommentPlace | null;
   /** The place in a few characters, such as `service.go:241`. */
   where: string;
@@ -47,6 +47,9 @@ export type Chapter = {
   meaning: string | null;
   /** Why the section carries its level. */
   why: string;
+  /** What the change set out to do, as the pull request and its sessions
+   *  say, when the review found it. */
+  intent: string | null;
   /** Indexes into `Tour.stops`. */
   stops: number[];
 };
@@ -147,29 +150,16 @@ export function buildTour(document: ReviewDocument): Tour {
     for (const step of steps) {
       const statement = text(step.text);
       if (!statement) continue;
-      const tests = new Set<string>();
-      for (const id of step.evidence ?? []) {
-        const item = evidence.get(id);
-        if (item?.kind !== "test") continue;
-        for (const anchor of item.anchors ?? []) {
-          const path =
-            anchor.type === "hunk"
-              ? hunks.get(anchor.id)?.path
-              : anchor.type === "file"
-                ? anchor.path
-                : undefined;
-          if (path) tests.add(basename(path));
-        }
-      }
       add({
         id: step.id,
         title: text(step.title) || firstSentence(statement),
-        before: text(step.before) || null,
-        after: text(step.after) || statement,
         question: text(step.question) || null,
         text: statement,
         anchors: (step.anchors ?? []).filter((anchor) => anchor.type === "hunk"),
-        tests: [...tests],
+        evidence: (step.evidence ?? []).flatMap((id) => {
+          const item = evidence.get(id);
+          return item ? [item] : [];
+        }),
       });
     }
     if (own.length === 0) {
@@ -178,14 +168,12 @@ export function buildTour(document: ReviewDocument): Tour {
       add({
         id: section.id,
         title: section.title,
-        before: null,
-        after: summary || section.title,
         question: null,
         text: summary,
         anchors: anchors.length
           ? anchors
           : section.hunks.slice(0, 1).map((id) => ({ type: "hunk" as const, id })),
-        tests: [],
+        evidence: [],
       });
     }
     const level = sectionLevel(section);
@@ -195,6 +183,15 @@ export function buildTour(document: ReviewDocument): Tour {
       level,
       meaning: level ? RISK_SCORE_MEANING[level] : null,
       why: sectionWhy(section),
+      intent:
+        (section.blocks ?? [])
+          .flatMap((block: Block) =>
+            block.kind === "intent"
+              ? [text((block as Extract<Block, { kind: "intent" }>).text)]
+              : [],
+          )
+          .filter(Boolean)
+          .join("\n\n") || null,
       stops: own,
     });
   }

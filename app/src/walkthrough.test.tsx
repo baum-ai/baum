@@ -48,18 +48,19 @@ it("reads a step's tour fields and falls back for steps and sections without the
   const tour = buildTour(doc);
   const delay = tour.stops.find((stop) => stop.id === "beh_delay")!;
   expect(delay.title).toBe("Retries wait longer after each failure, up to a cap");
-  expect(delay.before).toBeTruthy();
   expect(delay.question).toBeTruthy();
   expect(delay.place).toEqual({ path: "queue/retry.go", line: 42, side: "RIGHT", start_line: 31 });
   expect(delay.where).toBe("retry.go:42");
-  expect(delay.tests).toContain("retry_test.go");
+  expect(delay.evidence.map((item) => item.id)).toEqual(["ev_retry_tests"]);
   const budget = tour.stops.find((stop) => stop.id === "beh_budget")!;
-  expect(budget.after).toBe(budget.text);
   expect(budget.question).toBeNull();
+  // A chapter carries its section's intent.
+  expect(tour.chapters[delay.chapter]!.intent).toContain("wait longer after each failure");
   // A section without behaviour steps is one stop of its summary.
   const docs = tour.stops.find((stop) => stop.id === "sec_docs")!;
   expect(docs.title).toBe("Docs and dependency bump");
-  expect(docs.after).toBe(doc.sections.find((s) => s.id === "sec_docs")!.summary.text);
+  expect(docs.text).toBe(doc.sections.find((s) => s.id === "sec_docs")!.summary.text);
+  expect(docs.evidence).toEqual([]);
 });
 
 it("takes a step's first sentence as its title", () => {
