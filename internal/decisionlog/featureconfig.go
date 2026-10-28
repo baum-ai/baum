@@ -94,11 +94,11 @@ const (
 // (local only; hosted builds have no estimate).
 const (
 	FeatureEstimateBytesPerToken           = 3
-	FeatureEstimateCandidateBytes          = 1500
+	FeatureEstimateCandidateBytes          = 4000
 	FeatureEstimateItemOutputTokens        = 550
 	FeatureEstimatePullsPerFeature         = 3
 	FeatureEstimateTextPasses              = 2
-	FeatureEstimateTextBytes               = 9000
+	FeatureEstimateTextBytes               = 20000
 	FeatureEstimateTextOutputTokens        = 1000
 	FeatureEstimatePullOutputTokens        = 300
 	FeatureEstimateSplitBytes              = 30000

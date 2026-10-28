@@ -261,7 +261,7 @@ func (r *featureRun) estimateCost(ctx context.Context, items []buildItem, p plan
 		if err != nil {
 			return 0, 0, false, err
 		}
-		add(tokens(len(merge.System)+features*FeatureEstimateCandidateBytes), FeatureEstimateConsolidateOutputTokens)
+		add(tokens(len(merge.System)+min(features*FeatureEstimateCandidateBytes, consolidate.DefaultMaxInputBytes)), FeatureEstimateConsolidateOutputTokens)
 		for range min(FeatureMaxSplits, features) {
 			add(tokens(len(merge.System)+FeatureEstimateSplitBytes), FeatureEstimateConsolidateOutputTokens)
 		}
