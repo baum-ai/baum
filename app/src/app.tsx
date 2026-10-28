@@ -467,13 +467,15 @@ function Workspace({ url }: { url: UrlState }) {
   // The shortcuts sheet lists the keys of where it was opened first.
   const shortcutsPlace: ShortcutsPlace = onList
     ? "pulls"
-    : (page === "inbox" || page === "pulls") && (groupId || selectedEntry)
-      ? "review"
-      : (page === "sessions" && openSession) || openJob
-        ? "page"
-        : page === "inbox" || page === "sessions" || page === "jobs" || page === "repositories"
-          ? page
-          : "anywhere";
+    : selectedEntry && url.search.get("walk")
+      ? "walkthrough"
+      : (page === "inbox" || page === "pulls") && (groupId || selectedEntry)
+        ? "review"
+        : (page === "sessions" && openSession) || openJob
+          ? "page"
+          : page === "inbox" || page === "sessions" || page === "jobs" || page === "repositories"
+            ? page
+            : "anywhere";
   const [openAgent = "", openID = ""] = openSession
     ? [
         openSession.slice(0, openSession.indexOf(":")),
@@ -584,7 +586,7 @@ function Workspace({ url }: { url: UrlState }) {
         // Only the review page's own keys use a focused Escape (its sheets).
         event.preventDefault();
         url.update((current) => {
-          for (const key of ["pr", "clone", "repository", "group"]) current.delete(key);
+          for (const key of ["pr", "clone", "repository", "group", "walk"]) current.delete(key);
           return current;
         });
       } else if (

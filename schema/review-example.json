@@ -588,6 +588,10 @@
                 "ev_retry_tests"
               ],
               "id": "beh_delay",
+              "title": "Retries wait longer after each failure, up to a cap",
+              "before": "Every retry waited the same fixed time.",
+              "after": "The wait starts short, doubles after each failed attempt and stops growing at a maximum.",
+              "question": "Can the doubling overflow before Max is applied?",
               "text": "The delay after a failed attempt starts at Base, doubles with each further attempt and never exceeds Max"
             },
             {

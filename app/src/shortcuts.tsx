@@ -35,6 +35,15 @@ const UP_NEXT_SHORTCUTS = [
   { keys: ["s"], label: "Snooze, then 1–4 to choose until when" },
   { keys: ["u"], label: "Undo a snooze" },
 ];
+/** The walkthrough's keys, which `Walkthrough` handles itself. */
+const WALKTHROUGH_SHORTCUTS = [
+  { keys: ["ArrowRight", "j"], label: "Tour: next stop" },
+  { keys: ["ArrowLeft", "k"], label: "Tour: previous stop" },
+  { keys: ["c"], label: "Comment on the stop or row" },
+  { keys: ["o", "Enter"], label: "Everything: details and evidence" },
+  { keys: ["t"], label: "Everything: walk me through it" },
+  { keys: ["e"], label: "Switch between the tour and everything" },
+];
 /** The keys of every other list (Sessions, Jobs, Repositories), which
  *  `listKeys` handles. */
 const LIST_SHORTCUTS = [
@@ -52,7 +61,8 @@ export type ShortcutsPlace =
   | "sessions"
   | "jobs"
   | "repositories"
-  | "page";
+  | "page"
+  | "walkthrough";
 export const MAC = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
 const KEY_NAMES: Record<string, string> = {
   ArrowDown: "↓",
@@ -339,6 +349,7 @@ export function ShortcutsSheet({
         back,
       ],
     },
+    { place: "walkthrough", title: "Walkthrough", rows: WALKTHROUGH_SHORTCUTS },
     {
       place: "sessions",
       title: "Sessions",
