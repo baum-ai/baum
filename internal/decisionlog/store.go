@@ -277,6 +277,12 @@ func (s *Store) Covered(ctx context.Context, m Meta) error {
 	}))
 }
 
+// SetPath records where the session's transcript is.
+func (s *Store) SetPath(ctx context.Context, agent, id, path string) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE capture_session SET transcript_path=? WHERE agent=? AND session_id=?`, path, agent, id)
+	return err
+}
+
 // Failed counts a failed extraction of the session and returns how many
 // followed its last success.
 func (s *Store) Failed(ctx context.Context, m Meta) (int, error) {
