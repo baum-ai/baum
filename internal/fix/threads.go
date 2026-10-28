@@ -115,14 +115,13 @@ func Digest(threads []Thread) string {
 	return hex.EncodeToString(sum[:16])
 }
 
-// Excerpt is the first line of a thread's first comment, at most 120
+// Excerpt is the headline of a thread's first comment, at most 120
 // characters, for the confirmation to show.
 func Excerpt(t Thread) string {
 	if len(t.Comments) == 0 {
 		return ""
 	}
-	line, _, _ := strings.Cut(strings.TrimSpace(t.Comments[0].Body), "\n")
-	return truncate(plain(line), 120)
+	return truncate(Headline(t.Comments[0].Body), 120)
 }
 
 // threadText is a thread as the prompt quotes it, between untrusted-data

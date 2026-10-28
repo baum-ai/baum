@@ -2032,6 +2032,28 @@ answers `{rerun, refused}`: an error only when no run started. Errors are
 anything else `502`. After either write the daemon runs `Service.PollNow` and
 publishes an index change.
 
+The same handler lists and resolves review threads for the Inbox's panel. `GET
+/api/prs/review-threads?repository=&pr=&unresolved=` answers `{threads,
+capped}`. `prupdate.ThreadCache` keeps each pull request's list in memory for
+10 minutes and serves it while it holds as many threads as `unresolved`,
+discovery's count (absent: not compared; a capped list is never compared), so
+a thread opened or resolved on GitHub is read again once discovery sees it; an
+edit within a thread shows once the entry expires. Otherwise the list is read
+with `github.Client.UnresolvedThreads` (the fix's `FixReviewThreads` document): each
+thread's node `id`, `path`, `line`, `outdated`, the first comment's `author`,
+its headline cut to 200 characters (`excerpt`: `fix.Headline`, the first
+wholly bold line among the first four, else the first line of text, without
+HTML comments, tags, images, code blocks or Markdown markup, which the fix
+dialog's excerpts use too), the
+comment count, the first comment's `url` and `can_resolve`
+(`viewerCanResolve`). `POST /api/prs/resolve-thread` takes `{repository, pr,
+thread}`, reads the thread by its node id (`ThreadState`) and refuses one that
+is not on that pull request (`not_found`, `404`) or that the account cannot
+resolve (`forbidden`); a thread already resolved answers success without a
+write. Otherwise it sends `resolveReviewThread` once and, like the other writes,
+polls discovery and publishes an index change. No reply is posted. A thread
+resolved from the app, or found resolved, leaves the cached list at once.
+
 The review index exposes discovery states for all open rows, including rows
 without a saved review or with an unreadable store. Saved review time comes from
 `summary.review_minutes` in the existing SQLite summary projection: only whole

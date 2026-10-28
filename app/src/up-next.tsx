@@ -35,6 +35,7 @@ import {
 } from "./merge";
 import { LoadingStatus, NineDots } from "./nine-dots";
 import { onBody, useShortcuts } from "./shortcuts";
+import { ReviewThreads } from "./threads";
 import { canUpdateBranch, UpdateBranchDialog } from "./unblock";
 
 /** What the person does next about a pull request: read a review they were
@@ -930,6 +931,8 @@ type PanelRow = {
   sub?: string;
   /** Lines added and deleted. */
   lines?: { additions: number; deletions: number };
+  /** The row lists the unresolved review threads under it. */
+  threads?: boolean;
 };
 type PanelBlock = { title: string; lead?: string; rows: PanelRow[]; more?: string };
 
@@ -989,7 +992,8 @@ function blocks(row: Row, doc: ReviewDocument | null): PanelBlock[] {
               ? [
                   {
                     main: `${plural(unresolved, "unresolved review thread")}${entry.unresolved_capped ? " or more" : ""}`,
-                    sub: "Open on GitHub until someone resolves them.",
+                    sub: "Resolve each one here once it is addressed.",
+                    threads: true,
                   },
                 ]
               : []),
@@ -1225,7 +1229,7 @@ function Panel({
           {block.lead ? <p className="upnext-lead">{block.lead}</p> : null}
           <ul>
             {block.rows.map((line) => (
-              <li key={line.main}>
+              <li key={line.main} className={line.threads ? "upnext-has-threads" : undefined}>
                 {line.badge ? (
                   <span
                     className={`upnext-badge upnext-badge-${line.badge === "✓" ? "done" : line.badge}`}
@@ -1243,6 +1247,15 @@ function Panel({
                     deletions={line.lines.deletions}
                     format={formatCount}
                     className="upnext-block-right"
+                  />
+                ) : null}
+                {line.threads ? (
+                  <ReviewThreads
+                    key={`${pr.repository}#${pr.number}`}
+                    repository={pr.repository}
+                    number={pr.number}
+                    unresolved={entry.unresolved ?? 0}
+                    url={pr.url}
                   />
                 ) : null}
               </li>

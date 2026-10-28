@@ -1,8 +1,9 @@
-// Package prupdate makes the two GitHub writes that unblock a pull request
-// without changing its code: merging its base branch into it (update branch)
-// and re-running its failed GitHub Actions workflow runs. Like merging, each
-// one is confirmed by the user against the head commit they saw, and is
-// re-checked against GitHub before anything is sent.
+// Package prupdate makes the GitHub writes that unblock a pull request
+// without changing its code: merging its base branch into it (update branch),
+// re-running its failed GitHub Actions workflow runs, and resolving a review
+// thread. Like merging, the first two are confirmed by the user against the
+// head commit they saw, and each is re-checked against GitHub before anything
+// is sent.
 package prupdate
 
 import (
@@ -13,6 +14,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/baum-ai/baum/internal/fix"
 	"github.com/baum-ai/baum/internal/github"
@@ -28,6 +30,7 @@ const (
 	UpToDate  = "up_to_date"
 	NoRuns    = "no_runs"
 	Fork      = "fork"
+	NotFound  = "not_found"
 	Failed    = "failed"
 )
 
@@ -47,8 +50,12 @@ const (
 	conflictMessage  = "This pull request has conflicts with its base branch. Resolve them before updating the branch."
 )
 
-// Service reads and writes through one GitHub client.
-type Service struct{ Client *github.Client }
+// Service reads and writes through one GitHub client. Threads, when set,
+// keeps the review threads it read.
+type Service struct {
+	Client  *github.Client
+	Threads *ThreadCache
+}
 
 // session is one repository's REST access, with the pull request read once.
 type session struct {
@@ -308,6 +315,85 @@ func rerunError(status int, text string) *Error {
 		return &Error{Failed, fmt.Sprintf("GitHub refused the re-run (HTTP %d).", status)}
 	}
 	return &Error{Failed, "GitHub refused the re-run: " + text}
+}
+
+// Thread is an unresolved review thread as the app lists it. Excerpt is the
+// headline of its first comment, the reviewer's text, untrusted.
+type Thread struct {
+	ID       string `json:"id"`
+	Path     string `json:"path"`
+	Line     int    `json:"line,omitempty"`
+	Outdated bool   `json:"outdated"`
+	Author   string `json:"author"`
+	Excerpt  string `json:"excerpt"`
+	Comments int    `json:"comments"`
+	URL      string `json:"url"`
+	// CanResolve is the signed-in account's permission to resolve it.
+	CanResolve bool `json:"can_resolve"`
+}
+
+// Threads lists a pull request's unresolved review threads.
+type Threads struct {
+	Threads []Thread `json:"threads"`
+	// Capped: the pull request has more threads than baum read.
+	Capped bool `json:"capped"`
+}
+
+// maxExcerpt bounds a thread's excerpt, in characters.
+const maxExcerpt = 200
+
+// ReviewThreads returns the pull request's unresolved review threads, from
+// the cache while it still matches unresolved, discovery's count (negative
+// when unknown), else read from GitHub.
+func (s Service) ReviewThreads(ctx context.Context, repository github.Repository, number, unresolved int) (Threads, error) {
+	key := threadKey(repository, number)
+	if cached, ok := s.Threads.get(key, unresolved); ok {
+		return cached, nil
+	}
+	list, err := s.Client.UnresolvedThreads(ctx, repository, number)
+	if err != nil {
+		return Threads{}, &Error{Failed, "baum could not read the review threads from GitHub."}
+	}
+	out := Threads{Threads: []Thread{}, Capped: list.Capped}
+	for _, t := range list.Unresolved {
+		first := t.Comments[0]
+		out.Threads = append(out.Threads, Thread{ID: t.ID, Path: t.Path, Line: t.Line, Outdated: t.Outdated, Author: first.Author, Excerpt: excerpt(first.Body), Comments: max(t.Total, len(t.Comments)), URL: t.URL, CanResolve: t.CanResolve})
+	}
+	s.Threads.put(key, out)
+	return out, nil
+}
+
+// excerpt is a comment's headline (fix.Headline), at most maxExcerpt
+// characters.
+func excerpt(body string) string {
+	line := fix.Headline(body)
+	if utf8.RuneCountInString(line) > maxExcerpt {
+		line = strings.TrimSpace(string([]rune(line)[:maxExcerpt-1])) + "…"
+	}
+	return line
+}
+
+// ResolveThread resolves one review thread of the pull request, as GitHub's
+// Resolve conversation button does. The thread is read first, so only a thread
+// of this pull request is resolved; one someone resolved meanwhile is done.
+func (s Service) ResolveThread(ctx context.Context, repository github.Repository, number int, id string) error {
+	state, err := s.Client.ThreadState(ctx, repository, id)
+	switch {
+	case err != nil:
+		return &Error{Failed, "baum could not read the review thread from GitHub."}
+	case !strings.EqualFold(state.Repository, repository.Owner+"/"+repository.Name) || state.Number != number:
+		return &Error{NotFound, "This review thread is not on this pull request."}
+	case state.Resolved:
+		s.Threads.resolved(threadKey(repository, number), id)
+		return nil
+	case !state.CanResolve:
+		return &Error{Forbidden, "Your GitHub account cannot resolve this review thread."}
+	}
+	if err := s.Client.ResolveThread(ctx, repository, id); err != nil {
+		return &Error{Failed, "GitHub did not resolve the review thread. Try again, or resolve it on GitHub."}
+	}
+	s.Threads.resolved(threadKey(repository, number), id)
+	return nil
 }
 
 // AsError returns err as a refusal, wording any other error as a connection

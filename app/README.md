@@ -72,8 +72,21 @@ navigation, version menu/comparison, Markdown/code renderers, session cards,
 commit panes, tokens and system theme as the current hosted PR page. Its host
 adapter supplies local document, history, attachment, patch and redacted session
 sources through the same slots as the hosted PR route. Hosted discussion and approvals are absent. Merging, updating a branch,
-re-running checks and a fix the person confirms, with its replies on the review
-threads it addressed, are the app's only GitHub writes (see below).
+re-running checks, a fix the person confirms, with its replies on the review
+threads it addressed, and resolving a review thread the person chose are the
+app's only GitHub writes (see below).
+
+The Inbox's panel lists a fix's unresolved review threads under the row that
+counts them (`ReviewThreads` in `src/threads.tsx`), asked for with `GET
+api/prs/review-threads` and discovery's `unresolved` count when the panel shows
+the pull request and again when that count changes. The daemon answers from
+its cache while the count matches (see `prupdate.ThreadCache`), so moving
+through the Inbox does not read GitHub each time. Each shows its first comment's
+headline (at most two lines), its author, its file and line linked to the thread on GitHub, whether
+it is outdated and how many comments it has. A thread the signed-in account
+may resolve (`can_resolve`) has a **Resolve** button that posts `api/prs/resolve-thread`
+at once, without a dialog, reads **Resolving…** meanwhile, and removes the thread
+from the list once GitHub confirms; a refusal is shown under the thread.
 
 A pull request with a merge conflict (`merge` is `conflict`), failing checks
 (`checks` is `failing`) or, on the person's own pull request
@@ -92,7 +105,7 @@ the row's Status cell, and the Inbox's card offers it as its action. Either open
 agent runs with write access to a temporary checkout (Claude Code cannot run
 commands, so it cannot run the tests; Codex runs them without network). A fix
 of review comments also lists the threads (`fix_threads`: file, line, author
-and the first line of the first comment), says that baum replies on each
+and the first comment's headline), says that baum replies on each
 thread the agent addressed and resolves it, and notes threads left out
 because there were more than 20 (`fix_threads_capped`) or because an account
 without access to the repository started them (`fix_threads_untrusted`). A fix

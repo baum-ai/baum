@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/baum-ai/baum/internal/github"
 )
@@ -37,6 +38,8 @@ type fakeGitHub struct {
 	// rerunStatus answers a re-run by run ID, 201 when absent.
 	rerunStatus map[int]int
 	rerunBody   map[int]string
+	// graphql answers each GraphQL document.
+	graphql func(query string, variables map[string]any) string
 
 	writes []string
 	bodies []string
@@ -49,6 +52,16 @@ func (f *fakeGitHub) client() *github.Client {
 		}
 		path := r.URL.Path
 		switch {
+		case path == "/graphql":
+			var body struct {
+				Query     string
+				Variables map[string]any
+			}
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			if strings.HasPrefix(strings.TrimSpace(body.Query), "mutation") {
+				f.writes = append(f.writes, fmt.Sprint("graphql ", body.Variables["thread"]))
+			}
+			return answer(200, f.graphql(body.Query, body.Variables))
 		case r.Method != "GET":
 			var body []byte
 			if r.Body != nil {
@@ -136,7 +149,7 @@ func TestUpdateBranch(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			err := Service{c.fake.client()}.UpdateBranch(context.Background(), repo, 7, c.expect)
+			err := Service{Client: c.fake.client()}.UpdateBranch(context.Background(), repo, 7, c.expect)
 			code(t, err, c.code)
 			if len(c.fake.writes) != c.writes {
 				t.Fatalf("writes %v, want %d", c.fake.writes, c.writes)
@@ -153,7 +166,7 @@ func TestUpdateBranch(t *testing.T) {
 
 func TestUpdateOptionsReportsBehind(t *testing.T) {
 	fake := fakeGitHub{head: "abc", mergeableState: "behind"}
-	options, err := Service{fake.client()}.UpdateOptions(context.Background(), repo, 7)
+	options, err := Service{Client: fake.client()}.UpdateOptions(context.Background(), repo, 7)
 	if err != nil || !options.Behind || options.Conflict || options.Fork || options.HeadRef != "feature" || options.BaseRef != "main" || options.HeadSHA != "abc" {
 		t.Fatalf("options %+v, %v", options, err)
 	}
@@ -185,7 +198,7 @@ func TestRerunFailedChecks(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			result, err := Service{c.fake.client()}.RerunFailedChecks(context.Background(), repo, 7, c.expect)
+			result, err := Service{Client: c.fake.client()}.RerunFailedChecks(context.Background(), repo, 7, c.expect)
 			code(t, err, c.code)
 			if strings.Join(c.fake.writes, "\n") != strings.Join(c.started, "\n") {
 				t.Fatalf("writes %v, want %v", c.fake.writes, c.started)
@@ -205,7 +218,7 @@ func TestRerunOptionsNamesWhatBaumCannotRerun(t *testing.T) {
 			checkRun(2, "ci/circle", "failure", "circleci"),
 			checkRun(3, "deploy", "success", "vercel"),
 		}}
-	options, err := Service{fake.client()}.RerunOptions(context.Background(), repo, 7)
+	options, err := Service{Client: fake.client()}.RerunOptions(context.Background(), repo, 7)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -214,5 +227,129 @@ func TestRerunOptionsNamesWhatBaumCannotRerun(t *testing.T) {
 	}
 	if len(fake.writes) != 0 {
 		t.Fatalf("reading wrote %v", fake.writes)
+	}
+}
+
+func TestReviewThreadsListsTheUnresolvedOnes(t *testing.T) {
+	long := strings.Repeat("é", 250)
+	fake := fakeGitHub{graphql: func(string, map[string]any) string {
+		return `{"data":{"repository":{"pullRequest":{"headRefOid":"abc","viewerDidAuthor":true,"reviewThreads":{"pageInfo":{"hasNextPage":false},"nodes":[
+			{"id":"RT_1","path":"a.go","line":12,"isResolved":false,"viewerCanReply":true,"viewerCanResolve":true,"comments":{"totalCount":3,"nodes":[
+				{"state":"SUBMITTED","body":"\n  Rename this.\nIt reads badly.","url":"https://github.com/acme/app/pull/7#discussion_r1","author":{"__typename":"User","login":"alice"}},
+				{"state":"SUBMITTED","body":"ok","url":"https://github.com/acme/app/pull/7#discussion_r2","author":{"__typename":"User","login":"me"}}]}},
+			{"id":"RT_2","path":"b.go","line":3,"isResolved":true,"comments":{"totalCount":1,"nodes":[{"state":"SUBMITTED","body":"done"}]}},
+			{"id":"RT_3","path":"c.go","originalLine":7,"isResolved":false,"isOutdated":true,"viewerCanResolve":false,"comments":{"totalCount":1,"nodes":[
+				{"state":"SUBMITTED","body":"` + long + `","url":"u3","author":null}]}}]}}}}}`
+	}}
+	got, err := Service{Client: fake.client()}.ReviewThreads(context.Background(), repo, 7, -1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Capped || len(got.Threads) != 2 {
+		t.Fatalf("threads %+v", got)
+	}
+	first, second := got.Threads[0], got.Threads[1]
+	if first != (Thread{ID: "RT_1", Path: "a.go", Line: 12, Author: "alice", Excerpt: "Rename this.", Comments: 3, URL: "https://github.com/acme/app/pull/7#discussion_r1", CanResolve: true}) {
+		t.Fatalf("first %+v", first)
+	}
+	if second.ID != "RT_3" || second.Line != 7 || !second.Outdated || second.CanResolve || second.Author != "" || second.Excerpt != strings.Repeat("é", 199)+"…" {
+		t.Fatalf("second %+v", second)
+	}
+	if len(fake.writes) != 0 {
+		t.Fatalf("reading wrote %v", fake.writes)
+	}
+}
+
+func TestResolveThread(t *testing.T) {
+	state := func(repository string, number int, resolved, canResolve bool) string {
+		return fmt.Sprintf(`{"data":{"node":{"id":"RT_1","isResolved":%v,"viewerCanReply":true,"viewerCanResolve":%v,"pullRequest":{"number":%d,"repository":{"nameWithOwner":%q}}}}}`, resolved, canResolve, number, repository)
+	}
+	resolvedReply := `{"data":{"resolveReviewThread":{"thread":{"id":"RT_1","isResolved":true}}}}`
+	cases := []struct {
+		name          string
+		state, answer string
+		code          string
+		writes        int
+	}{
+		{"resolves", state("Acme/App", 7, false, true), resolvedReply, "", 1},
+		{"already resolved", state("acme/app", 7, true, true), "", "", 0},
+		{"another pull request", state("acme/app", 8, false, true), "", NotFound, 0},
+		{"another repository", state("acme/other", 7, false, true), "", NotFound, 0},
+		{"not allowed", state("acme/app", 7, false, false), "", Forbidden, 0},
+		{"refused by GitHub", state("acme/app", 7, false, true), `{"errors":[{"type":"FORBIDDEN","message":"no"}]}`, Failed, 1},
+		{"thread unreadable", `{"data":{"node":null}}`, "", Failed, 0},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			fake := fakeGitHub{graphql: func(query string, variables map[string]any) string {
+				if variables["thread"] != "RT_1" {
+					t.Errorf("variables %v", variables)
+				}
+				if strings.HasPrefix(strings.TrimSpace(query), "mutation") {
+					return c.answer
+				}
+				return c.state
+			}}
+			code(t, Service{Client: fake.client()}.ResolveThread(context.Background(), repo, 7, "RT_1"), c.code)
+			if len(fake.writes) != c.writes {
+				t.Fatalf("writes %v, want %d", fake.writes, c.writes)
+			}
+		})
+	}
+}
+
+func TestReviewThreadsAreCachedWhileTheCountMatches(t *testing.T) {
+	reads := 0
+	threads := `{"id":"RT_1","path":"a.go","line":1,"isResolved":false,"viewerCanReply":true,"viewerCanResolve":true,"comments":{"totalCount":1,"nodes":[{"state":"SUBMITTED","body":"One.","author":{"__typename":"User","login":"alice"}}]}},
+		{"id":"RT_2","path":"b.go","line":2,"isResolved":false,"viewerCanReply":true,"viewerCanResolve":true,"comments":{"totalCount":1,"nodes":[{"state":"SUBMITTED","body":"Two.","author":{"__typename":"User","login":"bob"}}]}}`
+	fake := fakeGitHub{graphql: func(query string, _ map[string]any) string {
+		switch {
+		case strings.HasPrefix(strings.TrimSpace(query), "mutation"):
+			return `{"data":{"resolveReviewThread":{"thread":{"id":"RT_1","isResolved":true}}}}`
+		case strings.Contains(query, "ReviewThreadState"):
+			return `{"data":{"node":{"id":"RT_1","isResolved":false,"viewerCanResolve":true,"pullRequest":{"number":7,"repository":{"nameWithOwner":"acme/app"}}}}}`
+		}
+		reads++
+		return `{"data":{"repository":{"pullRequest":{"headRefOid":"abc","reviewThreads":{"pageInfo":{"hasNextPage":false},"nodes":[` + threads + `]}}}}}`
+	}}
+	now := time.Date(2026, 10, 28, 12, 0, 0, 0, time.UTC)
+	s := Service{Client: fake.client(), Threads: &ThreadCache{Now: func() time.Time { return now }}}
+	ctx := context.Background()
+	list := func(unresolved int) []string {
+		t.Helper()
+		got, err := s.ReviewThreads(ctx, repo, 7, unresolved)
+		if err != nil {
+			t.Fatal(err)
+		}
+		ids := []string{}
+		for _, thread := range got.Threads {
+			ids = append(ids, thread.ID)
+		}
+		return ids
+	}
+	for _, step := range []struct {
+		name       string
+		unresolved int
+		advance    time.Duration
+		want       string
+		reads      int
+	}{
+		{"first read", 2, 0, "RT_1,RT_2", 1},
+		{"same count", 2, time.Minute, "RT_1,RT_2", 1},
+		{"count unknown", -1, 0, "RT_1,RT_2", 1},
+		{"count changed", 3, 0, "RT_1,RT_2", 2},
+		{"expired", 2, DefaultThreadTTL, "RT_1,RT_2", 3},
+	} {
+		now = now.Add(step.advance)
+		if got := strings.Join(list(step.unresolved), ","); got != step.want || reads != step.reads {
+			t.Fatalf("%s: %s after %d reads, want %s after %d", step.name, got, reads, step.want, step.reads)
+		}
+	}
+	if err := s.ResolveThread(ctx, github.Repository{Host: "github.com", Owner: "Acme", Name: "App"}, 7, "RT_1"); err != nil {
+		t.Fatal(err)
+	}
+	// Discovery now counts one fewer: the cache already left the resolved one out.
+	if got := strings.Join(list(1), ","); got != "RT_2" || reads != 3 {
+		t.Fatalf("after resolving: %s after %d reads", got, reads)
 	}
 }

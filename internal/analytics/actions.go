@@ -99,13 +99,15 @@ type Merger interface {
 	MergePullRequest(ctx context.Context, repository github.Repository, number int, method, expectedHead string) error
 }
 
-// Updater is the branch update and check re-run writes
-// uiserver.UpdateHandler makes.
+// Updater is the branch update, check re-run and thread resolution writes
+// uiserver.UpdateHandler makes. Resolving a thread is not recorded.
 type Updater interface {
 	UpdateOptions(ctx context.Context, repository github.Repository, number int) (prupdate.UpdateOptions, error)
 	UpdateBranch(ctx context.Context, repository github.Repository, number int, expectedHead string) error
 	RerunOptions(ctx context.Context, repository github.Repository, number int) (prupdate.RerunOptions, error)
 	RerunFailedChecks(ctx context.Context, repository github.Repository, number int, expectedHead string) (prupdate.RerunResult, error)
+	ReviewThreads(ctx context.Context, repository github.Repository, number, unresolved int) (prupdate.Threads, error)
+	ResolveThread(ctx context.Context, repository github.Repository, number int, id string) error
 }
 
 // RecordMerges records each merge m makes.
