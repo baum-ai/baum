@@ -3,6 +3,7 @@ package decisionlog
 import (
 	"cmp"
 	"context"
+	"fmt"
 	"database/sql"
 	"encoding/json"
 	"net/http"
@@ -495,6 +496,89 @@ func TestTimelinePeople(t *testing.T) {
 	f.exec(`DELETE FROM session_commit`)
 	if got := featureIDs("octo@users.noreply.github.com"); got != "F1,F2,G1" {
 		t.Fatalf("features by the login = %s", got)
+	}
+}
+
+// The cited files and their folders, and the filters both lists share.
+func TestTimelineFilesAndFilters(t *testing.T) {
+	f := newTimelineFixture(t)
+	if err := f.store.Save(context.Background(), Extraction{Meta: Meta{Agent: "codex", ID: "g2", Repository: gadgets}, ContentHash: "c-g2",
+		Decisions: []decisions.Decision{
+			decision("d-g2", "Split the tool.", 1),
+			{ID: "d-g3", Summary: "Name the binary.", Category: decisions.CategoryScope, Who: decisions.WhoHuman, Turns: []int{2},
+				Files: []string{"cmd/gadget/main.go", "cmd/tool.go"}},
+		}}); err != nil {
+		t.Fatal(err)
+	}
+	type file struct {
+		Path          string
+		Kind          string
+		DecisionCount int `json:"decision_count"`
+	}
+	list := func(query url.Values) string {
+		var answer struct{ Files []file }
+		if code := f.get("/api/timeline/files", query, &answer); code != http.StatusOK {
+			t.Fatalf("files %v = %d", query, code)
+		}
+		var out []string
+		for _, each := range answer.Files {
+			out = append(out, fmt.Sprintf("%s %s %d", each.Kind, each.Path, each.DecisionCount))
+		}
+		return strings.Join(out, ", ")
+	}
+	if got := list(url.Values{"prefix": {"cmd/"}}); got != "folder cmd/ 1, folder cmd/gadget/ 1, file cmd/gadget/main.go 1, file cmd/tool.go 1" {
+		t.Fatalf("cmd/ = %s", got)
+	}
+	if got := list(url.Values{"prefix": {"c"}, "limit": {"2"}}); got != "folder cmd/ 1, folder cmd/gadget/ 1" {
+		t.Fatalf("c = %s", got)
+	}
+	if got := list(url.Values{"prefix": {"a"}, "repository": {gadgets}}); got != "file a.go 1" {
+		t.Fatalf("a in gadgets = %s", got)
+	}
+	if got := list(url.Values{"prefix": {"a"}, "repository": {repo}}); got != "" {
+		t.Fatalf("a in widgets = %s", got)
+	}
+	for _, bad := range []url.Values{{"limit": {"51"}}, {"repository": {"acme/off"}}} {
+		if code := f.get("/api/timeline/files", bad, nil); code != http.StatusBadRequest {
+			t.Fatalf("files %v = %d", bad, code)
+		}
+	}
+	features := func(query url.Values) string {
+		var page featurePage
+		if code := f.get("/api/timeline/features", query, &page); code != http.StatusOK {
+			t.Fatalf("features %v = %d", query, code)
+		}
+		return page.ids()
+	}
+	// A pull request's path, or a decision's file, or anything under it.
+	for query, want := range map[string]string{"file=export.go": "F1", "file=button.go": "F1", "file=count.go": "G1", "file=cmd": "",
+		"from=2026-01-01": "F1,F2,G1", "from=2027-01-01": "", "to=2026-01-01T00:00:00Z": "", "status=shipped&status=abandoned": "", "status=shipped&status=in_progress": "F1,F2,G1"} {
+		q, _ := url.ParseQuery(query)
+		if got := features(q); got != want {
+			t.Errorf("features %s = %q, want %q", query, got, want)
+		}
+	}
+	decisionCount := func(query url.Values) int {
+		var page struct{ Decisions []timelineDecision }
+		if code := f.get("/api/timeline/decisions", query, &page); code != http.StatusOK {
+			t.Fatalf("decisions %v = %d", query, code)
+		}
+		return len(page.Decisions)
+	}
+	later := t0.Add(time.Second).Format(time.RFC3339)
+	if n := decisionCount(url.Values{"from": {later}}); n != 0 {
+		t.Fatalf("from %s = %d", later, n)
+	}
+	if n := decisionCount(url.Values{"to": {later}}); n != 5 {
+		t.Fatalf("to %s = %d", later, n)
+	}
+	for _, bad := range []string{"from=yesterday", "to=2026-13-01"} {
+		q, _ := url.ParseQuery(bad)
+		for _, route := range []string{"decisions", "features"} {
+			if code := f.get("/api/timeline/"+route, q, nil); code != http.StatusBadRequest {
+				t.Fatalf("%s %s = %d", route, bad, code)
+			}
+		}
 	}
 }
 

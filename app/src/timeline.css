@@ -129,3 +129,22 @@
   color: var(--text-primary);
   cursor: pointer;
 }
+.timeline-file {
+  width: 12rem;
+}
+.timeline-date {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  color: var(--text-tertiary);
+  font-size: var(--text-xs);
+}
+.timeline-date input {
+  padding: 0.25rem 0.4rem;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  background: var(--surface-card);
+  color: var(--text-primary);
+  color-scheme: light dark;
+  font: inherit;
+}

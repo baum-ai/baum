@@ -1,4 +1,12 @@
-import { Fragment, useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
+import {
+  Fragment,
+  useCallback,
+  useEffect,
+  useId,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import { cn } from "@baum/viewer/components/classnames";
 import {
   DecisionDetailBody,
@@ -467,6 +475,9 @@ function TimelineLog({
   const status = search.get("status") ?? "";
   const file = search.get("file") ?? "";
   const person = search.get("person") ?? "";
+  // Local dates; `to` is the last day shown.
+  const from = search.get("from") ?? "";
+  const to = search.get("to") ?? "";
   const open = search.get("open");
   const openFeature = tab === "features" ? search.get("feature") : null;
   const write = useCallback(
@@ -488,11 +499,13 @@ function TimelineLog({
   if (!all) for (const name of scope) base.append("repository", name);
   if (q) base.set("q", q);
   if (person) base.set("person", person);
+  if (file) base.set("file", file);
+  if (from) base.set("from", from);
+  if (to) base.set("to", nextDay(to));
   const featureQuery = new URLSearchParams(base);
   if (status) featureQuery.set("status", status);
   const decisionQuery = new URLSearchParams(base);
   if (category) decisionQuery.set("category", category);
-  if (file) decisionQuery.set("file", file);
   const features = usePages<FeatureSummary>(
     "api/timeline/features",
     featureQuery.toString(),
@@ -556,7 +569,7 @@ function TimelineLog({
           withSummary={withSummary}
           pullRequestHref={(number) => pullRequestHref(repository, number)}
           openSession={OPEN_SESSION}
-          onFile={(path) => write({ tab: "all", file: path, feature: null })}
+          onFile={(path) => write({ file: path })}
           onRetry={() => loadDetail(id, true)}
           withheldNote={
             <WithheldNote sessionId={state?.status === "ready" ? state.detail.session.id : null} />
@@ -641,9 +654,19 @@ function TimelineLog({
         )}
       </section>
     ) : null;
-  const featureFiltered = Boolean(q || status || person);
-  const decisionFiltered = Boolean(q || category || file || person);
-  const clear = () => write({ q: null, status: null, category: null, file: null, person: null });
+  const shared = Boolean(q || person || file || from || to);
+  const featureFiltered = shared || Boolean(status);
+  const decisionFiltered = shared || Boolean(category);
+  const clear = () =>
+    write({
+      q: null,
+      status: null,
+      category: null,
+      file: null,
+      person: null,
+      from: null,
+      to: null,
+    });
   const people = usePeople(tab, scopeQuery(scope, all), revision);
   // Another set of repositories keeps the tab and filters; what was open
   // was one of the old set's.
@@ -839,6 +862,11 @@ function TimelineLog({
           started={jobsChanged}
         />
       ) : null}
+      {/* The shared filter bar's place: once @baum/viewer's
+          DecisionFilterControls (PR #903) lands, it replaces these simple
+          controls, writing the same address (repo, q, person, file, from,
+          to, status, category) and reading api/timeline/files and
+          api/timeline/people for its choices. */}
       <div className="local-filter-bar timeline-filters">
         <div className="timeline-controls">
           {served.length > 1 ? (
@@ -895,7 +923,26 @@ function TimelineLog({
               </select>
             </label>
           )}
-          {tab === "all" && file ? (
+          <FileFilter scope={scopeQuery(scope, all)} onPick={(path) => write({ file: path })} />
+          <label className="timeline-date">
+            <span>From</span>
+            <input
+              type="date"
+              value={from}
+              max={to || undefined}
+              onChange={(e) => write({ from: e.target.value })}
+            />
+          </label>
+          <label className="timeline-date">
+            <span>To</span>
+            <input
+              type="date"
+              value={to}
+              min={from || undefined}
+              onChange={(e) => write({ to: e.target.value })}
+            />
+          </label>
+          {file ? (
             <button
               type="button"
               className="timeline-pill"
@@ -1022,6 +1069,79 @@ function RepositoryPicker({
         )}
       </fieldset>
     </details>
+  );
+}
+
+/** The local day after `day` (YYYY-MM-DD): the exclusive end of a range
+ *  whose last day is `day`. */
+export function nextDay(day: string): string {
+  const [year, month, date] = day.split("-").map(Number);
+  const next = new Date(year ?? 0, (month ?? 1) - 1, (date ?? 1) + 1);
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${next.getFullYear()}-${pad(next.getMonth() + 1)}-${pad(next.getDate())}`;
+}
+
+type CitedFile = { path: string; kind: "file" | "folder"; decision_count: number };
+
+/** A box that narrows the lists to a file or folder, offering the cited
+ *  paths that start with what is typed (`api/timeline/files`). */
+function FileFilter({ scope, onPick }: { scope: string; onPick: (path: string) => void }) {
+  const [text, setText] = useState("");
+  const [files, setFiles] = useState<CitedFile[]>([]);
+  const list = useId();
+  useEffect(() => {
+    const abort = new AbortController();
+    const timer = setTimeout(() => {
+      const params = new URLSearchParams(scope);
+      if (text) params.set("prefix", text);
+      request<{ files?: CitedFile[] }>(
+        withQuery("api/timeline/files", params),
+        undefined,
+        "GET",
+        abort.signal,
+      )
+        .then((body) => setFiles(body.files ?? []))
+        .catch(() => {});
+    }, SEARCH_DELAY_MS);
+    return () => {
+      clearTimeout(timer);
+      abort.abort();
+    };
+  }, [scope, text]);
+  return (
+    <form
+      className="contents"
+      onSubmit={(event) => {
+        event.preventDefault();
+        if (text.trim()) onPick(text.trim());
+        setText("");
+      }}
+    >
+      <input
+        type="search"
+        aria-label="Filter by file"
+        placeholder="File or folder"
+        list={list}
+        value={text}
+        autoComplete="off"
+        onChange={(e) => {
+          const value = e.target.value;
+          // A path picked from the list applies at once.
+          if (files.some((each) => each.path === value)) {
+            onPick(value);
+            setText("");
+          } else setText(value);
+        }}
+        className="timeline-search timeline-file"
+      />
+      <datalist id={list}>
+        {files.map((each) => (
+          <option key={each.path} value={each.path}>
+            {`${formatCount(each.decision_count)} decisions`}
+          </option>
+        ))}
+      </datalist>
+    </form>
   );
 }
 

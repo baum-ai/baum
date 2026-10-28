@@ -13,7 +13,7 @@ import {
   type ViewerLinkProps,
 } from "@baum/viewer/navigation";
 import { jobReasonText, type Job } from "./api";
-import { daySections, pullRequestHref, sessionHref, TimelinePage } from "./timeline";
+import { daySections, nextDay, pullRequestHref, sessionHref, TimelinePage } from "./timeline";
 
 const Link = (props: ViewerLinkProps) => <a {...props} />;
 const me = { email: "me@example.com", name: null, login: null, avatar_url: null };
@@ -282,6 +282,15 @@ it("filters by a person the tab offers", async () => {
   await act(async () => {});
   expect(current.get("person")).toBe("me@example.com");
   expect(requests).toContain("/s/test-ns/api/timeline/features?person=me%40example.com");
+});
+
+it("sends a date range's last day as the next day's start", async () => {
+  expect(nextDay("2026-10-31")).toBe("2026-11-01");
+  expect(nextDay("2026-12-31")).toBe("2027-01-01");
+  await show("page=timeline&from=2026-10-01&to=2026-10-31&file=oss/app");
+  expect(requests).toContain(
+    "/s/test-ns/api/timeline/features?file=oss%2Fapp&from=2026-10-01&to=2026-11-01",
+  );
 });
 
 it("explains a Timeline with no repositories", async () => {

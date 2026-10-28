@@ -31,6 +31,9 @@ import (
 const (
 	TimelinePageSize = 50
 	TimelineMaxPage  = 500
+	// TimelineFilePage and TimelineMaxFilePage bound /files, as hosted.
+	TimelineFilePage    = 20
+	TimelineMaxFilePage = 50
 )
 
 // TimelineRegistry is what the Timeline reads of the repository registry;
@@ -189,6 +192,27 @@ func (t *Timeline) Handler() http.Handler {
 			return
 		}
 		writeTimeline(w, answer)
+	})
+	mux.HandleFunc("GET /api/timeline/files", func(w http.ResponseWriter, r *http.Request) {
+		q := r.URL.Query()
+		repositories, err := t.scope(r.Context(), q["repository"])
+		if err != nil {
+			timelineError(w, err)
+			return
+		}
+		limit := TimelineFilePage
+		if raw := q.Get("limit"); raw != "" {
+			if limit, err = strconv.Atoi(raw); err != nil || limit < 1 || limit > TimelineMaxFilePage {
+				http.Error(w, "invalid limit", http.StatusBadRequest)
+				return
+			}
+		}
+		files, err := t.files(r.Context(), repositories, q.Get("prefix"), limit)
+		if err != nil {
+			timelineError(w, err)
+			return
+		}
+		writeTimeline(w, map[string]any{"files": files})
 	})
 	for path, read := range map[string]func(context.Context, []string) ([]personCount, error){
 		"/api/timeline/people": t.people, "/api/timeline/features/people": t.featurePeople,
@@ -554,6 +578,8 @@ type snapshotPull struct {
 	author                 string
 	draft, merged, bot     bool
 	createdAt, activeUntil time.Time
+	// paths are the files it touches, nil while not read.
+	paths []string
 }
 
 type attributedDecision struct {
@@ -657,13 +683,14 @@ AND (rowid IN (SELECT rowid FROM feature_search WHERE feature_search MATCH ?3)
 		pull    snapshotPull
 		created int64
 		updated int64
+		paths   sql.NullString
 	}
 	pulls, err := collect(func(rows *sql.Rows) (pullRow, error) {
 		var p pullRow
 		return p, rows.Scan(&p.feature, &p.pull.number, &p.pull.title, &p.pull.state, &p.pull.head, &p.pull.author, &p.pull.draft,
-			&p.pull.merged, &p.pull.bot, &p.created, &p.updated)
+			&p.pull.merged, &p.pull.bot, &p.created, &p.updated, &p.paths)
 	})(db.QueryContext(ctx, `SELECT fp.feature_id, p.number, p.title, p.state, p.head_sha, p.author, p.draft, p.merged_at IS NOT NULL, p.bot,
-p.created_at, p.updated_at FROM feature_pull fp JOIN pull_request p ON p.repository=fp.repository AND p.number=fp.number
+p.created_at, p.updated_at, p.paths_json FROM feature_pull fp JOIN pull_request p ON p.repository=fp.repository AND p.number=fp.number
 WHERE fp.version_id=?1 AND fp.repository=?2 AND (?3='' OR fp.feature_id=?3) ORDER BY p.created_at DESC, p.number DESC`, version, repository, only))
 	if err != nil {
 		return nil, err
@@ -671,6 +698,11 @@ WHERE fp.version_id=?1 AND fp.repository=?2 AND (?3='' OR fp.feature_id=?3) ORDE
 	for _, p := range pulls {
 		if f := snap.features[p.feature]; f != nil {
 			p.pull.createdAt, p.pull.activeUntil = time.UnixMilli(p.created), time.UnixMilli(p.updated)
+			if p.paths.Valid {
+				if err := json.Unmarshal([]byte(p.paths.String), &p.pull.paths); err != nil {
+					return nil, err
+				}
+			}
 			f.pulls = append(f.pulls, p.pull)
 		}
 	}
@@ -788,6 +820,23 @@ func (t *Timeline) listed(ctx context.Context, repositories []string, q url.Valu
 		}
 		listed = append(listed, snap.matched()...)
 	}
+	from, to, err := timeBounds(q)
+	if err != nil {
+		return nil, err
+	}
+	if file := strings.TrimSuffix(strings.TrimSpace(q.Get("file")), "/"); file != "" {
+		listed = slices.DeleteFunc(listed, func(f *snapshotFeature) bool { return !f.touches(file) })
+	}
+	if from != nil || to != nil {
+		// The features whose activity, else creation, overlaps [from, to).
+		listed = slices.DeleteFunc(listed, func(f *snapshotFeature) bool {
+			first, last := f.createdAt, f.createdAt
+			if f.row.FirstActivityAt != nil {
+				first, last = *f.row.FirstActivityAt, *f.row.LastActivityAt
+			}
+			return (from != nil && last.Before(*from)) || (to != nil && !first.Before(*to))
+		})
+	}
 	if person := strings.ToLower(strings.TrimSpace(q.Get("person"))); person != "" {
 		self := reader.self(ctx)
 		if self.is(person) {
@@ -799,6 +848,50 @@ func (t *Timeline) listed(ctx context.Context, repositories []string, q url.Valu
 	}
 	slices.SortFunc(listed, featureOrder)
 	return listed, nil
+}
+
+// under reports whether path is file, or inside it as a folder.
+func under(path, file string) bool {
+	return path == file || strings.HasPrefix(path, file+"/")
+}
+
+// touches reports whether one of the feature's pull requests touches file,
+// or one of its decisions cites it, or anything under it.
+func (f *snapshotFeature) touches(file string) bool {
+	for _, p := range f.pulls {
+		if slices.ContainsFunc(p.paths, func(path string) bool { return under(path, file) }) {
+			return true
+		}
+	}
+	for _, d := range f.decisions {
+		if slices.ContainsFunc(d.Files, func(path string) bool { return under(path, file) }) {
+			return true
+		}
+	}
+	return false
+}
+
+// timeBounds reads from (inclusive) and to (exclusive): RFC 3339 times, or
+// dates, read as the local day's start.
+func timeBounds(q url.Values) (from, to *time.Time, err error) {
+	read := func(name string) (*time.Time, error) {
+		raw := strings.TrimSpace(q.Get(name))
+		if raw == "" {
+			return nil, nil
+		}
+		if at, err := time.Parse(time.RFC3339Nano, raw); err == nil {
+			return &at, nil
+		}
+		day, err := time.ParseInLocation(time.DateOnly, raw, time.Local)
+		if err != nil {
+			return nil, errTimelineQuery
+		}
+		return &day, nil
+	}
+	if from, err = read("from"); err == nil {
+		to, err = read("to")
+	}
+	return from, to, err
 }
 
 // personCount is a person with how many decisions or features they have.
@@ -1042,6 +1135,58 @@ func (t *Timeline) pullSummaries(ctx context.Context, repository string, pulls [
 	return nil
 }
 
+type timelineFile struct {
+	Path          string `json:"path"`
+	Kind          string `json:"kind"`
+	DecisionCount int    `json:"decision_count"`
+}
+
+// files are the paths the repositories' current decisions cite that start
+// with prefix, and their folders (ending in "/") that do, with how many
+// decisions cite each or anything under it, a decision counted once: most
+// first, folders before files, then by path; at most limit.
+func (t *Timeline) files(ctx context.Context, repositories []string, prefix string, limit int) ([]timelineFile, error) {
+	out := []timelineFile{}
+	if len(repositories) == 0 {
+		return out, nil
+	}
+	cited, err := collect(func(rows *sql.Rows) ([2]string, error) {
+		var f [2]string
+		return f, rows.Scan(&f[0], &f[1])
+	})(t.Store.db.QueryContext(ctx, `SELECT f.decision_id, f.path FROM decision_file f JOIN decision d ON d.decision_id=f.decision_id
+JOIN capture_session cs ON cs.agent=d.agent AND cs.session_id=d.session_id
+WHERE d.obsolete_at IS NULL AND cs.repository `+inList(len(repositories))+` AND f.path LIKE ? ESCAPE '\'`,
+		append(anyOf(repositories), likeEscape(prefix)+"%")...))
+	if err != nil {
+		return nil, err
+	}
+	type entry struct{ path, kind string }
+	decisions := map[entry]map[string]bool{}
+	add := func(e entry, decision string) {
+		if !strings.HasPrefix(e.path, prefix) {
+			return
+		}
+		if decisions[e] == nil {
+			decisions[e] = map[string]bool{}
+		}
+		decisions[e][decision] = true
+	}
+	for _, f := range cited {
+		add(entry{f[1], "file"}, f[0])
+		parts := strings.Split(f[1], "/")
+		for depth := 1; depth < len(parts); depth++ {
+			add(entry{strings.Join(parts[:depth], "/") + "/", "folder"}, f[0])
+		}
+	}
+	for e, ids := range decisions {
+		out = append(out, timelineFile{Path: e.path, Kind: e.kind, DecisionCount: len(ids)})
+	}
+	slices.SortFunc(out, func(a, b timelineFile) int {
+		return cmp.Or(cmp.Compare(b.DecisionCount, a.DecisionCount), cmp.Compare(b.Kind, a.Kind), cmp.Compare(a.Path, b.Path))
+	})
+	return out[:min(len(out), limit)], nil
+}
+
 // inList is "IN (?,?…)" for n values.
 func inList(n int) string { return "IN (?" + strings.Repeat(",?", n-1) + ")" }
 
@@ -1088,15 +1233,15 @@ func (t *Timeline) decisions(ctx context.Context, repositories []string, q url.V
 	if superseded := get("superseded"); superseded != "1" && superseded != "true" {
 		where = append(where, "d.superseded=0")
 	}
-	for _, bound := range []struct{ name, op string }{{"from", ">="}, {"to", "<"}} {
-		if raw := get(bound.name); raw != "" {
-			day, err := time.ParseInLocation(time.DateOnly, raw, time.Local)
-			if err != nil {
-				return nil, errTimelineQuery
-			}
-			where = append(where, "d.decided_at "+bound.op+" ?")
-			args = append(args, day.UnixMilli())
-		}
+	from, to, err := timeBounds(q)
+	if err != nil {
+		return nil, err
+	}
+	if from != nil {
+		where, args = append(where, "d.decided_at >= ?"), append(args, from.UnixMilli())
+	}
+	if to != nil {
+		where, args = append(where, "d.decided_at < ?"), append(args, to.UnixMilli())
 	}
 	if page.after != nil {
 		where = append(where, "(d.decided_at < ? OR (d.decided_at = ? AND d.decision_id > ?))")

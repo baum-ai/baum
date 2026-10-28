@@ -361,7 +361,7 @@ The app's sidebar leads to the Inbox, Pull requests, Timeline, Sessions, Analyti
 and Settings; the Inbox shows how many things wait on the person there, and Sessions shows the number of agent sessions waiting on the person (in the caution tone), or
 else the number working now.
 
-The Timeline page (`?page=timeline&repo=&tab=all&q=&person=&status=&category=&file=&feature=&open=`,
+The Timeline page (`?page=timeline&repo=&tab=all&q=&person=&file=&from=&to=&status=&category=&feature=&open=`,
 `src/timeline.tsx`) is the hosted Timeline over the local decision log. It reads
 the daemon's `api/timeline` routes (see the
 [decision log README](../internal/decisionlog/README.md#timeline-api)) and draws
@@ -375,9 +375,13 @@ ticking them all, or **All repositories**, drops `repo=`), a search box
 applied 300 ms after typing stops, a person select (`person=`) offering
 those with decisions on All decisions and those among the features' people
 on Features (`api/timeline/people`, `api/timeline/features/people`; the
-user is one person, whichever address or login names them), and a status select on Features or a
-category select on All decisions; a file chosen from a decision's detail
-shows as a removable pill. Everything lives in the address. Over several
+user is one person, whichever address or login names them), a file box
+offering the cited paths and folders starting with what is typed
+(`api/timeline/files`), From and To dates (`to` is the last day shown, sent
+as the next day's start), and a status select on Features or a
+category select on All decisions; a file, picked there or from a decision's
+detail, shows as a removable pill and narrows both lists. These are simple
+controls in the place the shared `DecisionFilterControls` will take. Everything lives in the address. Over several
 repositories each row names its repository and links its pull requests to
 that repository's PR page. Features groups them by
 month and day of last activity; on a screen 96rem wide the opened feature sits

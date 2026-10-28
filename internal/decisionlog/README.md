@@ -445,14 +445,17 @@ and never writes it.
   a detail is found in any of them, and is a 404 in another. Every row and
   detail names its repository, `{"id","full_name"}`, both the registry's
   name.
-- **`GET /features?repository=&q=&status=&cursor=&limit=`**: the
+- **`GET /features?repository=&q=&person=&file=&from=&to=&status=&cursor=&limit=`**: the
   repositories' features of their current versions not merged into
   another, merged in one order: by last activity (else creation) newest
   first, then id, 50 a page (`limit`, at most 500). `cursor` is the last
   row's time and id, so a page follows on from it whatever arrived
   meanwhile.
   `status` (`in_progress`, `shipped`, `abandoned`; repeated or comma
-  separated) and `q` filter before paging. A row has its title and
+  separated), `q`, `person` (below), `file` (a pull request touching the
+  path or anything under it, or a decision of the feature citing one) and
+  `from`/`to` (the features whose activity, else creation, overlaps them, as
+  hosted) filter before paging. A row has its title and
   description (null while none is written; `summary_pending` while it is
   behind its members), the status (`features.DeriveStatus` over its pull
   requests), the first and last activity (its pull requests' opening and
@@ -481,14 +484,21 @@ and never writes it.
   has a feature not merged into another; and `current_since`, when it
   became current (null without one). A building version's features are
   not listed until it is current.
-- **`GET /decisions?repository=&q=&file=&who=&category=&superseded=&from=&to=&cursor=&limit=`**:
+- **`GET /decisions?repository=&q=&person=&file=&who=&category=&superseded=&from=&to=&cursor=&limit=`**:
   the current decisions of the repositories' captured sessions, newest first
   and then by id, paged as features are, with `coverage`, summed over the
   repositories: their sessions extracted, skipped by reason, and being read
   (a capture attempt pending). `file` is the path or anything
   under it; `who` and `category` repeat or are comma separated; superseded
-  decisions show only with `superseded=1`; `from` (inclusive) and `to`
-  (exclusive) are local dates.
+  decisions show only with `superseded=1`. On both lists `from`
+  (inclusive) and `to` (exclusive) are RFC 3339 times or dates, a date
+  being the local day's start; another value is a 400.
+- **`GET /files?repository=&prefix=&limit=`**: `files`, the paths the
+  repositories' current decisions cite that start with `prefix`, and their
+  folders (ending in `/`) that do, each with its `kind` (`file` or
+  `folder`) and `decision_count`, the decisions citing it or anything under
+  it, each counted once: most first, folders before files, then by path; 20
+  (`limit`, at most 50).
 - **`GET /decisions/{id}`**: its session (`<agent>:<id>`, as the app's
   session page names it, branch and person), the session's current
   decisions (summary, category, who, rejected alternative, files, turns)
