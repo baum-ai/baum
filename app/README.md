@@ -405,12 +405,12 @@ version's reason, else its latest job's: one that failed, was cancelled or
 was interrupted) with what it spent and offers **Resume build**, the same
 estimate and confirmation; a building version with no reason and no job says
 that a build is in progress or stopped and offers Resume too, which estimates
-what is left and goes on with the same version. A latest build that failed
-before it made a version shows "The last feature history build failed" with
-**Try again**, until the repository has features or a version newer than the
-job. Feature builds' reasons have their own words, here and in Jobs
-(`jobReasonText` with the job's kind). A failed read of the build state keeps
-what was shown. The current features stay listed throughout, and the lists
+what is left and goes on with the same version. A latest build that ended
+before it made a version shows "The last feature history build stopped before
+it made a version" with its reason and **Try again**, until a version newer
+than the job is current. Feature builds' reasons have their own words, here
+and in Jobs (`jobReasonText` with the job's kind). A failed read of the build
+state keeps what was shown. The current features stay listed throughout, and the lists
 are read again when the build finishes. Without a local clone the build
 buttons are disabled. The page also says when the daemon has no decision
 store, when the decisions switch is off, and which picked repositories have

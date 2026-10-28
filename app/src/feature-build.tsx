@@ -129,16 +129,16 @@ export function BuildStatus({
   // failed, cancelled or interrupted.
   const ended = job && job.state !== "completed" ? job.reason || job.state : "";
   if (!building) {
-    // It stopped before it made its version: shown until the repository has
-    // features, or a version newer than the job.
+    // It stopped before it made its version: shown until a version newer
+    // than the job is current.
     const stale =
-      !job?.updated_at ||
-      (state.currentSince !== null && Date.parse(job.updated_at) < Date.parse(state.currentSince));
-    if (!ended || state.hasFeatures || stale) return null;
+      state.currentSince !== null &&
+      (!job?.updated_at || Date.parse(job.updated_at) < Date.parse(state.currentSince));
+    if (!ended || stale) return null;
     return (
       <section aria-label="Feature build" className="local-job-outcome">
         <p role="status" className="min-w-0 flex-1 font-medium">
-          The last feature history build failed. {buildReasonText(ended)}
+          The last feature history build stopped before it made a version. {buildReasonText(ended)}
         </p>
         <ViewerLink href={jobHref(job!)}>View in Jobs</ViewerLink>
         {action("Try again", false)}

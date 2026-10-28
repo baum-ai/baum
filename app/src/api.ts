@@ -257,7 +257,6 @@ const jobReasons: Record<string, string> = {
     "GitHub refused the push, usually because the branch moved on. Nothing was force-pushed.",
   push_failed: "The push failed. Check that git can push to this repository from your clone.",
 };
-/** What a finished job's reason means, in a sentence. */
 /** A job's reason in words: a feature build's in its own, others' as
  *  reviews and fixes say them. */
 export function jobReasonText(reason: string, kind?: Job["kind"]): string {

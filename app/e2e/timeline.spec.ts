@@ -112,7 +112,7 @@ for (const scheme of ["light", "dark"] as const) {
     // The fixture's build stops at once; the empty state stays, with the
     // failed build above it.
     await expect(page.getByRole("region", { name: "Feature build" })).toContainText(
-      "The last feature history build failed",
+      "The last feature history build stopped before it made a version",
     );
     await expect(page.getByText("No features yet")).toBeVisible();
     await expect(

@@ -633,37 +633,45 @@ it("resumes a build that stopped, and says a failed or unexplained one in its ow
     "The feature history build stopped. It was cancelled before it finished.",
   );
   expect(button("Resume build")).toBeDefined();
-  // A failed build with no version is shown while there are no features
-  // and no newer version.
+  // A build that ended with no version is shown until a newer version is
+  // current, features or not.
+  const lead = "The last feature history build stopped before it made a version.";
+  const render = async (job: Job, build: Record<string, unknown>, revision: number) => {
+    answers["api/timeline/build"] = { building: null, ...build };
+    await act(async () =>
+      root.render(<Harness initial="page=timeline" revision={revision} jobs={[job]} />),
+    );
+    await act(async () => {});
+    await act(async () => {});
+  };
   const failed = { ...buildJob("failed"), reason: "disabled", updated_at: "2026-10-28T10:00:00Z" };
-  answers["api/timeline/build"] = { building: null, has_features: false, current_since: null };
-  await act(async () =>
-    root.render(<Harness initial="page=timeline" revision={2} jobs={[failed]} />),
-  );
-  await act(async () => {});
-  await act(async () => {});
+  await render(failed, { has_features: false, current_since: null }, 2);
   expect(node.textContent).toContain(
-    "The last feature history build failed. Decisions are turned off for this repository, so it cannot be built.",
+    `${lead} Decisions are turned off for this repository, so it cannot be built.`,
   );
   expect(button("Try again")).toBeDefined();
-  answers["api/timeline/build"] = {
-    building: null,
-    has_features: false,
-    current_since: "2026-10-28T11:00:00Z",
+  // A Rebuild that stopped shows beside the features it kept.
+  await render(failed, { has_features: true, current_since: "2026-10-01T00:00:00Z" }, 3);
+  expect(node.textContent).toContain(lead);
+  // At the very time the version became current, it is not older.
+  await render(failed, { has_features: true, current_since: "2026-10-28T10:00:00Z" }, 4);
+  expect(node.textContent).toContain(lead);
+  await render(failed, { has_features: true, current_since: "2026-10-28T11:00:00Z" }, 5);
+  expect(node.textContent).not.toContain(lead);
+  // An interrupted one, in its words.
+  const interrupted = {
+    ...buildJob("interrupted"),
+    reason: "interrupted",
+    updated_at: failed.updated_at,
   };
-  await act(async () =>
-    root.render(<Harness initial="page=timeline" revision={3} jobs={[failed]} />),
-  );
-  await act(async () => {});
-  await act(async () => {});
-  expect(node.textContent).not.toContain("The last feature history build failed");
-  answers["api/timeline/build"] = { building: null, has_features: true, current_since: null };
-  await act(async () =>
-    root.render(<Harness initial="page=timeline" revision={4} jobs={[failed]} />),
-  );
-  await act(async () => {});
-  await act(async () => {});
-  expect(node.textContent).not.toContain("The last feature history build failed");
+  await render(interrupted, { has_features: false, current_since: null }, 6);
+  expect(node.textContent).toContain(`${lead} baum stopped before the build finished.`);
+  // A job with no time is shown without a current version, and not with one.
+  const untimed = { ...buildJob("failed"), reason: "failed" };
+  await render(untimed, { has_features: false, current_since: null }, 7);
+  expect(node.textContent).toContain(`${lead} It failed before it finished.`);
+  await render(untimed, { has_features: true, current_since: "2026-10-01T00:00:00Z" }, 8);
+  expect(node.textContent).not.toContain(lead);
 });
 
 it("names a feature build's reasons in its own words, and others' as before", () => {

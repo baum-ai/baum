@@ -526,3 +526,30 @@ func TestTimelineBrokenMergeChain(t *testing.T) {
 		t.Fatalf("a merge cycle = %d", code)
 	}
 }
+
+// current_since is when the current version became current: its switch,
+// else its creation; null without one.
+func TestTimelineCurrentSince(t *testing.T) {
+	f := newTimelineFixture(t)
+	since := func() *time.Time {
+		t.Helper()
+		var answer struct {
+			CurrentSince *time.Time `json:"current_since"`
+		}
+		f.get("/api/timeline/build", url.Values{"repository": {repo}}, &answer)
+		return answer.CurrentSince
+	}
+	created, switched := t0.Add(-time.Hour), t0.Add(time.Hour)
+	f.exec(`UPDATE feature_version SET created_at=?, switched_at=? WHERE state='current'`, created.UnixMilli(), switched.UnixMilli())
+	if got := since(); got == nil || !got.Equal(switched) {
+		t.Fatalf("switched = %v", got)
+	}
+	f.exec(`UPDATE feature_version SET switched_at=NULL WHERE state='current'`)
+	if got := since(); got == nil || !got.Equal(created) {
+		t.Fatalf("created = %v", got)
+	}
+	f.exec(`UPDATE feature_version SET state='retired'`)
+	if got := since(); got != nil {
+		t.Fatalf("without a current version = %v", got)
+	}
+}
