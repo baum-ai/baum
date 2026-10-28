@@ -96,20 +96,9 @@ export function sessionHref(id: string): string {
   return appURL(`?page=sessions&session=${encodeURIComponent(id)}`);
 }
 
-/** The local timeline serves no prompts: the session page has them while
- *  this computer still tracks the session. */
-function WithheldNote({ sessionId }: { sessionId: string | null }) {
-  return (
-    <>
-      The Timeline does not show prompts.{" "}
-      {sessionId ? (
-        <ViewerLink href={sessionHref(sessionId)} className="underline not-italic">
-          Open the session
-        </ViewerLink>
-      ) : null}
-    </>
-  );
-}
+/** A decision's prompts are read from its session's transcript on this
+ *  computer; once that is gone they are withheld. */
+export const WITHHELD_NOTE = "The session's transcript is no longer on this computer.";
 
 /** A decision's session opens as a link to its page. */
 const OPEN_SESSION: OpenSessionSource<string> = {
@@ -571,9 +560,7 @@ function TimelineLog({
           openSession={OPEN_SESSION}
           onFile={(path) => write({ file: path })}
           onRetry={() => loadDetail(id, true)}
-          withheldNote={
-            <WithheldNote sessionId={state?.status === "ready" ? state.detail.session.id : null} />
-          }
+          withheldNote={WITHHELD_NOTE}
         />
       </>
     );

@@ -56,12 +56,25 @@ func browserTimeline(t *testing.T, home string, registry *repos.Registry) http.H
 				Turns: []int{1}, Files: []string{}},
 		}},
 	}
+	// timeline-1's transcript is on this computer: its first prompt names
+	// an address the Timeline masks, and its third is only a wrapper. The
+	// others' are gone.
+	transcriptPath := filepath.Join(home, ".claude", "projects", "-fixture-demo", "timeline-1.jsonl")
+	writeFixtureTranscript(transcriptPath, "timeline-1", day(1, 10), []string{
+		"Serve the Timeline from the daemon's own store; ask ada.lovelace@example.com if the hosted log should sync down.",
+		"Draw it with the review viewer's decision log components.",
+		"<local-command-stdout>Set model to opus</local-command-stdout>",
+	})
 	for _, s := range sessions {
 		times := map[int]time.Time{}
 		for i := range 3 {
 			times[i+1] = s.at.Add(time.Duration(i) * 20 * time.Minute)
 		}
-		if err := store.Save(ctx, decisionlog.Extraction{Meta: decisionlog.Meta{Agent: "claude-code", ID: s.id, Repository: repo, Branch: s.branch},
+		path := ""
+		if s.id == "timeline-1" {
+			path = transcriptPath
+		}
+		if err := store.Save(ctx, decisionlog.Extraction{Meta: decisionlog.Meta{Agent: "claude-code", ID: s.id, Repository: repo, Branch: s.branch, Path: path},
 			ContentHash: "c-" + s.id, Decisions: s.decisions, TurnTimes: times}); err != nil {
 			t.Fatal(err)
 		}
@@ -133,7 +146,7 @@ changed_at, created_at, updated_at) VALUES (?,?,?,?,?,?,?,1,?,?,?,?)`, id, versi
 	exec(`INSERT INTO pull_commit(repository, number, sha, committed_at) VALUES (?,12,'commit-1',?)`, repo, ms(day(1, 11)))
 	exec(`INSERT INTO session_commit(agent, session_id, repository, sha, method, confidence) VALUES ('claude-code','timeline-1',?,'commit-1','checkpoint',1)`, repo)
 	exec(`INSERT INTO pr_summary(repository, number, content_hash, summary, created_at) VALUES (?,12,'h','Adds the local Timeline API and page.',?)`, repo, ms(day(1, 16)))
-	return (&decisionlog.Timeline{Store: store, Registry: registry,
+	return (&decisionlog.Timeline{Store: store, Registry: registry, Home: home,
 		Clone: func(context.Context, string) decisionlog.TimelineClone { return fixtureClone{} },
 		Login: func(context.Context) string { return "ada-l" }}).Handler()
 }

@@ -504,9 +504,17 @@ and never writes it.
   decisions (summary, category, who, rejected alternative, files, turns)
   and the pull requests its linked commits are in. A decision a later
   capture replaced (obsolete, kept for good) still opens, as on the hosted
-  Timeline: with the decisions replaced with it and `replaced: true`. `prompts_withheld` is
-  always true: the Timeline serves no transcript text, rationale or
-  evidence.
+  Timeline: with the decisions replaced with it and `replaced: true`. `turns` are
+  the human prompts the decisions cite (`ordinal`, `triggered_at`, `text`),
+  read from the session's transcript on this computer (its stored
+  `transcript_path`, found as capture finds it, `livesessions.Locate`) and
+  rendered as capture renders them (`decisions.Render` with a
+  `bundle.Redactor`): the harness's wrappers stripped, secrets and
+  identities masked, and a turn that was only wrappers left out. A session's
+  prompts are kept by its transcript's version (`Location.Version`), the 16
+  sessions last read. When the transcript is no longer on this computer, or
+  cannot be read, `prompts_withheld` is true and `turns` empty. No
+  rationale or evidence is served.
 
 `q` matches keywords, each word a prefix and all of them required, with
 SQLite FTS5 (the `unicode61` tokenizer, diacritics folded, no stemming, so

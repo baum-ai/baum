@@ -13,7 +13,7 @@ import {
   type ViewerLinkProps,
 } from "@baum/viewer/navigation";
 import { jobReasonText, type Job } from "./api";
-import { daySections, nextDay, pullRequestHref, sessionHref, TimelinePage } from "./timeline";
+import { daySections, nextDay, pullRequestHref, TimelinePage } from "./timeline";
 
 const Link = (props: ViewerLinkProps) => <a {...props} />;
 const me = { email: "me@example.com", name: null, login: null, avatar_url: null };
@@ -198,9 +198,7 @@ it("shows all decisions with what capture covered and a decision without its pro
   expect(node.textContent).toContain("3 sessions read · 1 skipped (Too large: 1) · 1 being read");
   expect(node.textContent).toContain("Keep the timeline local");
   expect(node.textContent).toContain("A hosted-only page");
-  expect(node.textContent).toContain("The Timeline does not show prompts.");
-  const session = [...node.querySelectorAll("a")].find((a) => a.textContent === "Open the session");
-  expect(session?.getAttribute("href")).toBe(sessionHref("claude-code:s1"));
+  expect(node.textContent).toContain("The session's transcript is no longer on this computer.");
   // A file narrows the list to the decisions citing it.
   const file = [...node.querySelectorAll("button")].find((b) =>
     b.textContent?.includes("oss/app/src/timeline.tsx"),
@@ -212,6 +210,19 @@ it("shows all decisions with what capture covered and a decision without its pro
   );
   const options = [...node.querySelectorAll("option")].map((o) => o.textContent);
   expect(options).toContain("All categories");
+});
+
+it("shows the prompts a decision cites", async () => {
+  answers["api/timeline/decisions/d1"] = {
+    ...decisionDetail,
+    prompts_withheld: false,
+    turns: [
+      { ordinal: 2, triggered_at: "2026-10-20T09:58:00Z", text: "Keep it on this computer." },
+    ],
+  };
+  await show("page=timeline&tab=all&open=d1");
+  expect(node.textContent).toContain("Keep it on this computer.");
+  expect(node.textContent).not.toContain("no longer on this computer");
 });
 
 it("says how features appear before there are any", async () => {

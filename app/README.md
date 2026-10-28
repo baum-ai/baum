@@ -390,9 +390,9 @@ into another opens the survivor. All decisions lists the current decisions by
 day, with a line of what capture made of the repository's sessions (read,
 skipped by reason, being read); a decision opened by address but not listed
 shows above the list. A decision a later capture replaced opens with a line
-saying so. A decision's detail says the Timeline shows no prompts and
-links to the session's page (`?page=sessions&session=<agent>:<id>`, which has it
-while the session is tracked); a pull request links to its PR page
+saying so. A decision's detail shows the prompts it cites, read from the
+session's transcript on this computer, or says "The session's transcript is
+no longer on this computer." once it is gone; a pull request links to its PR page
 (`?repository=&pr=`). Only the tab shown reads its list, 50 rows at a time
 with a button for more. The app's event stream counts `timeline` events and
 every connection after the first; on each the page reads its repositories, list

@@ -89,8 +89,14 @@ type Timeline struct {
 	// Login is the user's GitHub login, "" when unknown; it folds the pull
 	// requests they opened into them.
 	Login func(ctx context.Context) string
+	// Home holds the agents' session stores, whose transcripts a decision's
+	// cited prompts are read from; empty is the user's home.
+	Home string
+	// CursorStore is Cursor's database; empty is its default.
+	CursorStore string
 
-	selfMu sync.Mutex
+	prompts timelinePrompts
+	selfMu  sync.Mutex
 	selfAt time.Time
 	self   *Person
 }
@@ -1326,16 +1332,16 @@ WHERE repository `+inList(len(repositories))+` AND state=? AND stage=?)`, append
 
 // decision is a decision's detail: its session's current decisions, or for
 // a decision a later capture replaced (obsolete), the decisions replaced
-// with it, marked `replaced`; and the pull requests its session's commits
-// are in.
+// with it, marked `replaced`; the prompts they cite; and the pull requests
+// its session's commits are in.
 func (t *Timeline) decision(ctx context.Context, id string) (any, error) {
 	db := t.Store.db
 	var key SessionKey
-	var repository, branch string
+	var repository, branch, path string
 	var obsolete sql.NullInt64
-	err := db.QueryRowContext(ctx, `SELECT d.agent, d.session_id, d.obsolete_at, cs.repository, cs.branch FROM decision d
+	err := db.QueryRowContext(ctx, `SELECT d.agent, d.session_id, d.obsolete_at, cs.repository, cs.branch, cs.transcript_path FROM decision d
 JOIN capture_session cs ON cs.agent=d.agent AND cs.session_id=d.session_id WHERE d.decision_id=?`, id).
-		Scan(&key.Agent, &key.ID, &obsolete, &repository, &branch)
+		Scan(&key.Agent, &key.ID, &obsolete, &repository, &branch, &path)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, errTimelineNotFound
 	}
@@ -1370,7 +1376,9 @@ JOIN capture_session cs ON cs.agent=d.agent AND cs.session_id=d.session_id WHERE
 		Files               []string  `json:"files"`
 	}
 	list := make([]detailDecision, 0, len(current))
+	var cited []int
 	for _, d := range current {
+		cited = append(cited, d.Turns...)
 		row := summaryRow(d, "", nil)
 		each := detailDecision{ID: d.ID, Turn: row.Turn, Turns: d.Turns, DecidedAt: d.DecidedAt, Who: row.Who, Category: row.Category,
 			Summary: d.Summary, Superseded: d.Superseded, Files: d.Files}
@@ -1396,14 +1404,23 @@ WHERE sc.agent=? AND sc.session_id=? AND sc.repository=? ORDER BY p.number DESC`
 		listed[i] = pullOf(ctx, clone, p)
 		listed[i].Summary = nil
 	}
+	// The cited prompts, read from the session's transcript while it is on
+	// this computer; withheld once it is not.
+	turns := []timelineTurn{}
+	prompts, readable := t.prompts.read(ctx, t.home(), t.cursorStore(), key, path)
+	slices.Sort(cited)
+	for _, ordinal := range slices.Compact(cited) {
+		if turn, ok := prompts[ordinal]; ok {
+			turns = append(turns, turn)
+		}
+	}
 	return map[string]any{
-		"repository": repositoryRef(repository),
-		"session":    sessionOf(key, branch, reader.self(ctx)),
-		"decisions":  list,
-		"replaced":   obsolete.Valid,
-		// The Timeline serves no transcript text.
-		"turns":            []any{},
-		"prompts_withheld": true,
+		"repository":       repositoryRef(repository),
+		"session":          sessionOf(key, branch, reader.self(ctx)),
+		"decisions":        list,
+		"replaced":         obsolete.Valid,
+		"turns":            turns,
+		"prompts_withheld": !readable,
 		"pull_requests":    listed,
 	}, nil
 }

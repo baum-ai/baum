@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -116,7 +117,7 @@ changed_at, created_at, updated_at) VALUES ('G1',?,?,'Gadget counts','About coun
 	off := false
 	f.registry = &timelineRegistry{prefs: repos.DefaultPreferences(),
 		list: []repos.Repository{{Repository: repo}, {Repository: gadgets}, {Repository: "acme/off", Settings: repos.Settings{Decisions: &off}}}}
-	f.timeline = &Timeline{Store: f.store, Registry: f.registry,
+	f.timeline = &Timeline{Store: f.store, Registry: f.registry, Home: t.TempDir(),
 		Clone: func(_ context.Context, repository string) TimelineClone {
 			f.clones++
 			// acme/gadgets, served first, names the user.
@@ -579,6 +580,49 @@ func TestTimelineFilesAndFilters(t *testing.T) {
 				t.Fatalf("%s %s = %d", route, bad, code)
 			}
 		}
+	}
+}
+
+// A decision's detail has the prompts it cites from its session's transcript
+// on this computer, stripped and redacted as capture reads them, until the
+// transcript is gone.
+func TestTimelineCitedPrompts(t *testing.T) {
+	f := newTimelineFixture(t)
+	home, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.timeline.Home = home
+	path := filepath.Join(home, ".claude", "projects", "-work-demo", "p1.jsonl")
+	write(t, path, claudeTurn("p1", 1, "Export widgets as CSV and mail "+plantedMail+" when done.", "Done.")+
+		claudeTurn("p1", 2, "<local-command-stdout>Set model to opus</local-command-stdout>", "Ok.")+
+		claudeTurn("p1", 3, "Keep the header row.", "Done."))
+	if err := f.store.Save(context.Background(), Extraction{Meta: Meta{Agent: "claude-code", ID: "p1", Repository: repo, Path: path}, ContentHash: "c-p1",
+		Decisions: []decisions.Decision{decision("d-p1", "Export as CSV.", 1, 2), decision("d-p2", "Keep headers.", 3)}}); err != nil {
+		t.Fatal(err)
+	}
+	type detail struct {
+		PromptsWithheld bool           `json:"prompts_withheld"`
+		Turns           []timelineTurn `json:"turns"`
+	}
+	var got detail
+	f.get("/api/timeline/decisions/d-p1", nil, &got)
+	if got.PromptsWithheld || len(got.Turns) != 2 || got.Turns[0].Ordinal != 1 || got.Turns[1].Ordinal != 3 {
+		t.Fatalf("turns = %+v", got)
+	}
+	first := got.Turns[0]
+	if strings.Contains(first.Text, plantedMail) || !strings.HasPrefix(first.Text, "Export widgets as CSV and mail ") ||
+		first.TriggeredAt == nil || !first.TriggeredAt.Equal(t0.Add(time.Minute)) {
+		t.Fatalf("turn 1 = %+v", first)
+	}
+	// Gone from this computer: the prompts are withheld.
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	got = detail{}
+	f.get("/api/timeline/decisions/d-p1", nil, &got)
+	if !got.PromptsWithheld || len(got.Turns) != 0 {
+		t.Fatalf("without the transcript = %+v", got)
 	}
 }
 
