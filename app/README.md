@@ -136,17 +136,44 @@ or 403 status and shows inline in the dialog, in words; on success the daemon
 re-reads the repository's pull requests and the lists drop it.
 
 Keyboard shortcuts (`src/shortcuts.tsx`, one key table that both the handling and
-the sheet read). On Pull requests, `j`/`↓` and `k`/`↑` move a row focus through the
+the sheet read). Every page is reached from the keyboard. With the command key
+(⌘ on a Mac, Ctrl elsewhere): `1` to `7` open the sidebar's pages in its order
+(Inbox, Pull requests, Sessions, Analytics, Repositories, Jobs, Settings; digits
+are read by their place on the keyboard, so layouts that shift them work),
+`,` opens Settings, and `K` opens **Go to** (`src/go-to.tsx`). Back and forward
+are `⌘[` and `⌘]` on a Mac and `Alt+←` and `Alt+→` elsewhere. These work in
+text fields too, but not under a dialog other than the sheet or Go to, which
+they close. Go to searches the pages, the pull requests (by title, repository,
+number, author or branch; what waits in the Inbox first), the review groups and
+the agent sessions: every word typed must match, a label that starts with the
+query ranks first, `↑` and `↓` move, `Enter` opens and `Esc` closes. The sidebar
+draws each page's key while Alt is held and names it in the link's tooltip and
+`aria-keyshortcuts`.
+
+On Pull requests, `j`/`↓` and `k`/`↑` move a row focus through the
 rows as drawn (group rows count; rows of collapsed buckets and collapsed groups
 are skipped), `Enter` or `o` opens the focused pull request or group, `x` toggles
 its selection, `m` opens Merge and `f` Fix where the row offers them (Merge wins
 where both could), `g` generates the pull request's review through the same path
 as the PR page's Generate (so the same confirmations and the instant "Starting"
 state), `r` refreshes from GitHub at once rather than after the polling backoff,
-and `Esc` clears the focus. On any page, `?` (or the `?` button in Pull
+`h`/`←` and `l`/`→` move to the previous and next view (For you, Requested, …),
+and `Esc` clears the focus. Sessions, Jobs and Repositories share the list keys
+(`useRowFocus` and `listKeys`): `j`/`↓` and `k`/`↑` move, `Enter` or `o` opens
+the row (a session's transcript, a job's pull request or group, a repository's
+settings) and `Esc` clears the focus. On Sessions the three sections are one
+list and `p` opens the focused session's pull request; on Jobs `t` opens the
+transcript (Watch while a fix runs); on Repositories `a` opens or closes the
+picker and `/` searches it (the search takes the focus when the picker opens,
+and `Esc` in an empty search leaves it). On a pull request or group page `j`
+and `k` step to the next and previous place in reading order, as the
+navigator's arrows do (`ReviewViewer`'s `steps` ref), and `m`, `f` and `g`
+merge, fix and generate or regenerate where the header offers them. On any
+page, `?` (or the `?` button in Pull
 requests' page bar) shows the sheet of every key, grouped by where it works
-(anywhere, the Inbox, Pull requests, a pull request, group or session page),
-with the current page's group first; `?` or `Esc` closes it. Key hints drawn
+(anywhere, the Inbox, Pull requests, a pull request or group, Sessions, Jobs,
+Repositories, a session or job transcript), with the current page's group
+first; `?` or `Esc` closes it. Key hints drawn
 on buttons (class `key-hint`) show only while Alt, Option on a Mac, is held:
 `useKeyHints` marks the document root then and clears it on release or when
 the window loses focus. The focused row has an
@@ -156,7 +183,11 @@ Keys are ignored with Ctrl, Meta or Alt held, in text fields, selects, text area
 and editable content (checkboxes and radios still pass them) and while any dialog
 is open. On a pull request or group page, `u`, or `Esc` with nothing focused,
 returns to the page it was opened from (the Inbox, or Pull requests with the
-filter kept).
+filter kept); on a session's or job's transcript the same keys return to
+Sessions or Jobs. Settings and Analytics have no keys of their own beyond Tab:
+their controls are native fields and buttons (Analytics' window, chart and
+breakdown toggles are pressed buttons in a group), and its charts' bars take
+the focus for their tooltips.
 
 Update branch and Re-run checks (`src/unblock.tsx`) are secondary buttons in the
 PR page header beside Fix and Merge…, not in Pull requests: the Status cell is

@@ -2460,6 +2460,104 @@ span.inbox-fix svg {
 .inbox-row[data-focused] a:focus-visible {
   outline: none;
 }
+/* The same mark on the other lists (Sessions, Jobs, Repositories), whose
+   rows sit flush in their panel: the fill runs out into the panel's padding
+   and the bar stands at its edge. */
+.local-session-row[data-focused],
+.local-job-row[data-focused],
+.local-repo-row[data-focused] {
+  position: relative;
+  background: var(--surface-wash);
+  box-shadow:
+    -0.75rem 0 0 var(--surface-wash),
+    0.75rem 0 0 var(--surface-wash);
+}
+.local-session-row[data-focused]::before,
+.local-job-row[data-focused]::before,
+.local-repo-row[data-focused]::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -0.75rem;
+  width: 3px;
+  background: var(--action-primary);
+}
+/* Each section's key, at the end of its sidebar link. Folded to its glyph,
+   the link's tooltip names the key instead. */
+kbd.local-rail-key {
+  flex: none;
+  margin-left: 0;
+}
+@media (width < 64rem) {
+  kbd.local-rail-key {
+    display: none;
+  }
+}
+/* Go to: a search over the app's places, opened with ⌘K or Ctrl+K. */
+dialog.go-to {
+  width: 34rem;
+  margin-top: 12vh;
+  padding: 0;
+  overflow: hidden;
+}
+.go-to-input {
+  width: 100%;
+  padding: 0.9rem 1rem;
+  border: 0;
+  border-bottom: 1px solid var(--border-subtle);
+  background: transparent;
+  color: var(--text-primary);
+  font: inherit;
+  font-size: var(--text-lg);
+  outline: none;
+}
+.go-to-list {
+  max-height: min(24rem, 60vh);
+  margin: 0;
+  padding: 0.35rem;
+  overflow-y: auto;
+  list-style: none;
+}
+.go-to-option {
+  display: flex;
+  align-items: baseline;
+  gap: 0.6rem;
+  padding: 0.5rem 0.65rem;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+.go-to-option[aria-selected="true"] {
+  background: var(--surface-selected);
+  box-shadow: inset 3px 0 0 var(--action-primary);
+}
+.go-to-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-primary);
+}
+.go-to-detail {
+  flex: none;
+  max-width: 40%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-tertiary);
+  font-size: var(--text-xs);
+}
+.go-to-kind {
+  flex: none;
+  margin-left: auto;
+  color: var(--text-tertiary);
+  font-size: var(--text-xs);
+}
+.go-to-empty {
+  margin: 0;
+  padding: 1rem;
+  color: var(--text-secondary);
+}
 .shortcuts-sheet {
   width: 28rem;
 }

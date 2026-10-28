@@ -36,6 +36,10 @@ import claudeLogo from "./desktop/claude-code.svg";
 import codexLogo from "./desktop/codex.svg";
 import cursorLogo from "./desktop/cursor.svg";
 import { useNow } from "./live";
+import { listKeys, useRowFocus, useShortcuts } from "./shortcuts";
+
+/** What marks a list row for the row focus (`useRowFocus`). */
+type RowProps = (s: LiveSession) => { "data-row-id": string; "data-focused"?: true };
 
 const agentLogos: Record<string, string> = {
   "claude-code": claudeLogo,
@@ -351,18 +355,20 @@ function PermissionCard({
   session,
   now,
   onDone,
+  row,
 }: {
   request: AgentRequest;
   session?: LiveSession;
   now: number;
   onDone: (text: string) => void;
+  row: { "data-row-id": string; "data-focused"?: true };
 }) {
   const { phase, answer, busy } = useAnswer(request, onDone);
   const what = subject(request);
   const name = session ? sessionName(session) : request.tool;
   const label = (text: string) => `${text}: ${agentName(request.agent)} on ${name}`;
   return (
-    <li className="local-feed-card local-feed-ask" title={request.session_id}>
+    <li className="local-feed-card local-feed-ask" title={request.session_id} {...row}>
       <div className="local-feed-head">
         <span className="local-feed-dot ring" aria-hidden="true" />
         <h3>{permissionTitle(request)}</h3>
@@ -440,11 +446,13 @@ function QuestionCard({
   session,
   now,
   onDone,
+  row,
 }: {
   request: AgentRequest;
   session?: LiveSession;
   now: number;
   onDone: (text: string) => void;
+  row: { "data-row-id": string; "data-focused"?: true };
 }) {
   const { phase, answer, busy } = useAnswer(request, onDone);
   const [picked, setPicked] = useState<Record<string, string[]>>({});
@@ -482,7 +490,7 @@ function QuestionCard({
   };
   const ready = questions.every((q) => (picked[q.question]?.length ?? 0) > 0);
   return (
-    <li className="local-feed-card local-feed-ask" title={request.session_id}>
+    <li className="local-feed-card local-feed-ask" title={request.session_id} {...row}>
       <div className="local-feed-head">
         <span className="local-feed-dot ring" aria-hidden="true" />
         <h3>{agentName(request.agent)} has a question</h3>
@@ -541,11 +549,13 @@ function WaitingCard({
   since,
   now,
   open,
+  row,
 }: {
   session: LiveSession;
   since: string;
   now: number;
   open: (s: LiveSession) => ReactNode;
+  row: RowProps;
 }) {
   const reason = s.waiting_reason!;
   const title =
@@ -556,7 +566,7 @@ function WaitingCard({
         : `${agentName(s.agent)} is waiting for your answer`;
   const message = s.activity?.last_message;
   return (
-    <li className="local-feed-card quiet" title={s.session_id}>
+    <li className="local-feed-card quiet" title={s.session_id} {...row(s)}>
       <div className="local-feed-head">
         <span className="local-feed-dot caution" aria-hidden="true" />
         <h3>{title}</h3>
@@ -684,6 +694,7 @@ function RunningCard({
   Link,
   open,
   onDone,
+  row,
 }: {
   session: LiveSession;
   now: number;
@@ -692,6 +703,7 @@ function RunningCard({
   Link: ComponentType<ViewerLinkProps>;
   open: (s: LiveSession) => ReactNode;
   onDone: (text: string) => void;
+  row: RowProps;
 }) {
   const running = s.state === "running";
   const steps = s.activity?.steps ?? [];
@@ -700,7 +712,7 @@ function RunningCard({
   const files = s.activity?.files_touched;
   const seen = new Map<string, number>();
   return (
-    <li className="local-feed-card" title={s.session_id}>
+    <li className="local-feed-card" title={s.session_id} {...row(s)}>
       <div className="local-feed-head">
         <span className={`local-feed-dot ${running ? "live" : "muted"}`} aria-hidden="true" />
         <Agent agent={s.agent} />
@@ -813,9 +825,29 @@ export function SessionsPage({
     .sort((a, b) => endedAtOf(b).localeCompare(endedAtOf(a)));
   const queuedFor = (s: LiveSession) =>
     requests.messages.find((m) => m.agent === s.agent && m.session_id === s.session_id);
+  const rows = useRowFocus<HTMLDivElement>([
+    ...waiting.map((w) => (w.session ? sessionKey(w.session) : w.key)),
+    ...active.map(sessionKey),
+    ...ended.map(sessionKey),
+  ]);
+  const row: RowProps = (s) => ({
+    "data-row-id": sessionKey(s),
+    "data-focused": rows.focused === sessionKey(s) || undefined,
+  });
+  useShortcuts((event) => {
+    if (listKeys(event, rows) || event.key !== "p" || !rows.focused) return;
+    const pr = rows
+      .rowLink(rows.focused)
+      ?.closest("[data-row-id]")
+      ?.querySelector<HTMLElement>(".local-session-pr");
+    if (!pr) return;
+    event.preventDefault();
+    pr.click();
+  });
   const open = (s: LiveSession) => (
     <Link
       href={transcriptHref(s)}
+      data-row-link=""
       className="inbox-action local-session-open"
       aria-label={labelFor("Open transcript", s)}
     >
@@ -823,7 +855,7 @@ export function SessionsPage({
     </Link>
   );
   return (
-    <div className="local-feed">
+    <div ref={rows.list} className="local-feed">
       <div aria-live="polite" className="local-feed-live">
         {action ? (
           <p className="local-feed-done">
@@ -846,6 +878,7 @@ export function SessionsPage({
                   session={w.session}
                   now={now}
                   onDone={setAction}
+                  row={w.session ? row(w.session) : { "data-row-id": w.key }}
                 />
               ) : w.request ? (
                 <QuestionCard
@@ -854,6 +887,7 @@ export function SessionsPage({
                   session={w.session}
                   now={now}
                   onDone={setAction}
+                  row={w.session ? row(w.session) : { "data-row-id": w.key }}
                 />
               ) : (
                 <WaitingCard
@@ -862,6 +896,7 @@ export function SessionsPage({
                   since={w.since}
                   now={now}
                   open={open}
+                  row={row}
                 />
               ),
             )}
@@ -891,6 +926,7 @@ export function SessionsPage({
                 Link={Link}
                 open={open}
                 onDone={setAction}
+                row={row}
               />
             ))}
           </ul>
@@ -913,7 +949,7 @@ export function SessionsPage({
               );
               const files = s.activity?.files_touched;
               return (
-                <li key={sessionKey(s)} className="local-feed-card compact" title={s.session_id}>
+                <li key={sessionKey(s)} className="local-feed-card compact" title={s.session_id} {...row(s)}>
                   <Agent agent={s.agent} />
                   {s.title ? (
                     <span className="local-feed-title" title={s.title}>

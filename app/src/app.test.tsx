@@ -140,16 +140,16 @@ it("keeps API, event and navigation URLs under the session namespace", async () 
     .filter((href) => !href.startsWith("https:"));
   expect(hrefs).toContain("/s/test-ns/?page=jobs");
   for (const href of hrefs) expect(href.startsWith("/s/test-ns/")).toBe(true);
-  const jobs = Array.from(node.querySelectorAll("a")).find((a) => a.textContent === "Jobs")!;
-  await act(async () => jobs.click());
+  // A sidebar link, by its label: its key hint is part of its text.
+  const rail = (label: string) =>
+    Array.from(node.querySelectorAll<HTMLAnchorElement>("a.local-rail-link")).find(
+      (a) => a.querySelector(".local-rail-label")?.textContent === label,
+    )!;
+  await act(async () => rail("Jobs").click());
   expect(location.pathname).toBe("/s/test-ns/");
   expect(location.search).toBe("?page=jobs");
   expect(node.textContent).toContain("No jobs yet");
-  await act(async () => {
-    Array.from(node.querySelectorAll("a"))
-      .find((a) => a.textContent === "Pull requests")!
-      .click();
-  });
+  await act(async () => rail("Pull requests").click());
   await act(async () => {
     [...node.querySelectorAll<HTMLButtonElement>('[aria-label="Show"] button')]
       .find((button) => button.textContent?.startsWith("Mine"))!
