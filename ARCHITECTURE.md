@@ -2964,7 +2964,8 @@ the review backend's `agent.Completer` (default models `claude-haiku-5-5` and
 refused, and every call is recorded in a ledger that throttles a session (5
 minutes apart, 10 after a failure, 12 a day unless it ended). The reply is masked before it is parsed; decisions keep
 their IDs across extractions and are marked obsolete, never deleted, when a
-newer one drops them. See [its README](internal/decisionlog/README.md).
+newer one drops them; only the ledger's settled calls are pruned, after 90
+days. See [its README](internal/decisionlog/README.md).
 
 ### Feature log
 
