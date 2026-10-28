@@ -449,14 +449,18 @@ the local API behind its authentication, in the view models of the review
 viewer's decision log (`oss/viewer/src/decision-log.ts`). It reads the store
 and never writes it.
 
-- **`GET /repositories`**: the picked repositories whose decisions are not
-  turned off (the decisions switch and the repository's setting; the
-  automatic master switch is not read, so pausing hides nothing), by name.
+- **`GET /repositories`**: `decisions_enabled` (the decisions switch),
+  `repositories`, the picked repositories whose decisions are not turned
+  off (the switch and the repository's setting; the automatic master switch
+  is not read, so pausing hides nothing), by name, and `turned_off`, those
+  whose own setting is off.
   Every other route names one of them (`repository=`, any case) or reads
   from one; another is a 400 for a list and a 404 for a detail.
-- **`GET /features?repository=&q=&status=&cursor=`**: the repository's
-  features of its current version not merged into another, by last activity
-  (else creation) newest first, then id, 50 a page (`cursor` is an offset).
+- **`GET /features?repository=&q=&status=&cursor=&limit=`**: the
+  repository's features of its current version not merged into another, by
+  last activity (else creation) newest first, then id, 50 a page (`limit`,
+  at most 500). `cursor` is the last row's time and id, so a page follows
+  on from it whatever arrived meanwhile.
   `status` (`in_progress`, `shipped`, `abandoned`; repeated or comma
   separated) and `q` filter before paging. A row has its title and
   description (null while none is written; `summary_pending` while it is
@@ -464,8 +468,9 @@ and never writes it.
   requests), the first and last activity (its pull requests' opening and
   last update and its decisions' times), `people` (the clone's git
   `user.email` when it has a session, then its pull requests' authors not
-  opened by a bot, by login), the counts of pull requests, sessions (linked
-  to its pull requests' commits, or in it on their own) and decisions, and
+  opened by a bot, by login), the counts of pull requests, sessions (the
+  repository's captured sessions linked to its pull requests' commits, or in
+  it on their own) and decisions, and
   its key decisions, read as the text names them (`currentKeys`). A
   session's decisions are attributed as the feature's text attributes them
   (`features.Attributor`), each to one feature and, within it, to the pull
@@ -477,9 +482,9 @@ and never writes it.
   attributed decisions fall under none of its pull requests. A feature
   merged into another answers with the survivor's detail; one of a version
   no longer in use `{"archived": true}`.
-- **`GET /decisions?repository=&q=&file=&who=&category=&superseded=&from=&to=&cursor=`**:
-  the current decisions of the repository's captured sessions, newest first,
-  50 a page, with `coverage`: its sessions extracted, skipped by reason, and
+- **`GET /decisions?repository=&q=&file=&who=&category=&superseded=&from=&to=&cursor=&limit=`**:
+  the current decisions of the repository's captured sessions, newest first
+  and then by id, paged as features are, with `coverage`: its sessions extracted, skipped by reason, and
   being read (a capture attempt pending). `file` is the path or anything
   under it; `who` and `category` repeat or are comma separated; superseded
   decisions show only with `superseded=1`; `from` (inclusive) and `to`
@@ -492,16 +497,26 @@ and never writes it.
   evidence.
 
 `q` matches keywords, each word a prefix and all of them required, with
-SQLite FTS5 (Porter stemming): a decision's title and summary; a feature's
+SQLite FTS5 (the `unicode61` tokenizer, diacritics folded, no stemming, so
+a prefix matches as typed): a decision's title and summary; a feature's
 title, description and digest or a pull request's title, or a pull
 request's number. The index (`decision_search`, `feature_search`,
 `pull_search`) is kept by triggers on those tables and built from the rows
 already stored when a store without it is opened.
 
-The capture scheduler calls `Changed` after it saved a session's decisions
-and the feature worker after a repository's pass that listed pull requests,
-placed an item or wrote a feature's text; the daemon publishes a `timeline`
-event on the app's event stream then.
+A request reads its features' sessions' current decisions and links in a
+few set queries (`Store.Current` and `SessionLinks` read the same way), a
+feature's detail only that feature's, and opens the repository's clone once
+(`LocalClones`): its git `user.email` and its review store are each read
+at most once.
+
+`Changed` is called by the capturer once a capture's call is recorded as
+pending, by the capture scheduler after a capture that saved decisions,
+recorded a skip or settled an attempt, and by the feature worker after a
+repository's pass that listed pull requests, linked sessions, placed an
+item or wrote a feature's text. The daemon publishes a `timeline` event on
+the app's event stream then, at most once a second, and after a settings
+change.
 
 ## Testing by hand
 

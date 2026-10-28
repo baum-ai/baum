@@ -138,7 +138,7 @@ afterEach(async () => {
 });
 
 let current = new URLSearchParams();
-function Harness({ initial }: { initial: string }) {
+function Harness({ initial, revision = 0 }: { initial: string; revision?: number }) {
   const [search, setSearch] = useState(() => new URLSearchParams(initial));
   current = search;
   return (
@@ -146,7 +146,7 @@ function Harness({ initial }: { initial: string }) {
       <UrlStateProvider
         value={{ search, update: (patch) => setSearch((s) => patch(new URLSearchParams(s))) }}
       >
-        <TimelinePage />
+        <TimelinePage revision={revision} />
       </UrlStateProvider>
     </ViewerLinkProvider>
   );
@@ -227,4 +227,38 @@ it("groups decisions by the day they were made", () => {
     ["d2"],
     ["d1"],
   ]);
+});
+
+it("reads only the tab shown, and again with the rows it had when the log changes", async () => {
+  await show();
+  expect(requests.some((path) => path.includes("api/timeline/decisions"))).toBe(false);
+  requests.length = 0;
+  await act(async () => root.render(<Harness initial="page=timeline" revision={1} />));
+  await act(async () => {});
+  expect(requests).toContain("/s/test-ns/api/timeline/features?repository=acme%2Fdemo");
+  expect(requests.some((path) => path.includes("api/timeline/decisions"))).toBe(false);
+});
+
+it("says when the decision store or the decisions switch is off", async () => {
+  answers["api/timeline/repositories"] = { available: false, code: "timeline_unavailable" };
+  await show();
+  expect(node.textContent).toContain("The Timeline is not available");
+  await act(async () => root.unmount());
+  root = createRoot(node);
+  answers["api/timeline/repositories"] = {
+    decisions_enabled: false,
+    repositories: [],
+    turned_off: [],
+  };
+  await show();
+  expect(node.textContent).toContain("Decision capture is off");
+  await act(async () => root.unmount());
+  root = createRoot(node);
+  answers["api/timeline/repositories"] = {
+    decisions_enabled: true,
+    repositories: [],
+    turned_off: ["acme/demo"],
+  };
+  await show();
+  expect(node.textContent).toContain("Decisions are turned off for acme/demo.");
 });

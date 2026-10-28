@@ -464,8 +464,17 @@ func localApplication(paths daemon.Paths, concurrency int, log *slog.Logger) fun
 		// The feature log follows the decision capture gate, so a settings
 		// change wakes it too.
 		var featureLog *decisionlog.FeatureWorker
+		// The Timeline page reads the decision log again on this event; a
+		// burst of writes is one event a second.
+		timelineChanged := coalesce(time.Second, func() {
+			if err := server.Publish("timeline", struct{}{}); err != nil {
+				log.Warn("timeline event not published", "error", err)
+			}
+		})
 		settingsChanged := func() {
 			changed()
+			// A repository's decisions may just have been turned on or off.
+			timelineChanged()
 			scheduler.Wake()
 			featureLog.Wake()
 			// A repository may just have been picked.
@@ -493,14 +502,11 @@ func localApplication(paths daemon.Paths, concurrency int, log *slog.Logger) fun
 			if decisionStore, err = decisionlog.Open(filepath.Join(state, "decisions", "decisions.sqlite"), decisionlog.OpenOptions{AbandonPending: true}); err != nil {
 				log.Warn("decision capture is off: its store did not open", "error", err)
 			} else {
-				// The Timeline page reads the store again when it changes.
-				timelineChanged := func() { _ = server.Publish("timeline", struct{}{}) }
 				capture = &decisionlog.Scheduler{Tracker: live, Source: events.service.Store, Log: log, Changed: timelineChanged,
-					Worker: &decisionlog.Capturer{Store: decisionStore, Registry: registry, Config: cfg, Log: log}}
+					Worker: &decisionlog.Capturer{Store: decisionStore, Registry: registry, Config: cfg, Log: log, Changed: timelineChanged}}
 				featureLog = &decisionlog.FeatureWorker{Store: decisionStore, Registry: registry, GitHub: githubReaders(cfg), Config: cfg, Log: log, Changed: timelineChanged}
 				builds.worker.Store(featureLog)
-				timeline = (&decisionlog.Timeline{Store: decisionStore, Registry: registry,
-					Self: decisionlog.ClonePerson(registry), Review: decisionlog.CloneReview(registry)}).Handler()
+				timeline = (&decisionlog.Timeline{Store: decisionStore, Registry: registry, Clone: decisionlog.LocalClones(registry)}).Handler()
 			}
 		}
 		home, _ := os.UserHomeDir()
@@ -746,4 +752,32 @@ func daemonReportOf(report doctor.Daemon, status daemon.Status) doctor.Daemon {
 	report.Incompatible = status.Protocol > daemon.Protocol
 	report.Older = status.Protocol < daemon.Protocol || daemon.Older(status.Version, version())
 	return report
+}
+
+// coalesce calls f at most once every interval: a call within interval of
+// the last one is made when the interval ends, and calls meanwhile join it.
+func coalesce(every time.Duration, f func()) func() {
+	var mu sync.Mutex
+	var last time.Time
+	pending := false
+	return func() {
+		mu.Lock()
+		defer mu.Unlock()
+		if pending {
+			return
+		}
+		wait := every - time.Since(last)
+		if wait <= 0 {
+			last = time.Now()
+			f()
+			return
+		}
+		pending = true
+		time.AfterFunc(wait, func() {
+			mu.Lock()
+			pending, last = false, time.Now()
+			mu.Unlock()
+			f()
+		})
+	}
 }

@@ -53,7 +53,7 @@ type FeatureWorker struct {
 	// FeatureFirstBuildWindow.
 	Window time.Duration
 	// Changed is called after a repository's pass that may have changed
-	// its pull requests or features.
+	// its pull requests, their sessions or its features.
 	Changed func()
 	Log     *slog.Logger
 
@@ -152,8 +152,9 @@ func (w *FeatureWorker) RunOnce(ctx context.Context) {
 		synced, err := w.Sync(ctx, repository.Repository, dir)
 		// The gate again: a repository turned off meanwhile has no
 		// sessions read.
+		var indexed IndexReport
 		if err == nil && !synced.Stopped && w.enabled(ctx, repository.Repository) {
-			_, err = w.Index(ctx, repository.Repository, dir, synced.commits, false)
+			indexed, err = w.Index(ctx, repository.Repository, dir, synced.commits, false)
 		}
 		var assigned AssignReport
 		var summarized SummaryReport
@@ -163,7 +164,7 @@ func (w *FeatureWorker) RunOnce(ctx context.Context) {
 		if err == nil && !synced.Stopped {
 			summarized, err = w.Summarize(ctx, repository.Repository, dir, FeatureOptions{})
 		}
-		if w.Changed != nil && (synced.Listed > 0 || len(assigned.Items) > 0 || len(summarized.Features) > 0) {
+		if w.Changed != nil && (synced.Listed > 0 || indexed.Sessions > 0 || len(assigned.Items) > 0 || len(summarized.Features) > 0) {
 			w.Changed()
 		}
 		if err == nil && !synced.Stopped {

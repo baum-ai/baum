@@ -63,6 +63,9 @@ const TABS: { value: TimelineTab; label: string }[] = [
 ];
 const FEATURE_PANEL = "timeline-feature-panel";
 const SEARCH_DELAY_MS = 300;
+/** Rows a list reads at a time, and the most it reads again at once. */
+const PAGE = 50;
+const MAX_PAGE = 500;
 
 /** The app page of a pull request, by its repository. */
 export function pullRequestHref(repository: string, number: number): string {
@@ -99,23 +102,25 @@ const OPEN_SESSION: OpenSessionSource<string> = {
   ),
 };
 
-export function TimelinePage() {
+type RepositoryList = {
+  available?: false;
+  decisions_enabled?: boolean;
+  repositories?: { repository: string }[];
+  turned_off?: string[];
+};
+
+/** The Timeline page. `revision` changes when the daemon says the decision
+ *  log changed (its `timeline` event) or the event stream reconnected, and
+ *  the page reads everything it shows again. */
+export function TimelinePage({ revision }: { revision: number }) {
   const url = useUrlState();
-  const [repositories, setRepositories] = useState<string[] | null>(null);
+  const [list, setList] = useState<RepositoryList | null>(null);
   const [failed, setFailed] = useState(false);
-  // Bumped when the daemon says the log changed, so every list and open
-  // detail is read again.
-  const [revision, setRevision] = useState(0);
   useEffect(() => {
     const abort = new AbortController();
-    request<{ repositories?: { repository: string }[]; available?: false }>(
-      "api/timeline/repositories",
-      undefined,
-      "GET",
-      abort.signal,
-    )
+    request<RepositoryList>("api/timeline/repositories", undefined, "GET", abort.signal)
       .then((body) => {
-        setRepositories((body.repositories ?? []).map((each) => each.repository));
+        setList(body);
         setFailed(false);
       })
       .catch(() => {
@@ -123,13 +128,7 @@ export function TimelinePage() {
       });
     return () => abort.abort();
   }, [revision]);
-  useEffect(() => {
-    if (typeof EventSource === "undefined") return;
-    const source = new EventSource(appURL("api/events"));
-    const changed = () => setRevision((n) => n + 1);
-    source.addEventListener("timeline", changed);
-    return () => source.close();
-  }, []);
+  const repositories = list?.repositories?.map((each) => each.repository) ?? null;
   const asked = url.search.get("repo");
   const repository =
     repositories?.find((name) => name.toLowerCase() === asked?.toLowerCase()) ??
@@ -138,19 +137,35 @@ export function TimelinePage() {
   return (
     <>
       <PageBar title="Timeline" detail="What was decided and built, from your agent sessions" />
-      {failed && !repositories ? (
+      {failed && !list ? (
         <div className="local-page-body">
           <Failed>The Timeline could not be loaded.</Failed>
         </div>
-      ) : !repositories ? (
+      ) : !list ? (
         <div className="local-page-body">
           <LoadingStatus block>Loading the Timeline…</LoadingStatus>
         </div>
-      ) : !repository ? (
+      ) : list.available === false ? (
+        <div className="local-page-body">
+          <Empty title="The Timeline is not available">
+            baum could not open its decision store on this computer, so there is nothing to show.
+            Diagnostics in Settings may say why.
+          </Empty>
+        </div>
+      ) : list.decisions_enabled === false ? (
+        <div className="local-page-body">
+          <Empty title="Decision capture is off">
+            baum's decisions switch is off, so it reads no agent sessions and shows no Timeline.
+          </Empty>
+        </div>
+      ) : !repositories || !repository ? (
         <div className="local-page-body">
           <Empty title="No repositories with decisions">
+            {list.turned_off && list.turned_off.length > 0
+              ? `Decisions are turned off for ${list.turned_off.join(", ")}. `
+              : null}
             The Timeline shows the decisions baum reads from agent sessions in your picked
-            repositories. Pick one in Repositories to start.
+            repositories with decisions on. Pick one in Repositories to start.
           </Empty>
         </div>
       ) : (
@@ -182,22 +197,49 @@ function usePages<T>(
   query: string,
   key: "features" | "decisions",
   revision: number,
+  active: boolean,
 ): Pages<T> {
-  const [state, setState] = useState<{
+  type State = {
     query: string;
+    revision: number;
     rows: T[];
     cursor: string | null;
     status: "loading" | "idle" | "failed";
     loaded: boolean;
     coverage: Coverage | null;
-  }>({ query, rows: [], cursor: null, status: "loading", loaded: false, coverage: null });
+  };
+  const [state, setState] = useState<State>({
+    query,
+    revision,
+    rows: [],
+    cursor: null,
+    status: "loading",
+    loaded: false,
+    coverage: null,
+  });
+  const latest = useRef(state);
+  latest.current = state;
   useEffect(() => {
+    // Only the tab shown reads its list.
+    if (!active) return;
     const abort = new AbortController();
+    const base = latest.current;
+    // Read again for a change in the log, the list keeps as many rows as
+    // it had loaded.
+    const again = base.query === query && base.loaded;
+    if (again && base.revision === revision) return;
+    const limit = again ? Math.min(MAX_PAGE, Math.max(PAGE, base.rows.length)) : PAGE;
     setState((current) => ({ ...current, status: "loading" }));
-    request<Record<string, unknown>>(`${path}?${query}`, undefined, "GET", abort.signal)
+    request<Record<string, unknown>>(
+      `${path}?${query}${limit === PAGE ? "" : `&limit=${limit}`}`,
+      undefined,
+      "GET",
+      abort.signal,
+    )
       .then((body) =>
         setState({
           query,
+          revision,
           rows: (body[key] as T[]) ?? [],
           cursor: (body.next_cursor as string | null) ?? null,
           status: "idle",
@@ -209,9 +251,7 @@ function usePages<T>(
         if (!abort.signal.aborted) setState((current) => ({ ...current, status: "failed" }));
       });
     return () => abort.abort();
-  }, [path, query, key, revision]);
-  const latest = useRef(state);
-  latest.current = state;
+  }, [path, query, key, revision, active]);
   const loadMore = useCallback(() => {
     const base = latest.current;
     if (!base.cursor || base.status === "loading") return;
@@ -338,12 +378,14 @@ function TimelineLog({
     featureQuery.toString(),
     "features",
     revision,
+    tab === "features",
   );
   const decisions = usePages<DecisionSummary>(
     "api/timeline/decisions",
     decisionQuery.toString(),
     "decisions",
     revision,
+    tab === "all",
   );
 
   const [details, loadDetail] = useDetails(readDecision, revision);

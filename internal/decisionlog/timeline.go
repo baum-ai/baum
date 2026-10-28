@@ -10,6 +10,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 	"unicode"
 
@@ -24,8 +25,12 @@ import (
 // its sessions' current decisions, in the view models of the review
 // viewer's decision log (oss/viewer/src/decision-log.ts).
 
-// TimelinePageSize is how many rows a list answers with at most.
-const TimelinePageSize = 50
+// TimelinePageSize is how many rows a list answers with unless asked for
+// more; TimelineMaxPage is the most it answers with.
+const (
+	TimelinePageSize = 50
+	TimelineMaxPage  = 500
+)
 
 // TimelineRegistry is what the Timeline reads of the repository registry;
 // *repos.Registry is one.
@@ -42,17 +47,24 @@ type Person struct {
 	AvatarURL *string `json:"avatar_url"`
 }
 
+// TimelineClone is what one request reads of a repository's clone; it reads
+// each once.
+type TimelineClone interface {
+	// Person is who this machine's sessions belong to, nil when unknown.
+	Person(ctx context.Context) *Person
+	// Review is the summary of the pull request's latest saved review and
+	// its state against head ("current" or "outdated"), "" and "none"
+	// without one.
+	Review(ctx context.Context, number int, head string) (summary, state string)
+}
+
 // Timeline serves /api/timeline/.
 type Timeline struct {
 	Store    *Store
 	Registry TimelineRegistry
-	// Self is the person this machine's sessions in repository belong to,
-	// nil when unknown; nil reads nobody.
-	Self func(ctx context.Context, repository string) *Person
-	// Review is the summary of the pull request's latest saved review and
-	// its state against head ("current" or "outdated"), "" and "none"
-	// without one; nil reads none.
-	Review func(ctx context.Context, repository string, number int, head string) (summary, state string)
+	// Clone opens the repository's clone for a request; nil, or a nil
+	// answer, reads nobody and no review.
+	Clone func(ctx context.Context, repository string) TimelineClone
 }
 
 type timelineDecision struct {
@@ -120,37 +132,46 @@ type timelineSession struct {
 func (t *Timeline) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/timeline/repositories", func(w http.ResponseWriter, r *http.Request) {
-		names, err := t.repositories(r.Context())
+		answer, err := t.repositoryList(r.Context())
 		if err != nil {
 			timelineError(w, err)
 			return
 		}
-		list := make([]map[string]string, len(names))
-		for i, name := range names {
-			list[i] = map[string]string{"repository": name}
-		}
-		writeTimeline(w, map[string]any{"repositories": list})
+		writeTimeline(w, answer)
 	})
 	mux.HandleFunc("GET /api/timeline/features", func(w http.ResponseWriter, r *http.Request) {
-		repository, offset, ok := t.listQuery(w, r)
+		repository, page, ok := t.listQuery(w, r)
 		if !ok {
 			return
 		}
 		q := r.URL.Query()
 		statuses := multi(q, "status")
-		snap, err := t.snapshot(r.Context(), repository, q.Get("q"))
+		snap, err := t.snapshot(r.Context(), repository, q.Get("q"), "")
 		if err != nil {
 			timelineError(w, err)
 			return
 		}
-		rows := []timelineFeature{}
-		for _, f := range snap.ordered() {
-			if len(statuses) == 0 || slices.Contains(statuses, string(f.row.Status)) {
-				rows = append(rows, f.row)
-			}
+		var after *snapshotFeature
+		if page.after != nil {
+			after = &snapshotFeature{createdAt: page.after.at, row: timelineFeature{ID: page.after.id}}
 		}
-		page, next := pageOf(rows, offset)
-		writeTimeline(w, map[string]any{"features": page, "next_cursor": next, "order": "newest"})
+		rows := []timelineFeature{}
+		var next *string
+		for _, f := range snap.ordered() {
+			if after != nil && featureOrder(f, after) <= 0 {
+				continue
+			}
+			if len(statuses) > 0 && !slices.Contains(statuses, string(f.row.Status)) {
+				continue
+			}
+			if len(rows) == page.limit {
+				last := rows[len(rows)-1]
+				next = cursorOf(lastActive(snap.features[last.ID]), last.ID)
+				break
+			}
+			rows = append(rows, f.row)
+		}
+		writeTimeline(w, map[string]any{"features": rows, "next_cursor": next, "order": "newest"})
 	})
 	mux.HandleFunc("GET /api/timeline/features/{id}", func(w http.ResponseWriter, r *http.Request) {
 		detail, err := t.feature(r.Context(), r.PathValue("id"))
@@ -161,16 +182,16 @@ func (t *Timeline) Handler() http.Handler {
 		writeTimeline(w, detail)
 	})
 	mux.HandleFunc("GET /api/timeline/decisions", func(w http.ResponseWriter, r *http.Request) {
-		repository, offset, ok := t.listQuery(w, r)
+		repository, page, ok := t.listQuery(w, r)
 		if !ok {
 			return
 		}
-		page, err := t.decisions(r.Context(), repository, r.URL.Query(), offset)
+		answer, err := t.decisions(r.Context(), repository, r.URL.Query(), page)
 		if err != nil {
 			timelineError(w, err)
 			return
 		}
-		writeTimeline(w, page)
+		writeTimeline(w, answer)
 	})
 	mux.HandleFunc("GET /api/timeline/decisions/{id}", func(w http.ResponseWriter, r *http.Request) {
 		detail, err := t.decision(r.Context(), r.PathValue("id"))
@@ -206,10 +227,10 @@ func writeTimeline(w http.ResponseWriter, body any) {
 	_ = json.NewEncoder(w).Encode(body)
 }
 
-// repositories are the picked repositories whose decisions are not turned
-// off, by the registry's names. The automatic master switch is not read:
-// pausing capture does not hide what was captured.
-func (t *Timeline) repositories(ctx context.Context) ([]string, error) {
+// repositoryList answers /repositories: whether the decisions switch is on,
+// the picked repositories the Timeline serves and those whose decisions
+// are turned off.
+func (t *Timeline) repositoryList(ctx context.Context) (map[string]any, error) {
 	prefs, err := t.Registry.Preferences(ctx)
 	if err != nil {
 		return nil, err
@@ -218,9 +239,27 @@ func (t *Timeline) repositories(ctx context.Context) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
+	enabled := prefs.Decisions.Enabled == nil || *prefs.Decisions.Enabled
+	served, off := []map[string]string{}, []string{}
+	for _, name := range servedRepositories(prefs, list) {
+		served = append(served, map[string]string{"repository": name})
+	}
+	for _, r := range list {
+		if r.Settings.Decisions != nil && !*r.Settings.Decisions {
+			off = append(off, r.Repository)
+		}
+	}
+	slices.Sort(off)
+	return map[string]any{"decisions_enabled": enabled, "repositories": served, "turned_off": off}, nil
+}
+
+// servedRepositories are the picked repositories whose decisions are not
+// turned off, by the registry's names. The automatic master switch is not
+// read: pausing capture does not hide what was captured.
+func servedRepositories(prefs repos.Preferences, list []repos.Repository) []string {
 	names := []string{}
 	if prefs.Decisions.Enabled != nil && !*prefs.Decisions.Enabled {
-		return names, nil
+		return names
 	}
 	for _, r := range list {
 		if r.Settings.Decisions == nil || *r.Settings.Decisions {
@@ -228,17 +267,21 @@ func (t *Timeline) repositories(ctx context.Context) ([]string, error) {
 		}
 	}
 	slices.Sort(names)
-	return names, nil
+	return names
 }
 
 // allowed is the registry's name of repository when the Timeline serves
 // it.
 func (t *Timeline) allowed(ctx context.Context, repository string) (string, error) {
-	names, err := t.repositories(ctx)
+	prefs, err := t.Registry.Preferences(ctx)
 	if err != nil {
 		return "", err
 	}
-	for _, name := range names {
+	list, err := t.Registry.Repositories(ctx)
+	if err != nil {
+		return "", err
+	}
+	for _, name := range servedRepositories(prefs, list) {
 		if strings.EqualFold(name, repository) {
 			return name, nil
 		}
@@ -246,34 +289,51 @@ func (t *Timeline) allowed(ctx context.Context, repository string) (string, erro
 	return "", errTimelineRepository
 }
 
-// listQuery reads a list's repository and cursor, a page offset.
-func (t *Timeline) listQuery(w http.ResponseWriter, r *http.Request) (string, int, bool) {
+// listPage is a list's page: the row its cursor names, rows come after,
+// and how many.
+type listPage struct {
+	after *listCursor
+	limit int
+}
+
+type listCursor struct {
+	at time.Time
+	id string
+}
+
+// cursorOf names a row by its time and id, the lists' order.
+func cursorOf(at time.Time, id string) *string {
+	cursor := strconv.FormatInt(at.UnixMilli(), 10) + "|" + id
+	return &cursor
+}
+
+// listQuery reads a list's repository, cursor and limit.
+func (t *Timeline) listQuery(w http.ResponseWriter, r *http.Request) (string, listPage, bool) {
 	q := r.URL.Query()
+	page := listPage{limit: TimelinePageSize}
 	repository, err := t.allowed(r.Context(), q.Get("repository"))
 	if err != nil {
 		timelineError(w, err)
-		return "", 0, false
+		return "", page, false
 	}
-	offset := 0
 	if raw := q.Get("cursor"); raw != "" {
-		if offset, err = strconv.Atoi(raw); err != nil || offset < 0 {
+		at, id, found := strings.Cut(raw, "|")
+		ms, err := strconv.ParseInt(at, 10, 64)
+		if !found || err != nil || id == "" {
 			http.Error(w, "invalid cursor", http.StatusBadRequest)
-			return "", 0, false
+			return "", page, false
 		}
+		page.after = &listCursor{at: time.UnixMilli(ms), id: id}
 	}
-	return repository, offset, true
-}
-
-func pageOf[T any](rows []T, offset int) ([]T, *string) {
-	if offset >= len(rows) {
-		return []T{}, nil
+	if raw := q.Get("limit"); raw != "" {
+		n, err := strconv.Atoi(raw)
+		if err != nil || n < 1 || n > TimelineMaxPage {
+			http.Error(w, "invalid limit", http.StatusBadRequest)
+			return "", page, false
+		}
+		page.limit = n
 	}
-	end := min(len(rows), offset+TimelinePageSize)
-	if end == len(rows) {
-		return rows[offset:end], nil
-	}
-	next := strconv.Itoa(end)
-	return rows[offset:end], &next
+	return repository, page, true
 }
 
 // multi reads a parameter given repeatedly or comma separated.
@@ -306,11 +366,19 @@ func sessionID(agent, id string) string { return agent + ":" + id }
 // harness is the agent as the viewer names its harness.
 func harness(agent string) string { return strings.ReplaceAll(agent, "-", "_") }
 
-func (t *Timeline) self(ctx context.Context, repository string) *Person {
-	if t.Self == nil {
+// cloneOf opens the repository's clone for one request.
+func (t *Timeline) cloneOf(ctx context.Context, repository string) TimelineClone {
+	if t.Clone == nil {
 		return nil
 	}
-	return t.Self(ctx, repository)
+	return t.Clone(ctx, repository)
+}
+
+func personOf(ctx context.Context, clone TimelineClone) *Person {
+	if clone == nil {
+		return nil
+	}
+	return clone.Person(ctx)
 }
 
 func summaryRow(d Decision, person *Person) timelineDecision {
@@ -357,6 +425,7 @@ type timelineSnapshot struct {
 	repository string
 	features   map[string]*snapshotFeature
 	branches   map[SessionKey]string
+	clone      TimelineClone
 	self       *Person
 }
 
@@ -367,28 +436,34 @@ func (s *timelineSnapshot) ordered() []*snapshotFeature {
 			list = append(list, f)
 		}
 	}
-	slices.SortFunc(list, func(a, b *snapshotFeature) int {
-		return cmp.Or(lastActive(b).Compare(lastActive(a)), cmp.Compare(a.row.ID, b.row.ID))
-	})
+	slices.SortFunc(list, featureOrder)
 	return list
+}
+
+// featureOrder is the features list's: last activity (else creation)
+// newest first, then id.
+func featureOrder(a, b *snapshotFeature) int {
+	return cmp.Or(lastActive(b).Compare(lastActive(a)), cmp.Compare(a.row.ID, b.row.ID))
 }
 
 func lastActive(f *snapshotFeature) time.Time {
 	if f.row.LastActivityAt != nil {
-		return *f.row.LastActivityAt
+		return f.row.LastActivityAt.Truncate(time.Millisecond)
 	}
-	return f.createdAt
+	return f.createdAt.Truncate(time.Millisecond)
 }
 
-// snapshot reads the repository's features. With q, those it does not
-// match are read but not matched: the list leaves them out.
-func (t *Timeline) snapshot(ctx context.Context, repository, q string) (*timelineSnapshot, error) {
+// snapshot reads the repository's features, or with only that one. With q,
+// those it does not match are read but not matched: the list leaves them
+// out.
+func (t *Timeline) snapshot(ctx context.Context, repository, q, only string) (*timelineSnapshot, error) {
 	db := t.Store.db
 	snap := &timelineSnapshot{repository: repository, features: map[string]*snapshotFeature{}, branches: map[SessionKey]string{}}
 	version, err := liveVersion(ctx, db, repository, false, t.Store.now())
 	if err != nil || version == 0 {
 		return snap, err
 	}
+	// ?3 names the one feature read, '' every one.
 	type featureRow struct {
 		id, title, description, digest, keys string
 		pending                              bool
@@ -398,7 +473,7 @@ func (t *Timeline) snapshot(ctx context.Context, repository, q string) (*timelin
 		var f featureRow
 		return f, rows.Scan(&f.id, &f.title, &f.description, &f.digest, &f.keys, &f.pending, &f.created)
 	})(db.QueryContext(ctx, `SELECT id, title, description, digest, key_decisions_json, summarized_version < membership_version, created_at
-FROM feature WHERE version_id=? AND repository=? AND merged_into IS NULL`, version, repository))
+FROM feature WHERE version_id=?1 AND repository=?2 AND merged_into IS NULL AND (?3='' OR id=?3)`, version, repository, only))
 	if err != nil {
 		return nil, err
 	}
@@ -417,13 +492,16 @@ FROM feature WHERE version_id=? AND repository=? AND merged_into IS NULL`, versi
 		}
 		snap.features[f.id] = feature
 	}
-	if match := matchQuery(q); match != "" || strings.TrimSpace(q) != "" {
+	if len(snap.features) == 0 {
+		return snap, nil
+	}
+	if strings.TrimSpace(q) != "" {
 		number, _ := strconv.Atoi(strings.TrimPrefix(strings.TrimSpace(q), "#"))
 		matched, err := collect(scanString)(db.QueryContext(ctx, `SELECT id FROM feature WHERE version_id=?1 AND repository=?2
 AND (rowid IN (SELECT rowid FROM feature_search WHERE feature_search MATCH ?3)
  OR id IN (SELECT fp.feature_id FROM feature_pull fp JOIN pull_request p ON p.repository=fp.repository AND p.number=fp.number
   WHERE fp.version_id=?1 AND fp.repository=?2 AND (p.number=?4 OR p.rowid IN (SELECT rowid FROM pull_search WHERE pull_search MATCH ?3))))`,
-			version, repository, cmp.Or(match, `""`), number))
+			version, repository, cmp.Or(matchQuery(q), `""`), number))
 		if err != nil {
 			return nil, err
 		}
@@ -443,7 +521,7 @@ AND (rowid IN (SELECT rowid FROM feature_search WHERE feature_search MATCH ?3)
 			&p.pull.merged, &p.pull.bot, &p.created, &p.updated)
 	})(db.QueryContext(ctx, `SELECT fp.feature_id, p.number, p.title, p.state, p.head_sha, p.author, p.draft, p.merged_at IS NOT NULL, p.bot,
 p.created_at, p.updated_at FROM feature_pull fp JOIN pull_request p ON p.repository=fp.repository AND p.number=fp.number
-WHERE fp.version_id=? AND fp.repository=? ORDER BY p.created_at DESC, p.number DESC`, version, repository))
+WHERE fp.version_id=?1 AND fp.repository=?2 AND (?3='' OR fp.feature_id=?3) ORDER BY p.created_at DESC, p.number DESC`, version, repository, only))
 	if err != nil {
 		return nil, err
 	}
@@ -453,6 +531,8 @@ WHERE fp.version_id=? AND fp.repository=? ORDER BY p.created_at DESC, p.number D
 			f.pulls = append(f.pulls, p.pull)
 		}
 	}
+	// The repository's captured sessions only: a session captured under
+	// another repository is not this Timeline's.
 	type sessionRow struct {
 		feature string
 		key     SessionKey
@@ -465,11 +545,11 @@ WHERE fp.version_id=? AND fp.repository=? ORDER BY p.created_at DESC, p.number D
 	})(db.QueryContext(ctx, `SELECT DISTINCT fp.feature_id, sc.agent, sc.session_id, cs.branch, 0 FROM feature_pull fp
 JOIN pull_commit pc ON pc.repository=fp.repository AND pc.number=fp.number
 JOIN session_commit sc ON sc.repository=pc.repository AND sc.sha=pc.sha
-JOIN capture_session cs ON cs.agent=sc.agent AND cs.session_id=sc.session_id
-WHERE fp.version_id=?1 AND fp.repository=?2
+JOIN capture_session cs ON cs.agent=sc.agent AND cs.session_id=sc.session_id AND cs.repository=?2
+WHERE fp.version_id=?1 AND fp.repository=?2 AND (?3='' OR fp.feature_id=?3)
 UNION SELECT fs.feature_id, fs.agent, fs.session_id, cs.branch, 1 FROM feature_session fs
-JOIN capture_session cs ON cs.agent=fs.agent AND cs.session_id=fs.session_id
-WHERE fs.version_id=?1 AND fs.repository=?2 ORDER BY 2, 3, 1`, version, repository))
+JOIN capture_session cs ON cs.agent=fs.agent AND cs.session_id=fs.session_id AND cs.repository=?2
+WHERE fs.version_id=?1 AND fs.repository=?2 AND (?3='' OR fs.feature_id=?3) ORDER BY 2, 3, 1`, version, repository, only))
 	if err != nil {
 		return nil, err
 	}
@@ -485,24 +565,24 @@ WHERE fs.version_id=?1 AND fs.repository=?2 ORDER BY 2, 3, 1`, version, reposito
 		if s.own {
 			f.ownSessions = append(f.ownSessions, s.key)
 		}
-		if !slices.Contains(keys, s.key) {
+		if _, seen := snap.branches[s.key]; !seen {
 			keys = append(keys, s.key)
 		}
 		snap.branches[s.key] = s.branch
 	}
 	// Each session's decisions go to one feature each, as its text reads
 	// them, and under that feature's pull request the attributor chooses.
+	links, err := t.Store.sessionLinksOf(ctx, version, repository, keys)
+	if err != nil {
+		return nil, err
+	}
+	current, err := t.Store.currentOf(ctx, keys)
+	if err != nil {
+		return nil, err
+	}
 	for _, key := range keys {
-		links, err := t.Store.SessionLinks(ctx, repository, key.Agent, key.ID)
-		if err != nil {
-			return nil, err
-		}
-		attributor := links.Attributor()
-		current, err := t.Store.Current(ctx, key)
-		if err != nil {
-			return nil, err
-		}
-		for _, d := range current {
+		attributor := links[key].Attributor()
+		for _, d := range current[key] {
 			id := attributor.Attribute(d.Files)
 			f := snap.features[id]
 			if f == nil {
@@ -512,7 +592,8 @@ WHERE fs.version_id=?1 AND fs.repository=?2 ORDER BY 2, 3, 1`, version, reposito
 			f.decisions = append(f.decisions, attributedDecision{Decision: d, pull: pull})
 		}
 	}
-	snap.self = t.self(ctx, repository)
+	snap.clone = t.cloneOf(ctx, repository)
+	snap.self = personOf(ctx, snap.clone)
 	for _, f := range snap.features {
 		f.summarize(snap.self)
 	}
@@ -577,15 +658,14 @@ func (f *snapshotFeature) summarize(self *Person) {
 			continue
 		}
 		i := slices.IndexFunc(earliest, func(d Decision) bool { return d.ID == current[0].ID })
-		d := earliest[i]
-		row := summaryRow(d, nil)
-		f.row.KeyDecisions = append(f.row.KeyDecisions, timelineKeyDecision{ID: d.ID, SessionID: row.SessionID, Turn: row.Turn,
+		row := summaryRow(earliest[i], nil)
+		f.row.KeyDecisions = append(f.row.KeyDecisions, timelineKeyDecision{ID: row.ID, SessionID: row.SessionID, Turn: row.Turn,
 			Who: row.Who, Category: row.Category, Summary: row.Summary})
 	}
 }
 
 // feature is a feature's detail; one merged into another answers with the
-// survivor's id, one of a version no longer in use as archived.
+// survivor's, one of a version no longer in use as archived.
 func (t *Timeline) feature(ctx context.Context, id string) (any, error) {
 	db := t.Store.db
 	var repository string
@@ -617,11 +697,7 @@ func (t *Timeline) feature(ctx context.Context, id string) (any, error) {
 	if live != version {
 		return map[string]bool{"archived": true}, nil
 	}
-	return t.featureDetail(ctx, repository, id)
-}
-
-func (t *Timeline) featureDetail(ctx context.Context, repository, id string) (any, error) {
-	snap, err := t.snapshot(ctx, repository, "")
+	snap, err := t.snapshot(ctx, repository, "", id)
 	if err != nil {
 		return nil, err
 	}
@@ -639,8 +715,7 @@ func (t *Timeline) featureDetail(ctx context.Context, repository, id string) (an
 	}
 	pulls := []timelinePull{}
 	for _, p := range f.pulls {
-		pull := t.pull(ctx, repository, p)
-		pull.Decisions = []timelineDecision{}
+		pull := pullOf(ctx, snap.clone, p)
 		for _, d := range f.decisions {
 			if d.pull == p.number {
 				pull.Decisions = append(pull.Decisions, summaryRow(d.Decision, snap.self))
@@ -659,8 +734,8 @@ func (t *Timeline) featureDetail(ctx context.Context, repository, id string) (an
 		if len(held) == 0 && !slices.Contains(f.ownSessions, key) {
 			continue
 		}
-		session := t.session(key, snap.branches[key], snap.self)
-		session.Decisions = append([]timelineDecision{}, held...)
+		session := sessionOf(key, snap.branches[key], snap.self)
+		session.Decisions = append(session.Decisions, held...)
 		sessions = append(sessions, session)
 	}
 	if err := t.pullSummaries(ctx, repository, pulls); err != nil {
@@ -669,22 +744,22 @@ func (t *Timeline) featureDetail(ctx context.Context, repository, id string) (an
 	return map[string]any{"feature": row, "pull_requests": pulls, "sessions": sessions}, nil
 }
 
-func (t *Timeline) session(key SessionKey, branch string, person *Person) timelineSession {
+func sessionOf(key SessionKey, branch string, person *Person) timelineSession {
 	return timelineSession{ID: sessionID(key.Agent, key.ID), Person: person, Vendor: harness(key.Agent), Branch: branch,
 		Decisions: []timelineDecision{}}
 }
 
-// pull is a pull request as a detail lists it, with its saved review's
+// pullOf is a pull request as a detail lists it, with its saved review's
 // summary when there is one.
-func (t *Timeline) pull(ctx context.Context, repository string, p snapshotPull) timelinePull {
+func pullOf(ctx context.Context, clone TimelineClone, p snapshotPull) timelinePull {
 	state := "closed"
 	if p.state == "open" && !p.merged {
 		state = "open"
 	}
 	pull := timelinePull{Number: p.number, Title: p.title, State: state, Draft: p.draft, Merged: p.merged, ReviewState: "none",
 		Decisions: []timelineDecision{}}
-	if t.Review != nil {
-		summary, review := t.Review(ctx, repository, p.number, p.head)
+	if clone != nil {
+		summary, review := clone.Review(ctx, p.number, p.head)
 		pull.ReviewState = cmp.Or(review, "none")
 		if summary != "" {
 			pull.Summary = &summary
@@ -720,7 +795,7 @@ func (t *Timeline) pullSummaries(ctx context.Context, repository string, pulls [
 
 // decisions is a page of the repository's sessions' current decisions,
 // newest first, with the coverage of its sessions.
-func (t *Timeline) decisions(ctx context.Context, repository string, q map[string][]string, offset int) (map[string]any, error) {
+func (t *Timeline) decisions(ctx context.Context, repository string, q map[string][]string, page listPage) (map[string]any, error) {
 	get := func(name string) string {
 		if values := q[name]; len(values) > 0 {
 			return strings.TrimSpace(values[0])
@@ -758,6 +833,10 @@ func (t *Timeline) decisions(ctx context.Context, repository string, q map[strin
 			args = append(args, day.UnixMilli())
 		}
 	}
+	if page.after != nil {
+		where = append(where, "(d.decided_at < ? OR (d.decided_at = ? AND d.decision_id > ?))")
+		args = append(args, page.after.at.UnixMilli(), page.after.at.UnixMilli(), page.after.id)
+	}
 	db := t.Store.db
 	type row struct {
 		agent, session, id string
@@ -772,22 +851,22 @@ func (t *Timeline) decisions(ctx context.Context, repository string, q map[strin
 	})(db.QueryContext(ctx, `SELECT d.decision_id, d.agent, d.session_id, d.first_turn, d.decided_at, d.who, d.category, d.summary, d.superseded,
 (SELECT count(*) FROM decision_file f WHERE f.decision_id=d.decision_id)
 FROM decision d JOIN capture_session cs ON cs.agent=d.agent AND cs.session_id=d.session_id
-WHERE `+strings.Join(where, " AND ")+` ORDER BY d.decided_at DESC, d.decision_id LIMIT ? OFFSET ?`,
-		append(args, TimelinePageSize+1, offset)...))
+WHERE `+strings.Join(where, " AND ")+` ORDER BY d.decided_at DESC, d.decision_id LIMIT ?`,
+		append(args, page.limit+1)...))
 	if err != nil {
 		return nil, err
 	}
-	self := t.self(ctx, repository)
+	self := personOf(ctx, t.cloneOf(ctx, repository))
 	list := []timelineDecision{}
-	for _, r := range rows[:min(len(rows), TimelinePageSize)] {
+	for _, r := range rows[:min(len(rows), page.limit)] {
 		d := r.decision
 		d.ID, d.SessionID, d.Vendor, d.DecidedAt, d.Person = r.id, sessionID(r.agent, r.session), harness(r.agent), time.UnixMilli(r.decided), self
 		list = append(list, d)
 	}
 	var next *string
-	if len(rows) > TimelinePageSize {
-		cursor := strconv.Itoa(offset + TimelinePageSize)
-		next = &cursor
+	if len(rows) > page.limit {
+		last := list[len(list)-1]
+		next = cursorOf(last.DecidedAt, last.ID)
 	}
 	coverage, err := t.coverage(ctx, repository)
 	if err != nil {
@@ -890,13 +969,14 @@ WHERE sc.agent=? AND sc.session_id=? AND sc.repository=? ORDER BY p.number DESC`
 	if err != nil {
 		return nil, err
 	}
+	clone := t.cloneOf(ctx, repository)
 	listed := make([]timelinePull, len(pulls))
 	for i, p := range pulls {
-		listed[i] = t.pull(ctx, repository, p)
+		listed[i] = pullOf(ctx, clone, p)
 		listed[i].Summary = nil
 	}
 	return map[string]any{
-		"session":   t.session(key, branch, t.self(ctx, repository)),
+		"session":   sessionOf(key, branch, personOf(ctx, clone)),
 		"decisions": list,
 		// The Timeline serves no transcript text.
 		"turns":            []any{},
@@ -905,72 +985,74 @@ WHERE sc.agent=? AND sc.session_id=? AND sc.repository=? ORDER BY p.number DESC`
 	}, nil
 }
 
-// availableClone is the first available clone of the picked repository.
-func availableClone(ctx context.Context, registry TimelineRegistry, repository string) (repos.Clone, bool) {
-	list, err := registry.Repositories(ctx)
-	if err != nil {
-		return repos.Clone{}, false
-	}
-	for _, r := range list {
-		if !strings.EqualFold(r.Repository, repository) {
-			continue
+// LocalClones is a Timeline's Clone: the first available clone of the
+// picked repository, whose git user.email names this machine's sessions
+// and whose review store holds its saved reviews.
+func LocalClones(registry TimelineRegistry) func(context.Context, string) TimelineClone {
+	return func(ctx context.Context, repository string) TimelineClone {
+		list, err := registry.Repositories(ctx)
+		if err != nil {
+			return nil
 		}
-		for _, c := range r.Clones {
-			if c.Available {
-				return c, true
+		for _, r := range list {
+			if !strings.EqualFold(r.Repository, repository) {
+				continue
+			}
+			for _, c := range r.Clones {
+				if c.Available {
+					return &localClone{clone: c}
+				}
 			}
 		}
-	}
-	return repos.Clone{}, false
-}
-
-// ClonePerson is a Timeline's Self: the person named by the git user.email
-// of the repository's clone, nobody without one.
-func ClonePerson(registry TimelineRegistry) func(context.Context, string) *Person {
-	return func(ctx context.Context, repository string) *Person {
-		c, ok := availableClone(ctx, registry, repository)
-		if !ok {
-			return nil
-		}
-		clone, err := gitlocal.Open(ctx, c.Path, gitlocal.Options{})
-		if err != nil {
-			return nil
-		}
-		defer func() { _ = clone.Close() }()
-		email, err := clone.UserEmail(ctx)
-		if err != nil || email == "" {
-			return nil
-		}
-		return &Person{Email: email}
+		return nil
 	}
 }
 
-// CloneReview is a Timeline's Review: the latest review of the pull
-// request saved in the repository's clone.
-func CloneReview(registry TimelineRegistry) func(context.Context, string, int, string) (string, string) {
-	return func(ctx context.Context, repository string, number int, head string) (string, string) {
-		c, ok := availableClone(ctx, registry, repository)
-		if !ok {
-			return "", "none"
-		}
-		versions, err := store.Open(c.CommonDir, "", false)
+// localClone reads its clone's email and review store at most once.
+type localClone struct {
+	clone        repos.Clone
+	personOnce   sync.Once
+	person       *Person
+	versionsOnce sync.Once
+	versions     *store.Store
+}
+
+func (c *localClone) Person(ctx context.Context) *Person {
+	c.personOnce.Do(func() {
+		repo, err := gitlocal.Open(ctx, c.clone.Path, gitlocal.Options{})
 		if err != nil {
-			return "", "none"
+			return
 		}
-		latest, err := versions.Latest(ctx, store.Key{Repository: c.Repository, Number: number})
-		if err != nil {
-			return "", "none"
+		defer func() { _ = repo.Close() }()
+		if email, err := repo.UserEmail(ctx); err == nil && email != "" {
+			c.person = &Person{Email: email}
 		}
-		var doc struct {
-			Summary struct {
-				Text string `json:"text"`
-			} `json:"summary"`
+	})
+	return c.person
+}
+
+func (c *localClone) Review(ctx context.Context, number int, head string) (string, string) {
+	c.versionsOnce.Do(func() {
+		if versions, err := store.Open(c.clone.CommonDir, "", false); err == nil {
+			c.versions = versions
 		}
-		_ = json.Unmarshal(latest.Document, &doc)
-		state := "outdated"
-		if latest.Metadata.Head == head {
-			state = "current"
-		}
-		return strings.TrimSpace(doc.Summary.Text), state
+	})
+	if c.versions == nil {
+		return "", "none"
 	}
+	latest, err := c.versions.Latest(ctx, store.Key{Repository: c.clone.Repository, Number: number})
+	if err != nil {
+		return "", "none"
+	}
+	var doc struct {
+		Summary struct {
+			Text string `json:"text"`
+		} `json:"summary"`
+	}
+	_ = json.Unmarshal(latest.Document, &doc)
+	state := "outdated"
+	if latest.Metadata.Head == head {
+		state = "current"
+	}
+	return strings.TrimSpace(doc.Summary.Text), state
 }

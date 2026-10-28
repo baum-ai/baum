@@ -380,10 +380,14 @@ skipped by reason, being read); a decision opened by address but not listed
 shows above the list. A decision's detail says the Timeline shows no prompts and
 links to the session's page (`?page=sessions&session=<agent>:<id>`, which has it
 while the session is tracked); a pull request links to its PR page
-(`?repository=&pr=`). Lists load 50 rows at a time with a button for more, and
-everything is read again when the daemon publishes a `timeline` event. With no
-features yet, the page explains that features appear as pull requests and
-sessions are placed and offers All decisions.
+(`?repository=&pr=`). Only the tab shown reads its list, 50 rows at a time
+with a button for more. The app's event stream counts `timeline` events and
+its reconnections; on each the page reads its repositories, list (as many rows
+as it had loaded, up to 500) and open details again. With no features yet, the
+page explains that features appear as pull requests and sessions are placed and
+offers All decisions. It says so when the daemon has no decision store, when
+the decisions switch is off, and which picked repositories have their decisions
+turned off.
 
 The Analytics page (`?page=analytics&days=7|30|90&repo=&agent=`, `src/analytics.tsx`)
 reads `GET api/analytics` (see the daemon's [analytics README](../internal/analytics/README.md)).

@@ -123,8 +123,15 @@ changed_at, created_at, updated_at) VALUES (?,?,?,?,?,?,?,1,?,?,?,?)`, id, versi
 	exec(`INSERT INTO session_commit(agent, session_id, repository, sha, method, confidence) VALUES ('claude-code','timeline-1',?,'commit-1','checkpoint',1)`, repo)
 	exec(`INSERT INTO pr_summary(repository, number, content_hash, summary, created_at) VALUES (?,12,'h','Adds the local Timeline API and page.',?)`, repo, ms(day(1, 16)))
 	return (&decisionlog.Timeline{Store: store, Registry: registry,
-		Self: func(context.Context, string) *decisionlog.Person {
-			name := "Ada Lovelace"
-			return &decisionlog.Person{Email: "ada@example.com", Name: &name}
-		}}).Handler()
+		Clone: func(context.Context, string) decisionlog.TimelineClone { return fixtureClone{} }}).Handler()
 }
+
+// fixtureClone names the sessions' person and has no saved reviews.
+type fixtureClone struct{}
+
+func (fixtureClone) Person(context.Context) *decisionlog.Person {
+	name := "Ada Lovelace"
+	return &decisionlog.Person{Email: "ada@example.com", Name: &name}
+}
+
+func (fixtureClone) Review(context.Context, int, string) (string, string) { return "", "none" }

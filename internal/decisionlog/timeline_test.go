@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -28,7 +29,22 @@ func (r timelineRegistry) Repositories(context.Context) ([]repos.Repository, err
 
 type timelineFixture struct {
 	*featureFixture
-	handler http.Handler
+	handler  http.Handler
+	registry *timelineRegistry
+	// clones counts the clones opened, one per request.
+	clones int
+}
+
+// fakeClone names the sessions' person and has a current review of pull
+// request 1 at h1.
+type fakeClone struct{}
+
+func (fakeClone) Person(context.Context) *Person { return &Person{Email: "me@example.com"} }
+func (fakeClone) Review(_ context.Context, number int, head string) (string, string) {
+	if number == 1 && head == "h1" {
+		return "Reviewed export.", "current"
+	}
+	return "", "none"
 }
 
 // newTimelineFixture stores two features of acme/widgets' current version
@@ -73,14 +89,12 @@ changed_at, merged_into, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?
 	f.exec(`INSERT INTO session_commit(agent, session_id, repository, sha, method, confidence) VALUES ('claude-code','s1',?,'c1','checkpoint',1)`, repo)
 	f.exec(`INSERT INTO pr_summary(repository, number, content_hash, summary, created_at) VALUES (?,2,'h','Adds the button.',?)`, repo, t0.UnixMilli())
 	off := false
-	timeline := &Timeline{Store: f.store,
-		Registry: timelineRegistry{prefs: repos.DefaultPreferences(), list: []repos.Repository{{Repository: repo}, {Repository: "acme/off", Settings: repos.Settings{Decisions: &off}}}},
-		Self:     func(context.Context, string) *Person { return &Person{Email: "me@example.com"} },
-		Review: func(_ context.Context, _ string, number int, head string) (string, string) {
-			if number == 1 && head == "h1" {
-				return "Reviewed export.", "current"
-			}
-			return "", "none"
+	f.registry = &timelineRegistry{prefs: repos.DefaultPreferences(),
+		list: []repos.Repository{{Repository: repo}, {Repository: "acme/off", Settings: repos.Settings{Decisions: &off}}}}
+	timeline := &Timeline{Store: f.store, Registry: f.registry,
+		Clone: func(context.Context, string) TimelineClone {
+			f.clones++
+			return fakeClone{}
 		}}
 	f.handler = timeline.Handler()
 	return f
@@ -139,8 +153,36 @@ func TestTimelineRepositoriesAndScope(t *testing.T) {
 			t.Fatalf("features of %q = %d", name, code)
 		}
 	}
-	if code := f.get("/api/timeline/decisions", url.Values{"repository": {repo}, "cursor": {"x"}}, nil); code != http.StatusBadRequest {
-		t.Fatalf("bad cursor = %d", code)
+	for _, bad := range []url.Values{{"cursor": {"x"}}, {"cursor": {"1|"}}, {"limit": {"0"}}, {"limit": {"501"}}} {
+		bad.Set("repository", repo)
+		if code := f.get("/api/timeline/decisions", bad, nil); code != http.StatusBadRequest {
+			t.Fatalf("%v = %d", bad, code)
+		}
+	}
+	var listed struct {
+		Enabled   bool     `json:"decisions_enabled"`
+		TurnedOff []string `json:"turned_off"`
+	}
+	f.get("/api/timeline/repositories", nil, &listed)
+	if !listed.Enabled || len(listed.TurnedOff) != 1 || listed.TurnedOff[0] != "acme/off" {
+		t.Fatalf("repositories = %+v", listed)
+	}
+	// A detail of a repository turned off is not found.
+	off := false
+	f.registry.list[0].Settings.Decisions = &off
+	for _, path := range []string{"/api/timeline/features/F1", "/api/timeline/decisions/d-s1"} {
+		if code := f.get(path, nil, nil); code != http.StatusNotFound {
+			t.Fatalf("%s of a repository turned off = %d", path, code)
+		}
+	}
+	f.registry.list[0].Settings.Decisions = nil
+	f.registry.prefs.Decisions.Enabled = &off
+	f.get("/api/timeline/repositories", nil, &listed)
+	if listed.Enabled {
+		t.Fatal("the decisions switch reads as on")
+	}
+	if code := f.get("/api/timeline/decisions/d-s1", nil, nil); code != http.StatusNotFound {
+		t.Fatalf("decision with the switch off = %d", code)
 	}
 }
 
@@ -180,9 +222,9 @@ func TestTimelineFeatures(t *testing.T) {
 	// Text written later is found.
 	f.exec(`UPDATE feature SET title='Draft keeping' WHERE id='F2'`)
 	page = featurePage{}
-	f.get("/api/timeline/features", url.Values{"repository": {repo}, "q": {"drafts"}}, &page)
+	f.get("/api/timeline/features", url.Values{"repository": {repo}, "q": {"keep"}}, &page)
 	if page.ids() != "F2" {
-		t.Fatalf("q=drafts = %s", page.ids())
+		t.Fatalf("q=keep = %s", page.ids())
 	}
 }
 
@@ -293,5 +335,130 @@ VALUES ('claude-code','s3',?,'claude','m','full',0,'pending',0,'capture')`, repo
 	}
 	if code := f.get("/api/timeline/decisions/nope", nil, nil); code != http.StatusNotFound {
 		t.Fatalf("unknown = %d", code)
+	}
+}
+
+// Pages follow on from the last row they named, so a row added at the top
+// meanwhile repeats none; a request opens its clone once.
+func TestTimelinePagesByKeyset(t *testing.T) {
+	f := newTimelineFixture(t)
+	var seen []string
+	cursor := ""
+	for range 5 {
+		q := url.Values{"repository": {repo}, "limit": {"1"}, "superseded": {"1"}}
+		if cursor != "" {
+			q.Set("cursor", cursor)
+		}
+		var page struct {
+			Decisions  []timelineDecision `json:"decisions"`
+			NextCursor *string            `json:"next_cursor"`
+		}
+		f.get("/api/timeline/decisions", q, &page)
+		for _, d := range page.Decisions {
+			seen = append(seen, d.ID)
+		}
+		if cursor == "" {
+			// A newer decision arrives after the first page.
+			f.clock.now = t0.Add(48 * time.Hour)
+			f.saveSession("s9", "late.go")
+		}
+		if page.NextCursor == nil {
+			break
+		}
+		cursor = *page.NextCursor
+	}
+	if strings.Join(seen, ",") != "d-s1,d-s2,d-s2-old" && strings.Join(seen, ",") != "d-s1,d-s2-old,d-s2" {
+		t.Fatalf("pages = %v", seen)
+	}
+	seen = nil
+	cursor = ""
+	for range 5 {
+		q := url.Values{"repository": {repo}, "limit": {"1"}}
+		if cursor != "" {
+			q.Set("cursor", cursor)
+		}
+		var page featurePage
+		f.get("/api/timeline/features", q, &page)
+		seen = append(seen, page.ids())
+		if page.NextCursor == nil {
+			break
+		}
+		cursor = *page.NextCursor
+	}
+	if strings.Join(seen, ",") != "F1,F2" {
+		t.Fatalf("feature pages = %v", seen)
+	}
+	f.clones = 0
+	f.get("/api/timeline/features/F1", nil, &struct{}{})
+	if f.clones != 1 {
+		t.Fatalf("a detail opened %d clones", f.clones)
+	}
+}
+
+// A store from before the index is indexed when opened; pruned decisions
+// leave it, and a prefix finds a longer word.
+func TestTimelineSearchIndex(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "decisions", "decisions.sqlite")
+	s, err := Open(path, OpenOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := &clock{t0}
+	s.now = c.Now
+	ctx := context.Background()
+	save := func(id string, list ...decisions.Decision) {
+		t.Helper()
+		if err := s.Save(ctx, Extraction{Meta: Meta{Agent: "claude-code", ID: id, Repository: repo}, ContentHash: "c-" + id + list[0].ID, Decisions: list}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	save("s1", decision("d1", "Exporting widgets as spreadsheets", 1))
+	// Drop the index, as a store from before it had none.
+	for _, name := range []string{"decision_search", "feature_search", "pull_search"} {
+		if _, err := s.db.Exec(`DROP TABLE ` + name); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, name := range []string{"decision", "feature", "pull"} {
+		for _, op := range []string{"insert", "delete", "update"} {
+			if _, err := s.db.Exec(`DROP TRIGGER ` + name + `_search_` + op); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if s, err = Open(path, OpenOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	s.now = c.Now
+	t.Cleanup(func() { _ = s.Close() })
+	match := func(q string) []string {
+		t.Helper()
+		ids, err := collect(scanString)(s.db.Query(`SELECT d.decision_id FROM decision d WHERE d.rowid IN
+(SELECT rowid FROM decision_search WHERE decision_search MATCH ?) ORDER BY 1`, matchQuery(q)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return ids
+	}
+	if got := match("export spreadsheet"); len(got) != 1 || got[0] != "d1" {
+		t.Fatalf("export spreadsheet = %v", got)
+	}
+	// A new extraction makes d1 obsolete; pruned later, it leaves the index.
+	save("s1", decision("d2", "Exporting widgets as CSV", 1))
+	c.now = t0.Add(Retention + 48*time.Hour)
+	if err := s.Prune(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if got := match("spreadsheet"); len(got) != 0 {
+		t.Fatalf("pruned decision still found: %v", got)
+	}
+	if got := match("csv"); len(got) != 1 || got[0] != "d2" {
+		t.Fatalf("csv = %v", got)
+	}
+	if _, err := s.db.Exec(`INSERT INTO decision_search(decision_search) VALUES ('integrity-check')`); err != nil {
+		t.Fatal(err)
 	}
 }

@@ -175,7 +175,7 @@ func missingColumns(ctx context.Context, q interface {
 // searchSchema is the Timeline's keyword index (timeline.go): FTS5 tables
 // over the decisions', features' and pull requests' text, kept by triggers.
 const searchSchema = `
-CREATE VIRTUAL TABLE decision_search USING fts5(title, summary, content='decision', content_rowid='rowid', tokenize='porter unicode61');
+CREATE VIRTUAL TABLE decision_search USING fts5(title, summary, content='decision', content_rowid='rowid', tokenize='unicode61 remove_diacritics 2');
 CREATE TRIGGER decision_search_insert AFTER INSERT ON decision BEGIN
   INSERT INTO decision_search(rowid, title, summary) VALUES (new.rowid, new.title, new.summary); END;
 CREATE TRIGGER decision_search_delete AFTER DELETE ON decision BEGIN
@@ -183,7 +183,7 @@ CREATE TRIGGER decision_search_delete AFTER DELETE ON decision BEGIN
 CREATE TRIGGER decision_search_update AFTER UPDATE OF title, summary ON decision BEGIN
   INSERT INTO decision_search(decision_search, rowid, title, summary) VALUES ('delete', old.rowid, old.title, old.summary);
   INSERT INTO decision_search(rowid, title, summary) VALUES (new.rowid, new.title, new.summary); END;
-CREATE VIRTUAL TABLE feature_search USING fts5(title, description, digest, content='feature', content_rowid='rowid', tokenize='porter unicode61');
+CREATE VIRTUAL TABLE feature_search USING fts5(title, description, digest, content='feature', content_rowid='rowid', tokenize='unicode61 remove_diacritics 2');
 CREATE TRIGGER feature_search_insert AFTER INSERT ON feature BEGIN
   INSERT INTO feature_search(rowid, title, description, digest) VALUES (new.rowid, new.title, new.description, new.digest); END;
 CREATE TRIGGER feature_search_delete AFTER DELETE ON feature BEGIN
@@ -191,7 +191,7 @@ CREATE TRIGGER feature_search_delete AFTER DELETE ON feature BEGIN
 CREATE TRIGGER feature_search_update AFTER UPDATE OF title, description, digest ON feature BEGIN
   INSERT INTO feature_search(feature_search, rowid, title, description, digest) VALUES ('delete', old.rowid, old.title, old.description, old.digest);
   INSERT INTO feature_search(rowid, title, description, digest) VALUES (new.rowid, new.title, new.description, new.digest); END;
-CREATE VIRTUAL TABLE pull_search USING fts5(title, content='pull_request', content_rowid='rowid', tokenize='porter unicode61');
+CREATE VIRTUAL TABLE pull_search USING fts5(title, content='pull_request', content_rowid='rowid', tokenize='unicode61 remove_diacritics 2');
 CREATE TRIGGER pull_search_insert AFTER INSERT ON pull_request BEGIN
   INSERT INTO pull_search(rowid, title) VALUES (new.rowid, new.title); END;
 CREATE TRIGGER pull_search_delete AFTER DELETE ON pull_request BEGIN
@@ -659,54 +659,94 @@ func (s *Store) SessionLinks(ctx context.Context, repository, agent, sessionID s
 
 // sessionLinks is SessionLinks in the feature version version.
 func (s *Store) sessionLinks(ctx context.Context, version int64, repository, agent, sessionID string) (features.SessionLinks, error) {
-	var links features.SessionLinks
-	rows, err := s.db.QueryContext(ctx, `SELECT fp.feature_id, pr.number, pr.created_at, COALESCE(pr.paths_json, '[]'), fp.assigned_paths_json, sc.sha
+	key := SessionKey{Agent: agent, ID: sessionID}
+	links, err := s.sessionLinksOf(ctx, version, repository, []SessionKey{key})
+	return links[key], err
+}
+
+// sessionLinksOf is sessionLinks of each of the sessions, read together.
+func (s *Store) sessionLinksOf(ctx context.Context, version int64, repository string, keys []SessionKey) (map[SessionKey]features.SessionLinks, error) {
+	out := map[SessionKey]features.SessionLinks{}
+	if version == 0 || len(keys) == 0 {
+		return out, nil
+	}
+	set, err := sessionSet(keys)
+	if err != nil {
+		return nil, err
+	}
+	type linkRow struct {
+		key    SessionKey
+		pull   features.LinkedPullRequest
+		opened int64
+		paths  string
+		then   string
+		sha    string
+	}
+	rows, err := collect(func(rows *sql.Rows) (linkRow, error) {
+		var r linkRow
+		return r, rows.Scan(&r.key.Agent, &r.key.ID, &r.pull.FeatureID, &r.pull.Number, &r.opened, &r.paths, &r.then, &r.sha)
+	})(s.db.QueryContext(ctx, `SELECT sc.agent, sc.session_id, fp.feature_id, pr.number, pr.created_at, COALESCE(pr.paths_json, '[]'), fp.assigned_paths_json, sc.sha
 FROM session_commit sc
 JOIN capture_session cs ON cs.agent=sc.agent AND cs.session_id=sc.session_id
 JOIN pull_commit pc ON pc.repository=sc.repository AND pc.sha=sc.sha
 JOIN feature_pull fp ON fp.version_id=?1 AND fp.repository=pc.repository AND fp.number=pc.number
 JOIN pull_request pr ON pr.repository=pc.repository AND pr.number=pc.number
-WHERE sc.repository=?2 AND sc.agent=?3 AND sc.session_id=?4 ORDER BY pr.number, sc.sha`, version, repository, agent, sessionID)
+WHERE sc.repository=?2 AND sc.agent||char(31)||sc.session_id IN (SELECT value FROM json_each(?3))
+ORDER BY sc.agent, sc.session_id, pr.number, sc.sha`, version, repository, set))
 	if err != nil {
-		return links, err
+		return nil, err
 	}
-	byNumber := map[int32]int{}
-	for rows.Next() {
-		var pull features.LinkedPullRequest
-		var opened int64
-		var paths, assigned, sha string
-		if err := rows.Scan(&pull.FeatureID, &pull.Number, &opened, &paths, &assigned, &sha); err != nil {
-			_ = rows.Close()
-			return links, err
+	byNumber := map[SessionKey]map[int32]int{}
+	for _, r := range rows {
+		links := out[r.key]
+		if byNumber[r.key] == nil {
+			byNumber[r.key] = map[int32]int{}
 		}
-		i, seen := byNumber[pull.Number]
+		i, seen := byNumber[r.key][r.pull.Number]
 		if !seen {
 			// The paths it touches now and those it was assigned with.
 			var now, then []string
-			if err := errors.Join(json.Unmarshal([]byte(paths), &now), json.Unmarshal([]byte(assigned), &then)); err != nil {
-				_ = rows.Close()
-				return links, err
+			if err := errors.Join(json.Unmarshal([]byte(r.paths), &now), json.Unmarshal([]byte(r.then), &then)); err != nil {
+				return nil, err
 			}
+			pull := r.pull
 			pull.Paths = slices.Compact(slices.Sorted(slices.Values(append(now, then...))))
-			pull.PullRequestID, pull.OpenedAt = strconv.Itoa(int(pull.Number)), time.UnixMilli(opened)
+			pull.PullRequestID, pull.OpenedAt = strconv.Itoa(int(pull.Number)), time.UnixMilli(r.opened)
 			i = len(links.PullRequests)
-			byNumber[pull.Number] = i
+			byNumber[r.key][pull.Number] = i
 			links.PullRequests = append(links.PullRequests, pull)
 		}
-		links.PullRequests[i].Commits = append(links.PullRequests[i].Commits, sha)
+		links.PullRequests[i].Commits = append(links.PullRequests[i].Commits, r.sha)
+		out[r.key] = links
 	}
-	if err := rows.Err(); err != nil {
-		_ = rows.Close()
-		return links, err
+	type ownRow struct {
+		key     SessionKey
+		feature string
 	}
-	if err := rows.Close(); err != nil {
-		return links, err
-	}
-	err = s.db.QueryRowContext(ctx, `SELECT fs.feature_id FROM feature_session fs
+	owns, err := collect(func(rows *sql.Rows) (ownRow, error) {
+		var r ownRow
+		return r, rows.Scan(&r.key.Agent, &r.key.ID, &r.feature)
+	})(s.db.QueryContext(ctx, `SELECT fs.agent, fs.session_id, fs.feature_id FROM feature_session fs
 JOIN capture_session cs ON cs.agent=fs.agent AND cs.session_id=fs.session_id
-WHERE fs.version_id=? AND fs.repository=? AND fs.agent=? AND fs.session_id=?`, version, repository, agent, sessionID).Scan(&links.OwnFeature)
-	if errors.Is(err, sql.ErrNoRows) {
-		err = nil
+WHERE fs.version_id=? AND fs.repository=? AND fs.agent||char(31)||fs.session_id IN (SELECT value FROM json_each(?))`, version, repository, set))
+	if err != nil {
+		return nil, err
 	}
-	return links, err
+	for _, r := range owns {
+		links := out[r.key]
+		links.OwnFeature = r.feature
+		out[r.key] = links
+	}
+	return out, nil
+}
+
+// sessionSet is the sessions as a JSON array of agent, unit separator and
+// id, which a query reads with json_each.
+func sessionSet(keys []SessionKey) (string, error) {
+	values := make([]string, len(keys))
+	for i, key := range keys {
+		values[i] = key.Agent + "\x1f" + key.ID
+	}
+	encoded, err := json.Marshal(values)
+	return string(encoded), err
 }

@@ -90,7 +90,9 @@ type Capturer struct {
 	// Prices is nil for pricing.Active.
 	Prices func() *pricing.List
 	Now    func() time.Time
-	Log    *slog.Logger
+	// Changed is called once a capture's call is recorded as pending.
+	Changed func()
+	Log     *slog.Logger
 
 	once     sync.Once
 	redactor *bundle.Redactor
@@ -332,7 +334,7 @@ func (c *Capturer) Capture(ctx context.Context, t Target, o Options) (Report, er
 		return report, c.Store.Save(ctx, extraction)
 	}
 	calls := caller{store: c.Store, config: c.Config, backends: c.Backends, prices: c.prices(), redactor: c.redactor, log: c.logger(), now: now,
-		prefs: prefs, settings: settings}
+		prefs: prefs, settings: settings, begun: c.Changed}
 	planned, reason := calls.plan(ctx, prefs, settings, o.Backend, o.Model, report.MaxTokens, MaxOutputTokens)
 	report.Backend, report.Model, report.Reserved = planned.Backend, planned.Model, planned.Reserved
 	extraction.Backend, extraction.Model = report.Backend, report.Model

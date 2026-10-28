@@ -237,6 +237,8 @@ type caller struct {
 	settings repos.Settings
 	// budget, when set, is a first build's cost cap.
 	budget *buildBudget
+	// begun is called once an attempt is recorded as pending.
+	begun func()
 }
 
 // ReasonBuildCap stops a first build whose next call would take its
@@ -351,6 +353,9 @@ func (c caller) begin(ctx context.Context, p planned, a Attempt, prefs repos.Pre
 			}
 		}
 		return nil, 0, ReasonDailyCap, nil
+	}
+	if err == nil && c.begun != nil {
+		c.begun()
 	}
 	return &completerModel{completer: completer, redactor: c.redactor, attempt: a}, id, "", err
 }

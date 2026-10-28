@@ -571,60 +571,62 @@ type SessionKey struct{ Agent, ID string }
 // Current reads the current decisions of the sessions, in session and
 // extraction order, with their files.
 func (s *Store) Current(ctx context.Context, sessions ...SessionKey) ([]Decision, error) {
+	bySession, err := s.currentOf(ctx, sessions)
+	if err != nil {
+		return nil, err
+	}
 	var out []Decision
 	for _, key := range sessions {
-		rows, err := s.db.QueryContext(ctx, `SELECT decision_id, repository, title, summary, category, who, trigger, rationale,
+		out = append(out, bySession[key]...)
+	}
+	return out, nil
+}
+
+// currentOf reads the current decisions of the sessions together, each
+// session's in extraction order, with their files.
+func (s *Store) currentOf(ctx context.Context, sessions []SessionKey) (map[SessionKey][]Decision, error) {
+	out := map[SessionKey][]Decision{}
+	if len(sessions) == 0 {
+		return out, nil
+	}
+	set, err := sessionSet(sessions)
+	if err != nil {
+		return nil, err
+	}
+	list, err := collect(func(rows *sql.Rows) (Decision, error) {
+		var d Decision
+		var turns string
+		var decided int64
+		if err := rows.Scan(&d.Agent, &d.SessionID, &d.ID, &d.Repository, &d.Title, &d.Summary, &d.Category, &d.Who, &d.Trigger, &d.Rationale,
+			&d.RejectedAlternative, &d.Evidence, &d.Superseded, &turns, &d.DecidedTurn, &decided, &d.Branch); err != nil {
+			return d, err
+		}
+		d.DecidedAt, d.Files = time.UnixMilli(decided), []string{}
+		return d, json.Unmarshal([]byte(turns), &d.Turns)
+	})(s.db.QueryContext(ctx, `SELECT agent, session_id, decision_id, repository, title, summary, category, who, trigger, rationale,
 rejected_alternative, evidence, superseded, turns_json, decided_turn, decided_at, branch FROM current_decision
-WHERE agent=? AND session_id=? ORDER BY ordinal`, key.Agent, key.ID)
-		if err != nil {
-			return nil, err
+WHERE agent||char(31)||session_id IN (SELECT value FROM json_each(?)) ORDER BY agent, session_id, ordinal`, set))
+	if err != nil {
+		return nil, err
+	}
+	files, err := collect(func(rows *sql.Rows) ([2]string, error) {
+		var f [2]string
+		return f, rows.Scan(&f[0], &f[1])
+	})(s.db.QueryContext(ctx, `SELECT f.decision_id, f.path FROM decision_file f JOIN current_decision d ON d.decision_id=f.decision_id
+WHERE d.agent||char(31)||d.session_id IN (SELECT value FROM json_each(?)) ORDER BY f.decision_id, f.path`, set))
+	if err != nil {
+		return nil, err
+	}
+	byID := map[string][]string{}
+	for _, f := range files {
+		byID[f[0]] = append(byID[f[0]], f[1])
+	}
+	for _, d := range list {
+		if paths := byID[d.ID]; paths != nil {
+			d.Files = paths
 		}
-		start := len(out)
-		for rows.Next() {
-			d := Decision{Agent: key.Agent, SessionID: key.ID}
-			var turns string
-			var decided int64
-			if err := rows.Scan(&d.ID, &d.Repository, &d.Title, &d.Summary, &d.Category, &d.Who, &d.Trigger, &d.Rationale,
-				&d.RejectedAlternative, &d.Evidence, &d.Superseded, &turns, &d.DecidedTurn, &decided, &d.Branch); err != nil {
-				_ = rows.Close()
-				return nil, err
-			}
-			if err := json.Unmarshal([]byte(turns), &d.Turns); err != nil {
-				_ = rows.Close()
-				return nil, err
-			}
-			d.DecidedAt = time.UnixMilli(decided)
-			d.Files = []string{}
-			out = append(out, d)
-		}
-		if err := rows.Err(); err != nil {
-			_ = rows.Close()
-			return nil, err
-		}
-		if err := rows.Close(); err != nil {
-			return nil, err
-		}
-		for i := start; i < len(out); i++ {
-			files, err := s.db.QueryContext(ctx, `SELECT path FROM decision_file WHERE decision_id=? ORDER BY path`, out[i].ID)
-			if err != nil {
-				return nil, err
-			}
-			for files.Next() {
-				var path string
-				if err := files.Scan(&path); err != nil {
-					_ = files.Close()
-					return nil, err
-				}
-				out[i].Files = append(out[i].Files, path)
-			}
-			if err := files.Err(); err != nil {
-				_ = files.Close()
-				return nil, err
-			}
-			if err := files.Close(); err != nil {
-				return nil, err
-			}
-		}
+		key := SessionKey{Agent: d.Agent, ID: d.SessionID}
+		out[key] = append(out[key], d)
 	}
 	return out, nil
 }

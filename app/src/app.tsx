@@ -192,6 +192,9 @@ function Workspace({ url }: { url: UrlState }) {
   const [live, setLive] = useState<LiveSession[]>([]);
   // Counts the `live` events, which an open transcript reads itself again on.
   const [liveTick, setLiveTick] = useState(0);
+  // Counts the decision log's changes and reconnections of the event
+  // stream, for the Timeline to read again.
+  const [timelineTick, setTimelineTick] = useState(0);
   const [groups, setGroups] = useState<ReviewGroup[]>([]);
   // The pull requests being grouped, while the group name is asked.
   const [grouping, setGrouping] = useState<Entry[] | null>(null);
@@ -292,6 +295,10 @@ function Workspace({ url }: { url: UrlState }) {
     source.addEventListener("progress", refresh);
     source.addEventListener("automatic", refresh);
     source.addEventListener("reset", refresh);
+    const refreshTimeline = () => setTimelineTick((n) => n + 1);
+    source.addEventListener("timeline", refreshTimeline);
+    source.addEventListener("reset", refreshTimeline);
+    source.addEventListener("open", refreshTimeline);
     return () => source.close();
   }, [reload, reloadLive]);
   const authChanged = () => {
@@ -581,7 +588,7 @@ function Workspace({ url }: { url: UrlState }) {
           ) : page === "analytics" ? (
             <AnalyticsPage Link={LocalLink} />
           ) : page === "timeline" ? (
-            <TimelinePage />
+            <TimelinePage revision={timelineTick} />
           ) : page === "sessions" ? (
             <>
               <PageBar title="Sessions" detail="Agent sessions on this computer" />

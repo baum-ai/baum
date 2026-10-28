@@ -10,6 +10,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/baum-ai/baum/internal/daemon"
 	"github.com/baum-ai/baum/internal/doctor"
@@ -297,5 +298,23 @@ func TestDaemonDiagnosticsNeverFetchPrices(t *testing.T) {
 	report := uiDiagnostics(context.Background())
 	if len(report.Checks) == 0 || len(fetch) != 1 || fetch[0] {
 		t.Fatalf("checks %d, fetch flags %v", len(report.Checks), fetch)
+	}
+}
+
+func TestCoalesceCallsAtMostOnceAnInterval(t *testing.T) {
+	calls := make(chan time.Time, 8)
+	f := coalesce(50*time.Millisecond, func() { calls <- time.Now() })
+	f()
+	f()
+	f()
+	first := <-calls
+	second := <-calls
+	if gap := second.Sub(first); gap < 40*time.Millisecond {
+		t.Fatalf("second call %v after the first", gap)
+	}
+	select {
+	case <-calls:
+		t.Fatal("the calls within the interval were not joined")
+	case <-time.After(120 * time.Millisecond):
 	}
 }
