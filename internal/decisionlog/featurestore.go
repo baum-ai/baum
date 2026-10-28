@@ -7,7 +7,6 @@ import (
 	"errors"
 	"slices"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/baum-ai/baum/features"
@@ -88,14 +87,23 @@ const (
 // transaction: the ledger's stage, item and rejections columns, and the pull
 // requests' fork and default branch columns, added when missing. Pull
 // requests listed before the latter are listed again: the sync state's ETag
-// and cursor are reset. A column another process added first means it
-// migrated the store.
+// and cursor are reset. The write lock is taken first, so a store two
+// processes open at once is migrated by one of them.
 func migrate(ctx context.Context, db *sql.DB) error {
-	tx, err := db.BeginTx(ctx, nil)
+	tx, err := db.Conn(ctx)
 	if err != nil {
 		return err
 	}
-	defer func() { _ = tx.Rollback() }()
+	defer func() { _ = tx.Close() }()
+	if _, err := tx.ExecContext(ctx, `BEGIN IMMEDIATE`); err != nil {
+		return err
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_, _ = tx.ExecContext(context.WithoutCancel(ctx), `ROLLBACK`)
+		}
+	}()
 	have := map[string]bool{}
 	for _, table := range []string{"capture_attempt", "pull_request"} {
 		names, err := collect(scanString)(tx.QueryContext(ctx, `SELECT name FROM pragma_table_info(?)`, table))
@@ -121,9 +129,6 @@ func migrate(ctx context.Context, db *sql.DB) error {
 			continue
 		}
 		if _, err := tx.ExecContext(ctx, column.ddl); err != nil {
-			if strings.Contains(err.Error(), "duplicate column name") {
-				return nil
-			}
 			return err
 		}
 		relist = relist || column.relist
@@ -133,7 +138,9 @@ func migrate(ctx context.Context, db *sql.DB) error {
 			return err
 		}
 	}
-	return tx.Commit()
+	_, err = tx.ExecContext(ctx, `COMMIT`)
+	committed = err == nil
+	return err
 }
 
 // querier is a *sql.DB or *sql.Tx.

@@ -133,10 +133,10 @@ func (w *FeatureWorker) Assign(ctx context.Context, repository, dir string, o Fe
 			return report, ctx.Err()
 		}
 		if on, err := r.refresh(ctx); err != nil {
-			report.Stopped = "preferences_unreadable"
+			report.Stopped = ReasonPreferences
 			return report, err
 		} else if !on {
-			report.Stopped = "disabled"
+			report.Stopped = ReasonDisabled
 			return report, nil
 		}
 		placed, err := r.place(ctx, item)
@@ -343,7 +343,7 @@ func (r *featureRun) place(ctx context.Context, item assignItem) (PlacedItem, er
 	if err != nil {
 		return out, err
 	}
-	result, callErr := r.calls.complete(ctx, r.prefs, r.settings, r.opts.Backend, r.opts.Model,
+	result, callErr := r.calls.complete(ctx, r.opts.Backend, r.opts.Model,
 		Attempt{Repository: r.repository, Stage: StageAssign, Item: item.Kind + ":" + item.name()}, request)
 	out.Cost = result.Cost
 	switch {
@@ -639,7 +639,6 @@ func (s *Store) pullLinks(ctx context.Context, repository string, number int, me
 	for kind, query := range map[string]string{
 		"stacked": `SELECT o.number FROM pull_request i JOIN pull_request o ON o.repository=i.repository AND o.number != i.number
 WHERE i.repository=?1 AND i.number=?2 AND i.cross_repository=0 AND o.cross_repository=0 AND i.default_branch != ''
-
 AND ((o.head_ref = i.base_ref AND i.base_ref NOT IN ('', i.default_branch))
   OR (o.base_ref = i.head_ref AND i.head_ref NOT IN ('', i.default_branch)))
 AND (SELECT COUNT(*) FROM pull_request same WHERE same.repository=i.repository

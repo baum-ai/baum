@@ -214,7 +214,16 @@ type caller struct {
 	redactor *bundle.Redactor
 	log      *slog.Logger
 	now      time.Time
+	// gate reads the preferences and the repository's settings before each
+	// feature stage call, and whether calls may be made.
+	gate func(context.Context) (repos.Preferences, repos.Settings, bool, error)
 }
+
+// Reasons a feature stage call was not made, besides the skip reasons.
+const (
+	ReasonDisabled    = "disabled"
+	ReasonPreferences = "preferences_unreadable"
+)
 
 // planned is a call's backend, model and reservation.
 type planned struct {
@@ -269,9 +278,10 @@ func (c caller) overDailyCap(ctx context.Context, prefs repos.Preferences, reser
 }
 
 // begin selects the planned backend's completer and records the attempt as
-// pending with its reservation. A backend that no longer passes its check,
-// or cannot complete, is a skip and records nothing.
-func (c caller) begin(ctx context.Context, p planned, a Attempt) (*completerModel, int64, string, error) {
+// pending with its reservation, within the daily cap in the same statement.
+// A backend that no longer passes its check, or cannot complete, and a
+// reservation past the cap are skips and record nothing.
+func (c caller) begin(ctx context.Context, p planned, a Attempt, prefs repos.Preferences) (*completerModel, int64, string, error) {
 	selected, err := generate.Select(ctx, config.Backend(p.Backend), p.Model, p.backends, io.Discard)
 	if err != nil {
 		c.log.Info("decision log backend unavailable", "backend", p.Backend, "error", err)
@@ -282,7 +292,10 @@ func (c caller) begin(ctx context.Context, p planned, a Attempt) (*completerMode
 		return nil, 0, ReasonUnsupported, nil
 	}
 	a.Backend, a.Model, a.Reserved = p.Backend, p.Model, p.Reserved
-	id, err := c.store.Begin(ctx, a)
+	id, ok, err := c.store.beginWithin(ctx, a, prefs.Decisions.DailyCap, startOfDay(c.now))
+	if err == nil && !ok {
+		return nil, 0, ReasonDailyCap, nil
+	}
 	return &completerModel{completer: completer, redactor: c.redactor, attempt: a}, id, "", err
 }
 
@@ -326,7 +339,15 @@ type callResult struct {
 // complete makes one feature stage call with plan, overDailyCap, begin and
 // finish; the attempt names its stage and item. An error is a failed call
 // or a ledger write.
-func (c caller) complete(ctx context.Context, prefs repos.Preferences, settings repos.Settings, backend, model string, a Attempt, req decisions.ModelRequest) (callResult, error) {
+func (c caller) complete(ctx context.Context, backend, model string, a Attempt, req decisions.ModelRequest) (callResult, error) {
+	// The gate and the cap are read again before every call.
+	prefs, settings, on, err := c.gate(ctx)
+	switch {
+	case err != nil:
+		return callResult{Skip: ReasonPreferences}, err
+	case !on:
+		return callResult{Skip: ReasonDisabled}, nil
+	}
 	p, skip := c.plan(ctx, prefs, settings, backend, model, decisions.MaxRequestTokens(req), req.MaxOutputTokens)
 	if skip != "" {
 		return callResult{Skip: skip}, nil
@@ -334,7 +355,7 @@ func (c caller) complete(ctx context.Context, prefs repos.Preferences, settings 
 	if over, err := c.overDailyCap(ctx, prefs, p.Reserved); err != nil || over {
 		return callResult{Skip: ReasonDailyCap}, err
 	}
-	m, id, skip, err := c.begin(ctx, p, a)
+	m, id, skip, err := c.begin(ctx, p, a, prefs)
 	if err != nil || skip != "" {
 		return callResult{Skip: skip}, err
 	}

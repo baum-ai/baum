@@ -204,9 +204,13 @@ same backend, model, reservation (the request's byte bound and the call's
 reply bound: 4,096 tokens for a placement, 8,192 for a text or pull request
 summary), daily cap and ledger, each attempt recorded with its stage
 (`feature_assign`, `feature_summary` or `pr_summary`) and item. Rejected
-replies and a ledger that cannot be written are handled as capture's. A
-missing backend, an unpriced model or the daily cap stops the stage until
-its next run, with no failure counted.
+replies and a ledger that cannot be written are handled as capture's. The
+preferences and the repository's settings are read again before every call,
+so a repository turned off makes no further call. A repository turned off,
+a missing backend, an unpriced model or the daily cap stops the stage until
+its next run, with no failure counted. The daily cap is checked in the same
+statement that records the attempt, so capture and the feature log
+reserving at once cannot together pass it.
 
 ### Placement
 

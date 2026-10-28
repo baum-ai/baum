@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -541,6 +542,11 @@ func TestPlacementStackSkipsForksAndTheDefaultBranch(t *testing.T) {
 	if links, err = f.store.pullLinks(context.Background(), repo, 3, nil); err != nil || len(links["stacked"]) != 0 {
 		t.Fatalf("a fork's branch links: %v, %v", links, err)
 	}
+	// An unknown default branch links no stack either.
+	f.exec(`UPDATE pull_request SET cross_repository=0, default_branch=''`)
+	if links, err = f.store.pullLinks(context.Background(), repo, 3, nil); err != nil || len(links["stacked"]) != 0 {
+		t.Fatalf("a stack with no default branch links: %v, %v", links, err)
+	}
 }
 
 // A pull request placed before its paths were known gets them, with no
@@ -720,5 +726,36 @@ func TestRelinkManyCommitsMarksTheirFeatures(t *testing.T) {
 	}
 	if f.membership(feature) != before+1 {
 		t.Fatalf("membership %d, want %d", f.membership(feature), before+1)
+	}
+}
+
+// The daily cap check and the reservation are one: of two reservations at
+// once that together pass the cap, one is made.
+func TestReservationsWithinTheCapAreAtomic(t *testing.T) {
+	s := openStore(t, &clock{t0})
+	limit := 1.0
+	var wg sync.WaitGroup
+	made := make(chan bool, 2)
+	for range 2 {
+		wg.Go(func() {
+			_, ok, err := s.beginWithin(context.Background(), Attempt{Backend: "claude", Model: "m", Reserved: 0.6, Stage: StageAssign}, &limit, t0)
+			if err != nil {
+				t.Error(err)
+			}
+			made <- ok
+		})
+	}
+	wg.Wait()
+	close(made)
+	n := 0
+	for ok := range made {
+		if ok {
+			n++
+		}
+	}
+	var rows int
+	_ = s.db.QueryRow(`SELECT COUNT(*) FROM capture_attempt`).Scan(&rows)
+	if n != 1 || rows != 1 {
+		t.Fatalf("%d reservations made, %d rows", n, rows)
 	}
 }

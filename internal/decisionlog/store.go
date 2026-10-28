@@ -440,6 +440,15 @@ type Attempt struct {
 
 // Begin records an attempt as pending before its call, with its reservation.
 func (s *Store) Begin(ctx context.Context, a Attempt) (int64, error) {
+	id, _, err := s.beginWithin(ctx, a, nil, time.Time{})
+	return id, err
+}
+
+// beginWithin is Begin when every stage's spend since day, the reservation
+// included, stays within limit (none when nil); false, recording nothing,
+// when it would not. The check and the insert are one statement, so two
+// workers reserving at once cannot both pass the cap.
+func (s *Store) beginWithin(ctx context.Context, a Attempt, limit *float64, day time.Time) (int64, bool, error) {
 	var id int64
 	stage := a.Stage
 	if stage == "" {
@@ -449,9 +458,18 @@ func (s *Store) Begin(ctx context.Context, a Attempt) (int64, error) {
 	if a.Item != "" {
 		item = a.Item
 	}
+	var bound any
+	if limit != nil {
+		bound = *limit
+	}
 	err := s.db.QueryRowContext(ctx, `INSERT INTO capture_attempt(agent, session_id, repository, backend, model, mode, started_at, state, reserved_usd, stage, item)
-VALUES (?,?,?,?,?,?,?,?,?,?,?) RETURNING id`, a.Agent, a.ID, a.Repository, a.Backend, a.Model, a.Mode, s.now().UnixMilli(), AttemptPending, a.Reserved, stage, item).Scan(&id)
-	return id, err
+SELECT ?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11 WHERE ?12 IS NULL OR
+  (SELECT COALESCE(SUM(COALESCE(cost_usd, reserved_usd)), 0) FROM capture_attempt WHERE started_at >= ?13) + ?9 <= ?12 RETURNING id`,
+		a.Agent, a.ID, a.Repository, a.Backend, a.Model, a.Mode, s.now().UnixMilli(), AttemptPending, a.Reserved, stage, item, bound, day.UnixMilli()).Scan(&id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, false, nil
+	}
+	return id, err == nil, err
 }
 
 // Settle records how an attempt ended. A nil cost is unknown, and the

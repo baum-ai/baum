@@ -85,10 +85,10 @@ func (w *FeatureWorker) Summarize(ctx context.Context, repository, dir string, o
 			return report, ctx.Err()
 		}
 		if on, err := r.refresh(ctx); err != nil {
-			report.Stopped = "preferences_unreadable"
+			report.Stopped = ReasonPreferences
 			return report, err
 		} else if !on {
-			report.Stopped = "disabled"
+			report.Stopped = ReasonDisabled
 			return report, nil
 		}
 		out, err := r.summarize(ctx, p[0])
@@ -383,7 +383,7 @@ func (r *featureRun) summarize(ctx context.Context, featureID string) (Summarize
 	if err != nil {
 		return out, err
 	}
-	result, callErr := r.calls.complete(ctx, r.prefs, r.settings, r.opts.Backend, r.opts.Model,
+	result, callErr := r.calls.complete(ctx, r.opts.Backend, r.opts.Model,
 		Attempt{Repository: r.repository, Stage: StageSummary, Item: kindFeature + ":" + featureID}, request)
 	out.Cost = addCost(out.Cost, result.Cost)
 	switch {
@@ -462,7 +462,7 @@ func (r *featureRun) pullSummary(ctx context.Context, src summarySource, pull su
 	if err != nil {
 		return "", false, "", err
 	}
-	result, callErr := r.calls.complete(ctx, r.prefs, r.settings, r.opts.Backend, r.opts.Model,
+	result, callErr := r.calls.complete(ctx, r.opts.Backend, r.opts.Model,
 		Attempt{Repository: r.repository, Stage: StagePullSummary, Item: kindPull + ":" + strconv.Itoa(pull.Number)}, request)
 	out.Cost = addCost(out.Cost, result.Cost)
 	if result.Skip != "" || callErr != nil {
@@ -568,7 +568,7 @@ func ordinalAt(decisions []Decision, index int) int {
 
 // currentKeys maps key decisions to current decisions: the one with the
 // stored ID while it is current, else, at its address, the one at the same
-// place if not superseded, else the first not superseded, else the first;
+// place, else the first not superseded, else the first;
 // false when one has none.
 func currentKeys(keys []keyDecision, decisions []Decision) ([]keyDecision, bool) {
 	out := make([]keyDecision, 0, len(keys))
@@ -584,7 +584,8 @@ func currentKeys(keys []keyDecision, decisions []Decision) ([]keyDecision, bool)
 			switch {
 			case len(at) == 0:
 				return nil, false
-			case key.Ordinal < len(at) && !decisions[at[key.Ordinal]].Superseded:
+			case key.Ordinal < len(at):
+				// The matching hash shows it is the same decision.
 				i = at[key.Ordinal]
 			default:
 				i = at[0]

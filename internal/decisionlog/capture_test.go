@@ -493,3 +493,17 @@ func TestDebugDirKeepsOnlyThisCapturesFiles(t *testing.T) {
 		}
 	}
 }
+
+// A capture keeps its extraction when the ledger cannot be written after
+// the call.
+func TestCaptureKeepsTheExtractionWhenTheLedgerFails(t *testing.T) {
+	f := newFixture(t)
+	if _, err := f.store.db.Exec(`CREATE TRIGGER no_settle BEFORE UPDATE ON capture_attempt BEGIN SELECT RAISE(ABORT, 'read-only ledger'); END`); err != nil {
+		t.Fatal(err)
+	}
+	report := f.capture(t, Options{})
+	current, _ := f.store.Current(context.Background(), SessionKey{"claude-code", "s1"})
+	if report.Outcome != OutcomeExtracted || len(current) != 1 {
+		t.Fatalf("%+v, %d decisions", report, len(current))
+	}
+}

@@ -516,7 +516,11 @@ func (w *FeatureWorker) newRun(ctx context.Context, repository, dir string, o Fe
 	if w.Prices != nil {
 		prices = w.Prices()
 	}
-	r.calls = caller{store: w.Store, config: w.Config, backends: w.Backends, prices: prices, redactor: w.redactor, log: w.logger(), now: r.now}
+	r.calls = caller{store: w.Store, config: w.Config, backends: w.Backends, prices: prices, redactor: w.redactor, log: w.logger(), now: r.now,
+		gate: func(ctx context.Context) (repos.Preferences, repos.Settings, bool, error) {
+			on, err := r.refresh(ctx)
+			return r.prefs, r.settings, on, err
+		}}
 	var err error
 	r.version, err = liveVersion(ctx, w.Store.db, repository, !o.DryRun, r.now)
 	return r, err

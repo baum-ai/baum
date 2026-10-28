@@ -224,3 +224,26 @@ func TestFeatureTextKeepsTheNamedKeyDecision(t *testing.T) {
 		t.Fatalf("report = %+v", report)
 	}
 }
+
+// The gate is read before every call: turned off after a feature's first
+// pull request summary, it makes no further call.
+func TestFeatureTextRereadsTheGateBeforeEachCall(t *testing.T) {
+	f := newFeatureFixture(t)
+	f.clock.now = t0.Add(time.Hour)
+	f.pull(1, "Export widgets", t0.Add(time.Minute), "h1", []string{"export.go"}, "Adds a CSV export.")
+	f.pull(2, "Export follow-up", t0.Add(2*time.Minute), "h2", []string{"export.go"}, "Fixes the export.")
+	n := 0
+	f.backend.assign = func(user string) (string, error) {
+		if n++; n == 1 {
+			return choose("new", "", "Widgets"), nil
+		}
+		return choose("existing", "F1", ""), nil
+	}
+	f.assign(FeatureOptions{})
+	f.backend.onCall = func() { f.off = true }
+	f.clock.now = f.clock.now.Add(FeatureQuiet)
+	report := f.summarize(FeatureOptions{})
+	if report.Stopped != ReasonDisabled || f.backend.calls["pull"] != 1 || f.backend.calls["text"] != 0 {
+		t.Fatalf("report = %+v, calls %v", report, f.backend.calls)
+	}
+}

@@ -12,6 +12,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -712,6 +713,19 @@ INSERT INTO pull_sync(repository, etag, cursor_updated_at, activated_at) VALUES 
 		t.Fatal(err)
 	}
 	_ = db.Close()
+	// Two processes opening it at once: one migrates, neither fails.
+	var wg sync.WaitGroup
+	for range 2 {
+		wg.Go(func() {
+			s, err := Open(path, OpenOptions{})
+			if err != nil {
+				t.Error(err)
+				return
+			}
+			_ = s.Close()
+		})
+	}
+	wg.Wait()
 	for i, want := range []string{"", `"e2"`} { // and again, once migrated: no second reset
 		s, err := Open(path, OpenOptions{})
 		if err != nil {
