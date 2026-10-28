@@ -66,6 +66,7 @@ A host connects it through props and context:
 | row actions | no | `checks` on `ReviewViewer`, or `renderCheck` on `ChangesOverview` and `RisksOverview`, puts a host's read mark or approval beside each row |
 | side pane, header slots and other features | no | the `ReviewViewer` slots below |
 | decision log links and sessions | for the decision log components | `pullRequestHref` and `openSession` props (see [Decision log](#decision-log)) |
+| decision log filters | for `DecisionFilterControls` | the `filters` it shows and their change callbacks, `files` for file and folder suggestions and `people` for the authors (see [Decision log](#decision-log)) |
 
 ## The review page
 
@@ -406,6 +407,31 @@ filters, the address and which decision or feature is open.
   `DecisionOpening` from the host says which decision is open, toggles it and
   renders its detail, and the group holding the open decision opens and
   scrolls it into view. `pullRequestHref` opens a pull request as above.
+
+- `DecisionFilterControls` (`@baum/viewer/components/decision-filters`) is
+  the log's filter bar after the host's own scope picker, as a fragment the
+  host places in its bar: the keyword search, applied 300 ms after typing
+  stops; a Filters popover, its button counting the filters in force, with
+  the file or folder combobox, the author, category, decided-by, feature
+  status, date range and superseded and hide agent-only filters; a pill per
+  filter in force that removes it; and "Clear filters". The filters are the
+  `DecisionFilters` of `@baum/viewer/decision-log`, which also holds their
+  address form (`parseDecisionFilters`, `withDecisionFilters`,
+  `clearDecisionFilters`, the feature statuses) and API query
+  (`decisionQuery`, `featureQuery`). The host keeps them and passes
+  `filters`, with `onChange` (the fields that changed), `onClear` and
+  `resets` (a count of clears, which also drops text not yet applied); the
+  controls show a change at once, before the host hands it back. Its seams
+  are `files(prefix, signal)`, asked for file and folder suggestions 150 ms
+  after typing stops in the file box and aborted when the text changes, and
+  `people`, the authors the host loaded (`AuthorCount`, by decisions or by
+  features). `statuses` and `onStatuses` mark the Features tab: there the
+  status filter is offered and the filters that pick decisions alone
+  (category, decided by, superseded, hide agent-only) are neither offered nor
+  counted. Hiding agent-only decisions drops and disables the Agent filter.
+  `Combobox` (`@baum/viewer/components/combobox`) and `useDisclosure`
+  (`@baum/viewer/components/use-disclosure`, a `<details>` that closes on an
+  outside pointer and on Escape) are its building blocks, open to hosts too.
 
 `Avatar` (`@baum/viewer/components/avatar`) draws a person's picture, falling
 back to their initials when there is none or it fails to load.

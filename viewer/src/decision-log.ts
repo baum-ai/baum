@@ -4,8 +4,9 @@ import { formatBucket, formatCount, formatDate } from "./components/format";
 
 /** The decision log's view models and the pure decisions its components make
  *  about them: how a person, who decided, a feature's status, span and counts
- *  and a pull request's review read. They are the fields the hosted API
- *  answers with; a host fills them from wherever its log comes from. */
+ *  and a pull request's review read, and the log's filters, as the address
+ *  carries them and as the API query they send. They are the fields the hosted
+ *  API answers with; a host fills them from wherever its log comes from. */
 
 export type DecisionWho = "human" | "agent" | "agent_proposed_human_approved";
 
@@ -267,4 +268,242 @@ const REVIEW_STATES: Record<DecisionDetail["pull_requests"][number]["review_stat
 
 export function reviewStateLabel(state: string): string {
   return REVIEW_STATES[state as keyof typeof REVIEW_STATES] ?? state;
+}
+
+/** A file or folder the log's decisions cite, with how many cite it, as the
+ *  file filter suggests it. */
+export type DecisionFile = { path: string; kind: "file" | "folder"; decision_count: number };
+
+export type DecisionPersonCount = DecisionPerson & { decision_count: number };
+
+/** A person of the features, with how many features they are in. */
+export type FeaturePersonCount = DecisionPerson & { feature_count: number };
+
+/** An author the person filter offers: by decisions on All decisions, by
+ *  features on Features. */
+export type AuthorCount = DecisionPersonCount | FeaturePersonCount;
+
+export const WHO_OPTIONS: readonly { value: DecisionWho; label: string }[] = [
+  { value: "human", label: "Human" },
+  { value: "agent_proposed_human_approved", label: "Approved" },
+  { value: "agent", label: "Agent" },
+];
+
+/** Everything the address bar carries for the log's filters. Dates are local
+ *  calendar days, `YYYY-MM-DD`, both ends included. */
+export type DecisionFilters = {
+  q: string;
+  file: string;
+  person: string;
+  who: DecisionWho[];
+  categories: DecisionCategory[];
+  from: string | null;
+  to: string | null;
+  superseded: boolean;
+  hideAgent: boolean;
+};
+
+export const NO_FILTERS: DecisionFilters = {
+  q: "",
+  file: "",
+  person: "",
+  who: [],
+  categories: [],
+  from: null,
+  to: null,
+  superseded: false,
+  hideAgent: false,
+};
+
+const FILTER_KEYS = [
+  "q",
+  "file",
+  "person",
+  "who",
+  "category",
+  "from",
+  "to",
+  "superseded",
+  "agent",
+] as const;
+
+const DAY = /^(\d{4})-(\d{2})-(\d{2})$/;
+
+/** A real calendar day, so `2026-02-30` is dropped rather than sent on for the
+ *  API to refuse the whole page over. */
+function validDay(value: string | null): string | null {
+  const match = value ? DAY.exec(value) : null;
+  if (!match) return null;
+  const [year, month, day] = [Number(match[1]), Number(match[2]), Number(match[3])];
+  const at = new Date(year, month - 1, day);
+  return at.getFullYear() === year && at.getMonth() === month - 1 && at.getDate() === day
+    ? value
+    : null;
+}
+
+/** Known values in their canonical order, each once. A stale or hand-edited
+ *  value is dropped: the API answers an unknown one with a 400. */
+function known<T extends string>(values: string[], allowed: readonly T[]): T[] {
+  return allowed.filter((value) => values.includes(value));
+}
+
+export function parseDecisionFilters(search: URLSearchParams): DecisionFilters {
+  return exclusive({
+    q: search.get("q")?.trim() ?? "",
+    file: search.get("file")?.trim() ?? "",
+    person: search.get("person")?.trim() ?? "",
+    who: known(
+      search.getAll("who"),
+      WHO_OPTIONS.map((option) => option.value),
+    ),
+    categories: known(search.getAll("category"), CATEGORIES),
+    from: validDay(search.get("from")),
+    to: validDay(search.get("to")),
+    superseded: search.get("superseded") === "1",
+    hideAgent: search.get("agent") === "hide",
+  });
+}
+
+/** Hiding agent-only decisions and asking for them cannot both hold. Hiding
+ *  wins, whichever came first in the address, so `who=agent&agent=hide` reads
+ *  as hiding them. */
+function exclusive(filters: DecisionFilters): DecisionFilters {
+  return filters.hideAgent
+    ? { ...filters, who: filters.who.filter((value) => value !== "agent") }
+    : filters;
+}
+
+/** `search` with the filter params rewritten from `filters`, everything else
+ *  (the open decision) kept. Defaults are left off, so the plain address stays
+ *  plain. */
+export function withDecisionFilters(
+  search: URLSearchParams,
+  changes: Partial<DecisionFilters>,
+): URLSearchParams {
+  const filters = exclusive({ ...parseDecisionFilters(search), ...changes });
+  const next = new URLSearchParams(search);
+  for (const key of FILTER_KEYS) next.delete(key);
+  if (filters.q.trim()) next.set("q", filters.q.trim());
+  if (filters.file.trim()) next.set("file", filters.file.trim());
+  if (filters.person) next.set("person", filters.person);
+  for (const who of known(
+    filters.who,
+    WHO_OPTIONS.map((option) => option.value),
+  ))
+    next.append("who", who);
+  for (const category of known(filters.categories, CATEGORIES)) next.append("category", category);
+  const from = validDay(filters.from);
+  const to = validDay(filters.to);
+  if (from) next.set("from", from);
+  if (to) next.set("to", to);
+  if (filters.superseded) next.set("superseded", "1");
+  if (filters.hideAgent) next.set("agent", "hide");
+  return next;
+}
+
+/** The filters the tab shows off; the tab, anything opened and the other
+ *  tab's filters stay. On Features those that pick features and the status
+ *  are cleared; on All decisions every decision filter, but not the status. */
+export function clearDecisionFilters(search: URLSearchParams, features = false): URLSearchParams {
+  const next = withDecisionFilters(
+    search,
+    features ? { q: "", file: "", person: "", from: null, to: null } : NO_FILTERS,
+  );
+  if (features) next.delete("status");
+  return next;
+}
+
+/** The feature statuses the address asks for (`status`, repeatable), known
+ *  ones only, each once. Only the Features tab applies them. */
+export function parseFeatureStatuses(search: URLSearchParams): FeatureStatus[] {
+  return known(
+    search.getAll("status"),
+    FEATURE_STATUSES.map((option) => option.value),
+  );
+}
+
+export function withFeatureStatuses(
+  search: URLSearchParams,
+  statuses: FeatureStatus[],
+): URLSearchParams {
+  const next = new URLSearchParams(search);
+  next.delete("status");
+  for (const status of known(
+    statuses,
+    FEATURE_STATUSES.map((option) => option.value),
+  ))
+    next.append("status", status);
+  return next;
+}
+
+/** The filters that pick decisions alone: the Features tab neither offers
+ *  nor sends them, and they stay in the address for All decisions. */
+function withoutDecisionOnly(filters: DecisionFilters): DecisionFilters {
+  return { ...filters, who: [], categories: [], superseded: false, hideAgent: false };
+}
+
+/** The feature list's API query: the filters that pick features (the search
+ *  text, through a feature's own text and pull requests, the file and author,
+ *  through its pull requests and sessions, and the dates, through its
+ *  activity) and its statuses. A feature's own decisions are never
+ *  filtered. */
+export function featureQuery(
+  filters: DecisionFilters,
+  statuses: FeatureStatus[],
+  cursor?: string | null,
+): URLSearchParams {
+  const query = decisionQuery(withoutDecisionOnly(filters));
+  for (const status of statuses) query.append("status", status);
+  if (cursor) query.set("cursor", cursor);
+  return query;
+}
+
+/** Whether the Features tab's list is filtered by more than its statuses:
+ *  a search, a file, an author or dates. */
+export function hasFeatureFilters(filters: DecisionFilters): boolean {
+  return (
+    filters.q !== "" ||
+    filters.file !== "" ||
+    filters.person !== "" ||
+    filters.from !== null ||
+    filters.to !== null
+  );
+}
+
+export function hasDecisionFilters(filters: DecisionFilters): boolean {
+  return withDecisionFilters(new URLSearchParams(), filters).toString() !== "";
+}
+
+/** The instant a local calendar day begins, as RFC 3339 with the reader's own
+ *  offset. Read from the Date rather than assumed to be midnight, because a
+ *  day that begins with a daylight-saving jump begins at 01:00. */
+export function localDayStart(day: string, addDays = 0): string {
+  const [year, month, date] = day.split("-").map(Number) as [number, number, number];
+  const at = new Date(year, month - 1, date + addDays);
+  const offset = -at.getTimezoneOffset();
+  const sign = offset >= 0 ? "+" : "-";
+  const minutes = Math.abs(offset);
+  return `${pad(at.getFullYear(), 4)}-${pad(at.getMonth() + 1)}-${pad(at.getDate())}T${pad(at.getHours())}:${pad(at.getMinutes())}:00${sign}${pad(Math.floor(minutes / 60))}:${pad(minutes % 60)}`;
+}
+
+/** The API query for `filters`. `to` is the end of that day, so the API's
+ *  exclusive bound is the start of the next one. Hiding agent-only decisions
+ *  is a `who` the server applies, so every page it sends is shown whole. */
+export function decisionQuery(filters: DecisionFilters, cursor?: string | null): URLSearchParams {
+  const query = new URLSearchParams();
+  if (filters.q) query.set("q", filters.q);
+  if (filters.file) query.set("file", filters.file);
+  if (filters.person) query.set("person", filters.person);
+  const who = exclusive(filters).who;
+  const shown =
+    filters.hideAgent && who.length === 0
+      ? WHO_OPTIONS.map((option) => option.value).filter((value) => value !== "agent")
+      : who;
+  for (const value of shown) query.append("who", value);
+  for (const category of filters.categories) query.append("category", category);
+  if (filters.from) query.set("from", localDayStart(filters.from));
+  if (filters.to) query.set("to", localDayStart(filters.to, 1));
+  if (filters.superseded) query.set("superseded", "true");
+  if (cursor) query.set("cursor", cursor);
+  return query;
 }
