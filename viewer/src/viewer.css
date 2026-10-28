@@ -182,8 +182,8 @@
      near-black --brand-forest is a canvas, never an accent. A secondary or
      ghost action warms to sand under the pointer, as the public pages'
      outline button does. */
-  --action-primary: var(--brand-green-500);
-  --action-primary-hover: var(--brand-green-600);
+  --action-primary: var(--brand-green-600);
+  --action-primary-hover: var(--brand-green-700);
   --action-secondary-hover: var(--brand-sand-50);
   --action-accent: var(--accent-600);
   --action-accent-hover: var(--accent-700);
@@ -281,6 +281,7 @@
      dark mode; the semantic tokens that use them are. */
   --brand-sand-50: #f7ead0;
   --brand-sand-100: #f2dcad;
+  --brand-green-700: #2f6428;
   --brand-green-600: #3f7a34;
   --brand-green-500: #4c8b34;
   --brand-forest: #0f1a14;
