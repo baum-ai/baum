@@ -400,7 +400,8 @@ func TestMessagesDoNotOutliveTheirTurn(t *testing.T) {
 }
 
 // A message whose answer could not be written to the Stop hook is queued
-// again, unless a newer one replaced it.
+// again, unless a newer one replaced it or its turn ended; one written
+// resumes its session.
 func TestUndeliveredMessageIsRequeued(t *testing.T) {
 	s, _ := newStore(t)
 	take := func() daemon.Delivery {
@@ -433,9 +434,27 @@ func TestUndeliveredMessageIsRequeued(t *testing.T) {
 	if err := s.Queue(AgentClaudeCode, "s1", "delivered"); err != nil {
 		t.Fatal(err)
 	}
+	var resumed []string
+	s.Resumed = func(agent, session string, at time.Time) { resumed = append(resumed, agent+"/"+session) }
 	take().Written(nil)
 	if _, ok := s.TakeMessage(AgentClaudeCode, "s1"); ok {
 		t.Fatal("a delivered message was queued again")
+	}
+	if len(resumed) != 1 || resumed[0] != "claude-code/s1" {
+		t.Fatalf("a delivered message did not resume its session: %v", resumed)
+	}
+	// A new prompt that came while the message was out ends its turn.
+	if err := s.Queue(AgentClaudeCode, "s1", "for the turn that ended"); err != nil {
+		t.Fatal(err)
+	}
+	delivery = take()
+	s.Observe(hookevents.Event{Kind: hookevents.KindAgent, Agent: AgentClaudeCode, Name: "user-prompt-submit", Time: time.Now().Add(time.Second), Session: &hookevents.Session{ID: "s1"}})
+	delivery.Written(errors.New("broken pipe"))
+	if m, ok := s.TakeMessage(AgentClaudeCode, "s1"); ok {
+		t.Fatalf("a message outlived its turn: %+v", m)
+	}
+	if len(resumed) != 1 {
+		t.Fatalf("an undelivered message resumed its session: %v", resumed)
 	}
 	if result, err := s.take(context.Background(), json.RawMessage(`{"agent":"claude-code","session_id":"s1"}`)); err != nil || result != (Taken{}) {
 		t.Fatalf("nothing queued: %#v %v", result, err)

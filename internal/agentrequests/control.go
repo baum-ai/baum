@@ -39,10 +39,14 @@ func (s *Store) take(_ context.Context, params json.RawMessage) (any, error) {
 	if !ok {
 		return Taken{}, nil
 	}
-	// A message whose answer could not be written goes back in the queue.
+	// A message whose answer could not be written goes back in the queue;
+	// one handed over resumes the session's turn.
 	return daemon.Delivery{Result: Taken{Text: message.Text}, Written: func(err error) {
 		if err != nil {
 			s.Requeue(message)
+		} else if s.Resumed != nil {
+			s.Resumed(message.Agent, message.SessionID, s.now())
+			s.notify()
 		}
 	}}, nil
 }

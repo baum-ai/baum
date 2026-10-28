@@ -3010,17 +3010,23 @@ saved, in `agent-requests.json` in the state directory.
   would: the agent goes on (after a denial too) but reports nothing until
   the tool call ends, which for a long command would leave it shown waiting.
   A daemon restart rebuilds the session from the record, which has no event
-  for either, so it shows its earlier wait until the next event.
+  for either (nor for a delivered message, below), so it shows its earlier
+  wait until the next event.
 - **Messages.** At most one per session, replaced by a new one, accepted only
   for a listed session that has not ended and is not waiting for its next
   prompt (`turn_finished`): a Stop hook will come. `agent.take-message`
   removes and returns it as a `daemon.Delivery`, whose `Written` puts it
-  back, unless a newer one replaced it, when the answer could not be
-  written; the Stop hook makes it the agent's next instruction. A
-  `user-prompt-submit` or `session-end` drops a message queued before it (it
-  belonged to the turn that is over; a `stop` does not, since its hook takes
-  the message after recording the stop), and so does the list once the
-  session is no longer listed.
+  back when the answer could not be written, unless a newer one replaced it
+  or its turn ended while it was out (a `user-prompt-submit` or
+  `session-end` since it was queued, among the recent marks); the Stop hook
+  makes it the agent's next instruction. A written answer calls `Resumed`,
+  and `Tracker.Resumed` makes the session run again from then: the stop
+  that delivered it is older, so the tracker ignores it even when recorded
+  later, and a follow-up that only writes text is not shown as a finished
+  turn. A `user-prompt-submit` or `session-end` drops a message queued
+  before it (it belonged to the turn that is over; a `stop` does not, since
+  its hook takes the message after recording the stop), and so does the list
+  once the session is no longer listed.
 - **Known limits.** An answer racing the hook's disconnect is best-effort:
   the app is told `ok` and the hook may be gone. A written `take-message`
   answer can still be lost by a hook that goes away before reading it. The

@@ -585,7 +585,7 @@ func (t *Tracker) Apply(_ context.Context, e hookevents.Event) bool {
 // the end of a turn. A session with an event newer than at, or that waits for
 // nothing else, is left as it is. It reports whether the session changed.
 func (t *Tracker) Interrupted(agent, id string, at time.Time) bool {
-	return t.endWait(agent, id, at, EventStop, WaitTurnFinished)
+	return t.endWait(agent, id, at, EventStop, WaitTurnFinished, WaitPermission, WaitInput)
 }
 
 // Answered records that the app answered the permission or question a
@@ -594,13 +594,24 @@ func (t *Tracker) Interrupted(agent, id string, at time.Time) bool {
 // waits for nothing else, is left as it is. It reports whether the session
 // changed.
 func (t *Tracker) Answered(agent, id string, at time.Time) bool {
-	return t.endWait(agent, id, at, EventTool, "")
+	return t.endWait(agent, id, at, EventTool, "", WaitPermission, WaitInput)
 }
 
-// endWait ends a session's permission or input wait at at, with kind as its
-// last event and reason as its new wait, unless the session has an event
+// Resumed records that a session's Stop hook handed it a message the app
+// queued, at at: the agent goes on with the turn the stop ended, though it
+// may report nothing until it calls a tool or stops again. A stop the
+// tracker records after this, but which happened before at, is the one that
+// delivered the message and is ignored as old news. A session with an event
+// newer than at, or that waits for its user, is left as it is. It reports
+// whether the session changed.
+func (t *Tracker) Resumed(agent, id string, at time.Time) bool {
+	return t.endWait(agent, id, at, EventPrompt, "", WaitTurnFinished, "")
+}
+
+// endWait ends a session's wait, if it is one of ends, at at, with kind as
+// its last event and reason as its new wait, unless the session has an event
 // newer than at.
-func (t *Tracker) endWait(agent, id string, at time.Time, kind, reason string) bool {
+func (t *Tracker) endWait(agent, id string, at time.Time, kind, reason string, ends ...string) bool {
 	t.init()
 	now := t.now()
 	at = at.UTC()
@@ -610,7 +621,7 @@ func (t *Tracker) endWait(agent, id string, at time.Time, kind, reason string) b
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	s := t.sessions[key{agent, id}]
-	if s == nil || s.ended || at.Before(s.LastActivityAt) || (s.WaitingReason != WaitPermission && s.WaitingReason != WaitInput) {
+	if s == nil || s.ended || at.Before(s.LastActivityAt) || !slices.Contains(ends, s.WaitingReason) {
 		return false
 	}
 	s.LastActivityAt, s.LastEvent = at, kind

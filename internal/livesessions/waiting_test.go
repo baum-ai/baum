@@ -140,6 +140,43 @@ func TestAnAnsweredWaitWorksAgain(t *testing.T) {
 	}
 }
 
+func TestADeliveredMessageResumesTheTurn(t *testing.T) {
+	c := &clock{t0}
+	tr := newTracker(c, newLinker())
+	apply(tr, event("s1", "user-prompt-submit", c.now, "/work/demo"))
+	c.advance(time.Minute)
+	stopped := c.now
+	apply(tr, event("s1", "stop", stopped, "/work/demo"))
+	c.advance(time.Second)
+	if !tr.Resumed("claude-code", "s1", c.now) {
+		t.Fatal("the delivery changed nothing")
+	}
+	if s := only(t, tr); s.WaitingReason != "" || s.State != StateRunning || s.LastEvent != EventPrompt || !s.LastActivityAt.Equal(c.now) {
+		t.Fatalf("after the delivery: %+v", s)
+	}
+	// The stop that delivered it, recorded late, is old news.
+	apply(tr, event("s1", "stop", stopped, "/work/demo"))
+	if s := only(t, tr); s.WaitingReason != "" || s.State != StateRunning {
+		t.Fatalf("the delivering stop finished the turn: %+v", s)
+	}
+	// Delivered before the tracker saw its stop: the stop stays old news.
+	c.advance(time.Minute)
+	stopped = c.now
+	c.advance(time.Second)
+	tr.Resumed("claude-code", "s1", c.now)
+	apply(tr, event("s1", "stop", stopped, "/work/demo"))
+	if s := only(t, tr); s.WaitingReason != "" || s.State != StateRunning {
+		t.Fatalf("a stop recorded after its delivery finished the turn: %+v", s)
+	}
+	// A wait for the user is not one a message ends.
+	c.advance(time.Minute)
+	apply(tr, event("s1", "permission-request", c.now, "/work/demo"))
+	c.advance(time.Second)
+	if tr.Resumed("claude-code", "s1", c.now) {
+		t.Fatal("a delivery ended a permission wait")
+	}
+}
+
 func TestWorkClearsAWaitAndAWaitGoesOn(t *testing.T) {
 	c := &clock{t0}
 	tr := newTracker(c, newLinker())

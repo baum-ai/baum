@@ -256,6 +256,10 @@ type Store struct {
 	// of: it works again, though the agent reports nothing until the tool
 	// call ends.
 	Answered func(agent, session string, at time.Time)
+	// Resumed, when set, is told of a session whose Stop hook was handed
+	// the message queued for it: the agent goes on with its turn, though it
+	// may report nothing until it calls a tool or stops again.
+	Resumed func(agent, session string, at time.Time)
 	// Now is the clock; nil is time.Now.
 	Now func() time.Time
 	Log *slog.Logger
@@ -282,9 +286,12 @@ type mark struct {
 type markKind int
 
 const (
-	// markTurn is a boundary of the main agent's turn (stop,
-	// user-prompt-submit): a subagent's requests outlive it.
+	// markTurn is a boundary of the main agent's turn (stop): a subagent's
+	// requests outlive it.
 	markTurn markKind = iota
+	// markPrompt is a new prompt (user-prompt-submit), the boundary that
+	// also ends the turn a queued message was for.
+	markPrompt
 	// markEnd is the session's end.
 	markEnd
 	// markSubagent is a subagent's stop.
@@ -301,7 +308,7 @@ func (m mark) withdraws(p *pending) bool {
 		return false
 	}
 	switch m.kind {
-	case markTurn:
+	case markTurn, markPrompt:
 		return p.agentID == ""
 	case markEnd:
 		return true
@@ -640,6 +647,8 @@ func (s *Store) Observe(e hookevents.Event) {
 	}
 	m := mark{key: key{e.Agent, e.Session.ID}, at: e.Time.UTC()}
 	switch e.Name {
+	case "user-prompt-submit":
+		m.kind = markPrompt
 	case "post-tool-use", "post-tool-use-failure":
 		m.kind, m.digest = markTool, e.Session.ToolDigest
 	case "subagent-stop":
@@ -668,7 +677,7 @@ func (s *Store) Observe(e hookevents.Event) {
 		close(p.gone)
 	}
 	dropped := false
-	if message, queued := s.messages[m.key]; queued && (e.Name == "user-prompt-submit" || e.Name == "session-end") && message.QueuedAt.Before(m.at) {
+	if message, queued := s.messages[m.key]; queued && m.endsTurnOf(message) {
 		delete(s.messages, m.key)
 		dropped = true
 	}
@@ -676,6 +685,12 @@ func (s *Store) Observe(e hookevents.Event) {
 	if len(withdrawn) > 0 || dropped {
 		s.notify()
 	}
+}
+
+// endsTurnOf reports whether the mark ends the turn a message was queued for:
+// a later prompt or the end of its session.
+func (m mark) endsTurnOf(message Message) bool {
+	return m.key == (key{message.Agent, message.SessionID}) && (m.kind == markPrompt || m.kind == markEnd) && message.QueuedAt.Before(m.at)
 }
 
 func (p *pending) key() key { return key{p.Agent, p.SessionID} }
@@ -754,17 +769,20 @@ func (s *Store) TakeMessage(agent, id string) (Message, bool) {
 }
 
 // Requeue puts back a message taken but not delivered, unless a newer one
-// was queued since.
+// was queued since or its turn ended meanwhile (Observe saw a later prompt or
+// the session's end while it was out of the queue).
 func (s *Store) Requeue(m Message) {
 	s.init()
 	s.mu.Lock()
 	k := key{m.Agent, m.SessionID}
 	_, replaced := s.messages[k]
-	if !replaced {
+	over := slices.ContainsFunc(s.recent, func(r mark) bool { return r.endsTurnOf(m) })
+	requeued := !replaced && !over
+	if requeued {
 		s.messages[k] = m
 	}
 	s.mu.Unlock()
-	if !replaced {
+	if requeued {
 		s.notify()
 	}
 }
