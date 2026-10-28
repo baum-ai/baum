@@ -10,7 +10,7 @@ import (
 	collectcodex "github.com/baum-ai/baum/sessions/collector/codex"
 )
 
-// TestHostedReconcileAgainstTheRollouts independently counts inputs, messages, tool
+// TestReconcileAgainstTheRollouts independently counts inputs, messages, tool
 // calls, and answered call ids. Its invocation count intentionally mirrors the
 // documented batch boundaries, so that comparison is a regression check rather
 // than independent proof of the grouping rule.

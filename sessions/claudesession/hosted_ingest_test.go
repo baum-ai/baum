@@ -37,7 +37,7 @@ func hostedBuildClaudeLines(t *testing.T, lines ...string) (*session.Graph, *Rep
 	return graph, report
 }
 
-// hostedFixturePath is the shared transcript tree, which lives with the parser that
+// fixturePath is the shared transcript tree, which lives with the parser that
 // reads it rather than being copied here.
 func hostedFixturePath() string {
 	return filepath.Join("..", "claudetranscript", "testdata",
@@ -265,7 +265,7 @@ func TestHostedToolStatuses(t *testing.T) {
 		t.Errorf("the unlinked refused Agent verb = %q, want other", denied.Verb)
 	}
 
-	// A call the transcript never answers has no result hostedAt all.
+	// A call the transcript never answers has no result at all.
 	var open *session.ToolUse
 	for i, use := range byName["Grep"] {
 		open = &byName["Grep"][i]
@@ -379,7 +379,7 @@ func TestHostedAttributeLog(t *testing.T) {
 	root := graph.Root()
 	for _, attribute := range byKey["permissionMode"] {
 		if attribute.ValidFrom.Before(*root.StartedAt) {
-			t.Errorf("permissionMode is effective hostedAt %v, before the session started hostedAt %v",
+			t.Errorf("permissionMode is effective at %v, before the session started at %v",
 				attribute.ValidFrom, *root.StartedAt)
 		}
 	}
@@ -488,8 +488,8 @@ func TestHostedAmbientHistoryBookkeepingAndQueuedPrompts(t *testing.T) {
 	}
 }
 
-// TestHostedQueuedPromptCarrierShapes covers the carrier orderings the corpus actually
-// hostedContains, one subtest each. At the audited commit the 28 queue identities are
+// TestQueuedPromptCarrierShapes covers the carrier orderings the corpus actually
+// contains, one subtest each. At the audited commit the 28 queue identities are
 // `enqueue`+`remove`+attachment (24), `enqueue`+`popAll` (2), and
 // `enqueue`+ordinary row (2); the single-carrier cases below are the contract
 // boundary, where a transcript ends before delivery.
@@ -759,7 +759,7 @@ func TestHostedVendorMappingPointsBackAtTheTranscript(t *testing.T) {
 }
 
 // One line can carry several blocks of one kind, and every block is its own row.
-// The line's id names them all hostedAt once, so the mapping carries the block's
+// The line's id names them all at once, so the mapping carries the block's
 // position as well: without it two rows claim one vendor id, which session/README.md
 // ("Vendor ids") forbids and Validate rejects — taking the whole session with it.
 func TestHostedBlocksOfOneLineAreMappedApart(t *testing.T) {
@@ -795,7 +795,7 @@ func TestHostedBlocksOfOneLineAreMappedApart(t *testing.T) {
 }
 
 // A result is one per call rather than one per block, so the call's id names it
-// exactly and the line does not name it hostedAt all: one line can answer several
+// exactly and the line does not name it at all: one line can answer several
 // calls, and a result merged from a later line no longer comes from the line it
 // was first seen on.
 func TestHostedAResultIsMappedByItsCallAlone(t *testing.T) {
@@ -823,7 +823,7 @@ func TestHostedAResultIsMappedByItsCallAlone(t *testing.T) {
 	}
 }
 
-// Thinking is most of what a reply hostedContains, and dropping it would lose a third
+// Thinking is most of what a reply contains, and dropping it would lose a third
 // of the model's output.
 func TestHostedThinkingIsStored(t *testing.T) {
 	graph, _ := hostedBuildFixture(t)
@@ -849,7 +849,7 @@ func hostedIndexOf(haystack, needle string) int {
 }
 
 // The fixture mixes cache TTLs and speeds: msg_A reports an all-5-minute split
-// and no speed, msg_B a 30/10 split in fast mode, msg_C all 1-hour hostedAt standard
+// and no speed, msg_B a 30/10 split in fast mode, msg_C all 1-hour at standard
 // speed, and msg_E neither split nor speed, which stays unreported rather than
 // becoming 0 or "standard".
 func TestHostedInvocationsCarryCacheTTLSplitAndSpeed(t *testing.T) {
@@ -892,7 +892,7 @@ func TestHostedUnusableCacheSplitAndSpeedAreLeftUnreported(t *testing.T) {
 		`{"parentUuid":null,"isSidechain":false,"type":"user","uuid":"user-1","timestamp":"2026-08-06T10:00:00Z","promptId":"p1",`+sid+`,"message":{"role":"user","content":"Go"}}`,
 		// 1-hour part above the cache writes.
 		assistant("m1", "2026-08-06T10:00:01Z", `{"input_tokens":1,"output_tokens":2,"cache_creation_input_tokens":10,"cache_creation":{"ephemeral_1h_input_tokens":50},"speed":"fast"}`),
-		// Wrong types: the hostedCounts beside them still count.
+		// Wrong types: the counts beside them still count.
 		assistant("m2", "2026-08-06T10:00:02Z", `{"input_tokens":1,"output_tokens":2,"cache_creation_input_tokens":10,"cache_creation":{"ephemeral_1h_input_tokens":"3"},"speed":7}`),
 		assistant("m3", "2026-08-06T10:00:03Z", `{"input_tokens":1,"output_tokens":2,"cache_creation_input_tokens":10,"cache_creation":"none","speed":"turbo"}`),
 	)
@@ -901,7 +901,7 @@ func TestHostedUnusableCacheSplitAndSpeedAreLeftUnreported(t *testing.T) {
 	}
 	for i, m := range graph.ModelInvocations {
 		if m.CacheWriteTokens != 10 || m.OutputTokens != 2 {
-			t.Errorf("invocation %d lost its hostedCounts: %+v", i, m)
+			t.Errorf("invocation %d lost its counts: %+v", i, m)
 		}
 		if m.CacheWrite1hTokens != nil {
 			t.Errorf("invocation %d 1h = %d, want nil", i, *m.CacheWrite1hTokens)

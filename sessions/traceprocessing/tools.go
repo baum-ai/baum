@@ -64,3 +64,16 @@ func PatchHeaderPathsWith(patch string, profile MappingProfile) []string {
 	}
 	return paths
 }
+
+// GenericToolVerbWith preserves the hosted compact-tool aliases.
+func GenericToolVerbWith(name string, profile MappingProfile) session.ToolVerb {
+	if profile == Hosted {
+		switch name {
+		case "grep":
+			return session.VerbSearch
+		case "bash":
+			return session.VerbExecute
+		}
+	}
+	return GenericToolVerb(name)
+}

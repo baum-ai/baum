@@ -417,7 +417,7 @@ func TestHostedHandbackReportDropsTheHarnessFrameAndNotes(t *testing.T) {
 			"Intro.\n[harness: quoted]",
 		},
 		"no frame": {"Plain message.", "Plain message."},
-		"text hostedAt column zero": {
+		"text at column zero": {
 			"[Subagent hand-back] The report follows:\nUnindented.",
 			"[Subagent hand-back] The report follows:\nUnindented.",
 		},

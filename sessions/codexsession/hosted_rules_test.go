@@ -810,7 +810,7 @@ func TestHostedMalformedItemCompletedUserMessageFails(t *testing.T) {
 		hostedEnvelope("2026-08-01T12:00:01Z", "event_msg", `{"type":"item_completed","item":{"type":"UserMessage","content":"oops"}}`),
 	)
 	if _, _, err := hostedBuildLinesResult(t, lines...); err == nil {
-		t.Fatal("hostedBuild accepted a malformed UserMessage item")
+		t.Fatal("Build accepted a malformed UserMessage item")
 	}
 }
 

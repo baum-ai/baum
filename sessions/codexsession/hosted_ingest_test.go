@@ -29,7 +29,7 @@ func hostedFixtureTree(t *testing.T) *codextranscript.Tree {
 	return hostedStoreTree(t, filepath.Join("..", "codextranscript", "testdata", "store"))
 }
 
-// hostedStoreTree decodes the tree of the only root rollout in a Codex store.
+// storeTree decodes the tree of the only root rollout in a Codex store.
 func hostedStoreTree(t *testing.T, store string) *codextranscript.Tree {
 	t.Helper()
 	index, _, err := collectcodex.ScanStore(store)
@@ -75,7 +75,7 @@ func TestHostedBuildMapsCollaborationFixture(t *testing.T) {
 	}
 }
 
-// TestHostedBuildMapsCollaborationItemSpawns covers current Codex versions, which
+// TestBuildMapsCollaborationItemSpawns covers current Codex versions, which
 // report a collaboration spawn_agent's child only as an item_completed
 // SubAgentActivity item and return just the child's task_name: each child
 // resolves to its own spawn call, so the tree maps natively with per-request
@@ -134,7 +134,7 @@ func TestHostedBuildMapsCollaborationItemSpawns(t *testing.T) {
 	}
 }
 
-// TestHostedSubAgentActivityReportedTwiceCountsOnce covers a rollout resumed across
+// TestSubAgentActivityReportedTwiceCountsOnce covers a rollout resumed across
 // Codex versions that reports one spawn both as a sub_agent_activity event
 // and as an item_completed item: the copy must not become a second spawn
 // match.
@@ -213,7 +213,7 @@ func TestHostedSpawnRequiresBothLinks(t *testing.T) {
 	tree.Children[0].Meta.AgentPath = "/root/wrong"
 	_, _, err := hostedBuild(tree)
 	if err == nil {
-		t.Fatal("hostedBuild accepted a child without matching activity evidence")
+		t.Fatal("Build accepted a child without matching activity evidence")
 	}
 }
 
@@ -235,11 +235,11 @@ func TestHostedUnprovableBoundaryFails(t *testing.T) {
 	}
 	_, _, err := hostedBuild(tree)
 	if err == nil {
-		t.Fatal("hostedBuild accepted a child with no provable own-history boundary")
+		t.Fatal("Build accepted a child with no provable own-history boundary")
 	}
 }
 
-// TestHostedUnforkedChildWithInheritedHistoryFails keeps a child that names no
+// TestUnforkedChildWithInheritedHistoryFails keeps a child that names no
 // fork source from owning lines that are really its parent's history.
 func TestHostedUnforkedChildWithInheritedHistoryFails(t *testing.T) {
 	for _, class := range []codextranscript.Class{codextranscript.ClassSessionMeta, codextranscript.ClassEventMsg} {
@@ -267,7 +267,7 @@ func TestHostedUnforkedChildWithInheritedHistoryFails(t *testing.T) {
 				child.Lines[i+2].Ordinal++
 			}
 			if _, _, err := hostedBuild(tree); err == nil || !strings.Contains(err.Error(), "no fork source but repeats") {
-				t.Fatalf("hostedBuild error = %v, want inherited-history refusal", err)
+				t.Fatalf("Build error = %v, want inherited-history refusal", err)
 			}
 		})
 	}

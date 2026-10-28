@@ -10,7 +10,7 @@ import (
 	"github.com/baum-ai/baum/sessions/session"
 )
 
-// TestHostedReconcileAgainstTheTranscripts hostedCounts what is in the files independently of the mapping, and compares.
+// TestReconcileAgainstTheTranscripts counts what is in the files independently of the mapping, and compares.
 func TestHostedReconcileAgainstTheTranscripts(t *testing.T) {
 	root := corpusDir(t)
 	paths := mainTranscripts(t, root)
@@ -87,7 +87,7 @@ func (c hostedCounts) add(other hostedCounts) hostedCounts {
 	}
 }
 
-// hostedCountTranscripts hostedCounts what a tree holds, reading the lines directly rather
+// countTranscripts counts what a tree holds, reading the lines directly rather
 // than asking the mapping.
 func hostedCountTranscripts(tree *claudetranscript.Tree) hostedCounts {
 	var out hostedCounts
