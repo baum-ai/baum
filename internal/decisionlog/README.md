@@ -375,8 +375,8 @@ internal features build`.
   of each pull request with a description. The cap of the version's spend
   over all its runs is what it spent and the estimate times 1.25, and never
   less than what it spent and the largest call the remaining work makes (a
-  batch, or a text or pull request summary at its input's bound) priced as
-  the call is checked, so a confirmed resume can always make progress. A
+  batch, a text or a pull request summary at its input's bound, a batch with
+  the longer of its plain and seeded prompts) priced as the call is checked, so a confirmed resume can always make progress. A
   repository whose decisions are not captured, or whose model cannot be
   priced or called, is not estimated.
 - **Building.** The build makes the repository's `building` version, or

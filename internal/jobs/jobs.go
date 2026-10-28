@@ -45,8 +45,9 @@ const KindFix = "fix"
 // its pull request history placed in features (decisionlog's Build). Clone
 // names the repository's clone and PR is 0. It runs only from a confirmed
 // estimate, capped at the estimate's cap (what earlier runs spent and the
-// estimate times 1.25); one stopped at the cap, interrupted or failed is
-// resumed by confirming it again.
+// estimate times 1.25, never less than the largest remaining call); one
+// stopped at the cap, interrupted or failed is resumed by confirming it
+// again.
 const KindFeatureBuild = "feature_build"
 
 // FeatureBuildEstimate is what a feature build would do and cost.

@@ -131,9 +131,9 @@ gate, and prints what it did as JSON, with a line a batch on standard error.
 It builds a new version of the repository's features from its pull requests
 of the last 180 days, or resumes the one being built, and makes it current.
 --max-cost-usd caps the version's spend over all its runs; the default is
-what it spent and the estimate of what is left times 1.25, with room for at
-least one more call. --dry-run prints
-the estimate and writes nothing. It writes the daemon's store: run it with
+what it spent and the estimate of what is left times 1.25, never less than
+the largest remaining call. --dry-run prints the estimate and writes
+nothing. It writes the daemon's store: run it with
 the daemon stopped.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {

@@ -204,9 +204,9 @@ func TestPlacementChecksItsVersionBeforeEachItem(t *testing.T) {
 	}
 }
 
-// A build stopped in its last text pass, its pass already tried and no pull
-// request left, resumes with the default cap: the cap has room for a text
-// call held to its whole reply bound.
+// A build stopped in its last text pass, no pull request left, resumes with
+// the default cap: the cap has room for a text call held to its whole reply
+// bound.
 func TestBuildResumedInItsLastTextPass(t *testing.T) {
 	f := newFeatureFixture(t)
 	f.clock.now = t0.Add(60 * 24 * time.Hour)
@@ -256,5 +256,22 @@ func TestConsolidationWritesNothingToARetiredVersion(t *testing.T) {
 	}
 	if last, _, _ := f.store.consolidation(ctx, repo); !last.IsZero() || f.featureOf(3) != "B" || f.featureOf(2) != "A" {
 		t.Fatal("a retired version was written")
+	}
+}
+
+// A build with a few pull requests left resumes with the default cap: the
+// cap has room for a batch call held to the batch input's bound.
+func TestBuildSmallRemainderWithTheDefaultCap(t *testing.T) {
+	f := newFeatureFixture(t)
+	f.clock.now = t0.Add(60 * 24 * time.Hour)
+	f.history(3)
+	f.backend.batch = func(user string) (string, error) { return batchReply(t, user, ""), nil }
+	f.exec(`INSERT INTO feature_version(repository, state, created_at, spent_usd) VALUES (?, ?, ?, 1.5)`, repo, VersionBuilding, t0.UnixMilli())
+	estimate, err := f.worker.EstimateBuild(context.Background(), repo, "", BuildOptions{})
+	if err != nil || estimate.PullRequests != 3 || estimate.EstimateUSD == nil || estimate.Cap()-estimate.SpentUSD < estimate.ReservedUSD {
+		t.Fatalf("estimate = %+v, %v", estimate, err)
+	}
+	if report := f.build(BuildOptions{}); !report.Current || report.Placed != 3 {
+		t.Fatalf("report = %+v", report)
 	}
 }

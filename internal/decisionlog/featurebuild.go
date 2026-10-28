@@ -33,7 +33,9 @@ const (
 // BuildOptions change a first build.
 type BuildOptions struct {
 	// MaxCostUSD caps the building version's spend over all its runs; zero
-	// is what it spent and its estimate times FeatureBuildCapFactor.
+	// is the estimate's cap (BuildEstimate.Cap): what it spent and its
+	// estimate times FeatureBuildCapFactor, never less than what it spent
+	// and the largest remaining call.
 	MaxCostUSD float64
 	// DryRun estimates and writes nothing.
 	DryRun bool
@@ -198,13 +200,24 @@ func (w *FeatureWorker) EstimateBuild(ctx context.Context, repository, dir strin
 // sizes of their inputs (README.md, "First build"): the batches, the new
 // features' text twice and the text of a resumed version's features behind
 // their members, and a summary of every pull request with a description;
-// with the most one call the remaining work makes (a batch, text or pull
-// request summary) is held to under the cap, priced as complete checks it.
+// with the most one call the remaining work makes is held to under the cap
+// (a batch, text or pull request summary at its input's bound), priced as
+// complete checks it.
 func (r *featureRun) estimateCost(ctx context.Context, items []buildItem, p planned) (float64, float64, bool, error) {
 	batchVersion, _ := assign.Public.BatchVersion(AssignVersion)
 	batchRequest, err := assign.Public.Request(batchVersion, "", assign.MaxBatchOutputTokens)
 	if err != nil {
 		return 0, 0, false, err
+	}
+	// The batch held under the cap is the longer of the plain and seeded
+	// prompts at the input bound RenderBatch enforces.
+	seededRequest, err := assign.Public.Request(assign.Public.SeededBatch(batchVersion), "", assign.MaxBatchOutputTokens)
+	if err != nil {
+		return 0, 0, false, err
+	}
+	heldBatch := batchRequest
+	if len(seededRequest.System) > len(heldBatch.System) {
+		heldBatch = seededRequest
 	}
 	tokens := func(bytes int) int64 { return int64(bytes/FeatureEstimateBytesPerToken) + 1 }
 	total, reserved, priced := 0.0, 0.0, true
@@ -251,6 +264,9 @@ func (r *featureRun) estimateCost(ctx context.Context, items []buildItem, p plan
 			reserved = max(reserved, cost)
 		}
 	}
+	if len(items) > 0 {
+		hold(heldBatch, assign.MaxBatchInputBytes)
+	}
 	features, created := existing, 0
 	for start := 0; start < len(items); start += FeatureBatch {
 		bytes := len(batchRequest.System) + 2000
@@ -260,7 +276,6 @@ func (r *featureRun) estimateCost(ctx context.Context, items []buildItem, p plan
 		}
 		bytes += min(FeatureBuildCandidates, features) * FeatureEstimateCandidateBytes
 		add(tokens(bytes), int64(len(batch)*FeatureEstimateItemOutputTokens))
-		hold(batchRequest, bytes-len(batchRequest.System))
 		created = (start + len(batch) + FeatureEstimatePullsPerFeature - 1) / FeatureEstimatePullsPerFeature
 		features = existing + created
 	}

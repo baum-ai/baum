@@ -65,9 +65,11 @@ func (f *featureFixture) versionState(id int64) (state, stopped string) {
 
 // A build places the window's merged and open pull requests by no bot in
 // batches, oldest first, writes the text every three batches and after the
-// last, consolidates once and switches versions in one step; the live
-// placement keeps writing the current version meanwhile.
-func TestBuildPlacesTextsConsolidatesAndSwitches(t *testing.T) {
+// last, and switches versions in one step; the live placement keeps writing
+// the current version meanwhile, and the weekly pass consolidates the new
+// version on its next run though the old one had a recent pass and a
+// backoff.
+func TestBuildPlacesTextsAndSwitches(t *testing.T) {
 	f := newFeatureFixture(t)
 	f.clock.now = t0.Add(200 * 24 * time.Hour)
 	f.history(110)
@@ -78,6 +80,10 @@ func TestBuildPlacesTextsConsolidatesAndSwitches(t *testing.T) {
 	f.exec(`UPDATE pull_request SET state='closed', merged_at=NULL WHERE number=201`)
 	f.exec(`UPDATE pull_request SET merged_at=created_at, state='closed' WHERE number=202`)
 	live := f.live()
+	// The old version's recent pass and a backoff.
+	f.exec(`INSERT INTO feature_consolidation(repository, last_pass_at, fingerprint) VALUES (?, ?, 'old')`, repo, f.clock.now.Add(-24*time.Hour).UnixMilli())
+	f.exec(`INSERT INTO feature_settle(version_id, repository, kind, item, trigger_key, failures, next_at) VALUES (?, ?, ?, ?, 'old', 1, ?)`,
+		live, repo, kindConsolidation, consolidationItem, f.clock.now.Add(time.Hour).UnixMilli())
 	var order []string
 	livePlaced := false
 	f.backend.batch = func(user string) (string, error) {

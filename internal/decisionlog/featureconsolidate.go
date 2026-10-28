@@ -257,8 +257,7 @@ type plannedSplit struct {
 
 // consolidate makes one pass over the run's version (README.md,
 // "Consolidation"); gated, only when one is due. Every call is made before
-// anything is written. The pass is recorded unless the run builds a version,
-// whose switch records it.
+// anything is written.
 func (r *featureRun) consolidate(ctx context.Context, gated bool) (ConsolidateReport, error) {
 	s := r.w.Store
 	report := ConsolidateReport{Repository: r.repository}
