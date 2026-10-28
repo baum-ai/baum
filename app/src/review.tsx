@@ -34,7 +34,7 @@ import {
   type LiveSession,
   type Provenance,
 } from "./api";
-import { FixNotice } from "./fix";
+import { FixNotice, type FixState } from "./fix";
 import { CloneActions } from "./repositories";
 import { Notice } from "./shell";
 import { LiveSessions } from "./sessions";
@@ -101,6 +101,7 @@ export function LocalReview({
   live = [],
   groups = [],
   fix,
+  fixState = { starting: false, error: "" },
   fixJob,
 }: {
   entry: Entry;
@@ -115,8 +116,10 @@ export function LocalReview({
   live?: LiveSession[];
   /** The review groups this pull request belongs to. */
   groups?: { id: string; name: string }[];
-  /** Opens the fix confirmation; absent when the pull request offers no fix. */
+  /** Starts the fix at once; absent when the pull request has no clone. */
   fix?: () => void;
+  /** The fix asked for here: starting, or why it did not start. */
+  fixState?: FixState;
   /** The pull request's latest fix job. */
   fixJob?: Job;
 }) {
@@ -134,6 +137,7 @@ export function LocalReview({
     });
   const fixLabelText = fixLabel(entry);
   const fixing = isActiveJob(fixJob);
+  const fixStarting = fixState.starting && !fixing;
   // A finished fix stays on the page while it concerns the head shown: the
   // one it started from, or the commit it pushed.
   const showFix =
@@ -184,7 +188,7 @@ export function LocalReview({
     } else if (event.key === "m" && canMerge(entry)) {
       event.preventDefault();
       setMerging(true);
-    } else if (event.key === "f" && fix && fixLabelText && !fixing) {
+    } else if (event.key === "f" && fix && fixLabelText && !fixing && !fixStarting) {
       event.preventDefault();
       fix();
     } else if (event.key === "g" && !generating && !entry.needs_clone) {
@@ -325,12 +329,12 @@ export function LocalReview({
                       <Button
                         variant="secondary"
                         size="compact"
-                        disabled={fixing}
+                        disabled={fixing || fixStarting}
                         onClick={fix}
                         className="gap-1.5"
                       >
                         <SparkleIcon size={14} className="flex-none text-(--status-critical)" />
-                        {fixing ? "Fixing…" : fixLabelText}
+                        {fixing ? "Fixing…" : fixStarting ? "Starting…" : fixLabelText}
                       </Button>
                     ) : null}
                     {canRerunChecks(entry) ? (
@@ -442,6 +446,7 @@ export function LocalReview({
                     </ViewerLink>
                   </Notice>
                 ))}
+                {fixState.error ? <Alert>Couldn't start the fix: {fixState.error}</Alert> : null}
                 {showFix && fixJob ? (
                   <FixNotice key={fixJob.id} job={fixJob} changed={changed} />
                 ) : null}

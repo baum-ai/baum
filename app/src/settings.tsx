@@ -828,8 +828,6 @@ function RepositorySettings({
     setPending(true);
     void save({
       automatic: mode === "default" ? null : mode === "on",
-      // Spending caps are gone from the app; saving clears an old one.
-      daily_cap: null,
       backend,
       model: model?.trim() ? model.trim() : null,
     }).finally(() => setPending(false));

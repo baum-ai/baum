@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -271,7 +272,8 @@ func waitFinished(t *testing.T, q *Queue, id string) Job {
 	return Job{}
 }
 
-func TestConfirmedFixJobPushesAndReportsTheCommit(t *testing.T) {
+// A fix starts at once when asked for, with no estimate to confirm.
+func TestFixJobPushesAndReportsTheCommit(t *testing.T) {
 	r := newFixRepositories(t)
 	ctx := context.Background()
 	backend := &fixBackend{name: agent.BackendClaude, fix: resolveConflict}
@@ -282,14 +284,10 @@ func TestConfirmedFixJobPushesAndReportsTheCommit(t *testing.T) {
 	}
 	t.Cleanup(q.Close)
 	item := Item{Clone: r.clone.ID, PR: 1, Kind: KindFix}
-	if _, err := q.Generate(ctx, []Item{item}, "single", false); !errors.Is(err, ErrFixNeedsConfirmation) {
-		t.Fatalf("a fix ran without confirmation: %v", err)
+	if _, err := q.Generate(ctx, []Item{item, {Clone: r.clone.ID, PR: 2}}, "batch", false); err == nil {
+		t.Fatal("a fix was started in a batch")
 	}
-	if _, err := q.Estimate(ctx, []Item{item, {Clone: r.clone.ID, PR: 2}}, "batch"); err == nil {
-		t.Fatal("a fix was estimated in a batch")
-	}
-	e := estimate(t, q, "single", item)
-	jobs, err := q.SubmitConfirmed(ctx, e.ID, Confirmation{Estimate: true})
+	jobs, err := q.Generate(ctx, []Item{item}, "single", false)
 	if err != nil || len(jobs) != 1 || jobs[0].Kind != KindFix {
 		t.Fatalf("jobs %+v err %v", jobs, err)
 	}
@@ -321,8 +319,7 @@ func TestFixJobFailsWhenTheAgentChangesNothing(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(q.Close)
-	e := estimate(t, q, "single", Item{Clone: r.clone.ID, PR: 1, Kind: KindFix})
-	jobs, err := q.SubmitConfirmed(ctx, e.ID, Confirmation{Estimate: true})
+	jobs, err := q.Generate(ctx, []Item{{Clone: r.clone.ID, PR: 1, Kind: KindFix}}, "single", false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -335,9 +332,9 @@ func TestFixJobFailsWhenTheAgentChangesNothing(t *testing.T) {
 	}
 }
 
-// A blocked fix cannot be confirmed, and a review and a fix of one pull request
-// do not replace each other.
-func TestBlockedFixIsNotQueuedAndReviewsStayApart(t *testing.T) {
+// A blocked fix is not queued: starting it answers with its reason, which
+// POST /api/jobs passes on as blocked_reason for the app to say in words.
+func TestBlockedFixIsNotQueuedAndSaysWhy(t *testing.T) {
 	r := newFixRepositories(t)
 	ctx := context.Background()
 	local := fixRunner(t, r, &fakeGitHub{head: r.head, headRepository: "someone/repo", push: true}, &fixBackend{name: agent.BackendClaude})
@@ -346,12 +343,21 @@ func TestBlockedFixIsNotQueuedAndReviewsStayApart(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(q.Close)
-	e := estimate(t, q, "single", Item{Clone: r.clone.ID, PR: 1, Kind: KindFix})
-	if e.Items[0].BlockedReason != fix.ReasonFork {
-		t.Fatalf("estimate %+v", e.Items[0])
+	item := Item{Clone: r.clone.ID, PR: 1, Kind: KindFix}
+	var blocked *BlockedError
+	if _, err := q.Generate(ctx, []Item{item}, "single", false); !errors.As(err, &blocked) || blocked.Reason != fix.ReasonFork {
+		t.Fatalf("a fork's fix: %v", err)
 	}
-	if _, err := q.SubmitConfirmed(ctx, e.ID, Confirmation{Estimate: true}); err == nil {
-		t.Fatal("a fork's fix was queued")
+	w := httptest.NewRecorder()
+	q.Handler().ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/api/jobs", strings.NewReader(`{"items":[{"clone":"`+r.clone.ID+`","pr":1,"kind":"fix"}],"mode":"single"}`)))
+	var answer struct {
+		BlockedReason string `json:"blocked_reason"`
+	}
+	if w.Code != http.StatusConflict || json.Unmarshal(w.Body.Bytes(), &answer) != nil || answer.BlockedReason != fix.ReasonFork {
+		t.Fatalf("%d %s", w.Code, w.Body)
+	}
+	if len(q.List()) != 0 {
+		t.Fatalf("queued %+v", q.List())
 	}
 }
 
@@ -370,7 +376,7 @@ func TestPrepareFixOffersReviewCommentsOnTheViewersPullRequest(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if p.BlockedReason != "" || p.Fix.Threads == "" || p.Fix.Conflicts || p.Fix.Checks || p.FixThreadsUntrusted != 1 || p.FixThreadsCapped || p.EstimateUSD == nil {
+	if p.BlockedReason != "" || p.Fix.Threads == "" || p.Fix.Conflicts || p.Fix.Checks || p.FixThreadsUntrusted != 1 || p.FixThreadsCapped {
 		t.Fatalf("prepared %+v", p)
 	}
 	want := []FixThread{{Ref: "T1", Path: "a.txt", Line: 1, Author: "alice", Excerpt: "Rename this."}, {Ref: "T2", Path: "b.txt", Line: 1, Author: "alice", Excerpt: "Why?"}}
@@ -396,7 +402,7 @@ func answerThreads(prompt string) string {
 	return "Renamed it.\n\n" + fence + "\n" + `[{"id":"T1","addressed":true,"summary":"Renamed it as [asked](https://evil.example), @alice."},{"id":"T2","addressed":false,"summary":"A question for the author."},{"id":"T3","addressed":true,"summary":"Not a thread."}]` + "\n```"
 }
 
-func TestConfirmedThreadFixRepliesAndRecordsEachThread(t *testing.T) {
+func TestThreadFixRepliesAndRecordsEachThread(t *testing.T) {
 	r := newFixRepositories(t)
 	ctx := context.Background()
 	backend := &fixBackend{name: agent.BackendClaude, fix: func(dir string) error {
@@ -409,8 +415,7 @@ func TestConfirmedThreadFixRepliesAndRecordsEachThread(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(q.Close)
-	e := estimate(t, q, "single", Item{Clone: r.clone.ID, PR: 1, Kind: KindFix})
-	jobs, err := q.SubmitConfirmed(ctx, e.ID, Confirmation{Estimate: true})
+	jobs, err := q.Generate(ctx, []Item{{Clone: r.clone.ID, PR: 1, Kind: KindFix}}, "single", false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -429,7 +434,7 @@ func TestConfirmedThreadFixRepliesAndRecordsEachThread(t *testing.T) {
 	}
 }
 
-// A thread that changes after the confirmation stops the fix before the agent
+// A thread that changes after the fix was prepared stops it before the agent
 // runs.
 func TestThreadFixStopsWhenTheThreadsChange(t *testing.T) {
 	r := newFixRepositories(t)
