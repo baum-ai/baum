@@ -34,22 +34,35 @@ export function buildJobOf(jobs: Job[], repository: string): Job | undefined {
 
 /** What `api/timeline/build` says of the repository: its building version
  *  and whether it has features at all, whatever the lists' filters. */
-export type BuildState = { building: Building | null; hasFeatures: boolean };
+export type BuildState = {
+  building: Building | null;
+  hasFeatures: boolean;
+  /** When the current version became current, null without one. */
+  currentSince: string | null;
+};
 
 /** The repository's build state, read again when the log or the build job
  *  moves on. A read that fails keeps the last state. */
 export function useBuildState(repository: string, key: string): BuildState {
-  const [state, setState] = useState<BuildState>({ building: null, hasFeatures: false });
+  const [state, setState] = useState<BuildState>({
+    building: null,
+    hasFeatures: false,
+    currentSince: null,
+  });
   useEffect(() => {
     const abort = new AbortController();
-    request<{ building?: Building | null; has_features?: boolean }>(
+    request<{ building?: Building | null; has_features?: boolean; current_since?: string | null }>(
       `api/timeline/build?repository=${encodeURIComponent(repository)}`,
       undefined,
       "GET",
       abort.signal,
     )
       .then((body) =>
-        setState({ building: body.building ?? null, hasFeatures: body.has_features === true }),
+        setState({
+          building: body.building ?? null,
+          hasFeatures: body.has_features === true,
+          currentSince: body.current_since ?? null,
+        }),
       )
       .catch(() => {
         // A transient failure, or an older daemon: what was shown stays.
@@ -59,26 +72,10 @@ export function useBuildState(repository: string, key: string): BuildState {
   return state;
 }
 
-/** Why a feature build stopped or cannot run, in its own words; reasons
- *  shared with other jobs read as they do. */
-const buildReasons: Record<string, string> = {
-  cost_cap:
-    "It reached its spending cap before it finished. Confirm it again to resume where it stopped.",
-  spend_unrecorded: "baum could not record what one of its calls spent, so it stopped.",
-  unpriced_model:
-    "The model has no price in baum's price list, so the build's cost cannot be capped.",
-  unknown_model_price:
-    "The model has no price in baum's price list, so the build's cost cannot be capped.",
-  daily_cap: "The decision log's daily spending cap is reached. It can go on tomorrow.",
-  disabled: "Decisions are turned off for this repository, so it cannot be built.",
-  preferences_unreadable: "baum could not read its preferences, so it did not make a call.",
-  backend_unavailable: "The model backend is not available on this computer.",
-  backend_unsupported: "The configured backend cannot make the feature log's calls.",
-  failed: "It failed before it finished. Confirm it again to resume.",
-};
-
+/** Why a feature build stopped or cannot run, in its own words; see
+ *  `jobReasonText` with the `feature_build` kind. */
 export function buildReasonText(reason: string): string {
-  return buildReasons[reason] ?? jobReasonText(reason);
+  return jobReasonText(reason, "feature_build");
 }
 
 export function jobHref(job: Job): string {
@@ -87,18 +84,20 @@ export function jobHref(job: Job): string {
 
 /** A build running, stopped or failed, above the features it does not
  *  replace until it finishes. `onBuild` opens the confirmation, as a resume
- *  or a new build; without a clone it is offered disabled. */
+ *  or a new build; without a clone it is offered disabled. Every state but a
+ *  running build offers an action. */
 export function BuildStatus({
   job,
-  building,
+  state,
   clone,
   onBuild,
 }: {
   job: Job | undefined;
-  building: Building | null;
+  state: BuildState;
   clone: string | null;
   onBuild: (resume: boolean) => void;
 }) {
+  const { building } = state;
   const action = (label: string, resume: boolean) => (
     <Button
       variant="secondary"
@@ -126,29 +125,27 @@ export function BuildStatus({
       </section>
     );
   }
-  const failed = job?.state === "failed" ? (job.reason ?? "failed") : "";
+  // A latest job that finished without completing stopped the build:
+  // failed, cancelled or interrupted.
+  const ended = job && job.state !== "completed" ? job.reason || job.state : "";
   if (!building) {
-    // The latest build failed before it made its version.
-    if (!failed) return null;
+    // It stopped before it made its version: shown until the repository has
+    // features, or a version newer than the job.
+    const stale =
+      !job?.updated_at ||
+      (state.currentSince !== null && Date.parse(job.updated_at) < Date.parse(state.currentSince));
+    if (!ended || state.hasFeatures || stale) return null;
     return (
       <section aria-label="Feature build" className="local-job-outcome">
         <p role="status" className="min-w-0 flex-1 font-medium">
-          The last feature history build failed: {buildReasonText(failed)}
+          The last feature history build failed. {buildReasonText(ended)}
         </p>
         <ViewerLink href={jobHref(job!)}>View in Jobs</ViewerLink>
         {action("Try again", false)}
       </section>
     );
   }
-  const reason = building.stopped || failed;
-  const progress = (
-    <p className="text-xs text-(--text-tertiary)">
-      {building.total > 0
-        ? `${formatCount(building.placed)} of ${formatCount(building.total)} pull requests placed, `
-        : null}
-      {cost(building.spent_usd)} spent. The features shown stay until it finishes.
-    </p>
-  );
+  const reason = building.stopped || ended;
   return (
     <section aria-label="Feature build" className="local-job-outcome">
       <div className="min-w-0 flex-1">
@@ -159,10 +156,16 @@ export function BuildStatus({
               ? `The feature history build stopped. ${buildReasonText(reason)}`
               : "A feature history build is in progress or stopped"}
         </p>
-        {progress}
+        <p className="text-xs text-(--text-tertiary)">
+          {building.total > 0
+            ? `${formatCount(building.placed)} of ${formatCount(building.total)} pull requests placed, `
+            : null}
+          {cost(building.spent_usd)} spent. The features shown stay until it finishes.
+          {reason ? null : " Resuming estimates what is left and goes on with the same build."}
+        </p>
       </div>
       {job ? <ViewerLink href={jobHref(job)}>View in Jobs</ViewerLink> : null}
-      {reason ? action("Resume build", true) : null}
+      {action("Resume build", true)}
     </section>
   );
 }

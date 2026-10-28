@@ -401,15 +401,20 @@ changed estimate offers **Estimate again**, and the dialog cannot be closed
 while the start is under way. While the job runs the Features tab says
 "Building feature history… N of M pull requests placed" (from
 `api/timeline/build`) and links to it. A build that stopped says why (its
-version's reason, else its job's) with what it spent and offers **Resume
-build**, the same estimate and confirmation; a building version with neither
-says only that a build is in progress or stopped, and a failed build with no
-version offers **Try again**. The build's reasons have their own words. A
-failed read of the build state keeps what was shown. The current features stay
-listed throughout, and the lists are read again when the build finishes.
-Without a local clone the build buttons are disabled. The page also says when
-the daemon has no decision store, when the decisions switch is off, and which
-picked repositories have their decisions turned off.
+version's reason, else its latest job's: one that failed, was cancelled or
+was interrupted) with what it spent and offers **Resume build**, the same
+estimate and confirmation; a building version with no reason and no job says
+that a build is in progress or stopped and offers Resume too, which estimates
+what is left and goes on with the same version. A latest build that failed
+before it made a version shows "The last feature history build failed" with
+**Try again**, until the repository has features or a version newer than the
+job. Feature builds' reasons have their own words, here and in Jobs
+(`jobReasonText` with the job's kind). A failed read of the build state keeps
+what was shown. The current features stay listed throughout, and the lists
+are read again when the build finishes. Without a local clone the build
+buttons are disabled. The page also says when the daemon has no decision
+store, when the decisions switch is off, and which picked repositories have
+their decisions turned off.
 
 The Analytics page (`?page=analytics&days=7|30|90&repo=&agent=`, `src/analytics.tsx`)
 reads `GET api/analytics` (see the daemon's [analytics README](../internal/analytics/README.md)).

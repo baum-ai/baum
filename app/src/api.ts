@@ -159,6 +159,8 @@ export type Job = {
   group?: string;
   group_name?: string;
   members?: string;
+  /** When the job last changed. */
+  updated_at?: string;
   /** "fix" for a fix of the pull request, "feature_build" for a
    * repository's first feature build (its `pr` is 0); absent for a review. */
   kind?: "fix" | "feature_build";
@@ -256,9 +258,30 @@ const jobReasons: Record<string, string> = {
   push_failed: "The push failed. Check that git can push to this repository from your clone.",
 };
 /** What a finished job's reason means, in a sentence. */
-export function jobReasonText(reason: string): string {
+/** A job's reason in words: a feature build's in its own, others' as
+ *  reviews and fixes say them. */
+export function jobReasonText(reason: string, kind?: Job["kind"]): string {
+  if (kind === "feature_build" && Object.hasOwn(buildReasons, reason)) return buildReasons[reason]!;
   return jobReasons[reason] ?? reason.replaceAll("_", " ");
 }
+/** Why a feature build stopped or cannot run. None asks to confirm it again:
+ *  where a build can be resumed, the page offers that itself. */
+const buildReasons: Record<string, string> = {
+  cost_cap: "It reached its spending cap before it finished.",
+  spend_unrecorded: "baum could not record what one of its calls spent, so it stopped.",
+  unpriced_model:
+    "The model has no price in baum's price list, so the build's cost cannot be capped.",
+  unknown_model_price:
+    "The model has no price in baum's price list, so the build's cost cannot be capped.",
+  daily_cap: "The decision log's daily spending cap is reached. It can go on tomorrow.",
+  disabled: "Decisions are turned off for this repository, so it cannot be built.",
+  preferences_unreadable: "baum could not read its preferences, so it did not make a call.",
+  backend_unavailable: "The model backend is not available on this computer.",
+  backend_unsupported: "The configured backend cannot make the feature log's calls.",
+  failed: "It failed before it finished.",
+  cancelled: "It was cancelled before it finished.",
+  interrupted: "baum stopped before the build finished.",
+};
 /** How the jobs list and PR page say a job started without confirmation. */
 export function automaticLabel(job: Job): string | null {
   if (!job.automatic) return null;

@@ -490,11 +490,12 @@ WHERE (agent, session_id)`+inSessions, set))
 func TestTimelineBuildState(t *testing.T) {
 	f := newTimelineFixture(t)
 	var answer struct {
-		Building    *timelineBuild `json:"building"`
-		HasFeatures bool           `json:"has_features"`
+		Building     *timelineBuild `json:"building"`
+		HasFeatures  bool           `json:"has_features"`
+		CurrentSince *time.Time     `json:"current_since"`
 	}
 	f.get("/api/timeline/build", url.Values{"repository": {repo}}, &answer)
-	if answer.Building != nil || !answer.HasFeatures {
+	if answer.Building != nil || !answer.HasFeatures || answer.CurrentSince == nil {
 		t.Fatalf("build = %+v", answer)
 	}
 	f.exec(`INSERT INTO feature_version(repository, state, created_at, total, placed, stopped, spent_usd) VALUES (?, 'building', 0, 40, 12, 'cost_cap', 0.5)`, repo)

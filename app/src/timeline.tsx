@@ -436,10 +436,11 @@ function TimelineLog({
     wasActive.current = buildActive;
   }, [buildActive]);
   const revision = logRevision + buildFinished;
-  const { building, hasFeatures } = useBuildState(
+  const buildState = useBuildState(
     repository,
     `${revision}:${buildJob?.id ?? ""}:${buildJob?.state ?? ""}:${buildJob?.calls ?? 0}`,
   );
+  const { building, hasFeatures } = buildState;
   const [buildDialog, setBuildDialog] = useState<"build" | "resume" | null>(null);
   const url = useUrlState();
   const search = url.search;
@@ -603,7 +604,7 @@ function TimelineLog({
     <>
       <BuildStatus
         job={buildJob}
-        building={building}
+        state={buildState}
         clone={clone}
         onBuild={(resume) => setBuildDialog(resume ? "resume" : "build")}
       />

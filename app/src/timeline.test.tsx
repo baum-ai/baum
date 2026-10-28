@@ -12,7 +12,7 @@ import {
   ViewerLinkProvider,
   type ViewerLinkProps,
 } from "@baum/viewer/navigation";
-import type { Job } from "./api";
+import { jobReasonText, type Job } from "./api";
 import { daySections, pullRequestHref, sessionHref, TimelinePage } from "./timeline";
 
 const Link = (props: ViewerLinkProps) => <a {...props} />;
@@ -621,23 +621,58 @@ it("resumes a build that stopped, and says a failed or unexplained one in its ow
   await act(async () => {});
   await act(async () => {});
   expect(node.textContent).toContain("A feature history build is in progress or stopped");
-  expect(button("Resume build")).toBeUndefined();
-  // A failed build with no version is shown too.
-  answers["api/timeline/build"] = { building: null, has_features: true };
+  // Never a dead end: confirming estimates the rest and resumes it.
+  expect(button("Resume build")).toBeDefined();
+  // A cancelled build whose version records no reason reads as stopped.
   await act(async () =>
-    root.render(
-      <Harness
-        initial="page=timeline"
-        revision={2}
-        jobs={[{ ...buildJob("failed"), reason: "disabled" }]}
-      />,
-    ),
+    root.render(<Harness initial="page=timeline" revision={1} jobs={[buildJob("cancelled")]} />),
   );
   await act(async () => {});
   await act(async () => {});
-  expect(node.textContent).toContain("The last feature history build failed");
-  expect(node.textContent).toContain("so it cannot be built");
+  expect(node.textContent).toContain(
+    "The feature history build stopped. It was cancelled before it finished.",
+  );
+  expect(button("Resume build")).toBeDefined();
+  // A failed build with no version is shown while there are no features
+  // and no newer version.
+  const failed = { ...buildJob("failed"), reason: "disabled", updated_at: "2026-10-28T10:00:00Z" };
+  answers["api/timeline/build"] = { building: null, has_features: false, current_since: null };
+  await act(async () =>
+    root.render(<Harness initial="page=timeline" revision={2} jobs={[failed]} />),
+  );
+  await act(async () => {});
+  await act(async () => {});
+  expect(node.textContent).toContain(
+    "The last feature history build failed. Decisions are turned off for this repository, so it cannot be built.",
+  );
   expect(button("Try again")).toBeDefined();
+  answers["api/timeline/build"] = {
+    building: null,
+    has_features: false,
+    current_since: "2026-10-28T11:00:00Z",
+  };
+  await act(async () =>
+    root.render(<Harness initial="page=timeline" revision={3} jobs={[failed]} />),
+  );
+  await act(async () => {});
+  await act(async () => {});
+  expect(node.textContent).not.toContain("The last feature history build failed");
+  answers["api/timeline/build"] = { building: null, has_features: true, current_since: null };
+  await act(async () =>
+    root.render(<Harness initial="page=timeline" revision={4} jobs={[failed]} />),
+  );
+  await act(async () => {});
+  await act(async () => {});
+  expect(node.textContent).not.toContain("The last feature history build failed");
+});
+
+it("names a feature build's reasons in its own words, and others' as before", () => {
+  expect(jobReasonText("failed", "feature_build")).toBe("It failed before it finished.");
+  expect(jobReasonText("interrupted", "feature_build")).toBe(
+    "baum stopped before the build finished.",
+  );
+  expect(jobReasonText("interrupted")).toBe("The run stopped before it finished.");
+  expect(jobReasonText("daily_cap")).toBe("daily cap");
 });
 
 it("keeps the build state shown when a read of it fails", async () => {

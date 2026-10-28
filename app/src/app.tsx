@@ -1075,7 +1075,7 @@ function JobRow({ job, cancel }: { job: Job; cancel: () => Promise<void> }) {
         ) : null}
         {job.reason ? (
           <p role="status" className="local-job-meta">
-            {jobReasonText(job.reason)}
+            {jobReasonText(job.reason, job.kind)}
           </p>
         ) : null}
         {job.kind === "fix" ? <FixDetails job={job} /> : null}

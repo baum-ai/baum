@@ -487,8 +487,9 @@ and never writes it.
 - **`GET /build?repository=`**: `building`, the repository's first build in
   progress (its `building` version: pull requests `placed` of `total`, why
   it `stopped`, `""` while it may go on, and `spent_usd` over all its
-  runs), null without one, and `has_features`, whether the current version
-  has a feature not merged into another. A building version's features are
+  runs), null without one; `has_features`, whether the current version
+  has a feature not merged into another; and `current_since`, when it
+  became current (null without one). A building version's features are
   not listed until it is current.
 - **`GET /decisions?repository=&q=&file=&who=&category=&superseded=&from=&to=&cursor=&limit=`**:
   the current decisions of the repository's captured sessions, newest first
