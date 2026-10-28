@@ -4,6 +4,7 @@ package pricing
 import (
 	"context"
 	"crypto/ed25519"
+
 	shared "github.com/baum-ai/baum/pricing"
 )
 
