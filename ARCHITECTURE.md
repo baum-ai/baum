@@ -2990,9 +2990,17 @@ input hash is unchanged), and at most weekly, when the features'
 fingerprint changed, consolidates them (`FeatureWorker.Consolidate`,
 `consolidate.Public`: one merge call, at most three split calls, every call
 made before a write, each write checked against the membership versions it
-read). A first build (`FeatureWorker.Build`) places a repository's history
-in a `building` version with the batch prompt (`assign.Public.RenderBatch`),
-reusing placement's candidate ranking and writes and the text stage, then
+read). A first build (`FeatureWorker.Build`) lists a repository's whole
+history once (`FeatureWorker.ListHistory`), reads its paths, seeds a new
+`building` version from a feature taxonomy (`featureseed.go`), running
+feature discovery first when there is none newer than the version
+(`featurediscover.go`: the review backend and model through
+`generate.RunTask`, `discover.PublicPrompt`, a head-only checkout of
+`refs/baum/default` and `discover.HistoryDigest`), and places the history
+in the version with the batch prompt (`assign.Public.RenderBatch`), its
+seeds offered by path score (`discover.PathScores`), reusing placement's
+candidate ranking and writes and the text stage, then deletes the seeds no
+pull request joined and
 switches it to current in one transaction, after which the weekly pass
 consolidates it on its next run; it runs
 as a confirmed job (`jobs.KindFeatureBuild`, through `jobs.FeatureBuilder`)

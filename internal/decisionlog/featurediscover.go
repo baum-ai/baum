@@ -69,10 +69,10 @@ type DiscoverReport struct {
 }
 
 // Discover runs feature discovery of the repository once, from the clone in
-// dir, and stores the taxonomy it replies with. backend, when set, replaces
-// the configured backend; the model is the review model.
-func (w *FeatureWorker) Discover(ctx context.Context, repository, dir, backend string) (DiscoverReport, error) {
-	r, err := w.newRun(ctx, repository, dir, FeatureOptions{Manual: true, DryRun: true, Backend: backend})
+// dir, and stores the taxonomy it replies with. It runs on the review
+// backend and model.
+func (w *FeatureWorker) Discover(ctx context.Context, repository, dir string) (DiscoverReport, error) {
+	r, err := w.newRun(ctx, repository, dir, FeatureOptions{Manual: true, DryRun: true})
 	if err != nil {
 		return DiscoverReport{Repository: repository}, err
 	}
@@ -90,12 +90,10 @@ type discoveryPlan struct {
 }
 
 // planDiscovery resolves the backend and model exactly as a review does
-// (generate.Select with the review model) and buys the token budget.
+// (generate.Select with the review backend and model; a build's backend and
+// model replace only its own calls') and buys the token budget.
 func (r *featureRun) planDiscovery(ctx context.Context) discoveryPlan {
 	cfg := r.settings.Resolve(r.prefs.Resolve(r.w.Config))
-	if r.opts.Backend != "" {
-		cfg.Backend = config.Backend(r.opts.Backend)
-	}
 	backends := r.w.Backends
 	if backends.Claude == nil {
 		backends = generate.DefaultBackendsFor(cfg)

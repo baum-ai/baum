@@ -159,7 +159,7 @@ It writes the daemon's store: run it with the daemon stopped.`,
 	buildCmd.Flags().StringVar(&build.Backend, "backend", "", "backend to call instead of the configured one")
 	buildCmd.Flags().StringVar(&build.Model, "model", "", "model to call instead of the configured one")
 	buildCmd.Flags().StringVar(&build.Taxonomy, "taxonomy", decisionlog.TaxonomyAuto, "what a new version is seeded with: auto, none, latest or a taxonomy id")
-	var show, discoverBackend string
+	var show string
 	discoverCmd := &cobra.Command{
 		Use:   "discover",
 		Short: "Discover the repository's features from its default branch and history",
@@ -180,13 +180,12 @@ writes the daemon's store: run it with the daemon stopped.`,
 						discover.FeatureTaxonomy
 					}{id, taxonomy}, err
 				}
-				return w.Discover(ctx, repository, dir, discoverBackend)
+				return w.Discover(ctx, repository, dir)
 			})
 		},
 	}
 	flags(discoverCmd)
 	discoverCmd.Flags().StringVar(&show, "show", "", "print a stored taxonomy: latest or its id")
-	discoverCmd.Flags().StringVar(&discoverBackend, "backend", "", "backend to call instead of the configured one")
 	cmd.AddCommand(sync, link, place, summarize, consolidate, buildCmd, discoverCmd)
 	return cmd
 }

@@ -85,10 +85,10 @@ func TestPathScoresShareEachPathAmongTheSeedsHoldingIt(t *testing.T) {
 
 func TestHistoryPathPrefixesAreTheMostTouchedDirectories(t *testing.T) {
 	got := HistoryPathPrefixes([]string{
-		"platform/internal/decisionlog/a.go", "platform/internal/decisionlog/b.go", "platform/internal/db/c.sql",
+		"server/internal/notes/a.go", "server/internal/notes/b.go", "server/internal/db/c.sql",
 		"ui/src/a.tsx", "ui/src/b.tsx", "docs/x.md", "README.md", "go.mod", "justfile",
 	})
-	want := []string{"platform/internal/decisionlog/", "ui/src/", "README.md", "docs/", "go.mod"}
+	want := []string{"server/internal/notes/", "ui/src/", "README.md", "docs/", "go.mod"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("prefixes %v, want %v", got, want)
 	}

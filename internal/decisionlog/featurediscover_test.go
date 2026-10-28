@@ -209,7 +209,7 @@ func TestBuildTaxonomyChoices(t *testing.T) {
 	t.Run("newer", func(t *testing.T) {
 		f, dir := discoveryFixture(t)
 		f.exec(`INSERT INTO feature_version(repository, state, created_at) VALUES (?, ?, ?)`, repo, VersionBuilding, f.clock.now.Add(-time.Hour).UnixMilli())
-		report, err := f.worker.Discover(context.Background(), repo, dir, "")
+		report, err := f.worker.Discover(context.Background(), repo, dir)
 		if err != nil || report.TaxonomyID == 0 || report.Features != 2 {
 			t.Fatalf("discover = %+v, %v", report, err)
 		}
@@ -231,7 +231,7 @@ func TestBuildTaxonomyChoices(t *testing.T) {
 	})
 	t.Run("id", func(t *testing.T) {
 		f, dir := discoveryFixture(t)
-		report, err := f.worker.Discover(context.Background(), repo, dir, "")
+		report, err := f.worker.Discover(context.Background(), repo, dir)
 		if err != nil {
 			t.Fatal(err)
 		}

@@ -149,14 +149,16 @@ minutes.
   so an unchanged repository costs one conditional request. The cursor moves
   to the latest update listed, or to the start of the window when none was.
   A listing stops at about 10,000 pull requests; older ones still due are
-  skipped and logged.
+  skipped and logged. A first build lists the whole history once besides
+  (see "First build").
 - Only pull requests that can be placed in a feature are read from the
   clone: open or merged ones not opened by a bot. Each pass fetches what
   its due pull requests lack, as a review fetches a missing pull request
   commit: a head from `refs/pull/<N>/head` into `refs/baum/pull/<N>/head`
   and a base by its id into `refs/baum/pull/<N>/base`, both force-updated,
   100 refspecs to a `git fetch`. So each such pull request of the 180 days
-  before activation, and every one after, gets refs in the clone; they are
+  before activation (of the whole history after a first build), and every
+  one after, gets refs in the clone; they are
   kept, not pruned, as they may back saved reviews. Each pull request's
   commits, from its base to its head, are then read from the clone's own
   objects, never fetched. Its paths are the files its commits change; its
@@ -361,6 +363,11 @@ hosted rebuild does, by a first build: a job of the job queue
 (`jobs.KindFeatureBuild`) that runs only from a confirmed estimate, or `baum
 internal features build`.
 
+- **History.** The estimate first lists the repository's whole pull request
+  history, once per repository (`pull_sync.history_listed_at`), with no
+  ETag and without moving the sync's ETag or cursor; a listing that stops at
+  its bound is reported (`history_truncated`). The build then reads the
+  paths of every pull request due, as a sync does, before it places any.
 - **Estimate.** The pull requests left to place and a resumed version's
   features whose text is behind (with their pull requests' summaries still
   to write) are counted, and their calls priced from their sizes at the
@@ -370,15 +377,31 @@ internal features build`.
   of each pull request with a description. As for a requested review, there
   is no spending cap: the estimate is what the user confirms, and the build
   runs to the end. A repository whose decisions are not captured, or whose
-  model cannot be priced or called, is not estimated.
+  model cannot be priced or called, is not estimated. A build that will run
+  discovery says so, and that it may spend up to $5 more
+  (`discovery_usd`).
+- **Seeding.** A new version, with no features and no seeds, is seeded with
+  a feature taxonomy (`--taxonomy`, default `auto`): the newest made after
+  the version, else a new discovery's (see "Discovery"); `latest` or a
+  taxonomy's id a stored one; `none` nothing. Each of its features becomes a
+  provisional feature with no members, whose text is the taxonomy's, and a
+  seed (`feature_seed`, with its paths); the version records the taxonomy.
+  A resumed version is never seeded again. A discovery that cannot run or
+  fails leaves the build unseeded, with the reason in its report
+  (`unseeded`).
 - **Building.** The build makes the repository's `building` version, or
   resumes the one there is, and places in it the merged and open pull
-  requests of the last 180 days not opened by a bot, in no feature of the
+  requests of the whole history not opened by a bot, in no feature of the
   version and not skipped or left out of it at their head, listed once when
   it starts, oldest first, in batches of 25 with the batch prompt (its seeded
   form when a candidate has no pull requests). Each item's candidates are
   ranked against the version as placement ranks them, read again for every
   call, and the call offers their union, each item's best first, at most 40.
+  Seeds no pull request joined are kept out of the ranking: each is offered,
+  with its text and paths and no pull requests, to an item by its path score
+  (`discover.PathScores`), before the first ranked candidate not linked to
+  the item with a lower score, as the hosted rebuild does. A seed a pull
+  request joined is an ordinary feature from then on.
   A reply's new feature is created for the first item that starts it; a
   skipped small change is settled in the version at its head. The live
   stages keep using the current version meanwhile.
@@ -391,7 +414,8 @@ internal features build`.
   of the version behind its members is written, without the debounce; a
   feature whose text fails backs off and is left for the text stage. A
   build makes no consolidation pass.
-- **Switching.** The building version becomes current in one transaction:
+- **Switching.** The seeds no pull request joined are deleted, then the
+  building version becomes current in one transaction:
   the current one is retired, the skips become placement's settlements, the
   pull requests left out lose theirs so placement takes those within its
   lookback, and the repository's last consolidation pass is forgotten, so
@@ -409,18 +433,47 @@ internal features build`.
   `building` with `stopped` set to why; confirming it again resumes it. Its
   job then fails with that reason. Progress (phase, calls) is reported to
   the job, and the version records its pull requests placed of the total
-  and its spend over all its runs (`spent_usd`, each call's known cost).
+  and its spend over all its runs (`spent_usd`, each call's known cost, and
+  `unpriced_calls`, those whose cost is unknown: the spend is then a lower
+  bound, reported as such to the job). A spend the version cannot record is
+  logged; the call and its ledger row stand.
+
+### Discovery
+
+Discovery maps a repository into its features, as hosted discovery does
+(`features/discover`), and stores the reply as a taxonomy
+(`feature_taxonomy`). It runs as a first build's first step or with `baum
+internal features discover`.
+
+- Its backend and model are a review's: `generate.Select` with the review
+  backend and model, whatever a build's own `--backend` and `--model`.
+  cursor-agent is not supported, and a model with no price cannot run.
+- The default branch (the latest one GitHub reported for a pull request)
+  is fetched into `refs/baum/default`. The run directory holds its head's
+  checkout in `head/`, bounded as a review's, and `history.jsonl`
+  (read-only), the history digest of the pull requests a build places:
+  titles, branches and paths, no descriptions.
+- It runs through the review harness (`generate.RunTask`): the published
+  prompt `feature-discover-public-v1`, the discovery schema and the
+  taxonomy's bounds as its check, and hosted's budgets: 30 minutes, 200
+  calls, 3 provider attempts, 2 repairs, a 3-minute stall and 2-minute tool
+  timeout, and the tokens $5 buys at the model's highest token price. Its
+  output is masked before it is read.
+- It is one ledger row (stage `feature_discovery`); in a build its cost is
+  added to the version's spend.
 
 ### Stored data
 
 - `pull_request`, `pull_commit`, `pull_sync`: the listed pull requests with
   their paths at a head and failed reads, their commits, and the listing's
-  ETag, cursor, activation and last full re-link.
+  ETag, cursor, activation, last full re-link and history listing.
 - `session_commit`: each session linked to a commit, with the method and
   confidence.
 - `feature_version`, `feature`, `feature_pull`, `feature_session`,
   `feature_settle`, `pr_summary`, `feature_consolidation`: the tables
-  placement, text, consolidation and a build write. A repository has at
+  placement, text, consolidation and a build write.
+- `feature_taxonomy`, `feature_seed`: discovery's taxonomies and the seeds
+  of the versions built from them (`feature_version.taxonomy_id`). A repository has at
   most one `current` and one `building` version; `featureVersion` is the one
   place that chooses the version a stage uses (the live stages' current
   one, made when first needed, and a build's building one).
@@ -453,9 +506,12 @@ internal features consolidate` takes `--repo`, `--clone`, `--backend` and
 `--model` and makes one pass over the current features without the
 interval or fingerprint check. `baum
 internal features build --repo <owner/name> [--clone <path>] [--dry-run]
-[--backend <b>] [--model <m>]` runs a first build without the gate, a line a
-batch on standard error and its report as JSON; `--dry-run` prints the
-estimate and writes nothing.
+[--backend <b>] [--model <m>] [--taxonomy auto|none|latest|<id>]` runs a
+first build without the gate, a line a batch on standard error and its
+report as JSON; `--dry-run` lists the history and prints the estimate,
+writing no feature. `baum internal features discover --repo <owner/name>
+[--clone <path>] [--show latest|<id>]` runs discovery once and prints its
+report, or prints a stored taxonomy.
 These read the preferences and the repository's settings and fail when they
 cannot; `sync`
 and `link` read neither. The clone
