@@ -128,8 +128,8 @@ func userPrefix(agent, event string) string {
 }
 
 // HandlesEvent reports whether a project's agent hook file runs Entire for
-// this agent event: Entire's own command, baum's committed dispatcher and the
-// pre-rename one all end in `entire hooks AGENT EVENT`, and so does a command
+// this agent event: Entire's own command and baum's committed dispatcher
+// end in `entire hooks AGENT EVENT`, and so does a command
 // a repository wrapped in work of its own. The text is searched rather than
 // parsed so that a JSON file and a TOML file are read alike, and an
 // unreadable file still counts.

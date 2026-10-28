@@ -123,7 +123,6 @@ func TestUserHooksSkipRepositoriesWithoutEntire(t *testing.T) {
 func TestUserHooksDoNotReportAnEventTwice(t *testing.T) {
 	claude, _ := agenthooks.Lookup("claude-code")
 	codex, _ := agenthooks.Lookup("codex")
-	preRename := strings.ReplaceAll(agenthooks.Dispatcher(claude, "stop"), "baum", "recount"+"able")
 	cases := []struct {
 		name    string
 		spec    agenthooks.Spec
@@ -134,7 +133,6 @@ func TestUserHooksDoNotReportAnEventTwice(t *testing.T) {
 	}{
 		{name: "committed dispatcher", spec: claude, file: ".claude/settings.json", command: agenthooks.Dispatcher(claude, "stop"), commit: true},
 		{name: "Entire's own command", spec: claude, file: ".claude/settings.json", command: agenthooks.EntireCommand(claude, "stop"), commit: true},
-		{name: "pre-rename dispatcher", spec: claude, file: ".claude/settings.json", command: preRename, commit: true},
 		{name: "local settings", spec: claude, file: ".claude/settings.local.json", command: agenthooks.EntireCommand(claude, "stop")},
 		{name: "from a subdirectory", spec: claude, file: ".claude/settings.json", command: agenthooks.Dispatcher(claude, "stop"), commit: true, subdir: true},
 		{name: "Codex hooks.json", spec: codex, file: ".codex/hooks.json", command: agenthooks.Dispatcher(codex, "stop"), commit: true},

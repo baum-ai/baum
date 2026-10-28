@@ -141,18 +141,6 @@ func baumPrefix(spec Spec, event string) string {
 		spec.Slug, event)
 }
 
-// legacyName is the CLI's name before the product was renamed to baum, spelled
-// in parts so the published sources do not carry it.
-const legacyName = "recount" + "able"
-
-// legacyPrefix is the dispatcher prefix written before the product was renamed
-// to baum. Repositories set up then still commit it, so it is kept only to
-// recognise and replace those hooks; nothing generates or runs it.
-func legacyPrefix(spec Spec, event string) string {
-	return fmt.Sprintf(`sh -c 'if command -v %[3]s >/dev/null 2>&1 && %[3]s hooks agent --check %[1]s %[2]s >/dev/null 2>&1; then exec %[3]s hooks agent %[1]s %[2]s; fi; `,
-		spec.Slug, event, legacyName)
-}
-
 // entireBody renders the command `entire enable` writes for one agent event,
 // without the `sh -c` wrapper it comes in: the baum dispatcher keeps it
 // verbatim as its own tail.
@@ -365,8 +353,8 @@ func ContainsOwnedCommand(contents []byte) bool {
 
 // ContainsDispatcher reports whether a settings file carries at least one
 // command that dispatches through baum, as the onboarding pull request and
-// `baum setup` write it. Entire's own command and the pre-rename dispatcher do
-// not count: neither runs baum.
+// `baum setup` write it. Entire's own command does
+// not count: it does not run baum.
 func ContainsDispatcher(contents []byte) bool {
 	return anyCommand(contents, func(command string) bool {
 		for _, spec := range specs {
@@ -408,16 +396,14 @@ func anyCommand(contents []byte, accept func(string) bool) bool {
 
 // OwnedCommand reports the agent event a hook command runs, matching only
 // Entire's own generated command and the dispatcher baum writes in its
-// place, including the pre-rename dispatcher, so setup and onboarding replace
-// it rather than adding a second hook beside it. A repository that wraps a
-// hook in work of its own does not match: rewriting it to the bare dispatcher
+// place, so setup and onboarding replace it rather than adding a second hook.
+// A repository that wraps a hook in work of its own does not match: rewriting it to the bare dispatcher
 // would silently drop that work, so setup
 // leaves such an entry alone even though it does mention `entire hooks`.
 func OwnedCommand(command string) (Spec, string, bool) {
 	for _, spec := range specs {
 		for _, event := range spec.Events {
-			if strings.HasPrefix(command, baumPrefix(spec, event)) ||
-				strings.HasPrefix(command, legacyPrefix(spec, event)) {
+			if strings.HasPrefix(command, baumPrefix(spec, event)) {
 				return spec, event, true
 			}
 			if isEntireCommand(command, spec, event) {
