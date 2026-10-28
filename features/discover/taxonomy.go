@@ -100,7 +100,8 @@ func invalid(format string, args ...any) error {
 }
 
 // FeatureSeeds is the seed mapping of a version: the features a build
-// seeded it with from a taxonomy.
+// seeded it with from a taxonomy. A seeded feature's paths are kept with the
+// mapping only, never with the feature.
 type FeatureSeeds struct {
 	SchemaVersion int           `json:"schema_version"`
 	TaxonomyID    string        `json:"taxonomy_id"`

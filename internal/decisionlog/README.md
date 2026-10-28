@@ -365,9 +365,12 @@ internal features build`.
 
 - **History.** The estimate first lists the repository's whole pull request
   history, once per repository (`pull_sync.history_listed_at`), with no
-  ETag and without moving the sync's ETag or cursor; a listing that stops at
-  its bound is reported (`history_truncated`). The build then reads the
-  paths of every pull request due, as a sync does, before it places any.
+  ETag and without moving the sync's ETag or cursor, never replacing a pull
+  request a sync saved with a later update; a listing that stops at
+  its bound, leaving out the least recently updated pull requests, is
+  reported (`history_truncated`) and not retried. The build then reads the
+  paths of every pull request due, as a sync does, and links the commits it
+  read to this machine's sessions, before it places any.
 - **Estimate.** The pull requests left to place and a resumed version's
   features whose text is behind (with their pull requests' summaries still
   to write) are counted, and their calls priced from their sizes at the
@@ -378,8 +381,10 @@ internal features build`.
   is no spending cap: the estimate is what the user confirms, and the build
   runs to the end. A repository whose decisions are not captured, or whose
   model cannot be priced or called, is not estimated. A build that will run
-  discovery says so, and that it may spend up to $5 more
-  (`discovery_usd`).
+  discovery says so (`discovery_usd`: its token budget is what $5 buys at
+  the review model's base price; cache reads are not counted, so it is not
+  a dollar cap). Estimating lists the history, saving the pull requests it
+  lists and activating the repository's sync state; it writes no feature.
 - **Seeding.** A new version, with no features and no seeds, is seeded with
   a feature taxonomy (`--taxonomy`, default `auto`): the newest made after
   the version, else a new discovery's (see "Discovery"); `latest` or a
@@ -388,7 +393,9 @@ internal features build`.
   seed (`feature_seed`, with its paths); the version records the taxonomy.
   A resumed version is never seeded again. A discovery that cannot run or
   fails leaves the build unseeded, with the reason in its report
-  (`unseeded`).
+  (`unseeded`), recorded on the version so a resume neither runs nor pays
+  for it again. The gate is read right before discovery, as before any
+  call.
 - **Building.** The build makes the repository's `building` version, or
   resumes the one there is, and places in it the merged and open pull
   requests of the whole history not opened by a bot, in no feature of the
@@ -443,7 +450,8 @@ internal features build`.
 Discovery maps a repository into its features, as hosted discovery does
 (`features/discover`), and stores the reply as a taxonomy
 (`feature_taxonomy`). It runs as a first build's first step or with `baum
-internal features discover`.
+internal features discover`, which first lists the history and reads its
+paths as a build does.
 
 - Its backend and model are a review's: `generate.Select` with the review
   backend and model, whatever a build's own `--backend` and `--model`.
@@ -457,7 +465,8 @@ internal features discover`.
   prompt `feature-discover-public-v1`, the discovery schema and the
   taxonomy's bounds as its check, and hosted's budgets: 30 minutes, 200
   calls, 3 provider attempts, 2 repairs, a 3-minute stall and 2-minute tool
-  timeout, and the tokens $5 buys at the model's highest token price. Its
+  timeout, and the tokens $5 buys at the model's highest base price of
+  input, output and cache creation (cache reads are not counted). Its
   output is masked before it is read.
 - It is one ledger row (stage `feature_discovery`); in a build its cost is
   added to the version's spend.
@@ -508,10 +517,11 @@ interval or fingerprint check. `baum
 internal features build --repo <owner/name> [--clone <path>] [--dry-run]
 [--backend <b>] [--model <m>] [--taxonomy auto|none|latest|<id>]` runs a
 first build without the gate, a line a batch on standard error and its
-report as JSON; `--dry-run` lists the history and prints the estimate,
-writing no feature. `baum internal features discover --repo <owner/name>
-[--clone <path>] [--show latest|<id>]` runs discovery once and prints its
-report, or prints a stored taxonomy.
+report as JSON; `--dry-run` lists the history, saving the pull requests it
+lists, and prints the estimate, writing no feature. `baum internal features
+discover --repo <owner/name> [--clone <path>] [--show latest|<id>]` lists
+the history and reads its paths as a build does, then runs discovery once
+and prints its report, or prints a stored taxonomy.
 These read the preferences and the repository's settings and fail when they
 cannot; `sync`
 and `link` read neither. The clone

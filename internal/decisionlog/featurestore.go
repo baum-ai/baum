@@ -44,7 +44,7 @@ CREATE TABLE IF NOT EXISTS feature_version(
   id INTEGER PRIMARY KEY AUTOINCREMENT, repository TEXT NOT NULL, state TEXT NOT NULL,
   created_at INTEGER NOT NULL, switched_at INTEGER, stopped TEXT NOT NULL DEFAULT '',
   spent_usd REAL NOT NULL DEFAULT 0, total INTEGER NOT NULL DEFAULT 0, placed INTEGER NOT NULL DEFAULT 0,
-  taxonomy_id INTEGER, unpriced_calls INTEGER NOT NULL DEFAULT 0);
+  taxonomy_id INTEGER, unpriced_calls INTEGER NOT NULL DEFAULT 0, unseeded TEXT NOT NULL DEFAULT '');
 CREATE UNIQUE INDEX IF NOT EXISTS feature_version_current ON feature_version(repository) WHERE state='current';
 CREATE UNIQUE INDEX IF NOT EXISTS feature_version_building ON feature_version(repository) WHERE state='building';
 CREATE TABLE IF NOT EXISTS feature(
@@ -94,8 +94,8 @@ const (
 // migrate brings a store an earlier release made up to the schema, in one
 // transaction: the ledger's stage, item and rejections columns, and the pull
 // requests' fork and default branch columns, and the features' split time,
-// the sync state's history listing and the feature versions' taxonomy and
-// unpriced calls,
+// the sync state's history listing and the feature versions' taxonomy,
+// unpriced calls and why one is unseeded,
 // added when missing. Pull
 // requests listed before the latter are listed again: the sync state's ETag
 // and cursor are reset. The columns are read without a lock; only when one is
@@ -159,6 +159,7 @@ var migrations = []migration{
 	{"pull_sync", "history_listed_at", `ALTER TABLE pull_sync ADD COLUMN history_listed_at INTEGER`, false},
 	{"feature_version", "taxonomy_id", `ALTER TABLE feature_version ADD COLUMN taxonomy_id INTEGER`, false},
 	{"feature_version", "unpriced_calls", `ALTER TABLE feature_version ADD COLUMN unpriced_calls INTEGER NOT NULL DEFAULT 0`, false},
+	{"feature_version", "unseeded", `ALTER TABLE feature_version ADD COLUMN unseeded TEXT NOT NULL DEFAULT ''`, false},
 }
 
 // missingColumns are the migrations whose column the store lacks.
@@ -283,7 +284,7 @@ func (s *Store) Activate(ctx context.Context, repository string) (PullSync, erro
 // new head or base starts the count of failed reads again, and a new base
 // has the pull request's commits read again.
 func (s *Store) SavePulls(ctx context.Context, repository string, pulls []github.ListedPull, etag string, cursor time.Time) error {
-	return s.savePulls(ctx, repository, pulls, func(tx *sql.Tx) error {
+	return s.savePulls(ctx, repository, pulls, false, func(tx *sql.Tx) error {
 		if cursor.IsZero() {
 			return nil
 		}
@@ -295,16 +296,18 @@ func (s *Store) SavePulls(ctx context.Context, repository string, pulls []github
 
 // SaveHistoryPulls upserts a listing of the repository's whole history as
 // SavePulls does, leaving the sync's ETag and cursor as they are, and
-// records that the history was listed.
+// records that the history was listed. A pull request stored with a later
+// update, as a sync during the listing saves it, is kept as it is.
 func (s *Store) SaveHistoryPulls(ctx context.Context, repository string, pulls []github.ListedPull) error {
-	return s.savePulls(ctx, repository, pulls, func(tx *sql.Tx) error {
+	return s.savePulls(ctx, repository, pulls, true, func(tx *sql.Tx) error {
 		_, err := tx.ExecContext(ctx, `UPDATE pull_sync SET history_listed_at=? WHERE repository=?`, s.now().UnixMilli(), repository)
 		return err
 	})
 }
 
-// savePulls upserts pulls and then runs after, in one transaction.
-func (s *Store) savePulls(ctx context.Context, repository string, pulls []github.ListedPull, after func(*sql.Tx) error) error {
+// savePulls upserts pulls and then runs after, in one transaction; with
+// keepNewer, one stored with a later update is left as it is.
+func (s *Store) savePulls(ctx context.Context, repository string, pulls []github.ListedPull, keepNewer bool, after func(*sql.Tx) error) error {
 	now := s.now()
 	return s.inTx(ctx, func(tx *sql.Tx) error {
 		version, err := liveVersion(ctx, tx, repository, false, now)
@@ -312,6 +315,17 @@ func (s *Store) savePulls(ctx context.Context, repository string, pulls []github
 			return err
 		}
 		for _, p := range pulls {
+			if keepNewer {
+				var newer bool
+				err := tx.QueryRowContext(ctx, `SELECT updated_at > ? FROM pull_request WHERE repository=? AND number=?`,
+					p.UpdatedAt.UnixMilli(), repository, p.Number).Scan(&newer)
+				if err != nil && !errors.Is(err, sql.ErrNoRows) {
+					return err
+				}
+				if newer {
+					continue
+				}
+			}
 			// A feature's text reads its pull requests' title, description
 			// and state.
 			var changed string

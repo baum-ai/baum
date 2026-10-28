@@ -26,16 +26,17 @@ type buildSeed struct {
 }
 
 // unseeded reports whether the version is new to seeding: it has no seeds,
-// no taxonomy and no features.
+// no taxonomy and no features, and no discovery left it unseeded.
 func (r *featureRun) unseeded(ctx context.Context) (bool, error) {
 	var taxonomy sql.NullInt64
 	var features int
-	err := r.w.Store.db.QueryRowContext(ctx, `SELECT taxonomy_id, (SELECT COUNT(*) FROM feature WHERE version_id=?1)
-	+ (SELECT COUNT(*) FROM feature_seed WHERE version_id=?1) FROM feature_version WHERE id=?1`, r.version).Scan(&taxonomy, &features)
+	var reason string
+	err := r.w.Store.db.QueryRowContext(ctx, `SELECT taxonomy_id, unseeded, (SELECT COUNT(*) FROM feature WHERE version_id=?1)
+	+ (SELECT COUNT(*) FROM feature_seed WHERE version_id=?1) FROM feature_version WHERE id=?1`, r.version).Scan(&taxonomy, &reason, &features)
 	if errors.Is(err, sql.ErrNoRows) {
 		return true, nil
 	}
-	return err == nil && !taxonomy.Valid && features == 0, err
+	return err == nil && !taxonomy.Valid && reason == "" && features == 0, err
 }
 
 // versionCreated is when the run's version was created; now for a version
@@ -90,8 +91,8 @@ func (b *buildRun) seed(ctx context.Context) error {
 			b.report.Seeds = len(taxonomy.Features)
 		}
 	}
-	if err := b.w.Store.db.QueryRowContext(ctx, `SELECT COALESCE(taxonomy_id, 0) FROM feature_version WHERE id=?`, b.version).
-		Scan(&b.report.Taxonomy); err != nil {
+	if err := b.w.Store.db.QueryRowContext(ctx, `SELECT COALESCE(taxonomy_id, 0), unseeded FROM feature_version WHERE id=?`, b.version).
+		Scan(&b.report.Taxonomy, &b.report.Unseeded); err != nil {
 		return err
 	}
 	b.seeds, err = b.w.Store.openSeeds(ctx, b.version)
@@ -118,6 +119,13 @@ func (b *buildRun) chooseTaxonomy(ctx context.Context) (int64, discover.FeatureT
 	if err != nil || id != 0 {
 		return id, taxonomy, err
 	}
+	// The gate is read again right before the call, as before any other.
+	if on, err := b.refresh(ctx); err != nil || !on {
+		if err == nil {
+			err = errBuildStop{ReasonDisabled}
+		}
+		return 0, discover.FeatureTaxonomy{}, err
+	}
 	b.notify(BuildDiscovering)
 	report, taxonomy, err := b.discover(ctx)
 	b.report.Discovery = &report
@@ -127,7 +135,14 @@ func (b *buildRun) chooseTaxonomy(ctx context.Context) (int64, discover.FeatureT
 	if err != nil {
 		return 0, taxonomy, err
 	}
-	b.report.Unseeded = report.Stopped
+	if report.Stopped != "" {
+		// Recorded on the version, so a resume neither runs nor pays for
+		// it again.
+		if _, err := b.w.Store.db.ExecContext(context.WithoutCancel(ctx), `UPDATE feature_version SET unseeded=? WHERE id=?`,
+			report.Stopped, b.version); err != nil {
+			return 0, taxonomy, err
+		}
+	}
 	return report.TaxonomyID, taxonomy, nil
 }
 

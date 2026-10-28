@@ -133,9 +133,11 @@ It lists the repository's whole pull request history once, reads the paths
 of its pull requests, and builds a new version of its features from that
 history, or resumes the one being built, and makes it current. A new version
 is first seeded with a feature taxonomy (--taxonomy): auto reuses one made
-after the version or runs feature discovery, which spends up to $5 with the
-review model; none seeds nothing; latest or an id uses a stored one.
---dry-run lists the history and prints the estimate; it writes no feature.
+after the version or runs feature discovery with the review backend and
+model, whose token budget is what $5 buys at the model's base price (cache
+reads not counted, so not a dollar cap); none seeds nothing; latest or an id
+uses a stored one. --dry-run lists the history, saving the pull requests it
+lists, and prints the estimate; it writes no feature.
 It writes the daemon's store: run it with the daemon stopped.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
@@ -167,7 +169,9 @@ It writes the daemon's store: run it with the daemon stopped.`,
 read-only snapshot of the repository's default branch and its pull request
 history digest (titles, branches and paths, no descriptions) and replies with
 the repository's features, stored as a taxonomy a build can seed from. It
-uses the review backend and model and spends up to about $5. It prints what
+first lists the whole history once and reads its paths, as a build does. It
+uses the review backend and model, with the token budget $5 buys at the
+model's base price (cache reads not counted, so not a dollar cap). It prints what
 it did as JSON; --show latest or an id prints a stored taxonomy instead. It
 writes the daemon's store: run it with the daemon stopped.`,
 		Args: cobra.NoArgs,

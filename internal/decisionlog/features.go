@@ -342,8 +342,8 @@ type HistoryReport struct {
 	Listed       bool `json:"listed"`
 	Calls        int  `json:"github_calls"`
 	PullRequests int  `json:"pull_requests_listed"`
-	// Truncated is a listing that stopped at its bound: the oldest pull
-	// requests are missing.
+	// Truncated is a listing that stopped at its bound: the least recently
+	// updated pull requests are missing. The listing is not retried.
 	Truncated bool `json:"truncated,omitempty"`
 }
 
@@ -373,7 +373,7 @@ func (w *FeatureWorker) ListHistory(ctx context.Context, repository string) (His
 		return report, err
 	}
 	if list.Truncated {
-		w.logger().Warn("feature log: the oldest pull requests skipped, too many to list", "repository", repository, "listed", len(list.Pulls))
+		w.logger().Warn("feature log: the least recently updated pull requests skipped, too many to list", "repository", repository, "listed", len(list.Pulls))
 	}
 	report.Listed = true
 	return report, w.Store.SaveHistoryPulls(ctx, repository, list.Pulls)

@@ -3,6 +3,7 @@ package decisionlog
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -146,8 +147,11 @@ func TestBuildDiscoversAndSeeds(t *testing.T) {
 		t.Fatalf("estimate = %+v, %v", estimate, err)
 	}
 	report := f.buildIn(dir, BuildOptions{})
-	rate, _ := pricing.Active().HighestRate(discoveryModel)
-	if want := int(FeatureDiscoveryUSD / rate * 1e6); task.MaxTokens != want || task.MaxCalls != 200 {
+	if _, err := os.Stat(task.Directory); !os.IsNotExist(err) {
+		t.Fatalf("the run directory %s is left behind: %v", task.Directory, err)
+	}
+	rate, _ := pricing.Active().Rates(pricing.Active().Normalize(discoveryModel, pricing.VendorClaudeCode))
+	if want := int(FeatureDiscoveryUSD / max(rate.Input, rate.Output, rate.CacheWrite) * 1e6); task.MaxTokens != want || task.MaxCalls != 200 {
 		t.Fatalf("the task ran with %d tokens and %d calls, want %d and 200", task.MaxTokens, task.MaxCalls, want)
 	}
 	if !report.Current || report.Discovery == nil || report.Discovery.TaxonomyID == 0 || report.Taxonomy != report.Discovery.TaxonomyID ||
@@ -243,14 +247,23 @@ func TestBuildTaxonomyChoices(t *testing.T) {
 }
 
 // A discovery that fails leaves the build unseeded with the reason, and the
-// failed task's ledger row.
+// failed task's ledger row; a resume does not run it again.
 func TestBuildFailedDiscoveryIsUnseeded(t *testing.T) {
 	f, dir := discoveryFixture(t)
 	f.backend.task = func(agent.Request) (agent.Result, error) {
 		return agent.Result{Document: []byte(`{"features":[]}`), Model: discoveryModel, Calls: 1, Tokens: 10}, nil
 	}
-	report := f.buildIn(dir, BuildOptions{})
-	if !report.Current || report.Seeds != 0 || !strings.HasPrefix(report.Unseeded, ReasonDiscoveryFailed) || report.Features != 3 {
+	batch := f.backend.batch
+	f.backend.batch = func(string) (string, error) {
+		f.off = true
+		return "", errors.New("refused")
+	}
+	if first := f.buildIn(dir, BuildOptions{Gated: true}); first.Current || !strings.HasPrefix(first.Unseeded, ReasonDiscoveryFailed) {
+		t.Fatalf("first run = %+v", first)
+	}
+	f.off, f.backend.batch = false, batch
+	report := f.buildIn(dir, BuildOptions{Gated: true})
+	if !report.Current || report.Seeds != 0 || report.Discovery != nil || !strings.HasPrefix(report.Unseeded, ReasonDiscoveryFailed) || report.Features != 3 {
 		t.Fatalf("report = %+v", report)
 	}
 	if f.count(`SELECT COUNT(*) FROM capture_attempt WHERE stage=? AND state=?`, StageDiscovery, AttemptFailed) != 1 ||

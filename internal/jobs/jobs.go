@@ -55,8 +55,9 @@ type FeatureBuildEstimate struct {
 	Backend, Model string
 	// PullRequests are those left to place.
 	PullRequests int
-	// DiscoveryUSD, when not zero, is what the feature discovery the build
-	// runs first may spend besides EstimateUSD.
+	// DiscoveryUSD, when not zero, says the build runs feature discovery
+	// first, besides EstimateUSD, with the token budget DiscoveryUSD buys at
+	// the review model's base price (cache reads not counted: not a cap).
 	DiscoveryUSD float64
 	// EstimateUSD is the cost of what is left, nil when it cannot be
 	// priced.
@@ -164,8 +165,9 @@ type Prepared struct {
 	FixThreadsCapped    bool        `json:"fix_threads_capped,omitempty"`
 	FixThreadsUntrusted int         `json:"fix_threads_untrusted,omitempty"`
 	// BuildPullRequests are a feature build's (KindFeatureBuild) pull
-	// requests left to place, and BuildDiscoveryUSD, when not zero, what
-	// the feature discovery it runs first may spend besides EstimateUSD.
+	// requests left to place, and BuildDiscoveryUSD, when not zero, the
+	// dollars whose worth of tokens (at the review model's base price) the
+	// feature discovery it runs first may use besides EstimateUSD.
 	BuildPullRequests int     `json:"build_pull_requests,omitempty"`
 	BuildDiscoveryUSD float64 `json:"build_discovery_usd,omitempty"`
 }

@@ -83,10 +83,13 @@ type BuildEstimate struct {
 	// Reason is why no call could be made (a backend or price reason).
 	Reason string `json:"reason,omitempty"`
 	// HistoryTruncated says the history listing stopped at its bound: the
-	// oldest pull requests are missing.
+	// least recently updated pull requests are missing, and the listing is
+	// not retried.
 	HistoryTruncated bool `json:"history_truncated,omitempty"`
-	// Discovery says the build runs feature discovery first, which spends
-	// up to DiscoveryUSD besides the estimate.
+	// Discovery says the build runs feature discovery first, besides the
+	// estimate, with hosted discovery's token budget: what DiscoveryUSD buys
+	// at the review model's base price. Cache reads are not counted, so it
+	// is not a dollar cap.
 	Discovery    bool    `json:"discovery,omitempty"`
 	DiscoveryUSD float64 `json:"discovery_usd,omitempty"`
 }
@@ -392,6 +395,15 @@ func (b *buildRun) run(ctx context.Context) error {
 	}
 	if paths.Stopped {
 		return errBuildStop{ReasonDisabled}
+	}
+	// The commits read are linked to this machine's sessions, as a sync's.
+	if len(paths.commits) > 0 {
+		if _, err := b.w.Index(ctx, b.repository, b.dir, paths.commits, false); err != nil {
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			b.w.logger().Warn("feature build: commits not linked to sessions", "repository", b.repository, "error", err)
+		}
 	}
 	if err := b.seed(ctx); err != nil {
 		return err

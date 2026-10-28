@@ -19,6 +19,7 @@ import (
 	"github.com/baum-ai/baum/internal/assemble"
 	"github.com/baum-ai/baum/internal/config"
 	"github.com/baum-ai/baum/internal/generate"
+	"github.com/baum-ai/baum/internal/pricing"
 	"github.com/baum-ai/baum/sessions"
 )
 
@@ -30,8 +31,9 @@ import (
 // StageDiscovery is the ledger stage of a discovery task.
 const StageDiscovery = "feature_discovery"
 
-// Discovery's choices: hosted discovery's budgets, its token budget bought
-// by FeatureDiscoveryUSD at the review model's highest token price.
+// Discovery's choices: hosted discovery's budgets, its token budget what
+// FeatureDiscoveryUSD buys at the review model's base price
+// (discoveryMaxTokens), which bounds tokens rather than dollars.
 const (
 	FeatureDiscoveryUSD = 5.0
 	// LatestTaxonomy names a repository's newest taxonomy.
@@ -70,10 +72,17 @@ type DiscoverReport struct {
 
 // Discover runs feature discovery of the repository once, from the clone in
 // dir, and stores the taxonomy it replies with. It runs on the review
-// backend and model.
+// backend and model, after listing the whole history and reading its paths
+// as a first build does.
 func (w *FeatureWorker) Discover(ctx context.Context, repository, dir string) (DiscoverReport, error) {
 	r, err := w.newRun(ctx, repository, dir, FeatureOptions{Manual: true, DryRun: true})
 	if err != nil {
+		return DiscoverReport{Repository: repository}, err
+	}
+	if _, err := w.ListHistory(ctx, repository); err != nil {
+		return DiscoverReport{Repository: repository}, err
+	}
+	if err := w.readPaths(ctx, repository, dir, &SyncReport{}, func() bool { return false }); err != nil {
 		return DiscoverReport{Repository: repository}, err
 	}
 	report, _, err := r.discover(ctx)
@@ -109,13 +118,27 @@ func (r *featureRun) planDiscovery(ctx context.Context) discoveryPlan {
 		p.skip = ReasonUnsupported
 		return p
 	}
-	rate, ok := r.calls.prices.HighestRate(p.selected.Model)
+	maxTokens, ok := discoveryMaxTokens(r.calls.prices, p.selected.Backend.Name(), p.selected.Model)
 	if !ok {
 		p.skip = ReasonUnpriced
 		return p
 	}
-	p.maxTokens = int(FeatureDiscoveryUSD / rate * 1e6)
+	p.maxTokens = maxTokens
 	return p
+}
+
+// discoveryMaxTokens is the token budget FeatureDiscoveryUSD buys at the
+// model's highest base price of the token kinds the budget counts (input,
+// output and cache creation), as hosted discovery's is. Cache reads are not
+// counted, so it bounds tokens, not dollars.
+func discoveryMaxTokens(list *pricing.List, backend, model string) (int, bool) {
+	rate, ok := list.Rates(list.Normalize(model, vendor(backend)))
+	price := max(rate.Input, rate.Output, rate.CacheWrite)
+	if !ok || price <= 0 {
+		return 0, false
+	}
+	tokens := int(FeatureDiscoveryUSD / price * 1e6)
+	return tokens, tokens > 0
 }
 
 // discover runs discovery and stores its taxonomy, returning it. A run that
@@ -144,7 +167,8 @@ ORDER BY updated_at DESC LIMIT 1`, r.repository).Scan(&branch)
 	}
 	runDir, revision, err := r.discoveryDir(ctx, p.cfg, branch)
 	if runDir != "" {
-		defer func() { _ = os.RemoveAll(runDir) }()
+		// The unpacked checkout's directories are read-only.
+		defer generate.RemoveTree(runDir)
 	}
 	if err != nil {
 		return report, taxonomy, err
