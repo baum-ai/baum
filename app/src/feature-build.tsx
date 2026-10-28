@@ -150,11 +150,9 @@ export function BuildStatus({
     <section aria-label="Feature build" className="local-job-outcome">
       <div className="min-w-0 flex-1">
         <p role="status" className="font-medium">
-          {reason === "cost_cap"
-            ? "The feature history build stopped at its spending cap — confirm again to resume"
-            : reason
-              ? `The feature history build stopped. ${buildReasonText(reason)}`
-              : "A feature history build is in progress or stopped"}
+          {reason
+            ? `The feature history build stopped. ${buildReasonText(reason)}`
+            : "A feature history build is in progress or stopped"}
         </p>
         <p className="text-xs text-(--text-tertiary)">
           {building.total > 0
@@ -274,8 +272,8 @@ export function FeatureBuildDialog({
             baum places this repository's merged and open pull requests of the last 180 days in
             features, beside the features in use, and writes their text. The new features replace
             the current ones in one step once the build finishes, and the weekly pass consolidates
-            them (merging duplicates, splitting oversized ones) right after. It stops before a call
-            that would pass the cap; confirming again resumes it.
+            them (merging duplicates, splitting oversized ones) right after. If it stops, confirming
+            again resumes it.
           </p>
           <dl className="local-fix-facts">
             <dt>Pull requests</dt>
@@ -288,8 +286,6 @@ export function FeatureBuildDialog({
             <dd>
               {item.estimate_usd == null ? "Cost unknown" : `About ${cost(item.estimate_usd)}`}
             </dd>
-            <dt>Spending cap</dt>
-            <dd>{cost(item.build_cap_usd ?? 0)} over all its runs</dd>
           </dl>
         </div>
       ) : null}

@@ -498,11 +498,11 @@ func TestTimelineBuildState(t *testing.T) {
 	if answer.Building != nil || !answer.HasFeatures || answer.CurrentSince == nil {
 		t.Fatalf("build = %+v", answer)
 	}
-	f.exec(`INSERT INTO feature_version(repository, state, created_at, total, placed, stopped, spent_usd) VALUES (?, 'building', 0, 40, 12, 'cost_cap', 0.5)`, repo)
+	f.exec(`INSERT INTO feature_version(repository, state, created_at, total, placed, stopped, spent_usd) VALUES (?, 'building', 0, 40, 12, 'backend_unavailable', 0.5)`, repo)
 	f.exec(`INSERT INTO feature(id, version_id, repository, title, changed_at, created_at, updated_at)
 VALUES ('B1', (SELECT id FROM feature_version WHERE state='building'), ?, 'Being built', 0, 0, 0)`, repo)
 	f.get("/api/timeline/build", url.Values{"repository": {repo}}, &answer)
-	if b := answer.Building; b == nil || b.Placed != 12 || b.Total != 40 || b.Stopped != "cost_cap" || b.SpentUSD != 0.5 {
+	if b := answer.Building; b == nil || b.Placed != 12 || b.Total != 40 || b.Stopped != "backend_unavailable" || b.SpentUSD != 0.5 {
 		t.Fatalf("building = %+v", answer.Building)
 	}
 	if code := f.get("/api/timeline/features/B1", nil, nil); code != http.StatusNotFound {

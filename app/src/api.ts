@@ -266,13 +266,10 @@ export function jobReasonText(reason: string, kind?: Job["kind"]): string {
 /** Why a feature build stopped or cannot run. None asks to confirm it again:
  *  where a build can be resumed, the page offers that itself. */
 const buildReasons: Record<string, string> = {
-  cost_cap: "It reached its spending cap before it finished.",
-  spend_unrecorded: "baum could not record what one of its calls spent, so it stopped.",
   unpriced_model:
-    "The model has no price in baum's price list, so the build's cost cannot be capped.",
+    "The model has no price in baum's price list, so the build's cost cannot be estimated.",
   unknown_model_price:
-    "The model has no price in baum's price list, so the build's cost cannot be capped.",
-  daily_cap: "The decision log's daily spending cap is reached. It can go on tomorrow.",
+    "The model has no price in baum's price list, so the build's cost cannot be estimated.",
   disabled: "Decisions are turned off for this repository, so it cannot be built.",
   preferences_unreadable: "baum could not read its preferences, so it did not make a call.",
   backend_unavailable: "The model backend is not available on this computer.",
@@ -330,10 +327,8 @@ export type Estimate = {
     pr: number;
     kind?: "fix" | "feature_build";
     fix?: FixInputs;
-    /** A feature build's pull requests left to place, and the cap of its
-     *  spend over all its runs. */
+    /** A feature build's pull requests left to place. */
     build_pull_requests?: number;
-    build_cap_usd?: number;
     /** The review threads a fix would address; capped when there were more
      *  than baum includes, and how many were left out because an account
      *  without access to the repository started them. */

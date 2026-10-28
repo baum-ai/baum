@@ -448,7 +448,6 @@ it("builds a repository's feature history from the empty state after its estimat
         pr: 0,
         kind: "feature_build",
         build_pull_requests: 40,
-        build_cap_usd: 1.5,
         head_sha: "",
         backend: "claude",
         model: "claude-haiku-5-5",
@@ -475,7 +474,6 @@ it("builds a repository's feature history from the empty state after its estimat
   const dialog = node.querySelector("dialog")!;
   expect(dialog.textContent).toContain("40 to place");
   expect(dialog.textContent).toContain("About $1.20");
-  expect(dialog.textContent).toContain("$1.50 over all its runs");
   const confirm = [...dialog.querySelectorAll("button")].find(
     (b) => b.textContent === "Build feature history",
   )!;
@@ -487,7 +485,7 @@ it("builds a repository's feature history from the empty state after its estimat
   expect(link?.getAttribute("href")).toBe("/s/test-ns/?page=jobs&job=job-1");
 });
 
-it("shows a build in progress above the features it keeps, and offers to resume one stopped at its cap", async () => {
+it("shows a build in progress above the features it keeps, and offers to resume one that stopped", async () => {
   answers["api/timeline/build"] = {
     building: { placed: 12, total: 40, stopped: "", spent_usd: 0.4 },
   };
@@ -500,16 +498,21 @@ it("shows a build in progress above the features it keeps, and offers to resume 
   expect(node.textContent).toContain("Local timeline");
   expect(node.textContent).not.toContain("Rebuild feature history");
   answers["api/timeline/build"] = {
-    building: { placed: 30, total: 40, stopped: "cost_cap", spent_usd: 1.5 },
+    building: { placed: 30, total: 40, stopped: "backend_unavailable", spent_usd: 1.5 },
   };
   await act(async () =>
     root.render(
-      <Harness initial="page=timeline" jobs={[{ ...buildJob("failed"), reason: "cost_cap" }]} />,
+      <Harness
+        initial="page=timeline"
+        jobs={[{ ...buildJob("failed"), reason: "backend_unavailable" }]}
+      />,
     ),
   );
   await act(async () => {});
   await act(async () => {});
-  expect(node.textContent).toContain("stopped at its spending cap — confirm again to resume");
+  expect(node.textContent).toContain(
+    "The feature history build stopped. The model backend is not available on this computer.",
+  );
   expect(node.textContent).toContain("30 of 40 pull requests placed, $1.50 spent");
   expect([...node.querySelectorAll("button")].some((b) => b.textContent === "Resume build")).toBe(
     true,
@@ -537,7 +540,6 @@ const estimateOf = (item: Record<string, unknown>) => ({
       pr: 0,
       kind: "feature_build",
       build_pull_requests: 40,
-      build_cap_usd: 1.5,
       head_sha: "",
       backend: "claude",
       model: "claude-haiku-5-5",
@@ -563,7 +565,7 @@ it("says why a build cannot run, in the build's words", async () => {
   await act(async () => button("Build feature history")!.click());
   await act(async () => {});
   const dialog = node.querySelector("dialog")!;
-  expect(dialog.textContent).toContain("so the build's cost cannot be capped");
+  expect(dialog.textContent).toContain("so the build's cost cannot be estimated");
   expect(button("Build feature history", dialog)).toBeUndefined();
   expect(button("Close", dialog)).toBeDefined();
 });
@@ -590,7 +592,7 @@ it("estimates again when starting a build is refused", async () => {
 
 it("resumes a build that stopped, and says a failed or unexplained one in its own words", async () => {
   answers["api/timeline/build"] = {
-    building: { placed: 30, total: 40, stopped: "cost_cap", spent_usd: 1.5 },
+    building: { placed: 30, total: 40, stopped: "backend_unavailable", spent_usd: 1.5 },
     has_features: true,
   };
   answers["api/jobs/estimate"] = estimateOf({ build_pull_requests: 10 });
@@ -609,12 +611,15 @@ it("resumes a build that stopped, and says a failed or unexplained one in its ow
   };
   await act(async () =>
     root.render(
-      <Harness initial="page=timeline" jobs={[{ ...buildJob("failed"), reason: "daily_cap" }]} />,
+      <Harness
+        initial="page=timeline"
+        jobs={[{ ...buildJob("failed"), reason: "backend_unsupported" }]}
+      />,
     ),
   );
   await act(async () => {});
   await act(async () => {});
-  expect(node.textContent).toContain("The decision log's daily spending cap is reached.");
+  expect(node.textContent).toContain("The configured backend cannot make the feature log's calls.");
   expect(button("Resume build")).toBeDefined();
   // A building version with no job claims neither.
   await act(async () => root.render(<Harness initial="page=timeline" />));
@@ -685,13 +690,13 @@ it("names a feature build's reasons in its own words, and others' as before", ()
 
 it("keeps the build state shown when a read of it fails", async () => {
   answers["api/timeline/build"] = {
-    building: { placed: 30, total: 40, stopped: "cost_cap", spent_usd: 1.5 },
+    building: { placed: 30, total: 40, stopped: "backend_unavailable", spent_usd: 1.5 },
     has_features: true,
   };
   await show();
-  expect(node.textContent).toContain("stopped at its spending cap");
+  expect(node.textContent).toContain("The model backend is not available on this computer.");
   answers["api/timeline/build"] = async () => new Response("busy", { status: 500 });
   await act(async () => root.render(<Harness initial="page=timeline" revision={1} />));
   await act(async () => {});
-  expect(node.textContent).toContain("stopped at its spending cap");
+  expect(node.textContent).toContain("The model backend is not available on this computer.");
 });

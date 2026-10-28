@@ -393,8 +393,8 @@ offers **Build feature history** and All decisions; when the repository has
 features at all (whatever the filters), the page bar offers a quieter
 **Rebuild feature history**. Either estimates a `feature_build` job for the
 repository's clone (`src/feature-build.tsx`, `POST api/jobs/estimate` with
-`kind: "feature_build"`), shows the pull requests to place, harness, model,
-estimate and spending cap, says that the weekly consolidation pass takes the
+`kind: "feature_build"`), shows the pull requests to place, harness, model
+and estimate, says that the weekly consolidation pass takes the
 new features right after they become current, and starts it only when
 confirmed; it then links to the job in Jobs. A start refused for an expired or
 changed estimate offers **Estimate again**, and the dialog cannot be closed

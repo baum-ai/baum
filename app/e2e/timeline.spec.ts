@@ -95,12 +95,11 @@ for (const scheme of ["light", "dark"] as const) {
     await page.getByLabel("Repository").selectOption("acme/other");
     await expect(page.getByText("No features yet")).toBeVisible();
     await shot(page, `empty-${scheme}`);
-    // Its history is built by a confirmed job, from its estimate and cap.
+    // Its history is built by a confirmed job, from its estimate.
     await page.getByRole("button", { name: "Build feature history", exact: true }).click();
     const dialog = page.getByRole("dialog", { name: "Build feature history" });
     await expect(dialog).toContainText("42 to place");
     await expect(dialog).toContainText("About $0.84");
-    await expect(dialog).toContainText("$1.05 over all its runs");
     await shot(page, `build-confirm-${scheme}`);
     await dialog.getByRole("button", { name: "Build feature history", exact: true }).click();
     await expect(dialog.getByRole("link", { name: "View it in Jobs" })).toHaveAttribute(
