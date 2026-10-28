@@ -447,14 +447,20 @@ func TestTimelineSearchIndex(t *testing.T) {
 	if got := match("export spreadsheet"); len(got) != 1 || got[0] != "d1" {
 		t.Fatalf("export spreadsheet = %v", got)
 	}
-	// A new extraction makes d1 obsolete; pruned later, it leaves the index.
+	// A new extraction makes d1 obsolete: kept for good, it stays indexed
+	// through a prune, and only current decisions are searched.
 	save("s1", decision("d2", "Exporting widgets as CSV", 1))
 	c.now = t0.Add(Retention + 48*time.Hour)
 	if err := s.Prune(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if got := match("spreadsheet"); len(got) != 0 {
-		t.Fatalf("pruned decision still found: %v", got)
+	if got := match("spreadsheet"); len(got) != 1 || got[0] != "d1" {
+		t.Fatalf("obsolete decision not kept in the index: %v", got)
+	}
+	var current int
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM decision d WHERE d.obsolete_at IS NULL AND d.rowid IN
+(SELECT rowid FROM decision_search WHERE decision_search MATCH ?)`, matchQuery("spreadsheet")).Scan(&current); err != nil || current != 0 {
+		t.Fatalf("current matches for an obsolete decision: %d, %v", current, err)
 	}
 	if got := match("csv"); len(got) != 1 || got[0] != "d2" {
 		t.Fatalf("csv = %v", got)
