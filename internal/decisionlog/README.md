@@ -437,15 +437,20 @@ and never writes it.
 - **`GET /repositories`**: `decisions_enabled` (the decisions switch),
   `repositories`, the picked repositories whose decisions are not turned
   off (the switch and the repository's setting; the automatic master switch
-  is not read, so pausing hides nothing), by name, and `turned_off`, those
-  whose own setting is off.
-  Every other route names one of them (`repository=`, any case) or reads
-  from one; another is a 400 for a list and a 404 for a detail.
+  is not read, so pausing hides nothing), by name, each with
+  `has_features` (its current version has a feature not merged into
+  another), and `turned_off`, those whose own setting is off.
+  A list reads the repositories its `repository` parameters name (repeated,
+  any case; none is every one of them), and one it does not serve is a 400;
+  a detail is found in any of them, and is a 404 in another. Every row and
+  detail names its repository, `{"id","full_name"}`, both the registry's
+  name.
 - **`GET /features?repository=&q=&status=&cursor=&limit=`**: the
-  repository's features of its current version not merged into another, by
-  last activity (else creation) newest first, then id, 50 a page (`limit`,
-  at most 500). `cursor` is the last row's time and id, so a page follows
-  on from it whatever arrived meanwhile.
+  repositories' features of their current versions not merged into
+  another, merged in one order: by last activity (else creation) newest
+  first, then id, 50 a page (`limit`, at most 500). `cursor` is the last
+  row's time and id, so a page follows on from it whatever arrived
+  meanwhile.
   `status` (`in_progress`, `shipped`, `abandoned`; repeated or comma
   separated) and `q` filter before paging. A row has its title and
   description (null while none is written; `summary_pending` while it is
@@ -469,7 +474,7 @@ and never writes it.
   with the survivor's detail, one of a retired version `{"archived": true}`,
   and one of a version being built, or a chain of merges too long to follow
   (`ErrMergeChain`), is not found.
-- **`GET /build?repository=`**: `building`, the repository's first build in
+- **`GET /build?repository=`** (exactly one): `building`, the repository's first build in
   progress (its `building` version: pull requests `placed` of `total`, why
   it `stopped`, `""` while it may go on, and `spent_usd` over all its
   runs), null without one; `has_features`, whether the current version
@@ -477,16 +482,19 @@ and never writes it.
   became current (null without one). A building version's features are
   not listed until it is current.
 - **`GET /decisions?repository=&q=&file=&who=&category=&superseded=&from=&to=&cursor=&limit=`**:
-  the current decisions of the repository's captured sessions, newest first
-  and then by id, paged as features are, with `coverage`: its sessions extracted, skipped by reason, and
-  being read (a capture attempt pending). `file` is the path or anything
+  the current decisions of the repositories' captured sessions, newest first
+  and then by id, paged as features are, with `coverage`, summed over the
+  repositories: their sessions extracted, skipped by reason, and being read
+  (a capture attempt pending). `file` is the path or anything
   under it; `who` and `category` repeat or are comma separated; superseded
   decisions show only with `superseded=1`; `from` (inclusive) and `to`
   (exclusive) are local dates.
 - **`GET /decisions/{id}`**: its session (`<agent>:<id>`, as the app's
   session page names it, branch and person), the session's current
   decisions (summary, category, who, rejected alternative, files, turns)
-  and the pull requests its linked commits are in. `prompts_withheld` is
+  and the pull requests its linked commits are in. A decision a later
+  capture replaced (obsolete, kept for good) still opens, as on the hosted
+  Timeline: with the decisions replaced with it and `replaced: true`. `prompts_withheld` is
   always true: the Timeline serves no transcript text, rationale or
   evidence.
 

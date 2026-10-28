@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"net/url"
 	"slices"
 	"strconv"
 	"strings"
@@ -67,7 +68,20 @@ type Timeline struct {
 	Clone func(ctx context.Context, repository string) TimelineClone
 }
 
+// timelineRepository names the repository a row is listed under, as the
+// viewer's DecisionRepository: the registry's name is both its id and its
+// full name.
+type timelineRepository struct {
+	ID       string `json:"id"`
+	FullName string `json:"full_name"`
+}
+
+func repositoryRef(name string) *timelineRepository {
+	return &timelineRepository{ID: name, FullName: name}
+}
+
 type timelineDecision struct {
+	Repository *timelineRepository `json:"repository,omitempty"`
 	ID         string    `json:"id"`
 	SessionID  string    `json:"session_id"`
 	Turn       int       `json:"turn"`
@@ -91,6 +105,7 @@ type timelineKeyDecision struct {
 }
 
 type timelineFeature struct {
+	Repository       *timelineRepository   `json:"repository"`
 	ID               string                `json:"id"`
 	Title            *string               `json:"title"`
 	Description      *string               `json:"description"`
@@ -140,38 +155,16 @@ func (t *Timeline) Handler() http.Handler {
 		writeTimeline(w, answer)
 	})
 	mux.HandleFunc("GET /api/timeline/features", func(w http.ResponseWriter, r *http.Request) {
-		repository, page, ok := t.listQuery(w, r)
+		repositories, page, ok := t.listQuery(w, r)
 		if !ok {
 			return
 		}
-		q := r.URL.Query()
-		statuses := multi(q, "status")
-		snap, err := t.snapshot(r.Context(), repository, q.Get("q"), "")
+		answer, err := t.features(r.Context(), repositories, r.URL.Query(), page)
 		if err != nil {
 			timelineError(w, err)
 			return
 		}
-		var after *snapshotFeature
-		if page.after != nil {
-			after = &snapshotFeature{createdAt: page.after.at, row: timelineFeature{ID: page.after.id}}
-		}
-		rows := []timelineFeature{}
-		var next *string
-		for _, f := range snap.ordered() {
-			if after != nil && featureOrder(f, after) <= 0 {
-				continue
-			}
-			if len(statuses) > 0 && !slices.Contains(statuses, string(f.row.Status)) {
-				continue
-			}
-			if len(rows) == page.limit {
-				last := rows[len(rows)-1]
-				next = cursorOf(lastActive(snap.features[last.ID]), last.ID)
-				break
-			}
-			rows = append(rows, f.row)
-		}
-		writeTimeline(w, map[string]any{"features": rows, "next_cursor": next, "order": "newest"})
+		writeTimeline(w, answer)
 	})
 	mux.HandleFunc("GET /api/timeline/features/{id}", func(w http.ResponseWriter, r *http.Request) {
 		detail, err := t.feature(r.Context(), r.PathValue("id"))
@@ -200,11 +193,11 @@ func (t *Timeline) Handler() http.Handler {
 		writeTimeline(w, map[string]any{"building": building, "has_features": features, "current_since": since})
 	})
 	mux.HandleFunc("GET /api/timeline/decisions", func(w http.ResponseWriter, r *http.Request) {
-		repository, page, ok := t.listQuery(w, r)
+		repositories, page, ok := t.listQuery(w, r)
 		if !ok {
 			return
 		}
-		answer, err := t.decisions(r.Context(), repository, r.URL.Query(), page)
+		answer, err := t.decisions(r.Context(), repositories, r.URL.Query(), page)
 		if err != nil {
 			timelineError(w, err)
 			return
@@ -258,9 +251,17 @@ func (t *Timeline) repositoryList(ctx context.Context) (map[string]any, error) {
 		return nil, err
 	}
 	enabled := prefs.Decisions.Enabled == nil || *prefs.Decisions.Enabled
-	served, off := []map[string]string{}, []string{}
+	type servedRepository struct {
+		Repository  string `json:"repository"`
+		HasFeatures bool   `json:"has_features"`
+	}
+	served, off := []servedRepository{}, []string{}
 	for _, name := range servedRepositories(prefs, list) {
-		served = append(served, map[string]string{"repository": name})
+		features, _, err := t.current(ctx, name)
+		if err != nil {
+			return nil, err
+		}
+		served = append(served, servedRepository{Repository: name, HasFeatures: features})
 	}
 	for _, r := range list {
 		if r.Settings.Decisions != nil && !*r.Settings.Decisions {
@@ -288,23 +289,47 @@ func servedRepositories(prefs repos.Preferences, list []repos.Repository) []stri
 	return names
 }
 
-// allowed is the registry's name of repository when the Timeline serves
-// it.
-func (t *Timeline) allowed(ctx context.Context, repository string) (string, error) {
+// served is the repositories the Timeline serves, by name.
+func (t *Timeline) served(ctx context.Context) ([]string, error) {
 	prefs, err := t.Registry.Preferences(ctx)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	list, err := t.Registry.Repositories(ctx)
 	if err != nil {
+		return nil, err
+	}
+	return servedRepositories(prefs, list), nil
+}
+
+// allowed is the registry's name of repository when the Timeline serves
+// it.
+func (t *Timeline) allowed(ctx context.Context, repository string) (string, error) {
+	names, err := t.scope(ctx, []string{repository})
+	if err != nil {
 		return "", err
 	}
-	for _, name := range servedRepositories(prefs, list) {
-		if strings.EqualFold(name, repository) {
-			return name, nil
-		}
+	return names[0], nil
+}
+
+// scope is the registry's names of the repositories asked for, each once,
+// in the served order; none asked for is every served repository. One the
+// Timeline does not serve is errTimelineRepository.
+func (t *Timeline) scope(ctx context.Context, asked []string) ([]string, error) {
+	served, err := t.served(ctx)
+	if err != nil || len(asked) == 0 {
+		return served, err
 	}
-	return "", errTimelineRepository
+	var names []string
+	for _, repository := range asked {
+		i := slices.IndexFunc(served, func(name string) bool { return strings.EqualFold(name, repository) })
+		if i < 0 {
+			return nil, errTimelineRepository
+		}
+		names = append(names, served[i])
+	}
+	slices.Sort(names)
+	return slices.Compact(names), nil
 }
 
 // listPage is a list's page: the row its cursor names, rows come after,
@@ -325,21 +350,22 @@ func cursorOf(at time.Time, id string) *string {
 	return &cursor
 }
 
-// listQuery reads a list's repository, cursor and limit.
-func (t *Timeline) listQuery(w http.ResponseWriter, r *http.Request) (string, listPage, bool) {
+// listQuery reads a list's repositories (repeated; none is every one the
+// Timeline serves), cursor and limit.
+func (t *Timeline) listQuery(w http.ResponseWriter, r *http.Request) ([]string, listPage, bool) {
 	q := r.URL.Query()
 	page := listPage{limit: TimelinePageSize}
-	repository, err := t.allowed(r.Context(), q.Get("repository"))
+	repositories, err := t.scope(r.Context(), q["repository"])
 	if err != nil {
 		timelineError(w, err)
-		return "", page, false
+		return nil, page, false
 	}
 	if raw := q.Get("cursor"); raw != "" {
 		at, id, found := strings.Cut(raw, "|")
 		ms, err := strconv.ParseInt(at, 10, 64)
 		if !found || err != nil || id == "" {
 			http.Error(w, "invalid cursor", http.StatusBadRequest)
-			return "", page, false
+			return nil, page, false
 		}
 		page.after = &listCursor{at: time.UnixMilli(ms), id: id}
 	}
@@ -347,11 +373,11 @@ func (t *Timeline) listQuery(w http.ResponseWriter, r *http.Request) (string, li
 		n, err := strconv.Atoi(raw)
 		if err != nil || n < 1 || n > TimelineMaxPage {
 			http.Error(w, "invalid limit", http.StatusBadRequest)
-			return "", page, false
+			return nil, page, false
 		}
 		page.limit = n
 	}
-	return repository, page, true
+	return repositories, page, true
 }
 
 // multi reads a parameter given repeatedly or comma separated.
@@ -384,27 +410,49 @@ func sessionID(agent, id string) string { return agent + ":" + id }
 // harness is the agent as the viewer names its harness.
 func harness(agent string) string { return strings.ReplaceAll(agent, "-", "_") }
 
-// cloneOf opens the repository's clone for one request.
-func (t *Timeline) cloneOf(ctx context.Context, repository string) TimelineClone {
-	if t.Clone == nil {
-		return nil
-	}
-	return t.Clone(ctx, repository)
+// timelineReader is what one request reads of the repositories' clones:
+// each is opened at most once.
+type timelineReader struct {
+	t      *Timeline
+	clones map[string]TimelineClone
 }
 
-func personOf(ctx context.Context, clone TimelineClone) *Person {
+func (t *Timeline) reader() *timelineReader {
+	return &timelineReader{t: t, clones: map[string]TimelineClone{}}
+}
+
+// clone opens the repository's clone, once per request.
+func (r *timelineReader) clone(ctx context.Context, repository string) TimelineClone {
+	if c, ok := r.clones[repository]; ok {
+		return c
+	}
+	var c TimelineClone
+	if r.t.Clone != nil {
+		c = r.t.Clone(ctx, repository)
+	}
+	r.clones[repository] = c
+	return c
+}
+
+// self is who this machine's sessions in the repository belong to.
+func (r *timelineReader) self(ctx context.Context, repository string) *Person {
+	clone := r.clone(ctx, repository)
 	if clone == nil {
 		return nil
 	}
 	return clone.Person(ctx)
 }
 
-func summaryRow(d Decision, person *Person) timelineDecision {
+func summaryRow(d Decision, repository string, person *Person) timelineDecision {
 	turn := 0
 	if len(d.Turns) > 0 {
 		turn = slices.Min(d.Turns)
 	}
-	return timelineDecision{ID: d.ID, SessionID: sessionID(d.Agent, d.SessionID), Turn: turn, DecidedAt: d.DecidedAt, Who: string(d.Who),
+	var ref *timelineRepository
+	if repository != "" {
+		ref = repositoryRef(repository)
+	}
+	return timelineDecision{Repository: ref, ID: d.ID, SessionID: sessionID(d.Agent, d.SessionID), Turn: turn, DecidedAt: d.DecidedAt, Who: string(d.Who),
 		Person: person, Vendor: harness(d.Agent), Category: string(d.Category), Summary: d.Summary, Superseded: d.Superseded,
 		FileCount: len(d.Files)}
 }
@@ -447,14 +495,13 @@ type timelineSnapshot struct {
 	self       *Person
 }
 
-func (s *timelineSnapshot) ordered() []*snapshotFeature {
+func (s *timelineSnapshot) matched() []*snapshotFeature {
 	list := make([]*snapshotFeature, 0, len(s.features))
 	for _, f := range s.features {
 		if f.matched {
 			list = append(list, f)
 		}
 	}
-	slices.SortFunc(list, featureOrder)
 	return list
 }
 
@@ -474,7 +521,7 @@ func lastActive(f *snapshotFeature) time.Time {
 // snapshot reads the repository's features, or with only that one. With q,
 // those it does not match are read but not matched: the list leaves them
 // out.
-func (t *Timeline) snapshot(ctx context.Context, repository, q, only string) (*timelineSnapshot, error) {
+func (t *Timeline) snapshot(ctx context.Context, reader *timelineReader, repository, q, only string) (*timelineSnapshot, error) {
 	db := t.Store.db
 	snap := &timelineSnapshot{repository: repository, features: map[string]*snapshotFeature{}, branches: map[SessionKey]string{}}
 	version, err := liveVersion(ctx, db, repository, false, t.Store.now())
@@ -497,7 +544,7 @@ FROM feature WHERE version_id=?1 AND repository=?2 AND merged_into IS NULL AND (
 	}
 	for _, f := range rows {
 		feature := &snapshotFeature{createdAt: time.UnixMilli(f.created), digest: f.digest, matched: true}
-		feature.row = timelineFeature{ID: f.id, People: []Person{}, KeyDecisions: []timelineKeyDecision{}}
+		feature.row = timelineFeature{Repository: repositoryRef(repository), ID: f.id, People: []Person{}, KeyDecisions: []timelineKeyDecision{}}
 		// Text not written yet reads as pending while the feature is
 		// behind its members, else as missing; older text stays shown.
 		if f.title != "" {
@@ -610,12 +657,49 @@ WHERE fs.version_id=?1 AND fs.repository=?2 AND (?3='' OR fs.feature_id=?3) ORDE
 			f.decisions = append(f.decisions, attributedDecision{Decision: d, pull: pull})
 		}
 	}
-	snap.clone = t.cloneOf(ctx, repository)
-	snap.self = personOf(ctx, snap.clone)
+	snap.clone = reader.clone(ctx, repository)
+	snap.self = reader.self(ctx, repository)
 	for _, f := range snap.features {
 		f.summarize(snap.self)
 	}
 	return snap, nil
+}
+
+// features is a page of the repositories' features, merged in featureOrder.
+func (t *Timeline) features(ctx context.Context, repositories []string, q url.Values, page listPage) (map[string]any, error) {
+	statuses := multi(q, "status")
+	reader := t.reader()
+	var listed []*snapshotFeature
+	for _, repository := range repositories {
+		snap, err := t.snapshot(ctx, reader, repository, q.Get("q"), "")
+		if err != nil {
+			return nil, err
+		}
+		listed = append(listed, snap.matched()...)
+	}
+	slices.SortFunc(listed, featureOrder)
+	var after *snapshotFeature
+	if page.after != nil {
+		after = &snapshotFeature{createdAt: page.after.at, row: timelineFeature{ID: page.after.id}}
+	}
+	rows := []timelineFeature{}
+	var last *snapshotFeature
+	var next *string
+	for _, f := range listed {
+		if after != nil && featureOrder(f, after) <= 0 {
+			continue
+		}
+		if len(statuses) > 0 && !slices.Contains(statuses, string(f.row.Status)) {
+			continue
+		}
+		if len(rows) == page.limit {
+			next = cursorOf(lastActive(last), last.row.ID)
+			break
+		}
+		rows = append(rows, f.row)
+		last = f
+	}
+	return map[string]any{"features": rows, "next_cursor": next, "order": "newest"}, nil
 }
 
 // summarize fills the feature's row from its members.
@@ -676,7 +760,7 @@ func (f *snapshotFeature) summarize(self *Person) {
 			continue
 		}
 		i := slices.IndexFunc(earliest, func(d Decision) bool { return d.ID == current[0].ID })
-		row := summaryRow(earliest[i], nil)
+		row := summaryRow(earliest[i], "", nil)
 		f.row.KeyDecisions = append(f.row.KeyDecisions, timelineKeyDecision{ID: row.ID, SessionID: row.SessionID, Turn: row.Turn,
 			Who: row.Who, Category: row.Category, Summary: row.Summary})
 	}
@@ -704,7 +788,7 @@ func (t *Timeline) feature(ctx context.Context, id string) (any, error) {
 		return map[string]bool{"archived": true}, nil
 	}
 	id = resolved.ID
-	snap, err := t.snapshot(ctx, repository, "", id)
+	snap, err := t.snapshot(ctx, t.reader(), repository, "", id)
 	if err != nil {
 		return nil, err
 	}
@@ -725,7 +809,7 @@ func (t *Timeline) feature(ctx context.Context, id string) (any, error) {
 		pull := pullOf(ctx, snap.clone, p)
 		for _, d := range f.decisions {
 			if d.pull == p.number {
-				pull.Decisions = append(pull.Decisions, summaryRow(d.Decision, snap.self))
+				pull.Decisions = append(pull.Decisions, summaryRow(d.Decision, repository, snap.self))
 			}
 		}
 		pulls = append(pulls, pull)
@@ -735,7 +819,7 @@ func (t *Timeline) feature(ctx context.Context, id string) (any, error) {
 		var held []timelineDecision
 		for _, d := range f.decisions {
 			if d.pull == 0 && d.Agent == key.Agent && d.SessionID == key.ID {
-				held = append(held, summaryRow(d.Decision, snap.self))
+				held = append(held, summaryRow(d.Decision, repository, snap.self))
 			}
 		}
 		if len(held) == 0 && !slices.Contains(f.ownSessions, key) {
@@ -748,7 +832,7 @@ func (t *Timeline) feature(ctx context.Context, id string) (any, error) {
 	if err := t.pullSummaries(ctx, repository, pulls); err != nil {
 		return nil, err
 	}
-	return map[string]any{"feature": row, "pull_requests": pulls, "sessions": sessions}, nil
+	return map[string]any{"repository": repositoryRef(repository), "feature": row, "pull_requests": pulls, "sessions": sessions}, nil
 }
 
 func sessionOf(key SessionKey, branch string, person *Person) timelineSession {
@@ -800,31 +884,41 @@ func (t *Timeline) pullSummaries(ctx context.Context, repository string, pulls [
 	return nil
 }
 
-// decisions is a page of the repository's sessions' current decisions,
-// newest first, with the coverage of its sessions.
-func (t *Timeline) decisions(ctx context.Context, repository string, q map[string][]string, page listPage) (map[string]any, error) {
-	get := func(name string) string {
-		if values := q[name]; len(values) > 0 {
-			return strings.TrimSpace(values[0])
-		}
-		return ""
+// inList is "IN (?,?…)" for n values.
+func inList(n int) string { return "IN (?" + strings.Repeat(",?", n-1) + ")" }
+
+func anyOf[T any](values []T) []any {
+	out := make([]any, len(values))
+	for i, v := range values {
+		out[i] = v
 	}
-	where := []string{"d.obsolete_at IS NULL", "cs.repository=?"}
-	args := []any{repository}
+	return out
+}
+
+// decisions is a page of the repositories' sessions' current decisions,
+// newest first, with the coverage of their sessions.
+func (t *Timeline) decisions(ctx context.Context, repositories []string, q url.Values, page listPage) (map[string]any, error) {
+	list := []timelineDecision{}
+	coverage := timelineCoverage{SkippedByReason: map[string]int{}}
+	answer := map[string]any{"decisions": list, "next_cursor": nil, "order": "newest", "coverage": coverage, "features_enabled": true}
+	if len(repositories) == 0 {
+		return answer, nil
+	}
+	get := func(name string) string { return strings.TrimSpace(q.Get(name)) }
+	where := []string{"d.obsolete_at IS NULL", "cs.repository " + inList(len(repositories))}
+	args := anyOf(repositories)
 	if match := matchQuery(get("q")); match != "" {
 		where = append(where, "d.rowid IN (SELECT rowid FROM decision_search WHERE decision_search MATCH ?)")
 		args = append(args, match)
 	}
 	if file := strings.TrimSuffix(get("file"), "/"); file != "" {
 		where = append(where, `EXISTS (SELECT 1 FROM decision_file f WHERE f.decision_id=d.decision_id AND (f.path=? OR f.path LIKE ? ESCAPE '\'))`)
-		args = append(args, file, strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(file)+"/%")
+		args = append(args, file, likeEscape(file)+"/%")
 	}
 	for _, column := range []string{"who", "category"} {
 		if values := multi(q, column); len(values) > 0 {
-			where = append(where, "d."+column+" IN (?"+strings.Repeat(",?", len(values)-1)+")")
-			for _, v := range values {
-				args = append(args, v)
-			}
+			where = append(where, "d."+column+" "+inList(len(values)))
+			args = append(args, anyOf(values)...)
 		}
 	}
 	if superseded := get("superseded"); superseded != "1" && superseded != "true" {
@@ -844,42 +938,45 @@ func (t *Timeline) decisions(ctx context.Context, repository string, q map[strin
 		where = append(where, "(d.decided_at < ? OR (d.decided_at = ? AND d.decision_id > ?))")
 		args = append(args, page.after.at.UnixMilli(), page.after.at.UnixMilli(), page.after.id)
 	}
-	db := t.Store.db
 	type row struct {
-		agent, session, id string
-		decision           timelineDecision
-		decided            int64
+		agent, session, id, repository string
+		decision                       timelineDecision
+		decided                        int64
 	}
 	rows, err := collect(func(rows *sql.Rows) (row, error) {
 		var r row
-		err := rows.Scan(&r.id, &r.agent, &r.session, &r.decision.Turn, &r.decided, &r.decision.Who, &r.decision.Category,
+		err := rows.Scan(&r.id, &r.agent, &r.session, &r.repository, &r.decision.Turn, &r.decided, &r.decision.Who, &r.decision.Category,
 			&r.decision.Summary, &r.decision.Superseded, &r.decision.FileCount)
 		return r, err
-	})(db.QueryContext(ctx, `SELECT d.decision_id, d.agent, d.session_id, d.first_turn, d.decided_at, d.who, d.category, d.summary, d.superseded,
-(SELECT count(*) FROM decision_file f WHERE f.decision_id=d.decision_id)
+	})(t.Store.db.QueryContext(ctx, `SELECT d.decision_id, d.agent, d.session_id, cs.repository, d.first_turn, d.decided_at, d.who, d.category,
+d.summary, d.superseded, (SELECT count(*) FROM decision_file f WHERE f.decision_id=d.decision_id)
 FROM decision d JOIN capture_session cs ON cs.agent=d.agent AND cs.session_id=d.session_id
 WHERE `+strings.Join(where, " AND ")+` ORDER BY d.decided_at DESC, d.decision_id LIMIT ?`,
 		append(args, page.limit+1)...))
 	if err != nil {
 		return nil, err
 	}
-	self := personOf(ctx, t.cloneOf(ctx, repository))
-	list := []timelineDecision{}
+	reader := t.reader()
 	for _, r := range rows[:min(len(rows), page.limit)] {
 		d := r.decision
-		d.ID, d.SessionID, d.Vendor, d.DecidedAt, d.Person = r.id, sessionID(r.agent, r.session), harness(r.agent), time.UnixMilli(r.decided), self
+		d.Repository, d.ID, d.SessionID, d.Vendor = repositoryRef(r.repository), r.id, sessionID(r.agent, r.session), harness(r.agent)
+		d.DecidedAt, d.Person = time.UnixMilli(r.decided), reader.self(ctx, r.repository)
 		list = append(list, d)
 	}
-	var next *string
 	if len(rows) > page.limit {
 		last := list[len(list)-1]
-		next = cursorOf(last.DecidedAt, last.ID)
+		answer["next_cursor"] = cursorOf(last.DecidedAt, last.ID)
 	}
-	coverage, err := t.coverage(ctx, repository)
-	if err != nil {
+	if coverage, err = t.coverage(ctx, repositories); err != nil {
 		return nil, err
 	}
-	return map[string]any{"decisions": list, "next_cursor": next, "order": "newest", "coverage": coverage, "features_enabled": true}, nil
+	answer["decisions"], answer["coverage"] = list, coverage
+	return answer, nil
+}
+
+// likeEscape escapes s for LIKE … ESCAPE '\', so it matches only itself.
+func likeEscape(s string) string {
+	return strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(s)
 }
 
 type timelineCoverage struct {
@@ -889,9 +986,9 @@ type timelineCoverage struct {
 	SkippedByReason map[string]int `json:"skipped_by_reason"`
 }
 
-// coverage counts the repository's sessions by capture outcome; pending
+// coverage counts the repositories' sessions by capture outcome; pending
 // are those being read now.
-func (t *Timeline) coverage(ctx context.Context, repository string) (timelineCoverage, error) {
+func (t *Timeline) coverage(ctx context.Context, repositories []string) (timelineCoverage, error) {
 	c := timelineCoverage{SkippedByReason: map[string]int{}}
 	type count struct {
 		coverage, reason string
@@ -900,7 +997,8 @@ func (t *Timeline) coverage(ctx context.Context, repository string) (timelineCov
 	counts, err := collect(func(rows *sql.Rows) (count, error) {
 		var c count
 		return c, rows.Scan(&c.coverage, &c.reason, &c.n)
-	})(t.Store.db.QueryContext(ctx, `SELECT coverage, skip_reason, count(*) FROM capture_session WHERE repository=? GROUP BY 1, 2`, repository))
+	})(t.Store.db.QueryContext(ctx, `SELECT coverage, skip_reason, count(*) FROM capture_session WHERE repository `+inList(len(repositories))+
+		` GROUP BY 1, 2`, anyOf(repositories)...))
 	if err != nil {
 		return c, err
 	}
@@ -914,20 +1012,22 @@ func (t *Timeline) coverage(ctx context.Context, repository string) (timelineCov
 		}
 	}
 	err = t.Store.db.QueryRowContext(ctx, `SELECT count(*) FROM (SELECT DISTINCT agent, session_id FROM capture_attempt
-WHERE repository=? AND state=? AND stage=?)`, repository, AttemptPending, StageCapture).Scan(&c.Pending)
+WHERE repository `+inList(len(repositories))+` AND state=? AND stage=?)`, append(anyOf(repositories), AttemptPending, StageCapture)...).Scan(&c.Pending)
 	return c, err
 }
 
-// decision is a current decision's detail: its session's current
-// decisions, never its prompts, and the pull requests its session's
-// commits are in.
+// decision is a decision's detail: its session's current decisions, or for
+// a decision a later capture replaced (obsolete), the decisions replaced
+// with it, marked `replaced`; and the pull requests its session's commits
+// are in.
 func (t *Timeline) decision(ctx context.Context, id string) (any, error) {
 	db := t.Store.db
 	var key SessionKey
 	var repository, branch string
-	err := db.QueryRowContext(ctx, `SELECT d.agent, d.session_id, cs.repository, cs.branch FROM decision d
-JOIN capture_session cs ON cs.agent=d.agent AND cs.session_id=d.session_id WHERE d.decision_id=? AND d.obsolete_at IS NULL`, id).
-		Scan(&key.Agent, &key.ID, &repository, &branch)
+	var obsolete sql.NullInt64
+	err := db.QueryRowContext(ctx, `SELECT d.agent, d.session_id, d.obsolete_at, cs.repository, cs.branch FROM decision d
+JOIN capture_session cs ON cs.agent=d.agent AND cs.session_id=d.session_id WHERE d.decision_id=?`, id).
+		Scan(&key.Agent, &key.ID, &obsolete, &repository, &branch)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, errTimelineNotFound
 	}
@@ -940,10 +1040,15 @@ JOIN capture_session cs ON cs.agent=d.agent AND cs.session_id=d.session_id WHERE
 		}
 		return nil, err
 	}
-	current, err := t.Store.Current(ctx, key)
+	var at *int64
+	if obsolete.Valid {
+		at = &obsolete.Int64
+	}
+	stored, err := t.Store.decisionsOf(ctx, []SessionKey{key}, at)
 	if err != nil {
 		return nil, err
 	}
+	current := stored[key]
 	type detailDecision struct {
 		ID                  string    `json:"id"`
 		Turn                int       `json:"turn"`
@@ -958,7 +1063,7 @@ JOIN capture_session cs ON cs.agent=d.agent AND cs.session_id=d.session_id WHERE
 	}
 	list := make([]detailDecision, 0, len(current))
 	for _, d := range current {
-		row := summaryRow(d, nil)
+		row := summaryRow(d, "", nil)
 		each := detailDecision{ID: d.ID, Turn: row.Turn, Turns: d.Turns, DecidedAt: d.DecidedAt, Who: row.Who, Category: row.Category,
 			Summary: d.Summary, Superseded: d.Superseded, Files: d.Files}
 		if d.RejectedAlternative != "" {
@@ -976,15 +1081,18 @@ WHERE sc.agent=? AND sc.session_id=? AND sc.repository=? ORDER BY p.number DESC`
 	if err != nil {
 		return nil, err
 	}
-	clone := t.cloneOf(ctx, repository)
+	reader := t.reader()
+	clone := reader.clone(ctx, repository)
 	listed := make([]timelinePull, len(pulls))
 	for i, p := range pulls {
 		listed[i] = pullOf(ctx, clone, p)
 		listed[i].Summary = nil
 	}
 	return map[string]any{
-		"session":   sessionOf(key, branch, personOf(ctx, clone)),
-		"decisions": list,
+		"repository": repositoryRef(repository),
+		"session":    sessionOf(key, branch, reader.self(ctx, repository)),
+		"decisions":  list,
+		"replaced":   obsolete.Valid,
 		// The Timeline serves no transcript text.
 		"turns":            []any{},
 		"prompts_withheld": true,

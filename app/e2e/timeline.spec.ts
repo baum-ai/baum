@@ -34,7 +34,10 @@ for (const scheme of ["light", "dark"] as const) {
     await page.goto(await launchURL());
     await page.getByRole("link", { name: "Timeline", exact: true }).click();
     await expect(page.getByRole("heading", { name: "Timeline", exact: true })).toBeVisible();
-    await expect(page.getByLabel("Repository")).toHaveValue("acme/demo");
+    await expect(page.locator(".timeline-repos > summary")).toHaveText("All repositories");
+    await expect(page.getByLabel("Repositories without feature history")).toContainText(
+      "acme/other has no feature history yet.",
+    );
     const features = page.getByRole("list", { name: "Features" });
     await expect(features).toContainText("Local decision log");
     await expect(features).toContainText("Keyword search over decisions");
@@ -73,7 +76,11 @@ for (const scheme of ["light", "dark"] as const) {
     // All decisions, with one open.
     await page.getByRole("tab", { name: "All decisions" }).click();
     await expect(page).toHaveURL(/tab=all/);
-    await expect(page.getByText("3 sessions read")).toBeVisible();
+    // Every repository's decisions, each row naming its own.
+    await expect(page.getByText("4 sessions read")).toBeVisible();
+    await expect(
+      page.locator("li", { hasText: "Keep the other repository's checks in one workflow" }),
+    ).toContainText("acme/other");
     await page.getByRole("button", { name: /Match keywords with SQLite FTS5/ }).click();
     await expect(page.getByText("internal/decisionlog/featurestore.go")).toBeVisible();
     await expect(page.getByRole("link", { name: "Open the session" })).toHaveAttribute(
@@ -92,7 +99,11 @@ for (const scheme of ["light", "dark"] as const) {
 
     // Another repository with nothing placed yet explains how features
     // appear.
-    await page.getByLabel("Repository").selectOption("acme/other");
+    await page
+      .getByLabel("Repositories without feature history")
+      .getByRole("button", { name: "Open acme/other" })
+      .click();
+    await expect(page).toHaveURL(/repo=acme%2Fother/);
     await expect(page.getByText("No features yet")).toBeVisible();
     await shot(page, `empty-${scheme}`);
     // Its history is built by a confirmed job, from its estimate.
@@ -121,7 +132,8 @@ for (const scheme of ["light", "dark"] as const) {
     // Narrow: the page folds without scrolling sideways, the feature opens
     // in place.
     await page.setViewportSize({ width: 420, height: 900 });
-    await page.getByLabel("Repository").selectOption("acme/demo");
+    await page.locator(".timeline-repos > summary").click();
+    await page.getByRole("button", { name: "All repositories" }).click();
     await features
       .getByRole("button", { name: /Local decision log/ })
       .first()

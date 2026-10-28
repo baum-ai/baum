@@ -177,7 +177,7 @@ async function show(initial = "page=timeline") {
 
 it("lists a repository's features and opens one", async () => {
   await show();
-  expect(requests).toContain("/s/test-ns/api/timeline/features?repository=acme%2Fdemo");
+  expect(requests).toContain("/s/test-ns/api/timeline/features");
   expect(node.textContent).toContain("Local timeline");
   expect(node.textContent).toContain("1 PR · 1 session · 1 decision");
   const toggle = [...node.querySelectorAll("button[aria-expanded]")].find((b) =>
@@ -194,7 +194,7 @@ it("lists a repository's features and opens one", async () => {
 
 it("shows all decisions with what capture covered and a decision without its prompts", async () => {
   await show("page=timeline&tab=all&open=d1");
-  expect(requests).toContain("/s/test-ns/api/timeline/decisions?repository=acme%2Fdemo");
+  expect(requests).toContain("/s/test-ns/api/timeline/decisions");
   expect(node.textContent).toContain("3 sessions read · 1 skipped (Too large: 1) · 1 being read");
   expect(node.textContent).toContain("Keep the timeline local");
   expect(node.textContent).toContain("A hosted-only page");
@@ -208,7 +208,7 @@ it("shows all decisions with what capture covered and a decision without its pro
   await act(async () => file.click());
   await act(async () => {});
   expect(requests.at(-1)).toBe(
-    "/s/test-ns/api/timeline/decisions?repository=acme%2Fdemo&file=oss%2Fapp%2Fsrc%2Ftimeline.tsx",
+    "/s/test-ns/api/timeline/decisions?file=oss%2Fapp%2Fsrc%2Ftimeline.tsx",
   );
   const options = [...node.querySelectorAll("option")].map((o) => o.textContent);
   expect(options).toContain("All categories");
@@ -224,6 +224,47 @@ it("says how features appear before there are any", async () => {
   )!;
   await act(async () => all.click());
   expect(current.get("tab")).toBe("all");
+});
+
+it("shows every repository at once, or those ticked, each row naming its own", async () => {
+  answers["api/timeline/repositories"] = {
+    repositories: [
+      { repository: "acme/demo", has_features: true },
+      { repository: "acme/other", has_features: false },
+    ],
+  };
+  const other = {
+    ...feature,
+    id: "F2",
+    title: "Other work",
+    repository: { id: "acme/other", full_name: "acme/other" },
+  };
+  answers["api/timeline/features"] = {
+    features: [{ ...feature, repository: { id: "acme/demo", full_name: "acme/demo" } }, other],
+    next_cursor: null,
+  };
+  await show();
+  expect(requests).toContain("/s/test-ns/api/timeline/features");
+  expect(requests.some((path) => path.includes("api/timeline/build"))).toBe(false);
+  const list = node.querySelector('ol[aria-label="Features"]')!;
+  expect(list.textContent).toContain("acme/other");
+  expect(
+    node.querySelector('[aria-label="Repositories without feature history"]')?.textContent,
+  ).toContain("acme/other has no feature history yet.");
+  expect(node.querySelector("summary")?.textContent).toBe("All repositories");
+  const box = [...node.querySelectorAll("label")]
+    .find((l) => l.textContent === "acme/other")!
+    .querySelector("input")!;
+  await act(async () => box.click());
+  await act(async () => {});
+  expect(current.getAll("repo")).toEqual(["acme/demo"]);
+  expect(requests).toContain("/s/test-ns/api/timeline/features?repository=acme%2Fdemo");
+  expect(requests).toContain("/s/test-ns/api/timeline/build?repository=acme%2Fdemo");
+  // The one box left ticked cannot be cleared.
+  const last = [...node.querySelectorAll("label")]
+    .find((l) => l.textContent === "acme/demo")!
+    .querySelector("input")!;
+  expect(last.disabled).toBe(true);
 });
 
 it("explains a Timeline with no repositories", async () => {
@@ -252,7 +293,7 @@ it("reads only the tab shown, and again with the rows it had when the log change
   requests.length = 0;
   await act(async () => root.render(<Harness initial="page=timeline" revision={1} />));
   await act(async () => {});
-  expect(requests).toContain("/s/test-ns/api/timeline/features?repository=acme%2Fdemo");
+  expect(requests).toContain("/s/test-ns/api/timeline/features");
   expect(requests.some((path) => path.includes("api/timeline/decisions"))).toBe(false);
 });
 
@@ -297,7 +338,7 @@ it("reads again as many rows as were loaded when the log changes", async () => {
   await act(async () => root.render(<Harness initial="page=timeline" revision={1} />));
   await act(async () => {});
   expect(requests.filter((path) => path.includes("features"))).toEqual([
-    "/s/test-ns/api/timeline/features?repository=acme%2Fdemo&limit=70",
+    "/s/test-ns/api/timeline/features?limit=70",
   ]);
   expect(node.querySelectorAll("li[data-feature]").length).toBe(70);
 });
@@ -415,8 +456,8 @@ it("reads more than 500 rows again in requests that follow the cursor", async ()
   await act(async () => {});
   await act(async () => {});
   expect(requests.filter((path) => path.includes("features"))).toEqual([
-    "/s/test-ns/api/timeline/features?repository=acme%2Fdemo&limit=500",
-    "/s/test-ns/api/timeline/features?repository=acme%2Fdemo&limit=100&cursor=1%7CF499",
+    "/s/test-ns/api/timeline/features?limit=500",
+    "/s/test-ns/api/timeline/features?limit=100&cursor=1%7CF499",
   ]);
   expect(node.querySelectorAll("li[data-feature]").length).toBe(600);
 });

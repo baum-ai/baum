@@ -367,17 +367,23 @@ the daemon's `api/timeline` routes (see the
 [decision log README](../internal/decisionlog/README.md#timeline-api)) and draws
 them with the viewer's decision log components (`FeatureItem`,
 `FeatureSidePanel`, `FeatureDrillDown`, `TimelineHeading`, `DecisionRow`,
-`DecisionDetailBody`). Its bar holds a repository select over the picked
-repositories whose decisions are on (the first when the address names none), a
-search box applied 300 ms after typing stops, and a status select on Features or
-a category select on All decisions; a file chosen from a decision's detail shows
-as a removable pill. Everything lives in the address. Features groups them by
+`DecisionDetailBody`). It shows every picked repository whose decisions are
+on, as the hosted Timeline shows all of an organisation's, or those named by
+`repo=` (repeated). Its bar holds, with more than one such repository, a
+popover of a box per repository (the last one ticked cannot be cleared;
+ticking them all, or **All repositories**, drops `repo=`), a search box
+applied 300 ms after typing stops, and a status select on Features or a
+category select on All decisions; a file chosen from a decision's detail
+shows as a removable pill. Everything lives in the address. Over several
+repositories each row names its repository and links its pull requests to
+that repository's PR page. Features groups them by
 month and day of last activity; on a screen 96rem wide the opened feature sits
 in a panel beside the timeline, otherwise it opens in place. A feature merged
 into another opens the survivor. All decisions lists the current decisions by
 day, with a line of what capture made of the repository's sessions (read,
 skipped by reason, being read); a decision opened by address but not listed
-shows above the list. A decision's detail says the Timeline shows no prompts and
+shows above the list. A decision a later capture replaced opens with a line
+saying so. A decision's detail says the Timeline shows no prompts and
 links to the session's page (`?page=sessions&session=<agent>:<id>`, which has it
 while the session is tracked); a pull request links to its PR page
 (`?repository=&pr=`). Only the tab shown reads its list, 50 rows at a time
@@ -389,7 +395,10 @@ so an older answer never replaces a newer one. A feature in the address that
 the loaded list does not hold (further down, filtered out, archived or gone)
 shows above the list as the opened feature. With no features yet, the page
 explains that features appear as pull requests and sessions are placed and
-offers **Build feature history** and All decisions; when the repository has
+offers **Build feature history** (in a view of one repository) and All
+decisions. The feature build below belongs to a view of one repository; over
+several, each of them without a feature history has a line saying so that
+opens its own view. When the repository has
 features at all (whatever the filters), the page bar offers a quieter
 **Rebuild feature history**. Either estimates a `feature_build` job for the
 repository's clone (`src/feature-build.tsx`, `POST api/jobs/estimate` with

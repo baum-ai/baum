@@ -548,6 +548,12 @@ func (s *Store) Current(ctx context.Context, sessions ...SessionKey) ([]Decision
 // currentOf reads the current decisions of the sessions together, each
 // session's in extraction order, with their files.
 func (s *Store) currentOf(ctx context.Context, sessions []SessionKey) (map[SessionKey][]Decision, error) {
+	return s.decisionsOf(ctx, sessions, nil)
+}
+
+// decisionsOf is currentOf, or with obsolete the decisions a later capture
+// replaced at that time: one extraction's, kept for good.
+func (s *Store) decisionsOf(ctx context.Context, sessions []SessionKey, obsolete *int64) (map[SessionKey][]Decision, error) {
 	out := map[SessionKey][]Decision{}
 	if len(sessions) == 0 {
 		return out, nil
@@ -555,6 +561,11 @@ func (s *Store) currentOf(ctx context.Context, sessions []SessionKey) (map[Sessi
 	set, err := sessionSet(sessions)
 	if err != nil {
 		return nil, err
+	}
+	// ?2 is the obsolete time, NULL for the current decisions.
+	var at any
+	if obsolete != nil {
+		at = *obsolete
 	}
 	list, err := collect(func(rows *sql.Rows) (Decision, error) {
 		var d Decision
@@ -567,16 +578,16 @@ func (s *Store) currentOf(ctx context.Context, sessions []SessionKey) (map[Sessi
 		d.DecidedAt, d.Files = time.UnixMilli(decided), []string{}
 		return d, json.Unmarshal([]byte(turns), &d.Turns)
 	})(s.db.QueryContext(ctx, `SELECT agent, session_id, decision_id, repository, title, summary, category, who, trigger, rationale,
-rejected_alternative, evidence, superseded, turns_json, decided_turn, decided_at, branch FROM current_decision
-WHERE (agent, session_id)`+inSessions+` ORDER BY agent, session_id, ordinal`, set))
+rejected_alternative, evidence, superseded, turns_json, decided_turn, decided_at, branch FROM decision
+WHERE (agent, session_id)`+inSessions+` AND obsolete_at IS ?2 ORDER BY agent, session_id, ordinal`, set, at))
 	if err != nil {
 		return nil, err
 	}
 	files, err := collect(func(rows *sql.Rows) ([2]string, error) {
 		var f [2]string
 		return f, rows.Scan(&f[0], &f[1])
-	})(s.db.QueryContext(ctx, `SELECT f.decision_id, f.path FROM decision_file f JOIN current_decision d ON d.decision_id=f.decision_id
-WHERE (d.agent, d.session_id)`+inSessions+` ORDER BY f.decision_id, f.path`, set))
+	})(s.db.QueryContext(ctx, `SELECT f.decision_id, f.path FROM decision_file f JOIN decision d ON d.decision_id=f.decision_id
+WHERE (d.agent, d.session_id)`+inSessions+` AND d.obsolete_at IS ?2 ORDER BY f.decision_id, f.path`, set, at))
 	if err != nil {
 		return nil, err
 	}

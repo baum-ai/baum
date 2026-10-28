@@ -20,7 +20,8 @@ import (
 // feature log would leave it, and serves the Timeline over it: three
 // sessions' decisions and four features, one shipped, one in progress with
 // a session on its own, one abandoned and one whose text is not written
-// yet. acme/other has decisions on and nothing captured.
+// yet. acme/other has decisions on, one session's decision and no feature
+// history.
 func browserTimeline(t *testing.T, home string, registry *repos.Registry) http.Handler {
 	t.Helper()
 	ctx := context.Background()
@@ -64,6 +65,13 @@ func browserTimeline(t *testing.T, home string, registry *repos.Registry) http.H
 			ContentHash: "c-" + s.id, Decisions: s.decisions, TurnTimes: times}); err != nil {
 			t.Fatal(err)
 		}
+	}
+	if err := store.Save(ctx, decisionlog.Extraction{Meta: decisionlog.Meta{Agent: "codex", ID: "other-1", Repository: "acme/other", Branch: "main"},
+		ContentHash: "c-other-1", TurnTimes: map[int]time.Time{1: day(2, 14)}, Decisions: []decisions.Decision{
+			{ID: "dec-other", Summary: "Keep the other repository's checks in one workflow", Category: decisions.CategoryImplementation,
+				Who: decisions.WhoAgent, Turns: []int{1}, Files: []string{".github/workflows/ci.yml"}},
+		}}); err != nil {
+		t.Fatal(err)
 	}
 	version, err := store.LiveVersion(ctx, repo)
 	if err != nil {

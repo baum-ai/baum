@@ -42,14 +42,16 @@ export type BuildState = {
 };
 
 /** The repository's build state, read again when the log or the build job
- *  moves on. A read that fails keeps the last state. */
-export function useBuildState(repository: string, key: string): BuildState {
+ *  moves on; none is read without a repository. A read that fails keeps the
+ *  last state. */
+export function useBuildState(repository: string | null, key: string): BuildState {
   const [state, setState] = useState<BuildState>({
     building: null,
     hasFeatures: false,
     currentSince: null,
   });
   useEffect(() => {
+    if (repository === null) return;
     const abort = new AbortController();
     request<{ building?: Building | null; has_features?: boolean; current_since?: string | null }>(
       `api/timeline/build?repository=${encodeURIComponent(repository)}`,

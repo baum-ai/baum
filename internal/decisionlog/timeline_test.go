@@ -48,11 +48,14 @@ func (fakeClone) Review(_ context.Context, number int, head string) (string, str
 	return "", "none"
 }
 
+const gadgets = "acme/gadgets"
+
 // newTimelineFixture stores two features of acme/widgets' current version
 // and one merged into the first: "Widget export" with pull requests 1
 // (open, linked to session s1's commit) and 2 (merged, with a generated
 // summary), and an untitled feature behind its members holding session s2
-// on its own. acme/off has its decisions turned off.
+// on its own. acme/gadgets has feature G1 holding codex session g1 on its
+// own; acme/off has its decisions turned off.
 func newTimelineFixture(t *testing.T) *timelineFixture {
 	f := &timelineFixture{featureFixture: newFeatureFixture(t)}
 	ctx := context.Background()
@@ -89,9 +92,24 @@ changed_at, merged_into, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?
 	f.exec(`INSERT INTO pull_commit(repository, number, sha, committed_at) VALUES (?,1,'c1',?)`, repo, t0.UnixMilli())
 	f.exec(`INSERT INTO session_commit(agent, session_id, repository, sha, method, confidence) VALUES ('claude-code','s1',?,'c1','checkpoint',1)`, repo)
 	f.exec(`INSERT INTO pr_summary(repository, number, content_hash, summary, created_at) VALUES (?,2,'h','Adds the button.',?)`, repo, t0.UnixMilli())
+	// acme/gadgets: session g1 on its own in feature G1.
+	if err := f.store.Save(ctx, Extraction{Meta: Meta{Agent: "codex", ID: "g1", Repository: gadgets, Branch: "main"}, ContentHash: "c-g1",
+		Decisions: []decisions.Decision{{ID: "d-g1", Summary: "Count gadgets nightly.", Category: decisions.CategoryScope, Who: decisions.WhoHuman,
+			Turns: []int{1}, Files: []string{"count.go"}}}}); err != nil {
+		t.Fatal(err)
+	}
+	gadgetVersion, err := f.store.LiveVersion(ctx, gadgets)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.exec(`INSERT INTO feature(id, version_id, repository, title, description, digest, key_decisions_json, membership_version, summarized_version,
+changed_at, created_at, updated_at) VALUES ('G1',?,?,'Gadget counts','About counts','Digest','[]',1,1,0,?,?)`, gadgetVersion, gadgets,
+		t0.Add(-time.Hour).UnixMilli(), t0.UnixMilli())
+	f.exec(`INSERT INTO feature_session(version_id, repository, agent, session_id, feature_id, assigned_at) VALUES (?,?,'codex','g1','G1',?)`,
+		gadgetVersion, gadgets, t0.UnixMilli())
 	off := false
 	f.registry = &timelineRegistry{prefs: repos.DefaultPreferences(),
-		list: []repos.Repository{{Repository: repo}, {Repository: "acme/off", Settings: repos.Settings{Decisions: &off}}}}
+		list: []repos.Repository{{Repository: repo}, {Repository: gadgets}, {Repository: "acme/off", Settings: repos.Settings{Decisions: &off}}}}
 	timeline := &Timeline{Store: f.store, Registry: f.registry,
 		Clone: func(context.Context, string) TimelineClone {
 			f.clones++
@@ -119,7 +137,8 @@ func (f *timelineFixture) get(path string, query url.Values, out any) int {
 
 type featurePage struct {
 	Features []struct {
-		ID               string  `json:"id"`
+		Repository       *timelineRepository `json:"repository"`
+		ID               string              `json:"id"`
 		Title            *string `json:"title"`
 		Status           string  `json:"status"`
 		SummaryPending   bool    `json:"summary_pending"`
@@ -146,12 +165,14 @@ func TestTimelineRepositoriesAndScope(t *testing.T) {
 		Repositories []struct{ Repository string } `json:"repositories"`
 	}
 	f.get("/api/timeline/repositories", nil, &list)
-	if len(list.Repositories) != 1 || list.Repositories[0].Repository != repo {
+	if len(list.Repositories) != 2 || list.Repositories[0].Repository != gadgets || list.Repositories[1].Repository != repo {
 		t.Fatalf("repositories = %+v", list)
 	}
 	for _, name := range []string{"acme/off", "acme/unknown", ""} {
-		if code := f.get("/api/timeline/features", url.Values{"repository": {name}}, nil); code != http.StatusBadRequest {
-			t.Fatalf("features of %q = %d", name, code)
+		for _, route := range []string{"features", "decisions"} {
+			if code := f.get("/api/timeline/"+route, url.Values{"repository": {repo, name}}, nil); code != http.StatusBadRequest {
+				t.Fatalf("%s of %q = %d", route, name, code)
+			}
 		}
 	}
 	for _, bad := range []url.Values{{"cursor": {"x"}}, {"cursor": {"1|"}}, {"limit": {"0"}}, {"limit": {"501"}}} {
@@ -171,6 +192,11 @@ func TestTimelineRepositoriesAndScope(t *testing.T) {
 	// A detail of a repository turned off is not found.
 	off := false
 	f.registry.list[0].Settings.Decisions = &off
+	var page featurePage
+	f.get("/api/timeline/features", nil, &page)
+	if page.ids() != "G1" {
+		t.Fatalf("features of the repositories on = %s", page.ids())
+	}
 	for _, path := range []string{"/api/timeline/features/F1", "/api/timeline/decisions/d-s1"} {
 		if code := f.get(path, nil, nil); code != http.StatusNotFound {
 			t.Fatalf("%s of a repository turned off = %d", path, code)
@@ -339,6 +365,99 @@ VALUES ('claude-code','s3',?,'claude','m','full',0,'pending',0,'capture')`, repo
 	}
 }
 
+// Every list reads the repositories asked for, or every one served, merged
+// in one order; every row and detail names its repository.
+func TestTimelineAcrossRepositories(t *testing.T) {
+	f := newTimelineFixture(t)
+	var page featurePage
+	f.get("/api/timeline/features", nil, &page)
+	if page.ids() != "F1,F2,G1" {
+		t.Fatalf("features = %s", page.ids())
+	}
+	for i, want := range []string{repo, repo, gadgets} {
+		if r := page.Features[i].Repository; r == nil || r.FullName != want || r.ID != want {
+			t.Fatalf("feature %d repository = %+v", i, r)
+		}
+	}
+	page = featurePage{}
+	f.get("/api/timeline/features", url.Values{"repository": {"ACME/gadgets", gadgets}}, &page)
+	if page.ids() != "G1" {
+		t.Fatalf("features of gadgets = %s", page.ids())
+	}
+	// Pages follow on across the repositories.
+	var seen []string
+	cursor := ""
+	for range 5 {
+		q := url.Values{"repository": {repo, gadgets}, "limit": {"2"}}
+		if cursor != "" {
+			q.Set("cursor", cursor)
+		}
+		page = featurePage{}
+		f.get("/api/timeline/features", q, &page)
+		seen = append(seen, page.ids())
+		if page.NextCursor == nil {
+			break
+		}
+		cursor = *page.NextCursor
+	}
+	if strings.Join(seen, "|") != "F1,F2|G1" {
+		t.Fatalf("pages = %v", seen)
+	}
+	var decisions struct {
+		Decisions []timelineDecision `json:"decisions"`
+		Coverage  timelineCoverage   `json:"coverage"`
+	}
+	f.get("/api/timeline/decisions", nil, &decisions)
+	if len(decisions.Decisions) != 3 || decisions.Coverage.Extracted != 3 {
+		t.Fatalf("decisions = %+v", decisions)
+	}
+	for _, d := range decisions.Decisions {
+		if want := map[bool]string{true: gadgets, false: repo}[d.ID == "d-g1"]; d.Repository == nil || d.Repository.FullName != want {
+			t.Fatalf("%s repository = %+v", d.ID, d.Repository)
+		}
+	}
+	var detail struct {
+		Repository *timelineRepository `json:"repository"`
+		Feature    timelineFeature     `json:"feature"`
+	}
+	f.get("/api/timeline/features/G1", nil, &detail)
+	if detail.Repository == nil || detail.Repository.FullName != gadgets || detail.Feature.Repository.FullName != gadgets {
+		t.Fatalf("G1 = %+v", detail)
+	}
+	detail.Repository = nil
+	f.get("/api/timeline/decisions/d-g1", nil, &detail)
+	if detail.Repository == nil || detail.Repository.FullName != gadgets {
+		t.Fatalf("d-g1 = %+v", detail)
+	}
+}
+
+// A decision a later capture replaced still opens, with the decisions
+// replaced with it.
+func TestTimelineReplacedDecision(t *testing.T) {
+	f := newTimelineFixture(t)
+	f.clock.now = t0.Add(time.Hour)
+	if err := f.store.Save(context.Background(), Extraction{Meta: Meta{Agent: "claude-code", ID: "s1", Repository: repo}, ContentHash: "c-s1-again",
+		Decisions: []decisions.Decision{decision("d-s1-new", "Export as spreadsheets.", 1)}}); err != nil {
+		t.Fatal(err)
+	}
+	var detail struct {
+		Replaced  bool `json:"replaced"`
+		Decisions []struct {
+			ID    string
+			Files []string
+		}
+	}
+	f.get("/api/timeline/decisions/d-s1", nil, &detail)
+	if !detail.Replaced || len(detail.Decisions) != 1 || detail.Decisions[0].ID != "d-s1" || len(detail.Decisions[0].Files) != 1 {
+		t.Fatalf("replaced = %+v", detail)
+	}
+	detail.Replaced = false
+	f.get("/api/timeline/decisions/d-s1-new", nil, &detail)
+	if detail.Replaced || len(detail.Decisions) != 1 || detail.Decisions[0].ID != "d-s1-new" {
+		t.Fatalf("current = %+v", detail)
+	}
+}
+
 // Pages follow on from the last row they named, so a row added at the top
 // meanwhile repeats none; a request opens its clone once.
 func TestTimelinePagesByKeyset(t *testing.T) {
@@ -435,32 +554,34 @@ func TestTimelineSearchIndex(t *testing.T) {
 	}
 	s.now = c.Now
 	t.Cleanup(func() { _ = s.Close() })
+	handler := (&Timeline{Store: s, Registry: timelineRegistry{prefs: repos.DefaultPreferences(), list: []repos.Repository{{Repository: repo}}}}).Handler()
 	match := func(q string) []string {
 		t.Helper()
-		ids, err := collect(scanString)(s.db.Query(`SELECT d.decision_id FROM decision d WHERE d.rowid IN
-(SELECT rowid FROM decision_search WHERE decision_search MATCH ?) ORDER BY 1`, matchQuery(q)))
-		if err != nil {
-			t.Fatal(err)
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, httptest.NewRequest("GET", "/api/timeline/decisions?"+url.Values{"q": {q}}.Encode(), nil))
+		var page struct{ Decisions []timelineDecision }
+		if err := json.Unmarshal(w.Body.Bytes(), &page); err != nil {
+			t.Fatal(w.Code, err)
+		}
+		var ids []string
+		for _, d := range page.Decisions {
+			ids = append(ids, d.ID)
 		}
 		return ids
 	}
 	if got := match("export spreadsheet"); len(got) != 1 || got[0] != "d1" {
 		t.Fatalf("export spreadsheet = %v", got)
 	}
-	// A new extraction makes d1 obsolete: kept for good, it stays indexed
-	// through a prune, and only current decisions are searched.
+	// A new extraction makes d1 obsolete: kept for good through a prune
+	// (the integrity check below holds the index to it), and only current
+	// decisions are searched.
 	save("s1", decision("d2", "Exporting widgets as CSV", 1))
 	c.now = t0.Add(Retention + 48*time.Hour)
 	if err := s.Prune(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if got := match("spreadsheet"); len(got) != 1 || got[0] != "d1" {
-		t.Fatalf("obsolete decision not kept in the index: %v", got)
-	}
-	var current int
-	if err := s.db.QueryRow(`SELECT COUNT(*) FROM decision d WHERE d.obsolete_at IS NULL AND d.rowid IN
-(SELECT rowid FROM decision_search WHERE decision_search MATCH ?)`, matchQuery("spreadsheet")).Scan(&current); err != nil || current != 0 {
-		t.Fatalf("current matches for an obsolete decision: %d, %v", current, err)
+	if got := match("spreadsheet"); len(got) != 0 {
+		t.Fatalf("an obsolete decision is listed: %v", got)
 	}
 	if got := match("csv"); len(got) != 1 || got[0] != "d2" {
 		t.Fatalf("csv = %v", got)

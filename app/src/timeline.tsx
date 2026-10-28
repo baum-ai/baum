@@ -43,10 +43,11 @@ import { LoadingStatus } from "./nine-dots";
 import { PageBar } from "./shell";
 import "./timeline.css";
 
-/** The Timeline: a repository's features and decisions from the local
- *  decision log (`api/timeline`), drawn by the review viewer's decision log
- *  components as the hosted Timeline draws them. Its address holds the
- *  repository, tab, filters and what is open, so a reload shows the same. */
+/** The Timeline: the picked repositories' features and decisions from the
+ *  local decision log (`api/timeline`), drawn by the review viewer's decision
+ *  log components as the hosted Timeline draws them. Its address holds the
+ *  repositories (`repo=`, repeated; none is all of them), tab, filters and
+ *  what is open, so a reload shows the same. */
 
 export type TimelineTab = "features" | "all";
 
@@ -110,10 +111,12 @@ const OPEN_SESSION: OpenSessionSource<string> = {
   ),
 };
 
+type ServedRepository = { repository: string; has_features?: boolean };
+
 type RepositoryList = {
   available?: false;
   decisions_enabled?: boolean;
-  repositories?: { repository: string }[];
+  repositories?: ServedRepository[];
   turned_off?: string[];
 };
 
@@ -149,21 +152,23 @@ export function TimelinePage({
       });
     return () => abort.abort();
   }, [revision]);
-  const repositories = list?.repositories?.map((each) => each.repository) ?? null;
-  const asked = url.search.get("repo");
-  const repository =
-    repositories?.find((name) => name.toLowerCase() === asked?.toLowerCase()) ??
-    repositories?.[0] ??
-    null;
-  if (repositories && repository && list?.available !== false && list?.decisions_enabled !== false)
+  const served = list?.repositories ?? [];
+  const asked = url.search.getAll("repo").map((name) => name.toLowerCase());
+  // The repositories the address names that are served; none is all.
+  const selected = served
+    .map((each) => each.repository)
+    .filter((name) => asked.includes(name.toLowerCase()));
+  const scope = selected.length > 0 ? selected : served.map((each) => each.repository);
+  if (scope.length > 0 && list?.available !== false && list?.decisions_enabled !== false)
     return (
       <TimelineLog
-        key={repository}
-        repository={repository}
-        repositories={repositories}
+        key={scope.join("\n")}
+        scope={scope}
+        all={selected.length === 0}
+        served={served}
         revision={revision}
         jobs={jobs}
-        clone={cloneOf(repository)}
+        cloneOf={cloneOf}
         jobsChanged={jobsChanged}
       />
     );
@@ -274,7 +279,7 @@ function usePages<T>(
         if (limit !== PAGE) params.set("limit", String(limit));
         if (cursor) params.set("cursor", cursor);
         const body = await request<Record<string, unknown>>(
-          `${path}?${params}`,
+          withQuery(path, params),
           undefined,
           "GET",
           abort.signal,
@@ -297,12 +302,9 @@ function usePages<T>(
     more.current = abort;
     const started = generation.current;
     setState({ ...base, status: "loading" });
-    request<Record<string, unknown>>(
-      `${path}?${query}&cursor=${encodeURIComponent(base.cursor)}`,
-      undefined,
-      "GET",
-      abort.signal,
-    )
+    const params = new URLSearchParams(query);
+    params.set("cursor", base.cursor);
+    request<Record<string, unknown>>(withQuery(path, params), undefined, "GET", abort.signal)
       .then((body) =>
         setState((current) =>
           generation.current !== started || current.query !== base.query
@@ -321,6 +323,11 @@ function usePages<T>(
       });
   }, [path, query, key]);
   return { ...state, loaded: state.loaded && state.query === query, loadMore };
+}
+
+function withQuery(path: string, params: URLSearchParams): string {
+  const query = params.toString();
+  return query ? `${path}?${query}` : path;
 }
 
 /** Details read once per revision and kept, so closing and reopening one
@@ -411,23 +418,31 @@ const readFeature = async (id: string, signal: AbortSignal): Promise<FeatureStat
 };
 
 function TimelineLog({
-  repository,
-  repositories,
+  scope,
+  all,
+  served,
   revision: logRevision,
   jobs,
-  clone,
+  cloneOf,
   jobsChanged,
 }: {
-  repository: string;
-  repositories: string[];
+  /** The repositories shown. */
+  scope: string[];
+  /** The address names none: every served repository is shown. */
+  all: boolean;
+  served: ServedRepository[];
   revision: number;
   jobs: Job[];
-  clone: string | null;
+  cloneOf: (repository: string) => string | null;
   jobsChanged: () => void;
 }) {
-  // The repository's feature build: its job and its building version. A
-  // build that finishes changes the features, so the lists are read again.
-  const buildJob = buildJobOf(jobs, repository);
+  // A view of one repository has its feature build: its job and its
+  // building version. A build that finishes changes the features, so the
+  // lists are read again.
+  const single = scope.length === 1 ? (scope[0] ?? null) : null;
+  const several = single === null;
+  const clone = single ? cloneOf(single) : null;
+  const buildJob = single ? buildJobOf(jobs, single) : undefined;
   const buildActive = isActiveJob(buildJob);
   const [buildFinished, setBuildFinished] = useState(0);
   const wasActive = useRef(buildActive);
@@ -437,7 +452,7 @@ function TimelineLog({
   }, [buildActive]);
   const revision = logRevision + buildFinished;
   const buildState = useBuildState(
-    repository,
+    single,
     `${revision}:${buildJob?.id ?? ""}:${buildJob?.state ?? ""}:${buildJob?.calls ?? 0}`,
   );
   const { building, hasFeatures } = buildState;
@@ -466,7 +481,8 @@ function TimelineLog({
     [url],
   );
 
-  const base = new URLSearchParams({ repository });
+  const base = new URLSearchParams();
+  if (!all) for (const name of scope) base.append("repository", name);
   if (q) base.set("q", q);
   const featureQuery = new URLSearchParams(base);
   if (status) featureQuery.set("status", status);
@@ -514,8 +530,22 @@ function TimelineLog({
 
   const decisionDetail = (id: string, withSummary: boolean, at?: DecisionSummary) => {
     const state = details[id] as DetailState | undefined;
+    const repository =
+      (state?.status === "ready" ? state.detail.repository?.full_name : undefined) ??
+      at?.repository?.full_name ??
+      single ??
+      "";
+    // A decision a later capture of its session replaced still opens, with
+    // the decisions replaced with it.
+    const replaced = state?.status === "ready" && (state.detail as { replaced?: boolean }).replaced;
     return (
-      <DecisionDetailBody
+      <>
+        {replaced ? (
+          <p className="pt-1 text-base text-(--text-tertiary) italic">
+            A later reading of this session replaced this decision.
+          </p>
+        ) : null}
+        <DecisionDetailBody
         state={state}
         decisionId={id}
         at={at ? { sessionId: at.session_id, turn: at.turn } : undefined}
@@ -528,6 +558,7 @@ function TimelineLog({
           <WithheldNote sessionId={state?.status === "ready" ? state.detail.session.id : null} />
         }
       />
+      </>
     );
   };
   const openedDecision = (id: string) => (
@@ -548,18 +579,27 @@ function TimelineLog({
 
   const wide = useWideScreen();
   const sideFeature = wide ? features.rows.find((f) => f.id === openFeature) : undefined;
-  const drillDown = (id: string) => (
-    <FeatureDrillDown
-      state={featureStates[id] as FeatureState | undefined}
-      decisions={opening}
-      pullRequestHref={(number) => pullRequestHref(repository, number)}
-      onRetry={() => loadFeature(id, true)}
-    />
-  );
+  const drillDown = (id: string) => {
+    const state = featureStates[id] as FeatureState | undefined;
+    const repository =
+      (state?.status === "ready" ? state.detail.feature.repository?.full_name : undefined) ??
+      features.rows.find((f) => f.id === id)?.repository?.full_name ??
+      single ??
+      "";
+    return (
+      <FeatureDrillDown
+        state={state}
+        decisions={opening}
+        pullRequestHref={(number) => pullRequestHref(repository, number)}
+        onRetry={() => loadFeature(id, true)}
+      />
+    );
+  };
   const featureItem = (feature: FeatureSummary, day: string | null) => (
     <FeatureItem
       key={feature.id}
       feature={feature}
+      repository={several ? feature.repository?.full_name : undefined}
       day={day}
       panelElsewhere={wide ? FEATURE_PANEL : undefined}
       expanded={openFeature === feature.id}
@@ -582,6 +622,7 @@ function TimelineLog({
           <ol>
             <FeatureItem
               feature={openState.detail.feature}
+              repository={several ? openState.detail.feature.repository?.full_name : undefined}
               expanded
               onToggle={() => writeFeature(null, null)}
               onKeyDecision={(decision) => writeFeature(openFeature, decision)}
@@ -599,15 +640,35 @@ function TimelineLog({
   const featureFiltered = Boolean(q || status);
   const decisionFiltered = Boolean(q || category || file);
   const clear = () => write({ q: null, status: null, category: null, file: null });
+  // Another set of repositories keeps the tab and filters; what was open
+  // was one of the old set's.
+  const openRepositories = (names: string[]) =>
+    url.update((current) => {
+      const next = new URLSearchParams(current);
+      next.delete("repo");
+      next.delete("open");
+      next.delete("feature");
+      for (const name of names) next.append("repo", name);
+      return next;
+    });
 
   const featuresBody = (
     <>
-      <BuildStatus
-        job={buildJob}
-        state={buildState}
-        clone={clone}
-        onBuild={(resume) => setBuildDialog(resume ? "resume" : "build")}
-      />
+      {single ? (
+        <BuildStatus
+          job={buildJob}
+          state={buildState}
+          clone={clone}
+          onBuild={(resume) => setBuildDialog(resume ? "resume" : "build")}
+        />
+      ) : (
+        <WithoutHistory
+          repositories={served.filter(
+            (each) => scope.includes(each.repository) && !each.has_features,
+          )}
+          open={(name) => openRepositories([name])}
+        />
+      )}
       {openedFeature}
       <Stale pending={features.status === "loading" && features.loaded}>
         {features.status === "failed" && !features.loaded ? (
@@ -623,11 +684,11 @@ function TimelineLog({
             </Empty>
           ) : (
             <Empty title="No features yet">
-              Features appear here as baum places this repository's pull requests and agent sessions
-              in them, from now on. Build its feature history to place the pull requests of the last
-              180 days too. The decisions read so far are under All decisions.
+              {several
+                ? "Features appear here as baum places these repositories' pull requests and agent sessions in them, from now on. Open one repository to build its feature history. The decisions read so far are under All decisions."
+                : "Features appear here as baum places this repository's pull requests and agent sessions in them, from now on. Build its feature history to place the pull requests of the last 180 days too. The decisions read so far are under All decisions."}
               <span className="mt-3 flex flex-wrap justify-center gap-2">
-                {!buildActive && !building ? (
+                {single && !buildActive && !building ? (
                   <Button
                     size="tiny"
                     disabled={!clone}
@@ -715,7 +776,8 @@ function TimelineLog({
             </Empty>
           ) : (
             <Empty title="No decisions yet">
-              Decisions appear here as baum reads the agent sessions in this repository.
+              Decisions appear here as baum reads the agent sessions in{" "}
+              {several ? "these repositories" : "this repository"}.
             </Empty>
           )
         ) : (
@@ -730,6 +792,7 @@ function TimelineLog({
                     <DecisionRow
                       key={decision.id}
                       decision={decision}
+                      repository={several ? decision.repository?.full_name : undefined}
                       expanded={openRow === decision}
                       onToggle={() => writeOpen(decision, openRow === decision)}
                     >
@@ -762,9 +825,9 @@ function TimelineLog({
           ) : null
         }
       />
-      {buildDialog && clone ? (
+      {buildDialog && clone && single ? (
         <FeatureBuildDialog
-          repository={repository}
+          repository={single}
           clone={clone}
           resume={buildDialog === "resume"}
           close={() => setBuildDialog(null)}
@@ -773,19 +836,13 @@ function TimelineLog({
       ) : null}
       <div className="local-filter-bar timeline-filters">
         <div className="timeline-controls">
-          <label className="local-repo-filter">
-            <span className="sr-only">Repository</span>
-            <select
-              value={repository}
-              onChange={(e) =>
-                url.update(() => new URLSearchParams({ page: "timeline", repo: e.target.value }))
-              }
-            >
-              {repositories.map((name) => (
-                <option key={name}>{name}</option>
-              ))}
-            </select>
-          </label>
+          {served.length > 1 ? (
+            <RepositoryPicker
+              repositories={served.map((each) => each.repository)}
+              selected={all ? [] : scope}
+              onChange={openRepositories}
+            />
+          ) : null}
           <SearchBox
             key={tab}
             label={tab === "features" ? "Search features" : "Search decisions"}
@@ -850,6 +907,100 @@ function TimelineLog({
         </div>
       ))}
     </>
+  );
+}
+
+/** The repositories shown that have no feature history yet, a line each,
+ *  each opening its own view, where it can be built. */
+function WithoutHistory({
+  repositories,
+  open,
+}: {
+  repositories: ServedRepository[];
+  open: (name: string) => void;
+}) {
+  if (repositories.length === 0) return null;
+  return (
+    <ul aria-label="Repositories without feature history" className="timeline-history-lines">
+      {repositories.map((each) => (
+        <li key={each.repository}>
+          <span className="font-mono">{each.repository}</span> has no feature history yet.{" "}
+          <button type="button" className="underline" onClick={() => open(each.repository)}>
+            Open {each.repository}
+          </button>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+/** Which repositories the Timeline shows: a box for each, in a popover;
+ *  none ticked in the address is all of them. The last box left ticked
+ *  cannot be cleared. */
+function RepositoryPicker({
+  repositories,
+  selected,
+  onChange,
+}: {
+  repositories: string[];
+  /** Empty for all of them. */
+  selected: string[];
+  onChange: (names: string[]) => void;
+}) {
+  const ref = useRef<HTMLDetailsElement>(null);
+  useEffect(() => {
+    const close = (event: MouseEvent) => {
+      const details = ref.current;
+      if (details?.open && !details.contains(event.target as Node)) details.open = false;
+    };
+    document.addEventListener("click", close);
+    return () => document.removeEventListener("click", close);
+  }, []);
+  const all = selected.length === 0;
+  const ticked = all ? repositories : selected;
+  const label = all
+    ? "All repositories"
+    : selected.length === 1
+      ? selected[0]
+      : `${formatCount(selected.length)} repositories`;
+  const toggle = (name: string) => {
+    const next = ticked.includes(name) ? ticked.filter((each) => each !== name) : [...ticked, name];
+    onChange(next.length === repositories.length ? [] : next);
+  };
+  return (
+    <details
+      ref={ref}
+      className="timeline-repos"
+      onKeyDown={(event) => {
+        if (event.key !== "Escape" || !ref.current?.open) return;
+        ref.current.open = false;
+        ref.current.querySelector("summary")?.focus();
+      }}
+    >
+      <summary aria-label={`Repositories: ${label}`}>{label}</summary>
+      <fieldset className="timeline-repos-panel">
+        <legend className="sr-only">Repositories</legend>
+        {repositories.map((name) => {
+          const on = ticked.includes(name);
+          return (
+            <label key={name}>
+              <input
+                type="checkbox"
+                checked={on}
+                disabled={on && ticked.length === 1}
+                onChange={() => toggle(name)}
+              />
+              <span className="truncate">{name}</span>
+            </label>
+          );
+        })}
+        {all ? null : (
+          <button type="button" className="underline" onClick={() => onChange([])}>
+            All repositories
+          </button>
+        )}
+      </fieldset>
+    </details>
   );
 }
 
