@@ -53,7 +53,8 @@ not a failure.
    path is stored only once it does. A session whose own files exceed 64 MiB
    is skipped (`too_large`).
 2. When the stored fingerprint (size and modification time of its files) is
-   unchanged and the session is covered, nothing happens.
+   unchanged and the session is covered, nothing happens, except that a
+   stored path that failed is replaced by the one found.
 3. baum's own generation runs are skipped (`generation_run`).
 4. The transcript is rendered and redacted. When it has the head extraction's
    content hash (an empty head included), the head still covers it and no call
