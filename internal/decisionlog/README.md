@@ -152,12 +152,12 @@ minutes.
   its due pull requests lack, as a review fetches a missing pull request
   commit: a head from `refs/pull/<N>/head` into `refs/baum/pull/<N>/head`
   and a base by its id into `refs/baum/pull/<N>/base`, both force-updated,
-  100 refspecs to a `git fetch`. So each such pull request of the last 180
-  days gets refs in the clone; they are kept, not pruned, as they may back
-  saved reviews. Each pull request's commits, from its base to its head,
+  100 refspecs to a `git fetch`. So each such pull request of the 180 days
+  before activation, and every one after, gets refs in the clone; they are
+  kept, not pruned, as they may back saved reviews. Each pull request's commits, from its base to its head,
   are then read from the clone's own objects, never fetched. Its paths are
-  the files its commits change; its commits replace those recorded.
-  GitHub's file list is never read.
+  the files its commits change; its commits replace those recorded. A new
+  base has them read again. GitHub's file list is never read.
 - When a fetch fails, the remote is asked for its HEAD (`git ls-remote`).
   When it does not answer, the pass stops, nothing is counted against any
   pull request and the repository waits; when it answers, the refs of the
@@ -168,9 +168,9 @@ minutes.
   head starts the count again, and the daily re-link has every failed pull
   request read again at once, an unknown one 3 more times. A pull request
   that fails never stops the others or the linking.
-- The gate is read again before the fetch and before each pull request; a
-  repository turned off during a sync stops there, and its commits are not
-  linked in that pass.
+- The gate is read again before the fetch, before each pull request and
+  before linking; a repository turned off during a pass stops there, and
+  its commits are not linked in that pass.
 
 ### Sessions linked to pull requests
 

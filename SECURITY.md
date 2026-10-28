@@ -52,10 +52,12 @@ GitHub credential, about once a minute and conditionally. For the open and
 merged ones not opened by a bot it fetches the commits the clone lacks, as
 a review fetches a missing pull request commit: heads from
 `refs/pull/<N>/head` and bases by id, force-updated under
-`refs/baum/pull/<N>/`. Each such pull request of the last 180 days gets
+`refs/baum/pull/<N>/`. Each such pull request of the 180 days before the
+feature log was activated for the repository, and every one after, gets
 refs in the clone, which are kept and not pruned. When a fetch fails it
-asks the remote for its HEAD (`git ls-remote`); a failed fetch is tried
-again after 15 minutes. It keeps the pull requests' titles, descriptions,
+asks the remote for its HEAD (`git ls-remote`); when the remote answers,
+the failed batch is fetched again one ref at a time, and otherwise the
+fetch is tried again after 15 minutes. It keeps the pull requests' titles, descriptions,
 authors, commits and changed paths in the private decision store, and links
 the commits to the sessions on this machine there; these rows are not
 pruned.

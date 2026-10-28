@@ -197,7 +197,9 @@ func (s *Store) Activate(ctx context.Context, repository string) (PullSync, erro
 }
 
 // SavePulls upserts the listed pull requests and, for a non-zero cursor,
-// moves the sync state to etag and the cursor; the cursor never goes back.
+// moves the sync state to etag and the cursor; the cursor never goes back. A
+// new head or base starts the count of failed reads again, and a new base
+// has the pull request's commits read again.
 func (s *Store) SavePulls(ctx context.Context, repository string, pulls []github.ListedPull, etag string, cursor time.Time) error {
 	return s.inTx(ctx, func(tx *sql.Tx) error {
 		for _, p := range pulls {
@@ -211,8 +213,9 @@ func (s *Store) SavePulls(ctx context.Context, repository string, pulls []github
 			if _, err := tx.ExecContext(ctx, `INSERT INTO pull_request(repository, number, title, body, state, draft, author, bot,
 head_ref, head_sha, base_ref, base_sha, merge_commit_sha, created_at, updated_at, merged_at, closed_at)
 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(repository, number) DO UPDATE SET
-paths_failures=CASE WHEN head_sha=excluded.head_sha THEN paths_failures ELSE 0 END,
-paths_retry_at=CASE WHEN head_sha=excluded.head_sha THEN paths_retry_at END, title=excluded.title, body=excluded.body,
+paths_head_sha=CASE WHEN base_sha=excluded.base_sha THEN paths_head_sha ELSE '' END,
+paths_failures=CASE WHEN head_sha=excluded.head_sha AND base_sha=excluded.base_sha THEN paths_failures ELSE 0 END,
+paths_retry_at=CASE WHEN head_sha=excluded.head_sha AND base_sha=excluded.base_sha THEN paths_retry_at END, title=excluded.title, body=excluded.body,
 state=excluded.state, draft=excluded.draft, author=excluded.author, bot=excluded.bot, head_ref=excluded.head_ref, head_sha=excluded.head_sha,
 base_ref=excluded.base_ref, base_sha=excluded.base_sha, merge_commit_sha=excluded.merge_commit_sha, created_at=excluded.created_at,
 updated_at=excluded.updated_at, merged_at=excluded.merged_at, closed_at=excluded.closed_at`,

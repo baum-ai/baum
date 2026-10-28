@@ -626,3 +626,64 @@ func TestRelinkReadsTheRecordedHead(t *testing.T) {
 		t.Fatalf("pulls = %+v, %v", pulls, err)
 	}
 }
+
+// A pull request retargeted to another base, its head unchanged, has its
+// commits read again.
+func TestRetargetedPullIsReadAgain(t *testing.T) {
+	ctx := context.Background()
+	s := openStore(t, &clock{t0})
+	if _, err := s.Activate(ctx, "o/r"); err != nil {
+		t.Fatal(err)
+	}
+	save := func(base string) {
+		t.Helper()
+		pull := github.ListedPull{Number: 1, State: "open", HeadSHA: "h", BaseSHA: base, UpdatedAt: t0}
+		if err := s.SavePulls(ctx, "o/r", []github.ListedPull{pull}, "", t0); err != nil {
+			t.Fatal(err)
+		}
+	}
+	due := func() int {
+		t.Helper()
+		pulls, err := s.PullsWithoutPaths(ctx, "o/r")
+		if err != nil {
+			t.Fatal(err)
+		}
+		return len(pulls)
+	}
+	save("b1")
+	if err := s.SetPullPaths(ctx, "o/r", 1, "h", []string{"a"}, nil); err != nil {
+		t.Fatal(err)
+	}
+	save("b1")
+	if due() != 0 {
+		t.Fatal("an unchanged pull request is read again")
+	}
+	save("b2")
+	if due() != 1 {
+		t.Fatal("a retargeted pull request is not read again")
+	}
+}
+
+// A repository turned off after its sync has no sessions read, even when
+// the sync had nothing to do.
+func TestFeatureGateBeforeLinking(t *testing.T) {
+	c := &clock{t0}
+	s := openStore(t, c)
+	reader := &fakeReader{}
+	reader.set()
+	on := featureRegistry{prefs: repos.Preferences{Automatic: true}, repositories: []repos.Repository{
+		{Repository: "acme/widgets", Clones: []repos.Clone{{Path: t.TempDir(), Available: true}}}}}
+	w := &FeatureWorker{Store: s, Registry: turnedOff{on}, Now: c.Now,
+		GitHub: func(context.Context, github.Repository) (github.Reader, error) { return reader, nil }}
+	w.RunOnce(context.Background())
+	state, err := s.Activate(context.Background(), "acme/widgets")
+	if err != nil || state.Cursor.IsZero() || !state.RelinkedAt.IsZero() {
+		t.Fatalf("state = %+v, %v; want synced and not linked", state, err)
+	}
+	// Turned on, the same pass links.
+	w.Registry = on
+	w.RunOnce(context.Background())
+	if state, err = s.Activate(context.Background(), "acme/widgets"); err != nil || state.RelinkedAt.IsZero() {
+		t.Fatalf("state = %+v, %v; want linked", state, err)
+	}
+}

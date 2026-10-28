@@ -133,7 +133,9 @@ func (w *FeatureWorker) RunOnce(ctx context.Context) {
 		}
 		dir := repository.Clones[i].Path
 		synced, err := w.Sync(ctx, repository.Repository, dir)
-		if err == nil && !synced.Stopped {
+		// The gate again: a repository turned off meanwhile has no
+		// sessions read.
+		if err == nil && !synced.Stopped && w.enabled(ctx, repository.Repository) {
 			_, err = w.Index(ctx, repository.Repository, dir, synced.commits, false)
 		}
 		if err != nil && ctx.Err() == nil {
@@ -277,17 +279,15 @@ func (w *FeatureWorker) Sync(ctx context.Context, repository, dir string) (SyncR
 				paths = append(paths, c.Files...)
 				if at, err := time.Parse(time.RFC3339, c.CommittedAt); err == nil {
 					recorded = append(recorded, PullCommit{SHA: c.OID, CommittedAt: at})
+					if !at.Before(lookback) {
+						report.commits = append(report.commits, c)
+					}
 				}
 			}
 			slices.Sort(paths)
 			paths = slices.Compact(paths)
 			report.PathsRead++
 			report.Commits += len(recorded)
-			for _, c := range commits {
-				if at, err := time.Parse(time.RFC3339, c.CommittedAt); err == nil && !at.Before(lookback) {
-					report.commits = append(report.commits, c)
-				}
-			}
 		}
 		if err := w.Store.SetPullPaths(ctx, repository, p.Number, p.HeadSHA, paths, recorded); err != nil {
 			return report, err
@@ -362,8 +362,9 @@ func (w *FeatureWorker) Index(ctx context.Context, repository, dir string, fresh
 			commits[c.OID] = c
 		}
 	}
+	// Sync keeps only the fresh commits within the lookback.
 	for _, c := range fresh {
-		add(c, lookback)
+		commits[c.OID] = c
 	}
 	if full {
 		// Pull requests whose commits could not be read get another try.
