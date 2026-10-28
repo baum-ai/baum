@@ -1,6 +1,7 @@
 package decisionlog
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -36,11 +37,9 @@ const (
 	ReasonUnsupported = "backend_unsupported"
 	ReasonUnavailable = "backend_unavailable"
 	ReasonUnpriced    = "unpriced_model"
-	ReasonOverCostCap = "over_cost_cap"
-	ReasonDailyCap    = "daily_cap"
 )
 
-var transient = map[string]bool{ReasonUnsupported: true, ReasonUnavailable: true, ReasonUnpriced: true, ReasonOverCostCap: true, ReasonDailyCap: true}
+var transient = map[string]bool{ReasonUnsupported: true, ReasonUnavailable: true, ReasonUnpriced: true}
 
 // Outcomes of a capture.
 const (
@@ -92,6 +91,9 @@ type Capturer struct {
 	Now    func() time.Time
 	Log    *slog.Logger
 
+	// locate is livesessions.Locate unless a test replaces it.
+	locate func(home, cursorStore, agent, id, path string) (livesessions.Location, error)
+
 	once     sync.Once
 	redactor *bundle.Redactor
 	initErr  error
@@ -112,8 +114,7 @@ type Target struct {
 type Options struct {
 	// DryRun stops before the call and writes nothing.
 	DryRun bool
-	// Force skips the gate, the throttle and the unchanged check, not the
-	// caps.
+	// Force skips the gate, the throttle and the unchanged check.
 	Force bool
 	// Backend and Model, when set, replace the configured ones.
 	Backend, Model string
@@ -255,35 +256,71 @@ func (c *Capturer) Capture(ctx context.Context, t Target, o Options) (Report, er
 		}
 	}
 
-	loc, err := livesessions.Locate(c.home(), c.cursorStore(), t.Agent, t.ID, t.Path)
-	if err != nil {
-		return Report{Outcome: OutcomeUnavailable, Reason: err.Error()}, nil
-	}
-	if meta.Fingerprint, err = loc.Version(); err != nil {
-		return Report{Outcome: OutcomeUnavailable, Reason: "The transcript file is not there any more."}, nil
-	}
-	size, err := loc.Size()
-	if err != nil {
-		return Report{Outcome: OutcomeUnavailable, Reason: "The transcript file is not there any more."}, nil
-	}
-	if size > MaxTranscriptBytes {
-		return skip(ReasonTooLarge)
-	}
 	head, found, err := c.Store.Session(ctx, t.Agent, t.ID)
 	if err != nil {
 		return report, err
 	}
-	if found && !o.Force && covered(head, meta.Fingerprint, day) {
-		return Report{Outcome: OutcomeUnchanged}, nil
+	// A session whose hooks named no transcript (a Codex one is then looked up
+	// by id, a scan of its whole store) is read from the path the last capture
+	// confirmed, checked again; when that path no longer holds it, it is
+	// looked up as the hooks name it. A path is stored only once the
+	// transcript there is the session's.
+	locate := c.locate
+	if locate == nil {
+		locate = livesessions.Locate
 	}
-	graph, err := loc.Graph()
-	if err != nil || graph == nil {
-		c.logger().Info("session transcript not read for decision capture", "agent", t.Agent, "error", err)
-		return skip(ReasonUnreadable)
+	candidates := []string{t.Path}
+	if t.Path == "" && found && head.Path != "" {
+		candidates = []string{head.Path, ""}
+		meta.Path = head.Path
 	}
-	if !isSession(graph, t.ID) {
-		return skip(ReasonMismatch)
+	var loc livesessions.Location
+	var graph *session.Graph
+	var firstErr error
+	for i, path := range candidates {
+		last := i == len(candidates)-1
+		if loc, err = locate(c.home(), c.cursorStore(), t.Agent, t.ID, path); err != nil {
+			firstErr = cmp.Or(firstErr, err)
+			if last {
+				return Report{Outcome: OutcomeUnavailable, Reason: firstErr.Error()}, nil
+			}
+			// The stored path was just shown wrong: a skip must not keep it.
+			meta.Path = ""
+			continue
+		}
+		if meta.Fingerprint, err = loc.Version(); err != nil {
+			return Report{Outcome: OutcomeUnavailable, Reason: "The transcript file is not there any more."}, nil
+		}
+		size, err := loc.Size()
+		if err != nil {
+			return Report{Outcome: OutcomeUnavailable, Reason: "The transcript file is not there any more."}, nil
+		}
+		if size > MaxTranscriptBytes {
+			return skip(ReasonTooLarge)
+		}
+		if found && !o.Force && covered(head, meta.Fingerprint, day) {
+			// The file the head covers, found again by the hooks' path after
+			// the stored one failed: the path the fingerprint names is
+			// repaired.
+			if i > 0 && !o.DryRun {
+				return Report{Outcome: OutcomeUnchanged}, c.Store.SetPath(ctx, t.Agent, t.ID, loc.Path())
+			}
+			return Report{Outcome: OutcomeUnchanged}, nil
+		}
+		graph, err = loc.Graph()
+		if err != nil || graph == nil {
+			c.logger().Info("session transcript not read for decision capture", "agent", t.Agent, "error", err)
+			return skip(ReasonUnreadable)
+		}
+		if isSession(graph, t.ID) {
+			break
+		}
+		meta.Path = ""
+		if last {
+			return skip(ReasonMismatch)
+		}
 	}
+	meta.Path = loc.Path()
 	if sessions.IsGenerationRun(graph) {
 		return skip(ReasonGenerationRun)
 	}
@@ -339,25 +376,12 @@ func (c *Capturer) Capture(ctx context.Context, t Target, o Options) (Report, er
 	if reason != "" {
 		return skip(reason)
 	}
-	st, err := c.Store.Stats(ctx, t.Agent, t.ID, day)
-	if err != nil {
-		return report, err
-	}
-	if st.Spent+planned.Reserved > SessionDailyCap {
-		return skip(ReasonOverCostCap)
-	}
-	if over, err := calls.overDailyCap(ctx, prefs, planned.Reserved); err != nil {
-		return report, err
-	} else if over {
-		return skip(ReasonDailyCap)
-	}
 	if o.DryRun {
 		report.Outcome = OutcomeDryRun
 		return report, nil
 	}
 
-	model, attempt, reason, err := calls.begin(ctx, planned, Attempt{Agent: t.Agent, ID: t.ID, Repository: t.Repository, Mode: report.Mode},
-		prefs, new(float64(SessionDailyCap)))
+	model, attempt, reason, err := calls.begin(ctx, planned, Attempt{Agent: t.Agent, ID: t.ID, Repository: t.Repository, Mode: report.Mode})
 	if err != nil {
 		return report, err
 	}

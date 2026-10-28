@@ -2960,14 +2960,12 @@ files over 64 MiB, baum's own generation runs and prompts over 272,000
 estimated tokens, and reuses, extends or replaces the session's head
 extraction as hosted extraction does. Its structured completion goes through
 the review backend's `agent.Completer` (default models `claude-haiku-5-5` and
-`gpt-6-luna`); cursor-agent has none. Every call is reserved before it is
-made (byte bound plus 16,384 output tokens at list price, claude's prompt at
-the cache-write rate and its possible retry at the cache-read rate plus
-another reply) and recorded in a ledger that throttles a session (5 minutes apart, 10 after a failure, 12 a
-day unless it ended) and caps its spend at $0.25 a day, with an optional
-global daily cap. The reply is masked before it is parsed; decisions keep
+`gpt-6-luna`); cursor-agent has none. A model the price list cannot price is
+refused, and every call is recorded in a ledger that throttles a session (5
+minutes apart, 10 after a failure, 12 a day unless it ended). The reply is masked before it is parsed; decisions keep
 their IDs across extractions and are marked obsolete, never deleted, when a
-newer one drops them. See [its README](internal/decisionlog/README.md).
+newer one drops them; only the ledger's settled calls are pruned, after 90
+days. See [its README](internal/decisionlog/README.md).
 
 ### Feature log
 
@@ -3000,7 +2998,7 @@ consolidates it on its next run; it runs
 as a confirmed job (`jobs.KindFeatureBuild`, through `jobs.FeatureBuilder`)
 or from `baum internal features build`. Every stage calls through the same
 helper as capture (`caller` in `model.go`: backend and model resolution,
-reservation, the one daily cap, a build's cost cap and the
+reservation, a build's cost cap and the
 `capture_attempt` ledger, with the call's stage and item). The constants
 are in `featureconfig.go` and the feature version a stage uses is chosen in
 one place (`featureVersion`: the live stages' current one, a build's

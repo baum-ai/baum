@@ -537,7 +537,7 @@ func (w *FeatureWorker) newRun(ctx context.Context, repository, dir string, o Fe
 }
 
 // refresh reads the preferences and the repository's settings again, so a
-// gate or cap changed during a run applies to its next item. It reports
+// gate changed during a run applies to its next item. It reports
 // whether the repository's decisions are still captured; a manual run
 // ignores the gate.
 func (r *featureRun) refresh(ctx context.Context) (bool, error) {

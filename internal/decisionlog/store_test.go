@@ -132,7 +132,7 @@ func TestLedgerSpendAbandonedAttemptsAndPrune(t *testing.T) {
 	}
 	_, _ = s.Begin(ctx, Attempt{Agent: "codex", ID: "s9", Backend: "codex", Model: "m", Mode: "full", Reserved: 0.03})
 	_ = s.Close()
-	// Reopening settles the pending attempt as abandoned; its reservation counts.
+	// Reopening settles the pending attempt as abandoned.
 	if s, err = Open(path, OpenOptions{AbandonPending: true}); err != nil {
 		t.Fatal(err)
 	}
@@ -143,7 +143,7 @@ func TestLedgerSpendAbandonedAttemptsAndPrune(t *testing.T) {
 		t.Fatalf("state = %q %v", state, err)
 	}
 	st, err := s.Stats(ctx, "claude-code", "s1", startOfDay(t0))
-	if err != nil || st.Count != 2 || !near(st.Spent, 0.03) || !near(st.AllSpent, 0.06) || !st.LastFail.Equal(t0) || !st.LastStart.Equal(t0) {
+	if err != nil || st.Count != 2 || !st.LastFail.Equal(t0) || !st.LastStart.Equal(t0) {
 		t.Fatalf("%+v %v", st, err)
 	}
 	if err := s.Save(ctx, Extraction{Meta: Meta{Agent: "codex", ID: "s9"}, Decisions: []decisions.Decision{decision("old", "x", 1)}}); err != nil {
@@ -152,20 +152,21 @@ func TestLedgerSpendAbandonedAttemptsAndPrune(t *testing.T) {
 	if err := s.Save(ctx, Extraction{Meta: Meta{Agent: "codex", ID: "s9"}, Decisions: []decisions.Decision{}}); err != nil {
 		t.Fatal(err)
 	}
+	var filesBefore int
+	_ = s.db.QueryRow(`SELECT COUNT(*) FROM decision_file`).Scan(&filesBefore)
 	c.now = t0.Add(Retention + time.Hour)
 	if err := s.Prune(ctx); err != nil {
 		t.Fatal(err)
 	}
+	// The ledger is pruned; the obsolete decision and its files are kept.
 	var attempts, rows, files int
 	_ = s.db.QueryRow(`SELECT COUNT(*) FROM capture_attempt`).Scan(&attempts)
-	_ = s.db.QueryRow(`SELECT COUNT(*) FROM decision`).Scan(&rows)
+	_ = s.db.QueryRow(`SELECT COUNT(*) FROM decision WHERE obsolete_at IS NOT NULL`).Scan(&rows)
 	_ = s.db.QueryRow(`SELECT COUNT(*) FROM decision_file`).Scan(&files)
-	if attempts != 0 || rows != 0 || files != 0 {
-		t.Fatalf("after prune: %d attempts, %d decisions, %d files", attempts, rows, files)
+	if attempts != 0 || rows != 1 || files != filesBefore {
+		t.Fatalf("after prune: %d attempts, %d obsolete decisions, %d of %d files", attempts, rows, files, filesBefore)
 	}
 }
-
-func near(a, b float64) bool { return a-b < 1e-9 && b-a < 1e-9 }
 
 func TestOpenOptionsAndEmptyHead(t *testing.T) {
 	ctx := context.Background()

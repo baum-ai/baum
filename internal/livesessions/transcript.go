@@ -245,9 +245,15 @@ type Location struct {
 	// ID is the session's id: Cursor's conversation.
 	ID    string
 	files model.Files
+	// main is the session's own transcript file among files.
+	main string
 	// store is Cursor's database.
 	store string
 }
+
+// Path is the session's main transcript file, empty for a Cursor
+// conversation.
+func (s Location) Path() string { return s.main }
 
 // Size is the total size of the session's own files; zero for a Cursor
 // conversation, which shares one database with every other.
@@ -300,7 +306,7 @@ func (t *Transcripts) locate(agent, id, path string, c *cached) (Location, error
 	}
 	loc, err := Locate(t.home(), cursorStore, agent, id, path)
 	if err == nil && agent == AgentCodex && path == "" {
-		c.found = loc.files[0].Path
+		c.found = loc.main
 	}
 	return loc, err
 }
@@ -333,7 +339,7 @@ func Locate(home, cursorStore, agent, id, path string) (Location, error) {
 			}
 			files = append(files, f)
 		}
-		return Location{Vendor: vendors.ClaudeCode, ID: id, files: files}, nil
+		return Location{Vendor: vendors.ClaudeCode, ID: id, files: files, main: main}, nil
 	case AgentCodex:
 		root := filepath.Join(home, ".codex", "sessions")
 		rollout := func(name string) bool {
@@ -354,7 +360,7 @@ func Locate(home, cursorStore, agent, id, path string) (Location, error) {
 		// of the store, too much to do each time the session writes. The
 		// mapper reads a root without them, as discovery does when it
 		// cannot place them.
-		return Location{Vendor: vendors.Codex, ID: id, files: codex.RootFile(main)}, nil
+		return Location{Vendor: vendors.Codex, ID: id, files: codex.RootFile(main), main: main}, nil
 	case AgentCursor:
 		resolved, err := filepath.EvalSymlinks(cursorStore)
 		if err != nil {
