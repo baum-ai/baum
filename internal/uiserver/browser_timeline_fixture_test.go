@@ -12,6 +12,7 @@ import (
 
 	"github.com/baum-ai/baum/decisions"
 	"github.com/baum-ai/baum/internal/decisionlog"
+	"github.com/baum-ai/baum/internal/jobs"
 	"github.com/baum-ai/baum/internal/repos"
 )
 
@@ -135,3 +136,16 @@ func (fixtureClone) Person(context.Context) *decisionlog.Person {
 }
 
 func (fixtureClone) Review(context.Context, int, string) (string, string) { return "", "none" }
+
+// fixtureBuilder estimates every feature build at 42 pull requests and
+// stops each one at its cap at once, as a build that ran out of budget.
+type fixtureBuilder struct{}
+
+func (fixtureBuilder) EstimateFeatureBuild(context.Context, string, string) (jobs.FeatureBuildEstimate, error) {
+	estimate := 0.84
+	return jobs.FeatureBuildEstimate{Backend: "claude", Model: "claude-haiku-5-5", PullRequests: 42, EstimateUSD: &estimate, CapUSD: 1.05}, nil
+}
+
+func (fixtureBuilder) BuildFeatures(context.Context, string, string, float64, func(jobs.Progress)) (float64, error) {
+	return 0, &jobs.StoppedError{Reason: "cost_cap"}
+}

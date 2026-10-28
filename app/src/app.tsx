@@ -594,7 +594,16 @@ function Workspace({ url }: { url: UrlState }) {
           ) : page === "analytics" ? (
             <AnalyticsPage Link={LocalLink} />
           ) : page === "timeline" ? (
-            <TimelinePage revision={timelineTick} />
+            <TimelinePage
+              revision={timelineTick}
+              jobs={jobs}
+              cloneOf={(repository) =>
+                picked
+                  .find((each) => sameRepository(each.repository, repository))
+                  ?.clones.find((clone) => clone.available)?.id ?? null
+              }
+              jobsChanged={() => void reload()}
+            />
           ) : page === "sessions" ? (
             <>
               <PageBar title="Sessions" detail="Agent sessions on this computer" />

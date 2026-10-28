@@ -389,7 +389,18 @@ so an older answer never replaces a newer one. A feature in the address that
 the loaded list does not hold (further down, filtered out, archived or gone)
 shows above the list as the opened feature. With no features yet, the page
 explains that features appear as pull requests and sessions are placed and
-offers All decisions. It says so when the daemon has no decision store, when
+offers **Build feature history** and All decisions; with features, the page
+bar offers a quieter **Rebuild feature history**. Either estimates a
+`feature_build` job for the repository's clone (`src/feature-build.tsx`,
+`POST api/jobs/estimate` with `kind: "feature_build"`), shows the pull
+requests to place, harness, model, estimate and spending cap, and starts it
+only when confirmed; it then links to the job in Jobs. While the job runs the
+Features tab says "Building feature history… N of M pull requests placed"
+(from `api/timeline/build`) and links to it; a build that stopped (at its cap,
+or for another reason) says so with what it spent and offers **Resume build**,
+the same estimate and confirmation. The current features stay listed
+throughout, and the lists are read again when the build finishes. Without a
+local clone the build button is disabled. It says so when the daemon has no decision store, when
 the decisions switch is off, and which picked repositories have their decisions
 turned off.
 

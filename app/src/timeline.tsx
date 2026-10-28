@@ -31,7 +31,8 @@ import {
 } from "@baum/viewer/decision-log";
 import { useUrlState, ViewerLink } from "@baum/viewer/navigation";
 import { humanize } from "@baum/viewer/review-document";
-import { appURL, request } from "./api";
+import { appURL, isActiveJob, request, type Job } from "./api";
+import { BuildStatus, buildJobOf, FeatureBuildDialog, useBuilding } from "./feature-build";
 import { LoadingStatus } from "./nine-dots";
 import { PageBar } from "./shell";
 import "./timeline.css";
@@ -63,6 +64,7 @@ const TABS: { value: TimelineTab; label: string }[] = [
 ];
 const FEATURE_PANEL = "timeline-feature-panel";
 const SEARCH_DELAY_MS = 300;
+const PAGE_DETAIL = "What was decided and built, from your agent sessions";
 /** Rows a list reads at a time, and the most one request reads. */
 const PAGE = 50;
 const MAX_PAGE = 500;
@@ -112,7 +114,20 @@ type RepositoryList = {
 /** The Timeline page. `revision` changes when the daemon says the decision
  *  log changed (its `timeline` event) or the event stream reconnected, and
  *  the page reads everything it shows again. */
-export function TimelinePage({ revision }: { revision: number }) {
+export function TimelinePage({
+  revision,
+  jobs = [],
+  cloneOf = () => null,
+  jobsChanged = () => {},
+}: {
+  revision: number;
+  /** The job queue's jobs, for the repository's feature build. */
+  jobs?: Job[];
+  /** The available clone a repository's feature build runs in. */
+  cloneOf?: (repository: string) => string | null;
+  /** Reads the jobs again, once a build was started. */
+  jobsChanged?: () => void;
+}) {
   const url = useUrlState();
   const [list, setList] = useState<RepositoryList | null>(null);
   const [failed, setFailed] = useState(false);
@@ -134,9 +149,21 @@ export function TimelinePage({ revision }: { revision: number }) {
     repositories?.find((name) => name.toLowerCase() === asked?.toLowerCase()) ??
     repositories?.[0] ??
     null;
+  if (repositories && repository && list?.available !== false && list?.decisions_enabled !== false)
+    return (
+      <TimelineLog
+        key={repository}
+        repository={repository}
+        repositories={repositories}
+        revision={revision}
+        jobs={jobs}
+        clone={cloneOf(repository)}
+        jobsChanged={jobsChanged}
+      />
+    );
   return (
     <>
-      <PageBar title="Timeline" detail="What was decided and built, from your agent sessions" />
+      <PageBar title="Timeline" detail={PAGE_DETAIL} />
       {failed && !list ? (
         <div className="local-page-body">
           <Failed>The Timeline could not be loaded.</Failed>
@@ -158,7 +185,7 @@ export function TimelinePage({ revision }: { revision: number }) {
             baum's decisions switch is off, so it reads no agent sessions and shows no Timeline.
           </Empty>
         </div>
-      ) : !repositories || !repository ? (
+      ) : (
         <div className="local-page-body">
           <Empty title="No repositories with decisions">
             {list.turned_off && list.turned_off.length > 0
@@ -168,13 +195,6 @@ export function TimelinePage({ revision }: { revision: number }) {
             repositories with decisions on. Pick one in Repositories to start.
           </Empty>
         </div>
-      ) : (
-        <TimelineLog
-          key={repository}
-          repository={repository}
-          repositories={repositories}
-          revision={revision}
-        />
       )}
     </>
   );
@@ -387,12 +407,34 @@ const readFeature = async (id: string, signal: AbortSignal): Promise<FeatureStat
 function TimelineLog({
   repository,
   repositories,
-  revision,
+  revision: logRevision,
+  jobs,
+  clone,
+  jobsChanged,
 }: {
   repository: string;
   repositories: string[];
   revision: number;
+  jobs: Job[];
+  clone: string | null;
+  jobsChanged: () => void;
 }) {
+  // The repository's feature build: its job and its building version. A
+  // build that finishes changes the features, so the lists are read again.
+  const buildJob = buildJobOf(jobs, repository);
+  const buildActive = isActiveJob(buildJob);
+  const [buildFinished, setBuildFinished] = useState(0);
+  const wasActive = useRef(buildActive);
+  useEffect(() => {
+    if (wasActive.current && !buildActive) setBuildFinished((n) => n + 1);
+    wasActive.current = buildActive;
+  }, [buildActive]);
+  const revision = logRevision + buildFinished;
+  const building = useBuilding(
+    repository,
+    `${revision}:${buildJob?.id ?? ""}:${buildJob?.state ?? ""}:${buildJob?.calls ?? 0}`,
+  );
+  const [buildDialog, setBuildDialog] = useState<"build" | "resume" | null>(null);
   const url = useUrlState();
   const search = url.search;
   const tab: TimelineTab = search.get("tab") === "all" ? "all" : "features";
@@ -553,6 +595,11 @@ function TimelineLog({
 
   const featuresBody = (
     <>
+      <BuildStatus
+        job={buildJob}
+        building={building}
+        onResume={clone && !buildActive ? () => setBuildDialog("resume") : null}
+      />
       {openedFeature}
       <Stale pending={features.status === "loading" && features.loaded}>
         {features.status === "failed" && !features.loaded ? (
@@ -569,8 +616,19 @@ function TimelineLog({
           ) : (
             <Empty title="No features yet">
               Features appear here as baum places this repository's pull requests and agent sessions
-              in them. The decisions read so far are under All decisions.
-              <span className="mt-3 flex justify-center">
+              in them, from now on. Build its feature history to place the pull requests of the last
+              180 days too. The decisions read so far are under All decisions.
+              <span className="mt-3 flex flex-wrap justify-center gap-2">
+                {!buildActive && !building ? (
+                  <Button
+                    size="tiny"
+                    disabled={!clone}
+                    title={clone ? undefined : "Needs a local clone of the repository"}
+                    onClick={() => setBuildDialog("build")}
+                  >
+                    Build feature history
+                  </Button>
+                ) : null}
                 <Button variant="secondary" size="tiny" onClick={() => write({ tab: "all" })}>
                   Show all decisions
                 </Button>
@@ -680,8 +738,30 @@ function TimelineLog({
     </>
   );
 
+  const canRebuild =
+    clone !== null && !buildActive && !building && features.loaded && features.rows.length > 0;
   return (
     <>
+      <PageBar
+        title="Timeline"
+        detail={PAGE_DETAIL}
+        actions={
+          canRebuild ? (
+            <Button variant="ghost" size="compact" onClick={() => setBuildDialog("build")}>
+              Rebuild feature history
+            </Button>
+          ) : null
+        }
+      />
+      {buildDialog && clone ? (
+        <FeatureBuildDialog
+          repository={repository}
+          clone={clone}
+          resume={buildDialog === "resume"}
+          close={() => setBuildDialog(null)}
+          started={jobsChanged}
+        />
+      ) : null}
       <div className="local-filter-bar timeline-filters">
         <div className="timeline-controls">
           <label className="local-repo-filter">

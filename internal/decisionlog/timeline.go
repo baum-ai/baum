@@ -181,6 +181,19 @@ func (t *Timeline) Handler() http.Handler {
 		}
 		writeTimeline(w, detail)
 	})
+	mux.HandleFunc("GET /api/timeline/build", func(w http.ResponseWriter, r *http.Request) {
+		repository, err := t.allowed(r.Context(), r.URL.Query().Get("repository"))
+		if err != nil {
+			timelineError(w, err)
+			return
+		}
+		building, err := t.build(r.Context(), repository)
+		if err != nil {
+			timelineError(w, err)
+			return
+		}
+		writeTimeline(w, map[string]any{"building": building})
+	})
 	mux.HandleFunc("GET /api/timeline/decisions", func(w http.ResponseWriter, r *http.Request) {
 		repository, page, ok := t.listQuery(w, r)
 		if !ok {
@@ -664,39 +677,28 @@ func (f *snapshotFeature) summarize(self *Person) {
 	}
 }
 
-// feature is a feature's detail; one merged into another answers with the
-// survivor's, one of a version no longer in use as archived.
+// feature is a feature's detail, resolved by Store.ResolveFeature: one
+// merged into another answers with the survivor's, one of a retired
+// version as archived, one of a version being built is not found.
 func (t *Timeline) feature(ctx context.Context, id string) (any, error) {
-	db := t.Store.db
-	var repository string
-	var version int64
-	for hops := 0; ; hops++ {
-		var merged sql.NullString
-		err := db.QueryRowContext(ctx, `SELECT repository, version_id, merged_into FROM feature WHERE id=?`, id).Scan(&repository, &version, &merged)
-		if errors.Is(err, sql.ErrNoRows) || hops > 32 {
-			return nil, errTimelineNotFound
-		}
-		if err != nil {
-			return nil, err
-		}
-		if !merged.Valid {
-			break
-		}
-		id = merged.String
+	resolved, err := t.Store.ResolveFeature(ctx, id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, errTimelineNotFound
 	}
+	if err != nil {
+		return nil, err
+	}
+	repository := resolved.Repository
 	if _, err := t.allowed(ctx, repository); err != nil {
 		if errors.Is(err, errTimelineRepository) {
 			return nil, errTimelineNotFound
 		}
 		return nil, err
 	}
-	live, err := liveVersion(ctx, db, repository, false, t.Store.now())
-	if err != nil {
-		return nil, err
-	}
-	if live != version {
+	if resolved.Archived {
 		return map[string]bool{"archived": true}, nil
 	}
+	id = resolved.ID
 	snap, err := t.snapshot(ctx, repository, "", id)
 	if err != nil {
 		return nil, err
@@ -1055,4 +1057,25 @@ func (c *localClone) Review(ctx context.Context, number int, head string) (strin
 		state = "current"
 	}
 	return strings.TrimSpace(doc.Summary.Text), state
+}
+
+// timelineBuild is a first build's version in progress: its pull requests
+// placed of the total, why it stopped ("" while it may go on) and what it
+// spent over all its runs.
+type timelineBuild struct {
+	Placed   int     `json:"placed"`
+	Total    int     `json:"total"`
+	Stopped  string  `json:"stopped"`
+	SpentUSD float64 `json:"spent_usd"`
+}
+
+// build is the repository's building version, nil without one.
+func (t *Timeline) build(ctx context.Context, repository string) (*timelineBuild, error) {
+	var b timelineBuild
+	err := t.Store.db.QueryRowContext(ctx, `SELECT placed, total, stopped, spent_usd FROM feature_version WHERE repository=? AND state=?`,
+		repository, VersionBuilding).Scan(&b.Placed, &b.Total, &b.Stopped, &b.SpentUSD)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	return &b, err
 }

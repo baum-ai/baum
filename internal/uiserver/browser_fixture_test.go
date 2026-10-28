@@ -502,7 +502,7 @@ func TestLocalAppBrowserFixture(t *testing.T) {
 			_ = events.Close()
 			return daemon.App{}, err
 		}
-		runner, err := jobs.Open(filepath.Join(home, "jobs.json"), &jobs.Local{Registry: registry, Groups: groups, Config: cfg, Client: client, FixDirectory: filepath.Join(home, "fixes"), Backends: generate.Backends{Claude: func(string) generate.CheckedBackend { return fixtureFixer{backend} }}}, 1, func(job jobs.Job) {
+		runner, err := jobs.Open(filepath.Join(home, "jobs.json"), &jobs.Local{Registry: registry, Groups: groups, Config: cfg, Client: client, FixDirectory: filepath.Join(home, "fixes"), Features: fixtureBuilder{}, Backends: generate.Backends{Claude: func(string) generate.CheckedBackend { return fixtureFixer{backend} }}}, 1, func(job jobs.Job) {
 			_ = server.Publish("progress", map[string]any{"job": job})
 			_ = server.Publish("index", map[string]any{})
 			if job.Phase == "finished" {

@@ -12,6 +12,7 @@ import {
   ViewerLinkProvider,
   type ViewerLinkProps,
 } from "@baum/viewer/navigation";
+import type { Job } from "./api";
 import { daySections, pullRequestHref, sessionHref, TimelinePage } from "./timeline";
 
 const Link = (props: ViewerLinkProps) => <a {...props} />;
@@ -100,6 +101,7 @@ const decisionDetail: DecisionDetail = {
 let root: Root, node: HTMLDivElement;
 let answers: Record<string, unknown>;
 const requests: string[] = [];
+const bodies: unknown[] = [];
 beforeEach(() => {
   Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
   history.replaceState(null, "", "/s/test-ns/?page=timeline");
@@ -122,8 +124,9 @@ beforeEach(() => {
   root = createRoot(node);
   vi.stubGlobal(
     "fetch",
-    vi.fn(async (path: string) => {
+    vi.fn(async (path: string, init?: RequestInit) => {
       requests.push(path);
+      if (init?.body) bodies.push(JSON.parse(String(init.body)));
       const key = path.replace("/s/test-ns/", "").split("?")[0]!;
       const answer = answers[key];
       if (typeof answer === "function") return (answer as () => Promise<Response>)();
@@ -138,7 +141,16 @@ afterEach(async () => {
 });
 
 let current = new URLSearchParams();
-function Harness({ initial, revision = 0 }: { initial: string; revision?: number }) {
+let jobsChanged = 0;
+function Harness({
+  initial,
+  revision = 0,
+  jobs = [],
+}: {
+  initial: string;
+  revision?: number;
+  jobs?: Job[];
+}) {
   const [search, setSearch] = useState(() => new URLSearchParams(initial));
   current = search;
   return (
@@ -146,7 +158,12 @@ function Harness({ initial, revision = 0 }: { initial: string; revision?: number
       <UrlStateProvider
         value={{ search, update: (patch) => setSearch((s) => patch(new URLSearchParams(s))) }}
       >
-        <TimelinePage revision={revision} />
+        <TimelinePage
+          revision={revision}
+          jobs={jobs}
+          cloneOf={(repository) => (repository === "acme/demo" ? "clone-1" : null)}
+          jobsChanged={() => jobsChanged++}
+        />
       </UrlStateProvider>
     </ViewerLinkProvider>
   );
@@ -402,4 +419,107 @@ it("reads more than 500 rows again in requests that follow the cursor", async ()
     "/s/test-ns/api/timeline/features?repository=acme%2Fdemo&limit=100&cursor=1%7CF499",
   ]);
   expect(node.querySelectorAll("li[data-feature]").length).toBe(600);
+});
+
+const buildJob = (state: string, calls = 3): Job => ({
+  id: "job-1",
+  clone: "clone-1",
+  repository: "acme/demo",
+  pr: 0,
+  kind: "feature_build",
+  state,
+  phase: "placing",
+  calls,
+  tokens: 0,
+  repairs: 0,
+  actual_cost_usd: null,
+});
+
+it("builds a repository's feature history from the empty state after its estimate", async () => {
+  answers["api/timeline/features"] = { features: [], next_cursor: null };
+  answers["api/jobs/estimate"] = {
+    id: "est-1",
+    estimate_usd: 1.2,
+    price_version: "v1",
+    expires_at: "2026-10-28T12:00:00Z",
+    items: [
+      {
+        clone: "clone-1",
+        pr: 0,
+        kind: "feature_build",
+        build_pull_requests: 40,
+        build_cap_usd: 1.5,
+        head_sha: "",
+        backend: "claude",
+        model: "claude-haiku-5-5",
+        estimate_usd: 1.2,
+        max_tokens: 0,
+        max_calls: 0,
+        requires_isolation_confirmation: false,
+      },
+    ],
+  };
+  answers["api/jobs"] = { jobs: [buildJob("queued", 0)] };
+  bodies.length = 0;
+  jobsChanged = 0;
+  await show();
+  const build = [...node.querySelectorAll("button")].find(
+    (b) => b.textContent === "Build feature history",
+  )!;
+  await act(async () => build.click());
+  await act(async () => {});
+  expect(bodies[0]).toEqual({
+    items: [{ clone: "clone-1", pr: 0, kind: "feature_build" }],
+    mode: "single",
+  });
+  const dialog = node.querySelector("dialog")!;
+  expect(dialog.textContent).toContain("40 to place");
+  expect(dialog.textContent).toContain("About $1.20");
+  expect(dialog.textContent).toContain("$1.50 over all its runs");
+  const confirm = [...dialog.querySelectorAll("button")].find(
+    (b) => b.textContent === "Build feature history",
+  )!;
+  await act(async () => confirm.click());
+  await act(async () => {});
+  expect(bodies[1]).toEqual({ estimate_id: "est-1", confirm_estimate: true });
+  expect(jobsChanged).toBe(1);
+  const link = [...dialog.querySelectorAll("a")].find((a) => a.textContent === "View it in Jobs");
+  expect(link?.getAttribute("href")).toBe("/s/test-ns/?page=jobs&job=job-1");
+});
+
+it("shows a build in progress above the features it keeps, and offers to resume one stopped at its cap", async () => {
+  answers["api/timeline/build"] = {
+    building: { placed: 12, total: 40, stopped: "", spent_usd: 0.4 },
+  };
+  await act(async () =>
+    root.render(<Harness initial="page=timeline" jobs={[buildJob("running")]} />),
+  );
+  await act(async () => {});
+  await act(async () => {});
+  expect(node.textContent).toContain("Building feature history… 12 of 40 pull requests placed");
+  expect(node.textContent).toContain("Local timeline");
+  expect(node.textContent).not.toContain("Rebuild feature history");
+  answers["api/timeline/build"] = {
+    building: { placed: 30, total: 40, stopped: "cost_cap", spent_usd: 1.5 },
+  };
+  await act(async () =>
+    root.render(
+      <Harness initial="page=timeline" jobs={[{ ...buildJob("failed"), reason: "cost_cap" }]} />,
+    ),
+  );
+  await act(async () => {});
+  await act(async () => {});
+  expect(node.textContent).toContain("stopped at its spending cap — confirm again to resume");
+  expect(node.textContent).toContain("30 of 40 pull requests placed, $1.50 spent");
+  expect([...node.querySelectorAll("button")].some((b) => b.textContent === "Resume build")).toBe(
+    true,
+  );
+  expect(node.textContent).toContain("Local timeline");
+});
+
+it("offers a quieter rebuild when there are features and no build", async () => {
+  await show();
+  expect(
+    [...node.querySelectorAll("button")].some((b) => b.textContent === "Rebuild feature history"),
+  ).toBe(true);
 });

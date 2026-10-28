@@ -484,3 +484,34 @@ WHERE (agent, session_id)`+inSessions, set))
 		t.Fatalf("plan = %v", plan)
 	}
 }
+
+// A repository's first build in progress, and its features, which are not
+// shown until it is current.
+func TestTimelineBuildState(t *testing.T) {
+	f := newTimelineFixture(t)
+	var answer struct {
+		Building *timelineBuild `json:"building"`
+	}
+	f.get("/api/timeline/build", url.Values{"repository": {repo}}, &answer)
+	if answer.Building != nil {
+		t.Fatalf("building = %+v", answer.Building)
+	}
+	f.exec(`INSERT INTO feature_version(repository, state, created_at, total, placed, stopped, spent_usd) VALUES (?, 'building', 0, 40, 12, 'cost_cap', 0.5)`, repo)
+	f.exec(`INSERT INTO feature(id, version_id, repository, title, changed_at, created_at, updated_at)
+VALUES ('B1', (SELECT id FROM feature_version WHERE state='building'), ?, 'Being built', 0, 0, 0)`, repo)
+	f.get("/api/timeline/build", url.Values{"repository": {repo}}, &answer)
+	if b := answer.Building; b == nil || b.Placed != 12 || b.Total != 40 || b.Stopped != "cost_cap" || b.SpentUSD != 0.5 {
+		t.Fatalf("building = %+v", answer.Building)
+	}
+	if code := f.get("/api/timeline/features/B1", nil, nil); code != http.StatusNotFound {
+		t.Fatalf("a feature being built = %d", code)
+	}
+	var page featurePage
+	f.get("/api/timeline/features", url.Values{"repository": {repo}}, &page)
+	if page.ids() != "F1,F2" {
+		t.Fatalf("features while building = %s", page.ids())
+	}
+	if code := f.get("/api/timeline/build", url.Values{"repository": {"acme/off"}}, nil); code != http.StatusBadRequest {
+		t.Fatalf("build of a repository turned off = %d", code)
+	}
+}
