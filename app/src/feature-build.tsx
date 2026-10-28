@@ -195,8 +195,9 @@ export function FeatureBuildDialog({
           <p>
             baum places this repository's merged and open pull requests of the last 180 days in
             features, beside the features in use, and writes their text. The new features replace
-            the current ones in one step once the build finishes. It stops before a call that would
-            pass the cap; confirming again resumes it.
+            the current ones in one step once the build finishes, and the weekly pass consolidates
+            them (merging duplicates, splitting oversized ones) right after. It stops before a call
+            that would pass the cap; confirming again resumes it.
           </p>
           <dl className="local-fix-facts">
             <dt>Pull requests</dt>

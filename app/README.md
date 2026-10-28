@@ -393,8 +393,9 @@ offers **Build feature history** and All decisions; with features, the page
 bar offers a quieter **Rebuild feature history**. Either estimates a
 `feature_build` job for the repository's clone (`src/feature-build.tsx`,
 `POST api/jobs/estimate` with `kind: "feature_build"`), shows the pull
-requests to place, harness, model, estimate and spending cap, and starts it
-only when confirmed; it then links to the job in Jobs. While the job runs the
+requests to place, harness, model, estimate and spending cap, says that the
+weekly consolidation pass takes the new features right after they become
+current, and starts it only when confirmed; it then links to the job in Jobs. While the job runs the
 Features tab says "Building feature history… N of M pull requests placed"
 (from `api/timeline/build`) and links to it; a build that stopped (at its cap,
 or for another reason) says so with what it spent and offers **Resume build**,
