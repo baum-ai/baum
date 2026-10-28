@@ -2460,10 +2460,17 @@ span.inbox-fix svg {
 .inbox-row[data-focused] a:focus-visible {
   outline: none;
 }
-/* The same mark on the other lists (Sessions, Jobs, Repositories), whose
-   rows sit flush in their panel: the fill runs out into the panel's padding
-   and the bar stands at its edge. */
-.local-session-row[data-focused],
+/* The same mark on a Sessions card, inside its own border. */
+.local-feed-card[data-focused] {
+  background: var(--surface-wash);
+  box-shadow: inset 3px 0 0 var(--action-primary);
+}
+.local-feed-card[data-focused] a:focus-visible {
+  outline: none;
+}
+/* And on the other lists (Jobs, Repositories), whose rows sit flush in
+   their panel: the fill runs out into the panel's padding and the bar
+   stands at its edge. */
 .local-job-row[data-focused],
 .local-repo-row[data-focused] {
   position: relative;
@@ -2472,7 +2479,6 @@ span.inbox-fix svg {
     -0.75rem 0 0 var(--surface-wash),
     0.75rem 0 0 var(--surface-wash);
 }
-.local-session-row[data-focused]::before,
 .local-job-row[data-focused]::before,
 .local-repo-row[data-focused]::before {
   content: "";

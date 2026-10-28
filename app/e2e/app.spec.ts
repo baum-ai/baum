@@ -894,7 +894,7 @@ test("the whole app can be used from the keyboard", async ({ page }) => {
       .getByRole("link", { name: /^Open transcript/ }),
   ).toBeVisible({ timeout: 10000 });
   await page.keyboard.press("j");
-  await expect(page.locator(".local-session-row[data-focused]")).toHaveCount(1);
+  await expect(page.locator(".local-feed-card[data-focused]")).toHaveCount(1);
   await page.keyboard.press("Enter");
   await expect.poll(() => search().get("session")).not.toBeNull();
   await expect(page.getByRole("region", { name: "Transcript", exact: true })).toBeVisible();
