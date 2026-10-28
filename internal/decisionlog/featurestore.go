@@ -7,6 +7,7 @@ import (
 	"errors"
 	"slices"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/baum-ai/baum/features"
@@ -169,6 +170,59 @@ func missingColumns(ctx context.Context, q interface {
 		}
 	}
 	return missing, nil
+}
+
+// searchSchema is the Timeline's keyword index (timeline.go): FTS5 tables
+// over the decisions', features' and pull requests' text, kept by triggers.
+const searchSchema = `
+CREATE VIRTUAL TABLE decision_search USING fts5(title, summary, content='decision', content_rowid='rowid', tokenize='porter unicode61');
+CREATE TRIGGER decision_search_insert AFTER INSERT ON decision BEGIN
+  INSERT INTO decision_search(rowid, title, summary) VALUES (new.rowid, new.title, new.summary); END;
+CREATE TRIGGER decision_search_delete AFTER DELETE ON decision BEGIN
+  INSERT INTO decision_search(decision_search, rowid, title, summary) VALUES ('delete', old.rowid, old.title, old.summary); END;
+CREATE TRIGGER decision_search_update AFTER UPDATE OF title, summary ON decision BEGIN
+  INSERT INTO decision_search(decision_search, rowid, title, summary) VALUES ('delete', old.rowid, old.title, old.summary);
+  INSERT INTO decision_search(rowid, title, summary) VALUES (new.rowid, new.title, new.summary); END;
+CREATE VIRTUAL TABLE feature_search USING fts5(title, description, digest, content='feature', content_rowid='rowid', tokenize='porter unicode61');
+CREATE TRIGGER feature_search_insert AFTER INSERT ON feature BEGIN
+  INSERT INTO feature_search(rowid, title, description, digest) VALUES (new.rowid, new.title, new.description, new.digest); END;
+CREATE TRIGGER feature_search_delete AFTER DELETE ON feature BEGIN
+  INSERT INTO feature_search(feature_search, rowid, title, description, digest) VALUES ('delete', old.rowid, old.title, old.description, old.digest); END;
+CREATE TRIGGER feature_search_update AFTER UPDATE OF title, description, digest ON feature BEGIN
+  INSERT INTO feature_search(feature_search, rowid, title, description, digest) VALUES ('delete', old.rowid, old.title, old.description, old.digest);
+  INSERT INTO feature_search(rowid, title, description, digest) VALUES (new.rowid, new.title, new.description, new.digest); END;
+CREATE VIRTUAL TABLE pull_search USING fts5(title, content='pull_request', content_rowid='rowid', tokenize='porter unicode61');
+CREATE TRIGGER pull_search_insert AFTER INSERT ON pull_request BEGIN
+  INSERT INTO pull_search(rowid, title) VALUES (new.rowid, new.title); END;
+CREATE TRIGGER pull_search_delete AFTER DELETE ON pull_request BEGIN
+  INSERT INTO pull_search(pull_search, rowid, title) VALUES ('delete', old.rowid, old.title); END;
+CREATE TRIGGER pull_search_update AFTER UPDATE OF title ON pull_request BEGIN
+  INSERT INTO pull_search(pull_search, rowid, title) VALUES ('delete', old.rowid, old.title);
+  INSERT INTO pull_search(rowid, title) VALUES (new.rowid, new.title); END;
+INSERT INTO decision_search(decision_search) VALUES ('rebuild');
+INSERT INTO feature_search(feature_search) VALUES ('rebuild');
+INSERT INTO pull_search(pull_search) VALUES ('rebuild');`
+
+// migrateSearch creates the keyword index, indexing the rows already
+// stored, when the store has none.
+func migrateSearch(ctx context.Context, db *sql.DB) error {
+	var n int
+	if err := db.QueryRowContext(ctx, `SELECT count(*) FROM sqlite_master WHERE name='decision_search'`).Scan(&n); err != nil || n > 0 {
+		return err
+	}
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, searchSchema); err != nil {
+		_ = tx.Rollback()
+		if strings.Contains(err.Error(), "already exists") {
+			// Another process opening the store created it first.
+			return nil
+		}
+		return err
+	}
+	return tx.Commit()
 }
 
 // querier is a *sql.DB or *sql.Tx.

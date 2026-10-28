@@ -32,6 +32,7 @@ import { RepositoriesPage, SettingsPage, type ReviewDefaults } from "./settings"
 import { needsYou, SessionsPage } from "./sessions";
 import { SessionTranscriptPage } from "./session-transcript";
 import { AnalyticsPage } from "./analytics";
+import { TimelinePage } from "./timeline";
 import { Notice, PageBar, Sidebar } from "./shell";
 import {
   appBase,
@@ -495,6 +496,7 @@ function Workspace({ url }: { url: UrlState }) {
           page === "repositories" ||
           page === "sessions" ||
           page === "analytics" ||
+          page === "timeline" ||
           page === "pulls"
             ? page
             : page === "settings" || page === "diagnostics"
@@ -578,6 +580,8 @@ function Workspace({ url }: { url: UrlState }) {
             />
           ) : page === "analytics" ? (
             <AnalyticsPage Link={LocalLink} />
+          ) : page === "timeline" ? (
+            <TimelinePage />
           ) : page === "sessions" ? (
             <>
               <PageBar title="Sessions" detail="Agent sessions on this computer" />

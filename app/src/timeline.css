@@ -1,0 +1,61 @@
+/* The Timeline page: the hosted Timeline's filter bar, tabs and body, in
+   the app's panel. Every colour is a token, so dark mode follows. */
+.timeline-filters {
+  justify-content: flex-start;
+  padding-top: 0.5rem;
+  padding-bottom: 0.5rem;
+}
+.timeline-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  min-width: 0;
+}
+.timeline-search {
+  width: 14rem;
+  max-width: 100%;
+  padding: 0.3rem 0.6rem;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  background: var(--surface-card);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: var(--text-xs);
+}
+.timeline-search::placeholder {
+  color: var(--text-tertiary);
+}
+.timeline-pill {
+  display: inline-flex;
+  max-width: 18rem;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.15rem 0.4rem 0.15rem 0.6rem;
+  border: 1px solid var(--border-default);
+  border-radius: 999px;
+  background: var(--surface-wash);
+  color: var(--text-primary);
+  font-size: var(--text-xs);
+  cursor: pointer;
+}
+.timeline-tabs {
+  padding: 1rem 1.5rem 0;
+}
+.local-page-body.timeline-body {
+  padding-top: 1.5rem;
+  padding-bottom: 1.5rem;
+}
+@media (max-width: 40rem) {
+  .timeline-search {
+    width: 100%;
+  }
+  .timeline-controls {
+    width: 100%;
+  }
+  .timeline-tabs,
+  .local-page-body.timeline-body {
+    padding-left: 1rem;
+    padding-right: 1rem;
+  }
+}

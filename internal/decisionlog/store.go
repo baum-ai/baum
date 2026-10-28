@@ -119,6 +119,9 @@ func Open(path string, o OpenOptions) (*Store, error) {
 	if err == nil {
 		err = migrate(context.Background(), db)
 	}
+	if err == nil {
+		err = migrateSearch(context.Background(), db)
+	}
 	if err == nil && o.AbandonPending {
 		_, err = db.Exec(`UPDATE capture_attempt SET state=?, settled_at=?, reason='daemon_stopped' WHERE state=?`, AttemptAbandoned, s.now().UnixMilli(), AttemptPending)
 	}
@@ -172,6 +175,9 @@ func openReadOnly(path string) (*Store, error) {
 	_, err = db.Exec(schema + featureSchema)
 	if err == nil {
 		err = migrate(context.Background(), db)
+	}
+	if err == nil {
+		err = migrateSearch(context.Background(), db)
 	}
 	if err != nil {
 		_ = db.Close()

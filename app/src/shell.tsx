@@ -9,12 +9,21 @@ import {
   SessionsIcon,
   SettingsIcon,
   SparkleIcon,
+  TimelineIcon,
 } from "@baum/viewer/components/icons";
 import type { ViewerLinkProps } from "@baum/viewer/navigation";
 import { appURL } from "./api";
 import { PlanUsageRail } from "./plan-usage";
 
-type Page = "inbox" | "pulls" | "sessions" | "analytics" | "jobs" | "repositories" | "settings";
+type Page =
+  | "inbox"
+  | "pulls"
+  | "timeline"
+  | "sessions"
+  | "analytics"
+  | "jobs"
+  | "repositories"
+  | "settings";
 
 /** The application chrome, after the hosted sidebar: the mark, the sections
  *  and where the work happens, standing on the sand canvas beside the page's
@@ -61,6 +70,12 @@ export function Sidebar({
       label: "Pull requests",
       href: appURL("?page=pulls"),
       icon: PullRequestIcon,
+    },
+    {
+      page: "timeline",
+      label: "Timeline",
+      href: appURL("?page=timeline"),
+      icon: TimelineIcon,
     },
     {
       page: "sessions",

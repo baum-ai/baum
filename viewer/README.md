@@ -385,7 +385,8 @@ filters, the address and which decision or feature is open.
   its files (each calling `onFile`), pull requests, session facts and cited
   prompts. `pullRequestHref` says where a pull request opens; the link is a
   `ViewerLink`, so it navigates through the host's `ViewerLinkProvider`. A
-  detail whose prompts are withheld offers no session.
+  detail whose prompts are withheld offers no session and says
+  `withheldNote` in their place (by default, the hosted reason).
 - `openSession` (`OpenSessionSource`) opens the decision's session in place,
   in two parts: `load` fetches a session by id as data only the host reads,
   and `render` draws it at the cited turn, called on every render with the

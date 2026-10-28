@@ -52,7 +52,10 @@ type FeatureWorker struct {
 	// Window is how far back the first sync lists pull requests; zero is
 	// FeatureFirstBuildWindow.
 	Window time.Duration
-	Log    *slog.Logger
+	// Changed is called after a repository's pass that may have changed
+	// its pull requests or features.
+	Changed func()
+	Log     *slog.Logger
 
 	once     sync.Once
 	wake     chan struct{}
@@ -152,11 +155,16 @@ func (w *FeatureWorker) RunOnce(ctx context.Context) {
 		if err == nil && !synced.Stopped && w.enabled(ctx, repository.Repository) {
 			_, err = w.Index(ctx, repository.Repository, dir, synced.commits, false)
 		}
+		var assigned AssignReport
+		var summarized SummaryReport
 		if err == nil && !synced.Stopped {
-			_, err = w.Assign(ctx, repository.Repository, dir, FeatureOptions{})
+			assigned, err = w.Assign(ctx, repository.Repository, dir, FeatureOptions{})
 		}
 		if err == nil && !synced.Stopped {
-			_, err = w.Summarize(ctx, repository.Repository, dir, FeatureOptions{})
+			summarized, err = w.Summarize(ctx, repository.Repository, dir, FeatureOptions{})
+		}
+		if w.Changed != nil && (synced.Listed > 0 || len(assigned.Items) > 0 || len(summarized.Features) > 0) {
+			w.Changed()
 		}
 		if err == nil && !synced.Stopped {
 			_, err = w.Consolidate(ctx, repository.Repository, dir, FeatureOptions{})

@@ -357,9 +357,33 @@ ChatGPT; otherwise they come from its last session and, once older than 15
 minutes, say how old they are.
 See the daemon's [plan usage README](../internal/planusage/README.md).
 
-The app's sidebar leads to the Inbox, Pull requests, Sessions, Analytics, Repositories, Jobs
+The app's sidebar leads to the Inbox, Pull requests, Timeline, Sessions, Analytics, Repositories, Jobs
 and Settings; the Inbox shows how many things wait on the person there, and Sessions shows the number of agent sessions waiting on the person (in the caution tone), or
 else the number working now.
+
+The Timeline page (`?page=timeline&repo=&tab=all&q=&status=&category=&file=&feature=&open=`,
+`src/timeline.tsx`) is the hosted Timeline over the local decision log. It reads
+the daemon's `api/timeline` routes (see the
+[decision log README](../internal/decisionlog/README.md#timeline-api)) and draws
+them with the viewer's decision log components (`FeatureItem`,
+`FeatureSidePanel`, `FeatureDrillDown`, `TimelineHeading`, `DecisionRow`,
+`DecisionDetailBody`). Its bar holds a repository select over the picked
+repositories whose decisions are on (the first when the address names none), a
+search box applied 300 ms after typing stops, and a status select on Features or
+a category select on All decisions; a file chosen from a decision's detail shows
+as a removable pill. Everything lives in the address. Features groups them by
+month and day of last activity; on a screen 96rem wide the opened feature sits
+in a panel beside the timeline, otherwise it opens in place. A feature merged
+into another opens the survivor. All decisions lists the current decisions by
+day, with a line of what capture made of the repository's sessions (read,
+skipped by reason, being read); a decision opened by address but not listed
+shows above the list. A decision's detail says the Timeline shows no prompts and
+links to the session's page (`?page=sessions&session=<agent>:<id>`, which has it
+while the session is tracked); a pull request links to its PR page
+(`?repository=&pr=`). Lists load 50 rows at a time with a button for more, and
+everything is read again when the daemon publishes a `timeline` event. With no
+features yet, the page explains that features appear as pull requests and
+sessions are placed and offers All decisions.
 
 The Analytics page (`?page=analytics&days=7|30|90&repo=&agent=`, `src/analytics.tsx`)
 reads `GET api/analytics` (see the daemon's [analytics README](../internal/analytics/README.md)).
@@ -557,6 +581,12 @@ and the automatic job labels. The fixture also writes two Claude Code sessions i
 the demo clone under its fake home, commits of the person's in the other clone,
 plan usage samples and GitHub's answer to the delivery search, and a test opens
 Analytics and checks the figures they make, at desktop and narrow widths.
+It also seeds a decision store for acme/demo (three sessions' decisions and
+four features: in progress, with a session on its own, abandoned and with its
+text not written yet); `e2e/timeline.spec.ts` opens the Timeline in light and
+dark at desktop and narrow widths, opens a feature beside and in place,
+filters by status, keyword and category, opens a decision and shows the empty
+state of acme/other. With `TIMELINE_SHOTS=<dir>` it saves screenshots there.
 
 Generation usage is retained as provider-reported input, output, cache-read and
 cache-creation buckets, with available TTL, speed, prompt range and model-call

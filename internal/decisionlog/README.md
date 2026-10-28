@@ -442,6 +442,67 @@ internal features build`.
 
 These rows are not pruned.
 
+## Timeline API
+
+`Timeline` serves the app's Timeline page under `/api/timeline/`, mounted in
+the local API behind its authentication, in the view models of the review
+viewer's decision log (`oss/viewer/src/decision-log.ts`). It reads the store
+and never writes it.
+
+- **`GET /repositories`**: the picked repositories whose decisions are not
+  turned off (the decisions switch and the repository's setting; the
+  automatic master switch is not read, so pausing hides nothing), by name.
+  Every other route names one of them (`repository=`, any case) or reads
+  from one; another is a 400 for a list and a 404 for a detail.
+- **`GET /features?repository=&q=&status=&cursor=`**: the repository's
+  features of its current version not merged into another, by last activity
+  (else creation) newest first, then id, 50 a page (`cursor` is an offset).
+  `status` (`in_progress`, `shipped`, `abandoned`; repeated or comma
+  separated) and `q` filter before paging. A row has its title and
+  description (null while none is written; `summary_pending` while it is
+  behind its members), the status (`features.DeriveStatus` over its pull
+  requests), the first and last activity (its pull requests' opening and
+  last update and its decisions' times), `people` (the clone's git
+  `user.email` when it has a session, then its pull requests' authors not
+  opened by a bot, by login), the counts of pull requests, sessions (linked
+  to its pull requests' commits, or in it on their own) and decisions, and
+  its key decisions, read as the text names them (`currentKeys`). A
+  session's decisions are attributed as the feature's text attributes them
+  (`features.Attributor`), each to one feature and, within it, to the pull
+  request `Attributor.PullRequest` chooses.
+- **`GET /features/{id}`**: the row with `digest`, its pull requests newest
+  first (state, draft, merged, the latest saved review's state against the
+  head and its summary, else the generated one, and the decisions shown
+  under each) and its sessions: those in it on their own, and any whose
+  attributed decisions fall under none of its pull requests. A feature
+  merged into another answers with the survivor's detail; one of a version
+  no longer in use `{"archived": true}`.
+- **`GET /decisions?repository=&q=&file=&who=&category=&superseded=&from=&to=&cursor=`**:
+  the current decisions of the repository's captured sessions, newest first,
+  50 a page, with `coverage`: its sessions extracted, skipped by reason, and
+  being read (a capture attempt pending). `file` is the path or anything
+  under it; `who` and `category` repeat or are comma separated; superseded
+  decisions show only with `superseded=1`; `from` (inclusive) and `to`
+  (exclusive) are local dates.
+- **`GET /decisions/{id}`**: its session (`<agent>:<id>`, as the app's
+  session page names it, branch and person), the session's current
+  decisions (summary, category, who, rejected alternative, files, turns)
+  and the pull requests its linked commits are in. `prompts_withheld` is
+  always true: the Timeline serves no transcript text, rationale or
+  evidence.
+
+`q` matches keywords, each word a prefix and all of them required, with
+SQLite FTS5 (Porter stemming): a decision's title and summary; a feature's
+title, description and digest or a pull request's title, or a pull
+request's number. The index (`decision_search`, `feature_search`,
+`pull_search`) is kept by triggers on those tables and built from the rows
+already stored when a store without it is opened.
+
+The capture scheduler calls `Changed` after it saved a session's decisions
+and the feature worker after a repository's pass that listed pull requests,
+placed an item or wrote a feature's text; the daemon publishes a `timeline`
+event on the app's event stream then.
+
 ## Testing by hand
 
 `baum internal decisions capture --agent <agent> --session <id> [--path

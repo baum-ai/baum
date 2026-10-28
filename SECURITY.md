@@ -795,6 +795,19 @@ computer, plus one GitHub search per picked repository:
 Nothing of it is sent anywhere else. Costs are computed on the computer from the
 price list.
 
+### Timeline
+
+The Timeline page (`GET /api/timeline/...`, behind the app's authentication)
+reads only the private decision store and the clones: the picked repositories
+whose decisions are not turned off, their features of the version in use (text,
+status, pull requests' numbers, titles, states and authors' logins, counts and
+key decisions), their sessions' current decisions (summary, category, who
+decided, rejected alternative, cited files, branch) and, per pull request, the
+summary of the latest review saved in the clone or the generated one. A
+session's person is the clone's `user.email`. It serves no prompt, transcript,
+rationale or quoted evidence (`prompts_withheld` is always true) and makes no
+network request; a repository not picked, or with its decisions off, is refused.
+
 ### Finding clones on this computer
 
 The daemon looks for local clones of the repositories you pick, so you are not

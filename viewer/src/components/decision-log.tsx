@@ -217,6 +217,7 @@ export function DecisionDetailBody<T>({
   openSession,
   onFile,
   onRetry,
+  withheldNote = "Prompt text is hidden: this session also belongs to repositories you can't read.",
 }: {
   state: DetailState | undefined;
   decisionId: string;
@@ -231,6 +232,9 @@ export function DecisionDetailBody<T>({
   openSession: OpenSessionSource<T>;
   onFile: (path: string) => void;
   onRetry: () => void;
+  /** What a detail whose prompts are withheld says in their place; the
+   *  hosted reason by default. */
+  withheldNote?: ReactNode;
 }) {
   if (!state || state.status === "loading") {
     return (
@@ -373,9 +377,7 @@ export function DecisionDetailBody<T>({
       </DetailPart>
 
       {detail.prompts_withheld ? (
-        <p className="text-base text-(--text-tertiary) italic">
-          Prompt text is hidden: this session also belongs to repositories you can't read.
-        </p>
+        <p className="text-base text-(--text-tertiary) italic">{withheldNote}</p>
       ) : turns.length > 0 ? (
         <DetailPart label={turns.length === 1 ? "Prompt" : "Prompts"}>
           <CitedPrompts turns={turns} person={detail.session.person} />

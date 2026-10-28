@@ -488,14 +488,19 @@ func localApplication(paths daemon.Paths, concurrency int, log *slog.Logger) fun
 		// derived, redacted decisions in the daemon's state.
 		var capture *decisionlog.Scheduler
 		var decisionStore *decisionlog.Store
+		var timeline http.Handler
 		if live != nil {
 			if decisionStore, err = decisionlog.Open(filepath.Join(state, "decisions", "decisions.sqlite"), decisionlog.OpenOptions{AbandonPending: true}); err != nil {
 				log.Warn("decision capture is off: its store did not open", "error", err)
 			} else {
-				capture = &decisionlog.Scheduler{Tracker: live, Source: events.service.Store, Log: log,
+				// The Timeline page reads the store again when it changes.
+				timelineChanged := func() { _ = server.Publish("timeline", struct{}{}) }
+				capture = &decisionlog.Scheduler{Tracker: live, Source: events.service.Store, Log: log, Changed: timelineChanged,
 					Worker: &decisionlog.Capturer{Store: decisionStore, Registry: registry, Config: cfg, Log: log}}
-				featureLog = &decisionlog.FeatureWorker{Store: decisionStore, Registry: registry, GitHub: githubReaders(cfg), Config: cfg, Log: log}
+				featureLog = &decisionlog.FeatureWorker{Store: decisionStore, Registry: registry, GitHub: githubReaders(cfg), Config: cfg, Log: log, Changed: timelineChanged}
 				builds.worker.Store(featureLog)
+				timeline = (&decisionlog.Timeline{Store: decisionStore, Registry: registry,
+					Self: decisionlog.ClonePerson(registry), Review: decisionlog.CloneReview(registry)}).Handler()
 			}
 		}
 		home, _ := os.UserHomeDir()
@@ -542,7 +547,7 @@ func localApplication(paths daemon.Paths, concurrency int, log *slog.Logger) fun
 		endedSessions, unsubscribeEnded := events.Subscribe(4, func(e hookevents.Event) bool {
 			return e.Kind == hookevents.KindAgent && e.Name == "session-end"
 		})
-		api := uiserver.LocalAPI{GitHubAuth: githubConnection.Handler(), Registry: registry, Config: cfg, PRs: uiserver.DiscoveryHandler(registry, discover, changed), Index: index.Handler(), Jobs: queue.Handler(), Background: worker.Handler(), Automatic: scheduler.Handler(), Live: liveAPI, Clones: clones.Handler(), GitHubRepositories: pickList.Handler(), PlanUsage: plans.Handler(), Analytics: insights.Handler(), Merge: uiserver.MergeHandler(registry, actions.RecordMerges(githubClient), refreshRepository, changed), Update: uiserver.UpdateHandler(registry, actions.RecordUpdates(prupdate.Service{Client: githubClient}), refreshRepository, changed), Changed: settingsChanged,
+		api := uiserver.LocalAPI{GitHubAuth: githubConnection.Handler(), Registry: registry, Config: cfg, PRs: uiserver.DiscoveryHandler(registry, discover, changed), Index: index.Handler(), Jobs: queue.Handler(), Background: worker.Handler(), Automatic: scheduler.Handler(), Live: liveAPI, Clones: clones.Handler(), GitHubRepositories: pickList.Handler(), PlanUsage: plans.Handler(), Analytics: insights.Handler(), Timeline: timeline, Merge: uiserver.MergeHandler(registry, actions.RecordMerges(githubClient), refreshRepository, changed), Update: uiserver.UpdateHandler(registry, actions.RecordUpdates(prupdate.Service{Client: githubClient}), refreshRepository, changed), Changed: settingsChanged,
 			Groups:      (&reviewgroups.API{Store: groups, Registry: registry, Index: index.Build, Changed: changed}).Handler(),
 			Diagnostics: uiDiagnostics}.Handler()
 		return daemon.App{
