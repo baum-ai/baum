@@ -57,16 +57,27 @@ type SummarizedFeature struct {
 // longest behind first, at most FeatureSummaryRunLimit (or o.Limit). A
 // backend, price or cap reason stops it until the next run.
 func (w *FeatureWorker) Summarize(ctx context.Context, repository, dir string, o FeatureOptions) (SummaryReport, error) {
-	report := SummaryReport{Repository: repository, Features: []SummarizedFeature{}}
 	o.DryRun = false
 	r, err := w.newRun(ctx, repository, dir, o)
 	if err != nil {
-		return report, err
+		return SummaryReport{Repository: repository, Features: []SummarizedFeature{}}, err
 	}
 	quiet := r.now.Add(-FeatureQuiet)
 	if o.Manual {
 		quiet = r.now
 	}
+	limit := FeatureSummaryRunLimit
+	if o.Limit > 0 {
+		limit = o.Limit
+	}
+	return r.summarizePending(ctx, quiet, limit)
+}
+
+// summarizePending writes the text of at most limit of the run's version's
+// features behind their members and unchanged since quiet.
+func (r *featureRun) summarizePending(ctx context.Context, quiet time.Time, limit int) (SummaryReport, error) {
+	w, repository := r.w, r.repository
+	report := SummaryReport{Repository: repository, Features: []SummarizedFeature{}}
 	pending, err := w.Store.pendingSummaries(ctx, r.version, repository, quiet)
 	if err != nil {
 		return report, err
@@ -76,10 +87,6 @@ func (w *FeatureWorker) Summarize(ctx context.Context, repository, dir string, o
 		return report, err
 	}
 	pending = slices.DeleteFunc(pending, func(p [2]string) bool { return settled.waiting(kindFeature, p[0], p[1], r.now) })
-	limit := FeatureSummaryRunLimit
-	if o.Limit > 0 {
-		limit = o.Limit
-	}
 	for _, p := range pending[:min(len(pending), limit)] {
 		if ctx.Err() != nil {
 			return report, ctx.Err()
@@ -159,7 +166,7 @@ type summarySource struct {
 // commits and those in it on their own) that features.Attributor gives it,
 // never a session's prompts, and its paths (its pull requests' paths, those
 // they were placed with, and those its decisions cite).
-func (s *Store) summarySource(ctx context.Context, repository, featureID string) (summarySource, error) {
+func (s *Store) summarySource(ctx context.Context, version int64, repository, featureID string) (summarySource, error) {
 	var src summarySource
 	var keys string
 	if err := s.db.QueryRowContext(ctx, `SELECT membership_version, title, description, digest, key_decisions_json, summary_input_hash
@@ -224,7 +231,7 @@ WHERE fs.feature_id=?1 ORDER BY 2, 3, 1`, featureID))
 		}
 	}
 	for _, key := range sessions {
-		links, err := s.SessionLinks(ctx, repository, key.Agent, key.ID)
+		links, err := s.sessionLinks(ctx, version, repository, key.Agent, key.ID)
 		if err != nil {
 			return src, err
 		}
@@ -287,7 +294,7 @@ ON CONFLICT(repository, number) DO UPDATE SET content_hash=excluded.content_hash
 func (r *featureRun) summarize(ctx context.Context, featureID string) (SummarizedFeature, error) {
 	s := r.w.Store
 	out := SummarizedFeature{Feature: featureID, PullRequests: []int{}}
-	src, err := s.summarySource(ctx, r.repository, featureID)
+	src, err := s.summarySource(ctx, r.version, r.repository, featureID)
 	if errors.Is(err, sql.ErrNoRows) {
 		out.Outcome, out.Reason = FeatureSkipped, "gone"
 		return out, nil

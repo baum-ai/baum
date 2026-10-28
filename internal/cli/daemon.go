@@ -424,7 +424,9 @@ func localApplication(paths daemon.Paths, concurrency int, log *slog.Logger) fun
 			events.Close()
 			return daemon.App{}, err
 		}
-		queue, err := jobs.Open(filepath.Join(state, "jobs.json"), &jobs.Local{Registry: registry, Groups: groups, Config: cfg, Client: github.NewFromConfig(cfg, github.Options{}), RefreshPrices: refresh}, concurrency, func(job jobs.Job) {
+		// Feature builds run on the feature worker made below.
+		builds := &featureBuilder{}
+		queue, err := jobs.Open(filepath.Join(state, "jobs.json"), &jobs.Local{Registry: registry, Groups: groups, Config: cfg, Client: github.NewFromConfig(cfg, github.Options{}), RefreshPrices: refresh, Features: builds}, concurrency, func(job jobs.Job) {
 			_ = server.Publish("progress", map[string]any{"job": job})
 			if job.Phase == "finished" {
 				changed()
@@ -493,6 +495,7 @@ func localApplication(paths daemon.Paths, concurrency int, log *slog.Logger) fun
 				capture = &decisionlog.Scheduler{Tracker: live, Source: events.service.Store, Log: log,
 					Worker: &decisionlog.Capturer{Store: decisionStore, Registry: registry, Config: cfg, Log: log}}
 				featureLog = &decisionlog.FeatureWorker{Store: decisionStore, Registry: registry, GitHub: githubReaders(cfg), Config: cfg, Log: log}
+				builds.worker.Store(featureLog)
 			}
 		}
 		home, _ := os.UserHomeDir()

@@ -124,12 +124,13 @@ transcripts, never the transcripts themselves.
 
 ## Feature log
 
-The feature log will group a repository's pull requests and sessions into
+The feature log groups a repository's pull requests and sessions into
 features as the hosted feature log does, with the `features` package's rules
 and published prompts. Its choices are in `featureconfig.go`, and it shares
-the store with capture. `FeatureWorker` now syncs a repository's pull
+the store with capture. `FeatureWorker` syncs a repository's pull
 requests, reads their paths and commits from the clone, and links the
-commits to this machine's sessions; placing them in features builds on that.
+commits to this machine's sessions, then places them in features, writes
+the features' text and consolidates them.
 It runs in the daemon beside the capture scheduler, every minute and when
 settings change, for each picked repository with an available clone whose
 decisions are captured (the gate above); a repository turned off is not read
@@ -199,11 +200,12 @@ session with no capture row has none.
 
 ### Model calls
 
-Placement and feature text call as capture does (steps 6 to 8 above): the
-same backend, model, reservation (the request's byte bound and the call's
-reply bound: 4,096 tokens for a placement, 8,192 for a text or pull request
-summary), daily cap and ledger, each attempt recorded with its stage
-(`feature_assign`, `feature_summary` or `pr_summary`) and item. Rejected
+Placement, feature text and consolidation call as capture does (steps 6 to
+8 above): the same backend, model, reservation (the request's byte bound and
+the call's reply bound: 4,096 tokens for a placement, 32,768 for a batch,
+8,192 for a text, pull request summary, merge or split), daily cap and
+ledger, each attempt recorded with its stage (`feature_assign`,
+`feature_summary`, `pr_summary` or `feature_consolidate`) and item. Rejected
 replies and a ledger that cannot be written are handled as capture's. The
 preferences and the repository's settings are read again before every call,
 so a repository turned off makes no further call. A repository turned off,
@@ -302,6 +304,112 @@ failed pull request summary still writes the text, leaving the feature
 behind; failures back off and count as placement's do, per membership
 version.
 
+### Consolidation
+
+After the text, a repository's features are consolidated as hosted ones are,
+with the published consolidation prompt, at most once every 7 days (from the
+start of the last pass) and only when their fingerprint (every feature's id,
+membership and text versions and `merged_into`, merged ones included)
+changed since the last pass (`feature_consolidation`). A pass's own merges
+and splits are changes, so one that changed features is followed by another
+a week later. A pass reads the features not merged into another and active
+in the last 90 days (as placement's candidates), most recently active first.
+
+- **Merge.** With two features or more, one call sees each feature's text,
+  digest, paths, pull requests with their summaries (the saved review's,
+  else the generated one) and how many sessions are in it on their own. Each
+  group's duplicates are merged into its survivor: their pull requests and
+  sessions move to it as `consolidation`'s, the duplicate gets `merged_into`
+  (and so do the features merged into it before), both are marked, and a
+  link to the duplicate resolves to the survivor (`ResolveFeature`).
+- **Split hold.** For four weeks after a split, a merge of one of its parts
+  with the feature it was split from, or of two of its parts, is dropped
+  from the reply; the merge call marks such a part with its origin. A part
+  merged into another feature passes its origin and split time on.
+- **Split.** At most 3 features, as they will be after the merges, with more
+  than 30 pull requests or pull requests opened more than 8 weeks apart,
+  largest first, get one split call each with their pull requests' text,
+  state, opening date, placed paths and summaries. A feature kept whole, or
+  too large to offer (over 200 pull requests or its input over its bound,
+  which takes no slot), is recorded as checked (`split_checked_version`) and
+  not offered again until its members change; a survivor of the pass's
+  merges always is. Otherwise the largest part keeps the feature's id (ties
+  to the part with the earliest opened pull request), and each other part
+  becomes a new feature with the reply's text, recording `split_from` and
+  `split_at`, its pull requests moved as `consolidation`'s at the head and
+  paths they were placed with; sessions in it on their own stay. The parts
+  are recorded as checked.
+- **Writing.** Every call of a pass is made before anything is written. Each
+  merge and split is written in its own transaction, only while its features
+  are at the membership versions the pass read (as its own earlier writes
+  left them) and a split's feature holds exactly the pull requests it
+  partitioned; otherwise that one is skipped and the pass goes on. Writes
+  mark every feature they change and the features of the sessions linked to
+  the pull requests they move, for the text stage.
+- **Failures.** A merge call that fails, or whose reply does not decode,
+  writes nothing and backs the pass off as placement's failures do, counted
+  against the fingerprint. A split call that fails or replies invalidly
+  leaves that feature whole and unchecked. A merge call that cannot be made
+  (a backend, price or cap reason) stops the pass until the next run; a split
+  call that cannot be made stops the remaining split calls, and what was
+  called is written and the pass recorded.
+
+### First build
+
+The live placement places only work opened since the feature log was
+activated. A repository's history is placed when the user asks for it, as a
+hosted rebuild does, by a first build: a job of the job queue
+(`jobs.KindFeatureBuild`) that runs only from a confirmed estimate, or `baum
+internal features build`.
+
+- **Estimate.** The pull requests left to place are counted and their calls
+  priced from their sizes at the configured backend and model: a batch call
+  per 25 (the items' titles, descriptions and paths, and candidates for the
+  features placed so far, a feature per 3 pull requests), the features' text
+  twice, a summary of each pull request with a description, and one merge
+  and up to three split calls. The cap of the version's spend over all its
+  runs is what it spent and the estimate times 1.25, with room for at least
+  one more batch call's reservation beyond the estimate. A repository whose
+  decisions are not captured, or whose model cannot be priced or called, is
+  not estimated.
+- **Building.** The build makes the repository's `building` version, or
+  resumes the one there is, and places in it the merged and open pull
+  requests of the last 180 days not opened by a bot, in no feature of the
+  version and not skipped or left out of it at their head, listed once when
+  it starts, oldest first, in batches of 25 with the batch prompt (its seeded
+  form when a candidate has no pull requests). Each item's candidates are
+  ranked against the version as placement ranks them, read again for every
+  call, and the call offers their union, each item's best first, at most 40.
+  A reply's new feature is created for the first item that starts it; a
+  skipped small change is settled in the version at its head. The live
+  stages keep using the current version meanwhile.
+- **Failures.** A batch call that fails, for whatever reason, is made once
+  more, then the batch is split in halves down to one pull request; one that
+  still fails is tried once more with the others after the last batch, in
+  batches of 25, and then left out (settled in the version as `left_out`). A
+  failed store write stops the build.
+- **Text and consolidation.** Every 3 batches and after the last, the text
+  of every feature of the version behind its members is written, without the
+  debounce; a feature whose text fails backs off and is left for the text
+  stage. Then the version gets its one consolidation pass
+  (`consolidated_at`), whose changed features' text is written again; a pass
+  that fails is not made again, the weekly pass taking the version once it
+  is current.
+- **Switching.** The building version becomes current in one transaction:
+  the current one is retired, the skips become placement's settlements, the
+  pull requests left out lose theirs so placement takes those within its
+  lookback, and the switch is recorded as the repository's last
+  consolidation. Work the live stages placed in the old version is in no
+  feature of the new one; placement takes what is within its lookback. A
+  retired version is kept, and a link to one of its features resolves as
+  archived.
+- **Stopping.** A build stops before a call whose reservation would take the
+  version's spend (`spent_usd`, added after every call: its cost, else its
+  reservation) past the cap, or that cannot be made, leaving the version
+  `building` with `stopped` set to why; confirming it again resumes it. Its
+  job then fails with that reason. Progress (phase, calls) is reported to
+  the job and the version records its pull requests placed of the total.
+
 ### Stored data
 
 - `pull_request`, `pull_commit`, `pull_sync`: the listed pull requests with
@@ -311,9 +419,10 @@ version.
   confidence.
 - `feature_version`, `feature`, `feature_pull`, `feature_session`,
   `feature_settle`, `pr_summary`, `feature_consolidation`: the tables
-  placement writes. A repository has at most one `current` and one
-  `building` version; `liveVersion` is the one place that chooses the
-  version in use (the current one, made when first needed).
+  placement, text, consolidation and a build write. A repository has at
+  most one `current` and one `building` version; `featureVersion` is the one
+  place that chooses the version a stage uses (the live stages' current
+  one, made when first needed, and a build's building one).
 
 These rows are not pruned.
 
@@ -338,8 +447,14 @@ counts as JSON. `baum internal features assign --repo <owner/name> [--clone
 once, ignoring the activation, and prints each item; `--dry-run` prints each
 item's candidates and input size, makes no call and writes nothing.
 `baum internal features summarize` takes the same flags but `--dry-run` and
-writes the text of the features behind, without the debounce. Both read the
-preferences and the repository's settings and fail when they cannot; `sync`
+writes the text of the features behind, without the debounce. `baum
+internal features build --repo <owner/name> [--clone <path>]
+[--max-cost-usd N] [--dry-run] [--backend <b>] [--model <m>]` runs a first
+build without the gate, a line a batch on standard error and its report as
+JSON; `--max-cost-usd` caps the version's spend over all its runs (default
+the estimate's cap) and `--dry-run` prints the estimate and writes nothing.
+These read the preferences and the repository's settings and fail when they
+cannot; `sync`
 and `link` read neither. The clone
 defaults to the repository's registered one. They are for testing, with the
 daemon stopped: they write the daemon's store.

@@ -3,9 +3,11 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -102,7 +104,38 @@ its debounce, and prints each feature taken as JSON.`,
 		},
 	}
 	callFlags(summarize)
-	cmd.AddCommand(sync, link, place, summarize)
+	var build decisionlog.BuildOptions
+	buildCmd := &cobra.Command{
+		Use:   "build",
+		Short: "Build the repository's features from its pull request history",
+		Long: `Build runs a first build of the repository's features once, without its
+gate, and prints what it did as JSON, with a line a batch on standard error.
+It builds a new version of the repository's features from its pull requests
+of the last 180 days, or resumes the one being built, and makes it current.
+--max-cost-usd caps the version's spend over all its runs; the default is
+what it spent and the estimate of what is left times 1.25, with room for at
+least one more call. --dry-run prints
+the estimate and writes nothing. It writes the daemon's store: run it with
+the daemon stopped.`,
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			return runFeatures(cmd, repository, clone, 0, true, func(ctx context.Context, w *decisionlog.FeatureWorker, dir string) (any, error) {
+				if build.DryRun {
+					return w.EstimateBuild(ctx, repository, dir, build)
+				}
+				build.Progress = func(p decisionlog.BuildProgress) {
+					_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "%s: %d of %d pull requests, %d calls, $%.4f\n", p.Phase, p.Placed, p.Total, p.Calls, p.SpentUSD)
+				}
+				return w.Build(ctx, repository, dir, build)
+			})
+		},
+	}
+	flags(buildCmd)
+	buildCmd.Flags().Float64Var(&build.MaxCostUSD, "max-cost-usd", 0, "cap of the version's spend over all its runs; default the estimate's")
+	buildCmd.Flags().BoolVar(&build.DryRun, "dry-run", false, "print the estimate; write nothing")
+	buildCmd.Flags().StringVar(&build.Backend, "backend", "", "backend to call instead of the configured one")
+	buildCmd.Flags().StringVar(&build.Model, "model", "", "model to call instead of the configured one")
+	cmd.AddCommand(sync, link, place, summarize, buildCmd)
 	return cmd
 }
 
@@ -174,4 +207,36 @@ func registeredClone(ctx context.Context, repository string) (string, error) {
 		}
 	}
 	return "", fmt.Errorf("no registered clone of %s; pass --clone", repository)
+}
+
+// featureBuilder runs the job queue's feature builds (jobs.KindFeatureBuild)
+// on the daemon's feature worker, once it has one.
+type featureBuilder struct {
+	worker atomic.Pointer[decisionlog.FeatureWorker]
+}
+
+var errFeatureLogOff = errors.New("the feature log is off: its store did not open")
+
+func (b *featureBuilder) EstimateFeatureBuild(ctx context.Context, repository, dir string) (jobs.FeatureBuildEstimate, error) {
+	w := b.worker.Load()
+	if w == nil {
+		return jobs.FeatureBuildEstimate{}, errFeatureLogOff
+	}
+	e, err := w.EstimateBuild(ctx, repository, dir, decisionlog.BuildOptions{Gated: true})
+	return jobs.FeatureBuildEstimate{Backend: e.Backend, Model: e.Model, PullRequests: e.PullRequests, EstimateUSD: e.EstimateUSD,
+		CapUSD: e.Cap(), Reason: e.Reason}, err
+}
+
+func (b *featureBuilder) BuildFeatures(ctx context.Context, repository, dir string, capUSD float64, progress func(jobs.Progress)) (float64, error) {
+	w := b.worker.Load()
+	if w == nil {
+		return 0, errFeatureLogOff
+	}
+	report, err := w.Build(ctx, repository, dir, decisionlog.BuildOptions{MaxCostUSD: capUSD, Gated: true, Progress: func(p decisionlog.BuildProgress) {
+		progress(jobs.Progress{Phase: p.Phase, Calls: p.Calls})
+	}})
+	if err == nil && !report.Current {
+		err = &jobs.StoppedError{Reason: report.Stopped}
+	}
+	return report.SpentUSD, err
 }

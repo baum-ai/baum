@@ -2988,11 +2988,22 @@ and sessions in features (`FeatureWorker.Assign`: hosted triggers, a Go port
 of the hosted weighted candidate ranking, `assign.Public`) and writes the
 text of features whose members changed (`FeatureWorker.Summarize`,
 `summary.Public`, reusing text and generated pull request summaries whose
-input hash is unchanged). Both stages call through the same helper as
-capture (`caller` in `model.go`: backend and model resolution, reservation,
-the one daily cap and the `capture_attempt` ledger, with the call's stage
-and item). The constants are in `featureconfig.go` and the live feature
-version of a repository is chosen in one place (`liveVersion`). See
+input hash is unchanged), and at most weekly, when the features'
+fingerprint changed, consolidates them (`FeatureWorker.Consolidate`,
+`consolidate.Public`: one merge call, at most three split calls, every call
+made before a write, each write checked against the membership versions it
+read). A first build (`FeatureWorker.Build`) places a repository's history
+in a `building` version with the batch prompt (`assign.Public.RenderBatch`),
+reusing placement's candidate ranking and writes, the text stage and one
+consolidation pass, then switches it to current in one transaction; it runs
+as a confirmed job (`jobs.KindFeatureBuild`, through `jobs.FeatureBuilder`)
+or from `baum internal features build`. Every stage calls through the same
+helper as capture (`caller` in `model.go`: backend and model resolution,
+reservation, the one daily cap, a build's cost cap and the
+`capture_attempt` ledger, with the call's stage and item). The constants
+are in `featureconfig.go` and the feature version a stage uses is chosen in
+one place (`featureVersion`: the live stages' current one, a build's
+building one). See
 [its README](internal/decisionlog/README.md#feature-log).
 
 ### Transports and control protocol

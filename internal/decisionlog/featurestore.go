@@ -43,7 +43,7 @@ CREATE TABLE IF NOT EXISTS pull_sync(
 CREATE TABLE IF NOT EXISTS feature_version(
   id INTEGER PRIMARY KEY AUTOINCREMENT, repository TEXT NOT NULL, state TEXT NOT NULL,
   created_at INTEGER NOT NULL, switched_at INTEGER, stopped TEXT NOT NULL DEFAULT '',
-  spent_usd REAL NOT NULL DEFAULT 0, total INTEGER NOT NULL DEFAULT 0, placed INTEGER NOT NULL DEFAULT 0);
+  spent_usd REAL NOT NULL DEFAULT 0, total INTEGER NOT NULL DEFAULT 0, placed INTEGER NOT NULL DEFAULT 0, consolidated_at INTEGER);
 CREATE UNIQUE INDEX IF NOT EXISTS feature_version_current ON feature_version(repository) WHERE state='current';
 CREATE UNIQUE INDEX IF NOT EXISTS feature_version_building ON feature_version(repository) WHERE state='building';
 CREATE TABLE IF NOT EXISTS feature(
@@ -52,7 +52,7 @@ CREATE TABLE IF NOT EXISTS feature(
   key_decisions_json TEXT NOT NULL DEFAULT '[]',
   membership_version INTEGER NOT NULL DEFAULT 0, summarized_version INTEGER NOT NULL DEFAULT 0,
   dirty_since INTEGER, changed_at INTEGER NOT NULL, summary_input_hash TEXT NOT NULL DEFAULT '',
-  merged_into TEXT, split_from TEXT, split_checked_version INTEGER NOT NULL DEFAULT 0,
+  merged_into TEXT, split_from TEXT, split_at INTEGER, split_checked_version INTEGER NOT NULL DEFAULT 0,
   created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL);
 CREATE INDEX IF NOT EXISTS feature_version_repository ON feature(version_id, repository);
 CREATE TABLE IF NOT EXISTS feature_pull(
@@ -85,7 +85,8 @@ const (
 
 // migrate brings a store an earlier release made up to the schema, in one
 // transaction: the ledger's stage, item and rejections columns, and the pull
-// requests' fork and default branch columns, added when missing. Pull
+// requests' fork and default branch columns, the features' split time and
+// the versions' consolidation time, added when missing. Pull
 // requests listed before the latter are listed again: the sync state's ETag
 // and cursor are reset. The columns are read without a lock; only when one is
 // missing is the write lock taken and they are read again, so a store two
@@ -144,6 +145,8 @@ var migrations = []migration{
 	{"capture_attempt", "rejections", `ALTER TABLE capture_attempt ADD COLUMN rejections INTEGER NOT NULL DEFAULT 0`, false},
 	{"pull_request", "cross_repository", `ALTER TABLE pull_request ADD COLUMN cross_repository INTEGER NOT NULL DEFAULT 0`, true},
 	{"pull_request", "default_branch", `ALTER TABLE pull_request ADD COLUMN default_branch TEXT NOT NULL DEFAULT ''`, true},
+	{"feature", "split_at", `ALTER TABLE feature ADD COLUMN split_at INTEGER`, false},
+	{"feature_version", "consolidated_at", `ALTER TABLE feature_version ADD COLUMN consolidated_at INTEGER`, false},
 }
 
 // missingColumns are the migrations whose column the store lacks.
@@ -151,7 +154,7 @@ func missingColumns(ctx context.Context, q interface {
 	QueryContext(context.Context, string, ...any) (*sql.Rows, error)
 }) ([]migration, error) {
 	have := map[string]bool{}
-	for _, table := range []string{"capture_attempt", "pull_request"} {
+	for _, table := range []string{"capture_attempt", "pull_request", "feature", "feature_version"} {
 		names, err := collect(scanString)(q.QueryContext(ctx, `SELECT name FROM pragma_table_info(?)`, table))
 		if err != nil {
 			return nil, err
@@ -175,21 +178,32 @@ type querier interface {
 	QueryRowContext(context.Context, string, ...any) *sql.Row
 }
 
-// liveVersion is the one place that decides which feature version of a
-// repository the feature log reads and writes: its current one. With create
-// a repository without one gets it; otherwise it is 0.
-func liveVersion(ctx context.Context, q querier, repository string, create bool, now time.Time) (int64, error) {
+// featureVersion is the one place that decides which feature version of a
+// repository a stage reads and writes: the live stages its current one
+// (liveVersion), a first build its building one. With create a repository
+// without one gets it; otherwise it is 0.
+func featureVersion(ctx context.Context, q querier, repository, state string, create bool, now time.Time) (int64, error) {
 	var id int64
-	err := q.QueryRowContext(ctx, `SELECT id FROM feature_version WHERE repository=? AND state=?`, repository, VersionCurrent).Scan(&id)
+	err := q.QueryRowContext(ctx, `SELECT id FROM feature_version WHERE repository=? AND state=?`, repository, state).Scan(&id)
 	if !errors.Is(err, sql.ErrNoRows) || !create {
 		if errors.Is(err, sql.ErrNoRows) {
 			return 0, nil
 		}
 		return id, err
 	}
+	var switched any
+	if state == VersionCurrent {
+		switched = now.UnixMilli()
+	}
 	err = q.QueryRowContext(ctx, `INSERT INTO feature_version(repository, state, created_at, switched_at) VALUES (?,?,?,?) RETURNING id`,
-		repository, VersionCurrent, now.UnixMilli(), now.UnixMilli()).Scan(&id)
+		repository, state, now.UnixMilli(), switched).Scan(&id)
 	return id, err
+}
+
+// liveVersion is the repository's current feature version, which the live
+// stages and readers use.
+func liveVersion(ctx context.Context, q querier, repository string, create bool, now time.Time) (int64, error) {
+	return featureVersion(ctx, q, repository, VersionCurrent, create, now)
 }
 
 // LiveVersion is the repository's feature version in use, created when it
@@ -583,11 +597,16 @@ WHERE pc.repository=?2 AND pc.sha IN (`+placeholders(3, len(chunk))+`)`, args...
 // are in, and the feature it is in on its own. A session without a capture
 // row has none.
 func (s *Store) SessionLinks(ctx context.Context, repository, agent, sessionID string) (features.SessionLinks, error) {
-	var links features.SessionLinks
 	version, err := liveVersion(ctx, s.db, repository, false, s.now())
 	if err != nil || version == 0 {
-		return links, err
+		return features.SessionLinks{}, err
 	}
+	return s.sessionLinks(ctx, version, repository, agent, sessionID)
+}
+
+// sessionLinks is SessionLinks in the feature version version.
+func (s *Store) sessionLinks(ctx context.Context, version int64, repository, agent, sessionID string) (features.SessionLinks, error) {
+	var links features.SessionLinks
 	rows, err := s.db.QueryContext(ctx, `SELECT fp.feature_id, pr.number, pr.created_at, COALESCE(pr.paths_json, '[]'), fp.assigned_paths_json, sc.sha
 FROM session_commit sc
 JOIN capture_session cs ON cs.agent=sc.agent AND cs.session_id=sc.session_id

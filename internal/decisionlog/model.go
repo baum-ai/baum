@@ -84,6 +84,21 @@ func reserveFor(list *pricing.List, backend, model string, inputTokens, outputTo
 	return (first + further) / 1_000_000, true
 }
 
+// callCost is what one call of inputTokens and outputTokens is expected to
+// cost: reserveFor's first call.
+func callCost(list *pricing.List, backend, model string, inputTokens, outputTokens int64) (float64, bool) {
+	v := vendor(backend)
+	rates, ok := list.RatesFor(list.Normalize(model, v), pricing.Usage{Vendor: v, InputTokens: inputTokens, OutputTokens: outputTokens, SingleRequest: true})
+	if !ok {
+		return 0, false
+	}
+	input := rates.Input
+	if backend == agent.BackendClaude {
+		input = max(input, rates.CacheWrite)
+	}
+	return (float64(inputTokens)*input + float64(outputTokens)*rates.Output) / 1_000_000, true
+}
+
 // cost prices a call's reported usage, whose buckets are disjoint
 // (agent.Usage); nil when it cannot be priced.
 func cost(list *pricing.List, model string, u agent.Usage) *float64 {
@@ -220,6 +235,25 @@ type caller struct {
 	gate     func(context.Context) (repos.Preferences, repos.Settings, bool, error)
 	prefs    repos.Preferences
 	settings repos.Settings
+	// budget, when set, is a first build's cost cap.
+	budget *buildBudget
+}
+
+// ReasonBuildCap stops a first build whose next call would take its
+// version's spend past the build's cap.
+const ReasonBuildCap = "cost_cap"
+
+// buildBudget is a first build's version's spend over all its runs against
+// the build's cap. A call is made only while its reservation keeps the
+// spend within the cap; its cost, else its reservation, is added to the
+// version's.
+type buildBudget struct {
+	version    int64
+	cap, spent float64
+	// run is this run's spend, and calls its calls.
+	run   float64
+	calls int
+	full  bool
 }
 
 // Reasons a feature stage call was not made, besides the skip reasons.
@@ -370,6 +404,10 @@ func (c caller) complete(ctx context.Context, backend, model string, a Attempt, 
 	if skip != "" {
 		return callResult{Skip: skip}, nil
 	}
+	if b := c.budget; b != nil && (b.full || b.spent+p.Reserved > b.cap) {
+		b.full = true
+		return callResult{Skip: ReasonBuildCap}, nil
+	}
 	m, id, skip, err := c.begin(ctx, p, a, prefs, nil)
 	if err != nil || skip != "" {
 		return callResult{Skip: skip}, err
@@ -378,6 +416,18 @@ func (c caller) complete(ctx context.Context, backend, model string, a Attempt, 
 	// The ledger outlives a cancelled call: it may be paid for.
 	_, spent, _, err := c.finish(context.WithoutCancel(ctx), id, m, callErr, ctx.Err() != nil)
 	result := callResult{JSON: response.JSON, Called: m.called, Cost: spent}
+	if b := c.budget; b != nil && m.called {
+		paid := p.Reserved
+		if spent != nil {
+			paid = *spent
+		}
+		b.spent, b.run, b.calls = b.spent+paid, b.run+paid, b.calls+1
+		if recordErr := c.store.addVersionSpend(context.WithoutCancel(ctx), b.version, paid); recordErr != nil {
+			// A spend the version did not record stops the build.
+			b.full = true
+			c.log.Warn("decision log: build spend not recorded", "error", recordErr)
+		}
+	}
 	if err != nil {
 		// The reply stands: a ledger that could not be written is not the
 		// call's failure.

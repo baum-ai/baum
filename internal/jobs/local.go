@@ -39,6 +39,8 @@ type Local struct {
 	// FixDirectory holds fixes' temporary checkouts; empty is
 	// fix.DefaultDirectory.
 	FixDirectory string
+	// Features builds feature histories; nil refuses feature builds.
+	Features FeatureBuilder
 }
 
 type identityVersions struct {
@@ -66,6 +68,9 @@ func (l *Local) clone(ctx context.Context, id string) (repos.Clone, error) {
 	return repos.Clone{}, ErrNeedsClone
 }
 func (l *Local) Prepare(ctx context.Context, item Item) (Prepared, string, error) {
+	if item.Kind == KindFeatureBuild {
+		return l.prepareFeatureBuild(ctx, item)
+	}
 	if (item.Group == "") != (item.PR > 0) {
 		return Prepared{}, "", errors.New("invalid pull request")
 	}
@@ -226,8 +231,11 @@ func (l *Local) resolve(ctx context.Context, c repos.Clone) (config.Config, erro
 }
 
 func (l *Local) Execute(ctx context.Context, p Prepared, progress func(Progress)) (*float64, error) {
-	if p.Kind == KindFix {
+	switch p.Kind {
+	case KindFix:
 		return l.executeFix(ctx, p, progress)
+	case KindFeatureBuild:
+		return l.executeFeatureBuild(ctx, p, progress)
 	}
 	c, e := l.clone(ctx, p.Clone)
 	if e != nil {
@@ -364,4 +372,41 @@ func (a headAssembler) Assemble(ctx context.Context, r assemble.Request) (assemb
 		return assemble.Result{}, errors.New("pull request head changed; estimate again")
 	}
 	return result, e
+}
+
+// prepareFeatureBuild estimates a feature build of the clone's repository.
+// A build with nothing to price, or none that can call now, is blocked.
+func (l *Local) prepareFeatureBuild(ctx context.Context, item Item) (Prepared, string, error) {
+	if item.PR != 0 || item.Group != "" || l.Features == nil {
+		return Prepared{}, "", errors.New("invalid feature build")
+	}
+	c, e := l.clone(ctx, item.Clone)
+	if e != nil {
+		return Prepared{}, "", e
+	}
+	estimate, e := l.Features.EstimateFeatureBuild(ctx, c.Repository, c.Path)
+	if e != nil {
+		return Prepared{}, "", e
+	}
+	list := pricing.Active()
+	p := Prepared{Item: item, Repository: c.Repository, Backend: estimate.Backend, Model: estimate.Model, PriceVersion: list.Version(),
+		EstimateUSD: estimate.EstimateUSD, BuildPullRequests: estimate.PullRequests, BuildCapUSD: estimate.CapUSD, BlockedReason: estimate.Reason}
+	if p.EstimateUSD == nil && p.BlockedReason == "" {
+		p.BlockedReason = "unknown_model_price"
+	}
+	return p, list.Version(), nil
+}
+
+// executeFeatureBuild runs a confirmed feature build, capped at its
+// estimate's cap.
+func (l *Local) executeFeatureBuild(ctx context.Context, p Prepared, progress func(Progress)) (*float64, error) {
+	if l.Features == nil || p.EstimateUSD == nil {
+		return nil, errors.New("invalid feature build")
+	}
+	c, e := l.clone(ctx, p.Clone)
+	if e != nil {
+		return nil, e
+	}
+	spent, e := l.Features.BuildFeatures(ctx, c.Repository, c.Path, p.BuildCapUSD, progress)
+	return &spent, e
 }

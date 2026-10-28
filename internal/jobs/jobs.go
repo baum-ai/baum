@@ -41,6 +41,46 @@ type Item struct {
 // fix is never automatic and runs only from a confirmed estimate.
 const KindFix = "fix"
 
+// KindFeatureBuild is the Item.Kind of a repository's first feature build:
+// its pull request history placed in features (decisionlog's Build). Clone
+// names the repository's clone and PR is 0. It runs only from a confirmed
+// estimate, capped at the estimate's cap (what earlier runs spent and the
+// estimate times 1.25); one stopped at the cap, interrupted or failed is
+// resumed by confirming it again.
+const KindFeatureBuild = "feature_build"
+
+// FeatureBuildEstimate is what a feature build would do and cost.
+type FeatureBuildEstimate struct {
+	Backend, Model string
+	// PullRequests are those left to place.
+	PullRequests int
+	// EstimateUSD is the cost of what is left, nil when it cannot be
+	// priced; CapUSD the cap of the build's spend over all its runs a
+	// confirmation of it holds.
+	EstimateUSD *float64
+	CapUSD      float64
+	// Reason is why it cannot run now.
+	Reason string
+}
+
+// FeatureBuilder estimates and runs feature builds.
+type FeatureBuilder interface {
+	EstimateFeatureBuild(ctx context.Context, repository, dir string) (FeatureBuildEstimate, error)
+	// BuildFeatures runs a build whose version's spend may reach capUSD,
+	// and returns the run's spend; a build that stops before its version
+	// is current returns a *StoppedError.
+	BuildFeatures(ctx context.Context, repository, dir string, capUSD float64, progress func(Progress)) (float64, error)
+}
+
+// StoppedError is a feature build that stopped before it finished, for
+// Reason (a cost or daily cap, an unavailable backend, or "failed"); the
+// job fails with that reason.
+type StoppedError struct{ Reason string }
+
+func (e *StoppedError) Error() string {
+	return "the feature build stopped (" + e.Reason + "); confirm it again to resume"
+}
+
 // FixInputs are what a fix job was confirmed for: what it fixes, the branch
 // it pushes to and the base branch it merges.
 type FixInputs struct {
@@ -108,6 +148,11 @@ type Prepared struct {
 	FixThreads          []FixThread `json:"fix_threads,omitempty"`
 	FixThreadsCapped    bool        `json:"fix_threads_capped,omitempty"`
 	FixThreadsUntrusted int         `json:"fix_threads_untrusted,omitempty"`
+	// BuildPullRequests and BuildCapUSD are a feature build's
+	// (KindFeatureBuild) pull requests left to place and the cap of its
+	// spend over all its runs.
+	BuildPullRequests int     `json:"build_pull_requests,omitempty"`
+	BuildCapUSD       float64 `json:"build_cap_usd,omitempty"`
 }
 
 // sameConfirmedInputs reports whether two confirmations authorize the same
@@ -419,8 +464,8 @@ func (q *Queue) estimate(ctx context.Context, items []Item, mode string, isolati
 	if len(items) < 1 || len(items) > 50 || (mode != "single" && mode != "batch") || (mode == "single" && len(items) != 1) {
 		return Estimate{}, errors.New("invalid generation selection")
 	}
-	// A fix is confirmed on its own.
-	if items[0].Kind != "" && (mode != "single" || items[0].Kind != KindFix) {
+	// A fix or a feature build is confirmed on its own.
+	if items[0].Kind != "" && (mode != "single" || (items[0].Kind != KindFix && items[0].Kind != KindFeatureBuild)) {
 		return Estimate{}, errors.New("invalid generation selection")
 	}
 	for _, item := range items[1:] {
@@ -752,7 +797,12 @@ func (q *Queue) worker() {
 			current.State = "completed"
 			var refused *NotAutomaticError
 			var fixErr *fix.Error
+			var stopped *StoppedError
 			switch {
+			case err != nil && errors.As(err, &stopped):
+				current.State = "failed"
+				current.Reason = stopped.Reason
+				current.Detail = stopped.Error()
 			case err != nil && errors.As(err, &fixErr):
 				current.State = "failed"
 				current.Reason = fixErr.Reason

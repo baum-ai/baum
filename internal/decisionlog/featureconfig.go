@@ -62,13 +62,41 @@ const (
 	// FeatureConsolidateEvery is how often a repository's features are
 	// consolidated, when they changed.
 	FeatureConsolidateEvery = 7 * 24 * time.Hour
-	// FeatureSplitPulls and FeatureSplitAge make a feature a split candidate:
-	// at least that many pull requests over at least that long. A feature is
-	// split at most FeatureMaxSplits times.
+	// FeatureSplitPulls and FeatureSplitAge make a feature a split
+	// candidate: more pull requests than that, or pull requests opened
+	// further apart. A pass offers at most FeatureMaxSplits features.
 	FeatureSplitPulls = 30
 	FeatureSplitAge   = 8 * 7 * 24 * time.Hour
 	FeatureMaxSplits  = 3
+	// FeatureSplitHold is how long after a split a merge undoing it is not
+	// applied.
+	FeatureSplitHold = 4 * 7 * 24 * time.Hour
 	// FeatureFirstBuildWindow is how far back a repository's first build
 	// reads its pull requests, and how far back the first sync lists them.
 	FeatureFirstBuildWindow = 180 * 24 * time.Hour
+	// FeatureBuildTries is how many times a first build makes a failed batch
+	// call before splitting it; FeatureBuildCandidates is the most
+	// candidates a batch call offers; FeatureBuildSummarizeEvery is how many
+	// batches go between its text passes.
+	FeatureBuildTries          = 2
+	FeatureBuildCandidates     = 40
+	FeatureBuildSummarizeEvery = 3
+	// FeatureBuildCapFactor makes a confirmed build's cost cap from its
+	// estimate.
+	FeatureBuildCapFactor = 1.25
+)
+
+// The sizes a build's estimate assumes of what it cannot know beforehand
+// (local only; hosted builds have no estimate).
+const (
+	FeatureEstimateBytesPerToken           = 3
+	FeatureEstimateCandidateBytes          = 1500
+	FeatureEstimateItemOutputTokens        = 150
+	FeatureEstimatePullsPerFeature         = 3
+	FeatureEstimateTextPasses              = 2
+	FeatureEstimateTextBytes               = 9000
+	FeatureEstimateTextOutputTokens        = 800
+	FeatureEstimatePullOutputTokens        = 300
+	FeatureEstimateSplitBytes              = 30000
+	FeatureEstimateConsolidateOutputTokens = 3000
 )

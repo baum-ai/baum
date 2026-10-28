@@ -571,7 +571,8 @@ func (s *Service) baumWork(start time.Time, q Query) BaumWork {
 	work.Available = true
 	failures := map[string]int{}
 	for _, j := range s.Jobs() {
-		if j.CreatedAt.Before(start) || q.Repository != "" && !strings.EqualFold(j.Repository, q.Repository) || q.Agent != "" && jobAgents[j.Backend] != q.Agent {
+		// A feature build is the decision log's spend, not a review's.
+		if j.Kind == jobs.KindFeatureBuild || j.CreatedAt.Before(start) || q.Repository != "" && !strings.EqualFold(j.Repository, q.Repository) || q.Agent != "" && jobAgents[j.Backend] != q.Agent {
 			continue
 		}
 		switch {

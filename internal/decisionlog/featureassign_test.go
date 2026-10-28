@@ -28,7 +28,11 @@ type scriptBackend struct {
 	assign func(user string) (string, error)
 	text   func() (string, error)
 	pull   func() (string, error)
-	calls  map[string]int
+	// batch, merge and split answer a build's and consolidation's calls.
+	batch, merge, split func(user string) (string, error)
+	calls               map[string]int
+	// usage, when set, is reported instead of a small call's.
+	usage  *agent.Usage
 	onCall func()
 	// rejections is reported with every reply.
 	rejections int
@@ -47,10 +51,22 @@ func (b *scriptBackend) Complete(_ context.Context, req agent.CompleteRequest) (
 		b.onCall()
 	}
 	out := agent.Completion{Model: "claude-haiku-5-5", Usage: agent.Usage{Input: 1000, Output: 100}, Rejections: b.rejections}
+	if b.usage != nil {
+		out.Usage = *b.usage
+	}
 	schema := string(req.Schema)
 	var reply string
 	var err error
 	switch {
+	case strings.Contains(schema, `"assignments"`):
+		b.calls["batch"]++
+		reply, err = b.batch(req.User)
+	case strings.Contains(schema, `"groups"`):
+		b.calls["merge"]++
+		reply, err = b.merge(req.User)
+	case strings.Contains(schema, `"parts"`):
+		b.calls["split"]++
+		reply, err = b.split(req.User)
 	case strings.Contains(schema, `"choice"`):
 		b.calls["assign"]++
 		reply, err = b.assign(req.User)

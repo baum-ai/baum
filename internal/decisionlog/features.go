@@ -119,7 +119,7 @@ func (w *FeatureWorker) Run(ctx context.Context) {
 	}
 }
 
-// RunOnce runs the stages (sync, index, placement and text) for every
+// RunOnce runs the stages (sync, index, placement, text and consolidation) for every
 // repository whose decisions are captured and that has a clone. A repository turned off is not read and makes no
 // GitHub call.
 func (w *FeatureWorker) RunOnce(ctx context.Context) {
@@ -157,6 +157,9 @@ func (w *FeatureWorker) RunOnce(ctx context.Context) {
 		}
 		if err == nil && !synced.Stopped {
 			_, err = w.Summarize(ctx, repository.Repository, dir, FeatureOptions{})
+		}
+		if err == nil && !synced.Stopped {
+			_, err = w.Consolidate(ctx, repository.Repository, dir, FeatureOptions{})
 		}
 		if err != nil && ctx.Err() == nil {
 			w.retryAt[repository.Repository] = w.now().Add(FeatureQuiet)
@@ -482,6 +485,9 @@ type FeatureOptions struct {
 	Manual bool
 	// Backend and Model, when set, replace the configured ones.
 	Backend, Model string
+	// building runs the stage on the repository's building version, for a
+	// first build.
+	building bool
 }
 
 // featureRun is one repository's run of placement or the text stage.
@@ -521,8 +527,12 @@ func (w *FeatureWorker) newRun(ctx context.Context, repository, dir string, o Fe
 			on, err := r.refresh(ctx)
 			return r.prefs, r.settings, on, err
 		}}
+	state := VersionCurrent
+	if o.building {
+		state = VersionBuilding
+	}
 	var err error
-	r.version, err = liveVersion(ctx, w.Store.db, repository, !o.DryRun, r.now)
+	r.version, err = featureVersion(ctx, w.Store.db, repository, state, !o.DryRun, r.now)
 	return r, err
 }
 
