@@ -867,17 +867,13 @@ test("walks through a review, comments on a behaviour and submits the review", a
   await walk.getByRole("button", { name: "Save comment", exact: true }).click();
   await expect(walk.getByText("1 comment", { exact: true })).toBeVisible();
   await walk.screenshot({ path: "test-results/walkthrough-stop.png", animations: "disabled" });
-  // A reload keeps the view, what was looked at and the comment.
+  // A reload keeps the walkthrough, what was looked at and the comment.
   await page.reload();
   await expect(walk.getByText("1 comment", { exact: true })).toBeVisible();
-  await page.keyboard.press("e");
-  await expect(page).toHaveURL(/walk=all/);
-  await expect(walk.getByRole("button", { name: /^With comments/ })).toContainText("1");
+  await expect(page).toHaveURL(/walk=tour/);
+  await walk.getByRole("button", { name: "Send your review", exact: true }).click();
   await walk.getByRole("radio", { name: /Request changes/ }).click();
-  await walk.screenshot({
-    path: "test-results/walkthrough-everything.png",
-    animations: "disabled",
-  });
+  await walk.screenshot({ path: "test-results/walkthrough-submit.png", animations: "disabled" });
   await walk.getByRole("button", { name: "Request changes", exact: true }).click();
   await expect(walk.getByText("Your review is on GitHub.")).toBeVisible();
   expect(submitted).toEqual([
@@ -892,7 +888,12 @@ test("walks through a review, comments on a behaviour and submits the review", a
   ]);
   // Narrow: no sideways scroll.
   await page.setViewportSize({ width: 390, height: 844 });
-  await walk.getByRole("button", { name: "Guided tour", exact: true }).click();
+  await walk
+    .getByRole("button", {
+      name: "Retries wait longer after each failure, up to a cap",
+      exact: true,
+    })
+    .click();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(
     true,
   );

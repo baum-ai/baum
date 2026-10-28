@@ -43,7 +43,7 @@ import { canMerge, MergeDialog } from "./merge";
 import { useShortcuts } from "./shortcuts";
 import { PullRequestState, pullRequestStates } from "./inbox";
 import { canRerunChecks, canUpdateBranch, RerunChecksDialog, UpdateBranchDialog } from "./unblock";
-import { Walkthrough, type WalkView } from "./walkthrough";
+import { Walkthrough } from "./walkthrough";
 function Transcript({ id, query }: { id: string; query: string }) {
   const [load, setLoad] = useState<LocalTranscript | null>(null);
   const [error, setError] = useState(false);
@@ -124,11 +124,12 @@ export function LocalReview({
   const url = useUrlState();
   const back = backTo(url.search);
   // The walkthrough is opt-in: the full review stays the page's default.
+  // walk=all named the list view the walkthrough once had; it opens the tour.
   const walk = url.search.get("walk");
-  const walkView: WalkView | null = walk === "all" ? "all" : walk === "tour" ? "tour" : null;
-  const setWalk = (view: WalkView | null) =>
+  const walking = walk === "tour" || walk === "all";
+  const setWalk = (open: boolean) =>
     url.update((current) => {
-      if (view) current.set("walk", view);
+      if (open) current.set("walk", "tour");
       else current.delete("walk");
       return current;
     });
@@ -175,7 +176,7 @@ export function LocalReview({
   const steps = useRef<ReviewSteps>(null);
   useShortcuts((event) => {
     // The walkthrough has keys of its own.
-    if (walkView && doc) return;
+    if (walking && doc) return;
     const step =
       event.key === "j" ? steps.current?.next : event.key === "k" ? steps.current?.previous : null;
     if (step) {
@@ -276,15 +277,13 @@ export function LocalReview({
   return (
     <ReviewBoundary key={`${clone}:${pr.number}`}>
       <AttachmentUrlProvider resolve={attachments}>
-        {walkView && doc ? (
+        {walking && doc ? (
           // A new version starts afresh, with that version's own progress.
           <Walkthrough
             key={doc.review.version}
             entry={entry}
             document={doc}
-            view={walkView}
-            setView={setWalk}
-            close={() => setWalk(null)}
+            close={() => setWalk(false)}
             patches={patches}
             changed={changed}
           />
@@ -360,7 +359,7 @@ export function LocalReview({
                       </Button>
                     ) : null}
                     {doc ? (
-                      <Button variant="secondary" size="compact" onClick={() => setWalk("tour")}>
+                      <Button variant="secondary" size="compact" onClick={() => setWalk(true)}>
                         Walk through
                       </Button>
                     ) : null}

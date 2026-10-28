@@ -13,7 +13,6 @@ import {
   ExternalLinkIcon,
   SearchIcon,
 } from "@baum/viewer/components/icons";
-import { SegmentedControl } from "@baum/viewer/components/ui";
 import {
   RISK_SCORE_MEANING,
   type ReviewDocument,
@@ -36,8 +35,6 @@ import {
 } from "./walkthrough-model";
 import "./walkthrough.css";
 
-export type WalkView = "tour" | "all";
-
 const plural = (count: number, one: string, many = `${one}s`) =>
   `${count} ${count === 1 ? one : many}`;
 
@@ -45,9 +42,9 @@ const plural = (count: number, one: string, many = `${one}s`) =>
  *  before steps had titles, whose title is its first sentence. */
 const echoes = (stop: Stop) => !stop.before && stop.after.replace(/[.!?]\s*$/, "") === stop.title;
 
-/** The review as a guided tour of its behaviours, riskiest chapter first, or
- *  as one list of all of them. Nobody has to sign off on every behaviour:
- *  moving past a stop or opening its details counts as having looked at it,
+/** The review as a guided tour of its behaviours, riskiest chapter first.
+ *  Nobody has to sign off on every behaviour:
+ *  moving past a stop counts as having looked at it,
  *  and a comment is the only way to say something looks off. The comments go
  *  to GitHub as one review, each on the line its behaviour cites. It is drawn
  *  as the inbox is: the stops listed on the left, the one being read beside
@@ -55,16 +52,12 @@ const echoes = (stop: Stop) => !stop.before && stop.after.replace(/[.!?]\s*$/, "
 export function Walkthrough({
   entry,
   document,
-  view,
-  setView,
   close,
   patches,
   changed,
 }: {
   entry: Entry;
   document: ReviewDocument;
-  view: WalkView;
-  setView: (view: WalkView) => void;
   /** Back to the full review. */
   close: () => void;
   patches: HunkPatchSource;
@@ -90,13 +83,9 @@ export function Walkthrough({
   const last = tour.stops.length + 1;
   // 0 is the introduction, 1… the stops, `last` the wrap-up.
   const [step, setStep] = useState(0);
-  // The stop the list's focus is on, and the tour's last stop.
-  const [cur, setCur] = useState(0);
   const [skipped, setSkipped] = useState(0);
   const [editing, setEditing] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
-  const [open, setOpen] = useState<Set<string>>(new Set());
-  const [filter, setFilter] = useState<"all" | "unseen" | "commented">("all");
   const detail = useRef<HTMLDivElement>(null);
   // Each stop starts at its top, as a new page would.
   useEffect(() => {
@@ -107,7 +96,6 @@ export function Walkthrough({
     next = Math.max(0, Math.min(last, next));
     const leaving = tour.stops[step - 1];
     if (leaving && next !== step) markSeen(leaving);
-    if (next >= 1 && next < last) setCur(next - 1);
     setStep(next);
     setSkipped(skip);
     setEditing(null);
@@ -120,96 +108,23 @@ export function Walkthrough({
     const next = tour.stops.findIndex((stop, i) => i >= from && i !== step - 1 && !done(stop));
     go(next === -1 ? last : next + 1, Math.max(0, (next === -1 ? tour.stops.length : next) - from));
   };
-  const toTour = (at?: number) => {
-    if (at !== undefined) {
-      setStep(at + 1);
-      setCur(at);
-      setSkipped(0);
-    } else {
-      // Back into the tour lands on the first stop not looked at from where
-      // the reader was, wrapping to the start.
-      const after = tour.stops.findIndex((stop, i) => i >= cur && !done(stop));
-      const next = after === -1 ? tour.stops.findIndex((stop) => !done(stop)) : after;
-      setStep(next === -1 ? last : next + 1);
-      if (next !== -1) setCur(next);
-      setSkipped(tour.stops.filter(done).length);
-    }
-    setView("tour");
-  };
-  const toAll = () => {
-    const stop = tour.stops[step - 1];
-    if (view === "tour" && stop) {
-      setOpen((current) => new Set(current).add(stop.id));
-      markSeen(stop);
-    }
-    setView("all");
-  };
-  const toggleDetails = (index: number) => {
-    const stop = tour.stops[index]!;
-    setCur(index);
-    markSeen(stop);
-    setOpen((current) => {
-      const next = new Set(current);
-      if (next.has(stop.id)) next.delete(stop.id);
-      else next.add(stop.id);
-      return next;
-    });
-  };
   const startComment = (stop: Stop) => {
     setDraft(progress.notes[stop.id] ?? "");
     setEditing(stop.id);
   };
 
-  // Not looked at keeps the row the reader is on, which opening its details
-  // or its comment has just marked looked at.
-  const visible = tour.stops.flatMap((stop, index) =>
-    filter === "all" ||
-    (filter === "unseen" && (!done(stop) || index === cur)) ||
-    (filter === "commented" && commented(stop))
-      ? [index]
-      : [],
-  );
   const claim = step >= 1 && step < last ? tour.stops[step - 1]! : null;
   useShortcuts((event) => {
     const key = event.key;
-    if (key === "e") {
+    if (key === "ArrowRight" || key === "j") {
       event.preventDefault();
-      if (view === "tour") toAll();
-      else toTour();
-    } else if (view === "tour") {
-      if (key === "ArrowRight" || key === "j") {
-        event.preventDefault();
-        forward();
-      } else if (key === "ArrowLeft" || key === "k") {
-        event.preventDefault();
-        go(step - 1);
-      } else if (key === "c" && claim) {
-        event.preventDefault();
-        startComment(claim);
-      }
-    } else {
-      const position = visible.indexOf(cur);
-      if (key === "j" || key === "ArrowDown") {
-        event.preventDefault();
-        setCur(visible[Math.min(visible.length - 1, position + 1)] ?? cur);
-      } else if (key === "k" || key === "ArrowUp") {
-        event.preventDefault();
-        setCur(visible[Math.max(0, position - 1)] ?? cur);
-      } else if (key === "o" || key === "Enter") {
-        event.preventDefault();
-        toggleDetails(cur);
-      } else if (key === "c") {
-        event.preventDefault();
-        const stop = tour.stops[cur]!;
-        setOpen((current) => new Set(current).add(stop.id));
-        markSeen(stop);
-        requestAnimationFrame(() =>
-          window.document.getElementById(`walk-note-${stop.id}`)?.focus(),
-        );
-      } else if (key === "t") {
-        event.preventDefault();
-        toTour(cur);
-      }
+      forward();
+    } else if (key === "ArrowLeft" || key === "k") {
+      event.preventDefault();
+      go(step - 1);
+    } else if (key === "c" && claim) {
+      event.preventDefault();
+      startComment(claim);
     }
   });
 
@@ -236,18 +151,6 @@ export function Walkthrough({
       </div>
     );
 
-  const submit = (
-    <Submit
-      entry={entry}
-      document={document}
-      tour={tour}
-      progress={progress}
-      setProgress={setProgress}
-      seenCount={seenCount}
-      unseen={unseen.length}
-      changed={changed}
-    />
-  );
   return (
     <section aria-label="Walkthrough" className="walkthrough">
       <header className="walk-head">
@@ -269,15 +172,6 @@ export function Walkthrough({
           </p>
         </div>
         <div className="walk-head-actions">
-          <SegmentedControl
-            label="View"
-            value={view}
-            onChange={(next) => (next === "tour" ? toTour() : toAll())}
-            items={[
-              { value: "tour", label: "Guided tour" },
-              { value: "all", label: "Everything" },
-            ]}
-          />
           <button type="button" className="walk-secondary" onClick={close}>
             Full review
           </button>
@@ -300,106 +194,73 @@ export function Walkthrough({
         </p>
       ) : null}
       <HunkPatchProvider source={patches}>
-        {view === "tour" ? (
-          <div className="walk-split">
-            <StopList
-              tour={tour}
-              step={step}
-              done={done}
-              commented={commented}
-              seenCount={seenCount}
-              commentCount={commentCount}
-              go={go}
-            />
-            <div ref={detail} className="walk-detail">
-              {step === 0 ? (
-                <Intro
-                  entry={entry}
-                  document={document}
-                  tour={tour}
-                  done={done}
-                  go={go}
-                  start={forward}
-                  toAll={toAll}
-                />
-              ) : claim ? (
-                <Claim
-                  key={claim.id}
-                  tour={tour}
-                  stop={claim}
-                  document={document}
-                  seen={seen.has(claim.id)}
-                  note={progress.notes[claim.id] ?? ""}
-                  editing={editing === claim.id}
-                  draft={draft}
-                  setDraft={setDraft}
-                  startComment={() => startComment(claim)}
-                  saveComment={() => {
-                    setNote(claim, draft.trim());
-                    markSeen(claim);
-                    setEditing(null);
-                  }}
-                  cancelComment={() => setEditing(null)}
-                  removeComment={() => setNote(claim, "")}
-                  next={forward}
-                  back={() => go(step - 1)}
-                  nextLabel={
-                    tour.stops.slice(step).some((stop) => !done(stop)) ? "Next" : "Wrap up"
-                  }
-                  skipped={skipped}
-                />
-              ) : (
-                <WrapUp
-                  tour={tour}
-                  unseen={unseen}
-                  seenCount={seenCount}
-                  commentCount={commentCount}
-                  go={go}
-                  submit={submit}
-                />
-              )}
-            </div>
-          </div>
-        ) : (
-          <div className="walk-split">
-            <div className="walk-ledger">
-              <Ledger
-                tour={tour}
+        <div className="walk-split">
+          <StopList
+            tour={tour}
+            step={step}
+            done={done}
+            commented={commented}
+            seenCount={seenCount}
+            commentCount={commentCount}
+            go={go}
+          />
+          <div ref={detail} className="walk-detail">
+            {step === 0 ? (
+              <Intro
+                entry={entry}
                 document={document}
-                visible={visible}
-                cur={cur}
-                open={open}
-                filter={filter}
-                setFilter={setFilter}
-                progress={progress}
+                tour={tour}
                 done={done}
-                commented={commented}
-                toggle={toggleDetails}
-                expandAll={(expand) => {
-                  const stops = visible.map((index) => tour.stops[index]!);
-                  setOpen(expand ? new Set(stops.map((stop) => stop.id)) : new Set());
-                  if (expand) markSeen(...stops);
-                }}
-                markAllSeen={() => markSeen(...tour.stops)}
-                setNote={setNote}
-                comment={(index) => {
-                  const stop = tour.stops[index]!;
-                  setCur(index);
-                  markSeen(stop);
-                  setOpen((current) => new Set(current).add(stop.id));
-                  requestAnimationFrame(() =>
-                    window.document.getElementById(`walk-note-${stop.id}`)?.focus(),
-                  );
-                }}
-                walk={toTour}
+                go={go}
+                start={forward}
               />
-            </div>
-            <aside aria-label="Submit review" className="walk-aside">
-              <h2 className="walk-label">Submit review</h2>
-              {submit}
-            </aside>
+            ) : claim ? (
+              <Claim
+                key={claim.id}
+                tour={tour}
+                stop={claim}
+                document={document}
+                seen={seen.has(claim.id)}
+                note={progress.notes[claim.id] ?? ""}
+                editing={editing === claim.id}
+                draft={draft}
+                setDraft={setDraft}
+                startComment={() => startComment(claim)}
+                saveComment={() => {
+                  setNote(claim, draft.trim());
+                  markSeen(claim);
+                  setEditing(null);
+                }}
+                cancelComment={() => setEditing(null)}
+                removeComment={() => setNote(claim, "")}
+                next={forward}
+                back={() => go(step - 1)}
+                nextLabel={tour.stops.slice(step).some((stop) => !done(stop)) ? "Next" : "Wrap up"}
+                skipped={skipped}
+              />
+            ) : (
+              <WrapUp
+                tour={tour}
+                unseen={unseen}
+                seenCount={seenCount}
+                commentCount={commentCount}
+                go={go}
+                submit={
+                  <Submit
+                    entry={entry}
+                    document={document}
+                    tour={tour}
+                    progress={progress}
+                    setProgress={setProgress}
+                    seenCount={seenCount}
+                    unseen={unseen.length}
+                    changed={changed}
+                  />
+                }
+              />
+            )}
           </div>
-        )}
+        </div>
       </HunkPatchProvider>
     </section>
   );
@@ -512,7 +373,6 @@ function StopList({
             <span aria-hidden className="walk-mark walk-mark-end">
               <SearchIcon size={10} />
             </span>,
-            "Intro",
           )}
         </ul>
         {tour.chapters.map((chapter, index) => (
@@ -556,7 +416,6 @@ function StopList({
               <span aria-hidden className="walk-mark walk-mark-end">
                 <ChevronRightIcon size={10} />
               </span>,
-              "Submit",
             )}
           </ul>
         </section>
@@ -567,9 +426,6 @@ function StopList({
         </span>
         <span>
           <kbd>c</kbd> comment
-        </span>
-        <span>
-          <kbd>e</kbd> everything
         </span>
       </footer>
     </nav>
@@ -583,7 +439,6 @@ function Intro({
   done,
   go,
   start,
-  toAll,
 }: {
   entry: Entry;
   document: ReviewDocument;
@@ -591,7 +446,6 @@ function Intro({
   done: (stop: Stop) => boolean;
   go: (step: number, skip?: number) => void;
   start: () => void;
-  toAll: () => void;
 }) {
   const level = tour.level;
   return (
@@ -612,10 +466,6 @@ function Intro({
         <button type="button" className="walk-primary" onClick={start}>
           Start the tour
           <kbd aria-hidden>→</kbd>
-        </button>
-        <button type="button" className="walk-secondary" onClick={toAll}>
-          See everything at once
-          <kbd aria-hidden>e</kbd>
         </button>
       </div>
       {tour.risks.length || level ? (
@@ -962,213 +812,6 @@ function WrapUp({
         {submit}
       </section>
     </article>
-  );
-}
-
-function Ledger({
-  tour,
-  document,
-  visible,
-  cur,
-  open,
-  filter,
-  setFilter,
-  progress,
-  done,
-  commented,
-  toggle,
-  expandAll,
-  markAllSeen,
-  setNote,
-  comment,
-  walk,
-}: {
-  tour: Tour;
-  document: ReviewDocument;
-  visible: number[];
-  cur: number;
-  open: Set<string>;
-  filter: "all" | "unseen" | "commented";
-  setFilter: (filter: "all" | "unseen" | "commented") => void;
-  progress: Progress;
-  done: (stop: Stop) => boolean;
-  commented: (stop: Stop) => boolean;
-  toggle: (index: number) => void;
-  expandAll: (expand: boolean) => void;
-  markAllSeen: () => void;
-  setNote: (stop: Stop, note: string) => void;
-  comment: (index: number) => void;
-  walk: (index: number) => void;
-}) {
-  const allOpen = visible.length > 0 && visible.every((at) => open.has(tour.stops[at]!.id));
-  const counts = {
-    all: tour.stops.length,
-    unseen: tour.stops.filter((stop) => !done(stop)).length,
-    commented: tour.stops.filter(commented).length,
-  };
-  const current = useRef<HTMLDivElement>(null);
-  // A block body: Chrome's scrollIntoView returns a promise, which React
-  // would take for the effect's cleanup.
-  useEffect(() => {
-    current.current?.scrollIntoView?.({ block: "nearest" });
-  }, [cur]);
-  return (
-    <>
-      <div className="walk-filters">
-        {(
-          [
-            ["all", "All"],
-            ["unseen", "Not looked at"],
-            ["commented", "With comments"],
-          ] as const
-        ).map(([value, label]) => (
-          <button
-            key={value}
-            type="button"
-            aria-pressed={filter === value}
-            onClick={() => setFilter(value)}
-            className="walk-filter"
-          >
-            {label} <span className="walk-filter-count">{counts[value]}</span>
-          </button>
-        ))}
-        <span className="walk-filters-end">
-          <button type="button" className="walk-small" onClick={markAllSeen}>
-            Mark all looked at
-          </button>
-          <button type="button" className="walk-small" onClick={() => expandAll(!allOpen)}>
-            {allOpen ? "Collapse all details" : "Expand all details"}
-          </button>
-        </span>
-      </div>
-      <div className="walk-ledger-body">
-        {tour.chapters.map((chapter, index) => {
-          const rows = chapter.stops.filter((at) => visible.includes(at));
-          if (rows.length === 0) return null;
-          return (
-            <section key={chapter.id} aria-label={chapter.title} className="walk-group">
-              <div className="walk-group-head">
-                <h2>
-                  {index + 1} · {chapter.title}
-                </h2>
-                <ChapterProgress tour={tour} chapter={chapter} done={done} />
-                <RiskBadge level={chapter.level} />
-              </div>
-              {rows.map((at) => {
-                const stop = tour.stops[at]!;
-                const isOpen = open.has(stop.id);
-                const isCommented = commented(stop);
-                const isSeen = !isCommented && done(stop);
-                return (
-                  <div
-                    key={stop.id}
-                    ref={at === cur ? current : undefined}
-                    className={cn("walk-entry", at === cur && "current")}
-                  >
-                    <div className="walk-entry-main">
-                      <span
-                        role="img"
-                        aria-label={
-                          isCommented
-                            ? "Has your comment"
-                            : isSeen
-                              ? "Looked at"
-                              : "Not looked at yet"
-                        }
-                        className="walk-entry-mark"
-                      >
-                        <Mark state={isCommented ? "commented" : isSeen ? "seen" : null} />
-                      </span>
-                      <div className="walk-entry-text">
-                        <h3>{stop.title}</h3>
-                        {echoes(stop) ? null : <p>{stop.after}</p>}
-                        {isCommented && !isOpen ? (
-                          <p className="walk-entry-note">{progress.notes[stop.id]}</p>
-                        ) : null}
-                        <div className="walk-entry-links">
-                          <button
-                            type="button"
-                            aria-expanded={isOpen}
-                            onClick={() => toggle(at)}
-                            className="walk-link"
-                          >
-                            <ChevronRightIcon
-                              size={12}
-                              className={cn("walk-chevron", isOpen && "open")}
-                            />
-                            Details and evidence
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => walk(at)}
-                            className="walk-link muted"
-                          >
-                            Walk me through it
-                          </button>
-                        </div>
-                      </div>
-                      <button type="button" className="walk-small" onClick={() => comment(at)}>
-                        {isCommented ? "Edit comment" : "Comment"}
-                      </button>
-                    </div>
-                    {isOpen ? (
-                      <div className="walk-entry-details">
-                        {stop.before ? (
-                          <p>
-                            <strong>Before:</strong> {stop.before}
-                          </p>
-                        ) : null}
-                        {stop.question ? (
-                          <p>
-                            <strong>Ask yourself:</strong> {stop.question}
-                          </p>
-                        ) : null}
-                        {stop.text && stop.text !== stop.after ? (
-                          <p className="walk-entry-quote">The review states: “{stop.text}”</p>
-                        ) : null}
-                        {stop.anchors.length ? (
-                          <HunkEvidence document={document} anchors={stop.anchors} />
-                        ) : null}
-                        <label className="walk-entry-field">
-                          Comment{stop.where ? `, attached to ${stop.where}` : ""}. Leave it empty
-                          if nothing looks off.
-                          <textarea
-                            id={`walk-note-${stop.id}`}
-                            value={progress.notes[stop.id] ?? ""}
-                            placeholder={stop.question ?? ""}
-                            onChange={(event) => setNote(stop, event.target.value)}
-                            className="walk-textarea"
-                          />
-                        </label>
-                      </div>
-                    ) : null}
-                  </div>
-                );
-              })}
-            </section>
-          );
-        })}
-        {visible.length === 0 ? <p className="walk-empty">No behaviours in this view.</p> : null}
-      </div>
-      <footer className="walk-keys" aria-hidden>
-        <span>
-          <kbd>j</kbd> <kbd>k</kbd> move
-        </span>
-        <span>
-          <kbd>o</kbd> details
-        </span>
-        <span>
-          <kbd>c</kbd> comment
-        </span>
-        <span>
-          <kbd>t</kbd> walk me through it
-        </span>
-        <span>
-          <kbd>e</kbd> back to the tour
-        </span>
-        <span>Opening details counts as looked at</span>
-      </footer>
-    </>
   );
 }
 

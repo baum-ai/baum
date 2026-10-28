@@ -77,8 +77,9 @@ confirms, with its replies on the review threads it addressed, are the app's
 only GitHub writes (see below).
 
 The PR page's **Walk through** button (beside Regenerate, once a review is
-saved) opens the walkthrough (`src/walkthrough.tsx`): `?…&walk=tour` or
-`walk=all`, so a reload stays there, and **Full review** returns to the viewer.
+saved) opens the walkthrough (`src/walkthrough.tsx`): `?…&walk=tour` (or the
+retired `walk=all`), so a reload stays there, and **Full review** returns to
+the viewer.
 `buildTour` (`src/walkthrough-model.ts`) turns the document into chapters, the
 logical sections with hunks in `sectionsInReviewOrder` (mechanical and obsolete
 sections are left out), and stops, one per behaviour step: its `title`,
@@ -88,13 +89,12 @@ the first semicolon, as the title), and to the section summary for a section
 without steps. A stop's code is the viewer's `HunkEvidence` for
 the step's hunk anchors, reading omitted excerpts through the page's patch
 source. The walkthrough is drawn as the inbox is, with the Up next design's
-`--un-*` colours (`src/walkthrough.css`). **Guided tour** lists the overview,
-every stop by chapter and the wrap-up on the left, and shows the one being
-read beside them: its title, its before and after, Next and Something looks
-off, the question to ask, the chapter's risk and its code. Next and → skip
-stops already looked at. **Everything** lists every stop by chapter with
-filters, details and a comment box per row, and the submit panel beside it. Leaving a
-stop, opening its details or commenting marks it looked at; seen marks and
+`--un-*` colours (`src/walkthrough.css`). It is one guided tour: the
+overview, every stop by chapter and the wrap-up are listed on the left, and
+the one being read is beside them: its title, its before and after, Next and
+Something looks off, the question to ask, the chapter's risk and its code. The
+wrap-up lists the stops not looked at and sends the review. Next and → skip
+stops already looked at. Leaving a stop or commenting on it marks it looked at; seen marks and
 drafts are kept in `localStorage` (`baum.walkthrough`) per repository, pull
 request and review version, the 40 most recent. Submitting posts
 `POST api/prs/review` with `{repository, pr, head_sha, event, body, comments}`:
@@ -105,7 +105,7 @@ daemon sends it once and maps refusals to `{code, message}` (`forbidden` 403,
 `not_found` 404, `own_pull_request` and `invalid_line` 422, `failed` 502); on
 `invalid_line` the panel offers to resend with every comment in the body. A
 sent review clears the drafts and links to it on GitHub. The tour's keys (→/j,
-←/k, c, e; in Everything j/k, o, c, t, e) are listed in the shortcuts sheet.
+←/k, c) are listed in the shortcuts sheet.
 
 A pull request with a merge conflict (`merge` is `conflict`), failing checks
 (`checks` is `failing`) or, on the person's own pull request

@@ -511,17 +511,6 @@
   color: var(--un-link-hover);
   text-decoration-color: currentColor;
 }
-.walk-link.muted {
-  color: var(--un-muted);
-  font-weight: 500;
-  text-decoration: none;
-}
-.walk-chevron {
-  transition: transform 0.15s;
-}
-.walk-chevron.open {
-  transform: rotate(90deg);
-}
 
 /* A comment being written, or one saved */
 .walk-comment {
@@ -745,156 +734,6 @@
   border-radius: 8px;
 }
 
-/* Everything at once */
-.walk-ledger {
-  display: flex;
-  flex: 1;
-  flex-direction: column;
-  min-width: 0;
-}
-.walk-filters {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 6px;
-  padding: 12px 20px;
-  border-bottom: 1px solid var(--un-hairline);
-}
-.walkthrough .walk-filter {
-  padding: 4px 10px;
-  border: 1px solid var(--un-line);
-  border-radius: 6px;
-  background: var(--un-card);
-  box-shadow: var(--un-shadow-button);
-  font-size: 13px;
-  font-weight: 500;
-}
-.walkthrough .walk-filter:hover {
-  background: var(--un-hover);
-}
-.walkthrough .walk-filter:active {
-  transform: translateY(1px);
-}
-.walkthrough .walk-filter[aria-pressed="true"] {
-  border-color: var(--un-ink);
-  background: var(--un-ink);
-  color: var(--un-panel);
-}
-.walk-filter-count {
-  opacity: 0.65;
-  font-variant-numeric: tabular-nums;
-}
-.walk-filters-end {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  margin-left: auto;
-}
-.walk-ledger-body {
-  flex: 1;
-  min-height: 0;
-  padding: 4px 12px 16px;
-  overflow: auto;
-}
-.walk-ledger-body .walk-group-head {
-  padding: 10px 10px 6px;
-}
-.walk-entry {
-  border-radius: 10px;
-}
-.walk-entry + .walk-entry {
-  border-top: 1px solid var(--un-hairline);
-}
-.walk-entry.current {
-  border-top-color: transparent;
-  background: var(--un-card);
-  box-shadow: var(--un-shadow-selected);
-}
-.walk-entry.current + .walk-entry {
-  border-top-color: transparent;
-}
-.walk-entry-main {
-  display: flex;
-  align-items: flex-start;
-  gap: 12px;
-  padding: 12px 10px;
-}
-.walk-entry-mark {
-  display: flex;
-  padding-top: 2px;
-}
-.walk-entry-text {
-  display: flex;
-  flex: 1;
-  flex-direction: column;
-  gap: 5px;
-  min-width: 0;
-}
-.walk-entry-text h3 {
-  margin: 0;
-  font-size: 15px;
-  font-weight: 600;
-  line-height: 1.4;
-}
-.walk-entry-text p {
-  margin: 0;
-  color: var(--un-ink-soft);
-  font-size: 14px;
-  line-height: 1.5;
-}
-.walk-entry-text .walk-entry-note {
-  padding: 6px 10px;
-  border: 1px solid var(--un-working-line);
-  border-radius: 6px;
-  background: var(--un-working-bg);
-  color: var(--un-ink);
-  white-space: pre-line;
-}
-.walk-entry-links {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 14px;
-  font-size: 12.5px;
-}
-.walk-entry-details {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  padding: 0 10px 14px 38px;
-  font-size: 14px;
-  line-height: 1.5;
-}
-.walk-entry-details p {
-  margin: 0;
-}
-.walk-entry-quote {
-  color: var(--un-muted);
-  font-size: 13px;
-}
-.walk-entry-field {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  color: var(--un-muted);
-  font-size: 12.5px;
-}
-.walk-empty {
-  margin: 0;
-  padding: 24px 10px;
-  color: var(--un-muted);
-}
-.walk-aside {
-  display: flex;
-  flex: 0 0 360px;
-  flex-direction: column;
-  gap: 12px;
-  min-width: 0;
-  padding: 20px 18px;
-  overflow: auto;
-  border-left: 1px solid var(--un-line);
-  background: var(--un-list);
-}
-
 /* Sending the review */
 .walk-submit {
   display: flex;
@@ -1029,21 +868,13 @@
     flex-direction: column;
     overflow: auto;
   }
-  .walk-list,
-  .walk-aside {
+  .walk-list {
     flex: none;
     border-right: 0;
-    border-left: 0;
     border-bottom: 1px solid var(--un-line);
   }
-  .walk-aside {
-    order: 1;
-    border-top: 1px solid var(--un-line);
-    border-bottom: 0;
-  }
   .walk-list-body,
-  .walk-detail,
-  .walk-ledger-body {
+  .walk-detail {
     overflow: visible;
   }
   .walk-list-body {
@@ -1066,17 +897,13 @@
     border-top: 1px solid var(--un-hairline);
     border-left: 0;
   }
-  .walk-entry-details {
-    padding-left: 10px;
-  }
 }
 @media (prefers-reduced-motion: reduce) {
   .walk-panel,
   .walk-comment {
     animation: none;
   }
-  .walk-head-bar span,
-  .walk-chevron {
+  .walk-head-bar span {
     transition: none;
   }
 }

@@ -37,12 +37,9 @@ const UP_NEXT_SHORTCUTS = [
 ];
 /** The walkthrough's keys, which `Walkthrough` handles itself. */
 const WALKTHROUGH_SHORTCUTS = [
-  { keys: ["ArrowRight", "j"], label: "Tour: next stop" },
-  { keys: ["ArrowLeft", "k"], label: "Tour: previous stop" },
-  { keys: ["c"], label: "Comment on the stop or row" },
-  { keys: ["o", "Enter"], label: "Everything: details and evidence" },
-  { keys: ["t"], label: "Everything: walk me through it" },
-  { keys: ["e"], label: "Switch between the tour and everything" },
+  { keys: ["ArrowRight", "j"], label: "Next stop" },
+  { keys: ["ArrowLeft", "k"], label: "Previous stop" },
+  { keys: ["c"], label: "Comment on the stop" },
 ];
 /** The keys of every other list (Sessions, Jobs, Repositories), which
  *  `listKeys` handles. */

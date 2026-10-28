@@ -4,7 +4,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { ReviewDocument } from "@baum/viewer/review-document";
 import example from "../../schema/review-example.json" with { type: "json" };
 import type { Entry } from "./api";
-import { Walkthrough, type WalkView } from "./walkthrough";
+import { Walkthrough } from "./walkthrough";
 import {
   buildTour,
   firstSentence,
@@ -102,13 +102,12 @@ it("keeps progress per review version and survives junk in storage", () => {
   expect(loadProgress(`${key}x`).seen).toEqual([]);
 });
 
-let root: Root, node: HTMLDivElement, view: WalkView, posted: unknown[], answer: Response;
+let root: Root, node: HTMLDivElement, posted: unknown[], answer: Response;
 const changed = vi.fn(async () => {});
 beforeEach(() => {
   Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
   history.replaceState(null, "", "/s/test-ns/");
   localStorage.clear();
-  view = "tour";
   posted = [];
   answer = Response.json({ url: "https://github.com/acme/demo/pull/7#pullrequestreview-1" });
   node = document.createElement("div");
@@ -134,11 +133,6 @@ const render = (authored = false) =>
       <Walkthrough
         entry={entry(authored)}
         document={doc}
-        view={view}
-        setView={(next) => {
-          view = next;
-          render(authored);
-        }}
         close={() => {}}
         patches={async () => null}
         changed={changed}
@@ -174,6 +168,15 @@ it("walks the stops, marks what was passed as looked at and skips it next time",
   expect(node.textContent).toContain("Skipped 1 stop you already looked at");
 });
 
+// Comments on the first stop, then goes to the wrap-up.
+const commentAndWrapUp = (text: string) => {
+  click("Start the tour");
+  key("c");
+  type(node.querySelector("textarea")!, text);
+  click("Save comment");
+  click("Send your review");
+};
+
 it("sends one review with each comment on its line", async () => {
   render();
   click("Start the tour");
@@ -181,8 +184,7 @@ it("sends one review with each comment on its line", async () => {
   type(node.querySelector("textarea")!, "Trusts a client header");
   click("Save comment");
   expect(node.textContent).toContain("Your comment on");
-  key("e");
-  expect(view).toBe("all");
+  click("Send your review");
   expect(button("Approve").getAttribute("aria-disabled")).toBe("true");
   expect(button("Request changes").getAttribute("aria-disabled")).toBe("false");
   click("Request changes");
@@ -200,17 +202,15 @@ it("sends one review with each comment on its line", async () => {
 });
 
 it("offers neither a verdict on the reader's own pull request", () => {
-  view = "all";
   render(true);
+  click("Send your review");
   expect(button("Approve").getAttribute("aria-disabled")).toBe("true");
   expect(node.textContent).toContain("GitHub doesn’t let you approve your own pull request");
 });
 
 it("offers to fold comments into the body when GitHub can't place them", async () => {
-  view = "all";
   render();
-  act(() => exact("Comment").click());
-  type(node.querySelector("textarea[id^='walk-note-']")!, "Odd");
+  commentAndWrapUp("Odd");
   answer = Response.json(
     { code: "invalid_line", message: "Some comments are on lines outside the diff." },
     { status: 422 },
@@ -223,43 +223,19 @@ it("offers to fold comments into the body when GitHub can't place them", async (
   expect((posted[1] as { body: string }).body).toContain("Odd");
 });
 
-it("keeps the row being read in Not looked at", () => {
-  view = "all";
-  render();
-  click("Not looked at");
-  click("Details and evidence");
-  expect(button("Details and evidence").getAttribute("aria-expanded")).toBe("true");
-  expect(node.querySelector("textarea[id^='walk-note-']")).not.toBeNull();
-});
-
 it("keeps what was written while the review was being sent", async () => {
-  view = "all";
   render();
-  act(() => exact("Comment").click());
-  const note = node.querySelector<HTMLTextAreaElement>("textarea[id^='walk-note-']")!;
-  type(note, "Odd");
+  commentAndWrapUp("Odd");
   let respond!: (answer: Response) => void;
   vi.stubGlobal(
     "fetch",
     vi.fn(() => new Promise<Response>((resolve) => (respond = resolve))),
   );
   act(() => exact("Send comments").click());
-  type(note, "Odd, and the docs too");
-  type([...node.querySelectorAll("textarea")].find((field) => !field.id)!, "Thanks");
+  type(node.querySelector("textarea")!, "Thanks");
   await act(async () => respond(Response.json({ url: "https://github.com/x" })));
   expect(node.textContent).toContain("Your review is on GitHub.");
   const kept = loadProgress(progressKey(doc));
-  expect(Object.values(kept.notes)).toEqual(["Odd, and the docs too"]);
+  expect(Object.values(kept.notes)).toEqual([]);
   expect(kept.note).toBe("Thanks");
-});
-
-it("returns to the tour after sending a review", async () => {
-  view = "all";
-  render();
-  act(() => exact("Comment").click());
-  type(node.querySelector("textarea[id^='walk-note-']")!, "Odd");
-  await act(async () => exact("Send comments").click());
-  expect(node.textContent).toContain("Your review is on GitHub.");
-  act(() => exact("Guided tour").click());
-  expect(view).toBe("tour");
 });
