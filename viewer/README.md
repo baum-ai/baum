@@ -427,7 +427,9 @@ canonical. Tiles are validated against it at runtime, and
 [`../schema/legacy-review-tiles.json`](../schema/legacy-review-tiles.json)
 keeps the definitions of kinds the schema has retired, so stored tiles of
 those kinds still render; the Go `review` package reads the same file, so
-stored-document validation accepts them too. `pnpm generate` writes
+stored-document validation accepts them too. The type and validator generators
+both load this combined tile contract through `scripts/review-tile-schema.mjs`.
+`pnpm generate` writes
 the tile types to `generated/review-tile-types.d.ts` from both files, which is
 not committed. `pnpm generate:validators` writes the validators to
 `src/precompiled/review-tile-validators.js` with Ajv's standalone code
