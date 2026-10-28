@@ -1,13 +1,6 @@
-import {
-  Fragment,
-  useCallback,
-  useEffect,
-  useId,
-  useRef,
-  useState,
-  useSyncExternalStore,
-} from "react";
-import { cn } from "@baum/viewer/components/classnames";
+import { Fragment, useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { cn, FOCUS_RING } from "@baum/viewer/components/classnames";
+import { DecisionFilterControls } from "@baum/viewer/components/decision-filters";
 import {
   DecisionDetailBody,
   DecisionRow,
@@ -23,21 +16,30 @@ import {
   TimelineHeading,
 } from "@baum/viewer/components/feature-log";
 import { formatCount, formatDate } from "@baum/viewer/components/format";
-import { CloseIcon } from "@baum/viewer/components/icons";
+import { ChevronDownIcon, RepositoryIcon } from "@baum/viewer/components/icons";
 import { Empty, Failed, Stale } from "@baum/viewer/components/states";
 import { tabPanelProps } from "@baum/viewer/components/tabs";
 import { Button, Card, SegmentedControl, Spinner } from "@baum/viewer/components/ui";
+import { useDisclosure } from "@baum/viewer/components/use-disclosure";
 import {
-  CATEGORIES,
+  type AuthorCount,
+  clearDecisionFilters,
   type DecisionDetail,
-  type DecisionPerson,
+  type DecisionFile,
+  type DecisionFilters,
   type DecisionSummary,
-  FEATURE_STATUSES,
+  decisionQuery,
   type FeatureDetail,
   type FeatureSummary,
+  featureQuery,
+  hasDecisionFilters,
+  hasFeatureFilters,
   type KeyDecision,
   localDayKey,
-  personLabel,
+  parseDecisionFilters,
+  parseFeatureStatuses,
+  withDecisionFilters,
+  withFeatureStatuses,
 } from "@baum/viewer/decision-log";
 import { useUrlState } from "@baum/viewer/navigation";
 import { humanize } from "@baum/viewer/review-document";
@@ -85,7 +87,6 @@ const TABS: { value: TimelineTab; label: string }[] = [
   { value: "all", label: "All decisions" },
 ];
 const FEATURE_PANEL = "timeline-feature-panel";
-const SEARCH_DELAY_MS = 300;
 const PAGE_DETAIL = "What was decided and built, from your agent sessions";
 /** Rows a list reads at a time, and the most one request reads. */
 const PAGE = 50;
@@ -495,14 +496,9 @@ function TimelineLog({
   const url = useUrlState();
   const search = url.search;
   const tab: TimelineTab = search.get("tab") === "all" ? "all" : "features";
-  const q = search.get("q") ?? "";
-  const category = search.get("category") ?? "";
-  const status = search.get("status") ?? "";
-  const file = search.get("file") ?? "";
-  const person = search.get("person") ?? "";
-  // Local dates; `to` is the last day shown.
-  const from = search.get("from") ?? "";
-  const to = search.get("to") ?? "";
+  // The filters live in the address in the shared decision log's form.
+  const filters = parseDecisionFilters(search);
+  const statuses = parseFeatureStatuses(search);
   const open = search.get("open");
   const openFeature = tab === "features" ? search.get("feature") : null;
   const write = useCallback(
@@ -519,28 +515,24 @@ function TimelineLog({
       ),
     [url],
   );
+  const changeFilters = (changes: Partial<DecisionFilters>) =>
+    url.update((current) => withDecisionFilters(current, changes), { preventScrollReset: true });
 
-  const base = new URLSearchParams();
-  if (!all) for (const name of scope) base.append("repository", name);
-  if (q) base.set("q", q);
-  if (person) base.set("person", person);
-  if (file) base.set("file", file);
-  if (from) base.set("from", from);
-  if (to) base.set("to", nextDay(to));
-  const featureQuery = new URLSearchParams(base);
-  if (status) featureQuery.set("status", status);
-  const decisionQuery = new URLSearchParams(base);
-  if (category) decisionQuery.set("category", category);
+  const scoped = (query: URLSearchParams) => {
+    const params = new URLSearchParams(scopeQuery(scope, all));
+    for (const [key, value] of query) params.append(key, value);
+    return params.toString();
+  };
   const features = usePages<FeatureSummary>(
     "api/timeline/features",
-    featureQuery.toString(),
+    scoped(featureQuery(filters, statuses)),
     "features",
     revision,
     tab === "features",
   );
   const decisions = usePages<DecisionSummary>(
     "api/timeline/decisions",
-    decisionQuery.toString(),
+    scoped(decisionQuery(filters)),
     "decisions",
     revision,
     tab === "all",
@@ -594,7 +586,7 @@ function TimelineLog({
           withSummary={withSummary}
           pullRequestHref={(number) => pullRequestHref(repository, number)}
           openSession={OPEN_SESSION}
-          onFile={(path) => write({ file: path })}
+          onFile={(path) => changeFilters({ file: path })}
           onRetry={() => loadDetail(id, true)}
           withheldNote={WITHHELD_NOTE}
         />
@@ -677,20 +669,33 @@ function TimelineLog({
         )}
       </section>
     ) : null;
-  const shared = Boolean(q || person || file || from || to);
-  const featureFiltered = shared || Boolean(status);
-  const decisionFiltered = shared || Boolean(category);
-  const clear = () =>
-    write({
-      q: null,
-      status: null,
-      category: null,
-      file: null,
-      person: null,
-      from: null,
-      to: null,
+  const featureFiltered = hasFeatureFilters(filters) || statuses.length > 0;
+  const decisionFiltered = hasDecisionFilters(filters);
+  const [resets, setResets] = useState(0);
+  const clear = () => {
+    setResets((n) => n + 1);
+    url.update((current) => clearDecisionFilters(current, tab === "features"), {
+      preventScrollReset: true,
     });
-  const people = usePeople(tab, scopeQuery(scope, all), revision);
+  };
+  const scopeKey = scopeQuery(scope, all);
+  const people = usePeople(tab, scopeKey, revision);
+  // Stable while the repositories are, so a suggestion under way is not
+  // restarted by every render.
+  const files = useCallback(
+    async (prefix: string, signal?: AbortSignal) => {
+      const params = new URLSearchParams(scopeKey);
+      if (prefix) params.set("prefix", prefix);
+      const body = await request<{ files?: DecisionFile[] }>(
+        withQuery("api/timeline/files", params),
+        undefined,
+        "GET",
+        signal,
+      );
+      return body.files ?? [];
+    },
+    [scopeKey],
+  );
   // Another set of repositories keeps the tab and filters; what was open
   // was one of the old set's.
   const openRepositories = (names: string[]) =>
@@ -885,98 +890,30 @@ function TimelineLog({
           started={jobsChanged}
         />
       ) : null}
-      {/* The shared filter bar's place: once @baum/viewer's
-          DecisionFilterControls (PR #903) lands, it replaces these simple
-          controls, writing the same address (repo, q, person, file, from,
-          to, status, category) and reading api/timeline/files and
-          api/timeline/people for its choices. */}
+      {/* The hosted Timeline's filter bar: the repository picker, then the
+          viewer's shared controls over the same address. */}
       <div className="local-filter-bar timeline-filters">
-        <div className="timeline-controls">
-          {served.length > 1 ? (
-            <RepositoryPicker
-              repositories={served.map((each) => each.repository)}
-              selected={all ? [] : scope}
-              onChange={openRepositories}
-            />
-          ) : null}
-          <SearchBox
-            key={tab}
-            label={tab === "features" ? "Search features" : "Search decisions"}
-            value={q}
-            onChange={(value) => write({ q: value })}
+        {served.length > 1 ? (
+          <RepositoryPicker
+            repositories={served.map((each) => each.repository)}
+            selected={all ? [] : scope}
+            onChange={openRepositories}
           />
-          <label className="local-repo-filter">
-            <span className="sr-only">Person</span>
-            <select value={person} onChange={(e) => write({ person: e.target.value })}>
-              <option value="">Everyone</option>
-              {person &&
-              !people.some((each) => each.email.toLowerCase() === person.toLowerCase()) ? (
-                <option value={person}>{person}</option>
-              ) : null}
-              {people.map((each) => (
-                <option key={each.email} value={each.email}>
-                  {personLabel(each)} ({formatCount(each.decision_count ?? each.feature_count ?? 0)}
-                  )
-                </option>
-              ))}
-            </select>
-          </label>
-          {tab === "features" ? (
-            <label className="local-repo-filter">
-              <span className="sr-only">Status</span>
-              <select value={status} onChange={(e) => write({ status: e.target.value })}>
-                <option value="">All statuses</option>
-                {FEATURE_STATUSES.map((option) => (
-                  <option key={option.value} value={option.value}>
-                    {option.label}
-                  </option>
-                ))}
-              </select>
-            </label>
-          ) : (
-            <label className="local-repo-filter">
-              <span className="sr-only">Category</span>
-              <select value={category} onChange={(e) => write({ category: e.target.value })}>
-                <option value="">All categories</option>
-                {CATEGORIES.map((each) => (
-                  <option key={each} value={each}>
-                    {humanize(each)}
-                  </option>
-                ))}
-              </select>
-            </label>
-          )}
-          <FileFilter scope={scopeQuery(scope, all)} onPick={(path) => write({ file: path })} />
-          <label className="timeline-date">
-            <span>From</span>
-            <input
-              type="date"
-              value={from}
-              max={to || undefined}
-              onChange={(e) => write({ from: e.target.value })}
-            />
-          </label>
-          <label className="timeline-date">
-            <span>To</span>
-            <input
-              type="date"
-              value={to}
-              min={from || undefined}
-              onChange={(e) => write({ to: e.target.value })}
-            />
-          </label>
-          {file ? (
-            <button
-              type="button"
-              className="timeline-pill"
-              aria-label={`Remove filter: File ${file}`}
-              onClick={() => write({ file: null })}
-            >
-              <span className="truncate font-mono">{file}</span>
-              <CloseIcon size={10} />
-            </button>
-          ) : null}
-        </div>
+        ) : null}
+        <DecisionFilterControls
+          filters={filters}
+          files={files}
+          people={people}
+          onChange={changeFilters}
+          onClear={clear}
+          resets={resets}
+          statuses={tab === "features" ? statuses : undefined}
+          onStatuses={(next) =>
+            url.update((current) => withFeatureStatuses(current, next), {
+              preventScrollReset: true,
+            })
+          }
+        />
       </div>
       <div className="timeline-tabs">
         <SegmentedControl
@@ -1025,9 +962,9 @@ function WithoutHistory({
   );
 }
 
-/** Which repositories the Timeline shows: a box for each, in a popover;
- *  none ticked in the address is all of them. The last box left ticked
- *  cannot be cleared. */
+/** Which repositories the Timeline shows, drawn as the hosted log's picker:
+ *  a box for each, in a popover; none ticked in the address is all of them.
+ *  The last box left ticked cannot be cleared. */
 function RepositoryPicker({
   repositories,
   selected,
@@ -1038,15 +975,7 @@ function RepositoryPicker({
   selected: string[];
   onChange: (names: string[]) => void;
 }) {
-  const ref = useRef<HTMLDetailsElement>(null);
-  useEffect(() => {
-    const close = (event: MouseEvent) => {
-      const details = ref.current;
-      if (details?.open && !details.contains(event.target as Node)) details.open = false;
-    };
-    document.addEventListener("click", close);
-    return () => document.removeEventListener("click", close);
-  }, []);
+  const { detailsProps } = useDisclosure();
   const all = selected.length === 0;
   const ticked = all ? repositories : selected;
   const label = all
@@ -1059,22 +988,34 @@ function RepositoryPicker({
     onChange(next.length === repositories.length ? [] : next);
   };
   return (
-    <details
-      ref={ref}
-      className="timeline-repos"
-      onKeyDown={(event) => {
-        if (event.key !== "Escape" || !ref.current?.open) return;
-        ref.current.open = false;
-        ref.current.querySelector("summary")?.focus();
-      }}
-    >
-      <summary aria-label={`Repositories: ${label}`}>{label}</summary>
-      <fieldset className="timeline-repos-panel">
+    <details {...detailsProps} className="group relative">
+      <summary
+        aria-label={`Repositories: ${label}`}
+        className={cn(
+          "flex max-w-[280px] cursor-pointer list-none items-center gap-1.5 rounded-(--radius-sm) border px-2.5 py-1 text-base [&::-webkit-details-marker]:hidden",
+          FOCUS_RING,
+          // A narrowed scope stands out: every number on the page depends on it.
+          all
+            ? "border-(--border-default) bg-(--surface-card) text-(--text-secondary) hover:bg-(--surface-hover)"
+            : "border-(--action-accent) bg-(--surface-pressed) font-medium text-(--text-primary)",
+        )}
+      >
+        <RepositoryIcon size={13} className="flex-none text-(--text-tertiary)" />
+        <span className="truncate">{label}</span>
+        <ChevronDownIcon
+          size={12}
+          className="flex-none text-(--text-tertiary) transition-transform duration-150 group-open:rotate-180"
+        />
+      </summary>
+      <fieldset className="absolute left-0 z-20 mt-1 flex max-h-80 w-72 flex-col overflow-y-auto rounded-(--radius-md) border border-(--border-default) bg-(--surface-card) p-1 shadow-(--shadow-overlay)">
         <legend className="sr-only">Repositories</legend>
         {repositories.map((name) => {
           const on = ticked.includes(name);
           return (
-            <label key={name}>
+            <label
+              key={name}
+              className="flex cursor-pointer items-center gap-2 rounded-(--radius-sm) px-2 py-1.5 text-base text-(--text-primary) hover:bg-(--surface-hover)"
+            >
               <input
                 type="checkbox"
                 checked={on}
@@ -1086,85 +1027,19 @@ function RepositoryPicker({
           );
         })}
         {all ? null : (
-          <button type="button" className="underline" onClick={() => onChange([])}>
-            All repositories
-          </button>
+          <>
+            <div aria-hidden className="my-1 h-px bg-(--border-subtle)" />
+            <button
+              type="button"
+              className="rounded-(--radius-sm) px-2 py-1.5 text-left text-base text-(--text-secondary) hover:bg-(--surface-hover)"
+              onClick={() => onChange([])}
+            >
+              All repositories
+            </button>
+          </>
         )}
       </fieldset>
     </details>
-  );
-}
-
-/** The local day after `day` (YYYY-MM-DD): the exclusive end of a range
- *  whose last day is `day`. */
-export function nextDay(day: string): string {
-  const [year, month, date] = day.split("-").map(Number);
-  const next = new Date(year ?? 0, (month ?? 1) - 1, (date ?? 1) + 1);
-  const pad = (n: number) => String(n).padStart(2, "0");
-  return `${next.getFullYear()}-${pad(next.getMonth() + 1)}-${pad(next.getDate())}`;
-}
-
-type CitedFile = { path: string; kind: "file" | "folder"; decision_count: number };
-
-/** A box that narrows the lists to a file or folder, offering the cited
- *  paths that start with what is typed (`api/timeline/files`). */
-function FileFilter({ scope, onPick }: { scope: string; onPick: (path: string) => void }) {
-  const [text, setText] = useState("");
-  const [files, setFiles] = useState<CitedFile[]>([]);
-  const list = useId();
-  useEffect(() => {
-    const abort = new AbortController();
-    const timer = setTimeout(() => {
-      const params = new URLSearchParams(scope);
-      if (text) params.set("prefix", text);
-      request<{ files?: CitedFile[] }>(
-        withQuery("api/timeline/files", params),
-        undefined,
-        "GET",
-        abort.signal,
-      )
-        .then((body) => setFiles(body.files ?? []))
-        .catch(() => {});
-    }, SEARCH_DELAY_MS);
-    return () => {
-      clearTimeout(timer);
-      abort.abort();
-    };
-  }, [scope, text]);
-  return (
-    <form
-      className="contents"
-      onSubmit={(event) => {
-        event.preventDefault();
-        if (text.trim()) onPick(text.trim());
-        setText("");
-      }}
-    >
-      <input
-        type="search"
-        aria-label="Filter by file"
-        placeholder="File or folder"
-        list={list}
-        value={text}
-        autoComplete="off"
-        onChange={(e) => {
-          const value = e.target.value;
-          // A path picked from the list applies at once.
-          if (files.some((each) => each.path === value)) {
-            onPick(value);
-            setText("");
-          } else setText(value);
-        }}
-        className="timeline-search timeline-file"
-      />
-      <datalist id={list}>
-        {files.map((each) => (
-          <option key={each.path} value={each.path}>
-            {`${formatCount(each.decision_count)} decisions`}
-          </option>
-        ))}
-      </datalist>
-    </form>
   );
 }
 
@@ -1175,20 +1050,18 @@ function scopeQuery(scope: string[], all: boolean): string {
   return params.toString();
 }
 
-type CountedPerson = DecisionPerson & { decision_count?: number; feature_count?: number };
-
 /** The people the person filter offers: those with decisions on All
  *  decisions, those among the features' people on Features. A failed read
  *  keeps the list shown. */
-function usePeople(tab: TimelineTab, query: string, revision: number): CountedPerson[] {
-  const [people, setPeople] = useState<{ key: string; people: CountedPerson[] }>({
+function usePeople(tab: TimelineTab, query: string, revision: number): AuthorCount[] {
+  const [people, setPeople] = useState<{ key: string; people: AuthorCount[] }>({
     key: "",
     people: [],
   });
   const path = tab === "features" ? "api/timeline/features/people" : "api/timeline/people";
   useEffect(() => {
     const abort = new AbortController();
-    request<{ people?: CountedPerson[] }>(
+    request<{ people?: AuthorCount[] }>(
       withQuery(path, new URLSearchParams(query)),
       undefined,
       "GET",
@@ -1240,49 +1113,6 @@ function MorePages<T>({
         <p className="text-base text-(--text-tertiary)">{end}</p>
       ) : null}
     </div>
-  );
-}
-
-/** Applied a moment after typing stops, so a word is one request. */
-function SearchBox({
-  label,
-  value,
-  onChange,
-}: {
-  label: string;
-  value: string;
-  onChange: (value: string) => void;
-}) {
-  const [text, setText] = useState(value);
-  // The value this box last sent; one arriving from elsewhere (a cleared
-  // filter) replaces what is typed.
-  const sent = useRef(value);
-  const latest = useRef(onChange);
-  latest.current = onChange;
-  useEffect(() => {
-    if (value !== sent.current) {
-      sent.current = value;
-      setText(value);
-    }
-  }, [value]);
-  useEffect(() => {
-    if (text.trim() === sent.current) return;
-    const timer = setTimeout(() => {
-      sent.current = text.trim();
-      latest.current(text.trim());
-    }, SEARCH_DELAY_MS);
-    return () => clearTimeout(timer);
-  }, [text]);
-  return (
-    <input
-      type="search"
-      aria-label={label}
-      placeholder={label}
-      value={text}
-      autoComplete="off"
-      onChange={(e) => setText(e.target.value)}
-      className="timeline-search"
-    />
   );
 }
 

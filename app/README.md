@@ -369,19 +369,20 @@ them with the viewer's decision log components (`FeatureItem`,
 `FeatureSidePanel`, `FeatureDrillDown`, `TimelineHeading`, `DecisionRow`,
 `DecisionDetailBody`). It shows every picked repository whose decisions are
 on, as the hosted Timeline shows all of an organisation's, or those named by
-`repo=` (repeated). Its bar holds, with more than one such repository, a
-popover of a box per repository (the last one ticked cannot be cleared;
-ticking them all, or **All repositories**, drops `repo=`), a search box
-applied 300 ms after typing stops, a person select (`person=`) offering
-those with decisions on All decisions and those among the features' people
-on Features (`api/timeline/people`, `api/timeline/features/people`; the
-user is one person, whichever address or login names them), a file box
-offering the cited paths and folders starting with what is typed
-(`api/timeline/files`), From and To dates (`to` is the last day shown, sent
-as the next day's start), and a status select on Features or a
-category select on All decisions; a file, picked there or from a decision's
-detail, shows as a removable pill and narrows both lists. These are simple
-controls in the place the shared `DecisionFilterControls` will take. Everything lives in the address. Over several
+`repo=` (repeated). Its bar is the hosted Timeline's: with more than one
+such repository, a repository picker drawn as the hosted one (a popover of a
+box per repository; the last one ticked cannot be cleared, and ticking them
+all, or **All repositories**, drops `repo=`), then the viewer's shared
+`DecisionFilterControls` over the same address as hosted (`q`, `file`,
+`person`, `who`, `category`, `from`, `to`, `superseded`, `agent` and, on
+Features, `status`; see the
+[viewer README](../viewer/README.md#decision-log)). The app supplies its
+file and folder suggestions from `api/timeline/files` and its authors from
+`api/timeline/people` on All decisions and `api/timeline/features/people` on
+Features (the user is one person, whichever address or login names them),
+and sends the filters as the viewer's `decisionQuery` and `featureQuery`
+read them, with the repositories. A file picked from a decision's detail
+filters the tab shown. Everything lives in the address. Over several
 repositories each row names its repository and links its pull requests to
 that repository's PR page. Features groups them by
 month and day of last activity; on a screen 96rem wide the opened feature sits
@@ -633,12 +634,15 @@ and the automatic job labels. The fixture also writes two Claude Code sessions i
 the demo clone under its fake home, commits of the person's in the other clone,
 plan usage samples and GitHub's answer to the delivery search, and a test opens
 Analytics and checks the figures they make, at desktop and narrow widths.
-It also seeds a decision store for acme/demo (three sessions' decisions and
-four features: in progress, with a session on its own, abandoned and with its
-text not written yet); `e2e/timeline.spec.ts` opens the Timeline in light and
-dark at desktop and narrow widths, opens a feature beside and in place,
-filters by status, keyword and category, opens a decision and shows the empty
-state of acme/other. With `TIMELINE_SHOTS=<dir>` it saves screenshots there.
+It also seeds a decision store for acme/demo (three sessions' decisions, one
+with its transcript under the fake home, and four features: in progress, with
+a session on its own, abandoned and with its text not written yet) and one
+decision in acme/other; `e2e/timeline.spec.ts` opens the Timeline over every
+repository in light and dark at desktop and narrow widths, opens a feature
+beside and in place with a decision's cited prompts and its session at the
+cited turn, filters by author, status, file, dates, keyword and category
+through the shared filter bar, opens a decision and shows the empty state of
+acme/other. With `TIMELINE_SHOTS=<dir>` it saves screenshots there.
 
 Generation usage is retained as provider-reported input, output, cache-read and
 cache-creation buckets, with available TTL, speed, prompt range and model-call

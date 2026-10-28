@@ -17,6 +17,14 @@ async function launchURL(): Promise<string> {
   throw new Error("the daemon did not publish its credential");
 }
 
+// Opens the shared Filters popover, as the hosted browser tests do.
+async function openFilters(page: Page) {
+  const summary = page.locator("summary").filter({ hasText: /^Filters/ });
+  const details = page.locator("details").filter({ has: summary });
+  if (!(await details.evaluate((element) => (element as HTMLDetailsElement).open)))
+    await summary.click();
+}
+
 // With TIMELINE_SHOTS set, the views are also saved there for a look: the
 // whole page, or with `at` the window scrolled to that element (a full-page
 // shot resizes the window, which moves the opened feature out of its side
@@ -41,7 +49,9 @@ for (const scheme of ["light", "dark"] as const) {
     await page.goto(await launchURL());
     await page.getByRole("link", { name: "Timeline", exact: true }).click();
     await expect(page.getByRole("heading", { name: "Timeline", exact: true })).toBeVisible();
-    await expect(page.locator(".timeline-repos > summary")).toHaveText("All repositories");
+    await expect(page.locator('summary[aria-label^="Repositories:"]')).toHaveText(
+      "All repositories",
+    );
     await expect(page.getByLabel("Repositories without feature history")).toContainText(
       "acme/other has no feature history yet.",
     );
@@ -79,56 +89,74 @@ for (const scheme of ["light", "dark"] as const) {
       card.getByText("Draw it with the review viewer").first(),
     );
 
-    // The user is one person: their sessions and the pull request their
-    // login opened.
-    const person = page.getByLabel("Person");
-    await expect(person.locator("option")).toHaveText([
-      "Everyone",
+    // The shared filter bar: the user is one person, their sessions and the
+    // pull request their login opened.
+    await shot(page, `filter-bar-${scheme}`, page.locator(".timeline-filters"));
+    await openFilters(page);
+    const author = page.getByRole("combobox", { name: "Author", exact: true });
+    await expect(author.locator("option")).toHaveText([
+      "Any author",
       "Ada Lovelace (3)",
       "author (2)",
     ]);
-    await person.selectOption({ label: "author (2)" });
+    await author.selectOption({ label: "author (2)" });
     await expect(page).toHaveURL(/person=author%40users.noreply.github.com/);
     await expect(features).toContainText("Hosted-only Timeline");
     await expect(features).not.toContainText("Keyword search over decisions");
-    await person.selectOption({ label: "Ada Lovelace (3)" });
+    await author.selectOption({ label: "Ada Lovelace (3)" });
     await expect(features).toContainText("Keyword search over decisions");
     if (process.env.TIMELINE_SHOTS) {
       // The list the select offers, drawn open for the shot.
-      await person.evaluate((select: HTMLSelectElement) => {
+      // Drawn as a list it is a listbox while the shot is taken.
+      const handle = await author.elementHandle();
+      await handle?.evaluate((select: HTMLSelectElement) => {
         select.size = 3;
       });
-      await shot(page, `people-${scheme}`, person);
-      await person.evaluate((select: HTMLSelectElement) => {
+      await shot(page, `people-${scheme}`, page.locator(".timeline-filters"));
+      await handle?.evaluate((select: HTMLSelectElement) => {
         select.size = 0;
       });
     }
-    await person.selectOption("");
+    await author.selectOption("");
 
-    // Filters: status and keywords narrow the features.
-    await page.getByLabel("Status").selectOption("abandoned");
+    // Status and keywords narrow the features.
+    await page
+      .getByRole("group", { name: "Feature status" })
+      .getByRole("button", { name: "Abandoned" })
+      .click();
     await expect(page).toHaveURL(/status=abandoned/);
     await expect(features).toContainText("Hosted-only Timeline");
     await expect(features).not.toContainText("Local decision log");
-    await page.getByLabel("Status").selectOption("");
+    await page
+      .getByRole("group", { name: "Feature status" })
+      .getByRole("button", { name: "Abandoned" })
+      .click();
+    await expect(page).not.toHaveURL(/status=/);
+    // A file, suggested from the cited ones, narrows the features to those
+    // touching it.
+    const box = page.getByRole("combobox", { name: "File or folder" });
+    await box.fill("internal/decisionlog/feat");
+    await page
+      .getByRole("listbox", { name: "File or folder" })
+      .getByRole("option", { name: /featurestore\.go/ })
+      .click();
+    await expect(page).toHaveURL(/file=internal%2Fdecisionlog%2Ffeaturestore.go/);
+    await expect(features).toContainText("Keyword search over decisions");
+    await expect(features).not.toContainText("Local decision log");
+    await shot(page, `filters-open-${scheme}`, page.locator(".timeline-filters"));
+    // A range after everything leaves nothing.
+    await page.getByLabel("From", { exact: true }).fill("2099-01-01");
+    await expect(page.getByText("No features match these filters")).toBeVisible();
+    await page.keyboard.press("Escape");
+    await page.getByRole("button", { name: "Clear filters" }).first().click();
+    await expect(page).not.toHaveURL(/file=|from=/);
+    await expect(features).toContainText("Local decision log");
     await page.getByLabel("Search features").fill("keyword");
     await expect(page).toHaveURL(/q=keyword/);
     await expect(features).toContainText("Keyword search over decisions");
     await expect(features).not.toContainText("Local decision log");
     await page.getByLabel("Search features").fill("");
     await expect(page).not.toHaveURL(/q=/);
-    // A file narrows the features to those touching it.
-    await page.getByLabel("Filter by file").fill("internal/decisionlog/featurestore.go");
-    await page.getByLabel("Filter by file").press("Enter");
-    await expect(page).toHaveURL(/file=internal%2Fdecisionlog%2Ffeaturestore.go/);
-    await expect(features).toContainText("Keyword search over decisions");
-    await expect(features).not.toContainText("Local decision log");
-    await page.getByRole("button", { name: /Remove filter: File/ }).click();
-    // A range after everything leaves nothing.
-    await page.getByLabel("From", { exact: true }).fill("2099-01-01");
-    await expect(page.getByText("No features match these filters")).toBeVisible();
-    await page.getByLabel("From", { exact: true }).fill("");
-    await expect(features).toContainText("Local decision log");
 
     // All decisions, with one open.
     await page.getByRole("tab", { name: "All decisions" }).click();
@@ -139,13 +167,19 @@ for (const scheme of ["light", "dark"] as const) {
       page.locator("li", { hasText: "Keep the other repository's checks in one workflow" }),
     ).toContainText("acme/other");
     await page.getByRole("button", { name: /Match keywords with SQLite FTS5/ }).click();
-    await expect(page.getByText("internal/decisionlog/featurestore.go")).toBeVisible();
+    await expect(
+      page.getByRole("button", { name: "internal/decisionlog/featurestore.go", exact: true }),
+    ).toBeVisible();
     // Its session's transcript is gone from this computer.
     await expect(
       page.getByText("The session's transcript is no longer on this computer."),
     ).toBeVisible();
     await shot(page, `decisions-${scheme}`);
-    await page.getByLabel("Category").selectOption("scope");
+    await openFilters(page);
+    await page.locator("summary", { hasText: "All categories" }).click();
+    await page.getByRole("checkbox", { name: "Scope" }).check();
+    await page.keyboard.press("Escape");
+    await page.keyboard.press("Escape");
     const listed = page.locator("main section > ol");
     await expect(listed).toContainText("Try a hosted-only Timeline first");
     await expect(listed).not.toContainText("Match keywords with SQLite FTS5");
@@ -190,7 +224,7 @@ for (const scheme of ["light", "dark"] as const) {
     // Narrow: the page folds without scrolling sideways, the feature opens
     // in place.
     await page.setViewportSize({ width: 420, height: 900 });
-    await page.locator(".timeline-repos > summary").click();
+    await page.locator('summary[aria-label^="Repositories:"]').click();
     await page.getByRole("button", { name: "All repositories" }).click();
     await features
       .getByRole("button", { name: /Local decision log/ })
@@ -201,6 +235,8 @@ for (const scheme of ["light", "dark"] as const) {
       await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth),
     ).toBe(true);
     await shot(page, `narrow-${scheme}`);
+    await page.evaluate(() => window.scrollTo(0, 0));
+    await shot(page, `filter-bar-narrow-${scheme}`, page.locator(".timeline-filters"));
     expect(errors).toEqual([]);
   });
 }

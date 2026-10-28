@@ -13,7 +13,8 @@ import {
   type ViewerLinkProps,
 } from "@baum/viewer/navigation";
 import { jobReasonText, type Job } from "./api";
-import { daySections, nextDay, pullRequestHref, TimelinePage } from "./timeline";
+import { localDayStart } from "@baum/viewer/decision-log";
+import { daySections, pullRequestHref, TimelinePage } from "./timeline";
 
 const Link = (props: ViewerLinkProps) => <a {...props} />;
 const me = { email: "me@example.com", name: null, login: null, avatar_url: null };
@@ -208,8 +209,8 @@ it("shows all decisions with what capture covered and a decision without its pro
   expect(requests.at(-1)).toBe(
     "/s/test-ns/api/timeline/decisions?file=oss%2Fapp%2Fsrc%2Ftimeline.tsx",
   );
-  const options = [...node.querySelectorAll("option")].map((o) => o.textContent);
-  expect(options).toContain("All categories");
+  // All decisions offers the filters that pick decisions.
+  expect(node.textContent).toContain("Decided by");
 });
 
 it("shows the prompts a decision cites", async () => {
@@ -296,30 +297,31 @@ it("shows every repository at once, or those ticked, each row naming its own", a
   expect(last.disabled).toBe(true);
 });
 
-it("filters by a person the tab offers", async () => {
+it("filters with the shared controls, offering the tab's people and the cited files", async () => {
   answers["api/timeline/features/people"] = {
     people: [{ ...me, name: "Ada", login: "ada", feature_count: 2 }],
   };
-  await show();
-  const select = node.querySelector('select[value=""], label select') as HTMLSelectElement;
-  const options = [...select.querySelectorAll("option")].map((o) => o.textContent);
-  expect(options).toEqual(["Everyone", "Ada (2)"]);
-  await act(async () => {
-    select.value = "me@example.com";
-    select.dispatchEvent(new Event("change", { bubbles: true }));
+  answers["api/timeline/files"] = {
+    files: [{ path: "oss/app/", kind: "folder", decision_count: 3 }],
+  };
+  await show("page=timeline&person=me%40example.com&from=2026-10-01&to=2026-10-31&file=oss/app");
+  expect(requests).toContain("/s/test-ns/api/timeline/features/people");
+  const query = new URLSearchParams({
+    file: "oss/app",
+    person: "me@example.com",
+    from: localDayStart("2026-10-01"),
+    to: localDayStart("2026-10-31", 1),
   });
+  expect(requests).toContain(`/s/test-ns/api/timeline/features?${query}`);
+  // A pill per filter in force; the person's reads as their name.
+  expect(node.textContent).toContain("Ada");
+  const clear = [...node.querySelectorAll("button")].find(
+    (b) => b.textContent === "Clear filters",
+  )!;
+  await act(async () => clear.click());
   await act(async () => {});
-  expect(current.get("person")).toBe("me@example.com");
-  expect(requests).toContain("/s/test-ns/api/timeline/features?person=me%40example.com");
-});
-
-it("sends a date range's last day as the next day's start", async () => {
-  expect(nextDay("2026-10-31")).toBe("2026-11-01");
-  expect(nextDay("2026-12-31")).toBe("2027-01-01");
-  await show("page=timeline&from=2026-10-01&to=2026-10-31&file=oss/app");
-  expect(requests).toContain(
-    "/s/test-ns/api/timeline/features?file=oss%2Fapp&from=2026-10-01&to=2026-11-01",
-  );
+  expect(current.toString()).toBe("page=timeline");
+  expect(requests.at(-1)).toBe("/s/test-ns/api/timeline/features");
 });
 
 it("explains a Timeline with no repositories", async () => {
@@ -468,14 +470,11 @@ it("drops rows a load of more brings after the list was read again", async () =>
   // twice for the same query and revision it had, and those answers land
   // first.
   answers["api/timeline/features"] = { features: many(0, 50), next_cursor: "1|F49" };
-  const select = [...node.querySelectorAll("select")].find((each) =>
-    [...each.options].some((option) => option.value === "shipped"),
-  )!;
-  for (const value of ["shipped", ""]) {
-    await act(async () => {
-      select.value = value;
-      select.dispatchEvent(new Event("change", { bubbles: true }));
-    });
+  for (let i = 0; i < 2; i++) {
+    const shipped = [...node.querySelectorAll("button[aria-pressed]")].find(
+      (b) => b.textContent === "Shipped",
+    ) as HTMLButtonElement;
+    await act(async () => shipped.click());
     await act(async () => {});
   }
   expect(node.querySelectorAll("li[data-feature]").length).toBe(50);
