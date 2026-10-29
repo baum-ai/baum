@@ -47,7 +47,7 @@ import {
 import { LiveBadge, useNow } from "./live";
 import { LoadingStatus, NineDots } from "./nine-dots";
 import { canMerge, MergeDialog } from "./merge";
-import { inboxAction, moveFocus, onBody, useShortcuts } from "./shortcuts";
+import { inboxAction, moveFocus, onBody, useFocusRow, useLastRow, useShortcuts } from "./shortcuts";
 import { MergeReadyDialog, useSavedReview, type SavedReviews } from "./up-next";
 
 /** One row the keyboard can reach: a pull request or a review group. */
@@ -229,7 +229,8 @@ export function Inbox({
           ...group.rows.map((entry) => ({ id: `pr:${rowKey(entry)}`, entry })),
         ],
   );
-  const [focusedId, setFocusedId] = useState<string | null>(null);
+  // Kept for when the list is drawn again, back from a row's review.
+  const [focusedId, setFocusedId] = useLastRow("pulls", section);
   // A row that left the list (collapsed, filtered out) is no longer focused.
   const focused = items.find((item) => item.id === focusedId);
   const focusedKey = focused?.id ?? null;
@@ -239,12 +240,7 @@ export function Inbox({
       ?.querySelector<HTMLElement>(".inbox-pr-title");
   // Focus goes to the row's own link, so a screen reader reads the row as it
   // moves, and the row scrolls into view.
-  useEffect(() => {
-    if (!focusedKey) return;
-    const link = rowLink(focusedKey);
-    link?.focus({ preventScroll: true });
-    link?.closest("[data-row-id]")?.scrollIntoView?.({ block: "nearest" });
-  }, [focusedKey]);
+  useFocusRow(focusedKey, rowLink);
   useShortcuts((event) => {
     if (event.key === "Escape") {
       if (!focusedKey) return;
@@ -445,29 +441,6 @@ export function Inbox({
           {group.rows.map((entry) => renderRow(entry, false))}
         </Bucket>
       ))}
-      <footer className="inbox-keys" aria-hidden="true">
-        <span>
-          <kbd>j</kbd> <kbd>k</kbd> move
-        </span>
-        <span>
-          <kbd>x</kbd> select
-        </span>
-        <span>
-          <kbd>space</kbd> peek
-        </span>
-        <span>
-          <kbd>o</kbd> open
-        </span>
-        <span>
-          <kbd>m</kbd> merge
-        </span>
-        <span>
-          <kbd>f</kbd> fix
-        </span>
-        <span>
-          <kbd>?</kbd> every key
-        </span>
-      </footer>
       {merging ? (
         <MergeDialog
           key={rowKey(merging)}
@@ -845,8 +818,8 @@ function RowActions({
   );
 }
 const PEEK_SECTIONS = 4;
-/** A look at the saved review under its row: the summary, the first reason
- *  for its risk and the first sections with their lines, and a way in. */
+/** A look at the saved review under its row: the summary and the first
+ *  sections with their lines, and a way in. The row already shows the risk. */
 function RowPeek({
   id,
   entry,
@@ -867,14 +840,9 @@ function RowPeek({
   const saved = useSavedReview(entry, clone, savedReviews);
   const doc = saved && saved !== "failed" ? saved : null;
   const pr = entry.pull_request;
-  const reason = doc?.summary.risk_score?.reasons[0];
-  const reasonTitle = reason
-    ? doc?.sections.find((section) => section.id === reason.section)?.title
-    : undefined;
   const sections = doc
     ? sectionsInReviewOrder(doc.sections).filter((section) => section.derived.state !== "stale")
     : [];
-  const score = entry.risk_score?.score ?? 0;
   const lead = doc
     ? doc.summary.text
     : entry.needs_clone
@@ -890,48 +858,44 @@ function RowPeek({
               : "No review yet.";
   return (
     <div id={id} className="inbox-peek-panel" role="region" aria-label={`Peek at #${pr.number}`}>
-      <div className="inbox-peek-summary">
-        <h3>Summary</h3>
-        {lead == null ? <LoadingStatus>Reading the review…</LoadingStatus> : <p>{lead}</p>}
-        {reason ? (
-          <p className={cn("inbox-peek-risk", score >= 4 && "high")}>
-            {reasonTitle ? <strong>{reasonTitle}: </strong> : null}
-            {reason.text}
-          </p>
-        ) : null}
-      </div>
-      <div className="inbox-peek-changes">
-        {sections.length > 0 ? (
-          <>
-            <h3>Key changes</h3>
-            <ul>
-              {sections.slice(0, PEEK_SECTIONS).map((section) => (
-                <li key={section.id}>
-                  <span title={section.title}>{section.title}</span>
-                  <Lines
-                    additions={section.derived.additions}
-                    deletions={section.derived.deletions}
-                    format={formatCount}
-                  />
-                </li>
-              ))}
-            </ul>
-            {sections.length > PEEK_SECTIONS ? (
-              <p className="inbox-peek-more">
-                and {formatCount(sections.length - PEEK_SECTIONS)} more
-              </p>
-            ) : null}
-          </>
-        ) : null}
-        <div className="inbox-peek-actions">
-          <Link href={href} className={cn("inbox-peek-open", FOCUS_RING)}>
-            {doc ? "Open the review" : "Open the pull request"}
-          </Link>
-          {!doc && generate && entry.status !== "generating" && !entry.needs_clone ? (
-            <button type="button" className={cn("inbox-action", FOCUS_RING)} onClick={generate}>
-              Generate the review
-            </button>
+      <div className="inbox-peek-body">
+        <div className="inbox-peek-summary">
+          <h3>Summary</h3>
+          {lead == null ? <LoadingStatus>Reading the review…</LoadingStatus> : <p>{lead}</p>}
+        </div>
+        <div className="inbox-peek-changes">
+          {sections.length > 0 ? (
+            <>
+              <h3>Key changes</h3>
+              <ul>
+                {sections.slice(0, PEEK_SECTIONS).map((section) => (
+                  <li key={section.id}>
+                    <span title={section.title}>{section.title}</span>
+                    <Lines
+                      additions={section.derived.additions}
+                      deletions={section.derived.deletions}
+                      format={formatCount}
+                    />
+                  </li>
+                ))}
+              </ul>
+              {sections.length > PEEK_SECTIONS ? (
+                <p className="inbox-peek-more">
+                  and {formatCount(sections.length - PEEK_SECTIONS)} more
+                </p>
+              ) : null}
+            </>
           ) : null}
+          <div className="inbox-peek-actions">
+            <Link href={href} className={cn("inbox-action inbox-peek-open", FOCUS_RING)}>
+              {doc ? "Open the review" : "Open the pull request"}
+            </Link>
+            {!doc && generate && entry.status !== "generating" && !entry.needs_clone ? (
+              <button type="button" className={cn("inbox-action", FOCUS_RING)} onClick={generate}>
+                Generate the review
+              </button>
+            ) : null}
+          </div>
         </div>
       </div>
     </div>

@@ -4,6 +4,7 @@ import { beforeEach, afterEach, expect, it, vi } from "vitest";
 import { inboxGroups } from "./inbox";
 import { App } from "./app";
 import { appBase, cost, filtered, type Entry, type Clone } from "./api";
+import { forgetLastRows } from "./shortcuts";
 const entry = (number: number, status = "no_review", historical = false): Entry => ({
   pull_request: {
     repository: "acme/demo",
@@ -90,6 +91,7 @@ afterEach(async () => {
   await act(async () => root.unmount());
   node.remove();
   vi.unstubAllGlobals();
+  forgetLastRows();
 });
 it("shows a slow inbox response while coalescing refresh events into a follow-up read", async () => {
   const listeners = new Map<string, () => void>();
@@ -698,6 +700,8 @@ function stubAutomatic(
       puts.push({ path, body: JSON.parse(String(init.body)) });
       if (path.endsWith("api/settings/agent-env"))
         return Promise.resolve(Response.json(puts.at(-1)!.body));
+      if (path.endsWith("api/settings/decisions"))
+        return Promise.resolve(Response.json({ decisions: puts.at(-1)!.body }));
       return Promise.resolve(Response.json(path.endsWith("api/automatic") ? overview : {}));
     }
     if (path === "/s/test-ns/api/repos") return Promise.resolve(Response.json([clone]));
@@ -709,6 +713,10 @@ function stubAutomatic(
       );
     if (path === "/s/test-ns/api/automatic") return Promise.resolve(Response.json(overview));
     if (path === "/s/test-ns/api/settings") return Promise.resolve(Response.json(settings));
+    if (path === "/s/test-ns/api/settings/decisions")
+      return Promise.resolve(
+        Response.json({ decisions: (settings as { decisions?: unknown }).decisions }),
+      );
     return original(...args);
   });
   return puts;
@@ -980,7 +988,166 @@ it("sets automatic reviews per repository, with no daily cap", async () => {
   );
   expect(puts).toContainEqual({
     path: "/s/test-ns/api/repositories/acme/demo/settings",
-    body: { automatic: false, backend: null, model: null },
+    body: { automatic: false, backend: null, model: null, decisions: null },
+  });
+});
+it("turns decision capture off for one repository", async () => {
+  history.replaceState(null, "", "/s/test-ns/?page=repositories");
+  stubDiagnostics(async () => Response.json({ local: true, report: diagnosticsReport }));
+  const puts = stubAutomatic();
+  await act(async () => root.render(<App />));
+  const region = await openRepository();
+  const toggle = region.querySelector<HTMLInputElement>('input[role="switch"]')!;
+  // On by default.
+  expect(toggle.checked).toBe(true);
+  await act(async () => toggle.click());
+  await act(async () =>
+    Array.from(region.querySelectorAll("button"))
+      .find((b) => b.textContent === "Save repository settings")!
+      .click(),
+  );
+  expect(puts.at(-1)!.body).toMatchObject({ decisions: false });
+});
+it("shows a repository's decision capture turned off", async () => {
+  history.replaceState(null, "", "/s/test-ns/?page=repositories");
+  stubDiagnostics(async () => Response.json({ local: true, report: diagnosticsReport }));
+  stubAutomatic({ ...demoClone, settings: { ...demoClone.settings, decisions: false } });
+  await act(async () => root.render(<App />));
+  const region = await openRepository();
+  expect(region.querySelector<HTMLInputElement>('input[role="switch"]')!.checked).toBe(false);
+});
+it("shows a saved decision model capture ignores, and lets it be cleared", async () => {
+  history.replaceState(null, "", "/s/test-ns/?page=settings&section=reviews");
+  stubDiagnostics(async () => Response.json({ local: true, report: diagnosticsReport }));
+  const puts = stubAutomatic(demoClone, automaticOverview, {
+    backend: "codex",
+    model: "gpt-6-sol",
+  });
+  const stubbed = vi.mocked(fetch).getMockImplementation()!;
+  vi.mocked(fetch).mockImplementation((...args) =>
+    String(args[0]) === "/s/test-ns/api/settings/decisions" &&
+    (args[1] as RequestInit | undefined)?.method !== "PUT"
+      ? Promise.resolve(
+          Response.json({
+            decisions: {
+              enabled: true,
+              model: "claude-sonnet-5-5",
+              backend: "codex",
+              effective_model: "gpt-6-luna",
+              model_ignored: true,
+            },
+          }),
+        )
+      : stubbed(...args),
+  );
+  await act(async () => root.render(<App />));
+  const section = node.querySelector('[aria-labelledby="decisions-heading"]')!;
+  const model = section.querySelector<HTMLSelectElement>("#settings-decisions-model")!;
+  expect(model.selectedOptions[0]!.textContent).toBe("claude-sonnet-5-5 (not used)");
+  expect(section.textContent).toContain("Codex doesn't use claude-sonnet-5-5");
+  await act(async () => {
+    model.value = model.options[0]!.value;
+    model.dispatchEvent(new Event("change", { bubbles: true }));
+  });
+  await act(async () =>
+    [...section.querySelectorAll("button")]
+      .find((b) => b.textContent === "Save decision capture")!
+      .click(),
+  );
+  expect(puts.at(-1)).toEqual({
+    path: "/s/test-ns/api/settings/decisions",
+    body: { enabled: true, model: "" },
+  });
+});
+it("says when the harness capture uses could not be determined in time", async () => {
+  history.replaceState(null, "", "/s/test-ns/?page=settings&section=reviews");
+  stubDiagnostics(async () => Response.json({ local: true, report: diagnosticsReport }));
+  stubAutomatic(demoClone, automaticOverview, {
+    backend: "auto",
+    model: "",
+    decisions: {
+      enabled: true,
+      model: "",
+      backend: "",
+      backend_undetermined: true,
+      effective_model: "",
+      model_ignored: false,
+    },
+  });
+  await act(async () => root.render(<App />));
+  const section = node.querySelector('[aria-labelledby="decisions-heading"]')!;
+  expect(section.textContent).toContain("could not be determined");
+  expect(section.textContent).not.toContain("No harness that can capture");
+});
+it("saves the decision capture switch and model", async () => {
+  history.replaceState(null, "", "/s/test-ns/?page=settings&section=reviews");
+  stubDiagnostics(async () => Response.json({ local: true, report: diagnosticsReport }));
+  const puts = stubAutomatic(demoClone, automaticOverview, {
+    backend: "codex",
+    model: "gpt-6-sol",
+    decisions: { enabled: true, model: "" },
+  });
+  await act(async () => root.render(<App />));
+  const section = () => node.querySelector('[aria-labelledby="decisions-heading"]')!;
+  const save = () =>
+    [...section().querySelectorAll("button")].find(
+      (b) => b.textContent === "Save decision capture",
+    )!;
+  const model = section().querySelector<HTMLSelectElement>("#settings-decisions-model")!;
+  expect(model.selectedOptions[0]!.textContent).toBe("Default (gpt-6-luna)");
+  expect(section().textContent).toContain("never tool output or file contents");
+  expect(save().disabled).toBe(true);
+  await act(async () => {
+    model.value = "gpt-6-sol";
+    model.dispatchEvent(new Event("change", { bubbles: true }));
+  });
+  await act(async () => save().click());
+  expect(puts).toContainEqual({
+    path: "/s/test-ns/api/settings/decisions",
+    body: { enabled: true, model: "gpt-6-sol" },
+  });
+  expect(section().textContent).toContain("Saved.");
+  await act(async () => section().querySelector<HTMLInputElement>('input[role="switch"]')!.click());
+  expect(model.disabled).toBe(true);
+  await act(async () => save().click());
+  expect(puts.at(-1)).toEqual({
+    path: "/s/test-ns/api/settings/decisions",
+    body: { enabled: false, model: "gpt-6-sol" },
+  });
+});
+it("types a custom decision capture model", async () => {
+  history.replaceState(null, "", "/s/test-ns/?page=settings&section=reviews");
+  stubDiagnostics(async () => Response.json({ local: true, report: diagnosticsReport }));
+  const puts = stubAutomatic(demoClone, automaticOverview, {
+    backend: "codex",
+    model: "gpt-6-sol",
+    decisions: { enabled: true, model: "" },
+  });
+  await act(async () => root.render(<App />));
+  const section = node.querySelector('[aria-labelledby="decisions-heading"]')!;
+  const model = section.querySelector<HTMLSelectElement>("#settings-decisions-model")!;
+  await act(async () => {
+    model.value = [...model.options].find((o) => o.textContent === "Custom…")!.value;
+    model.dispatchEvent(new Event("change", { bubbles: true }));
+  });
+  const custom = section.querySelector<HTMLInputElement>("#settings-decisions-model-custom");
+  expect(custom).not.toBeNull();
+  expect(model.selectedOptions[0]!.textContent).toBe("Custom…");
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(
+      custom,
+      "gpt-6-custom",
+    );
+    custom!.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  await act(async () =>
+    [...section.querySelectorAll("button")]
+      .find((b) => b.textContent === "Save decision capture")!
+      .click(),
+  );
+  expect(puts.at(-1)).toEqual({
+    path: "/s/test-ns/api/settings/decisions",
+    body: { enabled: true, model: "gpt-6-custom" },
   });
 });
 /** Opens a repository's settings dialog and returns it. */
@@ -1030,7 +1197,7 @@ it("saves a repository's automatic choice as explicit null when automatic settin
   );
   expect(puts).toContainEqual({
     path: "/s/test-ns/api/repositories/acme/demo/settings",
-    body: { automatic: null, backend: null, model: null },
+    body: { automatic: null, backend: null, model: null, decisions: null },
   });
 });
 it("shows a repository set to On as paused while the global switch is off", async () => {

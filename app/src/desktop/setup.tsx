@@ -5,6 +5,8 @@ import {
   describeCommand,
   displayPath,
   withModel,
+  storedReviews,
+  shownHarness,
   type Outcome,
   type ReviewSettings,
   type SetupView,
@@ -27,9 +29,9 @@ const steps = [
   ],
   [
     "Set up reviews",
-    "Choose what writes your reviews and which pull requests baum reviews on its own.",
+    "Choose what writes your reviews, which pull requests baum reviews on its own and the model that captures your sessions' decisions.",
     "Set up reviews",
-    "Harness, model and automation",
+    "Harness, models and automation",
   ],
   [
     "Connect your agents",
@@ -76,6 +78,9 @@ export function Setup() {
   const [pickedCount, setPickedCount] = useState(0);
   const [reviews, setReviews] = useState<ReviewSettings | null>(null);
   const [savedReviews, setSavedReviews] = useState("");
+  // The saved decision model when the daemon reports capture ignores it, and
+  // the harness shown for that report.
+  const [unusedModel, setUnusedModel] = useState<{ model: string; backend: string } | null>(null);
   const [github, setGitHub] = useState(false);
   const working = useRef(false);
   const title = useRef<HTMLHeadingElement>(null);
@@ -113,9 +118,16 @@ export function Setup() {
         // "auto" and an unset model have no choice on screen: show the harness
         // "auto" picks and that harness's default model. They differ from what
         // is saved, so opening baum saves the explicit choice.
-        const backend = settings.backend === "auto" ? autoBackend(view) : settings.backend;
+        const backend = shownHarness(settings, autoBackend(view));
         setReviews(withModel({ ...settings, backend }));
-        setSavedReviews(JSON.stringify(settings));
+        // The daemon resolved the harness it ignores the model with.
+        if (
+          settings.decisions_model_ignored &&
+          settings.decisions_model &&
+          settings.decisions_backend
+        )
+          setUnusedModel({ model: settings.decisions_model, backend: settings.decisions_backend });
+        setSavedReviews(JSON.stringify(storedReviews(settings)));
       })
       .catch((cause) => {
         if (active) setError(String(cause));
@@ -178,7 +190,9 @@ export function Setup() {
   const done = view
     ? [github && pickedCount > 0, true, Boolean(command?.ok) && agentsDone][step]
     : false;
-  const reviewsChanged = reviews !== null && JSON.stringify(reviews) !== savedReviews;
+  // A default decision model is saved as none, so it follows the harness.
+  const reviewsChanged =
+    reviews !== null && JSON.stringify(storedReviews(reviews)) !== savedReviews;
   // A custom model needs a name, both to leave the review step and to finish.
   const modelMissing =
     (step === reviewStep || step === last) && reviews !== null && !reviews.model.trim();
@@ -191,12 +205,14 @@ export function Setup() {
     : false;
   async function finish() {
     if (reviews && reviewsChanged) {
-      const outcome = await invoke<Outcome>("save_review_settings", { settings: reviews });
+      const outcome = await invoke<Outcome>("save_review_settings", {
+        settings: storedReviews(reviews),
+      });
       if (!outcome.ok) {
         setError(outcome.lines.join("\n"));
         return;
       }
-      setSavedReviews(JSON.stringify(reviews));
+      setSavedReviews(JSON.stringify(storedReviews(reviews)));
     }
     await invoke<void>("finish_setup");
   }
@@ -276,7 +292,15 @@ export function Setup() {
             )}
             {step === reviewStep && reviews && (
               <>
-                <ReviewSettingsForm settings={reviews} disabled={busy} onChange={setReviews} />
+                <ReviewSettingsForm
+                  settings={reviews}
+                  disabled={busy}
+                  onChange={setReviews}
+                  decisions
+                  unusedDecisionModel={
+                    unusedModel?.backend === reviews.backend ? unusedModel.model : undefined
+                  }
+                />
                 <PlanUsage className="setup-card" />
               </>
             )}
