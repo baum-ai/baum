@@ -35,6 +35,9 @@ const (
 	AttemptAbandoned = "abandoned"
 )
 
+// StageCapture is the ledger stage of a decision capture's call.
+const StageCapture = "capture"
+
 const schema = `
 CREATE TABLE IF NOT EXISTS capture_session(
   agent TEXT NOT NULL, session_id TEXT NOT NULL,
@@ -118,7 +121,11 @@ func Open(path string, o OpenOptions) (*Store, error) {
 		return nil, err
 	}
 	s := &Store{db: db, now: time.Now}
-	if _, err = db.Exec(schema); err == nil && o.AbandonPending {
+	_, err = db.Exec(schema + featureSchema)
+	if err == nil {
+		err = migrate(context.Background(), db)
+	}
+	if err == nil && o.AbandonPending {
 		_, err = db.Exec(`UPDATE capture_attempt SET state=?, settled_at=?, reason='daemon_stopped' WHERE state=?`, AttemptAbandoned, s.now().UnixMilli(), AttemptPending)
 	}
 	if err != nil {
@@ -168,7 +175,11 @@ func openReadOnly(path string) (*Store, error) {
 		return nil, err
 	}
 	db.SetMaxOpenConns(1)
-	if _, err := db.Exec(schema); err != nil {
+	_, err = db.Exec(schema + featureSchema)
+	if err == nil {
+		err = migrate(context.Background(), db)
+	}
+	if err != nil {
 		_ = db.Close()
 		return nil, err
 	}
@@ -425,13 +436,24 @@ type Attempt struct {
 	// Mode is "full" or "extend".
 	Mode     string
 	Reserved float64
+	// Stage is the call's stage, "" for capture; Item names what a feature
+	// stage's call was about.
+	Stage, Item string
 }
 
 // Begin records an attempt as pending before its call, with its reservation.
 func (s *Store) Begin(ctx context.Context, a Attempt) (int64, error) {
 	var id int64
-	err := s.db.QueryRowContext(ctx, `INSERT INTO capture_attempt(agent, session_id, repository, backend, model, mode, started_at, state, reserved_usd)
-VALUES (?,?,?,?,?,?,?,?,?) RETURNING id`, a.Agent, a.ID, a.Repository, a.Backend, a.Model, a.Mode, s.now().UnixMilli(), AttemptPending, a.Reserved).Scan(&id)
+	stage := a.Stage
+	if stage == "" {
+		stage = StageCapture
+	}
+	var item any
+	if a.Item != "" {
+		item = a.Item
+	}
+	err := s.db.QueryRowContext(ctx, `INSERT INTO capture_attempt(agent, session_id, repository, backend, model, mode, started_at, state, reserved_usd, stage, item)
+VALUES (?,?,?,?,?,?,?,?,?,?,?) RETURNING id`, a.Agent, a.ID, a.Repository, a.Backend, a.Model, a.Mode, s.now().UnixMilli(), AttemptPending, a.Reserved, stage, item).Scan(&id)
 	return id, s.changed(err)
 }
 
@@ -651,10 +673,10 @@ type LedgerEntry struct {
 	Cost *float64
 }
 
-// Ledger reads the attempts started at or after since, oldest first.
+// Ledger reads the capture attempts started at or after since, oldest first.
 func (s *Store) Ledger(ctx context.Context, since time.Time) ([]LedgerEntry, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT repository, backend, state, reason, started_at, cost_usd FROM capture_attempt
-WHERE started_at >= ? ORDER BY started_at, id`, since.UnixMilli())
+WHERE stage = ? AND started_at >= ? ORDER BY started_at, id`, StageCapture, since.UnixMilli())
 	if err != nil {
 		return nil, err
 	}

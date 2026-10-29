@@ -46,6 +46,22 @@ directory and persist no session; Codex's read-only sandbox applies and its
 shell tools are turned off. The reply is masked again before it is stored in
 the private decision store. Turning off automatic generation (the tray's
 pause), the decisions switch or a repository's decisions setting stops it.
+For the same repositories, and stopped by the same switches, the daemon
+lists the repository's pull requests through the GitHub API with your
+GitHub credential, about once a minute and conditionally. For the open and
+merged ones not opened by a bot it fetches the commits the clone lacks, as
+a review fetches a missing pull request commit: heads from
+`refs/pull/<N>/head` and bases by id, force-updated under
+`refs/baum/pull/<N>/`. Each such pull request of the 180 days before the
+feature log was activated for the repository, and every one after, gets
+refs in the clone, which are kept and not pruned. When a fetch fails it
+asks the remote for its HEAD (`git ls-remote`); when the remote answers,
+the failed batch is fetched again one ref at a time, and otherwise the
+fetch is tried again after 15 minutes. A pull request whose commits still
+cannot be read is tried again after 15 minutes. It keeps the pull
+requests' titles, descriptions, authors, commits and changed paths in the private decision store, and links
+the commits to the sessions on this machine there; these rows are not
+pruned.
 
 Redaction is best effort. Review `baum internal bundle` output before using
 `generate` on a repository whose sessions may contain sensitive material, and

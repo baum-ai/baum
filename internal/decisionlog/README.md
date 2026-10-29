@@ -117,7 +117,8 @@ changes; other skips only when it changes.
   dated by its first cited turn's time, else the date its ID had, else the
   extraction's time.
 - `capture_attempt`: the ledger of calls (backend, model, full or extend,
-  reservation, cost, tokens, state).
+  reservation, cost, tokens, state), with the `stage` that made the call
+  (`capture`, or a feature log stage) and the `item` it was about.
 
 Nothing is pruned: the ledger and the decisions, obsolete ones included, are
 kept for good, as hosted extraction keeps them.
@@ -168,8 +169,98 @@ get 5 seconds; no backend, or none in time (`backend_undetermined`), is
 unknown (empty) and ignores nothing. `baum internal reviews show` reports the
 same as `decisions_backend`, `decisions_effective_model` and
 `decisions_model_ignored`. A repository's own setting is `settings.decisions`,
-through the repository settings API. Analytics counts the ledger
-(`Store.Ledger`) under baum's work.
+through the repository settings API. Analytics counts capture's calls in
+the ledger (`Store.Ledger`) under baum's work.
+
+## Feature log
+
+The feature log will group a repository's pull requests and sessions into
+features as the hosted feature log does, with the `features` package's rules
+and published prompts. Its choices are in `featureconfig.go`, and it shares
+the store with capture. `FeatureWorker` now syncs a repository's pull
+requests, reads their paths and commits from the clone, and links the
+commits to this machine's sessions; placing them in features builds on that.
+It runs in the daemon beside the capture scheduler, every minute and when
+settings change, for each picked repository with an available clone whose
+decisions are captured (the gate above); a repository turned off is not read
+and makes no GitHub call. A repository whose listing fails, whose clone
+cannot be read or whose remote is out of reach is tried again after 15
+minutes.
+
+### Pull requests
+
+- The first run for a repository records when the feature log was activated
+  for it (`pull_sync.activated_at`), for placement to leave earlier work
+  out.
+- The repository's pull requests of every state are listed through the
+  GitHub REST API, most recently updated first, 64 a page (a page too large
+  to read is read again at half the size, down to 8), until one updated
+  before the cursor (the first time, 180 days back); one updated exactly at
+  the cursor is listed again. The first page is read with the stored ETag,
+  so an unchanged repository costs one conditional request. The cursor moves
+  to the latest update listed, or to the start of the window when none was.
+  A listing stops at about 10,000 pull requests; older ones still due are
+  skipped and logged.
+- Only pull requests that can be placed in a feature are read from the
+  clone: open or merged ones not opened by a bot. Each pass fetches what
+  its due pull requests lack, as a review fetches a missing pull request
+  commit: a head from `refs/pull/<N>/head` into `refs/baum/pull/<N>/head`
+  and a base by its id into `refs/baum/pull/<N>/base`, both force-updated,
+  100 refspecs to a `git fetch`. So each such pull request of the 180 days
+  before activation, and every one after, gets refs in the clone; they are
+  kept, not pruned, as they may back saved reviews. Each pull request's
+  commits, from its base to its head, are then read from the clone's own
+  objects, never fetched. Its paths are the files its commits change; its
+  commits replace those recorded. A new base has them read again. GitHub's file list is never read.
+- When a fetch fails, the remote is asked for its HEAD (`git ls-remote`).
+  When it does not answer, the pass stops, nothing is counted against any
+  pull request and the repository waits; when it answers, the refs of the
+  failed fetch are fetched one at a time, so one the remote lacks keeps out
+  no other. A pull request whose commits then cannot be read (its head or
+  base is missing, or it has too many) is read again after 15 minutes;
+  after 3 failures at its head its paths are unknown at that head. A new
+  head starts the count again, and the daily re-link has every failed pull
+  request read again at once, an unknown one 3 more times. A pull request
+  that fails never stops the others or the linking.
+- The gate is read again before the fetch, before each pull request and
+  before linking; a repository turned off during a pass stops there, and
+  its commits are not linked in that pass.
+
+### Sessions linked to pull requests
+
+The commits are linked to the sessions on this machine with the local
+linkage of the review page (`locallink.LinkCommits`: Entire checkpoints, then
+the matcher; generation runs left out), and their links replace the ones
+they had:
+
+- each run, the commits just recorded, made in the last 7 days (hosted looks
+  back a day; a laptop may be off for days);
+- every 15 minutes, the commits within the session window of now, which a
+  session still running may yet link to, read from the clone without
+  fetching, at the head their commits were recorded at;
+- once a day, every commit of the last 7 days.
+
+A commit linked to a session more than one way keeps its strongest link.
+
+`Store.SessionLinks` reads what attributes a captured session's decisions
+(`features.SessionLinks`): the feature pull requests its linked commits are
+in, each with the paths it touches and those it was assigned with; a
+session with no capture row has none.
+
+### Stored data
+
+- `pull_request`, `pull_commit`, `pull_sync`: the listed pull requests with
+  their paths at a head and failed reads, their commits, and the listing's
+  ETag, cursor, activation and last full re-link.
+- `session_commit`: each session linked to a commit, with the method and
+  confidence.
+- `feature_version`, `feature`, `feature_pull`, `feature_session`,
+  `feature_settle`, `pr_summary`, `feature_consolidation`: the tables
+  placement writes. A repository has at most one `current` and one
+  `building` version; `liveVersion` is the one place that chooses the
+  version in use (the current one, made when first needed).
+
+These rows are not pruned.
 
 ## Testing by hand
 
@@ -182,3 +273,10 @@ when there is none. The hidden `--debug-dir <dir>` creates the private
 directory and writes the rendered transcript, and after a call the message
 sent and the raw reply, there, replacing a previous capture's files; a
 capture that stops before rendering leaves it empty.
+
+`baum internal features sync --repo <owner/name> [--clone <path>] [--days N]`
+runs one pull request sync without the gate (the first lists the last N
+days, default 180) and `baum internal features link --repo <owner/name>
+[--clone <path>]` links every commit of the last 7 days; each prints its
+counts as JSON. The clone defaults to the repository's registered one. They
+are for testing, with the daemon stopped: they write the daemon's store.
