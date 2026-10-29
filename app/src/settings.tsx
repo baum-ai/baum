@@ -6,18 +6,20 @@ import {
   type FormEvent,
   type ReactNode,
 } from "react";
-import { Alert, Button } from "@baum/viewer/components/ui";
+import { Alert, Button, SegmentedControl } from "@baum/viewer/components/ui";
 import {
   automaticNotice,
   request,
   type Automatic,
   type AutomaticStatus,
   type Clone,
+  type GitHubConnection,
   type Repository,
   type DiagnosticReport,
 } from "./api";
 import { RepositoryPicker, CloneActions } from "./repositories";
 import { GitHubConnectionSection } from "./github-connection";
+import { messages as githubMessages } from "./github-auth";
 import { DiagnosticsSection } from "./diagnostics";
 import { invoke } from "./desktop/native";
 import { Notice, PageBar, PanelHeader } from "./shell";
@@ -25,7 +27,6 @@ import { listKeys, useRowFocus, useShortcuts } from "./shortcuts";
 import codexLogo from "./desktop/codex.svg";
 import claudeLogo from "./desktop/claude-code.svg";
 import {
-  SlidersIcon,
   TerminalIcon,
   SessionsIcon,
   CheckIcon,
@@ -33,7 +34,7 @@ import {
   CloseIcon,
   PlusIcon,
 } from "@baum/viewer/components/icons";
-import { HarnessPicker, ModelPicker, ReviewSettingsForm, harnessName } from "./desktop/reviews";
+import { HarnessPicker, ModelPicker, harnesses, harnessName } from "./desktop/reviews";
 import {
   describeCommand,
   describeAgent,
@@ -47,8 +48,14 @@ import {
 } from "./desktop/setup-model";
 import { LoadingStatus } from "./nine-dots";
 
-/** The harness and model reviews use when a repository does not choose its own. */
-export type ReviewDefaults = { backend: string; model: string };
+/** The harness and model reviews use when a repository does not choose its
+ *  own, and the ones fixes use: an empty `fix_backend` follows the review's. */
+export type ReviewDefaults = {
+  backend: string;
+  model: string;
+  fix_backend?: string;
+  fix_model?: string;
+};
 
 function errorText(error: unknown) {
   return error instanceof Error ? error.message : "Local request failed.";
@@ -59,86 +66,500 @@ function shownBackend(backend: string) {
   return backend === "auto" || !backend ? "claude" : backend;
 }
 
-export function SettingsPage({
+/** Only Claude Code and Codex confine an agent with write access, so only
+ *  they fix pull requests. */
+const fixHarnesses = ["claude", "codex"];
+
+export const settingsSections = [
+  "overview",
+  "reviews",
+  "fixes",
+  "connections",
+  "computer",
+] as const;
+export type SettingsSection = (typeof settingsSections)[number];
+const sectionTitles: Record<SettingsSection, string> = {
+  overview: "Overview",
+  reviews: "Reviews",
+  fixes: "Fixes",
+  connections: "Connections",
+  computer: "This computer",
+};
+
+/** The section a `section` query value names; anything else is the overview. */
+export function settingsSection(value: string | null): SettingsSection {
+  return settingsSections.includes(value as SettingsSection)
+    ? (value as SettingsSection)
+    : "overview";
+}
+
+type Tone = "positive" | "caution" | "critical" | "neutral";
+
+/** Where something stands, drawn as a coloured dot beside its words. */
+function Dot({ tone }: { tone: Tone }) {
+  return <span className="settings-dot" data-tone={tone} aria-hidden="true" />;
+}
+
+/** How the GitHub connection reads in the overview and the section list. */
+function githubHealth(github: GitHubConnection | null): { tone: Tone; detail: string } {
+  if (!github) return { tone: "neutral", detail: "Checking the connection…" };
+  if (github.pending) return { tone: "caution", detail: "Waiting for you to finish signing in." };
+  if (github.error)
+    return {
+      tone: "critical",
+      detail: githubMessages[github.error] ?? "The connection needs attention.",
+    };
+  if (github.override)
+    return { tone: "positive", detail: `Using a credential from ${github.source ?? "elsewhere"}.` };
+  if (github.saved)
+    return { tone: "positive", detail: `Signed in as ${github.login ?? "you"} on ${github.host}.` };
+  return { tone: "critical", detail: "Not connected. baum needs GitHub to find pull requests." };
+}
+
+/** "baum reviews your pull requests on its own, with Claude Code." */
+function reviewSentence(automatic: Automatic | null, defaults: ReviewDefaults) {
+  const harness = harnessName(shownBackend(defaults.backend));
+  if (!automatic?.enabled) return `baum reviews pull requests when you ask, with ${harness}.`;
+  const which: Record<string, string> = {
+    all: "every open pull request in your repositories",
+    authored: "your pull requests",
+    requested: "pull requests you're asked to review",
+  };
+  const scope =
+    which[automatic.pull_requests ?? "both"] ??
+    "your pull requests and those you're asked to review";
+  return `baum reviews ${scope} on its own, with ${harness}.`;
+}
+
+/** The agent that fixes, in words, and whether it can. */
+function fixSummary(defaults: ReviewDefaults): { label: string; fixable: boolean } {
+  if (defaults.fix_backend)
+    return {
+      label: [harnessName(defaults.fix_backend), defaults.fix_model].filter(Boolean).join(" · "),
+      fixable: true,
+    };
+  const review = shownBackend(defaults.backend);
+  return {
+    label: `Same as reviews (${harnessName(review)})`,
+    fixable: fixHarnesses.includes(review),
+  };
+}
+
+/** A setting on one line: its name and a sentence about it on the left, its
+ *  control on the right; narrow, the control drops below. */
+function SettingRow({
+  label,
+  htmlFor,
+  detail,
+  children,
+}: {
+  label: ReactNode;
+  htmlFor?: string;
+  detail?: ReactNode;
+  children?: ReactNode;
+}) {
+  return (
+    <div className="settings-row">
+      <div className="settings-row-text">
+        {htmlFor ? (
+          <label htmlFor={htmlFor} className="settings-row-label">
+            {label}
+          </label>
+        ) : (
+          <span className="settings-row-label">{label}</span>
+        )}
+        {detail ? <div className="settings-row-detail">{detail}</div> : null}
+      </div>
+      {children ? <div className="settings-row-control">{children}</div> : null}
+    </div>
+  );
+}
+
+/** A section's title and what it holds, with the outcome of its last save. */
+function SectionHead({
+  id,
+  title,
+  detail,
+  status,
+}: {
+  id: string;
+  title: string;
+  detail?: ReactNode;
+  status?: ReactNode;
+}) {
+  return (
+    <header className="settings-section-head">
+      <div className="min-w-0">
+        <h2 id={id}>{title}</h2>
+        {detail ? <p>{detail}</p> : null}
+      </div>
+      {status}
+    </header>
+  );
+}
+
+/** Saves review and fix choices as they change. Each section sends all of its
+ *  choices, so one PUT runs at a time and a change made meanwhile replaces any
+ *  other waiting one: an older choice never lands after a newer one. The app
+ *  reads its state again once nothing waits, and `Saved` shows for a moment.
+ *  `failures` counts failed saves, so a section puts its controls back. */
+function useAutoSave(changed: () => Promise<void>) {
+  const [state, setState] = useState<"idle" | "saving" | "saved">("idle");
+  const [error, setError] = useState("");
+  const [failures, setFailures] = useState(0);
+  const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const waiting = useRef<Record<string, unknown> | null>(null);
+  const busy = useRef(false);
+  useEffect(() => () => clearTimeout(timer.current), []);
+  const drain = async () => {
+    busy.current = true;
+    clearTimeout(timer.current);
+    setState("saving");
+    setError("");
+    let failure = "";
+    while (waiting.current) {
+      const body = waiting.current;
+      waiting.current = null;
+      try {
+        await request("api/automatic", body, "PUT");
+        failure = "";
+      } catch (e) {
+        failure = errorText(e);
+      }
+      // Read the state even after a failure: an earlier save may have landed.
+      if (!waiting.current) {
+        await changed().catch((e: unknown) => {
+          failure ||= errorText(e);
+        });
+      }
+    }
+    busy.current = false;
+    setError(failure);
+    if (failure) {
+      setState("idle");
+      setFailures((n) => n + 1);
+    } else {
+      setState("saved");
+      timer.current = setTimeout(() => setState("idle"), 2000);
+    }
+  };
+  const save = (body: Record<string, unknown>) => {
+    waiting.current = body;
+    if (!busy.current) void drain();
+  };
+  const status = (
+    <p role="status" className="settings-saved">
+      {state === "saving" ? "Saving…" : state === "saved" ? "Saved" : ""}
+    </p>
+  );
+  return { save, error, status, failures };
+}
+
+/** The harness and model a desktop app or daemon page shows, as one select
+ *  per row. `same` adds a first choice that follows another setting. */
+function AgentSelect({
+  id,
+  value,
+  options,
+  same,
+  disabled,
+  onChange,
+}: {
+  id: string;
+  value: string;
+  options: string[];
+  same?: string;
+  disabled?: boolean;
+  onChange: (next: string) => void;
+}) {
+  return (
+    <select
+      id={id}
+      className="local-field settings-select"
+      value={value}
+      disabled={disabled}
+      onChange={(event) => onChange(event.target.value)}
+    >
+      {same !== undefined ? <option value="">{same}</option> : null}
+      {options.map((option) => (
+        <option key={option} value={option}>
+          {harnessName(option)}
+        </option>
+      ))}
+    </select>
+  );
+}
+
+const CUSTOM = "\u0000custom";
+
+/** The harness's models, its default first, and a name typed in by hand,
+ *  which is saved when the field is left or Enter is pressed. */
+function ModelField({
+  id,
+  backend,
+  value,
+  disabled,
+  onChange,
+}: {
+  id: string;
+  backend: string;
+  value: string;
+  disabled?: boolean;
+  onChange: (next: string) => void;
+}) {
+  const presets = modelPresets[backend] ?? [];
+  const [custom, setCustom] = useState(!presets.includes(value));
+  const [text, setText] = useState(value);
+  useEffect(() => setText(value), [value]);
+  const commit = () => {
+    const next = text.trim();
+    if (next && next !== value) onChange(next);
+  };
+  return (
+    <div className="settings-model">
+      <select
+        id={id}
+        className="local-field settings-select"
+        value={custom ? CUSTOM : value}
+        disabled={disabled}
+        onChange={(event) => {
+          const next = event.target.value;
+          setCustom(next === CUSTOM);
+          if (next === CUSTOM) setText(presets.includes(value) ? "" : value);
+          else onChange(next);
+        }}
+      >
+        {presets.map((model) => (
+          <option key={model} value={model}>
+            {model}
+          </option>
+        ))}
+        <option value={CUSTOM}>Custom…</option>
+      </select>
+      {custom ? (
+        <input
+          className="local-field settings-select"
+          aria-label="Custom model"
+          placeholder={`Model name, as ${harnessName(backend)} lists it`}
+          value={text}
+          disabled={disabled}
+          spellCheck={false}
+          onChange={(event) => setText(event.target.value)}
+          onBlur={commit}
+          onKeyDown={(event) => {
+            if (event.key === "Enter") commit();
+          }}
+        />
+      ) : null}
+    </div>
+  );
+}
+
+const scopes: { value: PullRequests; label: string }[] = [
+  { value: "all", label: "All" },
+  { value: "both", label: "Mine and requested" },
+  { value: "authored", label: "Only mine" },
+  { value: "requested", label: "Only requested" },
+];
+
+/** The global review settings: whether baum reviews on its own, which pull
+ *  requests, and the agent and model that write reviews. */
+function ReviewsSection({
   automatic,
   defaults,
   changed,
-  problems,
-  diagnosticsOpen,
-  setDiagnosticsOpen,
-  onDiagnostics,
-  authRevision,
-  authChanged,
 }: {
-  automatic: Automatic | null;
-  defaults: ReviewDefaults | null;
+  automatic: Automatic;
+  defaults: ReviewDefaults;
   changed: () => Promise<void>;
-  problems: number;
-  diagnosticsOpen: boolean;
-  setDiagnosticsOpen: (open: boolean) => void;
-  onDiagnostics: (report: DiagnosticReport | null) => void;
-  authRevision: number;
-  authChanged: () => void;
 }) {
+  const saved: ReviewSettings = withModel({
+    backend: shownBackend(defaults.backend),
+    model: defaults.backend === "auto" ? "" : defaults.model,
+    automatic: automatic.enabled,
+    pull_requests: (automatic.pull_requests ?? "both") as PullRequests,
+  });
+  const key = JSON.stringify(saved);
+  const [draft, setDraft] = useState(saved);
+  const { save, error, status, failures } = useAutoSave(changed);
+  // A save, another window or the tray changes what is saved; a failed save
+  // puts the controls back.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: `key` stands for `saved`
+  useEffect(() => setDraft(saved), [key, failures]);
+  const change = (patch: Partial<ReviewSettings>) => {
+    const next = { ...draft, ...patch };
+    setDraft(next);
+    save({
+      enabled: next.automatic,
+      backend: next.backend,
+      model: next.model,
+      pull_requests: next.pull_requests,
+    });
+  };
+  const harness = harnesses.find((h) => h.id === draft.backend);
   return (
-    <section>
-      <PageBar
-        title="Settings"
-        detail="How baum reviews pull requests on this computer"
-        actions={
-          <Button
-            variant="secondary"
-            size="compact"
-            className="inline-flex items-center gap-2"
-            onClick={() => setDiagnosticsOpen(true)}
-          >
-            Check this computer
-            {problems > 0 ? (
-              <span className="local-count-badge">
-                {problems}
-                <span className="sr-only"> {problems === 1 ? "problem" : "problems"}</span>
-              </span>
-            ) : null}
-          </Button>
-        }
+    <section aria-labelledby="settings-reviews-heading" className="settings-section">
+      <SectionHead
+        id="settings-reviews-heading"
+        title="Reviews"
+        detail="Which pull requests baum reviews on its own, and the agent that writes the reviews."
+        status={status}
       />
-      {diagnosticsOpen ? (
-        <DiagnosticsDialog
-          close={() => setDiagnosticsOpen(false)}
-          onReport={onDiagnostics}
-          authRevision={authRevision}
-          authChanged={authChanged}
-        />
-      ) : null}
-      <div className="local-page-body local-settings">
-        {diagnosticsOpen ? null : <GitHubConnectionSection onChanged={authChanged} />}
-        {hasFolderPicker() ? (
-          <>
-            <DesktopIntegrations />
-            <ZoomSection />
-          </>
-        ) : null}
-        {automatic && defaults ? (
-          <ReviewSettingsSection
-            key={JSON.stringify([automatic.enabled, automatic.pull_requests, defaults])}
-            automatic={automatic}
-            defaults={defaults}
-            changed={changed}
+      {error ? <Alert>{error}</Alert> : null}
+      <div className="local-panel settings-list">
+        <SettingRow
+          label="Review pull requests automatically"
+          htmlFor="review-automatic"
+          detail="New pushes and review requests in your repositories. Drafts, forks and authors without write access are skipped."
+        >
+          <input
+            id="review-automatic"
+            type="checkbox"
+            role="switch"
+            className="local-switch"
+            checked={draft.automatic}
+            onChange={(event) => change({ automatic: event.target.checked })}
           />
-        ) : (
-          <LoadingStatus block>Reading your review settings…</LoadingStatus>
-        )}
-        <AgentEnvSection />
-        <p className="px-1 text-xs text-(--text-tertiary)">
-          The daemon keeps generating after you close this window. Quit the desktop app with “Quit
-          and stop background reviews”, or run <code>baum daemon stop</code>, to stop it.
-        </p>
+        </SettingRow>
+        {draft.automatic ? (
+          <SettingRow
+            label="Which pull requests"
+            detail={
+              draft.pull_requests === "all" ? (
+                <span id="review-all-note">
+                  Every pull request in your repositories gets reviewed, including your team's, so
+                  reviews, notifications and cost grow with their activity.
+                </span>
+              ) : null
+            }
+          >
+            <SegmentedControl
+              label="Which pull requests"
+              value={draft.pull_requests}
+              items={scopes}
+              onChange={(pull_requests) => change({ pull_requests })}
+            />
+          </SettingRow>
+        ) : null}
+        <SettingRow
+          label="Agent that writes reviews"
+          htmlFor="review-agent"
+          detail={harness ? `Uses ${harness.detail.replace(/^Your/, "your")}.` : null}
+        >
+          <AgentSelect
+            id="review-agent"
+            value={draft.backend}
+            options={harnesses.map((h) => h.id)}
+            onChange={(backend) => change({ backend, model: modelPresets[backend]?.[0] ?? "" })}
+          />
+        </SettingRow>
+        <SettingRow label="Model" htmlFor="review-model">
+          <ModelField
+            // A new harness lists other models, so the field starts over.
+            key={draft.backend}
+            id="review-model"
+            backend={draft.backend}
+            value={draft.model}
+            onChange={(model) => change({ model })}
+          />
+        </SettingRow>
       </div>
+      <p className="settings-footnote">
+        Changes save as you make them and apply to the next review. A repository can choose its own
+        agent and model in Repositories.
+      </p>
     </section>
   );
 }
 
-function DesktopIntegrations() {
+/** The agent and model that fix pull requests: the review's, or one of the
+ *  harnesses that can fix. */
+function FixesSection({
+  defaults,
+  changed,
+}: {
+  defaults: ReviewDefaults;
+  changed: () => Promise<void>;
+}) {
+  const review = shownBackend(defaults.backend);
+  const savedBackend = defaults.fix_backend ?? "";
+  const saved = {
+    backend: savedBackend,
+    model: savedBackend ? defaults.fix_model || (modelPresets[savedBackend]?.[0] ?? "") : "",
+  };
+  const key = JSON.stringify(saved);
+  const [draft, setDraft] = useState(saved);
+  const { save, error, status, failures } = useAutoSave(changed);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: `key` stands for `saved`
+  useEffect(() => setDraft(saved), [key, failures]);
+  const change = (next: typeof saved) => {
+    setDraft(next);
+    save({ fix_backend: next.backend, fix_model: next.model });
+  };
+  const reviewModel = defaults.backend === "auto" ? "" : defaults.model;
+  const reviewAgent = [harnessName(review), reviewModel].filter(Boolean).join(" · ");
+  return (
+    <section aria-labelledby="settings-fixes-heading" className="settings-section">
+      <SectionHead
+        id="settings-fixes-heading"
+        title="Fixes"
+        detail="The agent that fixes conflicts, failing checks and review comments when you ask it to."
+        status={status}
+      />
+      {error ? <Alert>{error}</Alert> : null}
+      <div className="local-panel settings-list">
+        <SettingRow
+          label="Agent that fixes"
+          htmlFor="fix-agent"
+          detail={
+            !draft.backend && !fixHarnesses.includes(review) ? (
+              <span className="settings-caution">
+                Reviews use {harnessName(review)}, which can't fix pull requests. Choose Claude Code
+                or Codex to fix them.
+              </span>
+            ) : (
+              <>
+                {draft.backend ? "" : `Now ${reviewAgent}. `}It works with write access to a
+                temporary checkout. Only Claude Code and Codex can fix.
+              </>
+            )
+          }
+        >
+          <AgentSelect
+            id="fix-agent"
+            value={draft.backend}
+            options={fixHarnesses}
+            same="Same as reviews"
+            onChange={(backend) =>
+              change({ backend, model: backend ? (modelPresets[backend]?.[0] ?? "") : "" })
+            }
+          />
+        </SettingRow>
+        {draft.backend ? (
+          <SettingRow label="Model" htmlFor="fix-model">
+            <ModelField
+              key={draft.backend}
+              id="fix-model"
+              backend={draft.backend}
+              value={draft.model}
+              onChange={(model) => change({ ...draft, model })}
+            />
+          </SettingRow>
+        ) : null}
+      </div>
+      <p className="settings-footnote">
+        {draft.backend
+          ? "Fixes use this agent in every repository, whatever agent the repository reviews with."
+          : "Fixes follow the review agent, including a repository's own choice."}
+      </p>
+    </section>
+  );
+}
+
+/** The desktop app's view of the CLI and agent hooks, and the actions that
+ *  change them. Outside the desktop app it stays empty. */
+function useDesktopSetup() {
+  const desktop = hasFolderPicker();
   const [view, setView] = useState<SetupView | null>(null);
   const [busy, setBusy] = useState(false);
   // What the running action is, so only its own button changes its label.
@@ -149,8 +570,9 @@ function DesktopIntegrations() {
   async function refresh() {
     setView(await invoke<SetupView>("setup_state"));
   }
+  // biome-ignore lint/correctness/useExhaustiveDependencies: read once on mount
   useEffect(() => {
-    void refresh().catch((cause) => setError(String(cause)));
+    if (desktop) void refresh().catch((cause) => setError(String(cause)));
   }, []);
   async function run(command?: string, args?: Record<string, unknown>) {
     if (working.current) return;
@@ -173,16 +595,7 @@ function DesktopIntegrations() {
       setBusy(false);
     }
   }
-  const command = view ? describeCommand(view.command) : null;
   const display = (text: string) => displayPath(text, view?.home);
-  const status = (label: string, connected: boolean) => (
-    <span
-      className={`inline-flex items-center gap-1.5 text-xs ${connected ? "text-(--status-positive)" : "text-(--text-tertiary)"}`}
-    >
-      {connected ? <CheckIcon size={14} /> : null}
-      {label}
-    </span>
-  );
   const feedback = (
     <>
       {error ? <Alert>{display(error)}</Alert> : null}
@@ -193,65 +606,27 @@ function DesktopIntegrations() {
       ) : null}
     </>
   );
+  return { desktop, view, busy, doing, run, display, feedback };
+}
+type DesktopSetup = ReturnType<typeof useDesktopSetup>;
+
+function connectedState(label: string, connected: boolean) {
+  return (
+    <span
+      className={`inline-flex items-center gap-1.5 text-xs ${connected ? "text-(--status-positive)" : "text-(--text-tertiary)"}`}
+    >
+      {connected ? <CheckIcon size={14} /> : null}
+      {label}
+    </span>
+  );
+}
+
+/** Whether each coding agent's hooks are in, so baum can follow its work. */
+function AgentHooksPanel({ setup }: { setup: DesktopSetup }) {
+  const { view, busy, doing, run, display } = setup;
   return (
     <>
-      <section className="local-panel settings-card p-0!" aria-labelledby="cli-heading">
-        <PanelHeader
-          id="cli-heading"
-          icon={<TerminalIcon size={20} />}
-          title="Command line"
-          detail="Use baum from your terminal. Updates come with the desktop app."
-        />
-        <div className="flex flex-wrap items-center justify-between gap-4 border-t border-(--border-subtle) px-5 py-4">
-          <div className="min-w-0 flex-1 space-y-1">
-            <div className="flex flex-wrap items-center gap-3">
-              <h3 className="text-base font-medium">baum CLI</h3>
-              {command ? status(command.ok ? "Installed" : "Not installed", !!command.ok) : null}
-            </div>
-            {command ? (
-              <p className="break-all text-xs text-(--text-secondary)">{display(command.state)}</p>
-            ) : (
-              <p role="status" className="text-xs text-(--text-secondary)">
-                Checking installation…
-              </p>
-            )}
-            {command?.note ? (
-              <p className="text-xs text-(--text-secondary)">{display(command.note)}</p>
-            ) : null}
-          </div>
-          <div className="flex flex-wrap items-center gap-2">
-            {command?.action ? (
-              <Button
-                disabled={busy}
-                size="compact"
-                variant="secondary"
-                onClick={() =>
-                  void run("install_command", command.replace ? { replace: command.replace } : {})
-                }
-              >
-                {doing === "install_command:"
-                  ? command.replace
-                    ? "Replacing…"
-                    : "Installing…"
-                  : command.replace
-                    ? `Replace ${display(command.replace)}`
-                    : `${command.action} baum CLI`}
-              </Button>
-            ) : null}
-            {view?.command.record ? (
-              <Button
-                disabled={busy}
-                size="compact"
-                variant="secondary"
-                onClick={() => void run("uninstall_command")}
-              >
-                {doing === "uninstall_command:" ? "Removing…" : "Remove CLI"}
-              </Button>
-            ) : null}
-          </div>
-        </div>
-      </section>
-      <section className="local-panel settings-card p-0!" aria-labelledby="hooks-heading">
+      <section className="local-panel p-0!" aria-labelledby="hooks-heading">
         <PanelHeader
           id="hooks-heading"
           icon={<SessionsIcon size={20} />}
@@ -274,7 +649,7 @@ function DesktopIntegrations() {
               <div className="min-w-0 space-y-1">
                 <div className="flex flex-wrap items-center gap-3">
                   <h3 className="text-base font-medium">{agent.name}</h3>
-                  {status(
+                  {connectedState(
                     agent.installed && agent.enabled
                       ? "Connected"
                       : agent.installed
@@ -334,8 +709,370 @@ function DesktopIntegrations() {
         </footer>
       </section>
       {view?.hooks.error ? <Alert>{display(view.hooks.error)}</Alert> : null}
-      {feedback}
     </>
+  );
+}
+
+/** The baum CLI the desktop app installs, with install, update and removal. */
+function CommandLinePanel({ setup }: { setup: DesktopSetup }) {
+  const { view, busy, doing, run, display } = setup;
+  const command = view ? describeCommand(view.command) : null;
+  return (
+    <section className="local-panel p-0!" aria-labelledby="cli-heading">
+      <PanelHeader
+        id="cli-heading"
+        icon={<TerminalIcon size={20} />}
+        title="Command line"
+        detail="Use baum from your terminal. Updates come with the desktop app."
+      />
+      <div className="flex flex-wrap items-center justify-between gap-4 border-t border-(--border-subtle) px-5 py-4">
+        <div className="min-w-0 flex-1 space-y-1">
+          <div className="flex flex-wrap items-center gap-3">
+            <h3 className="text-base font-medium">baum CLI</h3>
+            {command
+              ? connectedState(command.ok ? "Installed" : "Not installed", !!command.ok)
+              : null}
+          </div>
+          {command ? (
+            <p className="break-all text-xs text-(--text-secondary)">{display(command.state)}</p>
+          ) : (
+            <p role="status" className="text-xs text-(--text-secondary)">
+              Checking installation…
+            </p>
+          )}
+          {command?.note ? (
+            <p className="text-xs text-(--text-secondary)">{display(command.note)}</p>
+          ) : null}
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          {command?.action ? (
+            <Button
+              disabled={busy}
+              size="compact"
+              variant="secondary"
+              onClick={() =>
+                void run("install_command", command.replace ? { replace: command.replace } : {})
+              }
+            >
+              {doing === "install_command:"
+                ? command.replace
+                  ? "Replacing…"
+                  : "Installing…"
+                : command.replace
+                  ? `Replace ${display(command.replace)}`
+                  : `${command.action} baum CLI`}
+            </Button>
+          ) : null}
+          {view?.command.record ? (
+            <Button
+              disabled={busy}
+              size="compact"
+              variant="secondary"
+              onClick={() => void run("uninstall_command")}
+            >
+              {doing === "uninstall_command:" ? "Removing…" : "Remove CLI"}
+            </Button>
+          ) : null}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+/** How the agent hooks stand, for the overview: none connected is a caution
+ *  only where an agent was found to connect. */
+function hooksHealth(view: SetupView | null): { tone: Tone; detail: string } | null {
+  if (!view) return null;
+  const agents = view.hooks.agents;
+  const connected = agents.filter((a) => a.installed && a.enabled && !a.error);
+  const waiting = agents.filter((a) => a.error || (a.detected && (!a.installed || !a.enabled)));
+  if (view.hooks.error || waiting.length > 0)
+    return {
+      tone: "caution",
+      detail: `${waiting.map((a) => a.name).join(" and ") || "An agent"} ${waiting.length === 1 ? "isn't" : "aren't"} connected, so baum can't follow ${waiting.length === 1 ? "its" : "their"} sessions.`,
+    };
+  if (connected.length === 0)
+    return { tone: "neutral", detail: "No coding agent found to connect." };
+  return {
+    tone: "positive",
+    detail: `baum follows ${connected.map((a) => a.name).join(" and ")} sessions on this computer.`,
+  };
+}
+
+export function SettingsPage({
+  automatic,
+  defaults,
+  github,
+  section,
+  setSection,
+  changed,
+  problems,
+  diagnosticsOpen,
+  setDiagnosticsOpen,
+  onDiagnostics,
+  authRevision,
+  authChanged,
+}: {
+  automatic: Automatic | null;
+  defaults: ReviewDefaults | null;
+  github: GitHubConnection | null;
+  section: SettingsSection;
+  setSection: (section: SettingsSection) => void;
+  changed: () => Promise<void>;
+  problems: number;
+  diagnosticsOpen: boolean;
+  setDiagnosticsOpen: (open: boolean) => void;
+  onDiagnostics: (report: DiagnosticReport | null) => void;
+  authRevision: number;
+  authChanged: () => void;
+}) {
+  const setup = useDesktopSetup();
+  const gh = githubHealth(github);
+  const hooks = setup.desktop ? hooksHealth(setup.view) : null;
+  const fix = defaults ? fixSummary(defaults) : null;
+  const computer: { tone: Tone; detail: string } =
+    problems > 0
+      ? {
+          tone: "critical",
+          detail: `${problems} ${problems === 1 ? "problem" : "problems"} found. Check this computer to see how to fix ${problems === 1 ? "it" : "them"}.`,
+        }
+      : { tone: "positive", detail: "No problems found on this computer." };
+  // The overview's rows, each with where to go about it.
+  const health: {
+    id: string;
+    name: string;
+    tone: Tone;
+    detail: string;
+    action: string;
+    go: () => void;
+  }[] = [
+    {
+      id: "github",
+      name: "GitHub",
+      ...gh,
+      action: gh.tone === "critical" && !github?.error ? "Connect" : "Open",
+      go: () => setSection("connections"),
+    },
+    ...(defaults
+      ? [
+          {
+            id: "reviews",
+            name: "Reviews",
+            tone: "positive" as Tone,
+            detail: `${automatic?.enabled ? "Automatic" : "When you ask"} · ${[harnessName(shownBackend(defaults.backend)), defaults.backend === "auto" ? "" : defaults.model].filter(Boolean).join(" · ")}`,
+            action: "Change",
+            go: () => setSection("reviews"),
+          },
+        ]
+      : []),
+    ...(fix
+      ? [
+          {
+            id: "fixes",
+            name: "Fixes",
+            tone: (fix.fixable ? "positive" : "caution") as Tone,
+            detail: fix.fixable
+              ? fix.label
+              : `${fix.label} can't fix pull requests. Choose Claude Code or Codex.`,
+            action: fix.fixable ? "Change" : "Choose",
+            go: () => setSection("fixes"),
+          },
+        ]
+      : []),
+    ...(hooks
+      ? [
+          {
+            id: "hooks",
+            name: "Agent hooks",
+            ...hooks,
+            action: hooks.tone === "caution" ? "Connect" : "Open",
+            go: () => setSection("connections"),
+          },
+        ]
+      : []),
+    {
+      id: "computer",
+      name: "This computer",
+      ...computer,
+      action: "Check",
+      go: () => setDiagnosticsOpen(true),
+    },
+  ];
+  const attention = health.filter((h) => h.tone === "critical" || h.tone === "caution").length;
+  const connectionTone: Tone =
+    gh.tone === "critical" ? "critical" : hooks?.tone === "caution" ? "caution" : gh.tone;
+  const nav: { id: SettingsSection; sub: string; tone?: Tone }[] = [
+    {
+      id: "overview",
+      sub: attention
+        ? `${attention} ${attention === 1 ? "thing needs" : "things need"} you`
+        : "All good",
+      tone: attention ? "critical" : undefined,
+    },
+    {
+      id: "reviews",
+      sub: defaults
+        ? `${automatic?.enabled ? "Automatic" : "When you ask"} · ${harnessName(shownBackend(defaults.backend))}`
+        : "Reading…",
+    },
+    {
+      id: "fixes",
+      sub: defaults?.fix_backend ? harnessName(defaults.fix_backend) : "Same as reviews",
+      tone: fix && !fix.fixable ? "caution" : undefined,
+    },
+    {
+      id: "connections",
+      sub: setup.desktop ? "GitHub and agent hooks" : "GitHub",
+      tone:
+        connectionTone === "critical" || connectionTone === "caution" ? connectionTone : undefined,
+    },
+    {
+      id: "computer",
+      sub:
+        problems > 0
+          ? `${problems} ${problems === 1 ? "problem" : "problems"} found`
+          : setup.desktop
+            ? "Diagnostics, CLI, environment"
+            : "Diagnostics, environment",
+      tone: problems > 0 ? "critical" : undefined,
+    },
+  ];
+  const loading = <LoadingStatus block>Reading your review settings…</LoadingStatus>;
+  return (
+    <section>
+      <PageBar
+        title="Settings"
+        detail="How baum reviews and fixes pull requests on this computer"
+      />
+      {diagnosticsOpen ? (
+        <DiagnosticsDialog
+          close={() => setDiagnosticsOpen(false)}
+          onReport={onDiagnostics}
+          authRevision={authRevision}
+          authChanged={authChanged}
+        />
+      ) : null}
+      <div className="local-page-body settings-layout">
+        <nav aria-label="Settings sections" className="settings-nav">
+          {nav.map((item) => (
+            <button
+              key={item.id}
+              type="button"
+              className="settings-nav-item"
+              aria-current={item.id === section ? "page" : undefined}
+              onClick={() => setSection(item.id)}
+            >
+              <span className="settings-nav-text">
+                <span className="settings-nav-label">{sectionTitles[item.id]}</span>
+                <span className="settings-nav-sub">{item.sub}</span>
+              </span>
+              {item.tone ? <Dot tone={item.tone} /> : null}
+            </button>
+          ))}
+        </nav>
+        <div className="settings-content">
+          {section === "overview" ? (
+            <section aria-labelledby="settings-overview-heading" className="settings-section">
+              <header className="settings-overview-head">
+                <h2 id="settings-overview-heading">
+                  {attention
+                    ? `${attention} ${attention === 1 ? "thing needs" : "things need"} you`
+                    : "Everything is working"}
+                </h2>
+                {defaults ? <p>{reviewSentence(automatic, defaults)}</p> : null}
+              </header>
+              <ul className="local-panel settings-list" aria-label="How baum is set up">
+                {health.map((row) => (
+                  <li key={row.id} className="settings-row">
+                    <Dot tone={row.tone} />
+                    <div className="settings-row-text">
+                      <span className="settings-row-label">{row.name}</span>
+                      <span className="settings-row-detail">{row.detail}</span>
+                    </div>
+                    <Button
+                      variant="secondary"
+                      size="compact"
+                      aria-label={`${row.action}: ${row.name}`}
+                      onClick={row.go}
+                    >
+                      {row.action}
+                    </Button>
+                  </li>
+                ))}
+              </ul>
+              <p className="settings-footnote">
+                Plan usage for Claude Code and Codex is in the sidebar, so it stays in view on every
+                page.
+              </p>
+            </section>
+          ) : section === "reviews" ? (
+            automatic && defaults ? (
+              <ReviewsSection automatic={automatic} defaults={defaults} changed={changed} />
+            ) : (
+              loading
+            )
+          ) : section === "fixes" ? (
+            defaults ? (
+              <FixesSection defaults={defaults} changed={changed} />
+            ) : (
+              loading
+            )
+          ) : section === "connections" ? (
+            <section aria-labelledby="settings-connections-heading" className="settings-section">
+              <SectionHead
+                id="settings-connections-heading"
+                title="Connections"
+                detail={
+                  setup.desktop
+                    ? "GitHub, where baum finds pull requests, and the coding agents it follows."
+                    : "GitHub, where baum finds pull requests."
+                }
+              />
+              {diagnosticsOpen ? null : <GitHubConnectionSection onChanged={authChanged} />}
+              {setup.desktop ? <AgentHooksPanel setup={setup} /> : null}
+              {setup.feedback}
+            </section>
+          ) : (
+            <section aria-labelledby="settings-computer-heading" className="settings-section">
+              <SectionHead
+                id="settings-computer-heading"
+                title="This computer"
+                detail="What baum needs here, and how it runs."
+              />
+              <div className="local-panel settings-list">
+                <SettingRow label="Diagnostics" detail={computer.detail}>
+                  <Button
+                    variant="secondary"
+                    size="compact"
+                    onClick={() => setDiagnosticsOpen(true)}
+                  >
+                    Check this computer
+                  </Button>
+                </SettingRow>
+                <SettingRow
+                  label="Background reviews"
+                  detail={
+                    <>
+                      The daemon keeps reviewing after you close this window. Quit the desktop app
+                      with “Quit and stop background reviews”, or run <code>baum daemon stop</code>,
+                      to stop it.
+                    </>
+                  }
+                />
+              </div>
+              {setup.desktop ? (
+                <>
+                  <CommandLinePanel setup={setup} />
+                  <ZoomSection />
+                  {setup.feedback}
+                </>
+              ) : null}
+              <AgentEnvSection />
+            </section>
+          )}
+        </div>
+      </div>
+    </section>
   );
 }
 
@@ -370,7 +1107,7 @@ function ZoomSection() {
   if (hidden) return null;
   const mod = navigator.platform.startsWith("Mac") ? "⌘" : "Ctrl";
   return (
-    <section className="local-panel settings-card p-0!" aria-labelledby="zoom-heading">
+    <section className="local-panel p-0!" aria-labelledby="zoom-heading">
       <PanelHeader
         id="zoom-heading"
         icon={<SearchIcon size={20} />}
@@ -400,85 +1137,6 @@ function ZoomSection() {
           <Alert>{error}</Alert>
         </div>
       ) : null}
-    </section>
-  );
-}
-
-/** The global review settings, drawn as the desktop setup's last step. */
-function ReviewSettingsSection({
-  automatic,
-  defaults,
-  changed,
-}: {
-  automatic: Automatic;
-  defaults: ReviewDefaults;
-  changed: () => Promise<void>;
-}) {
-  const saved: ReviewSettings = withModel({
-    backend: shownBackend(defaults.backend),
-    model: defaults.backend === "auto" ? "" : defaults.model,
-    automatic: automatic.enabled,
-    pull_requests: (automatic.pull_requests ?? "both") as PullRequests,
-  });
-  const [draft, setDraft] = useState(saved);
-  const [pending, setPending] = useState(false);
-  const [error, setError] = useState("");
-  const dirty = JSON.stringify(draft) !== JSON.stringify(saved);
-  const save = async () => {
-    setPending(true);
-    setError("");
-    try {
-      await request(
-        "api/automatic",
-        {
-          enabled: draft.automatic,
-          backend: draft.backend,
-          model: draft.model,
-          pull_requests: draft.pull_requests,
-        },
-        "PUT",
-      );
-      await changed();
-    } catch (e) {
-      setError(errorText(e));
-    } finally {
-      setPending(false);
-    }
-  };
-  return (
-    <section aria-labelledby="review-settings-heading" className="local-panel settings-card p-0!">
-      <PanelHeader
-        id="review-settings-heading"
-        icon={<SlidersIcon size={20} />}
-        title="Reviews"
-        detail="The agent that writes reviews, and which pull requests baum reviews on its own."
-      />
-      {error ? <Alert className="mx-5 mb-4">{error}</Alert> : null}
-      <ReviewSettingsForm
-        settings={draft}
-        disabled={pending}
-        onChange={setDraft}
-        className="settings-form"
-      />
-      <footer className="flex flex-wrap items-center justify-between gap-3 border-t border-(--border-subtle) px-5 py-3">
-        <p className="text-xs text-(--text-tertiary)">
-          {dirty ? "You have unsaved changes." : "Changes apply to the next review."}
-        </p>
-        <div className="flex flex-wrap items-center gap-2">
-          {dirty ? (
-            <Button variant="secondary" size="compact" onClick={() => setDraft(saved)}>
-              Discard changes
-            </Button>
-          ) : null}
-          <Button
-            size="compact"
-            disabled={!dirty || pending || !draft.model.trim()}
-            onClick={() => void save()}
-          >
-            {pending ? "Saving…" : "Save review settings"}
-          </Button>
-        </div>
-      </footer>
     </section>
   );
 }
@@ -567,7 +1225,7 @@ function AgentEnvSection() {
     }
   };
   return (
-    <section aria-labelledby="agent-env-heading" className="local-panel settings-card p-0!">
+    <section aria-labelledby="agent-env-heading" className="local-panel p-0!">
       <PanelHeader
         id="agent-env-heading"
         icon={<TerminalIcon size={20} />}

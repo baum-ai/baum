@@ -2204,7 +2204,11 @@ cannot push, a backend that cannot
 fix, or nothing broken is the item's `blocked_reason` (`fork`,
 `no_push_access`, `unsupported_backend`, `nothing_to_fix`): the start answers
 `409` with it and nothing is queued, and the app says why where the person
-clicked. The harness, model and budgets resolve as a review's. Before running, the executor prepares
+clicked. The budgets resolve as a review's. The harness and model are the
+preferences' fix agent (`fix_backend` and `fix_model`, Claude Code or Codex,
+set with `PUT /api/automatic` or `baum reviews set --fix-backend`) when one
+is chosen, winning over a repository's review override
+(`Preferences.ResolveFix`), and otherwise the review's. Before running, the executor prepares
 again and refuses a changed head (`head_changed`) or changed fix inputs, then
 reads the failing checks' output and the last 200 lines of up to four GitHub
 Actions job logs (`RESTReader.Tail`, which follows the signed log redirect

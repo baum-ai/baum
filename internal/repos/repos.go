@@ -73,6 +73,11 @@ type Preferences struct {
 	// in the app; a repository's own settings still override them.
 	Backend *config.Backend `json:"backend,omitempty"`
 	Model   *string         `json:"model,omitempty"`
+	// FixBackend and FixModel choose the agent that fixes pull requests
+	// (ResolveFix). A nil FixBackend means the same as reviews; an empty
+	// FixModel is the fix backend's default model.
+	FixBackend *config.Backend `json:"fix_backend,omitempty"`
+	FixModel   *string         `json:"fix_model,omitempty"`
 	// PullRequests narrows which pull requests get automatic reviews:
 	// PullRequestsAuthored, PullRequestsRequested, PullRequestsAll, or empty
 	// for both authored and requested.
@@ -113,6 +118,15 @@ func (p Preferences) Validate() error {
 	if p.Model != nil && len(*p.Model) > 256 {
 		return errors.New("model must be at most 256 bytes")
 	}
+	if p.FixBackend != nil && *p.FixBackend != config.BackendClaude && *p.FixBackend != config.BackendCodex {
+		return errors.New("fixes run with Claude Code or Codex only")
+	}
+	if p.FixModel != nil && len(*p.FixModel) > 256 {
+		return errors.New("fix model must be at most 256 bytes")
+	}
+	if p.FixBackend == nil && p.FixModel != nil && strings.TrimSpace(*p.FixModel) != "" {
+		return errors.New("choose the agent for fixes before its model")
+	}
 	if err := config.ValidateAgentEnv(p.AgentEnv); err != nil {
 		return fmt.Errorf("agent environment: %w", err)
 	}
@@ -136,6 +150,23 @@ func (p Preferences) Resolve(global config.Config) config.Config {
 		global.Model = strings.TrimSpace(*p.Model)
 	}
 	return global
+}
+
+// ResolveFix gives the config a fix runs with, from review, the config
+// already resolved for reviews (the global preferences and the repository's
+// overrides). A set FixBackend wins over the repository's own review backend
+// and model, and takes FixModel (empty for the backend's default); without
+// one the fix follows the reviews, repository overrides included.
+func (p Preferences) ResolveFix(review config.Config) config.Config {
+	if p.FixBackend == nil {
+		return review
+	}
+	review.Backend = *p.FixBackend
+	review.Model = ""
+	if p.FixModel != nil {
+		review.Model = strings.TrimSpace(*p.FixModel)
+	}
+	return review
 }
 
 // DefaultPreferences apply until the user changes them: automatic generation

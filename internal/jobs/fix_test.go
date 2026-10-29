@@ -466,3 +466,48 @@ func TestThreadFixStopsWhenTheThreadsChange(t *testing.T) {
 		t.Fatalf("mutations %v", g.recorded())
 	}
 }
+
+// A fix agent chosen in the preferences runs the fix with its own harness and
+// model, over the review's backend and a repository's review override; with
+// none chosen the fix follows the reviews.
+func TestPrepareFixUsesTheFixAgentOverRepositoryReviewSettings(t *testing.T) {
+	r := newFixRepositories(t)
+	ctx := context.Background()
+	g := &fakeGitHub{headRepository: "owner/repo", push: true, head: r.head}
+	local := fixRunner(t, r, g, &fixBackend{name: agent.BackendClaude})
+	claude, codex := &fixBackend{name: agent.BackendClaude}, &fixBackend{name: agent.BackendCodex}
+	local.Backends = generate.Backends{
+		Claude:      func(string) generate.CheckedBackend { return claude },
+		Codex:       func(string) generate.CheckedBackend { return codex },
+		CursorAgent: func(string) generate.CheckedBackend { return claude },
+		Anthropic:   func(string) generate.CheckedBackend { return claude },
+	}
+	if _, e := r.registry.AddPatch(ctx, r.clone.Path, func(s repos.Settings) (repos.Settings, error) {
+		backend, model := config.BackendClaude, "repository-model"
+		s.Backend, s.Model = &backend, &model
+		return s, nil
+	}); e != nil {
+		t.Fatal(e)
+	}
+	prepare := func() Prepared {
+		t.Helper()
+		p, _, e := local.Prepare(ctx, Item{Clone: r.clone.ID, PR: 1, Kind: KindFix})
+		if e != nil {
+			t.Fatal(e)
+		}
+		return p
+	}
+	if p := prepare(); p.Backend != agent.BackendClaude || p.Model != "repository-model" {
+		t.Fatalf("same as reviews: %+v", p)
+	}
+	if _, e := r.registry.UpdatePreferences(ctx, func(p repos.Preferences) repos.Preferences {
+		backend, model := config.BackendCodex, " gpt-fix "
+		p.FixBackend, p.FixModel = &backend, &model
+		return p
+	}); e != nil {
+		t.Fatal(e)
+	}
+	if p := prepare(); p.Backend != agent.BackendCodex || p.Model != "gpt-fix" || p.BlockedReason != "" {
+		t.Fatalf("fix agent: %+v", p)
+	}
+}

@@ -1085,3 +1085,28 @@ func TestNeedsCloneAtSubmissionKeepsHeadPending(t *testing.T) {
 	h.pass()
 	h.want("org/other#5@o2:new_head", "org/repo#1@a2:new_head")
 }
+
+func TestPutSetsAndClearsTheFixAgent(t *testing.T) {
+	h := newHarness(t)
+	if code := put(h.scheduler, `{"fix_backend":"codex","fix_model":" gpt-fix "}`); code != 200 {
+		t.Fatal(code)
+	}
+	p, _ := h.registry.Preferences(context.Background())
+	if p.FixBackend == nil || *p.FixBackend != "codex" || p.FixModel == nil || *p.FixModel != "gpt-fix" {
+		t.Fatalf("set: %+v", p)
+	}
+	for _, body := range []string{`{"fix_backend":"cursor-agent"}`, `{"fix_backend":"nope"}`} {
+		if code := put(h.scheduler, body); code != 400 {
+			t.Fatalf("%s = %d", body, code)
+		}
+	}
+	if p, _ = h.registry.Preferences(context.Background()); p.FixBackend == nil || *p.FixBackend != "codex" {
+		t.Fatalf("a rejected change was saved: %+v", p)
+	}
+	if code := put(h.scheduler, `{"fix_backend":"","fix_model":""}`); code != 200 {
+		t.Fatal(code)
+	}
+	if p, _ = h.registry.Preferences(context.Background()); p.FixBackend != nil || p.FixModel != nil {
+		t.Fatalf("cleared: %+v", p)
+	}
+}

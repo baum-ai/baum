@@ -74,6 +74,25 @@ func TestReviewsCLI(t *testing.T) {
 			t.Errorf("%v accepted", args)
 		}
 	}
+	// Fixes follow the reviews until a fix agent is chosen.
+	if _, e := run("set", "--fix-backend=claude", "--fix-model=sonnet"); e != nil {
+		t.Fatal(e)
+	}
+	if got := show(); got.FixBackend != "claude" || got.FixModel != "sonnet" {
+		t.Fatalf("after choosing a fix agent %+v", got)
+	}
+	if _, e := run("set", "--fix-backend=cursor-agent"); e == nil {
+		t.Error("cursor-agent accepted for fixes")
+	}
+	if _, e := run("set", "--fix-backend="); e != nil {
+		t.Fatal(e)
+	}
+	if got := show(); got.FixBackend != "" || got.FixModel != "" {
+		t.Fatalf("after following reviews again %+v", got)
+	}
+	if _, e := run("set", "--fix-model=sonnet"); e == nil {
+		t.Error("a fix model accepted without a fix agent")
+	}
 	if got := show(); got.Backend != "codex" || got.PullRequests != "both" {
 		t.Fatalf("a rejected change was saved %+v", got)
 	}

@@ -1,6 +1,15 @@
 import { readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
+
+/** Opens Settings from the sidebar, then one of its sections. */
+async function openSettings(page: Page, section: string) {
+  await page.getByRole("link", { name: "Settings", exact: true }).click();
+  await page
+    .getByRole("navigation", { name: "Settings sections" })
+    .getByRole("button", { name: new RegExp(`^${section}`) })
+    .click();
+}
 
 // The fixture runs the real daemon, which publishes its launch URL in a private
 // credential file once it serves; the desktop app reads the same file.
@@ -275,12 +284,23 @@ test("local inbox, reused PR viewer, versions, generation and settings", async (
   await page.screenshot({ path: "test-results/repositories.png", animations: "disabled" });
   await page.getByRole("link", { name: "Settings", exact: true }).click();
   await expect(
+    page.getByRole("region", { name: /things? needs? you|Everything is working/ }),
+  ).toBeVisible();
+  await page.screenshot({ path: "test-results/settings-overview.png", animations: "disabled" });
+  await openSettings(page, "Reviews");
+  await expect(
     page
       .getByRole("region", { name: "Reviews", exact: true })
       .getByRole("switch", { name: /Review pull requests automatically/ }),
   ).toBeChecked();
   await page.screenshot({ path: "test-results/settings.png", animations: "disabled" });
-  await page.getByRole("button", { name: /Check this computer/ }).click();
+  await openSettings(page, "Fixes");
+  await expect(
+    page.getByRole("region", { name: "Fixes", exact: true }).getByLabel("Agent that fixes"),
+  ).toBeVisible();
+  await page.screenshot({ path: "test-results/settings-fixes.png", animations: "disabled" });
+  await openSettings(page, "This computer");
+  await page.getByRole("button", { name: "Check this computer", exact: true }).click();
   const diagnostics = page
     .getByRole("dialog")
     .getByRole("region", { name: "Diagnostics", exact: true });
@@ -387,15 +407,14 @@ test("automatic review of a new head, shown as started automatically", async ({ 
   await expect(
     jobs.getByText("Started automatically because new commits were pushed", { exact: true }),
   ).toHaveCount(1);
-  await page.getByRole("link", { name: "Settings", exact: true }).click();
+  await openSettings(page, "Reviews");
   const automatic = page.getByRole("region", { name: "Reviews", exact: true });
   const toggle = automatic.getByRole("switch", { name: /Review pull requests automatically/ });
-  const save = automatic.getByRole("button", { name: "Save review settings" });
-  // The switch shows the saved preference once saving answers.
+  // The switch saves as it changes.
   await toggle.click();
-  await save.click();
-  await expect(save).toBeDisabled();
+  await expect(automatic.getByRole("status")).toHaveText("Saved");
   await expect(toggle).not.toBeChecked();
+  // The section is in the address, so a reload stays on it.
   await page.reload();
   // After a reload the section renders once the settings requests answer,
   // which can take a while on a busy CI runner.
@@ -409,9 +428,9 @@ test("automatic review of a new head, shown as started automatically", async ({ 
     repository.getByText(/Automatic reviews are paused by the global switch/),
   ).toBeVisible();
   await repository.getByRole("button", { name: "Cancel", exact: true }).click();
-  await page.getByRole("link", { name: "Settings", exact: true }).click();
+  await openSettings(page, "Reviews");
   await toggle.click();
-  await save.click();
+  await expect(automatic.getByRole("status")).toHaveText("Saved");
   await expect(toggle).toBeChecked();
   expect(errors).toEqual([]);
 });
@@ -556,7 +575,7 @@ test("a session asking for a permission shows in Needs you and leaves once it wo
   expect(errors).toEqual([]);
 });
 
-test("desktop Settings has separate CLI and hook cards at desktop and narrow widths", async ({
+test("desktop Settings has CLI and hook cards in their sections at desktop and narrow widths", async ({
   page,
 }, testInfo) => {
   await page.addInitScript(() => {
@@ -584,18 +603,29 @@ test("desktop Settings has separate CLI and hook cards at desktop and narrow wid
     });
   });
   await page.goto(await launchURL());
-  await page.getByRole("link", { name: "Settings", exact: true }).click();
   const cli = page.getByRole("region", { name: "Command line", exact: true });
   const hooks = page.getByRole("region", { name: "Agent hooks", exact: true });
-  await expect(cli.getByText("baum is installed at ~/.local/bin/baum.")).toBeVisible();
+  const fits = () => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth);
+  await openSettings(page, "Connections");
   await expect(hooks.getByText("Connected", { exact: true })).toHaveCount(2);
-  await cli.scrollIntoViewIfNeeded();
+  await page.screenshot({ path: testInfo.outputPath("settings-connections.png"), fullPage: true });
+  await openSettings(page, "This computer");
+  await expect(cli.getByText("baum is installed at ~/.local/bin/baum.")).toBeVisible();
   await page.screenshot({ path: testInfo.outputPath("settings-desktop.png"), fullPage: true });
   await page.setViewportSize({ width: 600, height: 900 });
   await expect(cli).toBeVisible();
-  await expect(hooks).toBeVisible();
-  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  expect(await fits()).toBe(true);
   await page.screenshot({ path: testInfo.outputPath("settings-narrow.png"), fullPage: true });
+  await openSettings(page, "Reviews");
+  await expect(page.getByLabel("Agent that writes reviews")).toBeVisible();
+  expect(await fits()).toBe(true);
+  await page.screenshot({
+    path: testInfo.outputPath("settings-reviews-narrow.png"),
+    fullPage: true,
+  });
+  await openSettings(page, "Connections");
+  await expect(hooks).toBeVisible();
+  expect(await fits()).toBe(true);
 });
 
 test("picks GitHub repositories and keeps clone-less PRs usable", async ({ page }) => {

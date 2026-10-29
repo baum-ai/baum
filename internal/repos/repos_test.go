@@ -320,3 +320,40 @@ func TestPreferencesCoverTheChosenPullRequests(t *testing.T) {
 		t.Fatal("unknown choice accepted")
 	}
 }
+
+func TestPreferencesFixAgent(t *testing.T) {
+	claude, codex, cursor := config.BackendClaude, config.BackendCodex, config.BackendCursorAgent
+	for _, b := range []*config.Backend{nil, &claude, &codex} {
+		if err := (Preferences{FixBackend: b}).Validate(); err != nil {
+			t.Fatalf("%v rejected: %v", b, err)
+		}
+	}
+	if err := (Preferences{FixBackend: &cursor}).Validate(); err == nil || err.Error() != "fixes run with Claude Code or Codex only" {
+		t.Fatalf("cursor-agent: %v", err)
+	}
+	long := strings.Repeat("m", 257)
+	if (Preferences{FixBackend: &claude, FixModel: &long}).Validate() == nil {
+		t.Fatal("long fix model accepted")
+	}
+	short, empty := "sonnet", ""
+	if (Preferences{FixModel: &short}).Validate() == nil {
+		t.Fatal("a fix model without a fix agent accepted")
+	}
+	if err := (Preferences{FixModel: &empty}).Validate(); err != nil {
+		t.Fatalf("an empty fix model without a fix agent: %v", err)
+	}
+	review := config.Config{Backend: config.BackendCursorAgent, Model: "review-model"}
+	if got := (Preferences{}).ResolveFix(review); got.Backend != review.Backend || got.Model != review.Model {
+		t.Fatalf("same as reviews: %+v", got)
+	}
+	if got := (Preferences{FixModel: &long}).ResolveFix(review); got.Backend != review.Backend || got.Model != review.Model {
+		t.Fatalf("a model without a backend: %+v", got)
+	}
+	if got := (Preferences{FixBackend: &codex}).ResolveFix(review); got.Backend != config.BackendCodex || got.Model != "" {
+		t.Fatalf("default model: %+v", got)
+	}
+	model := " gpt-fix "
+	if got := (Preferences{FixBackend: &codex, FixModel: &model}).ResolveFix(review); got.Backend != config.BackendCodex || got.Model != "gpt-fix" {
+		t.Fatalf("fix agent: %+v", got)
+	}
+}

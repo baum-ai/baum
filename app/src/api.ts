@@ -236,7 +236,7 @@ const jobReasons: Record<string, string> = {
   threads_changed:
     "The review comments changed after you started the fix, so it stopped. Check them and start it again.",
   unsupported_backend:
-    "Fixes run with Claude Code or Codex only. Choose one of them as the review harness to fix pull requests.",
+    "Fixes run with Claude Code or Codex only. Choose one of them as the agent for fixes in Settings.",
   head_changed: "New commits arrived on the branch, so the fix stopped. Try again on the new head.",
   no_remote: "The local clone has no remote for this repository to push to.",
   git: "A git command in the temporary checkout failed.",

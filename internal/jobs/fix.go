@@ -30,7 +30,8 @@ var mergeableRetry = 1500 * time.Millisecond
 // to the repository, and what is broken: merge conflicts (GitHub's
 // mergeability), failing checks of the head and, on the account's own pull
 // request, unresolved review threads (fixThreads). The harness and model are
-// the review's, resolved the same way. What stops a fix is its BlockedReason.
+// the fix agent's when the preferences choose one (resolveFix), otherwise the
+// review's. What stops a fix is its BlockedReason.
 func (l *Local) prepareFix(ctx context.Context, item Item) (Prepared, string, error) {
 	c, e := l.clone(ctx, item.Clone)
 	if e != nil {
@@ -57,7 +58,7 @@ func (l *Local) prepareFix(ctx context.Context, item Item) (Prepared, string, er
 	if e != nil {
 		return Prepared{}, "", e
 	}
-	cfg, e := l.resolve(ctx, c)
+	cfg, e := l.resolveFix(ctx, c)
 	if e != nil {
 		return Prepared{}, "", e
 	}
@@ -159,7 +160,7 @@ func (l *Local) executeFix(ctx context.Context, p Prepared, progress func(Progre
 	if e != nil {
 		return nil, e
 	}
-	cfg, e := l.resolve(ctx, c)
+	cfg, e := l.resolveFix(ctx, c)
 	if e != nil {
 		return nil, e
 	}
@@ -187,7 +188,7 @@ func (l *Local) executeFix(ctx context.Context, p Prepared, progress func(Progre
 	}
 	fixer, ok := selected.Backend.(agent.Fixer)
 	if !ok || !fix.Supported(selected.Backend.Name()) {
-		return nil, &fix.Error{Reason: fix.ReasonUnsupportedBackend, Err: errors.New(selected.Backend.Name() + " cannot fix pull requests; choose claude or codex")}
+		return nil, &fix.Error{Reason: fix.ReasonUnsupportedBackend, Err: errors.New(selected.Backend.Name() + " cannot fix pull requests; choose Claude Code or Codex as the agent for fixes in Settings")}
 	}
 	reader, e := l.Client.REST(ctx, repository)
 	if e != nil {

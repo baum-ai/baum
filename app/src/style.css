@@ -1300,90 +1300,187 @@ dialog.local-dialog-wide {
   background: var(--surface-selected, #f5ecdb);
 }
 
-/* Settings: one column at a readable width. */
-.local-settings {
-  max-width: 52rem;
-  gap: 1.25rem;
+/* Settings: the sections listed on the left, one shown at a time at a
+   readable width beside them. Narrow, the list becomes a strip above. */
+.settings-layout {
+  grid-template-columns: 13.5rem minmax(0, 1fr);
+  align-items: start;
+  gap: 1.5rem;
 }
-/* The review form keeps the desktop setup's markup but takes the app's
-   palette here, so both settings panels read as one page. */
-.settings-card .settings-form {
-  border-top: 1px solid var(--border-subtle);
+.settings-nav {
+  position: sticky;
+  top: 1.25rem;
+  display: grid;
+  gap: 2px;
 }
-.settings-card .review-section {
-  padding: 1.25rem;
-}
-.settings-card .review-section + .review-section {
-  border-top-color: var(--border-subtle);
-}
-.settings-card .review-label,
-.settings-card .review-section legend {
-  font-size: var(--text-xs);
-  color: var(--text-secondary);
-}
-.settings-card .review-note,
-.settings-card .switch-row small {
-  font-size: var(--text-xs);
-  color: var(--text-tertiary);
-}
-.settings-card .switch-row {
-  font-size: var(--text-base);
-}
-.settings-card .harness-tile,
-.settings-card .select select,
-.settings-card .model-row input {
-  border-color: var(--border-default);
-  background: var(--surface-card);
-  color: var(--text-primary);
-}
-/* The same sunken track and raised choice as the app's other segmented
-   controls, such as the Analytics window. */
-.settings-card .segmented {
-  border-color: transparent;
+.settings-nav-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  width: 100%;
+  padding: 0.5rem 0.75rem;
+  border: 0;
   border-radius: var(--radius-md);
-  background: var(--surface-sunken);
+  background: none;
+  color: var(--text-primary);
+  text-align: left;
+  font: inherit;
+  cursor: pointer;
 }
-.settings-card .harness-tile small {
-  color: var(--text-tertiary);
-}
-.settings-card .harness-option:hover .harness-tile,
-.settings-card .select select:hover {
-  border-color: var(--border-strong);
+.settings-nav-item:hover {
   background: var(--surface-hover);
 }
-.settings-card .harness-option input:checked + .harness-tile {
-  border-color: var(--action-primary);
+.settings-nav-item:active {
+  transform: translateY(1px);
+}
+.settings-nav-item:focus-visible {
+  outline: 2px solid var(--border-focus);
+  outline-offset: 1px;
+}
+.settings-nav-item[aria-current="page"] {
   background: var(--surface-selected);
-  box-shadow: inset 0 0 0 1px var(--action-primary);
 }
-.settings-card .select::after {
-  border-color: var(--text-secondary);
+.settings-nav-text {
+  display: grid;
+  min-width: 0;
 }
-.settings-card .segmented span {
+.settings-nav-label {
+  font-size: var(--text-base);
+  font-weight: 500;
+}
+.settings-nav-sub {
+  overflow: hidden;
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.settings-dot {
+  flex: none;
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 50%;
+  background: var(--text-tertiary);
+}
+.settings-dot[data-tone="positive"] {
+  background: var(--status-positive);
+}
+.settings-dot[data-tone="caution"] {
+  background: var(--status-caution);
+}
+.settings-dot[data-tone="critical"] {
+  background: var(--status-critical);
+}
+.settings-content {
+  min-width: 0;
+  max-width: 48rem;
+}
+.settings-section {
+  display: grid;
+  gap: 1rem;
+}
+.settings-section-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.25rem 1rem;
+}
+.settings-section-head h2 {
+  margin: 0;
+  font-size: var(--text-lg);
+  font-weight: 600;
+}
+.settings-section-head p,
+.settings-overview-head p {
+  margin: 0.25rem 0 0;
   color: var(--text-secondary);
 }
-.settings-card .segmented span {
-  border-radius: var(--radius-sm);
+.settings-overview-head h2 {
+  margin: 0;
+  font-size: var(--text-2xl);
+  font-weight: 600;
 }
-.settings-card .segmented label:hover input:not(:checked) + span {
-  color: var(--text-primary);
+.settings-saved {
+  margin: 0;
+  font-size: var(--text-xs);
+  color: var(--status-positive);
 }
-.settings-card .segmented input:checked + span {
-  background: var(--surface-card);
-  box-shadow: var(--shadow-card);
-  color: var(--text-primary);
+.settings-list {
+  padding: 0 !important;
+  margin: 0;
+  list-style: none;
 }
-.settings-card .segmented input:focus-visible + span {
-  outline-color: var(--border-focus);
+.settings-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.75rem 1rem;
+  padding: 0.875rem 1.25rem;
 }
-.settings-card .switch-row input[role="switch"] {
-  background: var(--border-strong);
+.settings-row + .settings-row {
+  border-top: 1px solid var(--border-subtle);
 }
-.settings-card .switch-row input[role="switch"]:checked {
-  background: var(--action-primary);
+.settings-row-text {
+  display: grid;
+  gap: 0.125rem;
+  flex: 1 1 16rem;
+  min-width: 0;
 }
-.settings-card .switch-row input[role="switch"]::after {
-  background: var(--surface-card);
+.settings-row-label {
+  font-size: var(--text-base);
+  font-weight: 500;
+}
+.settings-row-detail {
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+}
+.settings-row-control {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  max-width: 100%;
+}
+.settings-select {
+  width: 15rem;
+}
+.settings-model {
+  display: grid;
+  gap: 0.5rem;
+}
+.settings-caution {
+  color: var(--status-caution);
+}
+.settings-footnote {
+  margin: 0;
+  font-size: var(--text-xs);
+  color: var(--text-tertiary);
+}
+@media (max-width: 760px) {
+  .settings-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .settings-nav {
+    position: static;
+    display: flex;
+    overflow-x: auto;
+  }
+  .settings-nav-item {
+    flex: none;
+    width: auto;
+  }
+  .settings-nav-sub {
+    display: none;
+  }
+  .settings-row-control,
+  .settings-select,
+  .settings-model {
+    width: 100%;
+  }
+  .settings-row-control {
+    justify-content: flex-start;
+  }
 }
 .local-sessions {
   padding: 0 1.25rem;
