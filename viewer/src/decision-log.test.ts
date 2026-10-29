@@ -6,7 +6,9 @@ import {
   type DecisionSummary,
   decisionQuery,
   featureCounts,
+  featureHeadings,
   featureQuery,
+  type FeatureSummary,
   hasDecisionFilters,
   hasFeatureFilters,
   locateDecision,
@@ -35,6 +37,16 @@ function decision(overrides: Partial<DecisionSummary> = {}): DecisionSummary {
     file_count: 1,
     ...overrides,
   };
+}
+
+/** A feature last active at `last`, or never. */
+function at(id: string, last: string | null): FeatureSummary {
+  return { id, first_activity_at: null, last_activity_at: last } as unknown as FeatureSummary;
+}
+
+/** The start of a local day, as the headings carry it. */
+function day(date: string): string {
+  return new Date(`${date}T00:00:00`).toISOString();
 }
 
 const ada = { email: "ada@example.com", name: "Ada Lovelace", login: "ada", avatar_url: null };
@@ -108,6 +120,23 @@ describe("a feature row", () => {
     });
     expect(locateDecision(detail, "s2-d0")?.group).toBe("session:s2");
     expect(locateDecision(detail, "d9")).toBeNull();
+  });
+
+  it("starts a month or day heading only where the last feature with activity differs", () => {
+    const headings = featureHeadings([
+      at("a", "2026-10-28T10:00:00"),
+      at("b", "2026-10-28T09:00:00"),
+      at("idle", null),
+      at("c", "2026-10-21T10:00:00"),
+      at("d", "2026-09-30T10:00:00"),
+    ]);
+    expect(headings).toEqual([
+      { month: day("2026-10-01"), day: day("2026-10-28") },
+      { month: null, day: null },
+      { month: null, day: null },
+      { month: null, day: day("2026-10-21") },
+      { month: day("2026-09-01"), day: day("2026-09-30") },
+    ]);
   });
 });
 
