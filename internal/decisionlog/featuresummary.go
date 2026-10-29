@@ -55,7 +55,7 @@ type SummarizedFeature struct {
 // Summarize writes the text of the repository's features whose members
 // changed and have been unchanged for FeatureQuiet (not with o.Manual),
 // longest behind first, at most FeatureSummaryRunLimit (or o.Limit). A
-// backend or price reason stops it until the next run.
+// backend reason stops it until the next run.
 func (w *FeatureWorker) Summarize(ctx context.Context, repository, dir string, o FeatureOptions) (SummaryReport, error) {
 	o.DryRun = false
 	r, err := w.newRun(ctx, repository, dir, o)

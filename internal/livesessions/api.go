@@ -63,7 +63,7 @@ func (t *Transcripts) Handler() http.Handler {
 				out.Transcript = nil
 			} else {
 				_, path, _ := t.Tracker.Lookup(answer.Session.Agent, answer.Session.ID)
-				_, _, out.Summary = t.describe(key{answer.Session.Agent, answer.Session.ID}, path)
+				_, _, out.Summary, _ = t.describe(key{answer.Session.Agent, answer.Session.ID}, path)
 			}
 			writeJSON(w, http.StatusOK, out)
 		}

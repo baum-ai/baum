@@ -24,25 +24,25 @@ func TestBuildEstimateOfAResumedVersion(t *testing.T) {
 		f.pull(i, fmt.Sprintf("Change %d", i), f.clock.now.Add(-time.Hour), fmt.Sprintf("h%d", i), []string{"a.go"}, "A description.")
 		f.feature(version, fmt.Sprintf("F%d", i), i)
 	}
-	cost := func() float64 {
+	calls := func() int {
 		t.Helper()
 		e, err := f.worker.EstimateBuild(context.Background(), repo, "", BuildOptions{})
-		if err != nil || e.EstimateUSD == nil || e.PullRequests != 0 {
+		if err != nil || e.PullRequests != 0 {
 			t.Fatalf("estimate = %+v, %v", e, err)
 		}
-		return *e.EstimateUSD
+		return e.Calls
 	}
-	if clean := cost(); clean != 0 {
-		t.Fatalf("a version with nothing left is estimated at %f", clean)
+	if clean := calls(); clean != 0 {
+		t.Fatalf("a version with nothing left is estimated at %d calls", clean)
 	}
 	f.exec(`UPDATE feature SET membership_version=1`)
-	behind := cost()
+	behind := calls()
 	if behind <= 0 {
 		t.Fatal("features behind are not estimated")
 	}
 	f.exec(`INSERT INTO pr_summary(repository, number, content_hash, summary, created_at) SELECT repository, number, 'h', 's', 0 FROM pull_request`)
-	if summarized := cost(); summarized >= behind {
-		t.Fatalf("pull requests already summarized are estimated again: %f, %f", summarized, behind)
+	if summarized := calls(); summarized >= behind {
+		t.Fatalf("pull requests already summarized are estimated again: %d, %d", summarized, behind)
 	}
 }
 
@@ -65,13 +65,14 @@ func TestBuildChargesFailedCalls(t *testing.T) {
 	}
 }
 
-// A build stops when its model cannot be priced.
-func TestBuildStopReasons(t *testing.T) {
+// A build runs a model the price list cannot price, as any other: prices
+// only report.
+func TestBuildRunsAnUnpricedModel(t *testing.T) {
 	f := newFeatureFixture(t)
 	f.clock.now = t0.Add(60 * 24 * time.Hour)
 	f.history(50)
 	f.backend.batch = func(user string) (string, error) { return batchReply(t, user, ""), nil }
-	if report := f.build(BuildOptions{Model: "made-up-model"}); report.Stopped != ReasonUnpriced || f.backend.calls["batch"] != 0 {
+	if report := f.build(BuildOptions{Model: "made-up-model"}); report.Stopped != "" || f.backend.calls["batch"] == 0 {
 		t.Fatalf("unpriced = %+v", report)
 	}
 }
@@ -215,7 +216,7 @@ func TestBuildResumedInItsLastTextPass(t *testing.T) {
 	f.exec(`UPDATE feature SET membership_version=1`)
 	f.exec(`UPDATE feature_version SET spent_usd=0.5 WHERE id=?`, version)
 	estimate, err := f.worker.EstimateBuild(context.Background(), repo, "", BuildOptions{})
-	if err != nil || estimate.PullRequests != 0 || estimate.EstimateUSD == nil || *estimate.EstimateUSD <= 0 {
+	if err != nil || estimate.PullRequests != 0 || estimate.Calls <= 0 {
 		t.Fatalf("estimate = %+v, %v", estimate, err)
 	}
 	report := f.build(BuildOptions{})

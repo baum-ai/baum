@@ -72,8 +72,8 @@ Error codes include `credential_store_unavailable`, `auth_request_failed`,
 
 Automatic scheduling is fenced while device sign-in is pending and resumes on
 cancel/error expiry. An effective account change establishes fresh PR baselines
-without generating historical work. Existing preferences, daily spending limits,
-pauses and saved reviews remain. In-flight discovery is cancelled and obsolete
+without generating historical work. Existing preferences and saved reviews
+remain. In-flight discovery is cancelled and obsolete
 snapshots/observations cannot enter the new account's partition. Final review
 publication using the saved GitHub.com account is serialized against account
 replacement. Reviews using explicit environment/config or Enterprise credentials
@@ -103,6 +103,6 @@ configuration digest. A job admitted just before switching accounts cannot start
 with the replacement account, including after daemon restart. Baum-issued
 credentials use the validated account ID for their private partition, so
 same-account refresh preserves queued confirmations. Explicit overrides use a
-token fingerprint and require a fresh estimate when replaced. A discovery reader
+token fingerprint and require a fresh start when replaced. A discovery reader
 still refuses an exact token change mid-transaction and retries with a new reader;
 a late old-token identity lookup cannot inherit a replacement account's ID.

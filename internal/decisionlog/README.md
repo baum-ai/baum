@@ -77,9 +77,10 @@ not a failure.
    may make a second call, after the harness rejected its first reply against
    the schema; that resends the cached prompt, so it is reserved at the
    cache-read rate plus another reply. The Codex CLI has no option capping the
-   reply, so its 16,384 tokens are an estimate rather than a limit. A model the
-   price list does not price is skipped (`unpriced_model`). There is no
-   spending cap: as for reviews, each call keeps its token and time budgets.
+   reply, so its 16,384 tokens are an estimate rather than a limit. Prices
+   only report: a model the price list does not price runs, reserved at 0.
+   There is no spending cap: as for reviews, each call keeps its token and
+   time budgets.
 8. The attempt is recorded as pending and the completion made: one request for
    anthropic; `claude -p` with no tools besides its structured reply, which
    normally ends after one call and may retry a rejected reply once; or one
@@ -102,8 +103,8 @@ not a failure.
    transcript, given IDs and saved.
 
 A failed call is not cached. After 3 failures in a row the session is marked
-`extraction_failed` until its transcript changes. Skips for a missing backend
-or an unpriced model are tried again the next day or when the transcript
+`extraction_failed` until its transcript changes. Skips for a missing or
+unsupported backend are tried again the next day or when the transcript
 changes; other skips only when it changes.
 
 ## Stored data
@@ -215,9 +216,8 @@ and ledger, each attempt recorded with its stage (`feature_assign`,
 `feature_summary`, `pr_summary` or `feature_consolidate`) and item. Rejected
 replies and a ledger that cannot be written are handled as capture's. The
 preferences and the repository's settings are read again before every call,
-so a repository turned off makes no further call. A repository turned off,
-a missing backend or an unpriced model stops the stage until its next run,
-with no failure counted.
+so a repository turned off makes no further call. A repository turned off or
+a missing backend stops the stage until its next run, with no failure counted.
 
 ### Placement
 
@@ -359,7 +359,7 @@ turned off, and a merge over a first build's features needs the room.
   refusal discards the merges paid for, which are logged and counted), and
   the pass backs off as placement's failures do, counted against the
   fingerprint. A split reply that is invalid leaves only that feature whole
-  and unchecked. A call that cannot be made (a backend or price reason)
+  and unchecked. A call that cannot be made (a backend reason)
   also writes nothing; the pass is made again on the next run.
 
 ### First build
@@ -367,10 +367,11 @@ turned off, and a merge over a first build's features needs the room.
 The live placement places only work opened since the feature log was
 activated. A repository's history is placed when the user asks for it, as a
 hosted rebuild does, by a first build: a job of the job queue
-(`jobs.KindFeatureBuild`) that runs only from a confirmed estimate, or `baum
-internal features build`.
+(`jobs.KindFeatureBuild`) that starts at once when the user asks for it,
+with no estimate, as every requested run does, or `baum internal features
+build`.
 
-- **History.** The estimate first lists the repository's whole pull request
+- **History.** The build first lists the repository's whole pull request
   history, once per repository (`pull_sync.history_listed_at`), with no
   ETag and without moving the sync's ETag or cursor, never replacing a pull
   request a sync saved with a later update; a listing that stops at
@@ -380,20 +381,19 @@ internal features build`.
   any, links to this machine's sessions those of the commits it read that
   were made in the last 7 days (`FeatureLookback`), as a sync links its
   fresh commits; older commits are not linked.
-- **Estimate.** The pull requests left to place and a resumed version's
-  features whose text is behind (with their pull requests' summaries still
-  to write) are counted, and their calls priced from their sizes at the
-  configured backend and model: a batch call per 25 (the items' titles,
-  descriptions and paths, and candidates for the features placed so far, a
-  feature per 3 pull requests), the new features' text twice and a summary
-  of each pull request with a description. As for a requested review, there
-  is no spending cap: the estimate is what the user confirms, and the build
-  runs to the end. A repository whose decisions are not captured, or whose
-  model cannot be priced or called, is not estimated. A build that will run
-  discovery says so (`discovery_usd`: its token budget is what $5 buys at
-  the review model's base price; cache reads are not counted, so it is not
-  a dollar cap). Estimating lists the history, saving the pull requests it
-  lists and activating the repository's sync state; it writes no feature.
+- **No cap.** As for a requested review, there is no spending cap and
+  nothing about the price stops a build: a model with no price runs as any
+  other, and the build runs to the end. Costs are recorded at API prices
+  where they are known. A repository whose decisions are not captured, or
+  whose backend cannot call, does not start (the job is refused with the
+  reason).
+- **Dry run.** `--dry-run` counts what a build would do, with no cost: the
+  pull requests left to place and its calls, a batch call per 25, the new
+  features' text twice (a feature per 3 pull requests), a resumed version's
+  features whose text is behind, and a summary of each pull request with a
+  description; and whether it runs discovery first. It lists the history,
+  saving the pull requests it lists and activating the repository's sync
+  state; it writes no feature.
 - **Seeding.** A new version, with no features and no seeds, is seeded with
   a feature taxonomy (`--taxonomy`, default `auto`): the newest made after
   the version, else a new discovery's (see "Discovery"); `latest` or a
@@ -444,9 +444,9 @@ internal features build`.
   placement takes what is within its lookback. A retired version is kept,
   and a link to one of its features resolves as archived.
 - **Stopping.** A build stops before a call that cannot be made
-  (`unpriced_model`, `disabled` or a backend reason; `failed` for a store
-  error), or when it is cancelled or the daemon stops, leaving the version
-  `building` with `stopped` set to why; confirming it again resumes it. Its
+  (`disabled` or a backend reason; `failed` for a store error), or when it
+  is cancelled or the daemon stops, leaving the version `building` with
+  `stopped` set to why; starting it again resumes it. Its
   job then fails with that reason. Progress (phase, calls) is reported to
   the job, and the version records its pull requests placed of the total
   and its spend over all its runs (`spent_usd`, each call's known cost, and
@@ -464,7 +464,7 @@ paths as a build does.
 
 - Its backend and model are a review's: `generate.Select` with the review
   backend and model, whatever a build's own `--backend` and `--model`.
-  cursor-agent is not supported, and a model with no price cannot run.
+  cursor-agent is not supported; a model with no price runs as any other.
 - The default branch (the latest one GitHub reported for a pull request)
   is fetched into `refs/baum/default`. The run directory holds its head's
   checkout in `head/`, bounded as a review's, and `history.jsonl`
@@ -472,11 +472,11 @@ paths as a build does.
   titles, branches and paths, no descriptions.
 - It runs through the review harness (`generate.RunTask`): the published
   prompt `feature-discover-public-v1`, the discovery schema and the
-  taxonomy's bounds as its check, and hosted's budgets: 30 minutes, 200
-  calls, 3 provider attempts, 2 repairs, a 3-minute stall and 2-minute tool
-  timeout, and the tokens $5 buys at the model's highest base price of
-  input, output and cache creation (cache reads are not counted). Its
-  output is masked before it is read.
+  taxonomy's bounds as its check, and a review run's budgets: the
+  configuration's run timeout, calls and tokens (by default 45 minutes, 40
+  calls and 2,000,000 tokens), 3 provider attempts and 2 repairs, whatever
+  the model's price. Hosted discovery keeps its own budgets. Its output is
+  masked before it is read.
 - It is one ledger row (stage `feature_discovery`); in a build its cost is
   added to the version's spend.
 
@@ -527,7 +527,8 @@ internal features build --repo <owner/name> [--clone <path>] [--dry-run]
 [--backend <b>] [--model <m>] [--taxonomy auto|none|latest|<id>]` runs a
 first build without the gate, a line a batch on standard error and its
 report as JSON; `--dry-run` lists the history, saving the pull requests it
-lists, and prints the estimate, writing no feature. `baum internal features
+lists, and prints the pull requests and calls a build would make, with no
+cost, writing no feature. `baum internal features
 discover --repo <owner/name> [--clone <path>] [--show latest|<id>]` lists
 the history and reads its paths as a build does, then runs discovery once
 and prints its report, or prints a stored taxonomy.

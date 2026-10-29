@@ -1,8 +1,9 @@
-// Package prupdate makes the two GitHub writes that unblock a pull request
-// without changing its code: merging its base branch into it (update branch)
-// and re-running its failed GitHub Actions workflow runs. Like merging, each
-// one is confirmed by the user against the head commit they saw, and is
-// re-checked against GitHub before anything is sent.
+// Package prupdate makes the GitHub writes that unblock a pull request
+// without changing its code: merging its base branch into it (update branch),
+// re-running its failed GitHub Actions workflow runs, and resolving a review
+// thread. Like merging, the first two are confirmed by the user against the
+// head commit they saw, and each is re-checked against GitHub before anything
+// is sent.
 package prupdate
 
 import (
@@ -12,7 +13,9 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"slices"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/baum-ai/baum/internal/fix"
 	"github.com/baum-ai/baum/internal/github"
@@ -28,6 +31,7 @@ const (
 	UpToDate  = "up_to_date"
 	NoRuns    = "no_runs"
 	Fork      = "fork"
+	NotFound  = "not_found"
 	Failed    = "failed"
 )
 
@@ -47,8 +51,16 @@ const (
 	conflictMessage  = "This pull request has conflicts with its base branch. Resolve them before updating the branch."
 )
 
-// Service reads and writes through one GitHub client.
-type Service struct{ Client *github.Client }
+// Service reads and writes through one GitHub client. Cache, when set,
+// keeps the review threads and failing checks it read for the Inbox panel.
+// Counted, when set, hears of a pull request's unresolved threads read from
+// GitHub that no longer number discovery's count, so the inbox shows the new
+// count before discovery's next poll.
+type Service struct {
+	Client  *github.Client
+	Cache   *Cache
+	Counted func(ctx context.Context, repository github.Repository, number, unresolved int)
+}
 
 // session is one repository's REST access, with the pull request read once.
 type session struct {
@@ -287,6 +299,7 @@ func (s Service) RerunFailedChecks(ctx context.Context, repository github.Reposi
 	if len(result.Rerun) == 0 {
 		return result, first
 	}
+	s.Cache.rerun(headKey(repository, expectedHead))
 	return result, nil
 }
 
@@ -308,6 +321,191 @@ func rerunError(status int, text string) *Error {
 		return &Error{Failed, fmt.Sprintf("GitHub refused the re-run (HTTP %d).", status)}
 	}
 	return &Error{Failed, "GitHub refused the re-run: " + text}
+}
+
+// Thread is an unresolved review thread as the app lists it. Excerpt is the
+// headline of its first comment, the reviewer's text, untrusted.
+type Thread struct {
+	ID       string `json:"id"`
+	Path     string `json:"path"`
+	Line     int    `json:"line,omitempty"`
+	Outdated bool   `json:"outdated"`
+	Author   string `json:"author"`
+	Excerpt  string `json:"excerpt"`
+	Comments int    `json:"comments"`
+	URL      string `json:"url"`
+	// CanResolve is the signed-in account's permission to resolve it.
+	CanResolve bool `json:"can_resolve"`
+}
+
+// Threads lists a pull request's unresolved review threads.
+type Threads struct {
+	Threads []Thread `json:"threads"`
+	// Capped: the pull request has more threads than baum read.
+	Capped bool `json:"capped"`
+}
+
+// maxExcerpt bounds a thread's excerpt, in characters.
+const maxExcerpt = 200
+
+// ReviewThreads returns the pull request's unresolved review threads, from
+// the cache while it still matches unresolved, discovery's count (negative
+// when unknown), else read from GitHub.
+func (s Service) ReviewThreads(ctx context.Context, repository github.Repository, number, unresolved int) (Threads, error) {
+	key, gen := pullKey(repository, number), s.Cache.generation()
+	if cached, ok := s.Cache.cachedThreads(key, unresolved); ok {
+		return cached, nil
+	}
+	list, err := s.Client.UnresolvedThreads(ctx, repository, number)
+	if err != nil {
+		return Threads{}, &Error{Failed, "baum could not read the review threads from GitHub."}
+	}
+	out := Threads{Threads: []Thread{}, Capped: list.Capped}
+	for _, t := range list.Unresolved {
+		first := t.Comments[0]
+		out.Threads = append(out.Threads, Thread{ID: t.ID, Path: t.Path, Line: t.Line, Outdated: t.Outdated, Author: first.Author, Excerpt: excerpt(first.Body), Comments: max(t.Total, len(t.Comments)), URL: t.URL, CanResolve: t.CanResolve})
+	}
+	s.Cache.storeThreads(key, gen, out)
+	if s.Counted != nil && unresolved >= 0 && !out.Capped && len(out.Threads) != unresolved {
+		s.Counted(ctx, repository, number, len(out.Threads))
+	}
+	return out, nil
+}
+
+// excerpt is a comment's headline (fix.Headline), at most maxExcerpt
+// characters.
+func excerpt(body string) string {
+	line := fix.Headline(body)
+	if utf8.RuneCountInString(line) > maxExcerpt {
+		line = strings.TrimSpace(string([]rune(line)[:maxExcerpt-1])) + "…"
+	}
+	return line
+}
+
+// ResolveThread resolves one review thread of the pull request, as GitHub's
+// Resolve conversation button does. The thread is read first, so only a thread
+// of this pull request is resolved; one someone resolved meanwhile is done.
+func (s Service) ResolveThread(ctx context.Context, repository github.Repository, number int, id string) error {
+	state, err := s.Client.ThreadState(ctx, repository, id)
+	switch {
+	case err != nil:
+		return &Error{Failed, "baum could not read the review thread from GitHub."}
+	case !strings.EqualFold(state.Repository, repository.Owner+"/"+repository.Name) || state.Number != number:
+		return &Error{NotFound, "This review thread is not on this pull request."}
+	case state.Resolved:
+		s.Cache.resolved(pullKey(repository, number), id)
+		return nil
+	case !state.CanResolve:
+		return &Error{Forbidden, "Your GitHub account cannot resolve this review thread."}
+	}
+	if err := s.Client.ResolveThread(ctx, repository, id); err != nil {
+		return &Error{Failed, "GitHub did not resolve the review thread. Try again, or resolve it on GitHub."}
+	}
+	s.Cache.resolved(pullKey(repository, number), id)
+	return nil
+}
+
+// FailingCheck is a failing check of the head commit as the app lists it.
+// Name and Title come from the check itself and are untrusted.
+type FailingCheck struct {
+	Name string `json:"name"`
+	// Conclusion is the check run's conclusion or the commit status's state:
+	// failure, timed_out, startup_failure, action_required or error.
+	Conclusion string `json:"conclusion"`
+	// Title is the check's own one-line account of the failure, if any.
+	Title string `json:"title,omitempty"`
+	URL   string `json:"url,omitempty"`
+	// JobID is the GitHub Actions job behind a check run, which RerunJob
+	// re-runs; absent for other apps' checks and commit statuses.
+	JobID int64 `json:"job_id,omitempty"`
+}
+
+// Checks lists a head commit's failing checks.
+type Checks struct {
+	HeadSHA string         `json:"head_sha"`
+	Checks  []FailingCheck `json:"checks"`
+}
+
+// maxCheckTitle bounds a check's title, in characters.
+const maxCheckTitle = 160
+
+// FailingChecks lists the failing check runs and commit statuses of head,
+// the pull request's head commit as the app saw it, or of the pull
+// request's current head when head is empty.
+func (s Service) FailingChecks(ctx context.Context, repository github.Repository, number int, head string) (Checks, error) {
+	gen := s.Cache.generation()
+	if head != "" {
+		if cached, ok := s.Cache.cachedChecks(headKey(repository, head)); ok {
+			return cached, nil
+		}
+	}
+	reader, err := s.Client.REST(ctx, repository)
+	if err != nil {
+		return Checks{}, &Error{Failed, unreachable}
+	}
+	if head == "" {
+		pull, err := fix.ReadPullRequest(ctx, reader, repository, number)
+		if err != nil {
+			return Checks{}, &Error{NotOpen, "GitHub could not show this pull request as open. It may be closed."}
+		}
+		head = pull.HeadSHA
+	}
+	list, err := fix.FailingChecks(ctx, reader, repository, head)
+	if err != nil {
+		return Checks{}, &Error{Failed, "baum could not read the failing checks from GitHub."}
+	}
+	out := Checks{HeadSHA: head, Checks: []FailingCheck{}}
+	for _, check := range list {
+		out.Checks = append(out.Checks, FailingCheck{Name: check.Name, Conclusion: check.Conclusion, Title: checkTitle(check), URL: check.URL, JobID: check.JobID})
+	}
+	s.Cache.storeChecks(headKey(repository, head), gen, out)
+	return out, nil
+}
+
+// RerunJob re-runs one failed GitHub Actions job of the head commit the user
+// saw, as GitHub's Re-run job button does. The job must be one of that
+// head's failing checks, read here, so a request cannot name another job.
+func (s Service) RerunJob(ctx context.Context, repository github.Repository, number int, expectedHead string, job int64) error {
+	read, err := s.open(ctx, repository, number)
+	if err != nil {
+		return err
+	}
+	if read.pull.HeadSHA != expectedHead {
+		return &Error{HeadMoved, headMovedMessage}
+	}
+	if err := canPush(ctx, read.reader, repository); err != nil {
+		return err
+	}
+	checks, err := fix.FailingChecks(ctx, read.reader, repository, expectedHead)
+	if err != nil {
+		return &Error{Failed, "baum could not read the failing checks from GitHub."}
+	}
+	if job == 0 || !slices.ContainsFunc(checks, func(c fix.Check) bool { return c.JobID == job }) {
+		return &Error{NotFound, "This check is no longer failing on this commit, or GitHub Actions did not run it."}
+	}
+	path := fmt.Sprintf("%s/actions/jobs/%d/rerun", repositoryPath(repository), job)
+	status, body, err := read.reader.Write(ctx, http.MethodPost, path, nil)
+	if err != nil {
+		return &Error{Failed, unreachable}
+	}
+	if status != http.StatusCreated {
+		return rerunError(status, message(body))
+	}
+	s.Cache.rerun(headKey(repository, expectedHead))
+	return nil
+}
+
+// checkTitle is a check's output title, else the headline of its summary (a
+// commit status's description), at most maxCheckTitle characters.
+func checkTitle(check fix.Check) string {
+	title := fix.Headline(check.Title)
+	if title == "" {
+		title = fix.Headline(check.Summary)
+	}
+	if utf8.RuneCountInString(title) > maxCheckTitle {
+		title = strings.TrimSpace(string([]rune(title)[:maxCheckTitle-1])) + "…"
+	}
+	return title
 }
 
 // AsError returns err as a refusal, wording any other error as a connection

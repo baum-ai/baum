@@ -72,7 +72,7 @@ func TestReposCLI(t *testing.T) {
 	if e != nil || raw != "[]\n" {
 		t.Fatalf("invalid flags registered clone %s %v", raw, e)
 	}
-	if _, e = run("internal", "repos", "add", p, "--automatic", "--daily-cap=2.5", "--model=custom"); e != nil {
+	if _, e = run("internal", "repos", "add", p, "--automatic", "--model=custom"); e != nil {
 		t.Fatal(e)
 	}
 	if _, e = run("internal", "repos", "add", p, "--backend=codex"); e != nil {
@@ -86,25 +86,12 @@ func TestReposCLI(t *testing.T) {
 	if e = json.Unmarshal([]byte(raw), &list); e != nil {
 		t.Fatal(e)
 	}
-	if len(list) != 1 || (list[0].Settings.Automatic == nil || !*list[0].Settings.Automatic) || list[0].Settings.DailyCap == nil || *list[0].Settings.DailyCap != 2.5 || list[0].Settings.Model == nil {
+	if len(list) != 1 || (list[0].Settings.Automatic == nil || !*list[0].Settings.Automatic) || list[0].Settings.Model == nil {
 		t.Fatalf("settings lost %s", raw)
 	}
-	if _, e = run("internal", "repos", "add", p, "--daily-cap=1", "--clear-daily-cap"); e == nil {
-		t.Fatal("conflicting cap flags accepted")
-	}
-	if _, e = run("internal", "repos", "add", p, "--clear-daily-cap"); e != nil {
-		t.Fatal(e)
-	}
-	raw, e = run("internal", "repos", "list", "--json")
-	if e != nil {
-		t.Fatal(e)
-	}
-	list = nil
-	if e = json.Unmarshal([]byte(raw), &list); e != nil {
-		t.Fatal(e)
-	}
-	if len(list) != 1 || list[0].Settings.DailyCap != nil || (list[0].Settings.Automatic == nil || !*list[0].Settings.Automatic) {
-		t.Fatalf("cap not cleared or other settings lost %s", raw)
+	// There is no daily cap to set.
+	if _, e = run("internal", "repos", "add", p, "--daily-cap=1"); e == nil {
+		t.Fatal("a daily cap flag was accepted")
 	}
 	if _, e = run("internal", "repos", "add", p, "--backend=", "--model="); e != nil {
 		t.Fatal(e)

@@ -1,6 +1,7 @@
 package decisionlog
 
 import (
+	"cmp"
 	"compress/gzip"
 	"context"
 	"database/sql"
@@ -19,7 +20,6 @@ import (
 	"github.com/baum-ai/baum/internal/assemble"
 	"github.com/baum-ai/baum/internal/config"
 	"github.com/baum-ai/baum/internal/generate"
-	"github.com/baum-ai/baum/internal/pricing"
 	"github.com/baum-ai/baum/sessions"
 )
 
@@ -31,22 +31,20 @@ import (
 // StageDiscovery is the ledger stage of a discovery task.
 const StageDiscovery = "feature_discovery"
 
-// Discovery's choices: hosted discovery's budgets, its token budget what
-// FeatureDiscoveryUSD buys at the review model's base price
-// (discoveryMaxTokens), which bounds tokens rather than dollars.
-const (
-	FeatureDiscoveryUSD = 5.0
-	// LatestTaxonomy names a repository's newest taxonomy.
-	LatestTaxonomy = "latest"
-)
+// LatestTaxonomy names a repository's newest taxonomy.
+const LatestTaxonomy = "latest"
 
-var discoveryBudgets = agent.Budgets{
-	WallClock: 30 * time.Minute, MaxCalls: 200, MaxProviderAttempts: 3, MaxRepairAttempts: 2,
-	StallTimeout: 3 * time.Minute, ToolTimeout: 2 * time.Minute,
+// discoveryBudgets are a review run's budgets (the resolved configuration's
+// run timeout, calls and tokens, each unset one the default's), for priced
+// and unpriced models alike: nothing about the price bounds discovery.
+func discoveryBudgets(cfg config.Config) agent.Budgets {
+	b, d := cfg.Budgets, config.Default().Budgets
+	return agent.Budgets{WallClock: time.Duration(cmp.Or(b.RunTimeout, d.RunTimeout)), MaxCalls: cmp.Or(b.MaxCalls, d.MaxCalls),
+		MaxTokens: cmp.Or(b.MaxTokens, d.MaxTokens), MaxProviderAttempts: 3, MaxRepairAttempts: 2}
 }
 
 // Reasons discovery was not run or gave no taxonomy, besides the backend
-// and price reasons.
+// reasons.
 const (
 	ReasonNoDefaultBranch = "no_default_branch"
 	// ReasonDiscoveryFailed is followed by the failure's category.
@@ -62,8 +60,10 @@ type DiscoverReport struct {
 	Features   int    `json:"features"`
 	Backend    string `json:"backend,omitempty"`
 	Model      string `json:"model,omitempty"`
-	MaxTokens  int    `json:"max_tokens,omitempty"`
-	Calls      int    `json:"calls"`
+	// MaxTokens and MaxCalls are the run's budgets, a review run's.
+	MaxTokens int `json:"max_tokens,omitempty"`
+	MaxCalls  int `json:"max_calls,omitempty"`
+	Calls     int `json:"calls"`
 	// SpentUSD is nil when the run's spend cannot be priced.
 	SpentUSD *float64 `json:"spent_usd"`
 	// Stopped is why no taxonomy was made.
@@ -89,18 +89,18 @@ func (w *FeatureWorker) Discover(ctx context.Context, repository, dir string) (D
 	return report, err
 }
 
-// discoveryPlan is the backend and token budget discovery runs with, or why
-// it cannot run.
+// discoveryPlan is the backend and budgets discovery runs with, or why it
+// cannot run.
 type discoveryPlan struct {
-	selected  generate.Selected
-	cfg       config.Config
-	maxTokens int
-	skip      string
+	selected generate.Selected
+	cfg      config.Config
+	budgets  agent.Budgets
+	skip     string
 }
 
 // planDiscovery resolves the backend and model exactly as a review does
 // (generate.Select with the review backend and model; a build's backend and
-// model replace only its own calls') and buys the token budget.
+// model replace only its own calls'), with a review run's budgets.
 func (r *featureRun) planDiscovery(ctx context.Context) discoveryPlan {
 	cfg := r.settings.Resolve(r.prefs.Resolve(r.w.Config))
 	backends := r.w.Backends
@@ -118,27 +118,8 @@ func (r *featureRun) planDiscovery(ctx context.Context) discoveryPlan {
 		p.skip = ReasonUnsupported
 		return p
 	}
-	maxTokens, ok := discoveryMaxTokens(r.calls.prices, p.selected.Backend.Name(), p.selected.Model)
-	if !ok {
-		p.skip = ReasonUnpriced
-		return p
-	}
-	p.maxTokens = maxTokens
+	p.budgets = discoveryBudgets(cfg)
 	return p
-}
-
-// discoveryMaxTokens is the token budget FeatureDiscoveryUSD buys at the
-// model's highest base price of the token kinds the budget counts (input,
-// output and cache creation), as hosted discovery's is. Cache reads are not
-// counted, so it bounds tokens, not dollars.
-func discoveryMaxTokens(list *pricing.List, backend, model string) (int, bool) {
-	rate, ok := list.Rates(list.Normalize(model, vendor(backend)))
-	price := max(rate.Input, rate.Output, rate.CacheWrite)
-	if !ok || price <= 0 {
-		return 0, false
-	}
-	tokens := int(FeatureDiscoveryUSD / price * 1e6)
-	return tokens, tokens > 0
 }
 
 // discover runs discovery and stores its taxonomy, returning it. A run that
@@ -151,7 +132,7 @@ func (r *featureRun) discover(ctx context.Context) (DiscoverReport, discover.Fea
 	if p.selected.Backend != nil {
 		report.Backend, report.Model = p.selected.Backend.Name(), p.selected.Model
 	}
-	report.MaxTokens = p.maxTokens
+	report.MaxTokens, report.MaxCalls = p.budgets.MaxTokens, p.budgets.MaxCalls
 	if report.Stopped = p.skip; p.skip != "" {
 		return report, taxonomy, nil
 	}
@@ -175,18 +156,16 @@ ORDER BY updated_at DESC LIMIT 1`, r.repository).Scan(&branch)
 	}
 	report.Revision = revision
 	attempt := Attempt{Repository: r.repository, Stage: StageDiscovery, Item: "revision:" + revision,
-		Backend: report.Backend, Model: report.Model, Reserved: FeatureDiscoveryUSD}
+		Backend: report.Backend, Model: report.Model}
 	id, err := r.w.Store.Begin(ctx, attempt)
 	if err != nil {
 		return report, taxonomy, err
 	}
-	budgets := discoveryBudgets
-	budgets.MaxTokens = p.maxTokens
 	outcome, document, runErr := generate.RunTask(ctx, generate.TaskOptions{
 		Backend: p.selected.Backend, Redactor: r.w.redactor,
 		// The marker keeps the run's own session out of session evidence.
 		Task: agent.Task{Directory: runDir, Prompt: sessions.GenerationRunMarker + "\n" + discover.PublicPrompt,
-			Schema: discover.Schema, Check: discover.Check, Budgets: budgets},
+			Schema: discover.Schema, Check: discover.Check, Budgets: p.budgets},
 	})
 	report.Calls = outcome.Calls
 	report.SpentUSD = r.calls.prices.BackendOutcomeCost(report.Backend, cmpModel(outcome.Model, report.Model), outcome)

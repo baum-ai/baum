@@ -36,10 +36,9 @@ const (
 	// Transient.
 	ReasonUnsupported = "backend_unsupported"
 	ReasonUnavailable = "backend_unavailable"
-	ReasonUnpriced    = "unpriced_model"
 )
 
-var transient = map[string]bool{ReasonUnsupported: true, ReasonUnavailable: true, ReasonUnpriced: true}
+var transient = map[string]bool{ReasonUnsupported: true, ReasonUnavailable: true}
 
 // Outcomes of a capture.
 const (

@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/baum-ai/baum/features/assign"
-	"github.com/baum-ai/baum/features/summary"
 )
 
 // First build (README.md, "First build"): a repository's pull request
@@ -66,32 +65,28 @@ type BuildProgress struct {
 	Unpriced int
 }
 
-// BuildEstimate is what a build of the repository would do and cost.
+// BuildEstimate is what a build of the repository would do: how many pull
+// requests it places and calls it makes. It has no cost: prices only report.
 type BuildEstimate struct {
 	Repository string `json:"repository"`
 	// Version is the building version a build resumes, 0 for a new one.
 	Version int64 `json:"version,omitempty"`
 	// PullRequests are those left to place, in Batches calls.
-	PullRequests int    `json:"pull_requests"`
-	Batches      int    `json:"batches"`
-	Backend      string `json:"backend,omitempty"`
-	Model        string `json:"model,omitempty"`
-	// EstimateUSD is the cost of what is left, nil when it cannot be
-	// priced; SpentUSD what the version's earlier runs spent.
-	EstimateUSD *float64 `json:"estimate_usd"`
-	SpentUSD    float64  `json:"spent_usd"`
-	// Reason is why no call could be made (a backend or price reason).
+	PullRequests int `json:"pull_requests"`
+	Batches      int `json:"batches"`
+	// Calls are the model calls left, besides discovery's.
+	Calls   int    `json:"calls"`
+	Backend string `json:"backend,omitempty"`
+	Model   string `json:"model,omitempty"`
+	// Reason is why no call could be made (a backend reason).
 	Reason string `json:"reason,omitempty"`
 	// HistoryTruncated says the history listing stopped at its bound: the
 	// least recently updated pull requests are missing, and the listing is
 	// not retried.
 	HistoryTruncated bool `json:"history_truncated,omitempty"`
-	// Discovery says the build runs feature discovery first, besides the
-	// estimate, with hosted discovery's token budget: what DiscoveryUSD buys
-	// at the review model's base price. Cache reads are not counted, so it
-	// is not a dollar cap.
-	Discovery    bool    `json:"discovery,omitempty"`
-	DiscoveryUSD float64 `json:"discovery_usd,omitempty"`
+	// Discovery says the build runs feature discovery first, with a review
+	// run's budgets.
+	Discovery bool `json:"discovery,omitempty"`
 }
 
 // BuildReport says what Build did; no pull request, feature or reply text.
@@ -110,7 +105,7 @@ type BuildReport struct {
 	Calls    int `json:"calls"`
 	Features int `json:"features"`
 	// Current says the version became current; otherwise Stopped says why
-	// not (a backend or price reason, or "failed").
+	// not (a backend reason, or "failed").
 	Current         bool    `json:"current"`
 	Stopped         string  `json:"stopped,omitempty"`
 	SpentUSD        float64 `json:"spent_usd"`
@@ -177,6 +172,21 @@ ORDER BY created_at, number`, r.repository, r.version))
 	}), nil
 }
 
+// PlanBuild resolves the backend and model a build of the repository would
+// call, without listing its history, or the reason it cannot run now (the
+// gate, or a backend reason). Nothing about the price stops a build.
+func (w *FeatureWorker) PlanBuild(ctx context.Context, repository, dir string, o BuildOptions) (backend, model, reason string, err error) {
+	r, err := w.newRun(ctx, repository, dir, FeatureOptions{Manual: true, DryRun: true, Backend: o.Backend, Model: o.Model, building: true})
+	if err != nil {
+		return "", "", "", err
+	}
+	if _, _, on, err := w.gate(ctx, repository); err != nil || (o.Gated && !on) {
+		return "", "", ReasonDisabled, err
+	}
+	p, skip := r.calls.plan(ctx, r.prefs, r.settings, o.Backend, o.Model, 1, 1)
+	return p.Backend, p.Model, skip, nil
+}
+
 // EstimateBuild estimates a build of the repository: what is left of its
 // building version, or a new one.
 func (w *FeatureWorker) EstimateBuild(ctx context.Context, repository, dir string, o BuildOptions) (BuildEstimate, error) {
@@ -196,11 +206,6 @@ func (w *FeatureWorker) EstimateBuild(ctx context.Context, repository, dir strin
 	}
 	estimate.HistoryTruncated = history.Truncated
 	estimate.Version = r.version
-	if r.version != 0 {
-		if err := w.Store.db.QueryRowContext(ctx, `SELECT spent_usd FROM feature_version WHERE id=?`, r.version).Scan(&estimate.SpentUSD); err != nil {
-			return estimate, err
-		}
-	}
 	items, err := r.buildItems(ctx)
 	if err != nil {
 		return estimate, err
@@ -215,96 +220,43 @@ func (w *FeatureWorker) EstimateBuild(ctx context.Context, repository, dir strin
 	if estimate.Discovery, err = r.willDiscover(ctx, o.Taxonomy); err != nil {
 		return estimate, err
 	}
-	if estimate.Discovery {
-		estimate.DiscoveryUSD = FeatureDiscoveryUSD
-	}
-	cost, ok, err := r.estimateCost(ctx, items, p)
-	if ok {
-		estimate.EstimateUSD = &cost
-	} else if err == nil {
-		estimate.Reason = ReasonUnpriced
-	}
+	estimate.Calls, err = r.estimateCalls(ctx, items)
 	return estimate, err
 }
 
-// estimateCost prices the calls a build of items would make, from the
-// sizes of their inputs (README.md, "First build"): the batches, the new
-// features' text twice and the text of a resumed version's features behind
-// their members, and a summary of every pull request with a description.
-func (r *featureRun) estimateCost(ctx context.Context, items []buildItem, p planned) (float64, bool, error) {
-	batchVersion, _ := assign.Public.BatchVersion(AssignVersion)
-	batchRequest, err := assign.Public.Request(batchVersion, "", assign.MaxBatchOutputTokens)
-	if err != nil {
-		return 0, false, err
-	}
-	tokens := func(bytes int) int64 { return int64(bytes/FeatureEstimateBytesPerToken) + 1 }
-	total, priced := 0.0, true
-	add := func(in, out int64) {
-		cost, ok := callCost(r.calls.prices, p.Backend, p.Model, in, out)
-		total, priced = total+cost, priced && ok
-	}
-	type size struct{ bytes, body int }
-	sizes := make([]size, len(items))
-	for i, item := range items {
+// estimateCalls counts the calls a build of items would make (README.md,
+// "First build"): the batches, the new features' text twice and the text of
+// a resumed version's features behind their members, and a summary of every
+// pull request with a description.
+func (r *featureRun) estimateCalls(ctx context.Context, items []buildItem) (int, error) {
+	calls := 0
+	for _, item := range items {
 		pull, err := r.w.Store.placedPull(ctx, r.version, r.repository, item.Number)
 		if err != nil {
-			return 0, false, err
+			return 0, err
 		}
-		bytes := min(len(pull.Title), 200) + min(len(pull.Body), 2000) + 100
-		for _, path := range pull.Paths[:min(len(pull.Paths), 40)] {
-			bytes += len(path) + 4
+		if pull.Body != "" {
+			calls++
 		}
-		sizes[i] = size{bytes, len(pull.Body)}
 	}
-	// What a resumed version already holds: its features and those whose
-	// text is behind.
-	var existing, behind, unsummarized int
+	// What a resumed version already holds: its features whose text is
+	// behind, and their pull requests with a description and no generated
+	// summary, which get one with the text.
+	var behind, unsummarized int
 	if r.version != 0 {
-		// Their pull requests with a description and no generated summary
-		// get one with the text.
 		if err := r.w.Store.db.QueryRowContext(ctx, `SELECT
-(SELECT COUNT(*) FROM feature WHERE version_id=?1 AND merged_into IS NULL),
 (SELECT COUNT(*) FROM feature WHERE version_id=?1 AND merged_into IS NULL AND summarized_version < membership_version),
 (SELECT COUNT(*) FROM feature f JOIN feature_pull fp ON fp.feature_id=f.id
   JOIN pull_request p ON p.repository=fp.repository AND p.number=fp.number
   WHERE f.version_id=?1 AND f.merged_into IS NULL AND f.summarized_version < f.membership_version AND p.body != ''
   AND NOT EXISTS (SELECT 1 FROM pr_summary s WHERE s.repository=p.repository AND s.number=p.number))`, r.version).
-			Scan(&existing, &behind, &unsummarized); err != nil {
-			return 0, false, err
+			Scan(&behind, &unsummarized); err != nil {
+			return 0, err
 		}
 	}
-	features, created := existing, 0
-	for start := 0; start < len(items); start += FeatureBatch {
-		bytes := len(batchRequest.System) + 2000
-		batch := sizes[start:min(len(sizes), start+FeatureBatch)]
-		for _, s := range batch {
-			bytes += s.bytes
-		}
-		bytes += min(FeatureBuildCandidates, features) * FeatureEstimateCandidateBytes
-		add(tokens(bytes), int64(len(batch)*FeatureEstimateItemOutputTokens))
-		created = (start + len(batch) + FeatureEstimatePullsPerFeature - 1) / FeatureEstimatePullsPerFeature
-		features = existing + created
-	}
-	textRequest, err := summary.Public.Request(SummaryVersion, summary.Feature, "", summary.MaxOutputTokens)
-	if err != nil {
-		return 0, false, err
-	}
-	for range created*FeatureEstimateTextPasses + behind {
-		add(tokens(len(textRequest.System)+FeatureEstimateTextBytes), FeatureEstimateTextOutputTokens)
-	}
-	pullRequest, err := summary.Public.Request(SummaryVersion, summary.PullRequest, "", summary.MaxOutputTokens)
-	if err != nil {
-		return 0, false, err
-	}
-	for _, s := range sizes {
-		if s.body > 0 {
-			add(tokens(len(pullRequest.System)+min(s.body, 4000)+1000), FeatureEstimatePullOutputTokens)
-		}
-	}
-	for range unsummarized {
-		add(tokens(len(pullRequest.System)+3000), FeatureEstimatePullOutputTokens)
-	}
-	return math.Round(total*10000) / 10000, priced, nil
+	batches := (len(items) + FeatureBatch - 1) / FeatureBatch
+	created := (len(items) + FeatureEstimatePullsPerFeature - 1) / FeatureEstimatePullsPerFeature
+	return batches + created*FeatureEstimateTextPasses + behind + calls + unsummarized, nil
 }
 
 // buildRun is one run of a build.
@@ -335,7 +287,7 @@ func (w *FeatureWorker) Build(ctx context.Context, repository, dir string, o Bui
 	}
 	report.PullRequests, report.HistoryTruncated = estimate.PullRequests, estimate.HistoryTruncated
 	if o.DryRun {
-		report.Version, report.VersionSpentUSD, report.Stopped = estimate.Version, estimate.SpentUSD, FeatureDryRun
+		report.Version, report.Stopped = estimate.Version, FeatureDryRun
 		return report, nil
 	}
 	if estimate.Reason != "" {

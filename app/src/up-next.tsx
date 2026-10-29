@@ -1,4 +1,12 @@
-import { useEffect, useLayoutEffect, useRef, useState, type ComponentType } from "react";
+import {
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type ComponentType,
+  type Dispatch,
+  type SetStateAction,
+} from "react";
 import { formatCount } from "@baum/viewer/components/format";
 import { Lines } from "@baum/viewer/components/review-parts";
 import { Alert, Button } from "@baum/viewer/components/ui";
@@ -20,10 +28,11 @@ import {
   liveFor,
   request,
   type Entry,
+  type FixOnly,
   type Job,
   type LiveSession,
 } from "./api";
-import { phaseText } from "./fix";
+import { phaseText, type FixState } from "./fix";
 import { useNow } from "./live";
 import {
   canMerge,
@@ -35,6 +44,8 @@ import {
 } from "./merge";
 import { LoadingStatus, NineDots } from "./nine-dots";
 import { onBody, useShortcuts } from "./shortcuts";
+import { FailingChecks } from "./checks";
+import { ReviewThreads } from "./threads";
 import { canUpdateBranch, UpdateBranchDialog } from "./unblock";
 
 /** What the person does next about a pull request: read a review they were
@@ -482,6 +493,15 @@ export function useUpNext(entries: Entry[], live: LiveSession[], jobs: Job[], re
   };
 }
 
+/** What one of the person's own pull requests waits on, in a few words. */
+export function waitingOn(entry: Entry) {
+  if (entry.pull_request.draft || entry.merge === "draft") return "Draft";
+  if (entry.checks === "running") return "Checks running";
+  if (entry.review === "changes_requested") return "Changes requested";
+  if (entry.review !== "approved") return "Waiting on review";
+  return "Waiting on GitHub";
+}
+
 function prHref(entry: Entry, cloneFor: (entry: Entry) => string) {
   const pr = entry.pull_request;
   const clone = cloneFor(entry);
@@ -499,12 +519,21 @@ const sumMinutes = (items: { minutes?: number | null }[]) =>
 
 /** One row of the list: a pull request in the queue, or one of the person's
  *  own that an agent is fixing now. */
-type Row = { key: string; entry: Entry; item?: UpNextItem; job?: Job };
+/** A row of the list: a queued item, a pull request an agent is fixing, or
+ *  one of the person's own that waits on checks or reviewers. */
+type Row = { key: string; entry: Entry; item?: UpNextItem; job?: Job; waiting?: boolean };
 
-/** The saved review of the selected pull request, once read; read again only
- *  when a new version is saved. */
-function useReviewDocument(entry: Entry | undefined, clone: string) {
-  const [docs, setDocs] = useState<Record<string, ReviewDocument | "failed">>({});
+/** Saved reviews read so far, by clone, number and version. */
+type SavedReviewDocs = Record<string, ReviewDocument | "failed">;
+export type SavedReviews = [SavedReviewDocs, Dispatch<SetStateAction<SavedReviewDocs>>];
+
+/** The saved review of a pull request, once read, or "failed"; read again
+ *  only when a new version is saved. Nothing while it is read, or for a pull
+ *  request without a saved review. `shared` keeps what was read for a parent
+ *  that outlives the caller, as the Pull requests list does for its peeks. */
+export function useSavedReview(entry: Entry | undefined, clone: string, shared?: SavedReviews) {
+  const own = useState<SavedReviewDocs>({});
+  const [docs, setDocs] = shared ?? own;
   const id =
     entry && clone && entry.version_count > 0
       ? `${clone}#${entry.pull_request.number}@${entry.latest?.version ?? 0}`
@@ -521,7 +550,12 @@ function useReviewDocument(entry: Entry | undefined, clone: string) {
     return () => abort.abort();
     // `id` stands for the entry and clone.
   }, [id]);
-  const doc = id ? docs[id] : undefined;
+  return id ? docs[id] : undefined;
+}
+
+/** The saved review of the selected pull request, once read. */
+function useReviewDocument(entry: Entry | undefined, clone: string) {
+  const doc = useSavedReview(entry, clone);
   return doc && doc !== "failed" ? doc : null;
 }
 
@@ -533,6 +567,7 @@ export function UpNextPage({
   hasRepositories,
   cloneFor,
   fix,
+  fixState = () => ({ starting: false, error: "" }),
   changed,
   Link,
 }: {
@@ -540,8 +575,10 @@ export function UpNextPage({
   loading: boolean;
   hasRepositories: boolean;
   cloneFor: (entry: Entry) => string;
-  /** Opens the fix confirmation. */
-  fix: (entry: Entry) => void;
+  /** Starts the fix at once, of the failing checks alone with "checks". */
+  fix: (entry: Entry, only?: FixOnly) => void;
+  /** A pull request's fix that is starting or did not start. */
+  fixState?: (entry: Entry) => FixState;
   /** Reloads the inbox after a write to GitHub. */
   changed: () => Promise<void>;
   Link: ComponentType<ViewerLinkProps>;
@@ -557,23 +594,40 @@ export function UpNextPage({
   const list = useRef<HTMLDivElement>(null);
   const detail = useRef<HTMLDivElement>(null);
   const { queue, cleared, snoozed, fixing, waiting, now } = inbox;
-  const groups = GROUPS.map((group) => ({
-    ...group,
-    rows: [
-      ...queue
-        .filter((item) => group.kinds.includes(item.kind))
-        .map((item): Row => ({ key: item.key, entry: item.entry, item })),
-      ...(group.id === "agent"
-        ? fixing.map(({ entry, job }): Row => ({ key: upNextKey(entry.pull_request), entry, job }))
-        : []),
-    ],
-  })).filter((group) => group.rows.length > 0);
+  // Those an agent is fixing are listed under Hand to an agent.
+  const fixingKeys = new Set(fixing.map(({ entry }) => upNextKey(entry.pull_request)));
+  const others = waiting.filter((entry) => !fixingKeys.has(upNextKey(entry.pull_request)));
+  const groups = [
+    ...GROUPS.map((group) => ({
+      id: group.id as string,
+      title: group.title,
+      rows: [
+        ...queue
+          .filter((item) => group.kinds.includes(item.kind))
+          .map((item): Row => ({ key: item.key, entry: item.entry, item })),
+        ...(group.id === "agent"
+          ? fixing.map(
+              ({ entry, job }): Row => ({ key: upNextKey(entry.pull_request), entry, job }),
+            )
+          : []),
+      ],
+    })),
+    {
+      id: "waiting",
+      title: "Waiting on checks or reviews",
+      rows: others.map(
+        (entry): Row => ({ key: upNextKey(entry.pull_request), entry, waiting: true }),
+      ),
+    },
+  ].filter((group) => group.rows.length > 0);
   const rows = groups.flatMap((group) => group.rows);
   // A selected pull request that leaves the list hands the selection to the
-  // one that takes its place.
+  // one that takes its place. Waiting rows come last and are shown only when
+  // picked, so an emptied queue still reads as inbox zero.
   const last = useRef(0);
   const found = chosen ? rows.findIndex((row) => row.key === chosen) : -1;
-  const index = found >= 0 ? found : Math.min(last.current, rows.length - 1);
+  const actionable = rows.filter((row) => !row.waiting).length;
+  const index = found >= 0 ? found : Math.min(last.current, actionable - 1);
   const selected = index >= 0 ? rows[index] : undefined;
   useEffect(() => {
     if (index >= 0) last.current = index;
@@ -582,11 +636,18 @@ export function UpNextPage({
     setChosen(key);
     setMenu(false);
   };
+  // The list is one tab stop, on the selected row (or the first, with none
+  // selected), and the focus follows the selection while it is in the list,
+  // so the ring and the keys always act on the same row.
+  const tabbable = selected?.key ?? rows[0]?.key;
   useEffect(() => {
     if (!selected) return;
-    Array.from(list.current?.querySelectorAll<HTMLElement>("[data-row]") ?? [])
-      .find((element) => element.dataset.row === selected.key)
-      ?.scrollIntoView?.({ block: "nearest" });
+    const element = Array.from(
+      list.current?.querySelectorAll<HTMLElement>("[data-row]") ?? [],
+    ).find((element) => element.dataset.row === selected.key);
+    element?.scrollIntoView?.({ block: "nearest" });
+    if (list.current?.contains(document.activeElement))
+      element?.querySelector<HTMLElement>(".upnext-row")?.focus({ preventScroll: true });
   }, [selected?.key]);
   useEffect(() => {
     if (!toast) return;
@@ -594,6 +655,13 @@ export function UpNextPage({
     return () => clearTimeout(timer);
   }, [toast?.id]);
   const doc = useReviewDocument(selected?.entry, selected ? cloneFor(selected.entry) : "");
+  // The panel's fix button, which `f` presses too: a Fix item whose pull
+  // request offers a fix and has a clone.
+  const selectedFix =
+    selected?.item?.kind === "fix" && fixLabel(selected.entry) && cloneFor(selected.entry)
+      ? () => fix(selected.entry)
+      : undefined;
+  const selectedFixState = selected ? fixState(selected.entry) : { starting: false, error: "" };
   const options = snoozeOptions(now);
   const snooze = (until: SnoozeEnd) => {
     const item = selected?.item;
@@ -633,11 +701,13 @@ export function UpNextPage({
       const step = key === "j" || key === "ArrowDown" ? 1 : -1;
       select(rows[Math.min(rows.length - 1, Math.max(0, index + step))]!.key);
     } else if (key === "Enter") {
-      // Enter on a link or button already does what it says.
+      // Enter on a link or button already does what it says, except on a
+      // row, where it opens the pull request like anywhere else in the list.
       if (
         !onBody(event) &&
         event.target instanceof HTMLElement &&
-        event.target.closest("a, button")
+        event.target.closest("a, button") &&
+        !event.target.closest(".upnext-row")
       )
         return;
       const primary = detail.current?.querySelector<HTMLElement>(".upnext-primary");
@@ -653,6 +723,11 @@ export function UpNextPage({
       event.preventDefault();
       setMenu(false);
       setMerging(selected.entry);
+    } else if (key === "f") {
+      if (!selectedFix || selectedFixState.starting) return;
+      event.preventDefault();
+      setMenu(false);
+      selectedFix();
     } else if (key === "u") {
       if (!toast?.undo) return;
       event.preventDefault();
@@ -663,7 +738,7 @@ export function UpNextPage({
   const minutes = Math.round(sumMinutes(queue));
   const summary = loading
     ? "Loading your inbox…"
-    : rows.length === 0
+    : actionable === 0
       ? cleared.length
         ? `Nothing left. ${formatCount(cleared.length)} handled today.`
         : "Nothing waits on you."
@@ -676,7 +751,6 @@ export function UpNextPage({
           .filter(Boolean)
           .join(" · ");
   const total = cleared.length + queue.length;
-  const others = waiting.length - fixing.length;
   return (
     <>
       <div className="upnext-page">
@@ -717,7 +791,12 @@ export function UpNextPage({
                   <ul>
                     {group.rows.map((row) => (
                       <li key={row.key} data-row={row.key}>
-                        <ListRow row={row} on={row.key === selected?.key} pick={select} />
+                        <ListRow
+                          row={row}
+                          on={row.key === selected?.key}
+                          tabbable={row.key === tabbable}
+                          pick={select}
+                        />
                       </li>
                     ))}
                   </ul>
@@ -792,13 +871,6 @@ export function UpNextPage({
                 ) : null}
               </section>
             ) : null}
-            {others > 0 ? (
-              <p className="upnext-note">
-                {plural(others, "pull request")} of yours {others === 1 ? "waits" : "wait"} on
-                reviewers or checks.{" "}
-                <Link href={appURL("?page=pulls&filter=mine")}>See them in Pull requests</Link>
-              </p>
-            ) : null}
           </div>
           <footer className="upnext-keys key-hint" aria-hidden="true">
             <span>
@@ -809,6 +881,9 @@ export function UpNextPage({
             </span>
             <span>
               <kbd>m</kbd> merge
+            </span>
+            <span>
+              <kbd>f</kbd> fix
             </span>
             <span>
               <kbd>s</kbd> snooze
@@ -830,11 +905,15 @@ export function UpNextPage({
               doc={doc}
               href={prHref(selected.entry, cloneFor)}
               Link={Link}
-              fix={
-                fixLabel(selected.entry) && cloneFor(selected.entry)
-                  ? () => fix(selected.entry)
+              fix={selectedFix}
+              fixChecks={
+                fixLabel(selected.entry) &&
+                cloneFor(selected.entry) &&
+                selected.entry.checks === "failing"
+                  ? () => fix(selected.entry, "checks")
                   : undefined
               }
+              fixState={selectedFixState}
               merge={() => setMerging(selected.entry)}
               update={() => setUpdating(selected.entry)}
               menu={menu}
@@ -884,25 +963,38 @@ export function UpNextPage({
   );
 }
 
-function ListRow({ row, on, pick }: { row: Row; on: boolean; pick: (key: string) => void }) {
+function ListRow({
+  row,
+  on,
+  tabbable,
+  pick,
+}: {
+  row: Row;
+  on: boolean;
+  tabbable: boolean;
+  pick: (key: string) => void;
+}) {
   const pr = row.entry.pull_request;
-  const kind = row.item?.kind ?? "fix";
-  const sub = row.job
-    ? `Agent fixing · ${phaseText(row.job)}`
-    : row.item?.failedFix
-      ? `${KINDS[kind].label} · last fix failed`
-      : [
-          KINDS[kind].label,
-          pr.repository,
-          row.item?.minutes != null ? minutesText(row.item.minutes) : "",
-        ]
-          .filter(Boolean)
-          .join(" · ");
+  // The group heading already names the kind, so the line starts with the
+  // pull request's number.
+  const sub = [
+    `#${pr.number}`,
+    ...(row.job
+      ? ["Agent fixing", phaseText(row.job)]
+      : row.waiting
+        ? [waitingOn(row.entry), pr.repository]
+        : row.item?.failedFix
+          ? ["Last fix failed"]
+          : [pr.repository, row.item?.minutes != null ? minutesText(row.item.minutes) : ""]),
+  ]
+    .filter(Boolean)
+    .join(" · ");
   const hot = (row.entry.risk_score?.score ?? 0) >= 5;
   return (
     <button
       type="button"
       className="upnext-row"
+      tabIndex={tabbable ? 0 : -1}
       aria-current={on || undefined}
       onClick={() => pick(row.key)}
     >
@@ -930,6 +1022,10 @@ type PanelRow = {
   sub?: string;
   /** Lines added and deleted. */
   lines?: { additions: number; deletions: number };
+  /** The row lists the unresolved review threads under it. */
+  threads?: boolean;
+  /** The row lists the failing checks under it. */
+  checks?: boolean;
 };
 type PanelBlock = { title: string; lead?: string; rows: PanelRow[]; more?: string };
 
@@ -968,6 +1064,22 @@ function blocks(row: Row, doc: ReviewDocument | null): PanelBlock[] {
       })()
     : [];
   if (row.job) return changes;
+  if (row.waiting)
+    return [
+      {
+        title: "Where it stands",
+        rows: [
+          { main: waitingOn(entry) },
+          ...(REVIEW_WORDS[entry.review] && entry.review !== "changes_requested"
+            ? [{ main: REVIEW_WORDS[entry.review]! }]
+            : []),
+          ...(CHECK_WORDS[entry.checks] && entry.checks !== "running"
+            ? [{ main: CHECK_WORDS[entry.checks]! }]
+            : []),
+        ],
+      },
+      ...changes,
+    ];
   switch (row.item?.kind) {
     case "review":
     case "merge":
@@ -989,7 +1101,8 @@ function blocks(row: Row, doc: ReviewDocument | null): PanelBlock[] {
               ? [
                   {
                     main: `${plural(unresolved, "unresolved review thread")}${entry.unresolved_capped ? " or more" : ""}`,
-                    sub: "Open on GitHub until someone resolves them.",
+                    sub: "Resolve each one here once it is addressed.",
+                    threads: true,
                   },
                 ]
               : []),
@@ -1001,7 +1114,7 @@ function blocks(row: Row, doc: ReviewDocument | null): PanelBlock[] {
                   },
                 ]
               : []),
-            ...(entry.checks === "failing" ? [{ main: "Checks failing" }] : []),
+            ...(entry.checks === "failing" ? [{ main: "Checks failing", checks: true }] : []),
           ],
         },
         ...changes,
@@ -1045,6 +1158,8 @@ function Panel({
   href,
   Link,
   fix,
+  fixChecks,
+  fixState,
   merge,
   update,
   menu,
@@ -1058,6 +1173,9 @@ function Panel({
   href: string;
   Link: ComponentType<ViewerLinkProps>;
   fix?: () => void;
+  /** Starts the fix of the failing checks alone. */
+  fixChecks?: () => void;
+  fixState: FixState;
   merge: () => void;
   update: () => void;
   menu: boolean;
@@ -1066,7 +1184,7 @@ function Panel({
   snooze: (until: SnoozeEnd) => void;
   now: number;
 }) {
-  const { entry, item, job } = row;
+  const { entry, item, job, waiting } = row;
   const pr = entry.pull_request;
   const kind = item?.kind ?? "fix";
   const menuRef = useRef<HTMLDivElement>(null);
@@ -1087,7 +1205,8 @@ function Panel({
     </a>
   );
   // Opening the pull request is always the default; what the kind asks for
-  // follows it, and a write to GitHub opens its confirmation.
+  // follows it. A merge or branch update opens its confirmation; a fix starts
+  // at once.
   const actions = (
     <>
       <Link href={href} className="upnext-primary">
@@ -1100,6 +1219,8 @@ function Panel({
         <Link href={jobHref(job)} className="upnext-secondary">
           Watch the agent
         </Link>
+      ) : waiting ? (
+        github
       ) : kind === "merge" ? (
         <button type="button" className="upnext-secondary" onClick={merge}>
           Merge
@@ -1112,8 +1233,22 @@ function Panel({
           Update the branch
         </button>
       ) : kind === "fix" && fix ? (
-        <button type="button" className="upnext-secondary" onClick={fix}>
-          {fixLabel(entry)}
+        <button
+          type="button"
+          className="upnext-secondary"
+          disabled={fixState.starting}
+          onClick={fix}
+        >
+          {fixState.starting ? (
+            "Starting…"
+          ) : (
+            <>
+              {fixLabel(entry)}
+              <kbd aria-hidden="true" className="key-hint">
+                f
+              </kbd>
+            </>
+          )}
         </button>
       ) : (
         github
@@ -1128,7 +1263,11 @@ function Panel({
   return (
     <article className="upnext-panel" aria-labelledby="upnext-title">
       <div className="upnext-panel-meta">
-        <span className={`upnext-chip upnext-chip-${kind}`}>{KINDS[kind].label}</span>
+        {waiting ? (
+          <span className="upnext-chip upnext-chip-waiting">Waiting</span>
+        ) : (
+          <span className={`upnext-chip upnext-chip-${kind}`}>{KINDS[kind].label}</span>
+        )}
         <span className="upnext-panel-where">
           {pr.repository} · #{pr.number} · {who}
           {pr.draft ? " · Draft" : ""}
@@ -1149,6 +1288,11 @@ function Panel({
           <NineDots size={14} />
           <span>An agent is fixing it · {phaseText(job)}.</span>
           <span className="upnext-working-aside">You can move on</span>
+        </div>
+      ) : null}
+      {fixState.error ? (
+        <div className="upnext-failed" role="alert">
+          Couldn't start the fix: {fixState.error}
         </div>
       ) : null}
       {item?.failedFix ? (
@@ -1225,7 +1369,10 @@ function Panel({
           {block.lead ? <p className="upnext-lead">{block.lead}</p> : null}
           <ul>
             {block.rows.map((line) => (
-              <li key={line.main}>
+              <li
+                key={line.main}
+                className={line.threads || line.checks ? "upnext-has-threads" : undefined}
+              >
                 {line.badge ? (
                   <span
                     className={`upnext-badge upnext-badge-${line.badge === "✓" ? "done" : line.badge}`}
@@ -1243,6 +1390,35 @@ function Panel({
                     deletions={line.lines.deletions}
                     format={formatCount}
                     className="upnext-block-right"
+                  />
+                ) : null}
+                {line.threads ? (
+                  <ReviewThreads
+                    key={`${pr.repository}#${pr.number}`}
+                    repository={pr.repository}
+                    number={pr.number}
+                    unresolved={entry.unresolved ?? 0}
+                    url={pr.url}
+                  />
+                ) : null}
+                {line.checks && fixChecks ? (
+                  <button
+                    type="button"
+                    className="upnext-secondary upnext-thread-resolve"
+                    disabled={fixState.starting}
+                    onClick={fixChecks}
+                  >
+                    Fix CI
+                  </button>
+                ) : null}
+                {line.checks ? (
+                  <FailingChecks
+                    key={`${pr.repository}#${pr.number}`}
+                    repository={pr.repository}
+                    number={pr.number}
+                    head={pr.head_sha}
+                    url={pr.url}
+                    canRetry={pr.viewer_can_push === true}
                   />
                 ) : null}
               </li>
@@ -1306,7 +1482,7 @@ type Merge = {
 /** Merges every ready pull request in one confirmation, each with GitHub's
  *  default method for it and at the head commit the inbox showed. One that
  *  GitHub refuses is named with the reason; the others still merge. */
-function MergeReadyDialog({
+export function MergeReadyDialog({
   entries,
   close,
   merged,

@@ -177,7 +177,7 @@ func TestLocalPrepareUsesGitHubEvidenceNotBrowserAuthorization(t *testing.T) {
 			if e != nil {
 				t.Fatal(e)
 			}
-			if p.RequiresIsolationConfirmation != test.restricted || p.HeadSHA != "first" || p.EstimateUSD == nil || p.ConfigDigest == "" || version == "" {
+			if p.RequiresIsolationConfirmation != test.restricted || p.HeadSHA != "first" || p.ConfigDigest == "" || version == "" {
 				t.Fatalf("incorrect authorization %+v", p)
 			}
 			local.Config.Budgets.MaxTokens++
@@ -289,11 +289,10 @@ func TestPreferencesChooseTheBackendAndModel(t *testing.T) {
 	}
 }
 
-// A cursor-agent job has no estimate at API rates, whatever its model is
-// called: Cursor bills it through the user's subscription. It is not blocked:
-// it says why the estimate is unknown. Its progress and recorded cost stay
-// unknown for the same reason.
-func TestCursorAgentJobsHaveNoListPriceEstimate(t *testing.T) {
+// A cursor-agent job is not blocked, whatever its model is called, and its
+// recorded cost stays unknown: Cursor bills it through the user's
+// subscription, so no API price describes it.
+func TestCursorAgentJobsHaveNoListPrice(t *testing.T) {
 	ctx := context.Background()
 	registry, clone := registeredClone(t)
 	local := localRunner(registry, "owner/repo", "write", 200)
@@ -305,7 +304,7 @@ func TestCursorAgentJobsHaveNoListPriceEstimate(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	if p.Backend != agent.BackendCursorAgent || p.Model != "claude-sonnet-4-5" || p.EstimateUSD != nil || p.EstimateReason != pricing.ReasonBilledByCursor || p.BlockedReason != "" {
+	if p.Backend != agent.BackendCursorAgent || p.Model != "claude-sonnet-4-5" || p.BlockedReason != "" {
 		t.Fatalf("prepared = %+v", p)
 	}
 
@@ -322,7 +321,10 @@ func TestCursorAgentJobsHaveNoListPriceEstimate(t *testing.T) {
 	}
 }
 
-func TestRecoveredJobReinstallsItsNewerPriceListInsteadOfFailing(t *testing.T) {
+// A job prepared against one price list still runs under another: a newer
+// list installed meanwhile, or the compiled one after a restart, is not a
+// changed input.
+func TestJobRunsWhateverPriceListIsActive(t *testing.T) {
 	ctx := context.Background()
 	t.Cleanup(func() { pricing.Install(pricing.Embedded()) })
 	registry, clone := registeredClone(t)
@@ -334,33 +336,20 @@ func TestRecoveredJobReinstallsItsNewerPriceListInsteadOfFailing(t *testing.T) {
 	document.Version = "2999-01-01"
 	newer := pricing.NewList(document)
 	pricing.Install(newer)
-	confirmed, _, e := local.Prepare(ctx, Item{Clone: clone.ID, PR: 1})
-	if e != nil || confirmed.PriceVersion != "2999-01-01" {
-		t.Fatal(confirmed, e)
+	prepared, _, e := local.Prepare(ctx, Item{Clone: clone.ID, PR: 1})
+	if e != nil || prepared.PriceVersion != "2999-01-01" {
+		t.Fatal(prepared, e)
 	}
-
 	// After a restart the compiled list is active until the signed list returns.
 	pricing.Install(pricing.Embedded())
-	if e = local.confirmed(ctx, confirmed); e == nil {
-		t.Fatal("job ran against a price list it was not confirmed with")
+	if e = local.confirmed(ctx, prepared); e != nil {
+		t.Fatalf("a job prepared with a newer list was refused: %v", e)
 	}
-	refreshes := 0
-	local.RefreshPrices = func(context.Context) error {
-		refreshes++
-		pricing.Install(newer)
-		return nil
-	}
-	if e = local.confirmed(ctx, confirmed); e != nil || refreshes != 1 {
-		t.Fatalf("recovered job failed instead of reinstalling its list: %v (refreshes %d)", e, refreshes)
-	}
-	if e = local.confirmed(ctx, confirmed); e != nil || refreshes != 1 {
-		t.Fatal("refreshed although the confirmed list is active", e, refreshes)
-	}
-
-	stale := confirmed
+	stale := prepared
 	stale.PriceVersion = pricing.Embedded().Version()
-	if e = local.confirmed(ctx, stale); e == nil || refreshes != 1 {
-		t.Fatal("job confirmed against an older list ran or refreshed", e)
+	pricing.Install(newer)
+	if e = local.confirmed(ctx, stale); e != nil {
+		t.Fatalf("a job prepared with an older list was refused: %v", e)
 	}
 }
 

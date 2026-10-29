@@ -65,6 +65,9 @@ A host connects it through props and context:
 | file opener | no | `ReviewFilesProvider` opens a cited file in the host's own diff view instead of following the link |
 | row actions | no | `checks` on `ReviewViewer`, or `renderCheck` on `ChangesOverview` and `RisksOverview`, puts a host's read mark or approval beside each row |
 | side pane, header slots and other features | no | the `ReviewViewer` slots below |
+| decision log links and sessions | for the decision log components | `pullRequestHref` and `openSession` props (see [Decision log](#decision-log)) |
+| decision log page | for `TimelinePage` | its lists, the reads of details and authors, and the host's filter bar and wording (see [Decision log](#decision-log)), under the `UrlStateProvider` |
+| decision log filters | for `DecisionFilterControls` | the `filters` it shows and their change callbacks, `files` for file and folder suggestions and `people` for the authors (see [Decision log](#decision-log)) |
 
 ## The review page
 
@@ -361,6 +364,112 @@ bars (`--z-sticky`, 30).
 Section attention callouts show high and critical risks with evidence and lifecycle
 badges, without repeating their explanation in a nested card. Medium and low risks
 appear under **Risks** below **Key decisions**. Empty risk sections are omitted.
+
+## Decision log
+
+The decision log's timeline and feature log are drawn by
+`@baum/viewer/components/decision-log` and
+`@baum/viewer/components/feature-log` from the view models in
+`@baum/viewer/decision-log` (`DecisionSummary`, `DecisionDetail`,
+`FeatureSummary`, `FeatureDetail` and the types beside them, in the hosted
+API's field names), with the pure helpers that say how a person, who decided,
+a category, a feature's status, span and counts and a pull request's review
+read. Like the review page, they never fetch and never decide who may read
+what: the host hands them rows, details and their loading state. Used alone,
+the host owns the filters, the address and which decision or feature is open;
+`TimelinePage` below composes them into the page and keeps those in the
+address.
+
+- `DecisionRow` is one decision as a disclosure: time (and day with
+  `withDate`), who decided, the author with their `Avatar`, the category's
+  dot, an optional repository name and the summary. Its panel holds whatever
+  the host passes, usually `DecisionDetailBody`.
+- `DecisionDetailBody` draws a decision's detail from a `DetailState`
+  (loading, failed with a retry, missing, ready): the rejected alternative,
+  its files (each calling `onFile`), pull requests, session facts and cited
+  prompts. `pullRequestHref` says where a pull request opens; the link is a
+  `ViewerLink`, so it navigates through the host's `ViewerLinkProvider`. A
+  detail whose prompts are withheld offers no session and says
+  `withheldNote` in their place (by default, the hosted reason).
+- `openSession` (`OpenSessionSource`) opens the decision's session in place,
+  in two parts: `load` fetches a session by id as data only the host reads,
+  and `render` draws it at the cited turn, called on every render with the
+  current turn. The panel loads once per session, the first time the reader
+  opens it, and keeps it while closed; another turn of the same session
+  redraws without loading, and another session loads afresh. Closing the
+  panel or moving to another session during a load aborts it, and a
+  rejection says the session could not be loaded.
+- `FeatureItem`, `TimelineHeading`, `TimelineRail` and `TIMELINE_ROW` lay out
+  the feature timeline: month and day headings, a dot per feature by status,
+  and each feature's card with its people, counts and up to three key
+  decisions. With `panelElsewhere` the card only marks itself selected and
+  `FeatureSidePanel` shows the drill-down beside the timeline.
+- `FeatureDrillDown` draws a feature's `FeatureState` (loading, moved,
+  archived, missing, failed or ready): its digest, then its pull requests and
+  sessions without one, each a group of `DecisionRow`s. A
+  `DecisionOpening` from the host says which decision is open, toggles it and
+  renders its detail, and the group holding the open decision opens and
+  scrolls it into view. `pullRequestHref` opens a pull request as above.
+
+- `DecisionFilterControls` (`@baum/viewer/components/decision-filters`) is
+  the log's filter bar after the host's own scope picker, as a fragment the
+  host places in its bar: the keyword search, applied 300 ms after typing
+  stops; a Filters popover, its button counting the filters in force, with
+  the file or folder combobox, the author, category, decided-by, feature
+  status, date range and superseded and hide agent-only filters; a pill per
+  filter in force that removes it; and "Clear filters". The filters are the
+  `DecisionFilters` of `@baum/viewer/decision-log`, which also holds their
+  address form (`parseDecisionFilters`, `withDecisionFilters`,
+  `clearDecisionFilters`, the feature statuses) and API query
+  (`decisionQuery`, `featureQuery`). The host keeps them and passes
+  `filters`, with `onChange` (the fields that changed), `onClear` and
+  `resets` (a count of clears, which also drops text not yet applied); the
+  controls show a change at once, before the host hands it back. Its seams
+  are `files(prefix, signal)`, asked for file and folder suggestions 150 ms
+  after typing stops in the file box and aborted when the text changes, and
+  `people`, the authors the host loaded (`AuthorCount`, by decisions or by
+  features). `statuses` and `onStatuses` mark the Features tab: there the
+  status filter is offered and the filters that pick decisions alone
+  (category, decided by, superseded, hide agent-only) are neither offered nor
+  counted. Hiding agent-only decisions drops and disables the Agent filter.
+  `Combobox` (`@baum/viewer/components/combobox`) and `useDisclosure`
+  (`@baum/viewer/components/use-disclosure`, a `<details>` that closes on an
+  outside pointer and on Escape) are its building blocks, open to hosts too.
+
+- `TimelinePage` (`@baum/viewer/components/timeline-page`) is the whole log
+  page below the host's header, shared by the hosted Timeline and the local
+  app's: the host's filter bar (`filterBar` wraps the shared controls), the
+  Features and All decisions tabs when `withFeatures` (the timeline alone
+  otherwise), and each tab's list. The address it reads and writes through
+  `useUrlState` holds the tab (`parseLogTab`, `withLogTab`), the filters,
+  the open decision (`open`, read through the host's `parseOpen`) and the
+  open feature (`feature`); opening and closing replace the history entry.
+  A shared link's row or feature scrolls into view once, a feature merged
+  into another opens the one it went into, and an opened decision or feature
+  the list does not hold shows above it. The host reads the lists and hands
+  each as a `TimelineList`: its rows, whether the first page is loading,
+  failed or ready, the cursor, the next page's status and `loadMore`, an
+  optional `sentinel` the page places at the list's end for a host that
+  loads on scroll, the order (a ranked search reads as one list, best match
+  first) and `reordered` (said at the end with `reorderedNote`), and
+  `pending` to show it stale. The page asks `readDecision` and
+  `readFeature` for details, each once until `revision` changes (an open
+  detail stays shown until the newer read answers), and
+  `readPeople` for a tab's authors, keeping each tab's list. Decisions group
+  by local day (`decisionSections`) and features by month and day of their
+  last activity (`featureHeadings`, which skips a feature with none); on a
+  screen at least 96rem
+  wide the opened feature sits in `FeatureSidePanel` beside them. The host
+  says what an empty, unfiltered list says (`noFeatures`, which gets the
+  switch to All decisions, and `noDecisions`), may put its own lines above
+  each list (`featuresIntro`, `decisionsIntro`) and draw the first page's
+  loading (`loading`), and sets the padding of the tabs and body
+  (`tabsClassName`, `bodyClassName`). `repository` names the repository of
+  rows that name none, and `repositoryLabel`, for a log of several, how a
+  row names its own.
+
+`Avatar` (`@baum/viewer/components/avatar`) draws a person's picture, falling
+back to their initials when there is none or it fails to load.
 
 ## Syntax highlighting
 

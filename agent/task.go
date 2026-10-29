@@ -27,6 +27,48 @@ type Task struct {
 	Check    func(document []byte) (findings string)
 	Budgets  Budgets
 	Endpoint *Endpoint
+	// PassPrompt, when set, is the prompt of each pass instead of Prompt and,
+	// on a repair, the standard repair text.
+	PassPrompt func(TaskPass) (string, error)
+	// Accept, when set, checks each reply instead of the schema and Check:
+	// it returns the document the reply stands for, the findings that send it
+	// back for a repair, or Stop to reject it without another repair.
+	Accept func(ctx context.Context, pass TaskPass, document []byte, outcome *Outcome) (Verdict, error)
+	// Framing is how the backend frames the task; the zero value frames a
+	// generic task.
+	Framing Framing
+	// PersistSession keeps the backend's session of every call, so the
+	// Outcome's SessionID can be resumed later (Request.PersistSession).
+	PersistSession bool
+}
+
+// Framing is how a backend frames a task's prompt.
+type Framing int
+
+const (
+	// TaskFraming frames a generic task, without pull request review wording
+	// (Request.Task).
+	TaskFraming Framing = iota
+	// BackendFraming keeps the backend's own framing, a pull request
+	// review's (Generator.ReviewTask).
+	BackendFraming
+)
+
+// TaskPass is one pass of a task: Number 1 is the first, each later one a
+// repair of the Rejected document with the Findings of the pass before it.
+// Repairs is the repair budget.
+type TaskPass struct {
+	Number, Repairs int
+	Rejected        []byte
+	Findings        string
+}
+
+// Verdict is a task's Accept on a reply: the Document it stands for, with
+// Findings when it is rejected; Stop rejects it without another repair.
+type Verdict struct {
+	Document []byte
+	Findings string
+	Stop     bool
 }
 
 // The text around a task's validation repair, before the rejected document
@@ -35,57 +77,84 @@ const taskRepairInstruction = "\n\nThis is validation repair, not a new task. Pr
 
 // RunTask runs a task through the same loop as Generate: provider retries,
 // the stall watchdog and the budgets of call, and a reply rejected by the
-// schema or the task's Check is written to the run directory and sent back for
-// a repair, up to the repair budget. The returned document is the accepted
+// schema or the task's Check (or its Accept) is written to the run directory
+// and sent back for a repair, up to the repair budget or a Verdict that stops. The returned document is the accepted
 // one, or the last rejected one when the Outcome carries a Reason of
 // ReasonValidationRejected; any other failure comes back as an error with the
 // Outcome of what was spent. The Outcome's text is not redacted: the host
 // applies RedactTaskOutput before it stores or shows it. Nothing the model
 // wrote is logged.
 func (g *Generator) RunTask(ctx context.Context, task Task) (outcome Outcome, document []byte, err error) {
-	var schema jsonschema.Schema
-	if err := json.Unmarshal(task.Schema, &schema); err != nil {
-		return outcome, nil, fmt.Errorf("task schema: %w", err)
-	}
-	resolved, err := schema.Resolve(nil)
-	if err != nil {
-		return outcome, nil, fmt.Errorf("task schema: %w", err)
+	accept := task.Accept
+	if accept == nil {
+		var schema jsonschema.Schema
+		if err := json.Unmarshal(task.Schema, &schema); err != nil {
+			return outcome, nil, fmt.Errorf("task schema: %w", err)
+		}
+		resolved, err := schema.Resolve(nil)
+		if err != nil {
+			return outcome, nil, fmt.Errorf("task schema: %w", err)
+		}
+		accept = func(_ context.Context, _ TaskPass, document []byte, _ *Outcome) (Verdict, error) {
+			return Verdict{Document: document, Findings: taskFindings(resolved, task.Check, document)}, nil
+		}
 	}
 	if err := os.WriteFile(filepath.Join(task.Directory, "schema.json"), task.Schema, 0400); err != nil {
 		return outcome, nil, err
 	}
 	logger := g.Logger
 	_, repairEnding := RepairText(g.Backend.Name())
-	text := task.Prompt
+	prompt := task.PassPrompt
+	if prompt == nil {
+		prompt = func(pass TaskPass) (string, error) {
+			if pass.Number == 1 {
+				return task.Prompt, nil
+			}
+			return task.Prompt + taskRepairInstruction + string(pass.Rejected) + "\nThe validator found:\n" + pass.Findings + fmt.Sprintf(repairEnding, pass.Number-1, pass.Repairs), nil
+		}
+	}
 	stalls := 0
 	budgets := task.Budgets
-	repairs := max(budgets.MaxRepairAttempts, 1)
-	for attempt := 0; ; attempt++ {
-		result, callErr := g.call(ctx, budgets, Request{Directory: task.Directory, Prompt: text, Schema: task.Schema, Logger: logger, Endpoint: task.Endpoint, Task: true}, &outcome, &stalls)
+	pass := TaskPass{Number: 1, Repairs: max(budgets.MaxRepairAttempts, 1)}
+	for ; ; pass.Number++ {
+		text, err := prompt(pass)
+		if err != nil {
+			return outcome, nil, err
+		}
+		result, callErr := g.call(ctx, budgets, Request{Directory: task.Directory, Prompt: text, Schema: task.Schema, Logger: logger, Endpoint: task.Endpoint, Task: task.Framing == TaskFraming, PersistSession: task.PersistSession}, &outcome, &stalls)
 		if callErr != nil {
-			if attempt > 0 {
+			if pass.Number > 1 {
 				outcome.RejectedDocument = RetainedDocument(document)
 			}
 			return outcome, nil, callErr
 		}
-		document = result.Document
-		outcome.Findings = taskFindings(resolved, task.Check, document)
-		if logger != nil {
-			logger.InfoContext(ctx, "task document validated", "pass", attempt+1, "valid", outcome.Findings == "", "findings_bytes", len(outcome.Findings), "document_bytes", len(document))
+		// Every call is a fresh session carrying the whole context pack (a
+		// repair resends the bundle and the rejected document), so the
+		// session of the call that produced the accepted document is
+		// self-contained.
+		outcome.SessionID = result.SessionID
+		verdict, err := accept(ctx, pass, result.Document, &outcome)
+		if err != nil {
+			return outcome, nil, err
+		}
+		document, outcome.Findings = verdict.Document, verdict.Findings
+		// A task's own Accept logs its verdicts itself.
+		if logger != nil && task.Accept == nil {
+			logger.InfoContext(ctx, "task document validated", "pass", pass.Number, "valid", outcome.Findings == "", "findings_bytes", len(outcome.Findings), "document_bytes", len(document))
 		}
 		if outcome.Findings == "" {
 			break
 		}
-		if attempt == repairs {
+		if pass.Number > pass.Repairs || verdict.Stop {
 			outcome.Reason = ReasonValidationRejected
 			outcome.RejectedDocument = RetainedDocument(document)
 			break
 		}
 		outcome.ValidationRepairs++
-		if err := os.WriteFile(filepath.Join(task.Directory, fmt.Sprintf("rejected-%d.json", attempt+1)), document, 0400); err != nil {
+		if err := os.WriteFile(filepath.Join(task.Directory, fmt.Sprintf("rejected-%d.json", pass.Number)), document, 0400); err != nil {
 			return outcome, nil, err
 		}
-		text = task.Prompt + taskRepairInstruction + string(document) + "\nThe validator found:\n" + outcome.Findings + fmt.Sprintf(repairEnding, attempt+1, repairs)
+		pass.Rejected, pass.Findings = document, outcome.Findings
 	}
 	if err := ctx.Err(); err != nil {
 		return outcome, nil, err
