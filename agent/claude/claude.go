@@ -94,6 +94,12 @@ func (c *Backend) run(ctx context.Context, request agent.Request, fix bool) (res
 	if c.Profile != User && c.Profile != Isolated {
 		return result, fmt.Errorf("claude: unknown profile %d", int(c.Profile))
 	}
+	if err := request.ValidateSession(); err != nil {
+		return result, fmt.Errorf("claude: %w", err)
+	}
+	if request.WantsSession() && (c.Profile != User || fix) {
+		return result, errors.New("claude: only a User profile review or task can keep, resume or fork a session")
+	}
 	if request.MaxCalls < 1 {
 		return result, errors.New(agent.GenerationBudgetExceededReason("model calls"))
 	}
@@ -308,6 +314,7 @@ func (c *Backend) run(ctx context.Context, request agent.Request, fix bool) (res
 	for scanner.Scan() {
 		var event struct {
 			Type, Subtype string
+			SessionID     string   `json:"session_id"`
 			Tools         []string `json:"tools"`
 			IsError       bool     `json:"is_error"`
 			Errors        []string `json:"errors"`
@@ -353,6 +360,11 @@ func (c *Backend) run(ctx context.Context, request agent.Request, fix bool) (res
 			break
 		}
 		request.Activity.Progress()
+		// The init event's session_id wins; any other event's (the result's)
+		// fills in only while none is known.
+		if event.SessionID != "" && (event.Type == "system" && event.Subtype == "init" || result.SessionID == "") {
+			result.SessionID = event.SessionID
+		}
 
 		if event.Type == "stream_event" {
 			switch event.Event.Type {

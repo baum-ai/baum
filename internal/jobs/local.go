@@ -23,6 +23,7 @@ import (
 	"github.com/baum-ai/baum/internal/pricing"
 	"github.com/baum-ai/baum/internal/repos"
 	"github.com/baum-ai/baum/internal/reviewgroups"
+	"github.com/baum-ai/baum/internal/reviewruns"
 	"github.com/baum-ai/baum/internal/store"
 )
 
@@ -36,6 +37,15 @@ type Local struct {
 	// FixDirectory holds fixes' temporary checkouts; empty is
 	// fix.DefaultDirectory.
 	FixDirectory string
+	// ReviewRuns holds the run directories of reviews that keep their agent
+	// session; empty is reviewruns.DefaultRoot.
+	ReviewRuns string
+}
+
+// keepsSession reports whether a review by the named backend keeps its agent
+// session: only a local Claude Code or Codex session can be resumed.
+func keepsSession(backend string) bool {
+	return backend == string(config.BackendClaude) || backend == string(config.BackendCodex)
 }
 
 type identityVersions struct {
@@ -292,7 +302,7 @@ func (l *Local) Execute(ctx context.Context, p Prepared, progress func(Progress)
 		key.Number = group.Members[0].Number
 	}
 	progress(Progress{Phase: "assembling"})
-	result, e := generate.Publish(ctx, published, key, generate.Options{Group: group, PriceList: list, Assembler: guarded, Request: assemble.Request{Repository: repository, Number: key.Number, Limits: assemble.LimitsFrom(caps)}, Backend: backend, BackendVersion: selected.Version, Model: p.Model, Budgets: agent.Budgets{WallClock: time.Duration(cfg.Budgets.RunTimeout), MaxCalls: cfg.Budgets.MaxCalls, MaxTokens: cfg.Budgets.MaxTokens, MaxProviderAttempts: 3, MaxRepairAttempts: 2}, OnValidation: func(pass int, valid bool) {
+	result, e := l.publish(ctx, published, versions, key, p.Backend, generate.Options{Group: group, PriceList: list, Assembler: guarded, Request: assemble.Request{Repository: repository, Number: key.Number, Limits: assemble.LimitsFrom(caps)}, Backend: backend, BackendVersion: selected.Version, Model: p.Model, Budgets: agent.Budgets{WallClock: time.Duration(cfg.Budgets.RunTimeout), MaxCalls: cfg.Budgets.MaxCalls, MaxTokens: cfg.Budgets.MaxTokens, MaxProviderAttempts: 3, MaxRepairAttempts: 2}, OnValidation: func(pass int, valid bool) {
 		backend.repairs = pass - 1
 		if !valid {
 			backend.repairs = pass
@@ -306,6 +316,19 @@ func (l *Local) Execute(ctx context.Context, p Prepared, progress func(Progress)
 	backend.redacted = true
 	backend.report("publishing")
 	return list.BackendOutcomeCost(p.Backend, result.Outcome.Model, result.Outcome), e
+}
+
+// publish generates and stores a review. A single pull request reviewed by a
+// local Claude Code or Codex keeps its agent session and run directory, and
+// the directories of its older versions are pruned once the new one is stored.
+func (l *Local) publish(ctx context.Context, published generate.Versions, versions *store.Store, key store.Key, backend string, o generate.Options, cost func(generate.Result) *float64) (generate.Result, error) {
+	o.KeepSession = o.Group == nil && keepsSession(backend)
+	o.SessionRoot = l.ReviewRuns
+	result, e := generate.Publish(ctx, published, key, o, cost)
+	if e == nil && result.Metadata.Session != nil {
+		l.pruneReviewRuns(ctx, versions, key)
+	}
+	return result, e
 }
 
 type trackedBackend struct {
@@ -361,4 +384,20 @@ func (a headAssembler) Assemble(ctx context.Context, r assemble.Request) (assemb
 		return assemble.Result{}, errors.New("pull request head changed; start it again")
 	}
 	return result, e
+}
+
+// pruneReviewRuns removes the kept run directories of the pull request's
+// versions beyond the latest two. A failure only leaves them for the daily
+// expiry.
+func (l *Local) pruneReviewRuns(ctx context.Context, versions *store.Store, key store.Key) {
+	root := l.ReviewRuns
+	if root == "" {
+		var e error
+		if root, e = reviewruns.DefaultRoot(); e != nil {
+			return
+		}
+	}
+	if all, e := versions.Versions(ctx, key); e == nil {
+		_ = reviewruns.PruneVersions(root, all)
+	}
 }

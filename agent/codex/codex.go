@@ -103,6 +103,12 @@ func (c *Backend) run(ctx context.Context, request agent.Request, fix bool) (res
 	if c.Profile != Local && c.Profile != Container {
 		return result, fmt.Errorf("codex: unknown profile %d", int(c.Profile))
 	}
+	if err := request.ValidateSession(); err != nil {
+		return result, fmt.Errorf("codex: %w", err)
+	}
+	if request.WantsSession() && (c.Profile != Local || fix) {
+		return result, errors.New("codex: only a Local profile review or task can keep, resume or fork a session")
+	}
 	if request.MaxCalls < 1 {
 		return result, errors.New(agent.GenerationBudgetExceededReason("model calls"))
 	}
@@ -154,10 +160,31 @@ func (c *Backend) run(ctx context.Context, request agent.Request, fix bool) (res
 			env = append(env, "TMPDIR="+request.Scratch)
 		}
 	}
-	args := []string{"exec", "--json", "--ephemeral", "--ignore-user-config", "--ignore-rules",
-		"--disable", "hooks", "--disable", "apps", "--disable", "multi_agent",
-		"--sandbox", sandbox, "-c", `approval_policy="never"`, "-c", `web_search="disabled"`,
-		"--skip-git-repo-check"}
+	// Without session options the argv is exactly the ephemeral one. A kept
+	// session omits --ephemeral. `exec resume` and `exec fork` do not accept
+	// --sandbox, so the sandbox goes in as config there. Both subcommands
+	// postdate the version floor's release notes as far as known; a Codex too
+	// old for them fails with its own usage error.
+	args := []string{"exec"}
+	switch {
+	case request.ResumeSession != "" && request.ForkSession:
+		args = append(args, "fork")
+	case request.ResumeSession != "":
+		args = append(args, "resume")
+	}
+	args = append(args, "--json")
+	if !request.KeepsSession() {
+		args = append(args, "--ephemeral")
+	}
+	args = append(args, "--ignore-user-config", "--ignore-rules",
+		"--disable", "hooks", "--disable", "apps", "--disable", "multi_agent")
+	if request.ResumeSession != "" {
+		args = append(args, "-c", "sandbox_mode="+strconv.Quote(sandbox))
+	} else {
+		args = append(args, "--sandbox", sandbox)
+	}
+	args = append(args, "-c", `approval_policy="never"`, "-c", `web_search="disabled"`,
+		"--skip-git-repo-check")
 	args = append(args, fixConfig...)
 	// An empty Model leaves the flag out so Codex uses its configured default.
 	if c.Model != "" {
@@ -193,6 +220,10 @@ func (c *Backend) run(ctx context.Context, request agent.Request, fix bool) (res
 	// WaitDelay bounds them as it does an outer cancellation.
 	runCtx, stop := context.WithCancel(ctx)
 	defer stop()
+	// The session id is a positional that precedes the stdin prompt marker.
+	if request.ResumeSession != "" {
+		args = append(args, request.ResumeSession)
+	}
 	cmd := exec.CommandContext(runCtx, binary, append(args, "-")...)
 	cmd.Dir = request.Directory
 	cmd.Env = env
@@ -223,7 +254,9 @@ func (c *Backend) run(ctx context.Context, request agent.Request, fix bool) (res
 		var event struct {
 			Type    string `json:"type"`
 			Message string `json:"message"`
-			Item    struct {
+			// ThreadID is the thread.started event's session id.
+			ThreadID string `json:"thread_id"`
+			Item     struct {
 				ID       string `json:"id"`
 				Type     string `json:"type"`
 				Text     string `json:"text"`
@@ -267,6 +300,10 @@ func (c *Backend) run(ctx context.Context, request agent.Request, fix bool) (res
 				Server: event.Item.Server, Tool: event.Item.Tool, Error: event.Item.Error.Message, ExitCode: event.Item.ExitCode, Paths: paths})
 		}
 		switch event.Type {
+		case "thread.started":
+			if event.ThreadID != "" {
+				result.SessionID = event.ThreadID
+			}
 		case "error":
 			lastError = event.Message
 			request.Emit(agent.TranscriptEntry{Kind: "error", Text: event.Message})
@@ -390,6 +427,9 @@ func (c *Backend) run(ctx context.Context, request agent.Request, fix bool) (res
 		}
 		if c.Profile == Local {
 			if line, found := unknownOption(stderr.String()); found {
+				if request.WantsSession() {
+					return result, fmt.Errorf("this Codex does not support exec resume/fork or the options baum passes with them (%s); upgrade Codex", line)
+				}
 				return result, fmt.Errorf("codex does not accept the options baum needs (%s); upgrade Codex to %s or newer", line, minimumVersion)
 			}
 			// Local stderr is the user's own and bounded; a hosted run's may

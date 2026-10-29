@@ -66,6 +66,9 @@ type Run struct {
 	// validated. It must not fail: a document it cannot read is returned
 	// as it came, for the validator to report.
 	Decorate func([]byte) []byte
+	// PersistSession keeps the backend's session of every call, so the
+	// Outcome's SessionID can be resumed later (Request.PersistSession).
+	PersistSession bool
 }
 
 // Generate runs the loop. The returned document is the validated and prepared
@@ -154,7 +157,7 @@ func (g *Generator) ReviewTask(ctx context.Context, run Run) (Task, error) {
 	}
 	var assessed []byte
 	return Task{
-		Directory: run.Directory, Schema: schema, Budgets: run.Budgets, Endpoint: run.Endpoint, Framing: BackendFraming,
+		Directory: run.Directory, Schema: schema, Budgets: run.Budgets, Endpoint: run.Endpoint, Framing: BackendFraming, PersistSession: run.PersistSession,
 		PassPrompt: func(pass TaskPass) (string, error) {
 			if pass.Number == 1 {
 				return contextPack, nil
@@ -213,6 +216,9 @@ func (g *Generator) call(ctx context.Context, budgets Budgets, request Request, 
 		result, err = g.runWatched(ctx, budgets, request)
 		if err != nil {
 			outcome.ErroredAttempts++
+		}
+		if result.SessionID != "" {
+			outcome.Sessions = append(outcome.Sessions, result.SessionID)
 		}
 		outcome.Calls += result.Calls
 		outcome.Tokens += result.Tokens

@@ -779,6 +779,26 @@ did. The Codex backend logs each
 turn and each tool with its command (at most 512 bytes), duration, exit code
 and status, never its output.
 
+A local Claude Code or Codex call can keep its session: `Request.PersistSession`
+omits `--no-session-persistence` (Claude Code) or `--ephemeral` (Codex);
+`ResumeSession` continues an earlier session (`--resume <id>`, `codex exec
+resume <id>`) and implies persisting; `ForkSession`, with `ResumeSession`,
+continues in a new session (`--fork-session`, `codex exec fork <id>`) and
+leaves the original untouched. `Result.SessionID` is the id the CLI reported
+(Claude Code's `init` event, else its `result` event; Codex's `thread.started`
+`thread_id`), the new session's for a fork. Only the `User` and `Local`
+profiles accept these options, and only for reviews and tasks, not fixes; the
+hosted profiles, Cursor and the Anthropic backend refuse them, and a fork
+without a session to resume is an error. Without them every argv is unchanged.
+Codex's `exec resume` and `exec fork` take no `--sandbox`, so the same
+read-only sandbox is passed as `-c sandbox_mode="read-only"`. `ResumeSession`
+must be a canonical UUID (both CLIs report one), which also keeps an id from
+being read as a flag. A resume or fork must run with the same `Directory` as
+the session it continues: Claude Code stores sessions per working directory
+(`~/.claude/projects/<encoded cwd>`) and Codex filters by it too. A resumed
+Claude Code session keeps the system prompt it recorded, so per-turn framing
+belongs in the user prompt.
+
 The document goes through `review`: the validator
 completes it and returns located findings. On findings the loop sends back the
 bundle, the rejected document and the findings, without source excerpts, as a
@@ -1581,6 +1601,53 @@ with `cursor.Backend`, or with `anthropic.Backend` and the key from
 wall-clock budget is a `context.WithTimeout` around the loop, `pass_timeout`
 bounds each backend call, and SIGINT and SIGTERM cancel the context so the
 backend's process group is killed and the run directory removed.
+
+A review the daemon runs with the local `claude` or `codex` backend keeps its
+agent session and run directory (`generate.Options.KeepSession`, set by
+`jobs.Local` for single pull requests only: not for review groups, Cursor or the
+Anthropic API backend, and not for hosted runs), so a later chat can fork the
+session in the same directory. The run directory is then made under
+`<user cache>/baum/review-runs/` (`internal/reviewruns`, the same cache base as
+fixes), mode 0700, still named `agent.RunDirPrefix+"*"`, with symlinks resolved
+because the CLIs record the resolved cwd. The loop asks every call to persist
+its session. Each call, a repair included, is a fresh session that carries the
+whole context pack (a repair resends the bundle and the rejected document), so
+`Outcome.SessionID`, the session of the last successful call, is the one that
+produced the accepted document and is self-contained. A run that succeeds with a
+session id records `store.Metadata.Session` (`backend`, `id`, `directory`,
+absent in older versions) and keeps the directory, after deleting the
+`rejected-N.json` files of the repairs (raw model output the chat does not
+need); a failed, rejected or cancelled run, a run without a session id, and a
+version the store refused remove it as before. A cache directory that cannot be
+created is a warning on the progress output, and the review then runs in a
+temporary directory without persisting anything.
+
+Persisting makes the CLI write transcripts that were never written before: every
+call (the first attempt, provider retries, each repair) leaves a Claude Code
+session in `$CLAUDE_CONFIG_DIR` (else `~/.claude`) `/projects/<encoded run
+dir>/<id>.jsonl`, or a Codex rollout in `$CODEX_HOME` (else `~/.codex`)
+`/sessions/YYYY/MM/DD/rollout-*-<id>.jsonl` whose `session_meta` records the run
+directory as cwd. `Outcome.Sessions` lists every id the calls reported.
+`reviewruns.RemoveSessions` deletes them: after a successful run, those of the
+calls that did not produce the accepted document; on any failure, rejection,
+missing id, refused store or interruption, all of them (Claude's whole project
+directory, which is unique to the run, and the Codex rollouts whose first line
+records that cwd); and when a kept directory is pruned, every session of it,
+chat forks made later included. It acts only on a directory directly under the
+review-runs root with the run prefix, deletes only a real Claude project
+directory of that encoded name and `rollout-*.jsonl` regular files whose cwd is
+that directory, never follows a symlink and ignores files that are gone.
+The directory itself is pruned the same way and only real directories directly
+under the root whose names carry the prefix: after a successful publish the directories of a pull request's versions
+beyond the latest two (`reviewruns.PruneVersions`), and, when the daemon starts
+and then daily, any directory last modified more than 14 days ago
+(`reviewruns.Expire`). The directory of a review still running is neither
+referenced nor old, so neither pass touches it. The session collector never
+ingests these sessions: Claude Code, Codex and Cursor discovery decide by the
+cwd the transcript records, which is a run directory (prefix, outside every
+repository root), not by the transcript's path; review runs load no hooks
+(`--setting-sources ""`, `--disable hooks`), so nothing in `livesessions` or
+`hookevents` sees them.
 
 Completion mirrors the hosted worker's `Generate` and `Complete`: after the loop,
 `agent.RedactOutput` masks the document, findings, model and diagnostics (with

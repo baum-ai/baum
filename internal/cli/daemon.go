@@ -44,6 +44,7 @@ import (
 	"github.com/baum-ai/baum/internal/repos"
 	"github.com/baum-ai/baum/internal/reviewgroups"
 	"github.com/baum-ai/baum/internal/reviewindex"
+	"github.com/baum-ai/baum/internal/reviewruns"
 	"github.com/baum-ai/baum/internal/shellenv"
 	"github.com/baum-ai/baum/internal/transcript"
 	"github.com/baum-ai/baum/internal/uiserver"
@@ -594,6 +595,7 @@ func localApplication(paths daemon.Paths, concurrency int, log *slog.Logger) fun
 					wg.Go(func() { requests.Run(ctx, requestEvents) })
 				}
 				wg.Go(func() { sessionIndex.Run(ctx) })
+				wg.Go(func() { maintainReviewRuns(ctx, log) })
 				wg.Go(func() { planHistory.Run(ctx) })
 				wg.Go(func() { delivery.Run(ctx) })
 				if endedSessions != nil {
@@ -696,6 +698,16 @@ func (h hookEvents) SubscribeCounted(buffer int, match func(hookevents.Event) bo
 	}
 	ch, cancel, dropped := h.service.Store.SubscribeCounted(buffer, match)
 	return ch, dropped, cancel
+}
+
+// maintainReviewRuns expires the run directories of reviews that kept their
+// agent session, at start and then daily.
+func maintainReviewRuns(ctx context.Context, log *slog.Logger) {
+	root, err := reviewruns.DefaultRoot()
+	if err != nil {
+		return
+	}
+	reviewruns.Maintain(ctx, root, 24*time.Hour, func(err error) { log.Warn("expiring kept review runs", "error", err) })
 }
 
 // newCloneFinder builds the service that finds local clones of picked
