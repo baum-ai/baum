@@ -5,7 +5,6 @@ import { Markdown } from "@baum/viewer/components/markdown";
 import { Alert, Button, LiveDot } from "@baum/viewer/components/ui";
 import type { Anchor, ReviewDocument } from "@baum/viewer/review-document";
 import {
-  appURL,
   askChat,
   chatTurnActive,
   cost,
@@ -144,14 +143,29 @@ function OpenEvidence({ children }: { children: ReactNode }) {
   return <div ref={box}>{children}</div>;
 }
 
+/** The cited file at the review's head on github.com, or null for another
+ *  host, which the app has no link scheme for. */
+function fileLink(pullRequestUrl: string, document: ReviewDocument, c: ChatCitation) {
+  try {
+    const url = new URL(pullRequestUrl);
+    if (url.protocol !== "https:" || url.hostname !== "github.com") return null;
+    const path = c.path.split("/").map(encodeURIComponent).join("/");
+    return `https://github.com/${document.review.repository}/blob/${document.review.head}/${path}#L${c.start_line}-L${c.end_line}`;
+  } catch {
+    return null;
+  }
+}
+
 /** The lines a citation names. The ones the review's own hunks hold are drawn
  *  from them; the daemon serves no other file text, so lines outside the
  *  changes are named, with a link to GitHub where the review's head is known. */
 function CitationLines({
   citation,
   document,
+  pullRequestUrl,
 }: {
   citation: ChatCitation;
+  pullRequestUrl: string;
   /** The review the conversation is about, when it is the one on screen. */
   document: ReviewDocument | null;
 }) {
@@ -162,6 +176,7 @@ function CitationLines({
         <HunkEvidence document={document} anchors={anchors} />
       </OpenEvidence>
     );
+  const link = document ? fileLink(pullRequestUrl, document, citation) : null;
   const lines =
     citation.end_line > citation.start_line
       ? `lines ${citation.start_line}–${citation.end_line}`
@@ -169,14 +184,10 @@ function CitationLines({
   return (
     <p className="ask-cite-note">
       {citation.path}, {lines}: not part of this review's changes, so baum has no excerpt to show.
-      {document ? (
+      {link ? (
         <>
           {" "}
-          <a
-            href={`https://github.com/${document.review.repository}/blob/${document.review.head}/${citation.path}#L${citation.start_line}-L${citation.end_line}`}
-            target="_blank"
-            rel="noreferrer"
-          >
+          <a href={link} target="_blank" rel="noreferrer">
             Open on GitHub
           </a>
         </>
@@ -185,27 +196,41 @@ function CitationLines({
   );
 }
 
-function Citations({ answer, document }: { answer: ChatAnswer; document: ReviewDocument | null }) {
-  const [open, setOpen] = useState<string | null>(null);
+function Citations({
+  answer,
+  document,
+  pullRequestUrl,
+}: {
+  answer: ChatAnswer;
+  document: ReviewDocument | null;
+  pullRequestUrl: string;
+}) {
+  const [open, setOpen] = useState<number | null>(null);
   if (answer.citations.length === 0) return null;
   return (
     <section aria-label="Citations" className="ask-cites">
       <h4>Cited code</h4>
       <ul>
-        {answer.citations.map((citation) => {
+        {answer.citations.map((citation, index) => {
           const key = citationLabel(citation);
-          const shown = open === key;
+          const shown = open === index;
           return (
-            <li key={key}>
+            <li key={`${index}:${key}`}>
               <button
                 type="button"
                 className="ask-cite"
                 aria-expanded={shown}
-                onClick={() => setOpen(shown ? null : key)}
+                onClick={() => setOpen(shown ? null : index)}
               >
                 {key}
               </button>
-              {shown ? <CitationLines citation={citation} document={document} /> : null}
+              {shown ? (
+                <CitationLines
+                  citation={citation}
+                  document={document}
+                  pullRequestUrl={pullRequestUrl}
+                />
+              ) : null}
             </li>
           );
         })}
@@ -269,11 +294,13 @@ function TurnView({
   conversation,
   turn,
   document,
+  pullRequestUrl,
   answerActions,
 }: {
   conversation: ChatConversation;
   turn: ChatTurn;
   document: ReviewDocument | null;
+  pullRequestUrl: string;
   answerActions?: AnswerActions;
 }) {
   const reason = turnReasonText(turn);
@@ -288,7 +315,7 @@ function TurnView({
       ) : turn.state === "completed" && turn.answer ? (
         <div className="ask-answer">
           <Markdown html={false}>{turn.answer.answer_markdown}</Markdown>
-          <Citations answer={turn.answer} document={document} />
+          <Citations answer={turn.answer} document={document} pullRequestUrl={pullRequestUrl} />
           {/* The slot of the actions under an answer (Add as comment, Fix
            *  this); empty until they are given. */}
           <div className="ask-answer-actions" data-answer-actions="">
@@ -327,7 +354,8 @@ function conversationName(conversation: ChatConversation) {
 export function AskPanel({
   clone,
   pr,
-  repository,
+  pullRequestUrl,
+  latestVersion,
   document,
   patches,
   focus,
@@ -338,9 +366,11 @@ export function AskPanel({
 }: {
   clone: string;
   pr: number;
-  /** "owner/name", to match chat events. */
-  repository: string;
-  /** The current review; questions are about its version. */
+  /** The pull request's GitHub address, which decides where citations link. */
+  pullRequestUrl: string;
+  /** The newest review's version: conversations of older ones are outdated. */
+  latestVersion: number;
+  /** The review on screen; questions are about its version. */
   document: ReviewDocument;
   patches: HunkPatchSource | null;
   /** The part of the review the next question is about. */
@@ -379,28 +409,8 @@ export function AskPanel({
     return () => abort.abort();
   }, [clone, pr, tick]);
 
-  useEffect(() => {
-    if (typeof EventSource === "undefined") return;
-    const source = new EventSource(appURL("api/events"));
-    const onChat = (event: Event) => {
-      try {
-        const body = JSON.parse((event as MessageEvent<string>).data) as {
-          repository?: string;
-          pr?: number;
-        };
-        if (body.pr === pr && body.repository?.toLowerCase() === repository.toLowerCase())
-          refresh();
-      } catch {
-        refresh();
-      }
-    };
-    source.addEventListener("chat", onChat);
-    source.addEventListener("open", refresh);
-    source.addEventListener("reset", refresh);
-    return () => source.close();
-  }, [pr, repository, refresh]);
-
-  // A question's job settling is the fallback to the event.
+  // A question's job changing state (the app's own stream, through `jobs`)
+  // reads the list again.
   const jobStates = jobs.map((job) => `${job.id}:${job.state}`).join(",");
   const firstJobStates = useRef(jobStates);
   useEffect(() => {
@@ -416,7 +426,8 @@ export function AskPanel({
         ? choice
         : (current[0]?.id ?? "new");
   const conversation = conversations.find((c) => c.id === activeId);
-  const outdated = !!conversation && conversation.version !== version;
+  const readOnly = !!conversation && conversation.version !== version;
+  const older = !!conversation && conversation.version < latestVersion;
   const busy = !!conversation?.turns.some(chatTurnActive);
   const activeTurns = conversations.some((c) => c.turns.some(chatTurnActive));
 
@@ -432,11 +443,11 @@ export function AskPanel({
   useEffect(() => {
     input.current?.focus({ preventScroll: true });
   }, []);
-  const outdatedNow = useRef(outdated);
-  outdatedNow.current = outdated;
+  const readOnlyNow = useRef(readOnly);
+  readOnlyNow.current = readOnly;
   useEffect(() => {
     if (!focus) return;
-    if (outdatedNow.current) setChoice("new");
+    if (readOnlyNow.current) setChoice("new");
     input.current?.focus({ preventScroll: true });
   }, [focus]);
 
@@ -449,7 +460,7 @@ export function AskPanel({
 
   const send = async () => {
     const text = question.trim();
-    if (!text || busy || sending || outdated) return;
+    if (!text || busy || sending || readOnly) return;
     setSending(true);
     setError("");
     try {
@@ -473,9 +484,9 @@ export function AskPanel({
     }
   };
 
-  const older = new Map<number, ChatConversation[]>();
+  const others = new Map<number, ChatConversation[]>();
   for (const c of conversations)
-    if (c.version !== version) older.set(c.version, [...(older.get(c.version) ?? []), c]);
+    if (c.version !== version) others.set(c.version, [...(others.get(c.version) ?? []), c]);
   const item = (c: ChatConversation) => (
     <li key={c.id}>
       <button
@@ -528,9 +539,11 @@ export function AskPanel({
             </Button>
           </div>
           {current.length > 0 ? <ul>{current.map(item)}</ul> : null}
-          {[...older].map(([olderVersion, list]) => (
-            <div key={olderVersion}>
-              <h3>Outdated: asked about review v{olderVersion}</h3>
+          {[...others].map(([other, list]) => (
+            <div key={other}>
+              <h3>
+                {other < latestVersion ? "Outdated: asked about" : "Asked about"} review v{other}
+              </h3>
               <ul>{list.map(item)}</ul>
             </div>
           ))}
@@ -557,6 +570,7 @@ export function AskPanel({
                   conversation={conversation}
                   turn={turn}
                   document={conversation.version === version ? document : null}
+                  pullRequestUrl={pullRequestUrl}
                   answerActions={answerActions}
                 />
               ))}
@@ -569,11 +583,11 @@ export function AskPanel({
           )}
         </div>
       </HunkPatchProvider>
-      {outdated ? (
+      {readOnly ? (
         <div className="ask-composer">
           <p className="ask-note">
-            This conversation is about an older review, so it is read-only. Start a new one to ask
-            about the review on this page.
+            This conversation is about {older ? "an older review" : "a newer review"}, so it is
+            read-only. Start a new one to ask about the review on this page.
           </p>
           <div>
             <Button

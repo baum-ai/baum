@@ -175,8 +175,8 @@ by registered clone ID and pull request as for `api/versions`:
   saved review at that version), `needs_clone` 409, `busy` 409 (the
   conversation's last question is still queued or running),
   `unsupported_backend` 422 (the review was not written by Claude Code or
-  Codex on this computer), `restarting` 503. Without the capability `GET`
-  answers `{available: false, code: "chat_unavailable"}` and `POST` 503.
+  Codex on this computer), `restarting` 503. Without the capability both
+  answer 503 `{code: "chat_unavailable"}`.
 
 Each question is a job of `kind: "chat"` (`chat: {conversation, turn,
 version}`, the pull request in `pr`), queued at once without an estimate, which
@@ -193,10 +193,11 @@ walkthrough's header, or the key `a` (ignored while typing in a text field;
 inside the panel's own box it types an a), opens it; Escape with focus in the
 panel, its **Close** button or **Ask** again closes it. It is kept in the URL
 as `ask=1`, like the walkthrough's `walk=`, so a reload keeps it. `LocalReview`
-renders it beside the review (`.ask-layout`): a right-hand column from 96rem,
-where it never covers the review, and an overlay from the right edge below that.
-Only the current review can be asked about, so the button needs a loaded
-review. **Ask about this section** (the viewer's `renderSectionAside`, drawn on
+renders it beside the review (`.ask-layout`): a 22rem right-hand column from
+72rem, where the review takes the rest and nothing is covered (under 104rem the viewer folds its side pane to its strip meanwhile, `foldSidePane`), and below that
+a modal overlay from the right edge with a backdrop (a click on it closes the
+panel) and the review inert behind it. Closing returns the keyboard to the Ask
+button. The button needs a loaded review. **Ask about this section** (the viewer's `renderSectionAside`, drawn on
 the current version's section pane), **Ask about this** on a tour stop and
 **Ask** on an Everything row set the question's focus: a removable chip above the
 box, sent as the API's `focus`, which also opens the panel (`sectionFocus` and
@@ -205,12 +206,16 @@ end_line}` anchors, at most 20). The pull request's overview has no button of
 its own; a question without a focus is about the pull request as a whole.
 
 The panel lists the pull request's conversations (`GET api/prs/chat`, read
-again on each `chat` event of this repository and pull request, when one of its
-chat jobs changes state and every 4 s while a question is being answered),
-named by their first question: the current review's first, under "Review v<N>",
-then each older review's under "Outdated: asked about review v<M>". An older
-conversation is read-only: no box, a note, and **New conversation**, which
-starts one on the current review (also offered beside the list). A conversation
+when one of the pull request's chat jobs changes state, through the app's own
+event stream, and every 4 s while a question is being answered), named by their
+first question. Conversations belong to a review version, and the panel follows
+the version on screen: reading an older version in the viewer makes the
+questions go to that version. The version on screen is first, under "Review
+v<N>"; the others are read-only, under "Outdated: asked about review v<M>" when
+M is older than the latest review and "Asked about review v<M>" when it is newer
+than the one on screen. A read-only conversation has no box, a note, and **New
+conversation**, which starts one on the version on screen (also offered beside
+the list). A conversation
 with `seeded` shows "Started without the review's own context.", and a turn's
 `note` shows under it. The box takes Enter to send and Shift+Enter for a new
 line; **Send** reads "Sending…" at once and is disabled while a question of the

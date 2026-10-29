@@ -779,14 +779,19 @@ export async function listChats(
   pr: number,
   signal?: AbortSignal,
 ): Promise<ChatConversation[] | null> {
-  const body = await request<{ conversations?: ChatConversation[] | null; available?: boolean }>(
-    `api/prs/chat?${selector(clone, pr)}`,
-    undefined,
-    "GET",
-    signal,
-  );
-  if (body.available === false) return null;
-  return body.conversations ?? [];
+  try {
+    const body = await request<{ conversations?: ChatConversation[] | null }>(
+      `api/prs/chat?${selector(clone, pr)}`,
+      undefined,
+      "GET",
+      signal,
+    );
+    return body.conversations ?? [];
+  } catch (e) {
+    // Without the capability the daemon answers 503 {code: "chat_unavailable"}.
+    if (e instanceof LocalRequestError && e.code === "chat_unavailable") return null;
+    throw e;
+  }
 }
 /** Asks the review's agent a question; the conversation is new without an id.
  *  A refusal is a LocalRequestError whose message is the daemon's own words. */

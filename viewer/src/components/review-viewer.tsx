@@ -235,6 +235,9 @@ export type ReviewViewerProps<F extends ReviewFile = ReviewFile> = {
    *  as the navigator steps, for a host's own keys to step through the
    *  review. */
   steps?: RefObject<ReviewSteps | null>;
+  /** Folds the side pane to its strip while true, whatever the reader chose,
+   *  for a host that shares the width with a pane of its own. */
+  foldSidePane?: boolean;
 };
 
 /** The places either side of the one being read, in reading order. */
@@ -360,6 +363,7 @@ function ReviewWorkspace<F extends ReviewFile>({
   hunkPatches = null,
   onVersionsShown,
   steps: stepsRef,
+  foldSidePane = false,
 }: ReviewViewerProps<F> & { view: HistoryView }) {
   const [requested, setSelection] = useReviewSelection();
   // A place whose group the host has not supplied reads as the Summary. The
@@ -424,7 +428,8 @@ function ReviewWorkspace<F extends ReviewFile>({
     workspace.current?.style.setProperty(variable, `${width}px`);
   // The side pane can fold to a strip at the window's edge, so the review
   // pane has the width when the talk is not the point.
-  const [chatCollapsed, setChatCollapsed] = useConversationCollapsed();
+  const [chosenCollapsed, setChatCollapsed] = useConversationCollapsed();
+  const chatCollapsed = chosenCollapsed || foldSidePane;
   // Which of its tabs the side pane shows: the host's conversation, the pull
   // request's details, or how it came about. Without a conversation the
   // details stand in for it.

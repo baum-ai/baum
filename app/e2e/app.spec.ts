@@ -920,6 +920,26 @@ test("asks the review's agent a question and reads the lines its answer cites", 
   const panel = page.getByRole("complementary", { name: "Ask about this review" });
   await expect(panel).toBeVisible();
   expect(page.url()).toContain("ask=1");
+  // At 1280px the panel docks: the review keeps the rest, and its header
+  // buttons stay in view and can be pressed.
+  const docked = async () => {
+    const box = await page.evaluate(() => {
+      const dock = document.querySelector(".ask-panel")!.getBoundingClientRect();
+      const main = document.querySelector(".ask-main")!.getBoundingClientRect();
+      return {
+        dock: dock.left,
+        main: main.right,
+        width: window.innerWidth,
+        scroll: document.documentElement.scrollWidth,
+      };
+    });
+    expect(box.main).toBeLessThanOrEqual(box.dock + 1);
+    expect(box.scroll).toBeLessThanOrEqual(box.width);
+    for (const name of ["Ask", "Walk through", "Merge…"])
+      await page.getByRole("button", { name, exact: true }).click({ trial: true });
+  };
+  await docked();
+  await page.screenshot({ path: "test-results/ask-1280.png" });
   await expect(panel.getByText("answers questions about the code")).toBeVisible();
   await page.keyboard.type("Why is the delay capped?");
   await page.keyboard.press("Enter");
@@ -956,20 +976,23 @@ test("asks the review's agent a question and reads the lines its answer cites", 
   await page.setViewportSize({ width: 1800, height: 900 });
   await page.getByRole("button", { name: "Ask", exact: true }).click();
   await expect(panel).toBeVisible();
-  const covered = await page.evaluate(() => {
-    const dock = document.querySelector(".ask-panel")!.getBoundingClientRect();
-    const main = document.querySelector(".ask-main")!.getBoundingClientRect();
-    return main.right > dock.left + 1;
-  });
-  expect(covered).toBe(false);
+  await docked();
   await page.screenshot({ path: "test-results/ask-docked.png" });
-  // Narrow: it overlays the review and can be closed; no sideways scroll.
+  // Narrow: a modal overlay with a backdrop, the review inert behind it, and
+  // no sideways scroll; the backdrop closes it.
   await page.setViewportSize({ width: 390, height: 844 });
+  await expect(page.locator(".ask-backdrop")).toBeVisible();
+  await expect(page.locator(".ask-main")).toHaveAttribute("inert", "");
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(
     true,
   );
   await page.screenshot({ path: "test-results/ask-narrow.png" });
   await panel.getByRole("button", { name: "Close", exact: true }).click();
+  await expect(panel).toBeHidden();
+  await expect(page.getByRole("button", { name: "Ask", exact: true })).toBeFocused();
+  await page.getByRole("button", { name: "Ask", exact: true }).click();
+  await expect(panel).toBeVisible();
+  await page.locator(".ask-backdrop").click({ position: { x: 10, y: 400 } });
   await expect(panel).toBeHidden();
   expect(errors).toEqual([]);
 });

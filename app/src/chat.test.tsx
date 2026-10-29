@@ -55,7 +55,7 @@ const answered = (rest: Partial<ChatTurn> = {}) =>
       answer_markdown: "The cap keeps **retries** bounded.\n\n<b>raw html</b>",
       citations: [
         { path: "queue/retry.go", start_line: 31, end_line: 42 },
-        { path: "docs/elsewhere.md", start_line: 3, end_line: 3 },
+        { path: "docs/else where.md", start_line: 3, end_line: 3 },
       ],
       suggests_fix: null,
     },
@@ -131,7 +131,8 @@ async function panel(extra: Partial<Parameters<typeof AskPanel>[0]> = {}) {
       <AskPanel
         clone="clone"
         pr={212}
-        repository="example-org/taskline"
+        pullRequestUrl="https://github.com/example-org/taskline/pull/212"
+        latestVersion={doc.review.version}
         document={doc}
         patches={null}
         focus={null}
@@ -182,7 +183,7 @@ it("renders an answer as markdown, never raw HTML, with its citations and their 
   expect(node.querySelector(".ask-answer b")).toBeNull();
   expect(node.textContent).toContain("<b>raw html</b>");
   const cites = Array.from(node.querySelectorAll(".ask-cite")).map((c) => c.textContent);
-  expect(cites).toEqual(["queue/retry.go:31–42", "docs/elsewhere.md:3"]);
+  expect(cites).toEqual(["queue/retry.go:31–42", "docs/else where.md:3"]);
   expect(node.textContent).toContain("Cost $0.0123");
   // The slot under the answer is there for the next step's actions.
   expect(node.querySelector("[data-answer-actions]")).not.toBeNull();
@@ -195,8 +196,49 @@ it("renders an answer as markdown, never raw HTML, with its citations and their 
   await act(async () => (node.querySelectorAll(".ask-cite")[1] as HTMLElement).click());
   expect(node.querySelector(".ask-cite-note")!.textContent).toContain("no excerpt to show");
   expect(node.querySelector(".ask-cite-note a")!.getAttribute("href")).toBe(
-    `https://github.com/example-org/taskline/blob/${doc.review.head}/docs/elsewhere.md#L3-L3`,
+    `https://github.com/example-org/taskline/blob/${doc.review.head}/docs/else%20where.md#L3-L3`,
   );
+});
+
+it("leaves out the GitHub link for another host", async () => {
+  conversations = [conversation({ turns: [answered()] })];
+  await panel({ pullRequestUrl: "https://ghe.example.com/example-org/taskline/pull/212" });
+  await act(async () => (node.querySelectorAll(".ask-cite")[1] as HTMLElement).click());
+  expect(node.querySelector(".ask-cite-note")!.textContent).toContain("no excerpt to show");
+  expect(node.querySelector(".ask-cite-note a")).toBeNull();
+});
+
+it("keeps questions tied to the version on screen and says which conversations are outdated", async () => {
+  const shown = structuredClone(doc);
+  shown.review.version = 2;
+  conversations = [
+    conversation({ id: "newer", version: 4, turns: [answered({ question: "Newer question" })] }),
+    conversation({ id: "now", version: 2, turns: [answered({ question: "Now question" })] }),
+    conversation({ id: "old", version: 1, turns: [answered({ question: "Old question" })] }),
+  ];
+  // Version 2 is on screen; version 4 is the latest review.
+  await panel({ document: shown, latestVersion: 4 });
+  const headings = Array.from(node.querySelectorAll(".ask-convos h3")).map((h) => h.textContent);
+  expect(headings).toEqual([
+    "Review v2",
+    "Asked about review v4",
+    "Outdated: asked about review v1",
+  ]);
+  expect(node.textContent).toContain("Now question");
+  // A newer review's conversation is read-only here, and not called outdated.
+  await act(async () => button("Newer question")!.click());
+  expect(node.querySelector("textarea")).toBeNull();
+  expect(node.textContent).toContain("about a newer review, so it is read-only");
+  expect(node.textContent).not.toContain("Outdated: asked about review v4");
+  await act(async () => button("Old question")!.click());
+  expect(node.textContent).toContain("about an older review, so it is read-only");
+  // A question goes to the version on screen.
+  await act(async () => button("Now question")!.click());
+  await type("And here?");
+  await act(async () => button("Send")!.click());
+  expect(posted).toEqual([
+    { clone: "clone", pr: 212, version: 2, conversation_id: "now", question: "And here?" },
+  ]);
 });
 
 it("says in words why a question was not answered", async () => {
@@ -314,9 +356,15 @@ it("shows the daemon's words when the conversation is busy", async () => {
 });
 
 it("says so when chat is not available", async () => {
+  // What the daemon answers without the capability.
   vi.stubGlobal(
     "fetch",
-    vi.fn(async () => Response.json({ available: false, code: "chat_unavailable" })),
+    vi.fn(async () =>
+      Response.json(
+        { code: "chat_unavailable", message: "Chat is not available." },
+        { status: 503 },
+      ),
+    ),
   );
   await panel();
   expect(node.textContent).toContain("not available on this computer");
@@ -434,7 +482,10 @@ it("opens the Ask panel with a, keeps it in the URL, and ignores a typed in a te
   expect(node.querySelector(".ask-panel")).toBe(before);
   // Escape in the panel closes it.
   await press(node.querySelector("textarea")!, "Escape");
+  await settle();
   expect(node.querySelector(".ask-panel")).toBeNull();
+  // The keyboard goes back to the Ask button.
+  expect(document.activeElement).toBe(button("Ask"));
   expect(node.querySelector("[data-search]")!.textContent).toBe("");
   // The button does the same, and a reload with ask=1 starts open.
   await act(async () => button("Ask")!.click());

@@ -91,6 +91,21 @@ function Transcript({ id, query }: { id: string; query: string }) {
     </>
   );
 }
+/** Whether the window matches a media query, as it changes. */
+function useMedia(query: string) {
+  const [matches, setMatches] = useState(
+    () => typeof matchMedia === "function" && matchMedia(query).matches,
+  );
+  useEffect(() => {
+    if (typeof matchMedia !== "function") return;
+    const list = matchMedia(query);
+    const change = () => setMatches(list.matches);
+    change();
+    list.addEventListener("change", change);
+    return () => list.removeEventListener("change", change);
+  }, [query]);
+  return matches;
+}
 /** The hosted PR page's shared viewer, with local sources for its slots. */
 export function LocalReview({
   entry,
@@ -147,6 +162,18 @@ export function LocalReview({
     });
   // The part of the review the next question is about.
   const [askFocus, setAskFocus] = useState<ChatFocus | null>(null);
+  // Below 72rem the panel overlays the review, which is then inert behind it.
+  const narrow = useMedia("(width < 72rem)");
+  // Docked on a window under 104rem, the review has too little width for its
+  // side pane, which folds to its strip meanwhile.
+  const tight = useMedia("(72rem <= width < 104rem)");
+  // Closing hands the keyboard back to the Ask button that opened it.
+  const closeAsk = () => {
+    setAsk(false);
+    requestAnimationFrame(() =>
+      window.document.querySelector<HTMLElement>("[data-ask-button]")?.focus(),
+    );
+  };
   const askAbout = (focus: ChatFocus) => {
     setAskFocus(focus);
     if (!askOpen) setAsk(true);
@@ -304,7 +331,7 @@ export function LocalReview({
     <ReviewBoundary key={`${clone}:${pr.number}`}>
       <AttachmentUrlProvider resolve={attachments}>
         <div className="ask-layout">
-          <div className="ask-main">
+          <div className="ask-main" inert={narrow && askOpen ? true : undefined}>
             {walkView && doc ? (
               // A new version starts afresh, with that version's own progress.
               <Walkthrough
@@ -316,7 +343,11 @@ export function LocalReview({
                 close={() => setWalk(null)}
                 patches={patches}
                 changed={changed}
-                ask={{ open: askOpen, toggle: () => setAsk(!askOpen), about: askAbout }}
+                ask={{
+                  open: askOpen,
+                  toggle: () => (askOpen ? closeAsk() : setAsk(true)),
+                  about: askAbout,
+                }}
               />
             ) : (
               <ReviewViewer
@@ -326,6 +357,7 @@ export function LocalReview({
                 loadVersion={loadVersion}
                 versionsFailed={historyFailed ? { retry: () => setRetry((n) => n + 1) } : undefined}
                 steps={steps}
+                foldSidePane={askOpen && tight}
                 header={{
                   pullRequest: {
                     number: pr.number,
@@ -403,7 +435,8 @@ export function LocalReview({
                             size="compact"
                             aria-pressed={askOpen}
                             aria-keyshortcuts="a"
-                            onClick={() => setAsk(!askOpen)}
+                            data-ask-button=""
+                            onClick={() => (askOpen ? closeAsk() : setAsk(true))}
                           >
                             Ask
                           </Button>
@@ -557,18 +590,24 @@ export function LocalReview({
             )}
           </div>
           {askOpen && doc ? (
-            <AskPanel
-              key={`${clone}:${pr.number}`}
-              clone={clone}
-              pr={pr.number}
-              repository={pr.repository}
-              document={doc}
-              patches={patches}
-              focus={askFocus}
-              clearFocus={() => setAskFocus(null)}
-              close={() => setAsk(false)}
-              jobs={chats}
-            />
+            <>
+              <div className="ask-backdrop" aria-hidden onClick={closeAsk} />
+              <AskPanel
+                key={`${clone}:${pr.number}`}
+                clone={clone}
+                pr={pr.number}
+                pullRequestUrl={pr.url}
+                latestVersion={doc.review.version}
+                // Questions are about the version on screen, which is an older
+                // one while the viewer reads it.
+                document={!walkView && viewedDocument ? viewedDocument : doc}
+                patches={patches}
+                focus={askFocus}
+                clearFocus={() => setAskFocus(null)}
+                close={closeAsk}
+                jobs={chats}
+              />
+            </>
           ) : null}
         </div>
         {merging ? (

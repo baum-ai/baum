@@ -3359,18 +3359,28 @@ kbd.key-hint {
   z-index: var(--z-sheet, 40);
   display: flex;
   flex-direction: column;
-  width: min(26rem, 100vw);
+  width: min(26rem, 88vw);
   height: 100dvh;
   border-left: 1px solid var(--border-default);
   background: var(--surface-card);
   box-shadow: var(--shadow-overlay);
 }
-@media (width >= 96rem) {
+.ask-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: calc(var(--z-sheet, 40) - 1);
+  background: rgba(42, 29, 21, 0.35);
+}
+@media (width >= 72rem) {
+  .ask-backdrop {
+    display: none;
+  }
   .ask-panel {
     position: sticky;
     inset: auto;
     top: 0;
-    flex: 0 0 26rem;
+    flex: 0 0 22rem;
+    width: 22rem;
     z-index: auto;
     box-shadow: none;
   }
@@ -3419,22 +3429,35 @@ kbd.key-hint {
   padding: 0;
   list-style: none;
 }
+.ask-convo,
+.ask-cite {
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm, 6px);
+  background: var(--surface-card);
+  box-shadow: 0 1px 0 var(--border-default);
+  cursor: pointer;
+}
+.ask-convo:hover,
+.ask-cite:hover {
+  background: var(--surface-hover);
+}
+.ask-convo:active,
+.ask-cite:active {
+  background: var(--surface-selected);
+  box-shadow: none;
+  transform: translateY(1px);
+}
+.ask-convo:focus-visible,
+.ask-cite:focus-visible {
+  outline: 2px solid var(--border-focus);
+  outline-offset: 2px;
+}
 .ask-convo {
   width: 100%;
   padding: 0.25rem 0.5rem;
-  border: 0;
-  border-radius: var(--radius-sm, 6px);
-  background: transparent;
   color: var(--text-primary);
   font: inherit;
   text-align: left;
-  cursor: pointer;
-}
-.ask-convo:hover {
-  background: var(--surface-hover);
-}
-.ask-convo:active {
-  background: var(--surface-selected);
 }
 .ask-convo[aria-current="true"] {
   background: var(--surface-selected);
@@ -3500,22 +3523,12 @@ kbd.key-hint {
   list-style: none;
 }
 .ask-cite {
-  padding: 0;
-  border: 0;
-  background: transparent;
+  padding: 0.125rem 0.5rem;
   color: var(--text-link);
   font-family: var(--font-mono, ui-monospace, monospace);
   font-size: var(--text-xs);
   text-align: left;
-  text-decoration: underline;
-  cursor: pointer;
-}
-.ask-cite:hover {
-  color: var(--text-link-hover);
-}
-.ask-cite:focus-visible {
-  outline: 2px solid var(--border-focus);
-  outline-offset: 2px;
+  overflow-wrap: anywhere;
 }
 .ask-answer-actions:empty {
   display: none;

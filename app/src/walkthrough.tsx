@@ -279,6 +279,7 @@ export function Walkthrough({
                 size="compact"
                 aria-pressed={ask.open}
                 aria-keyshortcuts="a"
+                data-ask-button=""
                 onClick={ask.toggle}
               >
                 Ask
