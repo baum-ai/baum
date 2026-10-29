@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"github.com/baum-ai/baum/features/summary"
-	"golang.org/x/sync/errgroup"
 )
 
 // Feature text (README.md, "Feature text"): which features, their input,
@@ -99,6 +98,7 @@ func (r *featureRun) summarizePending(ctx context.Context, quiet time.Time, limi
 		mu     sync.Mutex
 		halted bool
 		runErr error
+		wg     sync.WaitGroup
 	)
 	// stop records why no further feature starts, the first reason kept.
 	stop := func(reason string, err error) {
@@ -110,10 +110,10 @@ func (r *featureRun) summarizePending(ctx context.Context, quiet time.Time, limi
 			runErr = err
 		}
 	}
-	var group errgroup.Group
-	group.SetLimit(FeatureSummaryConcurrency)
+	slots := make(chan struct{}, FeatureSummaryConcurrency)
 	for i, p := range pending {
 		// Checked once a slot is free, so a stop meanwhile applies.
+		slots <- struct{}{}
 		mu.Lock()
 		done := halted
 		mu.Unlock()
@@ -138,7 +138,8 @@ func (r *featureRun) summarizePending(ctx context.Context, quiet time.Time, limi
 			stop(ReasonDisabled, nil)
 			break
 		}
-		group.Go(func() error {
+		wg.Go(func() {
+			defer func() { <-slots }()
 			out, err := r.summarize(ctx, p[0])
 			mu.Lock()
 			if out.Cost != nil {
@@ -148,21 +149,20 @@ func (r *featureRun) summarizePending(ctx context.Context, quiet time.Time, limi
 			switch {
 			case errors.Is(err, errVersionRetired):
 				stop(ReasonVersionRetired, nil)
-				return nil
+				return
 			case out.Outcome == "":
 				stop(out.Reason, err)
-				return nil
+				return
 			case err != nil:
 				stop("", err)
-				return nil
+				return
 			}
 			written[i] = &out
 			w.logger().Info("feature text", "repository", repository, "feature", out.Feature, "outcome", out.Outcome,
 				"decisions", out.Decisions, "pull_request_summaries", out.PullSummaries)
-			return nil
 		})
 	}
-	_ = group.Wait()
+	wg.Wait()
 	for _, out := range written {
 		if out != nil {
 			report.Features = append(report.Features, *out)

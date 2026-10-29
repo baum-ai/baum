@@ -560,9 +560,9 @@ type FeatureOptions struct {
 
 // featureRun is one repository's run of placement or the text stage.
 type featureRun struct {
-	// mu guards prefs, settings and the review summaries read so far: the
-	// text stage writes features concurrently.
-	mu              sync.Mutex
+	// mu guards prefs and settings, reviewsMu the review summaries read so
+	// far: the text stage writes features concurrently.
+	mu, reviewsMu   sync.Mutex
 	w               *FeatureWorker
 	repository, dir string
 	prefs           repos.Preferences
@@ -596,12 +596,7 @@ func (w *FeatureWorker) newRun(ctx context.Context, repository, dir string, o Fe
 		prices = w.Prices()
 	}
 	r.calls = caller{store: w.Store, config: w.Config, backends: w.Backends, prices: prices, redactor: w.redactor, log: w.logger(), now: r.now,
-		gate: func(ctx context.Context) (repos.Preferences, repos.Settings, bool, error) {
-			on, err := r.refresh(ctx)
-			r.mu.Lock()
-			defer r.mu.Unlock()
-			return r.prefs, r.settings, on, err
-		}}
+		gate: r.reread}
 	state := VersionCurrent
 	if o.building {
 		state = VersionBuilding
@@ -616,14 +611,21 @@ func (w *FeatureWorker) newRun(ctx context.Context, repository, dir string, o Fe
 // whether the repository's decisions are still captured; a manual run
 // ignores the gate.
 func (r *featureRun) refresh(ctx context.Context) (bool, error) {
+	_, _, on, err := r.reread(ctx)
+	return on, err
+}
+
+// reread is refresh returning the preferences and settings it read, which
+// a concurrent call's gate uses rather than another call's.
+func (r *featureRun) reread(ctx context.Context) (repos.Preferences, repos.Settings, bool, error) {
 	prefs, settings, on, err := r.w.gate(ctx, r.repository)
 	if err != nil {
-		return false, err
+		return prefs, settings, false, err
 	}
 	r.mu.Lock()
 	r.prefs, r.settings = prefs, settings
 	r.mu.Unlock()
-	return r.opts.Manual || on, nil
+	return prefs, settings, r.opts.Manual || on, nil
 }
 
 // activation is when placement was turned on for the repository, recorded
@@ -639,8 +641,8 @@ func (r *featureRun) activation(ctx context.Context) (time.Time, error) {
 // reviewSummary is the summary of the pull request's latest review saved
 // in the clone, "" for none.
 func (r *featureRun) reviewSummary(ctx context.Context, number int) string {
-	r.mu.Lock()
-	defer r.mu.Unlock()
+	r.reviewsMu.Lock()
+	defer r.reviewsMu.Unlock()
 	if summary, ok := r.reviews[number]; ok {
 		return summary
 	}

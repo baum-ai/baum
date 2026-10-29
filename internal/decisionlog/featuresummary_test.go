@@ -2,6 +2,7 @@ package decisionlog
 
 import (
 	"context"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -97,23 +98,32 @@ func TestFeatureTextConcurrent(t *testing.T) {
 	if f.featureOf(1) == f.featureOf(2) {
 		t.Fatal("one feature for both pull requests")
 	}
-	// The first call returns only once a second one started, which one
-	// feature at a time never does before the deadline.
+	// The first two calls return only once both started, which one feature
+	// at a time never does.
 	var arrived atomic.Int32
+	together := make(chan struct{})
 	f.backend.wait = func() {
-		arrived.Add(1)
-		deadline := time.Now().Add(5 * time.Second)
-		for arrived.Load() < 2 && time.Now().Before(deadline) {
-			time.Sleep(time.Millisecond)
+		switch arrived.Add(1) {
+		case 1:
+			select {
+			case <-together:
+			case <-time.After(5 * time.Second):
+				t.Error("the features' calls ran one after another")
+			}
+		case 2:
+			close(together)
 		}
 	}
-	started := time.Now()
 	report := f.summarize(FeatureOptions{Manual: true})
-	if time.Since(started) > 4*time.Second {
-		t.Fatal("the features' calls ran one after another")
+	var pulls []int
+	for _, out := range report.Features {
+		if out.Outcome != FeatureSummarized {
+			t.Fatalf("report = %+v", report)
+		}
+		pulls = append(pulls, out.PullRequests...)
 	}
-	if len(report.Features) != 2 || report.Features[0].Outcome != FeatureSummarized || report.Features[1].Outcome != FeatureSummarized ||
-		report.Features[0].PullRequests[0] != 1 || f.backend.calls["text"] != 2 || f.backend.calls["pull"] != 2 {
+	slices.Sort(pulls)
+	if !slices.Equal(pulls, []int{1, 2}) || f.backend.calls["text"] != 2 || f.backend.calls["pull"] != 2 {
 		t.Fatalf("report = %+v, calls %v", report, f.backend.calls)
 	}
 }
