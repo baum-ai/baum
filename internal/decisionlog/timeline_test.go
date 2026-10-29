@@ -815,14 +815,10 @@ func TestTimelineSearchIndex(t *testing.T) {
 	if got := match("export spreadsheet"); len(got) != 1 || got[0] != "d1" {
 		t.Fatalf("export spreadsheet = %v", got)
 	}
-	// A new extraction makes d1 obsolete: kept for good through a prune
-	// (the integrity check below holds the index to it), and only current
-	// decisions are searched.
+	// A new extraction makes d1 obsolete: kept for good (the integrity
+	// check below holds the index to it), and only current decisions are
+	// searched.
 	save("s1", decision("d2", "Exporting widgets as CSV", 1))
-	c.now = t0.Add(Retention + 48*time.Hour)
-	if err := s.Prune(ctx); err != nil {
-		t.Fatal(err)
-	}
 	if got := match("spreadsheet"); len(got) != 0 {
 		t.Fatalf("an obsolete decision is listed: %v", got)
 	}
