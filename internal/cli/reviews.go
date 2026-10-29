@@ -9,6 +9,8 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/baum-ai/baum/internal/config"
+	"github.com/baum-ai/baum/internal/decisionlog"
+	"github.com/baum-ai/baum/internal/generate"
 	"github.com/baum-ai/baum/internal/repos"
 )
 
@@ -22,6 +24,15 @@ type reviewSettings struct {
 	// FixBackend and FixModel are empty when fixes follow the reviews.
 	FixBackend string `json:"fix_backend"`
 	FixModel   string `json:"fix_model"`
+	// DecisionsModel is the decision capture model the app chose, empty for
+	// the backend's default.
+	DecisionsModel string `json:"decisions_model"`
+	// DecisionsBackend and DecisionsEffectiveModel are the backend and model
+	// capture uses (decisionlog.EffectiveModel; empty when unknown), and
+	// DecisionsModelIgnored says it does not use DecisionsModel.
+	DecisionsBackend        string `json:"decisions_backend"`
+	DecisionsEffectiveModel string `json:"decisions_effective_model"`
+	DecisionsModelIgnored   bool   `json:"decisions_model_ignored"`
 }
 
 const pullRequestsBoth = "both"
@@ -43,6 +54,7 @@ func newReviewsCommand() *cobra.Command {
 		if e != nil {
 			return e
 		}
+		effective := decisionlog.EffectiveModel(cmd.Context(), cfg, prefs, generate.Backends{}, nil)
 		cfg = prefs.Resolve(cfg)
 		settings := reviewSettings{
 			Backend:      cfg.Backend,
@@ -56,9 +68,13 @@ func newReviewsCommand() *cobra.Command {
 		if prefs.FixModel != nil {
 			settings.FixModel = *prefs.FixModel
 		}
+		if prefs.Decisions.Model != nil {
+			settings.DecisionsModel = *prefs.Decisions.Model
+		}
+		settings.DecisionsBackend, settings.DecisionsEffectiveModel, settings.DecisionsModelIgnored = effective.Backend, effective.Model, effective.Ignored
 		return json.NewEncoder(cmd.OutOrStdout()).Encode(settings)
 	}}
-	set := &cobra.Command{Use: "set", Short: "Change the backend, model, automatic generation or which pull requests it covers", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
+	set := &cobra.Command{Use: "set", Short: "Change the backend, model, automatic generation, which pull requests it covers or the decision capture model", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
 		flags := cmd.Flags()
 		var backend *config.Backend
 		if flags.Changed("backend") {
@@ -125,6 +141,13 @@ func newReviewsCommand() *cobra.Command {
 			if pullRequests != nil {
 				next.PullRequests = *pullRequests
 			}
+			if flags.Changed("decisions-model") {
+				v, _ := flags.GetString("decisions-model")
+				next.Decisions.Model = nil
+				if v = strings.TrimSpace(v); v != "" {
+					next.Decisions.Model = &v
+				}
+			}
 			if invalid = next.Validate(); invalid != nil {
 				return p
 			}
@@ -145,6 +168,7 @@ func newReviewsCommand() *cobra.Command {
 	set.Flags().String("fix-model", "", "model for fixes (empty uses the fix agent's default)")
 	set.Flags().Bool("automatic", true, "generate reviews automatically (--automatic=false turns it off)")
 	set.Flags().String("pull-requests", "", "which pull requests get automatic reviews: authored, requested, both or all")
+	set.Flags().String("decisions-model", "", "model for capturing the decisions of agent sessions (empty uses the backend's default)")
 	root.AddCommand(show, set)
 	return root
 }

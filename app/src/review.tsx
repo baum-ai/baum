@@ -38,6 +38,7 @@ import { FixNotice, type FixState } from "./fix";
 import { CloneActions } from "./repositories";
 import { Notice } from "./shell";
 import { LiveSessions } from "./sessions";
+import { PullRequestDecisionsList } from "./decisions";
 import { LoadingStatus } from "./nine-dots";
 import { canMerge, MergeDialog } from "./merge";
 import { useShortcuts } from "./shortcuts";
@@ -451,6 +452,16 @@ export function LocalReview({
                   <FixNotice key={fixJob.id} job={fixJob} changed={changed} />
                 ) : null}
                 <LiveSessions sessions={running} Link={ViewerLink} />
+                {/* Read once the latest review has settled, and again when a
+                    newly saved one moves the provisional marks. */}
+                {doc || failed || entry.version_count === 0 ? (
+                  <PullRequestDecisionsList
+                    repository={pr.repository}
+                    number={pr.number}
+                    live={running}
+                    revision={`${ended}:${doc?.review.version ?? 0}`}
+                  />
+                ) : null}
                 {entry.needs_clone && doc ? (
                   <Notice>
                     Needs a local clone. This saved review remains available.

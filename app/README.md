@@ -576,6 +576,40 @@ never a path; a session's transcript comes only when the Sessions page opens it
 from disk again, where the full session is. A daemon without the record serves
 none.
 
+Decision capture (`GET api/decisions`, see the daemon's
+[decision capture README](../internal/decisionlog/README.md)) adds
+"Decisions (n)" to each row of that panel: the session's decision titles
+behind a disclosure, and "Updated N minutes ago", "Capturing…" or why it was
+not captured, in words (Cursor Agent as the review harness cannot capture),
+followed by why capture will not run again (paused, off, off for the
+repository, or not a picked repository; `capture_off`).
+Below it, "Decisions from sessions" lists the decisions of every session of
+the pull request, in progress or linked by the saved review, marking those
+made after that review was generated "Provisional", ended sessions the
+tracker still holds included; it is not drawn while no session has decisions,
+a capture state or a capture in flight. Both read again on the `decisions`
+event, which carries no data (events within 250 ms make one read), and when
+the event stream opens or resets or the automatic switch changes. Settings' **Decision capture** section holds
+the switch, the decision log model (the harness's cheap default, or another
+of its models), read with `GET api/settings/decisions` and saved with `PUT
+api/settings/decisions` (`enabled`, `model`; the whole object). Only these two answer
+with what the daemon makes of them: the harness capture resolves to, its model
+and whether the saved model is ignored (unknown, with a note that capture
+does not run, when no harness resolves); the section reads them again when
+the review harness changes. A saved model it ignores is listed as
+"<model> (not used)" with a note naming the harness, so choosing the default
+clears it. When the harness cannot be resolved the section says so, apart
+from a check that did not answer in time. A repository's dialog turns capture off for it (`decisions: false`; on sends
+`null`). The desktop setup's review step (which shows `auto` as the harness the daemon resolved, else
+its own guess) offers the decision log model beside the harness, reset to that
+harness's cheap model when the harness changes, and says what capture sends;
+the default is saved as none, so it follows the harness, and a saved model
+the daemon reports ignored (`baum internal reviews show`, with the harness it
+resolved) is shown the same way while that harness is chosen, and kept unless
+changed.
+Analytics shows decision capture's calls, failures by reason, calls cut short
+by a stop and spend under baum's work; an unknown cost stays unknown.
+
 The Sessions page (`?page=sessions`) is a live feed of the same sessions, in three
 sections of cards; the `live` event updates it and the sidebar count, and times
 tick every second. The daemon keeps ended sessions for 24 hours, across restarts.

@@ -41,17 +41,25 @@ func claudeTurn(session string, n int, prompt, reply string) string {
 type fakeBackend struct {
 	name     string
 	checkErr error
-	calls    int
-	users    []string
-	fail     error
-	summary  string
-	onCall   func()
-	// hang blocks the call until its context ends.
-	hang bool
+	// hang makes the check wait for its context to end.
+	hang    bool
+	calls   int
+	users   []string
+	fail    error
+	summary string
+	onCall  func()
+	// hangCall blocks the call until its context ends.
+	hangCall bool
 }
 
-func (f *fakeBackend) Name() string                          { return f.name }
-func (f *fakeBackend) Check(context.Context) (string, error) { return "1.0.0", f.checkErr }
+func (f *fakeBackend) Name() string { return f.name }
+func (f *fakeBackend) Check(ctx context.Context) (string, error) {
+	if f.hang {
+		<-ctx.Done()
+		return "", ctx.Err()
+	}
+	return "1.0.0", f.checkErr
+}
 func (f *fakeBackend) Run(context.Context, agent.Request) (agent.Result, error) {
 	return agent.Result{}, errors.New("not used")
 }
@@ -64,7 +72,7 @@ func (f *fakeBackend) Complete(ctx context.Context, request agent.CompleteReques
 	if f.onCall != nil {
 		f.onCall()
 	}
-	if f.hang {
+	if f.hangCall {
 		<-ctx.Done()
 		return agent.Completion{}, ctx.Err()
 	}
@@ -420,7 +428,7 @@ func TestCaptureCancelledIsNotAFailure(t *testing.T) {
 
 func TestCaptureHungCallTimesOutAsAFailure(t *testing.T) {
 	f := newFixture(t)
-	f.backend.hang = true
+	f.backend.hangCall = true
 	f.capturer.CallTimeout = 50 * time.Millisecond
 	report, err := f.capturer.Capture(context.Background(), f.target, Options{})
 	if err == nil || report.Outcome != OutcomeFailed || report.Reason != "timeout" {
@@ -686,5 +694,52 @@ func TestCaptureKeepsTheFirstLookupError(t *testing.T) {
 	report := f.capture(t, Options{})
 	if report.Outcome != OutcomeUnavailable || report.Reason != "The transcript file is not there any more." || *scans != 2 {
 		t.Fatalf("%+v, %d scans", report, *scans)
+	}
+}
+
+// The model the app shows is the one a capture would use, auto resolved by
+// the backends' checks.
+func TestEffectiveModelResolvesAsCaptureDoes(t *testing.T) {
+	ctx := context.Background()
+	missing := func(name string) func(string) generate.CheckedBackend {
+		return func(string) generate.CheckedBackend { return &fakeBackend{name: name, checkErr: errors.New("missing")} }
+	}
+	present := func(name string) func(string) generate.CheckedBackend {
+		return func(string) generate.CheckedBackend { return &fakeBackend{name: name} }
+	}
+	noClaude := generate.Backends{Claude: missing(agent.BackendClaude), Codex: present(agent.BackendCodex),
+		Anthropic: missing(agent.BackendAnthropic), CursorAgent: present(agent.BackendCursorAgent)}
+	sonnet, house := "claude-sonnet-5-5", "house-model"
+	auto, cursor := config.BackendAuto, config.BackendCursorAgent
+	for name, tc := range map[string]struct {
+		prefs repos.Preferences
+		want  Effective
+	}{
+		"auto picks codex, default model": {repos.Preferences{Backend: &auto}, Effective{Backend: agent.BackendCodex, Model: "gpt-6-luna"}},
+		"a claude model is ignored with codex": {repos.Preferences{Backend: &auto, Decisions: repos.DecisionPreferences{Model: &sonnet}},
+			Effective{Backend: agent.BackendCodex, Model: "gpt-6-luna", Ignored: true}},
+		"an unknown family is kept": {repos.Preferences{Backend: &auto, Decisions: repos.DecisionPreferences{Model: &house}},
+			Effective{Backend: agent.BackendCodex, Model: house}},
+		"cursor-agent captures nothing": {repos.Preferences{Backend: &cursor, Decisions: repos.DecisionPreferences{Model: &sonnet}},
+			Effective{Backend: agent.BackendCursorAgent}},
+	} {
+		if got := EffectiveModel(ctx, config.Config{Backend: config.BackendClaude}, tc.prefs, noClaude, pricing.Active()); got != tc.want {
+			t.Errorf("%s: %+v, want %+v", name, got, tc.want)
+		}
+	}
+	// Without a backend nothing is known, and a saved model is not called
+	// ignored.
+	none := generate.Backends{Claude: missing(agent.BackendClaude), Codex: missing(agent.BackendCodex), Anthropic: missing(agent.BackendAnthropic), CursorAgent: present(agent.BackendCursorAgent)}
+	saved := repos.Preferences{Decisions: repos.DecisionPreferences{Model: &sonnet}}
+	if got := EffectiveModel(ctx, config.Config{Backend: config.BackendAuto}, saved, none, nil); got != (Effective{}) {
+		t.Errorf("nothing usable: %+v", got)
+	}
+	// A check that does not answer in time is unknown too.
+	effectiveTimeout = 50 * time.Millisecond
+	t.Cleanup(func() { effectiveTimeout = 5 * time.Second })
+	hanging := none
+	hanging.Claude = func(string) generate.CheckedBackend { return &fakeBackend{name: agent.BackendClaude, hang: true} }
+	if got := EffectiveModel(ctx, config.Config{Backend: config.BackendAuto}, saved, hanging, nil); got != (Effective{Undetermined: true}) {
+		t.Errorf("a hanging check: %+v", got)
 	}
 }

@@ -1,5 +1,10 @@
 import { useId, useState } from "react";
-import { modelPresets, type PullRequests, type ReviewSettings } from "./setup-model";
+import {
+  decisionModelDefaults,
+  modelPresets,
+  type PullRequests,
+  type ReviewSettings,
+} from "./setup-model";
 import codexLogo from "./codex.svg";
 import claudeLogo from "./claude-code.svg";
 import cursorLogo from "./cursor.svg";
@@ -83,6 +88,7 @@ export function ModelPicker({
   inherit,
   id,
   label = "Model",
+  unused,
 }: {
   backend: string;
   value: string | null;
@@ -91,8 +97,11 @@ export function ModelPicker({
   inherit?: string;
   id: string;
   label?: string;
+  /** A saved model the harness does not use, listed as its own option so
+   *  it shows as chosen and choosing another is a change. */
+  unused?: string;
 }) {
-  const presets = modelPresets[backend] ?? [];
+  const presets = [...(modelPresets[backend] ?? []), ...(unused ? [unused] : [])];
   const [custom, setCustom] = useState(value !== null && !presets.includes(value));
   const selected = value === null ? INHERIT : custom ? CUSTOM : value;
   return (
@@ -115,7 +124,7 @@ export function ModelPicker({
             {inherit ? <option value={INHERIT}>{inherit}</option> : null}
             {presets.map((model) => (
               <option key={model} value={model}>
-                {model}
+                {model === unused ? `${model} (not used)` : model}
               </option>
             ))}
             <option value={CUSTOM}>Custom…</option>
@@ -139,16 +148,90 @@ export function ModelPicker({
   );
 }
 
+/** What decision capture sends, said once wherever it is set up. */
+export function DecisionsDisclosure() {
+  return (
+    <p className="review-note">
+      baum captures the decisions of your agent sessions in the repositories you pick. It sends each
+      session's prompts, the agent's visible text, its plans, question-and-answer dialogue and the
+      names of the files it edited, with secrets masked, to the harness's provider; never tool
+      output or file contents. Capture follows the sessions the agent hooks report, so it needs the
+      hooks installed. Turn it off in Settings or per repository.
+    </p>
+  );
+}
+
+/** The decision capture model, among the harness's models; Cursor Agent
+ *  cannot capture decisions. */
+export function DecisionModelPicker({
+  backend,
+  value,
+  onChange,
+  disabled,
+  inherit,
+  id,
+  unused,
+}: {
+  backend: string;
+  value: string | null;
+  onChange: (next: string | null) => void;
+  disabled: boolean;
+  inherit?: string;
+  id: string;
+  /** The saved model, when the daemon reports that capture ignores it. */
+  unused?: string;
+}) {
+  if (!decisionModelDefaults[backend])
+    return (
+      <div className="review-section">
+        <span className="review-label">Decision log model</span>
+        <p className="review-note">
+          {harnessName(backend)} can't capture decisions. Choose another harness to capture them.
+        </p>
+      </div>
+    );
+  return (
+    <>
+      <ModelPicker
+        key={`${backend}:${unused ?? ""}`}
+        id={id}
+        label="Decision log model"
+        backend={backend}
+        value={value}
+        disabled={disabled}
+        inherit={inherit}
+        onChange={onChange}
+        unused={unused}
+      />
+      {unused && value === unused ? (
+        <div className="review-section">
+          <p className="review-note">
+            {harnessName(backend)} doesn't use {unused}, so capture uses its default,{" "}
+            {decisionModelDefaults[backend]}. Choose a model to replace it.
+          </p>
+        </div>
+      ) : null}
+    </>
+  );
+}
+
 export function ReviewSettingsForm({
   settings,
   disabled,
   onChange,
   className = "setup-card",
+  decisions = false,
+  unusedDecisionModel,
 }: {
   settings: ReviewSettings;
   disabled: boolean;
   onChange: (next: ReviewSettings) => void;
   className?: string;
+  /** Also offer the decision capture model, which follows the harness. */
+  decisions?: boolean;
+  /** The saved decision model, when the daemon reports capture ignores it
+   *  with the harness shown. */
+  unusedDecisionModel?: string;
 }) {
   const update = (patch: Partial<ReviewSettings>) => onChange({ ...settings, ...patch });
   return (
@@ -157,7 +240,12 @@ export function ReviewSettingsForm({
         value={settings.backend}
         disabled={disabled}
         onChange={(backend) =>
-          update({ backend: backend ?? "", model: modelPresets[backend ?? ""]?.[0] ?? "" })
+          update({
+            backend: backend ?? "",
+            model: modelPresets[backend ?? ""]?.[0] ?? "",
+            // A new harness has other models: start from its cheap default.
+            ...(decisions ? { decisions_model: decisionModelDefaults[backend ?? ""] ?? "" } : {}),
+          })
         }
       />
       <ModelPicker
@@ -217,6 +305,21 @@ export function ReviewSettingsForm({
           </fieldset>
         )}
       </div>
+      {decisions ? (
+        <>
+          <DecisionModelPicker
+            id="decisions-model"
+            backend={settings.backend}
+            value={settings.decisions_model ?? ""}
+            disabled={disabled}
+            unused={unusedDecisionModel}
+            onChange={(model) => update({ decisions_model: model ?? "" })}
+          />
+          <div className="review-section">
+            <DecisionsDisclosure />
+          </div>
+        </>
+      ) : null}
     </div>
   );
 }
