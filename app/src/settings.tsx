@@ -527,8 +527,7 @@ function FixesSection({
       <p className="settings-footnote">
         {draft.backend
           ? "Fixes use this agent in every repository, whatever agent the repository reviews with."
-          : "Fixes follow the review agent, including a repository's own choice."}{" "}
-        The fix dialog shows the agent and model before anything runs.
+          : "Fixes follow the review agent, including a repository's own choice."}
       </p>
     </section>
   );
