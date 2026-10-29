@@ -14,6 +14,7 @@ import (
 
 	"github.com/baum-ai/baum/agent"
 	"github.com/baum-ai/baum/internal/assemble"
+	"github.com/baum-ai/baum/internal/chat"
 	"github.com/baum-ai/baum/internal/config"
 	"github.com/baum-ai/baum/internal/fix"
 	"github.com/baum-ai/baum/internal/generate"
@@ -43,6 +44,8 @@ type Local struct {
 	// ReviewRuns holds the run directories of reviews that keep their agent
 	// session; empty is reviewruns.DefaultRoot.
 	ReviewRuns string
+	// Chat answers chat jobs (KindChat); nil fails them.
+	Chat *chat.Service
 }
 
 // keepsSession reports whether a review by the named backend keeps its agent
@@ -236,8 +239,11 @@ func (l *Local) resolve(ctx context.Context, c repos.Clone) (config.Config, erro
 }
 
 func (l *Local) Execute(ctx context.Context, p Prepared, progress func(Progress)) (*float64, error) {
-	if p.Kind == KindFix {
+	switch p.Kind {
+	case KindFix:
 		return l.executeFix(ctx, p, progress)
+	case KindChat:
+		return l.executeChat(ctx, p, progress)
 	}
 	c, e := l.clone(ctx, p.Clone)
 	if e != nil {

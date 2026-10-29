@@ -259,7 +259,9 @@ func (q *Queue) automaticConflict(repository string, pr int, head string) error 
 	sameHead := 0
 	retryable := false
 	for _, j := range q.jobs {
-		if !strings.EqualFold(j.Repository, repository) || j.PR != pr {
+		// A question to a review's agent neither reviews the head nor
+		// holds up its review.
+		if !strings.EqualFold(j.Repository, repository) || j.PR != pr || j.Kind == KindChat {
 			continue
 		}
 		if j.State == "queued" || j.State == "running" {

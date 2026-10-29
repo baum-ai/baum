@@ -125,7 +125,8 @@ func (s *Service) ResetIdentity() {
 // interrupted and superseded jobs are not the user's news.
 func (s *Service) JobDone(ctx context.Context, job jobs.Job) {
 	// A review group's job names no pull request; its page shows the outcome.
-	if job.Phase != "finished" || (job.State != "completed" && job.State != "failed") || job.Group != "" {
+	// A question's answer shows where it was asked.
+	if job.Phase != "finished" || (job.State != "completed" && job.State != "failed") || job.Group != "" || job.Kind == jobs.KindChat {
 		return
 	}
 	n := Notice{Kind: KindFinished, Repository: job.Repository, PR: job.PR, Clone: job.Clone}
