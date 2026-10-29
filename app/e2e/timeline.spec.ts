@@ -49,6 +49,8 @@ for (const scheme of ["light", "dark"] as const) {
     await page.goto(await launchURL());
     await page.getByRole("link", { name: "Timeline", exact: true }).click();
     await expect(page.getByRole("heading", { name: "Timeline", exact: true })).toBeVisible();
+    // The sidebar opens it on human decisions, as the hosted rail does.
+    await expect(page).toHaveURL(/who=human/);
     await expect(page.locator('summary[aria-label^="Repositories:"]')).toHaveText(
       "All repositories",
     );
@@ -161,11 +163,21 @@ for (const scheme of ["light", "dark"] as const) {
     // All decisions, with one open.
     await page.getByRole("tab", { name: "All decisions" }).click();
     await expect(page).toHaveURL(/tab=all/);
-    // Every repository's decisions, each row naming its own.
+    // Every repository's decisions, each row naming its own, once the agent's
+    // are shown too.
     await expect(page.getByText("4 sessions read")).toBeVisible();
-    await expect(
-      page.locator("li", { hasText: "Keep the other repository's checks in one workflow" }),
-    ).toContainText("acme/other");
+    const otherRow = page.locator("li", {
+      hasText: "Keep the other repository's checks in one workflow",
+    });
+    const decision = (summary: string) =>
+      page.locator("main section > ol > li", { hasText: summary });
+    await expect(decision("Try a hosted-only Timeline first")).toHaveCount(1);
+    await expect(decision("Match keywords with SQLite FTS5")).toHaveCount(0);
+    await expect(otherRow).toHaveCount(0);
+    await shot(page, `decisions-human-${scheme}`);
+    await page.getByRole("button", { name: "Remove filter: Decided by human" }).click();
+    await expect(page).not.toHaveURL(/who=/);
+    await expect(otherRow).toContainText("acme/other");
     await page.getByRole("button", { name: /Match keywords with SQLite FTS5/ }).click();
     await expect(
       page.getByRole("button", { name: "internal/decisionlog/featurestore.go", exact: true }),
