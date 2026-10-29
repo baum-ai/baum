@@ -13,8 +13,8 @@ import {
   type ViewerLinkProps,
 } from "@baum/viewer/navigation";
 import { jobReasonText, type Job } from "./api";
-import { localDayStart } from "@baum/viewer/decision-log";
-import { daySections, pullRequestHref, TimelinePage } from "./timeline";
+import { decisionSections, localDayStart } from "@baum/viewer/decision-log";
+import { pullRequestHref, TimelinePage } from "./timeline";
 
 const Link = (props: ViewerLinkProps) => <a {...props} />;
 const me = { email: "me@example.com", name: null, login: null, avatar_url: null };
@@ -105,6 +105,8 @@ const requests: string[] = [];
 const bodies: unknown[] = [];
 beforeEach(() => {
   Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
+  // The page brings an opened row into view, which jsdom does not draw.
+  Element.prototype.scrollIntoView ??= () => {};
   history.replaceState(null, "", "/s/test-ns/?page=timeline");
   requests.length = 0;
   answers = {
@@ -338,10 +340,9 @@ it("opens the feature a merged one went into", async () => {
 
 it("groups decisions by the day they were made", () => {
   const later = { ...decision, id: "d2", decided_at: "2026-10-21T10:00:00Z" };
-  expect(daySections([later, decision]).map((s) => s.decisions.map((d) => d.id))).toEqual([
-    ["d2"],
-    ["d1"],
-  ]);
+  expect(
+    decisionSections([later, decision], "newest").map((s) => s.decisions.map((d) => d.id)),
+  ).toEqual([["d2"], ["d1"]]);
 });
 
 it("reads only the tab shown, and again with the rows it had when the log changes", async () => {

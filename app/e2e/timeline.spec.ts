@@ -68,7 +68,7 @@ for (const scheme of ["light", "dark"] as const) {
       .first()
       .click();
     await expect(page).toHaveURL(/feature=feature-local/);
-    const panel = page.locator("#timeline-feature-panel");
+    const panel = page.locator("#opened-feature-panel");
     await expect(panel).toContainText("Serve the decision log locally");
     await panel.getByRole("button", { name: /#12 Serve the decision log locally/ }).click();
     await expect(panel).toContainText("Adds the local Timeline API and page.");

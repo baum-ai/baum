@@ -365,9 +365,12 @@ The Timeline page (`?page=timeline&repo=&tab=all&q=&person=&file=&from=&to=&stat
 `src/timeline.tsx`) is the hosted Timeline over the local decision log. It reads
 the daemon's `api/timeline` routes (see the
 [decision log README](../internal/decisionlog/README.md#timeline-api)) and draws
-them with the viewer's decision log components (`FeatureItem`,
-`FeatureSidePanel`, `FeatureDrillDown`, `TimelineHeading`, `DecisionRow`,
-`DecisionDetailBody`). It shows every picked repository whose decisions are
+them with the hosted Timeline's own page, the viewer's `TimelinePage` (see the
+[viewer README](../viewer/README.md#decision-log)): the tabs, lists, paging and
+empty states, the opened decision and feature and the address they live in are
+the same code. The app supplies the lists, details and authors, its filter bar
+around the shared controls, the lines above each list, the empty lists'
+wording and the session a decision opens. It shows every picked repository whose decisions are
 on, as the hosted Timeline shows all of an organisation's, or those named by
 `repo=` (repeated). Its bar is the hosted Timeline's: with more than one
 such repository, a repository picker drawn as the hosted one (a popover of a
