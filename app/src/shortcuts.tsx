@@ -43,6 +43,7 @@ const WALKTHROUGH_SHORTCUTS = [
   { keys: ["o", "Enter"], label: "Everything: details and evidence" },
   { keys: ["t"], label: "Everything: walk me through it" },
   { keys: ["e"], label: "Switch between the tour and everything" },
+  { keys: ["a"], label: "Ask the review's agent a question" },
 ];
 /** The keys of every other list (Sessions, Jobs, Repositories), which
  *  `listKeys` handles. */
@@ -346,6 +347,7 @@ export function ShortcutsSheet({
         { keys: ["m"], label: "Merge, where offered" },
         { keys: ["f"], label: "Fix, where offered" },
         { keys: ["g"], label: "Generate or regenerate the review" },
+        { keys: ["a"], label: "Ask the review's agent a question; Esc in the panel closes it" },
         back,
       ],
     },

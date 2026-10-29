@@ -350,8 +350,8 @@ it("lists exactly the keys that work in the sheet", async () => {
     "l",
     "→",
   ]);
-  expect(listed("A pull request or group")).toEqual(["j", "k", "m", "f", "g", "u", "Esc"]);
-  expect(listed("Walkthrough")).toEqual(["→", "j", "←", "k", "c", "o", "Enter", "t", "e"]);
+  expect(listed("A pull request or group")).toEqual(["j", "k", "m", "f", "g", "a", "u", "Esc"]);
+  expect(listed("Walkthrough")).toEqual(["→", "j", "←", "k", "c", "o", "Enter", "t", "e", "a"]);
   const list = ["j", "↓", "k", "↑", "Enter", "o", "Esc"];
   expect(listed("Sessions")).toEqual([...list, "p"]);
   expect(listed("Jobs")).toEqual([...list, "t"]);

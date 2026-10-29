@@ -35,6 +35,9 @@ export const phases: Record<string, string> = {
   pushing: "Pushing",
   replying: "Replying on the review threads",
   finishing: "Finishing",
+  answering: "The agent is answering",
+  "preparing a new session": "Starting a new agent session",
+  "checking citations": "Checking the answer's citations",
 };
 
 /** What a running fix is doing, in words. */

@@ -47,7 +47,8 @@ import {
   request,
   reviewJob,
   fixJob,
-  fixName,
+  jobName,
+  chatJobs,
   isActiveJob,
   filtered,
   rowKey,
@@ -764,6 +765,7 @@ function Workspace({ url }: { url: UrlState }) {
               starting={starting.has(rowKey(selectedEntry))}
               fix={cloneFor(selectedEntry) ? () => setFixing(selectedEntry) : undefined}
               fixJob={fixJob(selectedEntry, jobs)}
+              chats={chatJobs(selectedEntry, jobs)}
             />
           ) : page !== "pulls" ? (
             <UpNextPage
@@ -1149,7 +1151,7 @@ function JobRow({
           )}
         </LocalLink>
         <p className="local-job-meta">
-          {job.kind === "fix" ? `${fixName(job.fix ?? {})} · ` : null}
+          {job.kind === "fix" || job.kind === "chat" ? `${jobName(job)} · ` : null}
           {started ?? "Started by you"}
         </p>
         {job.kind === "fix" && job.commit ? (
