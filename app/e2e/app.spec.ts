@@ -1045,6 +1045,15 @@ test("makes a fix or a review comment from an answer", async ({ page }) => {
   // Undo takes it out of the draft again.
   await answer.getByRole("button", { name: "Undo", exact: true }).click();
   await expect(overall).toHaveValue("");
+  // On a narrow screen the panel covers the review, so opening the draft
+  // closes it and leaves the draft usable.
+  await page.setViewportSize({ width: 390, height: 844 });
+  await answer.getByRole("button", { name: "Add as comment", exact: true }).click();
+  await answer.getByRole("button", { name: "Open the draft", exact: true }).click();
+  await expect(panel).toBeHidden();
+  await expect(overall).toHaveValue(/docs\/guide\.md:3–6/);
+  await overall.fill("Edited on a narrow screen.");
+  await expect(overall).toHaveValue("Edited on a narrow screen.");
   expect(errors).toEqual([]);
 });
 

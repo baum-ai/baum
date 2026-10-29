@@ -624,7 +624,11 @@ export function LocalReview({
                       tour={tour}
                       fix={fix && fixEligible(entry) ? fix : undefined}
                       fixRunning={fixing}
-                      openDraft={() => setWalk("all")}
+                      openDraft={() => {
+                        setWalk("all");
+                        // The overlay would cover the draft and keep it inert.
+                        if (narrow) closeAsk();
+                      }}
                     />
                   ) : null
                 }

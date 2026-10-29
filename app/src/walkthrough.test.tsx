@@ -11,6 +11,7 @@ import {
   firstSentence,
   loadProgress,
   progressKey,
+  removeFromDraft,
   reviewSubmission,
   saveProgress,
 } from "./walkthrough-model";
@@ -305,4 +306,24 @@ it("merges text appended to a stop's stored note since the box was opened", () =
   expect(loadProgress(progressKey(doc)).notes[stop.id]).toBe(
     "Earlier.\n\nFrom the answer. And mine.",
   );
+});
+
+it("takes an undone answer out of the comment being written, keeping the rest", () => {
+  render();
+  click("Start the tour");
+  const stop = buildTour(doc).stops[0]!;
+  const target = { kind: "stop" as const, id: stop.id, title: stop.title };
+  key("c");
+  type(node.querySelector("textarea")!, "My own note.");
+  let added = "";
+  act(() => {
+    added = appendToDraft(progressKey(doc), target, "From the answer.");
+  });
+  type(node.querySelector("textarea")!, "My own note.\n\nFrom the answer.\n\nAnd more.");
+  act(() => {
+    expect(removeFromDraft(progressKey(doc), target, added)).toBe(true);
+  });
+  expect(node.querySelector("textarea")!.value).toBe("My own note.\n\nAnd more.");
+  click("Save comment");
+  expect(loadProgress(progressKey(doc)).notes[stop.id]).toBe("My own note.\n\nAnd more.");
 });

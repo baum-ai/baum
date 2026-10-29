@@ -84,15 +84,20 @@ export function Walkthrough({
       const id = editingRef.current;
       if (id === null) return;
       // Text appended to the stop's note since the editing began joins the
-      // text being edited.
+      // text being edited, and text the panel takes back (Undo) leaves it.
       const stored = next.notes[id] ?? "";
-      if (stored !== editBase.current && stored.startsWith(editBase.current)) {
-        const tail = stored.slice(editBase.current.length);
+      const base = editBase.current;
+      if (stored === base) return;
+      if (stored.startsWith(base)) {
         editBase.current = stored;
-        const added = tail.replace(/^\s+/, "");
+        const added = stored.slice(base.length).replace(/^\s+/, "");
         setDraft((current) =>
           current.trim() ? `${current.replace(/\s+$/, "")}\n\n${added}` : added,
         );
+      } else if (base.startsWith(stored)) {
+        editBase.current = stored;
+        const removed = base.slice(stored.length).trim();
+        if (removed) setDraft((current) => withoutLast(current, removed));
       }
     };
     window.addEventListener(PROGRESS_EVENT, changed);
@@ -1371,4 +1376,14 @@ function Submit({
       </div>
     </div>
   );
+}
+
+/** The text with the last occurrence of a part taken out, along with the blank
+ *  line that joined it; the text unchanged when the part is no longer in it. */
+function withoutLast(text: string, part: string): string {
+  const at = text.lastIndexOf(part);
+  if (at < 0) return text;
+  const before = text.slice(0, at).replace(/\s+$/, "");
+  const after = text.slice(at + part.length).replace(/^\s+/, "");
+  return before && after ? `${before}\n\n${after}` : before || after;
 }
