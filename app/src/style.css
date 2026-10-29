@@ -62,6 +62,7 @@ body {
   --surface-hover: var(--nav-hover);
   --surface-selected: var(--nav-selected);
   position: sticky;
+  z-index: 5;
   top: 0;
   display: flex;
   flex: none;
@@ -96,6 +97,15 @@ body {
   display: flex;
   flex-direction: column;
   gap: 0.125rem;
+}
+/* The pages and the inboxes nested under Inbox scroll within the sidebar,
+   so however many inboxes there are, plan usage and the foot stay in view. */
+.local-rail-main {
+  flex: 0 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
 }
 .local-rail-link {
   display: flex;
@@ -158,6 +168,161 @@ body {
 }
 :root[data-theme="dark"] .local-rail-badge.caution {
   color: #1f1a15;
+}
+/* The inboxes nested under Inbox: a chevron folds them, each row is a link
+   with a dot and a count, and a menu beside it holds what changes the inbox. */
+.local-rail-row {
+  display: flex;
+  align-items: center;
+  gap: 0.125rem;
+}
+.local-rail-row > .local-rail-link {
+  flex: 1;
+  min-width: 0;
+}
+.local-rail-fold,
+.local-rail-more {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--text-tertiary);
+  cursor: pointer;
+}
+.local-rail-fold {
+  width: 1.75rem;
+  height: 2.25rem;
+  font-size: var(--text-xs);
+  transition: transform 0.15s;
+}
+.local-rail-fold[aria-expanded="false"] {
+  transform: rotate(-90deg);
+}
+.local-rail-fold:hover,
+.local-rail-more:hover,
+.local-rail-more[aria-expanded="true"] {
+  background: var(--surface-hover);
+  color: var(--text-primary);
+}
+.local-rail-more:active {
+  transform: translateY(1px);
+}
+.local-rail-inboxes {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  margin: 0.125rem 0 0.375rem 1.125rem;
+  padding-left: 0.5rem;
+  border-left: 1px solid var(--surface-selected);
+}
+.local-rail-inbox {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+.local-rail-inbox > .local-rail-sub {
+  flex: 1;
+  min-width: 0;
+}
+.local-rail-sub {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  height: 2rem;
+  padding: 0 0.5rem;
+  border-radius: var(--radius-md);
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
+  text-decoration: none;
+}
+.local-rail-sub:hover {
+  background: var(--surface-hover);
+  color: var(--text-primary);
+  text-decoration: none;
+}
+.local-rail-sub[aria-current="page"] {
+  background: var(--surface-selected);
+  color: var(--text-primary);
+  font-weight: 500;
+}
+.local-rail-sub-count {
+  flex: none;
+  font-size: var(--text-xs);
+  font-variant-numeric: tabular-nums;
+}
+/* An inbox left out of the Inbox badge counts quietly. */
+.local-rail-sub-count.muted {
+  color: var(--text-tertiary);
+}
+.local-rail-more {
+  width: 1.5rem;
+  height: 1.5rem;
+  margin-left: 0.125rem;
+  opacity: 0;
+}
+/* With a pointer the menu button takes the count's place while the row is
+   pointed at, so a long name keeps its room. */
+@media (hover: hover) {
+  .local-rail-inbox > .local-rail-more {
+    position: absolute;
+    top: 0.25rem;
+    right: 0.125rem;
+    margin: 0;
+  }
+  .local-rail-inbox:hover .local-rail-sub-count,
+  .local-rail-inbox:focus-within .local-rail-sub-count {
+    visibility: hidden;
+  }
+  .local-rail-inbox > .local-rail-sub {
+    padding-right: 0.5rem;
+  }
+}
+.local-rail-inbox:hover .local-rail-more,
+.local-rail-inbox:focus-within .local-rail-more,
+.local-rail-more[aria-expanded="true"] {
+  opacity: 1;
+}
+@media (hover: none) {
+  .local-rail-more {
+    opacity: 1;
+  }
+}
+/* Fixed, placed by `InboxRows` from its row, so the scrolling nav cannot
+   clip it. */
+.local-rail-menu {
+  position: fixed;
+  z-index: 10;
+  top: 0;
+  left: 0;
+  display: flex;
+  min-width: 14rem;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px;
+  border: 1px solid var(--un-line-strong);
+  border-radius: 10px;
+  background: var(--surface-popup);
+  box-shadow: var(--un-shadow-menu);
+  animation: upnext-drop 0.15s ease-out;
+}
+.local-rail-menu button {
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-primary);
+  font-size: 14px;
+  text-align: left;
+  cursor: pointer;
+}
+.local-rail-menu button:hover {
+  background: var(--un-menu-hover);
+}
+.local-rail-menu button:active {
+  background: var(--un-line);
 }
 .local-rail-foot {
   display: flex;
@@ -262,6 +427,10 @@ body {
     position: relative;
     justify-content: center;
     padding: 0;
+  }
+  .local-rail-fold,
+  .local-rail-inboxes {
+    display: none;
   }
   /* Folded, the box keeps only the lowest share left. */
   .plan-rail {
@@ -602,8 +771,9 @@ select.local-field {
   cursor: pointer;
 }
 /* Pull requests: the hosted Focus rows with local evidence columns, drawn
-   as the Up next design's live table, in the Inbox's palette (`--un-*`). */
-.local-frame:has(.local-inbox) {
+   as the Up next design's live table, in the Inbox's palette (`--un-*`).
+   The page's tabs key the panel, so loading and empty views match it. */
+.local-frame:has(.local-tabs) {
   background: var(--un-panel);
 }
 .local-inbox {
@@ -789,15 +959,14 @@ select.local-field {
     opacity: 1;
   }
 }
-/* The peek: the saved review's summary, its first risk and its first
-   sections, opened under the row it belongs to. */
+/* The peek: the saved review's summary and its first sections, opened under
+   the row it belongs to. The summary reads at a prose measure; the changes
+   sit in a ruled column beside it, under it once the panel is too narrow
+   for both. */
 .inbox-peek-panel {
   grid-column: 3 / -1;
-  display: flex;
-  flex-wrap: wrap;
-  gap: 1.25rem;
+  container-type: inline-size;
   margin: 0.35rem 0 0.25rem;
-  padding: 0.875rem 1rem;
   border: 1px solid var(--un-line);
   border-radius: 10px;
   background: var(--un-card);
@@ -807,6 +976,10 @@ select.local-field {
   .inbox-peek-panel {
     animation: none;
   }
+}
+.inbox-peek-body {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(15rem, 21rem);
 }
 .inbox-peek-panel h3 {
   margin: 0;
@@ -818,53 +991,65 @@ select.local-field {
 }
 .inbox-peek-summary {
   display: flex;
-  flex: 2 1 20rem;
   flex-direction: column;
-  gap: 0.5rem;
+  gap: 0.625rem;
   min-width: 0;
+  padding: 1rem 1.25rem 1.125rem;
 }
 .inbox-peek-summary > p {
+  max-width: 68ch;
   margin: 0;
-  color: var(--un-ink-soft);
-  font-size: var(--text-xs);
-  line-height: 1.55;
-}
-.inbox-peek-summary > p.inbox-peek-risk {
-  padding: 0.5rem 0.625rem;
-  border-radius: 6px;
-  background: var(--un-hairline);
   color: var(--un-ink);
-  line-height: 1.5;
-}
-.inbox-peek-summary > p.inbox-peek-risk.high {
-  background: var(--un-fix-bg);
-  color: var(--un-fix);
+  font-size: var(--text-xs);
+  line-height: 1.6;
 }
 .inbox-peek-changes {
   display: flex;
-  flex: 1 1 14rem;
   flex-direction: column;
-  gap: 0.375rem;
+  gap: 0.5rem;
   min-width: 0;
+  padding: 1rem 1.25rem 1.125rem;
+  border-left: 1px solid var(--un-hairline);
+}
+@container (max-width: 40rem) {
+  .inbox-peek-body {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .inbox-peek-changes {
+    border-top: 1px solid var(--un-hairline);
+    border-left: 0;
+  }
 }
 .inbox-peek-changes ul {
   display: grid;
-  gap: 0.3rem;
+  grid-template-columns: minmax(0, 1fr);
   margin: 0;
   padding: 0;
   list-style: none;
 }
 .inbox-peek-changes li {
-  display: flex;
-  justify-content: space-between;
-  gap: 0.5rem;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: baseline;
+  column-gap: 0.75rem;
+  padding: 0.375rem 0;
+  border-bottom: 1px solid var(--un-hairline);
+  color: var(--un-ink);
   font-size: var(--text-xs);
+  line-height: 1.4;
+}
+.inbox-peek-changes li:first-child {
+  padding-top: 0;
 }
 .inbox-peek-changes li > span:first-child {
-  min-width: 0;
+  display: -webkit-box;
   overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+}
+.inbox-peek-changes li > span:last-child {
+  font-size: 11px;
 }
 .inbox-peek-more {
   margin: 0;
@@ -877,26 +1062,10 @@ select.local-field {
   gap: 0.5rem;
   margin-top: 0.375rem;
 }
+/* A way into the review, in the row's secondary style: the peek is for
+   reading, so its link should not outweigh the row's own actions. */
 .inbox-peek-open {
-  display: inline-flex;
-  align-items: center;
-  height: 1.875rem;
-  padding: 0 0.75rem;
-  border: 1px solid var(--un-ink);
-  border-radius: 6px;
-  background: var(--un-ink);
-  box-shadow: var(--un-shadow-button);
-  color: var(--un-panel);
-  font-size: var(--text-xs);
-  font-weight: 600;
   text-decoration: none;
-}
-.inbox-peek-open:hover {
-  background: var(--un-ink-soft);
-}
-.inbox-peek-open:active {
-  box-shadow: none;
-  transform: translateY(1px);
 }
 /* The selection's actions, in a dark bar over the list while anything is
    selected. */
@@ -951,32 +1120,6 @@ select.local-field {
   margin-left: auto;
   background: transparent;
   font-weight: 500;
-}
-/* The keys that work on the list, at its foot; a touch screen has none. */
-.inbox-keys {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.375rem 0.875rem;
-  padding: 0.625rem 1.5rem;
-  border-top: 1px solid var(--un-line);
-  background: var(--un-list);
-  color: var(--un-muted);
-  font-size: var(--text-xs);
-}
-@media (hover: none) {
-  .inbox-keys {
-    display: none;
-  }
-}
-.inbox-keys kbd {
-  padding: 1px 5px;
-  border: 1px solid var(--un-line-strong);
-  border-bottom-width: 2px;
-  border-radius: 4px;
-  background: var(--un-card);
-  color: var(--un-ink-soft);
-  font-family: var(--font-mono, ui-monospace, monospace);
-  font-size: 11px;
 }
 /* When the list last read the daemon, beside Refresh. */
 .inbox-updated {
@@ -1956,6 +2099,91 @@ a.local-session-pr:hover {
   color: var(--text-link);
   font-weight: 500;
 }
+.local-live-decisions {
+  margin: 0.15rem 0 0;
+  padding-left: 1.625rem;
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+}
+.local-live-decisions summary {
+  cursor: pointer;
+}
+.local-live-decisions-state {
+  color: var(--text-tertiary);
+}
+.local-live-decisions ul {
+  display: grid;
+  gap: 0.15rem;
+  margin: 0.3rem 0 0;
+  padding-left: 1rem;
+  list-style: disc;
+  color: var(--text-primary);
+}
+.local-decisions h3 {
+  margin: 0 0 0.5rem;
+  font-weight: 600;
+}
+.local-decisions-note,
+.local-decisions-state {
+  margin: 0 0 0.5rem;
+  font-size: var(--text-xs);
+  color: var(--text-tertiary);
+}
+.local-decisions-session + .local-decisions-session {
+  margin-top: 0.75rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--border-subtle);
+}
+.local-decisions-session h4 {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.25rem 0.5rem;
+  margin: 0 0 0.15rem;
+  font-size: var(--text-base);
+  font-weight: 600;
+}
+.local-decisions-session h4 > :not(.local-decisions-session-title) {
+  flex: none;
+}
+.local-decisions-session-title {
+  min-width: 0;
+  font-weight: 400;
+  color: var(--text-secondary);
+  overflow-wrap: anywhere;
+}
+.local-decisions-session ul {
+  display: grid;
+  gap: 0.6rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.local-decision p {
+  margin: 0.15rem 0 0;
+}
+.local-decision-head {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: baseline;
+  gap: 0.25rem 0.5rem;
+}
+.local-decision-head > :not(.local-decision-title) {
+  flex: none;
+}
+.local-decision-title {
+  min-width: 0;
+  font-weight: 500;
+  color: var(--text-primary);
+}
+.local-decision-summary {
+  color: var(--text-secondary);
+}
+.local-decision-why,
+.local-decision-meta {
+  font-size: var(--text-xs);
+  color: var(--text-tertiary);
+}
 .local-sessions-count {
   min-width: 1.25rem;
   padding: 0 0.4rem;
@@ -2045,8 +2273,25 @@ a.local-session-pr:hover {
   white-space: nowrap;
 }
 /* The Sessions page as a live feed: Needs you, Running now and Ended
-   recently, each a stack of cards. */
+   recently, each a stack of cards. It sits on the Pull requests page's warm
+   panel, its cards in the list's sand and its controls in the panel's paper,
+   in the Inbox's palette (`--un-*`) rather than white. */
+.local-frame:has(.local-feed) {
+  background: var(--un-panel);
+}
+.local-frame:has(.local-feed) .local-page-bar {
+  border-bottom-color: var(--un-line);
+}
 .local-feed {
+  --text-primary: var(--un-ink);
+  --text-secondary: var(--un-ink-soft);
+  --text-tertiary: var(--un-muted);
+  --surface-card: var(--un-panel);
+  --surface-sunken: var(--un-hairline);
+  --surface-wash: var(--un-hairline);
+  --border-default: var(--un-line-strong);
+  --border-subtle: var(--un-line);
+  --action-secondary-hover: var(--un-hover);
   --feed-read-bg: #e6edf5;
   --feed-read: #24405f;
   --feed-edit-bg: #faefd6;
@@ -2055,7 +2300,7 @@ a.local-session-pr:hover {
   --feed-bash: #1f4d20;
   --feed-ask: #d9932b;
   --feed-ask-ink: #a86512;
-  --feed-soft: #fbf6ec;
+  --feed-soft: var(--un-hover);
   --feed-done-bg: #f0f7ec;
   --feed-done-border: #cfe2c6;
   --feed-done: #1f4d20;
@@ -2125,9 +2370,10 @@ a.local-session-pr:hover {
   gap: 0.75rem;
   min-width: 0;
   padding: 1rem 1.125rem;
-  border: 1px solid var(--panel-border);
+  border: 1px solid var(--un-line);
   border-radius: 12px;
-  background: var(--surface-card);
+  background: var(--un-list);
+  color: var(--un-ink);
   animation: local-feed-rise 0.3s ease-out;
 }
 .local-feed-cards.column > .local-feed-card {
@@ -2206,8 +2452,8 @@ a.local-session-pr:hover {
   margin: 0;
 }
 .local-feed-where {
-  color: var(--text-secondary);
-  font-size: var(--text-base);
+  color: var(--un-muted);
+  font-size: 14px;
   line-height: 1.5;
 }
 .local-feed-mono {
@@ -2215,6 +2461,10 @@ a.local-session-pr:hover {
   font-size: 12.5px;
 }
 .local-feed-quote {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
   padding-left: 0.625rem;
   border-left: 2px solid var(--border-subtle);
   color: var(--text-secondary);
@@ -2225,8 +2475,27 @@ a.local-session-pr:hover {
   padding: 0.625rem 0.75rem;
   border-radius: var(--radius-md);
   background: var(--feed-soft);
-  font-size: var(--text-base);
-  line-height: 1.5;
+  color: var(--un-ink-soft);
+  font-size: 14px;
+  line-height: 1.55;
+}
+/* An agent's last message, rendered: its opening lines, fading out past
+   them where the transcript takes over. The fade is measured from the top,
+   so a short message is never dimmed. */
+.local-feed-message {
+  max-height: 10rem;
+  overflow: hidden;
+  mask-image: linear-gradient(to bottom, #000 7.5rem, transparent 10rem);
+}
+.local-feed-message strong {
+  color: var(--un-ink);
+  font-weight: 600;
+}
+.local-feed-message code {
+  font-size: 12.5px;
+}
+.local-feed-message a {
+  color: var(--un-link);
 }
 .local-feed-note {
   color: var(--text-secondary);
@@ -2949,8 +3218,8 @@ span.inbox-fix svg {
 }
 /* The same mark on a Sessions card, inside its own border. */
 .local-feed-card[data-focused] {
-  background: var(--surface-wash);
-  box-shadow: inset 3px 0 0 var(--action-primary);
+  background: var(--un-hover);
+  box-shadow: inset 3px 0 0 var(--un-ink);
 }
 .local-feed-card[data-focused] a:focus-visible {
   outline: none;
@@ -3214,6 +3483,86 @@ kbd.key-hint {
   --un-shadow-menu: 0 12px 30px rgb(0 0 0 / 40%);
   --un-shadow-toast: 0 10px 28px rgb(0 0 0 / 50%);
 }
+/* The six colours an inbox can have, for its dot beside the sidebar's sand
+   and for the text of its tag on a tint of itself; each is at least 4.5:1 on
+   the paper and, in dark mode, on the forest. */
+:root {
+  --inbox-blue: #2f5f8a;
+  --inbox-green: #2a6f38;
+  --inbox-red: #b3261e;
+  --inbox-amber: #96570e;
+  --inbox-purple: #7a4fa0;
+  --inbox-grey: #6e655b;
+}
+:root[data-theme="dark"] {
+  --inbox-blue: #7fb0dd;
+  --inbox-green: #8ed07a;
+  --inbox-red: #f28b82;
+  --inbox-amber: #e5b25d;
+  --inbox-purple: #bb9de0;
+  --inbox-grey: #a8a8a8;
+}
+.inbox-blue {
+  --inbox: var(--inbox-blue);
+}
+.inbox-green {
+  --inbox: var(--inbox-green);
+}
+.inbox-red {
+  --inbox: var(--inbox-red);
+}
+.inbox-amber {
+  --inbox: var(--inbox-amber);
+}
+.inbox-purple {
+  --inbox: var(--inbox-purple);
+}
+.inbox-grey {
+  --inbox: var(--inbox-grey);
+}
+.inbox-dot {
+  width: 8px;
+  height: 8px;
+  flex: none;
+  border-radius: 50%;
+  background: var(--inbox);
+}
+.inbox-dot-large {
+  width: 10px;
+  height: 10px;
+}
+.upnext-tag {
+  flex: none;
+  max-width: 8rem;
+  overflow: hidden;
+  padding: 0 6px;
+  border: 1px solid color-mix(in srgb, var(--inbox) 35%, transparent);
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--inbox) 10%, transparent);
+  color: var(--inbox);
+  font-size: 11.5px;
+  font-weight: 600;
+  line-height: 1.5;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.upnext-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-left: auto;
+}
+.upnext-list-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.upnext-list-title h1 {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 /* The page fills the panel to the window's foot, and its list and panel
    scroll on their own. */
 .local-shell:has(.upnext-page) {
@@ -3301,6 +3650,10 @@ kbd.key-hint {
   color: var(--un-ink-soft);
   font-size: 13.5px;
   line-height: 1.4;
+}
+.upnext-list-head .upnext-list-summary {
+  color: var(--un-muted);
+  font-size: 12.5px;
 }
 .upnext-bar {
   height: 5px;
@@ -3950,7 +4303,8 @@ kbd.key-hint {
   transform: translateX(-50%);
   animation: upnext-rise 0.2s ease-out;
 }
-.upnext-page .upnext-toast button {
+.upnext-page .upnext-toast button,
+.inbox-toast button {
   padding: 5px 12px;
   border: 1px solid var(--un-toast-line);
   border-radius: 6px;
@@ -3958,6 +4312,12 @@ kbd.key-hint {
   color: var(--un-toast-ink);
   font-size: 13px;
   font-weight: 600;
+}
+/* Deleting an inbox from the sidebar toasts on any page, so it floats over
+   the window rather than over the Up next page. */
+.inbox-toast {
+  position: fixed;
+  left: 50%;
 }
 /* A narrow window stacks the list over the panel and scrolls them as one. */
 @container (width < 760px) {
@@ -4336,4 +4696,524 @@ kbd.key-hint {
   border: 1px solid color-mix(in srgb, var(--status-caution) 30%, transparent);
   border-radius: 6px;
   background: var(--status-caution-bg);
+}
+
+/* The inbox pages: New inbox, an inbox's edit page and Manage inboxes. They
+   are settings-like pages in the app's own tokens; each inbox's colour is its
+   `--inbox`. */
+.inbox-btn {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  height: 2rem;
+  padding: 0 0.85rem;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  background: var(--surface-card);
+  box-shadow: 0 1px 1px rgb(0 0 0 / 8%);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: var(--text-sm);
+  font-weight: 500;
+  text-decoration: none;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.inbox-btn:hover {
+  background: var(--action-secondary-hover);
+  color: var(--text-primary);
+  text-decoration: none;
+}
+.inbox-btn:active {
+  box-shadow: none;
+  transform: translateY(1px);
+}
+.inbox-btn:focus-visible,
+.inbox-chip:focus-visible,
+.inbox-part:focus-visible,
+.inbox-template:focus-visible,
+.inbox-swatch:focus-visible,
+.inbox-disclosure:focus-visible {
+  outline: 2px solid var(--border-focus);
+  outline-offset: 2px;
+}
+.inbox-btn:disabled {
+  opacity: 0.45;
+  box-shadow: none;
+  cursor: default;
+}
+.inbox-btn-small {
+  width: 1.75rem;
+  height: 1.5rem;
+  padding: 0;
+  font-size: 10px;
+}
+.inbox-edit-link {
+  height: 1.625rem;
+  margin-left: auto;
+  font-size: 12px;
+}
+.inbox-page {
+  max-width: 64rem;
+  align-content: start;
+  padding-bottom: 2rem;
+}
+.inbox-back {
+  justify-self: start;
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
+}
+.inbox-limit {
+  margin: 0;
+  padding: 0.6rem 0.9rem;
+  border-radius: var(--radius-md);
+  background: var(--surface-wash);
+  color: var(--text-primary);
+  font-size: var(--text-sm);
+}
+.inbox-templates {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(17rem, 1fr));
+  gap: 0.75rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.inbox-template {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  width: 100%;
+  height: 100%;
+  padding: 0.85rem 1rem;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-lg);
+  background: var(--surface-card);
+  box-shadow: 0 1px 1px rgb(0 0 0 / 8%);
+  color: var(--text-primary);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.inbox-template:hover:not(:disabled) {
+  border-color: var(--inbox);
+  background: var(--action-secondary-hover);
+}
+.inbox-template:active:not(:disabled) {
+  box-shadow: none;
+  transform: translateY(1px);
+}
+.inbox-template:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.inbox-template-head {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+.inbox-template-name {
+  flex: 1;
+  min-width: 0;
+  font-weight: 600;
+}
+.inbox-template-count {
+  flex: none;
+  color: var(--text-secondary);
+  font-size: var(--text-xs);
+  font-variant-numeric: tabular-nums;
+}
+.inbox-template-sentence {
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
+  line-height: 1.4;
+}
+.inbox-edit {
+  grid-template-columns: minmax(0, 1fr) 20rem;
+  align-items: start;
+  gap: 1rem 1.25rem;
+}
+.inbox-edit > .inbox-back {
+  grid-column: 1 / -1;
+}
+.inbox-form {
+  display: grid;
+  gap: 0;
+  padding: 0 !important;
+}
+.inbox-block {
+  display: grid;
+  gap: 0.6rem;
+  padding: 1rem 1.25rem;
+}
+.inbox-block + .inbox-block,
+.inbox-form > .inbox-badge-block,
+.inbox-fresh + .inbox-block {
+  border-top: 1px solid var(--border-subtle);
+}
+.inbox-block h2 {
+  margin: 0;
+}
+.inbox-fresh {
+  margin: 0;
+  padding: 0.6rem 1.25rem;
+  border-bottom: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+  background: var(--surface-wash);
+  color: var(--status-positive);
+  font-size: var(--text-sm);
+}
+.inbox-name-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.6rem 0.75rem;
+}
+.inbox-name {
+  flex: 1 1 12rem;
+  min-width: 0;
+}
+.inbox-name[aria-invalid="true"] {
+  border-color: var(--status-critical);
+}
+.inbox-name-error {
+  margin: 0;
+  color: var(--status-critical);
+  font-size: var(--text-xs);
+}
+.inbox-swatches {
+  display: flex;
+  gap: 0.4rem;
+}
+.inbox-swatch {
+  width: 1.375rem;
+  height: 1.375rem;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: var(--inbox);
+  box-shadow: 0 1px 0 rgb(0 0 0 / 20%);
+  cursor: pointer;
+}
+.inbox-swatch[aria-checked="true"] {
+  box-shadow:
+    0 0 0 2px var(--surface-card),
+    0 0 0 4px var(--inbox);
+}
+.inbox-sentence {
+  margin: 0;
+  font-size: 1.05rem;
+  line-height: 2;
+}
+.inbox-part {
+  padding: 0 0.1rem;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-primary);
+  font: inherit;
+  font-weight: 600;
+  text-decoration: underline;
+  text-decoration-color: var(--border-focus);
+  text-decoration-thickness: 2px;
+  text-underline-offset: 5px;
+  cursor: pointer;
+}
+.inbox-part:hover,
+.inbox-part[aria-expanded="true"] {
+  background: var(--surface-selected);
+}
+.inbox-choices {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 0.4rem;
+}
+.inbox-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-height: 2rem;
+  padding: 0.25rem 0.7rem;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  background: var(--surface-card);
+  box-shadow: 0 1px 1px rgb(0 0 0 / 8%);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: var(--text-sm);
+  font-weight: 500;
+  cursor: pointer;
+}
+.inbox-chip:hover {
+  background: var(--action-secondary-hover);
+}
+.inbox-chip:active {
+  box-shadow: none;
+  transform: translateY(1px);
+}
+.inbox-chip[aria-pressed="true"] {
+  border-color: var(--text-primary);
+  background: var(--surface-selected);
+}
+.inbox-chip-count {
+  color: var(--text-secondary);
+  font-size: var(--text-xs);
+  font-variant-numeric: tabular-nums;
+}
+.inbox-disclosure {
+  justify-self: start;
+  padding: 0.2rem 0;
+  border: 0;
+  background: none;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: var(--text-sm);
+  cursor: pointer;
+}
+.inbox-disclosure::after {
+  content: " ›";
+}
+.inbox-disclosure[aria-expanded="true"]::after {
+  content: " ⌄";
+}
+.inbox-disclosure:hover {
+  color: var(--text-primary);
+}
+.inbox-fine {
+  display: grid;
+  gap: 1rem;
+}
+.inbox-fine-title {
+  margin: 0;
+  padding: 0;
+  font-size: var(--text-sm);
+  font-weight: 600;
+}
+.inbox-fine-title span {
+  color: var(--text-secondary);
+  font-weight: 400;
+}
+.inbox-leave-out {
+  display: grid;
+  gap: 0.4rem;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+.inbox-check {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: var(--text-sm);
+  cursor: pointer;
+}
+.inbox-check-note {
+  color: var(--text-secondary);
+}
+.inbox-badge-block {
+  margin: 0;
+}
+.inbox-delete {
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  border-top: 1px solid var(--border-subtle);
+}
+.inbox-delete p {
+  margin: 0;
+}
+.inbox-preview {
+  position: sticky;
+  top: 1.25rem;
+  display: grid;
+  gap: 0.75rem;
+}
+.inbox-preview-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+.inbox-preview-head h2 {
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+}
+.inbox-preview-count {
+  font-size: 1.75rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+/* Always drawn so a screen reader hears it fill; empty it takes no room. */
+.inbox-diff:empty {
+  position: absolute;
+}
+.inbox-diff {
+  margin: 0;
+  color: var(--status-positive);
+  font-size: var(--text-xs);
+  font-weight: 600;
+}
+.inbox-preview-group h3 {
+  margin: 0 0 0.35rem;
+  color: var(--text-secondary);
+  font-size: var(--text-xs);
+  font-weight: 600;
+}
+.inbox-preview-group ul {
+  display: grid;
+  gap: 0.4rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.inbox-preview-row {
+  display: grid;
+  gap: 0.15rem;
+  padding: 0.45rem 0.6rem;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--surface-card);
+}
+.inbox-preview-row.added {
+  animation: upnext-rise 1.2s ease-out;
+}
+.inbox-preview-row.gone {
+  border-style: dashed;
+  background: transparent;
+  opacity: 0.6;
+  /* Over the diff's four seconds, fading out in the last part so the row
+     is gone when the diff clears. */
+  animation: inbox-row-leave 4s linear forwards;
+}
+@keyframes inbox-row-leave {
+  0%,
+  92% {
+    opacity: 0.6;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+.inbox-preview-row.gone .inbox-preview-title {
+  color: var(--text-tertiary);
+  text-decoration: line-through;
+}
+.inbox-preview-title {
+  overflow: hidden;
+  font-size: var(--text-sm);
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.inbox-preview-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.3rem 0.4rem;
+  color: var(--text-secondary);
+  font-size: var(--text-xs);
+}
+.inbox-lede {
+  margin: 0;
+  color: var(--text-secondary);
+}
+.inbox-manage {
+  display: grid;
+  margin: 0;
+  padding: 0 !important;
+  list-style: none;
+}
+.inbox-manage-row {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.75rem 1.25rem;
+}
+.inbox-manage-row + .inbox-manage-row {
+  border-top: 1px solid var(--border-subtle);
+}
+.inbox-move {
+  display: flex;
+  flex: none;
+  gap: 0.25rem;
+}
+.inbox-manage-text {
+  display: grid;
+  flex: 1;
+  gap: 0.125rem;
+  min-width: 0;
+}
+.inbox-manage-name {
+  display: flex;
+  align-items: baseline;
+  gap: 0.6rem;
+}
+.inbox-manage-name span {
+  color: var(--text-secondary);
+  font-size: var(--text-xs);
+  font-variant-numeric: tabular-nums;
+}
+.inbox-manage-badge {
+  display: flex;
+  flex: none;
+}
+.inbox-manage-badge .local-switch {
+  margin: 0;
+}
+.inbox-badge-label {
+  margin: -0.5rem 0 0;
+  padding-right: 5.5rem;
+  color: var(--text-secondary);
+  font-size: var(--text-xs);
+  text-align: right;
+}
+.inbox-coverage {
+  margin: 0;
+  padding: 0.6rem 0.85rem;
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  font-size: var(--text-sm);
+}
+.inbox-coverage.caution {
+  border-color: color-mix(in srgb, var(--status-caution) 35%, transparent);
+  background: var(--status-caution-bg);
+  color: var(--status-caution);
+}
+.inbox-coverage.ok {
+  border-color: color-mix(in srgb, var(--status-positive) 35%, transparent);
+  background: var(--status-positive-bg);
+  color: var(--status-positive);
+}
+.local-rail-extra {
+  color: var(--text-tertiary);
+}
+.local-rail-plus {
+  display: inline-flex;
+  flex: none;
+  justify-content: center;
+  width: 8px;
+  font-size: var(--text-sm);
+  line-height: 1;
+}
+@media (max-width: 900px) {
+  .inbox-edit {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .inbox-preview {
+    position: static;
+  }
+  .inbox-manage-row {
+    flex-wrap: wrap;
+  }
+  .inbox-badge-label {
+    display: none;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .inbox-preview-row.added,
+  .inbox-preview-row.gone {
+    animation: none;
+  }
 }

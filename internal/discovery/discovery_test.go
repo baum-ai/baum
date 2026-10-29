@@ -114,7 +114,7 @@ func recordedFixture() *fixture {
  {"number":1,"title":"My draft","html_url":"https://github.com/acme/app/pull/1","draft":true,"user":{"login":"VIEWER"},"head":{"sha":"head1","ref":"my-draft","repo":{"id":1,"full_name":"acme/app"}},"base":{"ref":"main","repo":{"id":1,"full_name":"acme/app"}},"requested_reviewers":[]},
  {"number":2,"title":"Team request","user":{"login":"writer"},"head":{"sha":"head2","repo":{"id":2,"full_name":"fork/app"}},"base":{"repo":{"id":1,"full_name":"acme/app"}},"requested_teams":[{"id":42}]},
  {"number":3,"title":"Direct request","user":{"login":"reader"},"head":{"sha":"head3","repo":null},"base":{"repo":{"id":1,"full_name":"acme/app"}},"requested_reviewers":[{"login":"viewer"}]},
- {"number":4,"title":"Unknown permissions","user":{"login":"unknown"},"head":{"sha":"head4","repo":{"id":1,"full_name":"acme/app"}},"base":{"repo":{"id":1,"full_name":"acme/app"}}}
+ {"number":4,"title":"Unknown permissions","user":{"login":"unknown","__typename":"Bot"},"head":{"sha":"head4","repo":{"id":1,"full_name":"acme/app"}},"base":{"repo":{"id":1,"full_name":"acme/app"}}}
  ]`,
 		"/repos/acme/app/collaborators/VIEWER/permission": `{"permission":"admin"}`,
 		"/repos/acme/app/collaborators/writer/permission": `{"permission":"write"}`,
@@ -154,6 +154,13 @@ func TestFlagsAndPrivateOfflineCache(t *testing.T) {
 	}
 	if prs[3].AuthorHasWrite != nil {
 		t.Fatal("unreadable permission treated as known")
+	}
+	if !prs[3].AuthorBot || prs[0].AuthorBot || prs[1].AuthorBot || prs[2].AuthorBot {
+		t.Fatalf("author_bot = %t %t %t %t, want only the Bot author", prs[0].AuthorBot, prs[1].AuthorBot, prs[2].AuthorBot, prs[3].AuthorBot)
+	}
+	var old PullRequest
+	if err := json.Unmarshal([]byte(`{"number":1,"author":"x"}`), &old); err != nil || old.AuthorBot {
+		t.Fatalf("older snapshot decoded as %+v, %v", old, err)
 	}
 	// The viewer's own permission is the repository's, whoever wrote the PR.
 	for _, pr := range prs {

@@ -44,6 +44,53 @@ type Item struct {
 // fix is never automatic: it runs when a person starts it.
 const KindFix = "fix"
 
+// KindFeatureBuild is the Item.Kind of a repository's first feature build:
+// its pull request history placed in features (decisionlog's Build). Clone
+// names the repository's clone and PR is 0. It starts at once when a person
+// asks for it, with no estimate and no spending cap; one interrupted or
+// failed is resumed by starting it again.
+const KindFeatureBuild = "feature_build"
+
+// FeatureBuildPlan is the backend and model a feature build would call, or
+// why it cannot run now.
+type FeatureBuildPlan struct {
+	Backend, Model string
+	// Reason is why it cannot run now.
+	Reason string
+}
+
+// ReasonUnpricedCalls is the cost reason of a feature build some of whose
+// calls could not be priced: its recorded cost at API prices is a lower
+// bound.
+const ReasonUnpricedCalls = "unpriced_calls"
+
+// FeatureBuilder plans and runs feature builds.
+type FeatureBuilder interface {
+	PlanFeatureBuild(ctx context.Context, repository, dir string) (FeatureBuildPlan, error)
+	// BuildFeatures runs a build and returns the run's spend; a build that
+	// stops before its version is current returns a *StoppedError.
+	BuildFeatures(ctx context.Context, repository, dir string, progress func(Progress)) (float64, error)
+}
+
+// StoppedError is a feature build that stopped before it finished, for
+// Reason (an unavailable backend, or "failed"); the job fails with that
+// reason.
+type StoppedError struct {
+	Reason string
+	// Err is the error that stopped it, if one did.
+	Err error
+}
+
+func (e *StoppedError) Error() string {
+	message := "the feature build stopped (" + e.Reason + ")"
+	if e.Err != nil {
+		message += ": " + e.Err.Error()
+	}
+	return message + "; start it again to resume"
+}
+
+func (e *StoppedError) Unwrap() error { return e.Err }
+
 // FixOnlyChecks is the Item.Only of a fix of the failing checks alone.
 const FixOnlyChecks = "checks"
 
@@ -416,8 +463,8 @@ func (q *Queue) estimate(ctx context.Context, items []Item, mode string, isolati
 	if len(items) < 1 || len(items) > 50 || (mode != "single" && mode != "batch") || (mode == "single" && len(items) != 1) {
 		return Estimate{}, errors.New("invalid generation selection")
 	}
-	// A fix is confirmed on its own.
-	if items[0].Kind != "" && (mode != "single" || items[0].Kind != KindFix) {
+	// A fix or a feature build starts on its own.
+	if items[0].Kind != "" && (mode != "single" || (items[0].Kind != KindFix && items[0].Kind != KindFeatureBuild)) {
 		return Estimate{}, errors.New("invalid generation selection")
 	}
 	if items[0].Only != "" && (items[0].Kind != KindFix || items[0].Only != FixOnlyChecks) {
@@ -745,7 +792,12 @@ func (q *Queue) worker() {
 			current.State = "completed"
 			var refused *NotAutomaticError
 			var fixErr *fix.Error
+			var stopped *StoppedError
 			switch {
+			case err != nil && errors.As(err, &stopped):
+				current.State = "failed"
+				current.Reason = stopped.Reason
+				current.Detail = stopped.Error()
 			case err != nil && errors.As(err, &fixErr):
 				current.State = "failed"
 				current.Reason = fixErr.Reason

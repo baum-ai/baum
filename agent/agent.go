@@ -164,6 +164,9 @@ type Result struct {
 	ModelSource                string
 	Usage                      Usage
 	StructuredOutputRejections int
+	// LastRejection is a bounded copy of the last rejection's detail, which
+	// describes the document's shape, not repository content.
+	LastRejection string
 	// SessionID is the session (Claude Code) or thread (Codex) id the CLI
 	// reported for this call; with Request.ForkSession, the new session's id.
 	// Empty when the CLI reported none.

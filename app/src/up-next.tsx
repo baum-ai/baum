@@ -5,6 +5,7 @@ import {
   useState,
   type ComponentType,
   type Dispatch,
+  type ReactNode,
   type SetStateAction,
 } from "react";
 import { formatCount } from "@baum/viewer/components/format";
@@ -33,6 +34,7 @@ import {
   type LiveSession,
 } from "./api";
 import { phaseText, type FixState } from "./fix";
+import { inboxesOf, matches, sentence, type Inbox } from "./inboxes";
 import { useNow } from "./live";
 import {
   canMerge,
@@ -43,7 +45,7 @@ import {
   type MergeOptions,
 } from "./merge";
 import { LoadingStatus, NineDots } from "./nine-dots";
-import { onBody, useShortcuts } from "./shortcuts";
+import { onBody, useLastRow, useShortcuts } from "./shortcuts";
 import { FailingChecks } from "./checks";
 import { ReviewThreads } from "./threads";
 import { canUpdateBranch, UpdateBranchDialog } from "./unblock";
@@ -82,7 +84,7 @@ const KINDS: Record<UpNextKind, { label: string; done: string; order: number }> 
 };
 
 /** The list's groups, by what the person does about their pull requests. */
-const GROUPS: { id: "eyes" | "merge" | "agent"; title: string; kinds: UpNextKind[] }[] = [
+export const GROUPS: { id: "eyes" | "merge" | "agent"; title: string; kinds: UpNextKind[] }[] = [
   { id: "eyes", title: "Needs your eyes", kinds: ["review", "clone"] },
   { id: "merge", title: "Ready to merge", kinds: ["merge"] },
   { id: "agent", title: "Hand to an agent", kinds: ["fix", "update"] },
@@ -122,7 +124,9 @@ function kindOf(entry: Entry, jobs: Job[]): UpNextKind | null {
   // An agent already fixing it leaves nothing for the person until it ends.
   if (isActiveJob(fixJob(entry, jobs))) return null;
   if (blocked(entry)) return "fix";
-  if (canMerge(entry)) return "merge";
+  // GitHub can call a head just pushed clean before its checks are queued;
+  // checks running say the merge is not ready yet, whatever the merge state.
+  if (canMerge(entry) && entry.checks !== "running") return "merge";
   if (canUpdateBranch(entry)) return "update";
   return null;
 }
@@ -559,10 +563,27 @@ function useReviewDocument(entry: Entry | undefined, clone: string) {
   return doc && doc !== "failed" ? doc : null;
 }
 
+/** The row's inboxes, in the sidebar's order. A pull request an agent is
+ *  fixing is in those that take a fix; one that waits on others is in none. */
+function rowInboxes(row: Row, inboxes: Inbox[]) {
+  const item = row.item ?? (row.job ? { kind: "fix" as const, entry: row.entry } : null);
+  return item ? inboxesOf(item, inboxes) : [];
+}
+
+export function InboxTag({ inbox }: { inbox: Inbox }) {
+  return <span className={`upnext-tag inbox-${inbox.color}`}>{inbox.name}</span>;
+}
+
 /** The inbox: what waits on the person, grouped by what they do about it, and
- *  the selected pull request's panel beside it. */
+ *  the selected pull request's panel beside it. In one of the person's inboxes
+ *  (`selected`) it lists only what matches that inbox; what was done today and
+ *  the person's pull requests waiting on others are only in the Inbox. */
 export function UpNextPage({
-  inbox,
+  inbox: all,
+  inboxes = [],
+  selected: scope = null,
+  login,
+  headerAction,
   loading,
   hasRepositories,
   cloneFor,
@@ -572,6 +593,14 @@ export function UpNextPage({
   Link,
 }: {
   inbox: UpNextState;
+  /** All of the person's inboxes, for the tags. */
+  inboxes?: Inbox[];
+  /** The inbox whose queue this is; none for the Inbox. */
+  selected?: Inbox | null;
+  /** The signed-in GitHub account, for "my own repositories". */
+  login?: string;
+  /** Shown beside an inbox's name: where its Edit link goes. */
+  headerAction?: ReactNode;
   loading: boolean;
   hasRepositories: boolean;
   cloneFor: (entry: Entry) => string;
@@ -586,14 +615,23 @@ export function UpNextPage({
   const [merging, setMerging] = useState<Entry | null>(null);
   const [mergingAll, setMergingAll] = useState<Entry[] | null>(null);
   const [updating, setUpdating] = useState<Entry | null>(null);
-  const [chosen, setChosen] = useState<string | null>(null);
+  // Kept for when the inbox is drawn again, back from a pull request.
+  const [chosen, setChosen] = useLastRow("inbox");
   const [menu, setMenu] = useState(false);
   const [snoozedOpen, setSnoozedOpen] = useState(false);
   const [doneOpen, setDoneOpen] = useState(false);
   const [toast, setToast] = useState<{ id: number; text: string; undo?: () => void } | null>(null);
   const list = useRef<HTMLDivElement>(null);
   const detail = useRef<HTMLDivElement>(null);
-  const { queue, cleared, snoozed, fixing, waiting, now } = inbox;
+  const inScope = (item: { kind: UpNextKind; entry: Entry }) => !scope || matches(scope, item);
+  const queue = all.queue.filter(inScope);
+  const snoozed = all.snoozed.filter(inScope);
+  const fixing = all.fixing.filter(({ entry }) => inScope({ kind: "fix", entry }));
+  // Done today and what waits on others are the Inbox's alone.
+  const cleared = scope ? [] : all.cleared;
+  const waiting = scope ? [] : all.waiting;
+  const inbox = { ...all, queue, snoozed, fixing, cleared, waiting };
+  const { now } = all;
   // Those an agent is fixing are listed under Hand to an agent.
   const fixingKeys = new Set(fixing.map(({ entry }) => upNextKey(entry.pull_request)));
   const others = waiting.filter((entry) => !fixingKeys.has(upNextKey(entry.pull_request)));
@@ -739,9 +777,11 @@ export function UpNextPage({
   const summary = loading
     ? "Loading your inbox…"
     : actionable === 0
-      ? cleared.length
-        ? `Nothing left. ${formatCount(cleared.length)} handled today.`
-        : "Nothing waits on you."
+      ? scope
+        ? "Nothing waiting."
+        : cleared.length
+          ? `Nothing left. ${formatCount(cleared.length)} handled today.`
+          : "Nothing waits on you."
       : [
           yours ? `${plural(yours, "thing")} for you` : "",
           minutes ? `about ${plural(minutes, "minute")}` : "",
@@ -751,23 +791,38 @@ export function UpNextPage({
           .filter(Boolean)
           .join(" · ");
   const total = cleared.length + queue.length;
+  const alsoIn = (row: Row) => rowInboxes(row, inboxes).filter((other) => other.id !== scope?.id);
   return (
     <>
       <div className="upnext-page">
         <div className="upnext-list">
           <header className="upnext-list-head">
-            <h1>Up next</h1>
-            <p>{summary}</p>
-            <div
-              className="upnext-bar"
-              role="progressbar"
-              aria-label="Cleared today"
-              aria-valuemin={0}
-              aria-valuemax={total}
-              aria-valuenow={cleared.length}
-            >
-              <div style={{ width: `${total ? (100 * cleared.length) / total : 0}%` }} />
-            </div>
+            {scope ? (
+              <>
+                <div className={`upnext-list-title inbox-${scope.color}`}>
+                  <span aria-hidden="true" className="inbox-dot inbox-dot-large" />
+                  <h1>{scope.name}</h1>
+                  {headerAction}
+                </div>
+                <p>{sentence(scope, login)}</p>
+                <p className="upnext-list-summary">{summary}</p>
+              </>
+            ) : (
+              <>
+                <h1>Up next</h1>
+                <p>{summary}</p>
+                <div
+                  className="upnext-bar"
+                  role="progressbar"
+                  aria-label="Cleared today"
+                  aria-valuemin={0}
+                  aria-valuemax={total}
+                  aria-valuenow={cleared.length}
+                >
+                  <div style={{ width: `${total ? (100 * cleared.length) / total : 0}%` }} />
+                </div>
+              </>
+            )}
           </header>
           <div ref={list} className="upnext-list-body">
             {groups.map((group) => {
@@ -793,6 +848,7 @@ export function UpNextPage({
                       <li key={row.key} data-row={row.key}>
                         <ListRow
                           row={row}
+                          tag={scope ? undefined : rowInboxes(row, inboxes)[0]}
                           on={row.key === selected?.key}
                           tabbable={row.key === tabbable}
                           pick={select}
@@ -903,6 +959,7 @@ export function UpNextPage({
               key={selected.key}
               row={selected}
               doc={doc}
+              tags={alsoIn(selected)}
               href={prHref(selected.entry, cloneFor)}
               Link={Link}
               fix={selectedFix}
@@ -923,7 +980,7 @@ export function UpNextPage({
               now={now}
             />
           ) : (
-            <Zero inbox={inbox} hasRepositories={hasRepositories} Link={Link} />
+            <Zero inbox={inbox} scoped={!!scope} hasRepositories={hasRepositories} Link={Link} />
           )}
         </div>
         {toast ? (
@@ -965,11 +1022,14 @@ export function UpNextPage({
 
 function ListRow({
   row,
+  tag,
   on,
   tabbable,
   pick,
 }: {
   row: Row;
+  /** The first inbox the row is in, in the Inbox. */
+  tag?: Inbox;
   on: boolean;
   tabbable: boolean;
   pick: (key: string) => void;
@@ -1009,6 +1069,7 @@ function ListRow({
           {sub}
         </span>
       </span>
+      {tag ? <InboxTag inbox={tag} /> : null}
       {hot ? (
         <span className="upnext-hot" role="img" aria-label="Critical risk" title="Critical risk" />
       ) : null}
@@ -1155,6 +1216,7 @@ function blocks(row: Row, doc: ReviewDocument | null): PanelBlock[] {
 function Panel({
   row,
   doc,
+  tags,
   href,
   Link,
   fix,
@@ -1170,6 +1232,8 @@ function Panel({
 }: {
   row: Row;
   doc: ReviewDocument | null;
+  /** The other inboxes it is in, or all of them in the Inbox. */
+  tags: Inbox[];
   href: string;
   Link: ComponentType<ViewerLinkProps>;
   fix?: () => void;
@@ -1273,6 +1337,13 @@ function Panel({
           {pr.draft ? " · Draft" : ""}
           {pr.fork ? " · Fork" : ""}
         </span>
+        {tags.length > 0 ? (
+          <span className="upnext-tags" role="group" aria-label="Inboxes">
+            {tags.map((tag) => (
+              <InboxTag key={tag.id} inbox={tag} />
+            ))}
+          </span>
+        ) : null}
         {item?.minutes != null ? (
           <span className="upnext-minutes" title="baum's estimate of the time to read the change">
             {minutesText(item.minutes)}
@@ -1439,10 +1510,12 @@ function Panel({
 
 function Zero({
   inbox,
+  scoped,
   hasRepositories,
   Link,
 }: {
   inbox: UpNextState;
+  scoped: boolean;
   hasRepositories: boolean;
   Link: ComponentType<ViewerLinkProps>;
 }) {
@@ -1457,6 +1530,17 @@ function Zero({
       </div>
     );
   const { snoozed, cleared } = inbox;
+  if (scoped)
+    return (
+      <div className="upnext-zero">
+        <h2>Nothing here right now.</h2>
+        <p>
+          {snoozed.length > 0
+            ? `Everything here is handled except ${plural(snoozed.length, "snoozed pull request")}; they come back on their own.`
+            : "It fills up as matching pull requests come in."}
+        </p>
+      </div>
+    );
   return (
     <div className="upnext-zero">
       <h2>Inbox zero.</h2>

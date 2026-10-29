@@ -3,9 +3,9 @@
 //
 // It holds what every host shares: the decision schema, the cleaned transcript
 // a model reads (Render), the strict reply schema and parser, and the citation
-// validator that checks a reply against the transcript (Extractor). It ships no
-// prompt: each host supplies its own system prompt to NewExtractor and its own
-// Model. See ARCHITECTURE.md, "decisions".
+// validator that checks a reply against the transcript (Extractor). A host
+// supplies its own system prompt to NewExtractor, or uses the published one
+// (NewPublicExtractor), and its own Model. See ARCHITECTURE.md, "decisions".
 package decisions
 
 import (

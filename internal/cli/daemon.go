@@ -27,13 +27,16 @@ import (
 	"github.com/baum-ai/baum/internal/clonefind"
 	"github.com/baum-ai/baum/internal/config"
 	"github.com/baum-ai/baum/internal/daemon"
+	"github.com/baum-ai/baum/internal/decisionlog"
 	"github.com/baum-ai/baum/internal/discovery"
 	"github.com/baum-ai/baum/internal/doctor"
+	"github.com/baum-ai/baum/internal/generate"
 	"github.com/baum-ai/baum/internal/github"
 	"github.com/baum-ai/baum/internal/githubrepos"
 	"github.com/baum-ai/baum/internal/gitlocal"
 	"github.com/baum-ai/baum/internal/hookevents"
 	"github.com/baum-ai/baum/internal/hookrefresh"
+	"github.com/baum-ai/baum/internal/inboxes"
 	"github.com/baum-ai/baum/internal/jobs"
 	"github.com/baum-ai/baum/internal/livesessions"
 	"github.com/baum-ai/baum/internal/localapp"
@@ -434,7 +437,9 @@ func localApplication(paths daemon.Paths, concurrency int, log *slog.Logger) fun
 			scheduler.Observe(ctx, snapshot)
 			notify.Observe(ctx, snapshot)
 		}
-		queue, err := jobs.Open(filepath.Join(state, "jobs.json"), &jobs.Local{Registry: registry, Groups: groups, Config: cfg, Client: github.NewFromConfig(cfg, github.Options{})}, concurrency, func(job jobs.Job) {
+		// Feature builds run on the feature worker made below.
+		builds := &featureBuilder{}
+		queue, err := jobs.Open(filepath.Join(state, "jobs.json"), &jobs.Local{Registry: registry, Groups: groups, Config: cfg, Client: github.NewFromConfig(cfg, github.Options{}), Features: builds}, concurrency, func(job jobs.Job) {
 			_ = server.Publish("progress", map[string]any{"job": job})
 			if job.Phase == "finished" {
 				changed()
@@ -442,13 +447,10 @@ func localApplication(paths daemon.Paths, concurrency int, log *slog.Logger) fun
 				go notify.JobDone(ctx, job)
 				// A PR whose job finished may have a pending head.
 				scheduler.Wake()
-				// A fix pushed a new head: show it, and its checks, soon.
+				// A fix pushed a new head: show it at once, and poll again
+				// until its checks appear, which takes GitHub a few seconds.
 				if repo, err := github.ParseRepository(job.Repository); err == nil && job.Kind == jobs.KindFix && job.Commit != "" {
-					go func() {
-						if _, err := discover.PollNow(ctx, repo); err == nil {
-							changed()
-						}
-					}()
+					go discovery.AfterPush(ctx, discover.PollNow, repo, job.PR, job.Commit, changed, nil)
 				}
 			}
 		})
@@ -469,9 +471,13 @@ func localApplication(paths daemon.Paths, concurrency int, log *slog.Logger) fun
 			changed()
 			scheduler.Wake()
 		}, log)
+		// The feature log follows the decision capture gate, so a settings
+		// change wakes it too.
+		var featureLog *decisionlog.FeatureWorker
 		settingsChanged := func() {
 			changed()
 			scheduler.Wake()
+			featureLog.Wake()
 			// A repository may just have been picked.
 			clones.Trigger()
 		}
@@ -512,6 +518,21 @@ func localApplication(paths daemon.Paths, concurrency int, log *slog.Logger) fun
 			}
 			maps.Copy(methods, requests.Methods())
 			waits = requests.Waits()
+		}
+		// Decision capture follows the tracked sessions; its store keeps the
+		// derived, redacted decisions in the daemon's state.
+		var capture *decisionlog.Scheduler
+		var decisionStore *decisionlog.Store
+		if live != nil {
+			if decisionStore, err = decisionlog.Open(filepath.Join(state, "decisions", "decisions.sqlite"), decisionlog.OpenOptions{AbandonPending: true}); err != nil {
+				log.Warn("decision capture is off: its store did not open", "error", err)
+			} else {
+				decisionStore.Changed = func() { _ = server.Publish("decisions", struct{}{}) }
+				capture = &decisionlog.Scheduler{Tracker: live, Source: events.service.Store, Log: log,
+					Worker: &decisionlog.Capturer{Store: decisionStore, Registry: registry, Config: cfg, Log: log}}
+				featureLog = &decisionlog.FeatureWorker{Store: decisionStore, Registry: registry, GitHub: githubReaders(cfg), Config: cfg, Log: log}
+				builds.worker.Store(featureLog)
+			}
 		}
 		home, _ := os.UserHomeDir()
 		pickList := &githubrepos.Service{
@@ -569,12 +590,26 @@ func localApplication(paths daemon.Paths, concurrency int, log *slog.Logger) fun
 		actions := &analytics.Actions{Path: filepath.Join(state, "analytics-actions.json")}
 		sessionIndex := &analytics.Index{Path: filepath.Join(state, "analytics-index.json"), Clones: registry, Log: log}
 		insights := &analytics.Service{Registry: registry, Index: sessionIndex, Jobs: queue.List, Actions: actions, Plans: planHistory, Delivery: delivery}
+		var decisionsAPI func(uiserver.LinkedSessions) http.Handler
+		if decisionStore != nil {
+			insights.Captures = decisionStore.Ledger
+			decisionsAPI = func(linked uiserver.LinkedSessions) http.Handler {
+				return (&decisionlog.API{Store: decisionStore, Registry: registry, Live: live.Sessions, Linked: linked, Log: log}).Handler()
+			}
+		}
 		// A session that ended has its last lines written: read it soon.
 		endedSessions, unsubscribeEnded := events.Subscribe(4, func(e hookevents.Event) bool {
 			return e.Kind == hookevents.KindAgent && e.Name == "session-end"
 		})
 		api := uiserver.LocalAPI{GitHubAuth: githubConnection.Handler(), Registry: registry, Config: cfg, PRs: uiserver.DiscoveryHandler(registry, discover, changed), Index: index.Handler(), Jobs: queue.Handler(), Background: worker.Handler(), Automatic: scheduler.Handler(), Live: liveAPI, AgentRequests: requestsAPI, Clones: clones.Handler(), GitHubRepositories: pickList.Handler(), PlanUsage: plans.Handler(), Analytics: insights.Handler(), Merge: uiserver.MergeHandler(registry, actions.RecordMerges(githubClient), mergedPullRequest, changed), Review: uiserver.ReviewHandler(registry, githubClient, changed), Update: uiserver.UpdateHandler(registry, actions.RecordUpdates(prupdate.Service{Client: githubClient, Cache: panelCache, Counted: countedThreads}), refreshRepository, changed), Changed: settingsChanged,
-			Groups:      (&reviewgroups.API{Store: groups, Registry: registry, Index: index.Build, Changed: changed}).Handler(),
+			Inboxes:   (&inboxes.API{Store: inboxes.Open(filepath.Join(state, "inboxes.json")), Changed: changed}).Handler(),
+			Groups:    (&reviewgroups.API{Store: groups, Registry: registry, Index: index.Build, Changed: changed}).Handler(),
+			Decisions: decisionsAPI, Log: log,
+			DecisionsChanged: func() { _ = server.Publish("decisions", struct{}{}) },
+			DecisionModel: func(ctx context.Context, prefs repos.Preferences) uiserver.DecisionModel {
+				e := decisionlog.EffectiveModel(ctx, cfg, prefs, generate.Backends{}, nil)
+				return uiserver.DecisionModel{Backend: e.Backend, Undetermined: e.Undetermined, Model: e.Model, Ignored: e.Ignored}
+			},
 			Diagnostics: uiDiagnostics}.Handler()
 		return daemon.App{
 			API:     api,
@@ -598,6 +633,10 @@ func localApplication(paths daemon.Paths, concurrency int, log *slog.Logger) fun
 				wg.Go(func() { scheduler.Run(ctx) })
 				if live != nil {
 					wg.Go(func() { live.Run(ctx) })
+				}
+				if capture != nil {
+					wg.Go(func() { capture.Run(ctx) })
+					wg.Go(func() { featureLog.Run(ctx) })
 				}
 				if requestEvents != nil {
 					wg.Go(func() { requests.Run(ctx, requestEvents) })
@@ -636,6 +675,9 @@ func localApplication(paths daemon.Paths, concurrency int, log *slog.Logger) fun
 				unsubscribeEnded()
 				unsubscribeRequests()
 				events.Close()
+				if decisionStore != nil {
+					_ = decisionStore.Close()
+				}
 				_ = groups.Close()
 				_ = registry.Close()
 			},

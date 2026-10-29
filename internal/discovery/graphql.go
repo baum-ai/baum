@@ -21,7 +21,7 @@ const inboxQuery = `query LocalInbox($owner: String!, $name: String!, $cursor: S
   pullRequests(states: OPEN, first: 50, after: $cursor) {
    pageInfo { hasNextPage endCursor }
    nodes {
-    number title headRefOid headRefName baseRefName isDraft updatedAt author { login }
+    number title headRefOid headRefName baseRefName isDraft updatedAt author { __typename login }
     headRepository { databaseId nameWithOwner } baseRepository { databaseId nameWithOwner }
     reviewRequests(first: 100) { nodes { requestedReviewer { __typename ... on User { login } ... on Team { databaseId } } } pageInfo { hasNextPage } }
     reviewDecision latestOpinionatedReviews(first: 100) { nodes { state } pageInfo { hasNextPage } }

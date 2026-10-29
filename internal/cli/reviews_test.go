@@ -37,14 +37,34 @@ func TestReviewsCLI(t *testing.T) {
 		return s
 	}
 	// Until the app chooses, the config file decides.
-	if got := show(); got != (reviewSettings{Backend: "claude", Model: "file-model", Automatic: true, PullRequests: "both"}) {
+	if got := show(); got != (reviewSettings{Backend: "claude", Model: "file-model", Automatic: true, PullRequests: "both", DecisionsBackend: "claude", DecisionsEffectiveModel: "claude-haiku-5-5"}) {
 		t.Fatalf("defaults %+v", got)
 	}
 	if _, e := run("set", "--backend=codex", "--model=gpt-5.5", "--automatic=false", "--pull-requests=requested"); e != nil {
 		t.Fatal(e)
 	}
-	if got := show(); got != (reviewSettings{Backend: "codex", Model: "gpt-5.5", Automatic: false, PullRequests: "requested"}) {
+	if got := show(); got != (reviewSettings{Backend: "codex", Model: "gpt-5.5", Automatic: false, PullRequests: "requested", DecisionsBackend: "codex", DecisionsEffectiveModel: "gpt-6-luna"}) {
 		t.Fatalf("after set %+v", got)
+	}
+	// The decision capture model is the app's choice; empty is the default.
+	if _, e := run("set", "--decisions-model=gpt-6-luna"); e != nil {
+		t.Fatal(e)
+	}
+	if got := show(); got.DecisionsModel != "gpt-6-luna" || got.Model != "gpt-5.5" {
+		t.Fatalf("after setting the decisions model %+v", got)
+	}
+	// A model of the other provider's family is reported as ignored.
+	if _, e := run("set", "--decisions-model=claude-sonnet-5-5"); e != nil {
+		t.Fatal(e)
+	}
+	if got := show(); got.DecisionsModel != "claude-sonnet-5-5" || got.DecisionsEffectiveModel != "gpt-6-luna" || !got.DecisionsModelIgnored {
+		t.Fatalf("an ignored decisions model %+v", got)
+	}
+	if _, e := run("set", "--decisions-model="); e != nil {
+		t.Fatal(e)
+	}
+	if got := show(); got.DecisionsModel != "" {
+		t.Fatalf("after clearing the decisions model %+v", got)
 	}
 	if _, e := run("set", "--pull-requests=all"); e != nil {
 		t.Fatal(e)

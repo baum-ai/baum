@@ -18,6 +18,22 @@ import {
 import { CloneActions, type FoundClones } from "./repositories";
 import { GroupMissing, GroupPage, NameDialog } from "./group";
 import { Inbox, UpdatedAgo } from "./inbox";
+import {
+  EditInboxPage,
+  editInboxHref,
+  manageInboxesHref,
+  ManageInboxesPage,
+  NewInboxPage,
+  newInboxHref,
+  RailLinks,
+} from "./inbox-pages";
+import {
+  inboxBadgeCount,
+  matches,
+  readInboxes,
+  useInboxes,
+  type Inbox as SavedInbox,
+} from "./inboxes";
 import { UpNextPage, useUpNext } from "./up-next";
 import {
   onBody,
@@ -33,8 +49,9 @@ import {
   type ShortcutsPlace,
 } from "./shortcuts";
 import { GoTo, type GoToItem } from "./go-to";
-import { PAGES } from "./pages";
+import { PAGES, type Page } from "./pages";
 import { LocalReview } from "./review";
+import { DecisionsRevision } from "./decisions";
 import { useDiagnosticProblems } from "./diagnostics";
 import { RepositoriesPage, SettingsPage, settingsSection, type ReviewDefaults } from "./settings";
 import { needsYou, SessionsPage, transcriptHref } from "./sessions";
@@ -229,7 +246,20 @@ function Workspace({ url }: { url: UrlState }) {
   const [agentRequests, setAgentRequests] = useState<AgentRequests>(noAgentRequests);
   // Counts the `live` events, which an open transcript reads itself again on.
   const [liveTick, setLiveTick] = useState(0);
+  // Counts the reads decision lists make again: on a `decisions` event,
+  // several at once coalesced, and when the stream opens or resets or the
+  // automatic switch changes.
+  const [decisionsTick, setDecisionsTick] = useState(0);
   const [groups, setGroups] = useState<ReviewGroup[]>([]);
+  const inboxes = useInboxes();
+  // The inbox just made from a template, whose page says so.
+  const [freshInbox, setFreshInbox] = useState<string | null>(null);
+  // Deleting an inbox says so on any page, with a way back.
+  const [inboxToast, setInboxToast] = useState<{
+    id: number;
+    text: string;
+    undo: () => void;
+  } | null>(null);
   // The pull requests being grouped, while the group name is asked.
   const [grouping, setGrouping] = useState<Entry[] | null>(null);
   const lastLive = useRef(0);
@@ -270,6 +300,7 @@ function Workspace({ url }: { url: UrlState }) {
             repositories,
             found,
             groupList,
+            inboxList,
           ] = await Promise.all([
             request<Clone[]>("api/repos"),
             request<Snapshot>("api/index?history=1"),
@@ -284,6 +315,8 @@ function Workspace({ url }: { url: UrlState }) {
             request<FoundClones>("api/clones/found").catch(() => null),
             // An older daemon has no groups.
             request<unknown>("api/groups").catch(() => null),
+            // An older daemon (404) has no inboxes; another failure is reported.
+            readInboxes(),
           ]);
           setClones(repos);
           setPicked(Array.isArray(repositories) ? repositories : []);
@@ -299,6 +332,7 @@ function Workspace({ url }: { url: UrlState }) {
           setSnapshot(index);
           setJobs(jobList.jobs ?? []);
           setGroups(parseGroups(groupList));
+          inboxes.read(inboxList);
           setRates(discovery);
           setBackground(Array.isArray(sync) ? sync : []);
           setAutomatic(auto && Array.isArray(auto.repositories) ? (auto as Automatic) : null);
@@ -331,12 +365,24 @@ function Workspace({ url }: { url: UrlState }) {
     source.addEventListener("open", refresh);
     source.addEventListener("open", refreshLive);
     source.addEventListener("live", refreshLive);
+    let decisionsTimer: ReturnType<typeof setTimeout> | undefined;
+    const refreshDecisions = () => {
+      decisionsTimer ??= setTimeout(() => {
+        decisionsTimer = undefined;
+        setDecisionsTick((n) => n + 1);
+      }, 250);
+    };
+    for (const kind of ["decisions", "open", "reset", "automatic"])
+      source.addEventListener(kind, refreshDecisions);
     source.addEventListener("reset", refreshLive);
     source.addEventListener("index", refresh);
     source.addEventListener("progress", refresh);
     source.addEventListener("automatic", refresh);
     source.addEventListener("reset", refresh);
-    return () => source.close();
+    return () => {
+      clearTimeout(decisionsTimer);
+      source.close();
+    };
   }, [reload, reloadLive]);
   const authChanged = () => {
     setAuthRevision((n) => n + 1);
@@ -378,11 +424,76 @@ function Workspace({ url }: { url: UrlState }) {
         entry.pull_request.repository.toLowerCase() === requestedRepository.toLowerCase(),
     );
   const groupId = url.search.get("group");
-  const page = url.search.get("page") ?? "inbox";
+  const requestedPage = url.search.get("page") ?? "inbox";
+  // The pages that make and change inboxes need a daemon that has them.
+  const inboxPage =
+    requestedPage === "inbox-new" || requestedPage === "inbox-edit" || requestedPage === "inboxes";
+  const page = inboxPage && inboxes.status === "older" ? "inbox" : requestedPage;
+  // Before the first read they wait; after a failed one they say so.
+  const inboxWaiting =
+    inboxPage && (inboxes.status === "loading" || inboxes.status === "failed") ? (
+      <section>
+        <PageBar title="Inboxes" />
+        <div className="local-page-body">
+          {inboxes.status === "failed" ? (
+            <Alert>
+              {inboxes.error} <Button onClick={() => void reload()}>Retry</Button>
+            </Alert>
+          ) : loading ? (
+            <LoadingStatus block>Loading inboxes…</LoadingStatus>
+          ) : null}
+        </div>
+      </section>
+    ) : null;
   // The inbox's queue counts in the sidebar on every page. Its record of what
   // was cleared waits for the first complete read, and pauses while reads
   // fail, so an empty or failed read clears nothing.
   const inbox = useUpNext(indexedEntries, live, jobs, revision > 0 && !error);
+  // What the sidebar highlights is the page that shows the queue, with the
+  // inbox the address names, when the daemon still has it.
+  const railPage: Page =
+    page === "jobs" ||
+    page === "repositories" ||
+    page === "sessions" ||
+    page === "analytics" ||
+    page === "pulls"
+      ? page
+      : page === "settings" || page === "diagnostics"
+        ? "settings"
+        : "inbox";
+  const selectedInbox =
+    railPage === "inbox"
+      ? (inboxes.inboxes.find((candidate) => candidate.id === url.search.get("inbox")) ?? null)
+      : null;
+  // Undo reads the list as it is then, not as it was at the delete.
+  const currentInboxes = useRef(inboxes.inboxes);
+  currentInboxes.current = inboxes.inboxes;
+  const removeInbox = (target: SavedInbox) => {
+    const before = inboxes.inboxes;
+    const at = before.findIndex((candidate) => candidate.id === target.id);
+    inboxes.save(before.filter((candidate) => candidate.id !== target.id));
+    setInboxToast({
+      id: Date.now(),
+      text: `Deleted ${target.name}. Its pull requests stay in Inbox.`,
+      undo: () => {
+        const now = currentInboxes.current;
+        if (now.some((candidate) => candidate.id === target.id)) return;
+        const index = Math.min(Math.max(at, 0), now.length);
+        inboxes.save([...now.slice(0, index), target, ...now.slice(index)]);
+      },
+    });
+  };
+  useEffect(() => {
+    if (!inboxToast) return;
+    const timer = setTimeout(
+      () => setInboxToast((t) => (t?.id === inboxToast.id ? null : t)),
+      5000,
+    );
+    return () => clearTimeout(timer);
+  }, [inboxToast?.id]);
+  useEffect(() => {
+    if (freshInbox && page !== "inbox-edit") setFreshInbox(null);
+  }, [freshInbox, page]);
   // The pages that show the diagnostics run them themselves.
   // The diagnostics dialog runs them itself while it is open.
   const diagnostics = useDiagnosticProblems(page !== "diagnostics");
@@ -546,6 +657,23 @@ function Workspace({ url }: { url: UrlState }) {
         label: item.label,
         href: item.href(),
       })),
+      ...(inboxes.available
+        ? [
+            ...inboxes.inboxes.map((one) => ({
+              id: `inbox:${one.id}`,
+              kind: "Inbox" as const,
+              label: one.name,
+              href: appURL(`?inbox=${encodeURIComponent(one.id)}`),
+            })),
+            { id: "inbox-new", kind: "Page" as const, label: "New inbox", href: newInboxHref() },
+            {
+              id: "inboxes",
+              kind: "Page" as const,
+              label: "Manage inboxes",
+              href: manageInboxesHref(),
+            },
+          ]
+        : []),
       ...pulls.map((entry) => {
         const pr = entry.pull_request;
         const clone = cloneFor(entry);
@@ -575,6 +703,16 @@ function Workspace({ url }: { url: UrlState }) {
         href: transcriptHref(s),
       })),
     ];
+  };
+  const inboxPageProps = {
+    inboxes: inboxes.inboxes,
+    items: inbox.queue,
+    login: github?.login,
+    repositories,
+    saves: inboxes.saves,
+    save: inboxes.save,
+    go: navigate,
+    Link: LocalLink,
   };
   useKeyHints();
   useEscapeBlurs();
@@ -647,18 +785,34 @@ function Workspace({ url }: { url: UrlState }) {
   return (
     <div className="local-shell">
       <Sidebar
-        page={
-          page === "jobs" ||
-          page === "repositories" ||
-          page === "sessions" ||
-          page === "analytics" ||
-          page === "pulls"
-            ? page
-            : page === "settings" || page === "diagnostics"
-              ? "settings"
-              : "inbox"
+        page={railPage}
+        inbox={inboxBadgeCount(inbox.queue, inboxes.inboxes)}
+        inboxes={
+          inboxes.available
+            ? {
+                list: inboxes.inboxes,
+                counts: Object.fromEntries(
+                  inboxes.inboxes.map((candidate) => [
+                    candidate.id,
+                    inbox.queue.filter((item) => matches(candidate, item)).length,
+                  ]),
+                ),
+                selected: selectedInbox?.id ?? null,
+                elsewhere: page === "inbox-new" || page === "inboxes",
+                toggleBadge: (target) =>
+                  inboxes.save(
+                    inboxes.inboxes.map((candidate) =>
+                      candidate.id === target.id
+                        ? { ...candidate, badge: !candidate.badge }
+                        : candidate,
+                    ),
+                  ),
+                remove: removeInbox,
+                edit: (target) => navigate(editInboxHref(target.id)),
+                footer: <RailLinks page={page} Link={LocalLink} />,
+              }
+            : undefined
         }
-        inbox={inbox.queue.length}
         activeJobs={jobs.filter(isActiveJob).length}
         runningSessions={live.filter((s) => s.state === "running").length}
         needsYou={needsYou(live).length}
@@ -697,6 +851,9 @@ function Workspace({ url }: { url: UrlState }) {
             <Alert>
               {error} <Button onClick={() => void reload()}>Retry</Button>
             </Alert>
+          ) : null}
+          {inboxes.error && !(inboxWaiting && inboxes.status === "failed") ? (
+            <Alert>{inboxes.error}</Alert>
           ) : null}
           {page === "repositories" ? (
             <RepositoriesPage
@@ -769,6 +926,19 @@ function Workspace({ url }: { url: UrlState }) {
                 <Jobs jobs={jobs} changed={reload} />
               </div>
             </>
+          ) : inboxWaiting ? (
+            inboxWaiting
+          ) : page === "inbox-new" ? (
+            <NewInboxPage {...inboxPageProps} created={setFreshInbox} />
+          ) : page === "inbox-edit" ? (
+            <EditInboxPage
+              {...inboxPageProps}
+              id={url.search.get("inbox") ?? ""}
+              fresh={freshInbox === url.search.get("inbox")}
+              remove={removeInbox}
+            />
+          ) : page === "inboxes" ? (
+            <ManageInboxesPage {...inboxPageProps} />
           ) : groupId ? (
             (() => {
               const group = groups.find((g) => g.id === groupId);
@@ -813,28 +983,43 @@ function Workspace({ url }: { url: UrlState }) {
               </div>
             </section>
           ) : selectedEntry ? (
-            <LocalReview
-              key={rowKey(selectedEntry)}
-              entry={selectedEntry}
-              clone={cloneFor(selectedEntry)}
-              revision={revision}
-              job={reviewJob(selectedEntry, jobs)}
-              changed={reload}
-              live={live}
-              groups={groups.filter(
-                (g) =>
-                  sameRepository(g.repository, selectedEntry.pull_request.repository) &&
-                  g.members.includes(selectedEntry.pull_request.number),
-              )}
-              generate={() => void generate([selectedEntry], "single")}
-              starting={starting.has(rowKey(selectedEntry))}
-              fix={cloneFor(selectedEntry) ? () => void fix(selectedEntry) : undefined}
-              fixState={fixState(selectedEntry)}
-              fixJob={fixJob(selectedEntry, jobs)}
-            />
+            <DecisionsRevision.Provider value={decisionsTick}>
+              <LocalReview
+                key={rowKey(selectedEntry)}
+                entry={selectedEntry}
+                clone={cloneFor(selectedEntry)}
+                revision={revision}
+                job={reviewJob(selectedEntry, jobs)}
+                changed={reload}
+                live={live}
+                groups={groups.filter(
+                  (g) =>
+                    sameRepository(g.repository, selectedEntry.pull_request.repository) &&
+                    g.members.includes(selectedEntry.pull_request.number),
+                )}
+                generate={() => void generate([selectedEntry], "single")}
+                starting={starting.has(rowKey(selectedEntry))}
+                fix={cloneFor(selectedEntry) ? () => void fix(selectedEntry) : undefined}
+                fixState={fixState(selectedEntry)}
+                fixJob={fixJob(selectedEntry, jobs)}
+              />
+            </DecisionsRevision.Provider>
           ) : page !== "pulls" ? (
             <UpNextPage
               inbox={inbox}
+              inboxes={inboxes.inboxes}
+              selected={selectedInbox}
+              headerAction={
+                selectedInbox ? (
+                  <LocalLink
+                    href={editInboxHref(selectedInbox.id)}
+                    className="inbox-btn inbox-edit-link"
+                  >
+                    Edit
+                  </LocalLink>
+                ) : undefined
+              }
+              login={github?.login}
               // Until a read succeeds there is nothing to say an empty inbox about.
               loading={revision === 0}
               hasRepositories={picked.length > 0 || clones.length > 0}
@@ -1020,6 +1205,20 @@ function Workspace({ url }: { url: UrlState }) {
               Couldn't start the fix of #{fixError.number}: {fixError.text}
             </Alert>
           ) : null}
+          {inboxToast ? (
+            <div role="status" className="upnext-toast inbox-toast">
+              <span>{inboxToast.text}</span>
+              <button
+                type="button"
+                onClick={() => {
+                  inboxToast.undo();
+                  setInboxToast(null);
+                }}
+              >
+                Undo
+              </button>
+            </div>
+          ) : null}
           {shortcuts ? (
             <ShortcutsSheet current={shortcutsPlace} close={() => setShortcuts(false)} />
           ) : null}
@@ -1107,7 +1306,10 @@ function ForkConfirmation({
 function Jobs({ jobs, changed }: { jobs: Job[]; changed: () => Promise<void> }) {
   const [error, setError] = useState("");
   const newest = jobs.slice().reverse();
-  const rows = useRowFocus<HTMLUListElement>(newest.map((job) => job.id));
+  const rows = useRowFocus<HTMLUListElement>(
+    "jobs",
+    newest.map((job) => job.id),
+  );
   useShortcuts((event) => {
     if (listKeys(event, rows) || event.key !== "t" || !rows.focused) return;
     const transcript = rows
@@ -1199,25 +1401,31 @@ function JobRow({
     >
       <JobState job={job} />
       <div className="min-w-0">
-        <LocalLink
-          data-row-link=""
-          href={appURL(
-            job.group
-              ? `?group=${encodeURIComponent(job.group)}`
-              : `?${job.clone ? `clone=${encodeURIComponent(job.clone)}` : `repository=${encodeURIComponent(job.repository)}`}&pr=${job.pr}`,
-          )}
-          className="local-job-title"
-        >
-          {job.group ? (
-            <>
-              Review group: {job.group_name || job.group} <span>{job.repository}</span>
-            </>
-          ) : (
-            <>
-              {job.repository} <span>#{job.pr}</span>
-            </>
-          )}
-        </LocalLink>
+        {job.kind === "feature_build" ? (
+          <span className="local-job-title">
+            Feature build <span>· {job.repository}</span>
+          </span>
+        ) : (
+          <LocalLink
+            data-row-link=""
+            href={appURL(
+              job.group
+                ? `?group=${encodeURIComponent(job.group)}`
+                : `?${job.clone ? `clone=${encodeURIComponent(job.clone)}` : `repository=${encodeURIComponent(job.repository)}`}&pr=${job.pr}`,
+            )}
+            className="local-job-title"
+          >
+            {job.group ? (
+              <>
+                Review group: {job.group_name || job.group} <span>{job.repository}</span>
+              </>
+            ) : (
+              <>
+                {job.repository} <span>#{job.pr}</span>
+              </>
+            )}
+          </LocalLink>
+        )}
         <p className="local-job-meta">
           {job.kind === "fix" ? `${fixName(job.fix ?? {})} · ` : null}
           {started ?? (job.automatic ? null : "Started by you")}

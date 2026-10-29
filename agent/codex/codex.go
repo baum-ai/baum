@@ -74,7 +74,7 @@ type Backend struct {
 func (*Backend) Name() string { return agent.BackendCodex }
 
 func (c *Backend) Run(ctx context.Context, request agent.Request) (agent.Result, error) {
-	return c.run(ctx, request, false)
+	return c.run(ctx, request, false, nil)
 }
 
 // Fix runs Codex with write access to the request's directory, for a fix a
@@ -87,10 +87,10 @@ func (c *Backend) Fix(ctx context.Context, request agent.Request) (agent.Result,
 	if c.Profile != Local {
 		return agent.Result{}, errors.New("codex: only the Local profile runs fixes")
 	}
-	return c.run(ctx, request, true)
+	return c.run(ctx, request, true, nil)
 }
 
-func (c *Backend) run(ctx context.Context, request agent.Request, fix bool) (result agent.Result, err error) {
+func (c *Backend) run(ctx context.Context, request agent.Request, fix bool, extra []string) (result agent.Result, err error) {
 	result.Model = c.Model
 	result.ModelSource = "configured"
 	pendingTurns := 0
@@ -186,6 +186,7 @@ func (c *Backend) run(ctx context.Context, request agent.Request, fix bool) (res
 	args = append(args, "-c", `approval_policy="never"`, "-c", `web_search="disabled"`,
 		"--skip-git-repo-check")
 	args = append(args, fixConfig...)
+	args = append(args, extra...)
 	// An empty Model leaves the flag out so Codex uses its configured default.
 	if c.Model != "" {
 		args = append(args, "--model", c.Model)

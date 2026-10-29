@@ -156,6 +156,10 @@ outcome with the agent's summary (`FixDetails`). `reviewJob` ignores fix jobs an
 never shows as a review being generated. The daemon polls discovery after a
 push, so the new head appears without a manual refresh.
 
+The Jobs page lists a repository's first feature build (`kind:
+"feature_build"`, `pr` 0) as "Feature build · <repository>", with no link; it
+starts at once when asked for, like any other run.
+
 A fix can be watched live. A fix job with `has_transcript` has a transcript
 page, `?page=jobs&job=<id>` (`JobPage` and `JobTranscript` in
 `src/job-transcript.tsx`), its panels in the inbox's light sand on its darker
@@ -200,7 +204,8 @@ are `⌘[` and `⌘]` on a Mac and `Alt+←` and `Alt+→` elsewhere. These work
 text fields too, but not under a dialog other than the sheet or Go to, which
 they close. Go to searches the pages, the pull requests (by title, repository,
 number, author or branch; what waits in the Inbox first), the review groups and
-the agent sessions: every word typed must match, a label that starts with the
+the agent sessions, and, with a daemon that has inboxes, each inbox by its name
+(opening its queue) with **New inbox** and **Manage inboxes**: every word typed must match, a label that starts with the
 query ranks first, `↑` and `↓` move, `Enter` opens and `Esc` closes. The sidebar
 draws each page's key while Alt is held and names it in the link's tooltip and
 `aria-keyshortcuts`. Tab moves nothing anywhere, dialogs included: the keys act
@@ -241,6 +246,11 @@ on buttons (class `key-hint`) show only while Alt, Option on a Mac, is held:
 the window loses focus. The focused row has an
 accent bar and a faint fill, distinct from hover and selection; focus moves to
 the row's own link, so screen readers follow, and the row scrolls into view.
+Each list (Pull requests, Inbox, Sessions, Jobs, Repositories) keeps its
+focused or selected row for as long as the app runs (`useLastRow`), and a link
+clicked in a row keeps that row too, so coming back from what a row opened
+(`Esc`, `u`, Back or the sidebar) lands on the same row, scrolled to the middle.
+`Esc` on the list gives the row up.
 Keys are ignored with Ctrl, Meta or Alt held, in text fields, selects, text areas
 and editable content (checkboxes and radios still pass them) and while any dialog
 is open. On a pull request or group page, `u`, or `Esc` with nothing focused,
@@ -282,8 +292,9 @@ colours and sizes rather than the app's tokens and type scale (`--un-*` in
 panel scroll on their own, and below 760px the list stacks above the panel.
 `upNext` places each open pull request in at most one kind, from discovery's
 flags only: **Review** (their review is requested), **Clone** (a requested
-review whose repository has no local clone), **Merge** (theirs, and
-`canMerge`), **Fix** (theirs, with changes requested, unresolved threads, a
+review whose repository has no local clone), **Merge** (theirs, `canMerge`
+and no checks running: GitHub can call a head just pushed clean before its
+checks are queued), **Fix** (theirs, with changes requested, unresolved threads, a
 conflict or failing checks) and **Update** (theirs, and `canUpdateBranch`).
 The queue runs in that order, which is the order of the list's groups:
 **Needs your eyes** (Review, Clone), **Ready to merge** (Merge) and **Hand to
@@ -348,6 +359,115 @@ the daemon. The sidebar's Inbox badge counts the queue without snoozed pull
 requests. It is not the desktop tray's waiting count, which counts only review
 requests and the person's blocked pull requests.
 
+**Inboxes** are saved filters over this same queue, defined in the daemon (see
+its [inboxes README](../internal/inboxes/README.md)) and matched here
+(`src/inboxes.ts`): the app never builds a second queue. An inbox holds the
+queue items that fit all of its parts: what (any; reviews, which are Review and
+Clone items; things ready to merge; things an agent can fix, which are Fix and
+Update items and the pull requests a fix agent is working on now; or the
+person's own), owners (the repository's owner, ignoring case; none means any),
+risk (3 or more, or 4 or more, from the baum review's score; a pull request with
+no score yet never matches a risk filter, and "at least N" counts as N),
+repositories (none means any) and whether bots are left out. A pull request can
+be in several inboxes. An inbox's queue is `?inbox=<id>` on the app root (an
+unknown id shows the Inbox): the same page, with only the matching items, the
+same groups, order, panel, keys, snoozes and **Merge all N** (which counts only
+that inbox's Merge items). Its header shows the inbox's name beside its colour
+dot and a sentence saying what it holds ("Anything waiting on me in any
+repository, whatever the risk."), and an empty one says "Nothing here right
+now." Snoozed lists only the inbox's pull requests. **Done today**, the header's
+done count and progress bar, and the group of the person's own pull requests
+that wait on checks or reviews are only in the Inbox (all). In the Inbox a row
+carries a small tag with the colour and name of the first inbox it is in, and
+its panel a tag for each; in an inbox the panel tags the other inboxes it is
+also in. Colours are six palette names (`--inbox-*` in `src/style.css`, with
+dark variants).
+
+In the sidebar a chevron beside Inbox folds the inboxes nested under it
+(remembered in `localStorage`; hidden with the glyph-only rail). The pages and
+inboxes scroll within the sidebar, so with many inboxes plan usage, Jobs and
+Settings stay in view; a row's menu is placed against the window, under its row
+or above it near the bottom, and closes when the sidebar scrolls. Each row links
+to `?inbox=<id>`, is the current page when selected (then Inbox is not), and
+shows a dot, the name and how many unsnoozed items match, none when 0. The `⋯`
+button opens a short list of buttons, focused on the first, to leave the inbox
+out of the Inbox badge (its count is then muted, and says so to screen readers)
+or count it, and **Delete inbox**. Esc, a click elsewhere or choosing closes it
+and returns focus to the `⋯` button (after a delete, to the neighbouring inbox,
+or Inbox); focus never drops to the page. The menu's first button is **Edit inbox**,
+which opens the inbox's edit page. Delete toasts "Deleted <name>. Its
+pull requests stay in Inbox." with **Undo**, which puts back only that inbox,
+with its id so links to it still work, into the list as it is then, at its old
+place (or the end), so a change made while the toast was up is kept; an inbox
+with that id already there is left alone. The chevron is labelled "Inboxes",
+with `aria-expanded` and `aria-controls` for the nested list. The Inbox badge counts the unsnoozed
+queue items that are in no inbox or in at least one that counts in the badge;
+with no inboxes it is the count above. Changes show at once and are sent to the
+daemon one at a time, each carrying the newest revision, so an older change
+cannot overwrite a newer one; a conflict adopts the daemon's list and any other
+failure restores the last saved list with an error. An older daemon (the read
+answers 404, or `available: false`) has none of this: no chevron, rows, tags or
+changed badge. Any other failed read (a 500 `inboxes_unreadable`, a dropped
+connection) is not an older daemon: it keeps the list shown (on the very first
+read, nothing inbox-related) and says "Couldn't read your inboxes" in an alert
+until a read succeeds, and later saves still go out. Entries the daemon sends
+are read defensively (missing lists are empty, unknown values the plain ones,
+entries without an id and name dropped).
+
+Inboxes are made and changed on three pages that sit under Inbox in the sidebar
+but are not sidebar pages of their own, so they have no number key and ⌘1 still
+opens Inbox (`src/inbox-pages.tsx`; routed in `src/app.tsx` by `?page=`). The
+nested list always ends with **New inbox** and **Manage inboxes** (shown even
+with no inboxes), and an inbox's queue header carries an **Edit** link. With an
+older daemon none of these links, pages or Go to entries exist, and a direct
+address to them shows Inbox, but only for an older daemon (the read answers 404
+or `available: false`): before the first read has answered the page shows
+"Loading inboxes…" rather than Inbox, and after a first read that failed it
+shows the read error with Retry. On New inbox and Manage inboxes the sidebar's
+current page is that entry alone, and Inbox is only the section (as when an
+inbox's row is selected); the edit page keeps the inbox's own row current.
+Every control is a real button, link or input with
+a label, with no key of its own, as Tab moves nothing in the app.
+
+- **New inbox** (`?page=inbox-new`): "What should this inbox catch?" and six
+  templates, each a button with a colour dot, name, sentence and how many
+  unsnoozed pull requests it would show now. Urgent (red) is any repository at
+  risk 4 or 5; Work (blue) is every owner of the person's repositories except
+  their login (empty when there is none); Personal (green) is the login's own
+  repositories with the badge off; Needs my review (purple), Quick merges
+  (amber) and For an agent (grey) pick that kind. A name another inbox has
+  becomes "Urgent 2", "Urgent 3"… Picking one appends it to the list with an id
+  the app makes in the daemon's shape (so its page opens at once), and opens its
+  edit page with "Created and added to the sidebar. Adjust anything below.", its
+  Name input focused. At
+  20 inboxes the templates are disabled, with a line saying so.
+- **Edit** (`?page=inbox-edit&inbox=<id>`): "← <name>" back to its queue, a
+  "Saved" mark after each save the daemon accepted, and "Changes save as you
+  make them". The name is an input saved on blur or Enter; a blank or
+  too-long name, or one another inbox has (ignoring case), is refused in place
+  and not sent. Six colour swatches have radio semantics. "What it catches" is
+  the sentence with its three parts (what, where, risk) as buttons; one opens its
+  options as buttons, each with how many pull requests it would show, and
+  picking one saves. Where offers any repository, the person's own, each other
+  owner of their repositories and, when the inbox holds a set the list lacks,
+  that set. Fine-tune holds repository chips (none picked means all that match
+  above) and "Leave out: Bots" (`no_bots`). A switch counts the inbox in the
+  Inbox badge. **Delete inbox** is the sidebar's delete with Undo, then goes to
+  Inbox with focus on the sidebar's Inbox link. The right-hand preview is "Would show right now" with the same
+  unsnoozed queue items and `matches` as the queue, grouped like it, each row
+  with its repository and tags of the other inboxes it is in. A change that
+  alters the matches says "N added", "N removed" or "N added · N removed" (a
+  zero half is left out) for four seconds, in a live region that is always on
+  the page and empty otherwise, the removed rows struck through and fading out
+  over the last moments (no fade with reduced motion). An unknown id says "This inbox no longer
+  exists" and links to Inbox.
+- **Manage** (`?page=inboxes`): the inboxes in the sidebar's order, each with
+  its colour dot, name, how many are in it now, sentence, up and down buttons
+  ("Move <name> up", disabled at the ends), a labelled badge switch and Edit; a
+  save sends the whole list in its new order. A tinted note says how many queue items
+  are in no inbox (they show only under Inbox and always count in its badge; in
+  the caution tone), or that every one is in some (in the positive tone). With none, it leads to New inbox.
+
 Pull requests (`?page=pulls`, `src/inbox.tsx`) lists every open pull request
 of the picked repositories, with or without a local clone, with Risk,
 Pull request, Review time, Review and Status columns. The pull requests of a
@@ -375,13 +495,12 @@ with the exact time as a tooltip), with a turning mark while a refresh runs.
 A row's last cell holds its action and **Peek**, which wait for the pointer or
 keyboard focus in the wide table. Peek (or `Space` on the focused row) opens
 the saved review under the row, read when first opened and again only for a
-new version: the summary, the first reason for its risk (in the critical tone
-at 4 and 5), the first four sections in review order with their lines added
+new version: the summary (the row already shows the risk score), the first four sections in review order with their lines added
 and removed, and **Open the review**. Without a saved review it says why (no
 clone, being written, failed, none yet) and offers **Generate the review**
 where it can run. A row whose state (review, checks, merge state, threads,
-score, estimate or version) changed in the latest read flashes once. The keys
-that work on the list are listed at its foot, except on touch screens. Generating and failed reviews remain visible under the
+score, estimate or version) changed in the latest read flashes once. The keys that work on the list are
+in the shortcuts sheet (`?`). Generating and failed reviews remain visible under the
 title, with agent sessions in progress beside them. Incomplete risk assessments show a lower bound (`≥N/5`) with an explicit
 “at least” description and caution styling rather than a reassuring low-risk
 colour. Collapsible groups say who acts next, with each row in one group:
@@ -468,7 +587,7 @@ minutes, say how old they are.
 See the daemon's [plan usage README](../internal/planusage/README.md).
 
 The app's sidebar leads to the Inbox, Pull requests, Sessions, Analytics, Repositories, Jobs
-and Settings; the Inbox shows how many things wait on the person there, and Sessions shows the number of agent sessions waiting on the person (in the caution tone), or
+and Settings; the Inbox shows how many things wait on the person there (its inboxes are nested beneath it), and Sessions shows the number of agent sessions waiting on the person (in the caution tone), or
 else the number working now.
 
 The Analytics page (`?page=analytics&days=7|30|90&repo=&agent=`, `src/analytics.tsx`)
@@ -573,6 +692,40 @@ never a path; a session's transcript comes only when the Sessions page opens it
 from disk again, where the full session is. A daemon without the record serves
 none.
 
+Decision capture (`GET api/decisions`, see the daemon's
+[decision capture README](../internal/decisionlog/README.md)) adds
+"Decisions (n)" to each row of that panel: the session's decision titles
+behind a disclosure, and "Updated N minutes ago", "Capturing…" or why it was
+not captured, in words (Cursor Agent as the review harness cannot capture),
+followed by why capture will not run again (paused, off, off for the
+repository, or not a picked repository; `capture_off`).
+Below it, "Decisions from sessions" lists the decisions of every session of
+the pull request, in progress or linked by the saved review, marking those
+made after that review was generated "Provisional", ended sessions the
+tracker still holds included; it is not drawn while no session has decisions,
+a capture state or a capture in flight. Both read again on the `decisions`
+event, which carries no data (events within 250 ms make one read), and when
+the event stream opens or resets or the automatic switch changes. Settings' **Decision capture** section holds
+the switch, the decision log model (the harness's cheap default, or another
+of its models), read with `GET api/settings/decisions` and saved with `PUT
+api/settings/decisions` (`enabled`, `model`; the whole object). Only these two answer
+with what the daemon makes of them: the harness capture resolves to, its model
+and whether the saved model is ignored (unknown, with a note that capture
+does not run, when no harness resolves); the section reads them again when
+the review harness changes. A saved model it ignores is listed as
+"<model> (not used)" with a note naming the harness, so choosing the default
+clears it. When the harness cannot be resolved the section says so, apart
+from a check that did not answer in time. A repository's dialog turns capture off for it (`decisions: false`; on sends
+`null`). The desktop setup's review step (which shows `auto` as the harness the daemon resolved, else
+its own guess) offers the decision log model beside the harness, reset to that
+harness's cheap model when the harness changes, and says what capture sends;
+the default is saved as none, so it follows the harness, and a saved model
+the daemon reports ignored (`baum internal reviews show`, with the harness it
+resolved) is shown the same way while that harness is chosen, and kept unless
+changed.
+Analytics shows decision capture's calls, failures by reason, calls cut short
+by a stop and spend under baum's work; an unknown cost stays unknown.
+
 The Sessions page (`?page=sessions`) is a live feed of the same sessions, in three
 sections of cards; the `live` event updates it and the sidebar count, and times
 tick every second. The daemon keeps ended sessions for 24 hours, across restarts.
@@ -590,7 +743,9 @@ tick every second. The daemon keeps ended sessions for 24 hours, across restarts
   what was done, and when nobody waits it reads "Nobody is waiting on you." with the
   last action. A session waiting with no request (it finished its turn, or asks for
   something only its terminal can answer) gets a quieter card with the reason, the
-  wait, the agent's last message, the line it showed and Open transcript, plus
+  wait, the agent's last message (rendered as Markdown when it finished its turn, its
+  opening lines fading into Open transcript; a quote clamped to three lines
+  otherwise), the line it showed and Open transcript, plus
   "Answer in the terminal" for a permission or an answer. It has no reply box: the app
   sends messages only to running sessions. A daemon without `api/agent-requests`
   shows no requests.
@@ -712,7 +867,12 @@ unknown costs, selection and filters, automatic settings and notices,
 and the automatic job labels. The fixture also writes two Claude Code sessions in
 the demo clone under its fake home, commits of the person's in the other clone,
 plan usage samples and GitHub's answer to the delivery search, and a test opens
-Analytics and checks the figures they make, at desktop and narrow widths.
+Analytics and checks the figures they make, at desktop and narrow widths. The
+fixture also serves a real inbox store (`inboxes.json` in its state directory), and
+`e2e/inboxes.spec.ts` makes an inbox from a template, changes a part of its
+sentence and sees the preview say what changed, switches its badge and sees the
+Inbox badge change, and deletes it from the sidebar with Undo. `e2e/inbox-screens.spec.ts`
+takes pictures of the inbox pages, light and dark, only with `INBOX_SCREENSHOTS=1`.
 
 Generation usage is retained as provider-reported input, output, cache-read and
 cache-creation buckets, with available TTL, speed, prompt range and model-call
@@ -726,8 +886,10 @@ Saved review usage follows the version selected in history. Its cost reads
 "At API prices": what the usage would cost at API prices, not what a
 subscription charges. Unknown costs show a reason; configured model identity
 is distinguished from a provider report. Each attempt is priced independently
-when its model and pricing inputs are known. Pricing only reports: no budget,
-cap, confirmation or decision about a run reads it.
+when its model and pricing inputs are known. A cost with `unpriced_calls` (a
+feature build some of whose calls could not be priced) is a lower bound, shown
+"≥" with a note. Pricing only reports: no budget, cap, confirmation or decision
+about a run reads it.
 
 GitHub browser scenarios use the real auth manager/controller and mocked GitHub
 HTTP and credential-store boundaries. The `github-auth-mode` marker selects
