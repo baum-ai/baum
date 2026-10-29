@@ -364,7 +364,9 @@ transcript in its usual store beside the review's, holding the questions, the
 files the agent read and its answers. When the review's session is gone, baum
 seeds a new run directory under the same `<cache>/baum/review-runs/` root
 (0700) with the checkout of the review's head from your clone, the saved
-review (already masked) and the earlier questions and answers (masked). Using
+review (already masked) and the earlier questions and answers (masked;
+questions are stored and shown as you typed them, and masked only where they
+go to the agent). Using
 a directory refreshes its modification time, so it expires 14 days after the
 conversation last used it; pruning a review's older versions and the expiry
 delete these directories and every CLI session in them, chat forks included,

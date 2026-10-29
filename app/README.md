@@ -157,7 +157,10 @@ by registered clone ID and pull request as for `api/versions`:
   answer?, job_id, state, reason?, note?, cost_usd?, cost_reason?, created,
   finished?}]}]}`, newest first. `answer` is `{answer_markdown, citations:
   [{path, start_line, end_line}], suggests_fix: {summary} | null}`, masked for
-  secrets, its citations checked against the head. `state` is `queued`,
+  secrets, its citations checked against the head. `question` is the
+  reviewer's own text as typed, not masked (it is masked only when sent to the
+  agent). A turn whose `note` says the agent kept no session answered, but the
+  next question starts without the conversation's context. `state` is `queued`,
   `running`, `completed`, `failed`, `cancelled` or `interrupted` (a turn whose
   job a stopped daemon left behind). A conversation whose `version` is not the
   latest review is about an older one. `seeded` with a turn's `note` means the

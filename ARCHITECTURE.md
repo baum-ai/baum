@@ -1674,17 +1674,26 @@ root (`reviewruns.Create`): the checkout of the review's head commit exported
 from the registered clone (`head/` only, within the review's checkout limits;
 a clone that lacks the commit fails the turn with `needs_clone`), the stored,
 already-masked review as `review.json`, and the earlier answered turns as
-`conversation.json` (question and `answer_markdown`, oldest first, the newest
-that fit in 64 KiB), and starts a new persisted session there. The
+`conversation.json` (question, masked here, and `answer_markdown`, oldest
+first, the newest that fit in 64 KiB), and starts a new persisted session there. The
 conversation is then marked `seeded` and the turn's `note` says it started
 without the review's own context. A resume or fork whose session the CLI
 cannot find falls back the same way, once per turn: `agent.Generator.Continue`
 (the loop's provider retries, stall watchdog and budgets for one call of a
 continuing session) returns `agent.ErrSessionNotFound` at once, without
-retries, only when the call resumed a session, made no model call and the
-CLI's error names a missing session ("No conversation found with session ID"
-for Claude Code; a thread, session or rollout "not found" for Codex). A seeded
-directory for which no session was recorded is removed. Before a directory is
+retries. The backends report it themselves for a resume or fork: Claude Code
+ends with a failed `result` event (no turns) whose `errors` say "No
+conversation found with session ID" (on a fork its `session_id` is a fresh,
+empty one, which is dropped), and Codex exits with a line of stderr, any line
+after warnings, naming the thread or rollout it could not find ("no rollout
+found for thread id"). The loop also recognises such text in an error of a
+resumed call that made no model call. A seeded directory for which no session
+was recorded is removed. Session ids are kept only when they are UUIDs: a
+stored one that is not valid counts as gone and seeds a new session. When the
+agent reports no session for an answer, the answer stands, the turn's `note`
+says the next question starts without this conversation's context, and the
+next turn seeds a session with the earlier turns rather than forking the
+review again. Before a directory is
 used `reviewruns.Use` checks it is a real run directory directly under the
 root and sets its modification time to now, so the 14-day expiry never removes
 a directory a chat used recently. `PruneVersions` still removes the
@@ -1712,10 +1721,18 @@ the checkout after symlinks are resolved, an existing regular file, and
 `1 <= start_line <= end_line <=` its line count. A reply the schema rejects, or
 with citations that fail, gets one repair that resumes the same session (never
 a fresh call, which would lose what the agent read); citations still wrong
-afterwards are dropped, so a stored answer never carries a broken one. The
+afterwards are dropped, so a stored answer never carries a broken one; when
+only citations were wrong and the repair breaks the schema, the first answer
+stands without them. A path that names the file only on a case-insensitive
+file system is stored as the checkout spells it. The
 answer is masked with `agent.RedactTaskOutput` before it is checked further,
-stored or returned, and the log carries sizes and counts only. A turn's
-budgets are half of a review's calls, tokens and wall clock.
+stored or returned, and the log carries sizes and counts only. The question
+itself is the reviewer's own text: it is stored and served as typed, and
+masked only where it goes to an agent (the turn's prompt and a seeded
+`conversation.json`). A turn's budgets are half of a review's calls, tokens
+and wall clock, and each call is bounded by half of its `pass_timeout`
+(`generate.BoundPasses`), which fails the turn with the budget
+`pass_timeout` without a retry.
 
 Storage and jobs. Conversations and turns live in the clone's review store
 (`versions.sqlite`, tables `conversations` and `turns`, keyed by the lowercased
@@ -1730,8 +1747,9 @@ like a fix (`has_transcript`), reports phase, calls, tokens and cost
 (`pricing.BackendAccountingCost`), and fails with the generation reasons
 (`budget`, `backend`, `validation`, `interrupted`, `internal`) or
 `needs_clone`. A failed, cancelled or interrupted job settles its turn the same
-way; a turn whose job is gone (a daemon that stopped while it ran) reads as
-interrupted and does not keep the conversation busy. A `chat` server-sent
+way, with the job's cost even when a next question settled the turn from
+its ended job first; a turn whose job is gone (a daemon that stopped while it
+ran) reads as interrupted and does not keep the conversation busy. A `chat` server-sent
 event (`{conversation, repository, pr, turn, state}`, never the answer) goes
 out when a question is queued and when it settles.
 
