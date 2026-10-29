@@ -2285,14 +2285,14 @@ metadata, risk, the members that version covered and whether it is outdated
 reviewed), and a group's versions, documents and patches.
 
 Stacked pull requests are grouped by default. After every complete discovery
-snapshot `localApplication` passes the repository's stacks
-(`reviewgroups.Stacks`: chains of 2 to 8 open, non-fork pull requests by one
-author, each based on the previous one's head branch; a branch several open
-pull requests are based on is shared and links none of them) to
-`Store.SyncStacks`, which creates, updates or dissolves the repository's
-stack groups (`stack` true). A stack touching a pull request in a person's
-group, or in a stack group the person deleted, is left alone, and a person's
-rename or member change makes a stack group theirs.
+snapshot `localApplication` passes the repository's open pull requests to
+`Store.SyncStacks`. It plans stacks with the hosted platform's rules
+(`stacks.Plan`: pull requests by one author, each based on another's head
+branch, as chains or trees; see `stacks/README.md`) over the live stack groups
+and creates, updates or dissolves stack groups (`stack` true) of 2 to 8
+members. Pull requests in a person's group, or in a stack group the person
+deleted, take no part, and a person's rename or member change makes a stack
+group theirs.
 
 A job item names `{clone, group}` with `pr` 0, so pull request scheduling and
 notices, keyed by pull request, never match a group job; the queue's busy and

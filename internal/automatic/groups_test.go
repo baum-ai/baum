@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/baum-ai/baum/internal/discovery"
 	"github.com/baum-ai/baum/internal/reviewgroups"
 )
 
@@ -18,7 +19,8 @@ func withGroups(t *testing.T, h *harness) (stack, mine reviewgroups.Group) {
 	}
 	t.Cleanup(func() { _ = groups.Close() })
 	ctx := context.Background()
-	if _, err := groups.SyncStacks(ctx, "org/repo", []reviewgroups.Stack{{Members: []int{1, 2}, Name: "Stack"}}); err != nil {
+	stacked := []discovery.PullRequest{{Number: 1, Title: "Stack", HeadRef: "a", BaseRef: "main"}, {Number: 2, HeadRef: "b", BaseRef: "a"}}
+	if _, err := groups.SyncStacks(ctx, "org/repo", stacked); err != nil {
 		t.Fatal(err)
 	}
 	if mine, err = groups.Create(ctx, "org/repo", "Mine", []int{3, 4}); err != nil {

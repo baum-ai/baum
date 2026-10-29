@@ -1220,7 +1220,7 @@ function JobRow({
         </LocalLink>
         <p className="local-job-meta">
           {job.kind === "fix" ? `${fixName(job.fix ?? {})} · ` : null}
-          {started ?? "Started by you"}
+          {started ?? (job.automatic ? null : "Started by you")}
         </p>
         {job.kind === "fix" && job.commit ? (
           <p className="local-job-meta">

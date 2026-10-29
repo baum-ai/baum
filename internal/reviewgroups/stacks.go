@@ -10,81 +10,8 @@ import (
 	"unicode"
 
 	"github.com/baum-ai/baum/internal/discovery"
+	"github.com/baum-ai/baum/stacks"
 )
-
-// Stack is a set of open pull requests stacked on each other, as Stacks
-// finds them.
-type Stack struct {
-	// Members are the pull request numbers, ascending.
-	Members []int
-	// Name is the group name a new stack group gets: the bottom pull
-	// request's title.
-	Name string
-}
-
-// Stacks finds the stacks among a repository's open pull requests: chains
-// of pull requests by one author, each based on the previous one's head
-// branch. A branch several open pull requests are based on is shared, like a
-// develop branch with its own pull request into main, and links none of them.
-// Pull requests from forks are left out, and so are stacks of more than
-// MaxMembers.
-func Stacks(prs []discovery.PullRequest) []Stack {
-	prs = slices.DeleteFunc(slices.Clone(prs), func(pr discovery.PullRequest) bool {
-		return pr.Fork || pr.HeadRef == "" || pr.Number <= 0
-	})
-	slices.SortFunc(prs, func(a, b discovery.PullRequest) int { return a.Number - b.Number })
-	parent := make([]int, len(prs))
-	for i := range parent {
-		parent[i] = i
-	}
-	var root func(int) int
-	root = func(i int) int {
-		if parent[i] != i {
-			parent[i] = root(parent[i])
-		}
-		return parent[i]
-	}
-	heads := map[string][]int{}
-	bases := map[string]int{}
-	for i, pr := range prs {
-		heads[pr.HeadRef] = append(heads[pr.HeadRef], i)
-		bases[pr.BaseRef]++
-	}
-	stacked := make([]bool, len(prs))
-	for i, pr := range prs {
-		below := heads[pr.BaseRef]
-		if bases[pr.BaseRef] != 1 || len(below) != 1 || below[0] == i || !strings.EqualFold(prs[below[0]].Author, pr.Author) {
-			continue
-		}
-		stacked[i] = true
-		parent[root(i)] = root(below[0])
-	}
-	components := map[int][]int{}
-	for i := range prs {
-		components[root(i)] = append(components[root(i)], i)
-	}
-	var out []Stack
-	for _, members := range components {
-		if len(members) < MinMembers || len(members) > MaxMembers {
-			continue
-		}
-		// The bottom is the one member not stacked on another.
-		bottom := members[0]
-		for _, i := range members {
-			if !stacked[i] {
-				bottom = i
-				break
-			}
-		}
-		stack := Stack{Name: stackName(prs[bottom])}
-		for _, i := range members {
-			stack.Members = append(stack.Members, prs[i].Number)
-		}
-		out = append(out, stack)
-	}
-	slices.SortFunc(out, func(a, b Stack) int { return a.Members[0] - b.Members[0] })
-	return out
-}
 
 // stackName is the name "Review together" suggests for a group: the first
 // (here the bottom) pull request's title, cut to a group name's length.
@@ -99,18 +26,20 @@ func stackName(pr discovery.PullRequest) string {
 	return title
 }
 
-// SyncStacks keeps repository's stack groups in step with its current
-// stacks and reports whether anything changed:
+// SyncStacks keeps repository's stack groups in step with the stacks among
+// its open pull requests (package stacks, the hosted detection) and reports
+// whether anything changed:
 //
-//   - a stack without a group gets a new stack group;
+//   - a stack of 2 to MaxMembers without a group gets a new stack group;
 //   - a stack group whose stack gained or lost members gets the stack's
 //     members;
-//   - a stack group whose stack is gone (merged, closed or unstacked) is
-//     dissolved: removed from every list, its versions kept.
+//   - a stack group whose stack is gone (merged, closed, unstacked or grown
+//     past MaxMembers) is dissolved: removed from every list, its versions
+//     kept.
 //
-// The person's choices win: a stack with a pull request in a group the person
-// made or took over, or in a stack group the person deleted, gets no group.
-func (s *Store) SyncStacks(ctx context.Context, repository string, stacks []Stack) (bool, error) {
+// The person's choices win: a pull request in a group the person made or took
+// over, or in a stack group the person deleted, takes no part.
+func (s *Store) SyncStacks(ctx context.Context, repository string, prs []discovery.PullRequest) (bool, error) {
 	repository = strings.ToLower(strings.TrimSpace(repository))
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -143,46 +72,67 @@ func (s *Store) SyncStacks(ctx context.Context, repository string, stacks []Stac
 			return false, err
 		}
 	}
-	now := time.Now().UTC().Truncate(time.Millisecond)
-	changed := false
-	kept := map[string]bool{}
-	for _, stack := range stacks {
-		members, err := cleanMembers(stack.Members)
-		if err != nil || slices.ContainsFunc(members, func(n int) bool { return claimed[n] }) {
-			continue
-		}
-		at := slices.IndexFunc(live, func(g Group) bool {
-			return !kept[g.ID] && slices.ContainsFunc(g.Members, func(n int) bool { return slices.Contains(members, n) })
-		})
-		encoded, _ := json.Marshal(members)
-		if at < 0 {
-			name, err := cleanName(stack.Name)
-			if err != nil {
-				name = fmt.Sprintf("#%d", members[0])
-			}
-			id := newID()
-			if _, err := tx.ExecContext(ctx, `INSERT INTO groups(id,repository,name,members,stack,created,updated) VALUES(?,?,?,?,1,?,?)`, id, repository, name, string(encoded), now.UnixMilli(), now.UnixMilli()); err != nil {
-				return false, err
-			}
-			kept[id], changed = true, true
-			continue
-		}
-		g := live[at]
-		kept[g.ID] = true
-		if !slices.Equal(g.Members, members) {
-			if _, err := tx.ExecContext(ctx, `UPDATE groups SET members=?, updated=? WHERE id=?`, string(encoded), now.UnixMilli(), g.ID); err != nil {
-				return false, err
-			}
-			changed = true
+	pulls := map[int]discovery.PullRequest{}
+	var candidates []stacks.Candidate
+	for _, pr := range prs {
+		if !claimed[pr.Number] {
+			pulls[pr.Number] = pr
+			candidates = append(candidates, stacks.Candidate{Number: pr.Number, Open: true, CrossRepository: pr.Fork, BaseRef: pr.BaseRef, HeadRef: pr.HeadRef, Author: pr.Author})
 		}
 	}
-	for _, g := range live {
-		if kept[g.ID] {
+	stored := make([]stacks.StoredStack, len(live))
+	byID := map[string]Group{}
+	for i, g := range live {
+		byID[g.ID] = g
+		stored[i] = stacks.StoredStack{ID: g.ID, CreatedAt: g.CreatedAt}
+		for _, number := range g.Members {
+			stored[i].Members = append(stored[i].Members, stacks.Placement{Number: number})
+		}
+	}
+	changes := stacks.Plan(candidates, stored)
+	now := time.Now().UTC().Truncate(time.Millisecond)
+	changed := false
+	for _, stack := range changes.Created {
+		var members []int
+		var name string
+		for _, member := range stack.Members {
+			members = append(members, member.Number)
+			if member.Parent == nil {
+				name = stackName(pulls[member.Number])
+			}
+		}
+		if members, err = cleanMembers(members); err != nil {
 			continue
 		}
-		// Dissolved, not deleted by the person: the flag goes, so its pull
-		// requests may form a stack group again.
-		if _, err := tx.ExecContext(ctx, `UPDATE groups SET deleted=?, stack=0 WHERE id=?`, now.UnixMilli(), g.ID); err != nil {
+		encoded, _ := json.Marshal(members)
+		if _, err := tx.ExecContext(ctx, `INSERT INTO groups(id,repository,name,members,stack,created,updated) VALUES(?,?,?,?,1,?,?)`, newID(), repository, name, string(encoded), now.UnixMilli(), now.UnixMilli()); err != nil {
+			return false, err
+		}
+		changed = true
+	}
+	// A stack group stores no parents, so an update rejoins every member;
+	// only a change of members is written.
+	for _, update := range changes.Updated {
+		g := byID[update.ID]
+		members := slices.DeleteFunc(slices.Clone(g.Members), func(n int) bool { return slices.Contains(update.Leave, n) })
+		for _, member := range update.Join {
+			if !slices.Contains(members, member.Number) {
+				members = append(members, member.Number)
+			}
+		}
+		members, err := cleanMembers(members)
+		switch {
+		case err != nil || (update.Ended != nil && *update.Ended):
+			// Dissolved, not deleted by the person: the flag goes, so its
+			// pull requests may form a stack group again.
+			_, err = tx.ExecContext(ctx, `UPDATE groups SET deleted=?, stack=0 WHERE id=?`, now.UnixMilli(), g.ID)
+		case !slices.Equal(members, g.Members):
+			encoded, _ := json.Marshal(members)
+			_, err = tx.ExecContext(ctx, `UPDATE groups SET members=?, updated=? WHERE id=?`, string(encoded), now.UnixMilli(), g.ID)
+		default:
+			continue
+		}
+		if err != nil {
 			return false, err
 		}
 		changed = true

@@ -42,12 +42,12 @@ Stacked pull requests are grouped by default. After every complete discovery
 poll the daemon finds the repository's stacks (`Stacks`) and keeps its stack
 groups in step (`Store.SyncStacks`):
 
-- A **stack** is a chain of open pull requests by one author, each based on
-  the previous one's head branch (`base_ref` = `head_ref`). A branch several
-  open pull requests are based on is shared (a develop branch with its own
-  pull request into main, or a stack that branches) and links none of them.
-  Pull requests from forks are left out, and a stack of more than eight pull
-  requests gets no group.
+- A **stack** follows the hosted platform's rules, shared in
+  [`stacks`](../../stacks/README.md) (`stacks.Plan`): pull requests by one
+  author, each based on another's head branch (`base_ref` = `head_ref`), as a
+  chain or a tree; forks take no part. Only open pull requests are planned,
+  over the live stack groups, which keeps a group's identity when its stack
+  changes. A stack of more than eight pull requests gets no group.
 - A stack without a group gets one (`stack` true), named after its bottom
   pull request's title as "Review together" names a group after the first.
   The app shows a stack group, and its automatically generated review, as it
@@ -55,8 +55,8 @@ groups in step (`Store.SyncStacks`):
   a pull request added on top) gives its group the new members; one that is
   gone (one open member left, or none) dissolves its group, which leaves every
   list like a deleted one and keeps its versions.
-- The person's choices win. A stack with a pull request in a group the person
-  made, or in a stack group the person deleted, gets no group. Renaming a
+- The person's choices win. A pull request in a group the person made, or in
+  a stack group the person deleted, takes no part in stacks. Renaming a
   stack group or changing its members makes it the person's (`stack` false),
   so sync no longer changes or dissolves it.
 - With automatic generation on for the repository, a stack group's review

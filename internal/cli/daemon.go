@@ -425,7 +425,7 @@ func localApplication(paths daemon.Paths, concurrency int, log *slog.Logger) fun
 			}
 			// Stacked pull requests are grouped for review by default.
 			if !snapshot.Stale && snapshot.Error == "" {
-				if synced, err := groups.SyncStacks(ctx, snapshot.Repository, reviewgroups.Stacks(snapshot.PullRequests)); err != nil {
+				if synced, err := groups.SyncStacks(ctx, snapshot.Repository, snapshot.PullRequests); err != nil {
 					log.Warn("stack groups not updated", "repository", snapshot.Repository, "error", err)
 				} else if synced {
 					changed()
