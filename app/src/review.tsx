@@ -31,11 +31,12 @@ import {
   automaticLabel,
   jobReasonText,
   liveFor,
+  fixEligible,
   fixLabel,
   type LiveSession,
   type Provenance,
 } from "./api";
-import { FixNotice } from "./fix";
+import { FixNotice, type FixChat } from "./fix";
 import { CloneActions } from "./repositories";
 import { Notice } from "./shell";
 import { LiveSessions } from "./sessions";
@@ -45,6 +46,8 @@ import { useShortcuts } from "./shortcuts";
 import { PullRequestState, pullRequestStates } from "./inbox";
 import { canRerunChecks, canUpdateBranch, RerunChecksDialog, UpdateBranchDialog } from "./unblock";
 import { Walkthrough, type WalkView } from "./walkthrough";
+import { buildTour } from "./walkthrough-model";
+import { AnswerActions } from "./answer-actions";
 import { AskPanel, sectionFocus } from "./chat";
 function Transcript({ id, query }: { id: string; query: string }) {
   const [load, setLoad] = useState<LocalTranscript | null>(null);
@@ -133,8 +136,9 @@ export function LocalReview({
   live?: LiveSession[];
   /** The review groups this pull request belongs to. */
   groups?: { id: string; name: string }[];
-  /** Opens the fix confirmation; absent when the pull request offers no fix. */
-  fix?: () => void;
+  /** Opens the fix confirmation, of a conversation's change when given one;
+   *  absent when the pull request offers no fix. */
+  fix?: (chat?: FixChat) => void;
   /** The pull request's latest fix job. */
   fixJob?: Job;
   /** The pull request's questions to the review's agent. */
@@ -210,6 +214,8 @@ export function LocalReview({
           ? entry.status
           : undefined;
   const [doc, setDoc] = useState<ReviewDocument | null>(null);
+  // Where an answer's comment lands when it is added to the draft.
+  const tour = useMemo(() => (doc ? buildTour(doc) : null), [doc]);
   const [failed, setFailed] = useState(false);
   const [retry, setRetry] = useState(0);
   const [provenance, setProvenance] = useState<Provenance[]>([]);
@@ -388,7 +394,7 @@ export function LocalReview({
                             variant="secondary"
                             size="compact"
                             disabled={fixing}
-                            onClick={fix}
+                            onClick={() => fix()}
                             className="gap-1.5"
                           >
                             <SparkleIcon size={14} className="flex-none text-(--status-critical)" />
@@ -606,6 +612,22 @@ export function LocalReview({
                 clearFocus={() => setAskFocus(null)}
                 close={closeAsk}
                 jobs={chats}
+                answerActions={({ conversation, turn, answer }) =>
+                  // Only an answer about the newest review goes to its draft or
+                  // to a fix of the pull request as it is now.
+                  tour && conversation.version === doc.review.version ? (
+                    <AnswerActions
+                      conversation={conversation}
+                      turn={turn}
+                      answer={answer}
+                      document={doc}
+                      tour={tour}
+                      fix={fix && fixEligible(entry) ? fix : undefined}
+                      fixRunning={fixing}
+                      openDraft={() => setWalk("all")}
+                    />
+                  ) : null
+                }
               />
             </>
           ) : null}

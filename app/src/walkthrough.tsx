@@ -19,6 +19,7 @@ import { useShortcuts } from "./shortcuts";
 import {
   buildTour,
   commentedStops,
+  PROGRESS_EVENT,
   loadProgress,
   progressKey,
   reviewSubmission,
@@ -70,6 +71,14 @@ export function Walkthrough({
   useEffect(() => {
     saveProgress(key, progress);
   }, [key, progress]);
+  // The Ask panel adds an answer to the draft from outside this page.
+  useEffect(() => {
+    const changed = (event: Event) => {
+      if ((event as CustomEvent<string>).detail === key) setProgress(loadProgress(key));
+    };
+    window.addEventListener(PROGRESS_EVENT, changed);
+    return () => window.removeEventListener(PROGRESS_EVENT, changed);
+  }, [key]);
   const seen = useMemo(() => new Set(progress.seen), [progress.seen]);
   const commented = (stop: Stop) => Boolean(progress.notes[stop.id]?.trim());
   const done = (stop: Stop) => seen.has(stop.id) || commented(stop);

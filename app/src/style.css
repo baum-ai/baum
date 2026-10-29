@@ -3538,6 +3538,28 @@ kbd.key-hint {
   flex-wrap: wrap;
   gap: 0.5rem;
 }
+.ask-actions {
+  display: grid;
+  gap: 0.5rem;
+  margin-top: 0.25rem;
+}
+.ask-actions-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+.ask-suggestion,
+.ask-added {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.25rem 0.5rem;
+  margin: 0;
+  font-size: var(--text-sm, 0.875rem);
+}
+.local-fix-chat {
+  margin: 0.75rem 0 0;
+}
 .ask-outcome {
   padding: 0.5rem 0.75rem;
   border: 1px solid color-mix(in srgb, var(--status-caution) 35%, transparent);

@@ -3,6 +3,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { ViewerLinkProps } from "@baum/viewer/navigation";
 import {
+  fixEligible,
   fixJob,
   fixLabel,
   fixName,
@@ -292,4 +293,73 @@ it("shows what became of each review thread after the push", async () => {
   expect(text).toContain("Replied and resolved 1 of 2 threads");
   expect(text).toContain("src/a.go:12 Replied and resolved: Renamed it.");
   expect(text).toContain("src/b.go Left open: A question for the author.");
+});
+
+it("confirms a fix made from a conversation, sending only its ids", async () => {
+  answer = estimate({
+    fix: { chat: "c1", chat_turn: 2, head_ref: "feature", base_ref: "main" },
+    fix_chat: { conversation_id: "c1", turn: 2 },
+  });
+  const started = vi.fn(async () => {});
+  await act(async () =>
+    root.render(
+      <FixDialog
+        entry={broken}
+        clone="clone"
+        chat={{ conversation_id: "c1", turn: 2, suggestion: "Lower the cap to 30s" }}
+        close={() => {}}
+        started={started}
+      />,
+    ),
+  );
+  // The daemon reads the conversation: no question, answer or suggestion goes up.
+  expect(requests[0]).toEqual({
+    path: "/s/test-ns/api/jobs/estimate",
+    body: {
+      items: [{ clone: "clone", pr: 8, kind: "fix", fix_chat: { conversation_id: "c1", turn: 2 } }],
+      mode: "single",
+    },
+  });
+  const text = node.textContent ?? "";
+  expect(text).toContain("Uses this conversation as context");
+  expect(text).toContain("Lower the cap to 30s");
+  expect(text).toContain("makes the change the conversation asks for");
+  const confirm = Array.from(node.querySelectorAll("button")).find(
+    (button) => button.textContent === "Fix from conversation",
+  )!;
+  await act(async () => confirm.click());
+  expect(requests[1]).toEqual({
+    path: "/s/test-ns/api/jobs",
+    body: { estimate_id: "estimate", confirm_estimate: true },
+  });
+  expect(started).toHaveBeenCalled();
+});
+
+it("shows why a conversation cannot be fixed from", async () => {
+  answer = estimate({ blocked_reason: "chat_unavailable" });
+  await act(async () =>
+    root.render(
+      <FixDialog
+        entry={broken}
+        clone="clone"
+        chat={{ conversation_id: "c1", turn: 1 }}
+        close={() => {}}
+        started={async () => {}}
+      />,
+    ),
+  );
+  expect(node.textContent).toContain("Uses this conversation as context");
+  expect(node.textContent).toContain("no answer to fix from");
+});
+
+it("names a fix from a conversation and offers it whenever a fix may run", () => {
+  expect(fixName({ chat: "c1" })).toBe("Fix from conversation");
+  expect(fixName({ checks: true, chat: "c1" })).toBe("Fix CI and from conversation");
+  const clean = variant({ merge: "ready", checks: "passing" });
+  expect(fixLabel(clean)).toBeNull();
+  expect(fixEligible(clean)).toBe(true);
+  expect(fixEligible(variant({}, { fork: true }))).toBe(false);
+  expect(fixEligible(variant({}, { viewer_can_push: false }))).toBe(false);
+  expect(fixEligible(variant({}, { state: "MERGED" }))).toBe(false);
+  expect(fixEligible(variant({ needs_clone: true }))).toBe(false);
 });

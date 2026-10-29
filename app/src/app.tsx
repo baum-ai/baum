@@ -70,7 +70,7 @@ import {
   type LiveSession,
 } from "./api";
 import { LoadingStatus } from "./nine-dots";
-import { FixDetails, FixDialog, TranscriptLink } from "./fix";
+import { FixDetails, FixDialog, TranscriptLink, type FixChat } from "./fix";
 import { JobPage } from "./job-transcript";
 
 function useLocation() {
@@ -196,7 +196,10 @@ function Workspace({ url }: { url: UrlState }) {
   // A generation that includes a fork, waiting for the user's confirmation.
   const [fork, setFork] = useState<{ entries: Entry[]; mode: "single" | "batch" } | null>(null);
   // A fix waiting for the user's confirmation.
-  const [fixing, setFixing] = useState<Entry | null>(null);
+  // The fix being confirmed, and the conversation it is made from, if any.
+  const [fixRequest, setFixRequest] = useState<{ entry: Entry; chat?: FixChat } | null>(null);
+  const fixing = fixRequest?.entry ?? null;
+  const setFixing = (entry: Entry | null) => setFixRequest(entry && { entry });
   const [shortcuts, setShortcuts] = useState(false);
   const [goingTo, setGoingTo] = useState(false);
   const [rates, setRates] = useState<
@@ -763,7 +766,11 @@ function Workspace({ url }: { url: UrlState }) {
               )}
               generate={() => void generate([selectedEntry], "single")}
               starting={starting.has(rowKey(selectedEntry))}
-              fix={cloneFor(selectedEntry) ? () => setFixing(selectedEntry) : undefined}
+              fix={
+                cloneFor(selectedEntry)
+                  ? (chat) => setFixRequest({ entry: selectedEntry, chat })
+                  : undefined
+              }
               fixJob={fixJob(selectedEntry, jobs)}
               chats={chatJobs(selectedEntry, jobs)}
             />
@@ -985,6 +992,7 @@ function Workspace({ url }: { url: UrlState }) {
               key={`fix:${rowKey(fixing)}`}
               entry={fixing}
               clone={cloneFor(fixing)}
+              chat={fixRequest?.chat}
               close={() => setFixing(null)}
               started={reload}
             />

@@ -997,6 +997,54 @@ test("asks the review's agent a question and reads the lines its answer cites", 
   expect(errors).toEqual([]);
 });
 
+// An answer becomes a confirmed fix that uses the conversation, or a line of
+// the review draft that is sent only with the review.
+test("makes a fix or a review comment from an answer", async ({ page }) => {
+  const errors: string[] = [];
+  page.on("pageerror", (e) => errors.push(e.message));
+  page.on("console", (m) => {
+    if (m.type() === "error" && !m.text().includes("Failed to load resource"))
+      errors.push(m.text());
+  });
+  await page.goto(await launchURL());
+  await page.getByRole("link", { name: "Pull requests", exact: true }).first().click();
+  await page.getByRole("link", { name: /Reuse the existing PR page/ }).click();
+  await expect(page.getByRole("button", { name: "Ask", exact: true })).toBeVisible();
+  await page.keyboard.press("a");
+  const panel = page.getByRole("complementary", { name: "Ask about this review" });
+  await expect(panel).toBeVisible();
+  const before = await panel.locator(".ask-answer").count();
+  await page.keyboard.type("Why is the delay capped?");
+  await page.keyboard.press("Enter");
+  await expect(panel.locator(".ask-answer")).toHaveCount(before + 1);
+  const answer = panel.locator(".ask-turn").last();
+  await expect(answer.getByRole("button", { name: "Add as comment", exact: true })).toBeVisible();
+  // The fixture's checks fail, so the conversation is one more part of the fix.
+  await answer.getByRole("button", { name: "Fix this", exact: true }).click();
+  const dialog = page.getByRole("dialog", { name: "Fix CI and from conversation" });
+  await expect(dialog).toBeVisible();
+  await expect(dialog.getByText("Uses this conversation as context")).toBeVisible();
+  await expect(dialog.getByText("Estimate")).toBeVisible();
+  await expect(dialog.getByText("makes the change the conversation asks for")).toBeVisible();
+  await page.screenshot({ path: "test-results/ask-fix-from-answer.png" });
+  await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
+  await expect(dialog).toBeHidden();
+  // Adding it to the draft sends nothing: the draft shows it, in the review's own panel.
+  await answer.getByRole("button", { name: "Add as comment", exact: true }).click();
+  await expect(answer.getByText("Added to your review draft")).toBeVisible();
+  await answer.getByRole("button", { name: "Open the draft", exact: true }).click();
+  await expect(page).toHaveURL(/walk=all/);
+  const submit = page.getByRole("complementary", { name: "Submit review" });
+  const overall = submit.getByLabel("Overall comment (optional)");
+  await expect(overall).toHaveValue(/so a long outage cannot push retries out forever/);
+  await expect(overall).toHaveValue(/docs\/guide\.md:3–6/);
+  await page.screenshot({ path: "test-results/ask-add-as-comment.png" });
+  // Undo takes it out of the draft again.
+  await answer.getByRole("button", { name: "Undo", exact: true }).click();
+  await expect(overall).toHaveValue("");
+  expect(errors).toEqual([]);
+});
+
 // Every page from the keyboard alone: the command key with a number (Ctrl
 // here, which is not a Mac), Go to, each list's keys, a pull request's
 // section keys, back and forward, and the sheet that lists them.

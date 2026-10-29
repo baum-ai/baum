@@ -186,6 +186,10 @@ export type FixInputs = {
   conflicts?: boolean;
   checks?: boolean;
   threads?: string;
+  /** The conversation with the review's agent the fix makes the change of,
+   *  and the last turn it uses. */
+  chat?: string;
+  chat_turn?: number;
   head_ref?: string;
   base_ref?: string;
 };
@@ -240,6 +244,10 @@ const jobReasons: Record<string, string> = {
   no_push_access: "Your GitHub account can't push to this repository.",
   nothing_to_fix:
     "GitHub reports no merge conflict, failing check or unresolved review comment to fix on this pull request now.",
+  chat_unavailable:
+    "The conversation has no answer to fix from, or does not belong to this pull request.",
+  chat_changed:
+    "The conversation changed after you confirmed the fix, so it stopped. Start it again from the answer.",
   threads_changed:
     "The review comments changed after you confirmed the fix, so it stopped. Check them and start it again.",
   unsupported_backend:
@@ -310,6 +318,8 @@ export type Estimate = {
     pr: number;
     kind?: "fix";
     fix?: FixInputs;
+    /** The conversation a fix would use, as the estimate pinned it. */
+    fix_chat?: { conversation_id: string; turn?: number };
     /** The review threads a fix would address; capped when there were more
      *  than baum includes, and how many were left out because an account
      *  without access to the repository started them. */
@@ -639,13 +649,24 @@ export function fixName(fix: {
   conflicts?: boolean;
   checks?: boolean;
   threads?: string | boolean;
+  chat?: string | boolean;
 }): string {
   const parts = [
     fix.conflicts ? "conflicts" : "",
     fix.checks ? "CI" : "",
     fix.threads ? "review comments" : "",
+    fix.chat ? "from conversation" : "",
   ].filter(Boolean);
   return `Fix ${joinAnd(parts.length ? parts : ["CI"])}`;
+}
+/** Whether a fix may be offered at all: an open pull request whose branch is in
+ *  the repository itself, in a repository the signed-in account may push to,
+ *  with a local clone. A fix from a conversation needs nothing else; the daemon
+ *  checks it all again against GitHub. */
+export function fixEligible(entry: Entry): boolean {
+  const pr = entry.pull_request;
+  if (entry.historical || entry.needs_clone || pr.fork || pr.viewer_can_push !== true) return false;
+  return !pr.state || pr.state.toUpperCase() === "OPEN";
 }
 /** The fix a pull request offers, or null: only an open pull request whose
  *  branch is in the repository itself (not a fork), in a repository the
@@ -653,9 +674,8 @@ export function fixName(fix: {
  *  on the person's own pull request, unresolved review threads. The daemon
  *  checks all of it again against GitHub before anything runs. */
 export function fixLabel(entry: Entry): string | null {
+  if (!fixEligible(entry)) return null;
   const pr = entry.pull_request;
-  if (entry.historical || entry.needs_clone || pr.fork || pr.viewer_can_push !== true) return null;
-  if (pr.state && pr.state.toUpperCase() !== "OPEN") return null;
   const conflicts = entry.merge === "conflict";
   const checks = entry.checks === "failing";
   const threads = pr.authored_by_me && (entry.unresolved ?? 0) > 0;
@@ -686,9 +706,15 @@ export function threadOutcomesSummary(outcomes: ThreadOutcome[] | undefined): st
 }
 /** Prepares a fix of the pull request: what it would fix, with which harness
  *  and model, and on which branch, or why it cannot run. */
-export async function estimateFix(clone: string, pr: number): Promise<Estimate> {
+export async function estimateFix(
+  clone: string,
+  pr: number,
+  chat?: { conversation_id: string; turn: number },
+): Promise<Estimate> {
+  // Only ids: the daemon reads the conversation from its own store.
+  const fixChat = chat && { conversation_id: chat.conversation_id, turn: chat.turn };
   return request<Estimate>("api/jobs/estimate", {
-    items: [{ clone, pr, kind: "fix" }],
+    items: [{ clone, pr, kind: "fix", ...(fixChat ? { fix_chat: fixChat } : {}) }],
     mode: "single",
   });
 }

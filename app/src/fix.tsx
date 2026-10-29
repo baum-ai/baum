@@ -28,6 +28,7 @@ export const phases: Record<string, string> = {
   preparing: "Checking the pull request",
   "reading checks": "Reading the failing checks",
   "reading review comments": "Reading the review comments",
+  "reading the conversation": "Reading the conversation",
   fetching: "Fetching the branch",
   merging: "Merging the base branch",
   fixing: "The agent is fixing it",
@@ -65,11 +66,16 @@ function fixSentence(fix: FixInputs, branch: string) {
     fix.conflicts ? "resolves the conflicts" : "",
     fix.checks ? "fixes the failing checks" : "",
     fix.threads ? "addresses the unresolved review comments" : "",
+    fix.chat ? "makes the change the conversation asks for" : "",
   ].filter(Boolean);
   if (fix.conflicts)
     return `An agent merges ${fix.base_ref ?? "the base branch"} into ${branch}${tasks.length === 1 ? " and " : ", "}${joinAnd(tasks)}.`;
   return `An agent ${joinAnd(tasks.length ? tasks : ["fixes the failing checks"])} on ${branch}.`;
 }
+
+/** A conversation with the review's agent a fix is made from: its ids, and the
+ *  agent's suggested change when the answer made one, for the dialog to show. */
+export type FixChat = { conversation_id: string; turn: number; suggestion?: string };
 
 /** Where a thread is: its file and line. */
 function threadPlace(thread: FixThread) {
@@ -120,11 +126,14 @@ function FixThreads({ item }: { item: Estimate["items"][number] }) {
 export function FixDialog({
   entry,
   clone,
+  chat,
   close,
   started,
 }: {
   entry: Entry;
   clone: string;
+  /** Makes the fix from a conversation with the review's agent. */
+  chat?: FixChat;
   close: () => void;
   started: () => Promise<void>;
 }) {
@@ -137,7 +146,7 @@ export function FixDialog({
   }, []);
   useEffect(() => {
     let active = true;
-    estimateFix(clone, entry.pull_request.number).then(
+    estimateFix(clone, entry.pull_request.number, chat).then(
       (answer) => {
         if (active) setEstimate(answer);
       },
@@ -148,7 +157,7 @@ export function FixDialog({
     return () => {
       active = false;
     };
-  }, [clone, entry.pull_request.number]);
+  }, [clone, entry.pull_request.number, chat?.conversation_id, chat?.turn]);
   const item = estimate?.items[0];
   const fix = item?.fix ?? {};
   const title = item && !item.blocked_reason ? fixName(fix) : "Fix this pull request";
@@ -177,6 +186,17 @@ export function FixDialog({
           </p>
         </div>
       </div>
+      {chat ? (
+        <p className="local-fix-chat">
+          Uses this conversation as context.
+          {chat.suggestion ? (
+            <>
+              {" "}
+              <span className="local-fix-thread-note">Suggested change: {chat.suggestion}</span>
+            </>
+          ) : null}
+        </p>
+      ) : null}
       {error ? <Alert>{error}</Alert> : null}
       {!item && !error ? (
         <LoadingStatus block>Checking the pull request on GitHub…</LoadingStatus>
