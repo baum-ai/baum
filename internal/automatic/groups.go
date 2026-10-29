@@ -1,7 +1,6 @@
 package automatic
 
 import (
-	"cmp"
 	"context"
 	"errors"
 	"strconv"
@@ -29,17 +28,18 @@ type groupState struct {
 	RetryAt  time.Time `json:"retry_at,omitzero"`
 	// Retried and Refused are as a PR's: the heads whose interrupted run
 	// was put back once, and the last refused job put back. Trigger is why
-	// heads put back run again.
-	Retried string `json:"retried,omitempty"`
-	Refused string `json:"refused,omitempty"`
-	Trigger string `json:"trigger,omitempty"`
+	// the heads put back (TriggerFor) run again.
+	Retried    string `json:"retried,omitempty"`
+	Refused    string `json:"refused,omitempty"`
+	Trigger    string `json:"trigger,omitempty"`
+	TriggerFor string `json:"trigger_for,omitempty"`
 }
 
 type groupWork struct {
-	name  string
-	repo  repository
-	group reviewgroups.Group
-	heads map[int]string
+	name    string
+	repo    repository
+	group   reviewgroups.Group
+	heads   map[int]string
 	key     string
 	trigger string
 }
@@ -95,7 +95,9 @@ func (s *Scheduler) passGroups(ctx context.Context, v view, interrupted, refused
 	}
 	for _, j := range interrupted {
 		if gs := stateOf(j); gs != nil && gs.Retried != j.Members {
-			gs.Done, gs.Retried, gs.Trigger, changed = "", j.Members, jobs.TriggerRetry, true
+			gs.Retried = j.Members
+			gs.putBack(j.Members, jobs.TriggerRetry)
+			changed = true
 		}
 	}
 	for _, j := range refused {
@@ -104,7 +106,9 @@ func (s *Scheduler) passGroups(ctx context.Context, v view, interrupted, refused
 			if j.Reason == jobs.ReasonDraft {
 				trigger = jobs.TriggerReadyForReview
 			}
-			gs.Done, gs.Refused, gs.Trigger, changed = "", j.ID, trigger, true
+			gs.Refused = j.ID
+			gs.putBack(j.Members, trigger)
+			changed = true
 		}
 	}
 	live := map[string]bool{}
@@ -129,7 +133,11 @@ func (s *Scheduler) passGroups(ctx context.Context, v view, interrupted, refused
 		if gs.Done == key || (gs.Heads == key && now.Before(gs.RetryAt)) {
 			continue
 		}
-		due = append(due, groupWork{g.Repository, r, g, heads, key, cmp.Or(gs.Trigger, jobs.TriggerStackReviewed)})
+		trigger := jobs.TriggerStackReviewed
+		if gs.TriggerFor == key {
+			trigger = gs.Trigger
+		}
+		due = append(due, groupWork{g.Repository, r, g, heads, key, trigger})
 	}
 	for _, rs := range state.Repositories {
 		for id := range rs.Groups {
@@ -227,7 +235,7 @@ func (s *Scheduler) submitGroup(ctx context.Context, w groupWork, now time.Time)
 		s.log().Warn("automatic stack review not queued", "repository", w.name, "group", w.group.ID, "attempt", gs.Attempts, "error", err)
 	}
 	if gs.Done == w.key {
-		gs.Trigger = ""
+		gs.Trigger, gs.TriggerFor = "", ""
 	}
 	announce := notice != rs.Notice || (result == stopRepository && !quiet)
 	rs.Notice = notice
@@ -238,6 +246,13 @@ func (s *Scheduler) submitGroup(ctx context.Context, w groupWork, now time.Time)
 		s.notify([]Status{status})
 	}
 	return result
+}
+
+// putBack makes heads already handled due again, for trigger, with a fresh
+// count of attempts.
+func (gs *groupState) putBack(heads, trigger string) {
+	gs.Done, gs.Trigger, gs.TriggerFor = "", trigger, heads
+	gs.Heads, gs.Attempts, gs.RetryAt = "", 0, time.Time{}
 }
 
 // retryFor counts attempts and backoff for heads, starting over for new ones.

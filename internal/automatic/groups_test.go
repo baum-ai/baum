@@ -92,9 +92,10 @@ func TestStackGroupReviewWaitsForEveryMemberToBeEligible(t *testing.T) {
 	h.want("org/repo#1@a2:new_head")
 }
 
-// A stack whose members were already reviewed when the scheduler first saw
-// its group is not caught up, as pull requests open at the baseline are not.
-func TestStackGroupAlreadyReviewedAtFirstSightIsNotCaughtUp(t *testing.T) {
+// A stack whose members' current heads automatic generation did not handle
+// (reviewed before the baseline) is not caught up, as pull requests open at
+// the baseline are not.
+func TestStackGroupReviewedBeforeTheBaselineIsNotCaughtUp(t *testing.T) {
 	h := newHarness(t)
 	withGroups(t, h)
 	h.reviewed[1], h.reviewed[2] = "a1", "b1"
