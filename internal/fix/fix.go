@@ -37,6 +37,7 @@ const (
 	ReasonFork               = "fork"
 	ReasonNoPushAccess       = "no_push_access"
 	ReasonNothingToFix       = "nothing_to_fix"
+	ReasonNoChat             = "chat_unavailable"
 	ReasonUnsupportedBackend = "unsupported_backend"
 )
 
@@ -44,6 +45,7 @@ const (
 const (
 	ReasonHeadChanged      = "head_changed"
 	ReasonThreadsChanged   = "threads_changed"
+	ReasonChatChanged      = "chat_changed"
 	ReasonNoRemote         = "no_remote"
 	ReasonGit              = "git"
 	ReasonSigning          = "signing"
@@ -95,6 +97,9 @@ type Options struct {
 	// Threads are the review threads to address; Replies posts baum's
 	// replies on those the agent addressed, after the push.
 	Threads []Thread
+	// Chat, when set, is a reviewer's conversation with the agent that wrote
+	// the review, describing a change to make: untrusted data in the prompt.
+	Chat    *ChatContext
 	Replies ThreadWriter
 	Agent   agent.Fixer
 	// Backend and Model name the agent in the commit message.
@@ -113,6 +118,8 @@ type Options struct {
 	// Transcript, when set, receives the agent's steps (agent.Request.Transcript).
 	Transcript func(agent.TranscriptEntry)
 }
+
+func (o Options) hasChat() bool { return o.Chat != nil && len(o.Chat.Turns) > 0 }
 
 // Outcome is what a fix did.
 type Outcome struct {
@@ -210,13 +217,13 @@ func Run(ctx context.Context, o Options) (out Outcome, err error) {
 		}
 	}
 	answers := map[string]Answer{}
-	if len(conflicts) > 0 || o.Checks || len(o.Threads) > 0 {
+	if len(conflicts) > 0 || o.Checks || len(o.Threads) > 0 || o.hasChat() {
 		progress("fixing")
 		scratch := filepath.Join(dir, "tmp")
 		if err := os.Mkdir(scratch, 0o700); err != nil {
 			return out, fail(ReasonGit, err)
 		}
-		text, tag, err := buildPrompt(ctx, task{Repository: o.Repository.String(), Number: o.Number, Title: o.Title, HeadRef: o.HeadRef, BaseRef: o.BaseRef, Conflicts: conflicts, Merged: o.Conflicts && len(conflicts) == 0, Checks: o.Evidence, Threads: o.Threads}, o.Conflicts, o.Checks)
+		text, tag, err := buildPrompt(ctx, task{Repository: o.Repository.String(), Number: o.Number, Title: o.Title, HeadRef: o.HeadRef, BaseRef: o.BaseRef, Conflicts: conflicts, Merged: o.Conflicts && len(conflicts) == 0, Checks: o.Evidence, Threads: o.Threads, Chat: o.Chat}, o.Conflicts, o.Checks)
 		if err != nil {
 			return out, fail(ReasonBackend, err)
 		}
@@ -268,16 +275,17 @@ func Run(ctx context.Context, o Options) (out Outcome, err error) {
 	if !descends {
 		return out, fail(ReasonHistoryRewritten, errors.New("the result does not build on the pull request's head; baum never rewrites a branch's history"))
 	}
-	if len(o.Threads) > 0 && !o.Conflicts && !o.Checks {
-		// A fix of review comments alone never pushes a workflow change:
-		// the comments are other people's words, and a workflow runs with
-		// the repository's secrets as soon as it is pushed.
+	if (len(o.Threads) > 0 || o.hasChat()) && !o.Conflicts && !o.Checks {
+		// A fix of review comments or a conversation alone never pushes a
+		// workflow change: they are other people's or an agent's words, and
+		// a workflow runs with the repository's secrets as soon as it is
+		// pushed.
 		changed, err := checkout.Changed(ctx, head)
 		if err != nil {
 			return out, fail(ReasonGit, err)
 		}
 		if paths := workflows(changed); len(paths) > 0 {
-			return out, fail(ReasonWorkflowChanged, fmt.Errorf("the agent changed GitHub workflow or action files (%s), which a fix of review comments never pushes", strings.Join(paths, ", ")))
+			return out, fail(ReasonWorkflowChanged, fmt.Errorf("the agent changed GitHub workflow or action files (%s), which a fix of review comments or a conversation never pushes", strings.Join(paths, ", ")))
 		}
 	}
 	progress("pushing")
@@ -373,6 +381,9 @@ func commitMessage(o Options) string {
 	if len(o.Threads) > 0 {
 		done = append(done, "review comments addressed")
 	}
+	if o.hasChat() {
+		done = append(done, "change from a conversation made")
+	}
 	if len(done) == 0 {
 		done = append(done, "changed")
 	}
@@ -384,6 +395,10 @@ func commitMessage(o Options) string {
 	switch {
 	case o.Conflicts:
 		return fmt.Sprintf("Merge branch '%s' into %s\n\n%s by an agent (%s) through baum, on request.", o.BaseRef, o.HeadRef, what, agentName)
+	case o.hasChat() && (o.Checks || len(o.Threads) > 0):
+		return fmt.Sprintf("Fix and make the change from a conversation\n\n%s by an agent (%s) through baum, on request.", what, agentName)
+	case o.hasChat():
+		return fmt.Sprintf("Make the change from a conversation\n\nChanged by an agent (%s) through baum, on request.", agentName)
 	case o.Checks && len(o.Threads) > 0:
 		return fmt.Sprintf("Fix failing checks and address review comments\n\n%s by an agent (%s) through baum, on request.", what, agentName)
 	case o.Checks:

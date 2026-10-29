@@ -216,6 +216,8 @@ func (l *Local) confirmed(ctx context.Context, p Prepared) error {
 		case reason != "":
 		case current.Fix.Threads != p.Fix.Threads && p.Fix.Threads != "":
 			reason = fix.ReasonThreadsChanged
+		case current.Fix.ChatDigest != p.Fix.ChatDigest && p.Fix.ChatDigest != "":
+			reason = fix.ReasonChatChanged
 		default:
 			reason = fix.ReasonNothingToFix
 		}

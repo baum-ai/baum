@@ -34,6 +34,10 @@ type Item struct {
 	// Kind is KindFix for a fix, KindChat for a question to a review's
 	// agent, empty for a review.
 	Kind string `json:"kind,omitempty"`
+	// FixChat, on a fix, makes the conversation of a review's agent part of
+	// what it fixes (see FixChatRef). It is `fix_chat`, not `chat`, because a
+	// job's own `chat` is the turn a chat job answers.
+	FixChat *FixChatRef `json:"fix_chat,omitempty"`
 }
 
 // KindFix is the Item.Kind of a fix: an agent with write access to a
@@ -52,8 +56,16 @@ type FixInputs struct {
 	// threads and their comments (fix.Digest): a reply or an edit on GitHub
 	// after the confirmation stops the fix.
 	Threads string `json:"threads,omitempty"`
-	HeadRef string `json:"head_ref,omitempty"`
-	BaseRef string `json:"base_ref,omitempty"`
+	// Chat, ChatTurn and ChatDigest, when the fix makes the change a
+	// conversation asks for, are the conversation, the last turn it uses
+	// and the digest of those turns as the agent gets them
+	// (fix.ChatDigest): the job keeps no text, and a changed conversation
+	// stops the fix before the agent runs.
+	Chat       string `json:"chat,omitempty"`
+	ChatTurn   int    `json:"chat_turn,omitempty"`
+	ChatDigest string `json:"chat_digest,omitempty"`
+	HeadRef    string `json:"head_ref,omitempty"`
+	BaseRef    string `json:"base_ref,omitempty"`
 }
 
 // FixThread is a review thread a fix addresses, as the confirmation and the

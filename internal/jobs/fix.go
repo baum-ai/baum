@@ -120,7 +120,21 @@ func (l *Local) prepareFix(ctx context.Context, item Item) (Prepared, string, er
 				p.FixThreads = append(p.FixThreads, FixThread{Ref: t.Ref, Path: t.Path, Line: t.Line, Outdated: t.Outdated, Author: author, Excerpt: excerpt})
 			}
 		}
-		if !p.Fix.Conflicts && !p.Fix.Checks && p.Fix.Threads == "" {
+		if item.FixChat != nil {
+			chat, turn, reason, err := fixChat(ctx, c, item.PR, *item.FixChat)
+			if err != nil {
+				return Prepared{}, "", err
+			}
+			if reason != "" {
+				p.BlockedReason = reason
+				break
+			}
+			// The estimate pins the last turn: the confirmed fix uses the
+			// conversation up to it, whatever is asked after.
+			p.Item.FixChat = &FixChatRef{Conversation: chat.Conversation, Turn: turn}
+			p.Fix.Chat, p.Fix.ChatTurn, p.Fix.ChatDigest = chat.Conversation, turn, fix.ChatDigest(chat)
+		}
+		if !p.Fix.Conflicts && !p.Fix.Checks && p.Fix.Threads == "" && p.Fix.ChatDigest == "" {
 			p.BlockedReason = fix.ReasonNothingToFix
 		}
 	}
@@ -220,6 +234,19 @@ func (l *Local) executeFix(ctx context.Context, p Prepared, progress func(Progre
 			return nil, &fix.Error{Reason: fix.ReasonThreadsChanged, Err: errors.New("the review comments changed since the fix was confirmed; confirm it again")}
 		}
 	}
+	var conversation *fix.ChatContext
+	if p.Fix.ChatDigest != "" && p.FixChat != nil {
+		progress(Progress{Phase: "reading the conversation"})
+		chat, _, reason, err := fixChat(ctx, c, p.PR, *p.FixChat)
+		if err != nil {
+			return nil, err
+		}
+		// The agent gets exactly the conversation that was confirmed.
+		if reason != "" || fix.ChatDigest(chat) != p.Fix.ChatDigest {
+			return nil, &fix.Error{Reason: fix.ReasonChatChanged, Err: errors.New("the conversation changed since the fix was confirmed; confirm it again")}
+		}
+		conversation = &chat
+	}
 	var transcript func(agent.TranscriptEntry)
 	hasTranscript := false
 	if target, ok := transcriptTargetOf(ctx); ok {
@@ -231,7 +258,7 @@ func (l *Local) executeFix(ctx context.Context, p Prepared, progress func(Progre
 	list := pricing.Active()
 	out, err := fix.Run(ctx, fix.Options{ID: id(), Clone: c.Path, Repository: repository, Number: p.PR, Title: pr.Title,
 		HeadRef: p.Fix.HeadRef, HeadSHA: p.HeadSHA, BaseRef: p.Fix.BaseRef, Conflicts: p.Fix.Conflicts, Checks: p.Fix.Checks, Evidence: evidence,
-		Threads: threads, Replies: l.Client, Agent: fixer, Backend: p.Backend, Model: p.Model, MaxCalls: cfg.Budgets.MaxCalls, MaxTokens: cfg.Budgets.MaxTokens,
+		Threads: threads, Chat: conversation, Replies: l.Client, Agent: fixer, Backend: p.Backend, Model: p.Model, MaxCalls: cfg.Budgets.MaxCalls, MaxTokens: cfg.Budgets.MaxTokens,
 		WallClock: time.Duration(cfg.Budgets.RunTimeout), Directory: l.FixDirectory, Env: cfg.AgentEnviron(), Transcript: transcript,
 		Progress: func(phase string) { progress(Progress{Phase: phase, HasTranscript: hasTranscript}) }})
 	report := Progress{Phase: "finishing", HasTranscript: hasTranscript}
