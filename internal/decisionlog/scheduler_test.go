@@ -174,7 +174,6 @@ func (f *fakeTracker) Lookup(agent, id string) (livesessions.Session, string, bo
 type fakeWorker struct {
 	mu       sync.Mutex
 	captured []Target
-	pruned   int
 	block    bool
 	started  chan struct{}
 	finished chan struct{}
@@ -191,13 +190,6 @@ func (w *fakeWorker) Capture(ctx context.Context, t Target, _ Options) (Report, 
 		close(w.finished)
 	}
 	return Report{Outcome: OutcomeExtracted}, nil
-}
-
-func (w *fakeWorker) Prune(context.Context) error {
-	w.mu.Lock()
-	w.pruned++
-	w.mu.Unlock()
-	return nil
 }
 
 func (w *fakeWorker) targets() []Target {
@@ -260,8 +252,8 @@ func TestSchedulerQueuesDedupsAndBackstops(t *testing.T) {
 	}
 	cancel()
 	<-done
-	if worker.pruned != 1 || !source.canceled {
-		t.Fatalf("pruned %d, unsubscribed %v", worker.pruned, source.canceled)
+	if !source.canceled {
+		t.Fatal("not unsubscribed")
 	}
 }
 

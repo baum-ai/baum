@@ -112,7 +112,7 @@ func TestSkipKeepsTheHeadAndCoverageReads(t *testing.T) {
 	}
 }
 
-func TestLedgerSpendAbandonedAttemptsAndPrune(t *testing.T) {
+func TestLedgerSpendAndAbandonedAttempts(t *testing.T) {
 	ctx := context.Background()
 	c := &clock{t0}
 	path := filepath.Join(t.TempDir(), "decisions", "decisions.sqlite")
@@ -145,26 +145,6 @@ func TestLedgerSpendAbandonedAttemptsAndPrune(t *testing.T) {
 	st, err := s.Stats(ctx, "claude-code", "s1", startOfDay(t0))
 	if err != nil || st.Count != 2 || !st.LastFail.Equal(t0) || !st.LastStart.Equal(t0) {
 		t.Fatalf("%+v %v", st, err)
-	}
-	if err := s.Save(ctx, Extraction{Meta: Meta{Agent: "codex", ID: "s9"}, Decisions: []decisions.Decision{decision("old", "x", 1)}}); err != nil {
-		t.Fatal(err)
-	}
-	if err := s.Save(ctx, Extraction{Meta: Meta{Agent: "codex", ID: "s9"}, Decisions: []decisions.Decision{}}); err != nil {
-		t.Fatal(err)
-	}
-	var filesBefore int
-	_ = s.db.QueryRow(`SELECT COUNT(*) FROM decision_file`).Scan(&filesBefore)
-	c.now = t0.Add(Retention + time.Hour)
-	if err := s.Prune(ctx); err != nil {
-		t.Fatal(err)
-	}
-	// The ledger is pruned; the obsolete decision and its files are kept.
-	var attempts, rows, files int
-	_ = s.db.QueryRow(`SELECT COUNT(*) FROM capture_attempt`).Scan(&attempts)
-	_ = s.db.QueryRow(`SELECT COUNT(*) FROM decision WHERE obsolete_at IS NOT NULL`).Scan(&rows)
-	_ = s.db.QueryRow(`SELECT COUNT(*) FROM decision_file`).Scan(&files)
-	if attempts != 0 || rows != 1 || files != filesBefore {
-		t.Fatalf("after prune: %d attempts, %d obsolete decisions, %d of %d files", attempts, rows, files, filesBefore)
 	}
 }
 

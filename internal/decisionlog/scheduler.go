@@ -21,8 +21,6 @@ const (
 	BackstopEvery = 5 * time.Minute
 	// TickEvery is how often the triggers are evaluated.
 	TickEvery = 30 * time.Second
-	// PruneEvery is how often the store is pruned.
-	PruneEvery = 24 * time.Hour
 )
 
 // Tracker is what the scheduler reads of the live sessions;
@@ -37,10 +35,9 @@ type Source interface {
 	SubscribeCounted(buffer int, match func(hookevents.Event) bool) (events <-chan hookevents.Record, cancel func(), dropped func() uint64)
 }
 
-// Worker captures one session and prunes the store; *Capturer is one.
+// Worker captures one session; *Capturer is one.
 type Worker interface {
 	Capture(context.Context, Target, Options) (Report, error)
-	Prune(context.Context) error
 }
 
 // memo is what the scheduler remembers of a session between ticks.
@@ -186,7 +183,6 @@ func (s *Scheduler) Run(ctx context.Context) {
 	var wg sync.WaitGroup
 	defer wg.Wait()
 	wg.Go(func() { s.work(ctx) })
-	s.prune(ctx)
 	memos := map[key]memo{}
 	tick := s.Tick
 	if tick <= 0 {
@@ -194,7 +190,7 @@ func (s *Scheduler) Run(ctx context.Context) {
 	}
 	ticker := time.NewTicker(tick)
 	defer ticker.Stop()
-	lastBackstop, lastPrune := s.now(), s.now()
+	lastBackstop := s.now()
 	for {
 		select {
 		case <-ctx.Done():
@@ -212,17 +208,7 @@ func (s *Scheduler) Run(ctx context.Context) {
 				lastBackstop = now
 			}
 			s.tick(memos, backstop)
-			if now.Sub(lastPrune) >= PruneEvery {
-				lastPrune = now
-				s.prune(ctx)
-			}
 		}
-	}
-}
-
-func (s *Scheduler) prune(ctx context.Context) {
-	if err := s.Worker.Prune(ctx); err != nil && ctx.Err() == nil {
-		s.logger().Warn("decision store not pruned", "error", err)
 	}
 }
 
