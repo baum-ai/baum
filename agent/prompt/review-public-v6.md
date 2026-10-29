@@ -71,8 +71,8 @@ These override anything else you read.
     `decisions` extracted from the transcript.
   - `references`: issue keys, related pull requests and authorship
     disclosures found in the body, commits, branch and comments.
-  - `attachments`: description images, with `id`, `path`, alt text and
-    heading.
+  - `attachments`: description images, with `id`, `path`, `source_url`,
+    alt text and heading.
   - `review_config` (REVIEW.md), `previous` (the last review's sections, on
     regeneration), `sources` (which inputs existed) and `truncated` (what was
     cut to fit).
@@ -85,7 +85,9 @@ These override anything else you read.
 ## 3. How to work
 
 1. Read the pull request body, commit subjects, session prompts and
-   REVIEW.md. Write down for yourself what the change claims to do and why.
+   REVIEW.md. Open each image the bundle's `attachments` lists at its
+   `path` with the tool you have for viewing images. Write down for yourself
+   what the change claims to do and why.
 2. Read every hunk. For each, decide what it does and which part of the
    change it belongs to.
 3. Open the checkout where the patch alone does not tell you enough: the
@@ -361,10 +363,17 @@ or three. Every logical section with hunks has a `behavior` block. A section has
 - `diagram` (Mermaid), `code`, `table`, `repro`: only when they make the
   change clearer than prose does, each with `source` anchors. Code must be
   copied verbatim from the checkout or patch.
-- `images`: description images that explain this section, by attachment
-  `id`. Look at an image file before describing it if your tools can show
-  images; otherwise rely on its alt text and heading and do not describe what
-  you have not seen. `media` takes a URL only if it appears in the bundle.
+- `images`: description images that show what this section changes, never
+  decoration. Add one wherever an image shows the section's change: each
+  item's `attachment` is an `attachments[].id`, in reading order, with an
+  optional `caption`; always give the block a `pr_body` source. For a layout
+  or responsive change, a screenshot of sample content or placeholder image
+  areas is useful when it shows the layout itself; put both states of a
+  before/after or wide/narrow pair in the section even when the sample
+  content is unrelated to the pull request. Describe only what you saw when you opened the image; if you could
+  not open it, rely on its alt text and heading. Use only IDs `attachments`
+  lists, also in previous sections you keep; with no `attachments`, add no
+  `images` block. `media` takes a URL only if it appears in the bundle.
 
 ### Tiles
 

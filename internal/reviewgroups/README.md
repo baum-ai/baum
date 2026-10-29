@@ -118,7 +118,7 @@ started from.
    `members.json`: each member's number, title, reviewed head and a compact
    projection of its saved review (summary, sections and risks).
 4. Runs the agent loop with the public group prompt
-   (`agent/prompt` `GroupPrompts`, version `group-review-public-v2`).
+   (`agent/prompt` `GroupPrompts`, version `group-review-public-v3`).
    Before validation the host fills what the model never writes: the
    document's `stack` (`title` = group name, `members` = number, head SHA and
    member review version) and each section's `pull_requests`, the members

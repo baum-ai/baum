@@ -704,18 +704,18 @@ type Prompt struct {
 ```
 
 The module ships and maintains its own public prompt in `agent/prompt`:
-`review-public-v5.md`, shared by every backend and ending with a "Submitting"
+`review-public-v6.md`, shared by every backend and ending with a "Submitting"
 heading, plus a submit block per backend (`submit-claude.md`, used for claude
 and anthropic, `submit-codex.md`, and `submit-cursor.md`, which points at the
 schema the cursor-agent backend appends and lists the tools that stop a run),
 embedded with `go:embed`.
 `Prompts.Instructions` appends the backend's block under that heading, sets
-`Version` to `review-public-v5` and `Digest` to the sha256 of the composed body,
+`Version` to `review-public-v6` and `Digest` to the sha256 of the composed body,
 and fails for any other backend. A host may supply another implementation; the
 hosted service does, with its private prompts. `StaticPrompts` is a fixed
 implementation for tests and simple hosts. The prompt is per backend because
 each backend submits its result differently. `GroupPrompts` is the local
-review group's prompt (`group-review-public-v2`): the same text with
+review group's prompt (`group-review-public-v3`): the same text with
 `group-public-v1.md` inserted before the Submitting heading, which says how a
 group's bundle, per-member checkout and `members.json` differ and what a
 combined review covers (see "Review groups").
