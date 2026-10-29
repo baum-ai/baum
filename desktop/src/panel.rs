@@ -199,7 +199,8 @@ pub fn tray_panel_height(app: AppHandle, height: f64) {
 }
 
 /// The panel's actions: the tray menu's, of which it offers Open, pause or
-/// resume, Quit and stop, and the waiting sessions. Anything else is refused.
+/// resume, Quit and stop, and the waiting sessions, and `close` (Escape),
+/// which only hides the panel. Anything else is refused.
 #[tauri::command]
 pub fn tray_action(app: AppHandle, id: String) -> Result<(), String> {
     if !allowed(&id) {
@@ -208,12 +209,14 @@ pub fn tray_action(app: AppHandle, id: String) -> Result<(), String> {
     if let Some(window) = app.get_webview_window(LABEL) {
         hide(&window);
     }
-    tray::on_menu(&app, &id);
+    if id != "close" {
+        tray::on_menu(&app, &id);
+    }
     Ok(())
 }
 
 fn allowed(id: &str) -> bool {
-    matches!(id, "open" | "pause" | "quit-stop")
+    matches!(id, "open" | "pause" | "quit-stop" | "close")
         || id
             .strip_prefix(tray::SESSION_PREFIX)
             .is_some_and(|key| !key.is_empty())
@@ -278,7 +281,13 @@ mod tests {
 
     #[test]
     fn the_page_reaches_only_the_panels_actions() {
-        for id in ["open", "pause", "quit-stop", "session:claude-code:a"] {
+        for id in [
+            "open",
+            "pause",
+            "quit-stop",
+            "close",
+            "session:claude-code:a",
+        ] {
             assert!(allowed(id), "{id}");
         }
         for id in [

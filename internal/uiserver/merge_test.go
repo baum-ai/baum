@@ -2,6 +2,7 @@ package uiserver
 
 import (
 	"context"
+	"fmt"
 	"net/http/httptest"
 	"path/filepath"
 	"strings"
@@ -40,7 +41,9 @@ func TestMergeHandler(t *testing.T) {
 	merger := &fakeMerger{}
 	var refreshed []string
 	changed := 0
-	h := MergeHandler(registry, merger, func(_ context.Context, r github.Repository) { refreshed = append(refreshed, r.String()) }, func() { changed++ })
+	h := MergeHandler(registry, merger, func(_ context.Context, r github.Repository, number int, head string) {
+		refreshed = append(refreshed, fmt.Sprintf("%s#%d@%s", r, number, head))
+	}, func() { changed++ })
 	do := func(method, path, body string) *httptest.ResponseRecorder {
 		w := httptest.NewRecorder()
 		h.ServeHTTP(w, httptest.NewRequest(method, "http://local"+path, strings.NewReader(body)))
@@ -69,7 +72,7 @@ func TestMergeHandler(t *testing.T) {
 	if len(merger.merged) != 0 || len(refreshed) != 0 {
 		t.Fatalf("rejected requests merged: %v", merger.merged)
 	}
-	if w := do("POST", "/api/prs/merge", `{"repository":"ACME/bare","pr":7,"method":"SQUASH","head_sha":"abc"}`); w.Code != 200 || len(merger.merged) != 1 || merger.merged[0] != "acme/bare SQUASH abc" || len(refreshed) != 1 || changed != 1 {
+	if w := do("POST", "/api/prs/merge", `{"repository":"ACME/bare","pr":7,"method":"SQUASH","head_sha":"abc"}`); w.Code != 200 || len(merger.merged) != 1 || merger.merged[0] != "acme/bare SQUASH abc" || len(refreshed) != 1 || refreshed[0] != "acme/bare#7@abc" || changed != 1 {
 		t.Fatalf("merge: %d %s %v", w.Code, w.Body.String(), merger.merged)
 	}
 	for _, c := range []struct {

@@ -12,7 +12,9 @@
 // working directory itself and the transcript path stay inside the tracker
 // and are never served. Reading session files from disk is unchanged and
 // remains the full history; Transcripts serves a tracked session's
-// transcript, redacted, while it runs.
+// transcript, redacted, while it runs, and its list adds each session's title,
+// compaction summary and activity (latest tool calls, files written, latest
+// assistant message), read from the transcript and masked.
 package livesessions
 
 import (
@@ -53,7 +55,7 @@ const (
 	EventPrompt = "prompt"
 	EventTool   = "tool"
 	// EventWait is the agent asking its user for something: a Claude Code
-	// notification or a Codex permission request.
+	// notification or a permission request of either agent.
 	EventWait = "wait"
 	EventStop = "stop"
 	EventEnd  = "end"
@@ -62,8 +64,8 @@ const (
 // Why a session waits on its user.
 const (
 	// WaitPermission is a session asking to be allowed to run a tool: a
-	// Claude Code permission_prompt notification or a Codex permission
-	// request.
+	// Claude Code permission_prompt notification or a permission request of
+	// either agent.
 	WaitPermission = "permission"
 	// WaitInput is a session asking a question (an elicitation dialog, a
 	// background agent waiting on input) or any notification of a type baum
@@ -271,7 +273,7 @@ func normalise(name string) (string, bool) {
 		return EventStart, true
 	case "user-prompt-submit", "before-submit-prompt":
 		return EventPrompt, true
-	case "pre-task", "post-task", "post-todo", "post-tool-use", "pre-compact", "subagent-start", "subagent-stop":
+	case "pre-task", "post-task", "post-todo", "post-tool-use", "post-tool-use-failure", "pre-compact", "subagent-start", "subagent-stop":
 		return EventTool, true
 	case "notification", "permission-request":
 		return EventWait, true
@@ -577,6 +579,57 @@ func (t *Tracker) Apply(_ context.Context, e hookevents.Event) bool {
 	return changed
 }
 
+// Interrupted records that a session's user turned down, in the terminal, the
+// permission or answer it waited for, at at: Claude Code interrupts the turn
+// and sends no stop, so the session waits for its user's next prompt, as at
+// the end of a turn. A session with an event newer than at, or that waits for
+// nothing else, is left as it is. It reports whether the session changed.
+func (t *Tracker) Interrupted(agent, id string, at time.Time) bool {
+	return t.endWait(agent, id, at, EventStop, WaitTurnFinished, WaitPermission, WaitInput)
+}
+
+// Answered records that the app answered the permission or question a
+// session waited for, at at: it works again, though the agent reports nothing
+// until the tool call ends. A session with an event newer than at, or that
+// waits for nothing else, is left as it is. It reports whether the session
+// changed.
+func (t *Tracker) Answered(agent, id string, at time.Time) bool {
+	return t.endWait(agent, id, at, EventTool, "", WaitPermission, WaitInput)
+}
+
+// Resumed records that a session's Stop hook handed it a message the app
+// queued, at at: the agent goes on with the turn the stop ended, though it
+// may report nothing until it calls a tool or stops again. A stop the
+// tracker records after this, but which happened before at, is the one that
+// delivered the message and is ignored as old news. A session with an event
+// newer than at, or that waits for its user, is left as it is. It reports
+// whether the session changed.
+func (t *Tracker) Resumed(agent, id string, at time.Time) bool {
+	return t.endWait(agent, id, at, EventPrompt, "", WaitTurnFinished, "")
+}
+
+// endWait ends a session's wait, if it is one of ends, at at, with kind as
+// its last event and reason as its new wait, unless the session has an event
+// newer than at.
+func (t *Tracker) endWait(agent, id string, at time.Time, kind, reason string, ends ...string) bool {
+	t.init()
+	now := t.now()
+	at = at.UTC()
+	if at.After(now) {
+		at = now
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	s := t.sessions[key{agent, id}]
+	if s == nil || s.ended || at.Before(s.LastActivityAt) || !slices.Contains(ends, s.WaitingReason) {
+		return false
+	}
+	s.LastActivityAt, s.LastEvent = at, kind
+	s.wait(reason, at, "")
+	s.State = s.state(now)
+	return true
+}
+
 // announceLocked queues the session's wait for Waiting when it is one to
 // announce and was not announced yet.
 func (t *Tracker) announceLocked(k key, now time.Time) {
@@ -796,6 +849,12 @@ func (t *Tracker) applyEvent(e hookevents.Event, now time.Time) {
 		// A late delivery of an older event tells nothing newer.
 		return
 	}
+	if e.Name == "subagent-stop" && s.WaitingReason != "" {
+		// A subagent that finished says nothing of a session waiting on its
+		// user: Claude Code runs one after every stop, and a background one
+		// can finish while its session waits.
+		return
+	}
 	s.LastActivityAt, s.LastEvent = at, kind
 	switch kind {
 	case EventStop:
@@ -902,6 +961,18 @@ func (t *Tracker) Lookup(agent, id string) (Session, string, bool) {
 		return Session{}, "", false
 	}
 	return session, s.transcript, true
+}
+
+// workdir is the session's working directory, for reading paths the session
+// wrote relative to it; it is never served.
+func (t *Tracker) workdir(agent, id string) string {
+	t.init()
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if s := t.sessions[key{agent, id}]; s != nil {
+		return s.cwd
+	}
+	return ""
 }
 
 // persisted is the ended sessions' file: identifiers and times, no paths.

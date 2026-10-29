@@ -3,6 +3,7 @@ package baumcli
 import (
 	"bufio"
 	"bytes"
+	"cmp"
 	"context"
 	"errors"
 	"io"
@@ -24,21 +25,27 @@ var (
 )
 
 // sendHookEvent hands a hook's event to the user's daemon, starting it when it
-// is not running, within hookevents.Budget. It never fails the hook and writes
-// nothing to the hook's output: what it spools or drops goes to the hook log.
-func sendHookEvent(ctx context.Context, event hookevents.Event) {
+// is not running, within hookevents.Budget, and reports whether the daemon
+// recorded it. It never fails the hook and writes nothing to the hook's
+// output: what it spools or drops goes to the hook log.
+func sendHookEvent(ctx context.Context, event hookevents.Event) bool {
 	paths, err := hookDaemonPaths()
 	if err != nil {
-		return
+		return false
 	}
 	sender := &hookevents.Sender{Paths: paths, Version: version(), Spawn: hookDaemonSpawn}
-	sender.Send(context.WithoutCancel(ctx), event)
+	return sender.Send(context.WithoutCancel(ctx), event) == hookevents.Delivered
 }
 
-// newHookEvent starts the event of a hook run in the working directory.
-func newHookEvent(kind, agent, name string) hookevents.Event {
+// newHookEvent starts the event of a hook run in the working directory,
+// stamped with when the hook started rather than when its work ended: the
+// daemon orders a tool call's events against the requests of later calls by
+// these times.
+func newHookEvent(kind, agent, name string, started time.Time) hookevents.Event {
 	dir, _ := os.Getwd()
-	return hookevents.New(kind, agent, name, dir, version())
+	event := hookevents.New(kind, agent, name, dir, version())
+	event.Time = started.UTC()
+	return event
 }
 
 // exitStatus is the status a hook's result makes the process exit with.
@@ -64,7 +71,7 @@ const (
 
 // payloadIdentifiers are the members of an agent hook's payload its event
 // keeps; agentSession keeps the last two for a notification only.
-var payloadIdentifiers = []string{"session_id", "conversation_id", "transcript_path", "cwd", "hook_event_name", "source", "reason", "notification_type", "message"}
+var payloadIdentifiers = []string{"session_id", "conversation_id", "transcript_path", "cwd", "hook_event_name", "source", "reason", "agent_id", "notification_type", "message"}
 
 // notificationEvent is Claude Code's Notification hook, the one event whose
 // event keeps the text the agent showed its user.
@@ -77,6 +84,10 @@ type hookInput struct {
 	source io.Reader
 	mu     sync.Mutex
 	data   []byte
+	// limit bounds data; zero is maxHookInput. over is set once the input
+	// carried more.
+	limit  int
+	over   bool
 	fields *topLevelStrings
 	done   chan struct{}
 }
@@ -130,9 +141,11 @@ func (h *hookInput) copy(w *os.File) {
 		n, err := h.source.Read(buf)
 		if n > 0 {
 			h.mu.Lock()
-			if room := maxHookInput - len(h.data); room > 0 {
+			room := cmp.Or(h.limit, maxHookInput) - len(h.data)
+			if room > 0 {
 				h.data = append(h.data, buf[:min(n, room)]...)
 			}
+			h.over = h.over || n > room
 			_, _ = h.fields.Write(buf[:n])
 			h.mu.Unlock()
 			// A command that exits without reading everything closes the
@@ -155,6 +168,25 @@ func (h *hookInput) wait() {
 	case <-h.done:
 	case <-time.After(hookInputWait):
 	}
+}
+
+// complete is all the input carried, once it ended, waiting up to wait for
+// that; false when it did not end in time or was longer than its limit.
+func (h *hookInput) complete(wait time.Duration) ([]byte, bool) {
+	if h == nil {
+		return nil, false
+	}
+	select {
+	case <-h.done:
+	case <-time.After(wait):
+		return nil, false
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.over {
+		return nil, false
+	}
+	return bytes.Clone(h.data), true
 }
 
 // payload is the bounded copy of what the input carried.
@@ -199,6 +231,7 @@ func agentSession(event string, fields map[string]string) *hookevents.Session {
 		HookEvent:      text("hook_event_name"),
 		Source:         text("source"),
 		Reason:         text("reason"),
+		AgentID:        text("agent_id"),
 	}
 	if event == notificationEvent {
 		session.NotificationType, session.Message = text("notification_type"), text("message")

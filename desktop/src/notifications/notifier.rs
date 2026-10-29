@@ -29,13 +29,8 @@ pub enum Outcome {
     /// The window has focus on the same pull request, or on the session's
     /// transcript.
     Focused,
-    /// An event that repeats while its condition lasts, already shown.
-    Duplicate,
     Failed,
 }
-
-/// Remembered dedupe keys; the oldest are forgotten.
-const SEEN: usize = 64;
 
 pub struct Notifier {
     host: Arc<dyn Host>,
@@ -88,7 +83,7 @@ impl Notifier {
     pub fn handle_event(&self, name: &str, data: &str) -> Option<Outcome> {
         let toast = toast::from_event(name, data)?;
         let outcome = self.deliver(&toast);
-        if !matches!(outcome, Outcome::Shown | Outcome::Duplicate) {
+        if outcome != Outcome::Shown {
             eprintln!("baum desktop: notification not shown ({outcome:?})");
         }
         Some(outcome)
@@ -113,11 +108,6 @@ impl Notifier {
         {
             return Outcome::Focused;
         }
-        if let Some(key) = &toast.dedupe
-            && settings.announced.contains(key)
-        {
-            return Outcome::Duplicate;
-        }
         // The first notification is the first use: only now is the operating
         // system asked.
         if settings.permission == Permission::Unknown {
@@ -137,16 +127,7 @@ impl Notifier {
             .platform
             .show(toast, Box::new(move || host.open(&route)))
         {
-            Ok(()) => {
-                if let Some(key) = &toast.dedupe {
-                    let mut state = self.state();
-                    state.settings.announced.push(key.clone());
-                    let excess = state.settings.announced.len().saturating_sub(SEEN);
-                    state.settings.announced.drain(..excess);
-                    self.save(&state.settings);
-                }
-                Outcome::Shown
-            }
+            Ok(()) => Outcome::Shown,
             Err(ShowError::Denied) => {
                 let mut state = self.state();
                 state.settings.permission = Permission::Denied;
@@ -245,8 +226,6 @@ mod tests {
         )
     }
 
-    const CAP: &str = r#"{"repository":"acme/widgets","enabled":true,"daily_cap":5.0,"spent_today":5.2,"paused_until":"2026-10-21T00:00:00Z","notice":"daily_cap","pending":0}"#;
-
     fn session_notice(kind: &str) -> String {
         format!(
             r#"{{"kind":"{kind}","repository":"acme/widgets","pr":7,"agent":"claude-code","session":"s-1","branch":"feature","message":"Claude needs your permission to use Bash"}}"#
@@ -264,7 +243,6 @@ mod tests {
             ("notice", notice("review_failed", r#","reason":"timeout""#)),
             ("notice", notice("review_requested", "")),
             ("notice", notice("review_automatic", "")),
-            ("automatic", CAP.to_string()),
             ("notice", notice("checks_failed", "")),
             ("notice", notice("conflict", "")),
             ("notice", notice("changes_requested", "")),
@@ -290,7 +268,6 @@ mod tests {
                 Kind::Failed,
                 Kind::Requested,
                 Kind::Automatic,
-                Kind::CapReached,
                 Kind::ChecksFailed,
                 Kind::Conflict,
                 Kind::ChangesRequested,
@@ -310,6 +287,15 @@ mod tests {
         let (notifier, _, platform) = setup(Permission::Granted);
         assert_eq!(notifier.handle_event("index", "{}"), None);
         assert_eq!(notifier.handle_event("reset", "{}"), None);
+        // An automatic generation status is not news, an older daemon's daily
+        // cap pause included.
+        assert_eq!(
+            notifier.handle_event(
+                "automatic",
+                r#"{"repository":"acme/widgets","notice":"daily_cap"}"#
+            ),
+            None
+        );
         assert!(platform.shown.lock().unwrap().is_empty());
     }
 
@@ -325,41 +311,6 @@ mod tests {
                 number: 7
             }]
         );
-    }
-
-    #[test]
-    fn clicking_the_cap_notification_opens_the_jobs_list() {
-        let (notifier, host, platform) = setup(Permission::Granted);
-        notifier.handle_event("automatic", CAP);
-        platform.click();
-        assert_eq!(*host.opened.lock().unwrap(), [Route::Jobs]);
-    }
-
-    #[test]
-    fn the_cap_is_announced_once_per_pause() {
-        let (notifier, _, platform) = setup(Permission::Granted);
-        assert_eq!(
-            notifier.handle_event("automatic", CAP),
-            Some(Outcome::Shown)
-        );
-        assert_eq!(
-            notifier.handle_event("automatic", CAP),
-            Some(Outcome::Duplicate)
-        );
-        let next_day = CAP.replace("2026-10-21", "2026-10-22");
-        assert_eq!(
-            notifier.handle_event("automatic", &next_day),
-            Some(Outcome::Shown)
-        );
-        assert_eq!(platform.shown.lock().unwrap().len(), 2);
-    }
-
-    #[test]
-    fn no_cap_set_no_notification() {
-        let (notifier, _, platform) = setup(Permission::Granted);
-        let uncapped = CAP.replace(r#""daily_cap":5.0"#, r#""daily_cap":null"#);
-        assert_eq!(notifier.handle_event("automatic", &uncapped), None);
-        assert!(platform.shown.lock().unwrap().is_empty());
     }
 
     #[test]
@@ -382,12 +333,7 @@ mod tests {
             notifier.handle_event("notice", &other_clone),
             Some(Outcome::Shown)
         );
-        // So does the cap, which belongs to no pull request.
-        assert_eq!(
-            notifier.handle_event("automatic", CAP),
-            Some(Outcome::Shown)
-        );
-        assert_eq!(platform.shown.lock().unwrap().len(), 3);
+        assert_eq!(platform.shown.lock().unwrap().len(), 2);
         // Once the window loses focus the same pull request notifies again.
         *host.focused.lock().unwrap() = None;
         assert_eq!(notifier.handle_event("notice", &same), Some(Outcome::Shown));
@@ -460,7 +406,6 @@ mod tests {
             ("notice", notice("review_failed", "")),
             ("notice", notice("review_requested", "")),
             ("notice", notice("review_automatic", "")),
-            ("automatic", CAP.to_string()),
             ("notice", notice("checks_failed", "")),
             ("notice", notice("conflict", "")),
             ("notice", notice("changes_requested", "")),
@@ -621,47 +566,6 @@ mod tests {
             1,
             "set_kind waited for the request"
         );
-    }
-
-    #[test]
-    fn a_dedupe_key_is_used_up_only_by_a_toast_that_was_shown() {
-        let (notifier, _, platform) = setup(Permission::Denied);
-        assert_eq!(
-            notifier.handle_event("automatic", CAP),
-            Some(Outcome::Denied)
-        );
-        assert!(notifier.settings().announced.is_empty());
-        assert!(platform.shown.lock().unwrap().is_empty());
-        // Allowed later, the same pause is still news.
-        let granted = FakePlatform::new(Permission::Granted);
-        let again = Notifier::new(Arc::new(FakeHost::default()), granted, Store::in_memory());
-        assert_eq!(again.handle_event("automatic", CAP), Some(Outcome::Shown));
-        assert_eq!(again.settings().announced.len(), 1);
-    }
-
-    #[test]
-    fn a_pause_is_announced_once_across_restarts() {
-        let dir =
-            std::env::temp_dir().join(format!("baum-desktop-announced-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        let first = FakePlatform::new(Permission::Granted);
-        let n = Notifier::new(
-            Arc::new(FakeHost::default()),
-            first.clone(),
-            Store::in_dir(dir.clone()),
-        );
-        assert_eq!(n.handle_event("automatic", CAP), Some(Outcome::Shown));
-        let second = FakePlatform::new(Permission::Granted);
-        let n = Notifier::new(
-            Arc::new(FakeHost::default()),
-            second.clone(),
-            Store::in_dir(dir.clone()),
-        );
-        assert_eq!(n.handle_event("automatic", CAP), Some(Outcome::Duplicate));
-        assert!(second.shown.lock().unwrap().is_empty());
-        let next_day = CAP.replace("2026-10-21", "2026-10-22");
-        assert_eq!(n.handle_event("automatic", &next_day), Some(Outcome::Shown));
-        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[test]

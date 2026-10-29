@@ -1,6 +1,7 @@
 package fix
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -119,6 +120,10 @@ type Check struct {
 	Log string `json:"log,omitempty"`
 	// JobID is the GitHub Actions job behind a check run, 0 for another app.
 	JobID int64 `json:"-"`
+	// URL is where the check's details are: the app's details page, else
+	// the check run on GitHub, or a commit status's target. The app links it;
+	// the prompt leaves it out.
+	URL string `json:"-"`
 }
 
 // Bounds on what a check contributes to a prompt.
@@ -145,6 +150,8 @@ func FailingChecks(ctx context.Context, r Reader, repository github.Repository, 
 				ID         int64
 				Name       string
 				Conclusion string
+				HTMLURL    string `json:"html_url"`
+				DetailsURL string `json:"details_url"`
 				App        *struct{ Slug string }
 				Output     struct{ Title, Summary, Text string }
 			} `json:"check_runs"`
@@ -156,7 +163,7 @@ func FailingChecks(ctx context.Context, r Reader, repository github.Repository, 
 			if !failing[run.Conclusion] {
 				continue
 			}
-			check := Check{Name: bounded(run.Name, 256), Conclusion: run.Conclusion, Title: bounded(run.Output.Title, 512), Summary: bounded(run.Output.Summary, maxCheckField), Text: bounded(run.Output.Text, maxCheckField)}
+			check := Check{Name: bounded(run.Name, 256), Conclusion: run.Conclusion, Title: bounded(run.Output.Title, 512), Summary: bounded(run.Output.Summary, maxCheckField), Text: bounded(run.Output.Text, maxCheckField), URL: cmp.Or(run.DetailsURL, run.HTMLURL)}
 			if run.App != nil && run.App.Slug == "github-actions" {
 				check.JobID = run.ID
 			}
@@ -172,6 +179,7 @@ func FailingChecks(ctx context.Context, r Reader, repository github.Repository, 
 	var combined struct {
 		Statuses []struct {
 			Context, State, Description string
+			TargetURL                   string `json:"target_url"`
 		}
 	}
 	if err := readJSON(ctx, r, path+"/status?per_page=100", &combined); err != nil {
@@ -179,7 +187,7 @@ func FailingChecks(ctx context.Context, r Reader, repository github.Repository, 
 	}
 	for _, status := range combined.Statuses {
 		if failing[status.State] {
-			checks = append(checks, Check{Name: bounded(status.Context, 256), Conclusion: status.State, Summary: bounded(status.Description, maxCheckField)})
+			checks = append(checks, Check{Name: bounded(status.Context, 256), Conclusion: status.State, Summary: bounded(status.Description, maxCheckField), URL: status.TargetURL})
 		}
 	}
 	return checks[:min(len(checks), maxChecks)], nil

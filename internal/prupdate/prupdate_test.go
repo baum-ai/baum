@@ -7,8 +7,10 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/baum-ai/baum/internal/github"
 )
@@ -37,9 +39,13 @@ type fakeGitHub struct {
 	// rerunStatus answers a re-run by run ID, 201 when absent.
 	rerunStatus map[int]int
 	rerunBody   map[int]string
+	// graphql answers each GraphQL document.
+	graphql func(query string, variables map[string]any) string
 
 	writes []string
 	bodies []string
+	// gets are the REST reads it answered.
+	gets []string
 }
 
 func (f *fakeGitHub) client() *github.Client {
@@ -48,7 +54,20 @@ func (f *fakeGitHub) client() *github.Client {
 			return &http.Response{StatusCode: status, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(body)), Request: r}, nil
 		}
 		path := r.URL.Path
+		if r.Method == "GET" {
+			f.gets = append(f.gets, path)
+		}
 		switch {
+		case path == "/graphql":
+			var body struct {
+				Query     string
+				Variables map[string]any
+			}
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			if strings.HasPrefix(strings.TrimSpace(body.Query), "mutation") {
+				f.writes = append(f.writes, fmt.Sprint("graphql ", body.Variables["thread"]))
+			}
+			return answer(200, f.graphql(body.Query, body.Variables))
 		case r.Method != "GET":
 			var body []byte
 			if r.Body != nil {
@@ -60,7 +79,11 @@ func (f *fakeGitHub) client() *github.Client {
 				return answer(f.updateStatus, f.updateBody)
 			}
 			var id int
-			_, _ = fmt.Sscanf(path[strings.Index(path, "/runs/"):], "/runs/%d/rerun-failed-jobs", &id)
+			if i := strings.Index(path, "/jobs/"); i >= 0 {
+				_, _ = fmt.Sscanf(path[i:], "/jobs/%d/rerun", &id)
+			} else {
+				_, _ = fmt.Sscanf(path[strings.Index(path, "/runs/"):], "/runs/%d/rerun-failed-jobs", &id)
+			}
 			status := 201
 			if s, ok := f.rerunStatus[id]; ok {
 				status = s
@@ -136,7 +159,7 @@ func TestUpdateBranch(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			err := Service{c.fake.client()}.UpdateBranch(context.Background(), repo, 7, c.expect)
+			err := Service{Client: c.fake.client()}.UpdateBranch(context.Background(), repo, 7, c.expect)
 			code(t, err, c.code)
 			if len(c.fake.writes) != c.writes {
 				t.Fatalf("writes %v, want %d", c.fake.writes, c.writes)
@@ -153,7 +176,7 @@ func TestUpdateBranch(t *testing.T) {
 
 func TestUpdateOptionsReportsBehind(t *testing.T) {
 	fake := fakeGitHub{head: "abc", mergeableState: "behind"}
-	options, err := Service{fake.client()}.UpdateOptions(context.Background(), repo, 7)
+	options, err := Service{Client: fake.client()}.UpdateOptions(context.Background(), repo, 7)
 	if err != nil || !options.Behind || options.Conflict || options.Fork || options.HeadRef != "feature" || options.BaseRef != "main" || options.HeadSHA != "abc" {
 		t.Fatalf("options %+v, %v", options, err)
 	}
@@ -185,7 +208,7 @@ func TestRerunFailedChecks(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			result, err := Service{c.fake.client()}.RerunFailedChecks(context.Background(), repo, 7, c.expect)
+			result, err := Service{Client: c.fake.client()}.RerunFailedChecks(context.Background(), repo, 7, c.expect)
 			code(t, err, c.code)
 			if strings.Join(c.fake.writes, "\n") != strings.Join(c.started, "\n") {
 				t.Fatalf("writes %v, want %v", c.fake.writes, c.started)
@@ -205,7 +228,7 @@ func TestRerunOptionsNamesWhatBaumCannotRerun(t *testing.T) {
 			checkRun(2, "ci/circle", "failure", "circleci"),
 			checkRun(3, "deploy", "success", "vercel"),
 		}}
-	options, err := Service{fake.client()}.RerunOptions(context.Background(), repo, 7)
+	options, err := Service{Client: fake.client()}.RerunOptions(context.Background(), repo, 7)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -214,5 +237,255 @@ func TestRerunOptionsNamesWhatBaumCannotRerun(t *testing.T) {
 	}
 	if len(fake.writes) != 0 {
 		t.Fatalf("reading wrote %v", fake.writes)
+	}
+}
+
+func TestReviewThreadsListsTheUnresolvedOnes(t *testing.T) {
+	long := strings.Repeat("é", 250)
+	fake := fakeGitHub{graphql: func(string, map[string]any) string {
+		return `{"data":{"repository":{"pullRequest":{"headRefOid":"abc","viewerDidAuthor":true,"reviewThreads":{"pageInfo":{"hasNextPage":false},"nodes":[
+			{"id":"RT_1","path":"a.go","line":12,"isResolved":false,"viewerCanReply":true,"viewerCanResolve":true,"comments":{"totalCount":3,"nodes":[
+				{"state":"SUBMITTED","body":"\n  Rename this.\nIt reads badly.","url":"https://github.com/acme/app/pull/7#discussion_r1","author":{"__typename":"User","login":"alice"}},
+				{"state":"SUBMITTED","body":"ok","url":"https://github.com/acme/app/pull/7#discussion_r2","author":{"__typename":"User","login":"me"}}]}},
+			{"id":"RT_2","path":"b.go","line":3,"isResolved":true,"comments":{"totalCount":1,"nodes":[{"state":"SUBMITTED","body":"done"}]}},
+			{"id":"RT_3","path":"c.go","originalLine":7,"isResolved":false,"isOutdated":true,"viewerCanResolve":false,"comments":{"totalCount":1,"nodes":[
+				{"state":"SUBMITTED","body":"` + long + `","url":"u3","author":null}]}}]}}}}}`
+	}}
+	got, err := Service{Client: fake.client()}.ReviewThreads(context.Background(), repo, 7, -1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Capped || len(got.Threads) != 2 {
+		t.Fatalf("threads %+v", got)
+	}
+	first, second := got.Threads[0], got.Threads[1]
+	if first != (Thread{ID: "RT_1", Path: "a.go", Line: 12, Author: "alice", Excerpt: "Rename this.", Comments: 3, URL: "https://github.com/acme/app/pull/7#discussion_r1", CanResolve: true}) {
+		t.Fatalf("first %+v", first)
+	}
+	if second.ID != "RT_3" || second.Line != 7 || !second.Outdated || second.CanResolve || second.Author != "" || second.Excerpt != strings.Repeat("é", 199)+"…" {
+		t.Fatalf("second %+v", second)
+	}
+	if len(fake.writes) != 0 {
+		t.Fatalf("reading wrote %v", fake.writes)
+	}
+}
+
+func TestResolveThread(t *testing.T) {
+	state := func(repository string, number int, resolved, canResolve bool) string {
+		return fmt.Sprintf(`{"data":{"node":{"id":"RT_1","isResolved":%v,"viewerCanReply":true,"viewerCanResolve":%v,"pullRequest":{"number":%d,"repository":{"nameWithOwner":%q}}}}}`, resolved, canResolve, number, repository)
+	}
+	resolvedReply := `{"data":{"resolveReviewThread":{"thread":{"id":"RT_1","isResolved":true}}}}`
+	cases := []struct {
+		name          string
+		state, answer string
+		code          string
+		writes        int
+	}{
+		{"resolves", state("Acme/App", 7, false, true), resolvedReply, "", 1},
+		{"already resolved", state("acme/app", 7, true, true), "", "", 0},
+		{"another pull request", state("acme/app", 8, false, true), "", NotFound, 0},
+		{"another repository", state("acme/other", 7, false, true), "", NotFound, 0},
+		{"not allowed", state("acme/app", 7, false, false), "", Forbidden, 0},
+		{"refused by GitHub", state("acme/app", 7, false, true), `{"errors":[{"type":"FORBIDDEN","message":"no"}]}`, Failed, 1},
+		{"thread unreadable", `{"data":{"node":null}}`, "", Failed, 0},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			fake := fakeGitHub{graphql: func(query string, variables map[string]any) string {
+				if variables["thread"] != "RT_1" {
+					t.Errorf("variables %v", variables)
+				}
+				if strings.HasPrefix(strings.TrimSpace(query), "mutation") {
+					return c.answer
+				}
+				return c.state
+			}}
+			code(t, Service{Client: fake.client()}.ResolveThread(context.Background(), repo, 7, "RT_1"), c.code)
+			if len(fake.writes) != c.writes {
+				t.Fatalf("writes %v, want %d", fake.writes, c.writes)
+			}
+		})
+	}
+}
+
+func TestReviewThreadsAreCachedWhileTheCountMatches(t *testing.T) {
+	reads := 0
+	threads := `{"id":"RT_1","path":"a.go","line":1,"isResolved":false,"viewerCanReply":true,"viewerCanResolve":true,"comments":{"totalCount":1,"nodes":[{"state":"SUBMITTED","body":"One.","author":{"__typename":"User","login":"alice"}}]}},
+		{"id":"RT_2","path":"b.go","line":2,"isResolved":false,"viewerCanReply":true,"viewerCanResolve":true,"comments":{"totalCount":1,"nodes":[{"state":"SUBMITTED","body":"Two.","author":{"__typename":"User","login":"bob"}}]}}`
+	fake := fakeGitHub{graphql: func(query string, _ map[string]any) string {
+		switch {
+		case strings.HasPrefix(strings.TrimSpace(query), "mutation"):
+			return `{"data":{"resolveReviewThread":{"thread":{"id":"RT_1","isResolved":true}}}}`
+		case strings.Contains(query, "ReviewThreadState"):
+			return `{"data":{"node":{"id":"RT_1","isResolved":false,"viewerCanResolve":true,"pullRequest":{"number":7,"repository":{"nameWithOwner":"acme/app"}}}}}`
+		}
+		reads++
+		return `{"data":{"repository":{"pullRequest":{"headRefOid":"abc","reviewThreads":{"pageInfo":{"hasNextPage":false},"nodes":[` + threads + `]}}}}}`
+	}}
+	now := time.Date(2026, 10, 28, 12, 0, 0, 0, time.UTC)
+	var counted []int
+	s := Service{Client: fake.client(), Cache: &Cache{Now: func() time.Time { return now }}, Counted: func(_ context.Context, _ github.Repository, number, unresolved int) {
+		counted = append(counted, number, unresolved)
+	}}
+	ctx := context.Background()
+	list := func(unresolved int) []string {
+		t.Helper()
+		got, err := s.ReviewThreads(ctx, repo, 7, unresolved)
+		if err != nil {
+			t.Fatal(err)
+		}
+		ids := []string{}
+		for _, thread := range got.Threads {
+			ids = append(ids, thread.ID)
+		}
+		return ids
+	}
+	for _, step := range []struct {
+		name       string
+		unresolved int
+		advance    time.Duration
+		want       string
+		reads      int
+	}{
+		{"first read", 2, 0, "RT_1,RT_2", 1},
+		{"same count", 2, DefaultThreadTTL / 2, "RT_1,RT_2", 1},
+		{"count unknown", -1, 0, "RT_1,RT_2", 1},
+		{"count changed", 3, 0, "RT_1,RT_2", 2},
+		{"expired", 2, DefaultThreadTTL, "RT_1,RT_2", 3},
+	} {
+		now = now.Add(step.advance)
+		if got := strings.Join(list(step.unresolved), ","); got != step.want || reads != step.reads {
+			t.Fatalf("%s: %s after %d reads, want %s after %d", step.name, got, reads, step.want, step.reads)
+		}
+	}
+	// Only the read that found other than discovery's count reports it.
+	if !slices.Equal(counted, []int{7, 2}) {
+		t.Fatalf("counted %v, want pull request 7 at 2", counted)
+	}
+	if err := s.ResolveThread(ctx, github.Repository{Host: "github.com", Owner: "Acme", Name: "App"}, 7, "RT_1"); err != nil {
+		t.Fatal(err)
+	}
+	// Discovery now counts one fewer: the cache already left the resolved one out.
+	if got := strings.Join(list(1), ","); got != "RT_2" || reads != 3 {
+		t.Fatalf("after resolving: %s after %d reads", got, reads)
+	}
+}
+
+func TestReviewThreadsForgetAnAccountChange(t *testing.T) {
+	reads := 0
+	var cache *Cache
+	resetDuringRead := false
+	fake := fakeGitHub{graphql: func(string, map[string]any) string {
+		reads++
+		if resetDuringRead {
+			cache.ResetIdentity()
+		}
+		return `{"data":{"repository":{"pullRequest":{"headRefOid":"abc","reviewThreads":{"pageInfo":{"hasNextPage":false},"nodes":[
+			{"id":"RT_1","path":"a.go","line":1,"isResolved":false,"viewerCanResolve":true,"comments":{"totalCount":1,"nodes":[{"state":"SUBMITTED","body":"One.","author":{"__typename":"User","login":"alice"}}]}}]}}}}}`
+	}}
+	cache = &Cache{}
+	s := Service{Client: fake.client(), Cache: cache}
+	ctx := context.Background()
+	read := func() {
+		t.Helper()
+		if _, err := s.ReviewThreads(ctx, repo, 7, 1); err != nil {
+			t.Fatal(err)
+		}
+	}
+	read()
+	read()
+	if reads != 1 {
+		t.Fatalf("cached list read %d times", reads)
+	}
+	cache.ResetIdentity()
+	read()
+	if reads != 2 {
+		t.Fatalf("after an account change: %d reads, want 2", reads)
+	}
+	// A read under way while the account changes is not kept.
+	cache.ResetIdentity()
+	resetDuringRead = true
+	read()
+	resetDuringRead = false
+	read()
+	if reads != 4 {
+		t.Fatalf("read across an account change was kept: %d reads, want 4", reads)
+	}
+}
+
+func TestFailingChecks(t *testing.T) {
+	fake := fakeGitHub{head: "abc", canPush: true, runs: []string{run(11, "CI", "completed", "failure")}, checks: []string{
+		`{"id":21,"name":"test","conclusion":"failure","html_url":"https://github.com/acme/app/runs/21","app":{"slug":"github-actions"},"output":{"title":"","summary":"**2 tests failed** in ` + "`pkg`" + `"}}`,
+		`{"id":22,"name":"lint","conclusion":"success","app":{"slug":"github-actions"},"output":{}}`,
+		`{"id":23,"name":"ci/circle","conclusion":"timed_out","details_url":"https://circleci.com/x","html_url":"https://github.com/acme/app/runs/23","app":{"slug":"circleci"},"output":{"title":"Timed out after 1h"}}`,
+	}}
+	now := time.Date(2026, 10, 28, 12, 0, 0, 0, time.UTC)
+	s := Service{Client: fake.client(), Cache: &Cache{Now: func() time.Time { return now }}}
+	ctx := context.Background()
+	got, err := s.FailingChecks(ctx, repo, 7, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := Checks{HeadSHA: "abc", Checks: []FailingCheck{
+		{Name: "test", Conclusion: "failure", Title: "2 tests failed in pkg", URL: "https://github.com/acme/app/runs/21", JobID: 21},
+		{Name: "ci/circle", Conclusion: "timed_out", Title: "Timed out after 1h", URL: "https://circleci.com/x"},
+	}}
+	if fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Fatalf("checks %+v, want %+v", got, want)
+	}
+	reads := func() int {
+		n := 0
+		for _, path := range fake.gets {
+			if strings.HasSuffix(path, "/check-runs") {
+				n++
+			}
+		}
+		return n
+	}
+	// With no head the pull request was read for it, so nothing is cached under "".
+	if _, err := s.FailingChecks(ctx, repo, 7, "abc"); err != nil || reads() != 1 {
+		t.Fatalf("cached checks read again: %d reads, %v", reads(), err)
+	}
+	if _, err := s.FailingChecks(ctx, repo, 7, "other"); err != nil || reads() != 2 {
+		t.Fatalf("another head: %d reads, %v", reads(), err)
+	}
+	if _, err := s.RerunFailedChecks(ctx, repo, 7, "abc"); err != nil {
+		t.Fatal(err)
+	}
+	before := reads()
+	if _, err := s.FailingChecks(ctx, repo, 7, "abc"); err != nil || reads() != before+1 {
+		t.Fatalf("checks kept after a re-run: %d reads, %v", reads()-before, err)
+	}
+	now = now.Add(DefaultChecksTTL)
+	if _, err := s.FailingChecks(ctx, repo, 7, "abc"); err != nil || reads() != before+2 {
+		t.Fatalf("expired checks kept: %d reads, %v", reads()-before, err)
+	}
+}
+
+func TestRerunJob(t *testing.T) {
+	failing := `{"id":21,"name":"test","conclusion":"failure","app":{"slug":"github-actions"},"output":{}}`
+	other := `{"id":23,"name":"ci/circle","conclusion":"failure","app":{"slug":"circleci"},"output":{}}`
+	cases := []struct {
+		name   string
+		fake   fakeGitHub
+		job    int64
+		code   string
+		writes int
+	}{
+		{"reruns the job", fakeGitHub{head: "abc", canPush: true, checks: []string{failing}}, 21, "", 1},
+		{"head moved", fakeGitHub{head: "new", canPush: true, checks: []string{failing}}, 21, HeadMoved, 0},
+		{"cannot push", fakeGitHub{head: "abc", checks: []string{failing}}, 21, Forbidden, 0},
+		{"not a failing job", fakeGitHub{head: "abc", canPush: true, checks: []string{failing}}, 99, NotFound, 0},
+		{"another app's check", fakeGitHub{head: "abc", canPush: true, checks: []string{other}}, 23, NotFound, 0},
+		{"refused by GitHub", fakeGitHub{head: "abc", canPush: true, checks: []string{failing}, rerunStatus: map[int]int{21: 403}, rerunBody: map[int]string{21: `{"message":"Resource not accessible"}`}}, 21, Forbidden, 1},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			s := Service{Client: c.fake.client(), Cache: &Cache{}}
+			code(t, s.RerunJob(context.Background(), repo, 7, "abc", c.job), c.code)
+			if len(c.fake.writes) != c.writes || (c.writes == 1 && c.fake.writes[0] != "POST /repos/acme/app/actions/jobs/21/rerun") {
+				t.Fatalf("writes %v, want %d", c.fake.writes, c.writes)
+			}
+		})
 	}
 }
