@@ -137,7 +137,7 @@ INSERT INTO groups(id,repository,name,members,created,updated) VALUES('old','acm
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer s.Close()
+	defer func() { _ = s.Close() }()
 	if g, err := s.Get(context.Background(), "old"); err != nil || g.Stack || !slices.Equal(g.Members, []int{1, 2}) {
 		t.Fatalf("old group %+v %v", g, err)
 	}
