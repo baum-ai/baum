@@ -2968,7 +2968,51 @@ replace it.
   or the end, clears it, except a `subagent-stop`, which is ignored while the
   session waits: Claude Code runs a subagent after every stop (its
   SubagentStop arrives a second or two after the Stop), and a background
-  subagent can finish while its session waits. A notification's `message` becomes
+  subagent can finish while its session waits; and a `session-start` whose
+  `source` is `compact`, also ignored while it waits: Claude Code compacts a
+  session that has sat waiting a while (seen about an hour after its stop) and
+  no stop follows. The list (`GET api/live-sessions`) settles a session silent
+  past `IdleAfter` with no reason (`settle`): it stays `running` while a tool
+  call it made has no result in its transcript (a Claude Code `tool_use` with no
+  `tool_result` naming its id, a Codex call with no `*_output` for its
+  `call_id`; a subagent or a long command reports nothing until it returns),
+  and otherwise waits as `quiet` from its last activity: it stopped without a
+  stop (Claude Code sends none for an interrupted turn) or its agent died. A
+  prompt typed after an unanswered call ends it; results are matched by the id
+  that opens their line, so one longer than a line read whole still counts. The
+  tracker's own state stays `idle`, so the desktop's notifications, which ask
+  only about `permission` and `input`, never announce it. A Claude Code or Codex
+  session with no title and no activity never had a conversation (opened and
+  left, or used only to resume another; Claude Code writes no transcript until
+  then) and is left out of the list (`empty`). Since agents report few
+  events during a turn, `Transcripts.Watch` builds the list every 5 seconds
+  (reading only what the transcripts appended) and publishes `live` when it
+  differs from the last one, so a running session's steps, files and message,
+  and a session settling, reach the app without a hook event.
+  **Replying and ending.** The list marks a session `messageable` when it
+  waits at its prompt (a finished turn, or for Claude Code gone quiet) and
+  `endable` when it waits or went quiet, each only where baum can reach its
+  agent (`Transcripts.Senders`, `Transcripts.Enders`). `POST
+  api/live-sessions/{agent}/{id}/message` with `{"text"}` (at most 10 000
+  characters) opens it with a line saying the user sent it from baum and
+  puts it into the session: Claude Code's through its cross-session inbox
+  (`ClaudeInbox`, one JSON line on the socket its
+  `~/.claude/sessions/<pid>.json` names; macOS and Linux), which starts the
+  next turn in the session's own terminal; Codex's with `codex queue --thread
+  <id> --message` (`CodexQueue`, when `codex` is on PATH), offered after a
+  finished turn only, since a quiet Codex session may have no terminal left
+  and the queue would run its turn unseen. `POST .../end` ends a Claude Code
+  session as `/exit` does (`ClaudeExit`): SIGTERM to its process when that
+  reports itself idle; it exits in under a second, fires SessionEnd and can
+  be resumed. Codex has no clean way to close a session from outside, so
+  none is offered. Both find the process by its registry entry, confirmed as
+  the one that wrote it (`procStart` against `/proc/<pid>/stat` field 22 and
+  `pidDomain` against this pid namespace on Linux, `ps -o lstart=` on macOS),
+  since an entry a killed session left can name a reused pid; a session with
+  no such process is recorded ended (`Tracker.Gone`), one baum cannot confirm
+  is left alone. A message the app sent, which Claude Code records as a peer's
+  meta line, is the session's `last_prompt`. Neither route runs on Windows.
+  A notification's `message` becomes
   `waiting_message`: format characters dropped, control characters and runs of
   spaces made one space, masked as transcripts are (`transcript.Renderer.Mask`,
   before it is cut), and cut to 160 characters. Claude Code says nothing when
@@ -3040,7 +3084,8 @@ replace it.
   `thread_name` for the id in `~/.codex/session_index.jsonl`; Cursor's
   composer name. Without one it is the first prompt the user typed (a Claude
   Code user line that is not meta, a compaction summary, a tool result or a
-  tag-wrapped command; a Codex `user_message` event). The summary is the
+  tag-wrapped command; a Codex `user_message` event, or from Codex 0.165 an
+  `item_completed` event's `UserMessage` item). The summary is the
   latest compaction's: a Claude Code `isCompactSummary` user line, without
   the text wrapped around it, or a Codex `compacted` line's
   `payload.message` (decoded from the start of the line, which the history
@@ -3050,7 +3095,7 @@ replace it.
   at most 32 KiB) whenever it sends the transcript. The files are the
   transcript's, under the same store checks (`inStore`); a session the hooks
   named no path for is found by its id (`~/.claude/projects/*/<id>.jsonl`, or
-  the Codex store's index). Transcripts are read from where the last read
+  the Codex rollout named for it). Transcripts are read from where the last read
   stopped, 16 MiB at a time (the last 256 KiB name a Claude Code session
   until a long one is caught up), at most every 5 seconds (30 for Cursor),
   again only when the files' sizes or times changed, and right away after a
@@ -3067,7 +3112,7 @@ replace it.
   it. Claude Code's `assistant` lines and Codex's `response_item` payloads
   (`function_call`, `custom_tool_call`, `local_shell_call`, assistant
   `message`) are read; Codex `shell`, `exec_command` and `local_shell` show
-  as `Bash` and `apply_patch` as `Edit`, an MCP tool as `server: tool`. Cursor
+  as `Bash` and `apply_patch` as `Edit`, an MCP tool as `server: tool`; a code-mode `exec` call (JavaScript around `tools.<name>(...)`) is shown as the first tool it calls. Cursor
   sessions have none; it is absent until something is found.
 - **Transcripts.** `GET /api/live-sessions/{agent}/{id}/transcript`
   (`Transcripts`, mounted beside the list by the same `LocalAPI.Live`
@@ -3081,8 +3126,11 @@ replace it.
   one discovery reads (`~/.claude/projects` for Claude Code, a `.jsonl`;
   `~/.codex/sessions` for Codex, a `rollout-*.jsonl`). A Claude Code
   subagent transcript beside it that resolves outside the store is left out.
-  Without a path a Codex session is looked up by id in its store's
-  first-line index (`codex.ScanStore`, once per session); a Claude Code one
+  Without a path a Codex session is looked up by id (`findRollout`, once per
+  session): the `rollout-*-<id>.jsonl` under `~/.codex/sessions` whose first
+  line names that thread as a root. Only names are walked, so the rollouts
+  Codex compresses as they age (`.jsonl.zst`, which a store scan rejects) do
+  not stop it; a Claude Code one
   has no such lookup and is unavailable, as after a restart has only the
   saved ended sessions. A Cursor session is read from Cursor's own database
   (`cursortranscript.DefaultStorePath`, a regular file) by its conversation

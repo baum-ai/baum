@@ -484,6 +484,15 @@ export function SlidersIcon(props: IconProps) {
   );
 }
 
+/** A paper plane, for sending a message. */
+export function PaperPlaneIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M14.5 1.5 10 14.5 7.3 8.7 1.5 6 14.5 1.5ZM14.5 1.5 7.3 8.7" />
+    </Icon>
+  );
+}
+
 /** Up, for a figure that rose. */
 export function ArrowUpIcon(props: IconProps) {
   return (

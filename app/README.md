@@ -808,8 +808,19 @@ Analytics shows decision capture's calls, failures by reason, calls cut short
 by a stop and spend under baum's work; an unknown cost stays unknown.
 
 The Sessions page (`?page=sessions`) is a live feed of the same sessions, in three
-sections of cards; the `live` event updates it and the sidebar count, and times
-tick every second. The daemon keeps ended sessions for 24 hours, across restarts.
+sections drawn as the Pull requests list (bucket headings with a dot and a count, then
+rows between hairlines, no panels). Each heading folds its section, as an inbox
+bucket's does; Ended recently starts folded, and the fold holds while the app runs.
+The keys move only through rows on show. The `live` event updates it and the sidebar count, and times
+tick every second. The daemon keeps ended sessions for 24 hours, across restarts, and
+leaves out a session that never had a conversation (no title and no activity).
+A right click on a session's card opens the app's own menu (`src/context-menu.tsx`)
+in place of the browser's: Reply when the daemon offers it (`messageable`, with its
+key r), Open transcript, Open pull request when it has one, and End session when the
+daemon offers it (`endable`). The Menu key or Shift+F10 opens it
+under the focused card; the arrows move through it, Enter chooses and Escape, a click
+elsewhere or a scroll closes it. In a field, or over selected text, the browser's menu
+stays.
 
 - "Needs you" (`SessionsPage` in `src/sessions.tsx`) shows only while something waits
   on the person: the requests the app can answer first, then the longest wait. A session with a pending `permission`
@@ -822,26 +833,40 @@ tick every second. The daemon keeps ended sessions for 24 hours, across restarts
   at once; the card says "Sent" until the next `live` refresh drops the request, and a
   409 `request_gone` shows "Already answered in the terminal". A green notice says
   what was done, and when nobody waits it reads "Nobody is waiting on you." with the
-  last action. A session waiting with no request (it finished its turn, or asks for
-  something only its terminal can answer) gets a quieter card with the reason, the
-  wait, the agent's last message (rendered as Markdown when it finished its turn, its
-  opening lines fading into Open transcript; a quote clamped to three lines
-  otherwise), the line it showed and Open transcript, plus
-  "Answer in the terminal" for a permission or an answer. It has no reply box: the app
-  sends messages only to running sessions. A daemon without `api/agent-requests`
+  last action. A session waiting with no request (it finished its turn, asks for
+  something only its terminal can answer, or went quiet) gets a quieter card headed by the agent's
+  mark, the session's title, its branch and the wait, then the opening paragraph of
+  the agent's last message (at most two lines, its Markdown emphasis and code
+  rendered) and the line it showed, plus "Asks permission in its
+  terminal" or "Asks a question in its terminal" when only the terminal can answer.
+  A session that went quiet (`quiet`: the daemon heard nothing for 10 minutes and no
+  tool call of it is still running, as after an interrupted turn or an agent that
+  died) has "quiet", in a muted tone, before the time since its last activity (a
+  waiting one has "waiting" in amber), and no note. Rows carry the agent's logo, no
+  status dot. Every card in Needs you and Running now shows the latest message the user
+  typed (`activity.last_prompt`) on one line under its head, after "You". A session
+  the daemon marks `messageable` (waiting at its prompt) can be replied to: r on its
+  focused card, or Reply in its right-click menu, opens a "Reply" box under it, Enter
+  posts to `api/live-sessions/{agent}/{id}/message` and Escape closes it. The reply
+  starts its next turn in its own terminal and the card moves to Running now; a
+  notice says what was sent. One marked `endable` (waiting or quiet, Claude Code
+  only) can be ended from its right-click menu, which posts `.../end`; the card leaves
+  when the session's end arrives. Neither shows on a card until asked. A daemon without `api/agent-requests`
   shows no requests.
-- "Running now" has one card per running session, or one quiet for a while (a muted
-  dot and "Quiet for 12 min"): the agent, title, branch, pull request link, and the time
+- "Running now" has one card per running session, including one silent for a while
+  whose tool call (a subagent, a long command) has not returned, or, from a daemon
+  older than `quiet`, one quiet for a while ("Quiet for 12 min"): the agent, title, branch, pull request link, and the time
   since it started. From the session's `activity` it shows the current step (the tool
   in its colour and its target, with a blinking caret while running, still under
-  reduced motion), a "Trail" of chips for the earlier steps and "N files touched";
-  without `activity` it reads "Active 2 min ago". "Send when it finishes" posts a
-  message to `api/agent-messages`; the daemon delivers it when the session's turn
+  reduced motion) and "N files touched" before the time;
+  without `activity` it reads "Active 2 min ago". r on its focused row, or "Reply when
+  it finishes" in its right-click menu, opens "Send when it finishes" (Enter posts a
+  message to `api/agent-messages`, Escape closes it); the daemon delivers it when the session's turn
   ends, one per session, and the card then shows "Queued for when it finishes" with
   Cancel.
 - "Ended recently" has one compact row per session that ended in the last 24 hours,
   newest first: the agent, title, how long it ran and the files it touched, when it
-  ended, and Open transcript.
+  ended.
 
 The Settings page has "Answer Codex approvals from the app" (`codex_approvals`, saved
 through `PUT api/agent-requests/settings`, hidden when the daemon lacks the route):
@@ -855,7 +880,10 @@ needs the person the sidebar's Sessions badge counts those sessions in the cauti
 tone; otherwise it counts the running ones. The desktop app notifies when a session
 starts asking for a permission or an answer (see the desktop README).
 
-Each row's "Open transcript" opens `?page=sessions&session=<agent>:<id>`
+A click on a session's card (anywhere but its buttons, fields and links, and not
+while selecting text) opens its transcript, as does its link (the waiting card's
+title, else the agent's name), which j/k focus and Enter or o follow. The transcript
+opens at `?page=sessions&session=<agent>:<id>`
 (`src/session-transcript.tsx`), titled with the session's title (else "Claude
 Code session"), with the agent's compaction summary, when it has one, closed above
 the transcript: the session's header (agent, working, waiting

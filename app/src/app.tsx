@@ -918,6 +918,7 @@ function Workspace({ url }: { url: UrlState }) {
                   requests={agentRequests}
                   Link={LocalLink}
                   prHref={sessionPR}
+                  navigate={navigate}
                 />
               </div>
             </>

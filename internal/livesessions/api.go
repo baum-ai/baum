@@ -39,6 +39,8 @@ func (t *Transcripts) Handler() http.Handler {
 			Sessions []Listed `json:"sessions"`
 		}{t.listed()})
 	})
+	mux.HandleFunc("POST /api/live-sessions/{agent}/{id}/end", t.handleEnd)
+	mux.HandleFunc("POST /api/live-sessions/{agent}/{id}/message", t.handleMessage)
 	mux.HandleFunc("GET /api/live-sessions/{agent}/{id}/transcript", func(w http.ResponseWriter, r *http.Request) {
 		answer, err := t.Get(r.Context(), r.PathValue("agent"), r.PathValue("id"))
 		t.WriteAnswer(w, r, answer, err)

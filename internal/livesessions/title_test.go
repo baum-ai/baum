@@ -253,3 +253,22 @@ func TestSummaryOpeningIsPlainTextWithoutTheSectionName(t *testing.T) {
 		}
 	}
 }
+
+func TestCodex0165FirstPromptIsItsUserMessageItem(t *testing.T) {
+	f := newTranscriptFixture(t)
+	const id = "019f0000-0000-7000-8000-000000000007"
+	write(t, filepath.Join(f.home, ".codex", "sessions", "2026", "10", "28", "rollout-2026-10-28T18-25-14-"+id+".jsonl"),
+		`{"timestamp":"2026-10-28T18:25:14.000Z","type":"session_meta","payload":{"id":"`+id+`","cwd":"/work/demo","cli_version":"0.165.0","source":"vscode"}}
+{"timestamp":"2026-10-28T18:25:20.000Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"<environment_context>x</environment_context>"}]}}
+{"timestamp":"2026-10-28T18:25:20.000Z","type":"event_msg","payload":{"type":"item_completed","item":{"type":"UserMessage","id":"u1","client_id":"c1","content":[{"type":"text","text":"Check issue ENG-1527 on linear","text_elements":[]}]}}}
+`)
+	e := hookevents.New(hookevents.KindAgent, "codex", "user-prompt-submit", "/work/demo", "test")
+	e.Time = f.clock.now
+	e.Session = &hookevents.Session{ID: id, Cwd: "/work/demo"}
+	if !apply(f.tracker, e) {
+		t.Fatal("not tracked")
+	}
+	if got := titles(t, f)["codex/"+id]; got != "Check issue ENG-1527 on linear" {
+		t.Fatalf("title %q", got)
+	}
+}

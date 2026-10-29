@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -497,7 +498,7 @@ func localApplication(paths daemon.Paths, concurrency int, log *slog.Logger) fun
 			// A session that starts waiting for a permission or an answer is
 			// a notice; reading the registry for it must not hold the tracker.
 			live.Waiting = func(session livesessions.Session) { go notify.SessionWaiting(ctx, session) }
-			transcripts = &livesessions.Transcripts{Tracker: live, Render: renderer.Render, Log: log}
+			transcripts = &livesessions.Transcripts{Tracker: live, Render: renderer.Render, Log: log, Senders: liveSenders(), Enders: liveEnders()}
 			liveAPI = transcripts.Handler()
 			// What agents wait on the app to answer, and the messages queued
 			// for running sessions, stay in memory, masked as the sessions
@@ -642,6 +643,9 @@ func localApplication(paths daemon.Paths, concurrency int, log *slog.Logger) fun
 				wg.Go(func() { scheduler.Run(ctx) })
 				if live != nil {
 					wg.Go(func() { live.Run(ctx) })
+					// A running session's progress is in its transcript, not
+					// in hook events.
+					wg.Go(func() { transcripts.Watch(ctx, func() { _ = server.Publish("live", struct{}{}) }) })
 				}
 				if capture != nil {
 					wg.Go(func() { capture.Run(ctx) })
@@ -731,6 +735,30 @@ func (h hookEvents) liveSessions(paths daemon.Paths, registry *repos.Registry, d
 		Notify:   func() { _ = server.Publish("live", struct{}{}) },
 		Log:      log,
 	}
+}
+
+// liveSenders are how the app's messages reach a waiting session: Claude
+// Code's inbox socket (macOS and Linux; on Windows it is a named pipe), and
+// `codex queue` when codex is on PATH.
+func liveSenders() map[string]livesessions.Sender {
+	senders := map[string]livesessions.Sender{}
+	if runtime.GOOS != "windows" {
+		senders[livesessions.AgentClaudeCode] = livesessions.ClaudeInbox{}.Send
+	}
+	if codex, ok := livesessions.NewCodexQueue(); ok {
+		senders[livesessions.AgentCodex] = codex.Send
+	}
+	return senders
+}
+
+// liveEnders are how the app ends a waiting session: Claude Code's as /exit
+// does (macOS and Linux). Codex has no clean way to close a session from
+// outside, so it has none.
+func liveEnders() map[string]livesessions.Ender {
+	if runtime.GOOS == "windows" {
+		return nil
+	}
+	return map[string]livesessions.Ender{livesessions.AgentClaudeCode: livesessions.ClaudeExit{}.End}
 }
 
 // Run drains the spool until ctx ends.

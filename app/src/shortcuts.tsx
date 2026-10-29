@@ -454,7 +454,11 @@ export function ShortcutsSheet({
     {
       place: "sessions",
       title: "Sessions",
-      rows: [...LIST_SHORTCUTS, { keys: ["p"], label: "Open the session's pull request" }],
+      rows: [
+        ...LIST_SHORTCUTS,
+        { keys: ["p"], label: "Open the session's pull request" },
+        { keys: ["r"], label: "Reply to the session; Enter sends it" },
+      ],
     },
     {
       place: "jobs",

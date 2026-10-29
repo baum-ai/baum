@@ -337,8 +337,9 @@ export type Diagnostics = {
   report: DiagnosticReport | null;
 };
 /** Why a session waits on its user: it asks to run a tool, it asked a
- *  question, or its turn ended. */
-export type WaitingReason = "permission" | "input" | "turn_finished";
+ *  question, its turn ended, or it went quiet (silent for 10 minutes with no
+ *  tool call still running: an interrupted turn or an agent that died). */
+export type WaitingReason = "permission" | "input" | "turn_finished" | "quiet";
 /** An agent session in progress, from `api/live-sessions`: identifiers and
  * times, and the one masked line a waiting agent showed; never a path or any
  * transcript content. */
@@ -360,6 +361,12 @@ export type LiveSession = {
   /** The line the agent showed, such as "Claude needs your permission to
    *  use Bash", masked by the daemon. */
   waiting_message?: string;
+  /** Whether the app may end it (`endSession`): it waits on its user or went
+   *  quiet, and the daemon can stop its agent. */
+  endable?: boolean;
+  /** Whether the app may send it a message (`messageSession`): it waits at
+   *  its prompt, and the daemon can reach its agent. */
+  messageable?: boolean;
   repository: string;
   branch?: string;
   /** Absent while the branch has no pull request. */
@@ -383,8 +390,10 @@ export type Activity = {
   /** The latest tool calls, oldest first. */
   steps: ActivityStep[];
   files_touched?: number;
-  /** The agent's latest text message, one line, masked. */
+  /** The agent's latest text message, masked, its line breaks kept. */
   last_message?: string;
+  /** The latest message the user typed, one line, masked. */
+  last_prompt?: string;
 };
 const agentNames: Record<string, string> = {
   "claude-code": "Claude Code",
@@ -421,11 +430,13 @@ function parseActivity(value: unknown): Activity | undefined {
     : [];
   const files = typeof a.files_touched === "number" && a.files_touched > 0 ? a.files_touched : 0;
   const message = typeof a.last_message === "string" && a.last_message ? a.last_message : "";
-  if (steps.length === 0 && !files && !message) return undefined;
+  const prompt = typeof a.last_prompt === "string" && a.last_prompt ? a.last_prompt : "";
+  if (steps.length === 0 && !files && !message && !prompt) return undefined;
   return {
     steps,
     ...(files ? { files_touched: files } : {}),
     ...(message ? { last_message: message } : {}),
+    ...(prompt ? { last_prompt: prompt } : {}),
   };
 }
 
@@ -524,6 +535,21 @@ export function cancelMessage(agent: string, sessionId: string) {
     `api/agent-messages/${encodeURIComponent(agent)}/${encodeURIComponent(sessionId)}`,
     undefined,
     "DELETE",
+  );
+}
+/** Sends a message to a session waiting at its prompt, as a new turn in its
+ *  own terminal. */
+export function messageSession(agent: string, sessionId: string, text: string) {
+  return request<{ sent: boolean }>(
+    `api/live-sessions/${encodeURIComponent(agent)}/${encodeURIComponent(sessionId)}/message`,
+    { text },
+  );
+}
+/** Stops a waiting or quiet session's agent, as if its user quit it. */
+export function endSession(agent: string, sessionId: string) {
+  return request<{ ending: boolean }>(
+    `api/live-sessions/${encodeURIComponent(agent)}/${encodeURIComponent(sessionId)}/end`,
+    {},
   );
 }
 export function saveAgentSettings(settings: AgentSettings) {

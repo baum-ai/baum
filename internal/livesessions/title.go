@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"cmp"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -63,6 +64,12 @@ type Listed struct {
 	// Activity). Absent for Cursor sessions and until a transcript has a tool
 	// call or assistant text.
 	Activity *Activity `json:"activity,omitempty"`
+	// Endable is whether the app may end the session (end.go): it waits on
+	// its user or went quiet, and baum can stop its agent.
+	Endable bool `json:"endable,omitempty"`
+	// Messageable is whether the app may send the session a message
+	// (message.go): it waits at its prompt, and baum can reach its agent.
+	Messageable bool `json:"messageable,omitempty"`
 }
 
 // described is what was last read of a session.
@@ -94,6 +101,48 @@ type scanState struct {
 // UUIDs.
 var safeID = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
 
+// Watch calls notify, until ctx ends, when what the list serves changed with
+// no hook event to say so: agents report few events during a turn, so a
+// running session's steps, files and message, and a silent session settling
+// (settle), are only in its transcript. The list is built every
+// TitleRecheckEvery, which reads only what the files appended since.
+func (t *Transcripts) Watch(ctx context.Context, notify func()) {
+	ticker := time.NewTicker(TitleRecheckEvery)
+	defer ticker.Stop()
+	var last []byte
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if t.moved(&last) {
+				notify()
+			}
+		}
+	}
+}
+
+// moved reports whether the list differs from last, which it then holds. The
+// first look only records it.
+func (t *Transcripts) moved(last *[]byte) bool {
+	now, err := json.Marshal(t.listed())
+	if err != nil {
+		return false
+	}
+	changed := *last != nil && !bytes.Equal(now, *last)
+	*last = now
+	return changed
+}
+
+// empty reports whether a Claude Code or Codex session never had a
+// conversation: no title (which falls back to the first prompt) and no
+// activity. It is one opened and left, or used only to resume another, and
+// is not listed. A Cursor session's title comes from elsewhere and it has no
+// activity, so it is always listed.
+func empty(agent, title string, activity *Activity) bool {
+	return (agent == AgentClaudeCode || agent == AgentCodex) && title == "" && activity == nil
+}
+
 // listed is the tracker's sessions with their titles and summaries.
 func (t *Transcripts) listed() []Listed {
 	sessions := t.Tracker.Sessions()
@@ -104,7 +153,12 @@ func (t *Transcripts) listed() []Listed {
 		k := key{s.Agent, s.ID}
 		keep[k] = true
 		title, excerpt, _, activity := t.describe(k, path)
-		out = append(out, Listed{Session: s, Title: title, Summary: excerpt, Activity: activity})
+		if empty(s.Agent, title, activity) {
+			continue
+		}
+		l := Listed{Session: settle(s, activity), Title: title, Summary: excerpt, Activity: activity}
+		l.Endable, l.Messageable = t.endable(l.Session), t.messageable(l.Session)
+		out = append(out, l)
 	}
 	t.mu.Lock()
 	for k := range t.described {
@@ -414,6 +468,25 @@ func (s *describeSource) read(id string, scan *scanState) error {
 // last whole line read.
 func readClaude(path string, from, to int64, scan *scanState) error {
 	return eachLine(path, from, to, scan, func(line []byte, whole bool) {
+		// A tool's result can be past maxLine; its id opens the line.
+		if bytes.Contains(line, []byte(`"type":"user"`)) {
+			if bytes.Contains(line, []byte(`"tool_result"`)) {
+				scan.act.answered(line)
+			} else if whole && bytes.Contains(line, []byte(`"from":"baum"`)) {
+				// A message the app sent through the session's inbox: a
+				// meta line from a peer, which the user wrote all the same.
+				if text, ok := fromApp(line); ok {
+					scan.act.prompted(text, true)
+				}
+			} else if whole {
+				if text, ok := claudeText(line, false); ok {
+					// Commands and their output come wrapped in tags, and an
+					// interruption is noted as a user line; neither was typed.
+					typed := !strings.HasPrefix(text, "<") && !strings.HasPrefix(text, "[Request interrupted")
+					scan.act.prompted(text, typed)
+				}
+			}
+		}
 		if !whole {
 			return
 		}
@@ -446,6 +519,49 @@ func readClaude(path string, from, to int64, scan *scanState) error {
 			}
 		}
 	})
+}
+
+// fromApp is the text of a Claude Code user line that is a message the app
+// sent (ClaudeInbox): a meta line from the peer "baum", whose text follows
+// the framing the app added, up to any wrapping Claude Code put around it.
+func fromApp(line []byte) (string, bool) {
+	var v struct {
+		Type   string `json:"type"`
+		Origin struct {
+			Kind string `json:"kind"`
+			From string `json:"from"`
+		} `json:"origin"`
+		Message struct {
+			Content json.RawMessage `json:"content"`
+		} `json:"message"`
+	}
+	if json.Unmarshal(line, &v) != nil || v.Type != "user" || v.Origin.Kind != "peer" || v.Origin.From != "baum" {
+		return "", false
+	}
+	var text string
+	if json.Unmarshal(v.Message.Content, &text) != nil {
+		var blocks []struct {
+			Type string `json:"type"`
+			Text string `json:"text"`
+		}
+		if json.Unmarshal(v.Message.Content, &blocks) != nil {
+			return "", false
+		}
+		for _, b := range blocks {
+			if b.Type == "text" {
+				text += b.Text
+			}
+		}
+	}
+	_, text, ok := strings.Cut(text, fromBaum)
+	if !ok {
+		return "", false
+	}
+	if i := strings.Index(text, "</"); i >= 0 {
+		text = text[:i]
+	}
+	text = strings.TrimSpace(text)
+	return text, text != ""
 }
 
 // claudeText is the text of a Claude Code user line: a compaction summary
@@ -494,9 +610,12 @@ func readCodex(path string, from, to int64, scan *scanState) error {
 			if message := codexCompaction(line); strings.TrimSpace(message) != "" {
 				scan.summary = message
 			}
+		case bytes.Contains(line, []byte(`"type":"response_item"`)) && bytes.Contains(line, []byte(`_output"`)):
+			// A tool's output can be past maxLine; its call_id opens the line.
+			scan.act.answered(line)
 		case whole && bytes.Contains(line, []byte(`"type":"response_item"`)):
 			scan.act.codexActivity(line)
-		case whole && scan.prompt == "" && bytes.Contains(line, []byte(`"user_message"`)):
+		case whole && bytes.Contains(line, []byte(`"user_message"`)):
 			var v struct {
 				Type    string `json:"type"`
 				Payload struct {
@@ -505,10 +624,49 @@ func readCodex(path string, from, to int64, scan *scanState) error {
 				} `json:"payload"`
 			}
 			if json.Unmarshal(line, &v) == nil && v.Type == "event_msg" && v.Payload.Type == "user_message" {
-				scan.prompt = strings.TrimSpace(v.Payload.Message)
+				codexTyped(scan, v.Payload.Message)
 			}
+		case whole && bytes.Contains(line, []byte(`"UserMessage"`)):
+			// Codex 0.165 records what the user typed as a completed
+			// UserMessage item instead.
+			var v struct {
+				Type    string `json:"type"`
+				Payload struct {
+					Type string `json:"type"`
+					Item struct {
+						Type    string `json:"type"`
+						Content []struct {
+							Type string `json:"type"`
+							Text string `json:"text"`
+						} `json:"content"`
+					} `json:"item"`
+				} `json:"payload"`
+			}
+			if json.Unmarshal(line, &v) != nil || v.Type != "event_msg" || v.Payload.Type != "item_completed" || v.Payload.Item.Type != "UserMessage" {
+				return
+			}
+			var parts []string
+			for _, c := range v.Payload.Item.Content {
+				if c.Type == "text" && strings.TrimSpace(c.Text) != "" {
+					parts = append(parts, c.Text)
+				}
+			}
+			codexTyped(scan, strings.Join(parts, "\n"))
 		}
 	})
+}
+
+// codexTyped records a message the user typed in a Codex session: its first
+// is the prompt a title falls back to, its latest the activity's.
+func codexTyped(scan *scanState, text string) {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return
+	}
+	if scan.prompt == "" {
+		scan.prompt = text
+	}
+	scan.act.prompted(text, true)
 }
 
 // codexCompaction is the message of a Codex compacted line, read from the

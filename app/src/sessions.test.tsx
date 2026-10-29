@@ -11,7 +11,7 @@ import {
   type AgentRequests,
   type LiveSession,
 } from "./api";
-import { SessionsPage } from "./sessions";
+import { forgetFoldedSections, SessionsPage } from "./sessions";
 import { SettingsPage } from "./settings";
 import { forgetLastRows } from "./shortcuts";
 
@@ -84,6 +84,7 @@ afterEach(async () => {
   node.remove();
   vi.unstubAllGlobals();
   forgetLastRows();
+  forgetFoldedSections();
 });
 
 async function render(sessions: LiveSession[], pending = requests()) {
@@ -237,7 +238,10 @@ it("shows a finished turn without a reply box and a terminal-only wait with a no
       state: "idle",
       waiting_reason: "turn_finished",
       waiting_since: ago(720),
-      activity: { steps: [], last_message: "Want me to open a pull request?" },
+      activity: {
+        steps: [],
+        last_message: "**Done.** Want me to open a pull request?\n\n## Checks\n\n- All pass.",
+      },
     }),
     session({
       session_id: "s2",
@@ -248,28 +252,34 @@ it("shows a finished turn without a reply box and a terminal-only wait with a no
     }),
   ]);
   const [finished, asking] = [...node.querySelectorAll('[aria-label="Needs you"] li')];
-  expect(finished!.textContent).toContain("finished its turn");
-  expect(finished!.querySelector(".local-feed-soft")!.textContent).toBe(
-    "Want me to open a pull request?",
-  );
-  expect(finished!.textContent).not.toContain("Answer in the terminal");
+  // The agent by its mark and the session by its title: no "finished its
+  // turn" heading.
+  expect(finished!.querySelector("img")!.getAttribute("alt")).toBe("Claude Code");
+  expect(finished!.querySelector("h3")!.textContent).toBe("Tidy the buttons");
+  expect(finished!.querySelector(".local-feed-branch")!.textContent).toBe("feature");
+  expect(finished!.textContent).not.toContain("finished its turn");
+  // Only the message's opening paragraph, its Markdown rendered.
+  const said = finished!.querySelector(".local-feed-soft")!;
+  expect(said.textContent!.trim()).toBe("Done. Want me to open a pull request?");
+  expect(said.querySelector("strong")!.textContent).toBe("Done.");
+  expect(finished!.textContent).not.toContain("in its terminal");
   expect(finished!.querySelector("input, textarea")).toBeNull();
   expect(finished!.querySelectorAll("button")).toHaveLength(0);
-  expect(finished!.querySelector("a.local-session-open")!.getAttribute("aria-label")).toContain(
+  expect(finished!.querySelector("a.local-feed-open")!.getAttribute("aria-label")).toContain(
     "Tidy the buttons",
   );
-  expect(asking!.textContent).toContain("Answer in the terminal");
+  expect(asking!.textContent).toContain("Asks permission in its terminal");
   expect(asking!.textContent).toContain("Claude needs your permission to use Bash");
 });
 
-it("shows a running session's current step, trail and files touched, and a quiet one", async () => {
+it("shows a running session's current step and files touched, and a quiet one", async () => {
   const steps = [
     { tool: "Read", target: "oss/app/src/sessions.tsx" },
     { tool: "Edit", target: "oss/app/README.md" },
     { tool: "Bash", target: "pnpm test sessions" },
   ];
   await render([
-    session({ activity: { steps, files_touched: 3 } }),
+    session({ activity: { steps, files_touched: 3, last_prompt: "Run the session tests" } }),
     session({
       session_id: "s2",
       state: "idle",
@@ -284,26 +294,37 @@ it("shows a running session's current step, trail and files touched, and a quiet
     }),
   ]);
   const [busy, quiet, bare] = [...node.querySelectorAll('[aria-label="Running now"] li')];
+  expect(busy!.querySelector(".local-feed-prompt")!.textContent).toBe("You Run the session tests");
   expect(busy!.querySelector(".local-feed-tool")!.textContent).toBe("Bash");
   expect(busy!.querySelector(".local-feed-target")!.textContent).toContain("pnpm test sessions");
   expect(busy!.querySelector(".local-feed-caret")).not.toBeNull();
-  const chips = [...busy!.querySelectorAll(".local-feed-trail .local-feed-chip")];
-  expect(chips.map((c) => c.textContent)).toEqual(["Read", "Edit"]);
-  expect(chips[1]!.getAttribute("title")).toBe("oss/app/README.md");
-  expect(busy!.querySelector(".local-feed-files")!.textContent).toBe("3 files touched");
-  expect(busy!.querySelector(".local-feed-time")!.textContent).toBe("7m 00s");
+  // Only the current step: no trail of the earlier ones.
+  expect(busy!.textContent).not.toContain("Trail");
+  expect(busy!.textContent).not.toContain("Read");
+  expect(busy!.querySelector(".local-feed-time")!.textContent).toBe("3 files touched · 7m 00s");
   expect(quiet!.textContent).toContain("Quiet for 12 min");
   expect(quiet!.querySelector(".local-feed-caret")).toBeNull();
-  expect(quiet!.querySelector(".local-feed-dot.muted")).not.toBeNull();
   expect(bare!.textContent).toContain("Active 2 minutes ago");
   expect(bare!.querySelector(".local-feed-step")).toBeNull();
 });
 
 it("sends a message for when the turn finishes, and cancels a queued one", async () => {
   await render([session()]);
+  // No box until r opens it on the focused card.
+  expect(node.querySelector("input")).toBeNull();
+  const key = (k: string) =>
+    act(async () => {
+      window.dispatchEvent(
+        new KeyboardEvent("keydown", { key: k, bubbles: true, cancelable: true }),
+      );
+    });
+  await key("j");
+  await key("r");
   const input = node.querySelector("input")! as HTMLInputElement;
+  expect(document.activeElement).toBe(input);
   expect(node.querySelector(`label[for="${input.id}"]`)!.textContent).toBe("Send when it finishes");
-  expect(button("Send")!.disabled).toBe(true);
+  const send = () => node.querySelector<HTMLButtonElement>('button[aria-label^="Send message"]')!;
+  expect(send().disabled).toBe(true);
   await act(async () => {
     Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(
       input,
@@ -311,7 +332,7 @@ it("sends a message for when the turn finishes, and cancels a queued one", async
     );
     input.dispatchEvent(new Event("input", { bubbles: true }));
   });
-  await click(button("Send"));
+  await click(send());
   expect(posts()[0]).toMatchObject({
     path: "/s/test-ns/api/agent-messages",
     method: "POST",
@@ -325,7 +346,8 @@ it("sends a message for when the turn finishes, and cancels a queued one", async
     path: "/s/test-ns/api/agent-messages/claude-code/s1",
     method: "DELETE",
   });
-  expect(node.querySelector("input")).not.toBeNull();
+  // Cancelled, the box stays closed until asked again.
+  expect(node.querySelector("input")).toBeNull();
 
   // A message the daemon reports shows the same way.
   await render(
@@ -348,6 +370,13 @@ it("lists ended sessions compactly with their length and files", async () => {
       activity: { steps: [], files_touched: 14 },
     }),
   ]);
+  // Folded at first: its heading unfolds it.
+  expect(node.querySelector('[aria-label="Ended recently"] li')).toBeNull();
+  await click(
+    node.querySelector<HTMLButtonElement>(
+      '[aria-label="Ended recently"] button[aria-expanded="false"]',
+    )!,
+  );
   const row = node.querySelector('[aria-label="Ended recently"] li')!;
   expect(row.textContent).toContain("2.8 h · 14 files touched");
   expect(row.textContent).toContain("Ended 10 minutes ago");
@@ -425,4 +454,225 @@ it("toggles Codex approvals in Settings, and hides the toggle without the route"
   respond = () => new Response("missing", { status: 404 });
   await render();
   expect(node.textContent).not.toContain("Answer Codex approvals");
+});
+
+it("opens a session's transcript on a click anywhere on its card but its controls", async () => {
+  await render([session({ state: "running" })]);
+  const card = node.querySelector('[aria-label="Running now"] li')!;
+  const link = card.querySelector<HTMLAnchorElement>("a.local-feed-open")!;
+  expect(card.textContent).not.toContain("Open transcript");
+  let opened = 0;
+  link.addEventListener("click", (e) => {
+    e.preventDefault();
+    opened++;
+  });
+  await act(async () => card.querySelector<HTMLElement>(".local-feed-time")!.click());
+  expect(opened).toBe(1);
+  // Its box, once r opens it, keeps its clicks.
+  await act(async () => {
+    window.dispatchEvent(new KeyboardEvent("keydown", { key: "j", bubbles: true }));
+  });
+  await act(async () => {
+    window.dispatchEvent(
+      new KeyboardEvent("keydown", { key: "r", bubbles: true, cancelable: true }),
+    );
+  });
+  await act(async () => card.querySelector<HTMLElement>("input")!.click());
+  await act(async () => card.querySelector<HTMLElement>("button")!.click());
+  expect(opened).toBe(1);
+});
+
+it("lists a session that went quiet under Needs you, muted, with its last words", async () => {
+  await render([
+    session({
+      state: "idle",
+      waiting_reason: "quiet",
+      waiting_since: ago(1680),
+      activity: {
+        steps: [],
+        last_message: "Re-running the browser tests.",
+        last_prompt: "The cards are too long",
+      },
+    }),
+  ]);
+  const card = node.querySelector('[aria-label="Needs you"] li')!;
+  expect(card.textContent).toContain("quiet 28m 00s");
+  expect(card.querySelector(".local-feed-soft")!.textContent!.trim()).toBe(
+    "Re-running the browser tests.",
+  );
+  // The muted dot and the time say it went quiet: no note.
+  expect(card.querySelector(".local-feed-note")).toBeNull();
+  // What the user last typed, which it went quiet on.
+  expect(card.querySelector(".local-feed-prompt")!.textContent).toBe("You The cards are too long");
+  expect(node.querySelector('[aria-label="Running now"] li')).toBeNull();
+});
+
+it("never shows End session on a card: the menu offers it where the daemon can stop the agent", async () => {
+  await render([
+    session({
+      state: "idle",
+      waiting_reason: "turn_finished",
+      waiting_since: ago(60),
+      endable: true,
+    }),
+    session({ session_id: "s2", state: "idle", waiting_reason: "quiet", waiting_since: ago(900) }),
+  ]);
+  expect(button("End session")).toBeUndefined();
+  const menuOf = async (id: string) => {
+    await act(async () => {
+      node.querySelector(`[data-row-id="${id}"] h3`)!.dispatchEvent(
+        new MouseEvent("contextmenu", {
+          bubbles: true,
+          cancelable: true,
+          clientX: 9,
+          clientY: 9,
+        }),
+      );
+    });
+    const items = [...node.querySelectorAll('[role="menu"] [role="menuitem"]')].map(
+      (b) => b.textContent,
+    );
+    await act(async () => {
+      node
+        .querySelector('[role="menu"] button')!
+        .dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    });
+    return items;
+  };
+  expect(await menuOf("claude-code:s1")).toContain("End session");
+  expect(await menuOf("claude-code:s2")).not.toContain("End session");
+});
+
+it("offers a session's actions on a right click, in place of the browser's menu", async () => {
+  const went: string[] = [];
+  await act(async () =>
+    root.render(
+      <SessionsPage
+        sessions={[
+          session({
+            state: "idle",
+            waiting_reason: "turn_finished",
+            waiting_since: ago(60),
+            endable: true,
+            pr: 7,
+          }),
+        ]}
+        requests={requests()}
+        prHref={() => "/s/test-ns/?page=pull-requests&pr=7"}
+        Link={Link}
+        navigate={(href) => went.push(href)}
+      />,
+    ),
+  );
+  const card = node.querySelector(
+    '[data-row-id="claude-code:s1"] .local-feed-prompt, [data-row-id="claude-code:s1"] h3',
+  )!;
+  const rightClick = () => {
+    const event = new MouseEvent("contextmenu", {
+      bubbles: true,
+      cancelable: true,
+      clientX: 40,
+      clientY: 50,
+    });
+    card.dispatchEvent(event);
+    return event;
+  };
+  let event!: MouseEvent;
+  await act(async () => {
+    event = rightClick();
+  });
+  expect(event.defaultPrevented).toBe(true);
+  const items = () =>
+    [...node.querySelectorAll('[role="menu"] [role="menuitem"]')] as HTMLButtonElement[];
+  expect(items().map((b) => b.textContent)).toEqual([
+    "Open transcript",
+    "Open pull request #7",
+    "End session",
+  ]);
+  expect(document.activeElement).toBe(items()[0]);
+  // Escape closes it.
+  await act(async () => {
+    items()[0]!.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+  });
+  expect(node.querySelector('[role="menu"]')).toBeNull();
+  // A choice closes it and does what it says.
+  await act(async () => {
+    rightClick();
+  });
+  await click(items()[1]);
+  expect(went).toEqual(["/s/test-ns/?page=pull-requests&pr=7"]);
+  expect(node.querySelector('[role="menu"]')).toBeNull();
+  await act(async () => {
+    rightClick();
+  });
+  await click(items()[2]);
+  expect(posts()).toEqual([
+    { path: "/s/test-ns/api/live-sessions/claude-code/s1/end", method: "POST", body: {} },
+  ]);
+  expect(node.textContent).toContain("You ended Tidy the buttons.");
+});
+
+it("opens a reply with r on a session waiting at its prompt, sends it with Enter and closes it with Escape", async () => {
+  await render([
+    session({
+      state: "idle",
+      waiting_reason: "turn_finished",
+      waiting_since: ago(60),
+      messageable: true,
+    }),
+    session({
+      session_id: "s2",
+      state: "idle",
+      waiting_reason: "permission",
+      waiting_since: ago(30),
+    }),
+  ]);
+  // Nothing to type in until asked.
+  expect(node.querySelector("[aria-label='Needs you'] input")).toBeNull();
+  const key = (k: string) =>
+    act(async () => {
+      window.dispatchEvent(
+        new KeyboardEvent("keydown", { key: k, bubbles: true, cancelable: true }),
+      );
+    });
+  // The session asking a permission has no reply.
+  await key("j");
+  await key("j");
+  await key("r");
+  expect(node.querySelector("[aria-label='Needs you'] input")).toBeNull();
+  await key("k");
+  await key("r");
+  const input = node.querySelector<HTMLInputElement>('[data-row-id="claude-code:s1"] input')!;
+  expect(document.activeElement).toBe(input);
+  expect(input.value).toBe("");
+  // Escape closes it, and the keys go back to the card.
+  await act(async () => {
+    input.dispatchEvent(
+      new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }),
+    );
+  });
+  expect(node.querySelector("[aria-label='Needs you'] input")).toBeNull();
+  expect(document.activeElement).toBe(
+    node.querySelector('[data-row-id="claude-code:s1"] a.local-feed-open'),
+  );
+  await key("r");
+  const again = node.querySelector<HTMLInputElement>('[data-row-id="claude-code:s1"] input')!;
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(
+      again,
+      " Open the PR ",
+    );
+    again.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  // Enter submits the form.
+  await act(async () => again.form!.requestSubmit());
+  expect(posts()).toEqual([
+    {
+      path: "/s/test-ns/api/live-sessions/claude-code/s1/message",
+      method: "POST",
+      body: { text: "Open the PR" },
+    },
+  ]);
+  expect(node.querySelector("[aria-label='Needs you'] input")).toBeNull();
+  expect(node.textContent).toContain("You replied to Tidy the buttons: “Open the PR”.");
 });

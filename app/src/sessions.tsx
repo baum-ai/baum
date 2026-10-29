@@ -1,18 +1,22 @@
 import {
   useEffect,
   useId,
+  useRef,
   useState,
   type ComponentType,
   type FormEvent,
+  type MouseEvent,
   type ReactNode,
 } from "react";
 import { formatRelative } from "@baum/viewer/components/format";
-import { InlineMarkdown, Markdown } from "@baum/viewer/components/markdown";
+import { InlineMarkdown } from "@baum/viewer/components/markdown";
 import {
+  ChevronRightIcon,
   CircleCheckIcon,
   CircleDashedIcon,
   CommentsIcon,
   type IconProps,
+  PaperPlaneIcon,
   WarningIcon,
 } from "@baum/viewer/components/icons";
 import { Button, LiveDot } from "@baum/viewer/components/ui";
@@ -22,6 +26,8 @@ import {
   answerRequest,
   appURL,
   cancelMessage,
+  endSession,
+  messageSession,
   LocalRequestError,
   noAgentRequests,
   sendMessage,
@@ -36,6 +42,7 @@ import {
 import claudeLogo from "./desktop/claude-code.svg";
 import codexLogo from "./desktop/codex.svg";
 import cursorLogo from "./desktop/cursor.svg";
+import { useContextMenu, type MenuItem } from "./context-menu";
 import { useNow } from "./live";
 import { LiveSessionDecisions } from "./decisions";
 import { listKeys, useRowFocus, useShortcuts } from "./shortcuts";
@@ -73,6 +80,7 @@ export const waitingReasons: Record<WaitingReason, string> = {
   permission: "Asking permission",
   input: "Waiting for your answer",
   turn_finished: "Finished its turn",
+  quiet: "Went quiet",
 };
 
 const waitingSince = (s: LiveSession) => s.waiting_since ?? s.last_activity_at;
@@ -105,6 +113,17 @@ export function Agent({ agent }: { agent: string }) {
       {logo ? <img src={logo} alt="" width="18" height="18" className="shrink-0" /> : null}
       {agentName(agent)}
     </span>
+  );
+}
+
+/** The agent by its mark alone, its name for assistive technology; by name
+ *  when it has no mark. */
+function AgentMark({ agent }: { agent: string }) {
+  const logo = agentLogos[agent];
+  return logo ? (
+    <img src={logo} alt={agentName(agent)} width="18" height="18" className="flex-none" />
+  ) : (
+    <span className="local-feed-agent">{agentName(agent)}</span>
   );
 }
 
@@ -162,6 +181,7 @@ const reasonIcons: Record<WaitingReason, ComponentType<IconProps>> = {
   permission: WarningIcon,
   input: CommentsIcon,
   turn_finished: CircleCheckIcon,
+  quiet: CircleDashedIcon,
 };
 
 /** Why the session waits, with its icon: a permission or a question in the
@@ -192,7 +212,7 @@ export function LiveSessions({
       <h3>Sessions in progress</h3>
       <ul>
         {sessions.map((s) => (
-          <li key={sessionKey(s)} title={s.session_id}>
+          <li key={sessionKey(s)}>
             <span className="local-pr-session-who">
               <Agent agent={s.agent} />
               {s.state !== "running" && s.waiting_reason ? (
@@ -331,14 +351,28 @@ function PhaseNote({ phase }: { phase: Phase }) {
   return null;
 }
 
+/** The latest message the user typed to the session, on one line. */
+function LastPrompt({ session }: { session?: LiveSession }) {
+  const prompt = session?.activity?.last_prompt;
+  return prompt ? (
+    <p className="local-feed-prompt" title={prompt}>
+      <span className="local-feed-prompt-label">You</span> {prompt}
+    </p>
+  ) : null;
+}
+
+/** What an agent's message opens with: its first paragraph, where an agent
+ *  says what it did or asks. The transcript has the rest. */
+const opening = (message: string) => message.trim().split(/\n\s*\n/)[0]!;
+
 /** The session a card is about: its title and branch in one line, the
- *  agent's last words as a quote. */
+ *  opening of the agent's last words as a quote. */
 function CardContext({ session, quote }: { session?: LiveSession; quote?: boolean }) {
   const message = session?.activity?.last_message;
   return (
     <>
       {session ? (
-        <p className="local-feed-where" title={session.session_id}>
+        <p className="local-feed-where">
           {sessionName({ ...session, branch: undefined })}
           {session.branch ? (
             <>
@@ -348,9 +382,10 @@ function CardContext({ session, quote }: { session?: LiveSession; quote?: boolea
           ) : null}
         </p>
       ) : null}
+      <LastPrompt session={session} />
       {message && quote ? (
         <blockquote className="local-feed-quote">
-          “<InlineMarkdown>{message}</InlineMarkdown>”
+          “<InlineMarkdown>{opening(message)}</InlineMarkdown>”
         </blockquote>
       ) : null}
     </>
@@ -375,9 +410,8 @@ function PermissionCard({
   const name = session ? sessionName(session) : request.tool;
   const label = (text: string) => `${text}: ${agentName(request.agent)} on ${name}`;
   return (
-    <li className="local-feed-card local-feed-ask" title={request.session_id} {...row}>
+    <li className="local-feed-card local-feed-ask" {...row}>
       <div className="local-feed-head">
-        <span className="local-feed-dot ring" aria-hidden="true" />
         <h3>{permissionTitle(request)}</h3>
         <span className="local-feed-time">
           waiting {clock((now - new Date(request.created_at).getTime()) / 1000)}
@@ -497,9 +531,8 @@ function QuestionCard({
   };
   const ready = questions.every((q) => (picked[q.question]?.length ?? 0) > 0);
   return (
-    <li className="local-feed-card local-feed-ask" title={request.session_id} {...row}>
+    <li className="local-feed-card local-feed-ask" {...row}>
       <div className="local-feed-head">
-        <span className="local-feed-dot ring" aria-hidden="true" />
         <h3>{agentName(request.agent)} has a question</h3>
         <span className="local-feed-time">
           waiting {clock((now - new Date(request.created_at).getTime()) / 1000)}
@@ -549,59 +582,167 @@ function QuestionCard({
   );
 }
 
+/** A composer's send: a paper plane in a small green square, faded until there is
+ *  something to send, named for assistive technology. */
+function SendButton({
+  label,
+  busy,
+  disabled,
+}: {
+  label: string;
+  busy: boolean;
+  disabled: boolean;
+}) {
+  return (
+    <button
+      type="submit"
+      className="local-feed-send-button"
+      aria-label={label}
+      title="Send"
+      aria-busy={busy || undefined}
+      disabled={disabled}
+    >
+      <PaperPlaneIcon size={14} />
+    </button>
+  );
+}
+
+/** A reply to a session waiting at its prompt, where the daemon offers it
+ *  (`messageable`), opened with r or from the card's menu: Enter sends it,
+ *  starting the session's next turn in its own terminal (the card moves to
+ *  Running now when its prompt hook arrives), and Escape closes it. */
+function Reply({
+  session: s,
+  onDone,
+  close,
+}: {
+  session: LiveSession;
+  onDone: (text: string) => void;
+  close: () => void;
+}) {
+  const id = useId();
+  const input = useRef<HTMLInputElement>(null);
+  const [text, setText] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  useEffect(() => input.current?.focus(), []);
+  const submit = async (event: FormEvent) => {
+    event.preventDefault();
+    const message = text.trim();
+    if (!message || busy) return;
+    setBusy(true);
+    setError("");
+    try {
+      await messageSession(s.agent, s.session_id, message);
+      onDone(`You replied to ${sessionName(s)}: “${message}”.`);
+      close();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Could not reach the session.");
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <div className="local-feed-send">
+      <form className="local-feed-compose" onSubmit={(event) => void submit(event)}>
+        <label htmlFor={id} className="sr-only">
+          Reply
+        </label>
+        <input
+          ref={input}
+          id={id}
+          value={text}
+          maxLength={10000}
+          disabled={busy}
+          placeholder="Reply…"
+          onChange={(event) => setText(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key !== "Escape") return;
+            event.preventDefault();
+            close();
+          }}
+        />
+        <span className="local-feed-compose-hint" aria-hidden="true">
+          Enter to send · Esc to close
+        </span>
+        <SendButton
+          label={labelFor("Send reply", s)}
+          busy={busy}
+          disabled={busy || text.trim() === ""}
+        />
+      </form>
+      {error ? (
+        <p role="alert" className="local-feed-note error">
+          {error}
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
+/** What a waiting card says of a wait only its terminal can answer. A
+ *  finished turn needs no note, nor a quiet one, whose muted dot and time say
+ *  it. */
+const waitNotes: Partial<Record<WaitingReason, string>> = {
+  permission: "Asks permission in its terminal",
+  input: "Asks a question in its terminal",
+};
+
 /** A session waiting without a request the app can answer: it finished its
- *  turn, or asks for something only its terminal can answer. */
+ *  turn, asks for something only its terminal can answer, or went quiet. */
 function WaitingCard({
   session: s,
   since,
   now,
   open,
   row,
+  onDone,
+  replying,
+  closeReply,
 }: {
   session: LiveSession;
   since: string;
   now: number;
-  open: (s: LiveSession) => ReactNode;
+  open: (s: LiveSession, children: ReactNode) => ReactNode;
   row: RowProps;
+  /** Whether its reply is open (Reply). */
+  replying: boolean;
+  closeReply: () => void;
+  onDone: (text: string) => void;
 }) {
   const reason = s.waiting_reason!;
-  const title =
-    reason === "turn_finished"
-      ? `${agentName(s.agent)} finished its turn`
-      : reason === "permission"
-        ? `${agentName(s.agent)} is asking permission`
-        : `${agentName(s.agent)} is waiting for your answer`;
   const message = s.activity?.last_message;
   return (
-    <li className="local-feed-card quiet" title={s.session_id} {...row(s)}>
+    <li className="local-feed-card quiet" {...row(s)}>
+      {/* The agent by its mark, then the session by its title and branch:
+       *  why it waits shows in what it said, or in the note below. */}
       <div className="local-feed-head">
-        <span className="local-feed-dot caution" aria-hidden="true" />
-        <h3>{title}</h3>
-        <span className="local-feed-time quiet" title={absolute(since)}>
-          waiting {clock((now - new Date(since).getTime()) / 1000)}
+        <AgentMark agent={s.agent} />
+        <h3 className="local-feed-name">{open(s, sessionName({ ...s, branch: undefined }))}</h3>
+        {s.branch ? <code className="local-feed-mono local-feed-branch">{s.branch}</code> : null}
+        <span
+          className={`local-feed-time local-feed-status ${reason === "quiet" ? "quiet" : "waiting"}`}
+          title={absolute(since)}
+        >
+          {reason === "quiet" ? "quiet" : "waiting"}{" "}
+          {clock((now - new Date(since).getTime()) / 1000)}
         </span>
       </div>
-      <CardContext session={s} />
+      <LastPrompt session={s} />
       {message ? (
-        reason === "turn_finished" ? (
-          // The agent's last words as it wrote them, their opening shown;
-          // the transcript has the rest.
-          <div className="local-feed-soft">
-            <Markdown html={false} className="local-feed-message">
-              {message}
-            </Markdown>
-          </div>
+        reason === "turn_finished" || reason === "quiet" ? (
+          <p className="local-feed-soft">
+            <InlineMarkdown>{opening(message)}</InlineMarkdown>
+          </p>
         ) : (
           <blockquote className="local-feed-quote">
-            “<InlineMarkdown>{message}</InlineMarkdown>”
+            “<InlineMarkdown>{opening(message)}</InlineMarkdown>”
           </blockquote>
         )
       ) : null}
       {s.waiting_message ? <p className="local-needs-message">{s.waiting_message}</p> : null}
-      {reason !== "turn_finished" ? (
-        <p className="local-feed-note">Answer in the terminal</p>
-      ) : null}
-      <div className="local-feed-actions">{open(s)}</div>
+      {waitNotes[reason] ? <p className="local-feed-note">{waitNotes[reason]}</p> : null}
+      {s.messageable && replying ? <Reply session={s} onDone={onDone} close={closeReply} /> : null}
     </li>
   );
 }
@@ -612,12 +753,19 @@ function SendWhenFinished({
   session: s,
   queued,
   onDone,
+  replying,
+  close,
 }: {
   session: LiveSession;
   queued?: AgentMessage;
   onDone: (text: string) => void;
+  /** Whether its box is open: with r or from the card's menu, as a waiting
+   *  session's Reply. A queued message shows either way. */
+  replying: boolean;
+  close: () => void;
 }) {
   const id = useId();
+  const input = useRef<HTMLInputElement>(null);
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -626,6 +774,9 @@ function SendWhenFinished({
   const [local, setLocal] = useState<string | null | undefined>(undefined);
   useEffect(() => setLocal(undefined), [queued?.text]);
   const shown = local !== undefined ? local : (queued?.text ?? null);
+  useEffect(() => {
+    if (replying) input.current?.focus();
+  }, [replying]);
   const run = async (task: () => Promise<unknown>, after: () => void) => {
     setBusy(true);
     setError("");
@@ -648,6 +799,7 @@ function SendWhenFinished({
         setLocal(message);
         setText("");
         onDone(`You queued a message for ${sessionName(s)}: “${message}”.`);
+        close();
       },
     );
   };
@@ -671,27 +823,35 @@ function SendWhenFinished({
             {busy ? "Cancelling…" : "Cancel"}
           </Button>
         </div>
-      ) : (
+      ) : replying ? (
         <form className="local-feed-compose" onSubmit={submit}>
-          <label htmlFor={id}>Send when it finishes</label>
+          <label htmlFor={id} className="sr-only">
+            Send when it finishes
+          </label>
           <input
+            ref={input}
             id={id}
             value={text}
             maxLength={4000}
             disabled={busy}
             placeholder="Message for when its turn ends…"
             onChange={(event) => setText(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key !== "Escape") return;
+              event.preventDefault();
+              close();
+            }}
           />
-          <Button
-            type="submit"
-            size="compact"
-            aria-label={labelFor("Send message", s)}
+          <span className="local-feed-compose-hint" aria-hidden="true">
+            Enter to send · Esc to close
+          </span>
+          <SendButton
+            label={labelFor("Send message", s)}
+            busy={busy}
             disabled={busy || text.trim() === ""}
-          >
-            {busy ? "Sending…" : "Send"}
-          </Button>
+          />
         </form>
-      )}
+      ) : null}
       {error ? (
         <p role="alert" className="local-feed-note error">
           {error}
@@ -710,27 +870,28 @@ function RunningCard({
   open,
   onDone,
   row,
+  replying,
+  closeReply,
 }: {
   session: LiveSession;
   now: number;
   queued?: AgentMessage;
   prHref: (session: LiveSession) => string | null;
   Link: ComponentType<ViewerLinkProps>;
-  open: (s: LiveSession) => ReactNode;
+  open: (s: LiveSession, children: ReactNode) => ReactNode;
   onDone: (text: string) => void;
   row: RowProps;
+  replying: boolean;
+  closeReply: () => void;
 }) {
   const running = s.state === "running";
   const steps = s.activity?.steps ?? [];
   const current = steps.at(-1);
-  const trail = steps.slice(0, -1);
   const files = s.activity?.files_touched;
-  const seen = new Map<string, number>();
   return (
-    <li className="local-feed-card" title={s.session_id} {...row(s)}>
+    <li className="local-feed-card" {...row(s)}>
       <div className="local-feed-head">
-        <span className={`local-feed-dot ${running ? "live" : "muted"}`} aria-hidden="true" />
-        <Agent agent={s.agent} />
+        {open(s, <AgentMark agent={s.agent} />)}
         {s.title ? (
           <span className="local-feed-title" title={s.title}>
             {s.title}
@@ -738,46 +899,33 @@ function RunningCard({
         ) : null}
         <SessionWhere session={s} prHref={prHref} Link={Link} />
         <span className="local-feed-time" title={absolute(s.started_at)}>
+          {files ? <span className="local-feed-files">{filesTouched(files)} · </span> : null}
           {running
             ? clock((now - new Date(s.started_at).getTime()) / 1000)
             : `Quiet for ${lasted((now - new Date(s.last_activity_at).getTime()) / 1000)}`}
         </span>
       </div>
+      <LastPrompt session={s} />
       {current ? (
-        <>
-          <div className="local-feed-step" title={current.target}>
-            <span className={`local-feed-tool ${toolTone(current.tool)}`}>{current.tool}</span>
-            {current.target ? <span className="local-feed-target"> {current.target}</span> : null}
-            {running ? <span className="local-feed-caret" aria-hidden="true" /> : null}
-          </div>
-          {trail.length > 0 || files ? (
-            <div className="local-feed-trail">
-              <span className="local-feed-trail-label">Trail</span>
-              {trail.map((t, i) => {
-                const key = `${t.at ?? ""}|${t.tool}|${t.target ?? ""}`;
-                const n = seen.get(key) ?? 0;
-                seen.set(key, n + 1);
-                return (
-                  <span
-                    key={`${key}|${n}`}
-                    title={t.target}
-                    className={`local-feed-chip ${toolTone(t.tool)} ${i === trail.length - 1 ? "new" : ""}`}
-                  >
-                    {t.tool}
-                  </span>
-                );
-              })}
-              {files ? <span className="local-feed-files">{filesTouched(files)}</span> : null}
-            </div>
-          ) : null}
-        </>
+        <div className="local-feed-step" title={current.target}>
+          <span className={`local-feed-tool ${toolTone(current.tool)}`}>{current.tool}</span>
+          {current.target ? <span className="local-feed-target"> {current.target}</span> : null}
+          {running ? <span className="local-feed-caret" aria-hidden="true" /> : null}
+        </div>
       ) : (
         <p className="local-feed-note" title={absolute(s.last_activity_at)}>
           Active {formatRelative(s.last_activity_at, now)}
         </p>
       )}
-      {running ? <SendWhenFinished session={s} queued={queued} onDone={onDone} /> : null}
-      <div className="local-feed-actions">{open(s)}</div>
+      {running ? (
+        <SendWhenFinished
+          session={s}
+          queued={queued}
+          onDone={onDone}
+          replying={replying}
+          close={closeReply}
+        />
+      ) : null}
     </li>
   );
 }
@@ -791,6 +939,58 @@ type Waiting = {
   request?: AgentRequest;
 };
 
+type Section = "needs" | "running" | "ended";
+
+/** Which sections are folded, for as long as the app runs: Ended recently
+ *  starts folded, since it is looked back at, not watched. */
+const folded: Record<Section, boolean> = { needs: false, running: false, ended: true };
+let collapsedSections = folded;
+/** Folds the sections as a fresh start of the app does. */
+export function forgetFoldedSections() {
+  collapsedSections = folded;
+}
+
+/** A section's heading, drawn as an inbox bucket's: a chevron that folds the
+ *  section, its dot in the section's tone, its name and how many it holds. */
+function SectionHead({
+  section,
+  title,
+  count,
+  collapsed,
+  toggle,
+}: {
+  section: Section;
+  title: string;
+  count: number;
+  collapsed: boolean;
+  toggle: (section: Section) => void;
+}) {
+  return (
+    <h2>
+      <button
+        type="button"
+        className="local-feed-toggle"
+        aria-expanded={!collapsed}
+        aria-controls={`sessions-${section}`}
+        onClick={() => toggle(section)}
+      >
+        <ChevronRightIcon
+          size={12}
+          className={collapsed ? "local-feed-chevron" : "local-feed-chevron open"}
+        />
+        <span className="local-feed-section-dot" aria-hidden="true" />
+        {title}
+        {count > 0 ? (
+          <>
+            {" "}
+            <span className="local-feed-count">{count}</span>
+          </>
+        ) : null}
+      </button>
+    </h2>
+  );
+}
+
 /** The sessions page: what waits on the person (answerable from here), what
  *  agents are doing on this computer now, and what ended in the last day.
  *  `prHref` is where a session's pull request opens in the app, or null when
@@ -800,14 +1000,18 @@ export function SessionsPage({
   requests = noAgentRequests,
   prHref,
   Link,
+  navigate = (href) => window.location.assign(href),
 }: {
   sessions: LiveSession[];
   requests?: AgentRequests;
   prHref: (session: LiveSession) => string | null;
   Link: ComponentType<ViewerLinkProps>;
+  /** Goes to a page of the app, as its links do. */
+  navigate?: (href: string) => void;
 }) {
   const now = useNow(1000);
   const [action, setAction] = useState("");
+  const menu = useContextMenu();
   const live = sessions.filter((s) => s.state !== "ended");
   const find = (agent: string, id: string) =>
     live.find((s) => s.agent === agent && s.session_id === id);
@@ -840,17 +1044,44 @@ export function SessionsPage({
     .sort((a, b) => endedAtOf(b).localeCompare(endedAtOf(a)));
   const queuedFor = (s: LiveSession) =>
     requests.messages.find((m) => m.agent === s.agent && m.session_id === s.session_id);
+  const [collapsed, setCollapsed] = useState(collapsedSections);
+  const toggle = (section: Section) => {
+    collapsedSections = { ...collapsed, [section]: !collapsed[section] };
+    setCollapsed(collapsedSections);
+  };
+  // The keys move through the rows on show only.
   const rows = useRowFocus<HTMLDivElement>("sessions", [
-    ...waiting.map((w) => (w.session ? sessionKey(w.session) : w.key)),
-    ...active.map(sessionKey),
-    ...ended.map(sessionKey),
+    ...(collapsed.needs ? [] : waiting.map((w) => (w.session ? sessionKey(w.session) : w.key))),
+    ...(collapsed.running ? [] : active.map(sessionKey)),
+    ...(collapsed.ended ? [] : ended.map(sessionKey)),
   ]);
   const row: RowProps = (s) => ({
     "data-row-id": sessionKey(s),
     "data-focused": rows.focused === sessionKey(s) || undefined,
   });
+  // The reply open on a card, by its session's key, at most one.
+  const [replying, setReplying] = useState<string | null>(null);
+  // Closing a reply puts the keys back on its card.
+  const closeReply = () => {
+    if (replying) rows.rowLink(replying)?.focus();
+    setReplying(null);
+  };
+  // A waiting session takes a reply now; a working one, when it finishes.
+  const working = (s: LiveSession) => s.state === "running" && active.includes(s);
+  const reply = (s: LiveSession) => {
+    if (!s.messageable && !working(s)) return false;
+    setReplying(sessionKey(s));
+    return true;
+  };
   useShortcuts((event) => {
-    if (listKeys(event, rows) || event.key !== "p" || !rows.focused) return;
+    if (listKeys(event, rows) || !rows.focused) return;
+    if (event.key === "r") {
+      const s = sessions.find((x) => sessionKey(x) === rows.focused);
+      // The key opens the box; it is not typed into it.
+      if (s && reply(s)) event.preventDefault();
+      return;
+    }
+    if (event.key !== "p") return;
     const pr = rows
       .rowLink(rows.focused)
       ?.closest("[data-row-id]")
@@ -859,18 +1090,61 @@ export function SessionsPage({
     event.preventDefault();
     pr.click();
   });
-  const open = (s: LiveSession) => (
+  // A session's card opens its transcript: by its link, which the keys
+  // focus and follow, or by a click anywhere else on the card, unless it
+  // lands on something of its own to press or type in, or selects text.
+  const open = (s: LiveSession, children: ReactNode) => (
     <Link
       href={transcriptHref(s)}
       data-row-link=""
-      className="inbox-action local-session-open"
+      className="local-feed-open"
       aria-label={labelFor("Open transcript", s)}
     >
-      Open transcript
+      {children}
     </Link>
   );
+  const openCard = (event: MouseEvent) => {
+    const target = event.target as HTMLElement;
+    if (target.closest("a, button, input, textarea, select, label, summary")) return;
+    if (window.getSelection()?.toString()) return;
+    target.closest("[data-row-id]")?.querySelector<HTMLElement>(".local-feed-open")?.click();
+  };
+  // A right click on a session's card offers what can be done with it.
+  const actionsFor = (s: LiveSession): MenuItem[] => {
+    const items: MenuItem[] = [];
+    if (s.messageable) items.push({ label: "Reply", hint: "r", onSelect: () => reply(s) });
+    else if (working(s))
+      items.push({ label: "Reply when it finishes", hint: "r", onSelect: () => reply(s) });
+    items.push({ label: "Open transcript", onSelect: () => navigate(transcriptHref(s)) });
+    const pr = prHref(s);
+    if (pr)
+      items.push({
+        label: s.pr ? `Open pull request #${s.pr}` : "Open pull request",
+        onSelect: () => navigate(pr),
+      });
+    if (s.endable)
+      items.push({
+        label: "End session",
+        danger: true,
+        onSelect: () =>
+          void endSession(s.agent, s.session_id).then(
+            () => setAction(`You ended ${sessionName(s)}.`),
+            (e: unknown) =>
+              setAction(
+                `${sessionName(s)} was not ended: ${e instanceof Error ? e.message : "the request failed."}`,
+              ),
+          ),
+      });
+    return items;
+  };
+  const cardMenu = (event: MouseEvent) => {
+    const id = (event.target as HTMLElement).closest("[data-row-id]")?.getAttribute("data-row-id");
+    const s = id ? sessions.find((x) => sessionKey(x) === id) : undefined;
+    if (s) menu.open(event, actionsFor(s));
+  };
   return (
-    <div ref={rows.list} className="local-feed">
+    <div ref={rows.list} className="local-feed" onClick={openCard} onContextMenu={cardMenu}>
+      {menu.menu}
       <div aria-live="polite" className="local-feed-live">
         {action ? (
           <p className="local-feed-done">
@@ -880,11 +1154,15 @@ export function SessionsPage({
         ) : null}
       </div>
       {waiting.length > 0 ? (
-        <section aria-label="Needs you" className="local-feed-section">
-          <h2>
-            Needs you <span className="local-feed-count caution">{waiting.length}</span>
-          </h2>
-          <ul className="local-feed-cards">
+        <section aria-label="Needs you" className="local-feed-section needs">
+          <SectionHead
+            section="needs"
+            title="Needs you"
+            count={waiting.length}
+            collapsed={collapsed.needs}
+            toggle={toggle}
+          />
+          <ul id="sessions-needs" className="local-feed-cards" hidden={collapsed.needs}>
             {waiting.map((w) =>
               w.request?.kind === "permission" ? (
                 <PermissionCard
@@ -912,25 +1190,31 @@ export function SessionsPage({
                   now={now}
                   open={open}
                   row={row}
+                  onDone={setAction}
+                  replying={replying === sessionKey(w.session!)}
+                  closeReply={closeReply}
                 />
               ),
             )}
           </ul>
         </section>
       ) : null}
-      <section aria-label="Running now" className="local-feed-section">
-        <h2>
-          Running now
-          {active.length > 0 ? <span className="local-feed-count">{active.length}</span> : null}
-        </h2>
-        {active.length === 0 ? (
+      <section aria-label="Running now" className="local-feed-section running">
+        <SectionHead
+          section="running"
+          title="Running now"
+          count={active.length}
+          collapsed={collapsed.running}
+          toggle={toggle}
+        />
+        {collapsed.running ? null : active.length === 0 ? (
           <p className="local-sessions-empty">
             {waiting.length > 0
               ? "No other agent sessions are running."
               : "No agent sessions are running. Sessions of connected agents in your repositories show here while they work."}
           </p>
         ) : (
-          <ul className="local-feed-cards column">
+          <ul id="sessions-running" className="local-feed-cards">
             {active.map((s) => (
               <RunningCard
                 key={sessionKey(s)}
@@ -942,20 +1226,25 @@ export function SessionsPage({
                 open={open}
                 onDone={setAction}
                 row={row}
+                replying={replying === sessionKey(s)}
+                closeReply={closeReply}
               />
             ))}
           </ul>
         )}
       </section>
-      <section aria-label="Ended recently" className="local-feed-section">
-        <h2>
-          Ended recently
-          {ended.length > 0 ? <span className="local-feed-count">{ended.length}</span> : null}
-        </h2>
-        {ended.length === 0 ? (
+      <section aria-label="Ended recently" className="local-feed-section ended">
+        <SectionHead
+          section="ended"
+          title="Ended recently"
+          count={ended.length}
+          collapsed={collapsed.ended}
+          toggle={toggle}
+        />
+        {collapsed.ended ? null : ended.length === 0 ? (
           <p className="local-sessions-empty">No sessions ended in the last day.</p>
         ) : (
-          <ul className="local-feed-cards column">
+          <ul id="sessions-ended" className="local-feed-cards">
             {ended.map((s) => {
               const endedAt = endedAtOf(s);
               const seconds = Math.max(
@@ -964,13 +1253,8 @@ export function SessionsPage({
               );
               const files = s.activity?.files_touched;
               return (
-                <li
-                  key={sessionKey(s)}
-                  className="local-feed-card compact"
-                  title={s.session_id}
-                  {...row(s)}
-                >
-                  <Agent agent={s.agent} />
+                <li key={sessionKey(s)} className="local-feed-card compact" {...row(s)}>
+                  {open(s, <AgentMark agent={s.agent} />)}
                   {s.title ? (
                     <span className="local-feed-title" title={s.title}>
                       {s.title}
@@ -983,7 +1267,6 @@ export function SessionsPage({
                   <span className="local-feed-sub" title={absolute(endedAt)}>
                     Ended {formatRelative(endedAt, now)}
                   </span>
-                  {open(s)}
                 </li>
               );
             })}

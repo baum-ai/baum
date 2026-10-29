@@ -453,3 +453,39 @@ func TestAPIServesTheWait(t *testing.T) {
 		t.Fatalf("session = %v", s)
 	}
 }
+
+func TestACompactionLeavesAWait(t *testing.T) {
+	c := &clock{t0}
+	tr := newTracker(c, newLinker())
+	apply(tr, event("s1", "user-prompt-submit", c.now, "/work/demo"))
+	c.advance(time.Minute)
+	stopped := c.now
+	apply(tr, event("s1", "stop", c.now, "/work/demo"))
+	// Claude Code compacts the waiting session on its own an hour later.
+	c.advance(time.Hour)
+	compact := event("s1", "session-start", c.now, "/work/demo")
+	compact.Session.Source = "compact"
+	apply(tr, compact)
+	if s := only(t, tr); s.WaitingReason != WaitTurnFinished || !s.WaitingSince.Equal(stopped) || s.State != StateIdle {
+		t.Fatalf("after the compaction: %+v", s)
+	}
+	// Compacting a working session leaves it working, and a resume ends a
+	// wait as any start does.
+	c.advance(time.Minute)
+	apply(tr, event("s1", "user-prompt-submit", c.now, "/work/demo"))
+	c.advance(time.Minute)
+	compact.Time = c.now
+	compact.ID = "compact-while-working"
+	apply(tr, compact)
+	if s := only(t, tr); s.WaitingReason != "" || s.State != StateRunning {
+		t.Fatalf("after a compaction while working: %+v", s)
+	}
+	apply(tr, event("s1", "stop", c.now.Add(time.Second), "/work/demo"))
+	c.advance(time.Minute)
+	resume := event("s1", "session-start", c.now, "/work/demo")
+	resume.Session.Source = "resume"
+	apply(tr, resume)
+	if s := only(t, tr); s.WaitingReason != "" || s.State != StateRunning {
+		t.Fatalf("after a resume: %+v", s)
+	}
+}
