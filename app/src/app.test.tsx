@@ -711,37 +711,103 @@ function stubAutomatic(
   });
   return puts;
 }
-it("saves the global review settings from the form the desktop setup uses", async () => {
-  history.replaceState(null, "", "/s/test-ns/?page=settings");
+/** Picks `value` in a select as a person would. */
+async function choose(select: HTMLSelectElement, value: string) {
+  await act(async () => {
+    select.value = value;
+    select.dispatchEvent(new Event("change", { bubbles: true }));
+  });
+}
+it("saves each review setting as it changes", async () => {
+  history.replaceState(null, "", "/s/test-ns/?page=settings&section=reviews");
   stubDiagnostics(async () => Response.json({ local: true, report: diagnosticsReport }));
   const puts = stubAutomatic();
   await act(async () => root.render(<App />));
-  const save = () =>
-    [...node.querySelectorAll("button")].find((b) => b.textContent === "Save review settings")!;
+  const section = () => node.querySelector('[aria-labelledby="settings-reviews-heading"]')!;
   // "auto" shows as the harness it runs first, with that harness's default model.
-  expect(node.querySelector<HTMLInputElement>('input[value="claude"]')!.checked).toBe(true);
+  expect(node.querySelector<HTMLSelectElement>("#review-agent")!.value).toBe("claude");
   expect(node.querySelector<HTMLSelectElement>("#review-model")!.value).toBe("claude-haiku-5-5");
   const global = node.querySelector<HTMLInputElement>("#review-automatic")!;
   expect(global.checked).toBe(true);
   expect(node.querySelector("#review-all-note")).toBeNull();
-  await act(async () =>
-    node.querySelector<HTMLInputElement>('input[name="pull-requests"][value="all"]')!.click(),
-  );
+  const all = [...section().querySelectorAll("button")].find((b) => b.textContent === "All")!;
+  await act(async () => all.click());
   expect(node.querySelector("#review-all-note")).not.toBeNull();
-  await act(async () => save().click());
-  expect(puts).toContainEqual({
+  expect(puts.at(-1)).toEqual({
     path: "/s/test-ns/api/automatic",
     body: { enabled: true, backend: "claude", model: "claude-haiku-5-5", pull_requests: "all" },
   });
+  expect(section().textContent).toContain("Saved");
   await act(async () => global.click());
-  await act(async () => save().click());
-  expect(puts).toContainEqual({
+  expect(puts.at(-1)).toEqual({
     path: "/s/test-ns/api/automatic",
     body: { enabled: false, backend: "claude", model: "claude-haiku-5-5", pull_requests: "all" },
   });
+  // A new agent starts at its default model.
+  await choose(node.querySelector<HTMLSelectElement>("#review-agent")!, "codex");
+  expect(puts.at(-1)!.body).toMatchObject({ backend: "codex", model: "gpt-6-luna" });
+  // A custom model saves once the field is left, not on every key.
+  await choose(node.querySelector<HTMLSelectElement>("#review-model")!, "\u0000custom");
+  const count = puts.length;
+  const custom = node.querySelector<HTMLInputElement>('input[aria-label="Custom model"]')!;
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(
+      custom,
+      "gpt-6-terra",
+    );
+    custom.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  expect(puts.length).toBe(count);
+  await act(async () => custom.dispatchEvent(new FocusEvent("focusout", { bubbles: true })));
+  expect(puts.at(-1)!.body).toMatchObject({ backend: "codex", model: "gpt-6-terra" });
+});
+it("chooses a separate agent and model for fixes", async () => {
+  history.replaceState(null, "", "/s/test-ns/?page=settings&section=fixes");
+  stubDiagnostics(async () => Response.json({ local: true, report: diagnosticsReport }));
+  const puts = stubAutomatic(demoClone, automaticOverview, {
+    backend: "cursor-agent",
+    model: "composer-2.5",
+    fix_backend: "",
+    fix_model: "",
+  });
+  await act(async () => root.render(<App />));
+  const section = () => node.querySelector('[aria-labelledby="settings-fixes-heading"]')!;
+  const agent = node.querySelector<HTMLSelectElement>("#fix-agent")!;
+  expect([...agent.options].map((o) => o.textContent)).toEqual([
+    "Same as reviews",
+    "Claude Code",
+    "Codex",
+  ]);
+  expect(section().textContent).toContain("Reviews use Cursor Agent, which can't fix");
+  expect(node.querySelector("#fix-model")).toBeNull();
+  await choose(agent, "claude");
+  expect(puts.at(-1)).toEqual({
+    path: "/s/test-ns/api/automatic",
+    body: { fix_backend: "claude", fix_model: "claude-haiku-5-5" },
+  });
+  await choose(node.querySelector<HTMLSelectElement>("#fix-model")!, "claude-opus-5-5");
+  expect(puts.at(-1)!.body).toEqual({ fix_backend: "claude", fix_model: "claude-opus-5-5" });
+  await choose(agent, "");
+  expect(puts.at(-1)!.body).toEqual({ fix_backend: "", fix_model: "" });
+});
+it("opens on an overview that sends each problem to its section", async () => {
+  history.replaceState(null, "", "/s/test-ns/?page=settings");
+  stubDiagnostics(async () => Response.json({ local: true, report: diagnosticsReport }));
+  stubAutomatic(demoClone, automaticOverview, { backend: "anthropic", model: "claude-opus-5-5" });
+  await act(async () => root.render(<App />));
+  const overview = node.querySelector('[aria-labelledby="settings-overview-heading"]')!;
+  expect(overview.textContent).toContain("Same as reviews (Anthropic API) can't fix");
+  expect(overview.textContent).toContain("with Anthropic API.");
+  const nav = node.querySelector('nav[aria-label="Settings sections"]')!;
+  expect(nav.querySelector('[aria-current="page"]')!.textContent).toContain("Overview");
+  const fixes = overview.querySelector<HTMLButtonElement>('button[aria-label="Choose: Fixes"]')!;
+  await act(async () => fixes.click());
+  expect(location.search).toBe("?page=settings&section=fixes");
+  expect(node.querySelector("#fix-agent")).not.toBeNull();
+  expect(nav.querySelector('[aria-current="page"]')!.textContent).toContain("Fixes");
 });
 it("edits the environment agents run with and shows server errors inline", async () => {
-  history.replaceState(null, "", "/s/test-ns/?page=settings");
+  history.replaceState(null, "", "/s/test-ns/?page=settings&section=computer");
   stubDiagnostics(async () => Response.json({ local: true, report: diagnosticsReport }));
   const puts = stubAutomatic(demoClone, automaticOverview, {
     backend: "auto",
@@ -1002,18 +1068,28 @@ it("manages CLI and hooks inline in desktop Settings", async () => {
       expect(button).toBeTruthy();
       await act(async () => button!.click());
     };
-    await click("Install baum CLI");
-    expect(invoke).toHaveBeenCalledWith("install_command", {});
+    // The overview points at the agent whose hooks are missing.
+    expect(node.textContent).toContain("Codex isn't connected");
+    await act(async () =>
+      node.querySelector<HTMLButtonElement>('button[aria-label="Connect: Agent hooks"]')!.click(),
+    );
+    expect(location.search).toBe("?page=settings&section=connections");
     await click("Connect Codex");
     expect(invoke).toHaveBeenCalledWith("install_hooks", { agent: "codex" });
-    expect(location.search).toBe("?page=settings");
+    const computer = [...node.querySelectorAll("nav button")].find((b) =>
+      b.textContent!.startsWith("This computer"),
+    )!;
+    await act(async () => (computer as HTMLButtonElement).click());
+    await click("Install baum CLI");
+    expect(invoke).toHaveBeenCalledWith("install_command", {});
+    expect(location.search).toBe("?page=settings&section=computer");
   } finally {
     Reflect.deleteProperty(window, "__TAURI_INTERNALS__");
   }
 });
 
 it("sets the desktop window's zoom in Settings and follows the shortcuts", async () => {
-  history.replaceState(null, "", "/s/test-ns/?page=settings");
+  history.replaceState(null, "", "/s/test-ns/?page=settings&section=computer");
   const invoke = vi.fn(async (command: string, args?: { level: number }) => {
     if (command === "zoom_state") return { level: 1, levels: [0.9, 1, 1.25] };
     if (command === "set_zoom") return args!.level;
@@ -1049,7 +1125,7 @@ it("sets the desktop window's zoom in Settings and follows the shortcuts", async
 });
 
 it("hides the zoom card when the desktop app does not offer zoom", async () => {
-  history.replaceState(null, "", "/s/test-ns/?page=settings");
+  history.replaceState(null, "", "/s/test-ns/?page=settings&section=computer");
   const invoke = vi.fn(async (command: string) => {
     if (command === "zoom_state") throw new Error("zoom_state not allowed");
     return {

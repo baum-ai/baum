@@ -115,7 +115,7 @@ button first beside the version menu, Pull requests puts a small **Fix** in
 the row's Status cell, and the Inbox's card offers it as its action. Either opens
 `FixDialog` (`src/fix.tsx`), which estimates the fix
 (`POST api/jobs/estimate` with `kind: "fix"`) and shows the harness and model
-(the review's), the branch the result is pushed to, the estimate, and that the
+(the fix agent Settings chooses, else the review's), the branch the result is pushed to, the estimate, and that the
 agent runs with write access to a temporary checkout (Claude Code cannot run
 commands, so it cannot run the tests; Codex runs them without network). A fix
 of review comments also lists the threads (`fix_threads`: file, line, author
@@ -348,7 +348,7 @@ remains explicit. Refresh events share the active read and queue one follow-up,
 so a completed inbox snapshot is shown even while more updates arrive.
 Cached discovery keeps the inbox readable when refresh fails;
 one notice covers every repository GitHub could not refresh, says whether
-GitHub is disconnected or needs attention, and links to Settings; another
+GitHub is disconnected or needs attention, and links to Settings' Connections; another
 covers an exhausted GitHub allowance. Neither appears merely because the cache
 is old. Refresh asks
 GitHub through the local server. Checkbox selection requests a batch estimate;
@@ -440,17 +440,35 @@ viewer's `--data-*` slots, agents in a fixed order (Claude Code, Codex, Cursor),
 with tooltips on hover and focus. The page reads again every two seconds while
 the daemon is still indexing or searching GitHub, then every five minutes. An
 older daemon without the capability gets a note to update baum.
-In the desktop app, Settings has separate Command line and Agent hooks sections
-with inline CLI install, update and removal controls, plus installation,
-enablement and removal for each agent. Home paths are displayed with `~`.
-It shows the installed state, paths, trust guidance and action results.
-Settings holds the global review settings in the same form as the desktop
-setup's review step: the harness, its model (a listed model or a custom name),
-whether reviews run automatically and for which pull requests (authored,
-requested, both, or all open pull requests in the repository). Saving sends them to `PUT api/automatic` (`enabled`,
-`backend`, `model`, `pull_requests`), which the daemon keeps as app
-preferences over the config file; `GET api/settings` reports the effective
-harness and model. **Environment for agents** (`AgentEnvSection`) edits
+Settings (`?page=settings&section=…`, `SettingsPage` in `src/settings.tsx`)
+shows one section at a time, listed on the left with a line on where each
+stands and a dot when it needs attention; at narrow widths the list becomes
+a scrolling strip above the section. The section is in the address, so a
+reload or Back keeps it, and the GitHub notice's **Open settings** goes
+straight to Connections. **Overview**, the default, says how many things need
+the person ("Everything is working" otherwise) and in one sentence how baum
+reviews, then lists GitHub, Reviews, Fixes, the agent hooks (desktop app) and
+this computer, each with a dot and a button to the section that deals with it
+(**Check** on this computer opens the diagnostics dialog). Fixes needs
+attention when it follows reviews whose harness cannot fix. **Reviews** holds
+the global review settings, one per row: whether reviews run automatically,
+for which pull requests (authored, requested, both, or all open pull requests
+in the repository), the harness and its model (a listed model or a custom
+name, saved when its field is left or Enter is pressed). Each change is saved
+at once, with "Saved" beside the title, through `PUT api/automatic`
+(`enabled`, `backend`, `model`, `pull_requests`), which the daemon keeps as
+app preferences over the config file; `GET api/settings` reports the
+effective harness and model. A failed save shows the error and puts the
+control back. **Fixes** chooses the agent that fixes: "Same as reviews" (the
+default, which follows a repository's own review harness too) or Claude Code
+or Codex with a model, sent as `fix_backend` and `fix_model` (`""` returns to
+the reviews') and reported by `GET api/settings`. A chosen fix agent applies
+in every repository. **Connections** holds the GitHub connection and, in the
+desktop app, the Agent hooks card with installation, enablement and removal
+for each agent. **This computer** holds the diagnostics, the background
+daemon note, in the desktop app the Command line card (inline CLI install,
+update and removal) and Zoom, and the environment for agents. Home paths are
+displayed with `~`. **Environment for agents** (`AgentEnvSection`) edits
 variables set for every agent baum runs and for the git commands that commit
 and push a fix: NAME/value rows (names `^[A-Za-z_][A-Za-z0-9_]*$`, no duplicates, at most
 32) saved with `PUT api/settings/agent-env` (`{"agent_env": {...}}`; an empty

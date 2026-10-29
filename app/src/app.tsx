@@ -34,7 +34,7 @@ import { GoTo, type GoToItem } from "./go-to";
 import { PAGES } from "./pages";
 import { LocalReview } from "./review";
 import { useDiagnosticProblems } from "./diagnostics";
-import { RepositoriesPage, SettingsPage, type ReviewDefaults } from "./settings";
+import { RepositoriesPage, SettingsPage, settingsSection, type ReviewDefaults } from "./settings";
 import { needsYou, SessionsPage, transcriptHref } from "./sessions";
 import { SessionTranscriptPage } from "./session-transcript";
 import { AnalyticsPage } from "./analytics";
@@ -622,7 +622,13 @@ function Workspace({ url }: { url: UrlState }) {
             </Notice>
           ))}
           {unsynced.length > 0 && page !== "settings" ? (
-            <Notice action={<LocalLink href={appURL("?page=settings")}>Open settings</LocalLink>}>
+            <Notice
+              action={
+                <LocalLink href={appURL("?page=settings&section=connections")}>
+                  Open settings
+                </LocalLink>
+              }
+            >
               {syncNotice(github, unsynced)}
             </Notice>
           ) : null}
@@ -660,6 +666,16 @@ function Workspace({ url }: { url: UrlState }) {
               authChanged={authChanged}
               automatic={automatic}
               defaults={defaults}
+              github={github}
+              section={settingsSection(url.search.get("section"))}
+              setSection={(section) =>
+                url.update((current) => {
+                  current.set("page", "settings");
+                  if (section === "overview") current.delete("section");
+                  else current.set("section", section);
+                  return current;
+                })
+              }
               changed={reload}
               problems={diagnostics.problems}
               diagnosticsOpen={page === "diagnostics"}

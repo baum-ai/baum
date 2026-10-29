@@ -19,6 +19,9 @@ type reviewSettings struct {
 	Model        string         `json:"model"`
 	Automatic    bool           `json:"automatic"`
 	PullRequests string         `json:"pull_requests"`
+	// FixBackend and FixModel are empty when fixes follow the reviews.
+	FixBackend string `json:"fix_backend"`
+	FixModel   string `json:"fix_model"`
 }
 
 const pullRequestsBoth = "both"
@@ -41,12 +44,19 @@ func newReviewsCommand() *cobra.Command {
 			return e
 		}
 		cfg = prefs.Resolve(cfg)
-		return json.NewEncoder(cmd.OutOrStdout()).Encode(reviewSettings{
+		settings := reviewSettings{
 			Backend:      cfg.Backend,
 			Model:        cfg.Model,
 			Automatic:    prefs.Automatic,
 			PullRequests: cmp.Or(prefs.PullRequests, pullRequestsBoth),
-		})
+		}
+		if prefs.FixBackend != nil {
+			settings.FixBackend = string(*prefs.FixBackend)
+		}
+		if prefs.FixModel != nil {
+			settings.FixModel = *prefs.FixModel
+		}
+		return json.NewEncoder(cmd.OutOrStdout()).Encode(settings)
 	}}
 	set := &cobra.Command{Use: "set", Short: "Change the backend, model, automatic generation or which pull requests it covers", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
 		flags := cmd.Flags()
@@ -58,6 +68,20 @@ func newReviewsCommand() *cobra.Command {
 				return e
 			}
 			backend = &b
+		}
+		var fixBackend *config.Backend
+		clearFix := false
+		if flags.Changed("fix-backend") {
+			v, _ := flags.GetString("fix-backend")
+			if strings.TrimSpace(v) == "" {
+				clearFix = true
+			} else {
+				b, e := config.ParseBackend(v)
+				if e != nil {
+					return e
+				}
+				fixBackend = &b
+			}
 		}
 		var pullRequests *string
 		if flags.Changed("pull-requests") {
@@ -83,6 +107,17 @@ func newReviewsCommand() *cobra.Command {
 				v, _ := flags.GetString("model")
 				v = strings.TrimSpace(v)
 				next.Model = &v
+			}
+			if clearFix {
+				next.FixBackend, next.FixModel = nil, nil
+			}
+			if fixBackend != nil {
+				next.FixBackend = fixBackend
+			}
+			if flags.Changed("fix-model") {
+				v, _ := flags.GetString("fix-model")
+				v = strings.TrimSpace(v)
+				next.FixModel = &v
 			}
 			if flags.Changed("automatic") {
 				next.Automatic, _ = flags.GetBool("automatic")
@@ -111,6 +146,8 @@ func newReviewsCommand() *cobra.Command {
 	}}
 	set.Flags().String("backend", "", "backend for reviews the app generates: "+strings.Join(backendNames(), ", "))
 	set.Flags().String("model", "", "model for reviews the app generates (empty uses the backend's default)")
+	set.Flags().String("fix-backend", "", "agent that fixes pull requests: claude or codex (empty follows reviews again)")
+	set.Flags().String("fix-model", "", "model for fixes (empty uses the fix agent's default)")
 	set.Flags().Bool("automatic", true, "generate reviews automatically (--automatic=false turns it off)")
 	set.Flags().String("pull-requests", "", "which pull requests get automatic reviews: authored, requested, both or all")
 	root.AddCommand(show, set)

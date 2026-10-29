@@ -225,6 +225,16 @@ func (l *Local) resolve(ctx context.Context, c repos.Clone) (config.Config, erro
 	return c.Settings.Resolve(prefs.Resolve(l.Config)), nil
 }
 
+// resolveFix is resolve for a fix: the preferences' fix agent, when set,
+// replaces the review's backend and model (repos.Preferences.ResolveFix).
+func (l *Local) resolveFix(ctx context.Context, c repos.Clone) (config.Config, error) {
+	prefs, e := l.Registry.Preferences(ctx)
+	if e != nil {
+		return config.Config{}, e
+	}
+	return prefs.ResolveFix(c.Settings.Resolve(prefs.Resolve(l.Config))), nil
+}
+
 func (l *Local) Execute(ctx context.Context, p Prepared, progress func(Progress)) (*float64, error) {
 	if p.Kind == KindFix {
 		return l.executeFix(ctx, p, progress)

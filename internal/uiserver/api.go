@@ -149,8 +149,15 @@ func (a LocalAPI) Handler() *LocalHandler {
 		if len(cfg.AgentEnv) > 0 {
 			source = "file"
 		}
+		fixBackend, fixModel := "", ""
 		if prefs, err := a.Registry.Preferences(r.Context()); err == nil {
 			cfg = prefs.Resolve(cfg)
+			if prefs.FixBackend != nil {
+				fixBackend = string(*prefs.FixBackend)
+			}
+			if prefs.FixModel != nil {
+				fixModel = *prefs.FixModel
+			}
 			if len(prefs.AgentEnv) > 0 {
 				source = "app"
 			}
@@ -162,7 +169,9 @@ func (a LocalAPI) Handler() *LocalHandler {
 			Caps           map[string]int    `json:"caps"`
 			AgentEnv       map[string]string `json:"agent_env"`
 			AgentEnvSource string            `json:"agent_env_source"`
-		}{cfg.Backend, cfg.Model, cfg.Budgets, cfg.Caps, cfg.AgentEnv, source})
+			FixBackend     string            `json:"fix_backend"`
+			FixModel       string            `json:"fix_model"`
+		}{cfg.Backend, cfg.Model, cfg.Budgets, cfg.Caps, cfg.AgentEnv, source, fixBackend, fixModel})
 	})
 	// The app's agent environment replaces the config file's; an empty one
 	// goes back to the file's.
