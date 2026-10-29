@@ -5,7 +5,7 @@ inboxes and the app lists them under Inbox in the sidebar, each showing the
 queue entries that match. **Matching lives in the app**; this package only
 stores the definitions in the daemon and serves them at `/api/inboxes`, so
 they follow the person across app restarts. Per-inbox notifications are a
-later step (ENG-1577).
+later step.
 
 ## An inbox
 
