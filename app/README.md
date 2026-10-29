@@ -612,7 +612,9 @@ all, or **All repositories**, drops `repo=`), then the viewer's shared
 `DecisionFilterControls` over the same address as hosted (`q`, `file`,
 `person`, `who`, `category`, `from`, `to`, `superseded`, `agent` and, on
 Features, `status`; see the
-[viewer README](../viewer/README.md#decision-log)). The app supplies its
+[viewer README](../viewer/README.md#decision-log)). The sidebar, its key and
+Go to open it on human decisions (`who=human`), as the hosted rail does;
+clearing the filters there shows every decision. The app supplies its
 file and folder suggestions from `api/timeline/files` and its authors from
 `api/timeline/people` on All decisions and `api/timeline/features/people` on
 Features (the user is one person, whichever address or login names them),
