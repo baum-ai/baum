@@ -560,6 +560,9 @@ type FeatureOptions struct {
 
 // featureRun is one repository's run of placement or the text stage.
 type featureRun struct {
+	// mu guards prefs, settings and the review summaries read so far: the
+	// text stage writes features concurrently.
+	mu              sync.Mutex
 	w               *FeatureWorker
 	repository, dir string
 	prefs           repos.Preferences
@@ -595,6 +598,8 @@ func (w *FeatureWorker) newRun(ctx context.Context, repository, dir string, o Fe
 	r.calls = caller{store: w.Store, config: w.Config, backends: w.Backends, prices: prices, redactor: w.redactor, log: w.logger(), now: r.now,
 		gate: func(ctx context.Context) (repos.Preferences, repos.Settings, bool, error) {
 			on, err := r.refresh(ctx)
+			r.mu.Lock()
+			defer r.mu.Unlock()
 			return r.prefs, r.settings, on, err
 		}}
 	state := VersionCurrent
@@ -615,7 +620,9 @@ func (r *featureRun) refresh(ctx context.Context) (bool, error) {
 	if err != nil {
 		return false, err
 	}
+	r.mu.Lock()
 	r.prefs, r.settings = prefs, settings
+	r.mu.Unlock()
 	return r.opts.Manual || on, nil
 }
 
@@ -632,6 +639,8 @@ func (r *featureRun) activation(ctx context.Context) (time.Time, error) {
 // reviewSummary is the summary of the pull request's latest review saved
 // in the clone, "" for none.
 func (r *featureRun) reviewSummary(ctx context.Context, number int) string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	if summary, ok := r.reviews[number]; ok {
 		return summary
 	}
