@@ -292,8 +292,15 @@ fn main() {
         .plugin(tauri_plugin_single_instance::init(|app, _, _| {
             lifecycle::show_window(app);
         }))
-        // Used only from Rust; no page is granted their commands.
-        .plugin(tauri_plugin_opener::init())
+        // Used only from Rust; no page is granted their commands. Its default
+        // script would catch every `target="_blank"` click and call the
+        // plugin from the page, which is refused, so the link never reached
+        // `on_new_window` below.
+        .plugin(
+            tauri_plugin_opener::Builder::new()
+                .open_js_links_on_click(false)
+                .build(),
+        )
         .plugin(tauri_plugin_dialog::init())
         // Updates are driven from Rust only (see updater.rs).
         .plugin(tauri_plugin_updater::Builder::new().build())

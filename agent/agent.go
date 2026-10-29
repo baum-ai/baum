@@ -179,6 +179,15 @@ func EventPath(directory, path string) string {
 	return path[:min(len(path), 256)]
 }
 
+// TitlePath is a tool's path for its transcript title: relative to the run
+// directory when it is inside it, otherwise as the agent named it.
+func TitlePath(directory, path string) string {
+	if relative := EventPath(directory, path); relative != OutsideRun {
+		return relative
+	}
+	return path
+}
+
 // within reports path relative to directory, and whether it is inside it.
 func within(directory, path string) (string, bool) {
 	relative, err := filepath.Rel(directory, path)

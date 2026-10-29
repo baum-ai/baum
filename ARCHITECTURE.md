@@ -2308,7 +2308,8 @@ appended and flushed as each arrives. Title and text are masked with the bundle
 redactor and cut (1 KiB, 16 KiB); the file stops at 8 MiB with a final error
 entry, and only the 50 most recently written transcripts are kept. A tool
 appears as a `running` entry and again, with the same `id`, as `completed` or
-`failed` with its output. `Job.has_transcript` says one exists, and
+`failed` with its output; its title names a path inside the checkout relative
+to it (`agent.TitlePath`). `Job.has_transcript` says one exists, and
 `GET /api/jobs/{id}/transcript?after=N` returns `{"entries","next","more","done"}`
 (at most 500 entries after `seq` N; `404` without a transcript). Transcripts
 never leave the machine.

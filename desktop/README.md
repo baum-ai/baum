@@ -515,7 +515,9 @@ doing anything (`src/zoom.rs`).
   share `setup_state`, the four CLI and hook install/removal commands and
   `choose_repository`. GitHub connection, repository registration, review
   settings and finishing setup remain restricted to the bundled setup screen.
-- The opener plugin is used only from Rust, to open links in the browser. The
+- The opener plugin is used only from Rust, to open links in the browser. Its
+  click script (`open_js_links_on_click`) is off: it would call the plugin from
+  the page, which no page may do, and swallow the click. The
   dialog and updater plugins are used only from Rust too (see Updates). No
   page is granted any plugin's commands.
 

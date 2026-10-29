@@ -158,9 +158,15 @@ push, so the new head appears without a manual refresh.
 
 A fix can be watched live. A fix job with `has_transcript` has a transcript
 page, `?page=jobs&job=<id>` (`JobPage` and `JobTranscript` in
-`src/job-transcript.tsx`): the job's phase while it runs, then its summary or
-failure, above the agent's messages, collapsed reasoning, tool calls (a status
-mark, expandable to their output) and errors. `JobTranscript` reads
+`src/job-transcript.tsx`), its panels in the inbox's light sand on its darker
+sand: the job's phase while it runs, then its summary or failure, above the
+agent's messages, collapsed reasoning, tool calls (a status mark, expandable to
+their output) and errors.
+The summary, messages and reasoning are Markdown, without raw HTML. Consecutive
+tool calls form one run (`groupEntries`; reasoning does not break it) that shows
+only its latest call, with the earlier ones folded behind "N earlier tool
+calls" above it. A call shows its tool once (Claude's titles start with the
+tool's name) and Codex's tools as Run, Edit, MCP and Search. `JobTranscript` reads
 `GET api/jobs/{id}/transcript?after=N` from 0, again at once while `more`,
 otherwise every second until `done`, and follows the end while the reader is
 there (`useFollowScroll`). Entries are append-only; a later entry with a tool's
