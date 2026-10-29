@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -44,6 +45,11 @@ type scriptBackend struct {
 	// task answers a task run (discovery); runs counts them.
 	task func(agent.Request) (agent.Result, error)
 	runs int
+	// mu guards the counts and replyMu the concurrent answers: the text
+	// stage calls concurrently. wait, when set, runs before either is
+	// taken, so calls can be held open together.
+	mu, replyMu sync.Mutex
+	wait        func()
 }
 
 func (b *scriptBackend) Name() string                          { return agent.BackendClaude }
@@ -57,6 +63,21 @@ func (b *scriptBackend) Run(_ context.Context, req agent.Request) (agent.Result,
 }
 
 func (b *scriptBackend) Complete(_ context.Context, req agent.CompleteRequest) (agent.Completion, error) {
+	if b.wait != nil {
+		b.wait()
+	}
+	out, answer := b.record(req)
+	reply, err := answer()
+	out.Document = []byte(reply)
+	return out, err
+}
+
+// record counts the call and picks its answer, which runs without b.mu, as
+// a batch answer may place pull requests itself; feature text and pull
+// request summary answers, the concurrent ones, run one at a time.
+func (b *scriptBackend) record(req agent.CompleteRequest) (agent.Completion, func() (string, error)) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
 	if b.onCall != nil {
 		b.onCall()
 	}
@@ -66,33 +87,28 @@ func (b *scriptBackend) Complete(_ context.Context, req agent.CompleteRequest) (
 	if b.usage != nil {
 		out.Usage = *b.usage
 	}
-	schema := string(req.Schema)
-	var reply string
-	var err error
+	schema, user := string(req.Schema), req.User
 	switch {
 	case strings.Contains(schema, `"assignments"`):
 		b.calls["batch"]++
 		b.batchSystems = append(b.batchSystems, req.System)
-		reply, err = b.batch(req.User)
+		return out, func() (string, error) { return b.batch(user) }
 	case strings.Contains(schema, `"groups"`):
 		b.calls["merge"]++
-		reply, err = b.merge(req.User)
+		return out, func() (string, error) { return b.merge(user) }
 	case strings.Contains(schema, `"parts"`):
 		b.calls["split"]++
-		reply, err = b.split(req.User)
+		return out, func() (string, error) { return b.split(user) }
 	case strings.Contains(schema, `"choice"`):
 		b.calls["assign"]++
-		reply, err = b.assign(req.User)
+		return out, func() (string, error) { return b.assign(user) }
 	case strings.Contains(schema, `"digest"`):
 		b.calls["text"]++
-		b.textInput = req.User
-		reply, err = b.text()
-	default:
-		b.calls["pull"]++
-		reply, err = b.pull()
+		b.textInput = user
+		return out, func() (string, error) { b.replyMu.Lock(); defer b.replyMu.Unlock(); return b.text() }
 	}
-	out.Document = []byte(reply)
-	return out, err
+	b.calls["pull"]++
+	return out, func() (string, error) { b.replyMu.Lock(); defer b.replyMu.Unlock(); return b.pull() }
 }
 
 func choose(choice, ref, title string) string {
