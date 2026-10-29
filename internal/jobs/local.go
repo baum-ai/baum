@@ -23,6 +23,7 @@ import (
 	"github.com/baum-ai/baum/internal/pricing"
 	"github.com/baum-ai/baum/internal/repos"
 	"github.com/baum-ai/baum/internal/reviewgroups"
+	"github.com/baum-ai/baum/internal/reviewruns"
 	"github.com/baum-ai/baum/internal/store"
 )
 
@@ -39,6 +40,15 @@ type Local struct {
 	// FixDirectory holds fixes' temporary checkouts; empty is
 	// fix.DefaultDirectory.
 	FixDirectory string
+	// ReviewRuns holds the run directories of reviews that keep their agent
+	// session; empty is reviewruns.DefaultRoot.
+	ReviewRuns string
+}
+
+// keepsSession reports whether a review by the named backend keeps its agent
+// session: only a local Claude Code or Codex session can be resumed.
+func keepsSession(backend string) bool {
+	return backend == string(config.BackendClaude) || backend == string(config.BackendCodex)
 }
 
 type identityVersions struct {
@@ -301,9 +311,12 @@ func (l *Local) Execute(ctx context.Context, p Prepared, progress func(Progress)
 			backend.repairs = pass
 		}
 		backend.report("validating")
-	}, PassTimeout: time.Duration(cfg.Budgets.PassTimeout)}, func(r generate.Result) *float64 {
+	}, PassTimeout: time.Duration(cfg.Budgets.PassTimeout), KeepSession: group == nil && keepsSession(p.Backend), SessionRoot: l.ReviewRuns}, func(r generate.Result) *float64 {
 		return list.BackendOutcomeCost(p.Backend, r.Outcome.Model, r.Outcome)
 	})
+	if e == nil && result.Metadata.Session != nil {
+		l.pruneReviewRuns(ctx, versions, key)
+	}
 	backend.repairs = result.Outcome.ValidationRepairs
 	backend.accounting = result.Outcome.Accounting.Clone()
 	backend.redacted = true
@@ -364,4 +377,20 @@ func (a headAssembler) Assemble(ctx context.Context, r assemble.Request) (assemb
 		return assemble.Result{}, errors.New("pull request head changed; estimate again")
 	}
 	return result, e
+}
+
+// pruneReviewRuns removes the kept run directories of the pull request's
+// versions beyond the latest two. A failure only leaves them for the daily
+// expiry.
+func (l *Local) pruneReviewRuns(ctx context.Context, versions *store.Store, key store.Key) {
+	root := l.ReviewRuns
+	if root == "" {
+		var e error
+		if root, e = reviewruns.DefaultRoot(); e != nil {
+			return
+		}
+	}
+	if all, e := versions.Versions(ctx, key); e == nil {
+		_ = reviewruns.PruneVersions(root, all)
+	}
 }

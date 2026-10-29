@@ -66,6 +66,9 @@ type Run struct {
 	// validated. It must not fail: a document it cannot read is returned
 	// as it came, for the validator to report.
 	Decorate func([]byte) []byte
+	// PersistSession keeps the backend's session of every call, so the
+	// Outcome's SessionID can be resumed later (Request.PersistSession).
+	PersistSession bool
 }
 
 // Generate runs the loop. The returned document is the validated and prepared
@@ -141,7 +144,7 @@ func (g *Generator) Generate(ctx context.Context, run Run) (outcome Outcome, doc
 	budgets := run.Budgets
 	repairs := max(budgets.MaxRepairAttempts, 1)
 	for attempt := 0; ; attempt++ {
-		result, callErr := g.call(ctx, budgets, Request{Directory: run.Directory, Prompt: text, Schema: schema, Logger: logger, Endpoint: run.Endpoint}, &outcome, &stalls)
+		result, callErr := g.call(ctx, budgets, Request{Directory: run.Directory, Prompt: text, Schema: schema, Logger: logger, Endpoint: run.Endpoint, PersistSession: run.PersistSession}, &outcome, &stalls)
 		if callErr != nil {
 			if attempt > 0 {
 				// A repair that could not finish still fails with the call's
@@ -151,6 +154,11 @@ func (g *Generator) Generate(ctx context.Context, run Run) (outcome Outcome, doc
 			}
 			return outcome, nil, callErr
 		}
+		// Every call is a fresh session carrying the whole context pack (a
+		// repair resends the bundle and the rejected document), so the
+		// session of the call that produced the accepted document is
+		// self-contained.
+		outcome.SessionID = result.SessionID
 		document = review.DocumentWithTileKinds(result.Document, run.TileKinds)
 		if run.Decorate != nil {
 			document = run.Decorate(document)
