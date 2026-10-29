@@ -85,9 +85,12 @@ not a failure.
    normally ends after one call and may retry a rejected reply once; or one
    `codex exec` turn with its shell tools off, normally one request (a call to
    a tool Codex still offers, such as its patch or plan tool, makes another
-   within the turn). The attempt is settled with its cost from the reported
-   usage, priced as reviews price theirs (`pricing.List.OutcomeCost`): when
-   any part of it is unknown (a run cut short, a speed or 1-hour cache-write
+   within the turn). The completion, a retry included, has 10 minutes, the
+   default `pass_timeout` of a review pass: a backend still running then is
+   stopped and the attempt fails (reason `timeout`), so a hung backend does
+   not hold up the sessions queued behind it. The attempt is settled with its
+   cost from the reported usage, priced as reviews price theirs
+   (`pricing.List.OutcomeCost`): when any part of it is unknown (a run cut short, a speed or 1-hour cache-write
    split not reported, as Codex never reports its speed, or several calls
    whose prompt sizes may straddle a long-prompt tier) the cost is unknown,
    not estimated. An attempt still pending when the daemon starts is settled
