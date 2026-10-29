@@ -1,15 +1,19 @@
 package cli
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/spf13/cobra"
 
+	"github.com/baum-ai/baum/features/discover"
 	"github.com/baum-ai/baum/internal/config"
 	"github.com/baum-ai/baum/internal/decisionlog"
 	"github.com/baum-ai/baum/internal/github"
@@ -51,7 +55,7 @@ stopped.`,
 		},
 	}
 	flags(sync)
-	sync.Flags().IntVar(&days, "days", int(decisionlog.FeatureFirstBuildWindow/(24*time.Hour)), "days the first sync lists")
+	sync.Flags().IntVar(&days, "days", int(decisionlog.FeatureFirstSyncWindow/(24*time.Hour)), "days the first sync lists")
 	link := &cobra.Command{
 		Use:   "link",
 		Short: "Link the commits of the last week's pull requests to this machine's sessions",
@@ -102,7 +106,90 @@ its debounce, and prints each feature taken as JSON.`,
 		},
 	}
 	callFlags(summarize)
-	cmd.AddCommand(sync, link, place, summarize)
+	consolidate := &cobra.Command{
+		Use:   "consolidate",
+		Short: "Consolidate the repository's features once",
+		Long: `Consolidate makes one consolidation pass over the repository's current
+features, without its gate, weekly interval or fingerprint check, and prints
+what it did as JSON.`,
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			o.Manual = true
+			return runFeatures(cmd, repository, clone, 0, true, func(ctx context.Context, w *decisionlog.FeatureWorker, dir string) (any, error) {
+				return w.Consolidate(ctx, repository, dir, o)
+			})
+		},
+	}
+	flags(consolidate)
+	consolidate.Flags().StringVar(&o.Backend, "backend", "", "backend to call instead of the configured one")
+	consolidate.Flags().StringVar(&o.Model, "model", "", "model to call instead of the configured one")
+	var build decisionlog.BuildOptions
+	buildCmd := &cobra.Command{
+		Use:   "build",
+		Short: "Build the repository's features from its pull request history",
+		Long: `Build runs a first build of the repository's features once, without its
+gate, and prints what it did as JSON, with a line a batch on standard error.
+It lists the repository's whole pull request history once, reads the paths
+of its pull requests, and builds a new version of its features from that
+history, or resumes the one being built, and makes it current. A new version
+is first seeded with a feature taxonomy (--taxonomy): auto reuses one made
+after the version or runs feature discovery with the review backend, model
+and run budgets; none seeds nothing; latest or an id uses a stored one.
+--dry-run lists the history, saving the pull requests it lists, and prints
+how many pull requests a build places and calls it makes, with no cost; it
+writes no feature.
+It writes the daemon's store: run it with the daemon stopped.`,
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			return runFeatures(cmd, repository, clone, 0, true, func(ctx context.Context, w *decisionlog.FeatureWorker, dir string) (any, error) {
+				if build.DryRun {
+					return w.EstimateBuild(ctx, repository, dir, build)
+				}
+				build.Progress = func(p decisionlog.BuildProgress) {
+					atLeast := ""
+					if p.Unpriced > 0 {
+						atLeast = fmt.Sprintf("at least (%d calls not priced) ", p.Unpriced)
+					}
+					_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "%s: %d of %d pull requests, %d calls, %s$%.4f at API prices\n", p.Phase, p.Placed, p.Total, p.Calls, atLeast, p.SpentUSD)
+				}
+				return w.Build(ctx, repository, dir, build)
+			})
+		},
+	}
+	flags(buildCmd)
+	buildCmd.Flags().BoolVar(&build.DryRun, "dry-run", false, "print the pull requests and calls a build makes; write nothing")
+	buildCmd.Flags().StringVar(&build.Backend, "backend", "", "backend to call instead of the configured one")
+	buildCmd.Flags().StringVar(&build.Model, "model", "", "model to call instead of the configured one")
+	buildCmd.Flags().StringVar(&build.Taxonomy, "taxonomy", decisionlog.TaxonomyAuto, "what a new version is seeded with: auto, none, latest or a taxonomy id")
+	var show string
+	discoverCmd := &cobra.Command{
+		Use:   "discover",
+		Short: "Discover the repository's features from its default branch and history",
+		Long: `Discover runs feature discovery once: an agent of the review harness reads a
+read-only snapshot of the repository's default branch and its pull request
+history digest (titles, branches and paths, no descriptions) and replies with
+the repository's features, stored as a taxonomy a build can seed from. It
+first lists the whole history once and reads its paths, as a build does. It
+uses the review backend and model, with a review run's token, call and time
+budgets. It prints what it did as JSON; --show latest or an id prints a stored taxonomy instead. It
+writes the daemon's store: run it with the daemon stopped.`,
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			return runFeatures(cmd, repository, clone, 0, true, func(ctx context.Context, w *decisionlog.FeatureWorker, dir string) (any, error) {
+				if show != "" {
+					id, taxonomy, err := w.Store.Taxonomy(ctx, repository, show)
+					return struct {
+						ID int64 `json:"id"`
+						discover.FeatureTaxonomy
+					}{id, taxonomy}, err
+				}
+				return w.Discover(ctx, repository, dir)
+			})
+		},
+	}
+	flags(discoverCmd)
+	discoverCmd.Flags().StringVar(&show, "show", "", "print a stored taxonomy: latest or its id")
+	cmd.AddCommand(sync, link, place, summarize, consolidate, buildCmd, discoverCmd)
 	return cmd
 }
 
@@ -173,4 +260,48 @@ func registeredClone(ctx context.Context, repository string) (string, error) {
 		}
 	}
 	return "", fmt.Errorf("no registered clone of %s; pass --clone", repository)
+}
+
+// featureBuilder runs the job queue's feature builds (jobs.KindFeatureBuild)
+// on the daemon's feature worker, once it has one.
+type featureBuilder struct {
+	worker atomic.Pointer[decisionlog.FeatureWorker]
+}
+
+var errFeatureLogOff = errors.New("the feature log is off: its store did not open")
+
+func (b *featureBuilder) PlanFeatureBuild(ctx context.Context, repository, dir string) (jobs.FeatureBuildPlan, error) {
+	w := b.worker.Load()
+	if w == nil {
+		return jobs.FeatureBuildPlan{}, errFeatureLogOff
+	}
+	backend, model, reason, err := w.PlanBuild(ctx, repository, dir, decisionlog.BuildOptions{Gated: true})
+	return jobs.FeatureBuildPlan{Backend: backend, Model: model, Reason: reason}, err
+}
+
+func (b *featureBuilder) BuildFeatures(ctx context.Context, repository, dir string, progress func(jobs.Progress)) (float64, error) {
+	w := b.worker.Load()
+	if w == nil {
+		return 0, errFeatureLogOff
+	}
+	report, err := w.Build(ctx, repository, dir, decisionlog.BuildOptions{Gated: true, Progress: func(p decisionlog.BuildProgress) {
+		progress(jobs.Progress{Phase: p.Phase, Calls: p.Calls, CostReason: unpricedReason(p.Unpriced)})
+	}})
+	if report.UnpricedCalls > 0 {
+		progress(jobs.Progress{Phase: "finished", Calls: report.Calls, CostReason: jobs.ReasonUnpricedCalls})
+	}
+	if !report.Current && ctx.Err() == nil {
+		// A store error stops it too, as failed.
+		err = &jobs.StoppedError{Reason: cmp.Or(report.Stopped, "failed"), Err: err}
+	}
+	return report.SpentUSD, err
+}
+
+// unpricedReason is a build job's cost reason: its cost is a lower bound
+// when some of its calls could not be priced.
+func unpricedReason(unpriced int) string {
+	if unpriced > 0 {
+		return jobs.ReasonUnpricedCalls
+	}
+	return ""
 }

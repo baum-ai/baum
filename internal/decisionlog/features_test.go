@@ -321,6 +321,29 @@ func TestFeatureSyncAndIndex(t *testing.T) {
 	}
 }
 
+// A first build indexes from a job's goroutine while Run's goroutine runs
+// the stages; both use the worker's per-repository times.
+func TestFeatureIndexBesideRunOnce(t *testing.T) {
+	ctx := context.Background()
+	f := linktest.New(t)
+	c := &clock{time.Date(2026, 7, 2, 9, 0, 0, 0, time.UTC)}
+	reader := &fakeReader{}
+	on := featureRegistry{prefs: repos.Preferences{Automatic: true}, repositories: []repos.Repository{
+		{Repository: linktest.Repository, Clones: []repos.Clone{{Path: f.Repo, Available: true}}}}}
+	w := &FeatureWorker{Store: openStore(t, c), Registry: on, Now: c.Now, Sessions: f.Store,
+		GitHub: func(context.Context, github.Repository) (github.Reader, error) { return reader, nil }}
+	var wg sync.WaitGroup
+	for range 3 {
+		wg.Go(func() { w.RunOnce(ctx) })
+		wg.Go(func() {
+			if _, err := w.Index(ctx, linktest.Repository, f.Repo, nil, true); err != nil {
+				t.Error(err)
+			}
+		})
+	}
+	wg.Wait()
+}
+
 type featureRegistry struct {
 	prefs        repos.Preferences
 	repositories []repos.Repository
@@ -762,5 +785,48 @@ func TestOpenKeepsACurrentStoresSyncState(t *testing.T) {
 	defer func() { _ = s.Close() }()
 	if state, err := s.Activate(context.Background(), "acme/widgets"); err != nil || state.ETag != `"e1"` || state.Cursor.IsZero() {
 		t.Fatalf("state %+v, %v", state, err)
+	}
+}
+
+// ListHistory lists every pull request once, whatever their age, and
+// leaves the sync's ETag and cursor as they were.
+func TestListHistoryOnce(t *testing.T) {
+	c := &clock{time.Date(2026, 7, 2, 9, 0, 0, 0, time.UTC)}
+	s := openStore(t, c)
+	reader := &fakeReader{}
+	old := pullJSON(1, strings.Repeat("a", 40), strings.Repeat("b", 40))
+	old["created_at"], old["updated_at"] = "2023-01-01T08:00:00Z", "2023-01-02T08:00:00Z"
+	// Most recently updated first, as GitHub lists them.
+	reader.set(pullJSON(2, strings.Repeat("c", 40), strings.Repeat("b", 40)), old)
+	w := &FeatureWorker{Store: s, Now: c.Now,
+		GitHub: func(context.Context, github.Repository) (github.Reader, error) { return reader, nil }}
+	// The first sync lists the recent one; reading its paths fails, as the
+	// directory is no clone.
+	_, _ = w.Sync(context.Background(), "acme/widgets", t.TempDir())
+	before, err := s.Activate(context.Background(), "acme/widgets")
+	if err != nil || before.ETag == "" || before.Cursor.IsZero() {
+		t.Fatalf("state after the sync %+v, %v", before, err)
+	}
+	// A sync saved a later update of pull request 2 meanwhile.
+	if _, err := s.db.Exec(`UPDATE pull_request SET title='Fresher', updated_at=updated_at+1 WHERE number=2`); err != nil {
+		t.Fatal(err)
+	}
+	report, err := w.ListHistory(context.Background(), "acme/widgets")
+	if err != nil || !report.Listed || report.PullRequests != 2 {
+		t.Fatalf("report = %+v, %v", report, err)
+	}
+	after, err := s.Activate(context.Background(), "acme/widgets")
+	if err != nil || after.ETag != before.ETag || !after.Cursor.Equal(before.Cursor) || after.HistoryListedAt.IsZero() {
+		t.Fatalf("state %+v, then %+v, %v", before, after, err)
+	}
+	var stored int
+	var title string
+	_ = s.db.QueryRow(`SELECT COUNT(*) FROM pull_request WHERE repository='acme/widgets'`).Scan(&stored)
+	if err := s.db.QueryRow(`SELECT title FROM pull_request WHERE number=2`).Scan(&title); err != nil || title != "Fresher" {
+		t.Fatalf("the listing replaced a later update: %q, %v", title, err)
+	}
+	again, err := w.ListHistory(context.Background(), "acme/widgets")
+	if err != nil || again.Listed || again.Calls != 0 || stored != 2 {
+		t.Fatalf("second listing %+v, %v; %d stored", again, err, stored)
 	}
 }

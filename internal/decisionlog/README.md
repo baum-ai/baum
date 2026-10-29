@@ -177,12 +177,13 @@ the ledger (`Store.Ledger`) under baum's work.
 
 ## Feature log
 
-The feature log will group a repository's pull requests and sessions into
+The feature log groups a repository's pull requests and sessions into
 features as the hosted feature log does, with the `features` package's rules
 and published prompts. Its choices are in `featureconfig.go`, and it shares
-the store with capture. `FeatureWorker` now syncs a repository's pull
+the store with capture. `FeatureWorker` syncs a repository's pull
 requests, reads their paths and commits from the clone, and links the
-commits to this machine's sessions; placing them in features builds on that.
+commits to this machine's sessions, then places them in features, writes
+the features' text and consolidates them.
 It runs in the daemon beside the capture scheduler, every minute and when
 settings change, for each picked repository with an available clone whose
 decisions are captured (the gate above); a repository turned off is not read
@@ -203,14 +204,16 @@ minutes.
   so an unchanged repository costs one conditional request. The cursor moves
   to the latest update listed, or to the start of the window when none was.
   A listing stops at about 10,000 pull requests; older ones still due are
-  skipped and logged.
+  skipped and logged. A first build lists the whole history once besides
+  (see "First build").
 - Only pull requests that can be placed in a feature are read from the
   clone: open or merged ones not opened by a bot. Each pass fetches what
   its due pull requests lack, as a review fetches a missing pull request
   commit: a head from `refs/pull/<N>/head` into `refs/baum/pull/<N>/head`
   and a base by its id into `refs/baum/pull/<N>/base`, both force-updated,
   100 refspecs to a `git fetch`. So each such pull request of the 180 days
-  before activation, and every one after, gets refs in the clone; they are
+  before activation (of the whole history after a first build), and every
+  one after, gets refs in the clone; they are
   kept, not pruned, as they may back saved reviews. Each pull request's
   commits, from its base to its head, are then read from the clone's own
   objects, never fetched. Its paths are the files its commits change; its
@@ -252,11 +255,12 @@ session with no capture row has none.
 
 ### Model calls
 
-Placement and feature text call as capture does (steps 6 to 8 above): the
-same backend, model, reservation (the request's byte bound and the call's
-reply bound: 4,096 tokens for a placement, 8,192 for a text or pull request
-summary), 10-minute bound and ledger, each attempt recorded with its stage
-(`feature_assign`, `feature_summary` or `pr_summary`) and item. Rejected
+Placement, feature text and consolidation call as capture does (steps 6 to
+8 above): the same backend, model, reservation (the request's byte bound and
+the call's reply bound: 4,096 tokens for a placement, 32,768 for a batch,
+merge or split, 8,192 for a text or pull request summary), 10-minute bound
+and ledger, each attempt recorded with its stage (`feature_assign`,
+`feature_summary`, `pr_summary` or `feature_consolidate`) and item. Rejected
 replies and a ledger that cannot be written are handled as capture's. The
 preferences and the repository's settings are read again before every call,
 so a repository turned off makes no further call. A repository turned off or
@@ -316,7 +320,7 @@ A placement marks every feature it changes: the one joined, the one left
 and the features of the pull request's linked sessions; an identical one
 marks none. Also marked: a session's features when its decisions are saved;
 a feature pull request's feature when its title, description or state
-changes, and, with the features of the sessions linked to its old and new
+changes (in the current version and in a building one), and, with the features of the sessions linked to its old and new
 commits, when its commits or paths change; and when the sessions linked to
 a commit change, the features holding a pull request with it and the
 features of those sessions (an unchanged re-link marks none). Marking
@@ -351,18 +355,193 @@ failed pull request summary still writes the text, leaving the feature
 behind; failures back off and count as placement's do, per membership
 version.
 
+### Consolidation
+
+After the text, a repository's features are consolidated as hosted ones are,
+with the published consolidation prompt, at most once every 7 days (from the
+start of the last pass) and only when their fingerprint (every feature's id,
+membership and text versions and `merged_into`, merged ones included)
+changed since the last pass (`feature_consolidation`). A pass's own merges
+and splits are changes, so one that changed features is followed by another
+a week later. A pass reads the features not merged into another and active
+in the last 90 days (as placement's candidates), most recently active first.
+Its calls' replies may run to 32,768 tokens rather than hosted's 8,192:
+Claude Code's models think within the reply's bound even with thinking
+turned off, and a merge over a first build's features needs the room.
+
+- **Merge.** With two features or more, one call sees each feature's text,
+  digest, paths, pull requests with their summaries (the saved review's,
+  else the generated one) and how many sessions are in it on their own. Each
+  group's duplicates are merged into its survivor: their pull requests and
+  sessions move to it as `consolidation`'s, the duplicate gets `merged_into`
+  (and so do the features merged into it before), both are marked, and a
+  link to the duplicate resolves to the survivor (`ResolveFeature`).
+- **Split hold.** For four weeks after a split, a merge of one of its parts
+  with the feature it was split from, or of two of its parts, is dropped
+  from the reply; the merge call marks such a part with its origin. A part
+  merged into another feature passes its origin and split time on.
+- **Split.** At most 3 features, as they will be after the merges, with more
+  than 30 pull requests or pull requests opened more than 8 weeks apart,
+  largest first, get one split call each (a call takes its slot whatever its
+  outcome) with their pull requests' text,
+  state, opening date, placed paths and summaries. A feature kept whole, or
+  too large to offer (over 200 pull requests or its input over its bound,
+  which takes no slot), is recorded as checked (`split_checked_version`) and
+  not offered again until its members change; a survivor of the pass's
+  merges always is. Otherwise the largest part keeps the feature's id (ties
+  to the part with the earliest opened pull request), and each other part
+  becomes a new feature with the reply's text, recording `split_from` and
+  `split_at`, its pull requests moved as `consolidation`'s at the head and
+  paths they were placed with; sessions in it on their own stay. The parts
+  are recorded as checked.
+- **Writing.** Every call of a pass is made before anything is written. Each
+  merge and split is written in its own transaction, only while its features
+  are at the membership versions the pass read (as its own earlier writes
+  left them) and a split's feature holds exactly the pull requests it
+  partitioned; otherwise that one is skipped and the pass goes on. Writes
+  mark every feature they change and the features of the sessions linked to
+  the pull requests they move, for the text stage.
+- **Failures.** A call that fails, or a merge reply that does not decode,
+  defers the whole pass: nothing is written (a split call's failure or
+  refusal discards the merges paid for, which are logged and counted), and
+  the pass backs off as placement's failures do, counted against the
+  fingerprint. A split reply that is invalid leaves only that feature whole
+  and unchecked. A call that cannot be made (a backend reason)
+  also writes nothing; the pass is made again on the next run.
+
+### First build
+
+The live placement places only work opened since the feature log was
+activated. A repository's history is placed when the user asks for it, as a
+hosted rebuild does, by a first build: a job of the job queue
+(`jobs.KindFeatureBuild`) that starts at once when the user asks for it,
+with no estimate, as every requested run does, or `baum internal features
+build`.
+
+- **History.** The build first lists the repository's whole pull request
+  history, once per repository (`pull_sync.history_listed_at`), with no
+  ETag and without moving the sync's ETag or cursor, never replacing a pull
+  request a sync saved with a later update; a listing that stops at
+  its bound, leaving out the least recently updated pull requests, is
+  reported (`history_truncated`) and not retried. The build then reads the
+  paths of every pull request due, as a sync does, and, before it places
+  any, links to this machine's sessions those of the commits it read that
+  were made in the last 7 days (`FeatureLookback`), as a sync links its
+  fresh commits; older commits are not linked.
+- **No cap.** As for a requested review, there is no spending cap and
+  nothing about the price stops a build: a model with no price runs as any
+  other, and the build runs to the end. Costs are recorded at API prices
+  where they are known. A repository whose decisions are not captured, or
+  whose backend cannot call, does not start (the job is refused with the
+  reason).
+- **Dry run.** `--dry-run` counts what a build would do, with no cost: the
+  pull requests left to place and its calls, a batch call per 25, the new
+  features' text twice (a feature per 3 pull requests), a resumed version's
+  features whose text is behind, and a summary of each pull request with a
+  description; and whether it runs discovery first. It lists the history,
+  saving the pull requests it lists and activating the repository's sync
+  state; it writes no feature.
+- **Seeding.** A new version, with no features and no seeds, is seeded with
+  a feature taxonomy (`--taxonomy`, default `auto`): the newest made after
+  the version, else a new discovery's (see "Discovery"); `latest` or a
+  taxonomy's id a stored one; `none` nothing. Each of its features becomes a
+  provisional feature with no members, whose text is the taxonomy's, and a
+  seed (`feature_seed`, with its paths); the version records the taxonomy.
+  A resumed version is never seeded again. A discovery that cannot run or
+  fails leaves the build unseeded, with the reason in its report
+  (`unseeded`), recorded on the version so a resume neither runs nor pays
+  for it again. The gate is read right before discovery, as before any
+  call.
+- **Building.** The build makes the repository's `building` version, or
+  resumes the one there is, and places in it the merged and open pull
+  requests of the whole history not opened by a bot, in no feature of the
+  version and not skipped or left out of it at their head, listed once when
+  it starts, oldest first, in batches of 25 with the batch prompt (its seeded
+  form when a candidate has no pull requests). Each item's candidates are
+  ranked against the version as placement ranks them, read again for every
+  call, and the call offers their union, each item's best first, at most 40.
+  Seeds no pull request joined are kept out of the ranking: each is offered,
+  with its text and paths and no pull requests, to an item by its path score
+  (`discover.PathScores`), before the first ranked candidate not linked to
+  the item with a lower score, as the hosted rebuild does. A seed a pull
+  request joined is an ordinary feature from then on.
+  A reply's new feature is created for the first item that starts it; a
+  skipped small change is settled in the version at its head. The live
+  stages keep using the current version meanwhile.
+- **Failures.** A batch call that fails, for whatever reason, is made once
+  more, then the batch is split in halves down to one pull request; one that
+  still fails is tried once more with the others after the last batch, in
+  batches of 25, and then left out (settled in the version as `left_out`). A
+  failed store write stops the build.
+- **Text.** Every 3 batches and after the last, the text of every feature
+  of the version behind its members is written, without the debounce; a
+  feature whose text fails backs off and is left for the text stage. A
+  build makes no consolidation pass.
+- **Switching.** The seeds no pull request joined are deleted, then the
+  building version becomes current in one transaction:
+  the current one is retired, the skips become placement's settlements, the
+  pull requests left out lose theirs so placement takes those within its
+  lookback, and the repository's last consolidation pass is forgotten, so
+  the weekly pass consolidates the new version on its next run, a minute or
+  so after the switch. A live stage that raced the switch never writes the
+  retired version: its run stops at its next item or write
+  (`version_retired`), and a consolidation pass writes, records and settles
+  nothing, each write checking the version in its own transaction. Work the
+  live stages placed in the old version is in no feature of the new one;
+  placement takes what is within its lookback. A retired version is kept,
+  and a link to one of its features resolves as archived.
+- **Stopping.** A build stops before a call that cannot be made
+  (`disabled` or a backend reason; `failed` for a store error), or when it
+  is cancelled or the daemon stops, leaving the version `building` with
+  `stopped` set to why; starting it again resumes it. Its
+  job then fails with that reason. Progress (phase, calls) is reported to
+  the job, and the version records its pull requests placed of the total
+  and its spend over all its runs (`spent_usd`, each call's known cost, and
+  `unpriced_calls`, those whose cost is unknown: the spend is then a lower
+  bound, reported as such to the job). A spend the version cannot record is
+  logged; the call and its ledger row stand.
+
+### Discovery
+
+Discovery maps a repository into its features, as hosted discovery does
+(`features/discover`), and stores the reply as a taxonomy
+(`feature_taxonomy`). It runs as a first build's first step or with `baum
+internal features discover`, which first lists the history and reads its
+paths as a build does.
+
+- Its backend and model are a review's: `generate.Select` with the review
+  backend and model, whatever a build's own `--backend` and `--model`.
+  cursor-agent is not supported; a model with no price runs as any other.
+- The default branch (the latest one GitHub reported for a pull request)
+  is fetched into `refs/baum/default`. The run directory holds its head's
+  checkout in `head/`, bounded as a review's, and `history.jsonl`
+  (read-only), the history digest of the pull requests a build places:
+  titles, branches and paths, no descriptions.
+- It runs through the review harness (`generate.RunTask`): the published
+  prompt `feature-discover-public-v1`, the discovery schema and the
+  taxonomy's bounds as its check, and a review run's budgets: the
+  configuration's run timeout, calls and tokens (by default 45 minutes, 40
+  calls and 2,000,000 tokens), 3 provider attempts and 2 repairs, whatever
+  the model's price. Hosted discovery keeps its own budgets. Its output is
+  masked before it is read.
+- It is one ledger row (stage `feature_discovery`); in a build its cost is
+  added to the version's spend.
+
 ### Stored data
 
 - `pull_request`, `pull_commit`, `pull_sync`: the listed pull requests with
   their paths at a head and failed reads, their commits, and the listing's
-  ETag, cursor, activation and last full re-link.
+  ETag, cursor, activation, last full re-link and history listing.
 - `session_commit`: each session linked to a commit, with the method and
   confidence.
 - `feature_version`, `feature`, `feature_pull`, `feature_session`,
   `feature_settle`, `pr_summary`, `feature_consolidation`: the tables
-  placement writes. A repository has at most one `current` and one
-  `building` version; `liveVersion` is the one place that chooses the
-  version in use (the current one, made when first needed).
+  placement, text, consolidation and a build write.
+- `feature_taxonomy`, `feature_seed`: discovery's taxonomies and the seeds
+  of the versions built from them (`feature_version.taxonomy_id`). A repository has at
+  most one `current` and one `building` version; `featureVersion` is the one
+  place that chooses the version a stage uses (the live stages' current
+  one, made when first needed, and a build's building one).
 
 These rows are not pruned.
 
@@ -387,8 +566,21 @@ counts as JSON. `baum internal features assign --repo <owner/name> [--clone
 once, ignoring the activation, and prints each item; `--dry-run` prints each
 item's candidates and input size, makes no call and writes nothing.
 `baum internal features summarize` takes the same flags but `--dry-run` and
-writes the text of the features behind, without the debounce. Both read the
-preferences and the repository's settings and fail when they cannot; `sync`
+writes the text of the features behind, without the debounce. `baum
+internal features consolidate` takes `--repo`, `--clone`, `--backend` and
+`--model` and makes one pass over the current features without the
+interval or fingerprint check. `baum
+internal features build --repo <owner/name> [--clone <path>] [--dry-run]
+[--backend <b>] [--model <m>] [--taxonomy auto|none|latest|<id>]` runs a
+first build without the gate, a line a batch on standard error and its
+report as JSON; `--dry-run` lists the history, saving the pull requests it
+lists, and prints the pull requests and calls a build would make, with no
+cost, writing no feature. `baum internal features
+discover --repo <owner/name> [--clone <path>] [--show latest|<id>]` lists
+the history and reads its paths as a build does, then runs discovery once
+and prints its report, or prints a stored taxonomy.
+These read the preferences and the repository's settings and fail when they
+cannot; `sync`
 and `link` read neither. The clone
 defaults to the repository's registered one. They are for testing, with the
 daemon stopped: they write the daemon's store.

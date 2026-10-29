@@ -3,6 +3,7 @@ package decisionlog
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"slices"
@@ -50,7 +51,7 @@ type FeatureWorker struct {
 	// Tick is how often the stages run; zero is FeatureTick.
 	Tick time.Duration
 	// Window is how far back the first sync lists pull requests; zero is
-	// FeatureFirstBuildWindow.
+	// FeatureFirstSyncWindow.
 	Window time.Duration
 	Log    *slog.Logger
 
@@ -58,9 +59,10 @@ type FeatureWorker struct {
 	wake     chan struct{}
 	redactor *bundle.Redactor
 	initErr  error
-	// windowLinked is each repository's last re-link of the session window,
-	// retryAt when a failed repository is tried again; only Run's goroutine
-	// touches them.
+	// mu guards windowLinked, each repository's last re-link of the session
+	// window, and retryAt, when a failed repository is tried again: a first
+	// build indexes from a job's goroutine while Run's goroutine does.
+	mu                    sync.Mutex
 	windowLinked, retryAt map[string]time.Time
 }
 
@@ -119,7 +121,7 @@ func (w *FeatureWorker) Run(ctx context.Context) {
 	}
 }
 
-// RunOnce runs the stages (sync, index, placement and text) for every
+// RunOnce runs the stages (sync, index, placement, text and consolidation) for every
 // repository whose decisions are captured and that has a clone. A repository turned off is not read and makes no
 // GitHub call.
 func (w *FeatureWorker) RunOnce(ctx context.Context) {
@@ -138,7 +140,10 @@ func (w *FeatureWorker) RunOnce(ctx context.Context) {
 		if ctx.Err() != nil {
 			return
 		}
-		if !repository.Settings.DecisionsEnabled(prefs) || w.now().Before(w.retryAt[repository.Repository]) {
+		w.mu.Lock()
+		retryAt := w.retryAt[repository.Repository]
+		w.mu.Unlock()
+		if !repository.Settings.DecisionsEnabled(prefs) || w.now().Before(retryAt) {
 			continue
 		}
 		i := slices.IndexFunc(repository.Clones, func(c repos.Clone) bool { return c.Available })
@@ -158,8 +163,13 @@ func (w *FeatureWorker) RunOnce(ctx context.Context) {
 		if err == nil && !synced.Stopped {
 			_, err = w.Summarize(ctx, repository.Repository, dir, FeatureOptions{})
 		}
+		if err == nil && !synced.Stopped {
+			_, err = w.Consolidate(ctx, repository.Repository, dir, FeatureOptions{})
+		}
 		if err != nil && ctx.Err() == nil {
+			w.mu.Lock()
 			w.retryAt[repository.Repository] = w.now().Add(FeatureQuiet)
+			w.mu.Unlock()
 			w.logger().Warn("feature log: repository not brought up to date", "repository", repository.Repository, "error", err)
 		}
 	}
@@ -226,7 +236,7 @@ func (w *FeatureWorker) Sync(ctx context.Context, repository, dir string) (SyncR
 	if since.IsZero() {
 		window := w.Window
 		if window <= 0 {
-			window = FeatureFirstBuildWindow
+			window = FeatureFirstSyncWindow
 		}
 		since = w.now().Add(-window)
 	}
@@ -255,18 +265,26 @@ func (w *FeatureWorker) Sync(ctx context.Context, repository, dir string) (SyncR
 			return report, err
 		}
 	}
+	err = w.readPaths(ctx, repository, dir, &report, func() bool { return !w.enabled(ctx, repository) })
+	return report, err
+}
+
+// readPaths reads the paths and commits of each of the repository's pull
+// requests whose head changed from the clone in dir, fetching missing heads,
+// into report. It stops, setting report.Stopped, once stop says so.
+func (w *FeatureWorker) readPaths(ctx context.Context, repository, dir string, report *SyncReport, stop func() bool) error {
 	pulls, err := w.Store.PullsWithoutPaths(ctx, repository)
 	if err != nil || len(pulls) == 0 {
-		return report, err
+		return err
 	}
 	lookback := w.now().Add(-FeatureLookback)
-	if !w.enabled(ctx, repository) {
+	if stop() {
 		report.Stopped = true
-		return report, nil
+		return nil
 	}
 	clone, remote, err := openClone(ctx, dir, repository)
 	if err != nil {
-		return report, err
+		return err
 	}
 	defer func() { _ = clone.Close() }()
 	wanted := make([]gitlocal.PullRequest, 0, len(pulls))
@@ -276,25 +294,25 @@ func (w *FeatureWorker) Sync(ctx context.Context, repository, dir string) (SyncR
 	// The pass's one network step: when it fails, nothing is counted and the
 	// repository waits.
 	if err := clone.FetchPulls(ctx, remote, wanted); err != nil {
-		return report, fmt.Errorf("fetching pull request heads: %w", err)
+		return fmt.Errorf("fetching pull request heads: %w", err)
 	}
 	for _, p := range pulls {
-		if !w.enabled(ctx, repository) {
+		if stop() {
 			report.Stopped = true
-			return report, nil
+			return nil
 		}
 		commits, err := pullCommits(ctx, clone, p)
 		var paths []string
 		var recorded []PullCommit
 		switch {
 		case ctx.Err() != nil:
-			return report, ctx.Err()
+			return ctx.Err()
 		case err != nil:
 			report.PathsFailed++
 			w.logger().Debug("feature log: pull request commits not read", "repository", repository, "number", p.Number, "error", err)
 			unknown, err := w.Store.PathsFailed(ctx, repository, p.Number, p.HeadSHA)
 			if err != nil {
-				return report, err
+				return err
 			}
 			if unknown {
 				report.PathsUnknown++
@@ -317,10 +335,54 @@ func (w *FeatureWorker) Sync(ctx context.Context, repository, dir string) (SyncR
 			report.Commits += len(recorded)
 		}
 		if err := w.Store.SetPullPaths(ctx, repository, p.Number, p.HeadSHA, paths, recorded); err != nil {
-			return report, err
+			return err
 		}
 	}
-	return report, nil
+	return nil
+}
+
+// HistoryReport says what ListHistory did.
+type HistoryReport struct {
+	Repository string `json:"repository"`
+	// Listed is false when the history was listed before.
+	Listed       bool `json:"listed"`
+	Calls        int  `json:"github_calls"`
+	PullRequests int  `json:"pull_requests_listed"`
+	// Truncated is a listing that stopped at its bound: the least recently
+	// updated pull requests are missing. The listing is not retried.
+	Truncated bool `json:"truncated,omitempty"`
+}
+
+// ListHistory lists every pull request of the repository once, for its
+// first build, and saves them without moving the sync's ETag or cursor. A
+// repository whose history was listed before is not listed again.
+func (w *FeatureWorker) ListHistory(ctx context.Context, repository string) (HistoryReport, error) {
+	report := HistoryReport{Repository: repository}
+	repo, err := github.ParseRepository(repository)
+	if err != nil {
+		return report, err
+	}
+	state, err := w.Store.Activate(ctx, repository)
+	if err != nil || !state.HistoryListedAt.IsZero() {
+		return report, err
+	}
+	if w.GitHub == nil {
+		return report, errors.New("no GitHub reader to list the pull request history")
+	}
+	reader, err := w.GitHub(ctx, repo)
+	if err != nil {
+		return report, err
+	}
+	list, err := github.ListPullRequests(ctx, reader, repo, "", time.Time{})
+	report.Calls, report.PullRequests, report.Truncated = list.Calls, len(list.Pulls), list.Truncated
+	if err != nil {
+		return report, err
+	}
+	if list.Truncated {
+		w.logger().Warn("feature log: the least recently updated pull requests skipped, too many to list", "repository", repository, "listed", len(list.Pulls))
+	}
+	report.Listed = true
+	return report, w.Store.SaveHistoryPulls(ctx, repository, list.Pulls)
 }
 
 // openClone opens the clone in dir and names its remote for repository.
@@ -381,7 +443,9 @@ func (w *FeatureWorker) Index(ctx context.Context, repository, dir string, fresh
 	}
 	lookback := now.Add(-FeatureLookback)
 	full = full || now.Sub(state.RelinkedAt) >= FeatureRelinkEvery
+	w.mu.Lock()
 	window := full || now.Sub(w.windowLinked[repository]) >= FeatureQuiet
+	w.mu.Unlock()
 	report.Full = full
 	commits := map[string]gitlocal.Commit{}
 	add := func(c gitlocal.Commit, since time.Time) {
@@ -431,7 +495,7 @@ func (w *FeatureWorker) Index(ctx context.Context, repository, dir string, fresh
 	}
 	if len(commits) == 0 && !full {
 		if window {
-			w.windowLinked[repository] = now
+			w.linkedWindow(repository, now)
 		}
 		return report, nil
 	}
@@ -464,10 +528,17 @@ func (w *FeatureWorker) Index(ctx context.Context, repository, dir string, fresh
 		return report, err
 	}
 	if window {
-		w.windowLinked[repository] = now
+		w.linkedWindow(repository, now)
 	}
 	report.Commits, report.Links, report.Sessions = len(list), len(rows), len(linked)
 	return report, nil
+}
+
+// linkedWindow records the repository's re-link of the session window.
+func (w *FeatureWorker) linkedWindow(repository string, at time.Time) {
+	w.mu.Lock()
+	w.windowLinked[repository] = at
+	w.mu.Unlock()
 }
 
 // FeatureOptions change one run of placement or the text stage, for testing
@@ -482,6 +553,9 @@ type FeatureOptions struct {
 	Manual bool
 	// Backend and Model, when set, replace the configured ones.
 	Backend, Model string
+	// building runs the stage on the repository's building version, for a
+	// first build.
+	building bool
 }
 
 // featureRun is one repository's run of placement or the text stage.
@@ -497,6 +571,8 @@ type featureRun struct {
 	reviews         map[int]string
 	versions        *store.Store
 	versionsRead    bool
+	// exclude are features left out of the candidates' ranking.
+	exclude map[string]bool
 }
 
 // newRun reads the preferences and the repository's settings and its
@@ -521,8 +597,12 @@ func (w *FeatureWorker) newRun(ctx context.Context, repository, dir string, o Fe
 			on, err := r.refresh(ctx)
 			return r.prefs, r.settings, on, err
 		}}
+	state := VersionCurrent
+	if o.building {
+		state = VersionBuilding
+	}
 	var err error
-	r.version, err = liveVersion(ctx, w.Store.db, repository, !o.DryRun, r.now)
+	r.version, err = featureVersion(ctx, w.Store.db, repository, state, !o.DryRun, r.now)
 	return r, err
 }
 

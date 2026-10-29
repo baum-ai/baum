@@ -53,8 +53,9 @@ merged ones not opened by a bot it fetches the commits the clone lacks, as
 a review fetches a missing pull request commit: heads from
 `refs/pull/<N>/head` and bases by id, force-updated under
 `refs/baum/pull/<N>/`. Each such pull request of the 180 days before the
-feature log was activated for the repository, and every one after, gets
-refs in the clone, which are kept and not pruned. When a fetch fails it
+feature log was activated for the repository (of its whole history once a
+first build ran), and every one after, gets refs in the clone, which are
+kept and not pruned. When a fetch fails it
 asks the remote for its HEAD (`git ls-remote`); when the remote answers,
 the failed batch is fetched again one ref at a time, and otherwise the
 fetch is tried again after 15 minutes. A pull request whose commits still
@@ -72,6 +73,14 @@ your captured sessions (what was decided and why, and the files cited, never
 your prompts or quoted evidence) and the feature's paths. A pull request
 without a saved review summary gets one generated from its title,
 description and those decisions.
+
+A first build first lists the repository's whole pull request history once
+and, unless told otherwise, runs feature discovery: it fetches the default
+branch into `refs/baum/default` and sends a read-only snapshot of its head
+(bounded as a review's checkout) and the pull request history digest
+(titles, branches and changed paths, no descriptions) to the review
+harness's backend and provider, run as a review is; the reply, a list of
+features, is masked before it is stored.
 
 Redaction is best effort. Review `baum internal bundle` output before using
 `generate` on a repository whose sessions may contain sensitive material, and

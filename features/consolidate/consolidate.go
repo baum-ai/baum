@@ -76,8 +76,13 @@ func (p Prompts) PromptVersions() []string {
 	return versions
 }
 
-// MaxOutputTokens caps a reply, reasoning included.
-const MaxOutputTokens = 8192
+// MaxOutputTokens caps a reply, reasoning included, unless the host asks
+// for more, up to MaxHostOutputTokens: a host whose model reasons within the
+// reply's bound and cannot be told not to may need the room.
+const (
+	MaxOutputTokens     = 8192
+	MaxHostOutputTokens = 32768
+)
 
 // Bounds of one call's rendered input in bytes, a host's setting.
 const (
@@ -682,15 +687,19 @@ func (o orderedObject) MarshalJSON() ([]byte, error) {
 }
 
 // Request is the call of the kind for a rendered input under prompt version
-// version.
+// version, its reply bounded by maxOutputTokens (MaxOutputTokens for 0, at
+// most MaxHostOutputTokens).
 func (p Prompts) Request(version string, kind Kind, input string, maxOutputTokens int64) (decisions.ModelRequest, error) {
 	versioned, ok := p[version]
 	prompt, known := versioned.prompt(kind)
 	if !ok || !known {
 		return decisions.ModelRequest{}, fmt.Errorf("unknown feature consolidation prompt version %q or kind %q", version, kind)
 	}
-	if maxOutputTokens <= 0 || maxOutputTokens > MaxOutputTokens {
+	switch {
+	case maxOutputTokens <= 0:
 		maxOutputTokens = MaxOutputTokens
+	case maxOutputTokens > MaxHostOutputTokens:
+		maxOutputTokens = MaxHostOutputTokens
 	}
 	return decisions.ModelRequest{
 		System: prompt, User: input, SchemaName: schemaNames[kind], Schema: Schema(kind), MaxOutputTokens: maxOutputTokens,

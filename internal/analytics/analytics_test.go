@@ -495,6 +495,8 @@ func TestBaumWorkCountsJobsAndActions(t *testing.T) {
 	list := []jobs.Job{
 		job("", "completed", "", ptr(1.0)), job("", "failed", "budget_exceeded", nil), job("", "failed", "budget_exceeded", nil),
 		pushed, job(jobs.KindFix, "failed", "push_rejected", nil), group, old,
+		// A feature build is the decision log's spend, not baum's work.
+		job(jobs.KindFeatureBuild, "failed", "backend_unavailable", ptr(3.0)),
 	}
 	dir := t.TempDir()
 	actions := &Actions{Path: filepath.Join(dir, "actions.json"), Now: func() time.Time { return recent }}

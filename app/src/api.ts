@@ -163,8 +163,9 @@ export type Job = {
   group?: string;
   group_name?: string;
   members?: string;
-  /** "fix" for a fix of the pull request; absent for a review. */
-  kind?: "fix";
+  /** "fix" for a fix of the pull request, "feature_build" for a
+   * repository's first feature build (its `pr` is 0); absent for a review. */
+  kind?: "fix" | "feature_build";
   fix?: FixInputs;
   /** The fix agent's transcript can be read from `api/jobs/{id}/transcript`. */
   has_transcript?: boolean;

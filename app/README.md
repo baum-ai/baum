@@ -156,6 +156,10 @@ outcome with the agent's summary (`FixDetails`). `reviewJob` ignores fix jobs an
 never shows as a review being generated. The daemon polls discovery after a
 push, so the new head appears without a manual refresh.
 
+The Jobs page lists a repository's first feature build (`kind:
+"feature_build"`, `pr` 0) as "Feature build · <repository>", with no link; it
+starts at once when asked for, like any other run.
+
 A fix can be watched live. A fix job with `has_transcript` has a transcript
 page, `?page=jobs&job=<id>` (`JobPage` and `JobTranscript` in
 `src/job-transcript.tsx`), its panels in the inbox's light sand on its darker
@@ -880,8 +884,10 @@ Saved review usage follows the version selected in history. Its cost reads
 "At API prices": what the usage would cost at API prices, not what a
 subscription charges. Unknown costs show a reason; configured model identity
 is distinguished from a provider report. Each attempt is priced independently
-when its model and pricing inputs are known. Pricing only reports: no budget,
-cap, confirmation or decision about a run reads it.
+when its model and pricing inputs are known. A cost with `unpriced_calls` (a
+feature build some of whose calls could not be priced) is a lower bound, shown
+"≥" with a note. Pricing only reports: no budget, cap, confirmation or decision
+about a run reads it.
 
 GitHub browser scenarios use the real auth manager/controller and mocked GitHub
 HTTP and credential-store boundaries. The `github-auth-mode` marker selects

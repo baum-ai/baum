@@ -39,11 +39,12 @@ CREATE TABLE IF NOT EXISTS session_commit(
 CREATE INDEX IF NOT EXISTS session_commit_session ON session_commit(agent, session_id);
 CREATE TABLE IF NOT EXISTS pull_sync(
   repository TEXT PRIMARY KEY, etag TEXT NOT NULL DEFAULT '', cursor_updated_at INTEGER,
-  activated_at INTEGER NOT NULL, relinked_at INTEGER);
+  activated_at INTEGER NOT NULL, relinked_at INTEGER, history_listed_at INTEGER);
 CREATE TABLE IF NOT EXISTS feature_version(
   id INTEGER PRIMARY KEY AUTOINCREMENT, repository TEXT NOT NULL, state TEXT NOT NULL,
   created_at INTEGER NOT NULL, switched_at INTEGER, stopped TEXT NOT NULL DEFAULT '',
-  spent_usd REAL NOT NULL DEFAULT 0, total INTEGER NOT NULL DEFAULT 0, placed INTEGER NOT NULL DEFAULT 0);
+  spent_usd REAL NOT NULL DEFAULT 0, total INTEGER NOT NULL DEFAULT 0, placed INTEGER NOT NULL DEFAULT 0,
+  taxonomy_id INTEGER, unpriced_calls INTEGER NOT NULL DEFAULT 0, unseeded TEXT NOT NULL DEFAULT '');
 CREATE UNIQUE INDEX IF NOT EXISTS feature_version_current ON feature_version(repository) WHERE state='current';
 CREATE UNIQUE INDEX IF NOT EXISTS feature_version_building ON feature_version(repository) WHERE state='building';
 CREATE TABLE IF NOT EXISTS feature(
@@ -52,7 +53,7 @@ CREATE TABLE IF NOT EXISTS feature(
   key_decisions_json TEXT NOT NULL DEFAULT '[]',
   membership_version INTEGER NOT NULL DEFAULT 0, summarized_version INTEGER NOT NULL DEFAULT 0,
   dirty_since INTEGER, changed_at INTEGER NOT NULL, summary_input_hash TEXT NOT NULL DEFAULT '',
-  merged_into TEXT, split_from TEXT, split_checked_version INTEGER NOT NULL DEFAULT 0,
+  merged_into TEXT, split_from TEXT, split_at INTEGER, split_checked_version INTEGER NOT NULL DEFAULT 0,
   created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL);
 CREATE INDEX IF NOT EXISTS feature_version_repository ON feature(version_id, repository);
 CREATE TABLE IF NOT EXISTS feature_pull(
@@ -74,7 +75,14 @@ CREATE TABLE IF NOT EXISTS pr_summary(
   repository TEXT NOT NULL, number INTEGER NOT NULL, content_hash TEXT NOT NULL, summary TEXT NOT NULL, created_at INTEGER NOT NULL,
   PRIMARY KEY(repository, number));
 CREATE TABLE IF NOT EXISTS feature_consolidation(
-  repository TEXT PRIMARY KEY, last_pass_at INTEGER, fingerprint TEXT NOT NULL DEFAULT '');`
+  repository TEXT PRIMARY KEY, last_pass_at INTEGER, fingerprint TEXT NOT NULL DEFAULT '');
+CREATE TABLE IF NOT EXISTS feature_taxonomy(
+  id INTEGER PRIMARY KEY AUTOINCREMENT, repository TEXT NOT NULL, revision TEXT NOT NULL, created_at INTEGER NOT NULL,
+  document_json TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS feature_taxonomy_repository ON feature_taxonomy(repository, created_at);
+CREATE TABLE IF NOT EXISTS feature_seed(
+  version_id INTEGER NOT NULL, feature_id TEXT NOT NULL, entry INTEGER NOT NULL, paths_json TEXT NOT NULL,
+  PRIMARY KEY(version_id, feature_id));`
 
 // Feature version states.
 const (
@@ -85,7 +93,10 @@ const (
 
 // migrate brings a store an earlier release made up to the schema, in one
 // transaction: the ledger's stage, item and rejections columns, and the pull
-// requests' fork and default branch columns, added when missing. Pull
+// requests' fork and default branch columns, and the features' split time,
+// the sync state's history listing and the feature versions' taxonomy,
+// unpriced calls and why one is unseeded,
+// added when missing. Pull
 // requests listed before the latter are listed again: the sync state's ETag
 // and cursor are reset. The columns are read without a lock; only when one is
 // missing is the write lock taken and they are read again, so a store two
@@ -144,6 +155,11 @@ var migrations = []migration{
 	{"capture_attempt", "rejections", `ALTER TABLE capture_attempt ADD COLUMN rejections INTEGER NOT NULL DEFAULT 0`, false},
 	{"pull_request", "cross_repository", `ALTER TABLE pull_request ADD COLUMN cross_repository INTEGER NOT NULL DEFAULT 0`, true},
 	{"pull_request", "default_branch", `ALTER TABLE pull_request ADD COLUMN default_branch TEXT NOT NULL DEFAULT ''`, true},
+	{"feature", "split_at", `ALTER TABLE feature ADD COLUMN split_at INTEGER`, false},
+	{"pull_sync", "history_listed_at", `ALTER TABLE pull_sync ADD COLUMN history_listed_at INTEGER`, false},
+	{"feature_version", "taxonomy_id", `ALTER TABLE feature_version ADD COLUMN taxonomy_id INTEGER`, false},
+	{"feature_version", "unpriced_calls", `ALTER TABLE feature_version ADD COLUMN unpriced_calls INTEGER NOT NULL DEFAULT 0`, false},
+	{"feature_version", "unseeded", `ALTER TABLE feature_version ADD COLUMN unseeded TEXT NOT NULL DEFAULT ''`, false},
 }
 
 // missingColumns are the migrations whose column the store lacks.
@@ -151,7 +167,7 @@ func missingColumns(ctx context.Context, q interface {
 	QueryContext(context.Context, string, ...any) (*sql.Rows, error)
 }) ([]migration, error) {
 	have := map[string]bool{}
-	for _, table := range []string{"capture_attempt", "pull_request"} {
+	for _, table := range []string{"capture_attempt", "pull_request", "feature", "pull_sync", "feature_version"} {
 		names, err := collect(scanString)(q.QueryContext(ctx, `SELECT name FROM pragma_table_info(?)`, table))
 		if err != nil {
 			return nil, err
@@ -175,21 +191,32 @@ type querier interface {
 	QueryRowContext(context.Context, string, ...any) *sql.Row
 }
 
-// liveVersion is the one place that decides which feature version of a
-// repository the feature log reads and writes: its current one. With create
-// a repository without one gets it; otherwise it is 0.
-func liveVersion(ctx context.Context, q querier, repository string, create bool, now time.Time) (int64, error) {
+// featureVersion is the one place that decides which feature version of a
+// repository a stage reads and writes: the live stages its current one
+// (liveVersion), a first build its building one. With create a repository
+// without one gets it; otherwise it is 0.
+func featureVersion(ctx context.Context, q querier, repository, state string, create bool, now time.Time) (int64, error) {
 	var id int64
-	err := q.QueryRowContext(ctx, `SELECT id FROM feature_version WHERE repository=? AND state=?`, repository, VersionCurrent).Scan(&id)
+	err := q.QueryRowContext(ctx, `SELECT id FROM feature_version WHERE repository=? AND state=?`, repository, state).Scan(&id)
 	if !errors.Is(err, sql.ErrNoRows) || !create {
 		if errors.Is(err, sql.ErrNoRows) {
 			return 0, nil
 		}
 		return id, err
 	}
+	var switched any
+	if state == VersionCurrent {
+		switched = now.UnixMilli()
+	}
 	err = q.QueryRowContext(ctx, `INSERT INTO feature_version(repository, state, created_at, switched_at) VALUES (?,?,?,?) RETURNING id`,
-		repository, VersionCurrent, now.UnixMilli(), now.UnixMilli()).Scan(&id)
+		repository, state, now.UnixMilli(), switched).Scan(&id)
 	return id, err
+}
+
+// liveVersion is the repository's current feature version, which the live
+// stages and readers use.
+func liveVersion(ctx context.Context, q querier, repository string, create bool, now time.Time) (int64, error) {
+	return featureVersion(ctx, q, repository, VersionCurrent, create, now)
 }
 
 // LiveVersion is the repository's feature version in use, created when it
@@ -214,17 +241,20 @@ type PullSync struct {
 	ActivatedAt time.Time
 	// RelinkedAt is the last full re-link, zero for none.
 	RelinkedAt time.Time
+	// HistoryListedAt is when a first build listed the whole history, zero
+	// before.
+	HistoryListedAt time.Time
 }
 
 // Activate reads the repository's sync state, activating the repository the
 // first time.
 func (s *Store) Activate(ctx context.Context, repository string) (PullSync, error) {
 	var st PullSync
-	var cursor, relinked sql.NullInt64
+	var cursor, relinked, history sql.NullInt64
 	var activated int64
 	read := func() error {
-		return s.db.QueryRowContext(ctx, `SELECT etag, cursor_updated_at, activated_at, relinked_at FROM pull_sync WHERE repository=?`, repository).
-			Scan(&st.ETag, &cursor, &activated, &relinked)
+		return s.db.QueryRowContext(ctx, `SELECT etag, cursor_updated_at, activated_at, relinked_at, history_listed_at FROM pull_sync WHERE repository=?`,
+			repository).Scan(&st.ETag, &cursor, &activated, &relinked, &history)
 	}
 	err := read()
 	if errors.Is(err, sql.ErrNoRows) {
@@ -242,6 +272,9 @@ func (s *Store) Activate(ctx context.Context, repository string) (PullSync, erro
 	if relinked.Valid {
 		st.RelinkedAt = time.UnixMilli(relinked.Int64)
 	}
+	if history.Valid {
+		st.HistoryListedAt = time.UnixMilli(history.Int64)
+	}
 	return st, nil
 }
 
@@ -251,24 +284,55 @@ func (s *Store) Activate(ctx context.Context, repository string) (PullSync, erro
 // new head or base starts the count of failed reads again, and a new base
 // has the pull request's commits read again.
 func (s *Store) SavePulls(ctx context.Context, repository string, pulls []github.ListedPull, etag string, cursor time.Time) error {
+	return s.savePulls(ctx, repository, pulls, false, func(tx *sql.Tx) error {
+		if cursor.IsZero() {
+			return nil
+		}
+		_, err := tx.ExecContext(ctx, `UPDATE pull_sync SET etag=?, cursor_updated_at=MAX(COALESCE(cursor_updated_at, 0), ?) WHERE repository=?`,
+			etag, cursor.UnixMilli(), repository)
+		return err
+	})
+}
+
+// SaveHistoryPulls upserts a listing of the repository's whole history as
+// SavePulls does, leaving the sync's ETag and cursor as they are, and
+// records that the history was listed. A pull request stored with a later
+// update, as a sync during the listing saves it, is kept as it is.
+func (s *Store) SaveHistoryPulls(ctx context.Context, repository string, pulls []github.ListedPull) error {
+	return s.savePulls(ctx, repository, pulls, true, func(tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx, `UPDATE pull_sync SET history_listed_at=? WHERE repository=?`, s.now().UnixMilli(), repository)
+		return err
+	})
+}
+
+// savePulls upserts pulls and then runs after, in one transaction; with
+// keepNewer, one stored with a later update is left as it is.
+func (s *Store) savePulls(ctx context.Context, repository string, pulls []github.ListedPull, keepNewer bool, after func(*sql.Tx) error) error {
 	now := s.now()
 	return s.inTx(ctx, func(tx *sql.Tx) error {
-		version, err := liveVersion(ctx, tx, repository, false, now)
-		if err != nil {
-			return err
-		}
 		for _, p := range pulls {
+			if keepNewer {
+				var newer bool
+				err := tx.QueryRowContext(ctx, `SELECT updated_at > ? FROM pull_request WHERE repository=? AND number=?`,
+					p.UpdatedAt.UnixMilli(), repository, p.Number).Scan(&newer)
+				if err != nil && !errors.Is(err, sql.ErrNoRows) {
+					return err
+				}
+				if newer {
+					continue
+				}
+			}
 			// A feature's text reads its pull requests' title, description
-			// and state.
-			var changed string
-			err := tx.QueryRowContext(ctx, `SELECT fp.feature_id FROM pull_request p
-JOIN feature_pull fp ON fp.version_id=?1 AND fp.repository=p.repository AND fp.number=p.number
-WHERE p.repository=?2 AND p.number=?3 AND (p.title != ?4 OR p.body != ?5 OR p.state != ?6 OR (p.merged_at IS NOT NULL) != ?7)`,
-				version, repository, p.Number, p.Title, p.Body, p.State, p.MergedAt != nil).Scan(&changed)
-			if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			// and state: the current version's and a building one's.
+			changed, err := collect(scanString)(tx.QueryContext(ctx, `SELECT fp.feature_id FROM pull_request p
+JOIN feature_pull fp ON fp.repository=p.repository AND fp.number=p.number
+JOIN feature_version v ON v.id=fp.version_id AND v.state IN (?1, ?2)
+WHERE p.repository=?3 AND p.number=?4 AND (p.title != ?5 OR p.body != ?6 OR p.state != ?7 OR (p.merged_at IS NOT NULL) != ?8)`,
+				VersionCurrent, VersionBuilding, repository, p.Number, p.Title, p.Body, p.State, p.MergedAt != nil))
+			if err != nil {
 				return err
 			}
-			if err := markFeatures(ctx, tx, []string{changed}, now); err != nil {
+			if err := markFeatures(ctx, tx, changed, now); err != nil {
 				return err
 			}
 			var merged, closed any
@@ -293,12 +357,7 @@ updated_at=excluded.updated_at, merged_at=excluded.merged_at, closed_at=excluded
 				return err
 			}
 		}
-		if cursor.IsZero() {
-			return nil
-		}
-		_, err = tx.ExecContext(ctx, `UPDATE pull_sync SET etag=?, cursor_updated_at=MAX(COALESCE(cursor_updated_at, 0), ?) WHERE repository=?`,
-			etag, cursor.UnixMilli(), repository)
-		return err
+		return after(tx)
 	})
 }
 
@@ -583,11 +642,16 @@ WHERE pc.repository=?2 AND pc.sha IN (`+placeholders(3, len(chunk))+`)`, args...
 // are in, and the feature it is in on its own. A session without a capture
 // row has none.
 func (s *Store) SessionLinks(ctx context.Context, repository, agent, sessionID string) (features.SessionLinks, error) {
-	var links features.SessionLinks
 	version, err := liveVersion(ctx, s.db, repository, false, s.now())
 	if err != nil || version == 0 {
-		return links, err
+		return features.SessionLinks{}, err
 	}
+	return s.sessionLinks(ctx, version, repository, agent, sessionID)
+}
+
+// sessionLinks is SessionLinks in the feature version version.
+func (s *Store) sessionLinks(ctx context.Context, version int64, repository, agent, sessionID string) (features.SessionLinks, error) {
+	var links features.SessionLinks
 	rows, err := s.db.QueryContext(ctx, `SELECT fp.feature_id, pr.number, pr.created_at, COALESCE(pr.paths_json, '[]'), fp.assigned_paths_json, sc.sha
 FROM session_commit sc
 JOIN capture_session cs ON cs.agent=sc.agent AND cs.session_id=sc.session_id

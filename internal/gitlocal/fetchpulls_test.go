@@ -108,3 +108,19 @@ func TestFetchPullsBatches(t *testing.T) {
 		t.Fatalf("%d heads fetched, want %d", len(refs), len(prs))
 	}
 }
+
+// FetchBranch fetches the remote's branch into DefaultRef and returns its
+// head; a bad branch name is refused before anything runs.
+func TestFetchBranch(t *testing.T) {
+	f := newRemoteFixture(t)
+	write(t, f.remote, "d.txt", "newer\n", 0o644)
+	newer := commit(t, f.remote, "newer change")
+	r := open(t, f.clone, Options{})
+	got, err := r.FetchBranch(context.Background(), "", "main")
+	if err != nil || got != newer || git(t, f.clone, "rev-parse", DefaultRef) != newer {
+		t.Fatalf("FetchBranch = %s, %v; want %s", got, err, newer)
+	}
+	if _, err := r.FetchBranch(context.Background(), "", "a:b"); err != ErrInvalidInput {
+		t.Fatalf("a bad branch gives %v", err)
+	}
+}

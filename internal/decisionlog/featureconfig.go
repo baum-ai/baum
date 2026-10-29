@@ -62,13 +62,37 @@ const (
 	// FeatureConsolidateEvery is how often a repository's features are
 	// consolidated, when they changed.
 	FeatureConsolidateEvery = 7 * 24 * time.Hour
-	// FeatureSplitPulls and FeatureSplitAge make a feature a split candidate:
-	// at least that many pull requests over at least that long. A feature is
-	// split at most FeatureMaxSplits times.
+	// FeatureSplitPulls and FeatureSplitAge make a feature a split
+	// candidate: more pull requests than that, or pull requests opened
+	// further apart. A pass offers at most FeatureMaxSplits features.
 	FeatureSplitPulls = 30
 	FeatureSplitAge   = 8 * 7 * 24 * time.Hour
 	FeatureMaxSplits  = 3
-	// FeatureFirstBuildWindow is how far back a repository's first build
-	// reads its pull requests, and how far back the first sync lists them.
-	FeatureFirstBuildWindow = 180 * 24 * time.Hour
+	// FeatureConsolidateOutputTokens bounds a merge or split reply. Hosted
+	// uses consolidate.MaxOutputTokens; locally Claude Code's models think
+	// within the reply's bound whatever thinking is set to, and a merge over a
+	// first build's features ran out of it, so local calls get more room.
+	FeatureConsolidateOutputTokens = 4 * consolidate.MaxOutputTokens
+	// FeatureSplitHold is how long after a split a merge undoing it is not
+	// applied.
+	FeatureSplitHold = 4 * 7 * 24 * time.Hour
+	// FeatureFirstSyncWindow is how far back the first sync lists a
+	// repository's pull requests; a first build lists its whole history
+	// (FeatureWorker.ListHistory).
+	FeatureFirstSyncWindow = 180 * 24 * time.Hour
+	// FeatureBuildTries is how many times a first build makes a failed batch
+	// call before splitting it; FeatureBuildCandidates is the most
+	// candidates a batch call offers; FeatureBuildSummarizeEvery is how many
+	// batches go between its text passes.
+	FeatureBuildTries          = 2
+	FeatureBuildCandidates     = 40
+	FeatureBuildSummarizeEvery = 3
+)
+
+// What a build's estimate assumes of what it cannot know beforehand (local
+// only; hosted builds have no estimate): the pull requests a new feature
+// gathers, and how many times a new feature's text is written.
+const (
+	FeatureEstimatePullsPerFeature = 3
+	FeatureEstimateTextPasses      = 2
 )

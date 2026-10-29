@@ -108,7 +108,7 @@ type PlacedItem struct {
 
 // Assign places the repository's pending pull requests and sessions, oldest
 // trigger first, at most FeatureAssignRunLimit (or o.Limit) of them. A
-// backend or price reason stops it until the next run.
+// backend reason stops it until the next run.
 func (w *FeatureWorker) Assign(ctx context.Context, repository, dir string, o FeatureOptions) (AssignReport, error) {
 	report := AssignReport{Repository: repository, Items: []PlacedItem{}}
 	r, err := w.newRun(ctx, repository, dir, o)
@@ -131,6 +131,12 @@ func (w *FeatureWorker) Assign(ctx context.Context, repository, dir string, o Fe
 	for _, item := range items[:min(len(items), limit)] {
 		if ctx.Err() != nil {
 			return report, ctx.Err()
+		}
+		if retired, err := r.retired(ctx); err != nil {
+			return report, err
+		} else if retired {
+			report.Stopped = ReasonVersionRetired
+			return report, nil
 		}
 		if on, err := r.refresh(ctx); err != nil {
 			report.Stopped = ReasonPreferences
@@ -392,6 +398,11 @@ func (r *featureRun) place(ctx context.Context, item assignItem) (PlacedItem, er
 	} else {
 		out.Feature, err = r.w.Store.placeSession(write, r.version, r.repository, item.Session, target.FeatureID, r.now)
 	}
+	if errors.Is(err, errVersionRetired) {
+		// A build's switch retired the version: the run stops.
+		out.Reason = ReasonVersionRetired
+		return out, nil
+	}
 	if err != nil {
 		// Paid for but not kept.
 		out.Error = err.Error()
@@ -443,15 +454,23 @@ type candidatePull struct {
 // candidates are the item's candidate features as the call shows them
 // (rankCandidates), each with its digest and its pull requests' summaries.
 func (r *featureRun) candidates(ctx context.Context, input assign.Item, pull placedPull) ([]assign.Candidate, error) {
+	candidates, _, err := r.scoredCandidates(ctx, input, pull)
+	return candidates, err
+}
+
+// scoredCandidates are candidates with each one's path score; the run's
+// excluded features (a build's unjoined seeds) are left out of the ranking.
+func (r *featureRun) scoredCandidates(ctx context.Context, input assign.Item, pull placedPull) ([]assign.Candidate, []float64, error) {
 	s := r.w.Store
 	found, err := s.candidateFeatures(ctx, r.version, r.repository, r.now.Add(-FeatureCandidateWindow), pull.Feature)
+	found = slices.DeleteFunc(found, func(f *candidateFeature) bool { return r.exclude[f.ID] })
 	if err != nil || len(found) == 0 {
-		return nil, err
+		return nil, nil, err
 	}
 	if input.PullRequest != nil {
 		links, err := s.pullLinks(ctx, r.repository, pull.Number, assign.MentionedPullRequests(pull.Title, pull.Body))
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		for _, f := range found {
 			for kind, list := range map[string]*[]int32{"stacked": &f.Links.Stacked, "sessions": &f.Links.SharedSessions, "mentioned": &f.Links.Mentioned} {
@@ -467,9 +486,11 @@ func (r *featureRun) candidates(ctx context.Context, input assign.Item, pull pla
 	}
 	ranked := rankCandidates(found, input.Paths(), pull.Feature, FeatureCandidates, FeaturePathSlots)
 	out := make([]assign.Candidate, len(ranked))
+	scores := make([]float64, len(ranked))
 	// Only the sample the input shows needs its summaries.
 	sampled := map[int]bool{}
 	for i, f := range ranked {
+		scores[i] = f.score
 		out[i] = assign.Candidate{ID: f.ID, Title: f.Title, Description: f.Description, Paths: f.Paths, Current: f.current,
 			Digest: f.Digest, Links: f.Links}
 		out[i].PullRequests = make([]assign.CandidatePullRequest, len(f.PullRequests))
@@ -482,7 +503,7 @@ func (r *featureRun) candidates(ctx context.Context, input assign.Item, pull pla
 	}
 	generated, err := s.pullSummaries(ctx, r.repository, slices.Collect(maps.Keys(sampled)))
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	for i, f := range ranked {
 		for _, j := range assign.SampledPullRequests(len(f.PullRequests)) {
@@ -492,7 +513,7 @@ func (r *featureRun) candidates(ctx context.Context, input assign.Item, pull pla
 			}
 		}
 	}
-	return out, nil
+	return out, scores, nil
 }
 
 // rankCandidates ranks features for an item touching paths, as the hosted
@@ -662,6 +683,24 @@ WHERE item.repository=?1 AND item.number=?2 AND other.number != item.number`,
 	return links, nil
 }
 
+// errVersionRetired is a write to a feature version a build's switch
+// retired.
+var errVersionRetired = errors.New("the feature version was retired")
+
+// ReasonVersionRetired stops a live run whose version a build's switch
+// retired; the next run uses the new current version.
+const ReasonVersionRetired = "version_retired"
+
+// retired reports whether a build's switch retired the run's version.
+func (r *featureRun) retired(ctx context.Context) (bool, error) {
+	var state string
+	err := r.w.Store.db.QueryRowContext(ctx, `SELECT state FROM feature_version WHERE id=?`, r.version).Scan(&state)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	return state == VersionRetired, err
+}
+
 // placeTarget is an existing feature, or a new one's provisional text.
 type placeTarget struct {
 	FeatureID          string
@@ -669,8 +708,17 @@ type placeTarget struct {
 }
 
 // target resolves an existing feature, followed to the feature it was
-// merged into, or creates a new one.
+// merged into, or creates a new one; errVersionRetired for a retired
+// version.
 func target(ctx context.Context, tx *sql.Tx, version int64, repository string, t placeTarget, now time.Time) (string, error) {
+	// A run that raced a build's switch never writes the retired version.
+	var state string
+	if err := tx.QueryRowContext(ctx, `SELECT state FROM feature_version WHERE id=?`, version).Scan(&state); err != nil {
+		return "", err
+	}
+	if state == VersionRetired {
+		return "", errVersionRetired
+	}
 	if t.FeatureID == "" {
 		id := uuid.NewString()
 		_, err := tx.ExecContext(ctx, `INSERT INTO feature(id, version_id, repository, title, description, changed_at, created_at, updated_at)

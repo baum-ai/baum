@@ -270,8 +270,37 @@ type caller struct {
 	gate     func(context.Context) (repos.Preferences, repos.Settings, bool, error)
 	prefs    repos.Preferences
 	settings repos.Settings
+	// build, when set, counts a first build's calls and spend.
+	build *buildSpend
 	// timeout bounds each call; zero is CallTimeout.
 	timeout time.Duration
+}
+
+// buildSpend is a first build's run's calls and known spend, which are also
+// added to its version's spend, with its calls whose cost is unknown
+// counted on the version.
+type buildSpend struct {
+	version  int64
+	run      float64
+	calls    int
+	unpriced int
+}
+
+// add counts a call that was made and its cost, nil when unknown. A spend
+// the version could not record is logged; the call and its ledger row
+// stand.
+func (b *buildSpend) add(ctx context.Context, s *Store, log *slog.Logger, cost *float64) {
+	b.calls++
+	query, args := `UPDATE feature_version SET unpriced_calls=unpriced_calls+1 WHERE id=?`, []any{b.version}
+	if cost == nil {
+		b.unpriced++
+	} else {
+		b.run += *cost
+		query, args = `UPDATE feature_version SET spent_usd=spent_usd+? WHERE id=?`, []any{*cost, b.version}
+	}
+	if _, err := s.db.ExecContext(ctx, query, args...); err != nil {
+		log.Warn("decision log: build spend not recorded", "error", err)
+	}
 }
 
 // Reasons a feature stage call was not made, besides the skip reasons.
@@ -364,7 +393,7 @@ func (c caller) finish(ctx context.Context, id int64, m *completerModel, callErr
 // callResult is one feature stage call: its reply, or why none was made.
 type callResult struct {
 	JSON []byte
-	// Skip is the reason no call was made (a backend or price reason).
+	// Skip is the reason no call was made (a backend reason).
 	Skip string
 	// Called is set once the backend was called, so a failure may have been
 	// billed.
@@ -399,6 +428,9 @@ func (c caller) complete(ctx context.Context, backend, model string, a Attempt, 
 	// The ledger outlives a cancelled call: it may be paid for.
 	_, spent, _, err := c.finish(context.WithoutCancel(ctx), id, m, callErr, ctx.Err() != nil)
 	result := callResult{JSON: response.JSON, Called: m.called, Cost: spent}
+	if b := c.build; b != nil && m.called {
+		b.add(context.WithoutCancel(ctx), c.store, c.log, spent)
+	}
 	if err != nil {
 		// The reply stands: a ledger that could not be written is not the
 		// call's failure.

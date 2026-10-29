@@ -3292,10 +3292,31 @@ and sessions in features (`FeatureWorker.Assign`: hosted triggers, a Go port
 of the hosted weighted candidate ranking, `assign.Public`) and writes the
 text of features whose members changed (`FeatureWorker.Summarize`,
 `summary.Public`, reusing text and generated pull request summaries whose
-input hash is unchanged). Both stages call through the same helper as
-capture (`caller` in `model.go`: backend and model resolution, reservation
-and the `capture_attempt` ledger, with the call's stage and item). The constants are in `featureconfig.go` and the live feature
-version of a repository is chosen in one place (`liveVersion`). See
+input hash is unchanged), and at most weekly, when the features'
+fingerprint changed, consolidates them (`FeatureWorker.Consolidate`,
+`consolidate.Public`: one merge call, at most three split calls, every call
+made before a write, each write checked against the membership versions it
+read). A first build (`FeatureWorker.Build`) lists a repository's whole
+history once (`FeatureWorker.ListHistory`), reads its paths, seeds a new
+`building` version from a feature taxonomy (`featureseed.go`), running
+feature discovery first when there is none newer than the version
+(`featurediscover.go`: the review backend and model through
+`generate.RunTask`, `discover.PublicPrompt`, a head-only checkout of
+`refs/baum/default` and `discover.HistoryDigest`), and places the history
+in the version with the batch prompt (`assign.Public.RenderBatch`), its
+seeds offered by path score (`discover.PathScores`), reusing placement's
+candidate ranking and writes and the text stage, then deletes the seeds no
+pull request joined and
+switches it to current in one transaction, after which the weekly pass
+consolidates it on its next run; it runs
+as a job started at once (`jobs.KindFeatureBuild`, through `jobs.FeatureBuilder`)
+or from `baum internal features build`. Every stage calls through the same
+helper as capture (`caller` in `model.go`: backend and model resolution,
+reservation and the `capture_attempt` ledger, with the call's stage and
+item). The constants
+are in `featureconfig.go` and the feature version a stage uses is chosen in
+one place (`featureVersion`: the live stages' current one, a build's
+building one). See
 [its README](internal/decisionlog/README.md#feature-log).
 
 ### Transports and control protocol

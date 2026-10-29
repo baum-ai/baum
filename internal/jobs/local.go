@@ -37,6 +37,8 @@ type Local struct {
 	// FixDirectory holds fixes' temporary checkouts; empty is
 	// fix.DefaultDirectory.
 	FixDirectory string
+	// Features builds feature histories; nil refuses feature builds.
+	Features FeatureBuilder
 	// ReviewRuns holds the run directories of reviews that keep their agent
 	// session; empty is reviewruns.DefaultRoot.
 	ReviewRuns string
@@ -73,6 +75,9 @@ func (l *Local) clone(ctx context.Context, id string) (repos.Clone, error) {
 	return repos.Clone{}, ErrNeedsClone
 }
 func (l *Local) Prepare(ctx context.Context, item Item) (Prepared, string, error) {
+	if item.Kind == KindFeatureBuild {
+		return l.prepareFeatureBuild(ctx, item)
+	}
 	if (item.Group == "") != (item.PR > 0) {
 		return Prepared{}, "", errors.New("invalid pull request")
 	}
@@ -234,8 +239,11 @@ func (l *Local) resolveFix(ctx context.Context, c repos.Clone) (config.Config, e
 }
 
 func (l *Local) Execute(ctx context.Context, p Prepared, progress func(Progress)) (*float64, error) {
-	if p.Kind == KindFix {
+	switch p.Kind {
+	case KindFix:
 		return l.executeFix(ctx, p, progress)
+	case KindFeatureBuild:
+		return l.executeFeatureBuild(ctx, p, progress)
 	}
 	c, e := l.clone(ctx, p.Clone)
 	if e != nil {
@@ -384,6 +392,38 @@ func (a headAssembler) Assemble(ctx context.Context, r assemble.Request) (assemb
 		return assemble.Result{}, errors.New("pull request head changed; start it again")
 	}
 	return result, e
+}
+
+// prepareFeatureBuild plans a feature build of the clone's repository. One
+// with no backend that can call now is blocked; nothing about its price is.
+func (l *Local) prepareFeatureBuild(ctx context.Context, item Item) (Prepared, string, error) {
+	if item.PR != 0 || item.Group != "" || l.Features == nil {
+		return Prepared{}, "", errors.New("invalid feature build")
+	}
+	c, e := l.clone(ctx, item.Clone)
+	if e != nil {
+		return Prepared{}, "", e
+	}
+	plan, e := l.Features.PlanFeatureBuild(ctx, c.Repository, c.Path)
+	if e != nil {
+		return Prepared{}, "", e
+	}
+	list := pricing.Active()
+	return Prepared{Item: item, Repository: c.Repository, Backend: plan.Backend, Model: plan.Model, PriceVersion: list.Version(),
+		BlockedReason: plan.Reason}, list.Version(), nil
+}
+
+// executeFeatureBuild runs a started feature build.
+func (l *Local) executeFeatureBuild(ctx context.Context, p Prepared, progress func(Progress)) (*float64, error) {
+	if l.Features == nil {
+		return nil, errors.New("invalid feature build")
+	}
+	c, e := l.clone(ctx, p.Clone)
+	if e != nil {
+		return nil, e
+	}
+	spent, e := l.Features.BuildFeatures(ctx, c.Repository, c.Path, progress)
+	return &spent, e
 }
 
 // pruneReviewRuns removes the kept run directories of the pull request's

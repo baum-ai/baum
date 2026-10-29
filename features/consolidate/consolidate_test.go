@@ -279,6 +279,11 @@ func TestRequestRoundTripsItsVersionAndKind(t *testing.T) {
 			}
 		}
 	}
+	for give, want := range map[int64]int64{0: MaxOutputTokens, 20000: 20000, 1 << 20: MaxHostOutputTokens} {
+		if request, err := testPrompts.Request(PublicVersion, Merge, "{}", give); err != nil || request.MaxOutputTokens != want {
+			t.Fatalf("a reply bound of %d is %d (%v)", give, request.MaxOutputTokens, err)
+		}
+	}
 	if _, err := testPrompts.Request("feature-consolidate-v9", Merge, "{}", 0); err == nil {
 		t.Fatal("an unknown prompt version built a request")
 	}
