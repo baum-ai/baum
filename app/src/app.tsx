@@ -19,6 +19,15 @@ import { CloneActions, type FoundClones } from "./repositories";
 import { GroupMissing, GroupPage, NameDialog } from "./group";
 import { Inbox } from "./inbox";
 import {
+  EditInboxPage,
+  editInboxHref,
+  manageInboxesHref,
+  ManageInboxesPage,
+  NewInboxPage,
+  newInboxHref,
+  RailLinks,
+} from "./inbox-pages";
+import {
   inboxBadgeCount,
   matches,
   readInboxes,
@@ -229,6 +238,8 @@ function Workspace({ url }: { url: UrlState }) {
   const [liveTick, setLiveTick] = useState(0);
   const [groups, setGroups] = useState<ReviewGroup[]>([]);
   const inboxes = useInboxes();
+  // The inbox just made from a template, whose page says so.
+  const [freshInbox, setFreshInbox] = useState<string | null>(null);
   // Deleting an inbox says so on any page, with a way back.
   const [inboxToast, setInboxToast] = useState<{
     id: number;
@@ -380,7 +391,13 @@ function Workspace({ url }: { url: UrlState }) {
         entry.pull_request.repository.toLowerCase() === requestedRepository.toLowerCase(),
     );
   const groupId = url.search.get("group");
-  const page = url.search.get("page") ?? "inbox";
+  const requestedPage = url.search.get("page") ?? "inbox";
+  // The pages that make and change inboxes need a daemon that has them.
+  const page =
+    !inboxes.available &&
+    (requestedPage === "inbox-new" || requestedPage === "inbox-edit" || requestedPage === "inboxes")
+      ? "inbox"
+      : requestedPage;
   // The inbox's queue counts in the sidebar on every page. Its record of what
   // was cleared waits for the first complete read, and pauses while reads
   // fail, so an empty or failed read clears nothing.
@@ -427,6 +444,9 @@ function Workspace({ url }: { url: UrlState }) {
     );
     return () => clearTimeout(timer);
   }, [inboxToast?.id]);
+  useEffect(() => {
+    if (freshInbox && page !== "inbox-edit") setFreshInbox(null);
+  }, [freshInbox, page]);
   // The pages that show the diagnostics run them themselves.
   // The diagnostics dialog runs them itself while it is open.
   const diagnostics = useDiagnosticProblems(page !== "diagnostics");
@@ -586,6 +606,23 @@ function Workspace({ url }: { url: UrlState }) {
         label: item.label,
         href: item.href(),
       })),
+      ...(inboxes.available
+        ? [
+            ...inboxes.inboxes.map((one) => ({
+              id: `inbox:${one.id}`,
+              kind: "Inbox" as const,
+              label: one.name,
+              href: appURL(`?inbox=${encodeURIComponent(one.id)}`),
+            })),
+            { id: "inbox-new", kind: "Page" as const, label: "New inbox", href: newInboxHref() },
+            {
+              id: "inboxes",
+              kind: "Page" as const,
+              label: "Manage inboxes",
+              href: manageInboxesHref(),
+            },
+          ]
+        : []),
       ...pulls.map((entry) => {
         const pr = entry.pull_request;
         const clone = cloneFor(entry);
@@ -615,6 +652,16 @@ function Workspace({ url }: { url: UrlState }) {
         href: transcriptHref(s),
       })),
     ];
+  };
+  const inboxPageProps = {
+    inboxes: inboxes.inboxes,
+    items: inbox.queue,
+    login: github?.login,
+    repositories,
+    saves: inboxes.saves,
+    save: inboxes.save,
+    go: navigate,
+    Link: LocalLink,
   };
   useKeyHints();
   useEscapeBlurs();
@@ -709,6 +756,8 @@ function Workspace({ url }: { url: UrlState }) {
                     ),
                   ),
                 remove: removeInbox,
+                edit: (target) => navigate(editInboxHref(target.id)),
+                footer: <RailLinks page={page} Link={LocalLink} />,
               }
             : undefined
         }
@@ -818,6 +867,17 @@ function Workspace({ url }: { url: UrlState }) {
                 <Jobs jobs={jobs} changed={reload} />
               </div>
             </>
+          ) : page === "inbox-new" ? (
+            <NewInboxPage {...inboxPageProps} created={setFreshInbox} />
+          ) : page === "inbox-edit" ? (
+            <EditInboxPage
+              {...inboxPageProps}
+              id={url.search.get("inbox") ?? ""}
+              fresh={freshInbox === url.search.get("inbox")}
+              remove={removeInbox}
+            />
+          ) : page === "inboxes" ? (
+            <ManageInboxesPage {...inboxPageProps} />
           ) : groupId ? (
             (() => {
               const group = groups.find((g) => g.id === groupId);
@@ -886,6 +946,16 @@ function Workspace({ url }: { url: UrlState }) {
               inbox={inbox}
               inboxes={inboxes.inboxes}
               selected={selectedInbox}
+              headerAction={
+                selectedInbox ? (
+                  <LocalLink
+                    href={editInboxHref(selectedInbox.id)}
+                    className="inbox-btn inbox-edit-link"
+                  >
+                    Edit
+                  </LocalLink>
+                ) : undefined
+              }
               login={github?.login}
               // Until a read succeeds there is nothing to say an empty inbox about.
               loading={revision === 0}

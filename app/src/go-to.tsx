@@ -4,7 +4,7 @@ import { useEffect, useId, useMemo, useRef, useState } from "react";
  *  agent session. */
 export type GoToItem = {
   id: string;
-  kind: "Page" | "Pull request" | "Review group" | "Session";
+  kind: "Page" | "Inbox" | "Pull request" | "Review group" | "Session";
   label: string;
   /** What tells it apart from others like it: a repository and number. */
   detail?: string;

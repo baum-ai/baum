@@ -79,7 +79,7 @@ const KINDS: Record<UpNextKind, { label: string; done: string; order: number }> 
 };
 
 /** The list's groups, by what the person does about their pull requests. */
-const GROUPS: { id: "eyes" | "merge" | "agent"; title: string; kinds: UpNextKind[] }[] = [
+export const GROUPS: { id: "eyes" | "merge" | "agent"; title: string; kinds: UpNextKind[] }[] = [
   { id: "eyes", title: "Needs your eyes", kinds: ["review", "clone"] },
   { id: "merge", title: "Ready to merge", kinds: ["merge"] },
   { id: "agent", title: "Hand to an agent", kinds: ["fix", "update"] },
@@ -551,7 +551,7 @@ function rowInboxes(row: Row, inboxes: Inbox[]) {
   return item ? inboxesOf(item, inboxes) : [];
 }
 
-function InboxTag({ inbox }: { inbox: Inbox }) {
+export function InboxTag({ inbox }: { inbox: Inbox }) {
   return <span className={`upnext-tag inbox-${inbox.color}`}>{inbox.name}</span>;
 }
 

@@ -135,16 +135,28 @@ function joinOr(parts: string[]) {
     : `${parts.slice(0, -1).join(", ")} or ${parts[parts.length - 1]}`;
 }
 
+/** The three parts of an inbox's sentence, in lower case: what it holds,
+ *  where, and at what risk. `login` is the signed-in GitHub account, whose
+ *  own repositories read as such. */
+export function sentenceParts(inbox: Inbox, login?: string) {
+  return {
+    what: WHAT_WORDS[inbox.what] ?? WHAT_WORDS.any,
+    where:
+      inbox.owners.length === 0
+        ? "in any repository"
+        : inbox.owners.length === 1 &&
+            login &&
+            inbox.owners[0]!.toLowerCase() === login.toLowerCase()
+          ? "in my own repositories"
+          : `in ${joinOr(inbox.owners)}`,
+    risk: RISK_WORDS[inbox.risk] ?? RISK_WORDS.any,
+  };
+}
+
 /** What the inbox holds, in a sentence: "Anything waiting on me in any
- *  repository, whatever the risk." `login` is the signed-in GitHub account,
- *  whose own repositories read as such. */
+ *  repository, whatever the risk." */
 export function sentence(inbox: Inbox, login?: string): string {
-  const where =
-    inbox.owners.length === 0
-      ? "in any repository"
-      : inbox.owners.length === 1 && login && inbox.owners[0]!.toLowerCase() === login.toLowerCase()
-        ? "in my own repositories"
-        : `in ${joinOr(inbox.owners)}`;
+  const { what, where, risk } = sentenceParts(inbox, login);
   const only =
     inbox.repositories.length === 0
       ? ""
@@ -153,8 +165,130 @@ export function sentence(inbox: Inbox, login?: string): string {
             ? inbox.repositories[0]
             : `${inbox.repositories.length} repositories`
         }`;
-  const text = `${WHAT_WORDS[inbox.what] ?? WHAT_WORDS.any} ${where}, ${RISK_WORDS[inbox.risk] ?? RISK_WORDS.any}${only}${inbox.no_bots ? ", without bots" : ""}`;
+  const text = `${what} ${where}, ${risk}${only}${inbox.no_bots ? ", without bots" : ""}`;
   return `${text.charAt(0).toUpperCase()}${text.slice(1)}.`;
+}
+
+export const MAX_INBOXES = 20;
+const NAME_LIMIT = 40;
+
+/** An id in the daemon's shape (32 lower-case hex characters), which it keeps,
+ *  so a new inbox's page can open before the save is answered. */
+export function newInboxId(): string {
+  return Array.from(crypto.getRandomValues(new Uint8Array(16)), (byte) =>
+    byte.toString(16).padStart(2, "0"),
+  ).join("");
+}
+
+/** Why `name` cannot be saved for the inbox with id `own` (none for a new
+ *  one): blank, too long or another inbox's, ignoring case. Empty when fine. */
+export function nameProblem(name: string, inboxes: Inbox[], own?: string): string {
+  const trimmed = name.trim();
+  if (!trimmed) return "Give the inbox a name.";
+  if ([...trimmed].length > NAME_LIMIT)
+    return `Keep the name to ${NAME_LIMIT} characters or fewer.`;
+  if (inboxes.some((one) => one.id !== own && one.name.toLowerCase() === trimmed.toLowerCase()))
+    return "Another inbox already has that name.";
+  return "";
+}
+
+/** `name`, or `name 2`, `name 3`… when an inbox has it. */
+export function freeName(name: string, inboxes: Inbox[]): string {
+  const taken = new Set(inboxes.map((one) => one.name.toLowerCase()));
+  let candidate = name;
+  for (let n = 2; taken.has(candidate.toLowerCase()); n++) candidate = `${name} ${n}`;
+  return candidate;
+}
+
+/** The owners of `repositories` ("owner/name"), without the person's own
+ *  login, in alphabetical order, spelled as first met. */
+export function ownersOf(repositories: string[], login?: string): string[] {
+  const seen = new Map<string, string>();
+  for (const repository of repositories) {
+    const owner = repository.split("/")[0] ?? "";
+    const key = owner.toLowerCase();
+    if (owner && key !== login?.toLowerCase() && !seen.has(key)) seen.set(key, owner);
+  }
+  return [...seen.values()].sort((a, b) => a.localeCompare(b));
+}
+
+/** What a new inbox starts from. */
+export type Template = Pick<Inbox, "color" | "what" | "risk" | "owners" | "badge"> & {
+  name: string;
+};
+
+/** The six starting points. `owners` is every owner of the person's
+ *  repositories except their login (see `ownersOf`). */
+export function templates(owners: string[], login?: string): Template[] {
+  const base = { what: "any", risk: "any", owners: [] as string[], badge: true } as const;
+  return [
+    { ...base, name: "Urgent", color: "red", risk: "4" },
+    { ...base, name: "Work", color: "blue", owners },
+    { ...base, name: "Personal", color: "green", owners: login ? [login] : [], badge: false },
+    { ...base, name: "Needs my review", color: "purple", what: "review" },
+    { ...base, name: "Quick merges", color: "amber", what: "merge" },
+    { ...base, name: "For an agent", color: "grey", what: "agent" },
+  ];
+}
+
+/** A template as an inbox of its own, named so no other inbox has the name. */
+export function fromTemplate(template: Template, inboxes: Inbox[], id = newInboxId()): Inbox {
+  return {
+    id,
+    ...template,
+    name: freeName(template.name, inboxes),
+    repositories: [],
+    no_bots: false,
+  };
+}
+
+/** How many of `items` the inbox holds. */
+export function countOf(inbox: Inbox, items: Matchable[]): number {
+  return items.filter((item) => matches(inbox, item)).length;
+}
+
+export type Choice = { key: string; label: string; patch: Partial<Inbox>; on: boolean };
+
+const sameSet = (a: string[], b: string[]) =>
+  a.length === b.length && a.every((x) => b.some((y) => y.toLowerCase() === x.toLowerCase()));
+
+/** The options of each part of the sentence, marking the one in force. */
+export function choices(
+  inbox: Inbox,
+  owners: string[],
+  login?: string,
+): { what: Choice[]; where: Choice[]; risk: Choice[] } {
+  const what: Choice[] = (
+    [
+      ["any", "Anything waiting on me"],
+      ["review", "Reviews I’m asked for"],
+      ["merge", "Things ready to merge"],
+      ["agent", "Things an agent can fix"],
+      ["mine", "My own pull requests"],
+    ] as const
+  ).map(([key, label]) => ({ key, label, patch: { what: key }, on: inbox.what === key }));
+  const sets: { key: string; label: string; owners: string[] }[] = [
+    { key: "any", label: "Any repository", owners: [] },
+    ...(login ? [{ key: "own", label: "My own repositories", owners: [login] }] : []),
+    ...owners.map((owner) => ({ key: `owner:${owner}`, label: owner, owners: [owner] })),
+  ];
+  // Owners the list does not offer: several at once, or one no longer there.
+  if (!sets.some((set) => sameSet(set.owners, inbox.owners)))
+    sets.push({ key: "set", label: joinOr(inbox.owners), owners: inbox.owners });
+  const where: Choice[] = sets.map((set) => ({
+    key: set.key,
+    label: set.label,
+    patch: { owners: set.owners },
+    on: sameSet(set.owners, inbox.owners),
+  }));
+  const risk: Choice[] = (
+    [
+      ["any", "Any risk"],
+      ["3", "Risk 3 or more"],
+      ["4", "Risk 4 or 5"],
+    ] as const
+  ).map(([key, label]) => ({ key, label, patch: { risk: key }, on: inbox.risk === key }));
+  return { what, where, risk };
 }
 
 type SaverIO = {
@@ -166,6 +300,8 @@ type SaverIO = {
   /** What the sidebar and the queue show now; null for an older daemon. */
   show: (list: InboxList | null) => void;
   fail: (message: string) => void;
+  /** Called after each save the daemon accepted. */
+  saved?: () => void;
 };
 
 /** Keeps the saved list and sends changes one at a time. A change shows at
@@ -187,6 +323,7 @@ export function createInboxSaver(io: SaverIO) {
         const saved = await io.put(server.revision, next);
         if (!saved) throw new Error("The daemon cannot save inboxes.");
         server = saved;
+        io.saved?.();
         if (!waiting) io.show(saved);
       } catch (e) {
         waiting = null;
@@ -225,6 +362,7 @@ export function useInboxes() {
   const [list, setList] = useState<InboxList | null>(null);
   const [error, setError] = useState("");
   const [readError, setReadError] = useState("");
+  const [saves, setSaves] = useState(0);
   const saver = useRef<ReturnType<typeof createInboxSaver>>(undefined);
   saver.current ??= createInboxSaver({
     put: (revision, inboxes) =>
@@ -232,12 +370,15 @@ export function useInboxes() {
     get: () => request<unknown>("api/inboxes").then(parseInboxes),
     show: setList,
     fail: setError,
+    saved: () => setSaves((n) => n + 1),
   });
   const { adopt, save } = saver.current;
   return {
     available: list !== null,
     inboxes: list?.inboxes ?? [],
     error: error || readError,
+    /** How many saves the daemon has accepted, for a "Saved" mark. */
+    saves,
     /** Takes what a read answered. A failed read keeps the list shown and
      *  the saver's state, and is reported; an older daemon hides the inboxes. */
     read(result: InboxList | null | { failed: string }) {

@@ -17,6 +17,8 @@ export type RailInboxes = {
   selected: string | null;
   toggleBadge: (inbox: Inbox) => void;
   remove: (inbox: Inbox) => void;
+  /** Opens the inbox's edit page. */
+  edit: (inbox: Inbox) => void;
   /** More entries at the foot of the nested list: where "New inbox" and
    *  "Manage inboxes" go. */
   footer?: ReactNode;
@@ -189,8 +191,10 @@ function InboxRows({
   // to Inbox when it was the last.
   const afterDelete = () => {
     const row = menu.current;
-    const next = (row?.nextElementSibling ?? row?.previousElementSibling) as HTMLElement | null;
-    const target = next?.matches(".local-rail-inbox")
+    const inboxRow = (element: Element | null | undefined) =>
+      element?.matches(".local-rail-inbox") ? (element as HTMLElement) : null;
+    const next = inboxRow(row?.nextElementSibling) ?? inboxRow(row?.previousElementSibling);
+    const target = next
       ? next.querySelector<HTMLElement>("a.local-rail-sub")
       : row?.closest("nav")?.querySelector<HTMLElement>("a.local-rail-link");
     target?.focus();
@@ -235,6 +239,15 @@ function InboxRows({
             </button>
             {open === inbox.id ? (
               <div className="local-rail-menu">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setOpen(null);
+                    inboxes.edit(inbox);
+                  }}
+                >
+                  Edit inbox
+                </button>
                 <button
                   type="button"
                   onClick={() => {

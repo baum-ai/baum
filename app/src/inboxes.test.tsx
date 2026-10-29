@@ -374,7 +374,7 @@ it("returns focus to the menu button after Esc and after choosing, never to the 
   await render();
   await click(more("Acme"));
   // It opens on its first button.
-  expect(document.activeElement).toBe(menuItem("Leave out of the Inbox badge"));
+  expect(document.activeElement).toBe(menuItem("Edit inbox"));
   await press("Escape");
   expect(node.querySelector(".local-rail-menu")).toBeNull();
   expect(document.activeElement).toBe(more("Acme"));
