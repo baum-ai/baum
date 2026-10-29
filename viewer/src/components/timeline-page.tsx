@@ -610,15 +610,16 @@ function defaultLoading(label: string) {
 type Known<S> = Record<string, S | { status: "loading" } | { status: "failed" }>;
 
 /** Details read once per revision and kept, so closing and reopening one
- *  costs no request; a retry (`force`) reads one again. */
-function useDetails<S>(
+ *  costs no request; a retry (`force`) reads one again. A read for a newer
+ *  revision keeps the detail shown until its answer lands, so a log that
+ *  changes often does not flash its open details back to loading. */
+function useDetails<S extends { status: string }>(
   read: (id: string, signal: AbortSignal) => Promise<S>,
   revision: number,
 ): [Known<S>, (id: string, force?: boolean) => void] {
-  const [known, setKnown] = useState<{ revision: number; states: Known<S> }>({
-    revision,
-    states: {},
-  });
+  const [states, setStates] = useState<Known<S>>({});
+  const shown = useRef(states);
+  shown.current = states;
   // Each id's latest request, which alone may write its state: a newer one
   // (a new revision or a retry) aborts it.
   const requests = useRef(new Map<string, { revision: number; abort: AbortController }>());
@@ -631,7 +632,6 @@ function useDetails<S>(
     },
     [],
   );
-  const states = known.revision === revision ? known.states : {};
   const load = useCallback(
     (id: string, force = false) => {
       const previous = requests.current.get(id);
@@ -641,20 +641,17 @@ function useDetails<S>(
       requests.current.set(id, request);
       const set = (state: Known<S>[string]) => {
         if (requests.current.get(id) !== request) return;
-        setKnown((current) =>
-          current.revision > revision
-            ? current
-            : {
-                revision,
-                states: { ...(current.revision === revision ? current.states : {}), [id]: state },
-              },
-        );
+        setStates((current) => ({ ...current, [id]: state }));
       };
-      set({ status: "loading" });
+      // An answer from an earlier revision stays until this one replaces it;
+      // should this read fail, it stays.
+      const status = shown.current[id]?.status;
+      const refresh = !force && status !== undefined && status !== "loading" && status !== "failed";
+      if (!refresh) set({ status: "loading" });
       read(id, request.abort.signal)
         .then(set)
         .catch(() => {
-          if (!request.abort.signal.aborted) set({ status: "failed" });
+          if (!request.abort.signal.aborted && !refresh) set({ status: "failed" });
         });
     },
     [read, revision],

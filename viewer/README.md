@@ -389,7 +389,8 @@ address.
   its files (each calling `onFile`), pull requests, session facts and cited
   prompts. `pullRequestHref` says where a pull request opens; the link is a
   `ViewerLink`, so it navigates through the host's `ViewerLinkProvider`. A
-  detail whose prompts are withheld offers no session.
+  detail whose prompts are withheld offers no session and says
+  `withheldNote` in their place (by default, the hosted reason).
 - `openSession` (`OpenSessionSource`) opens the decision's session in place,
   in two parts: `load` fetches a session by id as data only the host reads,
   and `render` draws it at the cited turn, called on every render with the
@@ -452,7 +453,8 @@ address.
   loads on scroll, the order (a ranked search reads as one list, best match
   first) and `reordered` (said at the end with `reorderedNote`), and
   `pending` to show it stale. The page asks `readDecision` and
-  `readFeature` for details, each once until `revision` changes, and
+  `readFeature` for details, each once until `revision` changes (an open
+  detail stays shown until the newer read answers), and
   `readPeople` for a tab's authors, keeping each tab's list. Decisions group
   by local day (`decisionSections`) and features by month and day of their
   last activity (`featureHeadings`, which skips a feature with none); on a
