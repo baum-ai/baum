@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -115,6 +116,42 @@ func TestOpenLoadsRecordedEarlierNames(t *testing.T) {
 	_ = r.Close()
 	if got := gitlocal.RenamedTo(strings.ToUpper(old)); got != current {
 		t.Fatalf("RenamedTo = %q", got)
+	}
+}
+
+// A recheck drops the earlier names GitHub now answers with another
+// repository or none, and keeps those it still forwards or could not check.
+func TestRecheckAliasesDropsNamesNoLongerForwarded(t *testing.T) {
+	r := registry(t)
+	current := uniqueName("recheck-new")
+	kept, taken, gone, unchecked := uniqueName("recheck-kept"), uniqueName("recheck-taken"), uniqueName("recheck-gone"), uniqueName("recheck-unchecked")
+	answers := map[string]error{kept: nil, taken: nil, gone: github.ErrNotFound, unchecked: errors.New("offline")}
+	for alias := range answers {
+		if _, err := r.db.Exec("INSERT INTO aliases VALUES (?,?)", alias, current); err != nil {
+			t.Fatal(err)
+		}
+		gitlocal.AddRenamed(alias, current)
+	}
+	err := r.RecheckAliases(context.Background(), current, func(_ context.Context, repo github.Repository) (string, error) {
+		if repo.String() == taken {
+			return taken, nil
+		}
+		return current, answers[repo.String()]
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{kept, unchecked}
+	slices.Sort(want)
+	if got := gitlocal.EarlierNames(current); !slices.Equal(got, want) {
+		t.Fatalf("earlier names %v", got)
+	}
+	var stored int
+	if err := r.db.QueryRow("SELECT count(*) FROM aliases WHERE repository=?", current).Scan(&stored); err != nil || stored != 2 {
+		t.Fatalf("%d aliases stored, %v", stored, err)
+	}
+	if gitlocal.RenamedTo(taken) != taken || gitlocal.RenamedTo(gone) != gone {
+		t.Fatal("a dropped name still reads as the repository")
 	}
 }
 

@@ -35,6 +35,14 @@ func AddRenamed(from, to string) {
 	renamed.to[from] = to
 }
 
+// RemoveRenamed forgets the earlier name from: remotes using it read as it
+// again.
+func RemoveRenamed(from string) {
+	renamed.Lock()
+	defer renamed.Unlock()
+	delete(renamed.to, strings.ToLower(from))
+}
+
 // RenamedTo is the current lower-case "owner/name" of repository: the one
 // GitHub forwards it to when it is a recorded earlier name, else repository.
 func RenamedTo(repository string) string {

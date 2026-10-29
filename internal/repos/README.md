@@ -25,7 +25,11 @@ its HTTP handler uses.
   everywhere. Clones registered under the earlier name move to the current
   one, which is picked once and takes the earlier name's settings while its
   own are still the default. Renames chain, and renaming back undoes them.
-  Aliases are never checked again; the remote is never rewritten.
+  The daemon asks GitHub again at startup, and a fix before it pushes for
+  its repository (`RecheckAliases`): an alias GitHub now answers with
+  another repository (a new one took the name) or none is dropped, so its
+  remotes name that repository again; one it could not check is kept. The
+  remote is never rewritten.
   `Repositories` lists them as `earlier_names`.
 - `preferences(key, value)`: the global preferences as one JSON row.
 - `preferences(key, value)`: the global preferences as one JSON row. Its

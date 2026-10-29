@@ -577,6 +577,13 @@ func localApplication(paths daemon.Paths, concurrency int, log *slog.Logger) fun
 		// A write to a pull request re-reads the repository's pull requests so
 		// the inbox shows its new state.
 		githubClient := github.NewFromConfig(cfg, github.Options{})
+		// An earlier name GitHub no longer forwards stops reading as the
+		// repository it was recorded for.
+		go func() {
+			if err := registry.RecheckAliases(ctx, "", githubClient.CurrentName); err != nil {
+				log.Warn("earlier repository names not rechecked", "error", err)
+			}
+		}()
 		refreshRepository := func(ctx context.Context, repo github.Repository) { _, _ = discover.PollNow(ctx, repo) }
 		// GitHub accepted the merge: the inbox shows it merged without
 		// waiting for the background refresh to read it.

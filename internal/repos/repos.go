@@ -436,11 +436,49 @@ func loadAliases(db *sql.DB) error {
 	return rows.Err()
 }
 
+// RecheckAliases asks GitHub (current) again about the recorded earlier names
+// of repository, or of every repository when it is "", and drops each one it
+// no longer forwards there, as when a new repository took the name: remotes
+// using it then name that one. One that could not be checked is kept.
+func (r *Registry) RecheckAliases(ctx context.Context, repository string, current func(context.Context, github.Repository) (string, error)) error {
+	rows, e := r.db.QueryContext(ctx, "SELECT alias,repository FROM aliases WHERE ?1='' OR repository=lower(?1)", repository)
+	if e != nil {
+		return e
+	}
+	var aliases [][2]string
+	for rows.Next() {
+		var alias [2]string
+		if e = rows.Scan(&alias[0], &alias[1]); e != nil {
+			_ = rows.Close()
+			return e
+		}
+		aliases = append(aliases, alias)
+	}
+	if e = errors.Join(rows.Err(), rows.Close()); e != nil {
+		return e
+	}
+	for _, alias := range aliases {
+		earlier, e := github.ParseRepository(alias[0])
+		if e != nil {
+			continue
+		}
+		if now, e := current(ctx, earlier); e != nil && !errors.Is(e, github.ErrNotFound) || e == nil && strings.EqualFold(now, alias[1]) {
+			continue
+		}
+		if _, e = r.db.ExecContext(ctx, "DELETE FROM aliases WHERE alias=?", alias[0]); e != nil {
+			return e
+		}
+		gitlocal.RemoveRenamed(alias[0])
+	}
+	return nil
+}
+
 // AddForwarded registers a clone for repository, as AddFor does, whose remote
 // uses alias, an earlier name GitHub forwards to repository, which the caller
 // has checked. The alias is recorded first: from then on remote URLs using it
 // read as repository (gitlocal.RenamedTo), so the clone stays a clone of
-// repository everywhere. It is trusted from then on and never checked again.
+// repository everywhere, until RecheckAliases finds GitHub no longer
+// forwards it.
 func (r *Registry) AddForwarded(ctx context.Context, path, repository, alias string, settings *Settings) (Clone, error) {
 	gh, e := github.ParseRepository(repository)
 	old, oe := github.ParseRepository(alias)

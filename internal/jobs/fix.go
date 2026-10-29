@@ -231,6 +231,11 @@ func (l *Local) executeFix(ctx context.Context, p Prepared, progress func(Progre
 			transcript, hasTranscript = func(entry agent.TranscriptEntry) { writer.Add(ctx, entry) }, true
 		}
 	}
+	// A remote using an earlier name pushes to whatever GitHub forwards it to
+	// now: one no longer forwarded to the repository stops naming it.
+	if e := l.Registry.RecheckAliases(ctx, c.Repository, l.Client.CurrentName); e != nil {
+		return nil, e
+	}
 	list := pricing.Active()
 	out, err := fix.Run(ctx, fix.Options{ID: id(), Clone: c.Path, Repository: repository, Number: p.PR, Title: pr.Title,
 		HeadRef: p.Fix.HeadRef, HeadSHA: p.HeadSHA, BaseRef: p.Fix.BaseRef, Conflicts: p.Fix.Conflicts, Checks: p.Fix.Checks, Evidence: evidence,
