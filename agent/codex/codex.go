@@ -427,6 +427,9 @@ func (c *Backend) run(ctx context.Context, request agent.Request, fix bool) (res
 		}
 		if c.Profile == Local {
 			if line, found := unknownOption(stderr.String()); found {
+				if request.WantsSession() {
+					return result, fmt.Errorf("this Codex does not support exec resume/fork or the options baum passes with them (%s); upgrade Codex", line)
+				}
 				return result, fmt.Errorf("codex does not accept the options baum needs (%s); upgrade Codex to %s or newer", line, minimumVersion)
 			}
 			// Local stderr is the user's own and bounded; a hosted run's may

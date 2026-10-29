@@ -4,6 +4,7 @@ package claude
 
 import (
 	"context"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -12,6 +13,8 @@ import (
 
 	"github.com/baum-ai/baum/agent"
 )
+
+const testSession = "01a18588-ef8c-7962-b6af-d86e6966dacd"
 
 func TestSessionArguments(t *testing.T) {
 	backend := &Backend{Model: "sonnet"}
@@ -37,8 +40,8 @@ func TestSessionArguments(t *testing.T) {
 		fork    bool
 	}{
 		{"persist", agent.Request{PersistSession: true}, true, "", false},
-		{"resume", agent.Request{ResumeSession: "sess-1"}, true, "sess-1", false},
-		{"fork", agent.Request{ResumeSession: "sess-1", ForkSession: true}, true, "sess-1", true},
+		{"resume", agent.Request{ResumeSession: testSession}, true, testSession, false},
+		{"fork", agent.Request{ResumeSession: testSession, ForkSession: true}, true, testSession, true},
 	}
 	for _, c := range cases {
 		c.request.MaxCalls, c.request.Schema = 7, schema
@@ -64,9 +67,9 @@ func TestSessionArguments(t *testing.T) {
 			t.Errorf("%s: other flags changed\n got %q\nwant %q", c.name, flagsOf(other), flagsOf(want))
 		}
 	}
-	fork := backend.args(agent.Request{MaxCalls: 7, Schema: schema, ResumeSession: "s", ForkSession: true})
+	fork := backend.args(agent.Request{MaxCalls: 7, Schema: schema, ResumeSession: testSession, ForkSession: true})
 	i := slices.Index(fork, "--resume")
-	if fork[i+1] != "s" || fork[i+2] != "--fork-session" {
+	if fork[i+1] != testSession || fork[i+2] != "--fork-session" {
 		t.Errorf("fork args = %q", fork)
 	}
 }
@@ -97,18 +100,29 @@ func TestSessionIDParsing(t *testing.T) {
 
 func TestSessionRunPassesFlagsAndKeepsEnvironment(t *testing.T) {
 	script := fakeClaude(t, "2.1.296", succeeding("printf '%s\\n' \"$@\" > arguments.txt\nenv > environment.txt"))
+	plain := t.TempDir()
+	if _, err := (&Backend{Binary: script}).Run(context.Background(), request(plain, nil)); err != nil {
+		t.Fatal(err)
+	}
 	dir := t.TempDir()
 	r := request(dir, nil)
-	r.ResumeSession, r.ForkSession = "sess-9", true
+	r.ResumeSession, r.ForkSession = testSession, true
 	if _, err := (&Backend{Binary: script}).Run(context.Background(), r); err != nil {
 		t.Fatal(err)
 	}
-	args := strings.Split(strings.TrimSpace(readTestFile(t, dir, "arguments.txt")), "\n")
-	if slices.Contains(args, "--no-session-persistence") || !slices.Contains(args, "--resume") || !slices.Contains(args, "--fork-session") || !slices.Contains(args, "sess-9") || !slices.Contains(args, "--restricted") {
-		t.Errorf("args = %q", args)
+	// The working directory is the only thing that may differ.
+	want, got := environmentOf(t, plain), environmentOf(t, dir)
+	for _, env := range []map[string]string{want, got} {
+		delete(env, "PWD")
+		delete(env, "OLDPWD")
+		delete(env, "_")
 	}
-	if env := environmentOf(t, dir); env["DISABLE_AUTOUPDATER"] != "1" {
-		t.Errorf("environment changed: %v", env)
+	if !maps.Equal(want, got) {
+		t.Errorf("environment changed\n got %v\nwant %v", got, want)
+	}
+	args := strings.Split(strings.TrimSpace(readTestFile(t, dir, "arguments.txt")), "\n")
+	if slices.Contains(args, "--no-session-persistence") || !slices.Contains(args, "--resume") || !slices.Contains(args, "--fork-session") || !slices.Contains(args, testSession) || !slices.Contains(args, "--restricted") {
+		t.Errorf("args = %q", args)
 	}
 }
 
@@ -131,8 +145,10 @@ func TestSessionOptionsAreRefused(t *testing.T) {
 		want    string
 	}{
 		{"isolated persist", &Backend{Binary: script, Profile: Isolated, DefaultEndpoint: testEndpoint}, agent.Request{PersistSession: true}, false, "only a User profile"},
-		{"isolated resume", &Backend{Binary: script, Profile: Isolated, DefaultEndpoint: testEndpoint}, agent.Request{ResumeSession: "s"}, false, "only a User profile"},
+		{"isolated resume", &Backend{Binary: script, Profile: Isolated, DefaultEndpoint: testEndpoint}, agent.Request{ResumeSession: testSession}, false, "only a User profile"},
 		{"fork without resume", &Backend{Binary: script}, agent.Request{ForkSession: true}, false, "fork needs a session"},
+		{"leading dash", &Backend{Binary: script}, agent.Request{ResumeSession: "--help"}, false, "must be a UUID"},
+		{"name, not UUID", &Backend{Binary: script}, agent.Request{ResumeSession: "my-session"}, false, "must be a UUID"},
 		{"fix", &Backend{Binary: script}, agent.Request{PersistSession: true}, true, "only a User profile"},
 	} {
 		dir := t.TempDir()

@@ -4,6 +4,7 @@ package codex
 
 import (
 	"context"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -16,8 +17,10 @@ import (
 // threadScript records the arguments after the stdin is drained, then emits
 // events.
 func threadScript(events string) string {
-	return "cat >/dev/null\nprintf '%s\\n' \"$@\" > arguments.txt\ncat <<'EVENTS'\n" + events + "\nEVENTS\n"
+	return "cat >/dev/null\nprintf '%s\\n' \"$@\" > arguments.txt\nenv > environment.txt\ncat <<'EVENTS'\n" + events + "\nEVENTS\n"
 }
+
+const testSession = "01a18588-ef8c-7962-b6af-d86e6966dacd"
 
 func TestSessionArgumentsAndThreadID(t *testing.T) {
 	withThread := `{"type":"thread.started","thread_id":"thread-new"}
@@ -29,11 +32,12 @@ func TestSessionArgumentsAndThreadID(t *testing.T) {
 		prefix  []string
 		sandbox []string
 	}{
-		{"persist", agent.Request{PersistSession: true}, []string{"exec", "--json"}, []string{"--sandbox", "read-only"}},
-		{"resume", agent.Request{ResumeSession: "thr-1"}, []string{"exec", "resume", "--json"}, []string{"-c", `sandbox_mode="read-only"`}},
-		{"fork", agent.Request{ResumeSession: "thr-1", ForkSession: true}, []string{"exec", "fork", "--json"}, []string{"-c", `sandbox_mode="read-only"`}},
 		{"ephemeral default", agent.Request{}, []string{"exec", "--json", "--ephemeral"}, []string{"--sandbox", "read-only"}},
+		{"persist", agent.Request{PersistSession: true}, []string{"exec", "--json"}, []string{"--sandbox", "read-only"}},
+		{"resume", agent.Request{ResumeSession: testSession}, []string{"exec", "resume", "--json"}, []string{"-c", `sandbox_mode="read-only"`}},
+		{"fork", agent.Request{ResumeSession: testSession, ForkSession: true}, []string{"exec", "fork", "--json"}, []string{"-c", `sandbox_mode="read-only"`}},
 	}
+	var defaultEnv map[string]string
 	for _, c := range cases {
 		dir := t.TempDir()
 		r := schemaRequest(dir, nil)
@@ -48,8 +52,20 @@ func TestSessionArgumentsAndThreadID(t *testing.T) {
 		}
 		args := readLines(t, dir, "arguments.txt")
 		want := slices.Concat(c.prefix, tail, c.sandbox, []string{"-c", `approval_policy="never"`, "-c", `web_search="disabled"`, "--skip-git-repo-check", "--model", "m"})
+		if len(args) < len(want)+2 {
+			t.Fatalf("%s: too few args: %q", c.name, args)
+		}
 		if !slices.Equal(args[:len(want)], want) {
 			t.Errorf("%s: args\n got %q\nwant prefix %q", c.name, args, want)
+		}
+		env := environmentOf(t, dir)
+		delete(env, "PWD")
+		delete(env, "OLDPWD")
+		delete(env, "_")
+		if c.name == "ephemeral default" {
+			defaultEnv = env
+		} else if !maps.Equal(env, defaultEnv) {
+			t.Errorf("%s: environment differs from the default run\n got %v\nwant %v", c.name, env, defaultEnv)
 		}
 		rest := args[len(want):]
 		if !slices.Contains(rest, "--output-schema") {
@@ -58,7 +74,7 @@ func TestSessionArgumentsAndThreadID(t *testing.T) {
 		end := rest[len(rest)-1:]
 		if c.request.ResumeSession != "" {
 			end = rest[len(rest)-2:]
-			if !slices.Equal(end, []string{"thr-1", "-"}) {
+			if !slices.Equal(end, []string{testSession, "-"}) {
 				t.Errorf("%s: session id must precede the stdin marker: %q", c.name, rest)
 			}
 		} else if end[0] != "-" {
@@ -67,6 +83,16 @@ func TestSessionArgumentsAndThreadID(t *testing.T) {
 		if c.name != "ephemeral default" && slices.Contains(args, "--ephemeral") {
 			t.Errorf("%s: kept session still passes --ephemeral", c.name)
 		}
+	}
+}
+
+func TestSessionUnknownOptionDoesNotBlameTheVersionFloor(t *testing.T) {
+	script := fakeCodex(t, "codex-cli 0.162.1", "cat >/dev/null\necho \"error: unexpected argument '--output-schema' found\" >&2\nexit 2\n")
+	r := schemaRequest(t.TempDir(), nil)
+	r.ResumeSession, r.ForkSession = testSession, true
+	_, err := (&Backend{Binary: script}).Run(context.Background(), r)
+	if err == nil || !strings.Contains(err.Error(), "does not support exec resume/fork") || strings.Contains(err.Error(), minimumVersion) {
+		t.Fatalf("error %v", err)
 	}
 }
 
@@ -89,8 +115,10 @@ func TestSessionOptionsAreRefused(t *testing.T) {
 		want    string
 	}{
 		{"container persist", &Backend{Binary: script, Profile: Container}, agent.Request{PersistSession: true, Endpoint: endpoint}, false, "only a Local profile"},
-		{"container resume", &Backend{Binary: script, Profile: Container}, agent.Request{ResumeSession: "t", Endpoint: endpoint}, false, "only a Local profile"},
+		{"container resume", &Backend{Binary: script, Profile: Container}, agent.Request{ResumeSession: testSession, Endpoint: endpoint}, false, "only a Local profile"},
 		{"fork without resume", &Backend{Binary: script}, agent.Request{ForkSession: true}, false, "fork needs a session"},
+		{"leading dash", &Backend{Binary: script}, agent.Request{ResumeSession: "--last"}, false, "must be a UUID"},
+		{"name, not UUID", &Backend{Binary: script}, agent.Request{ResumeSession: "my-thread"}, false, "must be a UUID"},
 		{"fix", &Backend{Binary: script}, agent.Request{PersistSession: true}, true, "only a Local profile"},
 	} {
 		dir := t.TempDir()

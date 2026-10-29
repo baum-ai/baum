@@ -794,7 +794,13 @@ profiles accept these options, and only for reviews and tasks, not fixes; the
 hosted profiles, Cursor and the Anthropic backend refuse them, and a fork
 without a session to resume is an error. Without them every argv is unchanged.
 Codex's `exec resume` and `exec fork` take no `--sandbox`, so the same
-read-only sandbox is passed as `-c sandbox_mode="read-only"`.
+read-only sandbox is passed as `-c sandbox_mode="read-only"`. `ResumeSession`
+must be a canonical UUID (both CLIs report one), which also keeps an id from
+being read as a flag. A resume or fork must run with the same `Directory` as
+the session it continues: Claude Code stores sessions per working directory
+(`~/.claude/projects/<encoded cwd>`) and Codex filters by it too. A resumed
+Claude Code session keeps the system prompt it recorded, so per-turn framing
+belongs in the user prompt.
 
 The document goes through `review`: the validator
 completes it and returns located findings. On findings the loop sends back the

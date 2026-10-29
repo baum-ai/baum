@@ -9,6 +9,7 @@ import (
 	"errors"
 	"log/slog"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 )
@@ -86,7 +87,11 @@ type Request struct {
 	// backend refuse it. A ResumeSession implies it.
 	PersistSession bool
 	// ResumeSession is the session (Claude Code) or thread (Codex) id to
-	// continue. The session is kept, as with PersistSession.
+	// continue, a canonical UUID. The session is kept, as with PersistSession.
+	// Run with the same Directory as the session it continues: Claude Code
+	// stores sessions per working directory and Codex filters by it too. A
+	// resumed Claude Code session keeps the system prompt it recorded, so put
+	// per-turn framing in the user prompt.
 	ResumeSession string
 	// ForkSession, with ResumeSession, continues in a new session and leaves
 	// the original untouched; Result.SessionID is then the new one. Without
@@ -105,10 +110,15 @@ func (r Request) KeepsSession() bool {
 	return r.PersistSession || r.ResumeSession != ""
 }
 
+var sessionID = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
+
 // ValidateSession rejects an inconsistent combination of session options.
 func (r Request) ValidateSession() error {
 	if r.ForkSession && r.ResumeSession == "" {
 		return errors.New("fork needs a session to resume")
+	}
+	if r.ResumeSession != "" && !sessionID.MatchString(r.ResumeSession) {
+		return errors.New("the session to resume must be a UUID")
 	}
 	return nil
 }
