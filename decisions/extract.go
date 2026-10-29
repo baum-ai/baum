@@ -215,11 +215,18 @@ func (e *Extractor) IsRequest(req ModelRequest) bool {
 // EstimateTokens for English text, and holds for text with fewer bytes per
 // token, such as CJK.
 func (e *Extractor) MaxTokens(transcript *Transcript, opts ExtractOptions) int64 {
-	schema, err := json.Marshal(ExtractSchema())
+	return MaxRequestTokens(ModelRequest{System: e.system, User: userMessage(transcript, opts), Schema: ExtractSchema()})
+}
+
+// MaxRequestTokens is the same upper bound for any request: one token per
+// byte of its system prompt, user message and marshalled schema, plus
+// FramingTokens.
+func MaxRequestTokens(req ModelRequest) int64 {
+	schema, err := json.Marshal(req.Schema)
 	if err != nil {
-		panic(fmt.Sprintf("marshal extraction schema: %v", err))
+		panic(fmt.Sprintf("marshal request schema: %v", err))
 	}
-	return int64(len(e.system)) + int64(len(userMessage(transcript, opts))) + int64(len(schema)) + FramingTokens
+	return int64(len(req.System)) + int64(len(req.User)) + int64(len(schema)) + FramingTokens
 }
 
 // Extract asks model for the decisions in transcript and validates their

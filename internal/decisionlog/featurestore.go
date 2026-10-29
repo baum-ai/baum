@@ -7,7 +7,6 @@ import (
 	"errors"
 	"slices"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/baum-ai/baum/features"
@@ -22,6 +21,7 @@ CREATE TABLE IF NOT EXISTS pull_request(
   title TEXT NOT NULL, body TEXT NOT NULL DEFAULT '', state TEXT NOT NULL, draft INTEGER NOT NULL DEFAULT 0,
   author TEXT NOT NULL DEFAULT '', bot INTEGER NOT NULL DEFAULT 0,
   head_ref TEXT NOT NULL DEFAULT '', head_sha TEXT NOT NULL, base_ref TEXT NOT NULL DEFAULT '', base_sha TEXT NOT NULL,
+  cross_repository INTEGER NOT NULL DEFAULT 0, default_branch TEXT NOT NULL DEFAULT '',
   merge_commit_sha TEXT NOT NULL DEFAULT '',
   created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, merged_at INTEGER, closed_at INTEGER,
   paths_head_sha TEXT NOT NULL DEFAULT '', paths_json TEXT,
@@ -83,41 +83,90 @@ const (
 	VersionRetired  = "retired"
 )
 
-// migrate brings a store an earlier release made up to the schema: the
-// ledger's stage and item columns, added when missing.
+// migrate brings a store an earlier release made up to the schema, in one
+// transaction: the ledger's stage, item and rejections columns, and the pull
+// requests' fork and default branch columns, added when missing. Pull
+// requests listed before the latter are listed again: the sync state's ETag
+// and cursor are reset. The columns are read without a lock; only when one is
+// missing is the write lock taken and they are read again, so a store two
+// processes open at once is migrated by one of them.
 func migrate(ctx context.Context, db *sql.DB) error {
-	rows, err := db.QueryContext(ctx, `SELECT name FROM pragma_table_info('capture_attempt')`)
+	// A migrated store is read without the write lock.
+	if missing, err := missingColumns(ctx, db); err != nil || len(missing) == 0 {
+		return err
+	}
+	conn, err := db.Conn(ctx)
 	if err != nil {
 		return err
 	}
-	have := map[string]bool{}
-	for rows.Next() {
-		var name string
-		if err := rows.Scan(&name); err != nil {
-			_ = rows.Close()
+	defer func() { _ = conn.Close() }()
+	if _, err := conn.ExecContext(ctx, `BEGIN IMMEDIATE`); err != nil {
+		return err
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_, _ = conn.ExecContext(context.WithoutCancel(ctx), `ROLLBACK`)
+		}
+	}()
+	// Read again under the lock: another process may have migrated it.
+	missing, err := missingColumns(ctx, conn)
+	if err != nil {
+		return err
+	}
+	relist := false
+	for _, column := range missing {
+		if _, err := conn.ExecContext(ctx, column.ddl); err != nil {
 			return err
 		}
-		have[name] = true
+		relist = relist || column.relist
 	}
-	if err := rows.Err(); err != nil {
-		_ = rows.Close()
-		return err
-	}
-	if err := rows.Close(); err != nil {
-		return err
-	}
-	for _, column := range []struct{ name, ddl string }{
-		{"stage", `ALTER TABLE capture_attempt ADD COLUMN stage TEXT NOT NULL DEFAULT 'capture'`},
-		{"item", `ALTER TABLE capture_attempt ADD COLUMN item TEXT`},
-	} {
-		// Another process opening the store may add it first.
-		if !have[column.name] {
-			if _, err := db.ExecContext(ctx, column.ddl); err != nil && !strings.Contains(err.Error(), "duplicate column name") {
-				return err
-			}
+	if relist {
+		if _, err := conn.ExecContext(ctx, `UPDATE pull_sync SET etag='', cursor_updated_at=NULL`); err != nil {
+			return err
 		}
 	}
-	return nil
+	_, err = conn.ExecContext(ctx, `COMMIT`)
+	committed = err == nil
+	return err
+}
+
+// migration is a column migrate adds, and whether adding it lists the pull
+// requests again.
+type migration struct {
+	table, name, ddl string
+	relist           bool
+}
+
+var migrations = []migration{
+	{"capture_attempt", "stage", `ALTER TABLE capture_attempt ADD COLUMN stage TEXT NOT NULL DEFAULT 'capture'`, false},
+	{"capture_attempt", "item", `ALTER TABLE capture_attempt ADD COLUMN item TEXT`, false},
+	{"capture_attempt", "rejections", `ALTER TABLE capture_attempt ADD COLUMN rejections INTEGER NOT NULL DEFAULT 0`, false},
+	{"pull_request", "cross_repository", `ALTER TABLE pull_request ADD COLUMN cross_repository INTEGER NOT NULL DEFAULT 0`, true},
+	{"pull_request", "default_branch", `ALTER TABLE pull_request ADD COLUMN default_branch TEXT NOT NULL DEFAULT ''`, true},
+}
+
+// missingColumns are the migrations whose column the store lacks.
+func missingColumns(ctx context.Context, q interface {
+	QueryContext(context.Context, string, ...any) (*sql.Rows, error)
+}) ([]migration, error) {
+	have := map[string]bool{}
+	for _, table := range []string{"capture_attempt", "pull_request"} {
+		names, err := collect(scanString)(q.QueryContext(ctx, `SELECT name FROM pragma_table_info(?)`, table))
+		if err != nil {
+			return nil, err
+		}
+		for _, name := range names {
+			have[table+"."+name] = true
+		}
+	}
+	var missing []migration
+	for _, m := range migrations {
+		if !have[m.table+"."+m.name] {
+			missing = append(missing, m)
+		}
+	}
+	return missing, nil
 }
 
 // querier is a *sql.DB or *sql.Tx.
@@ -196,13 +245,32 @@ func (s *Store) Activate(ctx context.Context, repository string) (PullSync, erro
 	return st, nil
 }
 
-// SavePulls upserts the listed pull requests and, for a non-zero cursor,
+// SavePulls upserts the listed pull requests, marking the feature of one
+// whose title, description or state changed, and, for a non-zero cursor,
 // moves the sync state to etag and the cursor; the cursor never goes back. A
 // new head or base starts the count of failed reads again, and a new base
 // has the pull request's commits read again.
 func (s *Store) SavePulls(ctx context.Context, repository string, pulls []github.ListedPull, etag string, cursor time.Time) error {
+	now := s.now()
 	return s.inTx(ctx, func(tx *sql.Tx) error {
+		version, err := liveVersion(ctx, tx, repository, false, now)
+		if err != nil {
+			return err
+		}
 		for _, p := range pulls {
+			// A feature's text reads its pull requests' title, description
+			// and state.
+			var changed string
+			err := tx.QueryRowContext(ctx, `SELECT fp.feature_id FROM pull_request p
+JOIN feature_pull fp ON fp.version_id=?1 AND fp.repository=p.repository AND fp.number=p.number
+WHERE p.repository=?2 AND p.number=?3 AND (p.title != ?4 OR p.body != ?5 OR p.state != ?6 OR (p.merged_at IS NOT NULL) != ?7)`,
+				version, repository, p.Number, p.Title, p.Body, p.State, p.MergedAt != nil).Scan(&changed)
+			if err != nil && !errors.Is(err, sql.ErrNoRows) {
+				return err
+			}
+			if err := markFeatures(ctx, tx, []string{changed}, now); err != nil {
+				return err
+			}
 			var merged, closed any
 			if p.MergedAt != nil {
 				merged = p.MergedAt.UnixMilli()
@@ -211,8 +279,9 @@ func (s *Store) SavePulls(ctx context.Context, repository string, pulls []github
 				closed = p.ClosedAt.UnixMilli()
 			}
 			if _, err := tx.ExecContext(ctx, `INSERT INTO pull_request(repository, number, title, body, state, draft, author, bot,
-head_ref, head_sha, base_ref, base_sha, merge_commit_sha, created_at, updated_at, merged_at, closed_at)
-VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(repository, number) DO UPDATE SET
+head_ref, head_sha, base_ref, base_sha, merge_commit_sha, created_at, updated_at, merged_at, closed_at, cross_repository, default_branch)
+VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(repository, number) DO UPDATE SET
+cross_repository=excluded.cross_repository, default_branch=excluded.default_branch,
 paths_head_sha=CASE WHEN base_sha=excluded.base_sha OR head_sha!=excluded.head_sha THEN paths_head_sha ELSE '' END,
 paths_failures=CASE WHEN head_sha=excluded.head_sha AND base_sha=excluded.base_sha THEN paths_failures ELSE 0 END,
 paths_retry_at=CASE WHEN head_sha=excluded.head_sha AND base_sha=excluded.base_sha THEN paths_retry_at END, title=excluded.title, body=excluded.body,
@@ -220,14 +289,14 @@ state=excluded.state, draft=excluded.draft, author=excluded.author, bot=excluded
 base_ref=excluded.base_ref, base_sha=excluded.base_sha, merge_commit_sha=excluded.merge_commit_sha, created_at=excluded.created_at,
 updated_at=excluded.updated_at, merged_at=excluded.merged_at, closed_at=excluded.closed_at`,
 				repository, p.Number, p.Title, p.Body, p.State, p.Draft, p.Author, p.Bot, p.HeadRef, p.HeadSHA, p.BaseRef, p.BaseSHA,
-				p.MergeCommitSHA, p.CreatedAt.UnixMilli(), p.UpdatedAt.UnixMilli(), merged, closed); err != nil {
+				p.MergeCommitSHA, p.CreatedAt.UnixMilli(), p.UpdatedAt.UnixMilli(), merged, closed, p.CrossRepository, p.DefaultBranch); err != nil {
 				return err
 			}
 		}
 		if cursor.IsZero() {
 			return nil
 		}
-		_, err := tx.ExecContext(ctx, `UPDATE pull_sync SET etag=?, cursor_updated_at=MAX(COALESCE(cursor_updated_at, 0), ?) WHERE repository=?`,
+		_, err = tx.ExecContext(ctx, `UPDATE pull_sync SET etag=?, cursor_updated_at=MAX(COALESCE(cursor_updated_at, 0), ?) WHERE repository=?`,
 			etag, cursor.UnixMilli(), repository)
 		return err
 	})
@@ -261,7 +330,7 @@ WHERE repository=? AND number=? RETURNING paths_failures`, s.now().Add(FeatureQu
 			return err
 		}
 		if unknown = failures >= FeaturePathTries; unknown {
-			return setPaths(ctx, tx, repository, number, head, nil, nil)
+			return s.setPaths(ctx, tx, repository, number, head, nil, nil)
 		}
 		return nil
 	})
@@ -320,10 +389,14 @@ type PullCommit struct {
 // SetPullPaths records what the pull request touches at head: its paths, nil
 // when they cannot be read, and its commits, which replace those it had.
 func (s *Store) SetPullPaths(ctx context.Context, repository string, number int, head string, paths []string, commits []PullCommit) error {
-	return s.inTx(ctx, func(tx *sql.Tx) error { return setPaths(ctx, tx, repository, number, head, paths, commits) })
+	return s.inTx(ctx, func(tx *sql.Tx) error { return s.setPaths(ctx, tx, repository, number, head, paths, commits) })
 }
 
-func setPaths(ctx context.Context, tx *sql.Tx, repository string, number int, head string, paths []string, commits []PullCommit) error {
+// setPaths records the pull request's paths and commits at head. For a
+// feature pull request, a changed commit list or paths mark its feature and
+// the features of the sessions linked to its old and new commits; placed at
+// this head without paths, it gets them as the ones it was placed with.
+func (s *Store) setPaths(ctx context.Context, tx *sql.Tx, repository string, number int, head string, paths []string, commits []PullCommit) error {
 	var encoded any
 	if paths != nil {
 		raw, err := json.Marshal(paths)
@@ -332,6 +405,14 @@ func setPaths(ctx context.Context, tx *sql.Tx, repository string, number int, he
 		}
 		encoded = string(raw)
 	}
+	var before sql.NullString
+	if err := tx.QueryRowContext(ctx, `SELECT paths_json FROM pull_request WHERE repository=? AND number=?`, repository, number).Scan(&before); err != nil {
+		return err
+	}
+	shas, err := collect(scanString)(tx.QueryContext(ctx, `SELECT sha FROM pull_commit WHERE repository=? AND number=?`, repository, number))
+	if err != nil {
+		return err
+	}
 	if _, err := tx.ExecContext(ctx, `UPDATE pull_request SET paths_head_sha=?, paths_json=?, paths_failures=0, paths_retry_at=NULL
 WHERE repository=? AND number=?`, head, encoded, repository, number); err != nil {
 		return err
@@ -339,13 +420,51 @@ WHERE repository=? AND number=?`, head, encoded, repository, number); err != nil
 	if _, err := tx.ExecContext(ctx, `DELETE FROM pull_commit WHERE repository=? AND number=?`, repository, number); err != nil {
 		return err
 	}
+	text, _ := encoded.(string)
+	changed := before.Valid != (paths != nil) || before.String != text || len(shas) != len(commits)
 	for _, c := range commits {
+		changed = changed || !slices.Contains(shas, c.SHA)
+		shas = append(shas, c.SHA)
 		if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO pull_commit(repository, number, sha, committed_at) VALUES (?,?,?,?)`,
 			repository, number, c.SHA, c.CommittedAt.UnixMilli()); err != nil {
 			return err
 		}
 	}
-	return nil
+	now := s.now()
+	version, err := liveVersion(ctx, tx, repository, false, now)
+	if err != nil || version == 0 {
+		return err
+	}
+	var feature, placedHead, placedPaths string
+	err = tx.QueryRowContext(ctx, `SELECT feature_id, assigned_head_sha, assigned_paths_json FROM feature_pull
+WHERE version_id=? AND repository=? AND number=?`, version, repository, number).Scan(&feature, &placedHead, &placedPaths)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	var marked []string
+	if placedHead == head && placedPaths == "[]" && len(paths) > 0 {
+		// Paths recorded late: no call, the placement keeps them.
+		if _, err := tx.ExecContext(ctx, `UPDATE feature_pull SET assigned_paths_json=? WHERE version_id=? AND repository=? AND number=?`,
+			encoded, version, repository, number); err != nil {
+			return err
+		}
+		marked = append(marked, feature)
+	}
+	if changed {
+		sessions, err := commitSessions(ctx, tx, repository, shas)
+		if err != nil {
+			return err
+		}
+		linked, err := sessionFeatures(ctx, tx, version, repository, sessions)
+		if err != nil {
+			return err
+		}
+		marked = append(append(marked, feature), linked...)
+	}
+	return markFeatures(ctx, tx, marked, now)
 }
 
 // SessionCommit is one session linked to a commit.
@@ -358,8 +477,48 @@ type SessionCommit struct {
 // ReplaceSessionCommits makes links the sessions linked to the commits shas:
 // every earlier link of those commits goes. relinked, when not zero, records
 // a full re-link.
+// A commit whose sessions changed marks the features holding a pull request
+// with it and the features of its old and new sessions.
 func (s *Store) ReplaceSessionCommits(ctx context.Context, repository string, shas []string, links []SessionCommit, relinked time.Time) error {
+	now := s.now()
+	shas = slices.Compact(slices.Sorted(slices.Values(shas)))
 	return s.inTx(ctx, func(tx *sql.Tx) error {
+		before := map[string][]SessionKey{}
+		for chunk := range slices.Chunk(shas, maxParameters) {
+			args := []any{repository}
+			for _, sha := range chunk {
+				args = append(args, sha)
+			}
+			type link struct {
+				sha string
+				key SessionKey
+			}
+			links, err := collect(func(rows *sql.Rows) (link, error) {
+				var l link
+				return l, rows.Scan(&l.sha, &l.key.Agent, &l.key.ID)
+			})(tx.QueryContext(ctx, `SELECT sha, agent, session_id FROM session_commit WHERE repository=?1 AND sha IN (`+
+				placeholders(2, len(chunk))+`)`, args...))
+			if err != nil {
+				return err
+			}
+			for _, l := range links {
+				before[l.sha] = append(before[l.sha], l.key)
+			}
+		}
+		after := map[string][]SessionKey{}
+		for _, l := range links {
+			if key := (SessionKey{Agent: l.Agent, ID: l.SessionID}); !slices.Contains(after[l.SHA], key) {
+				after[l.SHA] = append(after[l.SHA], key)
+			}
+		}
+		var changed []string
+		var sessions []SessionKey
+		for _, sha := range shas {
+			if len(before[sha]) != len(after[sha]) || slices.ContainsFunc(after[sha], func(k SessionKey) bool { return !slices.Contains(before[sha], k) }) {
+				changed = append(changed, sha)
+				sessions = append(append(sessions, before[sha]...), after[sha]...)
+			}
+		}
 		for _, sha := range shas {
 			if _, err := tx.ExecContext(ctx, `DELETE FROM session_commit WHERE repository=? AND sha=?`, repository, sha); err != nil {
 				return err
@@ -373,12 +532,50 @@ WHERE excluded.confidence > session_commit.confidence`,
 				return err
 			}
 		}
+		if err := markLinkChanges(ctx, tx, repository, changed, sessions, now); err != nil {
+			return err
+		}
 		if relinked.IsZero() {
 			return nil
 		}
 		_, err := tx.ExecContext(ctx, `UPDATE pull_sync SET relinked_at=? WHERE repository=?`, relinked.UnixMilli(), repository)
 		return err
 	})
+}
+
+// markLinkChanges marks, for commits whose sessions changed, the features
+// holding a pull request with one of them and the features of sessions;
+// nothing when no feature holds such a pull request.
+func markLinkChanges(ctx context.Context, tx *sql.Tx, repository string, shas []string, sessions []SessionKey, now time.Time) error {
+	if len(shas) == 0 {
+		return nil
+	}
+	version, err := liveVersion(ctx, tx, repository, false, now)
+	if err != nil || version == 0 {
+		return err
+	}
+	var held []string
+	for chunk := range slices.Chunk(shas, maxParameters) {
+		args := []any{version, repository}
+		for _, sha := range chunk {
+			args = append(args, sha)
+		}
+		features, err := collect(scanString)(tx.QueryContext(ctx, `SELECT DISTINCT fp.feature_id FROM pull_commit pc
+JOIN feature_pull fp ON fp.version_id=?1 AND fp.repository=pc.repository AND fp.number=pc.number
+WHERE pc.repository=?2 AND pc.sha IN (`+placeholders(3, len(chunk))+`)`, args...))
+		if err != nil {
+			return err
+		}
+		held = append(held, features...)
+	}
+	if len(held) == 0 {
+		return nil
+	}
+	linked, err := sessionFeatures(ctx, tx, version, repository, sessions)
+	if err != nil {
+		return err
+	}
+	return markFeatures(ctx, tx, append(held, linked...), now)
 }
 
 // SessionLinks reads what attributes a captured session's decisions in the

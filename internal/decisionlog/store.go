@@ -64,7 +64,8 @@ CREATE TABLE IF NOT EXISTS capture_attempt(
   id INTEGER PRIMARY KEY AUTOINCREMENT, agent TEXT NOT NULL, session_id TEXT NOT NULL, repository TEXT NOT NULL DEFAULT '',
   backend TEXT NOT NULL, model TEXT NOT NULL, mode TEXT NOT NULL, started_at INTEGER NOT NULL, settled_at INTEGER,
   state TEXT NOT NULL, reason TEXT NOT NULL DEFAULT '', reserved_usd REAL NOT NULL, cost_usd REAL,
-  input_tokens INTEGER NOT NULL DEFAULT 0, cached_input_tokens INTEGER NOT NULL DEFAULT 0, output_tokens INTEGER NOT NULL DEFAULT 0);
+  input_tokens INTEGER NOT NULL DEFAULT 0, cached_input_tokens INTEGER NOT NULL DEFAULT 0, output_tokens INTEGER NOT NULL DEFAULT 0,
+  rejections INTEGER NOT NULL DEFAULT 0);
 CREATE INDEX IF NOT EXISTS capture_attempt_session ON capture_attempt(agent, session_id, started_at);
 CREATE INDEX IF NOT EXISTS capture_attempt_started ON capture_attempt(started_at);`
 
@@ -89,8 +90,8 @@ func (s *Store) changed(err error) error {
 // OpenOptions choose how Open opens the store.
 type OpenOptions struct {
 	// AbandonPending settles the attempts a previous run left pending as
-	// abandoned. Only the daemon, the one
-	// writer that makes calls unattended, sets it.
+	// abandoned. Only the daemon, the one writer that makes calls unattended,
+	// sets it.
 	AbandonPending bool
 	// ReadOnly opens an existing store without writing to it, and an empty
 	// in-memory one when there is none, for a dry run.
@@ -425,7 +426,16 @@ decided_at=excluded.decided_at, branch=excluded.branch, obsolete_at=NULL`,
 				}
 			}
 		}
-		return nil
+		// The session's features read its decisions.
+		version, err := liveVersion(ctx, tx, e.Repository, false, now)
+		if err != nil || version == 0 {
+			return err
+		}
+		marked, err := sessionFeatures(ctx, tx, version, e.Repository, []SessionKey{{Agent: e.Agent, ID: e.ID}})
+		if err != nil {
+			return err
+		}
+		return markFeatures(ctx, tx, marked, now)
 	}))
 }
 
@@ -459,12 +469,18 @@ VALUES (?,?,?,?,?,?,?,?,?,?,?) RETURNING id`, a.Agent, a.ID, a.Repository, a.Bac
 
 // Settle records how an attempt ended. A nil cost is unknown.
 func (s *Store) Settle(ctx context.Context, id int64, state, reason string, cost *float64, usage decisions.Usage) error {
+	return s.settle(ctx, id, state, reason, cost, usage, 0)
+}
+
+// settle is Settle recording, too, how many replies the harness rejected
+// against the schema.
+func (s *Store) settle(ctx context.Context, id int64, state, reason string, cost *float64, usage decisions.Usage, rejections int) error {
 	var value any
 	if cost != nil {
 		value = *cost
 	}
-	_, err := s.db.ExecContext(ctx, `UPDATE capture_attempt SET state=?, reason=?, cost_usd=?, settled_at=?, input_tokens=?, cached_input_tokens=?, output_tokens=?
-WHERE id=?`, state, reason, value, s.now().UnixMilli(), usage.InputTokens, usage.CachedInputTokens, usage.OutputTokens, id)
+	_, err := s.db.ExecContext(ctx, `UPDATE capture_attempt SET state=?, reason=?, cost_usd=?, settled_at=?, input_tokens=?, cached_input_tokens=?, output_tokens=?,
+rejections=? WHERE id=?`, state, reason, value, s.now().UnixMilli(), usage.InputTokens, usage.CachedInputTokens, usage.OutputTokens, rejections, id)
 	return s.changed(err)
 }
 

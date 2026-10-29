@@ -522,7 +522,7 @@ func localApplication(paths daemon.Paths, concurrency int, log *slog.Logger) fun
 				decisionStore.Changed = func() { _ = server.Publish("decisions", struct{}{}) }
 				capture = &decisionlog.Scheduler{Tracker: live, Source: events.service.Store, Log: log,
 					Worker: &decisionlog.Capturer{Store: decisionStore, Registry: registry, Config: cfg, Log: log}}
-				featureLog = &decisionlog.FeatureWorker{Store: decisionStore, Registry: registry, GitHub: githubReaders(cfg), Log: log}
+				featureLog = &decisionlog.FeatureWorker{Store: decisionStore, Registry: registry, GitHub: githubReaders(cfg), Config: cfg, Log: log}
 			}
 		}
 		home, _ := os.UserHomeDir()

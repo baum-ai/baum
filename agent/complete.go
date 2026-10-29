@@ -30,4 +30,9 @@ type Completion struct {
 	// Model is the model the provider reported, else the configured one.
 	Model string
 	Usage Usage
+	// Rejections counts the replies the harness rejected against the schema
+	// (claude), and RejectionDetail is a bounded copy of the last one's
+	// reason, which describes the reply's shape, for the private log.
+	Rejections      int
+	RejectionDetail string
 }

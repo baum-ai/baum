@@ -74,9 +74,9 @@ func (s Settings) DecisionsEnabled(p Preferences) bool {
 	return p.Automatic && (p.Decisions.Enabled == nil || *p.Decisions.Enabled) && (s.Decisions == nil || *s.Decisions)
 }
 
-// DecisionPreferences are the global choices for local decision capture. A
-// nil Enabled is on. Model, when set, replaces the backend's default decision
-// model.
+// DecisionPreferences are the global choices for local decision capture and
+// the feature log. A nil Enabled is on. Model, when set, replaces the
+// backend's default decision model.
 type DecisionPreferences struct {
 	Enabled *bool   `json:"enabled,omitempty"`
 	Model   *string `json:"model,omitempty"`
