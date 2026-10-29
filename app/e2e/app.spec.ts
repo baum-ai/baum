@@ -902,6 +902,78 @@ test("walks through a review, comments on a behaviour and submits the review", a
   expect(errors).toEqual([]);
 });
 
+test("asks the review's agent a question and reads the lines its answer cites", async ({
+  page,
+}) => {
+  const errors: string[] = [];
+  page.on("pageerror", (e) => errors.push(e.message));
+  page.on("console", (m) => {
+    if (m.type() === "error" && !m.text().includes("Failed to load resource"))
+      errors.push(m.text());
+  });
+  await page.goto(await launchURL());
+  await page.getByRole("link", { name: "Pull requests", exact: true }).first().click();
+  await page.getByRole("link", { name: /Reuse the existing PR page/ }).click();
+  await expect(page.getByRole("button", { name: "Ask", exact: true })).toBeVisible();
+  // The key opens the panel, with the cursor in its box.
+  await page.keyboard.press("a");
+  const panel = page.getByRole("complementary", { name: "Ask about this review" });
+  await expect(panel).toBeVisible();
+  expect(page.url()).toContain("ask=1");
+  await expect(panel.getByText("answers questions about the code")).toBeVisible();
+  await page.keyboard.type("Why is the delay capped?");
+  await page.keyboard.press("Enter");
+  await expect(panel.getByLabel("Question 1").getByText("Why is the delay capped?")).toBeVisible();
+  await expect(panel.getByText("so a long outage cannot push retries out forever")).toBeVisible();
+  await expect(panel.locator("strong", { hasText: "capped" })).toBeVisible();
+  // Started from a saved review whose agent session was not kept.
+  await expect(panel.getByText("Started without the review's own context.")).toBeVisible();
+  // The citation opens the lines it names, from the review's own hunk.
+  await panel.getByRole("button", { name: "docs/guide.md:3–6" }).click();
+  await expect(panel.getByText("A job that fails more often than its retry budget")).toBeVisible();
+  await panel.screenshot({ path: "test-results/ask-answered.png", animations: "disabled" });
+  // A reload keeps the panel open and the conversation.
+  await page.reload();
+  await expect(panel.getByLabel("Question 1").getByText("Why is the delay capped?")).toBeVisible();
+  // Asking about a section puts it above the box, and a second question
+  // goes to the same conversation.
+  await page
+    .getByRole("navigation", { name: "Review sections" })
+    .getByRole("button", { name: "Retry policy and backoff" })
+    .click();
+  await page.getByRole("button", { name: "Ask about this section", exact: true }).click();
+  await expect(panel.locator(".ask-focus")).toContainText("About");
+  await page.keyboard.type("Is this safe on retry?");
+  await page.keyboard.press("Enter");
+  await expect(panel.getByText("Is this safe on retry?")).toBeVisible();
+  await expect(panel.locator(".ask-answer")).toHaveCount(2);
+  // Escape in the panel closes it.
+  await panel.locator("textarea").focus();
+  await page.keyboard.press("Escape");
+  await expect(panel).toBeHidden();
+  expect(page.url()).not.toContain("ask=");
+  // On a wide screen it docks beside the review without covering it.
+  await page.setViewportSize({ width: 1800, height: 900 });
+  await page.getByRole("button", { name: "Ask", exact: true }).click();
+  await expect(panel).toBeVisible();
+  const covered = await page.evaluate(() => {
+    const dock = document.querySelector(".ask-panel")!.getBoundingClientRect();
+    const main = document.querySelector(".ask-main")!.getBoundingClientRect();
+    return main.right > dock.left + 1;
+  });
+  expect(covered).toBe(false);
+  await page.screenshot({ path: "test-results/ask-docked.png" });
+  // Narrow: it overlays the review and can be closed; no sideways scroll.
+  await page.setViewportSize({ width: 390, height: 844 });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(
+    true,
+  );
+  await page.screenshot({ path: "test-results/ask-narrow.png" });
+  await panel.getByRole("button", { name: "Close", exact: true }).click();
+  await expect(panel).toBeHidden();
+  expect(errors).toEqual([]);
+});
+
 // Every page from the keyboard alone: the command key with a number (Ctrl
 // here, which is not a Mac), Go to, each list's keys, a pull request's
 // section keys, back and forward, and the sheet that lists them.

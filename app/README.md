@@ -148,7 +148,7 @@ notice and Up next link to it: **Watch** while the fix runs, **Transcript**
 after. A failure's `detail` (git's own words for the `signing` reason, which the
 daemon checks before the agent runs) shows under **What happened**.
 
-Questions to the review agent (chat; the UI comes in a later step). The daemon
+Questions to the review agent (chat). The daemon
 serves a pull request's conversations with the agent that wrote a saved review,
 by registered clone ID and pull request as for `api/versions`:
 
@@ -186,6 +186,56 @@ reports its phase and cost, and can be cancelled, which settles the turn as
 cancelled. A `chat` event `{conversation, repository, pr, turn, state}` goes
 out on the SSE stream when a question is queued and when it settles; the
 answer itself is read with `GET api/prs/chat`.
+
+The **Ask** panel (`AskPanel` in `src/chat.tsx`) is how the app asks them. A
+boxed **Ask** button in the PR page's header (beside Walk through) and in the
+walkthrough's header, or the key `a` (ignored while typing in a text field;
+inside the panel's own box it types an a), opens it; Escape with focus in the
+panel, its **Close** button or **Ask** again closes it. It is kept in the URL
+as `ask=1`, like the walkthrough's `walk=`, so a reload keeps it. `LocalReview`
+renders it beside the review (`.ask-layout`): a right-hand column from 96rem,
+where it never covers the review, and an overlay from the right edge below that.
+Only the current review can be asked about, so the button needs a loaded
+review. **Ask about this section** (the viewer's `renderSectionAside`, drawn on
+the current version's section pane), **Ask about this** on a tour stop and
+**Ask** on an Everything row set the question's focus: a removable chip above the
+box, sent as the API's `focus`, which also opens the panel (`sectionFocus` and
+`stopFocus` turn the section's or the stop's hunks into `{path, start_line,
+end_line}` anchors, at most 20). The pull request's overview has no button of
+its own; a question without a focus is about the pull request as a whole.
+
+The panel lists the pull request's conversations (`GET api/prs/chat`, read
+again on each `chat` event of this repository and pull request, when one of its
+chat jobs changes state and every 4 s while a question is being answered),
+named by their first question: the current review's first, under "Review v<N>",
+then each older review's under "Outdated: asked about review v<M>". An older
+conversation is read-only: no box, a note, and **New conversation**, which
+starts one on the current review (also offered beside the list). A conversation
+with `seeded` shows "Started without the review's own context.", and a turn's
+`note` shows under it. The box takes Enter to send and Shift+Enter for a new
+line; **Send** reads "Sending…" at once and is disabled while a question of the
+conversation is queued or running, which the daemon also refuses as `busy`. A
+refusal's `message` shows beside the box as the daemon wrote it, and the
+question stays for another try.
+
+A queued or running turn shows its question, its status and the agent's live
+transcript (`useJobTranscript` and `EntryView` of `src/job-transcript.tsx`, tool
+calls collapsed) with **Cancel** (`POST api/jobs/{id}/cancel`). An answered turn
+draws `answer_markdown` with the viewer's `Markdown` component (raw HTML stays
+text), the cost when there is one, and the citations as `path:start–end`
+buttons. A citation inside one of the review's hunks opens that hunk's cited
+lines with `HunkEvidence` (an omitted excerpt is read through the page's patch
+source, `api/patch`); one outside the review's changes shows its path and lines
+with a link to the file at the review's head on GitHub, because the daemon
+serves no file text other than patches. A turn that failed, was cancelled or was
+interrupted says why in words (`turnReasonText`: `validation`, `budget`,
+`backend`, `input`, `internal`, `needs_clone`, `unsupported_backend`,
+`cancelled`, `interrupted`), with its cost. Each answer has an empty
+`data-answer-actions` slot (`AskPanel`'s `answerActions` prop) for the actions
+that follow an answer. Chat jobs are not reviews or fixes: `reviewJob` and
+`fixJob` ignore them, `chatJobs` lists a pull request's, and the Jobs list and
+transcript page call one "Question on #<pr>". The key `a` is in the shortcuts
+sheet for the pull request page and the walkthrough.
 
 Merging: a pull request whose Merge state is Ready (open, not a draft) shows a
 Merge button in the PR page header and, on hover or keyboard focus, beside Ready
