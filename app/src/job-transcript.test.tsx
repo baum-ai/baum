@@ -2,7 +2,7 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { Job } from "./api";
-import { JobTranscript, mergeEntries, type TranscriptEntry } from "./job-transcript";
+import { groupEntries, JobTranscript, mergeEntries, type TranscriptEntry } from "./job-transcript";
 
 const job = (overrides: Partial<Job> = {}): Job => ({
   id: "fix-1",
@@ -53,6 +53,61 @@ it("shows a tool's update in the place of its first entry", () => {
     [2, undefined, "x"],
   ]);
   expect(merged[0]!.tool).toBe("Bash");
+});
+
+it("gathers consecutive tool calls into one run, broken only by what the agent says", () => {
+  const items = groupEntries([
+    entry(1, { text: "Looking." }),
+    entry(2, { kind: "tool", id: "a", tool: "Read" }),
+    entry(3, { kind: "reasoning", text: "hm" }),
+    entry(4, { kind: "tool", id: "b", tool: "Edit" }),
+    entry(5, { kind: "tool", id: "c", tool: "Grep" }),
+    entry(6, { text: "Done." }),
+    entry(7, { kind: "tool", id: "d", tool: "Bash" }),
+  ]);
+  expect(
+    items.map((item) =>
+      item.kind === "tools" ? item.tools.map((t) => t.id) : `${item.entry.kind}:${item.entry.seq}`,
+    ),
+  ).toEqual(["message:1", "reasoning:3", ["a", "b", "c"], "message:6", ["d"]]);
+});
+
+it("shows a run's latest tool call and folds the earlier ones", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () =>
+      Response.json({
+        entries: [
+          entry(1, { text: "Some **bold** words." }),
+          entry(2, {
+            kind: "tool",
+            id: "a",
+            tool: "Read",
+            title: "Read a.go",
+            status: "completed",
+          }),
+          entry(3, { kind: "tool", id: "b", tool: "Edit", status: "failed" }),
+          entry(4, { kind: "tool", id: "c", tool: "Grep", status: "running" }),
+        ],
+        next: 4,
+        more: false,
+        done: true,
+      }),
+    ),
+  );
+  await act(async () => root.render(<JobTranscript job={job()} />));
+  await wait(20);
+  expect(node.querySelector(".local-job-message strong")!.textContent).toBe("bold");
+  const run = node.querySelector(".local-job-tools")!;
+  const earlier = run.querySelector<HTMLDetailsElement>(".local-job-tools-earlier")!;
+  expect(earlier.open).toBe(false);
+  expect(earlier.querySelector("summary")!.textContent).toBe("2 earlier tool calls, 1 failed");
+  expect([...earlier.querySelectorAll(".local-job-tool strong")].map((s) => s.textContent)).toEqual(
+    ["Read", "Edit"],
+  );
+  expect(run.querySelector(":scope > .local-job-tool strong")!.textContent).toBe("Grep");
+  // Claude's titles repeat the tool's name; it is shown once.
+  expect(earlier.querySelector(".local-job-tool-title")!.textContent).toBe("a.go");
 });
 
 it("reads on at once while there is more, then stops when done", async () => {

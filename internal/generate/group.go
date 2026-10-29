@@ -88,7 +88,7 @@ func assembleGroup(ctx context.Context, o Options, archives, runDir string, fail
 			return assemble.Result{}, nil, closeErr
 		}
 		if member.Head != "" && assembled.Head != member.Head {
-			return assemble.Result{}, nil, fail(CategoryInput, fmt.Errorf("pull request #%d head changed; estimate again", member.Number))
+			return assemble.Result{}, nil, fail(CategoryInput, fmt.Errorf("pull request #%d head changed; start it again", member.Number))
 		}
 		members = append(members, assemble.GroupMember{Number: member.Number, Result: assembled})
 		paths = append(paths, path)

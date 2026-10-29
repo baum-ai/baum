@@ -185,3 +185,29 @@ func TestFindSessionsSkipsBaumAgentRuns(t *testing.T) {
 		t.Fatalf("sessions = %+v, want only the one in the repository itself", found)
 	}
 }
+
+// A review that keeps its session runs in baum's cache directory, so its
+// transcript is under a project directory named after that path, whose
+// elements do not start with the prefix: the recorded cwd decides.
+func TestFindSessionsSkipsKeptReviewRuns(t *testing.T) {
+	home := t.TempDir()
+	repo := filepath.Join(home, "work", "repo")
+	kept := filepath.Join(home, ".cache", "baum", "review-runs", agent.RunDirPrefix+"4821")
+	projects := filepath.Join(home, ".claude", "projects")
+	const keptID, repoID = "dddddddd-0000-4000-8000-000000000004", "eeeeeeee-0000-4000-8000-000000000005"
+	writeFile(t, filepath.Join(projects, EncodeProjectDir(kept), keptID+".jsonl"), transcript(keptID, kept))
+	writeFile(t, filepath.Join(projects, EncodeProjectDir(repo), repoID+".jsonl"), transcript(repoID, repo))
+	// Neither the repository root nor a root that contains the cache
+	// directory takes it in.
+	for _, roots := range [][]string{{repo}, {home}} {
+		found, report, err := FindSessions(projects, roots)
+		if err != nil || len(report.Skipped) != 0 {
+			t.Fatalf("%v %+v", err, report)
+		}
+		for _, s := range found {
+			if s.SessionID == keptID {
+				t.Errorf("roots %v: the kept review run was collected: %+v", roots, s)
+			}
+		}
+	}
+}

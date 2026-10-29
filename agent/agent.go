@@ -6,8 +6,10 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 )
@@ -79,6 +81,46 @@ type Request struct {
 	// Transcript, when set, receives each step of the run as the person
 	// watching sees it (see TranscriptEntry); nil when none is kept.
 	Transcript func(TranscriptEntry)
+	// PersistSession keeps the CLI's session instead of discarding it, so the
+	// result's SessionID can be resumed later. Only a local Claude Code or
+	// Codex run supports it; the hosted profiles, Cursor and the Anthropic API
+	// backend refuse it. A ResumeSession implies it.
+	PersistSession bool
+	// ResumeSession is the session (Claude Code) or thread (Codex) id to
+	// continue, a canonical UUID. The session is kept, as with PersistSession.
+	// Run with the same Directory as the session it continues: Claude Code
+	// stores sessions per working directory and Codex filters by it too. A
+	// resumed Claude Code session keeps the system prompt it recorded, so put
+	// per-turn framing in the user prompt.
+	ResumeSession string
+	// ForkSession, with ResumeSession, continues in a new session and leaves
+	// the original untouched; Result.SessionID is then the new one. Without
+	// ResumeSession it is an error.
+	ForkSession bool
+}
+
+// WantsSession reports whether the request uses any session option.
+func (r Request) WantsSession() bool {
+	return r.PersistSession || r.ResumeSession != "" || r.ForkSession
+}
+
+// KeepsSession reports whether the CLI must keep its session: a persisted,
+// resumed or forked run.
+func (r Request) KeepsSession() bool {
+	return r.PersistSession || r.ResumeSession != ""
+}
+
+var sessionID = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
+
+// ValidateSession rejects an inconsistent combination of session options.
+func (r Request) ValidateSession() error {
+	if r.ForkSession && r.ResumeSession == "" {
+		return errors.New("fork needs a session to resume")
+	}
+	if r.ResumeSession != "" && !sessionID.MatchString(r.ResumeSession) {
+		return errors.New("the session to resume must be a UUID")
+	}
+	return nil
 }
 
 // TranscriptEntry is one step of a run as the person watching it sees it:
@@ -122,6 +164,10 @@ type Result struct {
 	ModelSource                string
 	Usage                      Usage
 	StructuredOutputRejections int
+	// SessionID is the session (Claude Code) or thread (Codex) id the CLI
+	// reported for this call; with Request.ForkSession, the new session's id.
+	// Empty when the CLI reported none.
+	SessionID string
 }
 
 // Event stores bounded metadata, never assistant text, tool output or search patterns.
@@ -177,6 +223,15 @@ func EventPath(directory, path string) string {
 		return r
 	}, path)
 	return path[:min(len(path), 256)]
+}
+
+// TitlePath is a tool's path for its transcript title: relative to the run
+// directory when it is inside it, otherwise as the agent named it.
+func TitlePath(directory, path string) string {
+	if relative := EventPath(directory, path); relative != OutsideRun {
+		return relative
+	}
+	return path
 }
 
 // within reports path relative to directory, and whether it is inside it.

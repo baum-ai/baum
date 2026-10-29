@@ -146,6 +146,38 @@ func TestLocalAPIAgentEnvironment(t *testing.T) {
 		handler.ServeHTTP(rec, httptest.NewRequest("PUT", "/api/settings/agent-env", strings.NewReader(body)))
 		return rec.Code
 	}
+	fixAgent := func() (string, string) {
+		t.Helper()
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, httptest.NewRequest("GET", "/api/settings", nil))
+		var body struct {
+			FixBackend *string `json:"fix_backend"`
+			FixModel   *string `json:"fix_model"`
+		}
+		if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil || body.FixBackend == nil || body.FixModel == nil {
+			t.Fatal(rec.Body.String(), err)
+		}
+		return *body.FixBackend, *body.FixModel
+	}
+	if b, m := fixAgent(); b != "" || m != "" {
+		t.Fatalf("unset fix agent %q %q", b, m)
+	}
+	if _, err := registry.UpdatePreferences(context.Background(), func(p repos.Preferences) repos.Preferences {
+		backend, model := config.BackendCodex, "gpt-fix"
+		p.FixBackend, p.FixModel = &backend, &model
+		return p
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if b, m := fixAgent(); b != "codex" || m != "gpt-fix" {
+		t.Fatalf("fix agent %q %q", b, m)
+	}
+	if _, err := registry.UpdatePreferences(context.Background(), func(p repos.Preferences) repos.Preferences {
+		p.FixBackend, p.FixModel = nil, nil
+		return p
+	}); err != nil {
+		t.Fatal(err)
+	}
 	if env, source := settings(); env["FROM_FILE"] != "1" || source != "file" {
 		t.Fatalf("before a choice: %v from %q", env, source)
 	}

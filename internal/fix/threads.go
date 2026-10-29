@@ -103,9 +103,9 @@ func SelectThreads(list github.ReviewThreads) Selection {
 	return out
 }
 
-// Digest identifies the threads a fix was confirmed for, with their
-// comments: a reply or an edit after the confirmation changes it, and the fix
-// must be confirmed again.
+// Digest identifies the threads a fix was started for, with their comments:
+// a reply or an edit after the start changes it, and the fix must be started
+// again.
 func Digest(threads []Thread) string {
 	if len(threads) == 0 {
 		return ""
@@ -115,14 +115,13 @@ func Digest(threads []Thread) string {
 	return hex.EncodeToString(sum[:16])
 }
 
-// Excerpt is the first line of a thread's first comment, at most 120
-// characters, for the confirmation to show.
+// Excerpt is the headline of a thread's first comment, at most 120
+// characters, for the job to show.
 func Excerpt(t Thread) string {
 	if len(t.Comments) == 0 {
 		return ""
 	}
-	line, _, _ := strings.Cut(strings.TrimSpace(t.Comments[0].Body), "\n")
-	return truncate(plain(line), 120)
+	return truncate(Headline(t.Comments[0].Body), 120)
 }
 
 // threadText is a thread as the prompt quotes it, between untrusted-data
