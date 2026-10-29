@@ -787,9 +787,10 @@ behind a disclosure, and "Updated N minutes ago", "Capturing…" or why it was
 not captured, in words (Cursor Agent as the review harness cannot capture),
 followed by why capture will not run again (paused, off, off for the
 repository, or not a picked repository; `capture_off`).
-Below it, "Decisions from sessions" lists the decisions of every session of
-the pull request, in progress or linked by the saved review, marking those
-made after that review was generated "Provisional", ended sessions the
+Below it, "Decisions from sessions" lists, behind a disclosure that starts
+closed and shows only the heading with the count, the decisions of every
+session of the pull request, in progress or linked by the saved review,
+marking those made after that review was generated "Provisional", ended sessions the
 tracker still holds included; it is not drawn while no session has decisions,
 a capture state or a capture in flight. Both read again on the `decisions`
 event, which carries no data (events within 250 ms make one read), and when
