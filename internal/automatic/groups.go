@@ -1,6 +1,7 @@
 package automatic
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"strconv"
@@ -27,9 +28,11 @@ type groupState struct {
 	Attempts int       `json:"attempts,omitempty"`
 	RetryAt  time.Time `json:"retry_at,omitzero"`
 	// Retried and Refused are as a PR's: the heads whose interrupted run
-	// was put back once, and the last refused job put back.
+	// was put back once, and the last refused job put back. Trigger is why
+	// heads put back run again.
 	Retried string `json:"retried,omitempty"`
 	Refused string `json:"refused,omitempty"`
+	Trigger string `json:"trigger,omitempty"`
 }
 
 type groupWork struct {
@@ -37,26 +40,28 @@ type groupWork struct {
 	repo  repository
 	group reviewgroups.Group
 	heads map[int]string
-	key   string
-	// first: the pass saw the group for the first time, as a baseline sees a
-	// PR; members already reviewed then are not caught up.
-	first bool
+	key     string
+	trigger string
 }
 
 // memberHeads is the group's heads when every member is open, eligible and
-// has no automatic job still to submit. Called with mu held.
+// has no automatic job still to submit, and automatic generation handled at
+// least one member's current head: a stack reviewed before the baseline, or
+// only by hand, is not caught up. Called with mu held.
 func memberHeads(rs *repoState, members []int) (map[int]string, string, bool) {
 	heads := map[int]string{}
 	parts := make([]string, 0, len(members))
+	handled := false
 	for _, number := range members {
 		pr := rs.PRs[number]
 		if pr == nil || pr.Head == "" || !pr.Eligible || pr.Pending != "" {
 			return nil, "", false
 		}
+		handled = handled || pr.Done == pr.Head
 		heads[number] = pr.Head
 		parts = append(parts, strconv.Itoa(number)+"@"+pr.Head)
 	}
-	return heads, strings.Join(parts, ","), true
+	return heads, strings.Join(parts, ","), handled
 }
 
 // passGroups queues the review of each stack group of a repository with
@@ -90,12 +95,16 @@ func (s *Scheduler) passGroups(ctx context.Context, v view, interrupted, refused
 	}
 	for _, j := range interrupted {
 		if gs := stateOf(j); gs != nil && gs.Retried != j.Members {
-			gs.Done, gs.Retried, changed = "", j.Members, true
+			gs.Done, gs.Retried, gs.Trigger, changed = "", j.Members, jobs.TriggerRetry, true
 		}
 	}
 	for _, j := range refused {
 		if gs := stateOf(j); gs != nil && gs.Refused != j.ID {
-			gs.Done, gs.Refused, changed = "", j.ID, true
+			trigger := j.Trigger
+			if j.Reason == jobs.ReasonDraft {
+				trigger = jobs.TriggerReadyForReview
+			}
+			gs.Done, gs.Refused, gs.Trigger, changed = "", j.ID, trigger, true
 		}
 	}
 	live := map[string]bool{}
@@ -106,22 +115,21 @@ func (s *Scheduler) passGroups(ctx context.Context, v view, interrupted, refused
 			continue
 		}
 		live[g.ID] = true
-		gs := rs.Groups[g.ID]
-		first := gs == nil
-		if first {
-			gs = &groupState{}
-			rs.Groups[g.ID] = gs
-			changed = true
-		}
 		r := v.repos[g.Repository]
 		heads, key, ok := memberHeads(rs, g.Members)
 		if !ok || !r.clone.Available || paused[g.Repository] {
 			continue
 		}
+		gs := rs.Groups[g.ID]
+		if gs == nil {
+			gs = &groupState{}
+			rs.Groups[g.ID] = gs
+			changed = true
+		}
 		if gs.Done == key || (gs.Heads == key && now.Before(gs.RetryAt)) {
 			continue
 		}
-		due = append(due, groupWork{g.Repository, r, g, heads, key, first})
+		due = append(due, groupWork{g.Repository, r, g, heads, key, cmp.Or(gs.Trigger, jobs.TriggerStackReviewed)})
 	}
 	for _, rs := range state.Repositories {
 		for id := range rs.Groups {
@@ -167,11 +175,7 @@ func (s *Scheduler) submitGroup(ctx context.Context, w groupWork, now time.Time)
 				return carryOn
 			}
 		}
-		if w.first {
-			err = jobs.ErrDuplicate
-		} else {
-			job, err = s.Queue.SubmitAutomatic(ctx, jobs.AutomaticRequest{Item: jobs.Item{Clone: w.repo.clone.ID, Group: w.group.ID}, Repository: w.repo.clone.Repository, Head: w.key, Trigger: jobs.TriggerStackReviewed})
-		}
+		job, err = s.Queue.SubmitAutomatic(ctx, jobs.AutomaticRequest{Item: jobs.Item{Clone: w.repo.clone.ID, Group: w.group.ID}, Repository: w.repo.clone.Repository, Head: w.key, Trigger: w.trigger})
 	}
 	s.mu.Lock()
 	rs := s.load().Repositories[w.name]
@@ -199,7 +203,8 @@ func (s *Scheduler) submitGroup(ctx context.Context, w groupWork, now time.Time)
 	case errors.Is(err, jobs.ErrHeadChanged), errors.As(err, &notAutomatic) && notAutomatic.Reason == jobs.ReasonDraft:
 		// GitHub is ahead of discovery: a member moved on or turned draft.
 		// Discovery soon shows it, which changes or holds these heads.
-		gs.Heads, gs.RetryAt = w.key, now.Add(time.Minute)
+		gs.retryFor(w.key)
+		gs.RetryAt = now.Add(time.Minute)
 	case errors.Is(err, jobs.ErrBusy):
 	case errors.Is(err, jobs.ErrRestarting):
 		result = stopAll
@@ -211,9 +216,7 @@ func (s *Scheduler) submitGroup(ctx context.Context, w groupWork, now time.Time)
 		gs.Done = w.key
 		notice = notAutomatic.Reason
 	default:
-		if gs.Heads != w.key {
-			gs.Heads, gs.Attempts = w.key, 0
-		}
+		gs.retryFor(w.key)
 		gs.Attempts++
 		if gs.Attempts >= maxAttempts {
 			gs.Done = w.key
@@ -222,6 +225,9 @@ func (s *Scheduler) submitGroup(ctx context.Context, w groupWork, now time.Time)
 			gs.RetryAt = now.Add(time.Duration(1<<gs.Attempts) * time.Minute)
 		}
 		s.log().Warn("automatic stack review not queued", "repository", w.name, "group", w.group.ID, "attempt", gs.Attempts, "error", err)
+	}
+	if gs.Done == w.key {
+		gs.Trigger = ""
 	}
 	announce := notice != rs.Notice || (result == stopRepository && !quiet)
 	rs.Notice = notice
@@ -232,6 +238,13 @@ func (s *Scheduler) submitGroup(ctx context.Context, w groupWork, now time.Time)
 		s.notify([]Status{status})
 	}
 	return result
+}
+
+// retryFor counts attempts and backoff for heads, starting over for new ones.
+func (gs *groupState) retryFor(heads string) {
+	if gs.Heads != heads {
+		gs.Heads, gs.Attempts = heads, 0
+	}
 }
 
 // covered reports that a group review read every current member at its

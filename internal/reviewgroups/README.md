@@ -62,8 +62,9 @@ groups in step (`Store.SyncStacks`):
   member is eligible, has a saved review of its current head and no
   automatic job left to submit, unless the group's latest version already
   read every current member at that head (a merged member alone calls for
-  none). A stack already reviewed when the scheduler first sees its group is
-  not caught up. Otherwise, and for groups a person made, the group
+  none), and once automatic generation handled at least one member's current
+  head: a stack reviewed before automatic generation was enabled, or only by
+  hand, is not caught up. Otherwise, and for groups a person made, the group
   review is generated on request.
 
 ## Storage

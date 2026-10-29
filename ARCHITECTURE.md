@@ -2706,11 +2706,13 @@ it and `Queue.SubmitAutomatic` decides each job.
   review is of its current head, it queues the group's review (trigger
   `stack_reviewed`) with those member heads, unless the group's latest
   version already read every current member at its current head (a merged
-  member alone calls for none). A group first seen with its members already
-  reviewed is not caught up, as at a baseline. Each set of member heads is
-  submitted once (`done`), with the pull requests' retry rules: failures to
-  prepare back off and give up after five attempts, an interrupted run is
-  retried once, and a job stopped before it started is submitted again. A
+  member alone calls for none). Automatic generation must have handled at
+  least one member's current head (its `done`): a stack reviewed before the
+  baseline, or only by hand, is not caught up. Each set of member heads is
+  submitted once (`done`), with the pull requests' retry rules and triggers:
+  failures to prepare back off and give up after five attempts, an
+  interrupted run is retried once (`retry`), and a job stopped before it
+  started is submitted again (`ready_for_review` after a draft). A
   member GitHub shows moved on or turned draft before discovery does is
   retried a minute later. Groups a person made are never generated
   automatically.
@@ -2718,7 +2720,7 @@ it and `Queue.SubmitAutomatic` decides each job.
   enabled repository's PRs (recorded head, request and draft flags,
   eligibility, pending head and trigger, last head handled, retried head,
   last stopped job put back), its stack groups (member heads handled,
-  attempts, retried heads, last stopped job put back) and its notice. A `paused_until` and
+  attempts, retried heads, last stopped job put back, trigger) and its notice. A `paused_until` and
   `paused_cap` an older baum saved for its daily cap are ignored on load, and
   its `daily_cap` notice is dropped. It is rewritten
   atomically on every change, so a restart neither forgets pending heads nor

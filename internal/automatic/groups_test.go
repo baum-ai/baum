@@ -121,3 +121,36 @@ func TestCoveredIgnoresMembersThatLeft(t *testing.T) {
 		t.Fatal("a moved or new member was covered")
 	}
 }
+
+// A stack review a daemon stop cut short is retried once, labelled as a retry.
+func TestInterruptedStackReviewIsRetriedOnce(t *testing.T) {
+	h := newHarness(t)
+	h.exec.block = make(chan struct{})
+	h.exec.started = make(chan struct{}, 10)
+	withGroups(t, h)
+	h.observe(pr{number: 1, head: "a1", authored: true}, pr{number: 2, head: "b1", authored: true})
+	snapshot := []pr{{number: 1, head: "a2", authored: true}, {number: 2, head: "b2", authored: true}}
+	h.observe(snapshot...)
+	h.pass()
+	for range 2 {
+		<-h.exec.started
+		h.exec.block <- struct{}{}
+	}
+	h.waitIdle()
+	h.reviewed[1], h.reviewed[2] = "a2", "b2"
+	h.pass()
+	<-h.exec.started
+	h.stop()
+	h.scheduler.Groups = h.exec.groups
+	h.observe(snapshot...)
+	h.pass()
+	members := []string{"org/repo#1@a2:new_head", "org/repo#2@b2:new_head"}
+	h.want(append(members, "org/repo#group@1@a2,2@b2:stack_reviewed", "org/repo#group@1@a2,2@b2:retry")...)
+	<-h.exec.started
+	h.stop()
+	h.scheduler.Groups = h.exec.groups
+	h.observe(snapshot...)
+	h.pass()
+	h.want(append(members, "org/repo#group@1@a2,2@b2:stack_reviewed", "org/repo#group@1@a2,2@b2:retry")...)
+	close(h.exec.block)
+}

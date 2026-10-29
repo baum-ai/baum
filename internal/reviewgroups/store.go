@@ -253,7 +253,16 @@ func (s *Store) Get(ctx context.Context, id string) (Group, error) {
 // Update renames the group when name is not nil and replaces its members
 // when members is not nil. Either makes a stack group the person's own.
 func (s *Store) Update(ctx context.Context, id string, name *string, members []int) (Group, error) {
-	g, err := s.Get(ctx, id)
+	// One transaction, so a concurrent SyncStacks cannot be written over.
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return Group{}, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	g, err := scanGroup(tx.QueryRowContext(ctx, `SELECT `+groupColumns+` FROM groups WHERE id=? AND deleted=0`, id))
+	if errors.Is(err, sql.ErrNoRows) {
+		return Group{}, ErrNotFound
+	}
 	if err != nil {
 		return Group{}, err
 	}
@@ -273,14 +282,10 @@ func (s *Store) Update(ctx context.Context, id string, name *string, members []i
 	g.Stack = false
 	g.UpdatedAt = time.Now().UTC().Truncate(time.Millisecond)
 	encoded, _ := json.Marshal(g.Members)
-	result, err := s.db.ExecContext(ctx, `UPDATE groups SET name=?, members=?, stack=0, updated=? WHERE id=? AND deleted=0`, g.Name, string(encoded), g.UpdatedAt.UnixMilli(), id)
-	if err != nil {
+	if _, err := tx.ExecContext(ctx, `UPDATE groups SET name=?, members=?, stack=0, updated=? WHERE id=?`, g.Name, string(encoded), g.UpdatedAt.UnixMilli(), id); err != nil {
 		return Group{}, err
 	}
-	if n, err := result.RowsAffected(); err != nil || n != 1 {
-		return Group{}, ErrNotFound
-	}
-	return g, nil
+	return g, tx.Commit()
 }
 
 // Delete removes the group from every list. Its versions stay in the store,
