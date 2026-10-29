@@ -584,13 +584,10 @@ without it marks the usage `Unreported`. `Result.Model` is the configured model
 (`configured`) or the display name the CLI's init event reports
 (`cli_reported`); neither is a provider model ID and no speed or cache TTL is
 reported. Cursor bills the run through the user's subscription, so
-`pricing.List.BackendEstimate`, `BackendOutcomeCost` and
-`BackendAccountingCost` return nil with `billed_by_cursor_subscription` for
-this backend whatever its model is called: the recorded cost is unknown, and a
-generation-queue job in the daemon carries it as `Prepared.EstimateReason` with a nil estimate
-instead of an estimate at API rates. Such a job is not blocked: `Queue.SubmitConfirmed`
-queues it only with `Confirmation.Unpriced` (`confirm_unpriced`) on top of the
-estimate and any isolation confirmation. A failed process is classified
+`pricing.List.BackendOutcomeCost` and `BackendAccountingCost` return nil with
+`billed_by_cursor_subscription` for this backend whatever its model is called:
+the recorded cost is unknown. Such a job is not blocked and needs no
+acknowledgement: it starts, manually or automatically, like any other. A failed process is classified
 from its stderr (`unsupported_option`, `sandbox_unavailable`,
 `authentication_error`); none is retried, as every attempt would fail the same
 way until the user acts.
@@ -1687,13 +1684,16 @@ to the pull request, read from the local session stores with `sessions` and
 `linkage`. When those sessions are not on this machine, the viewer shows the
 document's own session metadata.
 
-Estimated cost comes from a price list at
+What usage would cost at API prices comes from a price list at
 `https://static.usebaum.com/pricing/prices.json`. baum verifies its `.sig`
 with a public key embedded in the binary and falls back to a snapshot embedded
 at release when the list cannot be fetched or verified. Nothing is cached on
 disk: a fetched list replaces the embedded one for the life of the process, and
 `pricing.CurrentSource` says which is active (`embedded` or `fetched`), its
-version, when it was fetched and why the last refresh failed.
+version, when it was fetched and why the last refresh failed. Pricing is
+best-effort and only reports, in Analytics and a run's recorded usage: no
+budget, cap, limit, confirmation, ordering or dedupe reads a price or the
+list's version.
 
 ## Diagnostics
 
@@ -1764,8 +1764,10 @@ A repository's `automatic` setting is `null` (follow the global preference) or
 an explicit `true`/`false`. The global preference is a master switch
 (`Settings.AutomaticEnabled`): off disables every repository, `true` included;
 on, only an explicit `false` disables one. The `preferences` table holds the
-global preferences as one JSON row: `automatic` (true until changed) and
-`cursor_agent_acknowledged`. `PRAGMA user_version` 1 marks the schema in which
+global preferences as one JSON row: `automatic` (true until changed), the
+harness and model, `pull_requests` and `agent_env`; a field an older baum
+saved and this one dropped (`cursor_agent_acknowledged`) is ignored on read.
+`PRAGMA user_version` 1 marks the schema in which
 `null` exists: `Open` migrates an older file once, in a `BEGIN IMMEDIATE`
 transaction, turning the `automatic: false` every earlier registration stored
 into `null`, and keeping a stored `true` (only `baum internal repos add --automatic`
@@ -1774,7 +1776,9 @@ writing it. An older baum that registers a repository after the migration
 still stores `automatic: false`, which now reads as an explicit off: that
 repository stays off until changed in the app, which fails safe.
 `PUT /api/repos/{id}/settings` replaces the whole object and requires the
-`automatic` and `daily_cap` fields, so removing either is an explicit `null`.
+`automatic` field, so removing it is an explicit `null`. A `daily_cap` an
+older baum stored is ignored on read, and one an older app sends is dropped
+before the strict decode (`withoutDailyCap`), not refused.
 `/api/repositories` lists, picks and unpicks repositories by name, and
 `PUT /api/repositories/{owner}/{name}/settings` behaves the same way.
 
@@ -1974,7 +1978,18 @@ count and latest update, and reports those that differ from the fingerprint
 its last complete poll recorded. The background worker probes once a minute
 and polls a changed repository at once, so a pull request opened or pushed
 from anywhere shows within about a minute while unchanged repositories keep
-the backoff. A repository never polled or not returned waits for its scheduled
+the backoff. Resolving a review thread does not move a pull request's update
+time, so the probe misses it; the next scheduled poll, or the app reading the
+threads (below), shows it. Each polled pull request keeps GitHub's
+`updated_at`, which the background refresh compares with its last read; it is
+left out of the unchanged comparison, so it does not reset the backoff. GitHub
+works out a pull request's mergeability in the background after a push, so a
+poll right after one can read the old conflict or none. A poll that finds a
+new head, or a new pull request, sets the next poll `settleInterval` (15 s)
+away (or GitHub's polling interval, if longer), as do up to `maxSettles` (3)
+more while a non-draft pull request's `mergeable` or `mergeStateStatus` is
+still `UNKNOWN`; the snapshot says `settling`, and the background worker polls
+the repository at that deadline instead of its interval. A repository never polled or not returned waits for its scheduled
 poll; the probe assumes one credential, leaving out any repository whose
 credential differs from the first's.
 GraphQL cost, remaining points and reset time map to the public rate projection.
@@ -2006,8 +2021,11 @@ refuses a pull request whose head moved. Both accept only picked repositories
 errors to `{code, message}`: `head_moved` and `conflict` and `not_open` are
 `409`, `blocked` (required checks, reviews, branch protection) and
 `method_not_allowed` are `422`, `forbidden` is `403`, anything else `502`. After
-a merge the daemon runs `Service.PollNow` for the repository and publishes an
-index change so the inbox drops the pull request.
+a merge GitHub accepted, the daemon records it (`discovery.Service.Merged`:
+the pull request leaves the cached open ones and is observed `MERGED` at the
+merged head, with no read), runs `Service.PollNow` for the repository and
+publishes an index change, so the inbox shows it merged at once rather than
+when the background refresh next reads it.
 
 Submitting a review is the app's other write outside discovery.
 `POST /api/prs/review` takes `{repository, pr, head_sha, event, body,
@@ -2046,6 +2064,54 @@ answers `{rerun, refused}`: an error only when no run started. Errors are
 anything else `502`. After either write the daemon runs `Service.PollNow` and
 publishes an index change.
 
+The same handler lists and resolves review threads for the Inbox's panel. `GET
+/api/prs/review-threads?repository=&pr=&unresolved=` answers `{threads,
+capped}`. `prupdate.Cache` keeps each pull request's list in memory for
+a minute and serves it while it holds as many threads as `unresolved`,
+discovery's count (absent: not compared; a capped list is never compared), so
+a thread opened or resolved on GitHub is read again once discovery sees it, or
+once the entry expires, as is an edit within a thread. A list read from GitHub
+whose uncapped count differs from `unresolved` replaces discovery's count for
+that pull request (`discovery.Service.Unresolved`, through `Service.Counted`)
+and publishes an index change, so the Inbox row agrees with the panel before
+the next poll. A change of GitHub account, or
+disconnecting, empties it with the daemon's other account-dependent caches
+(`ResetIdentity`), and a read under way when that happens is not stored. Otherwise the list is read
+with `github.Client.UnresolvedThreads` (the fix's `FixReviewThreads` document): each
+thread's node `id`, `path`, `line`, `outdated`, the first comment's `author`,
+its headline cut to 200 characters (`excerpt`: `fix.Headline`, the first
+wholly bold line among the first four, else the first line of text, without
+HTML comments, tags, images, code blocks or Markdown markup, which the fix
+dialog's excerpts use too), the
+comment count, the first comment's `url` and `can_resolve`
+(`viewerCanResolve`). `POST /api/prs/resolve-thread` takes `{repository, pr,
+thread}`, reads the thread by its node id (`ThreadState`) and refuses one that
+is not on that pull request (`not_found`, `404`) or that the account cannot
+resolve (`forbidden`); a thread already resolved answers success without a
+write. Otherwise it sends `resolveReviewThread` once and, like the other writes,
+polls discovery and publishes an index change. No reply is posted. A thread
+resolved from the app, or found resolved, leaves the cached list at once.
+
+`GET /api/prs/failing-checks?repository=&pr=&head_sha=` lists the failing
+checks of `head_sha` (the head the app shows; absent, the pull request's head
+is read first) with `fix.FailingChecks`, the fix's evidence read: check runs
+of their latest attempt whose conclusion is `failure`, `timed_out`,
+`startup_failure` or `action_required`, and commit statuses in `error` or
+`failure`, at most 20. It answers `{head_sha, checks}`, each check's `name`,
+`conclusion`, `title` (its output title, else the headline of its summary or a
+status's description, cut to 160 characters), `url` (`details_url`, else
+`html_url`, or a status's `target_url`; the fix prompt leaves it out) and
+`job_id` (the GitHub Actions job behind a check run). `prupdate.Cache` keeps a
+head's list for 2 minutes, forgets it when either re-run starts a run of that
+head, and is emptied with the threads on an account change.
+
+`POST /api/prs/rerun-job` takes `{repository, pr, head_sha, job_id}`,
+re-checks that the pull request is open, its head is `head_sha` and the
+account can push, re-reads the head's failing checks and refuses a `job_id`
+that is not one of their jobs (`not_found`, `404`), then posts
+`.../actions/jobs/{id}/rerun` once (GitHub answers `201`; refusals are worded
+as a workflow run's). It is recorded as a check re-run in analytics.
+
 The review index exposes discovery states for all open rows, including rows
 without a saved review or with an unreadable store. Saved review time comes from
 `summary.review_minutes` in the existing SQLite summary projection: only whole
@@ -2066,54 +2132,57 @@ without duplicating review documents. `jobs.Open` takes an exclusive
 until its workers stop, so two processes never run one queue; it waits up to
 10 s for a predecessor whose shutdown timed out and that is exiting.
 `Queue.Drain` refuses new jobs and reports true only when none is queued or
-running, under the mutex `Submit` checks, so a restart never cuts a confirmed
-job short: one confirmed during it gets `503` with `Retry-After` and is
-estimated and confirmed again against the new daemon. Workers use the same `generate.Publish`
+running, under the mutex `Submit` checks, so a restart never cuts a started
+job short: one started during it gets `503` with `Retry-After` and is started
+again against the new daemon. Workers use the same `generate.Publish`
 entry point as the terminal: previous-version lookup, run lease, generation and
 strict validation, then atomic version publication. Running journal entries are
 interrupted on restart; queued entries retain their confirmed input fingerprint.
-A confirmation covers the estimate, isolation for a fork or an author without
-known write access, and, for a subscription-billed backend, that its cost is
-unknown (`Confirmation{Estimate, Isolation, Unpriced}`); each is checked on the
-server, never trusted from the browser.
+`POST /api/jobs` with `items` and `mode` starts reviews, a group's review or a
+fix at once (`Queue.Generate`): it prepares the items and queues them in one
+request, with no estimate to confirm and nothing about the price that stops a
+run. Jobs carry no cost estimate (an `estimate_usd` an older baum journaled is
+ignored), and a resubmission joins a queued job with the same inputs whatever
+price list either was prepared under. The one confirmation is isolation for a fork or an author without known
+write access (`confirm_isolation`; without it the answer is
+`{"isolation_required":true}`), checked on the server, never trusted from the
+browser. A single item the daemon will not run (a fix's `blocked_reason`) is
+`409` with `{"blocked_reason":"…"}`, which the app says in words. Internally
+`Generate` is `Estimate` (a preparation of the items, the name historical)
+then `SubmitConfirmed`, which prepares again and refuses changed inputs;
+there is no estimate endpoint.
 Fresh GitHub REST evidence authorizes the head and isolation warning; all
 preflight I/O happens outside the queue mutex so cancellation stays responsive.
 A job names a clone (`Item.Clone`). An item whose clone is unknown or
 unavailable, which includes every repository picked without a clone, is
-`jobs.ErrNeedsClone`: estimate and generate answer `409` with
+`jobs.ErrNeedsClone`: `POST /api/jobs` answers `409` with
 `{"needs_clone":true}` (the isolation answer is `{"isolation_required":true}`),
 and a queued job whose clone was removed ends with the reason `needs_clone`
-without running (`cancelled` when automatic, so its head is not used up and
-it counts no spend; `failed` when manual). Pull requests of such a repository are still discovered.
+without running (`cancelled` when automatic, so its head is not used up;
+`failed` when manual). Pull requests of such a repository are still discovered.
 The runner has no subprocess invocation of baum itself. Only the agent
 backends and a fix's git commands run child processes, cancelled through their
 context.
 
 `Queue.SubmitAutomatic` is how the automatic scheduler (see "Automatic
-generation") queues a job nobody confirmed. It prepares the item like an
-estimate, so the job has the same budgets, price list, recheck before running
-and isolation as a confirmed one, and refuses for good
-(`NotAutomaticError`) what a person would have to confirm: a fork or an author
-without known write access, a blocked (unpriced) model, and cursor-agent or
-another unestimated backend without the acknowledgement. Under the queue mutex
+generation") queues a job nobody confirmed. It prepares the item like a
+person's start, so the job has the same budgets, recheck before running and
+isolation as a confirmed one, and refuses for good (`NotAutomaticError`) what
+a person would have to confirm: a fork or an author without known write
+access, and a draft. A model without a price, cursor-agent included, runs
+automatically like any other. Under the queue mutex
 it refuses with `ErrRestarting` while draining, `ErrBusy` while the PR has a
 queued or running job (it never joins or supersedes one), `ErrDuplicate` when
 any job, manual or automatic, already exists for that head (except a single
 automatic job a daemon stop or restart interrupted, which `Interrupted` lists
-and which may run once more; failed and cancelled jobs are final), and
-`ErrDailyCap` when the repository's automatic jobs created that day (actual
-cost when reported, else the estimate; a job cancelled before calling a model
-counts zero) plus this estimate would exceed its `daily_cap`. Jobs record
-`automatic` and `trigger` (`new_head`, `review_requested`, `ready_for_review`,
-`retry`). Before a queued automatic job starts, the worker checks the cap again
-under the same mutex, against the current `daily_cap` the gate returns and the
-spending of the jobs that day that already started or finished (reported cost
-replacing the estimate) plus this job's estimate; over it, the job is cancelled
-with reason `daily_cap` before any model call. The executor's recheck of the
-confirmed inputs, before any model call, also refuses an automatic job whose
+and which may run once more; failed and cancelled jobs are final). Jobs
+record `automatic` and `trigger` (`new_head`, `review_requested`,
+`ready_for_review`, `retry`). A job an older baum cancelled with reason
+`daily_cap`, for the spending cap baum no longer has, loads as an ordinary
+cancelled job. The executor's recheck of the confirmed inputs, before any model call, also refuses an automatic job whose
 pull request GitHub now reports as a draft (the queue marks its inputs
 `RefuseDraft`; confirmed jobs run drafts); it is cancelled with reason
-`draft`. Neither job counts as its head's job: `ErrDuplicate` and
+`draft`. Such a job does not count as its head's job: `ErrDuplicate` and
 `Interrupted` ignore it, and `Refused` lists it while it is the latest job for
 its head.
 
@@ -2123,14 +2192,15 @@ retained. Keep these copied core files synchronized with the platform package.
 A bounded HTTPS downloader refuses redirects, verifies the existing release
 signing key, rejects flattened lists and installs only newer full-format lists.
 An installed download is stored with its signature in the job state directory.
-The daemon re-verifies and installs it before opening the queue, so recovered
-jobs see the list they were confirmed against; an unverifiable file is ignored.
-Estimates and job confirmation never infer the default model or replace it with
-a different priced model, and an item whose model has no price is blocked. The
-one exception is a backend billed outside the list (cursor-agent): its item has
-a nil estimate with an `estimate_reason`, the total is unknown, and
-`Queue.SubmitConfirmed` queues it only with the separate `confirm_unpriced`
-acknowledgement. Unknown actual usage remains null.
+The daemon re-verifies and installs it before opening the queue, so jobs are
+priced with the newest verified list; an unverifiable file is ignored. A job
+records the version it was prepared with as provenance only: a different
+active list is not a changed input, neither `SubmitConfirmed`, the executor's
+recheck nor the queue's dedupe compares it, and the run is priced, and its
+saved review records, the list active when it runs. Preparing a job never
+infers the default model or replaces it with a different priced model, and a
+model without a price, or a backend billed outside the list (cursor-agent),
+runs like any other. Unknown actual usage remains null.
 
 ### Review groups
 
@@ -2171,11 +2241,12 @@ linked sessions or commits.
 
 A job has a kind: a review (`Item.Kind` empty) or a fix (`"fix"`), which
 shares the queue, journal, concurrency, progress events and cancellation with
-reviews and shows in the same Jobs list. A fix is estimated alone
-(`POST /api/jobs/estimate` with `{"items":[{"clone","pr","kind":"fix"}],"mode":"single"}`)
-and queued only from that confirmed estimate (`POST /api/jobs` with
-`estimate_id`); a direct request is `400` (`ErrFixNeedsConfirmation`), and
-automatic generation never queues one. A review and a fix of one pull request
+reviews and shows in the same Jobs list. A fix starts alone, at once
+(`POST /api/jobs` with `{"items":[{"clone","pr","kind":"fix"}],"mode":"single"}`;
+`"only":"checks"` on the item, the Inbox's Fix CI, limits it to the failing
+checks: preparation leaves `conflicts` false and reads no review threads, and
+any other `only` is refused);
+one in a batch is refused, and automatic generation never queues one. A review and a fix of one pull request
 neither supersede nor block each other, and a fix of a head does not count as
 that head's review for the automatic scheduler.
 
@@ -2192,13 +2263,17 @@ first comment comes from an `OWNER`, `MEMBER` or `COLLABORATOR` or a bot, at
 most 20, dropping other authors' comments and bounding each body to 2 KiB.
 `Prepared.Fix` records what it fixes (`conflicts`, `checks`, and `threads`, a
 digest of the kept threads and their comments) and the branches;
-`fix_threads` previews the threads for the dialog, with
+`fix_threads` keeps the threads' places and excerpts for the job, with
 `fix_threads_capped` and `fix_threads_untrusted`. A fork, an account that
 cannot push, a backend that cannot
 fix, or nothing broken is the item's `blocked_reason` (`fork`,
-`no_push_access`, `unsupported_backend`, `nothing_to_fix`), which the dialog
-explains. The harness, model and budgets resolve as a review's, and the
-estimate is the same budget-sized one. Before running, the executor prepares
+`no_push_access`, `unsupported_backend`, `nothing_to_fix`): the start answers
+`409` with it and nothing is queued, and the app says why where the person
+clicked. The budgets resolve as a review's. The harness and model are the
+preferences' fix agent (`fix_backend` and `fix_model`, Claude Code or Codex,
+set with `PUT /api/automatic` or `baum reviews set --fix-backend`) when one
+is chosen, winning over a repository's review override
+(`Preferences.ResolveFix`), and otherwise the review's. Before running, the executor prepares
 again and refuses a changed head (`head_changed`) or changed fix inputs, then
 reads the failing checks' output and the last 200 lines of up to four GitHub
 Actions job logs (`RESTReader.Tail`, which follows the signed log redirect
@@ -2295,13 +2370,23 @@ conditional-cache deadlines, bounded requests, error backoff and host rate reset
 Every picked repository is polled, with or without a clone: discovery needs
 only `owner/name`. A repository without an available clone gets no per-PR
 refresh (that reads a store and the clone's saved reviews), and polling it
-still feeds `Service.Discovered`. Per-repository target cursors and repository rotation prevent a small renewed
-GitHub budget from perpetually serving only the first PRs. Linked worktrees are
-deduplicated by common git directory. No-review PRs fetch only a header and checks;
+still feeds `Service.Discovered`. A pass polls every due repository first and
+publishes an index change, so no repository's pull requests wait behind
+another's reads. It then reads, within `refreshBudget` (30 s), the pull
+requests that are due: never read, updated on GitHub since the last read
+(discovery's `updated_at`), at a head other than the last read's, or last
+observed open and no longer among the open ones (to learn that it merged or
+closed). Those go first; then any open one unread for `openReadAge` (15 min)
+or closed one unread for `closedReadAge` (1 h), the longest unread first. A
+failed read is retried after the interval, doubling to 15 minutes, without
+backing off the repository's polls; a rate-limited one stays due and goes
+first after the reset, so a small renewed budget still reaches every pull
+request. `Run` passes every 30 seconds, or sooner when a repository is due
+sooner, as a settling one is. Linked worktrees are deduplicated by common git directory. No-review PRs fetch only a header and checks;
 saved reviews use `refresh.Refresher` and `Store.RefreshCurrent`'s exact-byte CAS.
 `Service.RefreshNow` refreshes named PRs of one clone the same way outside
-that schedule (see "Refresh on hook events"); it shares the per-host rate
-pause with `Sync` in both directions.
+that schedule (see "Refresh on hook events"), and its reads count as the
+last read; it shares the per-host rate pause with `Sync` in both directions.
 
 Discovery's live freshness map uses its own short mutex; cached readers never
 wait behind a network poll. Disk-only startup remains stale. Minimized current
@@ -2497,19 +2582,15 @@ it and `Queue.SubmitAutomatic` decides each job.
   cannot start on restart before the settings are checked.
   `Queue.CancelDisallowedAutomatic` cancels
   queued automatic jobs the gate refuses, with its reason (`automatic_off`,
-  `repository_automatic_off`, `repository_removed`,
-  `cursor_agent_acknowledgement_required`, `settings_unreadable`); every pass
+  `repository_automatic_off`, `repository_removed`, `settings_unreadable`);
+  every pass
   runs it, and `PUT /api/automatic` runs it before answering. Running jobs keep
   running.
-- **Daily cap at start.** The gate also returns the repository's current
-  `daily_cap` and the scheduler clock's day; the queue checks it itself (the
-  gate never calls the queue or takes the scheduler's lock), so a cap lowered
-  while a job waited, or cost an earlier job reported, stops a queued job
-  before it starts (`daily_cap`). Each pass asks `Queue.Refused` for such jobs
-  (and those stopped as drafts) made after the baseline and puts each one's
-  head back as pending once (`refused` records the job) if the PR is still
-  open, eligible and at that head; the same pass submits it, `ErrDailyCap`
-  pauses the repository as below, and the head runs once the pause ends.
+- **Stopped before start.** Each pass asks `Queue.Refused` for automatic
+  jobs stopped before any model call without using up their head (stopped as
+  drafts, or because their clone went away) made after the baseline and puts
+  each one's head back as pending once (`refused` records the job) if the PR
+  is still open, eligible and at that head.
 - **Baseline.** Enabling is dated when a pass or snapshot first sees it. The
   first snapshot `Observe` gets that was fetched at or after that time records
   each open PR's head, whether the user's review is requested, whether team
@@ -2535,15 +2616,16 @@ it and `Queue.SubmitAutomatic` decides each job.
   a daemon stop or restart cut short that are the only job for their head; if
   the PR is still open at that head and eligible, the head is pending again
   with trigger `retry`, once (`retried` records it). The retry goes through
-  the same pass, so Drain, the cap and the switches apply. Failed and
+  the same pass, so Drain and the switches apply. Failed and
   cancelled runs are never retried; the next push triggers as usual. A run
   interrupted before a repository's baseline (turned off, then on again) is not
   retried: the baseline marks its heads as already retried.
 - **State.** `automatic.json` in the job state directory (0700) holds each
   enabled repository's PRs (recorded head, request and draft flags,
   eligibility, pending head and trigger, last head handled, retried head,
-  last cap- or draft-stopped job put back),
-  its pause and its notice. It is rewritten
+  last stopped job put back) and its notice. A `paused_until` and
+  `paused_cap` an older baum saved for its daily cap are ignored on load, and
+  its `daily_cap` notice is dropped. It is rewritten
   atomically on every change, so a restart neither forgets pending heads nor
   treats recorded ones as new; an unreadable file starts over with new
   baselines.
@@ -2554,9 +2636,8 @@ it and `Queue.SubmitAutomatic` decides each job.
   it is not submitted: `Queue.SubmitAutomatic` returns `jobs.ErrNeedsClone`,
   which keeps the head pending without using an attempt, a retry time or a
   new notice. One whose clone disappeared while it was queued is cancelled
-  with the reason `needs_clone` before any model call, like a daily-cap
-  refusal: `Queue.Refused` lists it, no spend is counted, and the head is
-  pending again, so the first pass with an available clone submits it once.
+  with the reason `needs_clone` before any model call, like a draft:
+  `Queue.Refused` lists it, and the head is pending again, so the first pass with an available clone submits it once.
 - **Passes** run at start, every 30 s, when a snapshot leaves pending work,
   when settings change and when a job finishes. A pass submits due pending
   heads in order unless the daemon is stopping or has a restart pending
@@ -2564,22 +2645,18 @@ it and `Queue.SubmitAutomatic` decides each job.
   already has it is skipped. Outcomes: queued, or `ErrDuplicate`, marks the
   head handled; `ErrBusy` waits for the PR's job; `ErrRestarting` ends the
   pass and is retried; `ErrHeadChanged` drops it (discovery brings the new
-  head); `ErrDailyCap` pauses the repository until local midnight with the
-  `daily_cap` notice, or until its cap is raised above or cleared from the
-  amount that caused the pause; a `NotAllowedError` (turned off meanwhile)
+  head); a `NotAllowedError` (turned off meanwhile)
   leaves the head for the next pass, which forgets it if the repository stays
-  off; a `NotAutomaticError` (a draft, a fork, an unpriced model, cursor-agent
-  not acknowledged) drops it with its reason as the notice; other errors retry
+  off; a `NotAutomaticError` (a draft, a fork or an author without write
+  access) drops it with its reason as the notice; other errors retry
   with backoff, five times.
-- **Spending.** No default cap. Each job keeps the configured run budgets, and
-  `daily_cap` is enforced per repository and calendar day, when a job is
-  queued and again before it starts. cursor-agent runs
-  automatically only after `cursor_agent_acknowledged`, checked by
-  `SubmitAutomatic` from the stored preference, never from a request.
+- **Spending.** There is no spending cap: baum cannot price what a
+  subscription bills, so no price limits automatic generation. Each job keeps
+  the configured token and call budgets. A model without a price,
+  cursor-agent included, needs no acknowledgement.
 - **Interfaces.** `GET /api/automatic` returns the preferences and each
-  repository's effective state, cap, today's automatic spend, pause, notice
-  and pending count; `PUT /api/automatic` changes the preferences. A changed
-  pause or notice, and every repository's status after a `PUT`, is published
+  repository's effective state, notice and pending count; `PUT /api/automatic`
+  changes the preferences. A changed notice, and every repository's status after a `PUT`, is published
   as an `automatic` SSE event for other app windows and the desktop app's
   notifications. `Trigger(ctx, repository)` polls discovery for one
   repository (`PollNow`: before discovery's poll deadline, within its rate
@@ -2723,8 +2800,8 @@ socket serves, and runs it beside background refresh, one worker in all.
   generation is on globally and for the repository, the worker calls
   `Scheduler.Trigger` for the repository, at most once per `Window`. Trigger
   polls discovery and passes the snapshot to `Observe`, the only path to a
-  job, so the scheduler's baseline, eligibility, dedupe, hold, gate, daily cap
-  and no-catch-up rules apply unchanged, and a head it already saw queues
+  job, so the scheduler's baseline, eligibility, dedupe, hold, gate and
+  no-catch-up rules apply unchanged, and a head it already saw queues
   nothing. Since background refresh and Trigger observe from two goroutines,
   `Observe` ignores a snapshot fetched before the newest one it took for the
   repository. The worker never queues or runs generation.

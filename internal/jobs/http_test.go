@@ -16,7 +16,7 @@ import (
 func TestHTTPGeneratesDirectly(t *testing.T) {
 	q, f := newQueue(t)
 	f.mu.Lock()
-	f.price, f.backend, f.reason, f.restricted = nil, agent.BackendCursorAgent, "billed_by_cursor_subscription", true
+	f.backend, f.restricted = agent.BackendCursorAgent, true
 	f.mu.Unlock()
 	handler := q.Handler()
 	post := func(body string) *httptest.ResponseRecorder {
@@ -55,19 +55,36 @@ func TestHTTPGeneratesDirectly(t *testing.T) {
 }
 
 // A request naming a clone that is gone answers with the needs_clone code,
-// apart from the isolation code, for both estimate and generate.
+// apart from the isolation code.
 func TestHTTPNeedsClone(t *testing.T) {
 	q, f := newQueue(t)
 	f.mu.Lock()
 	f.prepareErr = fmt.Errorf("prepare: %w", ErrNeedsClone)
 	f.mu.Unlock()
+	w := httptest.NewRecorder()
+	q.Handler().ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/api/jobs", strings.NewReader(`{"items":[{"clone":"gone","pr":1}],"mode":"single"}`)))
+	if w.Code != http.StatusConflict || !strings.Contains(w.Body.String(), `"needs_clone":true`) || strings.Contains(w.Body.String(), "isolation") {
+		t.Fatalf("%d %s", w.Code, w.Body)
+	}
+	if len(q.List()) != 0 {
+		t.Fatalf("queued %+v", q.List())
+	}
+}
+
+// Estimates are no longer served, and a start names its items: there is no
+// estimate to confirm.
+func TestHTTPHasNoEstimates(t *testing.T) {
+	q, _ := newQueue(t)
 	handler := q.Handler()
-	for _, path := range []string{"/api/jobs/estimate", "/api/jobs"} {
-		w := httptest.NewRecorder()
-		handler.ServeHTTP(w, httptest.NewRequest(http.MethodPost, path, strings.NewReader(`{"items":[{"clone":"gone","pr":1}],"mode":"single"}`)))
-		if w.Code != http.StatusConflict || !strings.Contains(w.Body.String(), `"needs_clone":true`) || strings.Contains(w.Body.String(), "isolation") {
-			t.Fatalf("%s: %d %s", path, w.Code, w.Body)
-		}
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/api/jobs/estimate", strings.NewReader(`{"items":[{"clone":"clone","pr":1}],"mode":"single"}`)))
+	if w.Code == http.StatusOK {
+		t.Fatalf("estimate answered %d %s", w.Code, w.Body)
+	}
+	w = httptest.NewRecorder()
+	handler.ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/api/jobs", strings.NewReader(`{"estimate_id":"e","confirm_estimate":true}`)))
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("estimate id answered %d %s", w.Code, w.Body)
 	}
 	if len(q.List()) != 0 {
 		t.Fatalf("queued %+v", q.List())

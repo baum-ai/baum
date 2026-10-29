@@ -32,6 +32,7 @@ const UP_NEXT_SHORTCUTS = [
   { keys: ["k", "ArrowUp"], label: "Previous pull request" },
   { keys: ["Enter"], label: "Open the pull request" },
   { keys: ["m"], label: "Merge, where offered" },
+  { keys: ["f"], label: "Fix, where offered" },
   { keys: ["s"], label: "Snooze, then 1–4 to choose until when" },
   { keys: ["u"], label: "Undo a snooze" },
 ];
@@ -52,6 +53,15 @@ const LIST_SHORTCUTS = [
   { keys: ["Enter", "o"], label: "Open the row" },
   { keys: ["Escape"], label: "Clear the row focus" },
 ];
+/** Settings' keys, which `SettingsPage` handles itself. */
+const SETTINGS_SHORTCUTS = [
+  { keys: ["j", "ArrowDown"], label: "Next section, or next control in one" },
+  { keys: ["k", "ArrowUp"], label: "Previous section, or previous control in one" },
+  { keys: ["1–5"], label: "Go to a section" },
+  { keys: ["Enter", "l", "ArrowRight"], label: "Go into the section" },
+  { keys: ["Space", "Enter"], label: "Change or press the focused control" },
+  { keys: ["Escape", "h", "ArrowLeft"], label: "Back to the sections" },
+];
 /** Where each group of keys works; the sheet lists the current one first. */
 export type ShortcutsPlace =
   | "anywhere"
@@ -61,6 +71,7 @@ export type ShortcutsPlace =
   | "sessions"
   | "jobs"
   | "repositories"
+  | "settings"
   | "page"
   | "walkthrough";
 export const MAC = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
@@ -278,6 +289,40 @@ export function useKeyHints() {
   }, []);
 }
 
+/** Escape gives up whatever the keyboard focused, so the page's keys act on
+ *  its selection again. It leaves alone an Escape something else used: a
+ *  dialog closing, a menu or a field clearing itself. */
+export function useEscapeBlurs() {
+  useEffect(() => {
+    const down = (event: KeyboardEvent) => {
+      // An Escape that closes a dialog hands the focus back to what opened it.
+      if (event.key !== "Escape" || event.isComposing || document.querySelector("dialog[open]"))
+        return;
+      // Page handlers may run after this one; look once the event is done.
+      setTimeout(() => {
+        if (event.defaultPrevented) return;
+        const focused = document.activeElement;
+        if (focused instanceof HTMLElement && focused !== document.body) focused.blur();
+      });
+    };
+    window.addEventListener("keydown", down);
+    return () => window.removeEventListener("keydown", down);
+  }, []);
+}
+
+/** Tab moves nothing, in pages and dialogs alike: the app's keys act on the
+ *  selection, which a focus left on some control would only confuse. Where
+ *  a place needs more than its keys, it gets its own. */
+export function useNoTab() {
+  useEffect(() => {
+    const down = (event: KeyboardEvent) => {
+      if (event.key === "Tab") event.preventDefault();
+    };
+    window.addEventListener("keydown", down, true);
+    return () => window.removeEventListener("keydown", down, true);
+  }, []);
+}
+
 /** A key that is the page itself's: pressed with nothing focused in it. */
 export function onBody(event: KeyboardEvent) {
   return (
@@ -374,6 +419,7 @@ export function ShortcutsSheet({
         { keys: ["/"], label: "Search GitHub repositories while adding" },
       ],
     },
+    { place: "settings", title: "Settings", rows: SETTINGS_SHORTCUTS },
     { place: "page", title: "A session or job transcript", rows: [back] },
   ];
   const ordered = [

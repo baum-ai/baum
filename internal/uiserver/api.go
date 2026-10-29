@@ -124,6 +124,10 @@ func (a LocalAPI) Handler() *LocalHandler {
 	mux.Handle("POST /api/prs/update-branch", update)
 	mux.Handle("GET /api/prs/rerun-checks-options", update)
 	mux.Handle("POST /api/prs/rerun-checks", update)
+	mux.Handle("GET /api/prs/review-threads", update)
+	mux.Handle("POST /api/prs/resolve-thread", update)
+	mux.Handle("GET /api/prs/failing-checks", update)
+	mux.Handle("POST /api/prs/rerun-job", update)
 	mux.Handle("/api/prs", provider(a.PRs, "discovery_unavailable"))
 	mux.Handle("/api/prs/", provider(a.PRs, "discovery_unavailable"))
 	mux.Handle("/api/background", provider(a.Background, "background_unavailable"))
@@ -158,8 +162,15 @@ func (a LocalAPI) Handler() *LocalHandler {
 		if len(cfg.AgentEnv) > 0 {
 			source = "file"
 		}
+		fixBackend, fixModel := "", ""
 		if prefs, err := a.Registry.Preferences(r.Context()); err == nil {
 			cfg = prefs.Resolve(cfg)
+			if prefs.FixBackend != nil {
+				fixBackend = string(*prefs.FixBackend)
+			}
+			if prefs.FixModel != nil {
+				fixModel = *prefs.FixModel
+			}
 			if len(prefs.AgentEnv) > 0 {
 				source = "app"
 			}
@@ -171,7 +182,9 @@ func (a LocalAPI) Handler() *LocalHandler {
 			Caps           map[string]int    `json:"caps"`
 			AgentEnv       map[string]string `json:"agent_env"`
 			AgentEnvSource string            `json:"agent_env_source"`
-		}{cfg.Backend, cfg.Model, cfg.Budgets, cfg.Caps, cfg.AgentEnv, source})
+			FixBackend     string            `json:"fix_backend"`
+			FixModel       string            `json:"fix_model"`
+		}{cfg.Backend, cfg.Model, cfg.Budgets, cfg.Caps, cfg.AgentEnv, source, fixBackend, fixModel})
 	})
 	// The app's agent environment replaces the config file's; an empty one
 	// goes back to the file's.

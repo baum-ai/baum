@@ -23,6 +23,9 @@ type Local struct {
 }
 
 func (l Local) Refresh(ctx context.Context, clone repos.Clone, number int) (result discovery.Observation, returnedErr error) {
+	// An observation is as of its first GitHub read, so one that began before
+	// a merge the app recorded (discovery.Service.Merged) is older than it.
+	started := time.Now().UTC()
 	ctx, cancel := config.GitHubAuth.IdentityContext(ctx)
 	defer cancel()
 	repo, err := github.ParseRepository(clone.Repository)
@@ -54,7 +57,7 @@ func (l Local) Refresh(ctx context.Context, clone repos.Clone, number int) (resu
 		if err != nil {
 			return discovery.Observation{}, err
 		}
-		return observe(evidence), nil
+		return observe(evidence, started), nil
 	}
 	if err != nil {
 		return discovery.Observation{}, err
@@ -74,7 +77,7 @@ func (l Local) Refresh(ctx context.Context, clone repos.Clone, number int) (resu
 	// Remote metadata is useful even when reviewed git objects are no longer
 	// present or a local session store cannot be read. Never discard it because
 	// the document refresh failed; surface the latter separately to the host.
-	observation := observe(capture.evidence)
+	observation := observe(capture.evidence, started)
 	moved := observation.HeadSHA != saved.Metadata.Head
 	if moved {
 		observation.Checks = "unknown"
@@ -85,11 +88,12 @@ func (l Local) Refresh(ctx context.Context, clone repos.Clone, number int) (resu
 	// Every fallible network read happens before publication, so a failed
 	// refresh (including a rate-limited one the worker retries) never commits.
 	if moved {
+		at := time.Now().UTC()
 		current, err := l.Client.Fetch(ctx, repo, number, github.FetchOptions{MetadataOnly: true})
 		if err != nil {
 			return observation, err
 		}
-		observation = observe(current)
+		observation = observe(current, at)
 	}
 	if err := config.GitHubAuth.WithIdentity(ctx, func() error { return versions.RefreshCurrent(ctx, key, saved, document) }); err != nil {
 		return observation, err
@@ -107,7 +111,7 @@ func (c *capturingClient) Fetch(ctx context.Context, repo github.Repository, num
 	c.evidence = evidence
 	return evidence, err
 }
-func observe(evidence github.Evidence) discovery.Observation {
+func observe(evidence github.Evidence, at time.Time) discovery.Observation {
 	pr := evidence.PullRequest
 	state := strings.ToUpper(pr.State)
 	if pr.MergedSHA != "" {
@@ -131,5 +135,5 @@ func observe(evidence github.Evidence) discovery.Observation {
 			}
 		}
 	}
-	return discovery.Observation{Number: pr.Number, HeadSHA: pr.HeadSHA, Title: pr.Title, State: state, Draft: pr.Draft, FetchedAt: time.Now().UTC(), Checks: checks}
+	return discovery.Observation{Number: pr.Number, HeadSHA: pr.HeadSHA, Title: pr.Title, State: state, Draft: pr.Draft, FetchedAt: at, Checks: checks}
 }

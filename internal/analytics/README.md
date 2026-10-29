@@ -64,8 +64,9 @@ The hosted service's counting rules apply:
   as the hosted cost queries group them; an aggregate the vendor reported
   without its requests is priced only below every threshold. A group with no
   price has no cost, never `$0.00`, and marks the total incomplete with the
-  reason in words. It is an estimate of API-equivalent cost, not what a
-  subscription charges.
+  reason in words. It is what the usage would cost at API prices, not what a
+  subscription charges, and it only reports: no budget, cap or decision
+  reads it.
 - Failed tool calls are calls whose result was an error. A tool error is not an
   interruption.
 

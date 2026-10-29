@@ -178,12 +178,12 @@
   --border-focus: var(--accent-600);
 
   /* ---- Semantic: interactive ----
-     The primary action is the brand's forest: dark enough to read as the same
-     weighty button, green enough to belong to the public pages. A secondary
-     or ghost action warms to sand under the pointer, as the public pages'
+     The primary action is the brand's green, as on Up next's Merge all. The
+     near-black --brand-forest is a canvas, never an accent. A secondary or
+     ghost action warms to sand under the pointer, as the public pages'
      outline button does. */
-  --action-primary: var(--brand-forest);
-  --action-primary-hover: #223328;
+  --action-primary: var(--brand-green-600);
+  --action-primary-hover: var(--brand-green-700);
   --action-secondary-hover: var(--brand-sand-50);
   --action-accent: var(--accent-600);
   --action-accent-hover: var(--accent-700);
@@ -274,13 +274,16 @@
      every sticky bar, under a host's own drawer. */
   --z-sheet: 40;
 
-  /* ---- Brand: sand and forest ----
+  /* ---- Brand: sand, green and forest ----
      The viewer borrows the brand palette only for chrome: the
      primary action, hover warmth, the picked row and masthead rules,
      never for status or data. The steps themselves are not restated for
      dark mode; the semantic tokens that use them are. */
   --brand-sand-50: #f7ead0;
   --brand-sand-100: #f2dcad;
+  --brand-green-700: #2f6428;
+  --brand-green-600: #3f7a34;
+  --brand-green-500: #4c8b34;
   --brand-forest: #0f1a14;
 }
 

@@ -630,6 +630,18 @@ func (f fakeWrites) RerunOptions(context.Context, github.Repository, int) (prupd
 func (f fakeWrites) RerunFailedChecks(context.Context, github.Repository, int, string) (prupdate.RerunResult, error) {
 	return prupdate.RerunResult{}, f.result()
 }
+func (f fakeWrites) ReviewThreads(context.Context, github.Repository, int, int) (prupdate.Threads, error) {
+	return prupdate.Threads{}, nil
+}
+func (f fakeWrites) ResolveThread(context.Context, github.Repository, int, string) error {
+	return f.result()
+}
+func (f fakeWrites) RerunJob(context.Context, github.Repository, int, string, int64) error {
+	return f.result()
+}
+func (f fakeWrites) FailingChecks(context.Context, github.Repository, int, string) (prupdate.Checks, error) {
+	return prupdate.Checks{}, nil
+}
 
 func TestActionsRecordOnlyWritesThatSucceeded(t *testing.T) {
 	actions := &Actions{Path: filepath.Join(t.TempDir(), "actions.json")}
