@@ -27,9 +27,9 @@ its HTTP handler uses.
   own are still the default. Renames chain, and renaming back undoes them.
   The daemon asks GitHub again at startup, and a fix before it pushes for
   its repository (`RecheckAliases`): an alias GitHub now answers with
-  another repository (a new one took the name) or none is dropped, so its
-  remotes name that repository again; one it could not check is kept. The
-  remote is never rewritten.
+  another repository than the recorded one (a new one took the name) is
+  dropped, so its remotes name that repository again; one it could not
+  check or does not show the token is kept. The remote is never rewritten.
   `Repositories` lists them as `earlier_names`.
 - `preferences(key, value)`: the global preferences as one JSON row.
 - `preferences(key, value)`: the global preferences as one JSON row. Its

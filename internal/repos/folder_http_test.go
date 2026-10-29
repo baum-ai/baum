@@ -120,38 +120,53 @@ func TestOpenLoadsRecordedEarlierNames(t *testing.T) {
 }
 
 // A recheck drops the earlier names GitHub now answers with another
-// repository or none, and keeps those it still forwards or could not check.
+// repository, and keeps those it still forwards there, even after another
+// rename, and those it could not check or does not show.
 func TestRecheckAliasesDropsNamesNoLongerForwarded(t *testing.T) {
 	r := registry(t)
-	current := uniqueName("recheck-new")
-	kept, taken, gone, unchecked := uniqueName("recheck-kept"), uniqueName("recheck-taken"), uniqueName("recheck-gone"), uniqueName("recheck-unchecked")
-	answers := map[string]error{kept: nil, taken: nil, gone: github.ErrNotFound, unchecked: errors.New("offline")}
-	for alias := range answers {
+	current, renamedAgain := uniqueName("recheck-new"), uniqueName("recheck-newer")
+	kept, again, taken, hidden, unchecked := uniqueName("recheck-kept"), uniqueName("recheck-again"), uniqueName("recheck-taken"), uniqueName("recheck-hidden"), uniqueName("recheck-unchecked")
+	answers := map[string]string{kept: current, taken: taken, hidden: "", unchecked: ""}
+	for _, alias := range []string{kept, taken, hidden, unchecked} {
 		if _, err := r.db.Exec("INSERT INTO aliases VALUES (?,?)", alias, current); err != nil {
 			t.Fatal(err)
 		}
 		gitlocal.AddRenamed(alias, current)
 	}
-	err := r.RecheckAliases(context.Background(), current, func(_ context.Context, repo github.Repository) (string, error) {
-		if repo.String() == taken {
-			return taken, nil
+	// again was recorded for renamedAgain's earlier name, which GitHub now
+	// forwards on.
+	if _, err := r.db.Exec("INSERT INTO aliases VALUES (?,?)", again, current+"-was"); err != nil {
+		t.Fatal(err)
+	}
+	gitlocal.AddRenamed(again, current+"-was")
+	err := r.RecheckAliases(context.Background(), "", func(_ context.Context, repo github.Repository) (string, error) {
+		switch name := repo.String(); {
+		case name == again || name == current+"-was":
+			return renamedAgain, nil
+		case name == current:
+			return current, nil
+		case name == hidden:
+			return "", github.ErrNotFound
+		case name == unchecked:
+			return "", errors.New("offline")
+		default:
+			return answers[name], nil
 		}
-		return current, answers[repo.String()]
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []string{kept, unchecked}
+	want := []string{hidden, kept, unchecked}
 	slices.Sort(want)
 	if got := gitlocal.EarlierNames(current); !slices.Equal(got, want) {
-		t.Fatalf("earlier names %v", got)
+		t.Fatalf("earlier names %v, want %v", got, want)
 	}
 	var stored int
-	if err := r.db.QueryRow("SELECT count(*) FROM aliases WHERE repository=?", current).Scan(&stored); err != nil || stored != 2 {
+	if err := r.db.QueryRow("SELECT count(*) FROM aliases").Scan(&stored); err != nil || stored != 4 {
 		t.Fatalf("%d aliases stored, %v", stored, err)
 	}
-	if gitlocal.RenamedTo(taken) != taken || gitlocal.RenamedTo(gone) != gone {
-		t.Fatal("a dropped name still reads as the repository")
+	if gitlocal.RenamedTo(taken) != taken || gitlocal.RenamedTo(again) != current+"-was" {
+		t.Fatal("the taken name reads as the repository, or the renamed-again one was dropped")
 	}
 }
 

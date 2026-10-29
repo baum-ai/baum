@@ -438,8 +438,9 @@ func loadAliases(db *sql.DB) error {
 
 // RecheckAliases asks GitHub (current) again about the recorded earlier names
 // of repository, or of every repository when it is "", and drops each one it
-// no longer forwards there, as when a new repository took the name: remotes
-// using it then name that one. One that could not be checked is kept.
+// now answers with another repository than the recorded one does, as when a
+// new repository took the name: remotes using it then name that one. One it
+// could not check or does not show the token is kept.
 func (r *Registry) RecheckAliases(ctx context.Context, repository string, current func(context.Context, github.Repository) (string, error)) error {
 	rows, e := r.db.QueryContext(ctx, "SELECT alias,repository FROM aliases WHERE ?1='' OR repository=lower(?1)", repository)
 	if e != nil {
@@ -462,13 +463,24 @@ func (r *Registry) RecheckAliases(ctx context.Context, repository string, curren
 		if e != nil {
 			continue
 		}
-		if now, e := current(ctx, earlier); e != nil && !errors.Is(e, github.ErrNotFound) || e == nil && strings.EqualFold(now, alias[1]) {
+		now, e := current(ctx, earlier)
+		if e != nil || strings.EqualFold(now, alias[1]) {
 			continue
 		}
-		if _, e = r.db.ExecContext(ctx, "DELETE FROM aliases WHERE alias=?", alias[0]); e != nil {
+		// Renamed again since: both names still lead to the same repository.
+		if recorded, e := github.ParseRepository(alias[1]); e != nil {
+			continue
+		} else if then, e := current(ctx, recorded); e != nil || strings.EqualFold(now, then) {
+			continue
+		}
+		// Unless AddForwarded recorded it anew meanwhile.
+		result, e := r.db.ExecContext(ctx, "DELETE FROM aliases WHERE alias=? AND repository=?", alias[0], alias[1])
+		if e != nil {
 			return e
 		}
-		gitlocal.RemoveRenamed(alias[0])
+		if n, _ := result.RowsAffected(); n > 0 {
+			gitlocal.RemoveRenamed(alias[0])
+		}
 	}
 	return nil
 }
