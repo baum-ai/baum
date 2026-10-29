@@ -1,25 +1,15 @@
-import { readFile } from "node:fs/promises";
-import { join } from "node:path";
 import { expect, test } from "@playwright/test";
+import { deleteAllInboxes, launchURL } from "./inbox-helpers";
 
 // Pictures of the inbox pages for a pull request, light and dark. They are
 // taken only when asked for (INBOX_SCREENSHOTS=1) and written to
 // test-results/inbox-screens, which is not committed.
 test.skip(!process.env.INBOX_SCREENSHOTS, "screenshots are taken on request");
 
-async function launchURL(): Promise<string> {
-  for (let attempt = 0; attempt < 100; attempt++) {
-    try {
-      const path = join(process.env.BAUM_APP_STATE_DIR ?? "", "credential.json");
-      const { url } = JSON.parse(await readFile(path, "utf8"));
-      if (typeof url === "string") return url;
-    } catch {
-      // Not written yet.
-    }
-    await new Promise((resolve) => setTimeout(resolve, 100));
-  }
-  throw new Error("the daemon did not publish its credential");
-}
+// The inboxes made here are not left for the specs that follow.
+test.afterEach(async ({ page }) => {
+  await deleteAllInboxes(page);
+});
 
 test("pictures of the inbox pages", async ({ page }) => {
   test.slow();

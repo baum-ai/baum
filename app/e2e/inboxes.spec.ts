@@ -1,27 +1,16 @@
-import { readFile } from "node:fs/promises";
-import { join } from "node:path";
 import { expect, test, type Page } from "@playwright/test";
-
-// The fixture daemon publishes its launch URL in a private credential file.
-async function launchURL(): Promise<string> {
-  for (let attempt = 0; attempt < 100; attempt++) {
-    try {
-      const path = join(process.env.BAUM_APP_STATE_DIR ?? "", "credential.json");
-      const { url } = JSON.parse(await readFile(path, "utf8"));
-      if (typeof url === "string") return url;
-    } catch {
-      // Not written yet.
-    }
-    await new Promise((resolve) => setTimeout(resolve, 100));
-  }
-  throw new Error("the daemon did not publish its credential");
-}
+import { deleteAllInboxes, launchURL } from "./inbox-helpers";
 
 /** The number on the Inbox link in the sidebar; 0 when it shows none. */
 async function inboxBadge(page: Page): Promise<number> {
   const badge = page.locator('.local-rail-link[href$="/"] .local-rail-badge');
   return (await badge.count()) === 0 ? 0 : Number(await badge.textContent());
 }
+
+// A failed or retried run leaves no inbox for the specs that follow.
+test.afterEach(async ({ page }) => {
+  await deleteAllInboxes(page);
+});
 
 // The fixture runs a real inbox store, so an inbox made here is saved by the
 // daemon and shows in the sidebar, in its queue and in the Inbox badge.
@@ -48,6 +37,7 @@ test("makes an inbox from a template, edits it, counts it in the badge and delet
     page.getByText("Created and added to the sidebar. Adjust anything below."),
   ).toBeVisible();
   await expect(page.getByLabel("Name")).toHaveValue("Needs my review");
+  await expect(page.getByLabel("Name")).toBeFocused();
   await expect(page.getByText("Saved", { exact: true })).toBeVisible();
   const inboxLink = sidebar.getByRole("link", { name: /^Needs my review/ });
   await expect(inboxLink).toBeVisible();
@@ -123,5 +113,6 @@ test("makes an inbox from a template, edits it, counts it in the badge and delet
   await page.getByRole("link", { name: "Edit", exact: true }).click();
   await page.getByRole("button", { name: "Delete inbox" }).click();
   await expect(sidebar.getByRole("link", { name: /^Needs my review/ })).toHaveCount(0);
+  await expect(sidebar.getByRole("link", { name: /^Inbox/ })).toBeFocused();
   expect(errors).toEqual([]);
 });

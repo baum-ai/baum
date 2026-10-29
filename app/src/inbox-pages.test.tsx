@@ -89,6 +89,9 @@ let node: HTMLDivElement;
 let entries: Entry[] = [];
 let daemon: { revision: number; inboxes: Inbox[] } | null = null;
 let puts: { revision: number; inboxes: Inbox[] }[] = [];
+// What the first read of the inboxes waits for, and a status that replaces its answer.
+let inboxesHold: Promise<void> | null = null;
+let inboxesFail: number | null = null;
 
 beforeEach(() => {
   Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
@@ -101,6 +104,8 @@ beforeEach(() => {
   entries = fixture();
   daemon = { revision: 1, inboxes: [reviews, acme] };
   puts = [];
+  inboxesHold = null;
+  inboxesFail = null;
   node = document.createElement("div");
   document.body.append(node);
   root = createRoot(node);
@@ -115,6 +120,8 @@ beforeEach(() => {
     "fetch",
     vi.fn(async (path: string, init?: RequestInit) => {
       if (path.endsWith("api/inboxes")) {
+        if (inboxesHold) await inboxesHold;
+        if (inboxesFail) return new Response("no", { status: inboxesFail });
         if (init?.method === "PUT") {
           const body = JSON.parse(init.body as string) as { revision: number; inboxes: Inbox[] };
           puts.push(body);
@@ -220,9 +227,17 @@ it("lists the six templates with their sentence and how many pull requests each 
   expect(node.textContent).toContain(
     "A pull request can sit in more than one inbox. Inbox at the top always shows everything.",
   );
-  // The sidebar keeps Inbox as its section, and says where it is.
-  expect(railLink("Inbox").getAttribute("aria-current")).toBe("page");
+  // The sidebar keeps Inbox as its section; only New inbox is the current page.
+  expect(railLink("Inbox").getAttribute("aria-current")).toBeNull();
   expect(railLink("New inbox").getAttribute("aria-current")).toBe("page");
+  expect(node.querySelectorAll('.local-rail [aria-current="page"]')).toHaveLength(1);
+});
+
+it("focuses the name once a template's page shows", async () => {
+  await render("?page=inbox-new");
+  await click(template("Urgent"));
+  expect(search().get("page")).toBe("inbox-edit");
+  expect(document.activeElement).toBe(nameInput());
 });
 
 it("makes Work from the owners of the person's repositories except their login", async () => {
@@ -390,7 +405,7 @@ it("changes a part of the sentence with one save and shows what it added and rem
   await click(options[1]);
   expect(puts).toHaveLength(1);
   expect(puts[0]!.inboxes[1]).toMatchObject({ id: "Acme", what: "review", owners: ["acme"] });
-  expect(node.querySelector(".inbox-diff")!.textContent).toBe("0 added · 2 removed");
+  expect(node.querySelector(".inbox-diff")!.textContent).toBe("2 removed");
   // The preview keeps the removed rows, struck through, until they fade.
   expect(node.querySelector(".inbox-preview-count")!.textContent).toBe("1");
   expect(
@@ -410,21 +425,43 @@ it("changes a part of the sentence with one save and shows what it added and rem
     )[0],
   );
   expect(puts).toHaveLength(2);
-  expect(node.querySelector(".inbox-diff")!.textContent).toBe("2 added · 0 removed");
+  expect(node.querySelector(".inbox-diff")!.textContent).toBe("2 added");
 });
 
-it("lets the diff fade after a few seconds", async () => {
+it("draws the diff's live region before there is a diff, empty", async () => {
+  await render("?page=inbox-edit&inbox=Acme");
+  const region = node.querySelector(".inbox-diff")!;
+  expect(region.getAttribute("role")).toBe("status");
+  expect(region.textContent).toBe("");
+  await click(node.querySelectorAll<HTMLButtonElement>(".inbox-part")[0]);
+  await click(
+    node.querySelectorAll<HTMLButtonElement>(
+      '[role="group"][aria-label="What it holds"] button',
+    )[1],
+  );
+  // The same element is filled, which is what a screen reader announces.
+  expect(node.querySelector(".inbox-diff")).toBe(region);
+  expect(region.textContent).toBe("2 removed");
+});
+
+it("lets the diff fade after a few seconds, the removed rows leaving with it", async () => {
   await render("?page=inbox-edit&inbox=Acme");
   vi.useFakeTimers();
   await click(node.querySelectorAll<HTMLButtonElement>(".inbox-part")[2]);
   await click(
     node.querySelectorAll<HTMLButtonElement>('[role="group"][aria-label="Risk"] button')[2],
   );
-  expect(node.querySelector(".inbox-diff")).not.toBeNull();
+  expect(node.querySelector(".inbox-diff")!.textContent).not.toBe("");
+  // The rows fade over the diff's last moments (a CSS animation), so they are
+  // still there until it ends.
   await act(async () => {
-    vi.advanceTimersByTime(5000);
+    vi.advanceTimersByTime(3900);
   });
-  expect(node.querySelector(".inbox-diff")).toBeNull();
+  expect(node.querySelector(".inbox-preview-row.gone")).not.toBeNull();
+  await act(async () => {
+    vi.advanceTimersByTime(200);
+  });
+  expect(node.querySelector(".inbox-diff")!.textContent).toBe("");
   expect(node.querySelector(".inbox-preview-row.gone")).toBeNull();
 });
 
@@ -493,7 +530,7 @@ it("opens fine-tune with what is already set, and a bot filter changes the previ
   expect(previewTitles()).toEqual(["Change 3", "Change 4"]);
   await click(button("Fine-tune"));
   await click(node.querySelector('.inbox-leave-out input[type="checkbox"]'));
-  expect(node.querySelector(".inbox-diff")!.textContent).toBe("0 added · 1 removed");
+  expect(node.querySelector(".inbox-diff")!.textContent).toBe("1 removed");
   await render("?page=inbox-edit&inbox=Merges");
   expect(node.querySelector(".inbox-fine")!.textContent).toContain("Leave out");
 });
@@ -536,6 +573,8 @@ it("deletes the inbox from its page with Undo and goes to Inbox", async () => {
   expect(puts[0]!.inboxes.map((one) => one.id)).toEqual(["Reviews"]);
   expect(location.search).toBe("");
   expect(node.querySelector(".upnext-list-head h1")!.textContent).toBe("Up next");
+  // Focus goes to Inbox in the sidebar, not to the page.
+  expect(document.activeElement).toBe(railLink("Inbox"));
   expect(node.querySelector(".inbox-toast")!.textContent).toContain(
     "Deleted Acme. Its pull requests stay in Inbox.",
   );
@@ -572,6 +611,8 @@ it("lists the inboxes in order with their counts, sentences and controls", async
   expect(link("Edit")!.getAttribute("href")).toBe("/s/test-ns/?page=inbox-edit&inbox=Reviews");
   expect(link("New inbox").getAttribute("href")).toBe("/s/test-ns/?page=inbox-new");
   expect(railLink("Manage inboxes").getAttribute("aria-current")).toBe("page");
+  expect(railLink("Inbox").getAttribute("aria-current")).toBeNull();
+  expect(node.querySelectorAll('.local-rail [aria-current="page"]')).toHaveLength(1);
 });
 
 it("reorders inboxes, saving the new order, and switches the badge", async () => {
@@ -605,11 +646,13 @@ it("says how many pull requests are in no inbox, or that every one is in some", 
   expect(node.querySelector(".inbox-coverage")!.textContent).toBe(
     "3 pull requests aren’t in any inbox right now. They show only under Inbox and always count in its badge.",
   );
+  expect(node.querySelector(".inbox-coverage")!.classList.contains("caution")).toBe(true);
   daemon = { revision: 1, inboxes: [reviews, inbox("Rest", {})] };
   await render("?page=inboxes");
   expect(node.querySelector(".inbox-coverage")!.textContent).toBe(
     "Every open pull request is in at least one inbox.",
   );
+  expect(node.querySelector(".inbox-coverage")!.classList.contains("ok")).toBe(true);
 });
 
 it("leads to New inbox when there are no inboxes", async () => {
@@ -688,4 +731,39 @@ it("shows none of it with an older daemon, and Inbox for a direct address", asyn
     (o) => o.textContent,
   );
   expect(options.some((o) => /inbox/i.test(o ?? "") && o !== "InboxPage")).toBe(false);
+});
+
+it("shows loading, not Inbox, for an inbox page until the first read answers", async () => {
+  let release!: () => void;
+  inboxesHold = new Promise<void>((resolve) => (release = resolve));
+  await render("?page=inboxes");
+  expect(node.querySelector(".upnext-list-head h1")).toBeNull();
+  expect(node.querySelector(".inbox-page")).toBeNull();
+  expect(node.textContent).toContain("Loading inboxes…");
+  await act(async () => {
+    release();
+    await settle();
+  });
+  expect(node.textContent).not.toContain("Loading inboxes…");
+  expect(node.querySelector(".inbox-manage")).not.toBeNull();
+});
+
+it("says the read failed on an inbox page when the first read fails, and recovers", async () => {
+  inboxesFail = 500;
+  await render("?page=inbox-edit&inbox=Acme");
+  expect(node.querySelector(".upnext-list-head h1")).toBeNull();
+  const alerts = Array.from(node.querySelectorAll('[role="alert"]'));
+  expect(alerts).toHaveLength(1);
+  expect(alerts[0]!.textContent).toContain("Couldn't read your inboxes");
+  inboxesFail = null;
+  await click(button("Retry"));
+  expect(node.querySelector('[role="alert"]')).toBeNull();
+  expect(nameInput().value).toBe("Acme");
+});
+
+it("falls back to Inbox for a daemon that says it has no inboxes", async () => {
+  daemon = null;
+  await render("?page=inboxes");
+  expect(node.querySelector(".upnext-list-head h1")!.textContent).toBe("Up next");
+  expect(node.querySelector('[role="alert"]')).toBeNull();
 });

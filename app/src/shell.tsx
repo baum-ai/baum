@@ -15,6 +15,9 @@ export type RailInboxes = {
   counts: Record<string, number>;
   /** The id of the inbox whose queue the page shows. */
   selected: string | null;
+  /** A page under Inbox that is not a queue (New inbox, Manage inboxes) is
+   *  the current one, so Inbox is only the section. */
+  elsewhere?: boolean;
   toggleBadge: (inbox: Inbox) => void;
   remove: (inbox: Inbox) => void;
   /** Opens the inbox's edit page. */
@@ -79,7 +82,9 @@ export function Sidebar({
         href={href()}
         title={`${label} (${pageKeyLabel(target)})`}
         aria-current={
-          page === target && !(target === "inbox" && inboxes?.selected) ? "page" : undefined
+          page === target && !(target === "inbox" && (inboxes?.selected || inboxes?.elsewhere))
+            ? "page"
+            : undefined
         }
         aria-keyshortcuts={pageKeyShortcut(target)}
         className="local-rail-link"

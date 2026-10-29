@@ -357,9 +357,15 @@ export function createInboxSaver(io: SaverIO) {
   };
 }
 
+/** Whether the first read has answered: `loading` before it, `ready` with a
+ *  list, `older` for a daemon without inboxes (404 or `available: false`) and
+ *  `failed` for a first read that failed some other way. */
+export type InboxesStatus = "loading" | "ready" | "older" | "failed";
+
 /** The person's inboxes, `null` while unread or when the daemon is older. */
 export function useInboxes() {
   const [list, setList] = useState<InboxList | null>(null);
+  const [status, setStatus] = useState<InboxesStatus>("loading");
   const [error, setError] = useState("");
   const [readError, setReadError] = useState("");
   const [saves, setSaves] = useState(0);
@@ -375,6 +381,7 @@ export function useInboxes() {
   const { adopt, save } = saver.current;
   return {
     available: list !== null,
+    status,
     inboxes: list?.inboxes ?? [],
     error: error || readError,
     /** How many saves the daemon has accepted, for a "Saved" mark. */
@@ -384,9 +391,12 @@ export function useInboxes() {
     read(result: InboxList | null | { failed: string }) {
       if (result && "failed" in result) {
         setReadError(result.failed);
+        // Once a read has answered, a later failure keeps what it said.
+        setStatus((s) => (s === "loading" || s === "failed" ? "failed" : s));
         return;
       }
       setReadError("");
+      setStatus(result ? "ready" : "older");
       adopt(result);
     },
     save: (inboxes: Inbox[]) => {

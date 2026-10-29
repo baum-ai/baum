@@ -372,7 +372,13 @@ opens Inbox (`src/inbox-pages.tsx`; routed in `src/app.tsx` by `?page=`). The
 nested list always ends with **New inbox** and **Manage inboxes** (shown even
 with no inboxes), and an inbox's queue header carries an **Edit** link. With an
 older daemon none of these links, pages or Go to entries exist, and a direct
-address to them shows Inbox. Every control is a real button, link or input with
+address to them shows Inbox, but only for an older daemon (the read answers 404
+or `available: false`): before the first read has answered the page shows
+"Loading inboxes…" rather than Inbox, and after a first read that failed it
+shows the read error with Retry. On New inbox and Manage inboxes the sidebar's
+current page is that entry alone, and Inbox is only the section (as when an
+inbox's row is selected); the edit page keeps the inbox's own row current.
+Every control is a real button, link or input with
 a label, with no key of its own, as Tab moves nothing in the app.
 
 - **New inbox** (`?page=inbox-new`): "What should this inbox catch?" and six
@@ -384,7 +390,8 @@ a label, with no key of its own, as Tab moves nothing in the app.
   (amber) and For an agent (grey) pick that kind. A name another inbox has
   becomes "Urgent 2", "Urgent 3"… Picking one appends it to the list with an id
   the app makes in the daemon's shape (so its page opens at once), and opens its
-  edit page with "Created and added to the sidebar. Adjust anything below." At
+  edit page with "Created and added to the sidebar. Adjust anything below.", its
+  Name input focused. At
   20 inboxes the templates are disabled, with a line saying so.
 - **Edit** (`?page=inbox-edit&inbox=<id>`): "← <name>" back to its queue, a
   "Saved" mark after each save the daemon accepted, and "Changes save as you
@@ -398,18 +405,20 @@ a label, with no key of its own, as Tab moves nothing in the app.
   that set. Fine-tune holds repository chips (none picked means all that match
   above) and "Leave out: Bots" (`no_bots`). A switch counts the inbox in the
   Inbox badge. **Delete inbox** is the sidebar's delete with Undo, then goes to
-  Inbox. The right-hand preview is "Would show right now" with the same
+  Inbox with focus on the sidebar's Inbox link. The right-hand preview is "Would show right now" with the same
   unsnoozed queue items and `matches` as the queue, grouped like it, each row
   with its repository and tags of the other inboxes it is in. A change that
-  alters the matches adds "N added · N removed" for a few seconds, the removed
-  rows struck through until it fades. An unknown id says "This inbox no longer
+  alters the matches says "N added", "N removed" or "N added · N removed" (a
+  zero half is left out) for four seconds, in a live region that is always on
+  the page and empty otherwise, the removed rows struck through and fading out
+  over the last moments (no fade with reduced motion). An unknown id says "This inbox no longer
   exists" and links to Inbox.
 - **Manage** (`?page=inboxes`): the inboxes in the sidebar's order, each with
   its colour dot, name, how many are in it now, sentence, up and down buttons
   ("Move <name> up", disabled at the ends), a labelled badge switch and Edit; a
-  save sends the whole list in its new order. A note says how many queue items
-  are in no inbox (they show only under Inbox and always count in its badge), or
-  that every one is in some. With none, it leads to New inbox.
+  save sends the whole list in its new order. A tinted note says how many queue items
+  are in no inbox (they show only under Inbox and always count in its badge; in
+  the caution tone), or that every one is in some (in the positive tone). With none, it leads to New inbox.
 
 Pull requests (`?page=pulls`, `src/inbox.tsx`) lists every open pull request
 of the picked repositories, with or without a local clone, with Risk,

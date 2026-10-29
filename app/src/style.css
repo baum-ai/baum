@@ -3988,6 +3988,10 @@ kbd.key-hint {
   font-weight: 600;
   font-variant-numeric: tabular-nums;
 }
+/* Always drawn so a screen reader hears it fill; empty it takes no room. */
+.inbox-diff:empty {
+  position: absolute;
+}
 .inbox-diff {
   margin: 0;
   color: var(--status-positive);
@@ -4014,7 +4018,6 @@ kbd.key-hint {
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-md);
   background: var(--surface-card);
-  transition: opacity 0.3s;
 }
 .inbox-preview-row.added {
   animation: upnext-rise 1.2s ease-out;
@@ -4023,6 +4026,18 @@ kbd.key-hint {
   border-style: dashed;
   background: transparent;
   opacity: 0.6;
+  /* Over the diff's four seconds, fading out in the last part so the row
+     is gone when the diff clears. */
+  animation: inbox-row-leave 4s linear forwards;
+}
+@keyframes inbox-row-leave {
+  0%,
+  92% {
+    opacity: 0.6;
+  }
+  100% {
+    opacity: 0;
+  }
 }
 .inbox-preview-row.gone .inbox-preview-title {
   color: var(--text-tertiary);
@@ -4099,8 +4114,20 @@ kbd.key-hint {
 }
 .inbox-coverage {
   margin: 0;
-  color: var(--text-secondary);
+  padding: 0.6rem 0.85rem;
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
   font-size: var(--text-sm);
+}
+.inbox-coverage.caution {
+  border-color: color-mix(in srgb, var(--status-caution) 35%, transparent);
+  background: var(--status-caution-bg);
+  color: var(--status-caution);
+}
+.inbox-coverage.ok {
+  border-color: color-mix(in srgb, var(--status-positive) 35%, transparent);
+  background: var(--status-positive-bg);
+  color: var(--status-positive);
 }
 .local-rail-extra {
   color: var(--text-tertiary);
@@ -4128,7 +4155,8 @@ kbd.key-hint {
   }
 }
 @media (prefers-reduced-motion: reduce) {
-  .inbox-preview-row.added {
+  .inbox-preview-row.added,
+  .inbox-preview-row.gone {
     animation: none;
   }
 }

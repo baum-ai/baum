@@ -226,6 +226,11 @@ function EditInbox({
   const [open, setOpen] = useState<"what" | "where" | "risk" | null>(null);
   const [fine, setFine] = useState(inbox.repositories.length > 0 || inbox.no_bots);
   const [diff, setDiff] = useState<Diff | null>(null);
+  const nameField = useRef<HTMLInputElement>(null);
+  // A new inbox opens with its name to type over.
+  useEffect(() => {
+    if (fresh) nameField.current?.focus();
+  }, []);
   // The name shown follows the saved one, as after a refusal elsewhere.
   useEffect(() => setDraft(inbox.name), [inbox.name]);
   useEffect(() => {
@@ -330,6 +335,7 @@ function EditInbox({
               <span aria-hidden="true" className="inbox-dot inbox-dot-large" />
               <input
                 id={`${ids}-name`}
+                ref={nameField}
                 type="text"
                 value={draft}
                 spellCheck={false}
@@ -458,6 +464,10 @@ function EditInbox({
               onClick={() => {
                 remove(inbox);
                 go(appURL());
+                // The button goes with the page: focus lands on Inbox.
+                document
+                  .querySelector<HTMLElement>(`.local-rail a.local-rail-link[href="${appURL()}"]`)
+                  ?.focus();
               }}
             >
               Delete inbox
@@ -469,11 +479,16 @@ function EditInbox({
             <h2>Would show right now</h2>
             <span className="inbox-preview-count">{mine.length}</span>
           </div>
-          {diff ? (
-            <p role="status" className="inbox-diff">
-              {diff.added.size} added · {diff.removed.length} removed
-            </p>
-          ) : null}
+          <p role="status" className="inbox-diff">
+            {diff
+              ? [
+                  diff.added.size > 0 ? `${diff.added.size} added` : "",
+                  diff.removed.length > 0 ? `${diff.removed.length} removed` : "",
+                ]
+                  .filter(Boolean)
+                  .join(" · ")
+              : ""}
+          </p>
           {groups.map((group) => (
             <section key={group.id} aria-label={group.title} className="inbox-preview-group">
               <h3>
@@ -619,7 +634,7 @@ export function ManageInboxesPage({ inboxes, items, login, saves, save, Link }: 
               ))}
             </ul>
             <p className="inbox-badge-label">Badge</p>
-            <p className="inbox-coverage">
+            <p className={`inbox-coverage ${uncovered > 0 ? "caution" : "ok"}`}>
               {uncovered > 0
                 ? `${uncovered} ${plural(uncovered, "pull request isn’t", "pull requests aren’t")} in any inbox right now. ${plural(uncovered, "It shows", "They show")} only under Inbox and always ${plural(uncovered, "counts", "count")} in its badge.`
                 : "Every open pull request is in at least one inbox."}

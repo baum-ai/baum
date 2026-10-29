@@ -393,11 +393,25 @@ function Workspace({ url }: { url: UrlState }) {
   const groupId = url.search.get("group");
   const requestedPage = url.search.get("page") ?? "inbox";
   // The pages that make and change inboxes need a daemon that has them.
-  const page =
-    !inboxes.available &&
-    (requestedPage === "inbox-new" || requestedPage === "inbox-edit" || requestedPage === "inboxes")
-      ? "inbox"
-      : requestedPage;
+  const inboxPage =
+    requestedPage === "inbox-new" || requestedPage === "inbox-edit" || requestedPage === "inboxes";
+  const page = inboxPage && inboxes.status === "older" ? "inbox" : requestedPage;
+  // Before the first read they wait; after a failed one they say so.
+  const inboxWaiting =
+    inboxPage && (inboxes.status === "loading" || inboxes.status === "failed") ? (
+      <section>
+        <PageBar title="Inboxes" />
+        <div className="local-page-body">
+          {inboxes.status === "failed" ? (
+            <Alert>
+              {inboxes.error} <Button onClick={() => void reload()}>Retry</Button>
+            </Alert>
+          ) : loading ? (
+            <LoadingStatus block>Loading inboxes…</LoadingStatus>
+          ) : null}
+        </div>
+      </section>
+    ) : null;
   // The inbox's queue counts in the sidebar on every page. Its record of what
   // was cleared waits for the first complete read, and pauses while reads
   // fail, so an empty or failed read clears nothing.
@@ -747,6 +761,7 @@ function Workspace({ url }: { url: UrlState }) {
                   ]),
                 ),
                 selected: selectedInbox?.id ?? null,
+                elsewhere: page === "inbox-new" || page === "inboxes",
                 toggleBadge: (target) =>
                   inboxes.save(
                     inboxes.inboxes.map((candidate) =>
@@ -800,7 +815,9 @@ function Workspace({ url }: { url: UrlState }) {
               {error} <Button onClick={() => void reload()}>Retry</Button>
             </Alert>
           ) : null}
-          {inboxes.error ? <Alert>{inboxes.error}</Alert> : null}
+          {inboxes.error && !(inboxWaiting && inboxes.status === "failed") ? (
+            <Alert>{inboxes.error}</Alert>
+          ) : null}
           {page === "repositories" ? (
             <RepositoriesPage
               repositories={picked}
@@ -867,6 +884,8 @@ function Workspace({ url }: { url: UrlState }) {
                 <Jobs jobs={jobs} changed={reload} />
               </div>
             </>
+          ) : inboxWaiting ? (
+            inboxWaiting
           ) : page === "inbox-new" ? (
             <NewInboxPage {...inboxPageProps} created={setFreshInbox} />
           ) : page === "inbox-edit" ? (
