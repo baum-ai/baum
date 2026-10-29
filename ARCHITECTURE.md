@@ -1618,11 +1618,30 @@ whole context pack (a repair resends the bundle and the rejected document), so
 `Outcome.SessionID`, the session of the last successful call, is the one that
 produced the accepted document and is self-contained. A run that succeeds with a
 session id records `store.Metadata.Session` (`backend`, `id`, `directory`,
-absent in older versions) and keeps the directory; a failed, rejected or
-cancelled run, a run without a session id, and a version the store refused remove
-it as before. Pruning removes directories only (the CLI's own session files
-stay), and only real directories directly under the root whose names carry the
-prefix: after a successful publish the directories of a pull request's versions
+absent in older versions) and keeps the directory, after deleting the
+`rejected-N.json` files of the repairs (raw model output the chat does not
+need); a failed, rejected or cancelled run, a run without a session id, and a
+version the store refused remove it as before. A cache directory that cannot be
+created is a warning on the progress output, and the review then runs in a
+temporary directory without persisting anything.
+
+Persisting makes the CLI write transcripts that were never written before: every
+call (the first attempt, provider retries, each repair) leaves a Claude Code
+session in `$CLAUDE_CONFIG_DIR` (else `~/.claude`) `/projects/<encoded run
+dir>/<id>.jsonl`, or a Codex rollout in `$CODEX_HOME` (else `~/.codex`)
+`/sessions/YYYY/MM/DD/rollout-*-<id>.jsonl` whose `session_meta` records the run
+directory as cwd. `Outcome.Sessions` lists every id the calls reported.
+`reviewruns.RemoveSessions` deletes them: after a successful run, those of the
+calls that did not produce the accepted document; on any failure, rejection,
+missing id, refused store or interruption, all of them (Claude's whole project
+directory, which is unique to the run, and the Codex rollouts whose first line
+records that cwd); and when a kept directory is pruned, every session of it,
+chat forks made later included. It acts only on a directory directly under the
+review-runs root with the run prefix, deletes only a real Claude project
+directory of that encoded name and `rollout-*.jsonl` regular files whose cwd is
+that directory, never follows a symlink and ignores files that are gone.
+The directory itself is pruned the same way and only real directories directly
+under the root whose names carry the prefix: after a successful publish the directories of a pull request's versions
 beyond the latest two (`reviewruns.PruneVersions`), and, when the daemon starts
 and then daily, any directory last modified more than 14 days ago
 (`reviewruns.Expire`). The directory of a review still running is neither

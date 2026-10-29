@@ -336,14 +336,22 @@ What remains for `codex`:
 A review the daemon runs with `claude` or `codex` keeps its agent session and
 run directory so a chat can continue it. The kept directory holds what the
 model was given: the unpacked head and merge-base checkouts, the description
-images, `bundle.json` (already redacted) and `schema.json`, and the CLI keeps
-its own transcript of the session in its usual store. It lives under baum's user
-cache directory (`<cache>/baum/review-runs/`), not in the system temporary
-directory or your repository, with mode 0700. Baum deletes the directories of a
-pull request's versions beyond the latest two and any directory untouched for 14
-days, only ever real directories with the run prefix directly under that root;
-it does not delete the CLI's session files. Failed, rejected and cancelled runs,
-runs for other backends and review groups still remove their directory at once.
+images, `bundle.json` (already redacted) and `schema.json`. The raw model output
+of a repair (`rejected-N.json`, unredacted) is deleted before the directory is
+kept. The CLI also keeps its transcript of the kept session in its usual store
+(`$CLAUDE_CONFIG_DIR` or `~/.claude` for Claude Code, `$CODEX_HOME` or
+`~/.codex` for Codex), which holds the prompt, the bundle and the model's
+answers. Only the session that produced the saved review stays: the sessions of
+retries and repairs are deleted when the run ends, and all of them when the run
+fails, is rejected or interrupted. The directory lives under baum's user cache
+directory (`<cache>/baum/review-runs/`), not in the system temporary directory
+or your repository, with mode 0700. Baum deletes the directories of a pull
+request's versions beyond the latest two and any directory untouched for 14
+days, together with the CLI sessions that ran in them (chat forks included),
+only ever real directories with the run prefix directly under that root, Claude
+project directories named after such a directory and Codex rollouts that record
+such a directory as their cwd; it never follows a symlink. Runs for other
+backends and review groups keep nothing and are removed at once.
 
 The unsandboxed mode (`--sandbox danger-full-access`) exists only as the
 `Container` profile for the hosted review agent, which runs inside its own

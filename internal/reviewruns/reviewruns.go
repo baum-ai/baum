@@ -71,14 +71,18 @@ func candidate(root, dir string) bool {
 	return err == nil && info.IsDir()
 }
 
-// Remove removes the listed directories that candidate accepts and ignores
-// the others.
+// Remove removes the listed run directories under root and the agent CLI
+// sessions that ran in them, and ignores anything else.
 func Remove(root string, dirs ...string) error {
 	var errs []error
 	for _, dir := range dirs {
-		if dir != "" && candidate(root, dir) {
+		if dir == "" || !underRoot(root, dir) {
+			continue
+		}
+		if candidate(root, dir) {
 			errs = append(errs, removeTree(dir))
 		}
+		errs = append(errs, RemoveSessions(root, dir))
 	}
 	return errors.Join(errs...)
 }
@@ -130,7 +134,8 @@ func Expire(root string, now time.Time, maxAge time.Duration) error {
 		if err != nil || now.Sub(info.ModTime()) <= maxAge {
 			continue
 		}
-		errs = append(errs, removeTree(filepath.Join(root, entry.Name())))
+		dir := filepath.Join(resolvedRoot(root), entry.Name())
+		errs = append(errs, removeTree(filepath.Join(root, entry.Name())), RemoveSessions(root, dir))
 	}
 	return errors.Join(errs...)
 }

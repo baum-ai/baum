@@ -652,8 +652,6 @@ func (h hookEvents) SubscribeCounted(buffer int, match func(hookevents.Event) bo
 	return ch, dropped, cancel
 }
 
-// newCloneFinder builds the service that finds local clones of picked
-// repositories from the folders agents worked in and the usual code folders.
 // maintainReviewRuns expires the run directories of reviews that kept their
 // agent session, at start and then daily.
 func maintainReviewRuns(ctx context.Context, log *slog.Logger) {
@@ -664,6 +662,8 @@ func maintainReviewRuns(ctx context.Context, log *slog.Logger) {
 	reviewruns.Maintain(ctx, root, 24*time.Hour, func(err error) { log.Warn("expiring kept review runs", "error", err) })
 }
 
+// newCloneFinder builds the service that finds local clones of picked
+// repositories from the folders agents worked in and the usual code folders.
 func newCloneFinder(registry *repos.Registry, events hookEvents, changed func(), log *slog.Logger) *clonefind.Service {
 	home, err := os.UserHomeDir()
 	if err != nil {

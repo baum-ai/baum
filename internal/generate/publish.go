@@ -4,9 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"time"
 
 	"github.com/baum-ai/baum/internal/pricing"
+	"github.com/baum-ai/baum/internal/reviewruns"
 	"github.com/baum-ai/baum/internal/store"
 	"github.com/baum-ai/baum/review"
 )
@@ -89,6 +91,7 @@ func Publish(ctx context.Context, versions Versions, key store.Key, o Options, c
 	dropSession := func() {
 		if keptSession != nil {
 			removeTree(keptSession.Directory)
+			_ = reviewruns.RemoveSessions(filepath.Dir(keptSession.Directory), keptSession.Directory)
 			result.Metadata.Session, result.RunDir = nil, ""
 		}
 	}

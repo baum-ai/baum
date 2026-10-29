@@ -228,6 +228,9 @@ func (g *Generator) call(ctx context.Context, budgets Budgets, request Request, 
 		if err != nil {
 			outcome.ErroredAttempts++
 		}
+		if result.SessionID != "" {
+			outcome.Sessions = append(outcome.Sessions, result.SessionID)
+		}
 		outcome.Calls += result.Calls
 		outcome.Tokens += result.Tokens
 		outcome.Model = result.Model

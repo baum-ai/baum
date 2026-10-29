@@ -36,6 +36,10 @@ type Outcome struct {
 	// when the run asked to persist its session (Run.PersistSession). It is
 	// not part of the diagnostics.
 	SessionID string `json:"-"`
+	// Sessions is every session id the run's calls reported, retries and
+	// repairs included, so a host can delete the CLI's files of the ones it
+	// does not keep. Set only with Run.PersistSession.
+	Sessions []string `json:"-"`
 }
 
 // IdentifierRedaction counts the spans the identifier pass masked, and the

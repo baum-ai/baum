@@ -244,6 +244,26 @@ func TestBestCandidateIsTheMostRecentlyUsed(t *testing.T) {
 	}
 }
 
+// A kept review run lives under the cache directory, which a dotfiles
+// repository in the home folder may contain: its sessions must not make that
+// repository the agents' clone.
+func TestKeptReviewRunsAreNotAgentFolders(t *testing.T) {
+	h := home(t)
+	dotfiles := repo(t, filepath.Join(h, "dots"), "origin", gh("acme/dotfiles"))
+	run := filepath.Join(dotfiles, ".cache", "baum", "review-runs", "baum-agent-run-4821")
+	if err := os.MkdirAll(run, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	at := time.Date(2026, 7, 1, 10, 0, 0, 0, time.UTC)
+	event := agentEvent(run, at)
+	event.Event.Session = &hookevents.Session{Cwd: run}
+	o := options(h, event)
+	o.MaxDepth = 1
+	if got := find(t, o).Repositories["acme/dotfiles"]; len(got) != 0 && got[0].Source == SourceAgent {
+		t.Fatalf("the review run made the dotfiles an agent folder: %+v", got)
+	}
+}
+
 func TestSessionStoresPointToClones(t *testing.T) {
 	h := home(t)
 	claude := repo(t, filepath.Join(h, "elsewhere", "claude-app"), "origin", gh("acme/claude-app"))
