@@ -34,6 +34,10 @@ groups (`internal/reviewgroups`, "Stack groups").
 
 ## Identity and membership
 
+As the hosted platform stores stacks, with every member and its parent. The
+local app plans only open pull requests over its stack groups, which store no
+parents, and dissolves a group where a hosted stack ends.
+
 - Members are recorded by pull request number with their parent's number
   (`NULL` for the root). A pull request is a current member (`left_at IS
   NULL`) of at most one stack; leaving keeps the row, and joining again clears
