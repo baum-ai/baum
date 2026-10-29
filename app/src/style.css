@@ -2119,8 +2119,15 @@ a.local-session-pr:hover {
   list-style: disc;
   color: var(--text-primary);
 }
+.local-decisions summary {
+  cursor: pointer;
+}
+.local-decisions details[open] > summary {
+  margin-bottom: 0.5rem;
+}
 .local-decisions h3 {
-  margin: 0 0 0.5rem;
+  display: inline;
+  margin: 0;
   font-weight: 600;
 }
 .local-decisions-note,
