@@ -639,28 +639,21 @@ it("lists the failing checks of the head it shows, each linking to its details",
   entries = [mine(2, { checks: "failing" })];
   const original = vi.mocked(fetch).getMockImplementation()!;
   vi.mocked(fetch).mockImplementation(async (...args) =>
-    String(args[0]).endsWith("api/jobs/estimate")
+    String(args[0]).includes("api/prs/failing-checks")
       ? Response.json({
-          id: "estimate",
-          items: [
-            { clone: "clone", pr: 2, kind: "fix", fix: { checks: true, head_ref: "feature" } },
+          head_sha: "head",
+          checks: [
+            {
+              name: "test",
+              conclusion: "failure",
+              title: "2 tests failed in pkg",
+              url: "https://github.com/acme/demo/runs/21",
+              job_id: 21,
+            },
+            { name: "ci/circle", conclusion: "timed_out" },
           ],
         })
-      : String(args[0]).includes("api/prs/failing-checks")
-        ? Response.json({
-            head_sha: "head",
-            checks: [
-              {
-                name: "test",
-                conclusion: "failure",
-                title: "2 tests failed in pkg",
-                url: "https://github.com/acme/demo/runs/21",
-                job_id: 21,
-              },
-              { name: "ci/circle", conclusion: "timed_out" },
-            ],
-          })
-        : original(...args),
+      : original(...args),
   );
   await render();
   expect(shown()).toBe("Change 2");
@@ -686,14 +679,10 @@ it("lists the failing checks of the head it shows, each linking to its details",
   const row = panel().querySelector<HTMLButtonElement>("li.upnext-has-threads > button")!;
   expect(row.textContent).toBe("Fix CI");
   await act(async () => row.click());
-  const estimates = vi
-    .mocked(fetch)
-    .mock.calls.filter(([path]) => String(path).endsWith("api/jobs/estimate"))
-    .map(([, init]) => JSON.parse(String((init as RequestInit).body)));
-  expect(estimates).toEqual([
+  expect(fixesStarted()).toEqual([
     { items: [{ clone: "clone", pr: 2, kind: "fix", only: "checks" }], mode: "single" },
   ]);
-  expect(node.querySelector("dialog h2")!.textContent).toBe("Fix CI");
+  expect(node.querySelector("dialog")).toBeNull();
   const asked = vi
     .mocked(fetch)
     .mock.calls.map(([path]) => String(path))
