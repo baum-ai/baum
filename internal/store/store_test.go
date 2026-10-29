@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -377,5 +378,22 @@ func TestRefreshInOlderStoreWithoutRuns(t *testing.T) {
 	_ = db.Close()
 	if err := s.RefreshCurrent(ctx, key, saved, []byte(`{"review":{"repository":"owner/repo","pull_request":7,"version":1},"checks":"newer"}`)); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestMetadataSessionIsOptional(t *testing.T) {
+	var old Metadata
+	if err := json.Unmarshal([]byte(`{"version":1,"head":"h","backend":"claude"}`), &old); err != nil || old.Session != nil {
+		t.Fatalf("%+v %v", old, err)
+	}
+	raw, err := json.Marshal(Metadata{Version: 2})
+	if err != nil || strings.Contains(string(raw), "session") {
+		t.Fatalf("%s %v", raw, err)
+	}
+	var round Metadata
+	in := Metadata{Version: 3, Session: &ReviewSession{Backend: "codex", ID: "i", Directory: "/d"}}
+	raw, _ = json.Marshal(in)
+	if err := json.Unmarshal(raw, &round); err != nil || *round.Session != *in.Session {
+		t.Fatalf("%+v %v", round, err)
 	}
 }

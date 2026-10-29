@@ -99,13 +99,18 @@ type Merger interface {
 	MergePullRequest(ctx context.Context, repository github.Repository, number int, method, expectedHead string) error
 }
 
-// Updater is the branch update and check re-run writes
-// uiserver.UpdateHandler makes.
+// Updater is the branch update, check re-run and thread resolution writes
+// uiserver.UpdateHandler makes. Re-running one job counts as a check re-run;
+// resolving a thread is not recorded.
 type Updater interface {
 	UpdateOptions(ctx context.Context, repository github.Repository, number int) (prupdate.UpdateOptions, error)
 	UpdateBranch(ctx context.Context, repository github.Repository, number int, expectedHead string) error
 	RerunOptions(ctx context.Context, repository github.Repository, number int) (prupdate.RerunOptions, error)
 	RerunFailedChecks(ctx context.Context, repository github.Repository, number int, expectedHead string) (prupdate.RerunResult, error)
+	ReviewThreads(ctx context.Context, repository github.Repository, number, unresolved int) (prupdate.Threads, error)
+	ResolveThread(ctx context.Context, repository github.Repository, number int, id string) error
+	FailingChecks(ctx context.Context, repository github.Repository, number int, head string) (prupdate.Checks, error)
+	RerunJob(ctx context.Context, repository github.Repository, number int, expectedHead string, job int64) error
 }
 
 // RecordMerges records each merge m makes.
@@ -136,6 +141,14 @@ func (r recordingUpdater) UpdateBranch(ctx context.Context, repository github.Re
 	err := r.Updater.UpdateBranch(ctx, repository, number, expectedHead)
 	if err == nil {
 		_ = r.actions.Record(ActionUpdateBranch, repository.String(), number)
+	}
+	return err
+}
+
+func (r recordingUpdater) RerunJob(ctx context.Context, repository github.Repository, number int, expectedHead string, job int64) error {
+	err := r.Updater.RerunJob(ctx, repository, number, expectedHead, job)
+	if err == nil {
+		_ = r.actions.Record(ActionRerunChecks, repository.String(), number)
 	}
 	return err
 }

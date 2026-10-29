@@ -32,31 +32,83 @@ type Item struct {
 	Group string `json:"group,omitempty"`
 	// Kind is KindFix for a fix, empty for a review.
 	Kind string `json:"kind,omitempty"`
+	// Only limits a fix to one of what it fixes: FixOnlyChecks fixes the
+	// failing checks and leaves conflicts and review comments alone.
+	Only string `json:"only,omitempty"`
 }
 
 // KindFix is the Item.Kind of a fix: an agent with write access to a
 // temporary checkout of the pull request's branch resolves its merge
 // conflicts, failing checks or unresolved review comments, and baum pushes
 // the result and replies on the review threads it addressed (internal/fix). A
-// fix is never automatic and runs only from a confirmed estimate.
+// fix is never automatic: it runs when a person starts it.
 const KindFix = "fix"
 
-// FixInputs are what a fix job was confirmed for: what it fixes, the branch
-// it pushes to and the base branch it merges.
+// KindFeatureBuild is the Item.Kind of a repository's first feature build:
+// its pull request history placed in features (decisionlog's Build). Clone
+// names the repository's clone and PR is 0. It starts at once when a person
+// asks for it, with no estimate and no spending cap; one interrupted or
+// failed is resumed by starting it again.
+const KindFeatureBuild = "feature_build"
+
+// FeatureBuildPlan is the backend and model a feature build would call, or
+// why it cannot run now.
+type FeatureBuildPlan struct {
+	Backend, Model string
+	// Reason is why it cannot run now.
+	Reason string
+}
+
+// ReasonUnpricedCalls is the cost reason of a feature build some of whose
+// calls could not be priced: its recorded cost at API prices is a lower
+// bound.
+const ReasonUnpricedCalls = "unpriced_calls"
+
+// FeatureBuilder plans and runs feature builds.
+type FeatureBuilder interface {
+	PlanFeatureBuild(ctx context.Context, repository, dir string) (FeatureBuildPlan, error)
+	// BuildFeatures runs a build and returns the run's spend; a build that
+	// stops before its version is current returns a *StoppedError.
+	BuildFeatures(ctx context.Context, repository, dir string, progress func(Progress)) (float64, error)
+}
+
+// StoppedError is a feature build that stopped before it finished, for
+// Reason (an unavailable backend, or "failed"); the job fails with that
+// reason.
+type StoppedError struct {
+	Reason string
+	// Err is the error that stopped it, if one did.
+	Err error
+}
+
+func (e *StoppedError) Error() string {
+	message := "the feature build stopped (" + e.Reason + ")"
+	if e.Err != nil {
+		message += ": " + e.Err.Error()
+	}
+	return message + "; start it again to resume"
+}
+
+func (e *StoppedError) Unwrap() error { return e.Err }
+
+// FixOnlyChecks is the Item.Only of a fix of the failing checks alone.
+const FixOnlyChecks = "checks"
+
+// FixInputs are what a fix job was started for: what it fixes, the branch it
+// pushes to and the base branch it merges.
 type FixInputs struct {
 	Conflicts bool `json:"conflicts,omitempty"`
 	Checks    bool `json:"checks,omitempty"`
 	// Threads, when the fix addresses review comments, identifies the
 	// threads and their comments (fix.Digest): a reply or an edit on GitHub
-	// after the confirmation stops the fix.
+	// after the fix was started stops it.
 	Threads string `json:"threads,omitempty"`
 	HeadRef string `json:"head_ref,omitempty"`
 	BaseRef string `json:"base_ref,omitempty"`
 }
 
-// FixThread is a review thread a fix addresses, as the confirmation and the
-// job show it. Author and Excerpt, the first line of the first comment, are
-// the reviewer's.
+// FixThread is a review thread a fix addresses, as the job shows it. Author
+// and Excerpt, the first line of the first comment, are the reviewer's.
 type FixThread struct {
 	Ref      string `json:"ref"`
 	Path     string `json:"path"`
@@ -66,25 +118,27 @@ type FixThread struct {
 	Excerpt  string `json:"excerpt,omitempty"`
 }
 
-// ErrFixNeedsConfirmation refuses a fix asked for without a confirmed
-// estimate.
-var ErrFixNeedsConfirmation = errors.New("a fix runs only from a confirmed estimate")
+// BlockedError refuses a single item the daemon will not run, such as a fix
+// of a fork or with nothing to fix: Reason is its BlockedReason, which the
+// app shows in words.
+type BlockedError struct{ Reason string }
+
+func (e *BlockedError) Error() string { return "not started: " + e.Reason }
 
 type Prepared struct {
 	ConfigDigest string `json:"config_digest"`
 	PriceVersion string `json:"price_version"`
 	Item
-	Repository  string   `json:"repository"`
-	HeadSHA     string   `json:"head_sha"`
-	Backend     string   `json:"backend"`
-	Model       string   `json:"model"`
-	MaxTokens   int      `json:"max_tokens,omitempty"`
-	MaxCalls    int      `json:"max_calls,omitempty"`
-	EstimateUSD *float64 `json:"estimate_usd"`
-	// EstimateReason, when set, is why EstimateUSD is nil on purpose: the
-	// backend is billed outside the price list (pricing.ReasonBilledByCursor).
-	// Such an item runs only after its own acknowledgement.
-	EstimateReason                string `json:"estimate_reason,omitempty"`
+	Repository string `json:"repository"`
+	HeadSHA    string `json:"head_sha"`
+	Backend    string `json:"backend"`
+	Model      string `json:"model"`
+	MaxTokens  int    `json:"max_tokens,omitempty"`
+	MaxCalls   int    `json:"max_calls,omitempty"`
+	// RequiresIsolationConfirmation and BlockedReason say what holds the item
+	// back. Nothing about its price does: there is no cost estimate, since
+	// baum cannot price what a subscription bills, and an estimate_usd an
+	// older baum journaled is ignored.
 	RequiresIsolationConfirmation bool   `json:"requires_isolation_confirmation"`
 	BlockedReason                 string `json:"blocked_reason,omitempty"`
 	// Draft: GitHub reports the PR as a draft. Automatic jobs skip drafts;
@@ -111,29 +165,19 @@ type Prepared struct {
 }
 
 // sameConfirmedInputs reports whether two confirmations authorize the same
-// run: clone, head, backend, model, budgets and caps, isolation, price list
-// version and estimate. Only then is a resubmission idempotent.
+// run: clone, head, backend, model, budgets and caps, and isolation. Only
+// then is a resubmission idempotent. The price list version is provenance and
+// never decides whether a queued job is kept or replaced.
 func (p Prepared) sameConfirmedInputs(o Prepared) bool {
-	if (p.EstimateUSD == nil) != (o.EstimateUSD == nil) || (p.EstimateUSD != nil && *p.EstimateUSD != *o.EstimateUSD) {
-		return false
-	}
-	p.EstimateUSD, o.EstimateUSD = nil, nil
+	p.PriceVersion, o.PriceVersion = "", ""
 	return reflect.DeepEqual(p, o)
 }
 
-// sameEstimate reports whether a fresh preparation carries the confirmed
-// estimate: the same amount, or the same reason it has none.
-func sameEstimate(current, confirmed Prepared) bool {
-	if current.EstimateUSD == nil || confirmed.EstimateUSD == nil {
-		return current.EstimateUSD == nil && confirmed.EstimateUSD == nil && current.EstimateReason == confirmed.EstimateReason
-	}
-	return *current.EstimateUSD == *confirmed.EstimateUSD
-}
-
+// Estimate is items prepared together, held for a few minutes until they
+// are queued. It carries no cost; the name is historical.
 type Estimate struct {
 	ID           string     `json:"id"`
 	Items        []Prepared `json:"items"`
-	EstimateUSD  *float64   `json:"estimate_usd"`
 	PriceVersion string     `json:"price_version"`
 	ExpiresAt    time.Time  `json:"expires_at"`
 }
@@ -215,8 +259,8 @@ type Queue struct {
 }
 
 // ErrRestarting refuses a job while the daemon restarts as a newer version.
-// Estimate and confirm again in a moment: the new daemon takes the job.
-var ErrRestarting = errors.New("the baum daemon is restarting as a newer version; estimate and confirm again in a moment")
+// Start it again in a moment: the new daemon takes the job.
+var ErrRestarting = errors.New("the baum daemon is restarting as a newer version; start it again in a moment")
 
 // lockWait is how long Open waits for a predecessor process to let go of the
 // journal: one whose shutdown timed out exits right after.
@@ -419,18 +463,19 @@ func (q *Queue) estimate(ctx context.Context, items []Item, mode string, isolati
 	if len(items) < 1 || len(items) > 50 || (mode != "single" && mode != "batch") || (mode == "single" && len(items) != 1) {
 		return Estimate{}, errors.New("invalid generation selection")
 	}
-	// A fix is confirmed on its own.
-	if items[0].Kind != "" && (mode != "single" || items[0].Kind != KindFix) {
+	// A fix or a feature build starts on its own.
+	if items[0].Kind != "" && (mode != "single" || (items[0].Kind != KindFix && items[0].Kind != KindFeatureBuild)) {
+		return Estimate{}, errors.New("invalid generation selection")
+	}
+	if items[0].Only != "" && (items[0].Kind != KindFix || items[0].Only != FixOnlyChecks) {
 		return Estimate{}, errors.New("invalid generation selection")
 	}
 	for _, item := range items[1:] {
-		if item.Kind != "" {
+		if item.Kind != "" || item.Only != "" {
 			return Estimate{}, errors.New("invalid generation selection")
 		}
 	}
 	estimate := Estimate{ID: id(), Items: []Prepared{}, ExpiresAt: time.Now().Add(5 * time.Minute).UTC()}
-	total := 0.0
-	known := true
 	seen := map[string]bool{}
 	for _, item := range items {
 		p, version, e := q.executor.Prepare(ctx, item)
@@ -448,27 +493,12 @@ func (q *Queue) estimate(ctx context.Context, items []Item, mode string, isolati
 		if mode == "batch" && p.RequiresIsolationConfirmation && !isolation {
 			p.BlockedReason = "isolation_confirmation_required"
 		}
-		if p.BlockedReason == "unknown_model_price" {
-			known = false
-		}
-		if p.BlockedReason == "" {
-			if p.EstimateUSD == nil {
-				// Billed elsewhere or not in the price list: the total is
-				// unknown, and the item runs anyway.
-				known = false
-			} else {
-				total += *p.EstimateUSD
-			}
-		}
 		estimate.Items = append(estimate.Items, p)
+		// The list active when the items were prepared, kept as provenance;
+		// a newer list installed meanwhile changes no item's eligibility.
 		if estimate.PriceVersion == "" {
 			estimate.PriceVersion = version
-		} else if estimate.PriceVersion != version {
-			return Estimate{}, errors.New("price list changed; estimate again")
 		}
-	}
-	if known {
-		estimate.EstimateUSD = &total
 	}
 	q.mu.Lock()
 	defer q.mu.Unlock()
@@ -485,8 +515,8 @@ func (q *Queue) estimate(ctx context.Context, items []Item, mode string, isolati
 }
 
 // Confirmation is what a person confirmed for an estimate: the estimate
-// itself, running an agent on a fork or an author without known write access,
-// and running items baum cannot estimate because another service bills them.
+// itself, and running an agent on a fork or an author without known write
+// access.
 type Confirmation struct {
 	Estimate, Isolation bool
 }
@@ -510,29 +540,37 @@ const ReasonNeedsClone = "needs_clone"
 var ErrIsolationRequired = errors.New("isolation confirmation required")
 
 // Generate prepares and queues items in one step: the user asked for the
-// reviews, and only a fork or an author without known write access needs
-// their confirmation (isolation) first.
+// reviews or the fix, and only a fork or an author without known write access
+// needs their confirmation (isolation) first. Nothing about the price stops a
+// run. A single item the daemon will not run is a BlockedError with its
+// reason.
 func (q *Queue) Generate(ctx context.Context, items []Item, mode string, isolation bool) ([]Job, error) {
-	for _, item := range items {
-		if item.Kind != "" {
-			return nil, ErrFixNeedsConfirmation
-		}
-	}
 	e, err := q.estimate(ctx, items, mode, isolation)
 	if err != nil {
 		return nil, err
 	}
 	for _, p := range e.Items {
 		if p.RequiresIsolationConfirmation && !isolation {
+			q.forget(e.ID)
 			return nil, ErrIsolationRequired
 		}
+	}
+	if mode == "single" && e.Items[0].BlockedReason != "" {
+		q.forget(e.ID)
+		return nil, &BlockedError{e.Items[0].BlockedReason}
 	}
 	return q.SubmitConfirmed(ctx, e.ID, Confirmation{Estimate: true, Isolation: isolation})
 }
 
+// forget drops an estimate nothing will submit.
+func (q *Queue) forget(estimateID string) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	delete(q.estimates, estimateID)
+}
+
 // SubmitConfirmed queues the unblocked items of a current estimate. An item
-// with an EstimateReason needs Unpriced, as one needing isolation
-// confirmation needs Isolation.
+// needing isolation confirmation needs Isolation.
 func (q *Queue) SubmitConfirmed(ctx context.Context, estimateID string, c Confirmation) ([]Job, error) {
 	confirmed, isolation := c.Estimate, c.Isolation
 	q.mu.Lock()
@@ -549,12 +587,14 @@ func (q *Queue) SubmitConfirmed(ctx context.Context, estimateID string, c Confir
 		if p.RequiresIsolationConfirmation && !isolation {
 			return nil, errors.New("separate isolation confirmation is required")
 		}
-		current, version, err := q.executor.Prepare(ctx, p.Item)
+		current, _, err := q.executor.Prepare(ctx, p.Item)
 		if err != nil {
 			return nil, err
 		}
-		if current.ConfigDigest != p.ConfigDigest || current.HeadSHA != p.HeadSHA || current.Members != p.Members || current.Backend != p.Backend || current.Model != p.Model || current.RequiresIsolationConfirmation != p.RequiresIsolationConfirmation || current.BlockedReason != "" || version != e.PriceVersion || !sameEstimate(current, p) || current.Fix != p.Fix {
-			return nil, errors.New("generation inputs changed; estimate again")
+		// A changed price list or estimate is not a changed input: nothing
+		// about the price stops a run.
+		if current.ConfigDigest != p.ConfigDigest || current.HeadSHA != p.HeadSHA || current.Members != p.Members || current.Backend != p.Backend || current.Model != p.Model || current.RequiresIsolationConfirmation != p.RequiresIsolationConfirmation || current.BlockedReason != "" || current.Fix != p.Fix {
+			return nil, errors.New("generation inputs changed; start it again")
 		}
 		prepared = append(prepared, current)
 	}
@@ -752,7 +792,12 @@ func (q *Queue) worker() {
 			current.State = "completed"
 			var refused *NotAutomaticError
 			var fixErr *fix.Error
+			var stopped *StoppedError
 			switch {
+			case err != nil && errors.As(err, &stopped):
+				current.State = "failed"
+				current.Reason = stopped.Reason
+				current.Detail = stopped.Error()
 			case err != nil && errors.As(err, &fixErr):
 				current.State = "failed"
 				current.Reason = fixErr.Reason

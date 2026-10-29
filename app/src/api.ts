@@ -8,9 +8,11 @@ export type Clone = {
   settings: {
     /** null follows the global automatic generation preference. */
     automatic: boolean | null;
-    daily_cap: number | null;
     backend: string | null;
     model: string | null;
+    /** Decision capture for this repository: false turns it off, null and
+     *  true follow the global switches. Absent from an older daemon. */
+    decisions?: boolean | null;
   };
 };
 export type Repository = { repository: string; settings: Clone["settings"]; clones: Clone[] };
@@ -36,6 +38,8 @@ export type PR = GitHubState & {
   head_sha: string;
   title: string;
   author?: string;
+  /** The author is a bot (a GitHub App), not a person. Absent in older snapshots. */
+  author_bot?: boolean;
   url: string;
   state: string;
   draft: boolean;
@@ -159,8 +163,11 @@ export type Job = {
   group?: string;
   group_name?: string;
   members?: string;
-  /** "fix" for a fix of the pull request; absent for a review. */
-  kind?: "fix";
+  /** When the job last changed. */
+  updated_at?: string;
+  /** "fix" for a fix of the pull request, "feature_build" for a
+   * repository's first feature build (its `pr` is 0); absent for a review. */
+  kind?: "fix" | "feature_build";
   fix?: FixInputs;
   /** The fix agent's transcript can be read from `api/jobs/{id}/transcript`. */
   has_transcript?: boolean;
@@ -177,7 +184,7 @@ export type Job = {
   fix_threads?: FixThread[];
   thread_outcomes?: ThreadOutcome[];
 };
-/** What a fix was confirmed for. `threads`, when set, identifies the review
+/** What a fix was started for. `threads`, when set, identifies the review
  *  threads it addresses. */
 export type FixInputs = {
   conflicts?: boolean;
@@ -208,16 +215,11 @@ export type ThreadOutcome = {
 export type AutomaticStatus = {
   repository: string;
   enabled: boolean;
-  daily_cap: number | null;
-  spent_today: number;
-  spent_known: boolean;
-  paused_until?: string;
   notice?: string;
   pending: number;
 };
 export type Automatic = {
   enabled: boolean;
-  cursor_agent_acknowledged: boolean;
   /** Which pull requests get automatic reviews; absent from older daemons. */
   pull_requests?: "all" | "both" | "authored" | "requested";
   repositories: AutomaticStatus[];
@@ -232,15 +234,17 @@ const jobReasons: Record<string, string> = {
   internal: "Something went wrong inside baum.",
   signing: "Git couldn't sign a commit, so the agent didn't run.",
   superseded: "A newer commit replaced it.",
+  // A job an older baum stopped for its daily spending cap, which is gone.
+  daily_cap: "It stopped before it started.",
   draft: "The pull request became a draft.",
   fork: "The pull request's branch is in a fork, which baum never pushes to.",
   no_push_access: "Your GitHub account can't push to this repository.",
   nothing_to_fix:
     "GitHub reports no merge conflict, failing check or unresolved review comment to fix on this pull request now.",
   threads_changed:
-    "The review comments changed after you confirmed the fix, so it stopped. Check them and start it again.",
+    "The review comments changed after you started the fix, so it stopped. Check them and start it again.",
   unsupported_backend:
-    "Fixes run with Claude Code or Codex only. Choose one of them as the review harness to fix pull requests.",
+    "Fixes run with Claude Code or Codex only. Choose one of them as the agent for fixes in Settings.",
   head_changed: "New commits arrived on the branch, so the fix stopped. Try again on the new head.",
   no_remote: "The local clone has no remote for this repository to push to.",
   git: "A git command in the temporary checkout failed.",
@@ -254,10 +258,27 @@ const jobReasons: Record<string, string> = {
     "GitHub refused the push, usually because the branch moved on. Nothing was force-pushed.",
   push_failed: "The push failed. Check that git can push to this repository from your clone.",
 };
-/** What a finished job's reason means, in a sentence. */
-export function jobReasonText(reason: string): string {
+/** A job's reason in words: a feature build's in its own, others' as
+ *  reviews and fixes say them. */
+export function jobReasonText(reason: string, kind?: Job["kind"]): string {
+  if (kind === "feature_build" && Object.hasOwn(buildReasons, reason)) return buildReasons[reason]!;
   return jobReasons[reason] ?? reason.replaceAll("_", " ");
 }
+/** Why a feature build stopped or cannot run. None asks to confirm it again:
+ *  where a build can be resumed, the page offers that itself. */
+const buildReasons: Record<string, string> = {
+  disabled: "Decisions are turned off for this repository, so it cannot be built.",
+  preferences_unreadable: "baum could not read its preferences, so it did not make a call.",
+  backend_unavailable: "The model backend is not available on this computer.",
+  backend_unsupported: "The configured backend cannot make the feature log's calls.",
+  git_auth_ssh:
+    "baum couldn't sign in over SSH to fetch pull requests. Background fetches can't ask for a key passphrase, so add your key to your SSH agent (ssh-add) and try again.",
+  git_auth_https:
+    "baum couldn't sign in over HTTPS to fetch pull requests. Background fetches can't ask for a password, so connect GitHub in Settings or save the credential in a Git credential helper, and try again.",
+  failed: "It failed before it finished.",
+  cancelled: "It was cancelled before it finished.",
+  interrupted: "baum stopped before the build finished.",
+};
 /** How the jobs list and PR page say a job started without confirmation. */
 export function automaticLabel(job: Job): string | null {
   if (!job.automatic) return null;
@@ -278,52 +299,20 @@ export function automaticNotice(status: AutomaticStatus): string | null {
   switch (status.notice) {
     case undefined:
     case "":
-      return null;
-    case "daily_cap":
-      return `Automatic generation is paused: today's automatic spending reached the daily cap${
-        status.daily_cap === null ? "" : ` of ${formatUSD(status.daily_cap)}`
-      }. It resumes ${
-        status.paused_until ? new Date(status.paused_until).toLocaleString() : "tomorrow"
-      }.`;
+    // An older daemon refused or paused these for the price; nothing does
+    // now, so a notice it left behind says nothing.
     case "cursor_agent_acknowledgement_required":
-      return "A pull request was not generated automatically: cursor-agent has no cost estimate. Acknowledge this in Repositories & settings to let automatic generation use it.";
+    case "unknown_model_price":
+    case "daily_cap":
+      return null;
     case "isolation_confirmation_required":
       return "A pull request was not generated automatically: it comes from a fork or an author without known write access, which always needs your confirmation.";
-    case "unknown_model_price":
-      return "A pull request was not generated automatically: the configured model has no known price. Choose a priced model.";
     case "unavailable":
       return "A pull request was not generated automatically: GitHub or the local clone was unavailable after several attempts.";
     default:
       return `A pull request was not generated automatically (${status.notice}).`;
   }
 }
-export type Estimate = {
-  id: string;
-  estimate_usd: number | null;
-  price_version: string;
-  expires_at: string;
-  items: {
-    clone: string;
-    pr: number;
-    kind?: "fix";
-    fix?: FixInputs;
-    /** The review threads a fix would address; capped when there were more
-     *  than baum includes, and how many were left out because an account
-     *  without access to the repository started them. */
-    fix_threads?: FixThread[];
-    fix_threads_capped?: boolean;
-    fix_threads_untrusted?: number;
-    head_sha: string;
-    backend: string;
-    model: string;
-    estimate_usd: number | null;
-    estimate_reason?: string;
-    max_tokens: number;
-    max_calls: number;
-    requires_isolation_confirmation: boolean;
-    blocked_reason?: string;
-  }[];
-};
 export type DiagnosticStatus = "ok" | "warning" | "problem" | "info";
 export type DiagnosticCheck = {
   id: string;
@@ -383,6 +372,19 @@ export type LiveSession = {
   /** The opening of the session's latest compaction summary (the request
    *  it records), one line, masked; absent until the agent compacted it. */
   summary?: string;
+  /** What the agent is doing, read from its transcript; absent when nothing
+   *  was found, and from a daemon older than this field. */
+  activity?: Activity;
+};
+/** One tool call of a session: the tool as displayed ("Read", "Edit",
+ *  "Bash", "server: tool") and what it works on, one masked line. */
+export type ActivityStep = { tool: string; target?: string; at?: string };
+export type Activity = {
+  /** The latest tool calls, oldest first. */
+  steps: ActivityStep[];
+  files_touched?: number;
+  /** The agent's latest text message, one line, masked. */
+  last_message?: string;
 };
 const agentNames: Record<string, string> = {
   "claude-code": "Claude Code",
@@ -399,11 +401,133 @@ export function agentName(agent: string): string {
 export function parseLive(body: unknown): LiveSession[] {
   const list = (body as { sessions?: unknown } | null)?.sessions;
   return Array.isArray(list)
-    ? list.filter(
-        (s): s is LiveSession =>
-          !!s && typeof s.session_id === "string" && typeof s.repository === "string",
-      )
+    ? list
+        .filter(
+          (s): s is LiveSession =>
+            !!s && typeof s.session_id === "string" && typeof s.repository === "string",
+        )
+        .map((s) => {
+          const { activity, ...rest } = s;
+          const clean = parseActivity(activity);
+          return clean ? { ...rest, activity: clean } : rest;
+        })
     : [];
+}
+function parseActivity(value: unknown): Activity | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const a = value as Partial<Activity>;
+  const steps = Array.isArray(a.steps)
+    ? a.steps.filter((s): s is ActivityStep => !!s && typeof s.tool === "string")
+    : [];
+  const files = typeof a.files_touched === "number" && a.files_touched > 0 ? a.files_touched : 0;
+  const message = typeof a.last_message === "string" && a.last_message ? a.last_message : "";
+  if (steps.length === 0 && !files && !message) return undefined;
+  return {
+    steps,
+    ...(files ? { files_touched: files } : {}),
+    ...(message ? { last_message: message } : {}),
+  };
+}
+
+/** One row of what a request would do. */
+export type RequestInput = { label: string; value: string; code?: boolean };
+export type RequestSuggestion = { id: string; label: string };
+export type RequestQuestion = {
+  question: string;
+  header?: string;
+  multi_select?: boolean;
+  options: { label: string; description?: string }[];
+};
+/** A permission or a question an agent waits on, answerable from the app. */
+export type AgentRequest = {
+  id: string;
+  agent: string;
+  session_id: string;
+  kind: "permission" | "question";
+  tool: string;
+  created_at: string;
+  input: RequestInput[];
+  suggestions: RequestSuggestion[];
+  questions: RequestQuestion[];
+};
+/** A message waiting for the session's turn to end. */
+export type AgentMessage = { agent: string; session_id: string; text: string; queued_at: string };
+export type AgentSettings = { codex_approvals: boolean };
+/** `api/agent-requests`; `settings` is null from a daemon without the route. */
+export type AgentRequests = {
+  requests: AgentRequest[];
+  messages: AgentMessage[];
+  settings: AgentSettings | null;
+};
+export const noAgentRequests: AgentRequests = { requests: [], messages: [], settings: null };
+
+const isText = (v: unknown): v is string => typeof v === "string";
+export function parseAgentRequests(body: unknown): AgentRequests {
+  const b = body as {
+    requests?: unknown;
+    messages?: unknown;
+    settings?: { codex_approvals?: unknown } | null;
+  } | null;
+  const requests = (Array.isArray(b?.requests) ? b.requests : [])
+    .filter(
+      (r: Partial<AgentRequest> | null): r is AgentRequest =>
+        !!r &&
+        isText(r.id) &&
+        isText(r.agent) &&
+        isText(r.session_id) &&
+        isText(r.created_at) &&
+        (r.kind === "permission" || r.kind === "question"),
+    )
+    .map((r) => ({
+      ...r,
+      tool: isText(r.tool) ? r.tool : "",
+      input: Array.isArray(r.input) ? r.input.filter((i) => !!i && isText(i.label)) : [],
+      suggestions: Array.isArray(r.suggestions)
+        ? r.suggestions.filter((x) => !!x && isText(x.id) && isText(x.label))
+        : [],
+      questions: Array.isArray(r.questions)
+        ? r.questions
+            .filter((q) => !!q && isText(q.question))
+            .map((q) => ({ ...q, options: Array.isArray(q.options) ? q.options : [] }))
+        : [],
+    }));
+  const messages = (Array.isArray(b?.messages) ? b.messages : []).filter(
+    (m: Partial<AgentMessage> | null): m is AgentMessage =>
+      !!m && isText(m.agent) && isText(m.session_id) && isText(m.text),
+  );
+  const settings =
+    b?.settings && typeof b.settings.codex_approvals === "boolean"
+      ? { codex_approvals: b.settings.codex_approvals }
+      : null;
+  return { requests, messages, settings };
+}
+/** The body of an answer: allow or deny a permission (with the suggestion
+ *  that makes it permanent), or the labels chosen for a question's options. */
+export type AnswerBody = {
+  behavior: "allow" | "deny";
+  suggestion?: string;
+  answers?: Record<string, string>;
+};
+export function answerRequest(id: string, body: AnswerBody) {
+  return request<{ ok: boolean }>(`api/agent-requests/${encodeURIComponent(id)}/answer`, body);
+}
+/** Queues a message for the session's next stop. */
+export function sendMessage(agent: string, sessionId: string, text: string) {
+  return request<{ ok: boolean }>("api/agent-messages", {
+    agent,
+    session_id: sessionId,
+    text,
+  });
+}
+export function cancelMessage(agent: string, sessionId: string) {
+  return request<{ ok: boolean }>(
+    `api/agent-messages/${encodeURIComponent(agent)}/${encodeURIComponent(sessionId)}`,
+    undefined,
+    "DELETE",
+  );
+}
+export function saveAgentSettings(settings: AgentSettings) {
+  return request<AgentSettings>("api/agent-requests/settings", settings, "PUT");
 }
 /** Sessions that are not over and belong to the pull request, matched by
  * repository across clones as jobs are. */
@@ -414,6 +538,69 @@ export function liveFor(sessions: LiveSession[], pr: Pick<PR, "repository" | "nu
       s.pr === pr.number &&
       s.repository.toLowerCase() === pr.repository.toLowerCase(),
   );
+}
+/** A decision captured from an agent session, from `api/decisions`. */
+export type CapturedDecision = {
+  decision_id: string;
+  title?: string;
+  summary: string;
+  category: string;
+  who: string;
+  rationale?: string;
+  rejected_alternative?: string;
+  superseded: boolean;
+  files: string[];
+  decided_at: string;
+  /** On a pull request: dated after its saved review was generated. */
+  provisional?: boolean;
+};
+/** What decision capture holds of one session. */
+export type SessionDecisions = {
+  agent: string;
+  session_id: string;
+  /** Why capture does not run for the session now: "paused", "off",
+   *  "repository_off" or "not_picked"; absent when it does. Only the
+   *  per-session answer carries it. */
+  capture_off?: string;
+  /** Empty for a session never captured. */
+  coverage: "extracted" | "skipped" | "";
+  skip_reason?: string;
+  updated_at: string | null;
+  /** A model call for the session is in flight. */
+  capturing: boolean;
+  decisions: CapturedDecision[];
+};
+/** The sessions of a pull request with their decisions. */
+export type PullRequestDecisions = {
+  sessions: (SessionDecisions & { title?: string; live: boolean })[];
+  review_generated_at: string | null;
+};
+/** The global decision capture settings, from `api/settings`. */
+export type DecisionSettings = {
+  enabled: boolean;
+  model: string;
+  /** What the daemon makes of them (`api/settings/decisions` only): the
+   *  harness capture resolves to, its model, and whether `model` is ignored. */
+  backend?: string;
+  /** The harness's checks did not answer in time, so it is unknown. */
+  backend_undetermined?: boolean;
+  effective_model?: string;
+  model_ignored?: boolean;
+};
+const skipReasons: Record<string, string> = {
+  too_large: "The session is too large to capture.",
+  unreadable: "The session's transcript could not be read.",
+  session_mismatch: "The transcript belongs to another session.",
+  generation_run: "baum's own runs are not captured.",
+  over_token_cap: "The session is too long for one capture.",
+  extraction_failed: "Capture failed three times; it tries again when the session changes.",
+  backend_unsupported:
+    "Cursor Agent can't capture decisions. Choose Claude Code, Codex or the Anthropic API for reviews to capture them.",
+  backend_unavailable: "No harness that can capture decisions is available on this computer.",
+};
+/** Why a session's decisions were not captured, in words. */
+export function skipReasonText(reason: string | undefined): string {
+  return (reason && skipReasons[reason]) ?? "Not captured.";
 }
 export type Snapshot = { entries: Entry[]; problems: { clone_id: string; reason: string }[] };
 /** The server serves the app only under its session namespace,
@@ -457,17 +644,26 @@ export async function request<T>(
   });
   if (!response.ok) {
     const text = (await response.text()).slice(0, 240);
-    let body: { code?: string; message?: string; needs_clone?: boolean } = {};
+    let body: {
+      code?: string;
+      message?: string;
+      needs_clone?: boolean;
+      blocked_reason?: string;
+    } = {};
     try {
       body = JSON.parse(text);
     } catch {
       /* The daemon also returns plain text. */
     }
+    // A run the daemon will not start (a fix of a fork, with nothing to
+    // fix…) names its reason, which is said in words.
     throw new LocalRequestError(
       body.needs_clone
         ? "Needs a local clone"
-        : (body.message ?? `Local request failed (${response.status}): ${text}`),
-      body.needs_clone ? "needs_clone" : body.code,
+        : body.blocked_reason
+          ? jobReasonText(body.blocked_reason)
+          : (body.message ?? `Local request failed (${response.status}): ${text}`),
+      body.needs_clone ? "needs_clone" : (body.blocked_reason ?? body.code),
       response.status,
     );
   }
@@ -668,19 +864,29 @@ export function threadOutcomesSummary(outcomes: ThreadOutcome[] | undefined): st
   if (failed) text += `; ${failed} ${failed === 1 ? "reply" : "replies"} failed`;
   return text;
 }
-/** Prepares a fix of the pull request: what it would fix, with which harness
- *  and model, and on which branch, or why it cannot run. */
-export async function estimateFix(clone: string, pr: number): Promise<Estimate> {
-  return request<Estimate>("api/jobs/estimate", {
-    items: [{ clone, pr, kind: "fix" }],
+/** Starts a feature build of the clone's repository at once, as every run
+ *  the person asks for starts: its first build, or the rest of one that
+ *  stopped. One the daemon will not run is refused with its reason as the
+ *  `LocalRequestError`'s code. */
+export async function startFeatureBuild(clone: string): Promise<Job[]> {
+  const answer = await request<{ jobs: Job[] }>("api/jobs", {
+    items: [{ clone, pr: 0, kind: "feature_build" }],
     mode: "single",
   });
+  return answer.jobs;
 }
-/** Starts a fix the person confirmed. */
-export async function startFix(estimate: Estimate): Promise<Job[]> {
+/** What a fix may be limited to: "checks" fixes the failing checks alone,
+ *  leaving conflicts and review comments. */
+export type FixOnly = "checks";
+/** Starts a fix of the pull request at once: the daemon checks GitHub, picks
+ *  the review's harness and model and queues it, with nothing to confirm. A
+ *  fix it will not run (a fork, no push access, nothing to fix) is refused
+ *  with its reason in words, as a `LocalRequestError` whose code is the
+ *  reason. `only` limits it, as Fix CI on the Inbox's failing checks does. */
+export async function startFix(clone: string, pr: number, only?: FixOnly): Promise<Job[]> {
   const answer = await request<{ jobs: Job[] }>("api/jobs", {
-    estimate_id: estimate.id,
-    confirm_estimate: true,
+    items: [{ clone, pr, kind: "fix", ...(only ? { only } : {}) }],
+    mode: "single",
   });
   return answer.jobs;
 }

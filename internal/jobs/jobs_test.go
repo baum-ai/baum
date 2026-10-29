@@ -21,11 +21,11 @@ type fakeExecutor struct {
 	head       string
 	digest     string
 	restricted bool
-	price      *float64
-	// backend and reason, when set, replace claude and the estimate reason.
-	backend, reason string
-	started         chan Prepared
-	release         chan struct{}
+	// backend, when set, replaces claude; version, when set, replaces the
+	// price list version.
+	backend, version string
+	started          chan Prepared
+	release          chan struct{}
 	// prepareErr, when set, fails Prepare.
 	prepareErr error
 }
@@ -40,7 +40,11 @@ func (f *fakeExecutor) Prepare(_ context.Context, item Item) (Prepared, string, 
 	if backend == "" {
 		backend = "claude"
 	}
-	return Prepared{ConfigDigest: f.digest, Item: item, Repository: "org/repo", HeadSHA: f.head, Backend: backend, Model: "claude-sonnet-4-5", EstimateUSD: f.price, EstimateReason: f.reason, RequiresIsolationConfirmation: f.restricted}, "2026-10-01", nil
+	version := f.version
+	if version == "" {
+		version = "2026-10-01"
+	}
+	return Prepared{ConfigDigest: f.digest, PriceVersion: version, Item: item, Repository: "org/repo", HeadSHA: f.head, Backend: backend, Model: "claude-sonnet-4-5", RequiresIsolationConfirmation: f.restricted}, version, nil
 }
 func (f *fakeExecutor) Execute(ctx context.Context, p Prepared, progress func(Progress)) (*float64, error) {
 	f.started <- p
@@ -56,8 +60,7 @@ func (f *fakeExecutor) Execute(ctx context.Context, p Prepared, progress func(Pr
 }
 func newQueue(t *testing.T) (*Queue, *fakeExecutor) {
 	t.Helper()
-	price := 2.0
-	f := &fakeExecutor{head: "first", price: &price, started: make(chan Prepared, 10), release: make(chan struct{})}
+	f := &fakeExecutor{head: "first", started: make(chan Prepared, 10), release: make(chan struct{})}
 	q, e := Open(filepath.Join(privateDir(t), "jobs.json"), f, 1, nil)
 	if e != nil {
 		t.Fatal(e)
@@ -118,7 +121,7 @@ func TestQueuedReplacementBatchEstimateAndNoParallelPR(t *testing.T) {
 	}
 	<-f.started
 	batch := estimate(t, q, "batch", Item{Clone: "clone", PR: 2}, Item{Clone: "clone", PR: 3})
-	if *batch.EstimateUSD != 4 {
+	if len(batch.Items) != 2 {
 		t.Fatal(batch)
 	}
 	queued, e := q.Submit(context.Background(), batch.ID, true, false)
@@ -200,9 +203,8 @@ func TestIsolationEnforcedAndExcludedFromBatch(t *testing.T) {
 	}
 }
 
-// A moved head is refused; a model the price list does not know still runs,
-// with no estimate.
-func TestChangedHeadFailsClosedAndUnknownPriceRuns(t *testing.T) {
+// A moved head is refused.
+func TestChangedHeadFailsClosed(t *testing.T) {
 	q, f := newQueue(t)
 	e := estimate(t, q, "single", Item{Clone: "clone", PR: 1})
 	f.mu.Lock()
@@ -211,48 +213,63 @@ func TestChangedHeadFailsClosedAndUnknownPriceRuns(t *testing.T) {
 	if _, err := q.Submit(context.Background(), e.ID, true, true); err == nil {
 		t.Fatal("stale head accepted")
 	}
-	f.price = nil
-	e = estimate(t, q, "single", Item{Clone: "clone", PR: 1})
-	if e.Items[0].BlockedReason != "" || e.EstimateUSD != nil {
-		t.Fatal(e)
-	}
-	if _, err := q.Submit(context.Background(), e.ID, true, true); err != nil {
-		t.Fatal(err)
-	}
 }
 
-// A backend billed outside the price list (cursor-agent) is not blocked: its
-// estimate is unknown with a reason, and it runs on the usual confirmations.
+// A price list installed between preparing and queueing is not a changed
+// input, and a resubmission under it joins the queued job rather than
+// replacing it: pricing never decides what runs.
+func TestChangedPriceListDecidesNothing(t *testing.T) {
+	q, f := newQueue(t)
+	busy, err := q.Generate(context.Background(), []Item{{Clone: "clone", PR: 1}}, "single", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	<-f.started
+	e := estimate(t, q, "single", Item{Clone: "clone", PR: 2})
+	f.mu.Lock()
+	f.version = "2999-01-01"
+	f.mu.Unlock()
+	queued, err := q.Submit(context.Background(), e.ID, true, false)
+	if err != nil || len(queued) != 1 {
+		t.Fatalf("queued = %+v, err = %v", queued, err)
+	}
+	f.mu.Lock()
+	f.version = "3000-01-01"
+	f.mu.Unlock()
+	again, err := q.Generate(context.Background(), []Item{{Clone: "clone", PR: 2}}, "single", false)
+	if err != nil || len(again) != 1 || again[0].ID != queued[0].ID {
+		t.Fatalf("a new price list replaced the queued job: %+v, err = %v", again, err)
+	}
+	close(f.release)
+	waitState(t, q, busy[0].ID, "completed")
+	waitState(t, q, queued[0].ID, "completed")
+}
+
+// A backend billed outside the price list (cursor-agent) is not blocked:
+// Generate starts it at once, with nothing to acknowledge.
 func TestUnpricedBackendRuns(t *testing.T) {
 	q, f := newQueue(t)
 	f.mu.Lock()
-	f.price, f.backend, f.reason = nil, agent.BackendCursorAgent, "billed_by_cursor_subscription"
+	f.backend = agent.BackendCursorAgent
 	f.mu.Unlock()
-	e := estimate(t, q, "single", Item{Clone: "clone", PR: 1})
-	if e.EstimateUSD != nil || e.Items[0].BlockedReason != "" || e.Items[0].EstimateReason != "billed_by_cursor_subscription" {
-		t.Fatalf("estimate = %+v", e)
-	}
-	if _, err := q.SubmitConfirmed(context.Background(), e.ID, Confirmation{}); err == nil {
-		t.Fatal("an unpriced run was queued without confirming the estimate")
-	}
-	jobs, err := q.SubmitConfirmed(context.Background(), e.ID, Confirmation{Estimate: true})
-	if err != nil || len(jobs) != 1 || jobs[0].EstimateReason != "billed_by_cursor_subscription" {
+	jobs, err := q.Generate(context.Background(), []Item{{Clone: "clone", PR: 1}}, "single", false)
+	if err != nil || len(jobs) != 1 || jobs[0].Backend != agent.BackendCursorAgent {
 		t.Fatalf("jobs = %+v, err = %v", jobs, err)
 	}
 	<-f.started
 	close(f.release)
 	waitState(t, q, jobs[0].ID, "completed")
 
-	// The fork rules still apply: isolation is confirmed separately.
+	// The fork rules still apply: isolation is confirmed separately, and a
+	// batch leaves the fork out.
 	q, f = newQueue(t)
 	f.mu.Lock()
-	f.price, f.backend, f.reason, f.restricted = nil, agent.BackendCursorAgent, "billed_by_cursor_subscription", true
+	f.backend, f.restricted = agent.BackendCursorAgent, true
 	f.mu.Unlock()
-	e = estimate(t, q, "single", Item{Clone: "clone", PR: 1})
-	if _, err := q.SubmitConfirmed(context.Background(), e.ID, Confirmation{Estimate: true}); err == nil {
-		t.Fatal("a fork run was queued without isolation confirmation")
+	if _, err := q.Generate(context.Background(), []Item{{Clone: "clone", PR: 1}}, "single", false); !errors.Is(err, ErrIsolationRequired) {
+		t.Fatalf("a fork run without isolation confirmation: %v", err)
 	}
-	if _, err := q.SubmitConfirmed(context.Background(), e.ID, Confirmation{Estimate: true, Isolation: true}); err != nil {
+	if _, err := q.Generate(context.Background(), []Item{{Clone: "clone", PR: 1}}, "single", true); err != nil {
 		t.Fatal(err)
 	}
 	batch := estimate(t, q, "batch", Item{Clone: "clone", PR: 2})
@@ -267,8 +284,7 @@ func TestRestartInterruptsRunningAndKeepsHistory(t *testing.T) {
 	if e := os.WriteFile(path, raw, 0600); e != nil {
 		t.Fatal(e)
 	}
-	price := 1.0
-	f := &fakeExecutor{price: &price}
+	f := &fakeExecutor{}
 	q, e := Open(path, f, 1, nil)
 	if e != nil {
 		t.Fatal(e)
@@ -330,8 +346,7 @@ func TestShutdownStopsWaitingAtDeadline(t *testing.T) {
 type stuckExecutor struct{ started, release chan struct{} }
 
 func (s *stuckExecutor) Prepare(_ context.Context, item Item) (Prepared, string, error) {
-	price := 1.0
-	return Prepared{Item: item, Repository: "org/repo", HeadSHA: "head", Backend: "claude", Model: "m", EstimateUSD: &price}, "v", nil
+	return Prepared{Item: item, Repository: "org/repo", HeadSHA: "head", Backend: "claude", Model: "m"}, "v", nil
 }
 func (s *stuckExecutor) Execute(context.Context, Prepared, func(Progress)) (*float64, error) {
 	close(s.started)
@@ -340,13 +355,12 @@ func (s *stuckExecutor) Execute(context.Context, Prepared, func(Progress)) (*flo
 }
 func TestOneProcessOwnsTheJournal(t *testing.T) {
 	path := filepath.Join(privateDir(t), "jobs.json")
-	price := 1.0
-	first, err := Open(path, &fakeExecutor{price: &price}, 1, nil)
+	first, err := Open(path, &fakeExecutor{}, 1, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	opened := time.Now()
-	if second, err := Open(path, &fakeExecutor{price: &price}, 1, nil); err == nil {
+	if second, err := Open(path, &fakeExecutor{}, 1, nil); err == nil {
 		second.Close()
 		t.Fatal("a second queue opened the same journal")
 	}
@@ -357,7 +371,7 @@ func TestOneProcessOwnsTheJournal(t *testing.T) {
 		t.Fatal("empty queue not idle")
 	}
 	first.Close()
-	again, err := Open(path, &fakeExecutor{price: &price}, 1, nil)
+	again, err := Open(path, &fakeExecutor{}, 1, nil)
 	if err != nil {
 		t.Fatal("journal still locked after Close:", err)
 	}
@@ -393,18 +407,17 @@ func TestDrainAndSubmitNeverBothSucceed(t *testing.T) {
 
 func TestSubmitWhileRestartingIsAServiceUnavailableToRetry(t *testing.T) {
 	q, _ := newQueue(t)
-	e := estimate(t, q, "single", Item{Clone: "clone", PR: 1})
 	if !q.Drain() {
 		t.Fatal("empty queue not drained")
 	}
-	body := strings.NewReader(`{"estimate_id":"` + e.ID + `","confirm_estimate":true,"confirm_isolation":false}`)
+	body := `{"items":[{"clone":"clone","pr":1}],"mode":"single"}`
 	w := httptest.NewRecorder()
-	q.Handler().ServeHTTP(w, httptest.NewRequest("POST", "/api/jobs", body))
+	q.Handler().ServeHTTP(w, httptest.NewRequest("POST", "/api/jobs", strings.NewReader(body)))
 	if w.Code != http.StatusServiceUnavailable || w.Header().Get("Retry-After") == "" || !strings.Contains(w.Body.String(), "restarting") {
 		t.Fatalf("%d %q %q", w.Code, w.Header().Get("Retry-After"), w.Body.String())
 	}
 	q.Resume()
-	if _, err := q.Submit(context.Background(), e.ID, true, false); err != nil {
+	if _, err := q.Generate(context.Background(), []Item{{Clone: "clone", PR: 1}}, "single", false); err != nil {
 		t.Fatal("not accepted after Resume:", err)
 	}
 }
@@ -412,13 +425,12 @@ func TestSubmitWhileRestartingIsAServiceUnavailableToRetry(t *testing.T) {
 // A predecessor that holds the journal while it exits is waited for.
 func TestOpenWaitsForThePreviousOwner(t *testing.T) {
 	path := filepath.Join(privateDir(t), "jobs.json")
-	price := 1.0
-	first, err := Open(path, &fakeExecutor{price: &price}, 1, nil)
+	first, err := Open(path, &fakeExecutor{}, 1, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	go func() { time.Sleep(300 * time.Millisecond); first.Close() }()
-	second, err := Open(path, &fakeExecutor{price: &price}, 1, nil)
+	second, err := Open(path, &fakeExecutor{}, 1, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -469,8 +481,7 @@ func (f *blockedPrepare) Prepare(ctx context.Context, item Item) (Prepared, stri
 	return f.fakeExecutor.Prepare(ctx, item)
 }
 func TestSlowPreflightDoesNotBlockCancellationAndConcurrentEstimateUse(t *testing.T) {
-	price := 1.0
-	base := &fakeExecutor{head: "first", price: &price, started: make(chan Prepared, 3), release: make(chan struct{})}
+	base := &fakeExecutor{head: "first", started: make(chan Prepared, 3), release: make(chan struct{})}
 	f := &blockedPrepare{fakeExecutor: base, block: make(chan struct{}), entered: make(chan struct{}, 3)}
 	q, e := Open(filepath.Join(privateDir(t), "jobs.json"), f, 1, nil)
 	if e != nil {

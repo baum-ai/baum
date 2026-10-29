@@ -171,3 +171,25 @@ func TestFindSessionsSkipsBaumAgentRuns(t *testing.T) {
 		t.Fatalf("sessions = %+v, want only in-repo", sessions)
 	}
 }
+
+// A kept review run lives in baum's cache directory; its rollout records that
+// directory as the cwd, which is skipped even under a root that contains it.
+func TestFindSessionsSkipsKeptReviewRuns(t *testing.T) {
+	home := t.TempDir()
+	repo := filepath.Join(home, "work", "repo")
+	kept := filepath.Join(home, ".cache", "baum", "review-runs", agent.RunDirPrefix+"4821")
+	sessionsDir := filepath.Join(home, ".codex", "sessions")
+	writeFile(t, filepath.Join(sessionsDir, "2026", "07", "01", "rollout-in-repo.jsonl"), rollout("in-repo", repo))
+	writeFile(t, filepath.Join(sessionsDir, "2026", "07", "02", "rollout-kept.jsonl"), rollout("kept", kept))
+	for _, roots := range [][]string{{repo}, {home}} {
+		sessions, _, err := FindSessions(sessionsDir, roots)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, s := range sessions {
+			if s.SessionID == "kept" {
+				t.Errorf("roots %v: the kept review run was collected", roots)
+			}
+		}
+	}
+}

@@ -307,9 +307,9 @@ The daemon outlives the app, so the app's presence is a tray icon.
 | --- | --- |
 | Idle | Nothing running or queued, nothing new to look at. |
 | Running | A review is running or queued. |
-| Attention | A review failed, a repository's daily cap paused automatic reviews, a diagnostics check reports a problem, or the daemon is not running. |
+| Attention | A review failed, a diagnostics check reports a problem, or the daemon is not running. |
 
-Attention for the first three clears when the window is opened or focused and
+Attention for the first two clears when the window is opened or focused and
 returns for something new (a failure found when the app first looks at the
 queue is not new; the daemon keeps finished jobs). Diagnostics warnings do not
 count. The menu lists what needs attention, and the tooltip shows the summary.
@@ -402,7 +402,6 @@ daemon serves are not involved.
 | Fix failed, with its failure category | `notice` `fix_failed` |
 | Agent needs my permission | `notice` `session_permission` |
 | Agent waiting for my answer | `notice` `session_input` |
-| Daily cost cap reached | `automatic`, when a repository is paused for `daily_cap` |
 
 The agent session notifications read like "Claude Code needs your
 permission · acme/demo" or "Codex is waiting for your answer · acme/demo",
@@ -419,9 +418,7 @@ pull request seen for the first time or for the daemon's first look at a
 repository.
 
 `notice` events are published by the daemon (`oss/internal/notices`, see
-`ARCHITECTURE.md`); the cap notification comes from the scheduler's existing
-`automatic` event. There is no default cap, so the cap notification exists only
-for a user who set one. The text comes only from fields the daemon already
+`ARCHITECTURE.md`). The text comes only from fields the daemon already
 redacted: the repository, the pull request title as GitHub returned it
 (control characters stripped, 200 characters at most), the stored risk score,
 the failure category, and an agent session's branch and masked message. A title is shown unchanged; where a Linux
@@ -431,8 +428,8 @@ title is not interpreted.
 - **Click.** Clicking a notification shows the window if it is hidden or
   minimised, brings it to the front and loads
   the pull request (`?clone=<id>&pr=<number>`), for an agent session its
-  transcript (`?page=sessions&session=<agent>:<id>`) or, for the cap and for a
-  notice with no registered clone, the jobs list (`?page=jobs`). The app learns
+  transcript (`?page=sessions&session=<agent>:<id>`) or, for a notice with no
+  registered clone, the jobs list (`?page=jobs`). The app learns
   the daemon's secret app path with one `POST /api/auth/exchange` and loads the
   URL itself; the page's own scripts do not navigate. Linux, macOS and Windows
   toasts report clicks through `notify-rust`. The logic is unit-tested with a fake
@@ -449,10 +446,9 @@ title is not interpreted.
 - **Settings.** Each kind is on by default, and so is a kind added after
   `notifications.json` was written. A "Notifications" submenu with one
   check item per kind is in the macOS menu bar and in the tray menu. Linux and
-  Windows windows have no menu bar, so there the tray holds them. The choices, the
-  permission answer, and the daily-cap pauses already announced (so a restart
-  or a replaced daemon does not announce one again) are saved in
-  `notifications.json` in the app's config directory
+  Windows windows have no menu bar, so there the tray holds them. The choices
+  and the permission answer are saved in `notifications.json` in the app's
+  config directory
   (`~/.config/com.usebaum.desktop/` on Linux). Those saved settings are the
   only copy of the state: a click on either menu flips them, then both menus
   are rebuilt or updated from them. Native menus need no page capability.
@@ -519,7 +515,9 @@ doing anything (`src/zoom.rs`).
   share `setup_state`, the four CLI and hook install/removal commands and
   `choose_repository`. GitHub connection, repository registration, review
   settings and finishing setup remain restricted to the bundled setup screen.
-- The opener plugin is used only from Rust, to open links in the browser. The
+- The opener plugin is used only from Rust, to open links in the browser. Its
+  click script (`open_js_links_on_click`) is off: it would call the plugin from
+  the page, which no page may do, and swallow the click. The
   dialog and updater plugins are used only from Rust too (see Updates). No
   page is granted any plugin's commands.
 

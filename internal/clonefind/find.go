@@ -21,6 +21,7 @@ import (
 	"github.com/baum-ai/baum/sessions/collector/claudecode"
 	"github.com/baum-ai/baum/sessions/collector/codex"
 	"github.com/baum-ai/baum/sessions/collector/cursor"
+	"github.com/baum-ai/baum/sessions/collector/model"
 	"github.com/baum-ai/baum/sessions/vendors"
 )
 
@@ -233,6 +234,11 @@ func (f *finder) agentDirs(ctx context.Context) []agentDir {
 			return
 		}
 		dir = filepath.Clean(dir)
+		// A directory baum made to run a review agent in is nobody's clone,
+		// whatever repository lies above it.
+		if model.IsAgentRun(dir) {
+			return
+		}
 		if at.After(latest[dir]) || latest[dir].IsZero() {
 			latest[dir] = at
 		}

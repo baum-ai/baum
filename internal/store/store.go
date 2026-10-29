@@ -70,6 +70,18 @@ type Metadata struct {
 	Calls           int               `json:"calls"`
 	Tokens          int               `json:"tokens"`
 	RecordedCostUSD *float64          `json:"recorded_cost_usd"`
+	// Session is the local agent session that produced the version, kept with
+	// its run directory so a chat can continue from it. Absent for hosted and
+	// other runs, and in versions stored before it existed.
+	Session *ReviewSession `json:"session,omitempty"`
+}
+
+// ReviewSession names a kept Claude Code session or Codex thread: resuming it
+// has to run in Directory, the cwd the session was recorded under.
+type ReviewSession struct {
+	Backend   string `json:"backend"`
+	ID        string `json:"id"`
+	Directory string `json:"directory"`
 }
 
 type Version struct {
