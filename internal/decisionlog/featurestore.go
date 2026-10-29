@@ -310,10 +310,6 @@ func (s *Store) SaveHistoryPulls(ctx context.Context, repository string, pulls [
 func (s *Store) savePulls(ctx context.Context, repository string, pulls []github.ListedPull, keepNewer bool, after func(*sql.Tx) error) error {
 	now := s.now()
 	return s.inTx(ctx, func(tx *sql.Tx) error {
-		version, err := liveVersion(ctx, tx, repository, false, now)
-		if err != nil {
-			return err
-		}
 		for _, p := range pulls {
 			if keepNewer {
 				var newer bool
@@ -327,16 +323,16 @@ func (s *Store) savePulls(ctx context.Context, repository string, pulls []github
 				}
 			}
 			// A feature's text reads its pull requests' title, description
-			// and state.
-			var changed string
-			err := tx.QueryRowContext(ctx, `SELECT fp.feature_id FROM pull_request p
-JOIN feature_pull fp ON fp.version_id=?1 AND fp.repository=p.repository AND fp.number=p.number
-WHERE p.repository=?2 AND p.number=?3 AND (p.title != ?4 OR p.body != ?5 OR p.state != ?6 OR (p.merged_at IS NOT NULL) != ?7)`,
-				version, repository, p.Number, p.Title, p.Body, p.State, p.MergedAt != nil).Scan(&changed)
-			if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			// and state: the current version's and a building one's.
+			changed, err := collect(scanString)(tx.QueryContext(ctx, `SELECT fp.feature_id FROM pull_request p
+JOIN feature_pull fp ON fp.repository=p.repository AND fp.number=p.number
+JOIN feature_version v ON v.id=fp.version_id AND v.state IN (?1, ?2)
+WHERE p.repository=?3 AND p.number=?4 AND (p.title != ?5 OR p.body != ?6 OR p.state != ?7 OR (p.merged_at IS NOT NULL) != ?8)`,
+				VersionCurrent, VersionBuilding, repository, p.Number, p.Title, p.Body, p.State, p.MergedAt != nil))
+			if err != nil {
 				return err
 			}
-			if err := markFeatures(ctx, tx, []string{changed}, now); err != nil {
+			if err := markFeatures(ctx, tx, changed, now); err != nil {
 				return err
 			}
 			var merged, closed any

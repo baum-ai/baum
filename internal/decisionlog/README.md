@@ -273,7 +273,7 @@ A placement marks every feature it changes: the one joined, the one left
 and the features of the pull request's linked sessions; an identical one
 marks none. Also marked: a session's features when its decisions are saved;
 a feature pull request's feature when its title, description or state
-changes, and, with the features of the sessions linked to its old and new
+changes (in the current version and in a building one), and, with the features of the sessions linked to its old and new
 commits, when its commits or paths change; and when the sessions linked to
 a commit change, the features holding a pull request with it and the
 features of those sessions (an unchanged re-link marks none). Marking
