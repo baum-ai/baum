@@ -149,10 +149,11 @@ function DecisionRow({ decision: d }: { decision: CapturedDecision }) {
   );
 }
 
-/** The decisions of the sessions linked to a pull request, on its page:
- *  those in progress and those its saved review links. A decision made after
- *  the saved review was generated is provisional. Nothing is drawn until a
- *  session has decisions or a capture state worth showing. */
+/** The decisions of the sessions linked to a pull request, on its page,
+ *  behind a closed disclosure: those in progress and those its saved review
+ *  links. A decision made after the saved review was generated is
+ *  provisional. Nothing is drawn until a session has decisions or a capture
+ *  state worth showing. */
 export function PullRequestDecisionsList({
   repository,
   number,
@@ -184,42 +185,47 @@ export function PullRequestDecisionsList({
   );
   return (
     <section aria-labelledby="pr-decisions-heading" className="mb-3 local-panel local-decisions">
-      <h3 id="pr-decisions-heading">Decisions from sessions ({total})</h3>
-      {provisional ? (
-        <p className="local-decisions-note">
-          {provisional === 1 ? "One decision was" : `${provisional} decisions were`} made after the
-          saved review was generated
-          {answer?.review_generated_at ? ` (${formatDateTime(answer.review_generated_at)})` : ""}:
-          the review has not seen {provisional === 1 ? "it" : "them"}.
-        </p>
-      ) : null}
-      {sessions.map((s) => {
-        const title =
-          s.title ||
-          live.find((l) => l.agent === s.agent && l.session_id === s.session_id)?.title ||
-          s.session_id;
-        return (
-          <div key={`${s.agent}:${s.session_id}`} className="local-decisions-session">
-            <h4>
-              <span>{agentName(s.agent)}</span>
-              <span className="local-decisions-session-title">{title}</span>
-              {s.live ? (
-                <Badge tone="info" size="compact">
-                  In progress
-                </Badge>
+      {/* Closed until asked for: a pull request's sessions can carry dozens of decisions. */}
+      <details>
+        <summary>
+          <h3 id="pr-decisions-heading">Decisions from sessions ({total})</h3>
+        </summary>
+        {provisional ? (
+          <p className="local-decisions-note">
+            {provisional === 1 ? "One decision was" : `${provisional} decisions were`} made after
+            the saved review was generated
+            {answer?.review_generated_at ? ` (${formatDateTime(answer.review_generated_at)})` : ""}:
+            the review has not seen {provisional === 1 ? "it" : "them"}.
+          </p>
+        ) : null}
+        {sessions.map((s) => {
+          const title =
+            s.title ||
+            live.find((l) => l.agent === s.agent && l.session_id === s.session_id)?.title ||
+            s.session_id;
+          return (
+            <div key={`${s.agent}:${s.session_id}`} className="local-decisions-session">
+              <h4>
+                <span>{agentName(s.agent)}</span>
+                <span className="local-decisions-session-title">{title}</span>
+                {s.live ? (
+                  <Badge tone="info" size="compact">
+                    In progress
+                  </Badge>
+                ) : null}
+              </h4>
+              <p className="local-decisions-state">{captureState(s, now)}</p>
+              {s.decisions.length ? (
+                <ul>
+                  {s.decisions.map((d) => (
+                    <DecisionRow key={d.decision_id} decision={d} />
+                  ))}
+                </ul>
               ) : null}
-            </h4>
-            <p className="local-decisions-state">{captureState(s, now)}</p>
-            {s.decisions.length ? (
-              <ul>
-                {s.decisions.map((d) => (
-                  <DecisionRow key={d.decision_id} decision={d} />
-                ))}
-              </ul>
-            ) : null}
-          </div>
-        );
-      })}
+            </div>
+          );
+        })}
+      </details>
     </section>
   );
 }

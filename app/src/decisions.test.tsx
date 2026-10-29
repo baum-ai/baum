@@ -155,6 +155,9 @@ it("lists a pull request's decisions by session and marks the provisional ones",
   );
   const section = node.querySelector('[aria-labelledby="pr-decisions-heading"]')!;
   expect(section.querySelector("h3")!.textContent).toBe("Decisions from sessions (3)");
+  // The list can be long, so it starts closed behind its heading.
+  expect(section.querySelector("details")!.open).toBe(false);
+  expect(section.querySelector("summary h3")).not.toBeNull();
   expect(section.textContent).toContain(
     "One decision was made after the saved review was generated",
   );

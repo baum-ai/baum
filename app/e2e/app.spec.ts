@@ -883,8 +883,17 @@ test("captured decisions show on the PR page, in Settings and in Analytics", asy
   await expect(live.getByText("Retry a failed sessions read once")).toBeVisible();
   const list = page.getByRole("region", { name: "Decisions from sessions (4)", exact: true });
   await expect(list).toBeVisible();
-  // Two decisions came after the saved review was generated.
+  // Closed by default: only the heading shows until it is opened.
   await expect(list.getByText("Provisional", { exact: true })).toHaveCount(2);
+  await expect(list.getByText("Provisional", { exact: true }).first()).toBeHidden();
+  await page.screenshot({
+    path: "test-results/decisions-pr-closed.png",
+    animations: "disabled",
+    fullPage: true,
+  });
+  await list.getByText("Decisions from sessions (4)").click();
+  // Two decisions came after the saved review was generated.
+  await expect(list.getByText("Provisional", { exact: true }).first()).toBeVisible();
   await expect(list.getByText(/2 decisions were made after the saved review/)).toBeVisible();
   for (const scheme of ["light", "dark"] as const) {
     await page.emulateMedia({ colorScheme: scheme });
