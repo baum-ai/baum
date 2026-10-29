@@ -546,6 +546,149 @@ paths as a build does.
 
 These rows are not pruned.
 
+## Timeline API
+
+`Timeline` serves the app's Timeline page under `/api/timeline/`, mounted in
+the local API behind its authentication, in the view models of the review
+viewer's decision log (`oss/viewer/src/decision-log.ts`). It reads the store
+and never writes it.
+
+- **`GET /repositories`**: `decisions_enabled` (the decisions switch),
+  `repositories`, the picked repositories whose decisions are not turned
+  off (the switch and the repository's setting; the automatic master switch
+  is not read, so pausing hides nothing), by name, each with
+  `has_features` (its current version has a feature not merged into
+  another), and `turned_off`, those whose own setting is off.
+  A list reads the repositories its `repository` parameters name (repeated,
+  any case; none is every one of them), and one it does not serve is a 400;
+  a detail is found in any of them, and is a 404 in another. Every row and
+  detail names its repository, `{"id","full_name"}`, both the registry's
+  name.
+- **`GET /features?repository=&q=&person=&file=&from=&to=&status=&cursor=&limit=`**: the
+  repositories' features of their current versions not merged into
+  another, merged in one order: by last activity (else creation) newest
+  first, then id, 50 a page (`limit`, at most 500). `cursor` is the last
+  row's time and id, so a page follows on from it whatever arrived
+  meanwhile.
+  `status` (`in_progress`, `shipped`, `abandoned`; repeated or comma
+  separated), `q`, `person` (below), `file` (a pull request touching the
+  path or anything under it, or a decision of the feature citing one) and
+  `from`/`to` (the features whose activity, else creation, overlaps them, as
+  hosted) filter before paging. A row has its title and
+  description (null while none is written; `summary_pending` while it is
+  behind its members), the status (`features.DeriveStatus` over its pull
+  requests), the first and last activity (its pull requests' opening and
+  last update and its decisions' times), `people` (the user, when it has a
+  session or a pull request they opened, then its other pull requests'
+  authors not opened by a bot, by login), the counts of pull requests, sessions (the
+  repository's captured sessions linked to its pull requests' commits, or in
+  it on their own) and decisions, and
+  its key decisions, read as the text names them (`currentKeys`). A
+  session's decisions are attributed as the feature's text attributes them
+  (`features.Attributor`), each to one feature and, within it, to the pull
+  request `Attributor.PullRequest` chooses.
+- **`GET /features/{id}`**: the row with `digest`, its pull requests newest
+  first (state, draft, merged, the latest saved review's state against the
+  head and its summary, else the generated one, and the decisions shown
+  under each) and its sessions: those in it on their own, and any whose
+  attributed decisions fall under none of its pull requests. The id is
+  resolved by `Store.ResolveFeature`: a feature merged into another answers
+  with the survivor's detail, one of a retired version `{"archived": true}`,
+  and one of a version being built, or a chain of merges too long to follow
+  (`ErrMergeChain`), is not found.
+- **`GET /build?repository=`** (exactly one): `building`, the repository's first build in
+  progress (its `building` version: pull requests `placed` of `total`, why
+  it `stopped`, `""` while it may go on, and `spent_usd` over all its
+  runs), null without one; `has_features`, whether the current version
+  has a feature not merged into another; and `current_since`, when it
+  became current (null without one). A building version's features are
+  not listed until it is current.
+- **`GET /decisions?repository=&q=&person=&file=&who=&category=&superseded=&from=&to=&cursor=&limit=`**:
+  the current decisions of the repositories' captured sessions, newest first
+  and then by id, paged as features are, with `coverage`, summed over the
+  repositories: their sessions extracted, skipped by reason, and being read
+  (a capture attempt pending). `file` is the path or anything
+  under it; `who` and `category` repeat or are comma separated; superseded
+  decisions show only with `superseded=1` (or `true`). On both lists `from`
+  (inclusive) and `to` (exclusive) are RFC 3339 times or dates, a date
+  being the local day's start; another value is a 400.
+- **`GET /files?repository=&prefix=&limit=`**: `files`, the paths the
+  repositories' current decisions cite that start with `prefix`, and their
+  folders (ending in `/`) that do, each with its `kind` (`file` or
+  `folder`) and `decision_count`, the decisions citing it or anything under
+  it, each counted once (superseded ones included, as hosted counts them):
+  most first, folders before files, then by path; 20
+  (`limit`, at most 50).
+- **`GET /decisions/{id}`**: its session (`<agent>:<id>`, as the app's
+  session page names it, branch and person), the session's current
+  decisions (summary, category, who, rejected alternative, files, turns)
+  and the pull requests its linked commits are in. A decision a later
+  capture replaced (obsolete, kept for good) still opens, as on the hosted
+  Timeline: with the decisions replaced with it and `replaced: true`. `turns` are
+  the human prompts the decisions cite (`ordinal`, `triggered_at`, `text`),
+  read from the session's transcript on this computer (its stored
+  `transcript_path`, found as capture finds it, `livesessions.Locate`) and
+  rendered as capture renders them (`decisions.Render` with a
+  `bundle.Redactor`): the harness's wrappers stripped, secrets and
+  identities masked, and a turn that was only wrappers left out. A session's
+  prompts are kept by its transcript's version (`Location.Version`), the 16
+  sessions last read. When the transcript is no longer on this computer,
+  cannot be read, or its files are over capture's `MaxTranscriptBytes`, `prompts_withheld` is true and `turns` empty. No
+  rationale or evidence is served.
+- **`GET /sessions/{agent}:{id}/transcript`**: a captured session's
+  transcript, as `GET /api/live-sessions/{agent}/{id}/transcript` answers
+  it, whether the tracker still lists the session or it ended long ago
+  (`livesessions.Transcripts.Read`, from its stored `transcript_path`;
+  `live` from the tracker). A session of a repository the Timeline does not
+  serve, or one never captured, is a 404.
+
+`q` matches keywords, each word a prefix and all of them required, with
+SQLite FTS5 (the `unicode61` tokenizer, diacritics folded, no stemming, so
+a prefix matches as typed): a decision's title and summary; a feature's
+title, description and digest or a pull request's title, or a pull
+request's number. The index (`decision_search`, `feature_search`,
+`pull_search`) is kept by triggers on those tables and built from the rows
+already stored when a store without it is opened.
+
+Every captured session is this computer's user's, so the Timeline knows one
+person besides the pull requests' authors: the user, named by the first
+served repository's clone (git `user.email` and `user.name`; avatars are
+never read, the app draws initials). Every served clone's address names
+them too, and so does their GitHub login's address
+(`<login>@users.noreply.github.com`) once `Login` knows the login (the
+daemon's is the viewer of a picked repository's cached discovery snapshot,
+else the GitHub connection's): the pull requests they opened are then theirs,
+and they are the login's person. It is read at most every 30 seconds. A
+pull request's author is named by their login's address.
+
+- **`GET /people?repository=`**: `people`, the user with
+  `decision_count`, the repositories' current decisions, superseded ones
+  included as hosted counts them (the list hides those unless asked);
+  nobody without a decision or a known user.
+- **`GET /features/people?repository=`**: `people`, everyone among the
+  repositories' features' people with `feature_count`, most first, then by
+  address.
+- `person=` (an address, any case) on `/features` keeps the features that
+  person is among the people of: the user (by any of their addresses) those
+  with their sessions or pull requests, anyone else those with a pull
+  request they opened. On `/decisions` the user keeps every decision, anyone
+  else none.
+
+A request reads its features' sessions' current decisions and links in a
+few set queries (`Store.Current` and `SessionLinks` read the same way), a
+feature's detail only that feature's, and opens each repository's clone at
+most once (`LocalClones`): its git identity and its review store are each
+read at most once.
+
+`Changed` is called by the capturer once a capture's call is recorded as
+pending, by the capture scheduler after a capture that saved decisions,
+recorded a skip or settled an attempt, and by the feature worker once a
+repository's pass, consolidation included, listed pull requests, linked
+sessions, placed an item, wrote a feature's text, or merged or split a
+feature. The daemon publishes a `timeline` event on
+the app's event stream then, at most once a second, and after a settings
+change.
+
 ## Testing by hand
 
 `baum internal decisions capture --agent <agent> --session <id> [--path

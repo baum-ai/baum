@@ -3,6 +3,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { beforeEach, afterEach, expect, it, vi } from "vitest";
 import { inboxGroups } from "./inbox";
 import { App } from "./app";
+import { useLocation } from "./location";
 import { appBase, cost, filtered, type Entry, type Clone } from "./api";
 import { forgetLastRows } from "./shortcuts";
 const entry = (number: number, status = "no_review", historical = false): Entry => ({
@@ -1523,4 +1524,24 @@ it("goes back to the inbox from a pull request page with u or Escape, keeping th
   expect(node.textContent).toContain("Needs a local clone");
   await press("Escape");
   expect(location.search).toBe("?filter=requested");
+});
+
+it("adds a history entry for an address write, and replaces it when asked", () => {
+  history.replaceState(null, "", "/s/test-ns/?page=timeline");
+  let url: ReturnType<typeof useLocation> | null = null;
+  function Probe() {
+    url = useLocation();
+    return null;
+  }
+  const node = document.createElement("div");
+  const probe = createRoot(node);
+  act(() => probe.render(<Probe />));
+  const start = history.length;
+  act(() => url!.update((search) => (search.set("feature", "F1"), search)));
+  expect(history.length).toBe(start + 1);
+  act(() => url!.update((search) => (search.set("feature", "F2"), search), { replace: true }));
+  expect(history.length).toBe(start + 1);
+  expect(location.search).toBe("?page=timeline&feature=F2");
+  expect(url!.search.get("feature")).toBe("F2");
+  act(() => probe.unmount());
 });

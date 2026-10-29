@@ -273,6 +273,8 @@ type caller struct {
 	settings repos.Settings
 	// build, when set, counts a first build's calls and spend.
 	build *buildSpend
+	// begun is called once an attempt is recorded as pending.
+	begun func()
 	// timeout bounds each call; zero is CallTimeout.
 	timeout time.Duration
 }
@@ -366,6 +368,9 @@ func (c caller) begin(ctx context.Context, p planned, a Attempt) (*completerMode
 	}
 	a.Backend, a.Model, a.Reserved = p.Backend, p.Model, p.Reserved
 	id, err := c.store.Begin(ctx, a)
+	if err == nil && c.begun != nil {
+		c.begun()
+	}
 	return &completerModel{completer: completer, redactor: c.redactor, attempt: a, timeout: c.timeout}, id, "", err
 }
 

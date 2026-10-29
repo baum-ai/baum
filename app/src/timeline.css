@@ -1,0 +1,35 @@
+/* The Timeline page: the hosted Timeline's filter bar, tabs and body, in
+   the app's panel. Every colour is a token, so dark mode follows. */
+.local-filter-bar.timeline-filters {
+  justify-content: flex-start;
+  gap: 0.625rem;
+  padding-top: 0.75rem;
+  padding-bottom: 0.75rem;
+}
+.timeline-tabs {
+  padding: 1rem 1.5rem 0;
+}
+.local-page-body.timeline-body {
+  padding-top: 1.5rem;
+  padding-bottom: 1.5rem;
+}
+.timeline-history-lines {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  margin-bottom: 1rem;
+  color: var(--text-secondary);
+  font-size: var(--text-xs);
+}
+.timeline-history-lines button {
+  color: var(--text-primary);
+  cursor: pointer;
+}
+@media (max-width: 40rem) {
+  .local-filter-bar.timeline-filters,
+  .timeline-tabs,
+  .local-page-body.timeline-body {
+    padding-left: 1rem;
+    padding-right: 1rem;
+  }
+}

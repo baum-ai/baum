@@ -30,10 +30,13 @@ type PullRequest struct {
 	// HeadRef is the head branch's name, which links a local session on that
 	// branch to the pull request. It is empty in a snapshot cached before it
 	// was kept, until the next poll.
-	HeadRef               string `json:"head_ref"`
-	Title                 string `json:"title"`
-	URL                   string `json:"url"`
-	Author                string `json:"author"`
+	HeadRef string `json:"head_ref"`
+	Title   string `json:"title"`
+	URL     string `json:"url"`
+	Author  string `json:"author"`
+	// AuthorBot is true for a GitHub App or other bot author. Snapshots cached
+	// before it existed decode as false.
+	AuthorBot             bool   `json:"author_bot"`
 	State                 string `json:"state"`
 	Draft                 bool   `json:"draft"`
 	Fork                  bool   `json:"fork"`
@@ -346,6 +349,8 @@ func maxTime(a, b time.Time) time.Time {
 
 type actor struct {
 	Login string `json:"login"`
+	// Typename is GraphQL's __typename ("User", "Bot", ...); the REST shape has none.
+	Typename string `json:"__typename,omitempty"`
 }
 type team struct {
 	ID int64 `json:"id"`
@@ -559,7 +564,7 @@ func (p *poll) discover(ctx context.Context, repository github.Repository) (Snap
 		if pr.Number <= 0 || pr.Head.SHA == "" {
 			return snapshot, errors.New("incomplete GitHub pull request")
 		}
-		item := PullRequest{Repository: repository.String(), Number: pr.Number, Title: pr.Title, URL: "https://" + repository.Host + "/" + repository.Owner + "/" + repository.Name + "/pull/" + strconv.Itoa(pr.Number), HeadSHA: pr.Head.SHA, HeadRef: pr.Head.Ref, Author: pr.User.Login, State: "OPEN", Draft: pr.Draft, Fork: pr.Head.Repo == nil || pr.Base.Repo.ID == 0 || pr.Head.Repo.ID != pr.Base.Repo.ID || !strings.EqualFold(pr.Head.Repo.FullName, pr.Base.Repo.FullName), AuthoredByMe: strings.EqualFold(pr.User.Login, viewer.Login), TeamMembershipKnown: teamErr == nil}
+		item := PullRequest{Repository: repository.String(), Number: pr.Number, Title: pr.Title, URL: "https://" + repository.Host + "/" + repository.Owner + "/" + repository.Name + "/pull/" + strconv.Itoa(pr.Number), HeadSHA: pr.Head.SHA, HeadRef: pr.Head.Ref, Author: pr.User.Login, AuthorBot: pr.User.Typename == "Bot", State: "OPEN", Draft: pr.Draft, Fork: pr.Head.Repo == nil || pr.Base.Repo.ID == 0 || pr.Head.Repo.ID != pr.Base.Repo.ID || !strings.EqualFold(pr.Head.Repo.FullName, pr.Base.Repo.FullName), AuthoredByMe: strings.EqualFold(pr.User.Login, viewer.Login), TeamMembershipKnown: teamErr == nil}
 		for _, user := range pr.RequestedReviewers {
 			if strings.EqualFold(user.Login, viewer.Login) {
 				item.ReviewRequestedFromMe = true

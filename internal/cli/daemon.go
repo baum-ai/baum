@@ -36,6 +36,7 @@ import (
 	"github.com/baum-ai/baum/internal/gitlocal"
 	"github.com/baum-ai/baum/internal/hookevents"
 	"github.com/baum-ai/baum/internal/hookrefresh"
+	"github.com/baum-ai/baum/internal/inboxes"
 	"github.com/baum-ai/baum/internal/jobs"
 	"github.com/baum-ai/baum/internal/livesessions"
 	"github.com/baum-ai/baum/internal/localapp"
@@ -465,8 +466,17 @@ func localApplication(paths daemon.Paths, concurrency int, log *slog.Logger) fun
 		// The feature log follows the decision capture gate, so a settings
 		// change wakes it too.
 		var featureLog *decisionlog.FeatureWorker
+		// The Timeline page reads the decision log again on this event; a
+		// burst of writes is one event a second.
+		timelineChanged := coalesce(time.Second, func() {
+			if err := server.Publish("timeline", struct{}{}); err != nil {
+				log.Warn("timeline event not published", "error", err)
+			}
+		})
 		settingsChanged := func() {
 			changed()
+			// A repository's decisions may just have been turned on or off.
+			timelineChanged()
 			scheduler.Wake()
 			featureLog.Wake()
 			// A repository may just have been picked.
@@ -481,12 +491,14 @@ func localApplication(paths daemon.Paths, concurrency int, log *slog.Logger) fun
 		var requests *agentrequests.Store
 		var requestEvents <-chan hookevents.Record
 		unsubscribeRequests := func() {}
+		var transcripts *livesessions.Transcripts
 		if live != nil {
 			live.Mask = func(text string) string { return renderer.Mask(ctx, text) }
 			// A session that starts waiting for a permission or an answer is
 			// a notice; reading the registry for it must not hold the tracker.
 			live.Waiting = func(session livesessions.Session) { go notify.SessionWaiting(ctx, session) }
-			liveAPI = (&livesessions.Transcripts{Tracker: live, Render: renderer.Render, Log: log}).Handler()
+			transcripts = &livesessions.Transcripts{Tracker: live, Render: renderer.Render, Log: log}
+			liveAPI = transcripts.Handler()
 			// What agents wait on the app to answer, and the messages queued
 			// for running sessions, stay in memory, masked as the sessions
 			// are; only the Codex setting is kept, in the state directory.
@@ -514,15 +526,20 @@ func localApplication(paths daemon.Paths, concurrency int, log *slog.Logger) fun
 		// derived, redacted decisions in the daemon's state.
 		var capture *decisionlog.Scheduler
 		var decisionStore *decisionlog.Store
+		var timeline http.Handler
+		// The GitHub connection's login, once it exists below.
+		var connectionLogin func() string
 		if live != nil {
 			if decisionStore, err = decisionlog.Open(filepath.Join(state, "decisions", "decisions.sqlite"), decisionlog.OpenOptions{AbandonPending: true}); err != nil {
 				log.Warn("decision capture is off: its store did not open", "error", err)
 			} else {
 				decisionStore.Changed = func() { _ = server.Publish("decisions", struct{}{}) }
-				capture = &decisionlog.Scheduler{Tracker: live, Source: events.service.Store, Log: log,
-					Worker: &decisionlog.Capturer{Store: decisionStore, Registry: registry, Config: cfg, Log: log}}
-				featureLog = &decisionlog.FeatureWorker{Store: decisionStore, Registry: registry, GitHub: githubReaders(cfg), Config: cfg, Log: log}
+				capture = &decisionlog.Scheduler{Tracker: live, Source: events.service.Store, Log: log, Changed: timelineChanged,
+					Worker: &decisionlog.Capturer{Store: decisionStore, Registry: registry, Config: cfg, Log: log, Changed: timelineChanged}}
+				featureLog = &decisionlog.FeatureWorker{Store: decisionStore, Registry: registry, GitHub: githubReaders(cfg), Config: cfg, Log: log, Changed: timelineChanged}
 				builds.worker.Store(featureLog)
+				timeline = (&decisionlog.Timeline{Store: decisionStore, Registry: registry, Clone: decisionlog.LocalClones(registry), Transcripts: transcripts,
+					Login: func(ctx context.Context) string { return viewerLogin(ctx, registry, discover.Cached, connectionLogin) }}).Handler()
 			}
 		}
 		home, _ := os.UserHomeDir()
@@ -556,6 +573,7 @@ func localApplication(paths daemon.Paths, concurrency int, log *slog.Logger) fun
 			}
 		}
 		githubConnection := uiserver.NewGitHubAuthentication(ctx, config.GitHubAuth, cfg, changed, beginIdentityChange)
+		connectionLogin = githubConnection.Login
 		// A write to a pull request re-reads the repository's pull requests so
 		// the inbox shows its new state.
 		githubClient := github.NewFromConfig(cfg, github.Options{})
@@ -592,7 +610,8 @@ func localApplication(paths daemon.Paths, concurrency int, log *slog.Logger) fun
 		endedSessions, unsubscribeEnded := events.Subscribe(4, func(e hookevents.Event) bool {
 			return e.Kind == hookevents.KindAgent && e.Name == "session-end"
 		})
-		api := uiserver.LocalAPI{GitHubAuth: githubConnection.Handler(), Registry: registry, Config: cfg, PRs: uiserver.DiscoveryHandler(registry, discover, changed), Index: index.Handler(), Jobs: queue.Handler(), Background: worker.Handler(), Automatic: scheduler.Handler(), Live: liveAPI, AgentRequests: requestsAPI, Clones: clones.Handler(), GitHubRepositories: pickList.Handler(), PlanUsage: plans.Handler(), Analytics: insights.Handler(), Merge: uiserver.MergeHandler(registry, actions.RecordMerges(githubClient), mergedPullRequest, changed), Review: uiserver.ReviewHandler(registry, githubClient, changed), Update: uiserver.UpdateHandler(registry, actions.RecordUpdates(prupdate.Service{Client: githubClient, Cache: panelCache, Counted: countedThreads}), refreshRepository, changed), Changed: settingsChanged,
+		api := uiserver.LocalAPI{GitHubAuth: githubConnection.Handler(), Registry: registry, Config: cfg, PRs: uiserver.DiscoveryHandler(registry, discover, changed), Index: index.Handler(), Jobs: queue.Handler(), Background: worker.Handler(), Automatic: scheduler.Handler(), Live: liveAPI, AgentRequests: requestsAPI, Clones: clones.Handler(), GitHubRepositories: pickList.Handler(), PlanUsage: plans.Handler(), Analytics: insights.Handler(), Timeline: timeline, Merge: uiserver.MergeHandler(registry, actions.RecordMerges(githubClient), mergedPullRequest, changed), Review: uiserver.ReviewHandler(registry, githubClient, changed), Update: uiserver.UpdateHandler(registry, actions.RecordUpdates(prupdate.Service{Client: githubClient, Cache: panelCache, Counted: countedThreads}), refreshRepository, changed), Changed: settingsChanged,
+			Inboxes:   (&inboxes.API{Store: inboxes.Open(filepath.Join(state, "inboxes.json")), Changed: changed}).Handler(),
 			Groups:    (&reviewgroups.API{Store: groups, Registry: registry, Index: index.Build, Changed: changed}).Handler(),
 			Decisions: decisionsAPI, Log: log,
 			DecisionsChanged: func() { _ = server.Publish("decisions", struct{}{}) },
@@ -813,4 +832,54 @@ func daemonReportOf(report doctor.Daemon, status daemon.Status) doctor.Daemon {
 	report.Incompatible = status.Protocol > daemon.Protocol
 	report.Older = status.Protocol < daemon.Protocol || daemon.Older(status.Version, version())
 	return report
+}
+
+// coalesce calls f at most once every interval: a call within interval of
+// the last one is made when the interval ends, and calls meanwhile join it.
+func coalesce(every time.Duration, f func()) func() {
+	var mu sync.Mutex
+	var last time.Time
+	pending := false
+	return func() {
+		mu.Lock()
+		defer mu.Unlock()
+		if pending {
+			return
+		}
+		wait := every - time.Since(last)
+		if wait <= 0 {
+			last = time.Now()
+			f()
+			return
+		}
+		pending = true
+		time.AfterFunc(wait, func() {
+			mu.Lock()
+			pending, last = false, time.Now()
+			mu.Unlock()
+			f()
+		})
+	}
+}
+
+// viewerLogin is the user's GitHub login for the Timeline: the viewer of a
+// picked repository's cached discovery snapshot, which follows the token
+// actually in use, else the GitHub connection's; "" when neither knows.
+func viewerLogin(ctx context.Context, registry *repos.Registry, cached func(context.Context, github.Repository) (discovery.Snapshot, error), connection func() string) string {
+	list, err := registry.Repositories(ctx)
+	if err == nil {
+		for _, r := range list {
+			repo, err := github.ParseRepository(r.Repository)
+			if err != nil {
+				continue
+			}
+			if snapshot, err := cached(ctx, repo); err == nil && snapshot.Viewer != "" {
+				return snapshot.Viewer
+			}
+		}
+	}
+	if connection != nil {
+		return connection()
+	}
+	return ""
 }

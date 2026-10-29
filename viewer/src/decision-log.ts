@@ -92,6 +92,9 @@ export type DecisionDetail = {
   turns: { ordinal: number; triggered_at: string | null; text: string }[];
   prompts_withheld: boolean;
   pull_requests: DecisionPullRequest[];
+  /** A later reading of the session replaced the decision, which still
+   *  opens. Only the local log sends it. */
+  replaced?: boolean;
 };
 
 export type FeatureStatus = "in_progress" | "shipped" | "abandoned";

@@ -266,7 +266,7 @@ function fixSummary(defaults: ReviewDefaults): { label: string; fixable: boolean
 
 /** A setting on one line: its name and a sentence about it on the left, its
  *  control on the right; narrow, the control drops below. */
-function SettingRow({
+export function SettingRow({
   label,
   htmlFor,
   detail,

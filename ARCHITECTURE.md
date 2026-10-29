@@ -2294,6 +2294,15 @@ infers the default model or replaces it with a different priced model, and a
 model without a price, or a backend billed outside the list (cursor-agent),
 runs like any other. Unknown actual usage remains null.
 
+### Inboxes
+
+`internal/inboxes` keeps the inboxes people define, saved filters over the
+desktop app's Up next queue listed under Inbox in the sidebar, in
+`inboxes.json` in the daemon's state directory. `/api/inboxes` serves the list
+(`GET`) and replaces it (`PUT`, guarded by a revision so two windows cannot
+overwrite each other). The daemon only stores them; the app matches the rules,
+including `no_bots` against the pull request's `author_bot` from discovery.
+
 ### Review groups
 
 `internal/reviewgroups` keeps review groups, named sets of 2 to 8 open pull
@@ -3094,7 +3103,13 @@ replace it.
   `transcript` the body `GET /api/sessions/{id}` answers, omitted when the
   request's `?version=` is the current one; or `{"available":false,"live",
   "code":"transcript_unavailable","message"}` with why, in a sentence the app
-  shows.
+  shows. The Timeline's `GET /api/timeline/sessions/{agent}:{id}/transcript`
+  answers the same way for a captured session of a repository it serves,
+  whether the tracker lists it or not (`Transcripts.Read`): from the path
+  capture stored, the tracker's while it lists the session, held to the same
+  store rules; `live` is false once the tracker does not list it. Its cache
+  entries are kept until the least recently asked for makes room, not dropped
+  with the tracker's list.
 - **Stream.** The tracker publishes a `live` event with no data (like `index`,
   a notification the app answers by reading the endpoint) when what the app
   sees changes, at most once a second, and on a `reset` the app rereads like

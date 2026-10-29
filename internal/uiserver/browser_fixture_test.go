@@ -32,6 +32,7 @@ import (
 	"github.com/baum-ai/baum/internal/githubrepos"
 	"github.com/baum-ai/baum/internal/gitlocal"
 	"github.com/baum-ai/baum/internal/hookevents"
+	"github.com/baum-ai/baum/internal/inboxes"
 	"github.com/baum-ai/baum/internal/jobs"
 	"github.com/baum-ai/baum/internal/livesessions"
 	"github.com/baum-ai/baum/internal/localapp"
@@ -271,6 +272,7 @@ func TestLocalAppBrowserFixture(t *testing.T) {
 	if _, err := registry.Pick(context.Background(), "acme/missing", nil); err != nil {
 		t.Fatal(err)
 	}
+	timeline := browserTimeline(t, home, registry)
 	versions, err := store.Open(clone.CommonDir, "", true)
 	if err != nil {
 		t.Fatal(err)
@@ -492,6 +494,8 @@ func TestLocalAppBrowserFixture(t *testing.T) {
 			return daemon.App{}, err
 		}
 		live := &livesessions.Tracker{Source: events, Linker: browserLiveLinker{}, Notify: func() { _ = server.Publish("live", struct{}{}) }}
+		transcripts := &livesessions.Transcripts{Tracker: live, Render: transcript.NewRenderer("").Render}
+		timeline.Transcripts = transcripts
 		decided, err := browserDecisions(home)
 		if err != nil {
 			_ = events.Close()
@@ -508,7 +512,7 @@ func TestLocalAppBrowserFixture(t *testing.T) {
 			_ = events.Close()
 			return daemon.App{}, err
 		}
-		runner, err := jobs.Open(filepath.Join(home, "jobs.json"), &jobs.Local{Registry: registry, Groups: groups, Config: cfg, Client: client, FixDirectory: filepath.Join(home, "fixes"), Backends: generate.Backends{Claude: func(string) generate.CheckedBackend { return fixtureFixer{backend} }}}, 1, func(job jobs.Job) {
+		runner, err := jobs.Open(filepath.Join(home, "jobs.json"), &jobs.Local{Registry: registry, Groups: groups, Config: cfg, Client: client, FixDirectory: filepath.Join(home, "fixes"), Features: fixtureBuilder{}, Backends: generate.Backends{Claude: func(string) generate.CheckedBackend { return fixtureFixer{backend} }}}, 1, func(job jobs.Job) {
 			_ = server.Publish("progress", map[string]any{"job": job})
 			_ = server.Publish("index", map[string]any{})
 			if job.Phase == "finished" {
@@ -543,7 +547,8 @@ func TestLocalAppBrowserFixture(t *testing.T) {
 			}
 			return exec.CommandContext(ctx, "git", "-C", opts.Dir, "remote", "set-url", "origin", opts.URL).Run()
 		}}
-		api := uiserver.LocalAPI{Clones: finder.Handler(), GitHubRepositories: repositoryService.Handler(), GitHubAuth: auth.Handler(), Registry: registry, Config: cfg, PRs: uiserver.DiscoveryHandler(registry, disc, nil), Merge: uiserver.MergeHandler(registry, actions.RecordMerges(client), func(ctx context.Context, repo github.Repository, _ int, _ string) { _, _ = disc.Poll(ctx, repo) }, changed), Update: uiserver.UpdateHandler(registry, actions.RecordUpdates(prupdate.Service{Client: client}), func(ctx context.Context, repo github.Repository) { _, _ = disc.Poll(ctx, repo) }, changed), Index: index.Handler(), Jobs: runner.Handler(), Automatic: scheduler.Handler(), Live: (&livesessions.Transcripts{Tracker: live, Render: transcript.NewRenderer("").Render}).Handler(), Changed: scheduler.Wake, Diagnostics: browserDiagnostics, PlanUsage: browserPlanUsage, Analytics: insights.Handler(),
+		api := uiserver.LocalAPI{Clones: finder.Handler(), GitHubRepositories: repositoryService.Handler(), GitHubAuth: auth.Handler(), Registry: registry, Config: cfg, PRs: uiserver.DiscoveryHandler(registry, disc, nil), Merge: uiserver.MergeHandler(registry, actions.RecordMerges(client), func(ctx context.Context, repo github.Repository, _ int, _ string) { _, _ = disc.Poll(ctx, repo) }, changed), Update: uiserver.UpdateHandler(registry, actions.RecordUpdates(prupdate.Service{Client: client}), func(ctx context.Context, repo github.Repository) { _, _ = disc.Poll(ctx, repo) }, changed), Index: index.Handler(), Jobs: runner.Handler(), Automatic: scheduler.Handler(), Live: transcripts.Handler(), Changed: scheduler.Wake, Diagnostics: browserDiagnostics, PlanUsage: browserPlanUsage, Analytics: insights.Handler(), Timeline: timeline.Handler(),
+			Inboxes:   (&inboxes.API{Store: inboxes.Open(filepath.Join(home, "inboxes.json"))}).Handler(),
 			Groups:    (&reviewgroups.API{Store: groups, Registry: registry, Index: index.Build, Changed: func() { _ = server.Publish("index", struct{}{}) }}).Handler(),
 			Decisions: browserDecisionsAPI(decided, registry, live),
 			DecisionModel: func(ctx context.Context, prefs repos.Preferences) uiserver.DecisionModel {

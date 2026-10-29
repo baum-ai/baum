@@ -105,7 +105,7 @@ export type CommandAction =
   | { kind: "forward" }
   | { kind: "go-to" };
 
-/** The app-wide key a keydown is, if any: ⌘1 to ⌘7 (Ctrl elsewhere) for the
+/** The app-wide key a keydown is, if any: ⌘1 to ⌘8 (Ctrl elsewhere) for the
  *  sidebar's pages, ⌘, for Settings, ⌘K for Go to, and ⌘[ and ⌘] on a Mac
  *  or Alt+← and Alt+→ elsewhere for back and forward. Digits are read by
  *  their place on the keyboard, so a layout that shifts them still works. */

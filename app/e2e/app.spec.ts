@@ -1057,7 +1057,7 @@ test("the whole app can be used from the keyboard", async ({ page }) => {
   await expect(heading("Up next")).toBeVisible();
 
   // Sessions: j focuses the row, Enter opens its transcript, u comes back.
-  await page.keyboard.press("Control+3");
+  await page.keyboard.press("Control+4");
   await expect(heading("Sessions")).toBeVisible();
   // The fixture's one session keeps the title an earlier story gave it, so
   // the row is found by its link, not its words.
@@ -1074,12 +1074,12 @@ test("the whole app can be used from the keyboard", async ({ page }) => {
   await page.keyboard.press("u");
   await expect(heading("Sessions")).toBeVisible();
 
-  await page.keyboard.press("Control+6");
+  await page.keyboard.press("Control+7");
   await expect(heading("Jobs")).toBeVisible();
-  await page.keyboard.press("Control+4");
+  await page.keyboard.press("Control+5");
   await expect(heading("Analytics")).toBeVisible();
   // Repositories: a opens the picker with its search focused.
-  await page.keyboard.press("Control+5");
+  await page.keyboard.press("Control+6");
   await expect(heading("Repositories")).toBeVisible();
   await page.keyboard.press("a");
   await expect(page.getByRole("searchbox")).toBeFocused();
@@ -1095,7 +1095,7 @@ test("the whole app can be used from the keyboard", async ({ page }) => {
   await expect(heading("Repositories")).toBeVisible();
 
   // The sheet lists the page's own keys first; Escape closes it.
-  await page.keyboard.press("Control+3");
+  await page.keyboard.press("Control+4");
   await expect(heading("Sessions")).toBeVisible();
   await page.keyboard.press("?");
   const sheet = page.getByRole("dialog", { name: "Keyboard shortcuts" });

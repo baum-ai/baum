@@ -56,6 +56,9 @@ type LocalAPI struct {
 	// Groups serves /api/groups: review groups and their combined reviews
 	// (internal/reviewgroups).
 	Groups http.Handler
+	// Inboxes serves /api/inboxes: the saved filters listed under Inbox in
+	// the app. Without it the route reports the capability unavailable.
+	Inboxes http.Handler
 	// GitHubRepositories serves the account's repositories for picking
 	// (/api/github/repositories) and cloning one
 	// (/api/repositories/{owner}/{name}/clone and clone-target).
@@ -66,6 +69,9 @@ type LocalAPI struct {
 	// Analytics serves /api/analytics: what the agents did, cost and
 	// delivered (internal/analytics).
 	Analytics http.Handler
+	// Timeline serves /api/timeline/: the features and decisions of the
+	// local decision log (internal/decisionlog).
+	Timeline http.Handler
 	// Decisions builds the handler of /api/decisions, the decisions captured
 	// from agent sessions (internal/decisionlog), given the sessions a pull
 	// request's saved review links, as its PR page lists them.
@@ -160,6 +166,7 @@ func (a LocalAPI) Handler() *LocalHandler {
 	mux.Handle("/api/agent-messages/", agentRequests)
 	mux.Handle("/api/groups", provider(a.Groups, "groups_unavailable"))
 	mux.Handle("/api/groups/", provider(a.Groups, "groups_unavailable"))
+	mux.Handle("/api/inboxes", provider(a.Inboxes, "inboxes_unavailable"))
 	mux.Handle("/api/clones/found", provider(a.Clones, "clones_unavailable"))
 	mux.Handle("/api/clones/found/", provider(a.Clones, "clones_unavailable"))
 	repositories := provider(a.GitHubRepositories, "github_repositories_unavailable")
@@ -169,6 +176,7 @@ func (a LocalAPI) Handler() *LocalHandler {
 	mux.Handle("POST /api/repositories/{owner}/{name}/clone", repositories)
 	mux.Handle("/api/plan-usage", provider(a.PlanUsage, "plan_usage_unavailable"))
 	mux.Handle("/api/analytics", provider(a.Analytics, "analytics_unavailable"))
+	mux.Handle("/api/timeline/", provider(a.Timeline, "timeline_unavailable"))
 	var decisions http.Handler
 	if a.Decisions != nil {
 		decisions = a.Decisions(a.linkedSessions(cache))

@@ -94,7 +94,10 @@ type Scheduler struct {
 	Now     func() time.Time
 	// Tick is how often the triggers are evaluated; zero is TickEvery.
 	Tick time.Duration
-	Log  *slog.Logger
+	// Changed is called after a capture that saved decisions, recorded a
+	// skip or settled an attempt.
+	Changed func()
+	Log     *slog.Logger
 
 	once   sync.Once
 	mu     sync.Mutex
@@ -230,6 +233,12 @@ func (s *Scheduler) work(ctx context.Context) {
 		}
 		report, err := s.Worker.Capture(ctx, Target{Agent: k.agent, ID: k.id, Path: path, Repository: session.Repository,
 			Branch: session.Branch, Ended: session.State == livesessions.StateEnded}, Options{})
+		// What the Timeline shows changes with saved decisions, a skip or a
+		// settled attempt; a capture that stopped before any is not one.
+		if s.Changed != nil && ctx.Err() == nil && (report.Outcome == OutcomeExtracted || report.Outcome == OutcomeSkipped ||
+			report.Outcome == OutcomeFailed || report.Outcome == OutcomeHit) {
+			s.Changed()
+		}
 		switch {
 		case ctx.Err() != nil:
 			return

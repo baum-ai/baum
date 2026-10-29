@@ -38,6 +38,8 @@ export type PR = GitHubState & {
   head_sha: string;
   title: string;
   author?: string;
+  /** The author is a bot (a GitHub App), not a person. Absent in older snapshots. */
+  author_bot?: boolean;
   url: string;
   state: string;
   draft: boolean;
@@ -161,6 +163,8 @@ export type Job = {
   group?: string;
   group_name?: string;
   members?: string;
+  /** When the job last changed. */
+  updated_at?: string;
   /** "fix" for a fix of the pull request, "feature_build" for a
    * repository's first feature build (its `pr` is 0); absent for a review. */
   kind?: "fix" | "feature_build";
@@ -254,10 +258,23 @@ const jobReasons: Record<string, string> = {
     "GitHub refused the push, usually because the branch moved on. Nothing was force-pushed.",
   push_failed: "The push failed. Check that git can push to this repository from your clone.",
 };
-/** What a finished job's reason means, in a sentence. */
-export function jobReasonText(reason: string): string {
+/** A job's reason in words: a feature build's in its own, others' as
+ *  reviews and fixes say them. */
+export function jobReasonText(reason: string, kind?: Job["kind"]): string {
+  if (kind === "feature_build" && Object.hasOwn(buildReasons, reason)) return buildReasons[reason]!;
   return jobReasons[reason] ?? reason.replaceAll("_", " ");
 }
+/** Why a feature build stopped or cannot run. None asks to confirm it again:
+ *  where a build can be resumed, the page offers that itself. */
+const buildReasons: Record<string, string> = {
+  disabled: "Decisions are turned off for this repository, so it cannot be built.",
+  preferences_unreadable: "baum could not read its preferences, so it did not make a call.",
+  backend_unavailable: "The model backend is not available on this computer.",
+  backend_unsupported: "The configured backend cannot make the feature log's calls.",
+  failed: "It failed before it finished.",
+  cancelled: "It was cancelled before it finished.",
+  interrupted: "baum stopped before the build finished.",
+};
 /** How the jobs list and PR page say a job started without confirmation. */
 export function automaticLabel(job: Job): string | null {
   if (!job.automatic) return null;
@@ -842,6 +859,17 @@ export function threadOutcomesSummary(outcomes: ThreadOutcome[] | undefined): st
   if (replied) text += `; replied on ${replied} more without resolving`;
   if (failed) text += `; ${failed} ${failed === 1 ? "reply" : "replies"} failed`;
   return text;
+}
+/** Starts a feature build of the clone's repository at once, as every run
+ *  the person asks for starts: its first build, or the rest of one that
+ *  stopped. One the daemon will not run is refused with its reason as the
+ *  `LocalRequestError`'s code. */
+export async function startFeatureBuild(clone: string): Promise<Job[]> {
+  const answer = await request<{ jobs: Job[] }>("api/jobs", {
+    items: [{ clone, pr: 0, kind: "feature_build" }],
+    mode: "single",
+  });
+  return answer.jobs;
 }
 /** What a fix may be limited to: "checks" fixes the failing checks alone,
  *  leaving conflicts and review comments. */

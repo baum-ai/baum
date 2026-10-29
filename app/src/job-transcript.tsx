@@ -265,7 +265,7 @@ function JobHeader({ job }: { job: Job }) {
           )}
         </p>
       )}
-      {!active && job.reason ? <p>{jobReasonText(job.reason)}</p> : null}
+      {!active && job.reason ? <p>{jobReasonText(job.reason, job.kind)}</p> : null}
       {!active && job.detail ? <pre className="local-job-detail">{job.detail}</pre> : null}
       {!active && job.summary ? (
         <Markdown html={false} className="local-job-summary">

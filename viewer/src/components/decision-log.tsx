@@ -275,6 +275,11 @@ export function DecisionDetailBody<T>({
 
   return (
     <div className="flex flex-col gap-4 pt-1">
+      {detail.replaced ? (
+        <p className="text-base text-(--text-tertiary) italic">
+          A later reading of this session replaced this decision.
+        </p>
+      ) : null}
       {withSummary ? (
         <div>
           <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1 text-xs text-(--text-secondary)">

@@ -328,6 +328,7 @@ it("lists exactly the keys that work in the sheet", async () => {
     "Ctrl+5",
     "Ctrl+6",
     "Ctrl+7",
+    "Ctrl+8",
     "Alt+←",
     "Alt+→",
     "?",
@@ -412,11 +413,11 @@ it("reads the app-wide keys with the platform's command key", () => {
     kind: "page",
     page: "inbox",
   });
-  expect(commandAction(key({ metaKey: true, key: "7", code: "Digit7" }), true)).toEqual({
+  expect(commandAction(key({ metaKey: true, key: "8", code: "Digit8" }), true)).toEqual({
     kind: "page",
     page: "settings",
   });
-  expect(commandAction(key({ ctrlKey: true, key: "8", code: "Digit8" }), false)).toBeNull();
+  expect(commandAction(key({ ctrlKey: true, key: "9", code: "Digit9" }), false)).toBeNull();
   expect(commandAction(key({ metaKey: true, key: "," }), true)).toEqual({
     kind: "page",
     page: "settings",

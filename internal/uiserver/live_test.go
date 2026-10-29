@@ -76,6 +76,10 @@ func TestLiveEventsAreNotificationsOnTheStream(t *testing.T) {
 	if err := s.Publish("live", struct{}{}); err != nil {
 		t.Fatal(err)
 	}
+	// The Timeline page reads the decision log again on this one.
+	if err := s.Publish("timeline", struct{}{}); err != nil {
+		t.Fatal(err)
+	}
 	if err := s.Publish("sessions", struct{}{}); err == nil {
 		t.Fatal("an unknown event kind was accepted")
 	}
