@@ -60,7 +60,8 @@ func TestCompleteReportsUsageOfAFailedCall(t *testing.T) {
 	}
 }
 
-// A rejected reply is counted and its detail kept.
+// A rejected reply is counted and its detail kept. The run ended with a
+// failed result, so its usage stays unreported, as review accounting treats it.
 func TestCompleteReportsRejectedReplies(t *testing.T) {
 	script := filepath.Join(t.TempDir(), "claude")
 	events := []string{
@@ -73,7 +74,7 @@ func TestCompleteReportsRejectedReplies(t *testing.T) {
 	}
 	completion, _ := (&Backend{Binary: script, versionOK: true}).Complete(context.Background(),
 		agent.CompleteRequest{System: "s", User: "u", Schema: []byte(`{}`)})
-	if completion.Rejections != 1 || completion.RejectionDetail != "Output validation failed: choice" {
+	if completion.Rejections != 1 || completion.RejectionDetail != "Output validation failed: choice" || !completion.Usage.Unreported {
 		t.Fatalf("%+v", completion)
 	}
 }
