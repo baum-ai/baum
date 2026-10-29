@@ -1,12 +1,14 @@
 package decisionlog
 
 import (
+	"cmp"
 	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
 	"slices"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/baum-ai/baum/features/summary"
@@ -74,7 +76,9 @@ func (w *FeatureWorker) Summarize(ctx context.Context, repository, dir string, o
 }
 
 // summarizePending writes the text of at most limit of the run's version's
-// features behind their members and unchanged since quiet.
+// features behind their members and unchanged since quiet,
+// FeatureSummaryConcurrency at once. A stop or an error starts no further
+// feature; those being written finish.
 func (r *featureRun) summarizePending(ctx context.Context, quiet time.Time, limit int) (SummaryReport, error) {
 	w, repository := r.w, r.repository
 	report := SummaryReport{Repository: repository, Features: []SummarizedFeature{}}
@@ -87,45 +91,83 @@ func (r *featureRun) summarizePending(ctx context.Context, quiet time.Time, limi
 		return report, err
 	}
 	pending = slices.DeleteFunc(pending, func(p [2]string) bool { return settled.waiting(kindFeature, p[0], p[1], r.now) })
-	for _, p := range pending[:min(len(pending), limit)] {
-		if ctx.Err() != nil {
-			return report, ctx.Err()
-		}
-		if retired, err := r.retired(ctx); err != nil {
-			return report, err
-		} else if retired {
-			report.Stopped = ReasonVersionRetired
-			return report, nil
-		}
-		if on, err := r.refresh(ctx); err != nil {
-			report.Stopped = ReasonPreferences
-			return report, err
-		} else if !on {
-			report.Stopped = ReasonDisabled
-			return report, nil
-		}
-		out, err := r.summarize(ctx, p[0])
-		if out.Cost != nil {
-			report.Spent += *out.Cost
-		}
-		if errors.Is(err, errVersionRetired) {
-			report.Stopped = ReasonVersionRetired
-			return report, nil
-		}
-		if out.Outcome == "" && out.Reason != "" {
-			report.Stopped = out.Reason
-		}
-		if err != nil {
-			return report, err
-		}
-		if out.Outcome == "" {
+	pending = pending[:min(len(pending), limit)]
+	// written keeps the features in pending's order.
+	written := make([]*SummarizedFeature, len(pending))
+	var (
+		mu     sync.Mutex
+		halted bool
+		runErr error
+		wg     sync.WaitGroup
+	)
+	// stop records why no further feature starts, the first reason kept and
+	// every error.
+	stop := func(reason string, err error) {
+		mu.Lock()
+		defer mu.Unlock()
+		halted = true
+		report.Stopped = cmp.Or(report.Stopped, reason)
+		runErr = errors.Join(runErr, err)
+	}
+	slots := make(chan struct{}, FeatureSummaryConcurrency)
+	for i, p := range pending {
+		// Checked once a slot is free, so a stop meanwhile applies.
+		slots <- struct{}{}
+		mu.Lock()
+		done := halted
+		mu.Unlock()
+		if done {
 			break
 		}
-		report.Features = append(report.Features, out)
-		w.logger().Info("feature text", "repository", repository, "feature", out.Feature, "outcome", out.Outcome,
-			"decisions", out.Decisions, "pull_request_summaries", out.PullSummaries)
+		if ctx.Err() != nil {
+			stop("", ctx.Err())
+			break
+		}
+		if retired, err := r.retired(ctx); err != nil {
+			stop("", err)
+			break
+		} else if retired {
+			stop(ReasonVersionRetired, nil)
+			break
+		}
+		if on, err := r.refresh(ctx); err != nil {
+			stop(ReasonPreferences, err)
+			break
+		} else if !on {
+			stop(ReasonDisabled, nil)
+			break
+		}
+		wg.Go(func() {
+			defer func() { <-slots }()
+			out, err := r.summarize(ctx, p[0])
+			mu.Lock()
+			if out.Cost != nil {
+				report.Spent += *out.Cost
+			}
+			mu.Unlock()
+			switch {
+			case errors.Is(err, errVersionRetired):
+				stop(ReasonVersionRetired, nil)
+				return
+			case out.Outcome == "":
+				stop(out.Reason, err)
+				return
+			case err != nil:
+				stop("", err)
+				return
+			}
+			written[i] = &out
+			w.logger().Info("feature text", "repository", repository, "feature", out.Feature, "outcome", out.Outcome,
+				"decisions", out.Decisions, "pull_request_summaries", out.PullSummaries)
+		})
 	}
-	return report, nil
+	wg.Wait()
+	for _, out := range written {
+		if out != nil {
+			report.Features = append(report.Features, *out)
+		}
+	}
+	return report, runErr
 }
 
 // pendingSummaries are the version's features whose text is behind their

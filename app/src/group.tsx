@@ -8,6 +8,7 @@ import {
   type FormEvent,
 } from "react";
 import { ReviewViewer, type ReviewSteps } from "@baum/viewer/components/review-viewer";
+import { StackIcon } from "@baum/viewer/components/icons";
 import { Alert, Badge, Button, LiveDot } from "@baum/viewer/components/ui";
 import { useHistoryView } from "@baum/viewer/use-review-version";
 import { ViewerLink, useUrlState } from "@baum/viewer/navigation";
@@ -440,7 +441,18 @@ export function GroupPage({
         steps={steps}
         header={{
           heading: group.name,
-          titleAside: <Badge size="compact">Review group</Badge>,
+          titleAside: group.stack ? (
+            <Badge
+              size="compact"
+              className="gap-1"
+              title="baum grouped these stacked pull requests"
+            >
+              <StackIcon size={12} />
+              Stack
+            </Badge>
+          ) : (
+            <Badge size="compact">Review group</Badge>
+          ),
           statistics: (
             <p className="text-xs text-(--text-tertiary)">
               {group.repository} · {group.members.length} pull requests reviewed together
