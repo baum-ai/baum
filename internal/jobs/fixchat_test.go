@@ -105,8 +105,8 @@ func TestPrepareFixFromConversationNeedsNothingBroken(t *testing.T) {
 	if newest.BlockedReason != "" || newest.Fix.Chat != chatA || newest.Fix.ChatTurn != 2 || newest.Fix.ChatDigest == "" || newest.Fix.Conflicts || newest.Fix.Checks {
 		t.Fatalf("newest turn: %+v", newest)
 	}
-	if newest.Item.FixChat == nil || newest.Item.FixChat.Turn != 2 {
-		t.Fatalf("the estimate does not pin the turn: %+v", newest.Item.FixChat)
+	if newest.FixChat == nil || newest.FixChat.Turn != 2 {
+		t.Fatalf("the estimate does not pin the turn: %+v", newest.FixChat)
 	}
 	first := prepare(clean(), agent.BackendClaude, &FixChatRef{Conversation: chatA, Turn: 1})
 	if first.BlockedReason != "" || first.Fix.ChatTurn != 1 || first.Fix.ChatDigest == newest.Fix.ChatDigest {

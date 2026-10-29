@@ -104,7 +104,7 @@ func (l *Local) prepareFix(ctx context.Context, item Item) (Prepared, string, er
 			}
 			// The estimate pins the last turn: the confirmed fix uses the
 			// conversation up to it, whatever is asked after.
-			p.Item.FixChat = &FixChatRef{Conversation: chat.Conversation, Turn: turn}
+			p.FixChat = &FixChatRef{Conversation: chat.Conversation, Turn: turn}
 			p.Fix.Chat, p.Fix.ChatTurn, p.Fix.ChatDigest = chat.Conversation, turn, fix.ChatDigest(chat)
 			break
 		}
