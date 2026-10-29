@@ -106,6 +106,8 @@ export type ReviewGroup = {
   repository: string;
   name: string;
   members: number[];
+  /** baum made the group for stacked pull requests, not a person. */
+  stack?: boolean;
   created_at: string;
   updated_at: string;
   version_count: number;

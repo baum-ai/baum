@@ -20,6 +20,7 @@ vi.mock("@baum/viewer/components/review-viewer", () => ({
   ReviewViewer: ({ document, header, placeholder, notices }: ReviewViewerProps) => (
     <div>
       <h1>{header?.heading}</h1>
+      {header?.titleAside}
       {header?.beside}
       {notices}
       {document ? <p>{document.summary.text}</p> : placeholder}
@@ -259,6 +260,32 @@ it("renders a group as one row with its members nested when expanded", async () 
   // Select all covers the loose row and the expanded members.
   await selectAll();
   expect(node.textContent).toContain("Generate reviews (3)");
+});
+
+it("marks a stack baum grouped as the hosted list does, and a person's group as a group", async () => {
+  entries = [entry(1), entry(2), entry(3), entry(4)];
+  groups = [
+    group([1, 2], { id: "g1", name: "Mine" }),
+    group([3, 4], { id: "g2", name: "Stacked", stack: true }),
+  ];
+  await act(async () => root.render(<App />));
+  const row = (name: string) =>
+    node.querySelector<HTMLAnchorElement>(`a[title="${name}"]`)!.closest("li")!;
+  expect(row("Stacked").querySelector('[title="Stack of 2 pull requests"]')).not.toBeNull();
+  expect(row("Stacked").textContent).not.toContain("Group of 2");
+  expect(row("Mine").textContent).toContain("Group of 2");
+  expect(row("Mine").querySelector('[title^="Stack of"]')).toBeNull();
+});
+
+it("labels a stack group's page as a stack", async () => {
+  entries = [entry(3), entry(4)];
+  groups = [group([3, 4], { id: "g2", name: "Stacked", stack: true })];
+  history.replaceState(null, "", "/s/test-ns/?group=g2");
+  await act(async () => root.render(<App />));
+  expect(
+    node.querySelector('[title="baum grouped these stacked pull requests"]')!.textContent,
+  ).toBe("Stack");
+  expect(node.textContent).not.toContain("Review group");
 });
 
 it("keeps group jobs apart from pull request jobs", () => {
