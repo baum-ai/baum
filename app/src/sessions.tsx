@@ -37,6 +37,7 @@ import claudeLogo from "./desktop/claude-code.svg";
 import codexLogo from "./desktop/codex.svg";
 import cursorLogo from "./desktop/cursor.svg";
 import { useNow } from "./live";
+import { LiveSessionDecisions } from "./decisions";
 import { listKeys, useRowFocus, useShortcuts } from "./shortcuts";
 
 /** What marks a list row for the row focus (`useRowFocus`). */
@@ -217,6 +218,7 @@ export function LiveSessions({
                 Open transcript
               </Link>
             </span>
+            <LiveSessionDecisions session={s} />
           </li>
         ))}
       </ul>

@@ -23,6 +23,7 @@ import (
 	"github.com/baum-ai/baum/internal/clonefind"
 	"github.com/baum-ai/baum/internal/config"
 	"github.com/baum-ai/baum/internal/daemon"
+	"github.com/baum-ai/baum/internal/decisionlog"
 	"github.com/baum-ai/baum/internal/discovery"
 	"github.com/baum-ai/baum/internal/doctor"
 	"github.com/baum-ai/baum/internal/generate"
@@ -494,6 +495,12 @@ func TestLocalAppBrowserFixture(t *testing.T) {
 		live := &livesessions.Tracker{Source: events, Linker: browserLiveLinker{}, Notify: func() { _ = server.Publish("live", struct{}{}) }}
 		transcripts := &livesessions.Transcripts{Tracker: live, Render: transcript.NewRenderer("").Render}
 		timeline.Transcripts = transcripts
+		decided, err := browserDecisions(home)
+		if err != nil {
+			_ = events.Close()
+			return daemon.App{}, err
+		}
+		decided.Changed = func() { _ = server.Publish("decisions", struct{}{}) }
 		scheduler := &automatic.Scheduler{Registry: registry, Path: filepath.Join(home, "automatic.json"), Discover: disc.Poll, Interval: 500 * time.Millisecond,
 			Notify: func(status automatic.Status) { _ = server.Publish("automatic", status) }}
 		// Review groups generate through the same fake backend: a group of
@@ -527,7 +534,7 @@ func TestLocalAppBrowserFixture(t *testing.T) {
 		sessionIndex := &analytics.Index{Path: filepath.Join(home, "analytics-index.json"), Clones: registry}
 		insights := &analytics.Service{Registry: registry, Index: sessionIndex, Jobs: runner.List, Actions: actions,
 			Plans:    &planusage.History{Path: filepath.Join(home, "plan-usage-history.json"), Service: &planusage.Service{Sources: []planusage.Source{fixedPlans{}}}},
-			Delivery: &analytics.Delivery{Search: client}}
+			Delivery: &analytics.Delivery{Search: client}, Captures: decided.Ledger}
 		finder := &clonefind.Service{Registry: registry, Options: clonefind.Options{Home: home}, Changed: changed}
 		repositoryService := &githubrepos.Service{Registry: registry, Lister: browserRepositoryLister{}, Home: home, Context: appCtx, Changed: changed, Clone: func(ctx context.Context, opts gitlocal.CloneOptions) error {
 			if err := os.MkdirAll(filepath.Dir(opts.Dir), 0700); err != nil {
@@ -540,8 +547,14 @@ func TestLocalAppBrowserFixture(t *testing.T) {
 			return exec.CommandContext(ctx, "git", "-C", opts.Dir, "remote", "set-url", "origin", opts.URL).Run()
 		}}
 		api := uiserver.LocalAPI{Clones: finder.Handler(), GitHubRepositories: repositoryService.Handler(), GitHubAuth: auth.Handler(), Registry: registry, Config: cfg, PRs: uiserver.DiscoveryHandler(registry, disc, nil), Merge: uiserver.MergeHandler(registry, actions.RecordMerges(client), func(ctx context.Context, repo github.Repository, _ int, _ string) { _, _ = disc.Poll(ctx, repo) }, changed), Update: uiserver.UpdateHandler(registry, actions.RecordUpdates(prupdate.Service{Client: client}), func(ctx context.Context, repo github.Repository) { _, _ = disc.Poll(ctx, repo) }, changed), Index: index.Handler(), Jobs: runner.Handler(), Automatic: scheduler.Handler(), Live: transcripts.Handler(), Changed: scheduler.Wake, Diagnostics: browserDiagnostics, PlanUsage: browserPlanUsage, Analytics: insights.Handler(), Timeline: timeline.Handler(),
-			Groups: (&reviewgroups.API{Store: groups, Registry: registry, Index: index.Build, Changed: func() { _ = server.Publish("index", struct{}{}) }}).Handler()}.Handler()
-		return daemon.App{API: api, Assets: localapp.Handler(), Shutdown: runner.Shutdown, Close: func() { api.Close(); _ = events.Close(); _ = groups.Close() }, Drain: runner.Drain, Resume: runner.Resume,
+			Groups:    (&reviewgroups.API{Store: groups, Registry: registry, Index: index.Build, Changed: func() { _ = server.Publish("index", struct{}{}) }}).Handler(),
+			Decisions: browserDecisionsAPI(decided, registry, live),
+			DecisionModel: func(ctx context.Context, prefs repos.Preferences) uiserver.DecisionModel {
+				e := decisionlog.EffectiveModel(ctx, cfg, prefs, generate.Backends{}, nil)
+				return uiserver.DecisionModel{Backend: e.Backend, Undetermined: e.Undetermined, Model: e.Model, Ignored: e.Ignored}
+			},
+			DecisionsChanged: func() { _ = server.Publish("decisions", struct{}{}) }}.Handler()
+		return daemon.App{API: api, Assets: localapp.Handler(), Shutdown: runner.Shutdown, Close: func() { api.Close(); _ = events.Close(); _ = groups.Close(); _ = decided.Close() }, Drain: runner.Drain, Resume: runner.Resume,
 			// Background discovery's place: hand the scheduler a snapshot
 			// every quarter second, as the daemon does after each poll.
 			Run: func(ctx context.Context) {

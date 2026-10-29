@@ -193,6 +193,66 @@ func maxCalls(backend string) int {
 	return 1
 }
 
+// Effective is the backend and model decision capture uses.
+type Effective struct {
+	// Backend is the backend reviews resolve to, empty when none passes its
+	// check.
+	Backend string `json:"backend"`
+	// Undetermined is a backend whose checks did not answer in time, apart
+	// from none being usable.
+	Undetermined bool `json:"backend_undetermined"`
+	// Model is the decision model; empty without a backend and with
+	// cursor-agent, which cannot capture.
+	Model string `json:"effective_model"`
+	// Ignored is a chosen model (preferences.decisions.model) that capture
+	// does not use with Backend.
+	Ignored bool `json:"model_ignored"`
+}
+
+// effectiveTimeout bounds the backend checks EffectiveModel runs for auto, so
+// a slow CLI never holds Settings or the setup.
+var effectiveTimeout = 5 * time.Second
+
+// EffectiveModel resolves the backend and decision model as a capture does
+// (resolveModel), from the config file with the app's preferences over it; a
+// repository's own backend can still differ. Backends zero builds them from
+// the configuration and list nil is pricing.Active. With auto it runs the
+// backends' checks, for at most effectiveTimeout. No usable backend leaves
+// the Effective empty; checks that do not answer in time leave it empty but
+// Undetermined. Either way the model is unknown and nothing is ignored.
+func EffectiveModel(ctx context.Context, file config.Config, prefs repos.Preferences, backends generate.Backends, list *pricing.List) Effective {
+	cfg := prefs.Resolve(file)
+	if backends.Claude == nil {
+		backends = generate.DefaultBackendsFor(cfg)
+	}
+	if list == nil {
+		list = pricing.Active()
+	}
+	ctx, cancel := context.WithTimeout(ctx, effectiveTimeout)
+	defer cancel()
+	backend, model, err := resolveModel(ctx, cfg.Backend, backends, list, prefs.Decisions.Model)
+	if err != nil {
+		return Effective{Undetermined: errors.Is(ctx.Err(), context.DeadlineExceeded)}
+	}
+	// cursor-agent uses no model at all, so it ignores none in particular.
+	chosen := prefs.Decisions.Model
+	return Effective{Backend: backend, Model: model, Ignored: chosen != nil && *chosen != "" && model != "" && *chosen != model}
+}
+
+// resolveModel names the backend capture uses (resolveBackend) and its
+// decision model (decisionModel); cursor-agent, which cannot capture, has
+// none.
+func resolveModel(ctx context.Context, requested config.Backend, backends generate.Backends, list *pricing.List, chosen *string) (string, string, error) {
+	backend, err := resolveBackend(ctx, requested, backends)
+	if err != nil {
+		return "", "", err
+	}
+	if backend == agent.BackendCursorAgent {
+		return backend, "", nil
+	}
+	return backend, decisionModel(list, backend, chosen), nil
+}
+
 // caller makes the decision log's model calls, decision capture's and the
 // feature log's (README.md, "Capture", steps 6 to 8): it resolves the
 // backend and model, reserves the cost and records each call in the ledger.
@@ -273,11 +333,10 @@ func (c caller) plan(ctx context.Context, prefs repos.Preferences, settings repo
 		p.backends = generate.DefaultBackendsFor(cfg)
 	}
 	var err error
-	if p.Backend, err = resolveBackend(ctx, requested, p.backends); err != nil {
+	if p.Backend, p.Model, err = resolveModel(ctx, requested, p.backends, c.prices, prefs.Decisions.Model); err != nil {
 		c.log.Info("decision log backend unavailable", "backend", requested, "error", err)
 		return p, ReasonUnavailable
 	}
-	p.Model = decisionModel(c.prices, p.Backend, prefs.Decisions.Model)
 	if model != "" {
 		p.Model = model
 	}

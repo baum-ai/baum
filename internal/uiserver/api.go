@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
@@ -68,7 +69,20 @@ type LocalAPI struct {
 	// Timeline serves /api/timeline/: the features and decisions of the
 	// local decision log (internal/decisionlog).
 	Timeline http.Handler
-	Changed  func()
+	// Decisions builds the handler of /api/decisions, the decisions captured
+	// from agent sessions (internal/decisionlog), given the sessions a pull
+	// request's saved review links, as its PR page lists them.
+	Decisions func(LinkedSessions) http.Handler
+	// DecisionModel resolves the decision model capture uses with the given
+	// preferences, for GET and PUT /api/settings/decisions; nil reports none.
+	DecisionModel func(context.Context, repos.Preferences) DecisionModel
+	// DecisionsChanged, when set, is called after a change to what decision
+	// capture does: its settings or a repository's. The daemon publishes the
+	// app's decisions event with it.
+	DecisionsChanged func()
+	// Log receives what the API logs; nil is slog.Default.
+	Log     *slog.Logger
+	Changed func()
 	// Diagnostics builds the report served at /api/diagnostics; nil serves the
 	// capability fields with a null report. It must honour its context.
 	Diagnostics func(context.Context) doctor.Report
@@ -98,8 +112,13 @@ func (a LocalAPI) Handler() *LocalHandler {
 	registry := a.Registry.Handler()
 	mutate := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		registry.ServeHTTP(w, r)
-		if r.Method != "GET" && r.Method != "HEAD" && a.Changed != nil {
-			a.Changed()
+		if r.Method != "GET" && r.Method != "HEAD" {
+			if a.Changed != nil {
+				a.Changed()
+			}
+			if a.DecisionsChanged != nil {
+				a.DecisionsChanged()
+			}
 		}
 	})
 	mux.Handle("/api/repos", mutate)
@@ -154,6 +173,11 @@ func (a LocalAPI) Handler() *LocalHandler {
 	mux.Handle("/api/plan-usage", provider(a.PlanUsage, "plan_usage_unavailable"))
 	mux.Handle("/api/analytics", provider(a.Analytics, "analytics_unavailable"))
 	mux.Handle("/api/timeline/", provider(a.Timeline, "timeline_unavailable"))
+	var decisions http.Handler
+	if a.Decisions != nil {
+		decisions = a.Decisions(a.linkedSessions(cache))
+	}
+	mux.Handle("/api/decisions", provider(decisions, "decisions_unavailable"))
 	mux.Handle("/api/github-auth", provider(a.GitHubAuth, "github_auth_unavailable"))
 	mux.Handle("/api/github-auth/", provider(a.GitHubAuth, "github_auth_unavailable"))
 	mux.Handle("/api/index", provider(a.Index, "index_unavailable"))
@@ -190,6 +214,8 @@ func (a LocalAPI) Handler() *LocalHandler {
 			FixModel       string            `json:"fix_model"`
 		}{cfg.Backend, cfg.Model, cfg.Budgets, cfg.Caps, cfg.AgentEnv, source, fixBackend, fixModel})
 	})
+	mux.HandleFunc("GET /api/settings/decisions", a.getDecisionSettings)
+	mux.HandleFunc("PUT /api/settings/decisions", a.putDecisionSettings)
 	// The app's agent environment replaces the config file's; an empty one
 	// goes back to the file's.
 	mux.HandleFunc("PUT /api/settings/agent-env", func(w http.ResponseWriter, r *http.Request) {

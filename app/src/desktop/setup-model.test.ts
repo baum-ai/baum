@@ -1,5 +1,12 @@
 import { expect, it } from "vitest";
-import { displayPath, repositoryPath, describeCommand } from "./setup-model";
+import {
+  describeCommand,
+  displayPath,
+  repositoryPath,
+  shownHarness,
+  storedReviews,
+  withModel,
+} from "./setup-model";
 
 it("abbreviates only the current home and expands repository input for native actions", () => {
   expect(displayPath("Install /home/user/.local/bin/baum", "/home/user")).toBe(
@@ -21,4 +28,36 @@ it("keeps a replacement's real path separate from its displayed text", () => {
   });
   expect(displayPath(command.state, "/home/user")).toContain("~/.local/bin/baum");
   expect(command.replace).toBe(found.path);
+});
+
+it("keeps a chosen decision model and saves the harness's default as none", () => {
+  const base = {
+    backend: "codex",
+    model: "gpt-6-sol",
+    automatic: true,
+    pull_requests: "both" as const,
+  };
+  expect(withModel({ ...base, decisions_model: "" }).decisions_model).toBe("gpt-6-luna");
+  // Only the daemon says whether a model is used; the setup keeps it.
+  expect(withModel({ ...base, decisions_model: "claude-haiku-5-5" }).decisions_model).toBe(
+    "claude-haiku-5-5",
+  );
+  expect(storedReviews({ ...base, decisions_model: "gpt-6-luna" }).decisions_model).toBe("");
+  expect(
+    storedReviews({
+      ...base,
+      decisions_model: "gpt-6-sol",
+      decisions_effective_model: "gpt-6-sol",
+      decisions_model_ignored: false,
+    }),
+  ).toEqual({ ...base, decisions_model: "gpt-6-sol" });
+});
+
+it("shows auto as the harness the daemon resolved, else the screen's guess", () => {
+  const auto = { backend: "auto", model: "", automatic: true, pull_requests: "both" as const };
+  expect(shownHarness({ ...auto, decisions_backend: "codex" }, "claude")).toBe("codex");
+  expect(shownHarness({ ...auto, decisions_backend: "" }, "claude")).toBe("claude");
+  expect(
+    shownHarness({ ...auto, backend: "anthropic", decisions_backend: "codex" }, "claude"),
+  ).toBe("anthropic");
 });

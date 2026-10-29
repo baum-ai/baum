@@ -413,3 +413,32 @@ it("reads the sessions from disk again once a session in progress ends", async (
   expect(sessionReads()).toBe(first + 2);
   expect(node.querySelector('[aria-label="Sessions in progress"]')).toBeNull();
 });
+
+it("rereads a session's decisions once for a burst of events", async () => {
+  history.replaceState(null, "", "/s/test-ns/?pr=7&clone=clone");
+  liveBody = { sessions: [session()] };
+  const reads = () =>
+    vi
+      .mocked(fetch)
+      .mock.calls.filter(([url]) => String(url).startsWith("/s/test-ns/api/decisions?agent="))
+      .length;
+  await act(async () => root.render(<App />));
+  expect(node.textContent).toContain("Sessions in progress");
+  const before = reads();
+  expect(before).toBeGreaterThan(0);
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  try {
+    await act(async () => {
+      for (const kind of ["decisions", "decisions", "open", "decisions"])
+        streams[0]!.dispatchEvent(new Event(kind));
+    });
+    expect(reads()).toBe(before);
+    await act(async () => {
+      vi.advanceTimersByTime(250);
+    });
+  } finally {
+    vi.useRealTimers();
+  }
+  await act(async () => {});
+  expect(reads()).toBe(before + 1);
+});

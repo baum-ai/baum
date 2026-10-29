@@ -1107,6 +1107,21 @@ ended one is kept for a day, its identifiers and times also in
 A finished session's content is still read from the session files on disk,
 through the redacted transcript routes below.
 
+`GET /api/decisions` serves the decisions decision capture stored, behind the
+same checks and limited to `GET`: for a session, or the sessions of a pull
+request, each decision's id, title, summary, category, who decided, rationale,
+rejected alternative, edited file names, date and whether it is superseded or
+provisional, all derived from redacted transcripts and masked again after the
+model replied. Each session comes with its agent and id, its capture state
+(coverage, skip reason, when it last changed, whether a call is in flight and
+why capture is off), and for a pull request whether it is in progress and, for
+a session the saved review links, its title as the PR page's sessions list
+shows it, and when the saved review the provisional marks are relative to was
+generated. Evidence quotes, turns, branches and repositories stay in the
+store.
+The `decisions` event carries no data. Its settings change only through the authenticated
+`PUT /api/settings/decisions` and repository settings routes.
+
 One line of text is the exception: a Claude Code notification's `message`,
 the sentence Claude Code shows you when it asks for something ("Claude needs
 your permission to use Bash"). Only the `notification` hook's event keeps it,
