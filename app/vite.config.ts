@@ -56,7 +56,7 @@ export default defineConfig({
     keepPlaceholder(),
     desktopBundle(),
     ...(process.env.BAUM_DESKTOP_DEV_DIR
-      ? [desktopDevelopment(process.env.BAUM_DESKTOP_DEV_DIR)]
+      ? [desktopDevelopment(process.env.BAUM_DESKTOP_DEV_DIR, process.env.BAUM_DESKTOP_DAEMON_HOST)]
       : []),
   ],
   build: {
