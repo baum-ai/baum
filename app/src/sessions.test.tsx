@@ -386,6 +386,9 @@ it("toggles Codex approvals in Settings, and hides the toggle without the route"
         <SettingsPage
           automatic={null}
           defaults={null}
+          github={null}
+          section="computer"
+          setSection={() => {}}
           changed={async () => {}}
           problems={0}
           diagnosticsOpen={false}
