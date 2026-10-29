@@ -1303,7 +1303,7 @@ function Panel({
           {pr.fork ? " · Fork" : ""}
         </span>
         {tags.length > 0 ? (
-          <span className="upnext-tags" aria-label="Inboxes">
+          <span className="upnext-tags" role="group" aria-label="Inboxes">
             {tags.map((tag) => (
               <InboxTag key={tag.id} inbox={tag} />
             ))}
@@ -1467,7 +1467,11 @@ function Zero({
     return (
       <div className="upnext-zero">
         <h2>Nothing here right now.</h2>
-        <p>It fills up as matching pull requests come in.</p>
+        <p>
+          {snoozed.length > 0
+            ? `Everything here is handled except ${plural(snoozed.length, "snoozed pull request")}; they come back on their own.`
+            : "It fills up as matching pull requests come in."}
+        </p>
       </div>
     );
   return (

@@ -90,6 +90,9 @@ let entries: Entry[] = [];
 // What GET api/inboxes answers; null is an older daemon's 404.
 let daemon: { revision: number; inboxes: Inbox[] } | null = null;
 let puts: { revision: number; inboxes: Inbox[] }[] = [];
+// A status other than 0 makes GET api/inboxes fail with it.
+let readStatus = 0;
+let listeners: Record<string, (() => void)[]> = {};
 
 beforeEach(() => {
   Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
@@ -98,13 +101,17 @@ beforeEach(() => {
   entries = fixture();
   daemon = { revision: 1, inboxes: [reviews, merges, acme, quiet] };
   puts = [];
+  readStatus = 0;
+  listeners = {};
   node = document.createElement("div");
   document.body.append(node);
   root = createRoot(node);
   vi.stubGlobal(
     "EventSource",
     class {
-      addEventListener() {}
+      addEventListener(type: string, listener: () => void) {
+        (listeners[type] ??= []).push(listener);
+      }
       close() {}
     },
   );
@@ -120,6 +127,11 @@ beforeEach(() => {
             inboxes: body.inboxes.map((one, i) => ({ ...one, id: one.id ?? `new-${i}` })),
           };
         }
+        if (readStatus)
+          return Response.json(
+            { code: "inboxes_unreadable", message: "The inboxes file is unreadable." },
+            { status: readStatus },
+          );
         return daemon
           ? Response.json({ available: true, ...daemon })
           : new Response("not found", { status: 404 });
@@ -178,15 +190,35 @@ const click = (element: Element | undefined | null) =>
     await new Promise((resolve) => setTimeout(resolve, 0));
   });
 const menuItem = (label: string) =>
-  Array.from(node.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')).find(
+  Array.from(node.querySelectorAll<HTMLButtonElement>(".local-rail-menu button")).find(
     (item) => item.textContent === label,
   )!;
+const more = (name: string) =>
+  node.querySelector<HTMLButtonElement>(`[aria-label="More for ${name}"]`)!;
+const press = (key: string) =>
+  act(async () => {
+    document.body.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true }));
+  });
+const panelTitle = () => node.querySelector("#upnext-title")?.textContent;
+const snoozeUntilLater = (...keys: string[]) =>
+  localStorage.setItem(
+    "baum.inbox.v1",
+    JSON.stringify({
+      day: (() => {
+        const d = new Date();
+        return `${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate()}`;
+      })(),
+      seen: {},
+      snoozed: Object.fromEntries(keys.map((key) => [key, Date.now() + 3600_000])),
+      held: {},
+    }),
+  );
 
 it("nests the inboxes under Inbox with their counts and the current one", async () => {
   await render();
   expect(subRows().map((row) => row.textContent?.replace("⋯", ""))).toEqual([
     "Reviews1",
-    "Merges2",
+    "Merges2 (not counted in the Inbox badge)",
     "Acme3",
     // Nothing matches: no count.
     "Quiet",
@@ -208,10 +240,14 @@ it("folds the nested list with its chevron and remembers it", async () => {
   await render();
   const fold = () => rail().querySelector<HTMLButtonElement>(".local-rail-fold")!;
   expect(fold().getAttribute("aria-expanded")).toBe("true");
-  expect(fold().getAttribute("aria-label")).toBe("Hide inboxes");
+  expect(fold().getAttribute("aria-label")).toBe("Inboxes");
+  const controls = fold().getAttribute("aria-controls")!;
+  expect(node.querySelector(`#${controls}`)!.querySelector(".local-rail-inboxes")).not.toBeNull();
   await click(fold());
   expect(subRows()).toHaveLength(0);
-  expect(fold().getAttribute("aria-label")).toBe("Show inboxes");
+  // The label stays; only aria-expanded changes.
+  expect(fold().getAttribute("aria-label")).toBe("Inboxes");
+  expect(node.querySelector(`#${controls}`)).not.toBeNull();
   expect(fold().getAttribute("aria-expanded")).toBe("false");
   await render();
   expect(subRows()).toHaveLength(0);
@@ -239,6 +275,7 @@ it("shows only an inbox's own queue under its name and sentence", async () => {
   ).toEqual(["Acme"]);
   // Merge all counts only this inbox's pull requests.
   expect(node.querySelector(".upnext-batch")!.textContent).toBe("Merge all 2");
+  expect(node.querySelector('[role="group"][aria-label="Inboxes"]')).not.toBeNull();
   await render("?inbox=Acme");
   expect(titles()).toEqual(["Change 1", "Change 3", "Change 2"]);
   await render("?inbox=Reviews");
@@ -278,6 +315,7 @@ it("deletes an inbox with Undo", async () => {
   expect(node.querySelector('[aria-label="More for Acme"]')!.getAttribute("aria-expanded")).toBe(
     "true",
   );
+  expect(node.querySelector('[role="menu"]')).toBeNull();
   await click(menuItem("Delete inbox"));
   expect(puts).toHaveLength(1);
   expect(puts[0]!.revision).toBe(1);
@@ -307,7 +345,8 @@ it("switches an inbox in and out of the badge, and closes its menu with Esc", as
   await act(async () => {
     document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
   });
-  expect(node.querySelector('[role="menu"]')).toBeNull();
+  expect(node.querySelector(".local-rail-menu")).toBeNull();
+  expect(document.activeElement).toBe(more("Merges"));
   await click(node.querySelector('[aria-label="More for Merges"]'));
   await click(menuItem("Count in the Inbox badge"));
   expect(puts[0]!.inboxes.find((one) => one.id === "Merges")!.badge).toBe(true);
@@ -317,7 +356,7 @@ it("switches an inbox in and out of the badge, and closes its menu with Esc", as
   await act(async () => {
     document.body.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
   });
-  expect(node.querySelector('[role="menu"]')).toBeNull();
+  expect(node.querySelector(".local-rail-menu")).toBeNull();
 });
 
 it("shows no inbox controls and today's badge with an older daemon", async () => {
@@ -329,4 +368,156 @@ it("shows no inbox controls and today's badge with an older daemon", async () =>
   expect(node.querySelector(".upnext-tag")).toBeNull();
   expect(node.querySelector(".upnext-list-head h1")!.textContent).toBe("Up next");
   expect(titles()).toEqual(["Change 1", "Change 3", "Change 4", "Change 2"]);
+});
+
+it("returns focus to the menu button after Esc and after choosing, never to the page", async () => {
+  await render();
+  await click(more("Acme"));
+  // It opens on its first button.
+  expect(document.activeElement).toBe(menuItem("Leave out of the Inbox badge"));
+  await press("Escape");
+  expect(node.querySelector(".local-rail-menu")).toBeNull();
+  expect(document.activeElement).toBe(more("Acme"));
+
+  await click(more("Acme"));
+  await click(menuItem("Leave out of the Inbox badge"));
+  expect(node.querySelector(".local-rail-menu")).toBeNull();
+  expect(document.activeElement).toBe(more("Acme"));
+
+  // A click elsewhere closes it, and focus that was in it does not fall to the body.
+  await click(more("Acme"));
+  await act(async () => {
+    document.body.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+  });
+  expect(node.querySelector(".local-rail-menu")).toBeNull();
+  expect(document.activeElement).toBe(more("Acme"));
+
+  // A deleted row's focus moves to a neighbour.
+  await click(more("Acme"));
+  await click(menuItem("Delete inbox"));
+  expect(document.activeElement).toBe(subLink("Quiet"));
+  await click(more("Quiet"));
+  await click(menuItem("Delete inbox"));
+  expect(document.activeElement).toBe(subLink("Merges"));
+});
+
+it("keeps changes made while the toast is up when Undo brings an inbox back", async () => {
+  await render();
+  await click(more("Acme"));
+  await click(menuItem("Delete inbox"));
+  await click(more("Merges"));
+  await click(menuItem("Count in the Inbox badge"));
+  await click(node.querySelector(".inbox-toast button"));
+  const last = puts[puts.length - 1]!;
+  expect(last.inboxes.map((one) => one.id)).toEqual(["Reviews", "Merges", "Acme", "Quiet"]);
+  expect(last.inboxes.find((one) => one.id === "Merges")!.badge).toBe(true);
+});
+
+it("puts an inbox back at its old place in the list as it is now", async () => {
+  await render();
+  await click(more("Quiet"));
+  await click(menuItem("Delete inbox"));
+  await click(more("Reviews"));
+  await click(menuItem("Delete inbox"));
+  await click(more("Acme"));
+  await click(menuItem("Delete inbox"));
+  const before = puts.length;
+  // Undo is for the last delete: Acme goes back at its old index, clamped.
+  await click(node.querySelector(".inbox-toast button"));
+  expect(puts).toHaveLength(before + 1);
+  expect(puts[before]!.inboxes.map((one) => one.id)).toEqual(["Merges", "Acme"]);
+});
+
+it("keeps the inbox controls and reports a failed read, but hides them for an older daemon", async () => {
+  await render();
+  expect(subRows()).toHaveLength(4);
+  readStatus = 500;
+  await act(async () => {
+    listeners["index"]!.forEach((listener) => listener());
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  });
+  expect(subRows()).toHaveLength(4);
+  expect(node.textContent).toContain("Couldn't read your inboxes: The inboxes file is unreadable.");
+  // A save still goes out: the failure did not forget the daemon's revision.
+  await click(more("Merges"));
+  await click(menuItem("Count in the Inbox badge"));
+  expect(puts).toHaveLength(1);
+  expect(puts[0]!.revision).toBe(1);
+  // A later good read clears the report.
+  readStatus = 0;
+  await act(async () => {
+    listeners["index"]!.forEach((listener) => listener());
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  });
+  expect(node.textContent).not.toContain("Couldn't read your inboxes");
+  expect(subRows()).toHaveLength(4);
+
+  // The very first read failing shows no inbox controls, but says why.
+  readStatus = 500;
+  await render();
+  expect(subRows()).toHaveLength(0);
+  expect(rail().querySelector(".local-rail-fold")).toBeNull();
+  expect(node.textContent).toContain("Couldn't read your inboxes");
+  // Only a 404 is an older daemon, and says nothing.
+  readStatus = 404;
+  await render();
+  expect(subRows()).toHaveLength(0);
+  expect(node.textContent).not.toContain("Couldn't read your inboxes");
+});
+
+it("says a muted count is not counted in the Inbox badge to screen readers too", async () => {
+  await render();
+  const hidden = subLink("Merges").querySelector(".sr-only");
+  expect(hidden?.textContent).toContain("not counted in the Inbox badge");
+  expect(subLink("Acme").querySelector(".sr-only")).toBeNull();
+});
+
+it("leaves a snoozed pull request out of an inbox's count and queue, and lists it under Snoozed", async () => {
+  snoozeUntilLater("acme/demo#3");
+  await render();
+  // Merges: only Change 4 waits; Acme: Changes 1 and 2.
+  expect(subLink("Merges").querySelector(".local-rail-sub-count")?.textContent).toBe("1");
+  expect(subLink("Acme").querySelector(".local-rail-sub-count")?.textContent).toBe("2");
+  await render("?inbox=Merges");
+  expect(titles()).toEqual(["Change 4"]);
+  const snoozed = node.querySelector('section[aria-label="Snoozed"]')!;
+  expect(snoozed.textContent).toContain("#3 Change 3");
+  expect(snoozed.textContent).toContain("Bring back");
+  // Not in Reviews' own list.
+  await render("?inbox=Reviews");
+  expect(node.querySelector('section[aria-label="Snoozed"]')).toBeNull();
+});
+
+it("shows Snoozed with Bring back in an inbox whose queue is empty", async () => {
+  snoozeUntilLater("acme/demo#3", "other/thing#4");
+  await render("?inbox=Merges");
+  expect(titles()).toEqual([]);
+  expect(node.querySelector(".upnext-zero")!.textContent).toContain(
+    "Everything here is handled except 2 snoozed pull requests",
+  );
+  const snoozed = node.querySelector('section[aria-label="Snoozed"]')!;
+  expect(snoozed.textContent).toContain("Snoozed · 2");
+  expect(snoozed.querySelectorAll("button.upnext-small")).toHaveLength(2);
+  await click(snoozed.querySelector("button.upnext-small"));
+  expect(titles()).toHaveLength(1);
+});
+
+it("counts only the inbox's own Merge items in Merge all", async () => {
+  await render();
+  expect(node.querySelector(".upnext-batch")!.textContent).toBe("Merge all 2");
+  // Acme holds one merge item (Change 3): nothing to merge all of.
+  await render("?inbox=Acme");
+  expect(node.querySelector(".upnext-batch")).toBeNull();
+});
+
+it("moves j and k only through the inbox's own rows", async () => {
+  await render("?inbox=Merges");
+  expect(panelTitle()).toBe("Change 3");
+  await press("j");
+  expect(panelTitle()).toBe("Change 4");
+  await press("j");
+  expect(panelTitle()).toBe("Change 4");
+  await press("k");
+  await press("k");
+  expect(panelTitle()).toBe("Change 3");
 });

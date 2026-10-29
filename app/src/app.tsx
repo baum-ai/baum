@@ -21,7 +21,7 @@ import { Inbox } from "./inbox";
 import {
   inboxBadgeCount,
   matches,
-  parseInboxes,
+  readInboxes,
   useInboxes,
   type Inbox as SavedInbox,
 } from "./inboxes";
@@ -284,8 +284,8 @@ function Workspace({ url }: { url: UrlState }) {
             request<FoundClones>("api/clones/found").catch(() => null),
             // An older daemon has no groups.
             request<unknown>("api/groups").catch(() => null),
-            // An older daemon has no inboxes.
-            request<unknown>("api/inboxes").catch(() => null),
+            // An older daemon (404) has no inboxes; another failure is reported.
+            readInboxes(),
           ]);
           setClones(repos);
           setPicked(Array.isArray(repositories) ? repositories : []);
@@ -301,7 +301,7 @@ function Workspace({ url }: { url: UrlState }) {
           setSnapshot(index);
           setJobs(jobList.jobs ?? []);
           setGroups(parseGroups(groupList));
-          inboxes.adopt(parseInboxes(inboxList));
+          inboxes.read(inboxList);
           setRates(discovery);
           setBackground(Array.isArray(sync) ? sync : []);
           setAutomatic(auto && Array.isArray(auto.repositories) ? (auto as Automatic) : null);
@@ -401,13 +401,22 @@ function Workspace({ url }: { url: UrlState }) {
     railPage === "inbox"
       ? (inboxes.inboxes.find((candidate) => candidate.id === url.search.get("inbox")) ?? null)
       : null;
+  // Undo reads the list as it is then, not as it was at the delete.
+  const currentInboxes = useRef(inboxes.inboxes);
+  currentInboxes.current = inboxes.inboxes;
   const removeInbox = (target: SavedInbox) => {
     const before = inboxes.inboxes;
+    const at = before.findIndex((candidate) => candidate.id === target.id);
     inboxes.save(before.filter((candidate) => candidate.id !== target.id));
     setInboxToast({
       id: Date.now(),
       text: `Deleted ${target.name}. Its pull requests stay in Inbox.`,
-      undo: () => inboxes.save(before),
+      undo: () => {
+        const now = currentInboxes.current;
+        if (now.some((candidate) => candidate.id === target.id)) return;
+        const index = Math.min(Math.max(at, 0), now.length);
+        inboxes.save([...now.slice(0, index), target, ...now.slice(index)]);
+      },
     });
   };
   useEffect(() => {

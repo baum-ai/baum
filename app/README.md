@@ -341,16 +341,28 @@ In the sidebar a chevron beside Inbox folds the inboxes nested under it
 (remembered in `localStorage`; hidden with the glyph-only rail). Each row links
 to `?inbox=<id>`, is the current page when selected (then Inbox is not), and
 shows a dot, the name and how many unsnoozed items match, none when 0. The `⋯`
-button opens a menu to leave the inbox out of the Inbox badge (its count is then
-muted) or count it, and **Delete inbox**, which toasts "Deleted <name>. Its pull
-requests stay in Inbox." with **Undo**, which puts it back in its place with
-its id, so links to it still work. The Inbox badge counts the unsnoozed
+button opens a short list of buttons, focused on the first, to leave the inbox
+out of the Inbox badge (its count is then muted, and says so to screen readers)
+or count it, and **Delete inbox**. Esc, a click elsewhere or choosing closes it
+and returns focus to the `⋯` button (after a delete, to the neighbouring inbox,
+or Inbox); focus never drops to the page. Delete toasts "Deleted <name>. Its
+pull requests stay in Inbox." with **Undo**, which puts back only that inbox,
+with its id so links to it still work, into the list as it is then, at its old
+place (or the end), so a change made while the toast was up is kept; an inbox
+with that id already there is left alone. The chevron is labelled "Inboxes",
+with `aria-expanded` and `aria-controls` for the nested list. The Inbox badge counts the unsnoozed
 queue items that are in no inbox or in at least one that counts in the badge;
 with no inboxes it is the count above. Changes show at once and are sent to the
 daemon one at a time, each carrying the newest revision, so an older change
 cannot overwrite a newer one; a conflict adopts the daemon's list and any other
-failure restores the last saved list with an error. An older daemon has none of
-this: no chevron, rows, tags or changed badge.
+failure restores the last saved list with an error. An older daemon (the read
+answers 404, or `available: false`) has none of this: no chevron, rows, tags or
+changed badge. Any other failed read (a 500 `inboxes_unreadable`, a dropped
+connection) is not an older daemon: it keeps the list shown (on the very first
+read, nothing inbox-related) and says "Couldn't read your inboxes" in an alert
+until a read succeeds, and later saves still go out. Entries the daemon sends
+are read defensively (missing lists are empty, unknown values the plain ones,
+entries without an id and name dropped).
 
 Pull requests (`?page=pulls`, `src/inbox.tsx`) lists every open pull request
 of the picked repositories, with or without a local clone, with Risk,

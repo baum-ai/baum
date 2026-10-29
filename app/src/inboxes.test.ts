@@ -249,3 +249,44 @@ it("sends an inbox the daemon no longer stores with its id, so Undo keeps its li
   s.save([a, gone]);
   expect(puts[0]!.inboxes).toEqual([a, gone]);
 });
+
+it("reads a malformed entry defensively and drops one without an id or name", () => {
+  const list = parseInboxes({
+    revision: 2,
+    inboxes: [
+      { id: "a", name: "A", color: "chartreuse", what: "everything", risk: "9" },
+      { id: "b", name: "B", color: "red", what: "merge", owners: ["acme", 3], badge: false },
+      { name: "no id" },
+      { id: "c" },
+      null,
+      "text",
+    ],
+  });
+  expect(list!.inboxes).toEqual([
+    {
+      id: "a",
+      name: "A",
+      color: "grey",
+      what: "any",
+      owners: [],
+      risk: "any",
+      repositories: [],
+      no_bots: false,
+      badge: true,
+    },
+    {
+      id: "b",
+      name: "B",
+      color: "red",
+      what: "merge",
+      owners: ["acme"],
+      risk: "any",
+      repositories: [],
+      no_bots: false,
+      badge: false,
+    },
+  ]);
+  // Matching and the sentence cope with what it returns.
+  expect(() => sentence(list!.inboxes[0]!)).not.toThrow();
+  expect(matches(list!.inboxes[0]!, item("review"))).toBe(true);
+});

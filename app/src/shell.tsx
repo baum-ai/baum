@@ -111,7 +111,8 @@ export function Sidebar({
                   type="button"
                   className="local-rail-fold"
                   aria-expanded={!fold}
-                  aria-label={fold ? "Show inboxes" : "Hide inboxes"}
+                  aria-controls="local-rail-inboxes"
+                  aria-label="Inboxes"
                   onClick={() => {
                     setFold(!fold);
                     try {
@@ -124,7 +125,9 @@ export function Sidebar({
                   ▾
                 </button>
               </div>
-              {fold ? null : <InboxRows inboxes={inboxes} Link={Link} />}
+              <div id="local-rail-inboxes" hidden={fold}>
+                {fold ? null : <InboxRows inboxes={inboxes} Link={Link} />}
+              </div>
             </div>
           ) : (
             link(item)
@@ -150,13 +153,27 @@ function InboxRows({
 }) {
   const [open, setOpen] = useState<string | null>(null);
   const menu = useRef<HTMLDivElement>(null);
+  // The `⋯` button of the row whose menu is open.
+  const more = () => menu.current?.querySelector<HTMLElement>(".local-rail-more") ?? null;
+  // The menu is a disclosure of plain buttons: it opens on the first, Esc and
+  // a click elsewhere close it, and focus goes back to its `⋯` button, so it
+  // never drops to the page.
+  const close = (restoreFocus: boolean) => {
+    if (restoreFocus) more()?.focus();
+    setOpen(null);
+  };
   useEffect(() => {
     if (!open) return;
+    menu.current?.querySelector<HTMLElement>(".local-rail-menu button")?.focus();
     const outside = (event: MouseEvent) => {
-      if (!menu.current?.contains(event.target as Node)) setOpen(null);
+      if (menu.current?.contains(event.target as Node)) return;
+      // Focus that was inside the row would otherwise fall to the page.
+      close(!!menu.current?.contains(document.activeElement));
     };
     const escape = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setOpen(null);
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      close(true);
     };
     document.addEventListener("mousedown", outside);
     document.addEventListener("keydown", escape);
@@ -165,6 +182,16 @@ function InboxRows({
       document.removeEventListener("keydown", escape);
     };
   }, [open]);
+  // A deleted row takes its button with it: focus moves to its neighbour, or
+  // to Inbox when it was the last.
+  const afterDelete = () => {
+    const row = menu.current;
+    const next = (row?.nextElementSibling ?? row?.previousElementSibling) as HTMLElement | null;
+    const target = next?.matches(".local-rail-inbox")
+      ? next.querySelector<HTMLElement>("a.local-rail-sub")
+      : row?.closest("nav")?.querySelector<HTMLElement>("a.local-rail-link");
+    target?.focus();
+  };
   return (
     <div className="local-rail-inboxes">
       {inboxes.list.map((inbox) => {
@@ -190,24 +217,25 @@ function InboxRows({
                   {count}
                 </span>
               ) : null}
+              {count > 0 && !inbox.badge ? (
+                <span className="sr-only"> (not counted in the Inbox badge)</span>
+              ) : null}
             </Link>
             <button
               type="button"
               className="local-rail-more"
               aria-label={`More for ${inbox.name}`}
-              aria-haspopup="menu"
               aria-expanded={open === inbox.id}
-              onClick={() => setOpen(open === inbox.id ? null : inbox.id)}
+              onClick={() => (open === inbox.id ? close(true) : setOpen(inbox.id))}
             >
               ⋯
             </button>
             {open === inbox.id ? (
-              <div role="menu" className="local-rail-menu">
+              <div className="local-rail-menu">
                 <button
                   type="button"
-                  role="menuitem"
                   onClick={() => {
-                    setOpen(null);
+                    close(true);
                     inboxes.toggleBadge(inbox);
                   }}
                 >
@@ -215,8 +243,8 @@ function InboxRows({
                 </button>
                 <button
                   type="button"
-                  role="menuitem"
                   onClick={() => {
+                    afterDelete();
                     setOpen(null);
                     inboxes.remove(inbox);
                   }}

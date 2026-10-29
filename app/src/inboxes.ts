@@ -21,6 +21,31 @@ export type Inbox = {
 };
 export type InboxList = { revision: number; inboxes: Inbox[] };
 
+const isString = (value: unknown): value is string => typeof value === "string";
+const strings = (value: unknown) => (Array.isArray(value) ? value.filter(isString) : []);
+
+/** One entry as the page can rely on it: a missing list is empty and an
+ *  unknown colour, `what` or risk is the plain one. Null without a string id
+ *  and name, so one malformed entry cannot crash the page. */
+function parseInbox(raw: unknown): Inbox | null {
+  const value = raw as Record<string, unknown> | null;
+  if (!value || typeof value !== "object" || !isString(value.id) || !isString(value.name))
+    return null;
+  return {
+    id: value.id,
+    name: value.name,
+    color: INBOX_COLORS.includes(value.color as InboxColor) ? (value.color as InboxColor) : "grey",
+    what: (["any", "review", "merge", "agent", "mine"] as const).includes(value.what as InboxWhat)
+      ? (value.what as InboxWhat)
+      : "any",
+    owners: strings(value.owners),
+    risk: value.risk === "3" || value.risk === "4" ? value.risk : "any",
+    repositories: strings(value.repositories),
+    no_bots: value.no_bots === true,
+    badge: value.badge !== false,
+  };
+}
+
 /** An older daemon answers 404 or `available: false`: no inboxes at all, not
  *  even an empty list. */
 export function parseInboxes(body: unknown): InboxList | null {
@@ -28,8 +53,21 @@ export function parseInboxes(body: unknown): InboxList | null {
   if (!value || value.available === false || !Array.isArray(value.inboxes)) return null;
   return {
     revision: typeof value.revision === "number" ? value.revision : 0,
-    inboxes: value.inboxes as Inbox[],
+    inboxes: value.inboxes.flatMap((raw) => parseInbox(raw) ?? []),
   };
+}
+
+/** What a read of the inboxes came to: the list, `null` for an older daemon
+ *  (404), or a failure, which says nothing about the daemon's version. */
+export async function readInboxes(): Promise<InboxList | null | { failed: string }> {
+  try {
+    return parseInboxes(await request<unknown>("api/inboxes"));
+  } catch (e) {
+    if (e instanceof LocalRequestError && e.status === 404) return null;
+    return {
+      failed: `Couldn't read your inboxes: ${e instanceof Error ? e.message : "Local request failed."}`,
+    };
+  }
 }
 
 /** What `matches` needs of a queue item. A pull request an agent is fixing
@@ -186,6 +224,7 @@ export function createInboxSaver(io: SaverIO) {
 export function useInboxes() {
   const [list, setList] = useState<InboxList | null>(null);
   const [error, setError] = useState("");
+  const [readError, setReadError] = useState("");
   const saver = useRef<ReturnType<typeof createInboxSaver>>(undefined);
   saver.current ??= createInboxSaver({
     put: (revision, inboxes) =>
@@ -198,8 +237,17 @@ export function useInboxes() {
   return {
     available: list !== null,
     inboxes: list?.inboxes ?? [],
-    error,
-    adopt,
+    error: error || readError,
+    /** Takes what a read answered. A failed read keeps the list shown and
+     *  the saver's state, and is reported; an older daemon hides the inboxes. */
+    read(result: InboxList | null | { failed: string }) {
+      if (result && "failed" in result) {
+        setReadError(result.failed);
+        return;
+      }
+      setReadError("");
+      adopt(result);
+    },
     save: (inboxes: Inbox[]) => {
       setError("");
       save(inboxes);
