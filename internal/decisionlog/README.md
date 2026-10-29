@@ -329,7 +329,7 @@ raises `membership_version` and sets `dirty_since` and `changed_at`.
 ### Feature text
 
 Each run writes the text of at most 50 features behind their members, not
-changed for 15 minutes, longest behind first, 8 at once, with the published
+changed for 15 minutes, longest behind first, 4 at once, with the published
 summary prompt. A stop or an error starts no further feature; those being
 written finish. A feature's input is its pull requests, earliest opened first
 (title, description, state, and the summary of the latest review saved in

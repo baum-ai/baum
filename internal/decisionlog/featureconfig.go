@@ -53,9 +53,10 @@ const (
 	FeatureAssignRunLimit  = 100
 	FeatureSummaryRunLimit = 50
 	// FeatureSummaryConcurrency is how many features the text stage writes
-	// at once, as a hosted rebuild does: each feature's text and pull
-	// request summaries are calls of their own.
-	FeatureSummaryConcurrency = 8
+	// at once: each feature's text and pull request summaries are calls of
+	// their own. Fewer than a hosted rebuild's, as each local call may be a
+	// CLI process on the user's machine and plan.
+	FeatureSummaryConcurrency = 4
 	// FeatureBackoff is how long an item or feature whose call failed
 	// waits; after FeatureMaxFailures counted failures for one trigger it
 	// waits for the next.

@@ -100,15 +100,14 @@ func (r *featureRun) summarizePending(ctx context.Context, quiet time.Time, limi
 		runErr error
 		wg     sync.WaitGroup
 	)
-	// stop records why no further feature starts, the first reason kept.
+	// stop records why no further feature starts, the first reason kept and
+	// every error.
 	stop := func(reason string, err error) {
 		mu.Lock()
 		defer mu.Unlock()
 		halted = true
 		report.Stopped = cmp.Or(report.Stopped, reason)
-		if runErr == nil {
-			runErr = err
-		}
+		runErr = errors.Join(runErr, err)
 	}
 	slots := make(chan struct{}, FeatureSummaryConcurrency)
 	for i, p := range pending {
