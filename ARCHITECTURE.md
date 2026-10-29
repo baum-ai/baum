@@ -1605,6 +1605,34 @@ wall-clock budget is a `context.WithTimeout` around the loop, `pass_timeout`
 bounds each backend call, and SIGINT and SIGTERM cancel the context so the
 backend's process group is killed and the run directory removed.
 
+A review the daemon runs with the local `claude` or `codex` backend keeps its
+agent session and run directory (`generate.Options.KeepSession`, set by
+`jobs.Local` for single pull requests only: not for review groups, Cursor or the
+Anthropic API backend, and not for hosted runs), so a later chat can fork the
+session in the same directory. The run directory is then made under
+`<user cache>/baum/review-runs/` (`internal/reviewruns`, the same cache base as
+fixes), mode 0700, still named `agent.RunDirPrefix+"*"`, with symlinks resolved
+because the CLIs record the resolved cwd. The loop asks every call to persist
+its session. Each call, a repair included, is a fresh session that carries the
+whole context pack (a repair resends the bundle and the rejected document), so
+`Outcome.SessionID`, the session of the last successful call, is the one that
+produced the accepted document and is self-contained. A run that succeeds with a
+session id records `store.Metadata.Session` (`backend`, `id`, `directory`,
+absent in older versions) and keeps the directory; a failed, rejected or
+cancelled run, a run without a session id, and a version the store refused remove
+it as before. Pruning removes directories only (the CLI's own session files
+stay), and only real directories directly under the root whose names carry the
+prefix: after a successful publish the directories of a pull request's versions
+beyond the latest two (`reviewruns.PruneVersions`), and, when the daemon starts
+and then daily, any directory last modified more than 14 days ago
+(`reviewruns.Expire`). The directory of a review still running is neither
+referenced nor old, so neither pass touches it. The session collector never
+ingests these sessions: Claude Code, Codex and Cursor discovery decide by the
+cwd the transcript records, which is a run directory (prefix, outside every
+repository root), not by the transcript's path; review runs load no hooks
+(`--setting-sources ""`, `--disable hooks`), so nothing in `livesessions` or
+`hookevents` sees them.
+
 Completion mirrors the hosted worker's `Generate` and `Complete`: after the loop,
 `agent.RedactOutput` masks the document, findings, model and diagnostics (with
 the unpacked tree's paths as the known checkout paths) and

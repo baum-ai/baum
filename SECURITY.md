@@ -333,6 +333,18 @@ What remains for `codex`:
   file. Baum does not pass the desktop session variables the keyring needs; sign
   in with `codex login` so the login is stored in `CODEX_HOME`.
 
+A review the daemon runs with `claude` or `codex` keeps its agent session and
+run directory so a chat can continue it. The kept directory holds what the
+model was given: the unpacked head and merge-base checkouts, the description
+images, `bundle.json` (already redacted) and `schema.json`, and the CLI keeps
+its own transcript of the session in its usual store. It lives under baum's user
+cache directory (`<cache>/baum/review-runs/`), not in the system temporary
+directory or your repository, with mode 0700. Baum deletes the directories of a
+pull request's versions beyond the latest two and any directory untouched for 14
+days, only ever real directories with the run prefix directly under that root;
+it does not delete the CLI's session files. Failed, rejected and cancelled runs,
+runs for other backends and review groups still remove their directory at once.
+
 The unsandboxed mode (`--sandbox danger-full-access`) exists only as the
 `Container` profile for the hosted review agent, which runs inside its own
 container. A test fails if any code under `oss/internal` or `oss/cmd` names it.
