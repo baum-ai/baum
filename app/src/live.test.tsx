@@ -8,6 +8,7 @@ import { App } from "./app";
 import { Inbox } from "./inbox";
 import { LocalReview } from "./review";
 import { liveFor, parseLive, type Entry, type LiveSession } from "./api";
+import { forgetLastRows } from "./shortcuts";
 
 vi.mock("@baum/viewer/components/review-viewer", () => ({
   ReviewViewer: ({ document, placeholder, notices }: ReviewViewerProps) => (
@@ -131,6 +132,7 @@ afterEach(async () => {
   await act(async () => root.unmount());
   node.remove();
   vi.unstubAllGlobals();
+  forgetLastRows();
 });
 
 it("keeps sessions in progress of the pull request, across clones, and none that ended", () => {
@@ -218,13 +220,12 @@ it("shows running and recently ended sessions on the Sessions page, updated by t
   const running = node.querySelector('[aria-label="Running now"]')!;
   expect(running.querySelectorAll("li")).toHaveLength(2);
   expect(running.textContent).toContain("Claude Code");
-  expect(running.textContent).toContain("Working");
   expect(running.querySelector(".local-session-repo")!.textContent).toBe("acme/demo");
   expect(running.querySelector(".local-session-branch")!.textContent).toBe("feature");
-  expect(running.textContent).toContain("Started 5 minutes ago");
+  expect(running.textContent).toMatch(/4m 59s|5m 0\ds/);
   expect(running.textContent).toContain("Active 20 seconds ago");
   expect(running.textContent).toContain("Codex");
-  expect(running.textContent).toContain("Waiting for you");
+  expect(running.textContent).toContain("Quiet for");
   expect(running.querySelector('a[href$="&pr=7"]')?.textContent).toBe("PR #7");
   expect(running.querySelector("li:nth-child(2) a.local-session-pr")).toBeNull();
   // Every row opens its transcript.
@@ -234,7 +235,7 @@ it("shows running and recently ended sessions on the Sessions page, updated by t
   const ended = node.querySelector('[aria-label="Ended recently"]')!;
   expect(ended.querySelectorAll("li")).toHaveLength(1);
   expect(ended.textContent).toContain("Ended 2 hours ago");
-  expect(ended.textContent).toContain("Lasted 1 h");
+  expect(ended.textContent).toContain("1.0 h");
   // Only sessions that are working count on the sidebar.
   expect(sidebarBadge()).toBe("1");
   liveBody = { sessions: [session({ state: "ended", ended_at: new Date().toISOString() })] };
@@ -307,27 +308,22 @@ it("puts the sessions waiting on the person in Needs you, longest wait first, an
     const rows = [...needs.querySelectorAll("li")];
     expect(rows.map((r) => r.getAttribute("title"))).toEqual(["asking", "finished", "question"]);
     expect(needs.querySelector("h2")!.textContent).toBe("Needs you 3");
-    expect(rows[0]!.textContent).toContain("Codex");
-    expect(rows[0]!.textContent).toContain("Asking permission");
-    expect(rows[0]!.textContent).toContain("Waiting 4 min");
-    expect(rows[0]!.querySelector(".local-session-branch")!.textContent).toBe("wip");
+    expect(rows[0]!.textContent).toContain("Codex is asking permission");
+    expect(rows[0]!.textContent).toContain("waiting 4m 00s");
+    expect(rows[0]!.textContent).toContain("Answer in the terminal");
+    expect(rows[0]!.querySelector(".local-feed-mono")!.textContent).toBe("wip");
     expect(rows[0]!.querySelector(".local-needs-message")).toBeNull();
-    expect(rows[1]!.textContent).toContain("Finished its turn");
-    expect(rows[2]!.textContent).toContain("Waiting for your answer");
-    expect(rows[2]!.textContent).toContain("Waiting under a minute");
+    expect(rows[1]!.textContent).toContain("Claude Code finished its turn");
+    expect(rows[1]!.textContent).not.toContain("Answer in the terminal");
+    expect(rows[2]!.textContent).toContain("Claude Code is waiting for your answer");
+    expect(rows[2]!.textContent).toContain("waiting 30s");
     expect(rows[2]!.querySelector(".local-needs-message")!.textContent).toBe(
       "Which database should the migration use?",
     );
-    // The title leads the row; a session without one goes without.
-    expect(rows[2]!.querySelector(".local-session-title")!.textContent).toBe(
-      "Plan the orders migration",
+    expect(rows[2]!.querySelector(".local-feed-where")!.textContent).toBe(
+      "Plan the orders migration · feature",
     );
-    expect(rows[0]!.querySelector(".local-session-title")).toBeNull();
-    expect(rows[2]!.querySelector(".local-session-summary-line")!.textContent).toBe(
-      "Move orders to the new schema without downtime.",
-    );
-    expect(rows[0]!.querySelector(".local-session-summary-line")).toBeNull();
-    expect(rows[2]!.querySelector('a[href$="&pr=7"]')?.textContent).toBe("PR #7");
+    expect(rows[0]!.querySelector("a.local-session-open")).not.toBeNull();
     expect(rows[2]!.querySelector("a.local-session-open")?.getAttribute("href")).toBe(
       "/s/test-ns/?page=sessions&session=claude-code%3Aquestion",
     );
@@ -347,8 +343,8 @@ it("puts the sessions waiting on the person in Needs you, longest wait first, an
     ).toBe(true);
     // The wait's length goes on without an event.
     await act(async () => vi.advanceTimersByTime(60_000));
-    expect(rows[2]!.textContent).toContain("Waiting 2 min");
-    expect(needs.querySelector("li")!.textContent).toContain("Waiting 5 min");
+    expect(rows[2]!.textContent).toContain("waiting 1m 30s");
+    expect(needs.querySelector("li")!.textContent).toContain("waiting 5m 00s");
     // Once nothing waits, the section goes and the badge counts the running ones.
     liveBody = { sessions: [session()] };
     await act(async () => streams[0]!.dispatchEvent(new Event("live")));
@@ -416,4 +412,33 @@ it("reads the sessions from disk again once a session in progress ends", async (
   await renderReview([]);
   expect(sessionReads()).toBe(first + 2);
   expect(node.querySelector('[aria-label="Sessions in progress"]')).toBeNull();
+});
+
+it("rereads a session's decisions once for a burst of events", async () => {
+  history.replaceState(null, "", "/s/test-ns/?pr=7&clone=clone");
+  liveBody = { sessions: [session()] };
+  const reads = () =>
+    vi
+      .mocked(fetch)
+      .mock.calls.filter(([url]) => String(url).startsWith("/s/test-ns/api/decisions?agent="))
+      .length;
+  await act(async () => root.render(<App />));
+  expect(node.textContent).toContain("Sessions in progress");
+  const before = reads();
+  expect(before).toBeGreaterThan(0);
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  try {
+    await act(async () => {
+      for (const kind of ["decisions", "decisions", "open", "decisions"])
+        streams[0]!.dispatchEvent(new Event(kind));
+    });
+    expect(reads()).toBe(before);
+    await act(async () => {
+      vi.advanceTimersByTime(250);
+    });
+  } finally {
+    vi.useRealTimers();
+  }
+  await act(async () => {});
+  expect(reads()).toBe(before + 1);
 });

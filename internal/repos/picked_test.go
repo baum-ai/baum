@@ -71,7 +71,7 @@ func TestPickRejectsInvalidNames(t *testing.T) {
 func TestRemoveKeepsPickedAndUnpickRemovesClones(t *testing.T) {
 	ctx := context.Background()
 	r := registry(t)
-	c, e := r.Add(ctx, clone(t, "https://github.com/owner/repo"), &Settings{DailyCap: new(2.0)})
+	c, e := r.Add(ctx, clone(t, "https://github.com/owner/repo"), &Settings{Model: new("custom")})
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -112,7 +112,7 @@ func TestRemoveKeepsPickedAndUnpickRemovesClones(t *testing.T) {
 	}
 	// The settings survive a re-pick.
 	v, e := r.Pick(ctx, "owner/repo", nil)
-	if e != nil || v.Settings.DailyCap == nil || *v.Settings.DailyCap != 2 {
+	if e != nil || v.Settings.Model == nil || *v.Settings.Model != "custom" {
 		t.Fatalf("%#v %v", v, e)
 	}
 }
@@ -128,7 +128,7 @@ func TestRepositoriesHTTP(t *testing.T) {
 	if code, body := request(http.MethodGet, "/api/repositories", ""); code != 200 || body != "[]" {
 		t.Fatal(code, body)
 	}
-	for _, body := range []string{`{"repository":"a"}`, `{"repository":"a/b/c"}`, `{"repository":""}`, `{}`, `{"repository":"owner/repo","unknown":1}`, `{"repository":"owner/repo","settings":{"daily_cap":-1}}`, `{"repository":"owner/repo"} {}`} {
+	for _, body := range []string{`{"repository":"a"}`, `{"repository":"a/b/c"}`, `{"repository":""}`, `{}`, `{"repository":"owner/repo","unknown":1}`, `{"repository":"owner/repo","settings":{"model":""}}`, `{"repository":"owner/repo"} {}`} {
 		if code, _ := request("POST", "/api/repositories", body); code != 400 {
 			t.Fatal(body, code)
 		}
@@ -140,15 +140,17 @@ func TestRepositoriesHTTP(t *testing.T) {
 	if code, body = request(http.MethodGet, "/api/repositories", ""); code != 200 || !strings.HasPrefix(body, `[{"repository":"owner/repo"`) || !strings.Contains(body, `"clones":[]`) {
 		t.Fatal(code, body)
 	}
-	for _, body := range []string{`{"automatic":true}`, `{"daily_cap":null}`, `{"unknown":1,"automatic":null,"daily_cap":null}`, `{"automatic":null,"daily_cap":-1}`} {
+	for _, body := range []string{`{"daily_cap":null}`, `{"unknown":1,"automatic":null}`, `{"automatic":null,"model":""}`} {
 		if code, _ = request("PUT", "/api/repositories/owner/repo/settings", body); code != 400 {
 			t.Fatal(body, code)
 		}
 	}
+	// An older app still sends the daily cap baum no longer has: it is
+	// ignored, not refused.
 	if code, _ = request("PUT", "/api/repositories/owner/repo/settings", `{"automatic":false,"daily_cap":1.5}`); code != 200 {
 		t.Fatal(code)
 	}
-	if s, ok, _ := r.RepositorySettings(context.Background(), "owner/repo"); !ok || s.Automatic == nil || *s.Automatic || s.DailyCap == nil {
+	if s, ok, _ := r.RepositorySettings(context.Background(), "owner/repo"); !ok || s.Automatic == nil || *s.Automatic {
 		t.Fatalf("%#v %v", s, ok)
 	}
 	if code, _ = request("PUT", "/api/repositories/owner/unknown/settings", `{"automatic":null,"daily_cap":null}`); code != 404 {

@@ -13,13 +13,23 @@ import (
 // commit made there, or "" when none is configured. It reads configuration
 // only.
 func (r *Repo) UserEmail(ctx context.Context) (string, error) {
+	return r.userConfig(ctx, "user.email")
+}
+
+// UserName is the clone's configured user.name, "" when none is configured.
+// It reads configuration only.
+func (r *Repo) UserName(ctx context.Context) (string, error) {
+	return r.userConfig(ctx, "user.name")
+}
+
+func (r *Repo) userConfig(ctx context.Context, key string) (string, error) {
 	done, err := r.begin()
 	if err != nil {
 		return "", err
 	}
 	defer done()
 	out, err := run(ctx, runSpec{dir: r.dir, env: userEnv(), limit: 8 << 10, timeout: r.opts.CommandTimeout},
-		"config", "--get", "user.email")
+		"config", "--get", key)
 	if err != nil {
 		var exitErr *exec.ExitError
 		if errors.As(err, &exitErr) && exitErr.ExitCode() == 1 {

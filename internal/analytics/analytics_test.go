@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/baum-ai/baum/internal/decisionlog"
 	"github.com/baum-ai/baum/internal/fix"
 	"github.com/baum-ai/baum/internal/github"
 	"github.com/baum-ai/baum/internal/jobs"
@@ -494,6 +495,8 @@ func TestBaumWorkCountsJobsAndActions(t *testing.T) {
 	list := []jobs.Job{
 		job("", "completed", "", ptr(1.0)), job("", "failed", "budget_exceeded", nil), job("", "failed", "budget_exceeded", nil),
 		pushed, job(jobs.KindFix, "failed", "push_rejected", nil), group, old,
+		// A feature build is the decision log's spend, not baum's work.
+		job(jobs.KindFeatureBuild, "failed", "backend_unavailable", ptr(3.0)),
 	}
 	dir := t.TempDir()
 	actions := &Actions{Path: filepath.Join(dir, "actions.json"), Now: func() time.Time { return recent }}
@@ -630,6 +633,18 @@ func (f fakeWrites) RerunOptions(context.Context, github.Repository, int) (prupd
 func (f fakeWrites) RerunFailedChecks(context.Context, github.Repository, int, string) (prupdate.RerunResult, error) {
 	return prupdate.RerunResult{}, f.result()
 }
+func (f fakeWrites) ReviewThreads(context.Context, github.Repository, int, int) (prupdate.Threads, error) {
+	return prupdate.Threads{}, nil
+}
+func (f fakeWrites) ResolveThread(context.Context, github.Repository, int, string) error {
+	return f.result()
+}
+func (f fakeWrites) RerunJob(context.Context, github.Repository, int, string, int64) error {
+	return f.result()
+}
+func (f fakeWrites) FailingChecks(context.Context, github.Repository, int, string) (prupdate.Checks, error) {
+	return prupdate.Checks{}, nil
+}
 
 func TestActionsRecordOnlyWritesThatSucceeded(t *testing.T) {
 	actions := &Actions{Path: filepath.Join(t.TempDir(), "actions.json")}
@@ -643,5 +658,34 @@ func TestActionsRecordOnlyWritesThatSucceeded(t *testing.T) {
 	got := actions.Since(time.Time{})
 	if len(got) != 3 || got[0].Kind != ActionMerge || got[1].Kind != ActionUpdateBranch || got[2].Kind != ActionRerunChecks || got[2].PR != 3 {
 		t.Fatalf("actions = %+v", got)
+	}
+}
+
+// Decision capture's calls count by state; an unknown cost leaves the spend
+// incomplete, and only unknown costs leave it unknown, never $0.
+func TestDecisionCaptureCounts(t *testing.T) {
+	at := time.Date(2026, 10, 20, 9, 0, 0, 0, time.UTC)
+	cost := 0.03
+	captures := []decisionlog.LedgerEntry{
+		{Repository: "acme/demo", Backend: "claude", State: "succeeded", StartedAt: at, Cost: &cost},
+		{Repository: "acme/demo", Backend: "claude", State: "failed", Reason: "timeout", StartedAt: at},
+		{Repository: "acme/demo", Backend: "claude", State: "pending", StartedAt: at},
+		{Repository: "acme/other", Backend: "codex", State: "failed", Reason: "timeout", StartedAt: at},
+		{Repository: "acme/demo", Backend: "claude", State: "abandoned", StartedAt: at, Cost: &cost},
+	}
+	all := decisionCapture(captures, Query{})
+	if all.Attempts != 5 || all.Succeeded != 1 || all.Failed != 2 || all.Abandoned != 1 || all.Cost.USD == nil || *all.Cost.USD != 0.06 || !all.Cost.Incomplete ||
+		len(all.Failures) != 1 || all.Failures[0] != (ReasonCount{Reason: "timeout", Count: 2}) {
+		t.Fatalf("all %+v", all)
+	}
+	codex := decisionCapture(captures, Query{Agent: "codex"})
+	if codex.Attempts != 1 || codex.Cost.USD != nil || !codex.Cost.Incomplete || len(codex.Cost.Reasons) != 1 {
+		t.Fatalf("codex %+v", codex)
+	}
+	if other := decisionCapture(captures, Query{Repository: "ACME/other"}); other.Attempts != 1 {
+		t.Fatalf("by repository %+v", other)
+	}
+	if none := decisionCapture(nil, Query{}); none.Attempts != 0 || none.Cost.USD != nil || none.Cost.Incomplete || none.Failures == nil {
+		t.Fatalf("none %+v", none)
 	}
 }

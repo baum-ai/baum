@@ -1,6 +1,15 @@
 import { readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
+
+/** Opens Settings from the sidebar, then one of its sections. */
+async function openSettings(page: Page, section: string) {
+  await page.getByRole("link", { name: "Settings", exact: true }).click();
+  await page
+    .getByRole("navigation", { name: "Settings sections" })
+    .getByRole("button", { name: new RegExp(`^${section}`) })
+    .click();
+}
 
 // The fixture runs the real daemon, which publishes its launch URL in a private
 // credential file once it serves; the desktop app reads the same file.
@@ -102,9 +111,29 @@ test("local inbox, reused PR viewer, versions, generation and settings", async (
     fullPage: false,
     animations: "disabled",
   });
+  // Peek opens the saved review under its row.
+  await approved.hover();
+  await approved.getByRole("button", { name: "Peek at acme/demo #7", exact: true }).click();
+  const peek = approved.getByRole("region", { name: "Peek at #7" });
+  await expect(peek).toContainText("Summary");
+  await expect(peek.getByRole("link", { name: "Open the review", exact: true })).toBeVisible();
+  // Selecting rows draws their actions in a bar over the list.
+  await page.getByRole("checkbox", { name: "Select acme/demo #7", exact: true }).check();
+  await page.getByRole("checkbox", { name: "Select acme/demo #8", exact: true }).check();
+  const bar = page.getByRole("toolbar", { name: "Selected pull requests" });
+  await expect(bar).toContainText("2 selected");
+  await expect(bar.getByRole("button", { name: "Merge 1", exact: true })).toBeVisible();
+  await page.screenshot({
+    path: "test-results/inbox-peek.png",
+    fullPage: false,
+    animations: "disabled",
+  });
+  await bar.getByRole("button", { name: "Clear", exact: true }).click();
+  await expect(bar).toHaveCount(0);
+  await approved.getByRole("button", { name: "Peek at acme/demo #7", exact: true }).click();
+  await expect(peek).toHaveCount(0);
   await page.setViewportSize({ width: 720, height: 900 });
   await expect(approved.getByText("Status:", { exact: true })).toBeVisible();
-  // The cell also holds the Merge button of a ready pull request.
   await expect(
     approved.locator(".inbox-status").filter({ hasText: "Status: Ready" }),
   ).toBeVisible();
@@ -139,7 +168,7 @@ test("local inbox, reused PR viewer, versions, generation and settings", async (
   await expect(unknown).not.toContainText("—");
   await page.screenshot({ path: "test-results/inbox-others.png", animations: "disabled" });
   await page.getByRole("checkbox", { name: "Select acme/demo #9", exact: true }).check();
-  await page.getByRole("button", { name: "Generate selected (1)", exact: true }).click();
+  await page.getByRole("button", { name: "Generate reviews (1)", exact: true }).click();
   // Only a fork asks before generating, in a batch as on its own page.
   await expect(page.getByRole("dialog")).toContainText("Review code from outside your team?");
   await page.getByRole("button", { name: "Cancel", exact: true }).click();
@@ -275,12 +304,23 @@ test("local inbox, reused PR viewer, versions, generation and settings", async (
   await page.screenshot({ path: "test-results/repositories.png", animations: "disabled" });
   await page.getByRole("link", { name: "Settings", exact: true }).click();
   await expect(
+    page.getByRole("region", { name: /things? needs? you|Everything is working/ }),
+  ).toBeVisible();
+  await page.screenshot({ path: "test-results/settings-overview.png", animations: "disabled" });
+  await openSettings(page, "Reviews");
+  await expect(
     page
       .getByRole("region", { name: "Reviews", exact: true })
       .getByRole("switch", { name: /Review pull requests automatically/ }),
   ).toBeChecked();
   await page.screenshot({ path: "test-results/settings.png", animations: "disabled" });
-  await page.getByRole("button", { name: /Check this computer/ }).click();
+  await openSettings(page, "Fixes");
+  await expect(
+    page.getByRole("region", { name: "Fixes", exact: true }).getByLabel("Agent that fixes"),
+  ).toBeVisible();
+  await page.screenshot({ path: "test-results/settings-fixes.png", animations: "disabled" });
+  await openSettings(page, "This computer");
+  await page.getByRole("button", { name: "Check this computer", exact: true }).click();
   const diagnostics = page
     .getByRole("dialog")
     .getByRole("region", { name: "Diagnostics", exact: true });
@@ -387,15 +427,14 @@ test("automatic review of a new head, shown as started automatically", async ({ 
   await expect(
     jobs.getByText("Started automatically because new commits were pushed", { exact: true }),
   ).toHaveCount(1);
-  await page.getByRole("link", { name: "Settings", exact: true }).click();
+  await openSettings(page, "Reviews");
   const automatic = page.getByRole("region", { name: "Reviews", exact: true });
   const toggle = automatic.getByRole("switch", { name: /Review pull requests automatically/ });
-  const save = automatic.getByRole("button", { name: "Save review settings" });
-  // The switch shows the saved preference once saving answers.
+  // The switch saves as it changes.
   await toggle.click();
-  await save.click();
-  await expect(save).toBeDisabled();
+  await expect(automatic.getByRole("status")).toHaveText("Saved");
   await expect(toggle).not.toBeChecked();
+  // The section is in the address, so a reload stays on it.
   await page.reload();
   // After a reload the section renders once the settings requests answer,
   // which can take a while on a busy CI runner.
@@ -409,9 +448,9 @@ test("automatic review of a new head, shown as started automatically", async ({ 
     repository.getByText(/Automatic reviews are paused by the global switch/),
   ).toBeVisible();
   await repository.getByRole("button", { name: "Cancel", exact: true }).click();
-  await page.getByRole("link", { name: "Settings", exact: true }).click();
+  await openSettings(page, "Reviews");
   await toggle.click();
-  await save.click();
+  await expect(automatic.getByRole("status")).toHaveText("Saved");
   await expect(toggle).toBeChecked();
   expect(errors).toEqual([]);
 });
@@ -445,12 +484,10 @@ test("a running agent session shows in the inbox and on the PR page until it end
   await page.getByRole("link", { name: "Sessions", exact: true }).first().click();
   const ended = page.getByRole("region", { name: "Ended recently", exact: true });
   await expect(ended.getByText("Claude Code")).toBeVisible();
-  await expect(ended.getByText("feature")).toBeVisible();
-  // Its title, and the request its compaction summary records.
+  // Its title leads the compact row.
   await expect(
     ended.getByText("Reuse the PR page in the local app", { exact: true }),
   ).toBeVisible();
-  await expect(ended.getByText(/^Serve saved reviews in the local app/)).toBeVisible();
   await expect(
     page.getByRole("region", { name: "Running now", exact: true }).getByText("Claude Code"),
   ).toHaveCount(0);
@@ -535,8 +572,8 @@ test("a session asking for a permission shows in Needs you and leaves once it wo
   await expect(row.getByText("Asking permission")).toBeVisible();
   await expect(row.getByText("Claude needs your permission to use Bash")).toBeVisible();
   // The title Claude Code gave the session leads the row.
-  await expect(row.getByText("Run the migration tests", { exact: true })).toBeVisible();
-  await expect(row.getByText("Waiting under a minute")).toBeVisible();
+  await expect(row.getByText("Run the migration tests")).toBeVisible();
+  await expect(row.getByText(/^waiting \d+s$/)).toBeVisible();
   await expect(row.getByText("feature")).toBeVisible();
   await expect(running.locator('li[title="needs-e2e"]')).toHaveCount(0);
   // The sidebar counts it, in the caution tone.
@@ -556,7 +593,7 @@ test("a session asking for a permission shows in Needs you and leaves once it wo
   expect(errors).toEqual([]);
 });
 
-test("desktop Settings has separate CLI and hook cards at desktop and narrow widths", async ({
+test("desktop Settings has CLI and hook cards in their sections at desktop and narrow widths", async ({
   page,
 }, testInfo) => {
   await page.addInitScript(() => {
@@ -584,18 +621,29 @@ test("desktop Settings has separate CLI and hook cards at desktop and narrow wid
     });
   });
   await page.goto(await launchURL());
-  await page.getByRole("link", { name: "Settings", exact: true }).click();
   const cli = page.getByRole("region", { name: "Command line", exact: true });
   const hooks = page.getByRole("region", { name: "Agent hooks", exact: true });
-  await expect(cli.getByText("baum is installed at ~/.local/bin/baum.")).toBeVisible();
+  const fits = () => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth);
+  await openSettings(page, "Connections");
   await expect(hooks.getByText("Connected", { exact: true })).toHaveCount(2);
-  await cli.scrollIntoViewIfNeeded();
+  await page.screenshot({ path: testInfo.outputPath("settings-connections.png"), fullPage: true });
+  await openSettings(page, "This computer");
+  await expect(cli.getByText("baum is installed at ~/.local/bin/baum.")).toBeVisible();
   await page.screenshot({ path: testInfo.outputPath("settings-desktop.png"), fullPage: true });
   await page.setViewportSize({ width: 600, height: 900 });
   await expect(cli).toBeVisible();
-  await expect(hooks).toBeVisible();
-  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  expect(await fits()).toBe(true);
   await page.screenshot({ path: testInfo.outputPath("settings-narrow.png"), fullPage: true });
+  await openSettings(page, "Reviews");
+  await expect(page.getByLabel("Agent that writes reviews")).toBeVisible();
+  expect(await fits()).toBe(true);
+  await page.screenshot({
+    path: testInfo.outputPath("settings-reviews-narrow.png"),
+    fullPage: true,
+  });
+  await openSettings(page, "Connections");
+  await expect(hooks).toBeVisible();
+  expect(await fits()).toBe(true);
 });
 
 test("picks GitHub repositories and keeps clone-less PRs usable", async ({ page }) => {
@@ -657,49 +705,29 @@ test("picks GitHub repositories and keeps clone-less PRs usable", async ({ page 
 });
 
 // PR 8 is the viewer's own, with a conflict, failing checks and unresolved
-// review threads; the dialog is checked and cancelled, so nothing runs.
-test("offers to fix review comments and lists the threads baum will answer", async ({ page }) => {
+// review threads. Fix starts at once, with no dialog and no estimate; the
+// fixture's agent leaves a note, and the push fails because the fixture's
+// clone has no reachable remote.
+test("starts a fix from a pull request's page at once, with no dialog", async ({ page }) => {
   await page.goto(await launchURL());
   await page.getByRole("link", { name: "Pull requests", exact: true }).first().click();
   const inbox = page.getByRole("region", { name: "Pull request inbox" });
   const row = inbox.getByRole("listitem").filter({ hasText: "A pull request without a review" });
   await row.hover();
-  await row
-    .getByRole("button", { name: "Fix conflicts, CI and review comments", exact: true })
-    .click();
-  const dialog = page.getByRole("dialog", { name: "Fix conflicts, CI and review comments" });
-  await expect(dialog).toContainText(
-    "baum replies on each thread the agent addressed and resolves it",
-  );
-  const threads = dialog.getByRole("list", { name: "Review threads" }).getByRole("listitem");
-  await expect(threads).toHaveCount(2);
-  await expect(threads.first()).toContainText("src/parser.go:42");
-  await expect(threads.first()).toContainText("Return the error instead of logging it.");
-  await expect(dialog).toContainText(
-    "1 thread started by an account without access to the repository is left out.",
-  );
-  await expect(dialog).not.toContainText("uploads the secrets");
-  await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
-  await expect(dialog).toBeHidden();
-});
-
-// The fix dialog opened from a pull request's page sits beside that page;
-// leaving afterwards must replace the page, not stack the next one under it.
-test("leaves a pull request page cleanly after its fix dialog", async ({ page }) => {
-  await page.goto(await launchURL());
-  await page.getByRole("link", { name: "Pull requests", exact: true }).first().click();
+  await expect(
+    row.getByRole("button", { name: "Fix conflicts, CI and review comments", exact: true }),
+  ).toBeVisible();
   await page.getByRole("link", { name: /A pull request without a review/ }).click();
   const title = page.getByRole("heading", { name: /A pull request without a review/ });
   await expect(title).toHaveCount(1);
   await page
     .getByRole("button", { name: "Fix conflicts, CI and review comments", exact: true })
     .click();
-  const dialog = page.getByRole("dialog", { name: "Fix conflicts, CI and review comments" });
-  await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
-  await expect(dialog).toBeHidden();
-  await expect(title).toHaveCount(1);
-  await page.getByRole("link", { name: "Repositories", exact: true }).click();
-  await expect(page.getByRole("heading", { name: "Repositories", exact: true })).toBeVisible();
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  await expect(page.getByRole("region", { name: "Fix", exact: true })).toBeVisible();
+  await page.getByRole("link", { name: "Jobs", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "Jobs", exact: true })).toBeVisible();
+  await expect(page.getByText(/Fix conflicts, CI and review comments/).first()).toBeVisible();
   await expect(title).toHaveCount(0);
 });
 
@@ -793,8 +821,8 @@ test("Analytics shows what the agents did, cost and delivered", async ({ page })
   await expect(tile("Human prompts")).toContainText("4");
   await expect(tile("Active agent time")).toContainText("26 min");
   // One model has no price: the estimate is a floor, never a full figure.
-  await expect(tile("Estimated cost")).toContainText("≥ $");
-  await expect(tile("Estimated cost")).toContainText("Incomplete");
+  await expect(tile("At API prices")).toContainText("≥ $");
+  await expect(tile("At API prices")).toContainText("Incomplete");
   await expect(tile("Agent-written")).toContainText("50%");
   await expect(tile("Agent-written")).toContainText("1 of 2 of your commits");
   const delivery = page.getByRole("region", { name: "Delivery" });
@@ -831,6 +859,81 @@ test("Analytics shows what the agents did, cost and delivered", async ({ page })
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(
     true,
   );
+  expect(errors).toEqual([]);
+});
+
+test("captured decisions show on the PR page, in Settings and in Analytics", async ({ page }) => {
+  const errors: string[] = [];
+  page.on("pageerror", (e) => errors.push(e.message));
+  const state = process.env.BAUM_APP_STATE_DIR ?? "";
+  // The fixture's decision store holds decisions of both sessions on PR 7;
+  // the second has a capture call in flight.
+  const running = join(state, "live-session");
+  const waiting = join(state, "live-needs");
+  await writeFile(running, "running");
+  await writeFile(waiting, "idle");
+  await page.goto(await launchURL());
+  await page.getByRole("link", { name: "Pull requests", exact: true }).first().click();
+  await page.getByRole("link", { name: /Reuse the existing PR page/ }).click();
+  const live = page.getByRole("region", { name: "Sessions in progress", exact: true });
+  const summary = live.getByText(/^Decisions \(3\)/);
+  await expect(summary).toBeVisible({ timeout: 10000 });
+  await expect(live.getByText(/^Decisions \(1\) · Capturing…/)).toBeVisible();
+  await summary.click();
+  await expect(live.getByText("Retry a failed sessions read once")).toBeVisible();
+  const list = page.getByRole("region", { name: "Decisions from sessions (4)", exact: true });
+  await expect(list).toBeVisible();
+  // Two decisions came after the saved review was generated.
+  await expect(list.getByText("Provisional", { exact: true })).toHaveCount(2);
+  await expect(list.getByText(/2 decisions were made after the saved review/)).toBeVisible();
+  for (const scheme of ["light", "dark"] as const) {
+    await page.emulateMedia({ colorScheme: scheme });
+    await live.scrollIntoViewIfNeeded();
+    await page.screenshot({
+      path: `test-results/decisions-pr-${scheme}.png`,
+      animations: "disabled",
+      fullPage: true,
+    });
+  }
+  await page.setViewportSize({ width: 420, height: 900 });
+  await page.screenshot({
+    path: "test-results/decisions-pr-narrow.png",
+    animations: "disabled",
+    fullPage: true,
+  });
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.emulateMedia({ colorScheme: "light" });
+
+  await openSettings(page, "Reviews");
+  const capture = page.getByRole("region", { name: "Decision capture", exact: true });
+  await expect(capture.getByRole("switch", { name: "Capture decisions" })).toBeChecked();
+  await expect(capture.getByRole("combobox", { name: "Decision log model" })).toBeVisible();
+  for (const scheme of ["light", "dark"] as const) {
+    await page.emulateMedia({ colorScheme: scheme });
+    await capture.screenshot({ path: `test-results/decisions-settings-${scheme}.png` });
+  }
+  await page.emulateMedia({ colorScheme: "light" });
+
+  await page.getByRole("link", { name: "Repositories", exact: true }).click();
+  await page.getByRole("button", { name: "Settings for acme/demo" }).click();
+  const repository = page.getByRole("dialog", { name: "Repository acme/demo", exact: true });
+  await expect(
+    repository.getByRole("switch", { name: /Capture the decisions of agent sessions/ }),
+  ).toBeChecked();
+  await repository.screenshot({ path: "test-results/decisions-repository.png" });
+  await repository.getByRole("button", { name: "Cancel", exact: true }).click();
+
+  await page.getByRole("link", { name: "Analytics", exact: true }).click();
+  const work = page.getByRole("region", { name: "baum's work" });
+  await expect(work.getByText("Decision capture", { exact: true })).toBeVisible({ timeout: 15000 });
+  await expect(work.getByText("Timed out")).toBeVisible();
+  await work.scrollIntoViewIfNeeded();
+  for (const scheme of ["light", "dark"] as const) {
+    await page.emulateMedia({ colorScheme: scheme });
+    await work.screenshot({ path: `test-results/decisions-analytics-${scheme}.png` });
+  }
+  await writeFile(running, "ended");
+  await writeFile(waiting, "ended");
   expect(errors).toEqual([]);
 });
 
@@ -954,7 +1057,7 @@ test("the whole app can be used from the keyboard", async ({ page }) => {
   await expect(heading("Up next")).toBeVisible();
 
   // Sessions: j focuses the row, Enter opens its transcript, u comes back.
-  await page.keyboard.press("Control+3");
+  await page.keyboard.press("Control+4");
   await expect(heading("Sessions")).toBeVisible();
   // The fixture's one session keeps the title an earlier story gave it, so
   // the row is found by its link, not its words.
@@ -964,19 +1067,19 @@ test("the whole app can be used from the keyboard", async ({ page }) => {
       .getByRole("link", { name: /^Open transcript/ }),
   ).toBeVisible({ timeout: 10000 });
   await page.keyboard.press("j");
-  await expect(page.locator(".local-session-row[data-focused]")).toHaveCount(1);
+  await expect(page.locator(".local-feed-card[data-focused]")).toHaveCount(1);
   await page.keyboard.press("Enter");
   await expect.poll(() => search().get("session")).not.toBeNull();
   await expect(page.getByRole("region", { name: "Transcript", exact: true })).toBeVisible();
   await page.keyboard.press("u");
   await expect(heading("Sessions")).toBeVisible();
 
-  await page.keyboard.press("Control+6");
+  await page.keyboard.press("Control+7");
   await expect(heading("Jobs")).toBeVisible();
-  await page.keyboard.press("Control+4");
+  await page.keyboard.press("Control+5");
   await expect(heading("Analytics")).toBeVisible();
   // Repositories: a opens the picker with its search focused.
-  await page.keyboard.press("Control+5");
+  await page.keyboard.press("Control+6");
   await expect(heading("Repositories")).toBeVisible();
   await page.keyboard.press("a");
   await expect(page.getByRole("searchbox")).toBeFocused();
@@ -992,7 +1095,7 @@ test("the whole app can be used from the keyboard", async ({ page }) => {
   await expect(heading("Repositories")).toBeVisible();
 
   // The sheet lists the page's own keys first; Escape closes it.
-  await page.keyboard.press("Control+3");
+  await page.keyboard.press("Control+4");
   await expect(heading("Sessions")).toBeVisible();
   await page.keyboard.press("?");
   const sheet = page.getByRole("dialog", { name: "Keyboard shortcuts" });

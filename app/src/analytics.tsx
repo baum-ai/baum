@@ -118,6 +118,16 @@ export type Analytics = {
     merges: number | null;
     branch_updates: number | null;
     check_reruns: number | null;
+    /** Decision capture's model calls; null without its ledger, absent from
+     *  an older daemon. */
+    decisions?: {
+      attempts: number;
+      succeeded: number;
+      failed: number;
+      abandoned?: number;
+      cost: Cost;
+      failures: { reason: string; count: number }[];
+    } | null;
   };
   delivery: {
     status: "loading" | "ready" | "unavailable";
@@ -174,8 +184,8 @@ export function parseAnalytics(body: unknown): Analytics | null {
     : null;
 }
 
-/** An estimate's text and its tooltip. Nothing priced is the em dash, never
- *  $0.00; a partly priced total is a floor. */
+/** A cost at API prices, as text and its tooltip. Nothing priced is the em
+ *  dash, never $0.00; a partly priced total is a floor. */
 export function costText(cost: Cost): { text: string; title: string } {
   const why = cost.reasons.join(" ");
   if (cost.usd === null) {
@@ -187,7 +197,10 @@ export function costText(cost: Cost): { text: string; title: string } {
       title: `At least this much; part of the usage has no price. ${why}`.trim(),
     };
   }
-  return { text: formatUSD(cost.usd), title: "Estimated at API prices from the price list." };
+  return {
+    text: formatUSD(cost.usd),
+    title: "What this usage would cost at API prices, not what you were charged.",
+  };
 }
 
 /** Active time in whole units, or null when unknown. */
@@ -315,7 +328,7 @@ function Summary({ data }: { data: Analytics }) {
         }
       />
       <Tile
-        label="Estimated cost"
+        label="At API prices"
         value={s.cost.usd === null ? null : cost.text}
         reason={cost.title}
         badge={
@@ -325,7 +338,7 @@ function Summary({ data }: { data: Analytics }) {
             </Badge>
           ) : null
         }
-        detail="Estimate at API prices"
+        detail="Not what a subscription charges"
       />
       <Tile
         label="Agent-written"
@@ -505,7 +518,7 @@ const rowHeads = (
       Tokens
     </th>
     <th scope="col" className="num">
-      Est. cost
+      At API prices
     </th>
   </>
 );
@@ -547,7 +560,7 @@ function Breakdown({ data }: { data: Analytics }) {
                   Tokens
                 </th>
                 <th scope="col" className="num">
-                  Est. cost
+                  At API prices
                 </th>
               </tr>
             </thead>
@@ -608,8 +621,9 @@ function Breakdown({ data }: { data: Analytics }) {
         )}
       </div>
       <p className="analytics-note">
-        Cost is an estimate at API prices, not what a subscription charges. A figure marked ≥ is a
-        floor: part of the usage has no price or reported no tokens.
+        Costs are what the usage would cost at API prices, not what you were charged: most agents
+        run on a subscription. A figure marked ≥ is a floor: part of the usage has no price or
+        reported no tokens.
       </p>
     </Card>
   );
@@ -743,6 +757,8 @@ function BaumWork({ data }: { data: Analytics }) {
     >
       {!b.available ? (
         <p className="analytics-note">The jobs list is not available.</p>
+      ) : runs === 0 && b.decisions?.attempts ? (
+        <p className="analytics-note">No reviews or fixes in this window.</p>
       ) : runs === 0 ? (
         <div className="analytics-empty">
           <h3>baum ran nothing in this window</h3>
@@ -761,7 +777,11 @@ function BaumWork({ data }: { data: Analytics }) {
               value: `${formatCount(b.fixes_pushed)} of ${formatCount(b.fixes)}`,
             },
             { label: "Review threads resolved", value: formatCount(b.threads_resolved) },
-            { label: "Spend", value: b.cost.usd === null ? null : cost.text, reason: cost.title },
+            {
+              label: "At API prices",
+              value: b.cost.usd === null ? null : cost.text,
+              reason: cost.title,
+            },
             { label: "Failed runs", value: formatCount(b.failed) },
           ]}
         />
@@ -776,6 +796,7 @@ function BaumWork({ data }: { data: Analytics }) {
           ))}
         </ul>
       ) : null}
+      {b.decisions ? <DecisionCapture decisions={b.decisions} /> : null}
       <Stats
         items={[
           {
@@ -796,6 +817,50 @@ function BaumWork({ data }: { data: Analytics }) {
         ]}
       />
     </Card>
+  );
+}
+
+const captureFailures: Record<string, string> = {
+  timeout: "Timed out",
+  unusable_reply: "Reply could not be used",
+  call_failed: "Model call failed",
+};
+
+/** Decision capture's calls in the window, within baum's work. */
+function DecisionCapture({
+  decisions: d,
+}: {
+  decisions: NonNullable<Analytics["baum"]["decisions"]>;
+}) {
+  const cost = costText(d.cost);
+  return (
+    <div className="analytics-decisions">
+      <h3>Decision capture</h3>
+      <Stats
+        items={[
+          { label: "Capture calls", value: formatCount(d.attempts) },
+          { label: "Failed calls", value: formatCount(d.failed) },
+          ...(d.abandoned
+            ? [{ label: "Cut short by a stop", value: formatCount(d.abandoned) }]
+            : []),
+          {
+            label: "Capture spend",
+            value: d.cost.usd === null ? null : cost.text,
+            reason: d.attempts ? cost.title : "No capture calls in this window.",
+          },
+        ]}
+      />
+      {d.failures.length ? (
+        <ul className="analytics-reasons" aria-label="Failed decision captures by reason">
+          {d.failures.map((f) => (
+            <li key={f.reason}>
+              <span>{captureFailures[f.reason] ?? f.reason}</span>
+              <strong>{formatCount(f.count)}</strong>
+            </li>
+          ))}
+        </ul>
+      ) : null}
+    </div>
   );
 }
 
@@ -1099,7 +1164,7 @@ export function AnalyticsPage({ Link }: { Link: ComponentType<ViewerLinkProps> }
     <>
       <PageBar
         title="Analytics"
-        detail="What your agents did, what it cost and what you delivered"
+        detail="What your agents did, its cost at API prices and what you delivered"
       />
       <div className="local-filter-bar analytics-filters">
         <SegmentedControl

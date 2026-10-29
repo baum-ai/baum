@@ -21,7 +21,8 @@ import (
 // Every other method requires the client's protocol to equal the daemon's;
 // otherwise the answer is the error code "protocol_mismatch" together with
 // the daemon's Status. Methods are registered through Options.Methods and
-// App.Methods.
+// App.Methods, and those that may wait for as long as their client stays
+// connected through Options.Waits and App.Waits.
 type Request struct {
 	Protocol int             `json:"protocol"`
 	Method   string          `json:"method"`
@@ -36,6 +37,8 @@ type Response struct {
 	Status *Status         `json:"status,omitempty"`
 	Result json.RawMessage `json:"result,omitempty"`
 	Error  *Error          `json:"error,omitempty"`
+	// written is the Delivery's Written of the method that answered.
+	written func(error)
 }
 
 // Error is a failed request. Code is stable; Message is for people.

@@ -126,6 +126,20 @@ func (e explicitPath) Fix(ctx context.Context, request agent.Request) (agent.Res
 	return fixer.Fix(ctx, request)
 }
 
+// ErrCannotComplete is a backend without single-call completions
+// (agent.Completer): cursor-agent.
+var ErrCannotComplete = errors.New("the backend cannot make a single structured call")
+
+// Complete forwards a completion (agent.Completer) to a backend that can make
+// one, and fails with ErrCannotComplete otherwise.
+func (e explicitPath) Complete(ctx context.Context, request agent.CompleteRequest) (agent.Completion, error) {
+	completer, ok := e.CheckedBackend.(agent.Completer)
+	if !ok {
+		return agent.Completion{}, fmt.Errorf("%s: %w", e.name, ErrCannotComplete)
+	}
+	return completer.Complete(ctx, request)
+}
+
 // Selected is the backend a run uses.
 type Selected struct {
 	Backend CheckedBackend
@@ -146,8 +160,8 @@ type Selected struct {
 // choice, claude, only: a backend auto falls back to runs with its own
 // default model, and skipped says so. skipped also receives why each earlier
 // choice was skipped; nil discards both. anthropic's default model is
-// resolved here (anthropic.DefaultModel), so Selected.Model names it and a
-// price estimate can use it.
+// resolved here (anthropic.DefaultModel), so Selected.Model names it and the
+// run's cost at API prices can be worked out from it.
 func Select(ctx context.Context, requested config.Backend, model string, backends Backends, skipped io.Writer) (Selected, error) {
 	try := func(name config.Backend, build func(string) CheckedBackend, model string) (Selected, error) {
 		if build == nil {
