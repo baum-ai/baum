@@ -484,12 +484,10 @@ test("a running agent session shows in the inbox and on the PR page until it end
   await page.getByRole("link", { name: "Sessions", exact: true }).first().click();
   const ended = page.getByRole("region", { name: "Ended recently", exact: true });
   await expect(ended.getByText("Claude Code")).toBeVisible();
-  await expect(ended.getByText("feature")).toBeVisible();
-  // Its title, and the request its compaction summary records.
+  // Its title leads the compact row.
   await expect(
     ended.getByText("Reuse the PR page in the local app", { exact: true }),
   ).toBeVisible();
-  await expect(ended.getByText(/^Serve saved reviews in the local app/)).toBeVisible();
   await expect(
     page.getByRole("region", { name: "Running now", exact: true }).getByText("Claude Code"),
   ).toHaveCount(0);
@@ -574,8 +572,8 @@ test("a session asking for a permission shows in Needs you and leaves once it wo
   await expect(row.getByText("Asking permission")).toBeVisible();
   await expect(row.getByText("Claude needs your permission to use Bash")).toBeVisible();
   // The title Claude Code gave the session leads the row.
-  await expect(row.getByText("Run the migration tests", { exact: true })).toBeVisible();
-  await expect(row.getByText("Waiting under a minute")).toBeVisible();
+  await expect(row.getByText("Run the migration tests")).toBeVisible();
+  await expect(row.getByText(/^waiting \d+s$/)).toBeVisible();
   await expect(row.getByText("feature")).toBeVisible();
   await expect(running.locator('li[title="needs-e2e"]')).toHaveCount(0);
   // The sidebar counts it, in the caution tone.
@@ -994,7 +992,7 @@ test("the whole app can be used from the keyboard", async ({ page }) => {
       .getByRole("link", { name: /^Open transcript/ }),
   ).toBeVisible({ timeout: 10000 });
   await page.keyboard.press("j");
-  await expect(page.locator(".local-session-row[data-focused]")).toHaveCount(1);
+  await expect(page.locator(".local-feed-card[data-focused]")).toHaveCount(1);
   await page.keyboard.press("Enter");
   await expect.poll(() => search().get("session")).not.toBeNull();
   await expect(page.getByRole("region", { name: "Transcript", exact: true })).toBeVisible();

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"maps"
 	"net/http"
 	"net/url"
 	"os"
@@ -19,6 +20,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/baum-ai/baum/internal/agentrequests"
 	"github.com/baum-ai/baum/internal/analytics"
 	"github.com/baum-ai/baum/internal/automatic"
 	"github.com/baum-ai/baum/internal/background"
@@ -469,13 +471,38 @@ func localApplication(paths daemon.Paths, concurrency int, log *slog.Logger) fun
 		// waiting session's message is masked the same way.
 		renderer := transcript.NewRenderer("")
 		live := events.liveSessions(paths, registry, discover, server, log)
-		var liveAPI http.Handler
+		var liveAPI, requestsAPI http.Handler
+		var requests *agentrequests.Store
+		var requestEvents <-chan hookevents.Record
+		unsubscribeRequests := func() {}
 		if live != nil {
 			live.Mask = func(text string) string { return renderer.Mask(ctx, text) }
 			// A session that starts waiting for a permission or an answer is
 			// a notice; reading the registry for it must not hold the tracker.
 			live.Waiting = func(session livesessions.Session) { go notify.SessionWaiting(ctx, session) }
 			liveAPI = (&livesessions.Transcripts{Tracker: live, Render: renderer.Render, Log: log}).Handler()
+			// What agents wait on the app to answer, and the messages queued
+			// for running sessions, stay in memory, masked as the sessions
+			// are; only the Codex setting is kept, in the state directory.
+			// The app reads them with the live sessions.
+			requests = &agentrequests.Store{Sessions: live, Mask: live.Mask, StateDir: paths.State, Log: log,
+				Notify: func() { _ = server.Publish("live", struct{}{}) },
+				// The store's own Notify, as the request or message goes, tells
+				// the app.
+				Interrupted: func(agent, session string, at time.Time) { live.Interrupted(agent, session, at) },
+				Answered:    func(agent, session string, at time.Time) { live.Answered(agent, session, at) },
+				Resumed:     func(agent, session string, at time.Time) { live.Resumed(agent, session, at) }}
+			requestEvents, unsubscribeRequests = events.Subscribe(256, agentrequests.Match)
+			requestsAPI = requests.Handler()
+		}
+		methods, waits := events.Methods(), map[string]daemon.Method(nil)
+		if requests != nil {
+			methods = maps.Clone(methods)
+			if methods == nil {
+				methods = map[string]daemon.Method{}
+			}
+			maps.Copy(methods, requests.Methods())
+			waits = requests.Waits()
 		}
 		home, _ := os.UserHomeDir()
 		pickList := &githubrepos.Service{
@@ -537,13 +564,14 @@ func localApplication(paths daemon.Paths, concurrency int, log *slog.Logger) fun
 		endedSessions, unsubscribeEnded := events.Subscribe(4, func(e hookevents.Event) bool {
 			return e.Kind == hookevents.KindAgent && e.Name == "session-end"
 		})
-		api := uiserver.LocalAPI{GitHubAuth: githubConnection.Handler(), Registry: registry, Config: cfg, PRs: uiserver.DiscoveryHandler(registry, discover, changed), Index: index.Handler(), Jobs: queue.Handler(), Background: worker.Handler(), Automatic: scheduler.Handler(), Live: liveAPI, Clones: clones.Handler(), GitHubRepositories: pickList.Handler(), PlanUsage: plans.Handler(), Analytics: insights.Handler(), Merge: uiserver.MergeHandler(registry, actions.RecordMerges(githubClient), mergedPullRequest, changed), Review: uiserver.ReviewHandler(registry, githubClient, changed), Update: uiserver.UpdateHandler(registry, actions.RecordUpdates(prupdate.Service{Client: githubClient, Cache: panelCache, Counted: countedThreads}), refreshRepository, changed), Changed: settingsChanged,
+		api := uiserver.LocalAPI{GitHubAuth: githubConnection.Handler(), Registry: registry, Config: cfg, PRs: uiserver.DiscoveryHandler(registry, discover, changed), Index: index.Handler(), Jobs: queue.Handler(), Background: worker.Handler(), Automatic: scheduler.Handler(), Live: liveAPI, AgentRequests: requestsAPI, Clones: clones.Handler(), GitHubRepositories: pickList.Handler(), PlanUsage: plans.Handler(), Analytics: insights.Handler(), Merge: uiserver.MergeHandler(registry, actions.RecordMerges(githubClient), mergedPullRequest, changed), Review: uiserver.ReviewHandler(registry, githubClient, changed), Update: uiserver.UpdateHandler(registry, actions.RecordUpdates(prupdate.Service{Client: githubClient, Cache: panelCache, Counted: countedThreads}), refreshRepository, changed), Changed: settingsChanged,
 			Groups:      (&reviewgroups.API{Store: groups, Registry: registry, Index: index.Build, Changed: changed}).Handler(),
 			Diagnostics: uiDiagnostics}.Handler()
 		return daemon.App{
 			API:     api,
 			Assets:  localapp.Handler(),
-			Methods: events.Methods(),
+			Methods: methods,
+			Waits:   waits,
 			Run: func(ctx context.Context) {
 				var wg sync.WaitGroup
 				wg.Go(func() { events.Run(ctx) })
@@ -561,6 +589,9 @@ func localApplication(paths daemon.Paths, concurrency int, log *slog.Logger) fun
 				wg.Go(func() { scheduler.Run(ctx) })
 				if live != nil {
 					wg.Go(func() { live.Run(ctx) })
+				}
+				if requestEvents != nil {
+					wg.Go(func() { requests.Run(ctx, requestEvents) })
 				}
 				wg.Go(func() { sessionIndex.Run(ctx) })
 				wg.Go(func() { planHistory.Run(ctx) })
@@ -593,6 +624,7 @@ func localApplication(paths daemon.Paths, concurrency int, log *slog.Logger) fun
 				unsubscribe()
 				unsubscribeClones()
 				unsubscribeEnded()
+				unsubscribeRequests()
 				events.Close()
 				_ = groups.Close()
 				_ = registry.Close()

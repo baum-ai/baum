@@ -2674,13 +2674,15 @@ endpoint.
 
 - **Event.** One JSON object per hook run, sent as the params of the `event`
   control request: `v` (the event format, `hookevents.Version`, 1), a random
-  `id`, `time`, `kind` (`agent` or `git`), `agent`, `name` (the agent event or
+  `id`, `time` (when the hook started), `kind` (`agent` or `git`), `agent`, `name` (the agent event or
   Git hook), `dir`, `exit` (the hook's status), `client` (baum's version), and
   `session` (an agent payload's top-level `id`, `transcript_path`, `cwd`,
   `hook_event`, `source`, `reason`, and for Claude Code's `notification` its
   `notification_type` and `message`, cut to 512 bytes, read by a streaming
-  scanner from the whole payload, the last of a repeated member winning;
-  nothing else of it) or `git`
+  scanner from the whole payload, the last of a repeated member winning, and
+  for Claude Code's and Codex's `post-tool-use` and `post-tool-use-failure`
+  the `tool_digest` of the call, and a Claude Code subagent's `agent_id`
+  (see "Agent requests and messages"); nothing else of it) or `git`
   (`args` without a pre-push remote URL, and `lines`, the refs or commits Git
   wrote to the hook). `Event.Bound` cuts fields at character boundaries, then
   trims Git lines and halves the longest fields until the escaped encoding fits
@@ -2824,11 +2826,12 @@ replace it.
   agents share baum's event names, which map to a normalised kind:
   `session-start` to `start`; `user-prompt-submit` and `before-submit-prompt`
   to `prompt`; `pre-task`, `post-task`, `post-todo`, `post-tool-use`,
-  `pre-compact`, `subagent-start` and `subagent-stop` to `tool` (the hooks each
+  `post-tool-use-failure`, `pre-compact`, `subagent-start` and
+  `subagent-stop` to `tool` (the hooks each
   agent has, so Claude Code reports subagent and todo activity, Codex tool
   runs, and Cursor prompts and compaction; the user-wide Claude Code plugin
   also reports every tool call as `post-tool-use`); `notification` (Claude
-  Code) and `permission-request` (Codex) to `wait`; `stop` to `stop`;
+  Code) and `permission-request` (Claude Code and Codex) to `wait`; `stop` to `stop`;
   `session-end` to `end`. Other names are ignored, so an older daemon ignores
   the wait events a newer plugin sends, and nothing changes for a newer
   daemon whose plugin sends none. A session is keyed by agent and id; an id
@@ -2861,7 +2864,10 @@ replace it.
   `elicitation_response`, `agent_completed`, `quota_auto_resume_fired`,
   `quota_auto_resume_disabled`, `plugin_notification`) are ignored. The same
   reason again keeps the wait (and its start); a start, prompt or tool event,
-  or the end, clears it. A notification's `message` becomes
+  or the end, clears it, except a `subagent-stop`, which is ignored while the
+  session waits: Claude Code runs a subagent after every stop (its
+  SubagentStop arrives a second or two after the Stop), and a background
+  subagent can finish while its session waits. A notification's `message` becomes
   `waiting_message`: format characters dropped, control characters and runs of
   spaces made one space, masked as transcripts are (`transcript.Renderer.Mask`,
   before it is cut), and cut to 160 characters. Claude Code says nothing when
@@ -2920,7 +2926,7 @@ replace it.
   `{"sessions":[…]}`, the most recently active first, each
   `{"agent","session_id","state","started_at","last_activity_at","ended_at"?,
   "last_event","waiting_reason"?,"waiting_since"?,"waiting_message"?,
-  "repository","branch"?,"pr"?,"title"?,"summary"?}`: `state` is `running`, `idle` or `ended`,
+  "repository","branch"?,"pr"?,"title"?,"summary"?,"activity"?}`: `state` is `running`, `idle` or `ended`,
   `last_event` is `start`, `prompt`, `tool`, `wait`, `stop` or `end`, the
   waiting fields are present while the session waits (see "Waiting"; the
   message only when the agent sent one), `repository` is
@@ -2949,6 +2955,18 @@ replace it.
   again only when the files' sizes or times changed, and right away after a
   failed read. Everything is one line or a block, masked and cut, and
   dropped with the session.
+- **Activity.** The same pass reads what the agent is doing into `activity`
+  (`activity.go`): `steps`, its last 12 tool calls oldest first (`tool`, a
+  one-line masked `target` of at most 160 characters, `at`), `files_touched`
+  (distinct files written by Edit, Write, MultiEdit, NotebookEdit or a Codex
+  `apply_patch`, over the whole transcript read, at most 10 000 remembered)
+  and `last_message` (the latest assistant text, at most 400 characters).
+  Targets are paths relative to the session's working directory when inside
+  it. Claude Code's `assistant` lines and Codex's `response_item` payloads
+  (`function_call`, `custom_tool_call`, `local_shell_call`, assistant
+  `message`) are read; Codex `shell`, `exec_command` and `local_shell` show
+  as `Bash` and `apply_patch` as `Edit`, an MCP tool as `server: tool`. Cursor
+  sessions have none; it is absent until something is found.
 - **Transcripts.** `GET /api/live-sessions/{agent}/{id}/transcript`
   (`Transcripts`, mounted beside the list by the same `LocalAPI.Live`
   provider) serves the transcript of a session the tracker lists, and only
@@ -3013,6 +3031,115 @@ replace it.
   for a new one, keeping the reader's open turns and, at the end of the page,
   their place at the end.
 
+### Agent requests and messages
+
+`internal/agentrequests` lets the app answer what Claude Code and Codex ask
+their user, and send a running session a message, through their hooks (the
+hook side is in `hosted/baumcli`, rules in its
+[README](hosted/baumcli/README.md), "User-wide hooks"). Everything is held in
+the daemon's memory; only `Settings` (`codex_approvals`, default false) is
+saved, in `agent-requests.json` in the state directory.
+
+- **Unattended sessions.** A Claude Code session nobody answers in a
+  terminal is never held: the hook gives no decision at once when
+  `CLAUDE_CODE_ENTRYPOINT` is set to anything but `cli` (`claude -p` sets
+  `sdk-cli`) or `CLAUDE_CODE_SESSION_ATTENDED` is `0`; an interactive session
+  sets `cli` and `1`, and without either variable the hook holds.
+- **Requests.** A `permission-request` hook whose event the daemon took sends
+  an `Ask` over `agent.request` (a waiting control method): agent, session,
+  the subagent's `agent_id` when one asks, kind (`permission`, or `question`
+  for Claude Code's AskUserQuestion), tool, the hook's start time, `Digest`
+  of the tool call (SHA-256 of the tool name and the input's canonical JSON;
+  an AskUserQuestion by its questions alone), and what the app shows:
+  label/value rows (Bash: Command, Description, and Sandbox when
+  `dangerouslyDisableSandbox` and Background when `run_in_background` is on;
+  Edit: File, Replace, With, and Replace all when `replace_all` is on;
+  MultiEdit: File, the number of edits, the old and new text of the first 8
+  and the rest as JSON; Write: File, Content; NotebookEdit: Notebook, Edit
+  mode, Cell, Source; WebFetch: URL, Prompt; Agent: Description, Subagent,
+  Model, Prompt; Codex `apply_patch`: Patch), then every other member of the
+  input that is not null, "", [] or {} as one compact JSON row ("Other
+  input", or "Input" for a tool with no rows), Claude Code's
+  `permission_suggestions` as labels ("Always allow Bash(make:*) in this
+  project"), and questions with their options. The hook keeps the payload and
+  builds the agent's answer from it; the daemon answers a `Decision`
+  (behaviour, suggestion index, option indexes or the user's own text per
+  question), or nothing. `Store.Ask` cleans, masks (the tracker's `Mask`) and
+  cuts every string (values keep newlines, 4000 characters; others one line),
+  holds at most 64 requests, and waits for an answer, a withdrawal, the
+  client's disconnect or, for Codex, `CodexWait` (25 s); a Codex request
+  answers nothing at once while `codex_approvals` is off (checked again under
+  the lock it is inserted under), and turning it off withdraws the waiting
+  ones. A request is refused, answering nothing at once, when the mask turned
+  non-empty text into "" (the redaction failed: nothing unmasked is shown),
+  or when its answers could not be told apart once cleaned and cut: two
+  equal questions, two equal options of one question, or a label containing
+  ", " in a multi-select question.
+- **Withdrawal.** `Store.Run` follows the record's agent events
+  (`Store.Subscribe` with `Match`): a session's `user-prompt-submit` or
+  `stop` withdraws its main agent's requests, a `subagent-stop` the requests
+  of that `agent_id`, `session-end` all of them, and a `post-tool-use` or
+  `post-tool-use-failure` (Claude Code's PostToolUseFailure, plugin 1.2.0)
+  whose `tool_digest` matches withdraws the oldest request of that tool call
+  (the user answered in Claude Code's terminal, which asks alongside);
+  parallel calls of other tools stay. Only requests whose hook started at or
+  before the event are withdrawn; hooks stamp their events with when they
+  started, so an asynchronous PostToolUse never post-dates the next request
+  for an identical call. The last 512 such marks (10 minutes) are kept so a
+  request that arrives after its tool call finished, or its turn ended, is
+  answered nothing at once.
+- **Turned down in the terminal.** Claude Code kills a waiting hook when the
+  user turns its request down in the terminal (No, or Esc), and interrupts
+  the turn without a Stop (checked with Claude Code 2.1.311): the
+  disconnect withdraws the request. When a main agent's request ends so,
+  neither answered nor withdrawn and more than a minute before `ClaudeHold`
+  (the hook's one-hour timeout, after which the terminal's dialog still
+  asks), the store calls `Interrupted`, and the tracker's
+  `Tracker.Interrupted` makes the session's `permission` or `input` wait a
+  `turn_finished` one from then (unless an event since is newer): it waits
+  for its user's next prompt. Likewise a request the app answered calls
+  `Answered`, and `Tracker.Answered` ends the session's wait as a tool event
+  would: the agent goes on (after a denial too) but reports nothing until
+  the tool call ends, which for a long command would leave it shown waiting.
+  A daemon restart rebuilds the session from the record, which has no event
+  for either (nor for a delivered message, below), so it shows its earlier
+  wait until the next event.
+- **Messages.** At most one per session, replaced by a new one, accepted only
+  for a listed session that has not ended and is not waiting for its next
+  prompt (`turn_finished`): a Stop hook will come. `agent.take-message`
+  removes and returns it as a `daemon.Delivery`, whose `Written` puts it
+  back when the answer could not be written, unless a newer one replaced it
+  or its turn ended while it was out (a `user-prompt-submit` or
+  `session-end` since it was queued, among the recent marks); the Stop hook
+  makes it the agent's next instruction. A written answer calls `Resumed`,
+  and `Tracker.Resumed` makes the session run again from then: the stop
+  that delivered it is older, so the tracker ignores it even when recorded
+  later, and a follow-up that only writes text is not shown as a finished
+  turn. A `user-prompt-submit` or `session-end` drops a message queued
+  before it (it belonged to the turn that is over; a `stop` does not, since
+  its hook takes the message after recording the stop), and so does the list
+  once the session is no longer listed.
+- **Known limits.** An answer racing the hook's disconnect is best-effort:
+  the app is told `ok` and the hook may be gone. A written `take-message`
+  answer can still be lost by a hook that goes away before reading it. The
+  mask treats e-mail-like spans in URLs as addresses and masks them, so such
+  a URL is shown masked.
+- **API.** `LocalAPI.AgentRequests` mounts `Store.Handler` behind the same
+  authentication as every route (without a record:
+  `agent_requests_unavailable`). `GET /api/agent-requests` answers
+  `{"requests":[{"id","agent","session_id","kind","tool","created_at","input":[{"label","value","code"?}],"suggestions":[{"id","label"}],"questions":[{"question","header"?,"multi_select","options":[{"label","description"?}]}]}],"messages":[{"agent","session_id","text","queued_at"}],"settings":{"codex_approvals"}}`,
+  oldest request first, message text masked. `POST
+  /api/agent-requests/{id}/answer` takes
+  `{"behavior","suggestion"?,"answers"?}` (answers keyed by the question and
+  option labels shown, several labels joined by ", ") and answers
+  `{"ok":true}`, 409 `request_gone` for a request no longer pending, 400
+  `bad_request` for one that does not fit. `PUT /api/agent-requests/settings`
+  takes `{"codex_approvals"}`; `POST /api/agent-messages` takes
+  `{"agent","session_id","text"}` (at most 4000 characters, not blank; 404
+  `session_not_running`); `DELETE /api/agent-messages/{agent}/{id}` is
+  idempotent. Every change publishes `live`, which the app already rereads
+  the sessions on.
+
 ### Transports and control protocol
 
 The app transport is `internal/uiserver` on `127.0.0.1` (a free port unless
@@ -3048,9 +3175,18 @@ identify and replace any daemon. `ping` and every method registered in
 answer `protocol_mismatch` with the daemon's status otherwise. Increment
 `daemon.Protocol` for any incompatible change. The application registers its
 methods through `App.Methods`; a method answers with its own error code by
-returning a `daemon.Error`. `event` is the one it has (see "Hook events");
-hook events that may move a head reach the automatic scheduler through its
-`Trigger` (see "Refresh on hook events"). Remote attach would be
+returning a `daemon.Error`. `event` (see "Hook events") and
+`agent.take-message` (see "Agent requests and messages") are the ones it
+has; hook events that may move a head reach the automatic scheduler through
+its `Trigger` (see "Refresh on hook events"). A method that may wait for as
+long as its client stays connected is registered in `Options.Waits` or
+`App.Waits` instead (`agent.request` is the one): the daemon clears the
+connection's idle deadline and runs it without the 30-second method timeout,
+its context ends when the client disconnects (a reader on the connection
+sees its end, or anything more it sends) or the daemon stops, and the
+connection closes after the answer. Other connections are served meanwhile;
+clients send it with `Client.Wait`, which dials within the usual request
+timeout and then waits until its context ends. Remote attach would be
 another transport beside these two; none exists.
 
 ### Desktop app interface

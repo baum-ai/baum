@@ -90,11 +90,98 @@ func TestEachWaitingReason(t *testing.T) {
 	})
 }
 
+func TestAnInterruptedWaitWaitsForTheNextPrompt(t *testing.T) {
+	c := &clock{t0}
+	tr := newTracker(c, newLinker())
+	apply(tr, event("s1", "user-prompt-submit", c.now, "/work/demo"))
+	if tr.Interrupted("claude-code", "s1", c.now) {
+		t.Fatal("a running session waits for nothing to turn down")
+	}
+	c.advance(time.Minute)
+	apply(tr, notification("s1", "permission_prompt", "Claude needs your permission to use Bash", c.now))
+	if tr.Interrupted("claude-code", "s1", c.now.Add(-time.Second)) {
+		t.Fatal("an interrupt older than the wait")
+	}
+	c.advance(time.Minute)
+	if !tr.Interrupted("claude-code", "s1", c.now) {
+		t.Fatal("the interrupt changed nothing")
+	}
+	if s := only(t, tr); s.WaitingReason != WaitTurnFinished || !s.WaitingSince.Equal(c.now) || s.WaitingMessage != "" || s.State != StateIdle {
+		t.Fatalf("after the interrupt: %+v", s)
+	}
+	if tr.Interrupted("claude-code", "s2", c.now) {
+		t.Fatal("an unknown session")
+	}
+	c.advance(time.Minute)
+	apply(tr, event("s1", "user-prompt-submit", c.now, "/work/demo"))
+	if s := only(t, tr); s.WaitingReason != "" || s.State != StateRunning {
+		t.Fatalf("after the next prompt: %+v", s)
+	}
+}
+
+func TestAnAnsweredWaitWorksAgain(t *testing.T) {
+	c := &clock{t0}
+	tr := newTracker(c, newLinker())
+	apply(tr, event("s1", "user-prompt-submit", c.now, "/work/demo"))
+	c.advance(time.Minute)
+	apply(tr, event("s1", "permission-request", c.now, "/work/demo"))
+	c.advance(time.Second)
+	if !tr.Answered("claude-code", "s1", c.now) {
+		t.Fatal("the answer changed nothing")
+	}
+	if s := only(t, tr); s.WaitingReason != "" || s.State != StateRunning || s.LastEvent != EventTool || !s.LastActivityAt.Equal(c.now) {
+		t.Fatalf("after the answer: %+v", s)
+	}
+	// A finished turn is not a wait the app answers.
+	c.advance(time.Minute)
+	apply(tr, event("s1", "stop", c.now, "/work/demo"))
+	if tr.Answered("claude-code", "s1", c.now) {
+		t.Fatal("answered a finished turn")
+	}
+}
+
+func TestADeliveredMessageResumesTheTurn(t *testing.T) {
+	c := &clock{t0}
+	tr := newTracker(c, newLinker())
+	apply(tr, event("s1", "user-prompt-submit", c.now, "/work/demo"))
+	c.advance(time.Minute)
+	stopped := c.now
+	apply(tr, event("s1", "stop", stopped, "/work/demo"))
+	c.advance(time.Second)
+	if !tr.Resumed("claude-code", "s1", c.now) {
+		t.Fatal("the delivery changed nothing")
+	}
+	if s := only(t, tr); s.WaitingReason != "" || s.State != StateRunning || s.LastEvent != EventPrompt || !s.LastActivityAt.Equal(c.now) {
+		t.Fatalf("after the delivery: %+v", s)
+	}
+	// The stop that delivered it, recorded late, is old news.
+	apply(tr, event("s1", "stop", stopped, "/work/demo"))
+	if s := only(t, tr); s.WaitingReason != "" || s.State != StateRunning {
+		t.Fatalf("the delivering stop finished the turn: %+v", s)
+	}
+	// Delivered before the tracker saw its stop: the stop stays old news.
+	c.advance(time.Minute)
+	stopped = c.now
+	c.advance(time.Second)
+	tr.Resumed("claude-code", "s1", c.now)
+	apply(tr, event("s1", "stop", stopped, "/work/demo"))
+	if s := only(t, tr); s.WaitingReason != "" || s.State != StateRunning {
+		t.Fatalf("a stop recorded after its delivery finished the turn: %+v", s)
+	}
+	// A wait for the user is not one a message ends.
+	c.advance(time.Minute)
+	apply(tr, event("s1", "permission-request", c.now, "/work/demo"))
+	c.advance(time.Second)
+	if tr.Resumed("claude-code", "s1", c.now) {
+		t.Fatal("a delivery ended a permission wait")
+	}
+}
+
 func TestWorkClearsAWaitAndAWaitGoesOn(t *testing.T) {
 	c := &clock{t0}
 	tr := newTracker(c, newLinker())
 	apply(tr, event("s1", "user-prompt-submit", c.now, "/work/demo"))
-	for _, work := range []string{"post-tool-use", "user-prompt-submit", "session-start", "pre-task", "subagent-stop"} {
+	for _, work := range []string{"post-tool-use", "user-prompt-submit", "session-start", "pre-task", "subagent-start"} {
 		c.advance(time.Minute)
 		apply(tr, notification("s1", "permission_prompt", "Claude needs your permission to use Edit", c.now))
 		if s := only(t, tr); s.WaitingReason != WaitPermission {
@@ -106,10 +193,24 @@ func TestWorkClearsAWaitAndAWaitGoesOn(t *testing.T) {
 			t.Fatalf("after %s: %+v", work, s)
 		}
 	}
-	// A stop, then Claude Code's idle_prompt a minute later: the same wait.
+	// A subagent that finishes while the session waits leaves the wait.
+	c.advance(time.Minute)
+	apply(tr, notification("s1", "permission_prompt", "Claude needs your permission to use Edit", c.now))
+	c.advance(time.Minute)
+	apply(tr, event("s1", "subagent-stop", c.now, "/work/demo"))
+	if s := only(t, tr); s.WaitingReason != WaitPermission || s.State != StateIdle {
+		t.Fatalf("after subagent-stop: %+v", s)
+	}
+	// A stop, then the subagent Claude Code runs after every stop, then its
+	// idle_prompt a minute later: the same wait.
 	c.advance(time.Minute)
 	stopped := c.now
 	apply(tr, event("s1", "stop", c.now, "/work/demo"))
+	c.advance(2 * time.Second)
+	apply(tr, event("s1", "subagent-stop", c.now, "/work/demo"))
+	if s := only(t, tr); s.WaitingReason != WaitTurnFinished || s.State != StateIdle {
+		t.Fatalf("after the stop's subagent-stop: %+v", s)
+	}
 	c.advance(time.Minute)
 	apply(tr, notification("s1", "idle_prompt", "Claude is waiting for your input", c.now))
 	if s := only(t, tr); s.WaitingReason != WaitTurnFinished || !s.WaitingSince.Equal(stopped) {

@@ -347,6 +347,19 @@ export type LiveSession = {
   /** The opening of the session's latest compaction summary (the request
    *  it records), one line, masked; absent until the agent compacted it. */
   summary?: string;
+  /** What the agent is doing, read from its transcript; absent when nothing
+   *  was found, and from a daemon older than this field. */
+  activity?: Activity;
+};
+/** One tool call of a session: the tool as displayed ("Read", "Edit",
+ *  "Bash", "server: tool") and what it works on, one masked line. */
+export type ActivityStep = { tool: string; target?: string; at?: string };
+export type Activity = {
+  /** The latest tool calls, oldest first. */
+  steps: ActivityStep[];
+  files_touched?: number;
+  /** The agent's latest text message, one line, masked. */
+  last_message?: string;
 };
 const agentNames: Record<string, string> = {
   "claude-code": "Claude Code",
@@ -363,11 +376,133 @@ export function agentName(agent: string): string {
 export function parseLive(body: unknown): LiveSession[] {
   const list = (body as { sessions?: unknown } | null)?.sessions;
   return Array.isArray(list)
-    ? list.filter(
-        (s): s is LiveSession =>
-          !!s && typeof s.session_id === "string" && typeof s.repository === "string",
-      )
+    ? list
+        .filter(
+          (s): s is LiveSession =>
+            !!s && typeof s.session_id === "string" && typeof s.repository === "string",
+        )
+        .map((s) => {
+          const { activity, ...rest } = s;
+          const clean = parseActivity(activity);
+          return clean ? { ...rest, activity: clean } : rest;
+        })
     : [];
+}
+function parseActivity(value: unknown): Activity | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const a = value as Partial<Activity>;
+  const steps = Array.isArray(a.steps)
+    ? a.steps.filter((s): s is ActivityStep => !!s && typeof s.tool === "string")
+    : [];
+  const files = typeof a.files_touched === "number" && a.files_touched > 0 ? a.files_touched : 0;
+  const message = typeof a.last_message === "string" && a.last_message ? a.last_message : "";
+  if (steps.length === 0 && !files && !message) return undefined;
+  return {
+    steps,
+    ...(files ? { files_touched: files } : {}),
+    ...(message ? { last_message: message } : {}),
+  };
+}
+
+/** One row of what a request would do. */
+export type RequestInput = { label: string; value: string; code?: boolean };
+export type RequestSuggestion = { id: string; label: string };
+export type RequestQuestion = {
+  question: string;
+  header?: string;
+  multi_select?: boolean;
+  options: { label: string; description?: string }[];
+};
+/** A permission or a question an agent waits on, answerable from the app. */
+export type AgentRequest = {
+  id: string;
+  agent: string;
+  session_id: string;
+  kind: "permission" | "question";
+  tool: string;
+  created_at: string;
+  input: RequestInput[];
+  suggestions: RequestSuggestion[];
+  questions: RequestQuestion[];
+};
+/** A message waiting for the session's turn to end. */
+export type AgentMessage = { agent: string; session_id: string; text: string; queued_at: string };
+export type AgentSettings = { codex_approvals: boolean };
+/** `api/agent-requests`; `settings` is null from a daemon without the route. */
+export type AgentRequests = {
+  requests: AgentRequest[];
+  messages: AgentMessage[];
+  settings: AgentSettings | null;
+};
+export const noAgentRequests: AgentRequests = { requests: [], messages: [], settings: null };
+
+const isText = (v: unknown): v is string => typeof v === "string";
+export function parseAgentRequests(body: unknown): AgentRequests {
+  const b = body as {
+    requests?: unknown;
+    messages?: unknown;
+    settings?: { codex_approvals?: unknown } | null;
+  } | null;
+  const requests = (Array.isArray(b?.requests) ? b.requests : [])
+    .filter(
+      (r: Partial<AgentRequest> | null): r is AgentRequest =>
+        !!r &&
+        isText(r.id) &&
+        isText(r.agent) &&
+        isText(r.session_id) &&
+        isText(r.created_at) &&
+        (r.kind === "permission" || r.kind === "question"),
+    )
+    .map((r) => ({
+      ...r,
+      tool: isText(r.tool) ? r.tool : "",
+      input: Array.isArray(r.input) ? r.input.filter((i) => !!i && isText(i.label)) : [],
+      suggestions: Array.isArray(r.suggestions)
+        ? r.suggestions.filter((x) => !!x && isText(x.id) && isText(x.label))
+        : [],
+      questions: Array.isArray(r.questions)
+        ? r.questions
+            .filter((q) => !!q && isText(q.question))
+            .map((q) => ({ ...q, options: Array.isArray(q.options) ? q.options : [] }))
+        : [],
+    }));
+  const messages = (Array.isArray(b?.messages) ? b.messages : []).filter(
+    (m: Partial<AgentMessage> | null): m is AgentMessage =>
+      !!m && isText(m.agent) && isText(m.session_id) && isText(m.text),
+  );
+  const settings =
+    b?.settings && typeof b.settings.codex_approvals === "boolean"
+      ? { codex_approvals: b.settings.codex_approvals }
+      : null;
+  return { requests, messages, settings };
+}
+/** The body of an answer: allow or deny a permission (with the suggestion
+ *  that makes it permanent), or the labels chosen for a question's options. */
+export type AnswerBody = {
+  behavior: "allow" | "deny";
+  suggestion?: string;
+  answers?: Record<string, string>;
+};
+export function answerRequest(id: string, body: AnswerBody) {
+  return request<{ ok: boolean }>(`api/agent-requests/${encodeURIComponent(id)}/answer`, body);
+}
+/** Queues a message for the session's next stop. */
+export function sendMessage(agent: string, sessionId: string, text: string) {
+  return request<{ ok: boolean }>("api/agent-messages", {
+    agent,
+    session_id: sessionId,
+    text,
+  });
+}
+export function cancelMessage(agent: string, sessionId: string) {
+  return request<{ ok: boolean }>(
+    `api/agent-messages/${encodeURIComponent(agent)}/${encodeURIComponent(sessionId)}`,
+    undefined,
+    "DELETE",
+  );
+}
+export function saveAgentSettings(settings: AgentSettings) {
+  return request<AgentSettings>("api/agent-requests/settings", settings, "PUT");
 }
 /** Sessions that are not over and belong to the pull request, matched by
  * repository across clones as jobs are. */

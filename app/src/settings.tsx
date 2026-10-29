@@ -10,7 +10,9 @@ import {
 import { Alert, Button, SegmentedControl } from "@baum/viewer/components/ui";
 import {
   automaticNotice,
+  parseAgentRequests,
   request,
+  saveAgentSettings,
   type Automatic,
   type AutomaticStatus,
   type Clone,
@@ -1182,6 +1184,7 @@ export function SettingsPage({
                 </>
               ) : null}
               <AgentEnvSection />
+              <AgentApprovalsSection />
             </section>
           )}
         </div>
@@ -1275,6 +1278,63 @@ function envProblems(rows: EnvRow[]): Record<number, string> {
     seen.add(row.name);
   }
   return problems;
+}
+
+/** Whether Codex approvals are answered from the Sessions page. Hidden
+ *  while the daemon does not serve the setting (an older one). */
+function AgentApprovalsSection() {
+  const [enabled, setEnabled] = useState<boolean | null>(null);
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState("");
+  useEffect(() => {
+    request<unknown>("api/agent-requests").then(
+      (body) => setEnabled(parseAgentRequests(body).settings?.codex_approvals ?? null),
+      () => setEnabled(null),
+    );
+  }, []);
+  if (enabled === null) return null;
+  const change = async (next: boolean) => {
+    setEnabled(next);
+    setPending(true);
+    setError("");
+    try {
+      await saveAgentSettings({ codex_approvals: next });
+    } catch (e) {
+      setEnabled(!next);
+      setError(errorText(e));
+    } finally {
+      setPending(false);
+    }
+  };
+  return (
+    <section aria-labelledby="agent-approvals-heading" className="local-panel settings-card p-0!">
+      <PanelHeader
+        id="agent-approvals-heading"
+        icon={<SessionsIcon size={20} />}
+        title="Answering agents"
+        detail="Approve commands and answer questions from the Sessions page."
+      />
+      <div className="review-section px-5 pb-4">
+        <label className="switch-row">
+          <span>
+            Answer Codex approvals from the app
+            <small>
+              While on, Codex hides its own approval prompt for up to 25 seconds while it waits for
+              an answer here.
+            </small>
+          </span>
+          <input
+            type="checkbox"
+            role="switch"
+            checked={enabled}
+            disabled={pending}
+            onChange={(event) => void change(event.target.checked)}
+          />
+        </label>
+        {error ? <Alert className="mt-3">{error}</Alert> : null}
+      </div>
+    </section>
+  );
 }
 
 /** Variables set for every agent baum runs and for the git commands that
