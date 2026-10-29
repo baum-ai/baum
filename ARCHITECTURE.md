@@ -2056,7 +2056,14 @@ new head, or a new pull request, sets the next poll `settleInterval` (15 s)
 away (or GitHub's polling interval, if longer), as do up to `maxSettles` (3)
 more while a non-draft pull request's `mergeable` or `mergeStateStatus` is
 still `UNKNOWN`; the snapshot says `settling`, and the background worker polls
-the repository at that deadline instead of its interval. A repository never polled or not returned waits for its scheduled
+the repository at that deadline instead of its interval. A fix that pushed
+polls its repository at once and again 5, 15, 30 and 60 s later
+(`discovery.AfterPush`) until the pull request shows the pushed head with
+checks running or finished: GitHub queues the checks seconds after the push,
+the first poll finds none and a clean merge state, and neither the probe
+(check results do not move `updated_at`) nor the settle poll (the background
+worker does not see a poll it did not make) would read them before the usual
+backoff. A repository never polled or not returned waits for its scheduled
 poll; the probe assumes one credential, leaving out any repository whose
 credential differs from the first's.
 GraphQL cost, remaining points and reset time map to the public rate projection.
@@ -3027,7 +3034,8 @@ replace it.
   one-line masked `target` of at most 160 characters, `at`), `files_touched`
   (distinct files written by Edit, Write, MultiEdit, NotebookEdit or a Codex
   `apply_patch`, over the whole transcript read, at most 10 000 remembered)
-  and `last_message` (the latest assistant text, at most 400 characters).
+  and `last_message` (the latest assistant text, at most 1 200 characters,
+  its line breaks kept so the app renders it as Markdown).
   Targets are paths relative to the session's working directory when inside
   it. Claude Code's `assistant` lines and Codex's `response_item` payloads
   (`function_call`, `custom_tool_call`, `local_shell_call`, assistant
