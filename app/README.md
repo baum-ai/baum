@@ -343,7 +343,8 @@ to `?inbox=<id>`, is the current page when selected (then Inbox is not), and
 shows a dot, the name and how many unsnoozed items match, none when 0. The `⋯`
 button opens a menu to leave the inbox out of the Inbox badge (its count is then
 muted) or count it, and **Delete inbox**, which toasts "Deleted <name>. Its pull
-requests stay in Inbox." with **Undo**. The Inbox badge counts the unsnoozed
+requests stay in Inbox." with **Undo**, which puts it back in its place with
+its id, so links to it still work. The Inbox badge counts the unsnoozed
 queue items that are in no inbox or in at least one that counts in the badge;
 with no inboxes it is the count above. Changes show at once and are sent to the
 daemon one at a time, each carrying the newest revision, so an older change

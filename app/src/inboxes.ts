@@ -145,12 +145,8 @@ export function createInboxSaver(io: SaverIO) {
     while (waiting && server) {
       const next = waiting;
       waiting = null;
-      // The daemon refuses an id it does not store (an inbox deleted and then
-      // restored by Undo): without one it assigns a new id.
-      const known = new Set(server.inboxes.map((inbox) => inbox.id));
-      const body = next.map(({ id, ...rest }) => (known.has(id) ? { id, ...rest } : rest));
       try {
-        const saved = await io.put(server.revision, body);
+        const saved = await io.put(server.revision, next);
         if (!saved) throw new Error("The daemon cannot save inboxes.");
         server = saved;
         if (!waiting) io.show(saved);

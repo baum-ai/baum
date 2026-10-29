@@ -241,12 +241,11 @@ it("adopts the daemon's list on a conflict and restores the saved list on anothe
   expect(two.failures).toEqual(["Couldn't save your inboxes: Boom"]);
 });
 
-it("sends an inbox the daemon does not store without its id", async () => {
+it("sends an inbox the daemon no longer stores with its id, so Undo keeps its links", async () => {
   const { s, puts } = saver();
   const a = inbox({ id: "a" });
   const gone = inbox({ id: "gone", name: "Gone" });
   s.adopt({ revision: 2, inboxes: [a] });
   s.save([a, gone]);
-  expect(puts[0]!.inboxes[0]).toEqual(a);
-  expect("id" in (puts[0]!.inboxes[1] as object)).toBe(false);
+  expect(puts[0]!.inboxes).toEqual([a, gone]);
 });

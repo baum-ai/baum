@@ -46,7 +46,9 @@ are serialized.
   whole list, answering the saved list in the shape of `GET`. `revision` is
   the one the client read; any other answers 409 `stale_revision` with the
   current list. Each save increments the revision. An entry without an `id`
-  gets one; an entry whose `id` is not in the stored list is refused. Other
+  gets one. An `id` in the daemon's shape (32 lower-case hex characters) is
+  kept even when the stored list no longer holds it, so an inbox deleted and
+  brought back by Undo keeps its links; any other `id` is refused. Other
   methods answer 405.
 
 Errors are `{"code": "...", "message": "..."}` with these codes. A refused save
@@ -54,11 +56,10 @@ changes nothing.
 
 | Status | Code | Meaning |
 | --- | --- | --- |
-| 400 | `invalid_request` | the body is not one JSON object of the expected shape, or has no `revision` |
-| 400 | `invalid_inbox` | a field is out of range: name length, color, what, risk, owner or repository shape, or too many owners or repositories |
+| 400 | `invalid_request` | the body is not one JSON object of the expected shape, has no `revision`, or is over 256 KB |
+| 400 | `invalid_inbox` | a field is out of range: an id the daemon did not assign, name length, color, what, risk, owner or repository shape, or too many owners or repositories |
 | 400 | `too_many_inboxes` | more than 20 inboxes |
 | 400 | `duplicate_name` | two names equal ignoring case |
 | 400 | `duplicate_id` | the same id twice |
-| 400 | `unknown_inbox` | an id that is not in the stored list |
 | 409 | `stale_revision` | the revision is not the stored one; the body carries the current list |
 | 500 | `inboxes_unreadable` | the stored file cannot be parsed; it is left untouched |

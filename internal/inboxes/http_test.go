@@ -101,6 +101,37 @@ func TestRoundTripOrderAndIDs(t *testing.T) {
 	}
 }
 
+func TestDeletedInboxComesBackWithItsID(t *testing.T) {
+	h := newHarness(t)
+	_, saved := h.put(`{"revision":0,"inboxes":[` + entry("One") + `]}`)
+	id := list(saved)[0]["id"].(string)
+	h.put(`{"revision":1,"inboxes":[]}`)
+	code, body := h.put(`{"revision":2,"inboxes":[{"id":"` + id + `",` + entry("One")[1:] + `]}`)
+	if code != 200 || list(body)[0]["id"] != id {
+		t.Fatalf("%d %v", code, body)
+	}
+}
+
+func TestConcurrentSavesOfOneRevision(t *testing.T) {
+	h := newHarness(t)
+	codes := make(chan int, 2)
+	for _, name := range []string{"One", "Two"} {
+		go func() {
+			req := httptest.NewRequest(http.MethodPut, "/api/inboxes", strings.NewReader(`{"revision":0,"inboxes":[`+entry(name)+`]}`))
+			rec := httptest.NewRecorder()
+			h.handler.ServeHTTP(rec, req)
+			codes <- rec.Code
+		}()
+	}
+	if a, b := <-codes, <-codes; a+b != http.StatusOK+http.StatusConflict {
+		t.Fatalf("codes %d and %d, want one 200 and one 409", a, b)
+	}
+	state, err := Open(h.path).Read()
+	if err != nil || state.Revision != 1 || len(state.Inboxes) != 1 {
+		t.Fatalf("%+v %v", state, err)
+	}
+}
+
 func TestStaleRevisionAnswersCurrentList(t *testing.T) {
 	h := newHarness(t)
 	h.put(`{"revision":0,"inboxes":[` + entry("One") + `]}`)
@@ -145,7 +176,7 @@ func TestValidation(t *testing.T) {
 		"repo dots":       {`[` + with(`"repositories":[]`, `"repositories":["a/.."]`) + `]`, "invalid_inbox"},
 		"too many owners": {`[` + with(`"owners":[]`, owners) + `]`, "invalid_inbox"},
 		"too many repos":  {`[` + with(`"repositories":[]`, repos) + `]`, "invalid_inbox"},
-		"unknown id":      {`[{"id":"nope","name":"B","color":"blue","what":"any","owners":[],"risk":"any","repositories":[],"no_bots":false,"badge":true}]`, "unknown_inbox"},
+		"foreign id":      {`[{"id":"nope","name":"B","color":"blue","what":"any","owners":[],"risk":"any","repositories":[],"no_bots":false,"badge":true}]`, "invalid_inbox"},
 		"duplicate id":    {`[{"id":"` + id + `","name":"B","color":"blue","what":"any","owners":[],"risk":"any","repositories":[],"no_bots":false,"badge":true},{"id":"` + id + `","name":"C","color":"blue","what":"any","owners":[],"risk":"any","repositories":[],"no_bots":false,"badge":true}]`, "duplicate_id"},
 	} {
 		code, body := h.put(`{"revision":1,"inboxes":` + tc.body + `}`)

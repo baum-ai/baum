@@ -30,6 +30,8 @@ var (
 
 	ownerPattern      = regexp.MustCompile(`^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$`)
 	repositoryPattern = regexp.MustCompile(`^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?/[A-Za-z0-9._-]{1,100}$`)
+	// idPattern is the shape of newID.
+	idPattern = regexp.MustCompile(`^[0-9a-f]{32}$`)
 )
 
 // Error codes of the API.
@@ -39,7 +41,6 @@ const (
 	CodeTooMany        = "too_many_inboxes"
 	CodeDuplicateName  = "duplicate_name"
 	CodeDuplicateID    = "duplicate_id"
-	CodeUnknownInbox   = "unknown_inbox"
 	CodeStale          = "stale_revision"
 	CodeUnreadable     = "inboxes_unreadable"
 )
@@ -126,7 +127,7 @@ func (s *Store) read() (State, error) {
 }
 
 // Replace saves the whole list, based on the revision the caller read. Entries
-// without an id get one; an id that is not in the stored list is refused.
+// without an id get one; an id in the daemon's shape is kept, stored or not.
 func (s *Store) Replace(revision int, inboxes []Inbox) (State, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -196,12 +197,15 @@ func normalize(in []Inbox, known map[string]bool) ([]Inbox, error) {
 		if inbox.Repositories, err = cleanList(inbox.Repositories, MaxRepositories, repositoryPattern, inbox.Name, "repositories", "owner/name"); err != nil {
 			return nil, err
 		}
+		// An id the list no longer holds is kept when it has the daemon's
+		// shape: it is an inbox deleted and brought back by Undo, whose links
+		// should still lead to it.
 		switch {
 		case inbox.ID == "":
 			for inbox.ID = newID(); ids[inbox.ID] || known[inbox.ID]; inbox.ID = newID() {
 			}
-		case !known[inbox.ID]:
-			return nil, invalid(CodeUnknownInbox, "Inbox %q has an id that does not exist.", inbox.Name)
+		case !idPattern.MatchString(inbox.ID):
+			return nil, invalid(CodeInvalidInbox, "Inbox %q has an id the daemon did not assign.", inbox.Name)
 		case ids[inbox.ID]:
 			return nil, invalid(CodeDuplicateID, "Inbox %q repeats the id of another inbox.", inbox.Name)
 		}

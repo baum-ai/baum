@@ -288,10 +288,9 @@ it("deletes an inbox with Undo", async () => {
   );
   await click(node.querySelector(".inbox-toast button"));
   expect(puts).toHaveLength(2);
-  // The daemon no longer stores it, so it goes back without its id, at its place.
+  // It goes back with its id, so links to it still lead there, at its place.
   expect(puts[1]!.revision).toBe(2);
-  expect(puts[1]!.inboxes.map((one) => one.name)).toEqual(["Reviews", "Merges", "Acme", "Quiet"]);
-  expect("id" in puts[1]!.inboxes[2]!).toBe(false);
+  expect(puts[1]!.inboxes.map((one) => one.id)).toEqual(["Reviews", "Merges", "Acme", "Quiet"]);
   expect(subRows().map((row) => row.querySelector(".local-rail-label")?.textContent)).toEqual([
     "Reviews",
     "Merges",
