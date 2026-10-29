@@ -402,8 +402,10 @@ opens the session in the detail, at that turn, ended or not
 page draws (`TranscriptCard` in `src/session-transcript.tsx`), with the cited
 turn marked and scrolled to, and "Turn N is not among the prompts shown for
 this session." when the transcript does not list it. A pull request links to its PR page
-(`?repository=&pr=`). Only the tab shown reads its list, 50 rows at a time
-with a button for more. The app's event stream counts `timeline` events and
+(`?repository=&pr=`). Opening or closing a decision or feature, and the
+redirect from a merged feature, replace the history entry rather than add one,
+as hosted. Only the tab shown reads its list, 50 rows at a time with a button
+for more. The app's event stream counts `timeline` events and
 every connection after the first; on each the page reads its repositories, list
 (as many rows as it had loaded, in requests of at most 500) and open details
 again. A load of more rows or a detail still under way from before is dropped,

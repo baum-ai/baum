@@ -1,6 +1,6 @@
 import { formatCount } from "@baum/viewer/components/format";
 import { UsageDetails } from "./usage";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { LogoMark } from "@baum/viewer/components/editorial";
 import {
   CircleCheckIcon,
@@ -65,26 +65,8 @@ import {
 import { LoadingStatus } from "./nine-dots";
 import { FixDetails, FixDialog, TranscriptLink } from "./fix";
 import { JobPage } from "./job-transcript";
+import { useLocation } from "./location";
 
-function useLocation() {
-  const [search, setSearch] = useState(() => new URLSearchParams(location.search));
-  const current = useRef(search);
-  const update = useCallback<UrlState["update"]>((patch) => {
-    const next = patch(new URLSearchParams(current.current));
-    current.current = next;
-    history.pushState(null, "", appURL(`?${next}`));
-    setSearch(next);
-  }, []);
-  useEffect(() => {
-    const pop = () => {
-      current.current = new URLSearchParams(location.search);
-      setSearch(current.current);
-    };
-    addEventListener("popstate", pop);
-    return () => removeEventListener("popstate", pop);
-  }, []);
-  return useMemo(() => ({ search, update }), [search, update]);
-}
 function LocalLink({ href, onClick, ...props }: ViewerLinkProps) {
   return (
     <a
