@@ -1,0 +1,732 @@
+# Local decision capture
+
+The daemon extracts the decisions of the coding-agent sessions running on this
+machine and keeps them in `<state>/decisions/decisions.sqlite`, a private
+(directory 0700, file 0600) SQLite database. Extraction uses the published
+prompt (`decisions.NewPublicExtractor`, `decisions-public-v1`) and the
+`decisions` package's renderer, parser and citation validator, so a local
+extraction follows the same rules as a hosted one.
+
+## Gate
+
+A session is captured only when all of these hold, read for every capture:
+
+- the automatic master switch is on (the desktop tray's pause turns it off);
+- the decisions switch (`preferences.decisions.enabled`) is not false;
+- the session's repository is picked and its `settings.decisions` is not
+  false.
+
+Capture is on by default. A session outside a picked repository, or in one
+turned off, is not read and leaves no row.
+
+## When a session is captured
+
+The scheduler reads the live session tracker every 30 seconds; it keeps no
+per-session timers. A session is queued when:
+
+- it settled: it ended, or it is not running and its last activity is at
+  least 2 minutes old (its turn ended, it waits on its user, or it went
+  silent); once per last activity;
+- it has been running for 20 minutes since it started running after it last
+  settled, or since it was last queued for running long (a brief wait between
+  prompts does not restart the count);
+- it is about to compact (`pre-compact` hook event), at once;
+- every 5 minutes, it is settled (the backstop, for a transcript that changed
+  without new activity; an unchanged one is left alone).
+
+One worker captures the queued sessions one at a time; a session already
+queued is not queued twice. Before a call, the ledger throttles a session: at
+most one attempt every 5 minutes, none within 10 minutes of a failed one, and
+after 12 attempts in a day only once it ended. A capture cut short by the
+daemon stopping settles its attempt as abandoned (outcome `abandoned`) and is
+not a failure.
+
+## Capture
+
+1. The transcript is located as the live session view locates it: a regular
+   file inside the agent's own session store, symbolic links resolved. When
+   the hooks named no transcript, the path the last capture stored is tried
+   first, Claude Code and Codex alike; if it no longer holds the session, a
+   Codex session is looked up by id, which scans the store (a Claude Code one
+   cannot be found without a path). The transcript must map to the hook
+   event's session, otherwise the session is skipped (`session_mismatch`); a
+   path is stored only once it does. A session whose own files exceed 64 MiB
+   is skipped (`too_large`).
+2. When the stored fingerprint (size and modification time of its files) is
+   unchanged and the session is covered, nothing happens, except that a
+   stored path that failed is replaced by the one found.
+3. baum's own generation runs are skipped (`generation_run`).
+4. The transcript is rendered and redacted. When it has the head extraction's
+   content hash (an empty head included), the head still covers it and no call
+   is made. When a head exists, the call extends it: the message lists the
+   existing decisions by handle and then the whole transcript, with a marker
+   after the turns the head's prefix covered; existing decisions keep their
+   IDs. Otherwise the call reads the whole transcript.
+5. A prompt estimated over 272,000 tokens is skipped (`over_token_cap`).
+6. The backend is the one reviews use (config file, app preferences, repository
+   settings), and `auto` resolves as for reviews: the first of claude, codex
+   and anthropic that passes its check, never cursor-agent; none is
+   `backend_unavailable`. The model follows the resolved backend:
+   `preferences.decisions.model` unless it names another provider's family,
+   else `claude-haiku-5-5` for claude and anthropic and `gpt-6-luna` for codex.
+   cursor-agent cannot make a single structured call (`backend_unsupported`); a
+   backend that does not pass its check is `backend_unavailable`.
+7. The cost is reserved before the call: the prompt's byte bound and 16,384
+   output tokens at the model's list price. Claude Code caches the prompt, so
+   claude's call is reserved at the cache-write rate when that is higher. It
+   may make a second call, after the harness rejected its first reply against
+   the schema; that resends the cached prompt, so it is reserved at the
+   cache-read rate plus another reply. The Codex CLI has no option capping the
+   reply, so its 16,384 tokens are an estimate rather than a limit. Prices
+   only report: a model the price list does not price runs, reserved at 0.
+   There is no spending cap: as for reviews, each call keeps its token and
+   time budgets.
+8. The attempt is recorded as pending and the completion made: one request for
+   anthropic; `claude -p` with no tools besides its structured reply, which
+   normally ends after one call and may retry a rejected reply once; or one
+   `codex exec` turn with its shell tools off, normally one request (a call to
+   a tool Codex still offers, such as its patch or plan tool, makes another
+   within the turn). The completion, a retry included, has 10 minutes, the
+   default `pass_timeout` of a review pass: a backend still running then is
+   stopped and the attempt fails (reason `timeout`), so a hung backend does
+   not hold up the sessions queued behind it. The attempt is settled with its
+   cost from the reported usage, priced as reviews price theirs
+   (`pricing.List.OutcomeCost`): when any part of it is unknown (a run cut short, a speed or 1-hour cache-write
+   split not reported, as Codex never reports its speed, or several calls
+   whose prompt sizes may straddle a long-prompt tier) the cost is unknown,
+   not estimated. It is also settled with how many replies the harness
+   rejected against the schema (`rejections`; the last one's reason goes to
+   the private log with the attempt's stage, item and id). An attempt still
+   pending when the daemon starts is settled as abandoned. A reply stands
+   when the ledger cannot be written after it; the failure is logged.
+9. The reply is masked for secrets before it is parsed, validated against the
+   transcript, given IDs and saved.
+
+A failed call is not cached. After 3 failures in a row the session is marked
+`extraction_failed` until its transcript changes. Skips for a missing or
+unsupported backend are tried again the next day or when the transcript
+changes; other skips only when it changes.
+
+## Stored data
+
+- `capture_session`: per agent and session id, the repository and branch, the
+  transcript path, the fingerprint, the head extraction (content and prefix
+  hash, prompt version, backend, model, decisions with IDs, dropped citations,
+  tokens and cost), the coverage (`extracted` or `skipped` with a reason) and
+  consecutive failures.
+- `decision` and the `current_decision` view, `decision_file`: the decision
+  log. A decision is upserted by ID; decisions a newer extraction no longer
+  holds get `obsolete_at` and are never deleted. A decision is
+  dated by its first cited turn's time, else the date its ID had, else the
+  extraction's time.
+- `capture_attempt`: the ledger of calls (backend, model, full or extend,
+  reservation, cost, tokens, state, failure reason, rejected replies), with the `stage` that made the call
+  (`capture`, or a feature log stage) and the `item` it was about.
+
+Nothing is pruned: the ledger and the decisions, obsolete ones included, are
+kept for good, as hosted extraction keeps them.
+The store holds decisions, rationale and evidence quotes derived from redacted
+transcripts, never the transcripts themselves.
+
+## In the app
+
+`API` serves `GET /api/decisions`, mounted by `internal/uiserver`:
+
+- `?agent=&session=`: one session's current decisions, its coverage and skip
+  reason, when its row last changed (`updated_at`, null when never captured)
+  and `capturing`, true while one of its calls is pending, and
+  `capture_off`, why the gate keeps capture from running for its repository
+  now (`paused`, `off`, `repository_off` or `not_picked`; the repository is
+  the tracker's, where the session works now, else the one it was last
+  captured in). A registry that cannot be read leaves it empty and is
+  logged.
+- `?repository=&pr=`: the same for each session of the pull request, resolved
+  when read: the tracked sessions whose pull request it is (the live
+  tracker's `prlink` link), ended ones it still holds included so their
+  provisional decisions stay, then the sessions its latest saved review links
+  on this machine (`locallink`, the computation its PR page's sessions list
+  shares; a failure to link is logged and links none, and a review too large
+  to serve links none but still dates the provisional marks). A session in
+  both appears once; `live` is a tracked session not over. Decisions dated
+  after the review's `generated_at` are `provisional`. A decision is dated
+  when it was first raised (its first cited turn, as hosted decisions are), so
+  provisional counts from then, not from when it was last revised; without a
+  saved review none are, and only the tracked sessions are listed.
+
+A decision carries only what the app shows (`DecisionView`): id, title,
+summary, category, who, rationale, rejected alternative, superseded, files
+and date; evidence, turns and branch are not served, nor a session's
+repository.
+
+`Store.Changed` is called after every write the app shows (a skip, a cover,
+a save, an attempt beginning or settling; the beginning is what shows
+"Capturing…", and the settling ends it when no save or skip follows); the
+daemon publishes the app's `decisions` event, which carries no data, with it,
+and also after the settings or a repository's are saved. The settings are
+`preferences.decisions`, served only by `GET` and `PUT
+/api/settings/decisions` (in `internal/uiserver`), which add
+`EffectiveModel`: the backend and model a capture would use, resolved by the
+same helper a capture uses, `auto` included, and whether the chosen model is
+ignored (never with cursor-agent, which uses no model). Its backend checks
+get 5 seconds; no backend, or none in time (`backend_undetermined`), is
+unknown (empty) and ignores nothing. `baum internal reviews show` reports the
+same as `decisions_backend`, `decisions_effective_model` and
+`decisions_model_ignored`. A repository's own setting is `settings.decisions`,
+through the repository settings API. Analytics counts capture's calls in
+the ledger (`Store.Ledger`) under baum's work.
+
+## Feature log
+
+The feature log groups a repository's pull requests and sessions into
+features as the hosted feature log does, with the `features` package's rules
+and published prompts. Its choices are in `featureconfig.go`, and it shares
+the store with capture. `FeatureWorker` syncs a repository's pull
+requests, reads their paths and commits from the clone, and links the
+commits to this machine's sessions, then places them in features, writes
+the features' text and consolidates them.
+It runs in the daemon beside the capture scheduler, every minute and when
+settings change, for each picked repository with an available clone whose
+decisions are captured (the gate above); a repository turned off is not read
+and makes no GitHub call. A repository whose listing fails, whose clone
+cannot be read or whose remote is out of reach is tried again after 15
+minutes.
+
+### Pull requests
+
+- The first run for a repository records when the feature log was activated
+  for it (`pull_sync.activated_at`), for placement to leave earlier work
+  out.
+- The repository's pull requests of every state are listed through the
+  GitHub REST API, most recently updated first, 64 a page (a page too large
+  to read is read again at half the size, down to 8), until one updated
+  before the cursor (the first time, 180 days back); one updated exactly at
+  the cursor is listed again. The first page is read with the stored ETag,
+  so an unchanged repository costs one conditional request. The cursor moves
+  to the latest update listed, or to the start of the window when none was.
+  A listing stops at about 10,000 pull requests; older ones still due are
+  skipped and logged. A first build lists the whole history once besides
+  (see "First build").
+- Only pull requests that can be placed in a feature are read from the
+  clone: open or merged ones not opened by a bot. Each pass fetches what
+  its due pull requests lack, as a review fetches a missing pull request
+  commit: a head from `refs/pull/<N>/head` into `refs/baum/pull/<N>/head`
+  and a base by its id into `refs/baum/pull/<N>/base`, both force-updated,
+  100 refspecs to a `git fetch`. So each such pull request of the 180 days
+  before activation (of the whole history after a first build), and every
+  one after, gets refs in the clone; they are
+  kept, not pruned, as they may back saved reviews. Each pull request's
+  commits, from its base to its head, are then read from the clone's own
+  objects, never fetched. Its paths are the files its commits change; its
+  commits replace those recorded. A new base has them read again. GitHub's file list is never read.
+- When a fetch fails, the remote is asked for its HEAD (`git ls-remote`).
+  When it does not answer, the pass stops, nothing is counted against any
+  pull request and the repository waits; when it answers, the refs of the
+  failed fetch are fetched one at a time, so one the remote lacks keeps out
+  no other. A pull request whose commits then cannot be read (its head or
+  base is missing, or it has too many) is read again after 15 minutes;
+  after 3 failures at its head its paths are unknown at that head. A new
+  head starts the count again, and the daily re-link has every failed pull
+  request read again at once, an unknown one 3 more times. A pull request
+  that fails never stops the others or the linking.
+- The gate is read again before the fetch, before each pull request and
+  before linking; a repository turned off during a pass stops there, and
+  its commits are not linked in that pass.
+
+### Sessions linked to pull requests
+
+The commits are linked to the sessions on this machine with the local
+linkage of the review page (`locallink.LinkCommits`: Entire checkpoints, then
+the matcher; generation runs left out), and their links replace the ones
+they had:
+
+- each run, the commits just recorded, made in the last 7 days (hosted looks
+  back a day; a laptop may be off for days);
+- every 15 minutes, the commits within the session window of now, which a
+  session still running may yet link to, read from the clone without
+  fetching, at the head their commits were recorded at;
+- once a day, every commit of the last 7 days.
+
+A commit linked to a session more than one way keeps its strongest link.
+
+`Store.SessionLinks` reads what attributes a captured session's decisions
+(`features.SessionLinks`): the feature pull requests its linked commits are
+in, each with the paths it touches and those it was assigned with; a
+session with no capture row has none.
+
+### Model calls
+
+Placement, feature text and consolidation call as capture does (steps 6 to
+8 above): the same backend, model, reservation (the request's byte bound and
+the call's reply bound: 4,096 tokens for a placement, 32,768 for a batch,
+merge or split, 8,192 for a text or pull request summary), 10-minute bound
+and ledger, each attempt recorded with its stage (`feature_assign`,
+`feature_summary`, `pr_summary` or `feature_consolidate`) and item. Rejected
+replies and a ledger that cannot be written are handled as capture's. The
+preferences and the repository's settings are read again before every call,
+so a repository turned off makes no further call. A repository turned off or
+a missing backend stops the stage until its next run, with no failure counted.
+
+### Placement
+
+After the sync and the linking, each run places at most 100 pending items,
+oldest trigger first, one call each with the published assigner prompt. An
+item is pending when:
+
+- a pull request is in no feature, was opened at or after the activation and
+  within the last 7 days (whatever its state), was not opened by a bot, and
+  its paths are known or it opened 15 minutes ago;
+- a pull request the assigner placed has merged since, once;
+- an open pull request's head is not the one it was placed at and its paths
+  changed enough (`features.LargeUpdate` with the paths it was placed with,
+  0.5 and 3); a head that changed too little is recorded as checked
+  (`checked_head_sha`) and left until the next push;
+- a captured session with current decisions, extracted in the last 7 days
+  and not since 15 minutes ago, is in no feature and linked to no pull
+  request's commit. A session linked to one is never placed on its own: it
+  follows that pull request's feature.
+
+Its candidates are at most 16 features of the live version not merged into
+another, changed in the last 90 days (a change to the feature, or one of its
+pull requests or their placements), or the item's current feature. A
+feature's paths are those its pull requests were placed with and those cited
+by the decisions of its sessions placed on their own that follow no feature
+pull request. Each of the item's paths a feature holds scores one over the
+number of these features holding it. The current feature comes first, then
+the features holding a pull request linked to the item (stacked on it or it
+on them: one's base branch is the other's head branch, other than the
+default branch (none while the default branch is not known), both in the
+repository rather than a fork, and opened from
+by one pull request only; sharing a linked session; or mentioned as `#N`),
+best path
+score first, then the best path scores of the rest (10), then the most
+recently changed. Each candidate shows its digest and its pull requests'
+titles with their saved review summaries, else generated ones.
+
+The reply joins a candidate, starts a feature with its provisional text, or
+skips a small change. A session only joins: with no candidate it is settled
+without a call, and a reply starting a feature or skipping settles it. A
+skipped pull request in no feature is settled for its head; one already in
+a feature stays in it, as if the reply chose it. Settled items wait for
+their next trigger (`feature_settle`). A failed call, an invalid reply or a
+failed write after a call backs the item off for 10 minutes; after 3 counted
+failures for one trigger it waits for the next.
+
+The preferences and the repository's settings are read again before each
+item, so a repository turned off stops the run. A call cut short by the daemon stopping counts no
+failure. A pull request placed at its head before its paths were known gets
+them as the paths it was placed with once they are recorded, with no call.
+
+A placement marks every feature it changes: the one joined, the one left
+and the features of the pull request's linked sessions; an identical one
+marks none. Also marked: a session's features when its decisions are saved;
+a feature pull request's feature when its title, description or state
+changes (in the current version and in a building one), and, with the features of the sessions linked to its old and new
+commits, when its commits or paths change; and when the sessions linked to
+a commit change, the features holding a pull request with it and the
+features of those sessions (an unchanged re-link marks none). Marking
+raises `membership_version` and sets `dirty_since` and `changed_at`.
+
+### Feature text
+
+Each run writes the text of at most 50 features behind their members, not
+changed for 15 minutes, longest behind first, with the published summary
+prompt. A feature's input is its pull requests, earliest opened first
+(title, description, state, and the summary of the latest review saved in
+the clone, else a generated one), the current decisions of its sessions that
+attribution gives it (what was decided and why and the cited files, never a
+session's prompts or quoted evidence) and its paths. The call also reads the
+repository's name and the feature's current title and description.
+
+A pull request with no saved review summary gets one from its own call, from
+its title, description and the feature's decisions of the sessions linked
+to it, kept in `pr_summary` with its input's hash and reused while that is
+unchanged; one with neither a description nor such a decision gets none.
+
+The text is kept with the hash of its input and its own text, decisions
+named by session and first cited turn, so the same decisions extracted again
+under new IDs keep it. Key decisions are kept by ID and address; reused
+text takes the IDs of the current decisions at their addresses. When a
+feature's input hash is unchanged, its text is kept and it is marked clean
+without a call. The text is stored only when the feature's members did not
+change during the call; otherwise it stays behind for the next run. Up to
+three key decisions are kept by ID. A feature with neither pull requests nor
+decisions keeps its text, loses its key decisions and is marked clean. A
+failed pull request summary still writes the text, leaving the feature
+behind; failures back off and count as placement's do, per membership
+version.
+
+### Consolidation
+
+After the text, a repository's features are consolidated as hosted ones are,
+with the published consolidation prompt, at most once every 7 days (from the
+start of the last pass) and only when their fingerprint (every feature's id,
+membership and text versions and `merged_into`, merged ones included)
+changed since the last pass (`feature_consolidation`). A pass's own merges
+and splits are changes, so one that changed features is followed by another
+a week later. A pass reads the features not merged into another and active
+in the last 90 days (as placement's candidates), most recently active first.
+Its calls' replies may run to 32,768 tokens rather than hosted's 8,192:
+Claude Code's models think within the reply's bound even with thinking
+turned off, and a merge over a first build's features needs the room.
+
+- **Merge.** With two features or more, one call sees each feature's text,
+  digest, paths, pull requests with their summaries (the saved review's,
+  else the generated one) and how many sessions are in it on their own. Each
+  group's duplicates are merged into its survivor: their pull requests and
+  sessions move to it as `consolidation`'s, the duplicate gets `merged_into`
+  (and so do the features merged into it before), both are marked, and a
+  link to the duplicate resolves to the survivor (`ResolveFeature`).
+- **Split hold.** For four weeks after a split, a merge of one of its parts
+  with the feature it was split from, or of two of its parts, is dropped
+  from the reply; the merge call marks such a part with its origin. A part
+  merged into another feature passes its origin and split time on.
+- **Split.** At most 3 features, as they will be after the merges, with more
+  than 30 pull requests or pull requests opened more than 8 weeks apart,
+  largest first, get one split call each (a call takes its slot whatever its
+  outcome) with their pull requests' text,
+  state, opening date, placed paths and summaries. A feature kept whole, or
+  too large to offer (over 200 pull requests or its input over its bound,
+  which takes no slot), is recorded as checked (`split_checked_version`) and
+  not offered again until its members change; a survivor of the pass's
+  merges always is. Otherwise the largest part keeps the feature's id (ties
+  to the part with the earliest opened pull request), and each other part
+  becomes a new feature with the reply's text, recording `split_from` and
+  `split_at`, its pull requests moved as `consolidation`'s at the head and
+  paths they were placed with; sessions in it on their own stay. The parts
+  are recorded as checked.
+- **Writing.** Every call of a pass is made before anything is written. Each
+  merge and split is written in its own transaction, only while its features
+  are at the membership versions the pass read (as its own earlier writes
+  left them) and a split's feature holds exactly the pull requests it
+  partitioned; otherwise that one is skipped and the pass goes on. Writes
+  mark every feature they change and the features of the sessions linked to
+  the pull requests they move, for the text stage.
+- **Failures.** A call that fails, or a merge reply that does not decode,
+  defers the whole pass: nothing is written (a split call's failure or
+  refusal discards the merges paid for, which are logged and counted), and
+  the pass backs off as placement's failures do, counted against the
+  fingerprint. A split reply that is invalid leaves only that feature whole
+  and unchecked. A call that cannot be made (a backend reason)
+  also writes nothing; the pass is made again on the next run.
+
+### First build
+
+The live placement places only work opened since the feature log was
+activated. A repository's history is placed when the user asks for it, as a
+hosted rebuild does, by a first build: a job of the job queue
+(`jobs.KindFeatureBuild`) that starts at once when the user asks for it,
+with no estimate, as every requested run does, or `baum internal features
+build`.
+
+- **History.** The build first lists the repository's whole pull request
+  history, once per repository (`pull_sync.history_listed_at`), with no
+  ETag and without moving the sync's ETag or cursor, never replacing a pull
+  request a sync saved with a later update; a listing that stops at
+  its bound, leaving out the least recently updated pull requests, is
+  reported (`history_truncated`) and not retried. The build then reads the
+  paths of every pull request due, as a sync does, and, before it places
+  any, links to this machine's sessions those of the commits it read that
+  were made in the last 7 days (`FeatureLookback`), as a sync links its
+  fresh commits; older commits are not linked.
+- **No cap.** As for a requested review, there is no spending cap and
+  nothing about the price stops a build: a model with no price runs as any
+  other, and the build runs to the end. Costs are recorded at API prices
+  where they are known. A repository whose decisions are not captured, or
+  whose backend cannot call, does not start (the job is refused with the
+  reason).
+- **Dry run.** `--dry-run` counts what a build would do, with no cost: the
+  pull requests left to place and its calls, a batch call per 25, the new
+  features' text twice (a feature per 3 pull requests), a resumed version's
+  features whose text is behind, and a summary of each pull request with a
+  description; and whether it runs discovery first. It lists the history,
+  saving the pull requests it lists and activating the repository's sync
+  state; it writes no feature.
+- **Seeding.** A new version, with no features and no seeds, is seeded with
+  a feature taxonomy (`--taxonomy`, default `auto`): the newest made after
+  the version, else a new discovery's (see "Discovery"); `latest` or a
+  taxonomy's id a stored one; `none` nothing. Each of its features becomes a
+  provisional feature with no members, whose text is the taxonomy's, and a
+  seed (`feature_seed`, with its paths); the version records the taxonomy.
+  A resumed version is never seeded again. A discovery that cannot run or
+  fails leaves the build unseeded, with the reason in its report
+  (`unseeded`), recorded on the version so a resume neither runs nor pays
+  for it again. The gate is read right before discovery, as before any
+  call.
+- **Building.** The build makes the repository's `building` version, or
+  resumes the one there is, and places in it the merged and open pull
+  requests of the whole history not opened by a bot, in no feature of the
+  version and not skipped or left out of it at their head, listed once when
+  it starts, oldest first, in batches of 25 with the batch prompt (its seeded
+  form when a candidate has no pull requests). Each item's candidates are
+  ranked against the version as placement ranks them, read again for every
+  call, and the call offers their union, each item's best first, at most 40.
+  Seeds no pull request joined are kept out of the ranking: each is offered,
+  with its text and paths and no pull requests, to an item by its path score
+  (`discover.PathScores`), before the first ranked candidate not linked to
+  the item with a lower score, as the hosted rebuild does. A seed a pull
+  request joined is an ordinary feature from then on.
+  A reply's new feature is created for the first item that starts it; a
+  skipped small change is settled in the version at its head. The live
+  stages keep using the current version meanwhile.
+- **Failures.** A batch call that fails, for whatever reason, is made once
+  more, then the batch is split in halves down to one pull request; one that
+  still fails is tried once more with the others after the last batch, in
+  batches of 25, and then left out (settled in the version as `left_out`). A
+  failed store write stops the build.
+- **Text.** Every 3 batches and after the last, the text of every feature
+  of the version behind its members is written, without the debounce; a
+  feature whose text fails backs off and is left for the text stage. A
+  build makes no consolidation pass.
+- **Switching.** The seeds no pull request joined are deleted, then the
+  building version becomes current in one transaction:
+  the current one is retired, the skips become placement's settlements, the
+  pull requests left out lose theirs so placement takes those within its
+  lookback, and the repository's last consolidation pass is forgotten, so
+  the weekly pass consolidates the new version on its next run, a minute or
+  so after the switch. A live stage that raced the switch never writes the
+  retired version: its run stops at its next item or write
+  (`version_retired`), and a consolidation pass writes, records and settles
+  nothing, each write checking the version in its own transaction. Work the
+  live stages placed in the old version is in no feature of the new one;
+  placement takes what is within its lookback. A retired version is kept,
+  and a link to one of its features resolves as archived.
+- **Stopping.** A build stops before a call that cannot be made
+  (`disabled` or a backend reason; `failed` for a store error), when a fetch
+  cannot sign in to the remote because the credential needs a key passphrase
+  or password nobody can type in the background (`git_auth_ssh`,
+  `git_auth_https`; the Timeline says how to make it available), or when it
+  is cancelled or the daemon stops, leaving the version `building` with
+  `stopped` set to why; starting it again resumes it. Its
+  job then fails with that reason. Progress (phase, calls) is reported to
+  the job, and the version records its pull requests placed of the total
+  and its spend over all its runs (`spent_usd`, each call's known cost, and
+  `unpriced_calls`, those whose cost is unknown: the spend is then a lower
+  bound, reported as such to the job). A spend the version cannot record is
+  logged; the call and its ledger row stand.
+
+### Discovery
+
+Discovery maps a repository into its features, as hosted discovery does
+(`features/discover`), and stores the reply as a taxonomy
+(`feature_taxonomy`). It runs as a first build's first step or with `baum
+internal features discover`, which first lists the history and reads its
+paths as a build does.
+
+- Its backend and model are a review's: `generate.Select` with the review
+  backend and model, whatever a build's own `--backend` and `--model`.
+  cursor-agent is not supported; a model with no price runs as any other.
+- The default branch (the latest one GitHub reported for a pull request)
+  is fetched into `refs/baum/default`. The run directory holds its head's
+  checkout in `head/`, bounded as a review's, and `history.jsonl`
+  (read-only), the history digest of the pull requests a build places:
+  titles, branches and paths, no descriptions.
+- It runs through the review harness (`generate.RunTask`): the published
+  prompt `feature-discover-public-v1`, the discovery schema and the
+  taxonomy's bounds as its check, and a review run's budgets: the
+  configuration's run timeout, calls and tokens (by default 45 minutes, 40
+  calls and 2,000,000 tokens), 3 provider attempts and 2 repairs, whatever
+  the model's price. Hosted discovery keeps its own budgets. Its output is
+  masked before it is read.
+- It is one ledger row (stage `feature_discovery`); in a build its cost is
+  added to the version's spend.
+
+### Stored data
+
+- `pull_request`, `pull_commit`, `pull_sync`: the listed pull requests with
+  their paths at a head and failed reads, their commits, and the listing's
+  ETag, cursor, activation, last full re-link and history listing.
+- `session_commit`: each session linked to a commit, with the method and
+  confidence.
+- `feature_version`, `feature`, `feature_pull`, `feature_session`,
+  `feature_settle`, `pr_summary`, `feature_consolidation`: the tables
+  placement, text, consolidation and a build write.
+- `feature_taxonomy`, `feature_seed`: discovery's taxonomies and the seeds
+  of the versions built from them (`feature_version.taxonomy_id`). A repository has at
+  most one `current` and one `building` version; `featureVersion` is the one
+  place that chooses the version a stage uses (the live stages' current
+  one, made when first needed, and a build's building one).
+
+These rows are not pruned.
+
+## Timeline API
+
+`Timeline` serves the app's Timeline page under `/api/timeline/`, mounted in
+the local API behind its authentication, in the view models of the review
+viewer's decision log (`oss/viewer/src/decision-log.ts`). It reads the store
+and never writes it.
+
+- **`GET /repositories`**: `decisions_enabled` (the decisions switch),
+  `repositories`, the picked repositories whose decisions are not turned
+  off (the switch and the repository's setting; the automatic master switch
+  is not read, so pausing hides nothing), by name, each with
+  `has_features` (its current version has a feature not merged into
+  another), and `turned_off`, those whose own setting is off.
+  A list reads the repositories its `repository` parameters name (repeated,
+  any case; none is every one of them), and one it does not serve is a 400;
+  a detail is found in any of them, and is a 404 in another. Every row and
+  detail names its repository, `{"id","full_name"}`, both the registry's
+  name.
+- **`GET /features?repository=&q=&person=&file=&from=&to=&status=&cursor=&limit=`**: the
+  repositories' features of their current versions not merged into
+  another, merged in one order: by last activity (else creation) newest
+  first, then id, 50 a page (`limit`, at most 500). `cursor` is the last
+  row's time and id, so a page follows on from it whatever arrived
+  meanwhile.
+  `status` (`in_progress`, `shipped`, `abandoned`; repeated or comma
+  separated), `q`, `person` (below), `file` (a pull request touching the
+  path or anything under it, or a decision of the feature citing one) and
+  `from`/`to` (the features whose activity, else creation, overlaps them, as
+  hosted) filter before paging. A row has its title and
+  description (null while none is written; `summary_pending` while it is
+  behind its members), the status (`features.DeriveStatus` over its pull
+  requests), the first and last activity (its pull requests' opening and
+  last update and its decisions' times), `people` (the user, when it has a
+  session or a pull request they opened, then its other pull requests'
+  authors not opened by a bot, by login), the counts of pull requests, sessions (the
+  repository's captured sessions linked to its pull requests' commits, or in
+  it on their own) and decisions, and
+  its key decisions, read as the text names them (`currentKeys`). A
+  session's decisions are attributed as the feature's text attributes them
+  (`features.Attributor`), each to one feature and, within it, to the pull
+  request `Attributor.PullRequest` chooses.
+- **`GET /features/{id}`**: the row with `digest`, its pull requests newest
+  first (state, draft, merged, the latest saved review's state against the
+  head and its summary, else the generated one, and the decisions shown
+  under each) and its sessions: those in it on their own, and any whose
+  attributed decisions fall under none of its pull requests. The id is
+  resolved by `Store.ResolveFeature`: a feature merged into another answers
+  with the survivor's detail, one of a retired version `{"archived": true}`,
+  and one of a version being built, or a chain of merges too long to follow
+  (`ErrMergeChain`), is not found.
+- **`GET /build?repository=`** (exactly one): `building`, the repository's first build in
+  progress (its `building` version: pull requests `placed` of `total`, why
+  it `stopped`, `""` while it may go on, and `spent_usd` over all its
+  runs), null without one; `has_features`, whether the current version
+  has a feature not merged into another; and `current_since`, when it
+  became current (null without one). A building version's features are
+  not listed until it is current.
+- **`GET /decisions?repository=&q=&person=&file=&who=&category=&superseded=&from=&to=&cursor=&limit=`**:
+  the current decisions of the repositories' captured sessions, newest first
+  and then by id, paged as features are, with `coverage`, summed over the
+  repositories: their sessions extracted, skipped by reason, and being read
+  (a capture attempt pending). `file` is the path or anything
+  under it; `who` and `category` repeat or are comma separated; superseded
+  decisions show only with `superseded=1` (or `true`). On both lists `from`
+  (inclusive) and `to` (exclusive) are RFC 3339 times or dates, a date
+  being the local day's start; another value is a 400.
+- **`GET /files?repository=&prefix=&limit=`**: `files`, the paths the
+  repositories' current decisions cite that start with `prefix`, and their
+  folders (ending in `/`) that do, each with its `kind` (`file` or
+  `folder`) and `decision_count`, the decisions citing it or anything under
+  it, each counted once (superseded ones included, as hosted counts them):
+  most first, folders before files, then by path; 20
+  (`limit`, at most 50).
+- **`GET /decisions/{id}`**: its session (`<agent>:<id>`, as the app's
+  session page names it, branch and person), the session's current
+  decisions (summary, category, who, rejected alternative, files, turns)
+  and the pull requests its linked commits are in. A decision a later
+  capture replaced (obsolete, kept for good) still opens, as on the hosted
+  Timeline: with the decisions replaced with it and `replaced: true`. `turns` are
+  the human prompts the decisions cite (`ordinal`, `triggered_at`, `text`),
+  read from the session's transcript on this computer (its stored
+  `transcript_path`, found as capture finds it, `livesessions.Locate`) and
+  rendered as capture renders them (`decisions.Render` with a
+  `bundle.Redactor`): the harness's wrappers stripped, secrets and
+  identities masked, and a turn that was only wrappers left out. A session's
+  prompts are kept by its transcript's version (`Location.Version`), the 16
+  sessions last read. When the transcript is no longer on this computer,
+  cannot be read, or its files are over capture's `MaxTranscriptBytes`, `prompts_withheld` is true and `turns` empty. No
+  rationale or evidence is served.
+- **`GET /sessions/{agent}:{id}/transcript`**: a captured session's
+  transcript, as `GET /api/live-sessions/{agent}/{id}/transcript` answers
+  it, whether the tracker still lists the session or it ended long ago
+  (`livesessions.Transcripts.Read`, from its stored `transcript_path`;
+  `live` from the tracker). A session of a repository the Timeline does not
+  serve, or one never captured, is a 404.
+
+`q` matches keywords, each word a prefix and all of them required, with
+SQLite FTS5 (the `unicode61` tokenizer, diacritics folded, no stemming, so
+a prefix matches as typed): a decision's title and summary; a feature's
+title, description and digest or a pull request's title, or a pull
+request's number. The index (`decision_search`, `feature_search`,
+`pull_search`) is kept by triggers on those tables and built from the rows
+already stored when a store without it is opened.
+
+Every captured session is this computer's user's, so the Timeline knows one
+person besides the pull requests' authors: the user, named by the first
+served repository's clone (git `user.email` and `user.name`; avatars are
+never read, the app draws initials). Every served clone's address names
+them too, and so does their GitHub login's address
+(`<login>@users.noreply.github.com`) once `Login` knows the login (the
+daemon's is the viewer of a picked repository's cached discovery snapshot,
+else the GitHub connection's): the pull requests they opened are then theirs,
+and they are the login's person. It is read at most every 30 seconds. A
+pull request's author is named by their login's address.
+
+- **`GET /people?repository=`**: `people`, the user with
+  `decision_count`, the repositories' current decisions, superseded ones
+  included as hosted counts them (the list hides those unless asked);
+  nobody without a decision or a known user.
+- **`GET /features/people?repository=`**: `people`, everyone among the
+  repositories' features' people with `feature_count`, most first, then by
+  address.
+- `person=` (an address, any case) on `/features` keeps the features that
+  person is among the people of: the user (by any of their addresses) those
+  with their sessions or pull requests, anyone else those with a pull
+  request they opened. On `/decisions` the user keeps every decision, anyone
+  else none.
+
+A request reads its features' sessions' current decisions and links in a
+few set queries (`Store.Current` and `SessionLinks` read the same way), a
+feature's detail only that feature's, and opens each repository's clone at
+most once (`LocalClones`): its git identity and its review store are each
+read at most once.
+
+`Changed` is called by the capturer once a capture's call is recorded as
+pending, by the capture scheduler after a capture that saved decisions,
+recorded a skip or settled an attempt, and by the feature worker once a
+repository's pass, consolidation included, listed pull requests, linked
+sessions, placed an item, wrote a feature's text, or merged or split a
+feature. The daemon publishes a `timeline` event on
+the app's event stream then, at most once a second, and after a settings
+change.
+
+## Testing by hand
+
+`baum internal decisions capture --agent <agent> --session <id> [--path
+<transcript>] [--dry-run] [--backend <b>] [--model <m>]` runs one capture
+without the gate, throttle or unchanged check and prints its report as JSON.
+`--dry-run` stops before the call and writes nothing but the `--debug-dir`
+files: it reads an existing store read-only, and uses an empty one in memory
+when there is none. The hidden `--debug-dir <dir>` creates the private
+directory and writes the rendered transcript, and after a call the message
+sent and the raw reply, there, replacing a previous capture's files; a
+capture that stops before rendering leaves it empty.
+
+`baum internal features sync --repo <owner/name> [--clone <path>] [--days N]`
+runs one pull request sync without the gate (the first lists the last N
+days, default 180) and `baum internal features link --repo <owner/name>
+[--clone <path>]` links every commit of the last 7 days; each prints its
+counts as JSON. `baum internal features assign --repo <owner/name> [--clone
+<path>] [--dry-run] [--limit N] [--backend <b>] [--model <m>]` runs placement
+once, ignoring the activation, and prints each item; `--dry-run` prints each
+item's candidates and input size, makes no call and writes nothing.
+`baum internal features summarize` takes the same flags but `--dry-run` and
+writes the text of the features behind, without the debounce. `baum
+internal features consolidate` takes `--repo`, `--clone`, `--backend` and
+`--model` and makes one pass over the current features without the
+interval or fingerprint check. `baum
+internal features build --repo <owner/name> [--clone <path>] [--dry-run]
+[--backend <b>] [--model <m>] [--taxonomy auto|none|latest|<id>]` runs a
+first build without the gate, a line a batch on standard error and its
+report as JSON; `--dry-run` lists the history, saving the pull requests it
+lists, and prints the pull requests and calls a build would make, with no
+cost, writing no feature. `baum internal features
+discover --repo <owner/name> [--clone <path>] [--show latest|<id>]` lists
+the history and reads its paths as a build does, then runs discovery once
+and prints its report, or prints a stored taxonomy.
+These read the preferences and the repository's settings and fail when they
+cannot; `sync`
+and `link` read neither. The clone
+defaults to the repository's registered one. They are for testing, with the
+daemon stopped: they write the daemon's store.

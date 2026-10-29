@@ -6,14 +6,17 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/baum-ai/baum/agent"
 )
 
 // A fix's transcript has the messages, reasoning and tools of the run, from
-// the complete assistant messages and the tool results.
+// the complete assistant messages and the tool results. A path in the run
+// directory is named relative to it.
 func TestFixTranscript(t *testing.T) {
+	directory := t.TempDir()
 	script := filepath.Join(t.TempDir(), "claude")
 	body := `#!/bin/sh
 if [ "$1" = --version ]; then echo '2.1.310 (Claude Code)'; exit 0; fi
@@ -22,18 +25,19 @@ cat <<'EVENTS'
 {"type":"stream_event","event":{"type":"message_start","message":{"id":"m1","model":"fixture"}}}
 {"type":"assistant","message":{"id":"m1","model":"fixture","content":[{"type":"thinking","thinking":"Look at it first."}]}}
 {"type":"assistant","message":{"id":"m1","model":"fixture","content":[{"type":"text","text":"Reading main.go."}]}}
-{"type":"assistant","message":{"id":"m1","model":"fixture","content":[{"type":"tool_use","id":"t1","name":"Read","input":{"file_path":"main.go"}}]}}
+{"type":"assistant","message":{"id":"m1","model":"fixture","content":[{"type":"tool_use","id":"t1","name":"Read","input":{"file_path":"DIR/main.go"}}]}}
 {"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"t1","content":"package main"}]}}
 {"type":"assistant","message":{"id":"m2","model":"fixture","content":[{"type":"tool_use","id":"t2","name":"Grep","input":{"pattern":"TODO"}},{"type":"tool_use","id":"t3","name":"Edit","input":{"file_path":"x.go"}}]}}
 {"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"t2","content":[{"type":"text","text":"nothing"}]},{"type":"tool_result","tool_use_id":"t3","is_error":true,"content":"not found"}]}}
 {"type":"result","subtype":"success","result":"Done.","usage":{"input_tokens":10,"output_tokens":2}}
 EVENTS
 `
+	body = strings.ReplaceAll(body, "DIR", directory)
 	if err := os.WriteFile(script, []byte(body), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	var got []agent.TranscriptEntry
-	request := agent.Request{Directory: t.TempDir(), Prompt: "fix", MaxCalls: 4, MaxTokens: 100, Transcript: func(e agent.TranscriptEntry) { got = append(got, e) }}
+	request := agent.Request{Directory: directory, Prompt: "fix", MaxCalls: 4, MaxTokens: 100, Transcript: func(e agent.TranscriptEntry) { got = append(got, e) }}
 	if _, err := (&Backend{Binary: script}).Fix(context.Background(), request); err != nil {
 		t.Fatal(err)
 	}

@@ -11,7 +11,7 @@ import (
 	"testing"
 )
 
-// testPrompt stands in for a host's system prompt; the package ships none.
+// testPrompt stands in for a host's system prompt.
 const testPrompt = "Extract the decisions. Cite ## Turn N ordinals."
 
 var testExtractor = NewExtractor(testPrompt)
@@ -624,5 +624,15 @@ func TestExtendedReadsHandles(t *testing.T) {
 		if got[1].Superseded != want || got[0].Superseded != true {
 			t.Errorf("%q: decisions = %+v", handle, got)
 		}
+	}
+}
+
+// The published prompt's version names it, so its extractions never share a
+// cache with a host's prompt of the same text.
+func TestPublicExtractorVersionNamesThePublishedPrompt(t *testing.T) {
+	public := NewPublicExtractor()
+	hashed := NewExtractor(public.SystemPrompt()).PromptVersion()
+	if public.SystemPrompt() == "" || public.PromptVersion() != PublicPromptName+"-"+hashed {
+		t.Fatalf("PromptVersion = %q, want %s-%s", public.PromptVersion(), PublicPromptName, hashed)
 	}
 }

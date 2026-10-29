@@ -323,3 +323,38 @@ func TestCodexTranscriptIsFoundByIDWithoutAPath(t *testing.T) {
 		t.Fatalf("%v %s", err, answer.Body)
 	}
 }
+
+// Read serves a session the tracker does not list, ended and not live, from
+// the path it is given, held to the agent's own store; its entry stays
+// while the tracker drops the sessions it no longer lists, until the least
+// recently used rule drops it.
+func TestTranscriptReadsAnUntrackedSession(t *testing.T) {
+	f := newTranscriptFixture(t)
+	ctx := context.Background()
+	path := filepath.Join(f.home, ".claude", "projects", "-work-demo", "old.jsonl")
+	write(t, path, claudeTurn("old", 1, "An old prompt", "Done."))
+	answer, err := f.live.Read(ctx, "claude-code", "old", path, "main")
+	if err != nil || answer.Session.State != StateEnded || answer.Session.Branch != "main" || !strings.Contains(string(answer.Body), "An old prompt") {
+		t.Fatalf("read = %+v, %v", answer.Session, err)
+	}
+	// Tracked sessions come and go; the untracked entry stays.
+	if _, err := f.live.Get(ctx, "claude-code", "s1"); err != nil {
+		t.Fatal(err)
+	}
+	if n := f.live.cachedLen(); n != 2 {
+		t.Fatalf("%d transcripts held", n)
+	}
+	outside := filepath.Join(t.TempDir(), "elsewhere.jsonl")
+	write(t, outside, claudeTurn("x", 1, "secret", "no"))
+	var missing *Unavailable
+	if _, err := f.live.Read(ctx, "claude-code", "x", outside, ""); !errors.As(err, &missing) {
+		t.Fatalf("a file outside the store = %v", err)
+	}
+	if _, err := f.live.Read(ctx, "claude-code", "gone", filepath.Join(f.home, ".claude", "projects", "-work-demo", "gone.jsonl"), ""); !errors.As(err, &missing) {
+		t.Fatalf("a missing file = %v", err)
+	}
+	// A tracked session reads as the tracker has it.
+	if answer, err := f.live.Read(ctx, "claude-code", "s1", "", ""); err != nil || answer.Session.State == StateEnded {
+		t.Fatalf("tracked = %+v, %v", answer.Session, err)
+	}
+}

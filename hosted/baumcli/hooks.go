@@ -51,6 +51,7 @@ func newHooksCommand(stdout, stderr io.Writer) *cobra.Command {
 				}
 				return hooksEnabled(cmd.Context(), ".")
 			}
+			started := time.Now()
 			entireArgs, ok := entireGitHookArgs(args)
 			if !ok {
 				return nil
@@ -63,7 +64,7 @@ func newHooksCommand(stdout, stderr io.Writer) *cobra.Command {
 			}
 			hosted := hookRunsHosted(cmd.Context(), ".")
 			err := runEntireGitHook(cmd, hosted, args, entireArgs, input, stdout, stderr)
-			event := newHookEvent(hookevents.KindGit, "", args[0])
+			event := newHookEvent(hookevents.KindGit, "", args[0], started)
 			event.Git = gitHookEvent(args, input.payload())
 			event.Exit = exitStatus(err)
 			sendHookEvent(cmd.Context(), event)
@@ -120,24 +121,50 @@ func newAgentHooksCommand(stdout, stderr io.Writer) *cobra.Command {
 			if err := validateHook(userWide, agent, event); err != nil {
 				return err
 			}
+			started := time.Now()
 			input := newHookInput(cmd.InOrStdin())
+			if input != nil && readsFullInput(agent, event) {
+				input.limit = maxFullHookInput
+			}
 			// An event Entire has no hook for is only recorded, hosted or
 			// not, so it is not asked.
 			recordOnly := userWide && agenthooks.RecordOnly(agent, event)
 			hosted := !recordOnly && hookRunsHosted(cmd.Context(), ".")
+			// A stop's output may carry the message the user queued in the
+			// app, so Entire's is held until the hook knows.
+			var stopOut *os.File
+			if event == stopEvent && appAgent(agent) {
+				stopOut = holdOutput()
+			}
 			var err error
 			if recordOnly || (userWide && !hosted) {
 				// A user-wide hook admitted only because the user has a
 				// daemon records the event and does nothing else, as the
 				// dispatcher does where `--check` refuses.
 				input.read()
+			} else if stopOut != nil {
+				err = runEntireAgentHook(cmd, hosted, agent, event, input, stopOut, stderr)
 			} else {
 				err = runEntireAgentHook(cmd, hosted, agent, event, input, stdout, stderr)
 			}
-			hookEvent := newHookEvent(hookevents.KindAgent, agent, event)
+			hookEvent := newHookEvent(hookevents.KindAgent, agent, event, started)
 			hookEvent.Session = agentSession(event, input.identifiers())
+			if hookEvent.Session != nil && digestsToolCall(agent, event) {
+				hookEvent.Session.ToolDigest = toolDigest(input)
+			}
 			hookEvent.Exit = exitStatus(err)
-			sendHookEvent(cmd.Context(), hookEvent)
+			// Only a daemon that took the event in time is asked anything
+			// more: one that is absent, busy or incompatible leaves the agent
+			// to ask in its terminal, with no further wait.
+			delivered := sendHookEvent(cmd.Context(), hookEvent)
+			switch {
+			case userWide && event == permissionRequestEvent:
+				if delivered {
+					answerFromApp(cmd.Context(), agent, input, started, stdout)
+				}
+			case stopOut != nil:
+				finishStop(cmd.Context(), agent, hookEvent.Session, heldOutput(stopOut), err, delivered, stdout)
+			}
 			return err
 		},
 	}

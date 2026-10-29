@@ -64,7 +64,7 @@ type FixOptions struct {
 
 // ErrHeadMoved reports a pull request branch that no longer points at the
 // commit the fix was confirmed for.
-var ErrHeadMoved = errors.New("the pull request's branch has moved on since the fix was confirmed")
+var ErrHeadMoved = errors.New("the pull request's branch has moved on since the fix was started")
 
 // ErrPushRejected reports a push the remote refused, typically because the
 // branch moved on while the fix ran.

@@ -19,7 +19,6 @@ import (
 type autoExecutor struct {
 	mu         sync.Mutex
 	heads      map[int]string
-	price      *float64
 	backend    string
 	restricted bool
 	draft      bool
@@ -35,7 +34,7 @@ func (f *autoExecutor) Prepare(_ context.Context, item Item) (Prepared, string, 
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.prepared++
-	p := Prepared{ConfigDigest: "digest", Item: item, Repository: "org/repo", HeadSHA: f.heads[item.PR], Backend: f.backend, Model: "claude-sonnet-4-5", EstimateUSD: f.price, RequiresIsolationConfirmation: f.restricted, Draft: f.draft}
+	p := Prepared{ConfigDigest: "digest", Item: item, Repository: "org/repo", HeadSHA: f.heads[item.PR], Backend: f.backend, Model: "claude-sonnet-4-5", RequiresIsolationConfirmation: f.restricted, Draft: f.draft}
 	return p, "2026-10-01", nil
 }
 
@@ -62,8 +61,7 @@ func (f *autoExecutor) Execute(ctx context.Context, p Prepared, _ func(Progress)
 
 func newAutoQueue(t *testing.T) (*Queue, *autoExecutor) {
 	t.Helper()
-	price := 2.0
-	f := &autoExecutor{heads: map[int]string{1: "a1", 2: "b1", 3: "c1"}, price: &price, backend: "claude", started: make(chan Prepared, 10), release: make(chan struct{})}
+	f := &autoExecutor{heads: map[int]string{1: "a1", 2: "b1", 3: "c1"}, backend: "claude", started: make(chan Prepared, 10), release: make(chan struct{})}
 	q, err := Open(filepath.Join(privateDir(t), "jobs.json"), f, 1, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -93,7 +91,7 @@ func TestAutomaticJobRunsThroughTheQueueMarkedAutomatic(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !j.Automatic || j.Trigger != TriggerNewHead || j.HeadSHA != "a1" || j.EstimateUSD == nil || *j.EstimateUSD != 2 || j.ConfigDigest != "digest" {
+	if !j.Automatic || j.Trigger != TriggerNewHead || j.HeadSHA != "a1" || j.ConfigDigest != "digest" {
 		t.Fatalf("job %+v", j)
 	}
 	if p := <-f.started; p.HeadSHA != "a1" {
@@ -117,7 +115,6 @@ func TestAutomaticRefusesWhatNeedsAPerson(t *testing.T) {
 		t.Fatalf("restricted PR: %v", err)
 	}
 	f.restricted = false
-	f.price = nil
 	f.backend = agent.BackendCursorAgent
 	if _, err := q.SubmitAutomatic(ctx, auto(1, "stale")); !errors.Is(err, ErrHeadChanged) {
 		t.Fatalf("changed head: %v", err)
@@ -127,7 +124,7 @@ func TestAutomaticRefusesWhatNeedsAPerson(t *testing.T) {
 	}
 	j, err := q.SubmitAutomatic(ctx, auto(1, "a1"))
 	if err != nil || j.Backend != agent.BackendCursorAgent {
-		t.Fatalf("unpriced cursor-agent: %+v %v", j, err)
+		t.Fatalf("cursor-agent: %+v %v", j, err)
 	}
 }
 
@@ -208,68 +205,12 @@ func TestAutomaticRefusedWhileDrainingAndAcceptedAfterResume(t *testing.T) {
 	}
 }
 
-func TestAutomaticDailyCapCountsTodaysAutomaticJobs(t *testing.T) {
-	q, f := newAutoQueue(t)
-	ctx := context.Background()
-	day := func(r AutomaticRequest, start time.Time, limit float64) AutomaticRequest {
-		r.Day, r.DailyCap = start, &limit
-		return r
-	}
-	start := time.Now().Add(-time.Hour)
-	if _, err := q.SubmitAutomatic(ctx, day(auto(1, "a1"), start, 0)); !errors.Is(err, ErrDailyCap) {
-		t.Fatalf("zero cap: %v", err)
-	}
-	first, err := q.SubmitAutomatic(ctx, day(auto(1, "a1"), start, 3))
-	if err != nil {
-		t.Fatal(err)
-	}
-	<-f.started
-	if spent, known := q.AutomaticSpend("org/repo", start); spent != 2 || !known {
-		t.Fatalf("spend while running %v %v", spent, known)
-	}
-	if _, err = q.SubmitAutomatic(ctx, day(auto(2, "b1"), start, 3)); !errors.Is(err, ErrDailyCap) {
-		t.Fatalf("over the cap: %v", err)
-	}
-	f.release <- struct{}{}
-	waitState(t, q, first.ID, "completed")
-	// The reported cost replaces the estimate: 1.5 + 2 still exceeds 3.
-	if spent, _ := q.AutomaticSpend("org/repo", start); spent != 1.5 {
-		t.Fatalf("spend after completion %v", spent)
-	}
-	if _, err = q.SubmitAutomatic(ctx, day(auto(2, "b1"), start, 3)); !errors.Is(err, ErrDailyCap) {
-		t.Fatalf("over the cap after completion: %v", err)
-	}
-	// A confirmed job does not count against the automatic cap.
-	e := estimate(t, q, "single", Item{Clone: "clone", PR: 3})
-	manual, err := q.Submit(ctx, e.ID, true, false)
-	if err != nil {
-		t.Fatal(err)
-	}
-	<-f.started
-	f.release <- struct{}{}
-	waitState(t, q, manual[0].ID, "completed")
-	if spent, _ := q.AutomaticSpend("org/repo", start); spent != 1.5 {
-		t.Fatalf("confirmed job counted %v", spent)
-	}
-	// The next day starts from zero.
-	tomorrow := start.Add(time.Hour).AddDate(0, 0, 1)
-	if _, err = q.SubmitAutomatic(ctx, day(auto(2, "b1"), tomorrow, 3)); err != nil {
-		t.Fatalf("next day: %v", err)
-	}
-	// Without a cap nothing limits spending.
-	f.heads[3] = "c2"
-	if _, err = q.SubmitAutomatic(ctx, auto(3, "c2")); err != nil {
-		t.Fatalf("uncapped: %v", err)
-	}
-}
-
 // An automatic run a daemon stop interrupted may run its head once more;
 // a confirmed run, a failure and a cancellation never run it again.
 func TestAutomaticInterruptedRunMayRunOnceMore(t *testing.T) {
 	ctx := context.Background()
 	path := filepath.Join(privateDir(t), "jobs.json")
-	price := 2.0
-	f := &autoExecutor{heads: map[int]string{1: "a1", 2: "b1", 3: "c1", 4: "d1"}, price: &price, backend: "claude", started: make(chan Prepared, 10), release: make(chan struct{})}
+	f := &autoExecutor{heads: map[int]string{1: "a1", 2: "b1", 3: "c1", 4: "d1"}, backend: "claude", started: make(chan Prepared, 10), release: make(chan struct{})}
 	open := func() *Queue {
 		q, err := Open(path, f, 1, nil)
 		if err != nil {
@@ -471,25 +412,6 @@ func TestAutomaticJournaledJobWaitsForTheGate(t *testing.T) {
 	}
 }
 
-// capGate is a gate that allows every job under a daily cap a test changes.
-type capGate struct {
-	mu    sync.Mutex
-	limit *float64
-	day   time.Time
-}
-
-func (g *capGate) gate(Job) Admission {
-	g.mu.Lock()
-	defer g.mu.Unlock()
-	return Admission{DailyCap: g.limit, Day: g.day}
-}
-
-func (g *capGate) set(limit float64) {
-	g.mu.Lock()
-	defer g.mu.Unlock()
-	g.limit = &limit
-}
-
 // noStart fails if the executor starts a job within a short wait.
 func noStart(t *testing.T, f *autoExecutor, what string) {
 	t.Helper()
@@ -498,113 +420,6 @@ func noStart(t *testing.T, f *autoExecutor, what string) {
 		t.Fatalf("%s: PR %d started", what, p.PR)
 	case <-time.After(200 * time.Millisecond):
 	}
-}
-
-// The daily cap is checked again before a queued automatic job starts: a cap
-// lowered while it waited stops it without a model call, the job does not use
-// up its head, and once the cap allows it the head runs. Confirmed jobs are
-// not limited.
-func TestAutomaticDailyCapRecheckedBeforeStart(t *testing.T) {
-	q, f := newAutoQueue(t)
-	ctx := context.Background()
-	start := time.Now().Add(-time.Hour)
-	g := &capGate{day: start}
-	g.set(10)
-	q.SetAutomaticGate(g.gate)
-	capped := func(r AutomaticRequest) AutomaticRequest {
-		limit := 10.0
-		r.Day, r.DailyCap = start, &limit
-		return r
-	}
-	running, err := q.SubmitAutomatic(ctx, capped(auto(1, "a1")))
-	if err != nil {
-		t.Fatal(err)
-	}
-	<-f.started
-	queued := []Job{}
-	for _, pr := range []int{2, 3} {
-		j, err := q.SubmitAutomatic(ctx, capped(auto(pr, f.heads[pr])))
-		if err != nil {
-			t.Fatal(err)
-		}
-		queued = append(queued, j)
-	}
-	// The user lowers the cap to zero while two jobs wait.
-	g.set(0)
-	f.release <- struct{}{}
-	waitState(t, q, running.ID, "completed")
-	for _, j := range queued {
-		if got := waitState(t, q, j.ID, "cancelled"); got.Reason != ReasonDailyCap || got.Calls != 0 {
-			t.Fatalf("stopped job %+v", got)
-		}
-	}
-	noStart(t, f, "cap lowered to zero")
-	// Stopped jobs spent nothing and are offered back to the scheduler.
-	if spent, known := q.AutomaticSpend("org/repo", start); spent != 1.5 || !known {
-		t.Fatalf("spend %v %v", spent, known)
-	}
-	if refused := q.Refused(); len(refused) != 2 || refused[0].ID != queued[0].ID || refused[1].ID != queued[1].ID {
-		t.Fatalf("refused %+v", refused)
-	}
-	// A confirmed job is not held by the automatic cap.
-	f.heads[4] = "d1"
-	e := estimate(t, q, "single", Item{Clone: "clone", PR: 4})
-	manual, err := q.Submit(ctx, e.ID, true, false)
-	if err != nil {
-		t.Fatal(err)
-	}
-	<-f.started
-	f.release <- struct{}{}
-	waitState(t, q, manual[0].ID, "completed")
-	// Raised again, the stopped head is not a duplicate and runs.
-	g.set(10)
-	again, err := q.SubmitAutomatic(ctx, capped(auto(2, "b1")))
-	if err != nil {
-		t.Fatalf("head stopped by the cap: %v", err)
-	}
-	if p := <-f.started; p.PR != 2 {
-		t.Fatalf("started %+v", p)
-	}
-	f.release <- struct{}{}
-	waitState(t, q, again.ID, "completed")
-	if refused := q.Refused(); len(refused) != 1 || refused[0].ID != queued[1].ID {
-		t.Fatalf("refused after the rerun %+v", refused)
-	}
-}
-
-// The cost an earlier job reports can take the repository past its cap
-// before the next queued job starts; that job then does not start.
-func TestAutomaticReportedCostStopsTheNextQueuedJob(t *testing.T) {
-	q, f := newAutoQueue(t)
-	ctx := context.Background()
-	price := 1.0
-	f.price = &price // each run reports 1.5, more than its estimate
-	start := time.Now().Add(-time.Hour)
-	g := &capGate{day: start}
-	g.set(2.4)
-	q.SetAutomaticGate(g.gate)
-	capped := func(r AutomaticRequest) AutomaticRequest {
-		limit := 2.4
-		r.Day, r.DailyCap = start, &limit
-		return r
-	}
-	first, err := q.SubmitAutomatic(ctx, capped(auto(1, "a1")))
-	if err != nil {
-		t.Fatal(err)
-	}
-	<-f.started
-	// 1 running + 1 queued fits under 2.4 at submission.
-	second, err := q.SubmitAutomatic(ctx, capped(auto(2, "b1")))
-	if err != nil {
-		t.Fatal(err)
-	}
-	f.release <- struct{}{}
-	waitState(t, q, first.ID, "completed")
-	// 1.5 reported + 1 estimated is over 2.4.
-	if got := waitState(t, q, second.ID, "cancelled"); got.Reason != ReasonDailyCap {
-		t.Fatalf("second job %+v", got)
-	}
-	noStart(t, f, "over the cap after a reported cost")
 }
 
 // A PR converted back to draft while its automatic job waited is not run:
@@ -636,9 +451,6 @@ func TestAutomaticJobOfAPRTurnedDraftDoesNotRun(t *testing.T) {
 		t.Fatalf("draft job %+v", got)
 	}
 	noStart(t, f, "PR turned draft")
-	if spent, known := q.AutomaticSpend("org/repo", time.Now().Add(-time.Hour)); spent != 1.5 || !known {
-		t.Fatalf("spend %v %v", spent, known)
-	}
 	if refused := q.Refused(); len(refused) != 1 || refused[0].ID != waiting.ID {
 		t.Fatalf("refused %+v", refused)
 	}
@@ -682,15 +494,38 @@ func TestAutomaticJobWithoutACloneFailsNeedsClone(t *testing.T) {
 		t.Fatalf("job ran: %+v", p)
 	default:
 	}
-	// It spent nothing, and its head is not used up.
-	if spent, known := q.AutomaticSpend("org/repo", time.Now()); spent != 0 || !known {
-		t.Fatalf("spend %v %v", spent, known)
-	}
+	// Its head is not used up.
 	if refused := q.Refused(); len(refused) != 1 || refused[0].ID != j.ID {
 		t.Fatalf("refused %+v", refused)
 	}
 	f.noClone = false
 	if _, err = q.SubmitAutomatic(context.Background(), auto(1, "a1")); err != nil {
 		t.Fatalf("resubmit with a clone: %v", err)
+	}
+}
+
+// A job an older baum cancelled for its daily cap loads as an ordinary
+// cancelled job: nothing offers its head again, and its estimate is dropped.
+func TestAutomaticJobCancelledForTheOldDailyCapLoads(t *testing.T) {
+	path := filepath.Join(privateDir(t), "jobs.json")
+	old := `[{"id":"old","clone":"clone","pr":1,"repository":"org/repo","head_sha":"a1","backend":"claude","model":"m","estimate_usd":2,"automatic":true,"trigger":"new_head","state":"cancelled","phase":"finished","reason":"daily_cap","calls":0,"tokens":0,"repairs":0,"actual_cost_usd":null,"created_at":"2026-10-20T10:00:00Z","updated_at":"2026-10-20T10:00:00Z"}]`
+	if err := os.WriteFile(path, []byte(old), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	f := &autoExecutor{heads: map[int]string{1: "a1"}, backend: "claude", started: make(chan Prepared, 10), release: make(chan struct{})}
+	q, err := Open(path, f, 1, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(q.Close)
+	q.SetAutomaticGate(func(Job) Admission { return Admission{} })
+	if list := q.List(); len(list) != 1 || list[0].State != "cancelled" || list[0].Reason != "daily_cap" {
+		t.Fatalf("loaded %+v", list)
+	}
+	if refused := q.Refused(); len(refused) != 0 {
+		t.Fatalf("refused %+v", refused)
+	}
+	if _, err := q.SubmitAutomatic(context.Background(), auto(1, "a1")); !errors.Is(err, ErrDuplicate) {
+		t.Fatalf("the old head ran again: %v", err)
 	}
 }

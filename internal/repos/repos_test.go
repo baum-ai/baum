@@ -47,10 +47,9 @@ func TestClonesAndSettings(t *testing.T) {
 	ctx := context.Background()
 	r := registry(t)
 	p := clone(t, "https://github.com/Owner/Repo.git")
-	cap := 1.25
 	b := config.BackendCodex
 	m := "model"
-	s := Settings{Automatic: new(true), DailyCap: &cap, Backend: &b, Model: &m}
+	s := Settings{Automatic: new(true), Backend: &b, Model: &m}
 	c, e := r.Add(ctx, p, &s)
 	if e != nil {
 		t.Fatal(e)
@@ -131,9 +130,9 @@ func TestRejectAndFallback(t *testing.T) {
 	if e != nil || enterprise.Repository == c.Repository {
 		t.Fatalf("enterprise %#v %v", enterprise, e)
 	}
-	negative := -1.0
-	if _, e = r.Add(ctx, p, &Settings{DailyCap: &negative}); e == nil {
-		t.Fatal("negative cap accepted")
+	empty := ""
+	if _, e = r.Add(ctx, p, &Settings{Model: &empty}); e == nil {
+		t.Fatal("empty model accepted")
 	}
 }
 func TestPermissionsAndConcurrentProcesses(t *testing.T) {
@@ -215,15 +214,17 @@ func TestHTTP(t *testing.T) {
 	if got := check(p); got != `{"valid":true,"repository":"owner/repo","registered":true}` {
 		t.Fatal(got)
 	}
-	for _, body := range []string{`{"unknown":1}`, `{"daily_cap":-1}`, `{"automatic":null}`, `{"daily_cap":null}`, `{"backend":"no"}`, `{} {}`, `{"model":""}`} {
+	for _, body := range []string{`{"unknown":1}`, `{"daily_cap":-1}`, `{"backend":"no"}`, `{} {}`, `{"model":""}`, `{"automatic":null,"model":""}`} {
 		if w = request("PUT", "/api/repos/"+c.ID+"/settings", body); w.Code != 400 {
 			t.Fatal(body, w.Code)
 		}
 	}
+	// An older app still sends the daily cap baum no longer has: it is
+	// ignored, not refused.
 	if w = request("PUT", "/api/repos/"+c.ID+"/settings", `{"automatic":true,"backend":null,"model":null,"daily_cap":0}`); w.Code != 200 {
 		t.Fatal(w.Code)
 	}
-	if w = request(http.MethodGet, "/api/repos", ""); w.Code != 200 || !strings.Contains(w.Body.String(), `"automatic":true`) {
+	if w = request(http.MethodGet, "/api/repos", ""); w.Code != 200 || !strings.Contains(w.Body.String(), `"automatic":true`) || strings.Contains(w.Body.String(), "daily_cap") {
 		t.Fatal(w.Code, w.Body)
 	}
 	if w = request("DELETE", "/api/repos/"+c.ID, ""); w.Code != 204 {
@@ -277,8 +278,8 @@ func TestConcurrentSettingsPatches(t *testing.T) {
 				if i == 0 {
 					s.Automatic = new(true)
 				} else {
-					v := 7.5
-					s.DailyCap = &v
+					v := "model-b"
+					s.Model = &v
 				}
 				return s, nil
 			})
@@ -290,7 +291,7 @@ func TestConcurrentSettingsPatches(t *testing.T) {
 	close(start)
 	wg.Wait()
 	list, e := r.List(context.Background())
-	if e != nil || len(list) != 1 || !explicitlyOn(list[0].Settings.Automatic) || list[0].Settings.DailyCap == nil || *list[0].Settings.DailyCap != 7.5 {
+	if e != nil || len(list) != 1 || !explicitlyOn(list[0].Settings.Automatic) || list[0].Settings.Model == nil || *list[0].Settings.Model != "model-b" {
 		t.Fatalf("lost settings %#v %v", list, e)
 	}
 }
@@ -317,5 +318,42 @@ func TestPreferencesCoverTheChosenPullRequests(t *testing.T) {
 	}
 	if (Preferences{PullRequests: "everyone"}).Validate() == nil {
 		t.Fatal("unknown choice accepted")
+	}
+}
+
+func TestPreferencesFixAgent(t *testing.T) {
+	claude, codex, cursor := config.BackendClaude, config.BackendCodex, config.BackendCursorAgent
+	for _, b := range []*config.Backend{nil, &claude, &codex} {
+		if err := (Preferences{FixBackend: b}).Validate(); err != nil {
+			t.Fatalf("%v rejected: %v", b, err)
+		}
+	}
+	if err := (Preferences{FixBackend: &cursor}).Validate(); err == nil || err.Error() != "fixes run with Claude Code or Codex only" {
+		t.Fatalf("cursor-agent: %v", err)
+	}
+	long := strings.Repeat("m", 257)
+	if (Preferences{FixBackend: &claude, FixModel: &long}).Validate() == nil {
+		t.Fatal("long fix model accepted")
+	}
+	short, empty := "sonnet", ""
+	if (Preferences{FixModel: &short}).Validate() == nil {
+		t.Fatal("a fix model without a fix agent accepted")
+	}
+	if err := (Preferences{FixModel: &empty}).Validate(); err != nil {
+		t.Fatalf("an empty fix model without a fix agent: %v", err)
+	}
+	review := config.Config{Backend: config.BackendCursorAgent, Model: "review-model"}
+	if got := (Preferences{}).ResolveFix(review); got.Backend != review.Backend || got.Model != review.Model {
+		t.Fatalf("same as reviews: %+v", got)
+	}
+	if got := (Preferences{FixModel: &long}).ResolveFix(review); got.Backend != review.Backend || got.Model != review.Model {
+		t.Fatalf("a model without a backend: %+v", got)
+	}
+	if got := (Preferences{FixBackend: &codex}).ResolveFix(review); got.Backend != config.BackendCodex || got.Model != "" {
+		t.Fatalf("default model: %+v", got)
+	}
+	model := " gpt-fix "
+	if got := (Preferences{FixBackend: &codex, FixModel: &model}).ResolveFix(review); got.Backend != config.BackendCodex || got.Model != "gpt-fix" {
+		t.Fatalf("fix agent: %+v", got)
 	}
 }

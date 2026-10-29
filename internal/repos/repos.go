@@ -9,7 +9,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"math"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -33,20 +32,20 @@ var ErrInvalidRepository = errors.New("repository must be a github.com owner/nam
 // global settings. Automatic is the repository's choice under the global
 // master switch (see AutomaticEnabled): nil follows it, false turns the
 // repository off, true is an explicit on that still stops while the global
-// switch is off. A nil cap is
-// unset (no daily limit) and zero permits no automatic spending; the daemon's
-// automatic scheduler enforces it. Registration itself starts no generation.
+// switch is off. Registration itself starts no generation. A daily_cap an
+// older baum stored is ignored on read and dropped on the next write: baum
+// sets no spending limits, since it cannot price what a subscription bills.
 type Settings struct {
 	Automatic *bool           `json:"automatic"`
-	DailyCap  *float64        `json:"daily_cap,omitempty"`
 	Backend   *config.Backend `json:"backend,omitempty"`
 	Model     *string         `json:"model,omitempty"`
+	// Decisions is the repository's choice for local decision capture under
+	// the global switches (see DecisionsEnabled): nil and true follow them,
+	// false turns the repository off.
+	Decisions *bool `json:"decisions,omitempty"`
 }
 
 func (s Settings) Validate() error {
-	if s.DailyCap != nil && (math.IsNaN(*s.DailyCap) || math.IsInf(*s.DailyCap, 0) || *s.DailyCap < 0) {
-		return errors.New("daily cap must be finite and nonnegative")
-	}
 	if s.Backend != nil && !s.Backend.Valid() {
 		return errors.New("invalid backend")
 	}
@@ -67,18 +66,38 @@ func (s Settings) AutomaticEnabled(p Preferences) bool {
 	return s.Automatic == nil || *s.Automatic
 }
 
-// Preferences are the registry's global choices, edited in the app.
+// DecisionsEnabled reports whether the daemon captures the decisions of this
+// repository's agent sessions: the automatic master switch (which the tray's
+// pause turns off) and the decisions switch are both on, and the repository
+// has not turned capture off.
+func (s Settings) DecisionsEnabled(p Preferences) bool {
+	return p.Automatic && (p.Decisions.Enabled == nil || *p.Decisions.Enabled) && (s.Decisions == nil || *s.Decisions)
+}
+
+// DecisionPreferences are the global choices for local decision capture and
+// the feature log. A nil Enabled is on. Model, when set, replaces the
+// backend's default decision model.
+type DecisionPreferences struct {
+	Enabled *bool   `json:"enabled,omitempty"`
+	Model   *string `json:"model,omitempty"`
+}
+
+// Preferences are the registry's global choices, edited in the app. Fields
+// an older baum saved and this one dropped, such as
+// cursor_agent_acknowledged, are ignored on read and gone after the next
+// write.
 type Preferences struct {
 	// Automatic is the default for repositories without an explicit choice.
 	Automatic bool `json:"automatic"`
-	// CursorAgentAcknowledged records the one-time acknowledgement that
-	// cursor-agent runs have no cost estimate; automatic generation uses
-	// cursor-agent only once it is set.
-	CursorAgentAcknowledged bool `json:"cursor_agent_acknowledged"`
 	// Backend and Model, when set, replace the config file's for generation
 	// in the app; a repository's own settings still override them.
 	Backend *config.Backend `json:"backend,omitempty"`
 	Model   *string         `json:"model,omitempty"`
+	// FixBackend and FixModel choose the agent that fixes pull requests
+	// (ResolveFix). A nil FixBackend means the same as reviews; an empty
+	// FixModel is the fix backend's default model.
+	FixBackend *config.Backend `json:"fix_backend,omitempty"`
+	FixModel   *string         `json:"fix_model,omitempty"`
 	// PullRequests narrows which pull requests get automatic reviews:
 	// PullRequestsAuthored, PullRequestsRequested, PullRequestsAll, or empty
 	// for both authored and requested.
@@ -86,6 +105,8 @@ type Preferences struct {
 	// AgentEnv, when it sets any variable, replaces the config file's
 	// agent_env (config.Config.AgentEnv).
 	AgentEnv map[string]string `json:"agent_env,omitempty"`
+	// Decisions configures local decision capture.
+	Decisions DecisionPreferences `json:"decisions,omitzero"`
 }
 
 // The PullRequests choices besides both.
@@ -119,6 +140,18 @@ func (p Preferences) Validate() error {
 	if p.Model != nil && len(*p.Model) > 256 {
 		return errors.New("model must be at most 256 bytes")
 	}
+	if m := p.Decisions.Model; m != nil && len(*m) > 256 {
+		return errors.New("decisions model must be at most 256 bytes")
+	}
+	if p.FixBackend != nil && *p.FixBackend != config.BackendClaude && *p.FixBackend != config.BackendCodex {
+		return errors.New("fixes run with Claude Code or Codex only")
+	}
+	if p.FixModel != nil && len(*p.FixModel) > 256 {
+		return errors.New("fix model must be at most 256 bytes")
+	}
+	if p.FixBackend == nil && p.FixModel != nil && strings.TrimSpace(*p.FixModel) != "" {
+		return errors.New("choose the agent for fixes before its model")
+	}
 	if err := config.ValidateAgentEnv(p.AgentEnv); err != nil {
 		return fmt.Errorf("agent environment: %w", err)
 	}
@@ -144,8 +177,25 @@ func (p Preferences) Resolve(global config.Config) config.Config {
 	return global
 }
 
+// ResolveFix gives the config a fix runs with, from review, the config
+// already resolved for reviews (the global preferences and the repository's
+// overrides). A set FixBackend wins over the repository's own review backend
+// and model, and takes FixModel (empty for the backend's default); without
+// one the fix follows the reviews, repository overrides included.
+func (p Preferences) ResolveFix(review config.Config) config.Config {
+	if p.FixBackend == nil {
+		return review
+	}
+	review.Backend = *p.FixBackend
+	review.Model = ""
+	if p.FixModel != nil {
+		review.Model = strings.TrimSpace(*p.FixModel)
+	}
+	return review
+}
+
 // DefaultPreferences apply until the user changes them: automatic generation
-// on, cursor-agent not acknowledged.
+// on.
 func DefaultPreferences() Preferences { return Preferences{Automatic: true} }
 
 // Resolve overlays generation choices without changing credentials or budgets.
