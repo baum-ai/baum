@@ -321,6 +321,29 @@ func TestFeatureSyncAndIndex(t *testing.T) {
 	}
 }
 
+// A first build indexes from a job's goroutine while Run's goroutine runs
+// the stages; both use the worker's per-repository times.
+func TestFeatureIndexBesideRunOnce(t *testing.T) {
+	ctx := context.Background()
+	f := linktest.New(t)
+	c := &clock{time.Date(2026, 7, 2, 9, 0, 0, 0, time.UTC)}
+	reader := &fakeReader{}
+	on := featureRegistry{prefs: repos.Preferences{Automatic: true}, repositories: []repos.Repository{
+		{Repository: linktest.Repository, Clones: []repos.Clone{{Path: f.Repo, Available: true}}}}}
+	w := &FeatureWorker{Store: openStore(t, c), Registry: on, Now: c.Now, Sessions: f.Store,
+		GitHub: func(context.Context, github.Repository) (github.Reader, error) { return reader, nil }}
+	var wg sync.WaitGroup
+	for range 3 {
+		wg.Go(func() { w.RunOnce(ctx) })
+		wg.Go(func() {
+			if _, err := w.Index(ctx, linktest.Repository, f.Repo, nil, true); err != nil {
+				t.Error(err)
+			}
+		})
+	}
+	wg.Wait()
+}
+
 type featureRegistry struct {
 	prefs        repos.Preferences
 	repositories []repos.Repository

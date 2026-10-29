@@ -62,9 +62,10 @@ type FeatureWorker struct {
 	wake     chan struct{}
 	redactor *bundle.Redactor
 	initErr  error
-	// windowLinked is each repository's last re-link of the session window,
-	// retryAt when a failed repository is tried again; only Run's goroutine
-	// touches them.
+	// mu guards windowLinked, each repository's last re-link of the session
+	// window, and retryAt, when a failed repository is tried again: a first
+	// build indexes from a job's goroutine while Run's goroutine does.
+	mu                    sync.Mutex
 	windowLinked, retryAt map[string]time.Time
 }
 
@@ -142,7 +143,10 @@ func (w *FeatureWorker) RunOnce(ctx context.Context) {
 		if ctx.Err() != nil {
 			return
 		}
-		if !repository.Settings.DecisionsEnabled(prefs) || w.now().Before(w.retryAt[repository.Repository]) {
+		w.mu.Lock()
+		retryAt := w.retryAt[repository.Repository]
+		w.mu.Unlock()
+		if !repository.Settings.DecisionsEnabled(prefs) || w.now().Before(retryAt) {
 			continue
 		}
 		i := slices.IndexFunc(repository.Clones, func(c repos.Clone) bool { return c.Available })
@@ -172,7 +176,9 @@ func (w *FeatureWorker) RunOnce(ctx context.Context) {
 			_, err = w.Consolidate(ctx, repository.Repository, dir, FeatureOptions{})
 		}
 		if err != nil && ctx.Err() == nil {
+			w.mu.Lock()
 			w.retryAt[repository.Repository] = w.now().Add(FeatureQuiet)
+			w.mu.Unlock()
 			w.logger().Warn("feature log: repository not brought up to date", "repository", repository.Repository, "error", err)
 		}
 	}
@@ -446,7 +452,9 @@ func (w *FeatureWorker) Index(ctx context.Context, repository, dir string, fresh
 	}
 	lookback := now.Add(-FeatureLookback)
 	full = full || now.Sub(state.RelinkedAt) >= FeatureRelinkEvery
+	w.mu.Lock()
 	window := full || now.Sub(w.windowLinked[repository]) >= FeatureQuiet
+	w.mu.Unlock()
 	report.Full = full
 	commits := map[string]gitlocal.Commit{}
 	add := func(c gitlocal.Commit, since time.Time) {
@@ -496,7 +504,7 @@ func (w *FeatureWorker) Index(ctx context.Context, repository, dir string, fresh
 	}
 	if len(commits) == 0 && !full {
 		if window {
-			w.windowLinked[repository] = now
+			w.linkedWindow(repository, now)
 		}
 		return report, nil
 	}
@@ -529,10 +537,17 @@ func (w *FeatureWorker) Index(ctx context.Context, repository, dir string, fresh
 		return report, err
 	}
 	if window {
-		w.windowLinked[repository] = now
+		w.linkedWindow(repository, now)
 	}
 	report.Commits, report.Links, report.Sessions = len(list), len(rows), len(linked)
 	return report, nil
+}
+
+// linkedWindow records the repository's re-link of the session window.
+func (w *FeatureWorker) linkedWindow(repository string, at time.Time) {
+	w.mu.Lock()
+	w.windowLinked[repository] = at
+	w.mu.Unlock()
 }
 
 // FeatureOptions change one run of placement or the text stage, for testing

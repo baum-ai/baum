@@ -61,7 +61,8 @@ func (b *scriptBackend) Complete(_ context.Context, req agent.CompleteRequest) (
 		b.onCall()
 	}
 	b.maxOutput = append(b.maxOutput, req.MaxOutputTokens)
-	out := agent.Completion{Model: "claude-haiku-5-5", Usage: agent.Usage{Input: 1000, Output: 100}, Rejections: b.rejections}
+	standard, prompt := "standard", int64(1000)
+	out := agent.Completion{Model: "claude-haiku-5-5", Usage: agent.Usage{Input: 1000, Output: 100, Speed: &standard, MinPrompt: &prompt, MaxPrompt: &prompt}, Rejections: b.rejections}
 	if b.usage != nil {
 		out.Usage = *b.usage
 	}

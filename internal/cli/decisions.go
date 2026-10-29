@@ -28,8 +28,8 @@ func newDecisionsCommand() *cobra.Command {
 		Use:   "capture",
 		Short: "Capture one session's decisions into the local store, or show what a capture would send",
 		Long: `Capture runs decision capture for one session as the daemon does, without its
-gate, throttle or unchanged check (the caps still apply), and prints what it
-did as JSON. With --dry-run it renders the transcript and prints the turns, the
+gate, throttle or unchanged check (the transcript size and token budgets still
+apply), and prints what it did as JSON. With --dry-run it renders the transcript and prints the turns, the
 token estimate and the cost reservation, and makes no model call and no write.
 A Claude Code session is looked up in ~/.claude/projects by its id unless
 --path names its transcript.`,

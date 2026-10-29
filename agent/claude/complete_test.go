@@ -3,7 +3,6 @@ package claude
 import (
 	"bytes"
 	"context"
-	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -61,7 +60,8 @@ func TestCompleteReportsUsageOfAFailedCall(t *testing.T) {
 	}
 }
 
-// A rejected reply is counted and its detail kept.
+// A rejected reply is counted and its detail kept. The run ended with a
+// failed result, so its usage stays unreported, as review accounting treats it.
 func TestCompleteReportsRejectedReplies(t *testing.T) {
 	script := filepath.Join(t.TempDir(), "claude")
 	events := []string{
@@ -74,30 +74,7 @@ func TestCompleteReportsRejectedReplies(t *testing.T) {
 	}
 	completion, _ := (&Backend{Binary: script, versionOK: true}).Complete(context.Background(),
 		agent.CompleteRequest{System: "s", User: "u", Schema: []byte(`{}`)})
-	if completion.Rejections != 1 || completion.RejectionDetail != "Output validation failed: choice" {
+	if completion.Rejections != 1 || completion.RejectionDetail != "Output validation failed: choice" || !completion.Usage.Unreported {
 		t.Fatalf("%+v", completion)
-	}
-}
-
-// A run out of turns still reports its calls' usage: every call finished
-// and the result event gave the run's total, so the usage is complete.
-func TestCompleteReportsUsageOfARunOutOfTurns(t *testing.T) {
-	script := filepath.Join(t.TempDir(), "claude")
-	call := func(id string, cacheRead int) []string {
-		return []string{
-			fmt.Sprintf(`{"type":"stream_event","event":{"type":"message_start","message":{"id":%q,"model":"claude-haiku-5-5","usage":{"input_tokens":2,"cache_creation_input_tokens":100,"cache_read_input_tokens":%d}}}}`, id, cacheRead),
-			fmt.Sprintf(`{"type":"stream_event","event":{"type":"message_delta","delta":{"stop_reason":"tool_use"},"usage":{"input_tokens":2,"cache_creation_input_tokens":100,"cache_read_input_tokens":%d,"output_tokens":50}}}`, cacheRead),
-			`{"type":"stream_event","event":{"type":"message_stop"}}`,
-		}
-	}
-	events := append(call("m1", 0), call("m2", 100)...)
-	events = append(events, `{"type":"result","subtype":"error_max_turns","is_error":true,"usage":{"input_tokens":4,"cache_creation_input_tokens":200,"cache_read_input_tokens":100,"output_tokens":100}}`)
-	if err := os.WriteFile(script, []byte("#!/bin/sh\ncat >/dev/null\ncat <<'EVENTS'\n"+strings.Join(events, "\n")+"\nEVENTS\n"), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	completion, err := (&Backend{Binary: script, versionOK: true}).Complete(context.Background(),
-		agent.CompleteRequest{System: "s", User: "u", Schema: []byte(`{}`)})
-	if err == nil || completion.Usage.Unreported || completion.Usage.Output != 100 || completion.Usage.CacheRead != 100 {
-		t.Fatalf("%+v %v", completion.Usage, err)
 	}
 }
