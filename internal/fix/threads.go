@@ -103,9 +103,9 @@ func SelectThreads(list github.ReviewThreads) Selection {
 	return out
 }
 
-// Digest identifies the threads a fix was confirmed for, with their
-// comments: a reply or an edit after the confirmation changes it, and the fix
-// must be confirmed again.
+// Digest identifies the threads a fix was started for, with their comments:
+// a reply or an edit after the start changes it, and the fix must be started
+// again.
 func Digest(threads []Thread) string {
 	if len(threads) == 0 {
 		return ""
@@ -116,7 +116,7 @@ func Digest(threads []Thread) string {
 }
 
 // Excerpt is the headline of a thread's first comment, at most 120
-// characters, for the confirmation to show.
+// characters, for the job to show.
 func Excerpt(t Thread) string {
 	if len(t.Comments) == 0 {
 		return ""

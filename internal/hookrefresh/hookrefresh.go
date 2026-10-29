@@ -592,8 +592,8 @@ func (s *Service) queueTrigger(name string, now time.Time) {
 }
 
 // triggerDue triggers the scheduler for each repository due, while automatic
-// generation is on for it. The scheduler's own gate, dedupe, daily cap and
-// baseline still decide every job.
+// generation is on for it. The scheduler's own gate, dedupe and baseline
+// still decide every job.
 func (s *Service) triggerDue(ctx context.Context) {
 	now := s.now()
 	names := make([]string, 0, len(s.triggers))

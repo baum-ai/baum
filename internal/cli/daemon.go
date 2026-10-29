@@ -387,8 +387,8 @@ func localApplication(paths daemon.Paths, concurrency int, log *slog.Logger) fun
 			events.Close()
 			return daemon.App{}, err
 		}
-		// Queued jobs resume with the price list they were confirmed against,
-		// so reinstall the verified downloaded list before workers start.
+		// Jobs are priced with the newest verified list, so reinstall the
+		// downloaded one before workers start.
 		if err := pricing.LoadPersisted(state); err != nil {
 			log.Warn("stored price list not loaded", "error", err)
 		}
@@ -423,7 +423,7 @@ func localApplication(paths daemon.Paths, concurrency int, log *slog.Logger) fun
 			events.Close()
 			return daemon.App{}, err
 		}
-		queue, err := jobs.Open(filepath.Join(state, "jobs.json"), &jobs.Local{Registry: registry, Groups: groups, Config: cfg, Client: github.NewFromConfig(cfg, github.Options{}), RefreshPrices: refresh}, concurrency, func(job jobs.Job) {
+		queue, err := jobs.Open(filepath.Join(state, "jobs.json"), &jobs.Local{Registry: registry, Groups: groups, Config: cfg, Client: github.NewFromConfig(cfg, github.Options{})}, concurrency, func(job jobs.Job) {
 			_ = server.Publish("progress", map[string]any{"job": job})
 			if job.Phase == "finished" {
 				changed()

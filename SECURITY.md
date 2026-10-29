@@ -50,8 +50,8 @@ any other host is refused, and an image hosted elsewhere is not downloaded.
 
 baum sends no telemetry. Unless you run `baum login`, nothing leaves the
 machine except calls to GitHub, the configured model provider and
-`static.usebaum.com`, from which it downloads the public price list used for
-cost estimates. That request is a plain download: it carries no token,
+`static.usebaum.com`, from which it downloads the public price list used to
+show what usage would cost at API prices. That request is a plain download: it carries no token,
 repository, pull request or session data, and the list's signature is checked
 against a key built into the binary. When the list cannot be fetched or
 verified, baum uses a copy embedded at release. The hosted service commands
@@ -241,7 +241,7 @@ so isolation is only as strong as that tool's read-only mode. Repository
 content and pull request text are untrusted input to the agent: a pull
 request could try to persuade it to read files outside the checkout. Use
 baum on pull requests you are prepared to have an agent read under your
-account. The one exception to read-only is a fix you confirm, which gives the
+account. The one exception to read-only is a fix you start, which gives the
 agent write access to a temporary checkout: see
 [Fixing a pull request](#fixing-a-pull-request).
 
@@ -450,22 +450,21 @@ A fix (`internal/fix`, run as a job of the local application) is the one
 time an agent gets **write access**. It is one of baum's few writes to GitHub
 (see "Writes to GitHub" below): it pushes a commit and, when it addressed
 review comments, replies on those threads and resolves them.
-It runs only after you ask for it on one pull request and confirm a dialog
-naming the harness, the model, the branch it pushes to and the write access;
-it never runs automatically. The daemon checks fresh GitHub evidence when you
-confirm and again before anything runs: the pull request is open, its branch
+It runs only when you start it on one pull request (its button or key, with
+no further dialog); it never runs automatically. The daemon checks fresh
+GitHub evidence when you start it and again before anything runs: the pull request is open, its branch
 is in the repository itself (a fork is refused), your account can push to the
 repository (`permissions.push` on `GET /repos/{owner}/{repo}`, which write,
 maintain and admin access give; who wrote the pull request does not matter),
-the head is still the one you confirmed, and it still has a merge conflict
+the head is still the one it started from, and it still has a merge conflict
 (GitHub's `mergeable`), failing checks or, on a pull request you opened, the
 same unresolved review threads with the same comments (a digest of them is
-part of what you confirm, so a comment added or edited afterwards stops the
+taken when you start it, so a comment added or edited afterwards stops the
 fix before the agent runs). A registered local clone is required. Only the `claude` and `codex` backends fix; `cursor-agent` and
 `anthropic` are refused.
 
 The checkout is a linked worktree of your registered clone, detached at the
-confirmed head, under `fixes/<id>/` in your user cache directory
+head the fix started from, under `fixes/<id>/` in your user cache directory
 (`$XDG_CACHE_HOME/baum` or the platform's), outside the clone and outside the
 system temporary directory. Its branch and the base branch are fetched into
 `refs/baum/fix/<id>/`, as a review's missing commits are; a branch that moved
@@ -526,7 +525,7 @@ from an owner, member or collaborator of the repository (GitHub's author
 association) or from an app's bot account, which someone with admin access
 installed; within a kept thread, other authors' comments are dropped. At most
 20 threads and the first 10 comments of each are read, each comment bounded
-to 2 KiB, and the dialog lists the threads and says how many it left out.
+to 2 KiB, and the job lists the threads it addressed.
 Each thread goes into the prompt as untrusted data under the same random-tag
 markers, with secrets masked, under a local id (`T1`, `T2`…) that baum maps
 to the thread's GitHub node id; the agent never sees or returns a GitHub id.
@@ -567,7 +566,7 @@ What baum does after the agent:
   it with your git identity and signing configuration, completing the merge
   for a conflict. It refuses to commit while a conflicted file still has a
   conflict marker, and fails when nothing changed.
-- It refuses a result that does not descend from the confirmed head: a fix
+- It refuses a result that does not descend from the head it started from: a fix
   only adds commits, it never rewrites the branch.
 - A fix of review comments alone (no conflict, no failing check) refuses a
   result that changes anything under `.github/workflows/` or
@@ -640,10 +639,10 @@ writes and no others:
 Each write goes through the daemon's authenticated, CSRF-checked local API,
 only for repositories you picked, and is re-checked against GitHub just before
 it is sent: the pull request is open, the head is still the one you confirmed
-and, for update branch and both re-runs, your account can push to the
+(or, for a fix, started from) and, for update branch and both re-runs, your account can push to the
 repository (`permissions.push`). Resolving a thread checks the thread instead, as above. Update branch also refuses a fork's branch and a
 conflicting pull request. None is retried, and none is ever started by an agent
-or automatically: thread replies follow only the fix you confirmed.
+or automatically: thread replies follow only a fix you started.
 
 ## Local repository registry
 
@@ -849,8 +848,10 @@ What it runs while it is up:
   registered clones, and pushes to other repositories, cause none;
 - generation jobs, the only thing that spends money: each runs the configured
   backend under your account, within the configured budgets, as
-  `baum internal generate` does. Some you confirmed in the app with their price
-  estimate; the others it starts by itself, unattended (below).
+  `baum internal generate` does. Some you started in the app; the others it
+  starts by itself, unattended (below). Prices only report what usage would
+  cost at API prices: baum shows none before a run, and no price limits,
+  refuses or decides a run. The token and call budgets bound each run.
 
 Automatic generation is on by default and runs without anyone watching. It
 starts a job when a pull request in a registered repository that you authored,
@@ -862,25 +863,21 @@ it decides by the same rules, and starts nothing the periodic check would not. I
 one for a pull request from a fork or by an author without known write access:
 those run the agent on someone else's content and always need your
 confirmation in the app. Each automatic job is prepared exactly like a
-confirmed one (same backend, model, budgets, price list and recheck of the head
-before any model call, which also stops it if the pull request was converted to
-a draft while it waited), and a model without a known price is never run
-automatically. What it can spend: up to the configured per-run budget for each
-new head (twice when a daemon stop or restart interrupts the first run, which
-is retried once; failed or cancelled runs are not retried), with no daily limit unless you set a repository's daily cap, which
-pauses that repository's automatic generation until the next day once reached.
-The cap is checked when a job is queued and again, against the current cap and
-the cost already reported that day, right before a queued job starts; a job
-over it is stopped before any model call and waits for the pause to end.
-cursor-agent, which baum cannot estimate or cap, runs automatically only after
-you acknowledge that in the app. Turning the global switch off (in Repositories
+confirmed one (same backend, model, budgets and recheck of the head before any
+model call, which also stops it if the pull request was converted to a draft
+while it waited). A model without a known price runs automatically like any
+other. What it can use: up to the configured per-run token and call budgets
+for each new head (twice when a daemon stop or restart interrupts the first
+run, which is retried once; failed or cancelled runs are not retried). There
+is no daily or dollar limit: baum cannot price what a subscription bills, so
+it sets none; turn automatic generation off for a repository to stop it.
+cursor-agent, which Cursor bills through your subscription and baum cannot
+price, needs no acknowledgement. Turning the global switch off (in Repositories
 & settings, or pausing automatic generation from the desktop app) stops it in
 every repository, including those set to "On"; while it is on, single
-repositories can be turned off. Turning off (or withdrawing the cursor-agent
-acknowledgement) also cancels that scope's automatic jobs that are queued but
+repositories can be turned off. Turning off also cancels that scope's automatic jobs that are queued but
 not started, and the queue checks the current settings again before starting
-each one; only a job already running finishes, within its budget. Raising or
-removing a repository's daily cap ends its pause.
+each one; only a job already running finishes, within its budget.
 The daemon keeps doing this after the app window closes, and the desktop app
 can quit without stopping it; only "Quit and stop background reviews" (or
 `baum daemon stop`) stops it.
@@ -1078,18 +1075,21 @@ The authenticated job API derives repository, head, fork and author permissions
 from registered clones and fresh GitHub evidence. A repository picked without a
 clone is discovered (names and GitHub metadata only) but never generated:
 requests and queued jobs naming no available clone stop with `needs_clone`
-before anything runs. A five-minute estimate is
-bound to the head, selected model/backend, budgets and price list version;
-confirmation cannot authorize changed inputs. Forks, non-writers and unknown
+before anything runs. A start prepares the job from that evidence and queues
+it in the same request, bound to the head, selected model/backend and
+budgets; a queued job whose inputs changed does not run. A price list
+installed meanwhile is not a changed input: the run is priced with the list
+active when it runs. Forks, non-writers and unknown
 permissions require a separate single-PR isolation acknowledgement and are
 excluded from batch generation. Cancellation reaches the existing backend
 process-group cleanup. Job history contains fixed failure reasons and bounded
 usage metadata, never arbitrary provider errors, prompts or rejected documents.
 The private journal persists queued/running/terminal states; crashed running
 entries become interrupted before work resumes. A fix (`"kind": "fix"`, see
-[Fixing a pull request](#fixing-a-pull-request)) runs only from a confirmed
-single-PR estimate, never from a direct request, and its estimate is refused
-for a fork, an account that cannot push or a backend that cannot fix. A fix
+[Fixing a pull request](#fixing-a-pull-request)) starts only for a single pull
+request a person asked to fix, never in a batch or automatically, and is
+refused before anything is queued for a fork, an account that cannot push, a
+backend that cannot fix or nothing to fix. A fix
 job also keeps the review threads it addressed (file, line, author and the
 first comment's headline in plain text) and each one's outcome code with the
 agent's cleaned summary. The stored copy of a downloaded
@@ -1104,9 +1104,9 @@ request resolves under it. Every application request is same-origin; the app has
 same sanitizers and safe rendering components as the hosted PR page and `baum internal
 view`. Stored document rendering failures remain within the PR pane. The app's
 only GitHub writes are the ones listed under "Writes to GitHub": a merge, a
-branch update, a re-run and a fix you confirm, with that fix's replies on the
-review threads it addressed, and resolving a review thread you chose; it
-supplies no approvals or other discussion controls.
+branch update and a re-run you confirm and a fix you start, with that fix's
+replies on the review threads it addressed, and resolving a review thread you
+chose; it supplies no approvals or other discussion controls.
 
 ## Desktop app
 

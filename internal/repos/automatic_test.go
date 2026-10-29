@@ -24,7 +24,7 @@ func TestAutomaticDefaultsOnAndExplicitChoicesWin(t *testing.T) {
 		t.Fatal(e)
 	}
 	prefs, e := r.Preferences(ctx)
-	if e != nil || !prefs.Automatic || prefs.CursorAgentAcknowledged {
+	if e != nil || !prefs.Automatic {
 		t.Fatalf("default preferences %#v %v", prefs, e)
 	}
 	if c.Settings.Automatic != nil || !c.Settings.AutomaticEnabled(prefs) {
@@ -50,10 +50,9 @@ func TestAutomaticDefaultsOnAndExplicitChoicesWin(t *testing.T) {
 	}
 	prefs, e = r.UpdatePreferences(ctx, func(p Preferences) Preferences {
 		p.Automatic = false
-		p.CursorAgentAcknowledged = true
 		return p
 	})
-	if e != nil || prefs.Automatic || !prefs.CursorAgentAcknowledged {
+	if e != nil || prefs.Automatic {
 		t.Fatalf("updated preferences %#v %v", prefs, e)
 	}
 	_ = r.Close()
@@ -64,8 +63,15 @@ func TestAutomaticDefaultsOnAndExplicitChoicesWin(t *testing.T) {
 		t.Fatal(e)
 	}
 	defer func() { _ = r.Close() }()
-	if prefs, e = r.Preferences(ctx); e != nil || prefs.Automatic || !prefs.CursorAgentAcknowledged {
+	if prefs, e = r.Preferences(ctx); e != nil || prefs.Automatic {
 		t.Fatalf("preferences after reopen %#v %v", prefs, e)
+	}
+	// An older baum's cursor-agent acknowledgement is ignored, not an error.
+	if _, e = r.db.ExecContext(ctx, "UPDATE preferences SET value=? WHERE key=?", `{"automatic":false,"cursor_agent_acknowledged":true}`, automaticPreferences); e != nil {
+		t.Fatal(e)
+	}
+	if prefs, e = r.Preferences(ctx); e != nil || prefs.Automatic {
+		t.Fatalf("preferences with an old field %#v %v", prefs, e)
 	}
 	list, e := r.List(ctx)
 	if e != nil {
@@ -120,7 +126,8 @@ func TestLegacyAutomaticFalseFollowsTheDefault(t *testing.T) {
 		for _, c := range list {
 			switch c.Repository {
 			case "owner/legacy":
-				if c.Settings.Automatic != nil || c.Settings.DailyCap == nil || *c.Settings.DailyCap != 3 {
+				// The legacy daily cap is ignored.
+				if c.Settings.Automatic != nil {
 					t.Fatalf("legacy row %#v", c.Settings)
 				}
 			case "owner/explicit":

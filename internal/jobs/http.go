@@ -58,67 +58,38 @@ func (q *Queue) Handler() http.Handler {
 	mux.HandleFunc("GET /api/jobs", func(w http.ResponseWriter, r *http.Request) {
 		respond(w, map[string]any{"available": true, "jobs": q.List()})
 	})
-	mux.HandleFunc("POST /api/jobs/estimate", func(w http.ResponseWriter, r *http.Request) {
-		var request struct {
-			Items []Item `json:"items"`
-			Mode  string `json:"mode"`
-		}
-		if !decode(w, r, &request) {
-			return
-		}
-		v, e := q.Estimate(r.Context(), request.Items, request.Mode)
-		if errors.Is(e, ErrNeedsClone) {
-			needsClone(w)
-			return
-		}
-		if groupRefusal(w, e) {
-			return
-		}
-		if e != nil {
-			message := "cannot estimate: select available PRs with an explicit priced model"
-			if len(request.Items) == 1 && request.Items[0].Kind == KindFix {
-				message = "cannot prepare the fix: GitHub, the local clone or the agent is unavailable"
-			}
-			http.Error(w, message, 400)
-			return
-		}
-		respond(w, v)
-	})
+	// POST /api/jobs starts what the person asked for at once: reviews, a
+	// group's review or a fix. Only a fork or an author without known write
+	// access waits for their confirmation (confirm_isolation); nothing waits
+	// for a price.
 	mux.HandleFunc("POST /api/jobs", func(w http.ResponseWriter, r *http.Request) {
-		// Either items to generate now, or a confirmed estimate.
 		var request struct {
 			Items            []Item `json:"items"`
 			Mode             string `json:"mode"`
-			EstimateID       string `json:"estimate_id"`
-			ConfirmEstimate  bool   `json:"confirm_estimate"`
 			ConfirmIsolation bool   `json:"confirm_isolation"`
 		}
 		if !decode(w, r, &request) {
 			return
 		}
-		var v []Job
-		var e error
-		if len(request.Items) > 0 {
-			v, e = q.Generate(r.Context(), request.Items, request.Mode, request.ConfirmIsolation)
-			if errors.Is(e, ErrIsolationRequired) {
-				w.Header().Set("Content-Type", "application/json")
-				w.WriteHeader(http.StatusConflict)
-				_ = json.NewEncoder(w).Encode(map[string]any{"isolation_required": true})
-				return
-			}
-		} else {
-			v, e = q.SubmitConfirmed(r.Context(), request.EstimateID, Confirmation{Estimate: request.ConfirmEstimate, Isolation: request.ConfirmIsolation})
-		}
-		if errors.Is(e, ErrFixNeedsConfirmation) {
-			http.Error(w, e.Error(), http.StatusBadRequest)
+		v, e := q.Generate(r.Context(), request.Items, request.Mode, request.ConfirmIsolation)
+		var blocked *BlockedError
+		switch {
+		case errors.Is(e, ErrIsolationRequired):
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusConflict)
+			_ = json.NewEncoder(w).Encode(map[string]any{"isolation_required": true})
 			return
-		}
-		if errors.Is(e, ErrRestarting) {
+		case errors.As(e, &blocked):
+			// The app says why in words where the person clicked.
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusConflict)
+			_ = json.NewEncoder(w).Encode(map[string]any{"blocked_reason": blocked.Reason})
+			return
+		case errors.Is(e, ErrRestarting):
 			w.Header().Set("Retry-After", "5")
 			http.Error(w, ErrRestarting.Error(), http.StatusServiceUnavailable)
 			return
-		}
-		if errors.Is(e, ErrNeedsClone) {
+		case errors.Is(e, ErrNeedsClone):
 			needsClone(w)
 			return
 		}
@@ -126,7 +97,11 @@ func (q *Queue) Handler() http.Handler {
 			return
 		}
 		if e != nil {
-			http.Error(w, "estimate expired, generation inputs changed, confirmation missing, or job already running", http.StatusConflict)
+			message := "cannot generate: GitHub, the local clone or the agent is unavailable, the pull request changed, or a job is already running"
+			if len(request.Items) == 1 && request.Items[0].Kind == KindFix {
+				message = "cannot start the fix: GitHub, the local clone or the agent is unavailable, the pull request changed, or a fix is already running"
+			}
+			http.Error(w, message, http.StatusConflict)
 			return
 		}
 		respond(w, map[string]any{"jobs": v})
