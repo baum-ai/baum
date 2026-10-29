@@ -1652,6 +1652,89 @@ repository root), not by the transcript's path; review runs load no hooks
 (`--setting-sources ""`, `--disable hooks`), so nothing in `livesessions` or
 `hookevents` sees them.
 
+#### Chat with the review agent
+
+`internal/chat` answers a reviewer's questions about a pull request with the
+agent that wrote a saved review version, desktop and daemon only. A
+conversation belongs to one repository, pull request and review version and
+keeps one agent session; it uses the review's harness and model
+(`Metadata.Backend` and `Metadata.Model`), so only a review by the local
+`claude` (User profile) or `codex` (Local profile) backend can be asked about.
+Cursor, the Anthropic API backend and hosted reviews are refused
+(`unsupported_backend`) before anything is queued.
+
+Sessions. The first turn forks the review's kept session (`ResumeSession` the
+review's id, `ForkSession`, `PersistSession`) in the review's run directory,
+so the agent starts with everything it read and the review's session stays
+untouched; the fork's new id becomes the conversation's session. Every later
+turn resumes the conversation's own session in the same directory, without
+forking. When the review kept no session, it is another harness's, or its run
+directory is gone, the turn seeds a new run directory under the review-runs
+root (`reviewruns.Create`): the checkout of the review's head commit exported
+from the registered clone (`head/` only, within the review's checkout limits;
+a clone that lacks the commit fails the turn with `needs_clone`), the stored,
+already-masked review as `review.json`, and the earlier answered turns as
+`conversation.json` (question and `answer_markdown`, oldest first, the newest
+that fit in 64 KiB), and starts a new persisted session there. The
+conversation is then marked `seeded` and the turn's `note` says it started
+without the review's own context. A resume or fork whose session the CLI
+cannot find falls back the same way, once per turn: `agent.Generator.Continue`
+(the loop's provider retries, stall watchdog and budgets for one call of a
+continuing session) returns `agent.ErrSessionNotFound` at once, without
+retries, only when the call resumed a session, made no model call and the
+CLI's error names a missing session ("No conversation found with session ID"
+for Claude Code; a thread, session or rollout "not found" for Codex). A seeded
+directory for which no session was recorded is removed. Before a directory is
+used `reviewruns.Use` checks it is a real run directory directly under the
+root and sets its modification time to now, so the 14-day expiry never removes
+a directory a chat used recently. `PruneVersions` still removes the
+directories of versions beyond a pull request's latest two, which a forked
+conversation shares; a chat on such an older version falls back to a seeded
+session on its next turn. A seeded directory belongs to no version, so only the
+expiry removes it, with its CLI sessions.
+
+Turns. Every turn sends the public chat instructions
+(`agent/prompt/chat-public-v1.md`, `prompt.Chat`) as the user prompt, because
+a resumed or forked session keeps the system prompt it was recorded with: the
+review is finished, answer the question concisely, read code as needed, cite
+files and lines of the head, set `suggests_fix` only for a concrete change.
+Requests are marked as tasks (`Request.Task`), which only changes the system
+prompt of a new Claude Code session (a seeded one). The question and the focus
+(the section, stop or overview it is about, with its title and anchors) follow
+as untrusted data between `BEGIN/END UNTRUSTED DATA` markers that carry a
+random nonce, masked for secrets, and the prompt starts with
+`sessions.GenerationRunMarker` like a review's. The reply must match the
+answer schema (`chat.Schema`: `answer_markdown` up to 20000 bytes, at most 20
+`citations` of `{path, start_line, end_line}`, `suggests_fix` an object with a
+`summary` or null; strict-mode friendly for Codex). Each citation is checked
+against the run directory's `head/`: a clean, relative path that stays inside
+the checkout after symlinks are resolved, an existing regular file, and
+`1 <= start_line <= end_line <=` its line count. A reply the schema rejects, or
+with citations that fail, gets one repair that resumes the same session (never
+a fresh call, which would lose what the agent read); citations still wrong
+afterwards are dropped, so a stored answer never carries a broken one. The
+answer is masked with `agent.RedactTaskOutput` before it is checked further,
+stored or returned, and the log carries sizes and counts only. A turn's
+budgets are half of a review's calls, tokens and wall clock.
+
+Storage and jobs. Conversations and turns live in the clone's review store
+(`versions.sqlite`, tables `conversations` and `turns`, keyed by the lowercased
+repository and pull request like versions); the session id and directory never
+leave the daemon. A question is a `chat` job (`jobs.KindChat`), queued at once
+without an estimate (`Queue.Ask`), whose turn is stored in the same step: a
+conversation with a turn still queued or running refuses another with `busy`,
+checked and inserted in one SQLite transaction. Chat jobs run in their own lane
+of two workers beside the review workers, so a question never waits behind a
+review, and at most one per conversation. The job keeps the agent's transcript
+like a fix (`has_transcript`), reports phase, calls, tokens and cost
+(`pricing.BackendAccountingCost`), and fails with the generation reasons
+(`budget`, `backend`, `validation`, `interrupted`, `internal`) or
+`needs_clone`. A failed, cancelled or interrupted job settles its turn the same
+way; a turn whose job is gone (a daemon that stopped while it ran) reads as
+interrupted and does not keep the conversation busy. A `chat` server-sent
+event (`{conversation, repository, pr, turn, state}`, never the answer) goes
+out when a question is queued and when it settles.
+
 Completion mirrors the hosted worker's `Generate` and `Complete`: after the loop,
 `agent.RedactOutput` masks the document, findings, model and diagnostics (with
 the unpacked tree's paths as the known checkout paths) and

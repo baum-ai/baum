@@ -353,6 +353,29 @@ project directories named after such a directory and Codex rollouts that record
 such a directory as their cwd; it never follows a symlink. Runs for other
 backends and review groups keep nothing and are removed at once.
 
+Asking the review agent a question about a pull request (chat, desktop and
+daemon only) runs the same harness with the same read-only restrictions as the
+review: Claude Code in restricted mode with Read, Glob and Grep confined to
+the run directory, Codex in its read-only sandbox (also on `exec fork` and
+`exec resume`). It never runs Cursor or the Anthropic API backend. The first
+question forks the review's kept session in the review's run directory, later
+questions resume that fork there; the CLI keeps each conversation's
+transcript in its usual store beside the review's, holding the questions, the
+files the agent read and its answers. When the review's session is gone, baum
+seeds a new run directory under the same `<cache>/baum/review-runs/` root
+(0700) with the checkout of the review's head from your clone, the saved
+review (already masked) and the earlier questions and answers (masked). Using
+a directory refreshes its modification time, so it expires 14 days after the
+conversation last used it; pruning a review's older versions and the expiry
+delete these directories and every CLI session in them, chat forks included,
+by the same rules as above. The question and the part of the review it is
+about are untrusted data in the prompt, between markers with a random nonce
+and with secrets masked. The answer is masked for secrets before it is
+stored or shown, and its citations are checked against the checkout (no
+absolute paths, no `..`, no symlink leaving it, only lines that exist).
+Conversations are stored in the clone's review store; the session id and run
+directory never leave the daemon, and the logs carry sizes, not text.
+
 The unsandboxed mode (`--sandbox danger-full-access`) exists only as the
 `Container` profile for the hosted review agent, which runs inside its own
 container. A test fails if any code under `oss/internal` or `oss/cmd` names it.

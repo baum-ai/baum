@@ -148,6 +148,42 @@ notice and Up next link to it: **Watch** while the fix runs, **Transcript**
 after. A failure's `detail` (git's own words for the `signing` reason, which the
 daemon checks before the agent runs) shows under **What happened**.
 
+Questions to the review agent (chat; the UI comes in a later step). The daemon
+serves a pull request's conversations with the agent that wrote a saved review,
+by registered clone ID and pull request as for `api/versions`:
+
+- `GET api/prs/chat?clone=<id>&pr=<n>` returns `{conversations: [{id, version,
+  backend, model, seeded, created, updated, turns: [{seq, question, focus,
+  answer?, job_id, state, reason?, note?, cost_usd?, cost_reason?, created,
+  finished?}]}]}`, newest first. `answer` is `{answer_markdown, citations:
+  [{path, start_line, end_line}], suggests_fix: {summary} | null}`, masked for
+  secrets, its citations checked against the head. `state` is `queued`,
+  `running`, `completed`, `failed`, `cancelled` or `interrupted` (a turn whose
+  job a stopped daemon left behind). A conversation whose `version` is not the
+  latest review is about an older one. `seeded` with a turn's `note` means the
+  conversation started without the review's own context.
+- `POST api/prs/chat` with `{clone, pr, version, conversation_id?, question,
+  focus?}` (question 1–4000 characters; `focus` `{kind: "section" | "stop" |
+  "overview", id?, title?, anchors?: [{path, start_line?, end_line?}]}`, at
+  most 20 anchors) starts a conversation, or asks the next question of one,
+  and answers 202 `{conversation_id, turn, job}`. Refusals are `{code,
+  message}`: `invalid_request` 400 (unknown fields included), `not_found` 404
+  (an unregistered clone or an unknown conversation), `no_review` 404 (no
+  saved review at that version), `needs_clone` 409, `busy` 409 (the
+  conversation's last question is still queued or running),
+  `unsupported_backend` 422 (the review was not written by Claude Code or
+  Codex on this computer), `restarting` 503. Without the capability `GET`
+  answers `{available: false, code: "chat_unavailable"}` and `POST` 503.
+
+Each question is a job of `kind: "chat"` (`chat: {conversation, turn,
+version}`, the pull request in `pr`), queued at once without an estimate, which
+the app can label "Question on #<pr>". It runs beside reviews, not behind
+them, keeps a transcript (`has_transcript`, `GET api/jobs/{id}/transcript`),
+reports its phase and cost, and can be cancelled, which settles the turn as
+cancelled. A `chat` event `{conversation, repository, pr, turn, state}` goes
+out on the SSE stream when a question is queued and when it settles; the
+answer itself is read with `GET api/prs/chat`.
+
 Merging: a pull request whose Merge state is Ready (open, not a draft) shows a
 Merge button in the PR page header and, on hover or keyboard focus, beside Ready
 in its Pull requests row (always drawn on touch screens), and as the Inbox
