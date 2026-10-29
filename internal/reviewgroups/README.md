@@ -49,7 +49,9 @@ groups in step (`Store.SyncStacks`):
   Pull requests from forks are left out, and a stack of more than eight pull
   requests gets no group.
 - A stack without a group gets one (`stack` true), named after its bottom
-  pull request's title. A stack that gained or lost members (a parent merged,
+  pull request's title as "Review together" names a group after the first.
+  The app shows a stack group, and its automatically generated review, as it
+  shows a group a person made and generated. A stack that gained or lost members (a parent merged,
   a pull request added on top) gives its group the new members; one that is
   gone (one open member left, or none) dissolves its group, which leaves every
   list like a deleted one and keeps its versions.

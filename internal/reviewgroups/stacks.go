@@ -86,14 +86,15 @@ func Stacks(prs []discovery.PullRequest) []Stack {
 	return out
 }
 
-// stackName is a valid group name from the bottom pull request's title.
+// stackName is the name "Review together" suggests for a group: the first
+// (here the bottom) pull request's title, cut to a group name's length.
 func stackName(pr discovery.PullRequest) string {
 	title := strings.Join(strings.FieldsFunc(pr.Title, func(r rune) bool { return unicode.IsSpace(r) || unicode.IsControl(r) }), " ")
 	if title == "" {
-		return fmt.Sprintf("Stack from #%d", pr.Number)
+		return fmt.Sprintf("#%d", pr.Number)
 	}
 	if runes := []rune(title); len(runes) > MaxNameLength {
-		title = strings.TrimSpace(string(runes[:MaxNameLength-1])) + "…"
+		title = strings.TrimSpace(string(runes[:MaxNameLength]))
 	}
 	return title
 }
@@ -157,7 +158,7 @@ func (s *Store) SyncStacks(ctx context.Context, repository string, stacks []Stac
 		if at < 0 {
 			name, err := cleanName(stack.Name)
 			if err != nil {
-				name = fmt.Sprintf("Stack from #%d", members[0])
+				name = fmt.Sprintf("#%d", members[0])
 			}
 			id := newID()
 			if _, err := tx.ExecContext(ctx, `INSERT INTO groups(id,repository,name,members,stack,created,updated) VALUES(?,?,?,?,1,?,?)`, id, repository, name, string(encoded), now.UnixMilli(), now.UnixMilli()); err != nil {

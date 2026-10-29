@@ -55,7 +55,7 @@ func TestStacksFollowBaseBranches(t *testing.T) {
 func TestStackNameFitsAGroupName(t *testing.T) {
 	long := open(1, "a", "main")
 	long.Title = strings.Repeat("word ", 40) + "\tend"
-	if name, err := cleanName(stackName(long)); err != nil || len([]rune(name)) != MaxNameLength || !strings.HasSuffix(name, "…") {
+	if name, err := cleanName(stackName(long)); err != nil || len([]rune(name)) > MaxNameLength || !strings.HasPrefix(name, "word word") {
 		t.Fatalf("name %q %v", name, err)
 	}
 	if name := stackName(open(4, "a", "main")); name != "PR a" {
@@ -63,7 +63,7 @@ func TestStackNameFitsAGroupName(t *testing.T) {
 	}
 	untitled := open(4, "a", "main")
 	untitled.Title = " \n"
-	if name := stackName(untitled); name != "Stack from #4" {
+	if name := stackName(untitled); name != "#4" {
 		t.Fatalf("name %q", name)
 	}
 }

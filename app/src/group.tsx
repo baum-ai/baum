@@ -440,13 +440,10 @@ export function GroupPage({
         steps={steps}
         header={{
           heading: group.name,
-          titleAside: <Badge size="compact">{group.stack ? "Stack" : "Review group"}</Badge>,
+          titleAside: <Badge size="compact">Review group</Badge>,
           statistics: (
             <p className="text-xs text-(--text-tertiary)">
-              {group.repository} · {group.members.length}{" "}
-              {group.stack
-                ? "stacked pull requests, grouped automatically"
-                : "pull requests reviewed together"}
+              {group.repository} · {group.members.length} pull requests reviewed together
             </p>
           ),
           back: { href: back.href, label: back.label },
