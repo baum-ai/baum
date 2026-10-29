@@ -4,7 +4,7 @@ Detects stacked pull requests: a chain or tree of a repository's pull
 requests, each based on another's head branch (A ← B ← C). `Plan` is a pure
 function from the candidate pull requests and the stored stacks to the
 changes that bring the stacks in line. The hosted platform stores stacks in
-PostgreSQL (`platform/internal/prstack`); the local app keeps them as review
+PostgreSQL; the local app keeps them as review
 groups (`internal/reviewgroups`, "Stack groups").
 
 ## Detection
