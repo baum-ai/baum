@@ -170,16 +170,19 @@ function InboxRows({
       // Focus that was inside the row would otherwise fall to the page.
       close(!!menu.current?.contains(document.activeElement));
     };
+    // Esc is the menu's alone while it is open: taken before the page's keys,
+    // whose Esc would clear the focus just given back to `⋯`.
     const escape = (event: KeyboardEvent) => {
       if (event.key !== "Escape") return;
       event.preventDefault();
+      event.stopPropagation();
       close(true);
     };
     document.addEventListener("mousedown", outside);
-    document.addEventListener("keydown", escape);
+    window.addEventListener("keydown", escape, true);
     return () => {
       document.removeEventListener("mousedown", outside);
-      document.removeEventListener("keydown", escape);
+      window.removeEventListener("keydown", escape, true);
     };
   }, [open]);
   // A deleted row takes its button with it: focus moves to its neighbour, or
