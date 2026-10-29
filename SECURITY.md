@@ -1023,9 +1023,10 @@ agent socket is the starting environment's, else the shell's; it is used only
 to fetch a missing pull request commit from your clone's remote, as `baum internal
 generate` would, never given to an agent backend, and dropped when it no longer
 exists. The daemon's fetches never prompt: git's terminal prompts and SSH's
-askpass are off, plain `ssh` runs in batch mode, and a fetch has a timeout, so
-a key that needs a passphrase fails the run with a message to add it to your
-SSH agent, and an unknown host key with git's error. An ssh command you configured runs as you wrote it.
+askpass are off, plain `ssh` runs in batch mode, and a fetch has a timeout. An
+SSH key the agent does not hold (one that needs a passphrase) or an HTTPS
+password nobody can type fails the run with a message saying how to make the
+credential available; an unknown host key fails it with git's error. An ssh command you configured runs as you wrote it.
 
 ## Authenticated local application
 

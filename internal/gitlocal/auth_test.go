@@ -30,6 +30,9 @@ func TestFetchSignInFailures(t *testing.T) {
 			"echo 'git@example.invalid: Permission denied (publickey).' >&2", &AuthError{Host: "example.invalid", SSH: true}},
 		{"SSH host unreachable", "ssh://git@example.invalid/acme/demo.git",
 			"echo 'ssh: connect to host example.invalid port 22: Connection refused' >&2", nil},
+		// HTTPS's pattern from an SSH remote is not its sign-in failure.
+		{"SSH with the other transport's output", "ssh://git@example.invalid/acme/demo.git",
+			"echo 'fatal: terminal prompts disabled' >&2", nil},
 		{"HTTPS asks for a password", asks.URL + "/acme/demo.git", "", &AuthError{Host: "127.0.0.1"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
