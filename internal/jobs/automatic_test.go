@@ -28,13 +28,15 @@ type autoExecutor struct {
 	fail       error
 	// noClone fails Execute as Local does once the job's clone is gone.
 	noClone bool
+	// members are each group's member heads, as Local prepares them.
+	members map[string]string
 }
 
 func (f *autoExecutor) Prepare(_ context.Context, item Item) (Prepared, string, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.prepared++
-	p := Prepared{ConfigDigest: "digest", Item: item, Repository: "org/repo", HeadSHA: f.heads[item.PR], Backend: f.backend, Model: "claude-sonnet-4-5", RequiresIsolationConfirmation: f.restricted, Draft: f.draft}
+	p := Prepared{ConfigDigest: "digest", Item: item, Repository: "org/repo", HeadSHA: f.heads[item.PR], Backend: f.backend, Model: "claude-sonnet-4-5", RequiresIsolationConfirmation: f.restricted, Draft: f.draft, Members: f.members[item.Group]}
 	return p, "2026-10-01", nil
 }
 
@@ -528,4 +530,46 @@ func TestAutomaticJobCancelledForTheOldDailyCapLoads(t *testing.T) {
 	if _, err := q.SubmitAutomatic(context.Background(), auto(1, "a1")); !errors.Is(err, ErrDuplicate) {
 		t.Fatalf("the old head ran again: %v", err)
 	}
+}
+
+// A group job runs its member heads once, and is busy or a duplicate only
+// against jobs of the same group.
+func TestAutomaticGroupJobsAreKeyedByGroupAndMemberHeads(t *testing.T) {
+	q, f := newAutoQueue(t)
+	f.mu.Lock()
+	f.members = map[string]string{"g1": "1@a1,2@b1", "g2": "2@b1,3@c1"}
+	f.mu.Unlock()
+	group := func(id, heads string) AutomaticRequest {
+		return AutomaticRequest{Item: Item{Clone: "clone", Group: id}, Repository: "org/repo", Head: heads, Trigger: TriggerStackReviewed}
+	}
+	if _, err := q.SubmitAutomatic(context.Background(), group("g1", "1@a1,2@b0")); !errors.Is(err, ErrHeadChanged) {
+		t.Fatalf("other member heads: %v", err)
+	}
+	if _, err := q.SubmitAutomatic(context.Background(), group("g1", "1@a1,2@b1")); err != nil {
+		t.Fatal(err)
+	}
+	<-f.started
+	if _, err := q.SubmitAutomatic(context.Background(), group("g1", "1@a1,2@b1")); !errors.Is(err, ErrBusy) {
+		t.Fatalf("the running group: %v", err)
+	}
+	// Another group and the members' own reviews are not busy.
+	if _, err := q.SubmitAutomatic(context.Background(), group("g2", "2@b1,3@c1")); err != nil {
+		t.Fatalf("another group: %v", err)
+	}
+	if _, err := q.SubmitAutomatic(context.Background(), auto(1, "a1")); err != nil {
+		t.Fatalf("a member's review: %v", err)
+	}
+	f.release <- struct{}{}
+	for deadline := time.Now().Add(5 * time.Second); ; time.Sleep(time.Millisecond) {
+		if time.Now().After(deadline) {
+			t.Fatalf("the group job did not finish: %+v", q.List())
+		}
+		if _, err := q.SubmitAutomatic(context.Background(), group("g1", "1@a1,2@b1")); !errors.Is(err, ErrBusy) {
+			break
+		}
+	}
+	if _, err := q.SubmitAutomatic(context.Background(), group("g1", "1@a1,2@b1")); !errors.Is(err, ErrDuplicate) {
+		t.Fatalf("the same member heads again: %v", err)
+	}
+	close(f.release)
 }

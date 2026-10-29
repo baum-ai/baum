@@ -21,7 +21,7 @@ const inboxQuery = `query LocalInbox($owner: String!, $name: String!, $cursor: S
   pullRequests(states: OPEN, first: 50, after: $cursor) {
    pageInfo { hasNextPage endCursor }
    nodes {
-    number title headRefOid headRefName isDraft updatedAt author { __typename login }
+    number title headRefOid headRefName baseRefName isDraft updatedAt author { __typename login }
     headRepository { databaseId nameWithOwner } baseRepository { databaseId nameWithOwner }
     reviewRequests(first: 100) { nodes { requestedReviewer { __typename ... on User { login } ... on Team { databaseId } } } pageInfo { hasNextPage } }
     reviewDecision latestOpinionatedReviews(first: 100) { nodes { state } pageInfo { hasNextPage } }
@@ -43,9 +43,9 @@ type gqlRepository struct {
 	NameWithOwner string
 }
 type gqlPR struct {
-	Number                         int
-	Title, HeadRefOid, HeadRefName string
-	IsDraft                        bool
+	Number                                      int
+	Title, HeadRefOid, HeadRefName, BaseRefName string
+	IsDraft                                     bool
 	// UpdatedAt feeds the probe's fingerprint and the snapshot; it is left
 	// out of the unchanged comparison so the backoff is unaffected.
 	UpdatedAt      time.Time `json:",omitzero"`
@@ -93,6 +93,7 @@ func (pr gqlPR) legacy() apiPR {
 			FullName string `json:"full_name"`
 		}{pr.HeadRepository.DatabaseID, pr.HeadRepository.NameWithOwner}
 	}
+	out.Base.Ref = pr.BaseRefName
 	out.Base.Repo.ID, out.Base.Repo.FullName = pr.BaseRepository.DatabaseID, pr.BaseRepository.NameWithOwner
 	for _, node := range pr.ReviewRequests.Nodes {
 		reviewer := node.RequestedReviewer

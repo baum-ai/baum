@@ -75,6 +75,9 @@ type Scheduler struct {
 	// Reviewed returns the head of the PR's latest saved review, "" if none.
 	// Nil uses SavedHead.
 	Reviewed func(context.Context, repos.Clone, int) (string, error)
+	// Groups holds the review groups; the reviews of stack groups follow
+	// their members' (see passGroups). Nil generates no group review.
+	Groups Groups
 	// Hold reports that the daemon is stopping or waiting to restart as a
 	// newer version; nothing is submitted meanwhile, so the queue can drain.
 	Hold func() bool
@@ -128,6 +131,7 @@ func (s *Scheduler) BeginIdentityChange() func(bool) {
 		for _, repository := range s.load().Repositories {
 			repository.Since = s.resetAt
 			repository.PRs = map[int]*prState{}
+			repository.Groups = map[string]*groupState{}
 			repository.AwaitingBaseline = true
 		}
 		s.observed = map[string]time.Time{}
@@ -166,9 +170,11 @@ type fileState struct {
 // pull requests already open then are not caught up. The paused_until and
 // paused_cap of the daily cap an older baum had are ignored on load.
 type repoState struct {
-	Since  time.Time        `json:"since"`
-	PRs    map[int]*prState `json:"prs"`
-	Notice string           `json:"notice,omitempty"`
+	Since time.Time        `json:"since"`
+	PRs   map[int]*prState `json:"prs"`
+	// Groups are the repository's stack groups by ID.
+	Groups map[string]*groupState `json:"groups,omitempty"`
+	Notice string                 `json:"notice,omitempty"`
 	// AwaitingBaseline: enabled at Since, but no discovery snapshot fetched
 	// since then has been seen yet; older snapshots are not a baseline.
 	AwaitingBaseline bool `json:"awaiting_baseline,omitempty"`
@@ -327,6 +333,9 @@ func (s *Scheduler) load() *fileState {
 		if r.PRs == nil {
 			r.PRs = map[int]*prState{}
 		}
+		if r.Groups == nil {
+			r.Groups = map[string]*groupState{}
+		}
 		if r.Notice == legacyNoticeDailyCap {
 			r.Notice = ""
 		}
@@ -364,7 +373,7 @@ func (s *Scheduler) prune(v view) bool {
 // on; its baseline is the first snapshot fetched after this. Called with mu
 // held.
 func (s *Scheduler) enable(name string) *repoState {
-	rs := &repoState{Since: s.now().UTC(), PRs: map[int]*prState{}, AwaitingBaseline: true}
+	rs := &repoState{Since: s.now().UTC(), PRs: map[int]*prState{}, Groups: map[string]*groupState{}, AwaitingBaseline: true}
 	s.state.Repositories[name] = rs
 	return rs
 }
@@ -600,6 +609,7 @@ func (s *Scheduler) Pass(ctx context.Context) {
 			paused[w.name] = true
 		}
 	}
+	s.passGroups(ctx, v, interrupted, refused, paused, now)
 }
 
 type outcome int

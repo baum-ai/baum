@@ -20,6 +20,7 @@ import (
 	"github.com/baum-ai/baum/internal/github"
 	"github.com/baum-ai/baum/internal/jobs"
 	"github.com/baum-ai/baum/internal/repos"
+	"github.com/baum-ai/baum/internal/reviewgroups"
 )
 
 type fakeRegistry struct {
@@ -92,6 +93,8 @@ type executor struct {
 	// needsClone is a clone ID whose items Prepare refuses with ErrNeedsClone,
 	// though the registry reports the clone available.
 	needsClone string
+	// groups are the review groups a group item names.
+	groups *reviewgroups.Store
 }
 
 func (e *executor) Prepare(_ context.Context, item jobs.Item) (jobs.Prepared, string, error) {
@@ -108,7 +111,19 @@ func (e *executor) Prepare(_ context.Context, item jobs.Item) (jobs.Prepared, st
 	if item.Clone == "clone-org/other" {
 		repository = "org/other"
 	}
-	return jobs.Prepared{ConfigDigest: "d", Item: item, Repository: repository, HeadSHA: e.heads[item.PR], Backend: backend, Model: "claude-sonnet-4-5"}, "2026-10-01", nil
+	p := jobs.Prepared{ConfigDigest: "d", Item: item, Repository: repository, HeadSHA: e.heads[item.PR], Backend: backend, Model: "claude-sonnet-4-5"}
+	if item.Group != "" {
+		g, err := e.groups.Get(context.Background(), item.Group)
+		if err != nil {
+			return jobs.Prepared{}, "", err
+		}
+		heads := []string{}
+		for _, n := range g.Members {
+			heads = append(heads, strconv.Itoa(n)+"@"+e.heads[n])
+		}
+		p.HeadSHA, p.Members = e.heads[g.Members[0]], strings.Join(heads, ",")
+	}
+	return p, "2026-10-01", nil
 }
 func (e *executor) Execute(ctx context.Context, p jobs.Prepared, _ func(jobs.Progress)) (*float64, error) {
 	// Like jobs.Local's recheck: an automatic job of a PR now a draft is
@@ -222,7 +237,9 @@ func (h *harness) observe(prs ...pr) {
 func (h *harness) queued() []string {
 	var out []string
 	for _, j := range h.queue.List() {
-		if j.Automatic {
+		if j.Automatic && j.Group != "" {
+			out = append(out, j.Repository+"#group@"+j.Members+":"+j.Trigger)
+		} else if j.Automatic {
 			out = append(out, j.Repository+"#"+strconv.Itoa(j.PR)+"@"+j.HeadSHA+":"+j.Trigger)
 		}
 	}
