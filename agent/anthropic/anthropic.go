@@ -146,6 +146,9 @@ func (b *Backend) httpClient() *http.Client {
 // Run implements agent.Backend. Every response is one call and is charged to
 // the request's budgets; a call the budgets cannot pay for is not made.
 func (b *Backend) Run(ctx context.Context, request agent.Request) (result agent.Result, err error) {
+	if request.WantsSession() {
+		return result, errors.New("anthropic: session options are not supported")
+	}
 	if request.MaxCalls < 1 {
 		return result, errors.New(agent.GenerationBudgetExceededReason("model calls"))
 	}

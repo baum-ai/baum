@@ -782,6 +782,20 @@ did. The Codex backend logs each
 turn and each tool with its command (at most 512 bytes), duration, exit code
 and status, never its output.
 
+A local Claude Code or Codex call can keep its session: `Request.PersistSession`
+omits `--no-session-persistence` (Claude Code) or `--ephemeral` (Codex);
+`ResumeSession` continues an earlier session (`--resume <id>`, `codex exec
+resume <id>`) and implies persisting; `ForkSession`, with `ResumeSession`,
+continues in a new session (`--fork-session`, `codex exec fork <id>`) and
+leaves the original untouched. `Result.SessionID` is the id the CLI reported
+(Claude Code's `init` event, else its `result` event; Codex's `thread.started`
+`thread_id`), the new session's for a fork. Only the `User` and `Local`
+profiles accept these options, and only for reviews and tasks, not fixes; the
+hosted profiles, Cursor and the Anthropic backend refuse them, and a fork
+without a session to resume is an error. Without them every argv is unchanged.
+Codex's `exec resume` and `exec fork` take no `--sandbox`, so the same
+read-only sandbox is passed as `-c sandbox_mode="read-only"`.
+
 The document goes through `review`: the validator
 completes it and returns located findings. On findings the loop sends back the
 bundle, the rejected document and the findings, without source excerpts, as a

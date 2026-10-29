@@ -256,7 +256,9 @@ as far as the tool allows:
   only the inline `--settings` baum passes is applied; administrator-managed
   policy settings may still apply. No MCP server is loaded
   (`--strict-mcp-config` with an empty list), and no session is written
-  (`--no-session-persistence`).
+  (`--no-session-persistence`), unless the caller asks the local run to keep,
+  resume (`--resume`) or fork (`--fork-session`) a session; the hosted profile
+  never does.
 - The process gets an allowlist of your environment variables. Provider
   credentials and configuration (`ANTHROPIC_*`, `OPENAI_*`, `AWS_*`,
   `GOOGLE_*`, `AZURE_*`), GitHub tokens, Git settings and the SSH agent are
@@ -288,7 +290,10 @@ Codex's own read-only sandbox:
   model can read any file your account can, such as `~/.ssh` or `~/.aws`, and
   a pull request could try to persuade it to. Baum adds no further
   restriction, and the model's answer is the only thing baum keeps.
-- `--ephemeral` writes no session, and the `hooks`, `apps` and `multi_agent`
+- `--ephemeral` writes no session (a local run that keeps, resumes or forks a
+  session omits it and runs `exec resume` or `exec fork`, with the sandbox set
+  as `-c sandbox_mode="read-only"` because those subcommands take no
+  `--sandbox`), and the `hooks`, `apps` and `multi_agent`
   features are disabled. Web search is off and approvals are never requested.
 - `--ignore-rules` skips user and project execpolicy `.rules` files, and
   `--ignore-user-config` skips `$CODEX_HOME/config.toml` (auth still uses

@@ -6,6 +6,7 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"path/filepath"
 	"strings"
@@ -79,6 +80,37 @@ type Request struct {
 	// Transcript, when set, receives each step of the run as the person
 	// watching sees it (see TranscriptEntry); nil when none is kept.
 	Transcript func(TranscriptEntry)
+	// PersistSession keeps the CLI's session instead of discarding it, so the
+	// result's SessionID can be resumed later. Only a local Claude Code or
+	// Codex run supports it; the hosted profiles, Cursor and the Anthropic API
+	// backend refuse it. A ResumeSession implies it.
+	PersistSession bool
+	// ResumeSession is the session (Claude Code) or thread (Codex) id to
+	// continue. The session is kept, as with PersistSession.
+	ResumeSession string
+	// ForkSession, with ResumeSession, continues in a new session and leaves
+	// the original untouched; Result.SessionID is then the new one. Without
+	// ResumeSession it is an error.
+	ForkSession bool
+}
+
+// WantsSession reports whether the request uses any session option.
+func (r Request) WantsSession() bool {
+	return r.PersistSession || r.ResumeSession != "" || r.ForkSession
+}
+
+// KeepsSession reports whether the CLI must keep its session: a persisted,
+// resumed or forked run.
+func (r Request) KeepsSession() bool {
+	return r.PersistSession || r.ResumeSession != ""
+}
+
+// ValidateSession rejects an inconsistent combination of session options.
+func (r Request) ValidateSession() error {
+	if r.ForkSession && r.ResumeSession == "" {
+		return errors.New("fork needs a session to resume")
+	}
+	return nil
 }
 
 // TranscriptEntry is one step of a run as the person watching it sees it:
@@ -122,6 +154,10 @@ type Result struct {
 	ModelSource                string
 	Usage                      Usage
 	StructuredOutputRejections int
+	// SessionID is the session (Claude Code) or thread (Codex) id the CLI
+	// reported for this call; with Request.ForkSession, the new session's id.
+	// Empty when the CLI reported none.
+	SessionID string
 }
 
 // Event stores bounded metadata, never assistant text, tool output or search patterns.
