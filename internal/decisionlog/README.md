@@ -86,11 +86,15 @@ not a failure.
    `codex exec` turn with its shell tools off, normally one request (a call to
    a tool Codex still offers, such as its patch or plan tool, makes another
    within the turn). The attempt is settled with its cost from the reported
-   usage, or none when it cannot be priced, and with how many replies the
-   harness rejected against the schema (`rejections`; the last one's reason
-   goes to the private log with the attempt's stage, item and id). An attempt
-   still pending when the daemon starts is settled as abandoned. A reply
-   stands when the ledger cannot be written after it; the failure is logged.
+   usage, priced as reviews price theirs (`pricing.List.OutcomeCost`): when
+   any part of it is unknown (a run cut short, a speed or 1-hour cache-write
+   split not reported, as Codex never reports its speed, or several calls
+   whose prompt sizes may straddle a long-prompt tier) the cost is unknown,
+   not estimated. It is also settled with how many replies the harness
+   rejected against the schema (`rejections`; the last one's reason goes to
+   the private log with the attempt's stage, item and id). An attempt still
+   pending when the daemon starts is settled as abandoned. A reply stands
+   when the ledger cannot be written after it; the failure is logged.
 9. The reply is masked for secrets before it is parsed, validated against the
    transcript, given IDs and saved.
 
@@ -115,8 +119,8 @@ changes; other skips only when it changes.
   reservation, cost, tokens, state, failure reason, rejected replies), with the `stage` that made the call
   (`capture`, or a feature log stage) and the `item` it was about.
 
-Settled attempts older than 90 days are pruned daily; decisions, obsolete
-ones included, are kept for good, as hosted extraction keeps them.
+Nothing is pruned: the ledger and the decisions, obsolete ones included, are
+kept for good, as hosted extraction keeps them.
 The store holds decisions, rationale and evidence quotes derived from redacted
 transcripts, never the transcripts themselves.
 

@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"io"
 	"log/slog"
-	"math"
 	"time"
 
 	"github.com/baum-ai/baum/agent"
@@ -82,29 +81,12 @@ func reserveFor(list *pricing.List, backend, model string, inputTokens, outputTo
 	return (first + further) / 1_000_000, true
 }
 
-// cost prices a call's reported usage, whose buckets are disjoint
-// (agent.Usage); nil when it cannot be priced.
+// cost prices a call's reported usage as review accounting does
+// (pricing.List.OutcomeCost): nil when it cannot be priced or any part of it
+// is unknown, such as an unreported speed or 1-hour cache-write split, or a
+// prompt range that straddles a long-prompt tier.
 func cost(list *pricing.List, model string, u agent.Usage) *float64 {
-	if u.Unreported || u.IsZero() || model == "" {
-		return nil
-	}
-	usage := pricing.Usage{Vendor: pricing.VendorClaudeCode, InputTokens: u.Input, OutputTokens: u.Output,
-		CacheReadTokens: u.CacheRead, CacheWriteTokens: u.CacheCreate, SingleRequest: true}
-	if u.CacheCreate1h != nil {
-		usage.CacheWrite1hTokens = *u.CacheCreate1h
-	}
-	if u.Speed != nil {
-		usage.Speed = pricing.Speed(*u.Speed)
-	}
-	if u.MinPrompt != nil && u.MaxPrompt != nil && *u.MinPrompt != *u.MaxPrompt {
-		usage.SingleRequest = false
-		usage.PromptRangeKnown, usage.MinPromptTokens, usage.MaxPromptTokens = true, *u.MinPrompt, *u.MaxPrompt
-	}
-	value, ok := list.Cost(list.Normalize(model, ""), usage)
-	if !ok || math.IsNaN(value) || math.IsInf(value, 0) {
-		return nil
-	}
-	return &value
+	return list.OutcomeCost(model, agent.Outcome{Usage: u})
 }
 
 // decisionUsage converts disjoint buckets to decisions.Usage, whose input
