@@ -52,7 +52,7 @@ func TestBuildChargesFailedCalls(t *testing.T) {
 	for _, tc := range []struct {
 		usage agent.Usage
 		paid  bool
-	}{{agent.Usage{Input: 1000, Output: 100}, true}, {agent.Usage{Input: 1000, Output: 100, Unreported: true}, false}} {
+	}{{agent.Usage{Input: 1000, Output: 100, Speed: new("standard")}, true}, {agent.Usage{Input: 1000, Output: 100, Speed: new("standard"), Unreported: true}, false}} {
 		f := newFeatureFixture(t)
 		f.clock.now = t0.Add(60 * 24 * time.Hour)
 		f.history(1)

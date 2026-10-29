@@ -193,9 +193,6 @@ func covered(row Session, fingerprint string, day time.Time) bool {
 	return row.Coverage == CoverageExtracted || !transient[row.SkipReason] || !row.UpdatedAt.Before(day)
 }
 
-// Prune prunes the store (Store.Prune).
-func (c *Capturer) Prune(ctx context.Context) error { return c.Store.Prune(ctx) }
-
 // Capture runs the pipeline for one session. An error is one the store or the
 // registry returned, or a failed call; what was skipped is in the report.
 func (c *Capturer) Capture(ctx context.Context, t Target, o Options) (Report, error) {

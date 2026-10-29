@@ -186,7 +186,7 @@ func TestGatedBuildStopsWhenTurnedOffAndResumes(t *testing.T) {
 	f := newFeatureFixture(t)
 	f.clock.now = t0.Add(60 * 24 * time.Hour)
 	f.history(50)
-	f.backend.usage = &agent.Usage{Input: 1000, Output: 1000}
+	f.backend.usage = &agent.Usage{Input: 1000, Output: 1000, Speed: new("standard")}
 	f.backend.merge = func(string) (string, error) { return `{"groups":[]}`, nil }
 	f.backend.batch = func(user string) (string, error) {
 		f.off = true
