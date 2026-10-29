@@ -24,7 +24,9 @@ import {
   ShortcutsSheet,
   listKeys,
   useCommandKeys,
+  useEscapeBlurs,
   useKeyHints,
+  useNoTab,
   useRowFocus,
   useShortcuts,
   VIEW_KEYS,
@@ -34,7 +36,7 @@ import { GoTo, type GoToItem } from "./go-to";
 import { PAGES } from "./pages";
 import { LocalReview } from "./review";
 import { useDiagnosticProblems } from "./diagnostics";
-import { RepositoriesPage, SettingsPage, type ReviewDefaults } from "./settings";
+import { RepositoriesPage, SettingsPage, settingsSection, type ReviewDefaults } from "./settings";
 import { needsYou, SessionsPage, transcriptHref } from "./sessions";
 import { SessionTranscriptPage } from "./session-transcript";
 import { AnalyticsPage } from "./analytics";
@@ -49,11 +51,11 @@ import {
   fixJob,
   fixName,
   isActiveJob,
+  startFix,
   filtered,
   rowKey,
   automaticLabel,
   jobReasonText,
-  automaticNotice,
   parseLive,
   parseGroups,
   sameRepository,
@@ -64,12 +66,13 @@ import {
   type Clone,
   type Repository,
   type Entry,
+  type FixOnly,
   type Snapshot,
   type Job,
   type LiveSession,
 } from "./api";
 import { LoadingStatus } from "./nine-dots";
-import { FixDetails, FixDialog, TranscriptLink } from "./fix";
+import { FixDetails, TranscriptLink } from "./fix";
 import { JobPage } from "./job-transcript";
 
 function useLocation() {
@@ -196,8 +199,14 @@ function Workspace({ url }: { url: UrlState }) {
   const [generationError, setGenerationError] = useState("");
   // A generation that includes a fork, waiting for the user's confirmation.
   const [fork, setFork] = useState<{ entries: Entry[]; mode: "single" | "batch" } | null>(null);
-  // A fix waiting for the user's confirmation.
-  const [fixing, setFixing] = useState<Entry | null>(null);
+  // The pull requests whose fix is on its way to the daemon: their Fix says
+  // Starting from the click, not from the job the answer brings.
+  const [fixStarting, setFixStarting] = useState(new Set<string>());
+  // Why the latest fix asked for did not start, in words, shown beside the
+  // pull request it was for (`key` is its rowKey).
+  const [fixError, setFixError] = useState<{ key: string; number: number; text: string } | null>(
+    null,
+  );
   const [shortcuts, setShortcuts] = useState(false);
   const [goingTo, setGoingTo] = useState(false);
   const [rates, setRates] = useState<
@@ -426,6 +435,28 @@ function Workspace({ url }: { url: UrlState }) {
       setStarting((now) => new Set([...now].filter((key) => !keys.includes(key))));
     }
   };
+  // A fix starts at once, from its button or key: there is no dialog and no
+  // price to confirm. One the daemon will not run (a fork, no push access,
+  // nothing to fix) says why where it was asked for.
+  const fix = async (entry: Entry, only?: FixOnly) => {
+    const clone = cloneFor(entry);
+    const key = rowKey(entry);
+    if (!clone || fixStarting.has(key) || isActiveJob(fixJob(entry, jobs))) return;
+    setFixError(null);
+    setFixStarting((now) => new Set([...now, key]));
+    try {
+      await startFix(clone, entry.pull_request.number, only);
+      await reload();
+    } catch (e) {
+      setFixError({ key, number: entry.pull_request.number, text: errorText(e) });
+    } finally {
+      setFixStarting((now) => new Set([...now].filter((k) => k !== key)));
+    }
+  };
+  const fixState = (entry: Entry) => ({
+    starting: fixStarting.has(rowKey(entry)),
+    error: fixError?.key === rowKey(entry) ? fixError.text : "",
+  });
   // One notice for every repository GitHub could not refresh, whichever
   // refresh failed: the cause and the fix are usually the same connection.
   const unsynced = [
@@ -458,13 +489,19 @@ function Workspace({ url }: { url: UrlState }) {
   // The shortcuts sheet lists the keys of where it was opened first.
   const shortcutsPlace: ShortcutsPlace = onList
     ? "pulls"
-    : (page === "inbox" || page === "pulls") && (groupId || selectedEntry)
-      ? "review"
-      : (page === "sessions" && openSession) || openJob
-        ? "page"
-        : page === "inbox" || page === "sessions" || page === "jobs" || page === "repositories"
-          ? page
-          : "anywhere";
+    : selectedEntry && url.search.get("walk")
+      ? "walkthrough"
+      : (page === "inbox" || page === "pulls") && (groupId || selectedEntry)
+        ? "review"
+        : (page === "sessions" && openSession) || openJob
+          ? "page"
+          : page === "inbox" ||
+              page === "sessions" ||
+              page === "jobs" ||
+              page === "repositories" ||
+              page === "settings"
+            ? page
+            : "anywhere";
   const [openAgent = "", openID = ""] = openSession
     ? [
         openSession.slice(0, openSession.indexOf(":")),
@@ -528,6 +565,8 @@ function Workspace({ url }: { url: UrlState }) {
     ];
   };
   useKeyHints();
+  useEscapeBlurs();
+  useNoTab();
   useCommandKeys((action) => {
     setShortcuts(false);
     if (action.kind === "go-to") {
@@ -575,7 +614,7 @@ function Workspace({ url }: { url: UrlState }) {
         // Only the review page's own keys use a focused Escape (its sheets).
         event.preventDefault();
         url.update((current) => {
-          for (const key of ["pr", "clone", "repository", "group"]) current.delete(key);
+          for (const key of ["pr", "clone", "repository", "group", "walk"]) current.delete(key);
           return current;
         });
       } else if (
@@ -623,17 +662,16 @@ function Workspace({ url }: { url: UrlState }) {
             </Notice>
           ))}
           {unsynced.length > 0 && page !== "settings" ? (
-            <Notice action={<LocalLink href={appURL("?page=settings")}>Open settings</LocalLink>}>
+            <Notice
+              action={
+                <LocalLink href={appURL("?page=settings&section=connections")}>
+                  Open settings
+                </LocalLink>
+              }
+            >
               {syncNotice(github, unsynced)}
             </Notice>
           ) : null}
-          {(automatic?.repositories ?? [])
-            .filter((status) => status.enabled && status.paused_until)
-            .map((status) => (
-              <Notice key={`automatic-${status.repository}`}>
-                {status.repository}: {automaticNotice(status)}
-              </Notice>
-            ))}
           {diagnostics.problems > 0 && page !== "diagnostics" ? (
             <Notice>
               baum cannot fully work on this computer: diagnostics found {diagnostics.problems}{" "}
@@ -661,6 +699,16 @@ function Workspace({ url }: { url: UrlState }) {
               authChanged={authChanged}
               automatic={automatic}
               defaults={defaults}
+              github={github}
+              section={settingsSection(url.search.get("section"))}
+              setSection={(section) =>
+                url.update((current) => {
+                  current.set("page", "settings");
+                  if (section === "overview") current.delete("section");
+                  else current.set("section", section);
+                  return current;
+                })
+              }
               changed={reload}
               problems={diagnostics.problems}
               diagnosticsOpen={page === "diagnostics"}
@@ -763,7 +811,8 @@ function Workspace({ url }: { url: UrlState }) {
               )}
               generate={() => void generate([selectedEntry], "single")}
               starting={starting.has(rowKey(selectedEntry))}
-              fix={cloneFor(selectedEntry) ? () => setFixing(selectedEntry) : undefined}
+              fix={cloneFor(selectedEntry) ? () => void fix(selectedEntry) : undefined}
+              fixState={fixState(selectedEntry)}
               fixJob={fixJob(selectedEntry, jobs)}
             />
           ) : page !== "pulls" ? (
@@ -773,7 +822,8 @@ function Workspace({ url }: { url: UrlState }) {
               loading={revision === 0}
               hasRepositories={picked.length > 0 || clones.length > 0}
               cloneFor={cloneFor}
-              fix={setFixing}
+              fix={(entry, only) => void fix(entry, only)}
+              fixState={fixState}
               changed={reload}
               Link={LocalLink}
             />
@@ -901,7 +951,8 @@ function Workspace({ url }: { url: UrlState }) {
                   live={live}
                   changed={reload}
                   groups={groups}
-                  fix={setFixing}
+                  fix={(entry) => void fix(entry)}
+                  fixStarting={(entry) => fixState(entry).starting}
                   jobs={jobs}
                   generate={(entry) => void generate([entry], "single")}
                   refresh={loading ? undefined : () => void refresh()}
@@ -946,6 +997,12 @@ function Workspace({ url }: { url: UrlState }) {
             </>
           )}
           {generationError ? <Alert>{generationError}</Alert> : null}
+          {/* The PR page and Up next show a fix's refusal beside its button. */}
+          {fixError && onList ? (
+            <Alert>
+              Couldn't start the fix of #{fixError.number}: {fixError.text}
+            </Alert>
+          ) : null}
           {shortcuts ? (
             <ShortcutsSheet current={shortcutsPlace} close={() => setShortcuts(false)} />
           ) : null}
@@ -981,17 +1038,6 @@ function Workspace({ url }: { url: UrlState }) {
               close={() => setFork(null)}
               confirm={() => void generate(fork.entries, fork.mode, true)}
               pending={generating}
-            />
-          ) : null}
-          {fixing && cloneFor(fixing) ? (
-            <FixDialog
-              // The review it opens from is a sibling keyed by the same row;
-              // a shared key leaves copies of that page behind.
-              key={`fix:${rowKey(fixing)}`}
-              entry={fixing}
-              clone={cloneFor(fixing)}
-              close={() => setFixing(null)}
-              started={reload}
             />
           ) : null}
         </main>

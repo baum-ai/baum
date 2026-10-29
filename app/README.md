@@ -71,9 +71,59 @@ The PR page reuses the same `@baum/viewer` `ReviewViewer`, header, section/risk
 navigation, version menu/comparison, Markdown/code renderers, session cards,
 commit panes, tokens and system theme as the current hosted PR page. Its host
 adapter supplies local document, history, attachment, patch and redacted session
-sources through the same slots as the hosted PR route. Hosted discussion and approvals are absent. Merging, updating a branch,
-re-running checks and a fix the person confirms, with its replies on the review
-threads it addressed, are the app's only GitHub writes (see below).
+sources through the same slots as the hosted PR route. Hosted discussion and approvals are absent. Merging, updating a branch, re-running checks,
+submitting a review from the walkthrough, a fix the person starts (with its
+replies on the review threads it addressed), and resolving a review thread the
+person chose are the app's only GitHub writes (see below).
+
+The Inbox's panel lists a fix's unresolved review threads under the row that
+counts them (`ReviewThreads` in `src/threads.tsx`), asked for with `GET
+api/prs/review-threads` and discovery's `unresolved` count when the panel shows
+the pull request and again when that count changes. The daemon answers from
+its cache while the count matches (see `prupdate.Cache`), so moving
+through the Inbox does not read GitHub each time. Each shows its first comment's
+headline (at most two lines), its author, its file and line linked to the thread on GitHub, whether
+it is outdated and how many comments it has. A thread the signed-in account
+may resolve (`can_resolve`) has a **Resolve** button that posts `api/prs/resolve-thread`
+at once, without a dialog, reads **Resolving…** meanwhile, and removes the thread
+from the list once GitHub confirms; a refusal is shown under the thread.
+
+Under "Checks failing" the panel lists the head's failing checks
+(`FailingChecks` in `src/checks.tsx`), asked for with `GET
+api/prs/failing-checks` and the head commit it shows (`head_sha`), again when
+that head changes. Each shows the check's name, its conclusion in words
+(`conclusionText`), its title when it has one and a **Details** link (`url`).
+A check with a `job_id` has **Retry** when discovery says the account can push
+(`viewer_can_push`): it posts `api/prs/rerun-job` at once, reads **Retrying…**,
+then shows "Re-running on GitHub"; a refusal is shown under the check. When the
+pull request offers a fix, the row has **Fix CI**, which starts at once a fix
+of the failing checks alone (`startFix(clone, pr, "checks")`, `"only":"checks"`
+on the item).
+The PR page's **Walk through** button (beside Regenerate, once a review is
+saved) opens the walkthrough (`src/walkthrough.tsx`): `?…&walk=tour` or
+`walk=all`, so a reload stays there, and **Full review** returns to the viewer.
+`buildTour` (`src/walkthrough-model.ts`) turns the document into chapters, the
+logical sections with hunks in `sectionsInReviewOrder` (mechanical and obsolete
+sections are left out), and stops, one per behaviour step: its `title`,
+`before`, `after` and `question` (schema revision 2026-10-27.1), falling back to
+the step's `text` for a review written before them, and to the section summary
+for a section without steps. A stop's code is the viewer's `HunkEvidence` for
+the step's hunk anchors, reading omitted excerpts through the page's patch
+source. **Guided tour** walks intro, stops and wrap-up; Next and → skip stops
+already looked at. **Everything** lists every stop by chapter with filters,
+details and a comment box per row, and the submit panel beside it. Leaving a
+stop, opening its details or commenting marks it looked at; seen marks and
+drafts are kept in `localStorage` (`baum.walkthrough`) per repository, pull
+request and review version, the 40 most recent. Submitting posts
+`POST api/prs/review` with `{repository, pr, head_sha, event, body, comments}`:
+`head_sha` is the reviewed head, each comment `{path, line, side, start_line?,
+body}` sits on the step's anchored lines (or the hunk's first added line), and
+a stop without a place goes into the body under the overall comment. The
+daemon sends it once and maps refusals to `{code, message}` (`forbidden` 403,
+`not_found` 404, `own_pull_request` and `invalid_line` 422, `failed` 502); on
+`invalid_line` the panel offers to resend with every comment in the body. A
+sent review clears the drafts and links to it on GitHub. The tour's keys (→/j,
+←/k, c, e; in Everything j/k, o, c, t, e) are listed in the shortcuts sheet.
 
 A pull request with a merge conflict (`merge` is `conflict`), failing checks
 (`checks` is `failing`) or, on the person's own pull request
@@ -85,19 +135,17 @@ request is open, is not a fork,
 discovery says the signed-in account can push to the repository
 (`viewer_can_push`) and the repository has a local clone. The PR page puts the
 button first beside the version menu, Pull requests puts a small **Fix** in
-the row's actions, and the Inbox's card offers it as its action. Either opens
-`FixDialog` (`src/fix.tsx`), which estimates the fix
-(`POST api/jobs/estimate` with `kind: "fix"`) and shows the harness and model
-(the review's), the branch the result is pushed to, the estimate, and that the
-agent runs with write access to a temporary checkout (Claude Code cannot run
-commands, so it cannot run the tests; Codex runs them without network). A fix
-of review comments also lists the threads (`fix_threads`: file, line, author
-and the first line of the first comment), says that baum replies on each
-thread the agent addressed and resolves it, and notes threads left out
-because there were more than 20 (`fix_threads_capped`) or because an account
-without access to the repository started them (`fix_threads_untrusted`). A fix
-the daemon refuses shows its reason instead of a confirmation. Confirming
-queues it (`POST api/jobs` with the estimate id); nothing runs without that.
+the row's actions, and the Inbox's card offers it as its action; `f` presses
+it on each. Any of them starts the fix at once, with no dialog and no cost
+estimate: `fix` in `src/app.tsx` posts `POST api/jobs` with
+`{"items":[{"clone","pr","kind":"fix"}],"mode":"single"}` (`startFix`), and
+the button reads **Starting…** (in Pull requests' row actions, **Fixing…**)
+from the click (the app's `fixStarting` set) until the job arrives. The daemon checks GitHub again and runs it with the
+fix agent Settings chooses, else the review's harness and model. A fix it refuses answers `409` with
+`blocked_reason` (fork, no push access, unsupported harness, nothing to fix),
+which `request` turns into the reason in words (`jobReasonText`); the app
+shows "Couldn't start the fix: …" where it was asked for: under the PR page's
+header, in the Inbox panel, or below Pull requests.
 The fix is a job like a review: the Jobs list labels it with the fix's name
 and, once done, links the pushed commit and keeps the agent's summary behind
 **What the agent did**; the PR page shows its phase with **Cancel fix**, then
@@ -110,9 +158,15 @@ push, so the new head appears without a manual refresh.
 
 A fix can be watched live. A fix job with `has_transcript` has a transcript
 page, `?page=jobs&job=<id>` (`JobPage` and `JobTranscript` in
-`src/job-transcript.tsx`): the job's phase while it runs, then its summary or
-failure, above the agent's messages, collapsed reasoning, tool calls (a status
-mark, expandable to their output) and errors. `JobTranscript` reads
+`src/job-transcript.tsx`), its panels in the inbox's light sand on its darker
+sand: the job's phase while it runs, then its summary or failure, above the
+agent's messages, collapsed reasoning, tool calls (a status mark, expandable to
+their output) and errors.
+The summary, messages and reasoning are Markdown, without raw HTML. Consecutive
+tool calls form one run (`groupEntries`; reasoning does not break it) that shows
+only its latest call, with the earlier ones folded behind "N earlier tool
+calls" above it. A call shows its tool once (Claude's titles start with the
+tool's name) and Codex's tools as Run, Edit, MCP and Search. `JobTranscript` reads
 `GET api/jobs/{id}/transcript?after=N` from 0, again at once while `more`,
 otherwise every second until `done`, and follows the end while the reader is
 there (`useFollowScroll`). Entries are append-only; a later entry with a tool's
@@ -133,7 +187,8 @@ has moved. The daemon accepts only picked repositories and never retries. A
 refusal (head moved, conflicts, required checks or branch protection, no
 permission, method not allowed) comes back as `{code, message}` with a 409, 422
 or 403 status and shows inline in the dialog, in words; on success the daemon
-re-reads the repository's pull requests and the lists drop it.
+records the merge and re-reads the repository's pull requests, so the lists
+drop it at once.
 
 Keyboard shortcuts (`src/shortcuts.tsx`, one key table that both the handling and
 the sheet read). Every page is reached from the keyboard. With the command key
@@ -148,12 +203,14 @@ number, author or branch; what waits in the Inbox first), the review groups and
 the agent sessions: every word typed must match, a label that starts with the
 query ranks first, `↑` and `↓` move, `Enter` opens and `Esc` closes. The sidebar
 draws each page's key while Alt is held and names it in the link's tooltip and
-`aria-keyshortcuts`.
+`aria-keyshortcuts`. Tab moves nothing anywhere, dialogs included: the keys act
+on the selection, and a place that needs more gets its own keys. `Esc` gives up
+any focus a click left on a control.
 
 On Pull requests, `j`/`↓` and `k`/`↑` move a row focus through the
 rows as drawn (group rows count; rows of collapsed buckets and collapsed groups
 are skipped), `Enter` or `o` opens the focused pull request or group, `x` toggles
-its selection, `Space` opens or closes its peek, `m` opens Merge and `f` Fix where the row offers them (Merge wins
+its selection, `Space` opens or closes its peek, `m` opens Merge and `f` starts the fix where the row offers them (Merge wins
 where both could), `g` generates the pull request's review through the same path
 as the PR page's Generate (so the same confirmations and the instant "Starting"
 state), `r` refreshes from GitHub at once rather than after the polling backoff,
@@ -165,7 +222,12 @@ settings) and `Esc` clears the focus. On Sessions the three sections are one
 list and `p` opens the focused session's pull request; on Jobs `t` opens the
 transcript (Watch while a fix runs); on Repositories `a` opens or closes the
 picker and `/` searches it (the search takes the focus when the picker opens,
-and `Esc` in an empty search leaves it). On a pull request or group page `j`
+and `Esc` in an empty search leaves it). Settings' section list is its
+selection, as Up next's list is: `j`/`↓` and `k`/`↑` move it, `1` to `5` jump
+to a section, and `Enter`, `l` or `→` go into the shown section, where `j` and
+`k` step through its controls, `Space` or `Enter` changes the focused one and
+`Esc`, `h` or `←` go back to the list (`Esc` in a text field or select gives
+it up first, and `j` and `k` go on from it). On a pull request or group page `j`
 and `k` step to the next and previous place in reading order, as the
 navigator's arrows do (`ReviewViewer`'s `steps` ref), and `m`, `f` and `g`
 merge, fix and generate or regenerate where the header offers them. On any
@@ -202,7 +264,9 @@ is open and `viewer_can_push` is true. Each opens a small confirmation
 the first names the two branches, the second lists the failed GitHub Actions
 workflow runs it will re-run and, under "Not re-runnable from baum", the
 failing checks of other apps; with no failed run it has nothing to confirm.
-Confirming posts `POST /api/prs/update-branch` or `POST /api/prs/rerun-checks`
+Both dialogs put the focus on the confirm button once GitHub allows the write,
+so `Enter` confirms and `Esc` cancels without Tab. Confirming posts
+`POST /api/prs/update-branch` or `POST /api/prs/rerun-checks`
 with the head commit the page showed (labels turn to "Updating…" and
 "Re-running…" in the same frame), so a moved branch is refused in words
 (`{code, message}`, shown inline). A successful update stays open until Closed
@@ -247,7 +311,8 @@ baum's reading estimate and the title (linking to the PR page), then why it
 waits on the person in a sentence built from its state (none for a Merge, whose
 group says it). Its default action is always **Open** (the PR page); beside it
 is what the kind asks for: Merge (`MergeDialog`), Update the branch
-(`UpdateBranchDialog`), the fix's own label (`FixDialog`), Watch the agent for
+(`UpdateBranchDialog`), the fix's own label (which starts the fix at once, with
+`f` as its key), Watch the agent for
 a running fix, else Open on GitHub; then **Snooze**. A scored pull request has
 a risk card: the score as five blocks, its meaning and, from the saved review,
 its first reason. Below it the panel lists, by kind: for a Review or Merge,
@@ -264,8 +329,9 @@ Snooze offers 1 hour, this afternoon (3 PM, while that is more than an hour
 away), tomorrow morning (9 AM) and **Until it changes**, which hides the pull
 request until its head moves. A snooze selects the next pull request and shows
 a toast with **Undo**; **Bring back** under Snoozed ends one early. Keys:
-`j`/`↓` and `k`/`↑` move the selection, `Enter` opens, `m` merges a Merge, `s`
-opens Snooze and `1`–`4` choose from it, `u` undoes a snooze.
+`j`/`↓` and `k`/`↑` move the selection, `Enter` opens, `m` merges a Merge, `f`
+starts a Fix item's fix (where its panel offers the button), `s` opens Snooze
+and `1`–`4` choose from it, `u` undoes a snooze.
 
 "Done today" lists the pull requests that left the queue since first seen
 today because the person's part is done: it merged or closed, the review
@@ -334,23 +400,19 @@ remains explicit. Refresh events share the active read and queue one follow-up,
 so a completed inbox snapshot is shown even while more updates arrive.
 Cached discovery keeps the inbox readable when refresh fails;
 one notice covers every repository GitHub could not refresh, says whether
-GitHub is disconnected or needs attention, and links to Settings; another
+GitHub is disconnected or needs attention, and links to Settings' Connections; another
 covers an exhausted GitHub allowance. Neither appears merely because the cache
 is old. Refresh asks
 GitHub through the local server. While anything is selected a dark bar over
 the list counts it and offers **Merge N** for the selected pull requests that
 can merge (one opens its Merge confirmation; more open the Inbox's Merge all
 confirmation), **Generate reviews (N)**, **Review together (N)** for two or
-more, and **Clear**. Checkbox selection requests a batch estimate;
-restricted fork/author entries are excluded from batches and require explicit
-isolation confirmation when generated individually. Generation confirms an
-approximate price and configured model; an unknown model price cannot start a
-run. The exception is the `cursor-agent` backend, which Cursor bills through
-the user's subscription: its item shows "cost unknown" with that reason in
-words instead of a price, the total is unknown, and the run starts only after a
-separate acknowledgement that baum cannot estimate it. The app sends it as
-`confirm_unpriced`, and the server refuses such a run without it. Exclusion and
-estimate reasons are shown in words, never as reason codes.
+more, and **Clear**. Generate, for one pull request or a checkbox
+selection, starts at once (`POST api/jobs` with the items): no dialog, no
+price, whatever the model, `cursor-agent` and models baum has no price for
+included. The one confirmation left is for a fork or an author without write
+access (`isolation_required`, then `confirm_isolation`); a batch with such an
+entry asks the same. Refusals are shown in words, never as reason codes.
 Progress and completion arrive over the authenticated SSE stream; reconnection
 rebuilds the inbox and jobs. Jobs appear newest first and can be cancelled. Existing reviews stay readable
 while regeneration runs. A PR page uses the queue’s active job for that
@@ -415,12 +477,13 @@ Its bar holds the window (7, 30 or 90 days, as a segmented control) and the
 repository and agent selects in the inbox's select style; all three live in the
 address. A new choice shows at once and the last report stays, faded, until the
 new one answers. Cards: summary tiles (sessions, active agent time, human prompts,
-the estimated cost marked "Incomplete" when part is unpriced, and the
+the cost at API prices, marked "Incomplete" when part is unpriced, and the
 agent-written share of commits); agent activity per day, sessions or active time
 stacked by agent, with a legend and a table behind "Show as a table"; a breakdown
 by agent, model or repository (sessions, prompts, tool calls, failed share, active
-time, tokens, estimated cost); agent-written commits by evidence; baum's work
-(reviews, fixes pushed, threads resolved, spend, failures by reason, merges,
+time, tokens, cost at API prices); agent-written commits by evidence; baum's
+work (reviews, fixes pushed, threads resolved, cost at API prices, failures by
+reason, merges,
 branch updates and re-runs from the app); delivery from GitHub ("Loading from
 GitHub…" for that card only while the daemon searches); plan usage over time per
 provider, with how often each window hit its limit; busiest hours; and the longest
@@ -430,25 +493,44 @@ viewer's `--data-*` slots, agents in a fixed order (Claude Code, Codex, Cursor),
 with tooltips on hover and focus. The page reads again every two seconds while
 the daemon is still indexing or searching GitHub, then every five minutes. An
 older daemon without the capability gets a note to update baum.
-In the desktop app, Settings has separate Command line and Agent hooks sections
-with inline CLI install, update and removal controls, plus installation,
-enablement and removal for each agent. Home paths are displayed with `~`.
-It shows the installed state, paths, trust guidance and action results.
-Settings holds the global review settings in the same form as the desktop
-setup's review step: the harness, its model (a listed model or a custom name),
-whether reviews run automatically and for which pull requests (authored,
-requested, both, or all open pull requests in the repository). Saving sends them to `PUT api/automatic` (`enabled`,
-`backend`, `model`, `pull_requests`), which the daemon keeps as app
-preferences over the config file; `GET api/settings` reports the effective
-harness and model. **Environment for agents** (`AgentEnvSection`) edits
+Settings (`?page=settings&section=…`, `SettingsPage` in `src/settings.tsx`)
+shows one section at a time, listed on the left with a line on where each
+stands and a dot when it needs attention; at narrow widths the list becomes
+a scrolling strip above the section. The section is in the address, so a
+reload or Back keeps it, and the GitHub notice's **Open settings** goes
+straight to Connections. **Overview**, the default, says how many things need
+the person ("Everything is working" otherwise) and in one sentence how baum
+reviews, then lists GitHub, Reviews, Fixes, the agent hooks (desktop app) and
+this computer, each with a dot and a button to the section that deals with it
+(**Check** on this computer opens the diagnostics dialog). Fixes needs
+attention when it follows reviews whose harness cannot fix. **Reviews** holds
+the global review settings, one per row: whether reviews run automatically,
+for which pull requests (authored, requested, both, or all open pull requests
+in the repository), the harness and its model (a listed model or a custom
+name, saved when its field is left or Enter is pressed). Each change is saved
+at once, with "Saved" beside the title, through `PUT api/automatic`
+(`enabled`, `backend`, `model`, `pull_requests`), which the daemon keeps as
+app preferences over the config file; `GET api/settings` reports the
+effective harness and model. Each section sends all its choices and runs one
+save at a time; changes made while one runs are sent together afterwards, so
+an older choice never lands after a newer one. A failed save shows the error
+and puts the control back. **Fixes** chooses the agent that fixes: "Same as reviews" (the
+default, which follows a repository's own review harness too) or Claude Code
+or Codex with a model, sent as `fix_backend` and `fix_model` (`""` returns to
+the reviews') and reported by `GET api/settings`. A chosen fix agent applies
+in every repository. **Connections** holds the GitHub connection and, in the
+desktop app, the Agent hooks card with installation, enablement and removal
+for each agent. **This computer** holds the diagnostics, the background
+daemon note, in the desktop app the Command line card (inline CLI install,
+update and removal) and Zoom, and the environment for agents. Home paths are
+displayed with `~`. **Environment for agents** (`AgentEnvSection`) edits
 variables set for every agent baum runs and for the git commands that commit
 and push a fix: NAME/value rows (names `^[A-Za-z_][A-Za-z0-9_]*$`, no duplicates, at most
 32) saved with `PUT api/settings/agent-env` (`{"agent_env": {...}}`; an empty
 object clears the app's value). `GET api/settings` returns `agent_env` and
 `agent_env_source` (`app`, or `file` while the config file's `[agent_env]`
 applies, which the section notes). `~` and `$VARS` are expanded; the values
-are stored on this computer, so no secrets belong there. Choosing cursor-agent, globally or for a repository, is the
-one-time acknowledgement that its cost cannot be estimated.
+are stored on this computer, so no secrets belong there.
 Automatic reviews are on by default. The global switch is a master switch (the
 desktop tray's pause sets it): off stops automatic generation everywhere. Each
 repository chooses "Global setting", "On" or "Off" (`automatic`: `null`,
@@ -459,8 +541,8 @@ opens the searchable account picker, the only way to add one: baum works with
 GitHub repositories only. Explicit per-repository folder attachment uses any
 matching remote, including an upstream remote in a fork clone. Settings apply
 to the repository through `PUT api/repositories/{owner}/{name}/settings`, with
-automatic generation and harness/model overrides. Saving clears an old daily
-spending cap. Removing a repository unpicks it but leaves its files and saved
+automatic generation and harness/model overrides; there is no spending cap.
+Removing a repository unpicks it but leaves its files and saved
 reviews on disk. Change local clone offers the existing clone registrations and
 lets the person remove one or register another folder. Explicit unpicks are
 remembered locally across picker reopens and app reloads; picking it again is
@@ -471,9 +553,9 @@ automatically because new commits were pushed" (or "because your review was
 requested", "because the pull request was marked ready for review", or
 "Started automatically again" for the one retry of a run a daemon stop or
 restart interrupted); it is cancelled like any other. Drafts get no automatic
-review, but Generate works on them as usual. `automatic` SSE events (a pause,
-its end, a notice, and every repository's status after a settings change in
-any window) reload the page and are what the desktop app can notify on.
+review, but Generate works on them as usual. `automatic` SSE events (a notice,
+and every repository's status after a settings change in any window) reload
+the page.
 Agent sessions in progress (`GET api/live-sessions`, tracked by the daemon from
 hook events, see "Live sessions" in ARCHITECTURE.md) show as a compact "Agent
 running" or "Agent idle" marker on the Pull requests rows of their pull request and as
@@ -559,7 +641,7 @@ when a refresh failed or the request allowance is used up; a cache that is
 merely older than the poll interval is normal and says nothing.
 The daemon keeps generating after the app closes, until "Quit and stop
 background reviews" or `baum daemon stop`. Every other model call runs only
-after an explicit generation request and spend confirmation.
+after an explicit generation or fix request.
 
 Run workloads in the repository's `ui-test` Docker service (see root AGENTS.md):
 `pnpm check`, `pnpm build`, `pnpm test:e2e`. `pnpm build` writes the assets the
@@ -600,7 +682,7 @@ answers the update-branch and re-run calls: tests re-run PR 8's failed checks
 and update PR 11's branch from their pages, each writing a marker (`rerun-8`,
 `updated-11`) the fixture's discovery reads and the test removes again. Unit tests cover
 first-run/authorization, namespaced URLs and navigation, each review state,
-unknown costs, selection and filters, automatic settings and pause notices,
+unknown costs, selection and filters, automatic settings and notices,
 and the automatic job labels. The fixture also writes two Claude Code sessions in
 the demo clone under its fake home, commits of the person's in the other clone,
 plan usage samples and GitHub's answer to the delivery search, and a test opens
@@ -614,15 +696,12 @@ after secret masking; progress retains numeric buckets while masking runs.
 The charged-token budget counter excludes cache reads;
 total processed tokens includes them. Missing older accounting remains unknown,
 and interrupted providers show reported subtotals rather than exact totals.
-Saved review usage follows the version selected in history. Unknown actual
-costs show a reason; configured model identity is distinguished from a provider
-report. Each attempt is priced independently when its model and pricing inputs
-are known.
-
-The confirmation amount is budget planning, not a PR-sized prediction. It shows
-the configured charged-token and backend-call limits and assumes one
-budget-sized cache read per call at the highest listed rates. Cached reads and
-provider overshoot can exceed those assumptions, so this is not a dollar cap.
+Saved review usage follows the version selected in history. Its cost reads
+"At API prices": what the usage would cost at API prices, not what a
+subscription charges. Unknown costs show a reason; configured model identity
+is distinguished from a provider report. Each attempt is priced independently
+when its model and pricing inputs are known. Pricing only reports: no budget,
+cap, confirmation or decision about a run reads it.
 
 GitHub browser scenarios use the real auth manager/controller and mocked GitHub
 HTTP and credential-store boundaries. The `github-auth-mode` marker selects

@@ -109,9 +109,8 @@ func (l *listing) List(ctx context.Context) ([]repos.Clone, error) {
 type executor struct{ gh *fakeGitHub }
 
 func (e *executor) Prepare(_ context.Context, item jobs.Item) (jobs.Prepared, string, error) {
-	price := 2.0
 	pr := e.gh.pr(item.PR)
-	return jobs.Prepared{ConfigDigest: "d", Item: item, Repository: repoName, HeadSHA: pr.HeadSHA, Draft: pr.Draft, Backend: "claude", Model: "claude-sonnet-4-5", EstimateUSD: &price}, "2026-10-01", nil
+	return jobs.Prepared{ConfigDigest: "d", Item: item, Repository: repoName, HeadSHA: pr.HeadSHA, Draft: pr.Draft, Backend: "claude", Model: "claude-sonnet-4-5"}, "2026-10-01", nil
 }
 
 func (e *executor) Execute(context.Context, jobs.Prepared, func(jobs.Progress)) (*float64, error) {
@@ -472,7 +471,6 @@ func TestNoJobWhenAutomaticGenerationDoesNotApply(t *testing.T) {
 			h.gh.set(7, func(pr *discovery.PullRequest) { pr.AuthoredByMe = false })
 			h.cache = h.gh.snapshot(h.now)
 		}, 0, 1},
-		{"cap reached", func(h *harness) { h.registry.edit(func(r *registry) { r.settings.DailyCap = new(1.0) }) }, 1, 1},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			h := newHarness(t)

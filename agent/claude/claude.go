@@ -391,7 +391,7 @@ func (c *Backend) run(ctx context.Context, request agent.Request, fix bool) (res
 		for _, content := range event.Message.Content {
 			if _, seen := toolsSeen[content.ID]; content.Type == "tool_use" && !seen {
 				toolsSeen[content.ID] = content.Name
-				titles[content.ID] = toolTitle(content.Name, content.Input.FilePath, content.Input.Path, content.Input.Pattern, content.Input.Command)
+				titles[content.ID] = toolTitle(content.Name, agent.TitlePath(request.Directory, content.Input.FilePath), agent.TitlePath(request.Directory, content.Input.Path), content.Input.Pattern, content.Input.Command)
 				request.Emit(agent.TranscriptEntry{Kind: "tool", ID: content.ID, Tool: content.Name, Title: titles[content.ID], Status: "running"})
 				request.Activity.ToolStarted(content.ID, content.Name)
 				path := agent.EventPath(request.Directory, cmp.Or(content.Input.FilePath, content.Input.Path))

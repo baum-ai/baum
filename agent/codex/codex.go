@@ -260,7 +260,7 @@ func (c *Backend) run(ctx context.Context, request agent.Request, fix bool) (res
 		if strings.HasPrefix(event.Type, "item.") {
 			var paths []string
 			for _, change := range event.Item.Changes {
-				paths = append(paths, change.Kind+" "+change.Path)
+				paths = append(paths, change.Kind+" "+agent.TitlePath(request.Directory, change.Path))
 			}
 			emitItem(request, event.Type, itemFields{ID: event.Item.ID, Type: event.Item.Type, Status: event.Item.Status, Text: event.Item.Text,
 				Command: event.Item.Command, Output: event.Item.Output, Message: event.Item.Message, Query: event.Item.Query,

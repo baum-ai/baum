@@ -1,6 +1,15 @@
 import { readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
+
+/** Opens Settings from the sidebar, then one of its sections. */
+async function openSettings(page: Page, section: string) {
+  await page.getByRole("link", { name: "Settings", exact: true }).click();
+  await page
+    .getByRole("navigation", { name: "Settings sections" })
+    .getByRole("button", { name: new RegExp(`^${section}`) })
+    .click();
+}
 
 // The fixture runs the real daemon, which publishes its launch URL in a private
 // credential file once it serves; the desktop app reads the same file.
@@ -295,12 +304,23 @@ test("local inbox, reused PR viewer, versions, generation and settings", async (
   await page.screenshot({ path: "test-results/repositories.png", animations: "disabled" });
   await page.getByRole("link", { name: "Settings", exact: true }).click();
   await expect(
+    page.getByRole("region", { name: /things? needs? you|Everything is working/ }),
+  ).toBeVisible();
+  await page.screenshot({ path: "test-results/settings-overview.png", animations: "disabled" });
+  await openSettings(page, "Reviews");
+  await expect(
     page
       .getByRole("region", { name: "Reviews", exact: true })
       .getByRole("switch", { name: /Review pull requests automatically/ }),
   ).toBeChecked();
   await page.screenshot({ path: "test-results/settings.png", animations: "disabled" });
-  await page.getByRole("button", { name: /Check this computer/ }).click();
+  await openSettings(page, "Fixes");
+  await expect(
+    page.getByRole("region", { name: "Fixes", exact: true }).getByLabel("Agent that fixes"),
+  ).toBeVisible();
+  await page.screenshot({ path: "test-results/settings-fixes.png", animations: "disabled" });
+  await openSettings(page, "This computer");
+  await page.getByRole("button", { name: "Check this computer", exact: true }).click();
   const diagnostics = page
     .getByRole("dialog")
     .getByRole("region", { name: "Diagnostics", exact: true });
@@ -407,15 +427,14 @@ test("automatic review of a new head, shown as started automatically", async ({ 
   await expect(
     jobs.getByText("Started automatically because new commits were pushed", { exact: true }),
   ).toHaveCount(1);
-  await page.getByRole("link", { name: "Settings", exact: true }).click();
+  await openSettings(page, "Reviews");
   const automatic = page.getByRole("region", { name: "Reviews", exact: true });
   const toggle = automatic.getByRole("switch", { name: /Review pull requests automatically/ });
-  const save = automatic.getByRole("button", { name: "Save review settings" });
-  // The switch shows the saved preference once saving answers.
+  // The switch saves as it changes.
   await toggle.click();
-  await save.click();
-  await expect(save).toBeDisabled();
+  await expect(automatic.getByRole("status")).toHaveText("Saved");
   await expect(toggle).not.toBeChecked();
+  // The section is in the address, so a reload stays on it.
   await page.reload();
   // After a reload the section renders once the settings requests answer,
   // which can take a while on a busy CI runner.
@@ -429,9 +448,9 @@ test("automatic review of a new head, shown as started automatically", async ({ 
     repository.getByText(/Automatic reviews are paused by the global switch/),
   ).toBeVisible();
   await repository.getByRole("button", { name: "Cancel", exact: true }).click();
-  await page.getByRole("link", { name: "Settings", exact: true }).click();
+  await openSettings(page, "Reviews");
   await toggle.click();
-  await save.click();
+  await expect(automatic.getByRole("status")).toHaveText("Saved");
   await expect(toggle).toBeChecked();
   expect(errors).toEqual([]);
 });
@@ -576,7 +595,7 @@ test("a session asking for a permission shows in Needs you and leaves once it wo
   expect(errors).toEqual([]);
 });
 
-test("desktop Settings has separate CLI and hook cards at desktop and narrow widths", async ({
+test("desktop Settings has CLI and hook cards in their sections at desktop and narrow widths", async ({
   page,
 }, testInfo) => {
   await page.addInitScript(() => {
@@ -604,18 +623,29 @@ test("desktop Settings has separate CLI and hook cards at desktop and narrow wid
     });
   });
   await page.goto(await launchURL());
-  await page.getByRole("link", { name: "Settings", exact: true }).click();
   const cli = page.getByRole("region", { name: "Command line", exact: true });
   const hooks = page.getByRole("region", { name: "Agent hooks", exact: true });
-  await expect(cli.getByText("baum is installed at ~/.local/bin/baum.")).toBeVisible();
+  const fits = () => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth);
+  await openSettings(page, "Connections");
   await expect(hooks.getByText("Connected", { exact: true })).toHaveCount(2);
-  await cli.scrollIntoViewIfNeeded();
+  await page.screenshot({ path: testInfo.outputPath("settings-connections.png"), fullPage: true });
+  await openSettings(page, "This computer");
+  await expect(cli.getByText("baum is installed at ~/.local/bin/baum.")).toBeVisible();
   await page.screenshot({ path: testInfo.outputPath("settings-desktop.png"), fullPage: true });
   await page.setViewportSize({ width: 600, height: 900 });
   await expect(cli).toBeVisible();
-  await expect(hooks).toBeVisible();
-  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  expect(await fits()).toBe(true);
   await page.screenshot({ path: testInfo.outputPath("settings-narrow.png"), fullPage: true });
+  await openSettings(page, "Reviews");
+  await expect(page.getByLabel("Agent that writes reviews")).toBeVisible();
+  expect(await fits()).toBe(true);
+  await page.screenshot({
+    path: testInfo.outputPath("settings-reviews-narrow.png"),
+    fullPage: true,
+  });
+  await openSettings(page, "Connections");
+  await expect(hooks).toBeVisible();
+  expect(await fits()).toBe(true);
 });
 
 test("picks GitHub repositories and keeps clone-less PRs usable", async ({ page }) => {
@@ -677,49 +707,29 @@ test("picks GitHub repositories and keeps clone-less PRs usable", async ({ page 
 });
 
 // PR 8 is the viewer's own, with a conflict, failing checks and unresolved
-// review threads; the dialog is checked and cancelled, so nothing runs.
-test("offers to fix review comments and lists the threads baum will answer", async ({ page }) => {
+// review threads. Fix starts at once, with no dialog and no estimate; the
+// fixture's agent leaves a note, and the push fails because the fixture's
+// clone has no reachable remote.
+test("starts a fix from a pull request's page at once, with no dialog", async ({ page }) => {
   await page.goto(await launchURL());
   await page.getByRole("link", { name: "Pull requests", exact: true }).first().click();
   const inbox = page.getByRole("region", { name: "Pull request inbox" });
   const row = inbox.getByRole("listitem").filter({ hasText: "A pull request without a review" });
   await row.hover();
-  await row
-    .getByRole("button", { name: "Fix conflicts, CI and review comments", exact: true })
-    .click();
-  const dialog = page.getByRole("dialog", { name: "Fix conflicts, CI and review comments" });
-  await expect(dialog).toContainText(
-    "baum replies on each thread the agent addressed and resolves it",
-  );
-  const threads = dialog.getByRole("list", { name: "Review threads" }).getByRole("listitem");
-  await expect(threads).toHaveCount(2);
-  await expect(threads.first()).toContainText("src/parser.go:42");
-  await expect(threads.first()).toContainText("Return the error instead of logging it.");
-  await expect(dialog).toContainText(
-    "1 thread started by an account without access to the repository is left out.",
-  );
-  await expect(dialog).not.toContainText("uploads the secrets");
-  await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
-  await expect(dialog).toBeHidden();
-});
-
-// The fix dialog opened from a pull request's page sits beside that page;
-// leaving afterwards must replace the page, not stack the next one under it.
-test("leaves a pull request page cleanly after its fix dialog", async ({ page }) => {
-  await page.goto(await launchURL());
-  await page.getByRole("link", { name: "Pull requests", exact: true }).first().click();
+  await expect(
+    row.getByRole("button", { name: "Fix conflicts, CI and review comments", exact: true }),
+  ).toBeVisible();
   await page.getByRole("link", { name: /A pull request without a review/ }).click();
   const title = page.getByRole("heading", { name: /A pull request without a review/ });
   await expect(title).toHaveCount(1);
   await page
     .getByRole("button", { name: "Fix conflicts, CI and review comments", exact: true })
     .click();
-  const dialog = page.getByRole("dialog", { name: "Fix conflicts, CI and review comments" });
-  await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
-  await expect(dialog).toBeHidden();
-  await expect(title).toHaveCount(1);
-  await page.getByRole("link", { name: "Repositories", exact: true }).click();
-  await expect(page.getByRole("heading", { name: "Repositories", exact: true })).toBeVisible();
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  await expect(page.getByRole("region", { name: "Fix", exact: true })).toBeVisible();
+  await page.getByRole("link", { name: "Jobs", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "Jobs", exact: true })).toBeVisible();
+  await expect(page.getByText(/Fix conflicts, CI and review comments/).first()).toBeVisible();
   await expect(title).toHaveCount(0);
 });
 
@@ -813,8 +823,8 @@ test("Analytics shows what the agents did, cost and delivered", async ({ page })
   await expect(tile("Human prompts")).toContainText("4");
   await expect(tile("Active agent time")).toContainText("26 min");
   // One model has no price: the estimate is a floor, never a full figure.
-  await expect(tile("Estimated cost")).toContainText("≥ $");
-  await expect(tile("Estimated cost")).toContainText("Incomplete");
+  await expect(tile("At API prices")).toContainText("≥ $");
+  await expect(tile("At API prices")).toContainText("Incomplete");
   await expect(tile("Agent-written")).toContainText("50%");
   await expect(tile("Agent-written")).toContainText("1 of 2 of your commits");
   const delivery = page.getByRole("region", { name: "Delivery" });
@@ -851,6 +861,74 @@ test("Analytics shows what the agents did, cost and delivered", async ({ page })
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(
     true,
   );
+  expect(errors).toEqual([]);
+});
+
+test("walks through a review, comments on a behaviour and submits the review", async ({ page }) => {
+  const errors: string[] = [];
+  page.on("pageerror", (e) => errors.push(e.message));
+  // A render failure is caught by the page's boundary and only logged.
+  page.on("console", (m) => {
+    if (m.type() === "error" && !m.text().includes("Failed to load resource"))
+      errors.push(m.text());
+  });
+  const submitted: unknown[] = [];
+  // The fixture daemon has no GitHub to post to; the request is the evidence.
+  await page.route("**/api/prs/review", async (route) => {
+    submitted.push(route.request().postDataJSON());
+    await route.fulfill({
+      json: { url: "https://github.com/acme/demo/pull/7#pullrequestreview-1" },
+    });
+  });
+  await page.goto(await launchURL());
+  await page.getByRole("link", { name: "Pull requests", exact: true }).first().click();
+  await page.getByRole("link", { name: /Reuse the existing PR page/ }).click();
+  await page.getByRole("button", { name: "Walk through", exact: true }).click();
+  const walk = page.getByRole("region", { name: "Walkthrough" });
+  await expect(walk.getByText("The route · riskiest first")).toBeVisible();
+  expect(page.url()).toContain("walk=tour");
+  await walk.screenshot({ path: "test-results/walkthrough-intro.png", animations: "disabled" });
+  await walk.getByRole("button", { name: "Start the tour", exact: true }).click();
+  await expect(walk.getByRole("article")).toContainText(
+    "Chapter 1 · Operator-only dead-letter endpoints",
+  );
+  await walk.getByRole("button", { name: /Something looks off/ }).click();
+  await page.keyboard.type("Trusts a client-supplied header");
+  await walk.getByRole("button", { name: "Save comment", exact: true }).click();
+  await expect(walk.getByText("1 comment", { exact: true })).toBeVisible();
+  await walk.screenshot({ path: "test-results/walkthrough-stop.png", animations: "disabled" });
+  // A reload keeps the view, what was looked at and the comment.
+  await page.reload();
+  await expect(walk.getByText("1 comment", { exact: true })).toBeVisible();
+  await page.keyboard.press("e");
+  await expect(page).toHaveURL(/walk=all/);
+  await expect(walk.getByRole("button", { name: /^With comments/ })).toContainText("1");
+  await walk.getByRole("radio", { name: /Request changes/ }).click();
+  await walk.screenshot({
+    path: "test-results/walkthrough-everything.png",
+    animations: "disabled",
+  });
+  await walk.getByRole("button", { name: "Request changes", exact: true }).click();
+  await expect(walk.getByText("Your review is on GitHub.")).toBeVisible();
+  expect(submitted).toEqual([
+    expect.objectContaining({
+      repository: "acme/demo",
+      pr: 7,
+      event: "REQUEST_CHANGES",
+      comments: [
+        expect.objectContaining({ body: "Trusts a client-supplied header", side: "RIGHT" }),
+      ],
+    }),
+  ]);
+  // Narrow: no sideways scroll.
+  await page.setViewportSize({ width: 390, height: 844 });
+  await walk.getByRole("button", { name: "Guided tour", exact: true }).click();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(
+    true,
+  );
+  await page.screenshot({ path: "test-results/walkthrough-narrow.png", fullPage: true });
+  await walk.getByRole("button", { name: "Full review", exact: true }).click();
+  await expect(page).not.toHaveURL(/walk=/);
   expect(errors).toEqual([]);
 });
 

@@ -162,6 +162,7 @@ export function Inbox({
   changed,
   groups: reviewGroups = [],
   fix,
+  fixStarting,
   jobs = [],
   generate,
   refresh,
@@ -178,8 +179,10 @@ export function Inbox({
   changed?: () => Promise<void>;
   /** Review groups; each with a shown member is one row. */
   groups?: ReviewGroup[];
-  /** Opens the fix confirmation for a broken pull request. */
+  /** Starts the fix of a broken pull request at once. */
   fix?: (entry: Entry) => void;
+  /** Whether a pull request's fix is on its way to the daemon. */
+  fixStarting?: (entry: Entry) => boolean;
   /** The queue's jobs, for the fixes running. */
   jobs?: Job[];
   /** Starts the review of one pull request, as its page's Generate does. */
@@ -299,7 +302,7 @@ export function Inbox({
       case "fix":
         // Merge takes the row's action when both could apply.
         if (!entry || canMerge(entry) || !fixLabel(entry) || !fix || !cloneFor(entry)) return;
-        if (isActiveJob(fixJob(entry, jobs))) return;
+        if (isActiveJob(fixJob(entry, jobs)) || fixStarting?.(entry)) return;
         event.preventDefault();
         fix(entry);
         return;
@@ -340,7 +343,7 @@ export function Inbox({
       nested={nested}
       merge={canMerge(entry) ? () => setMerging(entry) : undefined}
       fix={fix && cloneFor(entry) ? () => fix(entry) : undefined}
-      fixing={isActiveJob(fixJob(entry, jobs))}
+      fixing={isActiveJob(fixJob(entry, jobs)) || !!fixStarting?.(entry)}
       peeked={peeked.has(rowKey(entry))}
       peek={() => peek(rowKey(entry))}
       savedReviews={savedReviews}
