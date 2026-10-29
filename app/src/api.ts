@@ -248,6 +248,8 @@ const jobReasons: Record<string, string> = {
     "The conversation has no answer to fix from, or does not belong to this pull request.",
   chat_changed:
     "The conversation changed after you confirmed the fix, so it stopped. Start it again from the answer.",
+  chat_outdated:
+    "This conversation is about an older review of the pull request. Ask again on the current review to fix from its answer.",
   threads_changed:
     "The review comments changed after you confirmed the fix, so it stopped. Check them and start it again.",
   unsupported_backend:

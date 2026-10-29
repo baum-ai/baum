@@ -1013,6 +1013,8 @@ test("makes a fix or a review comment from an answer", async ({ page }) => {
   await page.keyboard.press("a");
   const panel = page.getByRole("complementary", { name: "Ask about this review" });
   await expect(panel).toBeVisible();
+  // Earlier tests leave answers in the fixture; count them once they have loaded.
+  await expect(panel.getByText("Loading conversations…")).toHaveCount(0);
   const before = await panel.locator(".ask-answer").count();
   await page.keyboard.type("Why is the delay capped?");
   await page.keyboard.press("Enter");
