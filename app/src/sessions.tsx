@@ -164,7 +164,11 @@ export function SessionWhere({
   return (
     <div className="local-session-where">
       <span className="local-session-repo">{s.repository}</span>
-      {s.branch ? <code className="local-session-branch">{s.branch}</code> : null}
+      {s.branch ? (
+        <code className="local-session-branch" title={s.branch}>
+          {s.branch}
+        </code>
+      ) : null}
       {s.pr ? (
         href ? (
           <Link href={href} className="local-session-pr">
@@ -228,7 +232,11 @@ export function LiveSessions({
               </span>
             ) : null}
             <span className="local-pr-session-meta">
-              {s.branch ? <code className="local-session-branch">{s.branch}</code> : null}
+              {s.branch ? (
+                <code className="local-session-branch" title={s.branch}>
+                  {s.branch}
+                </code>
+              ) : null}
               <span title={absolute(s.last_activity_at)}>
                 Last activity {formatRelative(s.last_activity_at, now)}
               </span>
@@ -491,7 +499,9 @@ function RequestHead({
           {session ? open(session, sessionName({ ...session, branch: undefined })) : request.tool}
         </h3>
         {session?.branch ? (
-          <code className="local-feed-mono local-feed-branch">{session.branch}</code>
+          <code className="local-feed-mono local-feed-branch" title={session.branch}>
+            {session.branch}
+          </code>
         ) : null}
         <span className="local-feed-time local-feed-status waiting">
           waiting {clock((now - new Date(request.created_at).getTime()) / 1000)}
@@ -862,7 +872,11 @@ function WaitingCard({
       <div className="local-feed-head">
         <AgentMark agent={s.agent} />
         <h3 className="local-feed-name">{open(s, sessionName({ ...s, branch: undefined }))}</h3>
-        {s.branch ? <code className="local-feed-mono local-feed-branch">{s.branch}</code> : null}
+        {s.branch ? (
+          <code className="local-feed-mono local-feed-branch" title={s.branch}>
+            {s.branch}
+          </code>
+        ) : null}
         <span
           className={`local-feed-time local-feed-status ${reason === "quiet" ? "quiet" : "waiting"}`}
           title={absolute(since)}
@@ -1036,6 +1050,9 @@ function RunningCard({
   const steps = s.activity?.steps ?? [];
   const current = steps.at(-1);
   const files = s.activity?.files_touched;
+  // What the agent last said says more of what it is doing than its last
+  // tool call (often a shell or a script); the call shows until it speaks.
+  const said = s.activity?.last_message;
   return (
     <li className="local-feed-card" {...row(s)}>
       <div className="local-feed-head">
@@ -1054,7 +1071,12 @@ function RunningCard({
         </span>
       </div>
       <LastPrompt session={s} />
-      {current ? (
+      {said ? (
+        <div className="local-feed-said">
+          <InlineMarkdown className="local-feed-said-text">{opening(said)}</InlineMarkdown>
+          {running ? <span className="local-feed-caret" aria-hidden="true" /> : null}
+        </div>
+      ) : current ? (
         <div className="local-feed-step" title={current.target}>
           <span className={`local-feed-tool ${toolTone(current.tool)}`}>{current.tool}</span>
           {current.target ? <span className="local-feed-target"> {current.target}</span> : null}

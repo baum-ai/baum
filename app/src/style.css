@@ -2417,12 +2417,38 @@ a.local-session-pr:hover {
   align-items: center;
   gap: 0.25rem 0.875rem;
 }
+/* A row's head stays one line: its title, where it works and its branch
+   give way with an ellipsis (the branch at most 18rem, whole on hover), so
+   the time keeps its place on the right and nothing widens the page. */
 .local-feed-head {
   display: flex;
-  flex-wrap: wrap;
   align-items: center;
-  gap: 0.25rem 0.625rem;
+  gap: 0.625rem;
   min-width: 0;
+}
+.local-feed-head > * {
+  min-width: 0;
+}
+.local-feed-head .local-feed-time {
+  flex: none;
+}
+.local-feed .local-session-where {
+  flex: 0 1 auto;
+  flex-wrap: nowrap;
+  overflow: hidden;
+}
+.local-feed .local-session-where > * {
+  min-width: 0;
+}
+.local-feed .local-session-repo {
+  flex: none;
+}
+.local-feed :is(.local-session-branch, .local-feed-branch) {
+  flex: 0 1 auto;
+  max-width: 18rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .local-feed-head h3 {
   margin: 0;
@@ -2773,6 +2799,30 @@ a.local-session-pr:hover {
   color: var(--un-muted);
   font-weight: 400;
 }
+/* A running session's latest words, one line, its caret after them. */
+.local-feed-said {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  color: var(--un-ink-soft);
+  font-size: var(--text-xs);
+  line-height: 1.5;
+}
+.local-feed-said-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.local-feed-said .local-feed-caret {
+  flex: none;
+  width: 6px;
+  height: 12px;
+  margin-left: 4px;
+}
+.local-feed-said code {
+  font-size: 12px;
+}
 /* The current step in a mono strip, then the trail of the steps before. */
 .local-feed-step {
   overflow: hidden;
@@ -2904,8 +2954,9 @@ a.local-session-pr:hover {
 .local-feed .local-sessions-empty {
   padding: 0.8rem 1.5rem;
 }
-/* The app's toasts (toast.tsx), in the Up next toast's dark: what happened,
-   what it was about, and where. */
+/* The app's toasts (toast.tsx), drawn as its menus: warm paper raised over
+   the page, which dark mode turns to its popup surface. What happened, what
+   it was about, and where. */
 .local-toast {
   position: fixed;
   z-index: 40;
@@ -2916,20 +2967,21 @@ a.local-session-pr:hover {
   gap: 10px;
   width: min(26rem, calc(100vw - var(--rail-width) - 2rem));
   padding: 12px 10px 12px 14px;
+  border: 1px solid var(--un-line-strong);
   border-radius: 10px;
-  background: var(--un-toast-bg);
-  box-shadow: var(--un-shadow-toast);
-  color: var(--un-toast-ink);
+  background: var(--surface-popup);
+  box-shadow: var(--un-shadow-menu);
+  color: var(--un-ink);
   transform: translateX(-50%);
   animation: local-toast-rise 0.2s ease-out;
 }
 .local-toast-icon {
   flex: none;
   margin-top: 1px;
-  color: color-mix(in srgb, var(--un-done) 55%, var(--un-toast-ink));
+  color: var(--un-done);
 }
 .local-toast.error .local-toast-icon {
-  color: color-mix(in srgb, var(--un-hot) 50%, var(--un-toast-ink));
+  color: var(--un-hot);
 }
 .local-toast-body {
   flex: 1;
@@ -2949,14 +3001,14 @@ a.local-session-pr:hover {
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;
   margin-top: 2px !important;
-  color: color-mix(in srgb, var(--un-toast-ink) 75%, transparent);
+  color: var(--un-ink-soft);
   font-size: 13px;
   line-height: 1.45;
   overflow-wrap: anywhere;
 }
 .local-toast-context {
   margin-top: 6px !important;
-  color: color-mix(in srgb, var(--un-toast-ink) 60%, transparent);
+  color: var(--un-muted);
   font-size: 12px;
 }
 .local-toast-context {
@@ -2972,13 +3024,17 @@ a.local-session-pr:hover {
   flex: none;
   align-self: center;
   padding: 5px 12px;
-  border: 1px solid var(--un-toast-line);
+  border: 1px solid var(--un-line-strong);
   border-radius: 6px;
-  background: var(--un-toast-button);
-  color: var(--un-toast-ink);
+  background: var(--un-panel);
+  box-shadow: var(--un-shadow-button);
+  color: var(--un-ink);
   font-size: 13px;
   font-weight: 600;
   cursor: pointer;
+}
+.local-toast-action:hover {
+  background: var(--un-hover);
 }
 .local-toast-close {
   display: grid;
@@ -2995,7 +3051,7 @@ a.local-session-pr:hover {
   cursor: pointer;
 }
 .local-toast-close:hover {
-  background: var(--un-toast-button);
+  background: var(--un-hover);
   opacity: 1;
 }
 @keyframes local-toast-rise {

@@ -863,9 +863,11 @@ stays.
 - "Running now" has one card per running session, including one silent for a while
   whose tool call (a subagent, a long command) has not returned, or, from a daemon
   older than `quiet`, one quiet for a while ("Quiet for 12 min"): the agent, title, branch, pull request link, and the time
-  since it started. From the session's `activity` it shows the current step (the tool
-  in its colour and its target, with a blinking caret while running, still under
-  reduced motion) and "N files touched" before the time;
+  since it started. From the session's `activity` it shows the opening of the agent's
+  latest message on one line (its Markdown emphasis and code rendered), else, until
+  the agent has said anything, the current step (the tool in its colour and its
+  target), either with a blinking caret while running, still under reduced motion;
+  and "N files touched" before the time;
   without `activity` it reads "Active 2 min ago". r on its focused row, or "Reply when
   it finishes" in its right-click menu, opens "Send when it finishes" (Enter posts a
   message to `api/agent-messages`, Escape closes it); the daemon delivers it when the session's turn

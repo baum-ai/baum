@@ -320,6 +320,21 @@ it("shows a running session's current step and files touched, and a quiet one", 
   expect(quiet!.textContent).toContain("Quiet for 12 min");
   expect(quiet!.querySelector(".local-feed-caret")).toBeNull();
   expect(bare!.textContent).toContain("Active 2 minutes ago");
+
+  // Once the agent has said something, its words show in place of the step.
+  await render([
+    session({
+      activity: {
+        steps,
+        last_message: "Running the **session** tests.\n\nThen the browser ones.",
+      },
+    }),
+  ]);
+  const said = node.querySelector('[aria-label="Running now"] .local-feed-said')!;
+  expect(said.textContent!.trim()).toBe("Running the session tests.");
+  expect(said.querySelector("strong")!.textContent).toBe("session");
+  expect(said.querySelector(".local-feed-caret")).not.toBeNull();
+  expect(node.querySelector('[aria-label="Running now"] .local-feed-step')).toBeNull();
   expect(bare!.querySelector(".local-feed-step")).toBeNull();
 });
 
