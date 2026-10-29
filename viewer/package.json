@@ -67,6 +67,7 @@
     "./components/states": "./src/components/states.tsx",
     "./components/table": "./src/components/table.tsx",
     "./components/tabs": "./src/components/tabs.ts",
+    "./components/timeline-page": "./src/components/timeline-page.tsx",
     "./components/transcript": "./src/components/transcript.tsx",
     "./components/ui": "./src/components/ui.tsx",
     "./components/use-disclosure": "./src/components/use-disclosure.ts",

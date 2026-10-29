@@ -507,3 +507,123 @@ export function decisionQuery(filters: DecisionFilters, cursor?: string | null):
   if (cursor) query.set("cursor", cursor);
   return query;
 }
+
+/** The two views of a log with features: its features, the default, and every
+ *  decision on one timeline (`tab=all`). A log without features has only the
+ *  timeline, whatever the address says. */
+export type LogTab = "features" | "all";
+
+export function parseLogTab(search: URLSearchParams): LogTab {
+  return search.get("tab") === "all" ? "all" : "features";
+}
+
+/** Another tab, with the same filters. What is opened belongs to the tab it
+ *  was opened in, so it is closed. */
+export function withLogTab(search: URLSearchParams, tab: LogTab): URLSearchParams {
+  const next = new URLSearchParams(search);
+  if (tab === "all") next.set("tab", "all");
+  else next.delete("tab");
+  next.delete("feature");
+  next.delete("open");
+  return next;
+}
+
+/** A cursor-paged list in the order the server sent it: ranked by a search
+ *  (`relevance`) or newest first (`newest`, or unsaid by an older API). The
+ *  decision log's two lists page the same way. */
+export type ListOrder = "relevance" | "newest" | undefined;
+
+/** Set when a later page came in another order, as when the search index
+ *  stopped answering mid-way through a ranked list and the server sent the
+ *  first page newest first: `restarted` when that page replaced the list,
+ *  `stopped` when it was empty, so the rows already loaded stay and no more
+ *  can be loaded. */
+export type Reordered = false | "restarted" | "stopped";
+
+/** What the end of a list that changed order says, the same for both lists;
+ *  null while it has not. */
+export function reorderedNote(reordered: Reordered): string | null {
+  if (reordered === "stopped")
+    return "Search ranking is unavailable right now, so no more matches can be loaded.";
+  if (reordered === "restarted")
+    return "Search ranking is unavailable right now; showing the newest matches.";
+  return null;
+}
+
+export type DecisionDay = { day: string; decisions: DecisionSummary[] };
+
+/** Rows under a header per local day, in the order they came: the API sends
+ *  them newest first, so the days come out newest first too. */
+export function groupByDay(decisions: DecisionSummary[]): DecisionDay[] {
+  const days: DecisionDay[] = [];
+  for (const decision of decisions) {
+    const day = localDayKey(decision.decided_at);
+    const last = days.at(-1);
+    if (last?.day === day) last.decisions.push(decision);
+    else days.push({ day, decisions: [decision] });
+  }
+  return days;
+}
+
+export type DecisionSection = {
+  key: string;
+  heading: string;
+  /** Rows say their day themselves when the section is not one day. */
+  dated: boolean;
+  decisions: DecisionSummary[];
+};
+
+/** How the list reads: a ranked search as one list in the server's order,
+ *  best match first, since regrouping it by day would undo the ranking;
+ *  anything else under a header per day. */
+export function decisionSections(
+  decisions: DecisionSummary[],
+  order: ListOrder,
+): DecisionSection[] {
+  if (order === "relevance")
+    return decisions.length > 0
+      ? [{ key: "relevance", heading: "Best matches first", dated: true, decisions }]
+      : [];
+  return groupByDay(decisions).map((day) => ({
+    key: day.day,
+    heading: formatDate(day.decisions[0]!.decided_at),
+    dated: false,
+    decisions: day.decisions,
+  }));
+}
+
+/** The local month and day a feature was last active, as ISO times at their
+ *  start, for the timeline's headings; null for a feature with no activity. */
+export function featureMonth(feature: FeatureSummary | undefined): string | null {
+  const at = lastActive(feature);
+  return at ? new Date(at.getFullYear(), at.getMonth(), 1).toISOString() : null;
+}
+
+export function featureDay(feature: FeatureSummary | undefined): string | null {
+  const at = lastActive(feature);
+  return at ? new Date(at.getFullYear(), at.getMonth(), at.getDate()).toISOString() : null;
+}
+
+/** The month and day headings above each feature, in the list's order: a
+ *  heading starts where the feature's month or day differs from the last
+ *  feature that had activity. A feature with none takes no heading. */
+export function featureHeadings(
+  features: FeatureSummary[],
+): { month: string | null; day: string | null }[] {
+  let previous: FeatureSummary | undefined;
+  return features.map((feature) => {
+    const month = featureMonth(feature);
+    const day = featureDay(feature);
+    const heading = {
+      month: month !== null && month !== featureMonth(previous) ? month : null,
+      day: day !== null && day !== featureDay(previous) ? day : null,
+    };
+    if (day !== null) previous = feature;
+    return heading;
+  });
+}
+
+function lastActive(feature: FeatureSummary | undefined): Date | null {
+  const at = feature?.last_activity_at ?? feature?.first_activity_at;
+  return at ? new Date(at) : null;
+}
