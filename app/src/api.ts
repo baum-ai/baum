@@ -101,6 +101,9 @@ export type ReviewGroup = {
   repository: string;
   name: string;
   members: number[];
+  /** baum made the group for stacked pull requests and keeps it in step with
+   *  the stack; renaming or changing its members makes it the person's. */
+  stack?: boolean;
   created_at: string;
   updated_at: string;
   version_count: number;
@@ -264,7 +267,9 @@ export function automaticLabel(job: Job): string | null {
         ? "new commits were pushed"
         : job.trigger === "ready_for_review"
           ? "the pull request was marked ready for review"
-          : "";
+          : job.trigger === "stack_reviewed"
+            ? "every pull request of the stack has its review"
+            : "";
   if (job.trigger === "retry")
     return "Started automatically again: the daemon stopped during the previous automatic run";
   return why ? `Started automatically because ${why}` : "Started automatically";

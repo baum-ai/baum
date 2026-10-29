@@ -78,7 +78,7 @@ func (f *fixture) roundTrip(r *http.Request) (*http.Response, error) {
 			for _, team := range pr.RequestedTeams {
 				requests = append(requests, map[string]any{"requestedReviewer": map[string]any{"__typename": "Team", "databaseId": team.ID}})
 			}
-			nodes = append(nodes, map[string]any{"number": pr.Number, "title": pr.Title, "isDraft": pr.Draft, "author": pr.User, "headRefOid": pr.Head.SHA, "headRefName": pr.Head.Ref, "headRepository": head, "baseRepository": map[string]any{"databaseId": pr.Base.Repo.ID, "nameWithOwner": pr.Base.Repo.FullName}, "reviewRequests": map[string]any{"nodes": requests}})
+			nodes = append(nodes, map[string]any{"number": pr.Number, "title": pr.Title, "isDraft": pr.Draft, "author": pr.User, "headRefOid": pr.Head.SHA, "headRefName": pr.Head.Ref, "baseRefName": pr.Base.Ref, "headRepository": head, "baseRepository": map[string]any{"databaseId": pr.Base.Repo.ID, "nameWithOwner": pr.Base.Repo.FullName}, "reviewRequests": map[string]any{"nodes": requests}})
 		}
 		encoded, _ := json.Marshal(map[string]any{"data": map[string]any{"viewer": map[string]any{"login": "viewer"}, "rateLimit": map[string]any{"cost": 1, "remaining": 4900, "resetAt": "2033-05-18T03:33:20Z"}, "repository": map[string]any{"viewerPermission": "WRITE", "pullRequests": map[string]any{"nodes": nodes, "pageInfo": map[string]any{"hasNextPage": len(rows) == 100, "endCursor": fmt.Sprintf("page-%d", page+1)}}}}})
 		body = string(encoded)
@@ -111,7 +111,7 @@ func recordedFixture() *fixture {
 		"/user":                           `{"login":"viewer"}`,
 		"/user/teams?per_page=100&page=1": `[{"id":42}]`,
 		"/repos/acme/app/pulls?state=open&per_page=100&page=1": `[
- {"number":1,"title":"My draft","html_url":"https://github.com/acme/app/pull/1","draft":true,"user":{"login":"VIEWER"},"head":{"sha":"head1","ref":"my-draft","repo":{"id":1,"full_name":"acme/app"}},"base":{"repo":{"id":1,"full_name":"acme/app"}},"requested_reviewers":[]},
+ {"number":1,"title":"My draft","html_url":"https://github.com/acme/app/pull/1","draft":true,"user":{"login":"VIEWER"},"head":{"sha":"head1","ref":"my-draft","repo":{"id":1,"full_name":"acme/app"}},"base":{"ref":"main","repo":{"id":1,"full_name":"acme/app"}},"requested_reviewers":[]},
  {"number":2,"title":"Team request","user":{"login":"writer"},"head":{"sha":"head2","repo":{"id":2,"full_name":"fork/app"}},"base":{"repo":{"id":1,"full_name":"acme/app"}},"requested_teams":[{"id":42}]},
  {"number":3,"title":"Direct request","user":{"login":"reader"},"head":{"sha":"head3","repo":null},"base":{"repo":{"id":1,"full_name":"acme/app"}},"requested_reviewers":[{"login":"viewer"}]},
  {"number":4,"title":"Unknown permissions","user":{"login":"unknown"},"head":{"sha":"head4","repo":{"id":1,"full_name":"acme/app"}},"base":{"repo":{"id":1,"full_name":"acme/app"}}}
@@ -143,7 +143,7 @@ func TestFlagsAndPrivateOfflineCache(t *testing.T) {
 		t.Fatalf("snapshot %#v", snapshot)
 	}
 	prs := snapshot.PullRequests
-	if !prs[0].AuthoredByMe || !prs[0].Draft || prs[0].Fork || prs[0].HeadSHA != "head1" || prs[0].HeadRef != "my-draft" || prs[0].State != "OPEN" || prs[0].AuthorHasWrite == nil || !*prs[0].AuthorHasWrite {
+	if !prs[0].AuthoredByMe || !prs[0].Draft || prs[0].Fork || prs[0].HeadSHA != "head1" || prs[0].HeadRef != "my-draft" || prs[0].BaseRef != "main" || prs[0].State != "OPEN" || prs[0].AuthorHasWrite == nil || !*prs[0].AuthorHasWrite {
 		t.Fatalf("authored flags %#v", prs[0])
 	}
 	if !prs[1].ReviewRequestedFromMe || !prs[1].Fork || prs[1].AuthorHasWrite == nil || !*prs[1].AuthorHasWrite {
@@ -227,7 +227,7 @@ func TestConditionalBackoffAndRateLimit(t *testing.T) {
 	}
 }
 
-// A cache written before pull requests kept their head branch reads every
+// A cache written before pull requests kept their base branch reads every
 // response in full once, so a 304 cannot keep the branch unknown.
 func TestOlderCacheFormatIsReadInFullOnce(t *testing.T) {
 	f := recordedFixture()
@@ -236,7 +236,7 @@ func TestOlderCacheFormatIsReadInFullOnce(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if first.PullRequests[0].HeadRef != "my-draft" || first.PullRequests[1].HeadRef != "" {
+	if first.PullRequests[0].HeadRef != "my-draft" || first.PullRequests[0].BaseRef != "main" || first.PullRequests[1].HeadRef != "" {
 		t.Fatalf("head branches %#v", first.PullRequests)
 	}
 	path := repositoryCachePath(t, s)
@@ -246,7 +246,7 @@ func TestOlderCacheFormatIsReadInFullOnce(t *testing.T) {
 	}
 	cache.Format = 0
 	for key, response := range cache.Responses {
-		response.Body = json.RawMessage(strings.ReplaceAll(string(response.Body), `"ref":"my-draft",`, ""))
+		response.Body = json.RawMessage(strings.ReplaceAll(string(response.Body), `"ref":"main",`, ""))
 		cache.Responses[key] = response
 	}
 	if err := save(path, cache); err != nil {
@@ -256,7 +256,7 @@ func TestOlderCacheFormatIsReadInFullOnce(t *testing.T) {
 	*now = first.NextPoll
 	before := len(f.requests)
 	got, err := s.Poll(context.Background(), testRepo)
-	if err != nil || got.PullRequests[0].HeadRef != "my-draft" {
+	if err != nil || got.PullRequests[0].BaseRef != "main" {
 		t.Fatalf("upgraded poll %#v %v", got, err)
 	}
 	for _, request := range f.requests[before:] {

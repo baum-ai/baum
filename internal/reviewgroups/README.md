@@ -1,8 +1,9 @@
 # Review groups
 
-A review group is a named set of open pull requests of one repository that a
-person chose in the inbox ("Review together") to review as one. The members
-need not be stacked or related by branch. Generating the group writes one
+A review group is a named set of open pull requests of one repository
+reviewed as one: either chosen by a person in the inbox ("Review together"),
+when the members need not be stacked or related by branch, or made by baum
+for a stack of pull requests (a **stack group**, below). Generating the group writes one
 combined `baum.review/1` document across every member: how the changes fit
 together, risks that cross members (the same file or function changed twice,
 conflicting assumptions, merge order), and each member's own findings in
@@ -35,6 +36,36 @@ This package owns the group definitions, the group review versions and the
   set of members, or a member's head (from discovery) differs from the head
   the version reviewed. An unknown current head is not outdated.
 
+## Stack groups
+
+Stacked pull requests are grouped by default. After every complete discovery
+poll the daemon finds the repository's stacks (`Stacks`) and keeps its stack
+groups in step (`Store.SyncStacks`):
+
+- A **stack** is a chain of open pull requests by one author, each based on
+  the previous one's head branch (`base_ref` = `head_ref`). A branch several
+  open pull requests are based on is shared (a develop branch with its own
+  pull request into main, or a stack that branches) and links none of them.
+  Pull requests from forks are left out, and a stack of more than eight pull
+  requests gets no group.
+- A stack without a group gets one (`stack` true), named after its bottom
+  pull request's title. A stack that gained or lost members (a parent merged,
+  a pull request added on top) gives its group the new members; one that is
+  gone (one open member left, or none) dissolves its group, which leaves every
+  list like a deleted one and keeps its versions.
+- The person's choices win. A stack with a pull request in a group the person
+  made, or in a stack group the person deleted, gets no group. Renaming a
+  stack group or changing its members makes it the person's (`stack` false),
+  so sync no longer changes or dissolves it.
+- With automatic generation on for the repository, a stack group's review
+  follows its members' (see `internal/automatic`): it is queued once every
+  member is eligible, has a saved review of its current head and no
+  automatic job left to submit, unless the group's latest version already
+  read every current member at that head (a merged member alone calls for
+  none). A stack already reviewed when the scheduler first sees its group is
+  not caught up. Otherwise, and for groups a person made, the group
+  review is generated on request.
+
 ## Storage
 
 `groups.sqlite` (0600) in the daemon's state directory (`jobs.Directory()`,
@@ -42,7 +73,7 @@ beside `jobs.json`), not in a clone: a group outlives any one clone.
 
 | Table | Holds |
 | --- | --- |
-| `groups(id, repository, name, members, created, updated, deleted)` | definitions; `members` is a JSON array of numbers; `deleted` is a soft-delete time, 0 while live |
+| `groups(id, repository, name, members, stack, created, updated, deleted)` | definitions; `members` is a JSON array of numbers; `stack` marks a stack group (added to older stores on open); `deleted` is a soft-delete time, 0 while live |
 | `versions(group_id, version, metadata, members, document)` | immutable combined reviews keyed by group ID and version; `metadata` is `store.Metadata`; `members` is the reviewed `stack.members` copied out of the document for listing |
 
 Group versions are keyed by group ID, never by `{repository, number}`, so
@@ -55,8 +86,10 @@ recorded for groups; the job queue shows a running group job.
 ## Generation
 
 A job item names `{clone, group}` instead of `{clone, pr}`; its `pr` is 0, so
-no pull request logic (automatic scheduling, duplicate heads, notices)
-matches a group job. Preparation reads every member's head, state and
+no pull request logic (automatic scheduling of pull requests, notices)
+matches a group job. An automatic group job's head is its members' heads
+(`Prepared.Members`): it is busy or a duplicate only against jobs of the same
+group. Preparation reads every member's head, state and
 author permission from GitHub like a pull request job: a member from a fork
 or an author without known write access needs the isolation confirmation
 for the whole group. Its budgets are one run's, as for a pull request. A
@@ -116,7 +149,7 @@ Behind the daemon's authenticated host. JSON is decoded strictly; errors are
 | `GET /api/groups/{id}/document?version=` | the latest or the named version |
 | `GET /api/groups/{id}/patch?version=&path=&hunk=` | `{"patch": string or null}` |
 
-`Group` is `{id, repository, name, members, created_at, updated_at,
+`Group` is `{id, repository, name, members, stack, created_at, updated_at,
 version_count, latest, risk_score, reviewed, outdated}`: `latest` is the
 latest version's metadata (or null), `reviewed` the members it covered with
 their heads, and `outdated` as above. Every mutation publishes an `index`

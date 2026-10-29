@@ -437,7 +437,8 @@ historical). Its shown members leave the loose rows and nest under the group
 row, which is collapsed by default; members the current filter hides are not
 shown, bucket counts count the group once, and Select all covers loose rows and
 the members of expanded groups. The group row shows the group's risk, its name,
-"Review group · N pull requests · repository" and, when it applies,
+"Review group · N pull requests · repository" (a stack group's badge says
+"Stack of N" instead of "Group of N") and, when it applies,
 "Generating group review", "Group review outdated" or "No group review yet".
 The group page (`?group=<id>`) is the shared viewer with the group's name as
 heading, member labels on sections, and above the review the members (state and

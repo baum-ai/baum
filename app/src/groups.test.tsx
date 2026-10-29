@@ -251,6 +251,15 @@ it("renders a group as one row with its members nested when expanded", async () 
   expect(node.textContent).toContain("Generate reviews (3)");
 });
 
+it("labels a group baum made for stacked pull requests as a stack", async () => {
+  entries = [entry(1), entry(2), entry(3)];
+  groups = [group([2, 3], { stack: true })];
+  await act(async () => root.render(<App />));
+  const row = node.querySelector<HTMLElement>('section[aria-label="Your pull requests"]')!;
+  expect(row.textContent).toContain("Stack of 2");
+  expect(row.textContent).not.toContain("Group of 2");
+});
+
 it("keeps group jobs apart from pull request jobs", () => {
   const base = {
     clone: "clone",

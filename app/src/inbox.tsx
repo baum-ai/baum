@@ -1043,7 +1043,9 @@ function GroupRow({
             >
               {group.name}
             </Link>
-            <Badge size="compact">Group of {group.members.length}</Badge>
+            <Badge size="compact">
+              {group.stack ? "Stack" : "Group"} of {group.members.length}
+            </Badge>
           </div>
           <p title={metadata} className="inbox-meta text-xs text-(--text-tertiary)">
             {metadata}
