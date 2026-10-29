@@ -9,6 +9,7 @@ import { App } from "./app";
 import { LocalReview } from "./review";
 import { reviewJob, type Entry, type Job } from "./api";
 import type { FixState } from "./fix";
+import { forgetLastRows } from "./shortcuts";
 vi.mock("@baum/viewer/components/review-viewer", () => ({
   ReviewViewer: ({ document, header, placeholder, notices }: ReviewViewerProps) => (
     <div data-generation={header?.generation?.state} data-back={header?.back?.href}>
@@ -99,6 +100,7 @@ afterEach(async () => {
   await act(async () => root.unmount());
   node.remove();
   vi.unstubAllGlobals();
+  forgetLastRows();
 });
 async function render(current: Job, revision = 0, currentEntry = entry) {
   await act(async () =>

@@ -62,6 +62,16 @@ cannot be read is tried again after 15 minutes. It keeps the pull
 requests' titles, descriptions, authors, commits and changed paths in the private decision store, and links
 the commits to the sessions on this machine there; these rows are not
 pruned.
+The feature log then sends to the same provider, with the published feature
+prompts: a pull request's title, description, branch and
+changed paths, with candidate features' titles, descriptions, digests and
+their pull requests' titles and summaries, to place it; and, to write a
+feature's text, its pull requests' titles, descriptions, states and the
+summaries of their reviews saved in the clone, the attributed decisions of
+your captured sessions (what was decided and why, and the files cited, never
+your prompts or quoted evidence) and the feature's paths. A pull request
+without a saved review summary gets one generated from its title,
+description and those decisions.
 
 Redaction is best effort. Review `baum internal bundle` output before using
 `generate` on a repository whose sessions may contain sensitive material, and
@@ -1059,6 +1069,21 @@ ended one is kept for a day, its identifiers and times also in
 `live-sessions.json` beside the record. Nothing of it goes to a baum server.
 A finished session's content is still read from the session files on disk,
 through the redacted transcript routes below.
+
+`GET /api/decisions` serves the decisions decision capture stored, behind the
+same checks and limited to `GET`: for a session, or the sessions of a pull
+request, each decision's id, title, summary, category, who decided, rationale,
+rejected alternative, edited file names, date and whether it is superseded or
+provisional, all derived from redacted transcripts and masked again after the
+model replied. Each session comes with its agent and id, its capture state
+(coverage, skip reason, when it last changed, whether a call is in flight and
+why capture is off), and for a pull request whether it is in progress and, for
+a session the saved review links, its title as the PR page's sessions list
+shows it, and when the saved review the provisional marks are relative to was
+generated. Evidence quotes, turns, branches and repositories stay in the
+store.
+The `decisions` event carries no data. Its settings change only through the authenticated
+`PUT /api/settings/decisions` and repository settings routes.
 
 One line of text is the exception: a Claude Code notification's `message`,
 the sentence Claude Code shows you when it asks for something ("Claude needs

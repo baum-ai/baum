@@ -428,8 +428,9 @@ func (c *Backend) run(ctx context.Context, request agent.Request, args, env []st
 					// call was wasted, so a bounded copy goes to the private log.
 					status = "schema_rejected"
 					result.StructuredOutputRejections++
+					result.LastRejection = boundedText(toolResultText(content.Content), 512)
 					if request.Logger != nil {
-						request.Logger.Info("structured output rejected", "id", content.ToolUseID, "detail", boundedText(toolResultText(content.Content), 512))
+						request.Logger.Info("structured output rejected", "id", content.ToolUseID, "detail", result.LastRejection)
 					}
 				} else if content.IsError {
 					status = agent.ErrorStatus(string(content.Content))

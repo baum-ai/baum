@@ -13,6 +13,7 @@ import {
 } from "./api";
 import { SessionsPage } from "./sessions";
 import { SettingsPage } from "./settings";
+import { forgetLastRows } from "./shortcuts";
 
 vi.mock("@baum/viewer/components/review-viewer", () => ({ ReviewViewer: () => null }));
 
@@ -82,6 +83,7 @@ afterEach(async () => {
   await act(async () => root.unmount());
   node.remove();
   vi.unstubAllGlobals();
+  forgetLastRows();
 });
 
 async function render(sessions: LiveSession[], pending = requests()) {

@@ -4,6 +4,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { Inbox } from "./inbox";
 import {
   commandAction,
+  forgetLastRows,
   INBOX_SHORTCUTS,
   listKeys,
   moveFocus,
@@ -100,6 +101,7 @@ afterEach(async () => {
   await act(async () => root.unmount());
   node.remove();
   vi.unstubAllGlobals();
+  forgetLastRows();
 });
 
 const render = (props: Partial<Parameters<typeof Inbox>[0]> = {}) =>
@@ -442,23 +444,24 @@ it("reads the app-wide keys with the platform's command key", () => {
   expect(commandAction(key({ key: "k" }), false)).toBeNull();
 });
 
+const opened = vi.fn();
+function List({ ids }: { ids: string[] }) {
+  const rows = useRowFocus<HTMLUListElement>("list", ids);
+  useShortcuts((event) => void listKeys(event, rows));
+  return (
+    <ul ref={rows.list}>
+      {ids.map((id) => (
+        <li key={id} data-row-id={id} data-focused={rows.focused === id || undefined}>
+          <a href={`#${id}`} data-row-link="" onClick={() => opened(id)}>
+            {id}
+          </a>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
 it("moves through a list's rows and opens the focused one", async () => {
-  const opened = vi.fn();
-  function List({ ids }: { ids: string[] }) {
-    const rows = useRowFocus<HTMLUListElement>(ids);
-    useShortcuts((event) => void listKeys(event, rows));
-    return (
-      <ul ref={rows.list}>
-        {ids.map((id) => (
-          <li key={id} data-row-id={id} data-focused={rows.focused === id || undefined}>
-            <a href={`#${id}`} data-row-link="" onClick={() => opened(id)}>
-              {id}
-            </a>
-          </li>
-        ))}
-      </ul>
-    );
-  }
   await act(async () => root.render(<List ids={["a", "b", "c"]} />));
   const focusedRow = () => node.querySelector<HTMLElement>("[data-focused]")?.dataset.rowId;
   await press("j");
@@ -480,6 +483,29 @@ it("moves through a list's rows and opens the focused one", async () => {
   await press("Escape", {}, document.activeElement!);
   expect(focusedRow()).toBeUndefined();
   expect(document.activeElement).toBe(document.body);
+});
+
+it("comes back to a list on the row it left from", async () => {
+  const focusedRow = () => node.querySelector<HTMLElement>("[data-focused]")?.dataset.rowId;
+  await act(async () => root.render(<List ids={["a", "b", "c"]} />));
+  await press("j");
+  await press("j", {}, document.activeElement!);
+  expect(focusedRow()).toBe("b");
+  // Opening the row draws its page in the list's place; back, the row is kept.
+  await act(async () => root.render(<p>Page</p>));
+  await act(async () => root.render(<List ids={["a", "b", "c"]} />));
+  expect(focusedRow()).toBe("b");
+  expect(document.activeElement?.textContent).toBe("b");
+  // A row opened by the pointer is kept as well.
+  await act(async () => node.querySelector<HTMLElement>('[data-row-id="c"] a')!.click());
+  await act(async () => root.render(<p>Page</p>));
+  await act(async () => root.render(<List ids={["a", "b", "c"]} />));
+  expect(focusedRow()).toBe("c");
+  // Escape gives the row up for good.
+  await press("Escape", {}, document.activeElement!);
+  await act(async () => root.render(<p>Page</p>));
+  await act(async () => root.render(<List ids={["a", "b", "c"]} />));
+  expect(focusedRow()).toBeUndefined();
 });
 
 it("moves within a list", () => {

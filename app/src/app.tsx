@@ -35,6 +35,7 @@ import {
 import { GoTo, type GoToItem } from "./go-to";
 import { PAGES } from "./pages";
 import { LocalReview } from "./review";
+import { DecisionsRevision } from "./decisions";
 import { useDiagnosticProblems } from "./diagnostics";
 import { RepositoriesPage, SettingsPage, settingsSection, type ReviewDefaults } from "./settings";
 import { needsYou, SessionsPage, transcriptHref } from "./sessions";
@@ -226,6 +227,10 @@ function Workspace({ url }: { url: UrlState }) {
   const [agentRequests, setAgentRequests] = useState<AgentRequests>(noAgentRequests);
   // Counts the `live` events, which an open transcript reads itself again on.
   const [liveTick, setLiveTick] = useState(0);
+  // Counts the reads decision lists make again: on a `decisions` event,
+  // several at once coalesced, and when the stream opens or resets or the
+  // automatic switch changes.
+  const [decisionsTick, setDecisionsTick] = useState(0);
   const [groups, setGroups] = useState<ReviewGroup[]>([]);
   // The pull requests being grouped, while the group name is asked.
   const [grouping, setGrouping] = useState<Entry[] | null>(null);
@@ -328,12 +333,24 @@ function Workspace({ url }: { url: UrlState }) {
     source.addEventListener("open", refresh);
     source.addEventListener("open", refreshLive);
     source.addEventListener("live", refreshLive);
+    let decisionsTimer: ReturnType<typeof setTimeout> | undefined;
+    const refreshDecisions = () => {
+      decisionsTimer ??= setTimeout(() => {
+        decisionsTimer = undefined;
+        setDecisionsTick((n) => n + 1);
+      }, 250);
+    };
+    for (const kind of ["decisions", "open", "reset", "automatic"])
+      source.addEventListener(kind, refreshDecisions);
     source.addEventListener("reset", refreshLive);
     source.addEventListener("index", refresh);
     source.addEventListener("progress", refresh);
     source.addEventListener("automatic", refresh);
     source.addEventListener("reset", refresh);
-    return () => source.close();
+    return () => {
+      clearTimeout(decisionsTimer);
+      source.close();
+    };
   }, [reload, reloadLive]);
   const authChanged = () => {
     setAuthRevision((n) => n + 1);
@@ -810,26 +827,28 @@ function Workspace({ url }: { url: UrlState }) {
               </div>
             </section>
           ) : selectedEntry ? (
-            <LocalReview
-              key={rowKey(selectedEntry)}
-              entry={selectedEntry}
-              clone={cloneFor(selectedEntry)}
-              revision={revision}
-              job={reviewJob(selectedEntry, jobs)}
-              changed={reload}
-              live={live}
-              groups={groups.filter(
-                (g) =>
-                  sameRepository(g.repository, selectedEntry.pull_request.repository) &&
-                  g.members.includes(selectedEntry.pull_request.number),
-              )}
-              generate={() => void generate([selectedEntry], "single")}
-              starting={starting.has(rowKey(selectedEntry))}
-              fix={cloneFor(selectedEntry) ? () => void fix(selectedEntry) : undefined}
-              fixState={fixState(selectedEntry)}
-              fixJob={fixJob(selectedEntry, jobs)}
-              fixRuns={fixJobs(selectedEntry, jobs)}
-            />
+            <DecisionsRevision.Provider value={decisionsTick}>
+              <LocalReview
+                key={rowKey(selectedEntry)}
+                entry={selectedEntry}
+                clone={cloneFor(selectedEntry)}
+                revision={revision}
+                job={reviewJob(selectedEntry, jobs)}
+                changed={reload}
+                live={live}
+                groups={groups.filter(
+                  (g) =>
+                    sameRepository(g.repository, selectedEntry.pull_request.repository) &&
+                    g.members.includes(selectedEntry.pull_request.number),
+                )}
+                generate={() => void generate([selectedEntry], "single")}
+                starting={starting.has(rowKey(selectedEntry))}
+                fix={cloneFor(selectedEntry) ? () => void fix(selectedEntry) : undefined}
+                fixState={fixState(selectedEntry)}
+                fixJob={fixJob(selectedEntry, jobs)}
+                fixRuns={fixJobs(selectedEntry, jobs)}
+              />
+            </DecisionsRevision.Provider>
           ) : page !== "pulls" ? (
             <UpNextPage
               inbox={inbox}
@@ -1105,7 +1124,10 @@ function ForkConfirmation({
 function Jobs({ jobs, changed }: { jobs: Job[]; changed: () => Promise<void> }) {
   const [error, setError] = useState("");
   const newest = jobs.slice().reverse();
-  const rows = useRowFocus<HTMLUListElement>(newest.map((job) => job.id));
+  const rows = useRowFocus<HTMLUListElement>(
+    "jobs",
+    newest.map((job) => job.id),
+  );
   useShortcuts((event) => {
     if (listKeys(event, rows) || event.key !== "t" || !rows.focused) return;
     const transcript = rows

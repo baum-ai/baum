@@ -94,8 +94,11 @@ not a failure.
    (`pricing.List.OutcomeCost`): when any part of it is unknown (a run cut short, a speed or 1-hour cache-write
    split not reported, as Codex never reports its speed, or several calls
    whose prompt sizes may straddle a long-prompt tier) the cost is unknown,
-   not estimated. An attempt still pending when the daemon starts is settled
-   as abandoned.
+   not estimated. It is also settled with how many replies the harness
+   rejected against the schema (`rejections`; the last one's reason goes to
+   the private log with the attempt's stage, item and id). An attempt still
+   pending when the daemon starts is settled as abandoned. A reply stands
+   when the ledger cannot be written after it; the failure is logged.
 9. The reply is masked for secrets before it is parsed, validated against the
    transcript, given IDs and saved.
 
@@ -117,13 +120,60 @@ changes; other skips only when it changes.
   dated by its first cited turn's time, else the date its ID had, else the
   extraction's time.
 - `capture_attempt`: the ledger of calls (backend, model, full or extend,
-  reservation, cost, tokens, state), with the `stage` that made the call
+  reservation, cost, tokens, state, failure reason, rejected replies), with the `stage` that made the call
   (`capture`, or a feature log stage) and the `item` it was about.
 
 Nothing is pruned: the ledger and the decisions, obsolete ones included, are
 kept for good, as hosted extraction keeps them.
 The store holds decisions, rationale and evidence quotes derived from redacted
 transcripts, never the transcripts themselves.
+
+## In the app
+
+`API` serves `GET /api/decisions`, mounted by `internal/uiserver`:
+
+- `?agent=&session=`: one session's current decisions, its coverage and skip
+  reason, when its row last changed (`updated_at`, null when never captured)
+  and `capturing`, true while one of its calls is pending, and
+  `capture_off`, why the gate keeps capture from running for its repository
+  now (`paused`, `off`, `repository_off` or `not_picked`; the repository is
+  the tracker's, where the session works now, else the one it was last
+  captured in). A registry that cannot be read leaves it empty and is
+  logged.
+- `?repository=&pr=`: the same for each session of the pull request, resolved
+  when read: the tracked sessions whose pull request it is (the live
+  tracker's `prlink` link), ended ones it still holds included so their
+  provisional decisions stay, then the sessions its latest saved review links
+  on this machine (`locallink`, the computation its PR page's sessions list
+  shares; a failure to link is logged and links none, and a review too large
+  to serve links none but still dates the provisional marks). A session in
+  both appears once; `live` is a tracked session not over. Decisions dated
+  after the review's `generated_at` are `provisional`. A decision is dated
+  when it was first raised (its first cited turn, as hosted decisions are), so
+  provisional counts from then, not from when it was last revised; without a
+  saved review none are, and only the tracked sessions are listed.
+
+A decision carries only what the app shows (`DecisionView`): id, title,
+summary, category, who, rationale, rejected alternative, superseded, files
+and date; evidence, turns and branch are not served, nor a session's
+repository.
+
+`Store.Changed` is called after every write the app shows (a skip, a cover,
+a save, an attempt beginning or settling; the beginning is what shows
+"Capturing…", and the settling ends it when no save or skip follows); the
+daemon publishes the app's `decisions` event, which carries no data, with it,
+and also after the settings or a repository's are saved. The settings are
+`preferences.decisions`, served only by `GET` and `PUT
+/api/settings/decisions` (in `internal/uiserver`), which add
+`EffectiveModel`: the backend and model a capture would use, resolved by the
+same helper a capture uses, `auto` included, and whether the chosen model is
+ignored (never with cursor-agent, which uses no model). Its backend checks
+get 5 seconds; no backend, or none in time (`backend_undetermined`), is
+unknown (empty) and ignores nothing. `baum internal reviews show` reports the
+same as `decisions_backend`, `decisions_effective_model` and
+`decisions_model_ignored`. A repository's own setting is `settings.decisions`,
+through the repository settings API. Analytics counts capture's calls in
+the ledger (`Store.Ledger`) under baum's work.
 
 ## Feature log
 
@@ -200,6 +250,107 @@ A commit linked to a session more than one way keeps its strongest link.
 in, each with the paths it touches and those it was assigned with; a
 session with no capture row has none.
 
+### Model calls
+
+Placement and feature text call as capture does (steps 6 to 8 above): the
+same backend, model, reservation (the request's byte bound and the call's
+reply bound: 4,096 tokens for a placement, 8,192 for a text or pull request
+summary), 10-minute bound and ledger, each attempt recorded with its stage
+(`feature_assign`, `feature_summary` or `pr_summary`) and item. Rejected
+replies and a ledger that cannot be written are handled as capture's. The
+preferences and the repository's settings are read again before every call,
+so a repository turned off makes no further call. A repository turned off or
+a missing backend stops the stage until its next run, with no failure counted.
+
+### Placement
+
+After the sync and the linking, each run places at most 100 pending items,
+oldest trigger first, one call each with the published assigner prompt. An
+item is pending when:
+
+- a pull request is in no feature, was opened at or after the activation and
+  within the last 7 days (whatever its state), was not opened by a bot, and
+  its paths are known or it opened 15 minutes ago;
+- a pull request the assigner placed has merged since, once;
+- an open pull request's head is not the one it was placed at and its paths
+  changed enough (`features.LargeUpdate` with the paths it was placed with,
+  0.5 and 3); a head that changed too little is recorded as checked
+  (`checked_head_sha`) and left until the next push;
+- a captured session with current decisions, extracted in the last 7 days
+  and not since 15 minutes ago, is in no feature and linked to no pull
+  request's commit. A session linked to one is never placed on its own: it
+  follows that pull request's feature.
+
+Its candidates are at most 16 features of the live version not merged into
+another, changed in the last 90 days (a change to the feature, or one of its
+pull requests or their placements), or the item's current feature. A
+feature's paths are those its pull requests were placed with and those cited
+by the decisions of its sessions placed on their own that follow no feature
+pull request. Each of the item's paths a feature holds scores one over the
+number of these features holding it. The current feature comes first, then
+the features holding a pull request linked to the item (stacked on it or it
+on them: one's base branch is the other's head branch, other than the
+default branch (none while the default branch is not known), both in the
+repository rather than a fork, and opened from
+by one pull request only; sharing a linked session; or mentioned as `#N`),
+best path
+score first, then the best path scores of the rest (10), then the most
+recently changed. Each candidate shows its digest and its pull requests'
+titles with their saved review summaries, else generated ones.
+
+The reply joins a candidate, starts a feature with its provisional text, or
+skips a small change. A session only joins: with no candidate it is settled
+without a call, and a reply starting a feature or skipping settles it. A
+skipped pull request in no feature is settled for its head; one already in
+a feature stays in it, as if the reply chose it. Settled items wait for
+their next trigger (`feature_settle`). A failed call, an invalid reply or a
+failed write after a call backs the item off for 10 minutes; after 3 counted
+failures for one trigger it waits for the next.
+
+The preferences and the repository's settings are read again before each
+item, so a repository turned off stops the run. A call cut short by the daemon stopping counts no
+failure. A pull request placed at its head before its paths were known gets
+them as the paths it was placed with once they are recorded, with no call.
+
+A placement marks every feature it changes: the one joined, the one left
+and the features of the pull request's linked sessions; an identical one
+marks none. Also marked: a session's features when its decisions are saved;
+a feature pull request's feature when its title, description or state
+changes, and, with the features of the sessions linked to its old and new
+commits, when its commits or paths change; and when the sessions linked to
+a commit change, the features holding a pull request with it and the
+features of those sessions (an unchanged re-link marks none). Marking
+raises `membership_version` and sets `dirty_since` and `changed_at`.
+
+### Feature text
+
+Each run writes the text of at most 50 features behind their members, not
+changed for 15 minutes, longest behind first, with the published summary
+prompt. A feature's input is its pull requests, earliest opened first
+(title, description, state, and the summary of the latest review saved in
+the clone, else a generated one), the current decisions of its sessions that
+attribution gives it (what was decided and why and the cited files, never a
+session's prompts or quoted evidence) and its paths. The call also reads the
+repository's name and the feature's current title and description.
+
+A pull request with no saved review summary gets one from its own call, from
+its title, description and the feature's decisions of the sessions linked
+to it, kept in `pr_summary` with its input's hash and reused while that is
+unchanged; one with neither a description nor such a decision gets none.
+
+The text is kept with the hash of its input and its own text, decisions
+named by session and first cited turn, so the same decisions extracted again
+under new IDs keep it. Key decisions are kept by ID and address; reused
+text takes the IDs of the current decisions at their addresses. When a
+feature's input hash is unchanged, its text is kept and it is marked clean
+without a call. The text is stored only when the feature's members did not
+change during the call; otherwise it stays behind for the next run. Up to
+three key decisions are kept by ID. A feature with neither pull requests nor
+decisions keeps its text, loses its key decisions and is marked clean. A
+failed pull request summary still writes the text, leaving the feature
+behind; failures back off and count as placement's do, per membership
+version.
+
 ### Stored data
 
 - `pull_request`, `pull_commit`, `pull_sync`: the listed pull requests with
@@ -231,5 +382,13 @@ capture that stops before rendering leaves it empty.
 runs one pull request sync without the gate (the first lists the last N
 days, default 180) and `baum internal features link --repo <owner/name>
 [--clone <path>]` links every commit of the last 7 days; each prints its
-counts as JSON. The clone defaults to the repository's registered one. They
-are for testing, with the daemon stopped: they write the daemon's store.
+counts as JSON. `baum internal features assign --repo <owner/name> [--clone
+<path>] [--dry-run] [--limit N] [--backend <b>] [--model <m>]` runs placement
+once, ignoring the activation, and prints each item; `--dry-run` prints each
+item's candidates and input size, makes no call and writes nothing.
+`baum internal features summarize` takes the same flags but `--dry-run` and
+writes the text of the features behind, without the debounce. Both read the
+preferences and the repository's settings and fail when they cannot; `sync`
+and `link` read neither. The clone
+defaults to the repository's registered one. They are for testing, with the
+daemon stopped: they write the daemon's store.

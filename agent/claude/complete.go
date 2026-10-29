@@ -44,5 +44,6 @@ func (c *Backend) Complete(ctx context.Context, request agent.CompleteRequest) (
 		"--setting-sources", "", "--strict-mcp-config", "--mcp-config", `{"mcpServers":{}}`)
 	env := []string{"CLAUDE_CODE_MAX_OUTPUT_TOKENS=" + strconv.Itoa(cmp.Or(request.MaxOutputTokens, maxOutputTokens))}
 	result, err := c.run(ctx, run, args, env, false)
-	return agent.Completion{Document: result.Document, Model: cmp.Or(result.Model, c.Model), Usage: result.Usage}, err
+	return agent.Completion{Document: result.Document, Model: cmp.Or(result.Model, c.Model), Usage: result.Usage,
+		Rejections: result.StructuredOutputRejections, RejectionDetail: result.LastRejection}, err
 }

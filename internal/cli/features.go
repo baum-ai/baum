@@ -45,7 +45,7 @@ the last --days days. It writes the daemon's store: run it with the daemon
 stopped.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return runFeatures(cmd, repository, clone, days, func(ctx context.Context, w *decisionlog.FeatureWorker, dir string) (any, error) {
+			return runFeatures(cmd, repository, clone, days, false, func(ctx context.Context, w *decisionlog.FeatureWorker, dir string) (any, error) {
 				return w.Sync(ctx, repository, dir)
 			})
 		},
@@ -59,17 +59,56 @@ stopped.`,
 JSON. It writes the daemon's store: run it with the daemon stopped.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return runFeatures(cmd, repository, clone, 0, func(ctx context.Context, w *decisionlog.FeatureWorker, dir string) (any, error) {
+			return runFeatures(cmd, repository, clone, 0, false, func(ctx context.Context, w *decisionlog.FeatureWorker, dir string) (any, error) {
 				return w.Index(ctx, repository, dir, nil, true)
 			})
 		},
 	}
 	flags(link)
-	cmd.AddCommand(sync, link)
+	var o decisionlog.FeatureOptions
+	callFlags := func(c *cobra.Command) {
+		flags(c)
+		c.Flags().IntVar(&o.Limit, "limit", 0, "most items or features to take; default the stage's limit")
+		c.Flags().StringVar(&o.Backend, "backend", "", "backend to call instead of the configured one")
+		c.Flags().StringVar(&o.Model, "model", "", "model to call instead of the configured one")
+	}
+	place := &cobra.Command{
+		Use:   "assign",
+		Short: "Place the repository's pending pull requests and sessions in features",
+		Long: `Assign runs the feature worker's placement once, without its gate and
+ignoring the activation, and prints each item taken as JSON. --dry-run prints
+each item's candidates and input size and makes no call.`,
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			o.Manual = true
+			return runFeatures(cmd, repository, clone, 0, true, func(ctx context.Context, w *decisionlog.FeatureWorker, dir string) (any, error) {
+				return w.Assign(ctx, repository, dir, o)
+			})
+		},
+	}
+	callFlags(place)
+	place.Flags().BoolVar(&o.DryRun, "dry-run", false, "render the calls without making them; write nothing")
+	summarize := &cobra.Command{
+		Use:   "summarize",
+		Short: "Write the text of the repository's features whose members changed",
+		Long: `Summarize runs the feature worker's text stage once, without its gate and
+its debounce, and prints each feature taken as JSON.`,
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			o.Manual = true
+			return runFeatures(cmd, repository, clone, 0, true, func(ctx context.Context, w *decisionlog.FeatureWorker, dir string) (any, error) {
+				return w.Summarize(ctx, repository, dir, o)
+			})
+		},
+	}
+	callFlags(summarize)
+	cmd.AddCommand(sync, link, place, summarize)
 	return cmd
 }
 
-func runFeatures(cmd *cobra.Command, repository, clone string, days int, stage func(context.Context, *decisionlog.FeatureWorker, string) (any, error)) error {
+// runFeatures runs one stage; calls, for placement and text, reads the
+// preferences and the repository's settings, which choose the backend.
+func runFeatures(cmd *cobra.Command, repository, clone string, days int, calls bool, stage func(context.Context, *decisionlog.FeatureWorker, string) (any, error)) error {
 	ctx := cmd.Context()
 	parsed, err := github.ParseRepository(repository)
 	if err != nil {
@@ -94,7 +133,15 @@ func runFeatures(cmd *cobra.Command, repository, clone string, days int, stage f
 		return err
 	}
 	defer func() { _ = store.Close() }()
-	worker := &decisionlog.FeatureWorker{Store: store, GitHub: githubReaders(cfg), Window: time.Duration(days) * 24 * time.Hour}
+	worker := &decisionlog.FeatureWorker{Store: store, GitHub: githubReaders(cfg), Config: cfg, Window: time.Duration(days) * 24 * time.Hour}
+	if calls {
+		registry, err := repos.OpenReadOnly("")
+		if err != nil {
+			return fmt.Errorf("reading the preferences: %w", err)
+		}
+		defer func() { _ = registry.Close() }()
+		worker.Registry = registry
+	}
 	report, err := stage(ctx, worker, clone)
 	encoder := json.NewEncoder(cmd.OutOrStdout())
 	encoder.SetIndent("", "  ")
