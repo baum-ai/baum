@@ -46,6 +46,8 @@ type fakeBackend struct {
 	fail     error
 	summary  string
 	onCall   func()
+	// hang blocks the call until its context ends.
+	hang bool
 }
 
 func (f *fakeBackend) Name() string                          { return f.name }
@@ -56,11 +58,15 @@ func (f *fakeBackend) Run(context.Context, agent.Request) (agent.Result, error) 
 
 var turnPattern = regexp.MustCompile(`## Turn (\d+)`)
 
-func (f *fakeBackend) Complete(_ context.Context, request agent.CompleteRequest) (agent.Completion, error) {
+func (f *fakeBackend) Complete(ctx context.Context, request agent.CompleteRequest) (agent.Completion, error) {
 	f.calls++
 	f.users = append(f.users, request.User)
 	if f.onCall != nil {
 		f.onCall()
+	}
+	if f.hang {
+		<-ctx.Done()
+		return agent.Completion{}, ctx.Err()
 	}
 	standard, prompt := "standard", int64(1000)
 	completion := agent.Completion{Model: "claude-haiku-5-5", Usage: agent.Usage{Input: 1000, Output: 100, Speed: &standard, MinPrompt: &prompt, MaxPrompt: &prompt}}
@@ -399,6 +405,22 @@ func TestCaptureCancelledIsNotAFailure(t *testing.T) {
 	f.backend.fail, f.backend.onCall = nil, nil
 	if report := f.capture(t, Options{Force: true}); report.Outcome != OutcomeExtracted {
 		t.Fatalf("%+v", report)
+	}
+}
+
+func TestCaptureHungCallTimesOutAsAFailure(t *testing.T) {
+	f := newFixture(t)
+	f.backend.hang = true
+	f.capturer.CallTimeout = 50 * time.Millisecond
+	report, err := f.capturer.Capture(context.Background(), f.target, Options{})
+	if err == nil || report.Outcome != OutcomeFailed || report.Reason != "timeout" {
+		t.Fatalf("%+v %v", report, err)
+	}
+	var state, reason string
+	_ = f.store.db.QueryRow(`SELECT state, reason FROM capture_attempt`).Scan(&state, &reason)
+	row, _, _ := f.store.Session(context.Background(), "claude-code", "s1")
+	if state != AttemptFailed || reason != "timeout" || row.Failures != 1 {
+		t.Fatalf("state %q reason %q, failures %d", state, reason, row.Failures)
 	}
 }
 
