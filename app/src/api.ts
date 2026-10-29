@@ -38,6 +38,8 @@ export type PR = GitHubState & {
   head_sha: string;
   title: string;
   author?: string;
+  /** The author is a bot (a GitHub App), not a person. Absent in older snapshots. */
+  author_bot?: boolean;
   url: string;
   state: string;
   draft: boolean;
