@@ -67,6 +67,11 @@ const (
 	MaxFailures  = 3
 )
 
+// CallTimeout bounds one model call, as review generation's default
+// pass_timeout bounds one pass: a backend that hangs releases the worker and
+// the attempt fails.
+const CallTimeout = 10 * time.Minute
+
 // Registry is what capture reads of the repository registry.
 type Registry interface {
 	Preferences(context.Context) (repos.Preferences, error)
@@ -92,6 +97,8 @@ type Capturer struct {
 	Prices func() *pricing.List
 	Now    func() time.Time
 	Log    *slog.Logger
+	// CallTimeout is zero for the package's CallTimeout.
+	CallTimeout time.Duration
 
 	// locate is livesessions.Locate unless a test replaces it.
 	locate func(home, cursorStore, agent, id, path string) (livesessions.Location, error)
@@ -410,7 +417,7 @@ func (c *Capturer) Capture(ctx context.Context, t Target, o Options) (Report, er
 	if err != nil {
 		return report, err
 	}
-	model := &completerModel{completer: completer, redactor: c.redactor}
+	model := &completerModel{completer: completer, redactor: c.redactor, timeout: c.CallTimeout}
 	result, callErr := c.Extractor.Extract(ctx, model, rendered, options)
 	if model.called {
 		_ = debugFile(o.DebugDir, "user.txt", []byte(model.user))
