@@ -791,6 +791,58 @@ it("chooses a separate agent and model for fixes", async () => {
   await choose(agent, "");
   expect(puts.at(-1)!.body).toEqual({ fix_backend: "", fix_model: "" });
 });
+it("saves one change at a time and only the newest of those made meanwhile", async () => {
+  history.replaceState(null, "", "/s/test-ns/?page=settings&section=fixes");
+  stubDiagnostics(async () => Response.json({ local: true, report: diagnosticsReport }));
+  const puts = stubAutomatic(demoClone, automaticOverview, {
+    backend: "claude",
+    model: "claude-sonnet-4-5",
+    fix_backend: "",
+    fix_model: "",
+  });
+  const stubbed = vi.mocked(fetch).getMockImplementation()!;
+  const held: (() => void)[] = [];
+  vi.mocked(fetch).mockImplementation((...args) => {
+    const response = stubbed(...args);
+    if ((args[1] as RequestInit | undefined)?.method !== "PUT") return response;
+    return new Promise((resolve) => held.push(() => resolve(response)));
+  });
+  await act(async () => root.render(<App />));
+  const agent = node.querySelector<HTMLSelectElement>("#fix-agent")!;
+  await choose(agent, "claude");
+  await choose(node.querySelector<HTMLSelectElement>("#fix-model")!, "claude-opus-5-5");
+  await choose(agent, "codex");
+  // The first save is still running, so nothing else is sent yet.
+  expect(puts.map((p) => p.body)).toEqual([
+    { fix_backend: "claude", fix_model: "claude-haiku-5-5" },
+  ]);
+  await act(async () => held.shift()!());
+  expect(puts.map((p) => p.body).at(-1)).toEqual({ fix_backend: "codex", fix_model: "gpt-6-luna" });
+  expect(puts).toHaveLength(2);
+  expect(agent.value).toBe("codex");
+  await act(async () => held.shift()!());
+  expect(node.querySelector('[aria-labelledby="settings-fixes-heading"]')!.textContent).toContain(
+    "Saved",
+  );
+});
+it("puts a control back when its save fails", async () => {
+  history.replaceState(null, "", "/s/test-ns/?page=settings&section=reviews");
+  stubDiagnostics(async () => Response.json({ local: true, report: diagnosticsReport }));
+  stubAutomatic();
+  const stubbed = vi.mocked(fetch).getMockImplementation()!;
+  vi.mocked(fetch).mockImplementation((...args) =>
+    (args[1] as RequestInit | undefined)?.method === "PUT"
+      ? Promise.resolve(new Response("registry is busy", { status: 500 }))
+      : stubbed(...args),
+  );
+  await act(async () => root.render(<App />));
+  const global = node.querySelector<HTMLInputElement>("#review-automatic")!;
+  await act(async () => global.click());
+  expect(global.checked).toBe(true);
+  expect(node.querySelector('[aria-labelledby="settings-reviews-heading"]')!.textContent).toContain(
+    "registry is busy",
+  );
+});
 it("opens on an overview that sends each problem to its section", async () => {
   history.replaceState(null, "", "/s/test-ns/?page=settings");
   stubDiagnostics(async () => Response.json({ local: true, report: diagnosticsReport }));

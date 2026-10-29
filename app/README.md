@@ -459,8 +459,10 @@ name, saved when its field is left or Enter is pressed). Each change is saved
 at once, with "Saved" beside the title, through `PUT api/automatic`
 (`enabled`, `backend`, `model`, `pull_requests`), which the daemon keeps as
 app preferences over the config file; `GET api/settings` reports the
-effective harness and model. A failed save shows the error and puts the
-control back. **Fixes** chooses the agent that fixes: "Same as reviews" (the
+effective harness and model. Each section sends all its choices and runs one
+save at a time; changes made while one runs are sent together afterwards, so
+an older choice never lands after a newer one. A failed save shows the error
+and puts the control back. **Fixes** chooses the agent that fixes: "Same as reviews" (the
 default, which follows a repository's own review harness too) or Claude Code
 or Codex with a model, sent as `fix_backend` and `fix_model` (`""` returns to
 the reviews') and reported by `GET api/settings`. A chosen fix agent applies

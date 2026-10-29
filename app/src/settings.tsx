@@ -198,35 +198,61 @@ function SectionHead({
   );
 }
 
-/** Saves review and fix choices as they change: one PUT per change, then the
- *  app reads its state again. `Saved` shows for a moment after each. */
+/** Saves review and fix choices as they change. Each section sends all of its
+ *  choices, so one PUT runs at a time and a change made meanwhile replaces any
+ *  other waiting one: an older choice never lands after a newer one. The app
+ *  reads its state again once nothing waits, and `Saved` shows for a moment.
+ *  `failures` counts failed saves, so a section puts its controls back. */
 function useAutoSave(changed: () => Promise<void>) {
   const [state, setState] = useState<"idle" | "saving" | "saved">("idle");
   const [error, setError] = useState("");
+  const [failures, setFailures] = useState(0);
   const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const waiting = useRef<Record<string, unknown> | null>(null);
+  const busy = useRef(false);
   useEffect(() => () => clearTimeout(timer.current), []);
-  const save = async (body: Record<string, unknown>) => {
+  const drain = async () => {
+    busy.current = true;
     clearTimeout(timer.current);
     setState("saving");
     setError("");
-    try {
-      await request("api/automatic", body, "PUT");
-      await changed();
+    let failure = "";
+    while (waiting.current) {
+      const body = waiting.current;
+      waiting.current = null;
+      try {
+        await request("api/automatic", body, "PUT");
+        failure = "";
+      } catch (e) {
+        failure = errorText(e);
+      }
+      // Read the state even after a failure: an earlier save may have landed.
+      if (!waiting.current) {
+        await changed().catch((e: unknown) => {
+          failure ||= errorText(e);
+        });
+      }
+    }
+    busy.current = false;
+    setError(failure);
+    if (failure) {
+      setState("idle");
+      setFailures((n) => n + 1);
+    } else {
       setState("saved");
       timer.current = setTimeout(() => setState("idle"), 2000);
-      return true;
-    } catch (e) {
-      setError(errorText(e));
-      setState("idle");
-      return false;
     }
+  };
+  const save = (body: Record<string, unknown>) => {
+    waiting.current = body;
+    if (!busy.current) void drain();
   };
   const status = (
     <p role="status" className="settings-saved">
       {state === "saving" ? "Saving…" : state === "saved" ? "Saved" : ""}
     </p>
   );
-  return { save, error, status };
+  return { save, error, status, failures };
 }
 
 /** The harness and model a desktop app or daemon page shows, as one select
@@ -355,20 +381,19 @@ function ReviewsSection({
   });
   const key = JSON.stringify(saved);
   const [draft, setDraft] = useState(saved);
-  // A save, another window or the tray changes what is saved.
+  const { save, error, status, failures } = useAutoSave(changed);
+  // A save, another window or the tray changes what is saved; a failed save
+  // puts the controls back.
   // biome-ignore lint/correctness/useExhaustiveDependencies: `key` stands for `saved`
-  useEffect(() => setDraft(saved), [key]);
-  const { save, error, status } = useAutoSave(changed);
+  useEffect(() => setDraft(saved), [key, failures]);
   const change = (patch: Partial<ReviewSettings>) => {
     const next = { ...draft, ...patch };
     setDraft(next);
-    void save({
+    save({
       enabled: next.automatic,
       backend: next.backend,
       model: next.model,
       pull_requests: next.pull_requests,
-    }).then((ok) => {
-      if (!ok) setDraft(saved);
     });
   };
   const harness = harnesses.find((h) => h.id === draft.backend);
@@ -464,14 +489,12 @@ function FixesSection({
   };
   const key = JSON.stringify(saved);
   const [draft, setDraft] = useState(saved);
+  const { save, error, status, failures } = useAutoSave(changed);
   // biome-ignore lint/correctness/useExhaustiveDependencies: `key` stands for `saved`
-  useEffect(() => setDraft(saved), [key]);
-  const { save, error, status } = useAutoSave(changed);
+  useEffect(() => setDraft(saved), [key, failures]);
   const change = (next: typeof saved) => {
     setDraft(next);
-    void save({ fix_backend: next.backend, fix_model: next.model }).then((ok) => {
-      if (!ok) setDraft(saved);
-    });
+    save({ fix_backend: next.backend, fix_model: next.model });
   };
   const reviewModel = defaults.backend === "auto" ? "" : defaults.model;
   const reviewAgent = [harnessName(review), reviewModel].filter(Boolean).join(" · ");
