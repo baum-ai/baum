@@ -3010,8 +3010,11 @@ replace it.
   `pidDomain` against this pid namespace on Linux, `ps -o lstart=` on macOS),
   since an entry a killed session left can name a reused pid; a session with
   no such process is recorded ended (`Tracker.Gone`), one baum cannot confirm
-  is left alone. A message the app sent, which Claude Code records as a peer's
-  meta line, is the session's `last_prompt`. Neither route runs on Windows.
+  is left alone. The session's `last_prompt` is the latest thing the user
+  wrote to it: a prompt, a message the app sent (which Claude Code records as
+  a peer's meta line), an answer to its question (`toolUseResult.answers`) or
+  a message sent while it worked (a `queued_command` attachment, read from the
+  start of a line an image makes too long). Neither route runs on Windows.
   A notification's `message` becomes
   `waiting_message`: format characters dropped, control characters and runs of
   spaces made one space, masked as transcripts are (`transcript.Renderer.Mask`,

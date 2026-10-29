@@ -55,6 +55,7 @@ import { DecisionsRevision } from "./decisions";
 import { useDiagnosticProblems } from "./diagnostics";
 import { RepositoriesPage, SettingsPage, settingsSection, type ReviewDefaults } from "./settings";
 import { needsYou, SessionsPage, transcriptHref } from "./sessions";
+import { ToastProvider } from "./toast";
 import { SessionTranscriptPage } from "./session-transcript";
 import { AnalyticsPage } from "./analytics";
 import { TimelinePage } from "./timeline";
@@ -161,20 +162,22 @@ export function App() {
   }, []);
   return (
     <UrlStateProvider value={url}>
-      <ViewerLinkProvider link={LocalLink}>
-        {auth === "ready" ? (
-          <Workspace url={url} />
-        ) : (
-          <main className="local-connecting">
-            <LogoMark size={40} />
-            {auth === "loading" ? (
-              <LoadingStatus block>Connecting to the local application…</LoadingStatus>
-            ) : (
-              <Alert>{authError} Open this page from the baum desktop app.</Alert>
-            )}
-          </main>
-        )}
-      </ViewerLinkProvider>
+      <ToastProvider>
+        <ViewerLinkProvider link={LocalLink}>
+          {auth === "ready" ? (
+            <Workspace url={url} />
+          ) : (
+            <main className="local-connecting">
+              <LogoMark size={40} />
+              {auth === "loading" ? (
+                <LoadingStatus block>Connecting to the local application…</LoadingStatus>
+              ) : (
+                <Alert>{authError} Open this page from the baum desktop app.</Alert>
+              )}
+            </main>
+          )}
+        </ViewerLinkProvider>
+      </ToastProvider>
     </UrlStateProvider>
   );
 }

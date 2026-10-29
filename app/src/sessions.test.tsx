@@ -12,6 +12,7 @@ import {
   type LiveSession,
 } from "./api";
 import { forgetFoldedSections, SessionsPage } from "./sessions";
+import { ToastProvider } from "./toast";
 import { SettingsPage } from "./settings";
 import { forgetLastRows } from "./shortcuts";
 
@@ -90,14 +91,17 @@ afterEach(async () => {
 async function render(sessions: LiveSession[], pending = requests()) {
   await act(async () =>
     root.render(
-      <SessionsPage sessions={sessions} requests={pending} prHref={() => null} Link={Link} />,
+      <ToastProvider>
+        <SessionsPage sessions={sessions} requests={pending} prHref={() => null} Link={Link} />
+      </ToastProvider>,
     ),
   );
 }
+// A choice's text after the number of its key.
 const button = (text: string) =>
-  [...node.querySelectorAll("button")].find((b) => b.textContent?.startsWith(text)) as
-    | HTMLButtonElement
-    | undefined;
+  [...node.querySelectorAll("button")].find((b) =>
+    (b.textContent ?? "").replace(/^[1-9]/, "").startsWith(text),
+  ) as HTMLButtonElement | undefined;
 const click = (b: HTMLButtonElement | undefined) => act(async () => b!.click());
 const posts = () => calls.filter((c) => c.method !== "GET");
 
@@ -110,11 +114,14 @@ it("shows a permission request with its input rows and posts Allow once, Always 
   });
   await render([waiting], requests({ requests: [permission()] }));
   const card = node.querySelector('[aria-label="Needs you"] li')!;
-  expect(card.querySelector("h3")!.textContent).toBe("Claude Code wants to run a command");
+  // Headed as the session's other rows, then what it asks.
+  expect(card.querySelector("h3")!.textContent).toBe("Tidy the buttons");
+  expect(card.querySelector(".local-feed-ask-text")!.textContent).toBe("Wants to run a command");
   expect(card.textContent).toContain("waiting 41s");
   expect(card.classList.contains("local-feed-ask")).toBe(true);
-  expect(card.querySelector(".local-feed-where")!.textContent).toBe("Tidy the buttons · feature");
-  expect(card.querySelector(".local-feed-quote")!.textContent).toContain("Running the githubgit");
+  expect(card.querySelector(".local-feed-branch")!.textContent).toBe("feature");
+  // The agent's earlier words are not the request's.
+  expect(card.querySelector(".local-feed-quote")).toBeNull();
   expect(card.querySelector("pre.local-feed-code")!.textContent).toContain(
     "just platform::test ./internal/githubgit/...",
   );
@@ -140,21 +147,28 @@ it("shows a permission request with its input rows and posts Allow once, Always 
   // Sent: disabled until the next refresh drops the request, with the notice.
   expect(button("Deny")!.disabled).toBe(true);
   expect(node.textContent).toContain("Sent");
-  expect(node.querySelector('[aria-live="polite"]')!.textContent).toBe(
-    "Bash(just platform::test:*) in this project is now always allowed.",
+  // The toast: what happened, to what, on which session.
+  const toast = () => node.querySelector('[aria-live="polite"] .local-toast');
+  expect(toast()!.querySelector(".local-toast-title")!.textContent).toBe("Always allowed");
+  expect(toast()!.querySelector(".local-toast-detail")!.textContent).toBe(
+    "Bash(just platform::test:*) in this project",
+  );
+  expect(toast()!.querySelector(".local-toast-context")!.textContent).toBe("Tidy the buttons");
+  expect(toast()!.querySelector(".local-toast-context img")!.getAttribute("alt")).toBe(
+    "Claude Code",
   );
 
   await render([waiting], requests({ requests: [permission({ id: "r2" })] }));
   await click(button("Deny"));
   expect(posts()[2]!.body).toEqual({ behavior: "deny" });
-  expect(node.querySelector('[aria-live="polite"]')!.textContent).toContain("You denied");
+  expect(toast()!.querySelector(".local-toast-title")!.textContent).toBe("Denied");
 
   // Nothing waits any more: the notice says so, with what was done.
   await render([session()]);
   expect(node.querySelector('[aria-label="Needs you"]')).toBeNull();
-  expect(node.querySelector('[aria-live="polite"]')!.textContent).toMatch(
-    /^Nobody is waiting on you\. You denied/,
-  );
+  // Dismissed, it goes.
+  await click(toast()!.querySelector<HTMLButtonElement>('button[aria-label="Dismiss"]')!);
+  expect(toast()).toBeNull();
 });
 
 it("names the request by its tool", async () => {
@@ -168,9 +182,9 @@ it("names the request by its tool", async () => {
       ],
     }),
   );
-  const titles = [...node.querySelectorAll("h3")].map((h) => h.textContent);
-  expect(titles).toContain("Claude Code wants to edit a file");
-  expect(titles).toContain("Claude Code wants to use WebFetch");
+  const asks = [...node.querySelectorAll(".local-feed-ask-text")].map((h) => h.textContent);
+  expect(asks).toContain("Wants to edit a file");
+  expect(asks).toContain("Wants to use WebFetch");
 });
 
 it("posts a question's answers, joining multi-select labels, once every question has one", async () => {
@@ -198,7 +212,8 @@ it("posts a question's answers, joining multi-select labels, once every question
     ],
   };
   await render([s], requests({ requests: [question] }));
-  expect(button("A")!.getAttribute("title")).toBe("Fast");
+  // What a choice means shows beside it.
+  expect(button("A")!.querySelector(".local-feed-choice-note")!.textContent).toBe("Fast");
   expect(button("Submit")!.disabled).toBe(true);
   await click(button("B"));
   await click(button("Unit"));
@@ -547,21 +562,23 @@ it("offers a session's actions on a right click, in place of the browser's menu"
   const went: string[] = [];
   await act(async () =>
     root.render(
-      <SessionsPage
-        sessions={[
-          session({
-            state: "idle",
-            waiting_reason: "turn_finished",
-            waiting_since: ago(60),
-            endable: true,
-            pr: 7,
-          }),
-        ]}
-        requests={requests()}
-        prHref={() => "/s/test-ns/?page=pull-requests&pr=7"}
-        Link={Link}
-        navigate={(href) => went.push(href)}
-      />,
+      <ToastProvider>
+        <SessionsPage
+          sessions={[
+            session({
+              state: "idle",
+              waiting_reason: "turn_finished",
+              waiting_since: ago(60),
+              endable: true,
+              pr: 7,
+            }),
+          ]}
+          requests={requests()}
+          prHref={() => "/s/test-ns/?page=pull-requests&pr=7"}
+          Link={Link}
+          navigate={(href) => went.push(href)}
+        />
+      </ToastProvider>,
     ),
   );
   const card = node.querySelector(
@@ -609,7 +626,7 @@ it("offers a session's actions on a right click, in place of the browser's menu"
   expect(posts()).toEqual([
     { path: "/s/test-ns/api/live-sessions/claude-code/s1/end", method: "POST", body: {} },
   ]);
-  expect(node.textContent).toContain("You ended Tidy the buttons.");
+  expect(node.querySelector(".local-toast-title")!.textContent).toBe("Ended the session");
 });
 
 it("opens a reply with r on a session waiting at its prompt, sends it with Enter and closes it with Escape", async () => {
@@ -674,5 +691,133 @@ it("opens a reply with r on a session waiting at its prompt, sends it with Enter
     },
   ]);
   expect(node.querySelector("[aria-label='Needs you'] input")).toBeNull();
-  expect(node.textContent).toContain("You replied to Tidy the buttons: “Open the PR”.");
+  expect(node.querySelector(".local-toast-title")!.textContent).toBe("Replied");
+  expect(node.querySelector(".local-toast-detail")!.textContent).toBe("Open the PR");
+});
+
+it("answers the focused question or permission with its number keys, Enter submitting several", async () => {
+  const s = session({ state: "idle", waiting_reason: "input", waiting_since: ago(5) });
+  const key = (k: string) =>
+    act(async () => {
+      window.dispatchEvent(
+        new KeyboardEvent("keydown", { key: k, bubbles: true, cancelable: true }),
+      );
+    });
+  const question: AgentRequest = {
+    id: "q1",
+    agent: "claude-code",
+    session_id: "s1",
+    kind: "question",
+    tool: "AskUserQuestion",
+    created_at: ago(5),
+    input: [],
+    suggestions: [],
+    questions: [
+      {
+        question: "Open the PR?",
+        header: "Open PR",
+        options: [{ label: "Yes" }, { label: "Not yet" }],
+      },
+    ],
+  };
+  await render([s], requests({ requests: [question] }));
+  expect(button("Not yet")!.querySelector("kbd")!.textContent).toBe("2");
+  await key("j");
+  await key("2");
+  expect(posts()[0]).toMatchObject({
+    path: "/s/test-ns/api/agent-requests/q1/answer",
+    body: { behavior: "allow", answers: { "Open the PR?": "Not yet" } },
+  });
+
+  // Several choices: the numbers toggle them, Enter submits.
+  const several: AgentRequest = {
+    ...question,
+    id: "q2",
+    questions: [
+      {
+        question: "Which checks?",
+        multi_select: true,
+        options: [{ label: "Unit" }, { label: "E2E" }],
+      },
+    ],
+  };
+  await render([s], requests({ requests: [several] }));
+  await key("1");
+  await key("2");
+  expect(button("E2E")!.getAttribute("aria-pressed")).toBe("true");
+  await key("Enter");
+  expect(posts()[1]).toMatchObject({ body: { answers: { "Which checks?": "Unit, E2E" } } });
+
+  // A permission: 1 allows once, the last number denies.
+  await render([s], requests({ requests: [permission({ id: "p1" })] }));
+  const deny = button("Deny")!.querySelector("kbd")!.textContent!;
+  await key(deny);
+  expect(posts()[2]).toMatchObject({
+    path: "/s/test-ns/api/agent-requests/p1/answer",
+    body: { behavior: "deny" },
+  });
+});
+
+it("takes an answer typed in place of a choice", async () => {
+  const s = session({ state: "idle", waiting_reason: "input", waiting_since: ago(5) });
+  const question: AgentRequest = {
+    id: "q1",
+    agent: "claude-code",
+    session_id: "s1",
+    kind: "question",
+    tool: "AskUserQuestion",
+    created_at: ago(5),
+    input: [],
+    suggestions: [],
+    questions: [{ question: "Open the PR?", options: [{ label: "Yes" }, { label: "Not yet" }] }],
+  };
+  await render([s], requests({ requests: [question] }));
+  const field = () => node.querySelector<HTMLInputElement>(".local-feed-card input");
+  const type = async (text: string) => {
+    const input = field()!;
+    expect(document.activeElement).toBe(input);
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, text);
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await act(async () => input.form!.requestSubmit());
+  };
+  // Its own number, after the choices.
+  expect(button("Type an answer")!.querySelector("kbd")!.textContent).toBe("3");
+  await click(button("Type an answer"));
+  // Escape closes it unanswered.
+  await act(async () => {
+    field()!.dispatchEvent(
+      new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }),
+    );
+  });
+  expect(field()).toBeNull();
+  await click(button("Type an answer"));
+  await type("After the toast lands");
+  expect(posts()[0]).toMatchObject({
+    path: "/s/test-ns/api/agent-requests/q1/answer",
+    body: { behavior: "allow", answers: { "Open the PR?": "After the toast lands" } },
+  });
+
+  // Among several, it joins the choices until Submit.
+  await render(
+    [s],
+    requests({
+      requests: [
+        {
+          ...question,
+          id: "q2",
+          questions: [
+            { question: "Which checks?", multi_select: true, options: [{ label: "Unit" }] },
+          ],
+        },
+      ],
+    }),
+  );
+  await click(button("Unit"));
+  await click(button("Type an answer"));
+  await type("Lint");
+  expect(button("“Lint”")!.getAttribute("aria-pressed")).toBe("true");
+  await click(button("Submit"));
+  expect(posts()[1]).toMatchObject({ body: { answers: { "Which checks?": "Unit, Lint" } } });
 });

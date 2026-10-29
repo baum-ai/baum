@@ -458,6 +458,10 @@ export function ShortcutsSheet({
         ...LIST_SHORTCUTS,
         { keys: ["p"], label: "Open the session's pull request" },
         { keys: ["r"], label: "Reply to the session; Enter sends it" },
+        {
+          keys: ["1–9"],
+          label: "Answer the focused question or permission; Enter submits several",
+        },
       ],
     },
     {

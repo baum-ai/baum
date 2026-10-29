@@ -100,6 +100,15 @@ func (a *activityScan) answered(line []byte) {
 	}
 }
 
+// said records something the user wrote without starting a turn: an answer
+// to the agent's question, or a message sent while it works. It is the
+// latest prompt, and the tool calls running go on.
+func (a *activityScan) said(text string) {
+	if text = strings.TrimSpace(text); text != "" {
+		a.prompt = text
+	}
+}
+
 // prompted records a user line: it ends the tool calls still open, since the
 // turn they belonged to is over, answered or not, and when the user typed it
 // (not a command or a note of an interruption) it is the latest prompt.

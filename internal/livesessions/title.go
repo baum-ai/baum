@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -472,6 +473,10 @@ func readClaude(path string, from, to int64, scan *scanState) error {
 		if bytes.Contains(line, []byte(`"type":"user"`)) {
 			if bytes.Contains(line, []byte(`"tool_result"`)) {
 				scan.act.answered(line)
+				if whole && bytes.Contains(line, []byte(`"answers"`)) {
+					// The user's answers to the agent's question.
+					scan.act.said(claudeAnswers(line))
+				}
 			} else if whole && bytes.Contains(line, []byte(`"from":"baum"`)) {
 				// A message the app sent through the session's inbox: a
 				// meta line from a peer, which the user wrote all the same.
@@ -486,6 +491,11 @@ func readClaude(path string, from, to int64, scan *scanState) error {
 					scan.act.prompted(text, typed)
 				}
 			}
+		}
+		if bytes.Contains(line, []byte(`"queued_command"`)) {
+			// A message the user sent while the agent worked; one with an
+			// image is past maxLine, its text first.
+			scan.act.said(claudeQueued(line, whole))
 		}
 		if !whole {
 			return
@@ -563,6 +573,62 @@ func fromApp(line []byte) (string, bool) {
 	}
 	text = strings.TrimSpace(text)
 	return text, text != ""
+}
+
+// claudeAnswers is what the user answered the agent's question
+// (AskUserQuestion) in a tool result line, each question's answer, joined.
+func claudeAnswers(line []byte) string {
+	var v struct {
+		ToolUseResult struct {
+			Answers map[string]string `json:"answers"`
+		} `json:"toolUseResult"`
+	}
+	if json.Unmarshal(line, &v) != nil || len(v.ToolUseResult.Answers) == 0 {
+		return ""
+	}
+	answers := slices.Sorted(maps.Values(v.ToolUseResult.Answers))
+	return strings.Join(answers, " · ")
+}
+
+// claudeQueued is the text of a message the user sent while the agent
+// worked, a queued_command attachment: a string or text blocks. Of a line
+// cut at maxLine, it is the first text, which comes before any image.
+func claudeQueued(line []byte, whole bool) string {
+	if !whole {
+		src := string(line)
+		if text := jsStringAfter(src, `"queued_command","prompt":`); text != "" {
+			return text
+		}
+		return jsStringAfter(src, `"type":"text","text":`)
+	}
+	var v struct {
+		Type       string `json:"type"`
+		Attachment struct {
+			Type   string          `json:"type"`
+			Prompt json.RawMessage `json:"prompt"`
+		} `json:"attachment"`
+	}
+	if json.Unmarshal(line, &v) != nil || v.Type != "attachment" || v.Attachment.Type != "queued_command" {
+		return ""
+	}
+	var text string
+	if json.Unmarshal(v.Attachment.Prompt, &text) == nil {
+		return text
+	}
+	var blocks []struct {
+		Type string `json:"type"`
+		Text string `json:"text"`
+	}
+	if json.Unmarshal(v.Attachment.Prompt, &blocks) != nil {
+		return ""
+	}
+	var parts []string
+	for _, b := range blocks {
+		if b.Type == "text" {
+			parts = append(parts, b.Text)
+		}
+	}
+	return strings.Join(parts, "\n")
 }
 
 // claudePeerNote opens what Claude Code adds after a peer's message, telling

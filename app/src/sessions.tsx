@@ -44,6 +44,7 @@ import codexLogo from "./desktop/codex.svg";
 import cursorLogo from "./desktop/cursor.svg";
 import { useContextMenu, type MenuItem } from "./context-menu";
 import { useNow } from "./live";
+import { useToast } from "./toast";
 import { LiveSessionDecisions } from "./decisions";
 import { listKeys, useRowFocus, useShortcuts } from "./shortcuts";
 
@@ -290,12 +291,115 @@ function toolTone(tool: string): string {
   return "other";
 }
 
-function permissionTitle(r: AgentRequest): string {
-  const who = agentName(r.agent);
-  if (r.tool === "Bash") return `${who} wants to run a command`;
+/** What the page tells the person after they acted (as a toast): what
+ *  happened, what it was about and on which session. */
+type Notice = {
+  title: string;
+  detail?: string;
+  agent?: string;
+  session?: string;
+  error?: boolean;
+};
+
+/** One choice of a request: a row with the number of its key (1–9, on the
+ *  focused card), its label and what it means; pressed while chosen among
+ *  several, `danger` for a refusal and `quiet` for typing one's own. */
+function Choice({
+  n,
+  label,
+  note,
+  pressed,
+  danger,
+  quiet,
+  ...button
+}: {
+  n?: number;
+  label: string;
+  note?: string;
+  pressed?: boolean;
+  danger?: boolean;
+  quiet?: boolean;
+  "aria-label": string;
+  disabled: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <li>
+      <button
+        type="button"
+        className={["local-feed-choice", danger && "danger", quiet && "quiet"]
+          .filter(Boolean)
+          .join(" ")}
+        aria-pressed={pressed}
+        data-key={n ? String(n) : undefined}
+        {...button}
+      >
+        <kbd className="local-feed-key" aria-hidden="true">
+          {n ?? ""}
+        </kbd>
+        <span className="local-feed-choice-label">{label}</span>
+        {note ? <span className="local-feed-choice-note">{note}</span> : null}
+      </button>
+    </li>
+  );
+}
+
+/** An answer of the person's own to a question: Enter gives it, Escape
+ *  closes it. */
+function AnswerField({
+  question,
+  disabled,
+  close,
+  answer,
+}: {
+  question: string;
+  disabled: boolean;
+  close: () => void;
+  answer: (text: string) => void;
+}) {
+  const id = useId();
+  const input = useRef<HTMLInputElement>(null);
+  const [text, setText] = useState("");
+  useEffect(() => input.current?.focus(), []);
+  return (
+    <form
+      className="local-feed-compose"
+      onSubmit={(event) => {
+        event.preventDefault();
+        if (text.trim()) answer(text.trim());
+      }}
+    >
+      <label htmlFor={id} className="sr-only">
+        Your answer to: {question}
+      </label>
+      <input
+        ref={input}
+        id={id}
+        value={text}
+        maxLength={2000}
+        disabled={disabled}
+        placeholder="Your answer…"
+        onChange={(event) => setText(event.target.value)}
+        onKeyDown={(event) => {
+          if (event.key !== "Escape") return;
+          event.preventDefault();
+          close();
+        }}
+      />
+      <span className="local-feed-compose-hint" aria-hidden="true">
+        Enter to answer · Esc to close
+      </span>
+      <SendButton label="Answer" busy={false} disabled={disabled || text.trim() === ""} />
+    </form>
+  );
+}
+
+/** What a permission request asks for, in words. */
+function permissionAsk(r: AgentRequest): string {
+  if (r.tool === "Bash") return "Wants to run a command";
   if (["Edit", "Write", "MultiEdit", "NotebookEdit"].includes(r.tool))
-    return `${who} wants to edit a file`;
-  return `${who} wants to use ${r.tool || "a tool"}`;
+    return "Wants to edit a file";
+  return `Wants to use ${r.tool || "a tool"}`;
 }
 
 type Phase =
@@ -308,14 +412,14 @@ type Phase =
 /** Posts an answer, showing at once that it is on its way: the card's
  *  buttons are disabled before the request starts. It stays "sent" until the
  *  next `live` refresh drops the request and the card with it. */
-function useAnswer(request: AgentRequest, onDone: (text: string) => void) {
+function useAnswer(request: AgentRequest, onDone: (notice: Notice) => void) {
   const [phase, setPhase] = useState<Phase>({ kind: "idle" });
   useEffect(() => {
     if (phase.kind !== "gone") return;
     const timer = setTimeout(() => setPhase({ kind: "idle" }), 4000);
     return () => clearTimeout(timer);
   }, [phase.kind]);
-  const answer = async (body: AnswerBody, done: string) => {
+  const answer = async (body: AnswerBody, done: Notice) => {
     setPhase({ kind: "pending" });
     try {
       await answerRequest(request.id, body);
@@ -365,29 +469,35 @@ function LastPrompt({ session }: { session?: LiveSession }) {
  *  says what it did or asks. The transcript has the rest. */
 const opening = (message: string) => message.trim().split(/\n\s*\n/)[0]!;
 
-/** The session a card is about: its title and branch in one line, the
- *  opening of the agent's last words as a quote. */
-function CardContext({ session, quote }: { session?: LiveSession; quote?: boolean }) {
-  const message = session?.activity?.last_message;
+/** A request card's head, as a waiting session's: the agent's mark, the
+ *  session's title (its transcript's link, when the session is listed) and
+ *  branch, and how long it has waited; then what the user last typed. */
+function RequestHead({
+  request,
+  session,
+  now,
+  open,
+}: {
+  request: AgentRequest;
+  session?: LiveSession;
+  now: number;
+  open: (s: LiveSession, children: ReactNode) => ReactNode;
+}) {
   return (
     <>
-      {session ? (
-        <p className="local-feed-where">
-          {sessionName({ ...session, branch: undefined })}
-          {session.branch ? (
-            <>
-              {" · "}
-              <code className="local-feed-mono">{session.branch}</code>
-            </>
-          ) : null}
-        </p>
-      ) : null}
+      <div className="local-feed-head">
+        <AgentMark agent={request.agent} />
+        <h3 className="local-feed-name">
+          {session ? open(session, sessionName({ ...session, branch: undefined })) : request.tool}
+        </h3>
+        {session?.branch ? (
+          <code className="local-feed-mono local-feed-branch">{session.branch}</code>
+        ) : null}
+        <span className="local-feed-time local-feed-status waiting">
+          waiting {clock((now - new Date(request.created_at).getTime()) / 1000)}
+        </span>
+      </div>
       <LastPrompt session={session} />
-      {message && quote ? (
-        <blockquote className="local-feed-quote">
-          “<InlineMarkdown>{opening(message)}</InlineMarkdown>”
-        </blockquote>
-      ) : null}
     </>
   );
 }
@@ -398,26 +508,29 @@ function PermissionCard({
   now,
   onDone,
   row,
+  open,
 }: {
   request: AgentRequest;
   session?: LiveSession;
   now: number;
-  onDone: (text: string) => void;
+  onDone: (notice: Notice) => void;
   row: { "data-row-id": string; "data-focused"?: true };
+  open: (s: LiveSession, children: ReactNode) => ReactNode;
 }) {
   const { phase, answer, busy } = useAnswer(request, onDone);
   const what = subject(request);
   const name = session ? sessionName(session) : request.tool;
   const label = (text: string) => `${text}: ${agentName(request.agent)} on ${name}`;
+  const notice = (title: string, detail = what): Notice => ({
+    title,
+    detail,
+    agent: request.agent,
+    session: name,
+  });
   return (
     <li className="local-feed-card local-feed-ask" {...row}>
-      <div className="local-feed-head">
-        <h3>{permissionTitle(request)}</h3>
-        <span className="local-feed-time">
-          waiting {clock((now - new Date(request.created_at).getTime()) / 1000)}
-        </span>
-      </div>
-      <CardContext session={session} quote />
+      <RequestHead request={request} session={session} now={now} open={open} />
+      <p className="local-feed-ask-text">{permissionAsk(request)}</p>
       {request.input.length > 0 ? (
         <div className="local-feed-inputs">
           {request.input.map((row, i) =>
@@ -443,40 +556,38 @@ function PermissionCard({
           )}
         </div>
       ) : null}
-      <div className="local-feed-actions">
-        <Button
+      <ul className="local-feed-choices">
+        <Choice
+          n={1}
+          label="Allow once"
           aria-label={label("Allow once")}
           disabled={busy}
-          onClick={() => void answer({ behavior: "allow" }, `You allowed ${what} once.`)}
-        >
-          Allow once
-        </Button>
-        {request.suggestions.map((s) => (
-          <Button
+          onClick={() => void answer({ behavior: "allow" }, notice("Allowed once"))}
+        />
+        {request.suggestions.slice(0, 7).map((s, i) => (
+          <Choice
             key={s.id}
-            variant="secondary"
+            n={i + 2}
+            label={s.label}
             aria-label={label(s.label)}
             disabled={busy}
             onClick={() =>
               void answer(
                 { behavior: "allow", suggestion: s.id },
-                `${s.label.replace(/^Always allow /i, "")} is now always allowed.`,
+                notice("Always allowed", s.label.replace(/^Always allow /i, "")),
               )
             }
-          >
-            {s.label}
-          </Button>
+          />
         ))}
-        <Button
-          variant="secondary"
-          className="local-feed-deny"
+        <Choice
+          n={Math.min(request.suggestions.length, 7) + 2}
+          label="Deny"
+          danger
           aria-label={label("Deny")}
           disabled={busy}
-          onClick={() => void answer({ behavior: "deny" }, `You denied ${what}.`)}
-        >
-          Deny
-        </Button>
-      </div>
+          onClick={() => void answer({ behavior: "deny" }, notice("Denied"))}
+        />
+      </ul>
       <PhaseNote phase={phase} />
     </li>
   );
@@ -488,15 +599,19 @@ function QuestionCard({
   now,
   onDone,
   row,
+  open,
 }: {
   request: AgentRequest;
   session?: LiveSession;
   now: number;
-  onDone: (text: string) => void;
+  onDone: (notice: Notice) => void;
   row: { "data-row-id": string; "data-focused"?: true };
+  open: (s: LiveSession, children: ReactNode) => ReactNode;
 }) {
   const { phase, answer, busy } = useAnswer(request, onDone);
   const [picked, setPicked] = useState<Record<string, string[]>>({});
+  // The question an answer is being typed for.
+  const [typing, setTyping] = useState<string | null>(null);
   const questions = request.questions;
   // One single-choice question is answered by its option; any other needs a
   // choice for every question and a Submit.
@@ -510,9 +625,14 @@ function QuestionCard({
           Object.entries(chosen).map(([q, labels]) => [q, labels.join(", ")]),
         ),
       },
-      `You answered ${agentName(request.agent)}: “${Object.values(chosen)
-        .map((labels) => labels.join(", "))
-        .join(" · ")}”.`,
+      {
+        title: `Answered “${Object.values(chosen)
+          .map((labels) => labels.join(", "))
+          .join(" · ")}”`,
+        detail: questions.map((q) => q.question).join(" · "),
+        agent: request.agent,
+        session: name,
+      },
     );
   const choose = (q: RequestQuestion, option: string) => {
     if (immediate) {
@@ -532,44 +652,67 @@ function QuestionCard({
   const ready = questions.every((q) => (picked[q.question]?.length ?? 0) > 0);
   return (
     <li className="local-feed-card local-feed-ask" {...row}>
-      <div className="local-feed-head">
-        <h3>{agentName(request.agent)} has a question</h3>
-        <span className="local-feed-time">
-          waiting {clock((now - new Date(request.created_at).getTime()) / 1000)}
-        </span>
-      </div>
-      <CardContext session={session} quote />
+      <RequestHead request={request} session={session} now={now} open={open} />
       {questions.map((q) => (
         <div key={q.question} role="group" aria-label={q.question} className="local-feed-question">
-          {q.header ? <span className="local-feed-chip">{q.header}</span> : null}
-          <p className="local-feed-ask-text">{q.question}</p>
-          <div className="local-feed-actions">
-            {q.options.map((o) => {
-              const on = picked[q.question]?.includes(o.label) ?? false;
-              return (
-                <Button
-                  key={o.label}
-                  variant="secondary"
-                  className="local-feed-option"
-                  title={o.description}
-                  aria-pressed={immediate ? undefined : on}
-                  aria-label={`${o.label}: ${agentName(request.agent)} on ${name}`}
-                  data-on={on || undefined}
+          <p className="local-feed-ask-text">
+            {q.header ? <span className="local-feed-ask-header">{q.header} · </span> : null}
+            {q.question}
+          </p>
+          {/* Each choice a row, numbered for its key when the card asks
+              one thing, then a typed answer of the person's own. */}
+          <ul className="local-feed-choices">
+            {q.options.map((o, i) => (
+              <Choice
+                key={o.label}
+                n={questions.length === 1 && i < 9 ? i + 1 : undefined}
+                label={o.label}
+                note={o.description}
+                pressed={immediate ? undefined : (picked[q.question]?.includes(o.label) ?? false)}
+                aria-label={`${o.label}: ${agentName(request.agent)} on ${name}`}
+                disabled={busy}
+                onClick={() => choose(q, o.label)}
+              />
+            ))}
+            {(picked[q.question] ?? [])
+              .filter((answer) => !q.options.some((o) => o.label === answer))
+              .map((answer) => (
+                <Choice
+                  key={`typed:${answer}`}
+                  label={`“${answer}”`}
+                  pressed
+                  aria-label={`${answer}: ${agentName(request.agent)} on ${name}`}
                   disabled={busy}
-                  onClick={() => choose(q, o.label)}
-                >
-                  <span>{o.label}</span>
-                  {o.description ? <small>{o.description}</small> : null}
-                </Button>
-              );
-            })}
-          </div>
+                  onClick={() => choose(q, answer)}
+                />
+              ))}
+            <Choice
+              n={questions.length === 1 && q.options.length < 9 ? q.options.length + 1 : undefined}
+              label="Type an answer…"
+              quiet
+              aria-label={`Type an answer: ${agentName(request.agent)} on ${name}`}
+              disabled={busy}
+              onClick={() => setTyping(q.question)}
+            />
+          </ul>
+          {typing === q.question ? (
+            <AnswerField
+              question={q.question}
+              disabled={busy}
+              close={() => setTyping(null)}
+              answer={(text) => {
+                setTyping(null);
+                choose(q, text);
+              }}
+            />
+          ) : null}
         </div>
       ))}
       {immediate ? null : (
         <div className="local-feed-actions">
           <Button
             aria-label={`Submit: ${agentName(request.agent)} on ${name}`}
+            data-key="Enter"
             disabled={busy || !ready}
             onClick={() => void send(picked)}
           >
@@ -617,7 +760,7 @@ function Reply({
   close,
 }: {
   session: LiveSession;
-  onDone: (text: string) => void;
+  onDone: (notice: Notice) => void;
   close: () => void;
 }) {
   const id = useId();
@@ -634,7 +777,7 @@ function Reply({
     setError("");
     try {
       await messageSession(s.agent, s.session_id, message);
-      onDone(`You replied to ${sessionName(s)}: “${message}”.`);
+      onDone({ title: "Replied", detail: message, agent: s.agent, session: sessionName(s) });
       close();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Could not reach the session.");
@@ -708,7 +851,7 @@ function WaitingCard({
   /** Whether its reply is open (Reply). */
   replying: boolean;
   closeReply: () => void;
-  onDone: (text: string) => void;
+  onDone: (notice: Notice) => void;
 }) {
   const reason = s.waiting_reason!;
   const message = s.activity?.last_message;
@@ -758,7 +901,7 @@ function SendWhenFinished({
 }: {
   session: LiveSession;
   queued?: AgentMessage;
-  onDone: (text: string) => void;
+  onDone: (notice: Notice) => void;
   /** Whether its box is open: with r or from the card's menu, as a waiting
    *  session's Reply. A queued message shows either way. */
   replying: boolean;
@@ -798,7 +941,12 @@ function SendWhenFinished({
       () => {
         setLocal(message);
         setText("");
-        onDone(`You queued a message for ${sessionName(s)}: “${message}”.`);
+        onDone({
+          title: "Queued for when it finishes",
+          detail: message,
+          agent: s.agent,
+          session: sessionName(s),
+        });
         close();
       },
     );
@@ -879,7 +1027,7 @@ function RunningCard({
   prHref: (session: LiveSession) => string | null;
   Link: ComponentType<ViewerLinkProps>;
   open: (s: LiveSession, children: ReactNode) => ReactNode;
-  onDone: (text: string) => void;
+  onDone: (notice: Notice) => void;
   row: RowProps;
   replying: boolean;
   closeReply: () => void;
@@ -1010,7 +1158,15 @@ export function SessionsPage({
   navigate?: (href: string) => void;
 }) {
   const now = useNow(1000);
-  const [action, setAction] = useState("");
+  const toast = useToast();
+  const notify = ({ agent, session, ...n }: Notice) => {
+    const logo = agent ? agentLogos[agent] : undefined;
+    toast({
+      ...n,
+      context: session,
+      icon: logo ? { src: logo, alt: agentName(agent!) } : undefined,
+    });
+  };
   const menu = useContextMenu();
   const live = sessions.filter((s) => s.state !== "ended");
   const find = (agent: string, id: string) =>
@@ -1074,6 +1230,26 @@ export function SessionsPage({
     return true;
   };
   useShortcuts((event) => {
+    // A request card's choices answer to their keys (1–9, Enter to submit
+    // several), before the list's own.
+    const card = rows.focused
+      ? [...(rows.list.current?.querySelectorAll<HTMLElement>("[data-row-id]") ?? [])].find(
+          (el) => el.dataset.rowId === rows.focused,
+        )
+      : undefined;
+    const choice = card?.querySelector<HTMLButtonElement>(
+      `button[data-key="${CSS.escape(event.key)}"]`,
+    );
+    // Enter on a focused control already does what it says.
+    const onControl =
+      event.key === "Enter" &&
+      event.target instanceof HTMLElement &&
+      event.target.closest("a, button, input, textarea");
+    if (choice && !onControl && !event.metaKey && !event.ctrlKey && !event.altKey) {
+      event.preventDefault();
+      if (!choice.disabled) choice.click();
+      return;
+    }
     if (listKeys(event, rows) || !rows.focused) return;
     if (event.key === "r") {
       const s = sessions.find((x) => sessionKey(x) === rows.focused);
@@ -1128,11 +1304,15 @@ export function SessionsPage({
         danger: true,
         onSelect: () =>
           void endSession(s.agent, s.session_id).then(
-            () => setAction(`You ended ${sessionName(s)}.`),
+            () => notify({ title: "Ended the session", agent: s.agent, session: sessionName(s) }),
             (e: unknown) =>
-              setAction(
-                `${sessionName(s)} was not ended: ${e instanceof Error ? e.message : "the request failed."}`,
-              ),
+              notify({
+                title: "Could not end the session",
+                detail: e instanceof Error ? e.message : "The request failed.",
+                agent: s.agent,
+                session: sessionName(s),
+                error: true,
+              }),
           ),
       });
     return items;
@@ -1145,14 +1325,6 @@ export function SessionsPage({
   return (
     <div ref={rows.list} className="local-feed" onClick={openCard} onContextMenu={cardMenu}>
       {menu.menu}
-      <div aria-live="polite" className="local-feed-live">
-        {action ? (
-          <p className="local-feed-done">
-            {waiting.length === 0 ? "Nobody is waiting on you. " : ""}
-            {action}
-          </p>
-        ) : null}
-      </div>
       {waiting.length > 0 ? (
         <section aria-label="Needs you" className="local-feed-section needs">
           <SectionHead
@@ -1170,8 +1342,9 @@ export function SessionsPage({
                   request={w.request}
                   session={w.session}
                   now={now}
-                  onDone={setAction}
+                  onDone={notify}
                   row={w.session ? row(w.session) : { "data-row-id": w.key }}
+                  open={open}
                 />
               ) : w.request ? (
                 <QuestionCard
@@ -1179,8 +1352,9 @@ export function SessionsPage({
                   request={w.request}
                   session={w.session}
                   now={now}
-                  onDone={setAction}
+                  onDone={notify}
                   row={w.session ? row(w.session) : { "data-row-id": w.key }}
+                  open={open}
                 />
               ) : (
                 <WaitingCard
@@ -1190,7 +1364,7 @@ export function SessionsPage({
                   now={now}
                   open={open}
                   row={row}
-                  onDone={setAction}
+                  onDone={notify}
                   replying={replying === sessionKey(w.session!)}
                   closeReply={closeReply}
                 />
@@ -1224,7 +1398,7 @@ export function SessionsPage({
                 prHref={prHref}
                 Link={Link}
                 open={open}
-                onDone={setAction}
+                onDone={notify}
                 row={row}
                 replying={replying === sessionKey(s)}
                 closeReply={closeReply}

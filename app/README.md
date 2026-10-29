@@ -814,6 +814,13 @@ bucket's does; Ended recently starts folded, and the fold holds while the app ru
 The keys move only through rows on show. The `live` event updates it and the sidebar count, and times
 tick every second. The daemon keeps ended sessions for 24 hours, across restarts, and
 leaves out a session that never had a conversation (no title and no activity).
+What the person does on the page (answering, replying, queueing, ending) is
+confirmed in a toast: the app's own (`src/toast.tsx`; any page raises one with
+`useToast()`), dark over the window's foot, saying what happened, what it was about
+(the question, the command, the message) and the session with its agent's logo. It
+goes after six seconds or when dismissed, is read out from one live region, and can
+carry an action such as Undo; a failure shows in the critical tone.
+
 A right click on a session's card opens the app's own menu (`src/context-menu.tsx`)
 in place of the browser's: Reply when the daemon offers it (`messageable`, with its
 key r), Open transcript, Open pull request when it has one, and End session when the

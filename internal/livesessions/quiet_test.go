@@ -204,3 +204,30 @@ func TestACodexSessionsLatestPromptInEitherFormat(t *testing.T) {
 		t.Fatalf("title %q", got)
 	}
 }
+
+func TestAnAnswerOrAMessageSentMidTurnIsTheLatestPrompt(t *testing.T) {
+	f := newTranscriptFixture(t)
+	// The answer to the agent's question, as a tool result.
+	appendLines(t, f.path,
+		toolUse("2026-10-29T18:00:00.000Z", "AskUserQuestion", `{"questions":[]}`),
+		`{"type":"user","timestamp":"2026-10-29T18:01:00.000Z","sessionId":"s1","message":{"role":"user","content":[{"tool_use_id":"t","type":"tool_result","content":"The user answered"}]},"toolUseResult":{"questions":[],"answers":{"What next?":"Add the type something option"}}}`,
+	)
+	if a := activities(t, f)["claude-code/s1"]; a == nil || a.LastPrompt != "Add the type something option" {
+		t.Fatalf("after the answer: %+v", a)
+	}
+	// A message sent mid-turn, its screenshot past maxLine; the tool call
+	// running goes on.
+	appendLines(t, f.path,
+		toolUse("2026-10-29T18:02:00.000Z", "Bash", `{"command":"just test"}`),
+		`{"type":"attachment","timestamp":"2026-10-29T18:03:00.000Z","sessionId":"s1","attachment":{"type":"queued_command","prompt":[{"type":"text","text":"My prompt is stale [Image #22]"},{"type":"image","source":{"type":"base64","media_type":"image/png","data":"`+strings.Repeat("A", maxLine)+`"}}]}}`,
+	)
+	f.clock.advance(TitleRecheckEvery)
+	a := activities(t, f)["claude-code/s1"]
+	if a == nil || a.LastPrompt != "My prompt is stale [Image #22]" {
+		t.Fatalf("after the message: %+v", a)
+	}
+	f.clock.advance(IdleAfter)
+	if s := served(t, f)["claude-code/s1"]; s.State != StateRunning {
+		t.Fatalf("the tool call ended with the message: %+v", s)
+	}
+}
