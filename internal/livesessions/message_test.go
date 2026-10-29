@@ -42,7 +42,7 @@ func TestOnlyASessionAtItsPromptIsMessaged(t *testing.T) {
 	if code := postMessage(f, "claude-code", "s1", `{"text":"Ship it"}`); code != http.StatusAccepted {
 		t.Fatalf("answered %d", code)
 	}
-	if len(sent) != 1 || sent[0] != "s1: "+framed("Ship it") {
+	if len(sent) != 1 || sent[0] != "s1: Ship it" {
 		t.Fatalf("sent %q", sent)
 	}
 	// Asking a permission: answered, not messaged.
@@ -111,7 +111,7 @@ func TestClaudeInboxWritesOneLineToTheSessionsSocket(t *testing.T) {
 	if err := json.Unmarshal([]byte(<-got), &message); err != nil {
 		t.Fatal(err)
 	}
-	if message.Type != "user" || message.From != "baum" || message.Message.Role != "user" || message.Message.Content != "Ship it" {
+	if message.Type != "user" || message.From != "baum" || message.Message.Role != "user" || message.Message.Content != framed("Ship it") {
 		t.Fatalf("sent %+v", message)
 	}
 	if err := (ClaudeInbox{Home: home}).Send(context.Background(), "9cb7a4e2-0000-4000-8000-000000000002", "x"); !errors.Is(err, ErrAgentGone) {

@@ -231,3 +231,44 @@ func TestAnAnswerOrAMessageSentMidTurnIsTheLatestPrompt(t *testing.T) {
 		t.Fatalf("the tool call ended with the message: %+v", s)
 	}
 }
+
+func TestAWorkingSessionIsReadAgainWithinASecond(t *testing.T) {
+	f := newTranscriptFixture(t)
+	activities(t, f)
+	// Working: what it says next shows after a second.
+	appendLines(t, f.path, `{"type":"assistant","timestamp":"2026-10-27T18:01:00.000Z","sessionId":"s1","message":{"role":"assistant","content":[{"type":"text","text":"Running the tests."}]}}`)
+	f.clock.advance(WorkingRecheckEvery)
+	if a := activities(t, f)["claude-code/s1"]; a == nil || a.LastMessage != "Running the tests." {
+		t.Fatalf("working: %+v", a)
+	}
+	// Waiting on its user: read again at the slower pace.
+	stop(f)
+	activities(t, f)
+	appendLines(t, f.path, `{"type":"assistant","timestamp":"2026-10-27T18:02:00.000Z","sessionId":"s1","message":{"role":"assistant","content":[{"type":"text","text":"Done."}]}}`)
+	f.clock.advance(WorkingRecheckEvery)
+	if a := activities(t, f)["claude-code/s1"]; a.LastMessage != "Running the tests." {
+		t.Fatalf("waiting, read early: %+v", a)
+	}
+	f.clock.advance(TitleRecheckEvery)
+	if a := activities(t, f)["claude-code/s1"]; a.LastMessage != "Done." {
+		t.Fatalf("waiting, not read: %+v", a)
+	}
+}
+
+func TestACodexPromptTheAppFramedOnceIsTheUsersText(t *testing.T) {
+	f := newTranscriptFixture(t)
+	const id = "019f0000-0000-7000-8000-000000000009"
+	write(t, filepath.Join(f.home, ".codex", "sessions", "2026", "10", "29", "rollout-2026-10-29T18-00-00-"+id+".jsonl"),
+		`{"timestamp":"2026-10-29T18:00:00.000Z","type":"session_meta","payload":{"id":"`+id+`","cwd":"/work/demo","source":"cli"}}
+{"timestamp":"2026-10-29T18:01:00.000Z","type":"event_msg","payload":{"type":"item_completed","item":{"type":"UserMessage","id":"u1","content":[{"type":"text","text":"`+fromBaum+` tell me more"}]}}}
+`)
+	e := hookevents.New(hookevents.KindAgent, "codex", "user-prompt-submit", "/work/demo", "test")
+	e.Time = f.clock.now
+	e.Session = &hookevents.Session{ID: id, Cwd: "/work/demo"}
+	if !apply(f.tracker, e) {
+		t.Fatal("not tracked")
+	}
+	if a := activities(t, f)["codex/"+id]; a == nil || a.LastPrompt != "tell me more" {
+		t.Fatalf("activity %+v", a)
+	}
+}

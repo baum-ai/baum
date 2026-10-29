@@ -47,6 +47,7 @@ import {
   useShortcuts,
   VIEW_KEYS,
   type ShortcutsPlace,
+  useReadlineArrows,
 } from "./shortcuts";
 import { GoTo, type GoToItem } from "./go-to";
 import { PAGES, type Page } from "./pages";
@@ -54,8 +55,9 @@ import { LocalReview } from "./review";
 import { DecisionsRevision } from "./decisions";
 import { useDiagnosticProblems } from "./diagnostics";
 import { RepositoriesPage, SettingsPage, settingsSection, type ReviewDefaults } from "./settings";
-import { needsYou, SessionsPage, transcriptHref } from "./sessions";
+import { asksYou, SessionsPage, transcriptHref } from "./sessions";
 import { ToastProvider } from "./toast";
+import { useActionsKey } from "./context-menu";
 import { SessionTranscriptPage } from "./session-transcript";
 import { AnalyticsPage } from "./analytics";
 import { TimelinePage } from "./timeline";
@@ -717,6 +719,8 @@ function Workspace({ url }: { url: UrlState }) {
   useKeyHints();
   useEscapeBlurs();
   useNoTab();
+  useActionsKey();
+  useReadlineArrows();
   useCommandKeys((action) => {
     setShortcuts(false);
     if (action.kind === "go-to") {
@@ -815,7 +819,7 @@ function Workspace({ url }: { url: UrlState }) {
         }
         activeJobs={jobs.filter(isActiveJob).length}
         runningSessions={live.filter((s) => s.state === "running").length}
-        needsYou={needsYou(live).length}
+        needsYou={asksYou(live).length}
         problems={diagnostics.problems}
         Link={LocalLink}
       />

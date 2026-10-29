@@ -132,6 +132,34 @@ export function commandAction(
   return null;
 }
 
+/** Ctrl+N and Ctrl+P (the readline keys, Control on a Mac too) as ↓ and ↑,
+ *  everywhere the arrows move: they are turned into those keys on the same
+ *  element before anything else sees them, so the lists, the context menu
+ *  and Go to follow without knowing them, and the browser's new window and
+ *  print stay out of the way. A text field keeps its own, except one that
+ *  steers a list (a combobox). Mounted once, for the whole app. */
+export function useReadlineArrows() {
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (!event.ctrlKey || event.metaKey || event.altKey || event.shiftKey || event.isComposing)
+        return;
+      const key = { n: "ArrowDown", p: "ArrowUp" }[event.key.toLowerCase()];
+      const target = event.target;
+      if (!key || !(target instanceof HTMLElement)) return;
+      const field = target.closest("input, textarea, select, [contenteditable]");
+      if (field && field.getAttribute("role") !== "combobox") return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      target.dispatchEvent(
+        new KeyboardEvent("keydown", { key, code: key, bubbles: true, cancelable: true }),
+      );
+    };
+    // Captured, so it comes before every other listener.
+    window.addEventListener("keydown", onKeyDown, true);
+    return () => window.removeEventListener("keydown", onKeyDown, true);
+  }, []);
+}
+
 /** Calls `handler` for the app-wide keys (`commandAction`), which work in
  *  text fields too, but not under a dialog other than the shortcuts sheet
  *  or Go to, which the handler closes. */
@@ -418,6 +446,11 @@ export function ShortcutsSheet({
       title: "Anywhere",
       rows: [
         { keys: [`${COMMAND}K`], label: "Go to a page, pull request or session" },
+        { keys: [`${COMMAND}.`], label: "Actions for the focused row, as a right click" },
+        {
+          keys: MAC ? ["⌃N", "⌃P"] : ["Ctrl+N", "Ctrl+P"],
+          label: "Down, up in any list or menu, as ↓ and ↑",
+        },
         ...PAGES.map((item) => ({ keys: [pageKeyLabel(item.page)], label: item.label })),
         MAC
           ? { keys: ["⌘[", "⌘]"], label: "Back, forward" }
@@ -458,6 +491,7 @@ export function ShortcutsSheet({
         ...LIST_SHORTCUTS,
         { keys: ["p"], label: "Open the session's pull request" },
         { keys: ["r"], label: "Reply to the session; Enter sends it" },
+        { keys: [" "], label: "Peek at the session below its row" },
         {
           keys: ["1–9"],
           label: "Answer the focused question or permission; Enter submits several",

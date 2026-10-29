@@ -2985,21 +2985,25 @@ replace it.
   session with no title and no activity never had a conversation (opened and
   left, or used only to resume another; Claude Code writes no transcript until
   then) and is left out of the list (`empty`). Since agents report few
-  events during a turn, `Transcripts.Watch` builds the list every 5 seconds
-  (reading only what the transcripts appended) and publishes `live` when it
-  differs from the last one, so a running session's steps, files and message,
-  and a session settling, reach the app without a hook event.
+  events during a turn, `Transcripts.Watch` builds the list every second,
+  reading a working session's transcript (one neither ended nor waiting)
+  when it grew and the others' every 5 seconds, only what they appended, and
+  publishes `live` when it differs from the last one: a running session's
+  steps, files and message, and a session settling, reach the app without a
+  hook event, what an agent says within a couple of seconds.
   **Replying and ending.** The list marks a session `messageable` when it
   waits at its prompt (a finished turn, or for Claude Code gone quiet) and
   `endable` when it waits or went quiet, each only where baum can reach its
   agent (`Transcripts.Senders`, `Transcripts.Enders`). `POST
   api/live-sessions/{agent}/{id}/message` with `{"text"}` (at most 10 000
-  characters) opens it with a line saying the user sent it from baum and
-  puts it into the session: Claude Code's through its cross-session inbox
+  characters) puts it into the session: Claude Code's through its cross-session inbox
   (`ClaudeInbox`, one JSON line on the socket its
   `~/.claude/sessions/<pid>.json` names; macOS and Linux), which starts the
-  next turn in the session's own terminal; Codex's with `codex queue --thread
-  <id> --message` (`CodexQueue`, when `codex` is on PATH), offered after a
+  next turn in the session's own terminal, opened with a line saying the user
+  sent it from baum (Claude Code tells its model an inbox message came from
+  another session); Codex's with `codex queue --thread
+  <id> --message` (`CodexQueue`, when `codex` is on PATH), the text alone,
+  which Codex takes as the user's own turn, offered after a
   finished turn only, since a quiet Codex session may have no terminal left
   and the queue would run its turn unseen. `POST .../end` ends a Claude Code
   session as `/exit` does (`ClaudeExit`): SIGTERM to its process when that

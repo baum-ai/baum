@@ -2365,6 +2365,9 @@ a.local-session-pr:hover {
 .local-feed-section.needs .local-feed-section-dot {
   background: var(--status-caution);
 }
+.local-feed-section.waiting .local-feed-section-dot {
+  background: var(--status-info);
+}
 .local-feed-section.running .local-feed-section-dot {
   background: var(--status-positive);
 }
@@ -2798,6 +2801,88 @@ a.local-session-pr:hover {
 .local-feed-choice.quiet .local-feed-choice-label {
   color: var(--un-muted);
   font-weight: 400;
+}
+/* A session's preview under its row (Space): the row grown open, in its
+   sand and behind its bar when it has the keys, the text under the title. */
+.local-feed-peek-row {
+  padding: 0 1.5rem 0.9rem calc(1.5rem + 18px + 0.625rem);
+  border-bottom: 1px solid var(--un-hairline);
+  background: var(--un-list);
+}
+.local-feed-card:has(+ .local-feed-peek-row) {
+  border-bottom: 0;
+  background: var(--un-list);
+}
+.local-feed-card[data-focused] + .local-feed-peek-row {
+  box-shadow: inset 3px 0 0 var(--un-ink);
+}
+.local-feed-peek {
+  display: grid;
+  grid-template-columns: 8rem minmax(0, 1fr);
+  gap: 0.5rem 1rem;
+  max-height: 22rem;
+  margin: 0;
+  overflow-y: auto;
+  animation: local-feed-rise 0.15s ease-out;
+}
+.local-feed-peek dt {
+  padding-top: 0.1rem;
+  color: var(--un-muted);
+  font-size: 11px;
+  font-weight: 600;
+}
+.local-feed-peek dd {
+  min-width: 0;
+  margin: 0;
+}
+.local-feed-peek-asked {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  color: var(--un-muted);
+  font-size: var(--text-xs);
+  line-height: 1.55;
+}
+@media (width < 48rem) {
+  .local-feed-peek {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0.25rem;
+  }
+}
+.local-feed-peek-said {
+  color: var(--un-ink-soft);
+  font-size: var(--text-xs);
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+.local-feed-peek-said :is(ul, ol) {
+  padding-left: 1.1rem;
+}
+.local-feed-peek-said strong {
+  color: var(--un-ink);
+  font-weight: 600;
+}
+.local-feed-peek-said :not(pre) > code {
+  padding: 0.05rem 0.3rem;
+  border-radius: 4px;
+  background: var(--un-hairline);
+  font-size: 12px;
+}
+.local-feed-peek-said pre {
+  padding: 0.5rem 0.75rem;
+  border-radius: 6px;
+  background: var(--un-hover);
+  font-size: 12px;
+  line-height: 1.5;
+}
+.local-feed-peek-said pre code {
+  font-size: 12px;
+}
+@media (prefers-reduced-motion: reduce) {
+  .local-feed-peek {
+    animation: none;
+  }
 }
 /* A running session's latest words, one line, its caret after them. */
 .local-feed-said {

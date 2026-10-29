@@ -74,7 +74,7 @@ func (t *Transcripts) WriteAnswer(w http.ResponseWriter, r *http.Request, answer
 			out.Transcript = nil
 		} else if t.Tracker != nil {
 			if _, path, ok := t.Tracker.Lookup(answer.Session.Agent, answer.Session.ID); ok {
-				_, _, out.Summary, _ = t.describe(key{answer.Session.Agent, answer.Session.ID}, path)
+				_, _, out.Summary, _ = t.describe(key{answer.Session.Agent, answer.Session.ID}, path, false)
 			}
 		}
 		writeJSON(w, http.StatusOK, out)

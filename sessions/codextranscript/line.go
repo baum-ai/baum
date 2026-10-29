@@ -190,7 +190,10 @@ type ResponseItem struct {
 	ToolSearchOutput *ToolSearchOutput     `json:"tool_search_output,omitempty"`
 	WebSearchCall    *WebSearchCall        `json:"web_search_call,omitempty"`
 	Compaction       *RawPayload           `json:"compaction,omitempty"`
-	ImageGeneration  *RawPayload           `json:"image_generation_call,omitempty"`
+	// AdditionalTools are the tools Codex 0.165 offers the model beyond its
+	// own, kept as written: they are context, not conversation.
+	AdditionalTools *RawPayload `json:"additional_tools,omitempty"`
+	ImageGeneration *RawPayload `json:"image_generation_call,omitempty"`
 }
 
 type ContentItem struct {

@@ -9,7 +9,7 @@ import {
   type ReactNode,
 } from "react";
 import { formatRelative } from "@baum/viewer/components/format";
-import { InlineMarkdown } from "@baum/viewer/components/markdown";
+import { InlineMarkdown, Markdown } from "@baum/viewer/components/markdown";
 import {
   ChevronRightIcon,
   CircleCheckIcon,
@@ -86,9 +86,19 @@ export const waitingReasons: Record<WaitingReason, string> = {
 
 const waitingSince = (s: LiveSession) => s.waiting_since ?? s.last_activity_at;
 
+/** Whether a wait asks the person something (a permission or an answer),
+ *  rather than only waiting for their next word (a finished turn, a quiet
+ *  session): the one is Needs you, the other Waiting for you. */
+export const asks = (reason?: WaitingReason) => reason === "permission" || reason === "input";
+
+/** The sessions asking their user for a permission or an answer, which the
+ *  sidebar counts in the caution tone. */
+export const asksYou = (sessions: LiveSession[]) =>
+  needsYou(sessions).filter((s) => asks(s.waiting_reason));
+
 /** The sessions waiting on their user, the longest wait first: those that
- *  ask for a permission or an answer, or finished their turn. A session only
- *  silent for a while is not one, nor is an ended one. */
+ *  ask for a permission or an answer, finished their turn or went quiet. A
+ *  session working, nor an ended one, is not one. */
 export function needsYou(sessions: LiveSession[]): LiveSession[] {
   return sessions
     .filter((s) => s.state !== "ended" && s.waiting_reason && waitingReasons[s.waiting_reason])
@@ -833,6 +843,44 @@ function Reply({
   );
 }
 
+/** What a session was started for, from the opening of its compaction
+ *  summary (`summary`), without the label and quotes Claude Code writes it
+ *  with ("Initial: \"…\""). */
+const originalRequest = (summary: string) =>
+  summary
+    .replace(/^\s*(?:initial(?: request)?|primary request(?: and intent)?)\s*:\s*/i, "")
+    .replace(/^["“](.*?)["”]?(\s*(?:…|\.\.\.))?$/s, "$1$2")
+    .trim();
+
+/** A session's preview under its row (Space), the row grown open: what it
+ *  was started for, when its compaction summary says, and the agent's latest
+ *  response, rendered, each beside its label. What the user last wrote is on
+ *  the row already. */
+function SessionPeek({ session: s }: { session: LiveSession }) {
+  const said = s.activity?.last_message;
+  const asked = s.summary ? originalRequest(s.summary) : "";
+  return (
+    <dl className="local-feed-peek" aria-label={`Preview of ${sessionName(s)}`} role="region">
+      {asked ? (
+        <>
+          <dt>Original request</dt>
+          <dd className="local-feed-peek-asked">{asked}</dd>
+        </>
+      ) : null}
+      <dt>Latest response</dt>
+      <dd>
+        {said ? (
+          <Markdown html={false} className="local-feed-peek-said">
+            {said}
+          </Markdown>
+        ) : (
+          <span className="local-feed-note">{agentName(s.agent)} has said nothing yet.</span>
+        )}
+      </dd>
+    </dl>
+  );
+}
+
 /** What a waiting card says of a wait only its terminal can answer. A
  *  finished turn needs no note, nor a quiet one, whose muted dot and time say
  *  it. */
@@ -1109,11 +1157,16 @@ type Waiting = {
   request?: AgentRequest;
 };
 
-type Section = "needs" | "running" | "ended";
+type Section = "needs" | "waiting" | "running" | "ended";
 
 /** Which sections are folded, for as long as the app runs: Ended recently
  *  starts folded, since it is looked back at, not watched. */
-const folded: Record<Section, boolean> = { needs: false, running: false, ended: true };
+const folded: Record<Section, boolean> = {
+  needs: false,
+  waiting: false,
+  running: false,
+  ended: true,
+};
 let collapsedSections = folded;
 /** Folds the sections as a fresh start of the app does. */
 export function forgetFoldedSections() {
@@ -1213,6 +1266,10 @@ export function SessionsPage({
       new Date(a.since).getTime() - new Date(b.since).getTime() ||
       a.key.localeCompare(b.key),
   );
+  // What asks something of the person leads (Needs you); what only waits for
+  // their next word follows (Waiting for you).
+  const asking = waiting.filter((w) => w.request || asks(w.session?.waiting_reason));
+  const idle = waiting.filter((w) => !asking.includes(w));
   const waitingKeys = new Set(waiting.flatMap((w) => (w.session ? [sessionKey(w.session)] : [])));
   // A session in Needs you is not listed again under Running now.
   const active = live.filter((s) => !waitingKeys.has(sessionKey(s)));
@@ -1228,8 +1285,10 @@ export function SessionsPage({
     setCollapsed(collapsedSections);
   };
   // The keys move through the rows on show only.
+  const waitingKey = (w: Waiting) => (w.session ? sessionKey(w.session) : w.key);
   const rows = useRowFocus<HTMLDivElement>("sessions", [
-    ...(collapsed.needs ? [] : waiting.map((w) => (w.session ? sessionKey(w.session) : w.key))),
+    ...(collapsed.needs ? [] : asking.map(waitingKey)),
+    ...(collapsed.waiting ? [] : idle.map(waitingKey)),
     ...(collapsed.running ? [] : active.map(sessionKey)),
     ...(collapsed.ended ? [] : ended.map(sessionKey)),
   ]);
@@ -1237,6 +1296,16 @@ export function SessionsPage({
     "data-row-id": sessionKey(s),
     "data-focused": rows.focused === sessionKey(s) || undefined,
   });
+  // The session peeked at under its row (Space), by its key, at most one.
+  const [peeking, setPeeking] = useState<string | null>(null);
+  const peek = (s: LiveSession) =>
+    setPeeking((current) => (current === sessionKey(s) ? null : sessionKey(s)));
+  const peekRow = (s?: LiveSession) =>
+    s && peeking === sessionKey(s) ? (
+      <li key={`peek:${sessionKey(s)}`} className="local-feed-peek-row">
+        <SessionPeek session={s} />
+      </li>
+    ) : null;
   // The reply open on a card, by its session's key, at most one.
   const [replying, setReplying] = useState<string | null>(null);
   // Closing a reply puts the keys back on its card.
@@ -1252,6 +1321,20 @@ export function SessionsPage({
     return true;
   };
   useShortcuts((event) => {
+    // Escape closes a peek before it clears the row.
+    if (event.key === "Escape" && peeking) {
+      event.preventDefault();
+      setPeeking(null);
+      return;
+    }
+    if (event.key === " " && rows.focused) {
+      const s = sessions.find((x) => sessionKey(x) === rows.focused);
+      if (s) {
+        event.preventDefault();
+        peek(s);
+        return;
+      }
+    }
     // A request card's choices answer to their keys (1–9, Enter to submit
     // several), before the list's own.
     const card = rows.focused
@@ -1314,6 +1397,7 @@ export function SessionsPage({
     else if (working(s))
       items.push({ label: "Reply when it finishes", hint: "r", onSelect: () => reply(s) });
     items.push({ label: "Open transcript", onSelect: () => navigate(transcriptHref(s)) });
+    items.push({ label: "Peek", hint: "Space", onSelect: () => peek(s) });
     const pr = prHref(s);
     if (pr)
       items.push({
@@ -1344,54 +1428,72 @@ export function SessionsPage({
     const s = id ? sessions.find((x) => sessionKey(x) === id) : undefined;
     if (s) menu.open(event, actionsFor(s));
   };
+  // What waits on the person, drawn the same in both of its sections.
+  const waitingRows = (list: Waiting[]) =>
+    list.flatMap((w) => [
+      w.request?.kind === "permission" ? (
+        <PermissionCard
+          key={w.key}
+          request={w.request}
+          session={w.session}
+          now={now}
+          onDone={notify}
+          row={w.session ? row(w.session) : { "data-row-id": w.key }}
+          open={open}
+        />
+      ) : w.request ? (
+        <QuestionCard
+          key={w.key}
+          request={w.request}
+          session={w.session}
+          now={now}
+          onDone={notify}
+          row={w.session ? row(w.session) : { "data-row-id": w.key }}
+          open={open}
+        />
+      ) : (
+        <WaitingCard
+          key={w.key}
+          session={w.session!}
+          since={w.since}
+          now={now}
+          open={open}
+          row={row}
+          onDone={notify}
+          replying={replying === sessionKey(w.session!)}
+          closeReply={closeReply}
+        />
+      ),
+      peekRow(w.session),
+    ]);
   return (
     <div ref={rows.list} className="local-feed" onClick={openCard} onContextMenu={cardMenu}>
       {menu.menu}
-      {waiting.length > 0 ? (
+      {asking.length > 0 ? (
         <section aria-label="Needs you" className="local-feed-section needs">
           <SectionHead
             section="needs"
             title="Needs you"
-            count={waiting.length}
+            count={asking.length}
             collapsed={collapsed.needs}
             toggle={toggle}
           />
           <ul id="sessions-needs" className="local-feed-cards" hidden={collapsed.needs}>
-            {waiting.map((w) =>
-              w.request?.kind === "permission" ? (
-                <PermissionCard
-                  key={w.key}
-                  request={w.request}
-                  session={w.session}
-                  now={now}
-                  onDone={notify}
-                  row={w.session ? row(w.session) : { "data-row-id": w.key }}
-                  open={open}
-                />
-              ) : w.request ? (
-                <QuestionCard
-                  key={w.key}
-                  request={w.request}
-                  session={w.session}
-                  now={now}
-                  onDone={notify}
-                  row={w.session ? row(w.session) : { "data-row-id": w.key }}
-                  open={open}
-                />
-              ) : (
-                <WaitingCard
-                  key={w.key}
-                  session={w.session!}
-                  since={w.since}
-                  now={now}
-                  open={open}
-                  row={row}
-                  onDone={notify}
-                  replying={replying === sessionKey(w.session!)}
-                  closeReply={closeReply}
-                />
-              ),
-            )}
+            {waitingRows(asking)}
+          </ul>
+        </section>
+      ) : null}
+      {idle.length > 0 ? (
+        <section aria-label="Waiting for you" className="local-feed-section waiting">
+          <SectionHead
+            section="waiting"
+            title="Waiting for you"
+            count={idle.length}
+            collapsed={collapsed.waiting}
+            toggle={toggle}
+          />
+          <ul id="sessions-waiting" className="local-feed-cards" hidden={collapsed.waiting}>
+            {waitingRows(idle)}
           </ul>
         </section>
       ) : null}
@@ -1411,7 +1513,7 @@ export function SessionsPage({
           </p>
         ) : (
           <ul id="sessions-running" className="local-feed-cards">
-            {active.map((s) => (
+            {active.flatMap((s) => [
               <RunningCard
                 key={sessionKey(s)}
                 session={s}
@@ -1424,8 +1526,9 @@ export function SessionsPage({
                 row={row}
                 replying={replying === sessionKey(s)}
                 closeReply={closeReply}
-              />
-            ))}
+              />,
+              peekRow(s),
+            ])}
           </ul>
         )}
       </section>
@@ -1441,14 +1544,14 @@ export function SessionsPage({
           <p className="local-sessions-empty">No sessions ended in the last day.</p>
         ) : (
           <ul id="sessions-ended" className="local-feed-cards">
-            {ended.map((s) => {
+            {ended.flatMap((s) => {
               const endedAt = endedAtOf(s);
               const seconds = Math.max(
                 0,
                 (new Date(endedAt).getTime() - new Date(s.started_at).getTime()) / 1000,
               );
               const files = s.activity?.files_touched;
-              return (
+              return [
                 <li key={sessionKey(s)} className="local-feed-card compact" {...row(s)}>
                   {open(s, <AgentMark agent={s.agent} />)}
                   {s.title ? (
@@ -1463,8 +1566,9 @@ export function SessionsPage({
                   <span className="local-feed-sub" title={absolute(endedAt)}>
                     Ended {formatRelative(endedAt, now)}
                   </span>
-                </li>
-              );
+                </li>,
+                peekRow(s),
+              ];
             })}
           </ul>
         )}

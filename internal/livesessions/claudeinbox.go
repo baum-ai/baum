@@ -124,7 +124,7 @@ func (c ClaudeInbox) Send(ctx context.Context, id, text string) error {
 	line, err := json.Marshal(map[string]any{
 		"type":    "user",
 		"from":    "baum",
-		"message": map[string]string{"role": "user", "content": text},
+		"message": map[string]string{"role": "user", "content": framed(text)},
 	})
 	if err != nil {
 		return err

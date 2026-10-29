@@ -25,15 +25,17 @@ import (
 )
 
 // Bounds on what is read of a session to describe it. A session is looked at
-// no more than once per TitleRecheckEvery (CursorTitleRecheckEvery for
-// Cursor, whose database is one large file it writes all the time), and its
-// files are read again only when they changed. Claude Code and Codex append
+// no more than once per TitleRecheckEvery, or WorkingRecheckEvery while it
+// works, so the app follows what it says within a couple of seconds
+// (CursorTitleRecheckEvery for Cursor, whose database is one large file it
+// writes all the time), and its files are read again only when they changed. Claude Code and Codex append
 // to their transcripts, so each read starts where the last one stopped, at
 // most scanPass bytes at a time; until a long transcript is caught up, its
 // last titleTail bytes, where Claude Code rewrites the title as the session
 // goes, name it.
 const (
 	TitleRecheckEvery       = 5 * time.Second
+	WorkingRecheckEvery     = time.Second
 	CursorTitleRecheckEvery = 30 * time.Second
 	maxTitle                = 120
 	maxExcerpt              = 240
@@ -106,9 +108,11 @@ var safeID = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
 // no hook event to say so: agents report few events during a turn, so a
 // running session's steps, files and message, and a silent session settling
 // (settle), are only in its transcript. The list is built every
-// TitleRecheckEvery, which reads only what the files appended since.
+// WorkingRecheckEvery, which reads a working session's files when they grew
+// (only what they appended) and the others' no more often than describe
+// allows.
 func (t *Transcripts) Watch(ctx context.Context, notify func()) {
-	ticker := time.NewTicker(TitleRecheckEvery)
+	ticker := time.NewTicker(WorkingRecheckEvery)
 	defer ticker.Stop()
 	var last []byte
 	for {
@@ -153,7 +157,10 @@ func (t *Transcripts) listed() []Listed {
 		_, path, _ := t.Tracker.Lookup(s.Agent, s.ID)
 		k := key{s.Agent, s.ID}
 		keep[k] = true
-		title, excerpt, _, activity := t.describe(k, path)
+		// A session neither ended nor waiting on its user is working, or went
+		// silent and may be (settle).
+		working := s.State != StateEnded && s.WaitingReason == ""
+		title, excerpt, _, activity := t.describe(k, path, working)
 		if empty(s.Agent, title, activity) {
 			continue
 		}
@@ -176,7 +183,7 @@ func (t *Transcripts) listed() []Listed {
 // at long enough ago. A failed read keeps what was read before and is tried
 // again by the next request, since a transcript can be named before it is
 // written.
-func (t *Transcripts) describe(k key, path string) (title, excerpt, summary string, activity *Activity) {
+func (t *Transcripts) describe(k key, path string, working bool) (title, excerpt, summary string, activity *Activity) {
 	t.mu.Lock()
 	if t.described == nil {
 		t.described = map[key]*described{}
@@ -191,8 +198,11 @@ func (t *Transcripts) describe(k key, path string) (title, excerpt, summary stri
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	every := TitleRecheckEvery
-	if k.agent == AgentCursor {
+	switch {
+	case k.agent == AgentCursor:
 		every = CursorTitleRecheckEvery
+	case working:
+		every = WorkingRecheckEvery
 	}
 	now := t.now()
 	if !e.checked.IsZero() && now.Sub(e.checked) < every {
@@ -730,7 +740,8 @@ func readCodex(path string, from, to int64, scan *scanState) error {
 // codexTyped records a message the user typed in a Codex session: its first
 // is the prompt a title falls back to, its latest the activity's.
 func codexTyped(scan *scanState, text string) {
-	text = strings.TrimSpace(text)
+	// The app framed its messages to Codex as to Claude Code once.
+	text = strings.TrimSpace(strings.TrimPrefix(text, fromBaum))
 	if text == "" {
 		return
 	}

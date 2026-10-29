@@ -814,6 +814,14 @@ bucket's does; Ended recently starts folded, and the fold holds while the app ru
 The keys move only through rows on show. The `live` event updates it and the sidebar count, and times
 tick every second. The daemon keeps ended sessions for 24 hours, across restarts, and
 leaves out a session that never had a conversation (no title and no activity).
+Space on a focused row, in any section, peeks at the session under it (`SessionPeek`):
+the row grows open, in its sand and behind its bar, the full width under the title:
+"Original request", what its compaction summary (`summary`) says it was started for
+without Claude Code's "Initial:" label and quotes, cut at two lines, and "Latest
+response", the agent's last message rendered, each beside its label (above it in a
+narrow window), scrolled past 22rem; what the user last wrote is on the row already. Space
+again or Escape closes it, before Escape clears the row.
+
 What the person does on the page (answering, replying, queueing, ending) is
 confirmed in a toast: the app's own (`src/toast.tsx`; any page raises one with
 `useToast()`), dark over the window's foot, saying what happened, what it was about
@@ -823,14 +831,20 @@ carry an action such as Undo; a failure shows in the critical tone.
 
 A right click on a session's card opens the app's own menu (`src/context-menu.tsx`)
 in place of the browser's: Reply when the daemon offers it (`messageable`, with its
-key r), Open transcript, Open pull request when it has one, and End session when the
-daemon offers it (`endable`). The Menu key or Shift+F10 opens it
-under the focused card; the arrows move through it, Enter chooses and Escape, a click
-elsewhere or a scroll closes it. In a field, or over selected text, the browser's menu
+key r), Open transcript, Peek (Space), Open pull request when it has one, and End session when the
+daemon offers it (`endable`). ⌘. (Ctrl+. elsewhere), anywhere in the app, opens
+the focused element's menu (`useActionsKey`), as the Menu key or Shift+F10 do; here
+it opens under the focused card. Ctrl+N and Ctrl+P (`useReadlineArrows`) move as ↓
+and ↑ in every list and menu of the app, and in Go to, but not in a plain text field. In the menu the arrows move, Enter chooses, and a click
+elsewhere or a scroll closes it; Escape closes it wherever the keys are and gives them
+back to the row that opened it. In a field, or over selected text, the browser's menu
 stays.
 
-- "Needs you" (`SessionsPage` in `src/sessions.tsx`) shows only while something waits
-  on the person: the requests the app can answer first, then the longest wait. A session with a pending `permission`
+- "Needs you" (`SessionsPage` in `src/sessions.tsx`) shows only while something asks
+  the person for a permission or an answer (`asks`), and "Waiting for you", after it,
+  only while a session finished its turn or went quiet: the same rows, split by
+  whether the session is blocked on a decision or only waits for the next word. Each
+  lists the requests the app can answer first, then the longest wait. A session with a pending `permission`
   request (from `api/agent-requests`) gets an amber card titled by its tool ("wants to
   run a command", "wants to edit a file", "wants to use X"), the session's title and
   branch, the agent's last message, what the request would do (`code` rows in a dark
@@ -882,11 +896,12 @@ through `PUT api/agent-requests/settings`, hidden when the daemon lacks the rout
 while on, Codex hides its own approval prompt for up to 25 seconds while it waits for an
 answer from the app.
 
-A session in Needs you is not listed again under Running now; a session idle only
+A session in Needs you or Waiting for you is not listed again under Running now; a session idle only
 because it went silent, or with a reason this app does not know, stays there. Times
 are relative where they are not clocks, with the exact time on hover. While anything
-needs the person the sidebar's Sessions badge counts those sessions in the caution
-tone; otherwise it counts the running ones. The desktop app notifies when a session
+asks the person something (Needs you, `asksYou`) the sidebar's Sessions badge counts
+those sessions in the caution tone; otherwise it counts the running ones, so a
+finished or quiet session waiting for its next word does not raise it. The desktop app notifies when a session
 starts asking for a permission or an answer (see the desktop README).
 
 A click on a session's card (anywhere but its buttons, fields and links, and not

@@ -313,14 +313,19 @@ it("puts the sessions waiting on the person in Needs you, longest wait first, an
       ],
     };
     await act(async () => streams[0]!.dispatchEvent(new Event("live")));
+    // What asks something is Needs you; a finished turn, Waiting for you.
     const needs = node.querySelector('[aria-label="Needs you"]')!;
-    const rows = [...needs.querySelectorAll("li")];
-    expect(rows.map((r) => r.getAttribute("data-row-id"))).toEqual([
+    const waitingForYou = node.querySelector('[aria-label="Waiting for you"]')!;
+    const finished = waitingForYou.querySelector("li")!;
+    const asked = [...needs.querySelectorAll("li")];
+    const rows = [asked[0]!, finished, asked[1]!];
+    expect(asked.map((r) => r.getAttribute("data-row-id"))).toEqual([
       "codex:asking",
-      "claude-code:finished",
       "claude-code:question",
     ]);
-    expect(needs.querySelector("h2")!.textContent).toBe("Needs you 3");
+    expect(finished.getAttribute("data-row-id")).toBe("claude-code:finished");
+    expect(needs.querySelector("h2")!.textContent).toBe("Needs you 2");
+    expect(waitingForYou.querySelector("h2")!.textContent).toBe("Waiting for you 1");
     expect(rows[0]!.querySelector("img")!.getAttribute("alt")).toBe("Codex");
     expect(rows[0]!.textContent).toContain("waiting 4m 00s");
     expect(rows[0]!.textContent).toContain("Asks permission in its terminal");
@@ -345,8 +350,8 @@ it("puts the sessions waiting on the person in Needs you, longest wait first, an
       "claude-code:s1",
       "claude-code:later",
     ]);
-    // The sidebar counts what needs the person, in the caution tone.
-    expect(sidebarBadge()).toBe("3");
+    // The sidebar counts what asks the person something, in the caution tone.
+    expect(sidebarBadge()).toBe("2");
     expect(
       node
         .querySelector('a[href$="?page=sessions"] .local-rail-badge')!

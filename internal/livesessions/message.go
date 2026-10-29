@@ -19,9 +19,10 @@ type Sender func(ctx context.Context, id, text string) error
 // maxMessage bounds a message from the app, in characters.
 const maxMessage = 10000
 
-// fromBaum is how a message the app sends opens, so the agent knows its user
-// sent it: Claude Code tells its model a message on its inbox came from
-// another session.
+// fromBaum is how a message the app sends to Claude Code opens (ClaudeInbox),
+// so the agent knows its user sent it: Claude Code tells its model a message
+// on its inbox came from another session. Codex takes a queued message as the
+// user's own turn, so it gets the text alone.
 const fromBaum = "Your user sent this from the baum desktop app, in place of typing it in this terminal:"
 
 // framed is a message as an agent receives it.
@@ -58,7 +59,7 @@ func (t *Transcripts) message(ctx context.Context, agent, id, text string) error
 	case !found.Messageable:
 		return errNotMessageable
 	}
-	err := t.Senders[agent](ctx, id, framed(text))
+	err := t.Senders[agent](ctx, id, text)
 	if errors.Is(err, ErrAgentGone) && t.Tracker.Gone(agent, id, time.Now()) {
 		t.Tracker.signal()
 	}

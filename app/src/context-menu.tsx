@@ -1,3 +1,4 @@
+import { MAC } from "./shortcuts";
 import {
   useEffect,
   useLayoutEffect,
@@ -43,9 +44,41 @@ export function useContextMenu() {
   return { open, menu };
 }
 
+/** Opens the right-click menu of what has the keys with ⌘. (Ctrl+. elsewhere),
+ *  as the Menu key or Shift+F10 do where there are such keys: a context menu
+ *  event on the focused element, which opens under it. Not in a text field
+ *  or under a dialog. Mounted once, for the whole app. */
+export function useActionsKey() {
+  useEffect(() => {
+    const onKeyDown = (event: globalThis.KeyboardEvent) => {
+      const command = MAC ? event.metaKey && !event.ctrlKey : event.ctrlKey && !event.metaKey;
+      if (!command || event.key !== "." || event.altKey || event.shiftKey || event.defaultPrevented)
+        return;
+      const target = document.activeElement;
+      if (
+        !(target instanceof HTMLElement) ||
+        target === document.body ||
+        target.closest("input, textarea, select, [contenteditable]") ||
+        document.querySelector("dialog[open]")
+      )
+        return;
+      event.preventDefault();
+      target.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true }));
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, []);
+}
+
 function ContextMenu({ x, y, items, close }: Open & { close: () => void }): ReactNode {
   const ref = useRef<HTMLDivElement>(null);
   const [at, setAt] = useState({ left: x, top: y });
+  // What had the keys before the menu took them, given back on Escape.
+  const [opener] = useState(() => document.activeElement);
+  const dismiss = () => {
+    close();
+    if (opener instanceof HTMLElement && opener.isConnected) opener.focus();
+  };
   // Kept inside the window, measured before it is painted.
   useLayoutEffect(() => {
     const menu = ref.current;
@@ -73,12 +106,24 @@ function ContextMenu({ x, y, items, close }: Open & { close: () => void }): Reac
       window.removeEventListener("blur", close);
     };
   }, [close]);
+  // Escape closes it wherever the keys are, and does nothing else: the page's
+  // own Escape (clearing its row) waits for the next one.
+  useEffect(() => {
+    const escape = (event: globalThis.KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      dismiss();
+    };
+    window.addEventListener("keydown", escape, true);
+    return () => window.removeEventListener("keydown", escape, true);
+  });
   // The menu's keys are its own: the page's list keys wait until it closes.
   const keys = (event: KeyboardEvent) => {
     event.stopPropagation();
     const buttons = [...(ref.current?.querySelectorAll("button") ?? [])];
     const index = buttons.indexOf(document.activeElement as HTMLButtonElement);
-    if (event.key === "Escape" || event.key === "Tab") {
+    if (event.key === "Tab") {
       event.preventDefault();
       close();
     } else if (event.key === "ArrowDown" || event.key === "ArrowUp") {
