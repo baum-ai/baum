@@ -313,6 +313,44 @@ the daemon. The sidebar's Inbox badge counts the queue without snoozed pull
 requests. It is not the desktop tray's waiting count, which counts only review
 requests and the person's blocked pull requests.
 
+**Inboxes** are saved filters over this same queue, defined in the daemon (see
+its [inboxes README](../internal/inboxes/README.md)) and matched here
+(`src/inboxes.ts`): the app never builds a second queue. An inbox holds the
+queue items that fit all of its parts: what (any; reviews, which are Review and
+Clone items; things ready to merge; things an agent can fix, which are Fix and
+Update items and the pull requests a fix agent is working on now; or the
+person's own), owners (the repository's owner, ignoring case; none means any),
+risk (3 or more, or 4 or more, from the baum review's score; a pull request with
+no score yet never matches a risk filter, and "at least N" counts as N),
+repositories (none means any) and whether bots are left out. A pull request can
+be in several inboxes. An inbox's queue is `?inbox=<id>` on the app root (an
+unknown id shows the Inbox): the same page, with only the matching items, the
+same groups, order, panel, keys, snoozes and **Merge all N** (which counts only
+that inbox's Merge items). Its header shows the inbox's name beside its colour
+dot and a sentence saying what it holds ("Anything waiting on me in any
+repository, whatever the risk."), and an empty one says "Nothing here right
+now." Snoozed lists only the inbox's pull requests. **Done today**, the header's
+done count and progress bar, and the group of the person's own pull requests
+that wait on checks or reviews are only in the Inbox (all). In the Inbox a row
+carries a small tag with the colour and name of the first inbox it is in, and
+its panel a tag for each; in an inbox the panel tags the other inboxes it is
+also in. Colours are six palette names (`--inbox-*` in `src/style.css`, with
+dark variants).
+
+In the sidebar a chevron beside Inbox folds the inboxes nested under it
+(remembered in `localStorage`; hidden with the glyph-only rail). Each row links
+to `?inbox=<id>`, is the current page when selected (then Inbox is not), and
+shows a dot, the name and how many unsnoozed items match, none when 0. The `⋯`
+button opens a menu to leave the inbox out of the Inbox badge (its count is then
+muted) or count it, and **Delete inbox**, which toasts "Deleted <name>. Its pull
+requests stay in Inbox." with **Undo**. The Inbox badge counts the unsnoozed
+queue items that are in no inbox or in at least one that counts in the badge;
+with no inboxes it is the count above. Changes show at once and are sent to the
+daemon one at a time, each carrying the newest revision, so an older change
+cannot overwrite a newer one; a conflict adopts the daemon's list and any other
+failure restores the last saved list with an error. An older daemon has none of
+this: no chevron, rows, tags or changed badge.
+
 Pull requests (`?page=pulls`, `src/inbox.tsx`) lists every open pull request
 of the picked repositories, with or without a local clone, with Risk,
 Pull request, Review time, Review and Status columns. The pull requests of a
@@ -416,7 +454,7 @@ minutes, say how old they are.
 See the daemon's [plan usage README](../internal/planusage/README.md).
 
 The app's sidebar leads to the Inbox, Pull requests, Sessions, Analytics, Repositories, Jobs
-and Settings; the Inbox shows how many things wait on the person there, and Sessions shows the number of agent sessions waiting on the person (in the caution tone), or
+and Settings; the Inbox shows how many things wait on the person there (its inboxes are nested beneath it), and Sessions shows the number of agent sessions waiting on the person (in the caution tone), or
 else the number working now.
 
 The Analytics page (`?page=analytics&days=7|30|90&repo=&agent=`, `src/analytics.tsx`)

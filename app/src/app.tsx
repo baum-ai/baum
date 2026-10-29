@@ -18,6 +18,13 @@ import {
 import { CloneActions, type FoundClones } from "./repositories";
 import { GroupMissing, GroupPage, NameDialog } from "./group";
 import { Inbox } from "./inbox";
+import {
+  inboxBadgeCount,
+  matches,
+  parseInboxes,
+  useInboxes,
+  type Inbox as SavedInbox,
+} from "./inboxes";
 import { UpNextPage, useUpNext } from "./up-next";
 import {
   onBody,
@@ -33,7 +40,7 @@ import {
   type ShortcutsPlace,
 } from "./shortcuts";
 import { GoTo, type GoToItem } from "./go-to";
-import { PAGES } from "./pages";
+import { PAGES, type Page } from "./pages";
 import { LocalReview } from "./review";
 import { useDiagnosticProblems } from "./diagnostics";
 import { RepositoriesPage, SettingsPage, settingsSection, type ReviewDefaults } from "./settings";
@@ -221,6 +228,13 @@ function Workspace({ url }: { url: UrlState }) {
   // Counts the `live` events, which an open transcript reads itself again on.
   const [liveTick, setLiveTick] = useState(0);
   const [groups, setGroups] = useState<ReviewGroup[]>([]);
+  const inboxes = useInboxes();
+  // Deleting an inbox says so on any page, with a way back.
+  const [inboxToast, setInboxToast] = useState<{
+    id: number;
+    text: string;
+    undo: () => void;
+  } | null>(null);
   // The pull requests being grouped, while the group name is asked.
   const [grouping, setGrouping] = useState<Entry[] | null>(null);
   const lastLive = useRef(0);
@@ -255,6 +269,7 @@ function Workspace({ url }: { url: UrlState }) {
             repositories,
             found,
             groupList,
+            inboxList,
           ] = await Promise.all([
             request<Clone[]>("api/repos"),
             request<Snapshot>("api/index?history=1"),
@@ -269,6 +284,8 @@ function Workspace({ url }: { url: UrlState }) {
             request<FoundClones>("api/clones/found").catch(() => null),
             // An older daemon has no groups.
             request<unknown>("api/groups").catch(() => null),
+            // An older daemon has no inboxes.
+            request<unknown>("api/inboxes").catch(() => null),
           ]);
           setClones(repos);
           setPicked(Array.isArray(repositories) ? repositories : []);
@@ -284,6 +301,7 @@ function Workspace({ url }: { url: UrlState }) {
           setSnapshot(index);
           setJobs(jobList.jobs ?? []);
           setGroups(parseGroups(groupList));
+          inboxes.adopt(parseInboxes(inboxList));
           setRates(discovery);
           setBackground(Array.isArray(sync) ? sync : []);
           setAutomatic(auto && Array.isArray(auto.repositories) ? (auto as Automatic) : null);
@@ -367,6 +385,39 @@ function Workspace({ url }: { url: UrlState }) {
   // was cleared waits for the first complete read, and pauses while reads
   // fail, so an empty or failed read clears nothing.
   const inbox = useUpNext(indexedEntries, live, jobs, revision > 0 && !error);
+  // What the sidebar highlights is the page that shows the queue, with the
+  // inbox the address names, when the daemon still has it.
+  const railPage: Page =
+    page === "jobs" ||
+    page === "repositories" ||
+    page === "sessions" ||
+    page === "analytics" ||
+    page === "pulls"
+      ? page
+      : page === "settings" || page === "diagnostics"
+        ? "settings"
+        : "inbox";
+  const selectedInbox =
+    railPage === "inbox"
+      ? (inboxes.inboxes.find((candidate) => candidate.id === url.search.get("inbox")) ?? null)
+      : null;
+  const removeInbox = (target: SavedInbox) => {
+    const before = inboxes.inboxes;
+    inboxes.save(before.filter((candidate) => candidate.id !== target.id));
+    setInboxToast({
+      id: Date.now(),
+      text: `Deleted ${target.name}. Its pull requests stay in Inbox.`,
+      undo: () => inboxes.save(before),
+    });
+  };
+  useEffect(() => {
+    if (!inboxToast) return;
+    const timer = setTimeout(
+      () => setInboxToast((t) => (t?.id === inboxToast.id ? null : t)),
+      5000,
+    );
+    return () => clearTimeout(timer);
+  }, [inboxToast?.id]);
   // The pages that show the diagnostics run them themselves.
   // The diagnostics dialog runs them itself while it is open.
   const diagnostics = useDiagnosticProblems(page !== "diagnostics");
@@ -627,18 +678,31 @@ function Workspace({ url }: { url: UrlState }) {
   return (
     <div className="local-shell">
       <Sidebar
-        page={
-          page === "jobs" ||
-          page === "repositories" ||
-          page === "sessions" ||
-          page === "analytics" ||
-          page === "pulls"
-            ? page
-            : page === "settings" || page === "diagnostics"
-              ? "settings"
-              : "inbox"
+        page={railPage}
+        inbox={inboxBadgeCount(inbox.queue, inboxes.inboxes)}
+        inboxes={
+          inboxes.available
+            ? {
+                list: inboxes.inboxes,
+                counts: Object.fromEntries(
+                  inboxes.inboxes.map((candidate) => [
+                    candidate.id,
+                    inbox.queue.filter((item) => matches(candidate, item)).length,
+                  ]),
+                ),
+                selected: selectedInbox?.id ?? null,
+                toggleBadge: (target) =>
+                  inboxes.save(
+                    inboxes.inboxes.map((candidate) =>
+                      candidate.id === target.id
+                        ? { ...candidate, badge: !candidate.badge }
+                        : candidate,
+                    ),
+                  ),
+                remove: removeInbox,
+              }
+            : undefined
         }
-        inbox={inbox.queue.length}
         activeJobs={jobs.filter(isActiveJob).length}
         runningSessions={live.filter((s) => s.state === "running").length}
         needsYou={needsYou(live).length}
@@ -678,6 +742,7 @@ function Workspace({ url }: { url: UrlState }) {
               {error} <Button onClick={() => void reload()}>Retry</Button>
             </Alert>
           ) : null}
+          {inboxes.error ? <Alert>{inboxes.error}</Alert> : null}
           {page === "repositories" ? (
             <RepositoriesPage
               repositories={picked}
@@ -810,6 +875,9 @@ function Workspace({ url }: { url: UrlState }) {
           ) : page !== "pulls" ? (
             <UpNextPage
               inbox={inbox}
+              inboxes={inboxes.inboxes}
+              selected={selectedInbox}
+              login={github?.login}
               // Until a read succeeds there is nothing to say an empty inbox about.
               loading={revision === 0}
               hasRepositories={picked.length > 0 || clones.length > 0}
@@ -988,6 +1056,20 @@ function Workspace({ url }: { url: UrlState }) {
             <Alert>
               Couldn't start the fix of #{fixError.number}: {fixError.text}
             </Alert>
+          ) : null}
+          {inboxToast ? (
+            <div role="status" className="upnext-toast inbox-toast">
+              <span>{inboxToast.text}</span>
+              <button
+                type="button"
+                onClick={() => {
+                  inboxToast.undo();
+                  setInboxToast(null);
+                }}
+              >
+                Undo
+              </button>
+            </div>
           ) : null}
           {shortcuts ? (
             <ShortcutsSheet current={shortcutsPlace} close={() => setShortcuts(false)} />
