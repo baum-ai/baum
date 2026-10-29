@@ -570,7 +570,9 @@ test("a session asking for a permission shows in Needs you and leaves once it wo
   await page.getByRole("link", { name: "Sessions", exact: true }).first().click();
   const running = page.getByRole("region", { name: "Running now", exact: true });
   const needs = page.getByRole("region", { name: "Needs you", exact: true });
-  await expect(running.locator('li[data-row-id="claude-code:needs-e2e"]')).toBeVisible({ timeout: 10000 });
+  await expect(running.locator('li[data-row-id="claude-code:needs-e2e"]')).toBeVisible({
+    timeout: 10000,
+  });
   await expect(needs).toHaveCount(0);
   await writeFile(marker, "permission");
   const row = needs.locator('li[data-row-id="claude-code:needs-e2e"]');
@@ -597,7 +599,9 @@ test("a session asking for a permission shows in Needs you and leaves once it wo
   await expect(running.locator('li[data-row-id="claude-code:needs-e2e"]')).toBeVisible();
   await expect(page.locator('a[href$="?page=sessions"] .local-rail-badge.caution')).toHaveCount(0);
   await writeFile(marker, "ended");
-  await expect(running.locator('li[data-row-id="claude-code:needs-e2e"]')).toHaveCount(0, { timeout: 10000 });
+  await expect(running.locator('li[data-row-id="claude-code:needs-e2e"]')).toHaveCount(0, {
+    timeout: 10000,
+  });
   expect(errors).toEqual([]);
 });
 
