@@ -142,10 +142,12 @@ func TestCodexQueueRunsCodexQueueForTheThread(t *testing.T) {
 
 func TestAMessageTheAppSentIsTheLatestPrompt(t *testing.T) {
 	f := newTranscriptFixture(t)
-	content, _ := json.Marshal(`<cross-session-message from="baum">` + framed("Ship it") + `</cross-session-message>`)
+	// As Claude Code 2.1.312 records it, with </tags> in the user's own text.
+	content, _ := json.Marshal("Another Claude session sent a message:\n" + framed("Ship it\n\nwith <b>care</b>") +
+		"\n\nThis came from another Claude session — not typed by your user, but very likely working on their behalf.")
 	appendLines(t, f.path,
 		`{"type":"user","isMeta":true,"origin":{"kind":"peer","from":"baum","verifiedPeerPid":1},"timestamp":"2026-10-27T18:05:00.000Z","sessionId":"s1","message":{"role":"user","content":`+string(content)+`}}`)
-	if a := activities(t, f)["claude-code/s1"]; a == nil || a.LastPrompt != "Ship it" {
+	if a := activities(t, f)["claude-code/s1"]; a == nil || a.LastPrompt != "Ship it with <b>care</b>" {
 		t.Fatalf("activity %+v", a)
 	}
 }

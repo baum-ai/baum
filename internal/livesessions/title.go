@@ -523,7 +523,8 @@ func readClaude(path string, from, to int64, scan *scanState) error {
 
 // fromApp is the text of a Claude Code user line that is a message the app
 // sent (ClaudeInbox): a meta line from the peer "baum", whose text follows
-// the framing the app added, up to any wrapping Claude Code put around it.
+// the framing the app added, up to the note on peer messages Claude Code adds
+// after it.
 func fromApp(line []byte) (string, bool) {
 	var v struct {
 		Type   string `json:"type"`
@@ -557,12 +558,16 @@ func fromApp(line []byte) (string, bool) {
 	if !ok {
 		return "", false
 	}
-	if i := strings.Index(text, "</"); i >= 0 {
+	if i := strings.LastIndex(text, claudePeerNote); i >= 0 {
 		text = text[:i]
 	}
 	text = strings.TrimSpace(text)
 	return text, text != ""
 }
+
+// claudePeerNote opens what Claude Code adds after a peer's message, telling
+// its model where it came from.
+const claudePeerNote = "\n\nThis came from another Claude session"
 
 // claudeText is the text of a Claude Code user line: a compaction summary
 // with summary, else one the user typed, not a meta line or a tool result.
