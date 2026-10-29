@@ -15,7 +15,7 @@ import (
 const (
 	maxSteps       = 12
 	maxTarget      = 160
-	maxLastMessage = 400
+	maxLastMessage = 1200
 	maxFilesKept   = 10000
 	// maxRawTarget bounds what is kept of a tool's input before it is
 	// masked and cut for serving.
@@ -30,7 +30,8 @@ type Activity struct {
 	// FilesTouched is the number of distinct files the session wrote, over
 	// the whole transcript read so far; absent when none.
 	FilesTouched int `json:"files_touched,omitempty"`
-	// LastMessage is the latest assistant text, masked, on one line and cut.
+	// LastMessage is the latest assistant text, masked, its line breaks kept
+	// (block) and cut.
 	LastMessage string `json:"last_message,omitempty"`
 }
 
@@ -89,7 +90,7 @@ func (a *activityScan) addFile(path string) {
 // activity is the scan as served for a session working in cwd, nil when
 // nothing was found.
 func (t *Transcripts) activity(a *activityScan, cwd string) *Activity {
-	out := &Activity{FilesTouched: len(a.files), LastMessage: t.Tracker.oneLine(a.message, maxLastMessage)}
+	out := &Activity{FilesTouched: len(a.files), LastMessage: t.Tracker.block(a.message, maxLastMessage)}
 	for _, s := range a.steps {
 		target := s.target
 		if s.path {
