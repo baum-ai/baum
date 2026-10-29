@@ -542,3 +542,152 @@ it("shows nothing as cleared on starting a fix", async () => {
   expect(row("Change 2").textContent).toContain("Agent fixing · Queued");
   expect(progress()).toBe("0 of 3");
 });
+
+it("lists the unresolved review threads and resolves one on request", async () => {
+  entries = [mine(7, { unresolved: 2 })];
+  const threads = [
+    {
+      id: "RT_1",
+      path: "src/a.go",
+      line: 12,
+      outdated: false,
+      author: "alice",
+      excerpt: "Rename this.",
+      comments: 2,
+      url: "https://github.com/acme/demo/pull/7#discussion_r1",
+      can_resolve: true,
+    },
+    {
+      id: "RT_2",
+      path: "b.go",
+      outdated: true,
+      author: "bob",
+      excerpt: "Why?",
+      comments: 1,
+      url: "https://github.com/acme/demo/pull/7#discussion_r2",
+      can_resolve: false,
+    },
+  ];
+  const original = vi.mocked(fetch).getMockImplementation()!;
+  vi.mocked(fetch).mockImplementation(async (...args) => {
+    const path = String(args[0]);
+    if (path.includes("api/prs/review-threads"))
+      return Response.json({ threads: [...threads], capped: false });
+    if (path.endsWith("api/prs/resolve-thread")) {
+      threads.splice(0, 1);
+      return Response.json({ resolved: true });
+    }
+    return original(...args);
+  });
+  await render();
+  expect(shown()).toBe("Change 7");
+  const items = () =>
+    Array.from(panel().querySelectorAll('[aria-label="Unresolved review threads"] li'));
+  expect(items().map((item) => item.textContent)).toEqual([
+    "Rename this.alice · src/a.go:12 · 2 commentsResolve",
+    "Why?bob · b.go · Outdated",
+  ]);
+  expect(items()[0]!.querySelector("a")!.getAttribute("href")).toBe(
+    "https://github.com/acme/demo/pull/7#discussion_r1",
+  );
+  await act(async () => button("Resolve").click());
+  const resolves = vi
+    .mocked(fetch)
+    .mock.calls.filter(([path]) => String(path).endsWith("api/prs/resolve-thread"))
+    .map(([, init]) => JSON.parse(String((init as RequestInit).body)));
+  expect(resolves).toEqual([{ repository: "acme/demo", pr: 7, thread: "RT_1" }]);
+  expect(items().map((item) => item.textContent)).toEqual(["Why?bob · b.go · Outdated"]);
+});
+
+it("says why resolving a review thread failed and keeps it", async () => {
+  entries = [mine(7, { unresolved: 1 })];
+  const original = vi.mocked(fetch).getMockImplementation()!;
+  vi.mocked(fetch).mockImplementation(async (...args) => {
+    const path = String(args[0]);
+    if (path.includes("api/prs/review-threads"))
+      return Response.json({
+        threads: [
+          {
+            id: "RT_1",
+            path: "a.go",
+            line: 1,
+            outdated: false,
+            author: "alice",
+            excerpt: "Rename this.",
+            comments: 1,
+            url: "u",
+            can_resolve: true,
+          },
+        ],
+        capped: false,
+      });
+    if (path.endsWith("api/prs/resolve-thread"))
+      return Response.json(
+        { code: "forbidden", message: "Your GitHub account cannot resolve this review thread." },
+        { status: 403 },
+      );
+    return original(...args);
+  });
+  await render();
+  await act(async () => button("Resolve").click());
+  const alert = panel().querySelector(".upnext-thread-error")!;
+  expect(alert.textContent).toBe("Your GitHub account cannot resolve this review thread.");
+  expect(button("Resolve").disabled).toBe(false);
+});
+
+it("lists the failing checks of the head it shows, each linking to its details", async () => {
+  entries = [mine(2, { checks: "failing" })];
+  const original = vi.mocked(fetch).getMockImplementation()!;
+  vi.mocked(fetch).mockImplementation(async (...args) =>
+    String(args[0]).includes("api/prs/failing-checks")
+      ? Response.json({
+          head_sha: "head",
+          checks: [
+            {
+              name: "test",
+              conclusion: "failure",
+              title: "2 tests failed in pkg",
+              url: "https://github.com/acme/demo/runs/21",
+              job_id: 21,
+            },
+            { name: "ci/circle", conclusion: "timed_out" },
+          ],
+        })
+      : original(...args),
+  );
+  await render();
+  expect(shown()).toBe("Change 2");
+  const items = Array.from(panel().querySelectorAll('[aria-label="Failing checks"] li'));
+  expect(items.map((item) => item.textContent)).toEqual([
+    "testFailed · 2 tests failed in pkgRetryDetails",
+    "ci/circleTimed out",
+  ]);
+  expect(items[0]!.querySelector("a")!.getAttribute("href")).toBe(
+    "https://github.com/acme/demo/runs/21",
+  );
+  // Retry re-runs that one job at once; another app's check has none.
+  await act(async () => button("Retry").click());
+  const reruns = vi
+    .mocked(fetch)
+    .mock.calls.filter(([path]) => String(path).endsWith("api/prs/rerun-job"))
+    .map(([, init]) => JSON.parse(String((init as RequestInit).body)));
+  expect(reruns).toEqual([{ repository: "acme/demo", pr: 2, head_sha: "head", job_id: 21 }]);
+  expect(panel().querySelector('[aria-label="Failing checks"] li')!.textContent).toBe(
+    "testRe-running on GitHubDetails",
+  );
+  // The row's Fix CI asks for a fix of the checks alone.
+  const row = panel().querySelector<HTMLButtonElement>("li.upnext-has-threads > button")!;
+  expect(row.textContent).toBe("Fix CI");
+  await act(async () => row.click());
+  expect(fixesStarted()).toEqual([
+    { items: [{ clone: "clone", pr: 2, kind: "fix", only: "checks" }], mode: "single" },
+  ]);
+  expect(node.querySelector("dialog")).toBeNull();
+  const asked = vi
+    .mocked(fetch)
+    .mock.calls.map(([path]) => String(path))
+    .filter((path) => path.includes("api/prs/failing-checks"));
+  expect(asked).toEqual([
+    "/s/test-ns/api/prs/failing-checks?repository=acme%2Fdemo&pr=2&head_sha=head",
+  ]);
+});

@@ -643,14 +643,17 @@ export function threadOutcomesSummary(outcomes: ThreadOutcome[] | undefined): st
   if (failed) text += `; ${failed} ${failed === 1 ? "reply" : "replies"} failed`;
   return text;
 }
+/** What a fix may be limited to: "checks" fixes the failing checks alone,
+ *  leaving conflicts and review comments. */
+export type FixOnly = "checks";
 /** Starts a fix of the pull request at once: the daemon checks GitHub, picks
  *  the review's harness and model and queues it, with nothing to confirm. A
  *  fix it will not run (a fork, no push access, nothing to fix) is refused
  *  with its reason in words, as a `LocalRequestError` whose code is the
- *  reason. */
-export async function startFix(clone: string, pr: number): Promise<Job[]> {
+ *  reason. `only` limits it, as Fix CI on the Inbox's failing checks does. */
+export async function startFix(clone: string, pr: number, only?: FixOnly): Promise<Job[]> {
   const answer = await request<{ jobs: Job[] }>("api/jobs", {
-    items: [{ clone, pr, kind: "fix" }],
+    items: [{ clone, pr, kind: "fix", ...(only ? { only } : {}) }],
     mode: "single",
   });
   return answer.jobs;

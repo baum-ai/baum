@@ -3169,6 +3169,56 @@ kbd.key-hint {
   font-size: 13px;
   font-variant-numeric: tabular-nums;
 }
+.upnext-block li.upnext-has-threads {
+  flex-wrap: wrap;
+}
+.upnext-threads {
+  flex-basis: 100%;
+  margin: 0;
+}
+.upnext-block .upnext-threads ul {
+  margin-top: 4px;
+  padding-left: 12px;
+  border-left: 2px solid var(--un-hairline);
+}
+.upnext-block .upnext-threads li {
+  align-items: center;
+  padding: 8px 0;
+}
+.upnext-block .upnext-threads li:first-child {
+  border-top: none;
+}
+.upnext-thread-excerpt {
+  display: -webkit-box;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+}
+.upnext-threads code {
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.upnext-thread-error {
+  color: var(--un-hot);
+  font-size: 13px;
+}
+.upnext-page .upnext-thread-resolve {
+  flex: none;
+  padding: 5px 10px;
+  font-size: 13px;
+}
+.upnext-check-actions {
+  display: flex;
+  flex: none;
+  gap: 6px;
+}
+.upnext-page .upnext-thread-resolve:disabled {
+  cursor: progress;
+  opacity: 0.7;
+}
 .upnext-block-more {
   margin: 0;
   padding-top: 6px;

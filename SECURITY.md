@@ -606,7 +606,7 @@ What remains:
 ## Writes to GitHub
 
 The local application writes to GitHub only when you click and confirm, one
-pull request at a time, with the credential you saved for baum. There are five
+pull request at a time, with the credential you saved for baum. There are seven
 writes and no others:
 
 - **Merge** (`internal/github/merge.go`): GraphQL `mergePullRequest` with
@@ -624,12 +624,23 @@ writes and no others:
   /repos/{owner}/{repo}/actions/runs/{run_id}/rerun-failed-jobs` for each failed,
   cancelled or timed-out workflow run of the head commit. The daemon reads the
   run list itself; a request names no run.
+- **Resolve a review thread** (`internal/prupdate`): `resolveReviewThread` on
+  the one thread you clicked **Resolve** on in the Inbox. The click is the
+  confirmation, since GitHub undoes it with one click; the daemon first reads
+  the thread and refuses one that is not on that pull request or that GitHub
+  says your account cannot resolve. It posts no reply.
+- **Re-run one job** (`internal/prupdate`): `POST
+  /repos/{owner}/{repo}/actions/jobs/{job_id}/rerun` for the one GitHub Actions
+  job you clicked **Retry** on in the Inbox. Like Resolve, the click is the
+  confirmation. The daemon re-reads the head commit's failing checks and
+  refuses a job that is not one of them, so a request cannot re-run any other
+  job.
 
 Each write goes through the daemon's authenticated, CSRF-checked local API,
 only for repositories you picked, and is re-checked against GitHub just before
 it is sent: the pull request is open, the head is still the one you confirmed
-(or, for a fix, started from) and, for update branch and re-run, your account can push to the repository
-(`permissions.push`). Update branch also refuses a fork's branch and a
+(or, for a fix, started from) and, for update branch and both re-runs, your account can push to the
+repository (`permissions.push`). Resolving a thread checks the thread instead, as above. Update branch also refuses a fork's branch and a
 conflicting pull request. None is retried, and none is ever started by an agent
 or automatically: thread replies follow only a fix you started.
 
@@ -819,8 +830,10 @@ What it runs while it is up:
   control socket only your user can open;
 - every minute or so, free GitHub reads with your token for registered clones:
   open pull requests, the authenticated user and teams, author permissions,
-  and the latest saved review's checks, conversation and head, with
-  conditional requests and backoff (see "What baum sends where");
+  and, when GitHub reports its pull request changed or it has not been read
+  for 15 minutes (an hour once closed), the latest saved review's checks,
+  conversation and head, with conditional requests and backoff (see "What
+  baum sends where");
 - once when it starts, the signed price list download;
 - the record of the events agent and Git hooks report (above), from which it
   also tracks the agent sessions in progress for the app (below);
@@ -1078,7 +1091,7 @@ request a person asked to fix, never in a batch or automatically, and is
 refused before anything is queued for a fork, an account that cannot push, a
 backend that cannot fix or nothing to fix. A fix
 job also keeps the review threads it addressed (file, line, author and the
-first line of the first comment) and each one's outcome code with the
+first comment's headline in plain text) and each one's outcome code with the
 agent's cleaned summary. The stored copy of a downloaded
 price list is trusted only after its signature verifies again on load. Only
 the daemon that owns the per-user lock opens the queue, so there is never a
@@ -1090,9 +1103,10 @@ are served only under the authenticated namespace, and every application
 request resolves under it. Every application request is same-origin; the app has no hosted baum API dependency. Review content uses the
 same sanitizers and safe rendering components as the hosted PR page and `baum internal
 view`. Stored document rendering failures remain within the PR pane. The app's
-only GitHub writes are a merge you confirm and a fix you start, with that fix's replies on
-the review threads it addressed; it supplies no approvals or other discussion
-controls.
+only GitHub writes are the ones listed under "Writes to GitHub": a merge, a
+branch update and a re-run you confirm and a fix you start, with that fix's
+replies on the review threads it addressed, and resolving a review thread you
+chose; it supplies no approvals or other discussion controls.
 
 ## Desktop app
 

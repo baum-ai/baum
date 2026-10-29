@@ -71,11 +71,34 @@ The PR page reuses the same `@baum/viewer` `ReviewViewer`, header, section/risk
 navigation, version menu/comparison, Markdown/code renderers, session cards,
 commit panes, tokens and system theme as the current hosted PR page. Its host
 adapter supplies local document, history, attachment, patch and redacted session
-sources through the same slots as the hosted PR route. Hosted discussion and approvals are absent. Merging, updating a branch,
-re-running checks, a review submitted from the walkthrough and a fix the person
-starts, with its replies on the review threads it addressed, are the app's
-only GitHub writes (see below).
+sources through the same slots as the hosted PR route. Hosted discussion and approvals are absent. Merging, updating a branch, re-running checks,
+submitting a review from the walkthrough, a fix the person starts (with its
+replies on the review threads it addressed), and resolving a review thread the
+person chose are the app's only GitHub writes (see below).
 
+The Inbox's panel lists a fix's unresolved review threads under the row that
+counts them (`ReviewThreads` in `src/threads.tsx`), asked for with `GET
+api/prs/review-threads` and discovery's `unresolved` count when the panel shows
+the pull request and again when that count changes. The daemon answers from
+its cache while the count matches (see `prupdate.Cache`), so moving
+through the Inbox does not read GitHub each time. Each shows its first comment's
+headline (at most two lines), its author, its file and line linked to the thread on GitHub, whether
+it is outdated and how many comments it has. A thread the signed-in account
+may resolve (`can_resolve`) has a **Resolve** button that posts `api/prs/resolve-thread`
+at once, without a dialog, reads **Resolving…** meanwhile, and removes the thread
+from the list once GitHub confirms; a refusal is shown under the thread.
+
+Under "Checks failing" the panel lists the head's failing checks
+(`FailingChecks` in `src/checks.tsx`), asked for with `GET
+api/prs/failing-checks` and the head commit it shows (`head_sha`), again when
+that head changes. Each shows the check's name, its conclusion in words
+(`conclusionText`), its title when it has one and a **Details** link (`url`).
+A check with a `job_id` has **Retry** when discovery says the account can push
+(`viewer_can_push`): it posts `api/prs/rerun-job` at once, reads **Retrying…**,
+then shows "Re-running on GitHub"; a refusal is shown under the check. When the
+pull request offers a fix, the row has **Fix CI**, which starts at once a fix
+of the failing checks alone (`startFix(clone, pr, "checks")`, `"only":"checks"`
+on the item).
 The PR page's **Walk through** button (beside Regenerate, once a review is
 saved) opens the walkthrough (`src/walkthrough.tsx`): `?…&walk=tour` or
 `walk=all`, so a reload stays there, and **Full review** returns to the viewer.
@@ -158,7 +181,8 @@ has moved. The daemon accepts only picked repositories and never retries. A
 refusal (head moved, conflicts, required checks or branch protection, no
 permission, method not allowed) comes back as `{code, message}` with a 409, 422
 or 403 status and shows inline in the dialog, in words; on success the daemon
-re-reads the repository's pull requests and the lists drop it.
+records the merge and re-reads the repository's pull requests, so the lists
+drop it at once.
 
 Keyboard shortcuts (`src/shortcuts.tsx`, one key table that both the handling and
 the sheet read). Every page is reached from the keyboard. With the command key

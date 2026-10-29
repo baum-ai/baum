@@ -82,6 +82,7 @@ import {
   type Clone,
   type Repository,
   type Entry,
+  type FixOnly,
   type Snapshot,
   type Job,
   type LiveSession,
@@ -528,14 +529,14 @@ function Workspace({ url }: { url: UrlState }) {
   // A fix starts at once, from its button or key: there is no dialog and no
   // price to confirm. One the daemon will not run (a fork, no push access,
   // nothing to fix) says why where it was asked for.
-  const fix = async (entry: Entry) => {
+  const fix = async (entry: Entry, only?: FixOnly) => {
     const clone = cloneFor(entry);
     const key = rowKey(entry);
     if (!clone || fixStarting.has(key) || isActiveJob(fixJob(entry, jobs))) return;
     setFixError(null);
     setFixStarting((now) => new Set([...now, key]));
     try {
-      await startFix(clone, entry.pull_request.number);
+      await startFix(clone, entry.pull_request.number, only);
       await reload();
     } catch (e) {
       setFixError({ key, number: entry.pull_request.number, text: errorText(e) });
@@ -980,7 +981,7 @@ function Workspace({ url }: { url: UrlState }) {
               loading={revision === 0}
               hasRepositories={picked.length > 0 || clones.length > 0}
               cloneFor={cloneFor}
-              fix={(entry) => void fix(entry)}
+              fix={(entry, only) => void fix(entry, only)}
               fixState={fixState}
               changed={reload}
               Link={LocalLink}

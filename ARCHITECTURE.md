@@ -1978,7 +1978,18 @@ count and latest update, and reports those that differ from the fingerprint
 its last complete poll recorded. The background worker probes once a minute
 and polls a changed repository at once, so a pull request opened or pushed
 from anywhere shows within about a minute while unchanged repositories keep
-the backoff. A repository never polled or not returned waits for its scheduled
+the backoff. Resolving a review thread does not move a pull request's update
+time, so the probe misses it; the next scheduled poll, or the app reading the
+threads (below), shows it. Each polled pull request keeps GitHub's
+`updated_at`, which the background refresh compares with its last read; it is
+left out of the unchanged comparison, so it does not reset the backoff. GitHub
+works out a pull request's mergeability in the background after a push, so a
+poll right after one can read the old conflict or none. A poll that finds a
+new head, or a new pull request, sets the next poll `settleInterval` (15 s)
+away (or GitHub's polling interval, if longer), as do up to `maxSettles` (3)
+more while a non-draft pull request's `mergeable` or `mergeStateStatus` is
+still `UNKNOWN`; the snapshot says `settling`, and the background worker polls
+the repository at that deadline instead of its interval. A repository never polled or not returned waits for its scheduled
 poll; the probe assumes one credential, leaving out any repository whose
 credential differs from the first's.
 GraphQL cost, remaining points and reset time map to the public rate projection.
@@ -2010,8 +2021,11 @@ refuses a pull request whose head moved. Both accept only picked repositories
 errors to `{code, message}`: `head_moved` and `conflict` and `not_open` are
 `409`, `blocked` (required checks, reviews, branch protection) and
 `method_not_allowed` are `422`, `forbidden` is `403`, anything else `502`. After
-a merge the daemon runs `Service.PollNow` for the repository and publishes an
-index change so the inbox drops the pull request.
+a merge GitHub accepted, the daemon records it (`discovery.Service.Merged`:
+the pull request leaves the cached open ones and is observed `MERGED` at the
+merged head, with no read), runs `Service.PollNow` for the repository and
+publishes an index change, so the inbox shows it merged at once rather than
+when the background refresh next reads it.
 
 Submitting a review is the app's other write outside discovery.
 `POST /api/prs/review` takes `{repository, pr, head_sha, event, body,
@@ -2049,6 +2063,54 @@ answers `{rerun, refused}`: an error only when no run started. Errors are
 `409`, `blocked`, `no_runs` and `fork` are `422`, `forbidden` is `403`,
 anything else `502`. After either write the daemon runs `Service.PollNow` and
 publishes an index change.
+
+The same handler lists and resolves review threads for the Inbox's panel. `GET
+/api/prs/review-threads?repository=&pr=&unresolved=` answers `{threads,
+capped}`. `prupdate.Cache` keeps each pull request's list in memory for
+a minute and serves it while it holds as many threads as `unresolved`,
+discovery's count (absent: not compared; a capped list is never compared), so
+a thread opened or resolved on GitHub is read again once discovery sees it, or
+once the entry expires, as is an edit within a thread. A list read from GitHub
+whose uncapped count differs from `unresolved` replaces discovery's count for
+that pull request (`discovery.Service.Unresolved`, through `Service.Counted`)
+and publishes an index change, so the Inbox row agrees with the panel before
+the next poll. A change of GitHub account, or
+disconnecting, empties it with the daemon's other account-dependent caches
+(`ResetIdentity`), and a read under way when that happens is not stored. Otherwise the list is read
+with `github.Client.UnresolvedThreads` (the fix's `FixReviewThreads` document): each
+thread's node `id`, `path`, `line`, `outdated`, the first comment's `author`,
+its headline cut to 200 characters (`excerpt`: `fix.Headline`, the first
+wholly bold line among the first four, else the first line of text, without
+HTML comments, tags, images, code blocks or Markdown markup, which the fix
+dialog's excerpts use too), the
+comment count, the first comment's `url` and `can_resolve`
+(`viewerCanResolve`). `POST /api/prs/resolve-thread` takes `{repository, pr,
+thread}`, reads the thread by its node id (`ThreadState`) and refuses one that
+is not on that pull request (`not_found`, `404`) or that the account cannot
+resolve (`forbidden`); a thread already resolved answers success without a
+write. Otherwise it sends `resolveReviewThread` once and, like the other writes,
+polls discovery and publishes an index change. No reply is posted. A thread
+resolved from the app, or found resolved, leaves the cached list at once.
+
+`GET /api/prs/failing-checks?repository=&pr=&head_sha=` lists the failing
+checks of `head_sha` (the head the app shows; absent, the pull request's head
+is read first) with `fix.FailingChecks`, the fix's evidence read: check runs
+of their latest attempt whose conclusion is `failure`, `timed_out`,
+`startup_failure` or `action_required`, and commit statuses in `error` or
+`failure`, at most 20. It answers `{head_sha, checks}`, each check's `name`,
+`conclusion`, `title` (its output title, else the headline of its summary or a
+status's description, cut to 160 characters), `url` (`details_url`, else
+`html_url`, or a status's `target_url`; the fix prompt leaves it out) and
+`job_id` (the GitHub Actions job behind a check run). `prupdate.Cache` keeps a
+head's list for 2 minutes, forgets it when either re-run starts a run of that
+head, and is emptied with the threads on an account change.
+
+`POST /api/prs/rerun-job` takes `{repository, pr, head_sha, job_id}`,
+re-checks that the pull request is open, its head is `head_sha` and the
+account can push, re-reads the head's failing checks and refuses a `job_id`
+that is not one of their jobs (`not_found`, `404`), then posts
+`.../actions/jobs/{id}/rerun` once (GitHub answers `201`; refusals are worded
+as a workflow run's). It is recorded as a check re-run in analytics.
 
 The review index exposes discovery states for all open rows, including rows
 without a saved review or with an unreadable store. Saved review time comes from
@@ -2189,7 +2251,10 @@ linked sessions or commits.
 A job has a kind: a review (`Item.Kind` empty) or a fix (`"fix"`), which
 shares the queue, journal, concurrency, progress events and cancellation with
 reviews and shows in the same Jobs list. A fix starts alone, at once
-(`POST /api/jobs` with `{"items":[{"clone","pr","kind":"fix"}],"mode":"single"}`);
+(`POST /api/jobs` with `{"items":[{"clone","pr","kind":"fix"}],"mode":"single"}`;
+`"only":"checks"` on the item, the Inbox's Fix CI, limits it to the failing
+checks: preparation leaves `conflicts` false and reads no review threads, and
+any other `only` is refused);
 one in a batch is refused, and automatic generation never queues one. A review and a fix of one pull request
 neither supersede nor block each other, and a fix of a head does not count as
 that head's review for the automatic scheduler.
@@ -2314,13 +2379,23 @@ conditional-cache deadlines, bounded requests, error backoff and host rate reset
 Every picked repository is polled, with or without a clone: discovery needs
 only `owner/name`. A repository without an available clone gets no per-PR
 refresh (that reads a store and the clone's saved reviews), and polling it
-still feeds `Service.Discovered`. Per-repository target cursors and repository rotation prevent a small renewed
-GitHub budget from perpetually serving only the first PRs. Linked worktrees are
-deduplicated by common git directory. No-review PRs fetch only a header and checks;
+still feeds `Service.Discovered`. A pass polls every due repository first and
+publishes an index change, so no repository's pull requests wait behind
+another's reads. It then reads, within `refreshBudget` (30 s), the pull
+requests that are due: never read, updated on GitHub since the last read
+(discovery's `updated_at`), at a head other than the last read's, or last
+observed open and no longer among the open ones (to learn that it merged or
+closed). Those go first; then any open one unread for `openReadAge` (15 min)
+or closed one unread for `closedReadAge` (1 h), the longest unread first. A
+failed read is retried after the interval, doubling to 15 minutes, without
+backing off the repository's polls; a rate-limited one stays due and goes
+first after the reset, so a small renewed budget still reaches every pull
+request. `Run` passes every 30 seconds, or sooner when a repository is due
+sooner, as a settling one is. Linked worktrees are deduplicated by common git directory. No-review PRs fetch only a header and checks;
 saved reviews use `refresh.Refresher` and `Store.RefreshCurrent`'s exact-byte CAS.
 `Service.RefreshNow` refreshes named PRs of one clone the same way outside
-that schedule (see "Refresh on hook events"); it shares the per-host rate
-pause with `Sync` in both directions.
+that schedule (see "Refresh on hook events"), and its reads count as the
+last read; it shares the per-host rate pause with `Sync` in both directions.
 
 Discovery's live freshness map uses its own short mutex; cached readers never
 wait behind a network poll. Disk-only startup remains stale. Minimized current

@@ -27,6 +27,7 @@ import {
   liveFor,
   request,
   type Entry,
+  type FixOnly,
   type Job,
   type LiveSession,
 } from "./api";
@@ -43,6 +44,8 @@ import {
 } from "./merge";
 import { LoadingStatus, NineDots } from "./nine-dots";
 import { onBody, useShortcuts } from "./shortcuts";
+import { FailingChecks } from "./checks";
+import { ReviewThreads } from "./threads";
 import { canUpdateBranch, UpdateBranchDialog } from "./unblock";
 
 /** What the person does next about a pull request: read a review they were
@@ -585,8 +588,8 @@ export function UpNextPage({
   loading: boolean;
   hasRepositories: boolean;
   cloneFor: (entry: Entry) => string;
-  /** Starts the fix at once. */
-  fix: (entry: Entry) => void;
+  /** Starts the fix at once, of the failing checks alone with "checks". */
+  fix: (entry: Entry, only?: FixOnly) => void;
   /** A pull request's fix that is starting or did not start. */
   fixState?: (entry: Entry) => FixState;
   /** Reloads the inbox after a write to GitHub. */
@@ -943,6 +946,13 @@ export function UpNextPage({
               href={prHref(selected.entry, cloneFor)}
               Link={Link}
               fix={selectedFix}
+              fixChecks={
+                fixLabel(selected.entry) &&
+                cloneFor(selected.entry) &&
+                selected.entry.checks === "failing"
+                  ? () => fix(selected.entry, "checks")
+                  : undefined
+              }
               fixState={selectedFixState}
               merge={() => setMerging(selected.entry)}
               update={() => setUpdating(selected.entry)}
@@ -1056,6 +1066,10 @@ type PanelRow = {
   sub?: string;
   /** Lines added and deleted. */
   lines?: { additions: number; deletions: number };
+  /** The row lists the unresolved review threads under it. */
+  threads?: boolean;
+  /** The row lists the failing checks under it. */
+  checks?: boolean;
 };
 type PanelBlock = { title: string; lead?: string; rows: PanelRow[]; more?: string };
 
@@ -1131,7 +1145,8 @@ function blocks(row: Row, doc: ReviewDocument | null): PanelBlock[] {
               ? [
                   {
                     main: `${plural(unresolved, "unresolved review thread")}${entry.unresolved_capped ? " or more" : ""}`,
-                    sub: "Open on GitHub until someone resolves them.",
+                    sub: "Resolve each one here once it is addressed.",
+                    threads: true,
                   },
                 ]
               : []),
@@ -1143,7 +1158,7 @@ function blocks(row: Row, doc: ReviewDocument | null): PanelBlock[] {
                   },
                 ]
               : []),
-            ...(entry.checks === "failing" ? [{ main: "Checks failing" }] : []),
+            ...(entry.checks === "failing" ? [{ main: "Checks failing", checks: true }] : []),
           ],
         },
         ...changes,
@@ -1188,6 +1203,7 @@ function Panel({
   href,
   Link,
   fix,
+  fixChecks,
   fixState,
   merge,
   update,
@@ -1204,6 +1220,8 @@ function Panel({
   href: string;
   Link: ComponentType<ViewerLinkProps>;
   fix?: () => void;
+  /** Starts the fix of the failing checks alone. */
+  fixChecks?: () => void;
   fixState: FixState;
   merge: () => void;
   update: () => void;
@@ -1405,7 +1423,10 @@ function Panel({
           {block.lead ? <p className="upnext-lead">{block.lead}</p> : null}
           <ul>
             {block.rows.map((line) => (
-              <li key={line.main}>
+              <li
+                key={line.main}
+                className={line.threads || line.checks ? "upnext-has-threads" : undefined}
+              >
                 {line.badge ? (
                   <span
                     className={`upnext-badge upnext-badge-${line.badge === "✓" ? "done" : line.badge}`}
@@ -1423,6 +1444,35 @@ function Panel({
                     deletions={line.lines.deletions}
                     format={formatCount}
                     className="upnext-block-right"
+                  />
+                ) : null}
+                {line.threads ? (
+                  <ReviewThreads
+                    key={`${pr.repository}#${pr.number}`}
+                    repository={pr.repository}
+                    number={pr.number}
+                    unresolved={entry.unresolved ?? 0}
+                    url={pr.url}
+                  />
+                ) : null}
+                {line.checks && fixChecks ? (
+                  <button
+                    type="button"
+                    className="upnext-secondary upnext-thread-resolve"
+                    disabled={fixState.starting}
+                    onClick={fixChecks}
+                  >
+                    Fix CI
+                  </button>
+                ) : null}
+                {line.checks ? (
+                  <FailingChecks
+                    key={`${pr.repository}#${pr.number}`}
+                    repository={pr.repository}
+                    number={pr.number}
+                    head={pr.head_sha}
+                    url={pr.url}
+                    canRetry={pr.viewer_can_push === true}
                   />
                 ) : null}
               </li>
