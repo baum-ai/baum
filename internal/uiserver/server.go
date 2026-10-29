@@ -280,7 +280,7 @@ func writeJSON(w http.ResponseWriter, v any) {
 // Publish records a small notification, not sensitive documents. Clients that
 // miss the bounded replay window receive a reset event and rebuild their index.
 func (s *Server) Publish(kind string, data any) error {
-	if kind != "index" && kind != "progress" && kind != "automatic" && kind != "live" && kind != "notice" && kind != "timeline" {
+	if kind != "index" && kind != "progress" && kind != "automatic" && kind != "live" && kind != "notice" && kind != "timeline" && kind != "decisions" {
 		return errors.New("unknown event kind")
 	}
 	b, err := json.Marshal(data)

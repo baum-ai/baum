@@ -97,8 +97,8 @@ any other host is refused, and an image hosted elsewhere is not downloaded.
 
 baum sends no telemetry. Unless you run `baum login`, nothing leaves the
 machine except calls to GitHub, the configured model provider and
-`static.usebaum.com`, from which it downloads the public price list used for
-cost estimates. That request is a plain download: it carries no token,
+`static.usebaum.com`, from which it downloads the public price list used to
+show what usage would cost at API prices. That request is a plain download: it carries no token,
 repository, pull request or session data, and the list's signature is checked
 against a key built into the binary. When the list cannot be fetched or
 verified, baum uses a copy embedded at release. The hosted service commands
@@ -288,7 +288,7 @@ so isolation is only as strong as that tool's read-only mode. Repository
 content and pull request text are untrusted input to the agent: a pull
 request could try to persuade it to read files outside the checkout. Use
 baum on pull requests you are prepared to have an agent read under your
-account. The one exception to read-only is a fix you confirm, which gives the
+account. The one exception to read-only is a fix you start, which gives the
 agent write access to a temporary checkout: see
 [Fixing a pull request](#fixing-a-pull-request).
 
@@ -303,7 +303,11 @@ as far as the tool allows:
   only the inline `--settings` baum passes is applied; administrator-managed
   policy settings may still apply. No MCP server is loaded
   (`--strict-mcp-config` with an empty list), and no session is written
-  (`--no-session-persistence`).
+  (`--no-session-persistence`), unless the caller asks the local run to keep,
+  resume (`--resume`) or fork (`--fork-session`) a session; the hosted profile
+  never does. `--restricted` and the tool allowlist apply on every launch,
+  resume and fork included. Callers must resume only session ids baum itself
+  recorded: an id could otherwise name any session the user's CLI stored.
 - The process gets an allowlist of your environment variables. Provider
   credentials and configuration (`ANTHROPIC_*`, `OPENAI_*`, `AWS_*`,
   `GOOGLE_*`, `AZURE_*`), GitHub tokens, Git settings and the SSH agent are
@@ -335,7 +339,11 @@ Codex's own read-only sandbox:
   model can read any file your account can, such as `~/.ssh` or `~/.aws`, and
   a pull request could try to persuade it to. Baum adds no further
   restriction, and the model's answer is the only thing baum keeps.
-- `--ephemeral` writes no session, and the `hooks`, `apps` and `multi_agent`
+- `--ephemeral` writes no session (a local run that keeps, resumes or forks a
+  session omits it and runs `exec resume` or `exec fork`, with the sandbox set
+  as `-c sandbox_mode="read-only"` because those subcommands take no
+  `--sandbox`; approvals stay `-c approval_policy="never"` and the other flags
+  apply as on every launch), and the `hooks`, `apps` and `multi_agent`
   features are disabled. Web search is off and approvals are never requested.
 - `--ignore-rules` skips user and project execpolicy `.rules` files, and
   `--ignore-user-config` skips `$CODEX_HOME/config.toml` (auth still uses
@@ -371,6 +379,26 @@ What remains for `codex`:
   `config.toml` may appear logged out, because `--ignore-user-config` skips that
   file. Baum does not pass the desktop session variables the keyring needs; sign
   in with `codex login` so the login is stored in `CODEX_HOME`.
+
+A review the daemon runs with `claude` or `codex` keeps its agent session and
+run directory so a chat can continue it. The kept directory holds what the
+model was given: the unpacked head and merge-base checkouts, the description
+images, `bundle.json` (already redacted) and `schema.json`. The raw model output
+of a repair (`rejected-N.json`, unredacted) is deleted before the directory is
+kept. The CLI also keeps its transcript of the kept session in its usual store
+(`$CLAUDE_CONFIG_DIR` or `~/.claude` for Claude Code, `$CODEX_HOME` or
+`~/.codex` for Codex), which holds the prompt, the bundle and the model's
+answers. Only the session that produced the saved review stays: the sessions of
+retries and repairs are deleted when the run ends, and all of them when the run
+fails, is rejected or interrupted. The directory lives under baum's user cache
+directory (`<cache>/baum/review-runs/`), not in the system temporary directory
+or your repository, with mode 0700. Baum deletes the directories of a pull
+request's versions beyond the latest two and any directory untouched for 14
+days, together with the CLI sessions that ran in them (chat forks included),
+only ever real directories with the run prefix directly under that root, Claude
+project directories named after such a directory and Codex rollouts that record
+such a directory as their cwd; it never follows a symlink. Runs for other
+backends and review groups keep nothing and are removed at once.
 
 The unsandboxed mode (`--sandbox danger-full-access`) exists only as the
 `Container` profile for the hosted review agent, which runs inside its own
@@ -497,22 +525,21 @@ A fix (`internal/fix`, run as a job of the local application) is the one
 time an agent gets **write access**. It is one of baum's few writes to GitHub
 (see "Writes to GitHub" below): it pushes a commit and, when it addressed
 review comments, replies on those threads and resolves them.
-It runs only after you ask for it on one pull request and confirm a dialog
-naming the harness, the model, the branch it pushes to and the write access;
-it never runs automatically. The daemon checks fresh GitHub evidence when you
-confirm and again before anything runs: the pull request is open, its branch
+It runs only when you start it on one pull request (its button or key, with
+no further dialog); it never runs automatically. The daemon checks fresh
+GitHub evidence when you start it and again before anything runs: the pull request is open, its branch
 is in the repository itself (a fork is refused), your account can push to the
 repository (`permissions.push` on `GET /repos/{owner}/{repo}`, which write,
 maintain and admin access give; who wrote the pull request does not matter),
-the head is still the one you confirmed, and it still has a merge conflict
+the head is still the one it started from, and it still has a merge conflict
 (GitHub's `mergeable`), failing checks or, on a pull request you opened, the
 same unresolved review threads with the same comments (a digest of them is
-part of what you confirm, so a comment added or edited afterwards stops the
+taken when you start it, so a comment added or edited afterwards stops the
 fix before the agent runs). A registered local clone is required. Only the `claude` and `codex` backends fix; `cursor-agent` and
 `anthropic` are refused.
 
 The checkout is a linked worktree of your registered clone, detached at the
-confirmed head, under `fixes/<id>/` in your user cache directory
+head the fix started from, under `fixes/<id>/` in your user cache directory
 (`$XDG_CACHE_HOME/baum` or the platform's), outside the clone and outside the
 system temporary directory. Its branch and the base branch are fetched into
 `refs/baum/fix/<id>/`, as a review's missing commits are; a branch that moved
@@ -573,7 +600,7 @@ from an owner, member or collaborator of the repository (GitHub's author
 association) or from an app's bot account, which someone with admin access
 installed; within a kept thread, other authors' comments are dropped. At most
 20 threads and the first 10 comments of each are read, each comment bounded
-to 2 KiB, and the dialog lists the threads and says how many it left out.
+to 2 KiB, and the job lists the threads it addressed.
 Each thread goes into the prompt as untrusted data under the same random-tag
 markers, with secrets masked, under a local id (`T1`, `T2`…) that baum maps
 to the thread's GitHub node id; the agent never sees or returns a GitHub id.
@@ -614,7 +641,7 @@ What baum does after the agent:
   it with your git identity and signing configuration, completing the merge
   for a conflict. It refuses to commit while a conflicted file still has a
   conflict marker, and fails when nothing changed.
-- It refuses a result that does not descend from the confirmed head: a fix
+- It refuses a result that does not descend from the head it started from: a fix
   only adds commits, it never rewrites the branch.
 - A fix of review comments alone (no conflict, no failing check) refuses a
   result that changes anything under `.github/workflows/` or
@@ -654,7 +681,7 @@ What remains:
 ## Writes to GitHub
 
 The local application writes to GitHub only when you click and confirm, one
-pull request at a time, with the credential you saved for baum. There are five
+pull request at a time, with the credential you saved for baum. There are seven
 writes and no others:
 
 - **Merge** (`internal/github/merge.go`): GraphQL `mergePullRequest` with
@@ -672,14 +699,25 @@ writes and no others:
   /repos/{owner}/{repo}/actions/runs/{run_id}/rerun-failed-jobs` for each failed,
   cancelled or timed-out workflow run of the head commit. The daemon reads the
   run list itself; a request names no run.
+- **Resolve a review thread** (`internal/prupdate`): `resolveReviewThread` on
+  the one thread you clicked **Resolve** on in the Inbox. The click is the
+  confirmation, since GitHub undoes it with one click; the daemon first reads
+  the thread and refuses one that is not on that pull request or that GitHub
+  says your account cannot resolve. It posts no reply.
+- **Re-run one job** (`internal/prupdate`): `POST
+  /repos/{owner}/{repo}/actions/jobs/{job_id}/rerun` for the one GitHub Actions
+  job you clicked **Retry** on in the Inbox. Like Resolve, the click is the
+  confirmation. The daemon re-reads the head commit's failing checks and
+  refuses a job that is not one of them, so a request cannot re-run any other
+  job.
 
 Each write goes through the daemon's authenticated, CSRF-checked local API,
 only for repositories you picked, and is re-checked against GitHub just before
 it is sent: the pull request is open, the head is still the one you confirmed
-and, for update branch and re-run, your account can push to the repository
-(`permissions.push`). Update branch also refuses a fork's branch and a
+(or, for a fix, started from) and, for update branch and both re-runs, your account can push to the
+repository (`permissions.push`). Resolving a thread checks the thread instead, as above. Update branch also refuses a fork's branch and a
 conflicting pull request. None is retried, and none is ever started by an agent
-or automatically: thread replies follow only the fix you confirmed.
+or automatically: thread replies follow only a fix you started.
 
 ## Local repository registry
 
@@ -895,8 +933,10 @@ What it runs while it is up:
   control socket only your user can open;
 - every minute or so, free GitHub reads with your token for registered clones:
   open pull requests, the authenticated user and teams, author permissions,
-  and the latest saved review's checks, conversation and head, with
-  conditional requests and backoff (see "What baum sends where");
+  and, when GitHub reports its pull request changed or it has not been read
+  for 15 minutes (an hour once closed), the latest saved review's checks,
+  conversation and head, with conditional requests and backoff (see "What
+  baum sends where");
 - once when it starts, the signed price list download;
 - the record of the events agent and Git hooks report (above), from which it
   also tracks the agent sessions in progress for the app (below);
@@ -911,8 +951,10 @@ What it runs while it is up:
   registered clones, and pushes to other repositories, cause none;
 - generation jobs, the only thing that spends money: each runs the configured
   backend under your account, within the configured budgets, as
-  `baum internal generate` does. Some you confirmed in the app with their price
-  estimate; the others it starts by itself, unattended (below).
+  `baum internal generate` does. Some you started in the app; the others it
+  starts by itself, unattended (below). Prices only report what usage would
+  cost at API prices: baum shows none before a run, and no price limits,
+  refuses or decides a run. The token and call budgets bound each run.
 
 Automatic generation is on by default and runs without anyone watching. It
 starts a job when a pull request in a registered repository that you authored,
@@ -924,25 +966,21 @@ it decides by the same rules, and starts nothing the periodic check would not. I
 one for a pull request from a fork or by an author without known write access:
 those run the agent on someone else's content and always need your
 confirmation in the app. Each automatic job is prepared exactly like a
-confirmed one (same backend, model, budgets, price list and recheck of the head
-before any model call, which also stops it if the pull request was converted to
-a draft while it waited), and a model without a known price is never run
-automatically. What it can spend: up to the configured per-run budget for each
-new head (twice when a daemon stop or restart interrupts the first run, which
-is retried once; failed or cancelled runs are not retried), with no daily limit unless you set a repository's daily cap, which
-pauses that repository's automatic generation until the next day once reached.
-The cap is checked when a job is queued and again, against the current cap and
-the cost already reported that day, right before a queued job starts; a job
-over it is stopped before any model call and waits for the pause to end.
-cursor-agent, which baum cannot estimate or cap, runs automatically only after
-you acknowledge that in the app. Turning the global switch off (in Repositories
+confirmed one (same backend, model, budgets and recheck of the head before any
+model call, which also stops it if the pull request was converted to a draft
+while it waited). A model without a known price runs automatically like any
+other. What it can use: up to the configured per-run token and call budgets
+for each new head (twice when a daemon stop or restart interrupts the first
+run, which is retried once; failed or cancelled runs are not retried). There
+is no daily or dollar limit: baum cannot price what a subscription bills, so
+it sets none; turn automatic generation off for a repository to stop it.
+cursor-agent, which Cursor bills through your subscription and baum cannot
+price, needs no acknowledgement. Turning the global switch off (in Repositories
 & settings, or pausing automatic generation from the desktop app) stops it in
 every repository, including those set to "On"; while it is on, single
-repositories can be turned off. Turning off (or withdrawing the cursor-agent
-acknowledgement) also cancels that scope's automatic jobs that are queued but
+repositories can be turned off. Turning off also cancels that scope's automatic jobs that are queued but
 not started, and the queue checks the current settings again before starting
-each one; only a job already running finishes, within its budget. Raising or
-removing a repository's daily cap ends its pause.
+each one; only a job already running finishes, within its budget.
 The daemon keeps doing this after the app window closes, and the desktop app
 can quit without stopping it; only "Quit and stop background reviews" (or
 `baum daemon stop`) stops it.
@@ -1070,6 +1108,21 @@ ended one is kept for a day, its identifiers and times also in
 A finished session's content is still read from the session files on disk,
 through the redacted transcript routes below.
 
+`GET /api/decisions` serves the decisions decision capture stored, behind the
+same checks and limited to `GET`: for a session, or the sessions of a pull
+request, each decision's id, title, summary, category, who decided, rationale,
+rejected alternative, edited file names, date and whether it is superseded or
+provisional, all derived from redacted transcripts and masked again after the
+model replied. Each session comes with its agent and id, its capture state
+(coverage, skip reason, when it last changed, whether a call is in flight and
+why capture is off), and for a pull request whether it is in progress and, for
+a session the saved review links, its title as the PR page's sessions list
+shows it, and when the saved review the provisional marks are relative to was
+generated. Evidence quotes, turns, branches and repositories stay in the
+store.
+The `decisions` event carries no data. Its settings change only through the authenticated
+`PUT /api/settings/decisions` and repository settings routes.
+
 One line of text is the exception: a Claude Code notification's `message`,
 the sentence Claude Code shows you when it asks for something ("Claude needs
 your permission to use Bash"). Only the `notification` hook's event keeps it,
@@ -1081,8 +1134,9 @@ addresses, your home directory as `~`) and cut to 160 characters, and only
 while the session waits. The desktop app shows it as the text of the
 "needs your permission" or "waiting for your answer" notification, the
 `notice` event that names the session (agent, id, repository, branch, pull
-request number) and carries the same masked line. Codex's permission request
-keeps nothing of the command it asks about. Nothing of it goes to a baum
+request number) and carries the same masked line. A permission request's
+event keeps nothing of the command it asks about (what the app is shown of
+it is held in memory only, below). Nothing of it goes to a baum
 server, and an ended session's saved state (`live-sessions.json`) holds none
 of it.
 
@@ -1137,6 +1191,61 @@ cite, read from that transcript and redacted as decision capture reads it
 (secrets and identities masked, the harness's wrappers stripped), and none
 once the file is gone.
 
+The desktop app can answer what your agents ask you, and send a running
+session a message. Approving from the app means that anything that can reach
+the daemon's authenticated local API (the app, or a process running as you
+that reads its credential file) can approve commands, file edits and other
+tool calls for your Claude Code sessions, and for Codex sessions once you turn
+on Codex approvals in the app (`codex_approvals`, off by default).
+`GET /api/agent-requests`, `POST /api/agent-requests/{id}/answer`,
+`PUT /api/agent-requests/settings`, `POST /api/agent-messages` and
+`DELETE /api/agent-messages/{agent}/{id}` sit behind the same authentication,
+Origin and Host checks as every application route. How it works:
+
+- Claude Code's `PermissionRequest` hook (user-wide plugin 1.2.0) and Codex's
+  hold their agent while the daemon waits for your answer, over the control
+  socket only you can reach. Claude Code keeps its own dialog in the terminal
+  at the same time, and the first answer wins; the hook stops waiting when
+  the same tool call finishes or fails, the session's turn ends or a new
+  prompt is submitted (a subagent's request waits for that subagent's stop
+  instead), and Claude Code kills it after an hour, leaving the dialog as it
+  was. A Claude Code session nobody answers in a terminal (`claude -p` and
+  the SDK, whose `CLAUDE_CODE_ENTRYPOINT` is not `cli` or whose
+  `CLAUDE_CODE_SESSION_ATTENDED` is `0`) is never held. Codex hides its
+  prompt while the hook waits, so the daemon answers a Codex request only
+  with the setting on, and only for about 25 seconds; then the hook prints
+  nothing and Codex asks in its terminal. With no daemon, an older one or
+  any failure, the hooks print nothing and the agent asks as it always did.
+- The app is shown everything the approval covers: rows for what the tool
+  call does (a command and its description; an edit's file, the text it
+  replaces and the new text, every edit of a MultiEdit with their count; a
+  file's new content; a URL; a subagent's description, type, model and
+  prompt), a row for each switch that widens it when it is on (a command
+  run outside the sandbox or in the background, an edit of every
+  occurrence), then every other member of the tool's input that is not
+  empty, as compact JSON (all of it for a tool baum has no rows for).
+  Claude Code's own suggestions for "always allow" are listed, and only the
+  one you pick is applied; a question shows its options. Every string is
+  cleaned and masked as transcripts are (secrets and e-mail addresses
+  masked, your home directory as `~`) and cut (4000 characters for a value),
+  so what you approve can differ from the real input only where a secret
+  was masked or a long value cut. When masking fails, or a question's
+  answers could not be told apart, the request is not shown and the agent
+  asks in its terminal. The hook keeps the agent's own payload and builds
+  the answer from it; the daemon never hands tool input back to an agent.
+- To notice an answer given in the terminal, the `post-tool-use` and
+  `post-tool-use-failure` hook events carry a SHA-256 digest of the tool's
+  name and input (`tool_digest`), never the input, and the subagent's
+  `agent_id` when the tool ran in one.
+- A message you queue is held for its session until that session's next
+  Stop hook, which tells the agent it came from you through the baum app.
+  One message per session; a new one replaces it, and a new prompt or the
+  session's end drops one queued before it.
+- Pending requests and messages are held in the daemon's memory only: never
+  written to disk, logged or sent to a baum server, and gone when the daemon
+  stops. Only the Codex setting is saved, in `agent-requests.json` in the
+  daemon's state directory.
+
 Document selectors must name a registered clone. Linked transcripts use the
 same redaction and linked-session allowlist as `baum internal view`; file patches are
 restricted to cited paths. Settings/diagnostics omit provider and GitHub keys.
@@ -1153,20 +1262,23 @@ The authenticated job API derives repository, head, fork and author permissions
 from registered clones and fresh GitHub evidence. A repository picked without a
 clone is discovered (names and GitHub metadata only) but never generated:
 requests and queued jobs naming no available clone stop with `needs_clone`
-before anything runs. A five-minute estimate is
-bound to the head, selected model/backend, budgets and price list version;
-confirmation cannot authorize changed inputs. Forks, non-writers and unknown
+before anything runs. A start prepares the job from that evidence and queues
+it in the same request, bound to the head, selected model/backend and
+budgets; a queued job whose inputs changed does not run. A price list
+installed meanwhile is not a changed input: the run is priced with the list
+active when it runs. Forks, non-writers and unknown
 permissions require a separate single-PR isolation acknowledgement and are
 excluded from batch generation. Cancellation reaches the existing backend
 process-group cleanup. Job history contains fixed failure reasons and bounded
 usage metadata, never arbitrary provider errors, prompts or rejected documents.
 The private journal persists queued/running/terminal states; crashed running
 entries become interrupted before work resumes. A fix (`"kind": "fix"`, see
-[Fixing a pull request](#fixing-a-pull-request)) runs only from a confirmed
-single-PR estimate, never from a direct request, and its estimate is refused
-for a fork, an account that cannot push or a backend that cannot fix. A fix
+[Fixing a pull request](#fixing-a-pull-request)) starts only for a single pull
+request a person asked to fix, never in a batch or automatically, and is
+refused before anything is queued for a fork, an account that cannot push, a
+backend that cannot fix or nothing to fix. A fix
 job also keeps the review threads it addressed (file, line, author and the
-first line of the first comment) and each one's outcome code with the
+first comment's headline in plain text) and each one's outcome code with the
 agent's cleaned summary. The stored copy of a downloaded
 price list is trusted only after its signature verifies again on load. Only
 the daemon that owns the per-user lock opens the queue, so there is never a
@@ -1178,9 +1290,10 @@ are served only under the authenticated namespace, and every application
 request resolves under it. Every application request is same-origin; the app has no hosted baum API dependency. Review content uses the
 same sanitizers and safe rendering components as the hosted PR page and `baum internal
 view`. Stored document rendering failures remain within the PR pane. The app's
-only GitHub writes are a merge and a fix you confirm, with that fix's replies on
-the review threads it addressed; it supplies no approvals or other discussion
-controls.
+only GitHub writes are the ones listed under "Writes to GitHub": a merge, a
+branch update and a re-run you confirm and a fix you start, with that fix's
+replies on the review threads it addressed, and resolving a review thread you
+chose; it supplies no approvals or other discussion controls.
 
 ## Desktop app
 

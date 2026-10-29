@@ -133,11 +133,11 @@ It lists the repository's whole pull request history once, reads the paths
 of its pull requests, and builds a new version of its features from that
 history, or resumes the one being built, and makes it current. A new version
 is first seeded with a feature taxonomy (--taxonomy): auto reuses one made
-after the version or runs feature discovery with the review backend and
-model, whose token budget is what $5 buys at the model's base price (cache
-reads not counted, so not a dollar cap); none seeds nothing; latest or an id
-uses a stored one. --dry-run lists the history, saving the pull requests it
-lists, and prints the estimate; it writes no feature.
+after the version or runs feature discovery with the review backend, model
+and run budgets; none seeds nothing; latest or an id uses a stored one.
+--dry-run lists the history, saving the pull requests it lists, and prints
+how many pull requests a build places and calls it makes, with no cost; it
+writes no feature.
 It writes the daemon's store: run it with the daemon stopped.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
@@ -150,14 +150,14 @@ It writes the daemon's store: run it with the daemon stopped.`,
 					if p.Unpriced > 0 {
 						atLeast = fmt.Sprintf("at least (%d calls not priced) ", p.Unpriced)
 					}
-					_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "%s: %d of %d pull requests, %d calls, %s$%.4f\n", p.Phase, p.Placed, p.Total, p.Calls, atLeast, p.SpentUSD)
+					_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "%s: %d of %d pull requests, %d calls, %s$%.4f at API prices\n", p.Phase, p.Placed, p.Total, p.Calls, atLeast, p.SpentUSD)
 				}
 				return w.Build(ctx, repository, dir, build)
 			})
 		},
 	}
 	flags(buildCmd)
-	buildCmd.Flags().BoolVar(&build.DryRun, "dry-run", false, "print the estimate; write nothing")
+	buildCmd.Flags().BoolVar(&build.DryRun, "dry-run", false, "print the pull requests and calls a build makes; write nothing")
 	buildCmd.Flags().StringVar(&build.Backend, "backend", "", "backend to call instead of the configured one")
 	buildCmd.Flags().StringVar(&build.Model, "model", "", "model to call instead of the configured one")
 	buildCmd.Flags().StringVar(&build.Taxonomy, "taxonomy", decisionlog.TaxonomyAuto, "what a new version is seeded with: auto, none, latest or a taxonomy id")
@@ -170,9 +170,8 @@ read-only snapshot of the repository's default branch and its pull request
 history digest (titles, branches and paths, no descriptions) and replies with
 the repository's features, stored as a taxonomy a build can seed from. It
 first lists the whole history once and reads its paths, as a build does. It
-uses the review backend and model, with the token budget $5 buys at the
-model's base price (cache reads not counted, so not a dollar cap). It prints what
-it did as JSON; --show latest or an id prints a stored taxonomy instead. It
+uses the review backend and model, with a review run's token, call and time
+budgets. It prints what it did as JSON; --show latest or an id prints a stored taxonomy instead. It
 writes the daemon's store: run it with the daemon stopped.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
@@ -271,14 +270,13 @@ type featureBuilder struct {
 
 var errFeatureLogOff = errors.New("the feature log is off: its store did not open")
 
-func (b *featureBuilder) EstimateFeatureBuild(ctx context.Context, repository, dir string) (jobs.FeatureBuildEstimate, error) {
+func (b *featureBuilder) PlanFeatureBuild(ctx context.Context, repository, dir string) (jobs.FeatureBuildPlan, error) {
 	w := b.worker.Load()
 	if w == nil {
-		return jobs.FeatureBuildEstimate{}, errFeatureLogOff
+		return jobs.FeatureBuildPlan{}, errFeatureLogOff
 	}
-	e, err := w.EstimateBuild(ctx, repository, dir, decisionlog.BuildOptions{Gated: true})
-	return jobs.FeatureBuildEstimate{Backend: e.Backend, Model: e.Model, PullRequests: e.PullRequests, EstimateUSD: e.EstimateUSD,
-		DiscoveryUSD: e.DiscoveryUSD, HistoryTruncated: e.HistoryTruncated, Reason: e.Reason}, err
+	backend, model, reason, err := w.PlanBuild(ctx, repository, dir, decisionlog.BuildOptions{Gated: true})
+	return jobs.FeatureBuildPlan{Backend: backend, Model: model, Reason: reason}, err
 }
 
 func (b *featureBuilder) BuildFeatures(ctx context.Context, repository, dir string, progress func(jobs.Progress)) (float64, error) {

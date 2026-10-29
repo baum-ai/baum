@@ -598,13 +598,10 @@ without it marks the usage `Unreported`. `Result.Model` is the configured model
 (`configured`) or the display name the CLI's init event reports
 (`cli_reported`); neither is a provider model ID and no speed or cache TTL is
 reported. Cursor bills the run through the user's subscription, so
-`pricing.List.BackendEstimate`, `BackendOutcomeCost` and
-`BackendAccountingCost` return nil with `billed_by_cursor_subscription` for
-this backend whatever its model is called: the recorded cost is unknown, and a
-generation-queue job in the daemon carries it as `Prepared.EstimateReason` with a nil estimate
-instead of an estimate at API rates. Such a job is not blocked: `Queue.SubmitConfirmed`
-queues it only with `Confirmation.Unpriced` (`confirm_unpriced`) on top of the
-estimate and any isolation confirmation. A failed process is classified
+`pricing.List.BackendOutcomeCost` and `BackendAccountingCost` return nil with
+`billed_by_cursor_subscription` for this backend whatever its model is called:
+the recorded cost is unknown. Such a job is not blocked and needs no
+acknowledgement: it starts, manually or automatically, like any other. A failed process is classified
 from its stderr (`unsupported_option`, `sandbox_unavailable`,
 `authentication_error`); none is retried, as every attempt would fail the same
 way until the user acts.
@@ -707,13 +704,13 @@ type Prompt struct {
 ```
 
 The module ships and maintains its own public prompt in `agent/prompt`:
-`review-public-v4.md`, shared by every backend and ending with a "Submitting"
+`review-public-v5.md`, shared by every backend and ending with a "Submitting"
 heading, plus a submit block per backend (`submit-claude.md`, used for claude
 and anthropic, `submit-codex.md`, and `submit-cursor.md`, which points at the
 schema the cursor-agent backend appends and lists the tools that stop a run),
 embedded with `go:embed`.
 `Prompts.Instructions` appends the backend's block under that heading, sets
-`Version` to `review-public-v4` and `Digest` to the sha256 of the composed body,
+`Version` to `review-public-v5` and `Digest` to the sha256 of the composed body,
 and fails for any other backend. A host may supply another implementation; the
 hosted service does, with its private prompts. `StaticPrompts` is a fixed
 implementation for tests and simple hosts. The prompt is per backend because
@@ -795,6 +792,26 @@ attempt that returned its result is kept even if the watchdog fired as it
 did. The Codex backend logs each
 turn and each tool with its command (at most 512 bytes), duration, exit code
 and status, never its output.
+
+A local Claude Code or Codex call can keep its session: `Request.PersistSession`
+omits `--no-session-persistence` (Claude Code) or `--ephemeral` (Codex);
+`ResumeSession` continues an earlier session (`--resume <id>`, `codex exec
+resume <id>`) and implies persisting; `ForkSession`, with `ResumeSession`,
+continues in a new session (`--fork-session`, `codex exec fork <id>`) and
+leaves the original untouched. `Result.SessionID` is the id the CLI reported
+(Claude Code's `init` event, else its `result` event; Codex's `thread.started`
+`thread_id`), the new session's for a fork. Only the `User` and `Local`
+profiles accept these options, and only for reviews and tasks, not fixes; the
+hosted profiles, Cursor and the Anthropic backend refuse them, and a fork
+without a session to resume is an error. Without them every argv is unchanged.
+Codex's `exec resume` and `exec fork` take no `--sandbox`, so the same
+read-only sandbox is passed as `-c sandbox_mode="read-only"`. `ResumeSession`
+must be a canonical UUID (both CLIs report one), which also keeps an id from
+being read as a flag. A resume or fork must run with the same `Directory` as
+the session it continues: Claude Code stores sessions per working directory
+(`~/.claude/projects/<encoded cwd>`) and Codex filters by it too. A resumed
+Claude Code session keeps the system prompt it recorded, so per-turn framing
+belongs in the user prompt.
 
 The document goes through `review`: the validator
 completes it and returns located findings. On findings the loop sends back the
@@ -1603,6 +1620,53 @@ wall-clock budget is a `context.WithTimeout` around the loop, `pass_timeout`
 bounds each backend call, and SIGINT and SIGTERM cancel the context so the
 backend's process group is killed and the run directory removed.
 
+A review the daemon runs with the local `claude` or `codex` backend keeps its
+agent session and run directory (`generate.Options.KeepSession`, set by
+`jobs.Local` for single pull requests only: not for review groups, Cursor or the
+Anthropic API backend, and not for hosted runs), so a later chat can fork the
+session in the same directory. The run directory is then made under
+`<user cache>/baum/review-runs/` (`internal/reviewruns`, the same cache base as
+fixes), mode 0700, still named `agent.RunDirPrefix+"*"`, with symlinks resolved
+because the CLIs record the resolved cwd. The loop asks every call to persist
+its session. Each call, a repair included, is a fresh session that carries the
+whole context pack (a repair resends the bundle and the rejected document), so
+`Outcome.SessionID`, the session of the last successful call, is the one that
+produced the accepted document and is self-contained. A run that succeeds with a
+session id records `store.Metadata.Session` (`backend`, `id`, `directory`,
+absent in older versions) and keeps the directory, after deleting the
+`rejected-N.json` files of the repairs (raw model output the chat does not
+need); a failed, rejected or cancelled run, a run without a session id, and a
+version the store refused remove it as before. A cache directory that cannot be
+created is a warning on the progress output, and the review then runs in a
+temporary directory without persisting anything.
+
+Persisting makes the CLI write transcripts that were never written before: every
+call (the first attempt, provider retries, each repair) leaves a Claude Code
+session in `$CLAUDE_CONFIG_DIR` (else `~/.claude`) `/projects/<encoded run
+dir>/<id>.jsonl`, or a Codex rollout in `$CODEX_HOME` (else `~/.codex`)
+`/sessions/YYYY/MM/DD/rollout-*-<id>.jsonl` whose `session_meta` records the run
+directory as cwd. `Outcome.Sessions` lists every id the calls reported.
+`reviewruns.RemoveSessions` deletes them: after a successful run, those of the
+calls that did not produce the accepted document; on any failure, rejection,
+missing id, refused store or interruption, all of them (Claude's whole project
+directory, which is unique to the run, and the Codex rollouts whose first line
+records that cwd); and when a kept directory is pruned, every session of it,
+chat forks made later included. It acts only on a directory directly under the
+review-runs root with the run prefix, deletes only a real Claude project
+directory of that encoded name and `rollout-*.jsonl` regular files whose cwd is
+that directory, never follows a symlink and ignores files that are gone.
+The directory itself is pruned the same way and only real directories directly
+under the root whose names carry the prefix: after a successful publish the directories of a pull request's versions
+beyond the latest two (`reviewruns.PruneVersions`), and, when the daemon starts
+and then daily, any directory last modified more than 14 days ago
+(`reviewruns.Expire`). The directory of a review still running is neither
+referenced nor old, so neither pass touches it. The session collector never
+ingests these sessions: Claude Code, Codex and Cursor discovery decide by the
+cwd the transcript records, which is a run directory (prefix, outside every
+repository root), not by the transcript's path; review runs load no hooks
+(`--setting-sources ""`, `--disable hooks`), so nothing in `livesessions` or
+`hookevents` sees them.
+
 Completion mirrors the hosted worker's `Generate` and `Complete`: after the loop,
 `agent.RedactOutput` masks the document, findings, model and diagnostics (with
 the unpacked tree's paths as the known checkout paths) and
@@ -1705,13 +1769,16 @@ to the pull request, read from the local session stores with `sessions` and
 `linkage`. When those sessions are not on this machine, the viewer shows the
 document's own session metadata.
 
-Estimated cost comes from a price list at
+What usage would cost at API prices comes from a price list at
 `https://static.usebaum.com/pricing/prices.json`. baum verifies its `.sig`
 with a public key embedded in the binary and falls back to a snapshot embedded
 at release when the list cannot be fetched or verified. Nothing is cached on
 disk: a fetched list replaces the embedded one for the life of the process, and
 `pricing.CurrentSource` says which is active (`embedded` or `fetched`), its
-version, when it was fetched and why the last refresh failed.
+version, when it was fetched and why the last refresh failed. Pricing is
+best-effort and only reports, in Analytics and a run's recorded usage: no
+budget, cap, limit, confirmation, ordering or dedupe reads a price or the
+list's version.
 
 ## Diagnostics
 
@@ -1782,8 +1849,10 @@ A repository's `automatic` setting is `null` (follow the global preference) or
 an explicit `true`/`false`. The global preference is a master switch
 (`Settings.AutomaticEnabled`): off disables every repository, `true` included;
 on, only an explicit `false` disables one. The `preferences` table holds the
-global preferences as one JSON row: `automatic` (true until changed) and
-`cursor_agent_acknowledged`. `PRAGMA user_version` 1 marks the schema in which
+global preferences as one JSON row: `automatic` (true until changed), the
+harness and model, `pull_requests` and `agent_env`; a field an older baum
+saved and this one dropped (`cursor_agent_acknowledged`) is ignored on read.
+`PRAGMA user_version` 1 marks the schema in which
 `null` exists: `Open` migrates an older file once, in a `BEGIN IMMEDIATE`
 transaction, turning the `automatic: false` every earlier registration stored
 into `null`, and keeping a stored `true` (only `baum internal repos add --automatic`
@@ -1792,7 +1861,9 @@ writing it. An older baum that registers a repository after the migration
 still stores `automatic: false`, which now reads as an explicit off: that
 repository stays off until changed in the app, which fails safe.
 `PUT /api/repos/{id}/settings` replaces the whole object and requires the
-`automatic` and `daily_cap` fields, so removing either is an explicit `null`.
+`automatic` field, so removing it is an explicit `null`. A `daily_cap` an
+older baum stored is ignored on read, and one an older app sends is dropped
+before the strict decode (`withoutDailyCap`), not refused.
 `/api/repositories` lists, picks and unpicks repositories by name, and
 `PUT /api/repositories/{owner}/{name}/settings` behaves the same way.
 
@@ -1975,8 +2046,9 @@ an automatic-generation trigger. All requests refuse redirects.
 Missing team scope and unreadable permissions are explicit unknown evidence;
 a fork or unknown author permission must not become an automatic-generation
 authorization. This service has no generation or GitHub mutation capability;
-the app's GitHub writes (merge, update branch, re-run checks, a confirmed
-fix's `git push` and that fix's replies on the review threads it addressed)
+the app's GitHub writes (merge, update branch, re-run checks, a submitted
+review, a confirmed fix's `git push` and that fix's replies on the review
+threads it addressed)
 live outside it (see "Fix jobs" and below).
 
 `Service.Cached` resolves the local credential and reads disk without network
@@ -1991,7 +2063,25 @@ count and latest update, and reports those that differ from the fingerprint
 its last complete poll recorded. The background worker probes once a minute
 and polls a changed repository at once, so a pull request opened or pushed
 from anywhere shows within about a minute while unchanged repositories keep
-the backoff. A repository never polled or not returned waits for its scheduled
+the backoff. Resolving a review thread does not move a pull request's update
+time, so the probe misses it; the next scheduled poll, or the app reading the
+threads (below), shows it. Each polled pull request keeps GitHub's
+`updated_at`, which the background refresh compares with its last read; it is
+left out of the unchanged comparison, so it does not reset the backoff. GitHub
+works out a pull request's mergeability in the background after a push, so a
+poll right after one can read the old conflict or none. A poll that finds a
+new head, or a new pull request, sets the next poll `settleInterval` (15 s)
+away (or GitHub's polling interval, if longer), as do up to `maxSettles` (3)
+more while a non-draft pull request's `mergeable` or `mergeStateStatus` is
+still `UNKNOWN`; the snapshot says `settling`, and the background worker polls
+the repository at that deadline instead of its interval. A fix that pushed
+polls its repository at once and again 5, 15, 30 and 60 s later
+(`discovery.AfterPush`) until the pull request shows the pushed head with
+checks running or finished: GitHub queues the checks seconds after the push,
+the first poll finds none and a clean merge state, and neither the probe
+(check results do not move `updated_at`) nor the settle poll (the background
+worker does not see a poll it did not make) would read them before the usual
+backoff. A repository never polled or not returned waits for its scheduled
 poll; the probe assumes one credential, leaving out any repository whose
 credential differs from the first's.
 GraphQL cost, remaining points and reset time map to the public rate projection.
@@ -2023,8 +2113,24 @@ refuses a pull request whose head moved. Both accept only picked repositories
 errors to `{code, message}`: `head_moved` and `conflict` and `not_open` are
 `409`, `blocked` (required checks, reviews, branch protection) and
 `method_not_allowed` are `422`, `forbidden` is `403`, anything else `502`. After
-a merge the daemon runs `Service.PollNow` for the repository and publishes an
-index change so the inbox drops the pull request.
+a merge GitHub accepted, the daemon records it (`discovery.Service.Merged`:
+the pull request leaves the cached open ones and is observed `MERGED` at the
+merged head, with no read), runs `Service.PollNow` for the repository and
+publishes an index change, so the inbox shows it merged at once rather than
+when the background refresh next reads it.
+
+Submitting a review is the app's other write outside discovery.
+`POST /api/prs/review` takes `{repository, pr, head_sha, event, body,
+comments: [{path, line, side, start_line?, body}]}` for a picked repository
+(unpicked is `404`) and creates one pull request review through REST
+(`Client.SubmitReview`) with `commit_id` set to `head_sha`, the commit the
+review was generated for, sent once with no retry. `event` is `APPROVE`,
+`COMMENT` or `REQUEST_CHANGES`; the last two need a body or a comment; at most
+100 comments, `side` `RIGHT` by default, and a range sends `start_side` equal to
+`side`. GitHub's refusals map to `{code, message}`: `forbidden` `403`,
+`not_found` `404`, `own_pull_request` and `invalid_line` (a line outside the
+diff) `422`, anything else `failed` `502`. The answer is `{url}`, the review on
+GitHub.
 
 Two more confirmed writes live in `internal/prupdate`, served by
 `uiserver.UpdateHandler` on the same auth, CSRF and picked-repository rules as
@@ -2050,6 +2156,54 @@ answers `{rerun, refused}`: an error only when no run started. Errors are
 anything else `502`. After either write the daemon runs `Service.PollNow` and
 publishes an index change.
 
+The same handler lists and resolves review threads for the Inbox's panel. `GET
+/api/prs/review-threads?repository=&pr=&unresolved=` answers `{threads,
+capped}`. `prupdate.Cache` keeps each pull request's list in memory for
+a minute and serves it while it holds as many threads as `unresolved`,
+discovery's count (absent: not compared; a capped list is never compared), so
+a thread opened or resolved on GitHub is read again once discovery sees it, or
+once the entry expires, as is an edit within a thread. A list read from GitHub
+whose uncapped count differs from `unresolved` replaces discovery's count for
+that pull request (`discovery.Service.Unresolved`, through `Service.Counted`)
+and publishes an index change, so the Inbox row agrees with the panel before
+the next poll. A change of GitHub account, or
+disconnecting, empties it with the daemon's other account-dependent caches
+(`ResetIdentity`), and a read under way when that happens is not stored. Otherwise the list is read
+with `github.Client.UnresolvedThreads` (the fix's `FixReviewThreads` document): each
+thread's node `id`, `path`, `line`, `outdated`, the first comment's `author`,
+its headline cut to 200 characters (`excerpt`: `fix.Headline`, the first
+wholly bold line among the first four, else the first line of text, without
+HTML comments, tags, images, code blocks or Markdown markup, which the fix
+dialog's excerpts use too), the
+comment count, the first comment's `url` and `can_resolve`
+(`viewerCanResolve`). `POST /api/prs/resolve-thread` takes `{repository, pr,
+thread}`, reads the thread by its node id (`ThreadState`) and refuses one that
+is not on that pull request (`not_found`, `404`) or that the account cannot
+resolve (`forbidden`); a thread already resolved answers success without a
+write. Otherwise it sends `resolveReviewThread` once and, like the other writes,
+polls discovery and publishes an index change. No reply is posted. A thread
+resolved from the app, or found resolved, leaves the cached list at once.
+
+`GET /api/prs/failing-checks?repository=&pr=&head_sha=` lists the failing
+checks of `head_sha` (the head the app shows; absent, the pull request's head
+is read first) with `fix.FailingChecks`, the fix's evidence read: check runs
+of their latest attempt whose conclusion is `failure`, `timed_out`,
+`startup_failure` or `action_required`, and commit statuses in `error` or
+`failure`, at most 20. It answers `{head_sha, checks}`, each check's `name`,
+`conclusion`, `title` (its output title, else the headline of its summary or a
+status's description, cut to 160 characters), `url` (`details_url`, else
+`html_url`, or a status's `target_url`; the fix prompt leaves it out) and
+`job_id` (the GitHub Actions job behind a check run). `prupdate.Cache` keeps a
+head's list for 2 minutes, forgets it when either re-run starts a run of that
+head, and is emptied with the threads on an account change.
+
+`POST /api/prs/rerun-job` takes `{repository, pr, head_sha, job_id}`,
+re-checks that the pull request is open, its head is `head_sha` and the
+account can push, re-reads the head's failing checks and refuses a `job_id`
+that is not one of their jobs (`not_found`, `404`), then posts
+`.../actions/jobs/{id}/rerun` once (GitHub answers `201`; refusals are worded
+as a workflow run's). It is recorded as a check re-run in analytics.
+
 The review index exposes discovery states for all open rows, including rows
 without a saved review or with an unreadable store. Saved review time comes from
 `summary.review_minutes` in the existing SQLite summary projection: only whole
@@ -2070,54 +2224,57 @@ without duplicating review documents. `jobs.Open` takes an exclusive
 until its workers stop, so two processes never run one queue; it waits up to
 10 s for a predecessor whose shutdown timed out and that is exiting.
 `Queue.Drain` refuses new jobs and reports true only when none is queued or
-running, under the mutex `Submit` checks, so a restart never cuts a confirmed
-job short: one confirmed during it gets `503` with `Retry-After` and is
-estimated and confirmed again against the new daemon. Workers use the same `generate.Publish`
+running, under the mutex `Submit` checks, so a restart never cuts a started
+job short: one started during it gets `503` with `Retry-After` and is started
+again against the new daemon. Workers use the same `generate.Publish`
 entry point as the terminal: previous-version lookup, run lease, generation and
 strict validation, then atomic version publication. Running journal entries are
 interrupted on restart; queued entries retain their confirmed input fingerprint.
-A confirmation covers the estimate, isolation for a fork or an author without
-known write access, and, for a subscription-billed backend, that its cost is
-unknown (`Confirmation{Estimate, Isolation, Unpriced}`); each is checked on the
-server, never trusted from the browser.
+`POST /api/jobs` with `items` and `mode` starts reviews, a group's review or a
+fix at once (`Queue.Generate`): it prepares the items and queues them in one
+request, with no estimate to confirm and nothing about the price that stops a
+run. Jobs carry no cost estimate (an `estimate_usd` an older baum journaled is
+ignored), and a resubmission joins a queued job with the same inputs whatever
+price list either was prepared under. The one confirmation is isolation for a fork or an author without known
+write access (`confirm_isolation`; without it the answer is
+`{"isolation_required":true}`), checked on the server, never trusted from the
+browser. A single item the daemon will not run (a fix's `blocked_reason`) is
+`409` with `{"blocked_reason":"…"}`, which the app says in words. Internally
+`Generate` is `Estimate` (a preparation of the items, the name historical)
+then `SubmitConfirmed`, which prepares again and refuses changed inputs;
+there is no estimate endpoint.
 Fresh GitHub REST evidence authorizes the head and isolation warning; all
 preflight I/O happens outside the queue mutex so cancellation stays responsive.
 A job names a clone (`Item.Clone`). An item whose clone is unknown or
 unavailable, which includes every repository picked without a clone, is
-`jobs.ErrNeedsClone`: estimate and generate answer `409` with
+`jobs.ErrNeedsClone`: `POST /api/jobs` answers `409` with
 `{"needs_clone":true}` (the isolation answer is `{"isolation_required":true}`),
 and a queued job whose clone was removed ends with the reason `needs_clone`
-without running (`cancelled` when automatic, so its head is not used up and
-it counts no spend; `failed` when manual). Pull requests of such a repository are still discovered.
+without running (`cancelled` when automatic, so its head is not used up;
+`failed` when manual). Pull requests of such a repository are still discovered.
 The runner has no subprocess invocation of baum itself. Only the agent
 backends and a fix's git commands run child processes, cancelled through their
 context.
 
 `Queue.SubmitAutomatic` is how the automatic scheduler (see "Automatic
-generation") queues a job nobody confirmed. It prepares the item like an
-estimate, so the job has the same budgets, price list, recheck before running
-and isolation as a confirmed one, and refuses for good
-(`NotAutomaticError`) what a person would have to confirm: a fork or an author
-without known write access, a blocked (unpriced) model, and cursor-agent or
-another unestimated backend without the acknowledgement. Under the queue mutex
+generation") queues a job nobody confirmed. It prepares the item like a
+person's start, so the job has the same budgets, recheck before running and
+isolation as a confirmed one, and refuses for good (`NotAutomaticError`) what
+a person would have to confirm: a fork or an author without known write
+access, and a draft. A model without a price, cursor-agent included, runs
+automatically like any other. Under the queue mutex
 it refuses with `ErrRestarting` while draining, `ErrBusy` while the PR has a
 queued or running job (it never joins or supersedes one), `ErrDuplicate` when
 any job, manual or automatic, already exists for that head (except a single
 automatic job a daemon stop or restart interrupted, which `Interrupted` lists
-and which may run once more; failed and cancelled jobs are final), and
-`ErrDailyCap` when the repository's automatic jobs created that day (actual
-cost when reported, else the estimate; a job cancelled before calling a model
-counts zero) plus this estimate would exceed its `daily_cap`. Jobs record
-`automatic` and `trigger` (`new_head`, `review_requested`, `ready_for_review`,
-`retry`). Before a queued automatic job starts, the worker checks the cap again
-under the same mutex, against the current `daily_cap` the gate returns and the
-spending of the jobs that day that already started or finished (reported cost
-replacing the estimate) plus this job's estimate; over it, the job is cancelled
-with reason `daily_cap` before any model call. The executor's recheck of the
-confirmed inputs, before any model call, also refuses an automatic job whose
+and which may run once more; failed and cancelled jobs are final). Jobs
+record `automatic` and `trigger` (`new_head`, `review_requested`,
+`ready_for_review`, `retry`). A job an older baum cancelled with reason
+`daily_cap`, for the spending cap baum no longer has, loads as an ordinary
+cancelled job. The executor's recheck of the confirmed inputs, before any model call, also refuses an automatic job whose
 pull request GitHub now reports as a draft (the queue marks its inputs
 `RefuseDraft`; confirmed jobs run drafts); it is cancelled with reason
-`draft`. Neither job counts as its head's job: `ErrDuplicate` and
+`draft`. Such a job does not count as its head's job: `ErrDuplicate` and
 `Interrupted` ignore it, and `Refused` lists it while it is the latest job for
 its head.
 
@@ -2127,14 +2284,24 @@ retained. Keep these copied core files synchronized with the platform package.
 A bounded HTTPS downloader refuses redirects, verifies the existing release
 signing key, rejects flattened lists and installs only newer full-format lists.
 An installed download is stored with its signature in the job state directory.
-The daemon re-verifies and installs it before opening the queue, so recovered
-jobs see the list they were confirmed against; an unverifiable file is ignored.
-Estimates and job confirmation never infer the default model or replace it with
-a different priced model, and an item whose model has no price is blocked. The
-one exception is a backend billed outside the list (cursor-agent): its item has
-a nil estimate with an `estimate_reason`, the total is unknown, and
-`Queue.SubmitConfirmed` queues it only with the separate `confirm_unpriced`
-acknowledgement. Unknown actual usage remains null.
+The daemon re-verifies and installs it before opening the queue, so jobs are
+priced with the newest verified list; an unverifiable file is ignored. A job
+records the version it was prepared with as provenance only: a different
+active list is not a changed input, neither `SubmitConfirmed`, the executor's
+recheck nor the queue's dedupe compares it, and the run is priced, and its
+saved review records, the list active when it runs. Preparing a job never
+infers the default model or replaces it with a different priced model, and a
+model without a price, or a backend billed outside the list (cursor-agent),
+runs like any other. Unknown actual usage remains null.
+
+### Inboxes
+
+`internal/inboxes` keeps the inboxes people define, saved filters over the
+desktop app's Up next queue listed under Inbox in the sidebar, in
+`inboxes.json` in the daemon's state directory. `/api/inboxes` serves the list
+(`GET`) and replaces it (`PUT`, guarded by a revision so two windows cannot
+overwrite each other). The daemon only stores them; the app matches the rules,
+including `no_bots` against the pull request's `author_bot` from discovery.
 
 ### Review groups
 
@@ -2175,11 +2342,12 @@ linked sessions or commits.
 
 A job has a kind: a review (`Item.Kind` empty) or a fix (`"fix"`), which
 shares the queue, journal, concurrency, progress events and cancellation with
-reviews and shows in the same Jobs list. A fix is estimated alone
-(`POST /api/jobs/estimate` with `{"items":[{"clone","pr","kind":"fix"}],"mode":"single"}`)
-and queued only from that confirmed estimate (`POST /api/jobs` with
-`estimate_id`); a direct request is `400` (`ErrFixNeedsConfirmation`), and
-automatic generation never queues one. A review and a fix of one pull request
+reviews and shows in the same Jobs list. A fix starts alone, at once
+(`POST /api/jobs` with `{"items":[{"clone","pr","kind":"fix"}],"mode":"single"}`;
+`"only":"checks"` on the item, the Inbox's Fix CI, limits it to the failing
+checks: preparation leaves `conflicts` false and reads no review threads, and
+any other `only` is refused);
+one in a batch is refused, and automatic generation never queues one. A review and a fix of one pull request
 neither supersede nor block each other, and a fix of a head does not count as
 that head's review for the automatic scheduler.
 
@@ -2196,13 +2364,17 @@ first comment comes from an `OWNER`, `MEMBER` or `COLLABORATOR` or a bot, at
 most 20, dropping other authors' comments and bounding each body to 2 KiB.
 `Prepared.Fix` records what it fixes (`conflicts`, `checks`, and `threads`, a
 digest of the kept threads and their comments) and the branches;
-`fix_threads` previews the threads for the dialog, with
+`fix_threads` keeps the threads' places and excerpts for the job, with
 `fix_threads_capped` and `fix_threads_untrusted`. A fork, an account that
 cannot push, a backend that cannot
 fix, or nothing broken is the item's `blocked_reason` (`fork`,
-`no_push_access`, `unsupported_backend`, `nothing_to_fix`), which the dialog
-explains. The harness, model and budgets resolve as a review's, and the
-estimate is the same budget-sized one. Before running, the executor prepares
+`no_push_access`, `unsupported_backend`, `nothing_to_fix`): the start answers
+`409` with it and nothing is queued, and the app says why where the person
+clicked. The budgets resolve as a review's. The harness and model are the
+preferences' fix agent (`fix_backend` and `fix_model`, Claude Code or Codex,
+set with `PUT /api/automatic` or `baum reviews set --fix-backend`) when one
+is chosen, winning over a repository's review override
+(`Preferences.ResolveFix`), and otherwise the review's. Before running, the executor prepares
 again and refuses a changed head (`head_changed`) or changed fix inputs, then
 reads the failing checks' output and the last 200 lines of up to four GitHub
 Actions job logs (`RESTReader.Tail`, which follows the signed log redirect
@@ -2237,7 +2409,8 @@ appended and flushed as each arrives. Title and text are masked with the bundle
 redactor and cut (1 KiB, 16 KiB); the file stops at 8 MiB with a final error
 entry, and only the 50 most recently written transcripts are kept. A tool
 appears as a `running` entry and again, with the same `id`, as `completed` or
-`failed` with its output. `Job.has_transcript` says one exists, and
+`failed` with its output; its title names a path inside the checkout relative
+to it (`agent.TitlePath`). `Job.has_transcript` says one exists, and
 `GET /api/jobs/{id}/transcript?after=N` returns `{"entries","next","more","done"}`
 (at most 500 entries after `seq` N; `404` without a transcript). Transcripts
 never leave the machine.
@@ -2299,13 +2472,23 @@ conditional-cache deadlines, bounded requests, error backoff and host rate reset
 Every picked repository is polled, with or without a clone: discovery needs
 only `owner/name`. A repository without an available clone gets no per-PR
 refresh (that reads a store and the clone's saved reviews), and polling it
-still feeds `Service.Discovered`. Per-repository target cursors and repository rotation prevent a small renewed
-GitHub budget from perpetually serving only the first PRs. Linked worktrees are
-deduplicated by common git directory. No-review PRs fetch only a header and checks;
+still feeds `Service.Discovered`. A pass polls every due repository first and
+publishes an index change, so no repository's pull requests wait behind
+another's reads. It then reads, within `refreshBudget` (30 s), the pull
+requests that are due: never read, updated on GitHub since the last read
+(discovery's `updated_at`), at a head other than the last read's, or last
+observed open and no longer among the open ones (to learn that it merged or
+closed). Those go first; then any open one unread for `openReadAge` (15 min)
+or closed one unread for `closedReadAge` (1 h), the longest unread first. A
+failed read is retried after the interval, doubling to 15 minutes, without
+backing off the repository's polls; a rate-limited one stays due and goes
+first after the reset, so a small renewed budget still reaches every pull
+request. `Run` passes every 30 seconds, or sooner when a repository is due
+sooner, as a settling one is. Linked worktrees are deduplicated by common git directory. No-review PRs fetch only a header and checks;
 saved reviews use `refresh.Refresher` and `Store.RefreshCurrent`'s exact-byte CAS.
 `Service.RefreshNow` refreshes named PRs of one clone the same way outside
-that schedule (see "Refresh on hook events"); it shares the per-host rate
-pause with `Sync` in both directions.
+that schedule (see "Refresh on hook events"), and its reads count as the
+last read; it shares the per-host rate pause with `Sync` in both directions.
 
 Discovery's live freshness map uses its own short mutex; cached readers never
 wait behind a network poll. Disk-only startup remains stale. Minimized current
@@ -2501,19 +2684,15 @@ it and `Queue.SubmitAutomatic` decides each job.
   cannot start on restart before the settings are checked.
   `Queue.CancelDisallowedAutomatic` cancels
   queued automatic jobs the gate refuses, with its reason (`automatic_off`,
-  `repository_automatic_off`, `repository_removed`,
-  `cursor_agent_acknowledgement_required`, `settings_unreadable`); every pass
+  `repository_automatic_off`, `repository_removed`, `settings_unreadable`);
+  every pass
   runs it, and `PUT /api/automatic` runs it before answering. Running jobs keep
   running.
-- **Daily cap at start.** The gate also returns the repository's current
-  `daily_cap` and the scheduler clock's day; the queue checks it itself (the
-  gate never calls the queue or takes the scheduler's lock), so a cap lowered
-  while a job waited, or cost an earlier job reported, stops a queued job
-  before it starts (`daily_cap`). Each pass asks `Queue.Refused` for such jobs
-  (and those stopped as drafts) made after the baseline and puts each one's
-  head back as pending once (`refused` records the job) if the PR is still
-  open, eligible and at that head; the same pass submits it, `ErrDailyCap`
-  pauses the repository as below, and the head runs once the pause ends.
+- **Stopped before start.** Each pass asks `Queue.Refused` for automatic
+  jobs stopped before any model call without using up their head (stopped as
+  drafts, or because their clone went away) made after the baseline and puts
+  each one's head back as pending once (`refused` records the job) if the PR
+  is still open, eligible and at that head.
 - **Baseline.** Enabling is dated when a pass or snapshot first sees it. The
   first snapshot `Observe` gets that was fetched at or after that time records
   each open PR's head, whether the user's review is requested, whether team
@@ -2539,15 +2718,16 @@ it and `Queue.SubmitAutomatic` decides each job.
   a daemon stop or restart cut short that are the only job for their head; if
   the PR is still open at that head and eligible, the head is pending again
   with trigger `retry`, once (`retried` records it). The retry goes through
-  the same pass, so Drain, the cap and the switches apply. Failed and
+  the same pass, so Drain and the switches apply. Failed and
   cancelled runs are never retried; the next push triggers as usual. A run
   interrupted before a repository's baseline (turned off, then on again) is not
   retried: the baseline marks its heads as already retried.
 - **State.** `automatic.json` in the job state directory (0700) holds each
   enabled repository's PRs (recorded head, request and draft flags,
   eligibility, pending head and trigger, last head handled, retried head,
-  last cap- or draft-stopped job put back),
-  its pause and its notice. It is rewritten
+  last stopped job put back) and its notice. A `paused_until` and
+  `paused_cap` an older baum saved for its daily cap are ignored on load, and
+  its `daily_cap` notice is dropped. It is rewritten
   atomically on every change, so a restart neither forgets pending heads nor
   treats recorded ones as new; an unreadable file starts over with new
   baselines.
@@ -2558,9 +2738,8 @@ it and `Queue.SubmitAutomatic` decides each job.
   it is not submitted: `Queue.SubmitAutomatic` returns `jobs.ErrNeedsClone`,
   which keeps the head pending without using an attempt, a retry time or a
   new notice. One whose clone disappeared while it was queued is cancelled
-  with the reason `needs_clone` before any model call, like a daily-cap
-  refusal: `Queue.Refused` lists it, no spend is counted, and the head is
-  pending again, so the first pass with an available clone submits it once.
+  with the reason `needs_clone` before any model call, like a draft:
+  `Queue.Refused` lists it, and the head is pending again, so the first pass with an available clone submits it once.
 - **Passes** run at start, every 30 s, when a snapshot leaves pending work,
   when settings change and when a job finishes. A pass submits due pending
   heads in order unless the daemon is stopping or has a restart pending
@@ -2568,22 +2747,18 @@ it and `Queue.SubmitAutomatic` decides each job.
   already has it is skipped. Outcomes: queued, or `ErrDuplicate`, marks the
   head handled; `ErrBusy` waits for the PR's job; `ErrRestarting` ends the
   pass and is retried; `ErrHeadChanged` drops it (discovery brings the new
-  head); `ErrDailyCap` pauses the repository until local midnight with the
-  `daily_cap` notice, or until its cap is raised above or cleared from the
-  amount that caused the pause; a `NotAllowedError` (turned off meanwhile)
+  head); a `NotAllowedError` (turned off meanwhile)
   leaves the head for the next pass, which forgets it if the repository stays
-  off; a `NotAutomaticError` (a draft, a fork, an unpriced model, cursor-agent
-  not acknowledged) drops it with its reason as the notice; other errors retry
+  off; a `NotAutomaticError` (a draft, a fork or an author without write
+  access) drops it with its reason as the notice; other errors retry
   with backoff, five times.
-- **Spending.** No default cap. Each job keeps the configured run budgets, and
-  `daily_cap` is enforced per repository and calendar day, when a job is
-  queued and again before it starts. cursor-agent runs
-  automatically only after `cursor_agent_acknowledged`, checked by
-  `SubmitAutomatic` from the stored preference, never from a request.
+- **Spending.** There is no spending cap: baum cannot price what a
+  subscription bills, so no price limits automatic generation. Each job keeps
+  the configured token and call budgets. A model without a price,
+  cursor-agent included, needs no acknowledgement.
 - **Interfaces.** `GET /api/automatic` returns the preferences and each
-  repository's effective state, cap, today's automatic spend, pause, notice
-  and pending count; `PUT /api/automatic` changes the preferences. A changed
-  pause or notice, and every repository's status after a `PUT`, is published
+  repository's effective state, notice and pending count; `PUT /api/automatic`
+  changes the preferences. A changed notice, and every repository's status after a `PUT`, is published
   as an `automatic` SSE event for other app windows and the desktop app's
   notifications. `Trigger(ctx, repository)` polls discovery for one
   repository (`PollNow`: before discovery's poll deadline, within its rate
@@ -2600,13 +2775,15 @@ endpoint.
 
 - **Event.** One JSON object per hook run, sent as the params of the `event`
   control request: `v` (the event format, `hookevents.Version`, 1), a random
-  `id`, `time`, `kind` (`agent` or `git`), `agent`, `name` (the agent event or
+  `id`, `time` (when the hook started), `kind` (`agent` or `git`), `agent`, `name` (the agent event or
   Git hook), `dir`, `exit` (the hook's status), `client` (baum's version), and
   `session` (an agent payload's top-level `id`, `transcript_path`, `cwd`,
   `hook_event`, `source`, `reason`, and for Claude Code's `notification` its
   `notification_type` and `message`, cut to 512 bytes, read by a streaming
-  scanner from the whole payload, the last of a repeated member winning;
-  nothing else of it) or `git`
+  scanner from the whole payload, the last of a repeated member winning, and
+  for Claude Code's and Codex's `post-tool-use` and `post-tool-use-failure`
+  the `tool_digest` of the call, and a Claude Code subagent's `agent_id`
+  (see "Agent requests and messages"); nothing else of it) or `git`
   (`args` without a pre-push remote URL, and `lines`, the refs or commits Git
   wrote to the hook). `Event.Bound` cuts fields at character boundaries, then
   trims Git lines and halves the longest fields until the escaped encoding fits
@@ -2725,8 +2902,8 @@ socket serves, and runs it beside background refresh, one worker in all.
   generation is on globally and for the repository, the worker calls
   `Scheduler.Trigger` for the repository, at most once per `Window`. Trigger
   polls discovery and passes the snapshot to `Observe`, the only path to a
-  job, so the scheduler's baseline, eligibility, dedupe, hold, gate, daily cap
-  and no-catch-up rules apply unchanged, and a head it already saw queues
+  job, so the scheduler's baseline, eligibility, dedupe, hold, gate and
+  no-catch-up rules apply unchanged, and a head it already saw queues
   nothing. Since background refresh and Trigger observe from two goroutines,
   `Observe` ignores a snapshot fetched before the newest one it took for the
   repository. The worker never queues or runs generation.
@@ -2750,11 +2927,12 @@ replace it.
   agents share baum's event names, which map to a normalised kind:
   `session-start` to `start`; `user-prompt-submit` and `before-submit-prompt`
   to `prompt`; `pre-task`, `post-task`, `post-todo`, `post-tool-use`,
-  `pre-compact`, `subagent-start` and `subagent-stop` to `tool` (the hooks each
+  `post-tool-use-failure`, `pre-compact`, `subagent-start` and
+  `subagent-stop` to `tool` (the hooks each
   agent has, so Claude Code reports subagent and todo activity, Codex tool
   runs, and Cursor prompts and compaction; the user-wide Claude Code plugin
   also reports every tool call as `post-tool-use`); `notification` (Claude
-  Code) and `permission-request` (Codex) to `wait`; `stop` to `stop`;
+  Code) and `permission-request` (Claude Code and Codex) to `wait`; `stop` to `stop`;
   `session-end` to `end`. Other names are ignored, so an older daemon ignores
   the wait events a newer plugin sends, and nothing changes for a newer
   daemon whose plugin sends none. A session is keyed by agent and id; an id
@@ -2787,7 +2965,10 @@ replace it.
   `elicitation_response`, `agent_completed`, `quota_auto_resume_fired`,
   `quota_auto_resume_disabled`, `plugin_notification`) are ignored. The same
   reason again keeps the wait (and its start); a start, prompt or tool event,
-  or the end, clears it. A notification's `message` becomes
+  or the end, clears it, except a `subagent-stop`, which is ignored while the
+  session waits: Claude Code runs a subagent after every stop (its
+  SubagentStop arrives a second or two after the Stop), and a background
+  subagent can finish while its session waits. A notification's `message` becomes
   `waiting_message`: format characters dropped, control characters and runs of
   spaces made one space, masked as transcripts are (`transcript.Renderer.Mask`,
   before it is cut), and cut to 160 characters. Claude Code says nothing when
@@ -2846,7 +3027,7 @@ replace it.
   `{"sessions":[…]}`, the most recently active first, each
   `{"agent","session_id","state","started_at","last_activity_at","ended_at"?,
   "last_event","waiting_reason"?,"waiting_since"?,"waiting_message"?,
-  "repository","branch"?,"pr"?,"title"?,"summary"?}`: `state` is `running`, `idle` or `ended`,
+  "repository","branch"?,"pr"?,"title"?,"summary"?,"activity"?}`: `state` is `running`, `idle` or `ended`,
   `last_event` is `start`, `prompt`, `tool`, `wait`, `stop` or `end`, the
   waiting fields are present while the session waits (see "Waiting"; the
   message only when the agent sent one), `repository` is
@@ -2875,6 +3056,19 @@ replace it.
   again only when the files' sizes or times changed, and right away after a
   failed read. Everything is one line or a block, masked and cut, and
   dropped with the session.
+- **Activity.** The same pass reads what the agent is doing into `activity`
+  (`activity.go`): `steps`, its last 12 tool calls oldest first (`tool`, a
+  one-line masked `target` of at most 160 characters, `at`), `files_touched`
+  (distinct files written by Edit, Write, MultiEdit, NotebookEdit or a Codex
+  `apply_patch`, over the whole transcript read, at most 10 000 remembered)
+  and `last_message` (the latest assistant text, at most 1 200 characters,
+  its line breaks kept so the app renders it as Markdown).
+  Targets are paths relative to the session's working directory when inside
+  it. Claude Code's `assistant` lines and Codex's `response_item` payloads
+  (`function_call`, `custom_tool_call`, `local_shell_call`, assistant
+  `message`) are read; Codex `shell`, `exec_command` and `local_shell` show
+  as `Bash` and `apply_patch` as `Edit`, an MCP tool as `server: tool`. Cursor
+  sessions have none; it is absent until something is found.
 - **Transcripts.** `GET /api/live-sessions/{agent}/{id}/transcript`
   (`Transcripts`, mounted beside the list by the same `LocalAPI.Live`
   provider) serves the transcript of a session the tracker lists, and only
@@ -2945,6 +3139,115 @@ replace it.
   for a new one, keeping the reader's open turns and, at the end of the page,
   their place at the end.
 
+### Agent requests and messages
+
+`internal/agentrequests` lets the app answer what Claude Code and Codex ask
+their user, and send a running session a message, through their hooks (the
+hook side is in `hosted/baumcli`, rules in its
+[README](hosted/baumcli/README.md), "User-wide hooks"). Everything is held in
+the daemon's memory; only `Settings` (`codex_approvals`, default false) is
+saved, in `agent-requests.json` in the state directory.
+
+- **Unattended sessions.** A Claude Code session nobody answers in a
+  terminal is never held: the hook gives no decision at once when
+  `CLAUDE_CODE_ENTRYPOINT` is set to anything but `cli` (`claude -p` sets
+  `sdk-cli`) or `CLAUDE_CODE_SESSION_ATTENDED` is `0`; an interactive session
+  sets `cli` and `1`, and without either variable the hook holds.
+- **Requests.** A `permission-request` hook whose event the daemon took sends
+  an `Ask` over `agent.request` (a waiting control method): agent, session,
+  the subagent's `agent_id` when one asks, kind (`permission`, or `question`
+  for Claude Code's AskUserQuestion), tool, the hook's start time, `Digest`
+  of the tool call (SHA-256 of the tool name and the input's canonical JSON;
+  an AskUserQuestion by its questions alone), and what the app shows:
+  label/value rows (Bash: Command, Description, and Sandbox when
+  `dangerouslyDisableSandbox` and Background when `run_in_background` is on;
+  Edit: File, Replace, With, and Replace all when `replace_all` is on;
+  MultiEdit: File, the number of edits, the old and new text of the first 8
+  and the rest as JSON; Write: File, Content; NotebookEdit: Notebook, Edit
+  mode, Cell, Source; WebFetch: URL, Prompt; Agent: Description, Subagent,
+  Model, Prompt; Codex `apply_patch`: Patch), then every other member of the
+  input that is not null, "", [] or {} as one compact JSON row ("Other
+  input", or "Input" for a tool with no rows), Claude Code's
+  `permission_suggestions` as labels ("Always allow Bash(make:*) in this
+  project"), and questions with their options. The hook keeps the payload and
+  builds the agent's answer from it; the daemon answers a `Decision`
+  (behaviour, suggestion index, option indexes or the user's own text per
+  question), or nothing. `Store.Ask` cleans, masks (the tracker's `Mask`) and
+  cuts every string (values keep newlines, 4000 characters; others one line),
+  holds at most 64 requests, and waits for an answer, a withdrawal, the
+  client's disconnect or, for Codex, `CodexWait` (25 s); a Codex request
+  answers nothing at once while `codex_approvals` is off (checked again under
+  the lock it is inserted under), and turning it off withdraws the waiting
+  ones. A request is refused, answering nothing at once, when the mask turned
+  non-empty text into "" (the redaction failed: nothing unmasked is shown),
+  or when its answers could not be told apart once cleaned and cut: two
+  equal questions, two equal options of one question, or a label containing
+  ", " in a multi-select question.
+- **Withdrawal.** `Store.Run` follows the record's agent events
+  (`Store.Subscribe` with `Match`): a session's `user-prompt-submit` or
+  `stop` withdraws its main agent's requests, a `subagent-stop` the requests
+  of that `agent_id`, `session-end` all of them, and a `post-tool-use` or
+  `post-tool-use-failure` (Claude Code's PostToolUseFailure, plugin 1.2.0)
+  whose `tool_digest` matches withdraws the oldest request of that tool call
+  (the user answered in Claude Code's terminal, which asks alongside);
+  parallel calls of other tools stay. Only requests whose hook started at or
+  before the event are withdrawn; hooks stamp their events with when they
+  started, so an asynchronous PostToolUse never post-dates the next request
+  for an identical call. The last 512 such marks (10 minutes) are kept so a
+  request that arrives after its tool call finished, or its turn ended, is
+  answered nothing at once.
+- **Turned down in the terminal.** Claude Code kills a waiting hook when the
+  user turns its request down in the terminal (No, or Esc), and interrupts
+  the turn without a Stop (checked with Claude Code 2.1.311): the
+  disconnect withdraws the request. When a main agent's request ends so,
+  neither answered nor withdrawn and more than a minute before `ClaudeHold`
+  (the hook's one-hour timeout, after which the terminal's dialog still
+  asks), the store calls `Interrupted`, and the tracker's
+  `Tracker.Interrupted` makes the session's `permission` or `input` wait a
+  `turn_finished` one from then (unless an event since is newer): it waits
+  for its user's next prompt. Likewise a request the app answered calls
+  `Answered`, and `Tracker.Answered` ends the session's wait as a tool event
+  would: the agent goes on (after a denial too) but reports nothing until
+  the tool call ends, which for a long command would leave it shown waiting.
+  A daemon restart rebuilds the session from the record, which has no event
+  for either (nor for a delivered message, below), so it shows its earlier
+  wait until the next event.
+- **Messages.** At most one per session, replaced by a new one, accepted only
+  for a listed session that has not ended and is not waiting for its next
+  prompt (`turn_finished`): a Stop hook will come. `agent.take-message`
+  removes and returns it as a `daemon.Delivery`, whose `Written` puts it
+  back when the answer could not be written, unless a newer one replaced it
+  or its turn ended while it was out (a `user-prompt-submit` or
+  `session-end` since it was queued, among the recent marks); the Stop hook
+  makes it the agent's next instruction. A written answer calls `Resumed`,
+  and `Tracker.Resumed` makes the session run again from then: the stop
+  that delivered it is older, so the tracker ignores it even when recorded
+  later, and a follow-up that only writes text is not shown as a finished
+  turn. A `user-prompt-submit` or `session-end` drops a message queued
+  before it (it belonged to the turn that is over; a `stop` does not, since
+  its hook takes the message after recording the stop), and so does the list
+  once the session is no longer listed.
+- **Known limits.** An answer racing the hook's disconnect is best-effort:
+  the app is told `ok` and the hook may be gone. A written `take-message`
+  answer can still be lost by a hook that goes away before reading it. The
+  mask treats e-mail-like spans in URLs as addresses and masks them, so such
+  a URL is shown masked.
+- **API.** `LocalAPI.AgentRequests` mounts `Store.Handler` behind the same
+  authentication as every route (without a record:
+  `agent_requests_unavailable`). `GET /api/agent-requests` answers
+  `{"requests":[{"id","agent","session_id","kind","tool","created_at","input":[{"label","value","code"?}],"suggestions":[{"id","label"}],"questions":[{"question","header"?,"multi_select","options":[{"label","description"?}]}]}],"messages":[{"agent","session_id","text","queued_at"}],"settings":{"codex_approvals"}}`,
+  oldest request first, message text masked. `POST
+  /api/agent-requests/{id}/answer` takes
+  `{"behavior","suggestion"?,"answers"?}` (answers keyed by the question and
+  option labels shown, several labels joined by ", ") and answers
+  `{"ok":true}`, 409 `request_gone` for a request no longer pending, 400
+  `bad_request` for one that does not fit. `PUT /api/agent-requests/settings`
+  takes `{"codex_approvals"}`; `POST /api/agent-messages` takes
+  `{"agent","session_id","text"}` (at most 4000 characters, not blank; 404
+  `session_not_running`); `DELETE /api/agent-messages/{agent}/{id}` is
+  idempotent. Every change publishes `live`, which the app already rereads
+  the sessions on.
+
 ### Decision capture
 
 `internal/decisionlog` extracts the decisions of the tracked sessions (see
@@ -2966,11 +3269,15 @@ files over 64 MiB, baum's own generation runs and prompts over 272,000
 estimated tokens, and reuses, extends or replaces the session's head
 extraction as hosted extraction does. Its structured completion goes through
 the review backend's `agent.Completer` (default models `claude-haiku-5-5` and
-`gpt-6-luna`); cursor-agent has none. A model the price list cannot price is
-refused, and every call is recorded in a ledger that throttles a session (5
+`gpt-6-luna`); cursor-agent has none. A model the price list cannot price
+runs, reserved at 0, and every call is recorded in a ledger that throttles a session (5
 minutes apart, 10 after a failure, 12 a day unless it ended). The reply is masked before it is parsed; decisions keep
 their IDs across extractions and are marked obsolete, never deleted, when a
-newer one drops them, and nothing is pruned. See [its README](internal/decisionlog/README.md).
+newer one drops them, and nothing is pruned. The app reads it through `GET /api/decisions` (a session, or the
+sessions of a pull request: those the tracker links to it and those its saved
+review links, with decisions newer than that review marked provisional) and
+rereads on the `decisions` event the store's writes publish. See [its
+README](internal/decisionlog/README.md).
 
 ### Feature log
 
@@ -3008,7 +3315,7 @@ candidate ranking and writes and the text stage, then deletes the seeds no
 pull request joined and
 switches it to current in one transaction, after which the weekly pass
 consolidates it on its next run; it runs
-as a confirmed job (`jobs.KindFeatureBuild`, through `jobs.FeatureBuilder`)
+as a job started at once (`jobs.KindFeatureBuild`, through `jobs.FeatureBuilder`)
 or from `baum internal features build`. Every stage calls through the same
 helper as capture (`caller` in `model.go`: backend and model resolution,
 reservation and the `capture_attempt` ledger, with the call's stage and
@@ -3053,9 +3360,18 @@ identify and replace any daemon. `ping` and every method registered in
 answer `protocol_mismatch` with the daemon's status otherwise. Increment
 `daemon.Protocol` for any incompatible change. The application registers its
 methods through `App.Methods`; a method answers with its own error code by
-returning a `daemon.Error`. `event` is the one it has (see "Hook events");
-hook events that may move a head reach the automatic scheduler through its
-`Trigger` (see "Refresh on hook events"). Remote attach would be
+returning a `daemon.Error`. `event` (see "Hook events") and
+`agent.take-message` (see "Agent requests and messages") are the ones it
+has; hook events that may move a head reach the automatic scheduler through
+its `Trigger` (see "Refresh on hook events"). A method that may wait for as
+long as its client stays connected is registered in `Options.Waits` or
+`App.Waits` instead (`agent.request` is the one): the daemon clears the
+connection's idle deadline and runs it without the 30-second method timeout,
+its context ends when the client disconnects (a reader on the connection
+sees its end, or anything more it sends) or the daemon stops, and the
+connection closes after the answer. Other connections are served meanwhile;
+clients send it with `Client.Wait`, which dials within the usual request
+timeout and then waits until its context ends. Remote attach would be
 another transport beside these two; none exists.
 
 ### Desktop app interface

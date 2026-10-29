@@ -3,6 +3,7 @@ import pluralize from "pluralize";
 import {
   type CSSProperties,
   type ReactNode,
+  type RefObject,
   useCallback,
   useEffect,
   useMemo,
@@ -230,7 +231,14 @@ export type ReviewViewerProps<F extends ReviewFile = ReviewFile> = {
   /** Called with the versions whose documents are on screen, each time that
    *  set changes. */
   onVersionsShown?: (versions: number[]) => void;
+  /** Kept on each render at the previous and next place in reading order,
+   *  as the navigator steps, for a host's own keys to step through the
+   *  review. */
+  steps?: RefObject<ReviewSteps | null>;
 };
+
+/** The places either side of the one being read, in reading order. */
+export type ReviewSteps = { previous: ReviewStep | null; next: ReviewStep | null };
 
 const NO_VERSIONS: number[] = [];
 const noVersion: LoadReviewVersion = async () => ({ status: "missing" });
@@ -351,6 +359,7 @@ function ReviewWorkspace<F extends ReviewFile>({
   focusConversation,
   hunkPatches = null,
   onVersionsShown,
+  steps: stepsRef,
 }: ReviewViewerProps<F> & { view: HistoryView }) {
   const [requested, setSelection] = useReviewSelection();
   // A place whose group the host has not supplied reads as the Summary. The
@@ -813,6 +822,7 @@ function ReviewWorkspace<F extends ReviewFile>({
           : -1;
   const previousStep = stepAt < 0 ? null : (steps[Math.ceil(stepAt) - 1] ?? null);
   const nextStep = stepAt < 0 ? null : (steps[Math.floor(stepAt) + 1] ?? null);
+  if (stepsRef) stepsRef.current = { previous: previousStep, next: nextStep };
   const navigatorIcon =
     selection.kind === "risk" || selection.kind === "risks"
       ? RiskIcon

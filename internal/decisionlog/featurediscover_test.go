@@ -14,8 +14,8 @@ import (
 	"github.com/baum-ai/baum/agent"
 	"github.com/baum-ai/baum/features/assign"
 	"github.com/baum-ai/baum/features/discover"
+	"github.com/baum-ai/baum/internal/config"
 	"github.com/baum-ai/baum/internal/locallink/linktest"
-	"github.com/baum-ai/baum/internal/pricing"
 )
 
 // discoveryModel is the review model discovery runs with in these tests.
@@ -143,16 +143,17 @@ func TestBuildDiscoversAndSeeds(t *testing.T) {
 		return reply(req)
 	}
 	estimate, err := f.worker.EstimateBuild(context.Background(), repo, dir, BuildOptions{})
-	if err != nil || !estimate.Discovery || estimate.DiscoveryUSD != FeatureDiscoveryUSD || estimate.PullRequests != 3 {
+	if err != nil || !estimate.Discovery || estimate.PullRequests != 3 {
 		t.Fatalf("estimate = %+v, %v", estimate, err)
 	}
 	report := f.buildIn(dir, BuildOptions{})
 	if _, err := os.Stat(task.Directory); !os.IsNotExist(err) {
 		t.Fatalf("the run directory %s is left behind: %v", task.Directory, err)
 	}
-	rate, _ := pricing.Active().Rates(pricing.Active().Normalize(discoveryModel, pricing.VendorClaudeCode))
-	if want := int(FeatureDiscoveryUSD / max(rate.Input, rate.Output, rate.CacheWrite) * 1e6); task.MaxTokens != want || task.MaxCalls != 200 {
-		t.Fatalf("the task ran with %d tokens and %d calls, want %d and 200", task.MaxTokens, task.MaxCalls, want)
+	// A review run's budgets, the defaults where the configuration sets none,
+	// whatever the model's price.
+	if want := config.Default().Budgets; task.MaxTokens != want.MaxTokens || task.MaxCalls != want.MaxCalls {
+		t.Fatalf("the task ran with %d tokens and %d calls, want a review run's %+v", task.MaxTokens, task.MaxCalls, want)
 	}
 	if !report.Current || report.Discovery == nil || report.Discovery.TaxonomyID == 0 || report.Taxonomy != report.Discovery.TaxonomyID ||
 		report.Seeds != 2 || report.SeedsJoined != 1 || report.SeedsDeleted != 1 || report.Features != 2 || report.Unseeded != "" {

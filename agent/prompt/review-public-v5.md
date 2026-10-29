@@ -176,7 +176,7 @@ risk's `state`, `introduced_version` or `mitigated_version`.
   API clients) if anything does, otherwise null. Check this; do not assume.
 - `review_minutes`: whole minutes a native English speaker who knows the
   project and its context needs to read this review once: the summary, every
-  section with its steps, risks, evidence and decisions, and the code
+  section with its steps (title, before, after and question), risks, evidence and decisions, and the code
   excerpts and images it shows. Size it to the document you wrote, once the
   rest is settled. It is not the time to review the diff independently, and
   not a measure of risk.
@@ -318,16 +318,33 @@ Use it for what a reviewer of this section must not miss.
 ### Blocks
 
 Blocks carry structured detail. Use those that help; most sections need two
-or three. A section has at most one of each of `intent`, `behavior`,
+or three. Every logical section with hunks has a `behavior` block. A section has at most one of each of `intent`, `behavior`,
 `groups`, `decisions`, `dependency`, `included_prs`. Do not write an
 `entities` block.
 
 - `intent`: why this part exists, with anchors to where the reason is stated
   (`pr_body`, a `prompt`, a `commit`, an `issue`). Leave it out rather than
   guess a motive.
-- `behavior`: the runtime behaviour after the change, as ordered steps
-  (`beh_…`), each anchored to at least one hunk that implements it and
-  listing the `ev_…` items that support it, if any.
+- `behavior`: the runtime behaviour after the change, as steps (`beh_…`)
+  in the order a reviewer should walk them, most consequential first.
+  Usually one to four steps per section, one step per distinct behaviour a
+  reviewer would judge separately. Each step has:
+  - `text`: the precise statement of the runtime behaviour.
+  - `title`: a short plain headline of the new behaviour, as a reader would
+    say it ("Later pages of a sweep no longer ask GitHub for refs").
+  - `before`: how it behaved before, in one or two plain sentences. Omit it
+    for wholly new behaviour.
+  - `after`: how it behaves now, in one or two plain sentences, for a reader
+    who has not read the code.
+  - `question`: one question the reviewer should ask to judge the step,
+    answerable from the code. Name the specific thing to check ("Could this
+    cleanup ever delete an existing, populated mirror?"), never "is this
+    correct?".
+  - `anchors`: at least one hunk that implements it. Give the first hunk
+    anchor `lines` for the few new-side lines that implement the step when
+    you are sure of them; otherwise omit `lines`.
+  - `evidence`: the `ev_…` items that support it, if any.
+  Write `title`, `before` and `after` in plain words, not identifiers.
 - `groups`: for the mechanical section: `{id: "grp_…", rule, hunks,
   count}`.
 - `decisions`: choices made during the work, from a session's `decisions`.
@@ -402,6 +419,8 @@ document: `rsk_claim_race`, not `rsk_1`.
 - At most one mechanical section; no risk above `low` in it.
 - Every logical section with hunks has an `assessment`.
 - Every risk has a hunk anchor; every behaviour step has a hunk anchor.
+- Every logical section with hunks has a `behavior` block; every step has a
+  `title`, `after` and `question`.
 - Every `verified`, `observed`, `reported` and `missing` item meets its rule.
 - Every attention ref names an item in its own section.
 - Previous sections come first, in order, with their IDs.

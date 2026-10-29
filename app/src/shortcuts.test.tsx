@@ -2,7 +2,16 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { Inbox } from "./inbox";
-import { INBOX_SHORTCUTS, moveFocus, ShortcutsSheet } from "./shortcuts";
+import {
+  commandAction,
+  forgetLastRows,
+  INBOX_SHORTCUTS,
+  listKeys,
+  moveFocus,
+  ShortcutsSheet,
+  useRowFocus,
+  useShortcuts,
+} from "./shortcuts";
 import { rowKey, type Entry, type ReviewGroup } from "./api";
 
 const entry = (number: number, patch: Partial<Entry> = {}, mine = true): Entry => ({
@@ -92,6 +101,7 @@ afterEach(async () => {
   await act(async () => root.unmount());
   node.remove();
   vi.unstubAllGlobals();
+  forgetLastRows();
 });
 
 const render = (props: Partial<Parameters<typeof Inbox>[0]> = {}) =>
@@ -300,10 +310,32 @@ it("lists exactly the keys that work in the sheet", async () => {
     "Anywhere",
     "Inbox",
     "Pull requests",
-    "A pull request, group or session",
+    "A pull request or group",
+    "Walkthrough",
+    "Sessions",
+    "Jobs",
+    "Repositories",
+    "Settings",
+    "A session or job transcript",
   ]);
-  expect(listed("Anywhere")).toEqual(["?", "Alt", "Esc"]);
-  expect(listed("Inbox")).toEqual(["j", "↓", "k", "↑", "Enter", "m", "s", "u"]);
+  // jsdom is not a Mac: Ctrl, and Alt with the arrows for back and forward.
+  expect(listed("Anywhere")).toEqual([
+    "Ctrl+K",
+    "Ctrl+1",
+    "Ctrl+2",
+    "Ctrl+3",
+    "Ctrl+4",
+    "Ctrl+5",
+    "Ctrl+6",
+    "Ctrl+7",
+    "Ctrl+8",
+    "Alt+←",
+    "Alt+→",
+    "?",
+    "Alt",
+    "Esc",
+  ]);
+  expect(listed("Inbox")).toEqual(["j", "↓", "k", "↑", "Enter", "m", "f", "s", "u"]);
   expect(listed("Pull requests")).toEqual([
     "j",
     "↓",
@@ -312,13 +344,24 @@ it("lists exactly the keys that work in the sheet", async () => {
     "Enter",
     "o",
     "x",
+    "Space",
     "m",
     "f",
     "g",
     "r",
     "Esc",
+    "h",
+    "←",
+    "l",
+    "→",
   ]);
-  expect(listed("A pull request, group or session")).toEqual(["u", "Esc"]);
+  expect(listed("A pull request or group")).toEqual(["j", "k", "m", "f", "g", "u", "Esc"]);
+  expect(listed("Walkthrough")).toEqual(["→", "j", "←", "k", "c", "o", "Enter", "t", "e"]);
+  const list = ["j", "↓", "k", "↑", "Enter", "o", "Esc"];
+  expect(listed("Sessions")).toEqual([...list, "p"]);
+  expect(listed("Jobs")).toEqual([...list, "t"]);
+  expect(listed("Repositories")).toEqual([...list, "a", "/"]);
+  expect(listed("A session or job transcript")).toEqual(["u", "Esc"]);
   expect(INBOX_SHORTCUTS.flatMap((s) => s.keys)).toEqual([
     "j",
     "ArrowDown",
@@ -327,6 +370,7 @@ it("lists exactly the keys that work in the sheet", async () => {
     "Enter",
     "o",
     "x",
+    " ",
     "m",
     "f",
     "g",
@@ -340,8 +384,127 @@ it("lists the keys of where the sheet was opened first", async () => {
     "Pull requests",
     "Anywhere",
     "Inbox",
-    "A pull request, group or session",
+    "A pull request or group",
+    "Walkthrough",
+    "Sessions",
+    "Jobs",
+    "Repositories",
+    "Settings",
+    "A session or job transcript",
   ]);
+});
+
+it("reads the app-wide keys with the platform's command key", () => {
+  const key = (patch: Partial<KeyboardEvent>) => ({
+    key: "",
+    code: "",
+    ctrlKey: false,
+    metaKey: false,
+    altKey: false,
+    shiftKey: false,
+    ...patch,
+  });
+  // The sidebar's pages in order, by the digit's place on the keyboard.
+  expect(commandAction(key({ ctrlKey: true, key: "2", code: "Digit2" }), false)).toEqual({
+    kind: "page",
+    page: "pulls",
+  });
+  expect(commandAction(key({ ctrlKey: true, key: "&", code: "Digit1" }), false)).toEqual({
+    kind: "page",
+    page: "inbox",
+  });
+  expect(commandAction(key({ metaKey: true, key: "8", code: "Digit8" }), true)).toEqual({
+    kind: "page",
+    page: "settings",
+  });
+  expect(commandAction(key({ ctrlKey: true, key: "9", code: "Digit9" }), false)).toBeNull();
+  expect(commandAction(key({ metaKey: true, key: "," }), true)).toEqual({
+    kind: "page",
+    page: "settings",
+  });
+  expect(commandAction(key({ ctrlKey: true, key: "k" }), false)).toEqual({ kind: "go-to" });
+  expect(commandAction(key({ metaKey: true, key: "K" }), true)).toEqual({ kind: "go-to" });
+  // Back and forward: ⌘[ and ⌘] on a Mac, Alt with the arrows elsewhere.
+  expect(commandAction(key({ metaKey: true, key: "[" }), true)).toEqual({ kind: "back" });
+  expect(commandAction(key({ metaKey: true, key: "]" }), true)).toEqual({ kind: "forward" });
+  expect(commandAction(key({ altKey: true, key: "ArrowLeft" }), false)).toEqual({
+    kind: "back",
+  });
+  expect(commandAction(key({ altKey: true, key: "ArrowRight" }), false)).toEqual({
+    kind: "forward",
+  });
+  // The other platform's modifier, extra modifiers and bare keys are not the app's.
+  expect(commandAction(key({ metaKey: true, key: "1", code: "Digit1" }), false)).toBeNull();
+  expect(commandAction(key({ ctrlKey: true, key: "1", code: "Digit1" }), true)).toBeNull();
+  expect(
+    commandAction(key({ ctrlKey: true, shiftKey: true, key: "!", code: "Digit1" }), false),
+  ).toBeNull();
+  expect(commandAction(key({ metaKey: true, key: "[" }), false)).toBeNull();
+  expect(commandAction(key({ key: "k" }), false)).toBeNull();
+});
+
+const opened = vi.fn();
+function List({ ids }: { ids: string[] }) {
+  const rows = useRowFocus<HTMLUListElement>("list", ids);
+  useShortcuts((event) => void listKeys(event, rows));
+  return (
+    <ul ref={rows.list}>
+      {ids.map((id) => (
+        <li key={id} data-row-id={id} data-focused={rows.focused === id || undefined}>
+          <a href={`#${id}`} data-row-link="" onClick={() => opened(id)}>
+            {id}
+          </a>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+it("moves through a list's rows and opens the focused one", async () => {
+  await act(async () => root.render(<List ids={["a", "b", "c"]} />));
+  const focusedRow = () => node.querySelector<HTMLElement>("[data-focused]")?.dataset.rowId;
+  await press("j");
+  expect(focusedRow()).toBe("a");
+  expect(document.activeElement?.textContent).toBe("a");
+  await press("ArrowDown", {}, document.activeElement!);
+  await press("j", {}, document.activeElement!);
+  await press("j", {}, document.activeElement!);
+  expect(focusedRow()).toBe("c");
+  await press("k", {}, document.activeElement!);
+  expect(focusedRow()).toBe("b");
+  await press("o", {}, document.activeElement!);
+  expect(opened).toHaveBeenCalledWith("b");
+  // A row that leaves the list takes the focus with it.
+  await act(async () => root.render(<List ids={["a", "c"]} />));
+  expect(focusedRow()).toBeUndefined();
+  await press("k");
+  expect(focusedRow()).toBe("c");
+  await press("Escape", {}, document.activeElement!);
+  expect(focusedRow()).toBeUndefined();
+  expect(document.activeElement).toBe(document.body);
+});
+
+it("comes back to a list on the row it left from", async () => {
+  const focusedRow = () => node.querySelector<HTMLElement>("[data-focused]")?.dataset.rowId;
+  await act(async () => root.render(<List ids={["a", "b", "c"]} />));
+  await press("j");
+  await press("j", {}, document.activeElement!);
+  expect(focusedRow()).toBe("b");
+  // Opening the row draws its page in the list's place; back, the row is kept.
+  await act(async () => root.render(<p>Page</p>));
+  await act(async () => root.render(<List ids={["a", "b", "c"]} />));
+  expect(focusedRow()).toBe("b");
+  expect(document.activeElement?.textContent).toBe("b");
+  // A row opened by the pointer is kept as well.
+  await act(async () => node.querySelector<HTMLElement>('[data-row-id="c"] a')!.click());
+  await act(async () => root.render(<p>Page</p>));
+  await act(async () => root.render(<List ids={["a", "b", "c"]} />));
+  expect(focusedRow()).toBe("c");
+  // Escape gives the row up for good.
+  await press("Escape", {}, document.activeElement!);
+  await act(async () => root.render(<p>Page</p>));
+  await act(async () => root.render(<List ids={["a", "b", "c"]} />));
+  expect(focusedRow()).toBeUndefined();
 });
 
 it("moves within a list", () => {

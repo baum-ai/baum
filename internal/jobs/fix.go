@@ -30,7 +30,8 @@ var mergeableRetry = 1500 * time.Millisecond
 // to the repository, and what is broken: merge conflicts (GitHub's
 // mergeability), failing checks of the head and, on the account's own pull
 // request, unresolved review threads (fixThreads). The harness and model are
-// the review's, resolved the same way. What stops a fix is its BlockedReason.
+// the fix agent's when the preferences choose one (resolveFix), otherwise the
+// review's. What stops a fix is its BlockedReason.
 func (l *Local) prepareFix(ctx context.Context, item Item) (Prepared, string, error) {
 	c, e := l.clone(ctx, item.Clone)
 	if e != nil {
@@ -57,7 +58,7 @@ func (l *Local) prepareFix(ctx context.Context, item Item) (Prepared, string, er
 	if e != nil {
 		return Prepared{}, "", e
 	}
-	cfg, e := l.resolve(ctx, c)
+	cfg, e := l.resolveFix(ctx, c)
 	if e != nil {
 		return Prepared{}, "", e
 	}
@@ -95,8 +96,12 @@ func (l *Local) prepareFix(ctx context.Context, item Item) (Prepared, string, er
 			return Prepared{}, "", err
 		}
 		p.Fix.Conflicts, p.Fix.Checks = pr.Conflicts(), len(checks) > 0
-		threads, err := l.fixThreads(ctx, repository, item.PR)
-		if err != nil {
+		var threads fix.Selection
+		if item.Only == FixOnlyChecks {
+			// A fix of the checks alone leaves the conflicts and the
+			// review threads to another fix.
+			p.Fix.Conflicts = false
+		} else if threads, err = l.fixThreads(ctx, repository, item.PR); err != nil {
 			return Prepared{}, "", err
 		}
 		p.Fix.Threads = fix.Digest(threads.Threads)
@@ -132,8 +137,6 @@ func (l *Local) prepareFix(ctx context.Context, item Item) (Prepared, string, er
 	}{KindFix, cfg.Budgets, selected.Version, reader.CacheIdentity()})
 	digest := sha256.Sum256(fingerprint)
 	p.ConfigDigest = hex.EncodeToString(digest[:])
-	// Like a review's, the estimate assumes the whole budget is used.
-	p.EstimateUSD, p.EstimateReason = list.BackendEstimate(p.Backend, p.Model, cfg.Budgets.MaxTokens, cfg.Budgets.MaxCalls)
 	return p, list.Version(), nil
 }
 
@@ -161,7 +164,7 @@ func (l *Local) executeFix(ctx context.Context, p Prepared, progress func(Progre
 	if e != nil {
 		return nil, e
 	}
-	cfg, e := l.resolve(ctx, c)
+	cfg, e := l.resolveFix(ctx, c)
 	if e != nil {
 		return nil, e
 	}
@@ -189,7 +192,7 @@ func (l *Local) executeFix(ctx context.Context, p Prepared, progress func(Progre
 	}
 	fixer, ok := selected.Backend.(agent.Fixer)
 	if !ok || !fix.Supported(selected.Backend.Name()) {
-		return nil, &fix.Error{Reason: fix.ReasonUnsupportedBackend, Err: errors.New(selected.Backend.Name() + " cannot fix pull requests; choose claude or codex")}
+		return nil, &fix.Error{Reason: fix.ReasonUnsupportedBackend, Err: errors.New(selected.Backend.Name() + " cannot fix pull requests; choose Claude Code or Codex as the agent for fixes in Settings")}
 	}
 	reader, e := l.Client.REST(ctx, repository)
 	if e != nil {
@@ -215,9 +218,9 @@ func (l *Local) executeFix(ctx context.Context, p Prepared, progress func(Progre
 		if err != nil {
 			return nil, err
 		}
-		// The agent gets exactly the threads that were confirmed.
+		// The agent gets exactly the threads the fix was started for.
 		if threads = selection.Threads; fix.Digest(threads) != p.Fix.Threads {
-			return nil, &fix.Error{Reason: fix.ReasonThreadsChanged, Err: errors.New("the review comments changed since the fix was confirmed; confirm it again")}
+			return nil, &fix.Error{Reason: fix.ReasonThreadsChanged, Err: errors.New("the review comments changed since the fix was started; start it again")}
 		}
 	}
 	var transcript func(agent.TranscriptEntry)

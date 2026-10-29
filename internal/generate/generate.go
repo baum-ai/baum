@@ -35,6 +35,7 @@ import (
 	"github.com/baum-ai/baum/internal/assemble"
 	"github.com/baum-ai/baum/internal/github"
 	"github.com/baum-ai/baum/internal/pricing"
+	"github.com/baum-ai/baum/internal/reviewruns"
 	"github.com/baum-ai/baum/internal/store"
 	"github.com/baum-ai/baum/review"
 	"github.com/baum-ai/baum/sessions"
@@ -115,6 +116,16 @@ type Options struct {
 	OnValidation func(pass int, valid bool)
 	// KeepRunDir keeps the run directory and reports its path on Progress.
 	KeepRunDir bool
+	// KeepSession persists the backend's session and keeps the run directory,
+	// under SessionRoot, when the run succeeds with a session id, and records
+	// both in the version's Metadata.Session so a later chat can continue the
+	// session in the same directory. A failed run, a missing session id and a
+	// group review remove the directory as usual. Only a local Claude Code or
+	// Codex backend supports it.
+	KeepSession bool
+	// SessionRoot is the directory kept runs are made in; empty is
+	// reviewruns.DefaultRoot.
+	SessionRoot string
 	// BundleOut, when not empty, receives the exact bundle the model was given.
 	BundleOut string
 	// DiagnosticsOut, when not empty, receives the run's redacted outcome as
@@ -136,7 +147,7 @@ type Result struct {
 	Document []byte
 	Metadata store.Metadata
 	Outcome  agent.Outcome
-	// RunDir is the run directory when KeepRunDir kept it.
+	// RunDir is the run directory when KeepRunDir or KeepSession kept it.
 	RunDir string
 	// Elapsed is the wall time of the run.
 	Elapsed time.Duration
@@ -210,14 +221,57 @@ func Run(ctx context.Context, o Options) (result Result, err error) {
 		return result, err
 	}
 	defer RemoveTree(archives)
-	runDir, err := os.MkdirTemp("", agent.RunDirPrefix+"*")
-	if err != nil {
-		return result, err
+	keepSession := o.KeepSession && o.Group == nil
+	var runDir, sessionRoot string
+	if keepSession {
+		sessionRoot = o.SessionRoot
+		if sessionRoot == "" {
+			if sessionRoot, err = reviewruns.DefaultRoot(); err != nil {
+				progress("warning: not keeping the agent session: %v", err)
+				keepSession = false
+			}
+		}
+	}
+	if keepSession {
+		if runDir, err = reviewruns.Create(sessionRoot); err != nil {
+			// A cache directory that cannot be written to must not fail the review.
+			progress("warning: not keeping the agent session: %v", err)
+			keepSession = false
+		}
+	}
+	if !keepSession {
+		if runDir, err = os.MkdirTemp("", agent.RunDirPrefix+"*"); err != nil {
+			return result, err
+		}
+	}
+	// A kept session's directory and the CLI's session files go unless the
+	// run succeeds with a session; then only the sessions of the calls that
+	// did not produce the accepted document go.
+	kept := false
+	var sessionIDs []string
+	if keepSession && !o.KeepRunDir {
+		defer func() {
+			switch {
+			case !kept:
+				RemoveTree(runDir)
+				if len(sessionIDs) > 0 {
+					_ = reviewruns.RemoveSessions(sessionRoot, runDir)
+				}
+			case len(sessionIDs) > 1:
+				var others []string
+				for _, id := range sessionIDs {
+					if id != result.Metadata.Session.ID {
+						others = append(others, id)
+					}
+				}
+				_ = reviewruns.RemoveSessions(sessionRoot, runDir, others...)
+			}
+		}()
 	}
 	if o.KeepRunDir {
 		result.RunDir = runDir
 		defer progress("run directory kept: %s", runDir)
-	} else {
+	} else if !keepSession {
 		defer RemoveTree(runDir)
 	}
 
@@ -266,8 +320,9 @@ func Run(ctx context.Context, o Options) (result Result, err error) {
 		Logger: slog.New(progressHandler{w: o.Progress, validated: o.OnValidation}),
 	}
 	outcome, document, genErr := generator.Generate(runCtx, agent.Run{
-		Bundle: &b, EncodedBundle: assembled.JSON, Directory: runDir, TileKinds: o.TileKinds, Budgets: o.Budgets, Decorate: decorate,
+		Bundle: &b, EncodedBundle: assembled.JSON, Directory: runDir, TileKinds: o.TileKinds, Budgets: o.Budgets, Decorate: decorate, PersistSession: keepSession,
 	})
+	sessionIDs = outcome.Sessions
 	// What the loop returned is masked on every path, as the hosted worker
 	// does, before any of it is shown, written or put in an error.
 	redactCtx := context.WithoutCancel(ctx)
@@ -332,6 +387,16 @@ func Run(ctx context.Context, o Options) (result Result, err error) {
 		Backend: o.Backend.Name(), BackendVersion: o.BackendVersion, Model: stored.Review.Generator.Model, Schema: stored.Schema,
 		SchemaRevision: stored.Review.Generator.SchemaRevision, PromptVersion: stored.Review.Generator.PromptVersion, PromptDigest: prompted.Digest,
 		Policy: stored.Review.Generator.ReviewMD, GeneratedAt: stored.Review.GeneratedAt, Elapsed: time.Since(started), Calls: outcome.Calls, Tokens: outcome.Tokens}
+	if keepSession && outcome.SessionID != "" {
+		result.Metadata.Session = &store.ReviewSession{Backend: o.Backend.Name(), ID: outcome.SessionID, Directory: runDir}
+		result.RunDir = runDir
+		kept = true
+		// The raw model output of the repairs is not needed to chat.
+		rejected, _ := filepath.Glob(filepath.Join(runDir, "rejected-*.json"))
+		for _, path := range rejected {
+			_ = os.Remove(path)
+		}
+	}
 	result.Attachments = captured
 	result.Document = completed
 	return result, nil

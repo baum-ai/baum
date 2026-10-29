@@ -64,8 +64,9 @@ The hosted service's counting rules apply:
   as the hosted cost queries group them; an aggregate the vendor reported
   without its requests is priced only below every threshold. A group with no
   price has no cost, never `$0.00`, and marks the total incomplete with the
-  reason in words. It is an estimate of API-equivalent cost, not what a
-  subscription charges.
+  reason in words. It is what the usage would cost at API prices, not what a
+  subscription charges, and it only reports: no budget, cap or decision
+  reads it.
 - Failed tool calls are calls whose result was an error. A tool error is not an
   interruption.
 
@@ -94,6 +95,11 @@ to and resolved. Merges, branch updates and check re-runs made from the app are
 recorded by `Actions` in `analytics-actions.json` (time, kind, repository,
 pull request number) when GitHub accepts them, kept 90 days; they are `null`
 when there is no ledger. The agent filter matches a job's harness.
+`decisions` counts decision capture's calls started in the window from its
+ledger (`Captures`; null without one): calls, those that succeeded, failed
+and were abandoned when the daemon stopped, failures by reason code, and the
+spend of settled calls, incomplete when one has no cost and unknown, never
+zero, when none has. The agent filter matches the backend that made the call.
 
 ## Delivery
 

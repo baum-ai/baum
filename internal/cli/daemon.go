@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"maps"
 	"net/http"
 	"net/url"
 	"os"
@@ -19,6 +20,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/baum-ai/baum/internal/agentrequests"
 	"github.com/baum-ai/baum/internal/analytics"
 	"github.com/baum-ai/baum/internal/automatic"
 	"github.com/baum-ai/baum/internal/background"
@@ -28,11 +30,13 @@ import (
 	"github.com/baum-ai/baum/internal/decisionlog"
 	"github.com/baum-ai/baum/internal/discovery"
 	"github.com/baum-ai/baum/internal/doctor"
+	"github.com/baum-ai/baum/internal/generate"
 	"github.com/baum-ai/baum/internal/github"
 	"github.com/baum-ai/baum/internal/githubrepos"
 	"github.com/baum-ai/baum/internal/gitlocal"
 	"github.com/baum-ai/baum/internal/hookevents"
 	"github.com/baum-ai/baum/internal/hookrefresh"
+	"github.com/baum-ai/baum/internal/inboxes"
 	"github.com/baum-ai/baum/internal/jobs"
 	"github.com/baum-ai/baum/internal/livesessions"
 	"github.com/baum-ai/baum/internal/localapp"
@@ -43,6 +47,7 @@ import (
 	"github.com/baum-ai/baum/internal/repos"
 	"github.com/baum-ai/baum/internal/reviewgroups"
 	"github.com/baum-ai/baum/internal/reviewindex"
+	"github.com/baum-ai/baum/internal/reviewruns"
 	"github.com/baum-ai/baum/internal/shellenv"
 	"github.com/baum-ai/baum/internal/transcript"
 	"github.com/baum-ai/baum/internal/uiserver"
@@ -388,8 +393,8 @@ func localApplication(paths daemon.Paths, concurrency int, log *slog.Logger) fun
 			events.Close()
 			return daemon.App{}, err
 		}
-		// Queued jobs resume with the price list they were confirmed against,
-		// so reinstall the verified downloaded list before workers start.
+		// Jobs are priced with the newest verified list, so reinstall the
+		// downloaded one before workers start.
 		if err := pricing.LoadPersisted(state); err != nil {
 			log.Warn("stored price list not loaded", "error", err)
 		}
@@ -426,7 +431,7 @@ func localApplication(paths daemon.Paths, concurrency int, log *slog.Logger) fun
 		}
 		// Feature builds run on the feature worker made below.
 		builds := &featureBuilder{}
-		queue, err := jobs.Open(filepath.Join(state, "jobs.json"), &jobs.Local{Registry: registry, Groups: groups, Config: cfg, Client: github.NewFromConfig(cfg, github.Options{}), RefreshPrices: refresh, Features: builds}, concurrency, func(job jobs.Job) {
+		queue, err := jobs.Open(filepath.Join(state, "jobs.json"), &jobs.Local{Registry: registry, Groups: groups, Config: cfg, Client: github.NewFromConfig(cfg, github.Options{}), Features: builds}, concurrency, func(job jobs.Job) {
 			_ = server.Publish("progress", map[string]any{"job": job})
 			if job.Phase == "finished" {
 				changed()
@@ -434,13 +439,10 @@ func localApplication(paths daemon.Paths, concurrency int, log *slog.Logger) fun
 				go notify.JobDone(ctx, job)
 				// A PR whose job finished may have a pending head.
 				scheduler.Wake()
-				// A fix pushed a new head: show it, and its checks, soon.
+				// A fix pushed a new head: show it at once, and poll again
+				// until its checks appear, which takes GitHub a few seconds.
 				if repo, err := github.ParseRepository(job.Repository); err == nil && job.Kind == jobs.KindFix && job.Commit != "" {
-					go func() {
-						if _, err := discover.PollNow(ctx, repo); err == nil {
-							changed()
-						}
-					}()
+					go discovery.AfterPush(ctx, discover.PollNow, repo, job.PR, job.Commit, changed, nil)
 				}
 			}
 		})
@@ -485,7 +487,10 @@ func localApplication(paths daemon.Paths, concurrency int, log *slog.Logger) fun
 		// waiting session's message is masked the same way.
 		renderer := transcript.NewRenderer("")
 		live := events.liveSessions(paths, registry, discover, server, log)
-		var liveAPI http.Handler
+		var liveAPI, requestsAPI http.Handler
+		var requests *agentrequests.Store
+		var requestEvents <-chan hookevents.Record
+		unsubscribeRequests := func() {}
 		var transcripts *livesessions.Transcripts
 		if live != nil {
 			live.Mask = func(text string) string { return renderer.Mask(ctx, text) }
@@ -494,6 +499,28 @@ func localApplication(paths daemon.Paths, concurrency int, log *slog.Logger) fun
 			live.Waiting = func(session livesessions.Session) { go notify.SessionWaiting(ctx, session) }
 			transcripts = &livesessions.Transcripts{Tracker: live, Render: renderer.Render, Log: log}
 			liveAPI = transcripts.Handler()
+			// What agents wait on the app to answer, and the messages queued
+			// for running sessions, stay in memory, masked as the sessions
+			// are; only the Codex setting is kept, in the state directory.
+			// The app reads them with the live sessions.
+			requests = &agentrequests.Store{Sessions: live, Mask: live.Mask, StateDir: paths.State, Log: log,
+				Notify: func() { _ = server.Publish("live", struct{}{}) },
+				// The store's own Notify, as the request or message goes, tells
+				// the app.
+				Interrupted: func(agent, session string, at time.Time) { live.Interrupted(agent, session, at) },
+				Answered:    func(agent, session string, at time.Time) { live.Answered(agent, session, at) },
+				Resumed:     func(agent, session string, at time.Time) { live.Resumed(agent, session, at) }}
+			requestEvents, unsubscribeRequests = events.Subscribe(256, agentrequests.Match)
+			requestsAPI = requests.Handler()
+		}
+		methods, waits := events.Methods(), map[string]daemon.Method(nil)
+		if requests != nil {
+			methods = maps.Clone(methods)
+			if methods == nil {
+				methods = map[string]daemon.Method{}
+			}
+			maps.Copy(methods, requests.Methods())
+			waits = requests.Waits()
 		}
 		// Decision capture follows the tracked sessions; its store keeps the
 		// derived, redacted decisions in the daemon's state.
@@ -506,6 +533,7 @@ func localApplication(paths daemon.Paths, concurrency int, log *slog.Logger) fun
 			if decisionStore, err = decisionlog.Open(filepath.Join(state, "decisions", "decisions.sqlite"), decisionlog.OpenOptions{AbandonPending: true}); err != nil {
 				log.Warn("decision capture is off: its store did not open", "error", err)
 			} else {
+				decisionStore.Changed = func() { _ = server.Publish("decisions", struct{}{}) }
 				capture = &decisionlog.Scheduler{Tracker: live, Source: events.service.Store, Log: log, Changed: timelineChanged,
 					Worker: &decisionlog.Capturer{Store: decisionStore, Registry: registry, Config: cfg, Log: log, Changed: timelineChanged}}
 				featureLog = &decisionlog.FeatureWorker{Store: decisionStore, Registry: registry, GitHub: githubReaders(cfg), Config: cfg, Log: log, Changed: timelineChanged}
@@ -520,9 +548,11 @@ func localApplication(paths daemon.Paths, concurrency int, log *slog.Logger) fun
 			Token:  func(ctx context.Context) (string, error) { return cfg.ResolveGitHubToken(ctx, config.GitHubHost) },
 			Health: config.GitHubAuth.Health, Home: home, Context: ctx, Changed: settingsChanged,
 		}
-		// The delivery figures' searches, cached per repository; an account
-		// change forgets them.
+		// The delivery figures' searches, cached per repository, and the
+		// review threads and failing checks the Inbox lists; an account
+		// change forgets both.
 		delivery := &analytics.Delivery{Search: github.NewFromConfig(cfg, github.Options{})}
+		panelCache := &prupdate.Cache{}
 		beginIdentityChange := func() func(bool) {
 			if token, _ := cfg.ExplicitGitHubTokenSource("github.com"); token != "" {
 				return func(bool) {}
@@ -537,6 +567,7 @@ func localApplication(paths daemon.Paths, concurrency int, log *slog.Logger) fun
 					notify.ResetIdentity()
 					pickList.ResetIdentity()
 					delivery.Reset()
+					panelCache.ResetIdentity()
 				}
 				finish(changedAccount)
 			}
@@ -547,6 +578,19 @@ func localApplication(paths daemon.Paths, concurrency int, log *slog.Logger) fun
 		// the inbox shows its new state.
 		githubClient := github.NewFromConfig(cfg, github.Options{})
 		refreshRepository := func(ctx context.Context, repo github.Repository) { _, _ = discover.PollNow(ctx, repo) }
+		// GitHub accepted the merge: the inbox shows it merged without
+		// waiting for the background refresh to read it.
+		mergedPullRequest := func(ctx context.Context, repo github.Repository, number int, head string) {
+			_ = discover.Merged(ctx, repo, number, head)
+			refreshRepository(ctx, repo)
+		}
+		// The Inbox panel read a pull request's review threads: its count
+		// shows before the next poll, which a resolution does not hasten.
+		countedThreads := func(ctx context.Context, repo github.Repository, number, unresolved int) {
+			if moved, err := discover.Unresolved(ctx, repo, number, unresolved); err == nil && moved {
+				changed()
+			}
+		}
 		// Analytics keeps aggregates only, in the state directory: an index
 		// of the sessions in registered clones, the merges, branch updates
 		// and re-runs made from the app, and plan usage samples.
@@ -555,17 +599,32 @@ func localApplication(paths daemon.Paths, concurrency int, log *slog.Logger) fun
 		actions := &analytics.Actions{Path: filepath.Join(state, "analytics-actions.json")}
 		sessionIndex := &analytics.Index{Path: filepath.Join(state, "analytics-index.json"), Clones: registry, Log: log}
 		insights := &analytics.Service{Registry: registry, Index: sessionIndex, Jobs: queue.List, Actions: actions, Plans: planHistory, Delivery: delivery}
+		var decisionsAPI func(uiserver.LinkedSessions) http.Handler
+		if decisionStore != nil {
+			insights.Captures = decisionStore.Ledger
+			decisionsAPI = func(linked uiserver.LinkedSessions) http.Handler {
+				return (&decisionlog.API{Store: decisionStore, Registry: registry, Live: live.Sessions, Linked: linked, Log: log}).Handler()
+			}
+		}
 		// A session that ended has its last lines written: read it soon.
 		endedSessions, unsubscribeEnded := events.Subscribe(4, func(e hookevents.Event) bool {
 			return e.Kind == hookevents.KindAgent && e.Name == "session-end"
 		})
-		api := uiserver.LocalAPI{GitHubAuth: githubConnection.Handler(), Registry: registry, Config: cfg, PRs: uiserver.DiscoveryHandler(registry, discover, changed), Index: index.Handler(), Jobs: queue.Handler(), Background: worker.Handler(), Automatic: scheduler.Handler(), Live: liveAPI, Clones: clones.Handler(), GitHubRepositories: pickList.Handler(), PlanUsage: plans.Handler(), Analytics: insights.Handler(), Timeline: timeline, Merge: uiserver.MergeHandler(registry, actions.RecordMerges(githubClient), refreshRepository, changed), Update: uiserver.UpdateHandler(registry, actions.RecordUpdates(prupdate.Service{Client: githubClient}), refreshRepository, changed), Changed: settingsChanged,
-			Groups:      (&reviewgroups.API{Store: groups, Registry: registry, Index: index.Build, Changed: changed}).Handler(),
+		api := uiserver.LocalAPI{GitHubAuth: githubConnection.Handler(), Registry: registry, Config: cfg, PRs: uiserver.DiscoveryHandler(registry, discover, changed), Index: index.Handler(), Jobs: queue.Handler(), Background: worker.Handler(), Automatic: scheduler.Handler(), Live: liveAPI, AgentRequests: requestsAPI, Clones: clones.Handler(), GitHubRepositories: pickList.Handler(), PlanUsage: plans.Handler(), Analytics: insights.Handler(), Timeline: timeline, Merge: uiserver.MergeHandler(registry, actions.RecordMerges(githubClient), mergedPullRequest, changed), Review: uiserver.ReviewHandler(registry, githubClient, changed), Update: uiserver.UpdateHandler(registry, actions.RecordUpdates(prupdate.Service{Client: githubClient, Cache: panelCache, Counted: countedThreads}), refreshRepository, changed), Changed: settingsChanged,
+			Inboxes:   (&inboxes.API{Store: inboxes.Open(filepath.Join(state, "inboxes.json")), Changed: changed}).Handler(),
+			Groups:    (&reviewgroups.API{Store: groups, Registry: registry, Index: index.Build, Changed: changed}).Handler(),
+			Decisions: decisionsAPI, Log: log,
+			DecisionsChanged: func() { _ = server.Publish("decisions", struct{}{}) },
+			DecisionModel: func(ctx context.Context, prefs repos.Preferences) uiserver.DecisionModel {
+				e := decisionlog.EffectiveModel(ctx, cfg, prefs, generate.Backends{}, nil)
+				return uiserver.DecisionModel{Backend: e.Backend, Undetermined: e.Undetermined, Model: e.Model, Ignored: e.Ignored}
+			},
 			Diagnostics: uiDiagnostics}.Handler()
 		return daemon.App{
 			API:     api,
 			Assets:  localapp.Handler(),
-			Methods: events.Methods(),
+			Methods: methods,
+			Waits:   waits,
 			Run: func(ctx context.Context) {
 				var wg sync.WaitGroup
 				wg.Go(func() { events.Run(ctx) })
@@ -588,7 +647,11 @@ func localApplication(paths daemon.Paths, concurrency int, log *slog.Logger) fun
 					wg.Go(func() { capture.Run(ctx) })
 					wg.Go(func() { featureLog.Run(ctx) })
 				}
+				if requestEvents != nil {
+					wg.Go(func() { requests.Run(ctx, requestEvents) })
+				}
 				wg.Go(func() { sessionIndex.Run(ctx) })
+				wg.Go(func() { maintainReviewRuns(ctx, log) })
 				wg.Go(func() { planHistory.Run(ctx) })
 				wg.Go(func() { delivery.Run(ctx) })
 				if endedSessions != nil {
@@ -619,6 +682,7 @@ func localApplication(paths daemon.Paths, concurrency int, log *slog.Logger) fun
 				unsubscribe()
 				unsubscribeClones()
 				unsubscribeEnded()
+				unsubscribeRequests()
 				events.Close()
 				if decisionStore != nil {
 					_ = decisionStore.Close()
@@ -693,6 +757,16 @@ func (h hookEvents) SubscribeCounted(buffer int, match func(hookevents.Event) bo
 	}
 	ch, cancel, dropped := h.service.Store.SubscribeCounted(buffer, match)
 	return ch, dropped, cancel
+}
+
+// maintainReviewRuns expires the run directories of reviews that kept their
+// agent session, at start and then daily.
+func maintainReviewRuns(ctx context.Context, log *slog.Logger) {
+	root, err := reviewruns.DefaultRoot()
+	if err != nil {
+		return
+	}
+	reviewruns.Maintain(ctx, root, 24*time.Hour, func(err error) { log.Warn("expiring kept review runs", "error", err) })
 }
 
 // newCloneFinder builds the service that finds local clones of picked

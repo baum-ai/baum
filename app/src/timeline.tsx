@@ -9,7 +9,7 @@ import {
   type TimelineList,
   TimelinePage as SharedTimelinePage,
 } from "@baum/viewer/components/timeline-page";
-import { Button } from "@baum/viewer/components/ui";
+import { Alert, Button } from "@baum/viewer/components/ui";
 import { useDisclosure } from "@baum/viewer/components/use-disclosure";
 import {
   type AuthorCount,
@@ -30,9 +30,9 @@ import { appURL, isActiveJob, request, type Job } from "./api";
 import {
   BuildStatus,
   buildJobOf,
-  FeatureBuildDialog,
   NO_CLONE,
   useBuildState,
+  useFeatureBuildStart,
 } from "./feature-build";
 import { LoadingStatus } from "./nine-dots";
 import {
@@ -413,7 +413,7 @@ function TimelineLog({
     `${revision}:${buildJob?.id ?? ""}:${buildJob?.state ?? ""}:${buildJob?.calls ?? 0}`,
   );
   const { building, hasFeatures } = buildState;
-  const [buildDialog, setBuildDialog] = useState<"build" | "resume" | null>(null);
+  const build = useFeatureBuildStart(clone, jobsChanged);
   const url = useUrlState();
   const search = url.search;
   const tab: LogTab = search.get("tab") === "all" ? "all" : "features";
@@ -495,20 +495,19 @@ function TimelineLog({
         detail={PAGE_DETAIL}
         actions={
           canRebuild ? (
-            <Button variant="ghost" size="compact" onClick={() => setBuildDialog("build")}>
-              Rebuild feature history
+            <Button
+              variant="ghost"
+              size="compact"
+              disabled={build.starting}
+              onClick={() => void build.start()}
+            >
+              {build.starting ? "Starting…" : "Rebuild feature history"}
             </Button>
           ) : null
         }
       />
-      {buildDialog && clone && single ? (
-        <FeatureBuildDialog
-          repository={single}
-          clone={clone}
-          resume={buildDialog === "resume"}
-          close={() => setBuildDialog(null)}
-          started={jobsChanged}
-        />
+      {build.error ? (
+        <Alert className="mx-5 mt-3">Couldn't start the feature build: {build.error}</Alert>
       ) : null}
       <SharedTimelinePage
         withFeatures
@@ -547,7 +546,8 @@ function TimelineLog({
               job={buildJob}
               state={buildState}
               clone={clone}
-              onBuild={(resume) => setBuildDialog(resume ? "resume" : "build")}
+              onBuild={() => void build.start()}
+              starting={build.starting}
             />
           ) : (
             <WithoutHistory
@@ -572,11 +572,11 @@ function TimelineLog({
               {single && !buildActive && !building ? (
                 <Button
                   size="tiny"
-                  disabled={!clone}
+                  disabled={!clone || build.starting}
                   title={clone ? undefined : NO_CLONE}
-                  onClick={() => setBuildDialog("build")}
+                  onClick={() => void build.start()}
                 >
-                  Build feature history
+                  {build.starting ? "Starting…" : "Build feature history"}
                 </Button>
               ) : null}
               <Button variant="secondary" size="tiny" onClick={showAll}>

@@ -74,6 +74,17 @@ CREATE INDEX IF NOT EXISTS capture_attempt_started ON capture_attempt(started_at
 type Store struct {
 	db  *sql.DB
 	now func() time.Time
+	// Changed, when set, is called after each write that changes what the
+	// app shows: a session's coverage or decisions, or an attempt beginning
+	// or settling. The daemon publishes the app's decisions event with it.
+	Changed func()
+}
+
+func (s *Store) changed(err error) error {
+	if err == nil && s.Changed != nil {
+		s.Changed()
+	}
+	return err
 }
 
 // OpenOptions choose how Open opens the store.
@@ -257,7 +268,7 @@ func (s *Store) inTx(ctx context.Context, work func(*sql.Tx) error) error {
 // Skip records that the session, as fingerprinted, was not extracted and why.
 // Its head extraction and decisions stay as they were.
 func (s *Store) Skip(ctx context.Context, m Meta, reason string) error {
-	return s.inTx(ctx, func(tx *sql.Tx) error {
+	return s.changed(s.inTx(ctx, func(tx *sql.Tx) error {
 		if err := upsertMeta(ctx, tx, m, CoverageSkipped, s.now()); err != nil {
 			return err
 		}
@@ -265,19 +276,19 @@ func (s *Store) Skip(ctx context.Context, m Meta, reason string) error {
 		_, err := tx.ExecContext(ctx, `UPDATE capture_session SET skip_reason=?1, failures=CASE WHEN ?1=?4 THEN 0 ELSE failures END
 WHERE agent=?2 AND session_id=?3`, reason, m.Agent, m.ID, ReasonFailed)
 		return err
-	})
+	}))
 }
 
 // Covered records that the head extraction still covers the session as
 // fingerprinted (a cache hit): its rendered transcript did not change.
 func (s *Store) Covered(ctx context.Context, m Meta) error {
-	return s.inTx(ctx, func(tx *sql.Tx) error {
+	return s.changed(s.inTx(ctx, func(tx *sql.Tx) error {
 		if err := upsertMeta(ctx, tx, m, CoverageExtracted, s.now()); err != nil {
 			return err
 		}
 		_, err := tx.ExecContext(ctx, `UPDATE capture_session SET skip_reason='', failures=0 WHERE agent=? AND session_id=?`, m.Agent, m.ID)
 		return err
-	})
+	}))
 }
 
 // SetPath records where the session's transcript is.
@@ -336,7 +347,7 @@ func (s *Store) Save(ctx context.Context, e Extraction) error {
 	if err != nil {
 		return err
 	}
-	return s.inTx(ctx, func(tx *sql.Tx) error {
+	return s.changed(s.inTx(ctx, func(tx *sql.Tx) error {
 		if err := upsertMeta(ctx, tx, e.Meta, CoverageExtracted, now); err != nil {
 			return err
 		}
@@ -431,7 +442,7 @@ decided_at=excluded.decided_at, branch=excluded.branch, obsolete_at=NULL`,
 			return err
 		}
 		return markFeatures(ctx, tx, marked, now)
-	})
+	}))
 }
 
 // Attempt is one model call in the ledger.
@@ -459,7 +470,7 @@ func (s *Store) Begin(ctx context.Context, a Attempt) (int64, error) {
 	}
 	err := s.db.QueryRowContext(ctx, `INSERT INTO capture_attempt(agent, session_id, repository, backend, model, mode, started_at, state, reserved_usd, stage, item)
 VALUES (?,?,?,?,?,?,?,?,?,?,?) RETURNING id`, a.Agent, a.ID, a.Repository, a.Backend, a.Model, a.Mode, s.now().UnixMilli(), AttemptPending, a.Reserved, stage, item).Scan(&id)
-	return id, err
+	return id, s.changed(err)
 }
 
 // Settle records how an attempt ended. A nil cost is unknown.
@@ -476,7 +487,7 @@ func (s *Store) settle(ctx context.Context, id int64, state, reason string, cost
 	}
 	_, err := s.db.ExecContext(ctx, `UPDATE capture_attempt SET state=?, reason=?, cost_usd=?, settled_at=?, input_tokens=?, cached_input_tokens=?, output_tokens=?,
 rejections=? WHERE id=?`, state, reason, value, s.now().UnixMilli(), usage.InputTokens, usage.CachedInputTokens, usage.OutputTokens, rejections, id)
-	return err
+	return s.changed(err)
 }
 
 // Stats are what the throttle reads from the ledger.
@@ -516,6 +527,30 @@ type Decision struct {
 	Repository string    `json:"repository"`
 	Branch     string    `json:"branch,omitempty"`
 	DecidedAt  time.Time `json:"decided_at"`
+}
+
+// DecisionView is what the app is told of a current decision: no evidence
+// quote, turns or branch.
+type DecisionView struct {
+	ID                  string             `json:"decision_id"`
+	Title               string             `json:"title,omitempty"`
+	Summary             string             `json:"summary"`
+	Category            decisions.Category `json:"category"`
+	Who                 decisions.Who      `json:"who"`
+	Rationale           string             `json:"rationale,omitempty"`
+	RejectedAlternative string             `json:"rejected_alternative,omitempty"`
+	Superseded          bool               `json:"superseded"`
+	Files               []string           `json:"files"`
+	// DecidedAt is when the decision was first raised (Decision.DecidedAt).
+	DecidedAt time.Time `json:"decided_at"`
+	// Provisional marks, for a pull request, a decision dated after its
+	// saved review was generated: the review has not seen it.
+	Provisional bool `json:"provisional,omitempty"`
+}
+
+func viewOf(d Decision) DecisionView {
+	return DecisionView{ID: d.ID, Title: d.Title, Summary: d.Summary, Category: d.Category, Who: d.Who, Rationale: d.Rationale,
+		RejectedAlternative: d.RejectedAlternative, Superseded: d.Superseded, Files: d.Files, DecidedAt: d.DecidedAt}
 }
 
 // SessionKey names a session.
@@ -611,4 +646,89 @@ func (s *Store) Coverage(ctx context.Context, sessions ...SessionKey) (map[Sessi
 		out[key] = [2]string{coverage, reason}
 	}
 	return out, nil
+}
+
+// SessionDecisions is what the app shows of one session's capture: its
+// current decisions, its coverage and why it was skipped, when its row last
+// changed and whether a call for it is in flight.
+type SessionDecisions struct {
+	Agent     string `json:"agent"`
+	SessionID string `json:"session_id"`
+	// Repository is the session's, as last captured; empty for a session
+	// never captured. The gate reads it; the app is not told.
+	Repository string `json:"-"`
+	// CaptureOff says why capture does not run for the session now
+	// (API.Registry; CaptureOff* values), empty when it does or is not known.
+	CaptureOff string `json:"capture_off,omitempty"`
+	// Coverage is CoverageExtracted, CoverageSkipped, or empty for a session
+	// never captured.
+	Coverage   string     `json:"coverage"`
+	SkipReason string     `json:"skip_reason,omitempty"`
+	UpdatedAt  *time.Time `json:"updated_at"`
+	// Capturing is a model call for the session that has not settled.
+	Capturing bool           `json:"capturing"`
+	Decisions []DecisionView `json:"decisions"`
+}
+
+// Sessions reads what the app shows of each session, in the given order.
+func (s *Store) Sessions(ctx context.Context, keys ...SessionKey) ([]SessionDecisions, error) {
+	out := make([]SessionDecisions, 0, len(keys))
+	for _, key := range keys {
+		row, found, err := s.Session(ctx, key.Agent, key.ID)
+		if err != nil {
+			return nil, err
+		}
+		view := SessionDecisions{Agent: key.Agent, SessionID: key.ID, Decisions: []DecisionView{}}
+		if found {
+			updated := row.UpdatedAt
+			view.Repository, view.Coverage, view.SkipReason, view.UpdatedAt = row.Repository, row.Coverage, row.SkipReason, &updated
+		}
+		if err := s.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM capture_attempt WHERE agent=? AND session_id=? AND state=?)`,
+			key.Agent, key.ID, AttemptPending).Scan(&view.Capturing); err != nil {
+			return nil, err
+		}
+		current, err := s.Current(ctx, key)
+		if err != nil {
+			return nil, err
+		}
+		for _, d := range current {
+			view.Decisions = append(view.Decisions, viewOf(d))
+		}
+		out = append(out, view)
+	}
+	return out, nil
+}
+
+// LedgerEntry is one attempt of the ledger, as analytics counts it.
+type LedgerEntry struct {
+	Repository, Backend string
+	State, Reason       string
+	StartedAt           time.Time
+	// Cost is nil when unknown or, for a pending attempt, not known yet.
+	Cost *float64
+}
+
+// Ledger reads the capture attempts started at or after since, oldest first.
+func (s *Store) Ledger(ctx context.Context, since time.Time) ([]LedgerEntry, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT repository, backend, state, reason, started_at, cost_usd FROM capture_attempt
+WHERE stage = ? AND started_at >= ? ORDER BY started_at, id`, StageCapture, since.UnixMilli())
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	var out []LedgerEntry
+	for rows.Next() {
+		var e LedgerEntry
+		var started int64
+		var cost sql.NullFloat64
+		if err := rows.Scan(&e.Repository, &e.Backend, &e.State, &e.Reason, &started, &cost); err != nil {
+			return nil, err
+		}
+		e.StartedAt = time.UnixMilli(started)
+		if cost.Valid {
+			e.Cost = &cost.Float64
+		}
+		out = append(out, e)
+	}
+	return out, rows.Err()
 }

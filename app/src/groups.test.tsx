@@ -6,6 +6,7 @@ import example from "../../schema/review-example.json" with { type: "json" };
 import { App } from "./app";
 import { groupJob, reviewJob, type Clone, type Entry, type Job, type ReviewGroup } from "./api";
 import { inboxGroups } from "./inbox";
+import { forgetLastRows } from "./shortcuts";
 
 vi.mock("@baum/viewer/components/review-viewer", () => ({
   ReviewViewer: ({ document, header, placeholder, notices }: ReviewViewerProps) => (
@@ -71,7 +72,7 @@ const clone: Clone = {
   path: "/work/demo",
   repository: "acme/demo",
   available: true,
-  settings: { automatic: null, daily_cap: null, backend: null, model: null },
+  settings: { automatic: null, backend: null, model: null },
 };
 
 let root: Root, node: HTMLDivElement;
@@ -132,6 +133,7 @@ afterEach(async () => {
   await act(async () => root.unmount());
   node.remove();
   vi.unstubAllGlobals();
+  forgetLastRows();
 });
 const buttons = (scope: ParentNode = node) =>
   Array.from(scope.querySelectorAll<HTMLButtonElement>("button"));
@@ -248,7 +250,7 @@ it("renders a group as one row with its members nested when expanded", async () 
   ).toBe("Auth rework");
   // Select all covers the loose row and the expanded members.
   await selectAll();
-  expect(node.textContent).toContain("Generate selected (3)");
+  expect(node.textContent).toContain("Generate reviews (3)");
 });
 
 it("keeps group jobs apart from pull request jobs", () => {

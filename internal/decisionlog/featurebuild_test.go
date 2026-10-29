@@ -47,8 +47,13 @@ func (f *featureFixture) history(n int) {
 	f.exec(`UPDATE pull_request SET state='closed', merged_at=created_at`)
 }
 
+// build builds in a directory that is no clone, so it seeds nothing unless
+// told otherwise: discovery, which reads the clone, has its own tests.
 func (f *featureFixture) build(o BuildOptions) BuildReport {
 	f.t.Helper()
+	if o.Taxonomy == "" {
+		o.Taxonomy = TaxonomyNone
+	}
 	report, err := f.worker.Build(context.Background(), repo, f.t.TempDir(), o)
 	if err != nil {
 		f.t.Fatal(err)
@@ -112,7 +117,7 @@ func TestBuildPlacesTextsAndSwitches(t *testing.T) {
 	// leaves it whole.
 	f.backend.split = func(string) (string, error) { return `{"parts":[]}`, nil }
 	estimate, err := f.worker.EstimateBuild(context.Background(), repo, "", BuildOptions{})
-	if err != nil || estimate.PullRequests != 111 || estimate.Batches != 5 || estimate.EstimateUSD == nil || *estimate.EstimateUSD <= 0 {
+	if err != nil || estimate.PullRequests != 111 || estimate.Batches != 5 || estimate.Calls < 5 {
 		t.Fatalf("estimate = %+v, %v", estimate, err)
 	}
 	report := f.build(BuildOptions{})

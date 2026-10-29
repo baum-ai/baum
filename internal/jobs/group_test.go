@@ -51,22 +51,20 @@ func TestGroupJobRefusalsOverHTTP(t *testing.T) {
 	f.prepareErr = &MembersNeedReviewsError{Numbers: []int{2, 3}}
 	server := httptest.NewServer(q.Handler())
 	defer server.Close()
-	for _, path := range []string{"/api/jobs/estimate", "/api/jobs"} {
-		response, err := http.Post(server.URL+path, "application/json", strings.NewReader(`{"items":[{"clone":"clone","pr":0,"group":"g1"}],"mode":"single"}`))
-		if err != nil {
-			t.Fatal(err)
-		}
-		var body struct {
-			Missing []int `json:"members_need_reviews"`
-		}
-		_ = json.NewDecoder(response.Body).Decode(&body)
-		_ = response.Body.Close()
-		if response.StatusCode != http.StatusConflict || !slices.Equal(body.Missing, []int{2, 3}) {
-			t.Fatalf("%s: %d %+v", path, response.StatusCode, body)
-		}
+	response, err := http.Post(server.URL+"/api/jobs", "application/json", strings.NewReader(`{"items":[{"clone":"clone","pr":0,"group":"g1"}],"mode":"single"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var body struct {
+		Missing []int `json:"members_need_reviews"`
+	}
+	_ = json.NewDecoder(response.Body).Decode(&body)
+	_ = response.Body.Close()
+	if response.StatusCode != http.StatusConflict || !slices.Equal(body.Missing, []int{2, 3}) {
+		t.Fatalf("%d %+v", response.StatusCode, body)
 	}
 	f.prepareErr = reviewgroups.ErrNotFound
-	response, err := http.Post(server.URL+"/api/jobs", "application/json", strings.NewReader(`{"items":[{"clone":"clone","pr":0,"group":"gone"}],"mode":"single"}`))
+	response, err = http.Post(server.URL+"/api/jobs", "application/json", strings.NewReader(`{"items":[{"clone":"clone","pr":0,"group":"gone"}],"mode":"single"}`))
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -5,8 +5,7 @@
 //! and the app keeps running). `toast` turns the events that matter into text: a `notice` event (review finished or failed,
 //! review requested from the user, review generated automatically, news of
 //! the user's own pull requests and fixes, an agent session waiting for the
-//! user's permission or answer) and an `automatic` event reporting the daily
-//! cost cap. `notifier` applies the
+//! user's permission or answer). `notifier` applies the
 //! settings, the operating system's permission and the focused window;
 //! `platform` shows the notification. A click makes Rust load the right app
 //! URL in the window, so pages the daemon serves need no capability.

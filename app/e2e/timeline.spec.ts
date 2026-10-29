@@ -198,22 +198,10 @@ for (const scheme of ["light", "dark"] as const) {
     await expect(page).toHaveURL(/repo=acme%2Fother/);
     await expect(page.getByText("No features yet")).toBeVisible();
     await shot(page, `empty-${scheme}`);
-    // Its history is built by a confirmed job, from its estimate.
+    // Its history is built by a job that starts at once: no dialog, no
+    // estimate.
     await page.getByRole("button", { name: "Build feature history", exact: true }).click();
-    const dialog = page.getByRole("dialog", { name: "Build feature history" });
-    await expect(dialog).toContainText("42 to place");
-    await expect(dialog).toContainText("About $0.84");
-    await expect(dialog).toContainText("baum first discovers this repository's features");
-    await expect(dialog).toContainText("its least recently updated pull requests are left out");
-    await expect(dialog).toContainText("a token budget of what about $5.00 buys");
-    await shot(page, `build-confirm-${scheme}`);
-    await dialog.getByRole("button", { name: "Build feature history", exact: true }).click();
-    await expect(dialog.getByRole("link", { name: "View it in Jobs" })).toHaveAttribute(
-      "href",
-      /page=jobs&job=/,
-    );
-    await dialog.getByRole("button", { name: "Close", exact: true }).click();
-    await expect(dialog).toBeHidden();
+    await expect(page.getByRole("dialog")).toHaveCount(0);
     // The fixture's build stops at once; the empty state stays, with the
     // failed build above it.
     await expect(page.getByRole("region", { name: "Feature build" })).toContainText(

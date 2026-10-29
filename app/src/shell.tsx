@@ -1,34 +1,53 @@
-import type { ComponentType, ReactNode } from "react";
-import { LogoMark, Wordmark } from "@baum/viewer/components/editorial";
 import {
-  ChartIcon,
-  type IconProps,
-  InboxIcon,
-  PullRequestIcon,
-  RepositoryIcon,
-  SessionsIcon,
-  SettingsIcon,
-  SparkleIcon,
-  TimelineIcon,
-} from "@baum/viewer/components/icons";
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type ComponentType,
+  type ReactNode,
+} from "react";
+import { LogoMark, Wordmark } from "@baum/viewer/components/editorial";
 import type { ViewerLinkProps } from "@baum/viewer/navigation";
 import { appURL } from "./api";
+import type { Inbox } from "./inboxes";
+import { PAGES, type Page } from "./pages";
 import { PlanUsageRail } from "./plan-usage";
+import { pageKeyLabel, pageKeyShortcut } from "./shortcuts";
 
-type Page =
-  | "inbox"
-  | "pulls"
-  | "timeline"
-  | "sessions"
-  | "analytics"
-  | "jobs"
-  | "repositories"
-  | "settings";
+/** The inboxes nested under Inbox, with what changes them. Absent when the
+ *  daemon is older and has none. */
+export type RailInboxes = {
+  list: Inbox[];
+  /** What waits in each, by id, not counting snoozed. */
+  counts: Record<string, number>;
+  /** The id of the inbox whose queue the page shows. */
+  selected: string | null;
+  /** A page under Inbox that is not a queue (New inbox, Manage inboxes) is
+   *  the current one, so Inbox is only the section. */
+  elsewhere?: boolean;
+  toggleBadge: (inbox: Inbox) => void;
+  remove: (inbox: Inbox) => void;
+  /** Opens the inbox's edit page. */
+  edit: (inbox: Inbox) => void;
+  /** More entries at the foot of the nested list: where "New inbox" and
+   *  "Manage inboxes" go. */
+  footer?: ReactNode;
+};
+
+const FOLD_KEY = "baum.inbox.folded.v1";
+function folded() {
+  try {
+    return localStorage.getItem(FOLD_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
 
 /** The application chrome, after the hosted sidebar: the mark, the sections
  *  and where the work happens, standing on the sand canvas beside the page's
  *  panel, with what is left of the agents' plans above the foot. Below `lg`
- *  it folds to its glyphs. */
+ *  it folds to its glyphs. Each section's key shows beside it while Alt is
+ *  held, like every key hint. */
 export function Sidebar({
   page,
   inbox,
@@ -36,6 +55,7 @@ export function Sidebar({
   runningSessions,
   needsYou,
   problems,
+  inboxes,
   Link,
 }: {
   page: Page;
@@ -47,110 +67,244 @@ export function Sidebar({
    *  in the caution tone, while there are any. */
   needsYou: number;
   problems: number;
+  inboxes?: RailInboxes;
   Link: ComponentType<ViewerLinkProps>;
 }) {
-  type Item = {
-    page: Page;
-    label: string;
-    href: string;
-    icon: ComponentType<IconProps>;
-    badge?: ReactNode;
-    tone?: "warn" | "caution";
-  };
-  const main: Item[] = [
-    {
-      page: "inbox",
-      label: "Inbox",
-      href: appURL(),
-      icon: InboxIcon,
-      badge: inbox > 0 ? inbox : null,
-    },
-    {
-      page: "pulls",
-      label: "Pull requests",
-      href: appURL("?page=pulls"),
-      icon: PullRequestIcon,
-    },
-    {
-      page: "timeline",
-      label: "Timeline",
-      href: appURL("?page=timeline"),
-      icon: TimelineIcon,
-    },
-    {
-      page: "sessions",
-      label: "Sessions",
-      href: appURL("?page=sessions"),
-      icon: SessionsIcon,
+  const [fold, setFold] = useState(folded);
+  const nested = inboxes && (inboxes.list.length > 0 || inboxes.footer);
+  const badges: Partial<Record<Page, { badge: ReactNode; tone?: "warn" | "caution" }>> = {
+    inbox: { badge: inbox > 0 ? inbox : null },
+    sessions: {
       badge: needsYou > 0 ? needsYou : runningSessions > 0 ? runningSessions : null,
       tone: needsYou > 0 ? "caution" : undefined,
     },
-    {
-      page: "analytics",
-      label: "Analytics",
-      href: appURL("?page=analytics"),
-      icon: ChartIcon,
-    },
-    {
-      page: "repositories",
-      label: "Repositories",
-      href: appURL("?page=repositories"),
-      icon: RepositoryIcon,
-    },
-  ];
-  // Jobs and settings are looked at now and then, so they sit at the foot.
-  const secondary: Item[] = [
-    {
-      page: "jobs",
-      label: "Jobs",
-      href: appURL("?page=jobs"),
-      icon: SparkleIcon,
-      badge: activeJobs > 0 ? activeJobs : null,
-    },
-    {
-      page: "settings",
-      label: "Settings",
-      href: appURL("?page=settings"),
-      icon: SettingsIcon,
-      badge: problems > 0 ? problems : null,
-    },
-  ];
-  const link = ({ page: target, label, href, icon: Icon, badge, tone }: Item) => (
-    <Link
-      key={target}
-      href={href}
-      title={label}
-      aria-current={page === target ? "page" : undefined}
-      className="local-rail-link"
-    >
-      <Icon size={18} className="local-rail-glyph" />
-      <span className="local-rail-label">{label}</span>
-      {badge ? (
-        <span
-          aria-hidden="true"
-          className={`local-rail-badge ${target === "settings" ? "warn" : (tone ?? "")}`.trim()}
-        >
-          {badge}
-        </span>
-      ) : null}
-    </Link>
-  );
+    jobs: { badge: activeJobs > 0 ? activeJobs : null },
+    settings: { badge: problems > 0 ? problems : null, tone: "warn" },
+  };
+  const link = ({ page: target, label, href, icon: Icon }: (typeof PAGES)[number]) => {
+    const { badge, tone } = badges[target] ?? {};
+    return (
+      <Link
+        key={target}
+        href={href()}
+        title={`${label} (${pageKeyLabel(target)})`}
+        aria-current={
+          page === target && !(target === "inbox" && (inboxes?.selected || inboxes?.elsewhere))
+            ? "page"
+            : undefined
+        }
+        aria-keyshortcuts={pageKeyShortcut(target)}
+        className="local-rail-link"
+      >
+        <Icon size={18} className="local-rail-glyph" />
+        <span className="local-rail-label">{label}</span>
+        {badge ? (
+          <span aria-hidden="true" className={`local-rail-badge ${tone ?? ""}`.trim()}>
+            {badge}
+          </span>
+        ) : null}
+        <kbd aria-hidden="true" className="key-hint local-rail-key">
+          {pageKeyLabel(target)}
+        </kbd>
+      </Link>
+    );
+  };
   return (
     <aside className="local-rail">
       <Link href={appURL()} className="local-rail-mark" title="Inbox">
         <LogoMark size={24} />
         <Wordmark size="sidebar" className="local-rail-label" />
       </Link>
-      <nav aria-label="Main" className="local-rail-nav">
-        {main.map(link)}
+      <nav aria-label="Main" className="local-rail-nav local-rail-main">
+        {PAGES.filter((item) => !item.foot).map((item) =>
+          item.page === "inbox" && inboxes && nested ? (
+            <div key="inbox">
+              <div className="local-rail-row">
+                {link(item)}
+                <button
+                  type="button"
+                  className="local-rail-fold"
+                  aria-expanded={!fold}
+                  aria-controls="local-rail-inboxes"
+                  aria-label="Inboxes"
+                  onClick={() => {
+                    setFold(!fold);
+                    try {
+                      localStorage.setItem(FOLD_KEY, fold ? "0" : "1");
+                    } catch {
+                      // Not remembered across reloads.
+                    }
+                  }}
+                >
+                  ▾
+                </button>
+              </div>
+              <div id="local-rail-inboxes" hidden={fold}>
+                {fold ? null : <InboxRows inboxes={inboxes} Link={Link} />}
+              </div>
+            </div>
+          ) : (
+            link(item)
+          ),
+        )}
       </nav>
       <div className="local-rail-foot">
         <PlanUsageRail />
         <nav aria-label="More" className="local-rail-nav">
-          {secondary.map(link)}
+          {PAGES.filter((item) => item.foot).map(link)}
         </nav>
       </div>
     </aside>
+  );
+}
+
+function InboxRows({
+  inboxes,
+  Link,
+}: {
+  inboxes: RailInboxes;
+  Link: ComponentType<ViewerLinkProps>;
+}) {
+  const [open, setOpen] = useState<string | null>(null);
+  const menu = useRef<HTMLDivElement>(null);
+  const popup = useRef<HTMLDivElement>(null);
+  // The `⋯` button of the row whose menu is open.
+  const more = () => menu.current?.querySelector<HTMLElement>(".local-rail-more") ?? null;
+  // The menu is a disclosure of plain buttons: it opens on the first, Esc and
+  // a click elsewhere close it, and focus goes back to its `⋯` button, so it
+  // never drops to the page.
+  const close = (restoreFocus: boolean) => {
+    if (restoreFocus) more()?.focus();
+    setOpen(null);
+  };
+  // The menu is placed against the window, under its row or above it when
+  // the row is near the bottom, so the sidebar's scrolling list cannot clip it.
+  useLayoutEffect(() => {
+    const row = menu.current?.getBoundingClientRect();
+    const element = popup.current;
+    if (!open || !row || !element) return;
+    const height = element.offsetHeight;
+    const below = row.bottom + 2;
+    element.style.top = `${below + height > window.innerHeight - 8 ? Math.max(8, row.top - height - 2) : below}px`;
+    element.style.left = `${row.left + 8}px`;
+  }, [open]);
+  useEffect(() => {
+    if (!open) return;
+    menu.current?.querySelector<HTMLElement>(".local-rail-menu button")?.focus();
+    const outside = (event: MouseEvent) => {
+      if (menu.current?.contains(event.target as Node)) return;
+      // Focus that was inside the row would otherwise fall to the page.
+      close(!!menu.current?.contains(document.activeElement));
+    };
+    // Esc is the menu's alone while it is open: taken before the page's keys,
+    // whose Esc would clear the focus just given back to `⋯`.
+    const escape = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      event.stopPropagation();
+      close(true);
+    };
+    // A placed menu would drift from its row as the sidebar scrolls or the
+    // window resizes, so either closes it.
+    const away = () => close(!!menu.current?.contains(document.activeElement));
+    document.addEventListener("mousedown", outside);
+    window.addEventListener("keydown", escape, true);
+    window.addEventListener("scroll", away, true);
+    window.addEventListener("resize", away);
+    return () => {
+      document.removeEventListener("mousedown", outside);
+      window.removeEventListener("keydown", escape, true);
+      window.removeEventListener("scroll", away, true);
+      window.removeEventListener("resize", away);
+    };
+  }, [open]);
+  // A deleted row takes its button with it: focus moves to its neighbour, or
+  // to Inbox when it was the last.
+  const afterDelete = () => {
+    const row = menu.current;
+    const inboxRow = (element: Element | null | undefined) =>
+      element?.matches(".local-rail-inbox") ? (element as HTMLElement) : null;
+    const next = inboxRow(row?.nextElementSibling) ?? inboxRow(row?.previousElementSibling);
+    const target = next
+      ? next.querySelector<HTMLElement>("a.local-rail-sub")
+      : row?.closest("nav")?.querySelector<HTMLElement>("a.local-rail-link");
+    target?.focus();
+  };
+  return (
+    <div className="local-rail-inboxes">
+      {inboxes.list.map((inbox) => {
+        const count = inboxes.counts[inbox.id] ?? 0;
+        return (
+          <div
+            key={inbox.id}
+            ref={open === inbox.id ? menu : undefined}
+            className={`local-rail-inbox inbox-${inbox.color}`}
+          >
+            <Link
+              href={appURL(`?inbox=${encodeURIComponent(inbox.id)}`)}
+              aria-current={inboxes.selected === inbox.id ? "page" : undefined}
+              className="local-rail-sub"
+            >
+              <span aria-hidden="true" className="inbox-dot" />
+              <span className="local-rail-label">{inbox.name}</span>
+              {count > 0 ? (
+                <span
+                  className={`local-rail-sub-count${inbox.badge ? "" : " muted"}`}
+                  title={inbox.badge ? undefined : "Not counted in the Inbox badge"}
+                >
+                  {count}
+                </span>
+              ) : null}
+              {count > 0 && !inbox.badge ? (
+                <span className="sr-only"> (not counted in the Inbox badge)</span>
+              ) : null}
+            </Link>
+            <button
+              type="button"
+              className="local-rail-more"
+              aria-label={`More for ${inbox.name}`}
+              aria-expanded={open === inbox.id}
+              onClick={() => (open === inbox.id ? close(true) : setOpen(inbox.id))}
+            >
+              ⋯
+            </button>
+            {open === inbox.id ? (
+              <div ref={popup} className="local-rail-menu">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setOpen(null);
+                    inboxes.edit(inbox);
+                  }}
+                >
+                  Edit inbox
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    close(true);
+                    inboxes.toggleBadge(inbox);
+                  }}
+                >
+                  {inbox.badge ? "Leave out of the Inbox badge" : "Count in the Inbox badge"}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    afterDelete();
+                    setOpen(null);
+                    inboxes.remove(inbox);
+                  }}
+                >
+                  Delete inbox
+                </button>
+              </div>
+            ) : null}
+          </div>
+        );
+      })}
+      {inboxes.footer}
+    </div>
   );
 }
 

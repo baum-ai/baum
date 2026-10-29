@@ -1,24 +1,22 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { formatCount } from "@baum/viewer/components/format";
-import { Alert, Button, LiveDot } from "@baum/viewer/components/ui";
+import { Button, LiveDot } from "@baum/viewer/components/ui";
 import { ViewerLink } from "@baum/viewer/navigation";
 import {
   appURL,
   cost,
-  estimateFeatureBuild,
   isActiveJob,
   jobReasonText,
+  LocalRequestError,
   request,
-  startFix,
-  type Estimate,
+  startFeatureBuild,
   type Job,
 } from "./api";
-import { harnessName } from "./desktop/reviews";
-import { LoadingStatus } from "./nine-dots";
 
 /** A repository's first feature build, from the Timeline: its history of
- *  pull requests placed in features by a confirmed, capped job of the job
- *  queue (`feature_build`), and its state while it runs or after it stopped. */
+ *  pull requests placed in features by a job of the job queue
+ *  (`feature_build`) that starts at once, and its state while it runs or
+ *  after it stopped. */
 
 /** The building version a first build writes, from `api/timeline/build`. */
 export type Building = { placed: number; total: number; stopped: string; spent_usd: number };
@@ -85,30 +83,33 @@ export function jobHref(job: Job): string {
 }
 
 /** A build running, stopped or failed, above the features it does not
- *  replace until it finishes. `onBuild` opens the confirmation, as a resume
- *  or a new build; without a clone it is offered disabled. Every state but a
+ *  replace until it finishes. `onBuild` starts it at once, resuming a
+ *  stopped one; without a clone it is offered disabled. Every state but a
  *  running build offers an action. */
 export function BuildStatus({
   job,
   state,
   clone,
   onBuild,
+  starting,
 }: {
   job: Job | undefined;
   state: BuildState;
   clone: string | null;
-  onBuild: (resume: boolean) => void;
+  onBuild: () => void;
+  /** The start request is on its way. */
+  starting: boolean;
 }) {
   const { building } = state;
-  const action = (label: string, resume: boolean) => (
+  const action = (label: string) => (
     <Button
       variant="secondary"
       size="compact"
-      disabled={!clone}
+      disabled={!clone || starting}
       title={clone ? undefined : NO_CLONE}
-      onClick={() => onBuild(resume)}
+      onClick={onBuild}
     >
-      {label}
+      {starting ? "Starting…" : label}
     </Button>
   );
   if (isActiveJob(job)) {
@@ -143,7 +144,7 @@ export function BuildStatus({
           The last feature history build stopped before it made a version. {buildReasonText(ended)}
         </p>
         <ViewerLink href={jobHref(job!)}>View in Jobs</ViewerLink>
-        {action("Try again", false)}
+        {action("Try again")}
       </section>
     );
   }
@@ -160,173 +161,43 @@ export function BuildStatus({
           {building.total > 0
             ? `${formatCount(building.placed)} of ${formatCount(building.total)} pull requests placed, `
             : null}
-          {cost(building.spent_usd)} spent. The features shown stay until it finishes.
-          {reason ? null : " Resuming estimates what is left and goes on with the same build."}
+          {cost(building.spent_usd)} at API prices so far. The features shown stay until it
+          finishes.
+          {reason ? null : " Resuming goes on with the same build."}
         </p>
       </div>
       {job ? <ViewerLink href={jobHref(job)}>View in Jobs</ViewerLink> : null}
-      {action("Resume build", true)}
+      {action("Resume build")}
     </section>
   );
 }
 
 export const NO_CLONE = "Needs a local clone of the repository";
 
-function errorText(error: unknown) {
-  return error instanceof Error ? error.message : "Local request failed.";
-}
-
-/** The estimate of a feature build and its confirmation, then a link to its
- *  job. */
-export function FeatureBuildDialog({
-  repository,
-  clone,
-  resume,
-  close,
-  started,
-}: {
-  repository: string;
-  clone: string;
-  /** A build that stopped is resumed, else a new one is built. */
-  resume: boolean;
-  close: () => void;
-  started: () => void;
-}) {
-  const dialog = useRef<HTMLDialogElement>(null);
-  const [estimate, setEstimate] = useState<Estimate | null>(null);
+/** Starts the repository's feature build at once, as every run the person
+ *  asks for starts: no dialog, no estimate. One the daemon will not run says
+ *  why in the build's own words. */
+export function useFeatureBuildStart(clone: string | null, started: () => void) {
+  const [starting, setStarting] = useState(false);
   const [error, setError] = useState("");
-  const [pending, setPending] = useState(false);
-  const [job, setJob] = useState<Job | null>(null);
-  // Counts estimates, so "Estimate again" asks for a new one.
-  const [attempt, setAttempt] = useState(0);
-  useEffect(() => {
-    dialog.current?.showModal?.();
-  }, []);
-  useEffect(() => {
-    let active = true;
-    estimateFeatureBuild(clone).then(
-      (answer) => {
-        if (active) setEstimate(answer);
-      },
-      (e) => {
-        if (active) setError(errorText(e));
-      },
-    );
-    return () => {
-      active = false;
-    };
-  }, [clone, attempt]);
-  // The estimate a start was refused for (expired, or its inputs changed)
-  // is not confirmed again: it is estimated afresh.
-  const [refused, setRefused] = useState(false);
-  const estimateAgain = () => {
-    setEstimate(null);
-    setError("");
-    setRefused(false);
-    setAttempt((n) => n + 1);
-  };
-  const item = estimate?.items[0];
-  const title = resume ? "Resume the feature history build" : "Build feature history";
-  const confirm = async () => {
-    if (!estimate) return;
-    setPending(true);
+  const start = async () => {
+    if (!clone || starting) return;
+    setStarting(true);
     setError("");
     try {
-      const jobs = await startFix(estimate);
-      setJob(jobs[0] ?? null);
+      await startFeatureBuild(clone);
       started();
     } catch (e) {
-      setError(errorText(e));
-      setRefused(true);
+      setError(
+        e instanceof LocalRequestError && e.code && e.status === 409
+          ? buildReasonText(e.code)
+          : e instanceof Error
+            ? e.message
+            : "Local request failed.",
+      );
     } finally {
-      setPending(false);
+      setStarting(false);
     }
   };
-  return (
-    <dialog
-      ref={dialog}
-      onCancel={(event) => {
-        // Escape waits for the start request.
-        if (pending) event.preventDefault();
-        else close();
-      }}
-      aria-labelledby="build-title"
-    >
-      <div className="local-dialog-head">
-        <div>
-          <h2 id="build-title">{title}</h2>
-          <p>{repository}</p>
-        </div>
-      </div>
-      {error ? <Alert>{error}</Alert> : null}
-      {job ? (
-        <p className="my-3" role="status">
-          The build started. It runs as a job; the features shown stay until it finishes.{" "}
-          <ViewerLink href={jobHref(job)}>View it in Jobs</ViewerLink>
-        </p>
-      ) : !item && !error ? (
-        <LoadingStatus block>Estimating the build…</LoadingStatus>
-      ) : item?.blocked_reason ? (
-        <p className="my-3">{buildReasonText(item.blocked_reason)}</p>
-      ) : item ? (
-        <div className="local-fix-confirmation">
-          <p>
-            {item.build_discovery_usd
-              ? "baum first discovers this repository's features from its default branch and history, as a hosted rebuild does, then places "
-              : "baum places "}
-            this repository's merged and open pull requests of its whole history in features, beside
-            the features in use, and writes their text. The new features replace the current ones in
-            one step once the build finishes, and the weekly pass consolidates them (merging
-            duplicates, splitting oversized ones) right after. If it stops, confirming again resumes
-            it.
-          </p>
-          {item.build_history_truncated ? (
-            <p>
-              The history is longer than baum lists: its least recently updated pull requests are
-              left out.
-            </p>
-          ) : null}
-          <dl className="local-fix-facts">
-            <dt>Pull requests</dt>
-            <dd>
-              {formatCount(item.build_pull_requests ?? 0)} to place
-              {item.build_history_truncated ? " (the most recently updated)" : ""}
-            </dd>
-            <dt>Harness</dt>
-            <dd>{harnessName(item.backend ?? "")}</dd>
-            <dt>Model</dt>
-            <dd>{item.model || "Harness default"}</dd>
-            <dt>Estimate</dt>
-            <dd>
-              {item.estimate_usd == null ? "Cost unknown" : `About ${cost(item.estimate_usd)}`}
-            </dd>
-            {item.build_discovery_usd ? (
-              <>
-                <dt>Discovery</dt>
-                <dd>
-                  Besides the estimate, feature discovery runs first with a token budget of what
-                  about {cost(item.build_discovery_usd)} buys at the model's base price; it is not a
-                  dollar cap.
-                </dd>
-              </>
-            ) : null}
-          </dl>
-        </div>
-      ) : null}
-      <div className="local-dialog-actions">
-        <Button variant="ghost" size="compact" disabled={pending} onClick={close}>
-          {job || item?.blocked_reason ? "Close" : "Cancel"}
-        </Button>
-        {refused ? (
-          <Button size="compact" onClick={estimateAgain}>
-            Estimate again
-          </Button>
-        ) : item && !item.blocked_reason && !job ? (
-          <Button size="compact" disabled={pending} onClick={() => void confirm()}>
-            {pending ? "Starting…" : resume ? "Resume build" : "Build feature history"}
-          </Button>
-        ) : null}
-      </div>
-    </dialog>
-  );
+  return { start, starting, error };
 }
