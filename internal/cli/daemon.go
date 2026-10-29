@@ -32,6 +32,7 @@ import (
 	"github.com/baum-ai/baum/internal/gitlocal"
 	"github.com/baum-ai/baum/internal/hookevents"
 	"github.com/baum-ai/baum/internal/hookrefresh"
+	"github.com/baum-ai/baum/internal/inboxes"
 	"github.com/baum-ai/baum/internal/jobs"
 	"github.com/baum-ai/baum/internal/livesessions"
 	"github.com/baum-ai/baum/internal/localapp"
@@ -522,6 +523,7 @@ func localApplication(paths daemon.Paths, concurrency int, log *slog.Logger) fun
 			return e.Kind == hookevents.KindAgent && e.Name == "session-end"
 		})
 		api := uiserver.LocalAPI{GitHubAuth: githubConnection.Handler(), Registry: registry, Config: cfg, PRs: uiserver.DiscoveryHandler(registry, discover, changed), Index: index.Handler(), Jobs: queue.Handler(), Background: worker.Handler(), Automatic: scheduler.Handler(), Live: liveAPI, Clones: clones.Handler(), GitHubRepositories: pickList.Handler(), PlanUsage: plans.Handler(), Analytics: insights.Handler(), Merge: uiserver.MergeHandler(registry, actions.RecordMerges(githubClient), refreshRepository, changed), Review: uiserver.ReviewHandler(registry, githubClient, changed), Update: uiserver.UpdateHandler(registry, actions.RecordUpdates(prupdate.Service{Client: githubClient}), refreshRepository, changed), Changed: settingsChanged,
+			Inboxes:     (&inboxes.API{Store: inboxes.Open(filepath.Join(state, "inboxes.json")), Changed: changed}).Handler(),
 			Groups:      (&reviewgroups.API{Store: groups, Registry: registry, Index: index.Build, Changed: changed}).Handler(),
 			Diagnostics: uiDiagnostics}.Handler()
 		return daemon.App{
