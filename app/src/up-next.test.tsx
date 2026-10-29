@@ -4,6 +4,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { App } from "./app";
 import type { Entry, Job, LiveSession } from "./api";
 import { snoozeOptions, snoozeText, upNext } from "./up-next";
+import { forgetLastRows } from "./shortcuts";
 
 type Overrides = Partial<Omit<Entry, "pull_request">> & {
   pull_request?: Partial<Entry["pull_request"]>;
@@ -227,6 +228,7 @@ afterEach(async () => {
   await act(async () => root.unmount());
   node.remove();
   vi.unstubAllGlobals();
+  forgetLastRows();
 });
 const render = async () => {
   await act(async () => root.unmount());
@@ -303,10 +305,10 @@ it("moves with j and k, opens with Enter and merges with m", async () => {
   expect(row("Change 3").getAttribute("aria-current")).toBe("true");
   await press("m");
   expect(node.querySelector("dialog")).not.toBeNull();
-  // Afresh, with no dialog open.
+  // Drawn again, with no dialog open, it comes back on the same pull request.
   await render();
   await press("Enter");
-  expect(location.search).toBe("?clone=clone&pr=1");
+  expect(location.search).toBe("?clone=clone&pr=3");
 });
 
 it("snoozes, undoes and brings back, and remembers it", async () => {
@@ -451,6 +453,20 @@ it("does not clear a pull request whose fix is running, and offers to watch it",
   expect(watch.getAttribute("href")).toBe("/s/test-ns/?page=jobs&job=fix-1");
   // The one other waiting pull request is listed as waiting.
   expect(row("Change 5").textContent).toContain("#5 · Draft");
+});
+
+it("waits on checks that run before calling a pull request ready to merge", async () => {
+  // GitHub called the head clean before its checks were queued.
+  entries = entries.map((e) =>
+    e.pull_request.number === 3 ? mine(3, { merge: "ready", checks: "running" }) : e,
+  );
+  await render();
+  expect(groups()).toEqual([
+    "Needs your eyes · 1",
+    "Ready to merge · 1",
+    "Hand to an agent · 1",
+    "Waiting on checks or reviews · 2",
+  ]);
 });
 
 it("clears a fixed pull request once its fix pushed", async () => {

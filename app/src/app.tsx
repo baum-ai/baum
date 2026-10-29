@@ -1115,7 +1115,10 @@ function ForkConfirmation({
 function Jobs({ jobs, changed }: { jobs: Job[]; changed: () => Promise<void> }) {
   const [error, setError] = useState("");
   const newest = jobs.slice().reverse();
-  const rows = useRowFocus<HTMLUListElement>(newest.map((job) => job.id));
+  const rows = useRowFocus<HTMLUListElement>(
+    "jobs",
+    newest.map((job) => job.id),
+  );
   useShortcuts((event) => {
     if (listKeys(event, rows) || event.key !== "t" || !rows.focused) return;
     const transcript = rows

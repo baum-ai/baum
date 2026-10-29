@@ -5,6 +5,7 @@ import { inboxGroups } from "./inbox";
 import { App } from "./app";
 import { useLocation } from "./location";
 import { appBase, cost, filtered, type Entry, type Clone } from "./api";
+import { forgetLastRows } from "./shortcuts";
 const entry = (number: number, status = "no_review", historical = false): Entry => ({
   pull_request: {
     repository: "acme/demo",
@@ -91,6 +92,7 @@ afterEach(async () => {
   await act(async () => root.unmount());
   node.remove();
   vi.unstubAllGlobals();
+  forgetLastRows();
 });
 it("shows a slow inbox response while coalescing refresh events into a follow-up read", async () => {
   const listeners = new Map<string, () => void>();

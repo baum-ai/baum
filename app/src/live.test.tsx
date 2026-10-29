@@ -8,6 +8,7 @@ import { App } from "./app";
 import { Inbox } from "./inbox";
 import { LocalReview } from "./review";
 import { liveFor, parseLive, type Entry, type LiveSession } from "./api";
+import { forgetLastRows } from "./shortcuts";
 
 vi.mock("@baum/viewer/components/review-viewer", () => ({
   ReviewViewer: ({ document, placeholder, notices }: ReviewViewerProps) => (
@@ -131,6 +132,7 @@ afterEach(async () => {
   await act(async () => root.unmount());
   node.remove();
   vi.unstubAllGlobals();
+  forgetLastRows();
 });
 
 it("keeps sessions in progress of the pull request, across clones, and none that ended", () => {

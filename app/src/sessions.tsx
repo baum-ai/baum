@@ -7,6 +7,7 @@ import {
   type ReactNode,
 } from "react";
 import { formatRelative } from "@baum/viewer/components/format";
+import { InlineMarkdown, Markdown } from "@baum/viewer/components/markdown";
 import {
   CircleCheckIcon,
   CircleDashedIcon,
@@ -345,7 +346,11 @@ function CardContext({ session, quote }: { session?: LiveSession; quote?: boolea
           ) : null}
         </p>
       ) : null}
-      {message && quote ? <blockquote className="local-feed-quote">“{message}”</blockquote> : null}
+      {message && quote ? (
+        <blockquote className="local-feed-quote">
+          “<InlineMarkdown>{message}</InlineMarkdown>”
+        </blockquote>
+      ) : null}
     </>
   );
 }
@@ -577,9 +582,17 @@ function WaitingCard({
       <CardContext session={s} />
       {message ? (
         reason === "turn_finished" ? (
-          <p className="local-feed-soft">{message}</p>
+          // The agent's last words as it wrote them, their opening shown;
+          // the transcript has the rest.
+          <div className="local-feed-soft">
+            <Markdown html={false} className="local-feed-message">
+              {message}
+            </Markdown>
+          </div>
         ) : (
-          <blockquote className="local-feed-quote">“{message}”</blockquote>
+          <blockquote className="local-feed-quote">
+            “<InlineMarkdown>{message}</InlineMarkdown>”
+          </blockquote>
         )
       ) : null}
       {s.waiting_message ? <p className="local-needs-message">{s.waiting_message}</p> : null}
@@ -825,7 +838,7 @@ export function SessionsPage({
     .sort((a, b) => endedAtOf(b).localeCompare(endedAtOf(a)));
   const queuedFor = (s: LiveSession) =>
     requests.messages.find((m) => m.agent === s.agent && m.session_id === s.session_id);
-  const rows = useRowFocus<HTMLDivElement>([
+  const rows = useRowFocus<HTMLDivElement>("sessions", [
     ...waiting.map((w) => (w.session ? sessionKey(w.session) : w.key)),
     ...active.map(sessionKey),
     ...ended.map(sessionKey),
