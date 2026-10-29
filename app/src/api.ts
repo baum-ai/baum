@@ -274,6 +274,10 @@ const buildReasons: Record<string, string> = {
   preferences_unreadable: "baum could not read its preferences, so it did not make a call.",
   backend_unavailable: "The model backend is not available on this computer.",
   backend_unsupported: "The configured backend cannot make the feature log's calls.",
+  git_auth_ssh:
+    "baum couldn't sign in over SSH to fetch pull requests. Background fetches can't ask for a key passphrase, so add your key to your SSH agent (ssh-add) and try again.",
+  git_auth_https:
+    "baum couldn't sign in over HTTPS to fetch pull requests. Background fetches can't ask for a password, so connect GitHub in Settings or save the credential in a Git credential helper, and try again.",
   failed: "It failed before it finished.",
   cancelled: "It was cancelled before it finished.",
   interrupted: "baum stopped before the build finished.",

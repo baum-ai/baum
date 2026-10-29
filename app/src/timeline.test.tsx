@@ -776,6 +776,13 @@ it("resumes a build that stopped, and says a failed or unexplained one in its ow
   };
   await render(interrupted, { has_features: false, current_since: null }, 6);
   expect(node.textContent).toContain(`${lead} baum stopped before the build finished.`);
+  // One whose fetch could not sign in says how to make the key available.
+  const signIn = { ...failed, reason: "git_auth_ssh" };
+  await render(signIn, { has_features: false, current_since: null }, 60);
+  expect(node.textContent).toContain(
+    `${lead} baum couldn't sign in over SSH to fetch pull requests.`,
+  );
+  expect(node.textContent).toContain("add your key to your SSH agent (ssh-add)");
   // A job with no time is shown without a current version, and not with one.
   const untimed = { ...buildJob("failed"), reason: "failed" };
   await render(untimed, { has_features: false, current_since: null }, 7);

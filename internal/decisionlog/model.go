@@ -266,6 +266,13 @@ const (
 	ReasonPreferences = "preferences_unreadable"
 )
 
+// Reasons a build stopped because a fetch could not sign in to the remote
+// (see gitlocal.AuthError).
+const (
+	ReasonGitAuthSSH   = "git_auth_ssh"
+	ReasonGitAuthHTTPS = "git_auth_https"
+)
+
 // planned is a call's backend, model and reservation.
 type planned struct {
 	Backend, Model string

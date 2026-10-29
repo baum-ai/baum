@@ -12,6 +12,7 @@ import (
 
 	"github.com/baum-ai/baum/features/assign"
 	"github.com/baum-ai/baum/features/summary"
+	"github.com/baum-ai/baum/internal/gitlocal"
 )
 
 // First build (README.md, "First build"): a repository's pull request
@@ -368,6 +369,12 @@ func (w *FeatureWorker) Build(ctx context.Context, repository, dir string, o Bui
 		report.Stopped, err = stop.reason, nil
 	case err != nil && ctx.Err() == nil:
 		report.Stopped = "failed"
+		if auth, ok := errors.AsType[*gitlocal.AuthError](err); ok {
+			report.Stopped = ReasonGitAuthHTTPS
+			if auth.SSH {
+				report.Stopped = ReasonGitAuthSSH
+			}
+		}
 	}
 	if report.Stopped != "" {
 		if _, recordErr := w.Store.db.ExecContext(context.WithoutCancel(ctx), `UPDATE feature_version SET stopped=? WHERE id=?`,

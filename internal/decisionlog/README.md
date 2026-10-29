@@ -445,7 +445,10 @@ internal features build`.
   and a link to one of its features resolves as archived.
 - **Stopping.** A build stops before a call that cannot be made
   (`unpriced_model`, `disabled` or a backend reason; `failed` for a store
-  error), or when it is cancelled or the daemon stops, leaving the version
+  error), when a fetch cannot sign in to the remote because the credential
+  needs a key passphrase or password nobody can type in the background
+  (`git_auth_ssh`, `git_auth_https`; the Timeline says how to make it
+  available), or when it is cancelled or the daemon stops, leaving the version
   `building` with `stopped` set to why; confirming it again resumes it. Its
   job then fails with that reason. Progress (phase, calls) is reported to
   the job, and the version records its pull requests placed of the total

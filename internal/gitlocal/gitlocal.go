@@ -523,6 +523,10 @@ func (r *Repo) FetchPulls(ctx context.Context, remote string, prs []PullRequest)
 		}
 		if !reachable {
 			if probe := r.lsRemote(ctx, remote); probe != nil {
+				// The fetch failed the same way: one sign-in message is enough.
+				if _, ok := errors.AsType[*AuthError](probe); ok {
+					return probe
+				}
 				return errors.Join(err, probe)
 			}
 			reachable = true
@@ -585,7 +589,10 @@ func (r *Repo) lsRemote(ctx context.Context, remote string) error {
 	if err != nil && authenticated {
 		return httpsFailure("GitHub HTTPS request failed", err)
 	}
-	return err
+	if err != nil {
+		return r.authFailure(ctx, remote, err)
+	}
+	return nil
 }
 
 // httpsFailure replaces the error of an authenticated command, whose output
@@ -634,7 +641,7 @@ func (r *Repo) fetch(ctx context.Context, remote string, refspecs []string) erro
 			}
 			return httpsFailure("GitHub HTTPS fetch failed", err)
 		}
-		return err
+		return r.authFailure(ctx, remote, err)
 	}
 	// A fetch into a shallow clone can add shallow commits.
 	return syncShallow(r.mirror, r.shallow)
