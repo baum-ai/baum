@@ -399,10 +399,17 @@ func localApplication(paths daemon.Paths, concurrency int, log *slog.Logger) fun
 			log.Warn("stored price list not loaded", "error", err)
 		}
 		refresh := func(ctx context.Context) error { return pricing.Refresh(ctx, state) }
+		// Review groups live in the daemon's state, not in a clone.
+		groups, err := reviewgroups.Open(filepath.Join(state, "groups.sqlite"))
+		if err != nil {
+			_ = registry.Close()
+			events.Close()
+			return daemon.App{}, err
+		}
 		// Automatic generation is separate from the model-free background
 		// refresh: discovery hands it snapshots, and it queues through the
 		// same runner as confirmed jobs.
-		scheduler := &automatic.Scheduler{Registry: registry, Path: filepath.Join(state, "automatic.json"), Discover: discover.PollNow, Log: log,
+		scheduler := &automatic.Scheduler{Registry: registry, Path: filepath.Join(state, "automatic.json"), Discover: discover.PollNow, Groups: groups, Log: log,
 			Hold: func() bool {
 				status, ok := daemon.Self()
 				return ok && (status.Stopping || status.RestartPending)
@@ -419,15 +426,16 @@ func localApplication(paths daemon.Paths, concurrency int, log *slog.Logger) fun
 			if snapshot.Epoch != discover.Epoch() {
 				return
 			}
+			// Stacked pull requests are grouped for review by default.
+			if !snapshot.Stale && snapshot.Error == "" {
+				if synced, err := groups.SyncStacks(ctx, snapshot.Repository, snapshot.PullRequests); err != nil {
+					log.Warn("stack groups not updated", "repository", snapshot.Repository, "error", err)
+				} else if synced {
+					changed()
+				}
+			}
 			scheduler.Observe(ctx, snapshot)
 			notify.Observe(ctx, snapshot)
-		}
-		// Review groups live in the daemon's state, not in a clone.
-		groups, err := reviewgroups.Open(filepath.Join(state, "groups.sqlite"))
-		if err != nil {
-			_ = registry.Close()
-			events.Close()
-			return daemon.App{}, err
 		}
 		// Feature builds run on the feature worker made below.
 		builds := &featureBuilder{}

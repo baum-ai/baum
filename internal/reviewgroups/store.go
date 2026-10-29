@@ -69,7 +69,11 @@ type Group struct {
 	Repository string `json:"repository"`
 	Name       string `json:"name"`
 	// Members are the pull request numbers, ascending.
-	Members   []int     `json:"members"`
+	Members []int `json:"members"`
+	// Stack marks a group baum made for a stack of pull requests and keeps
+	// in step with it (SyncStacks); a person's rename or member change makes
+	// it theirs.
+	Stack     bool      `json:"stack"`
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 }
@@ -125,6 +129,16 @@ func Open(path string) (*Store, error) {
 	db.SetMaxOpenConns(1)
 	if _, err = db.Exec(`CREATE TABLE IF NOT EXISTS groups(id TEXT PRIMARY KEY, repository TEXT NOT NULL, name TEXT NOT NULL, members TEXT NOT NULL, created INTEGER NOT NULL, updated INTEGER NOT NULL, deleted INTEGER NOT NULL DEFAULT 0);
 CREATE TABLE IF NOT EXISTS versions(group_id TEXT NOT NULL, version INTEGER NOT NULL, metadata BLOB NOT NULL, summary BLOB NOT NULL, document BLOB NOT NULL, PRIMARY KEY(group_id, version));`); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
+	// A store from before stack groups gains the column.
+	var stackColumn int
+	err = db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('groups') WHERE name='stack'`).Scan(&stackColumn)
+	if err == nil && stackColumn == 0 {
+		_, err = db.Exec(`ALTER TABLE groups ADD COLUMN stack INTEGER NOT NULL DEFAULT 0`)
+	}
+	if err != nil {
 		_ = db.Close()
 		return nil, err
 	}
@@ -193,13 +207,13 @@ func (s *Store) Create(ctx context.Context, repository, name string, members []i
 	return g, nil
 }
 
-const groupColumns = `id,repository,name,members,created,updated`
+const groupColumns = `id,repository,name,members,stack,created,updated`
 
 func scanGroup(row interface{ Scan(...any) error }) (Group, error) {
 	var g Group
 	var members string
 	var created, updated int64
-	if err := row.Scan(&g.ID, &g.Repository, &g.Name, &members, &created, &updated); err != nil {
+	if err := row.Scan(&g.ID, &g.Repository, &g.Name, &members, &g.Stack, &created, &updated); err != nil {
 		return Group{}, err
 	}
 	if err := json.Unmarshal([]byte(members), &g.Members); err != nil {
@@ -237,9 +251,18 @@ func (s *Store) Get(ctx context.Context, id string) (Group, error) {
 }
 
 // Update renames the group when name is not nil and replaces its members
-// when members is not nil.
+// when members is not nil. Either makes a stack group the person's own.
 func (s *Store) Update(ctx context.Context, id string, name *string, members []int) (Group, error) {
-	g, err := s.Get(ctx, id)
+	// One transaction, so a concurrent SyncStacks cannot be written over.
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return Group{}, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	g, err := scanGroup(tx.QueryRowContext(ctx, `SELECT `+groupColumns+` FROM groups WHERE id=? AND deleted=0`, id))
+	if errors.Is(err, sql.ErrNoRows) {
+		return Group{}, ErrNotFound
+	}
 	if err != nil {
 		return Group{}, err
 	}
@@ -253,20 +276,21 @@ func (s *Store) Update(ctx context.Context, id string, name *string, members []i
 			return Group{}, err
 		}
 	}
+	if name == nil && members == nil {
+		return g, nil
+	}
+	g.Stack = false
 	g.UpdatedAt = time.Now().UTC().Truncate(time.Millisecond)
 	encoded, _ := json.Marshal(g.Members)
-	result, err := s.db.ExecContext(ctx, `UPDATE groups SET name=?, members=?, updated=? WHERE id=? AND deleted=0`, g.Name, string(encoded), g.UpdatedAt.UnixMilli(), id)
-	if err != nil {
+	if _, err := tx.ExecContext(ctx, `UPDATE groups SET name=?, members=?, stack=0, updated=? WHERE id=?`, g.Name, string(encoded), g.UpdatedAt.UnixMilli(), id); err != nil {
 		return Group{}, err
 	}
-	if n, err := result.RowsAffected(); err != nil || n != 1 {
-		return Group{}, ErrNotFound
-	}
-	return g, nil
+	return g, tx.Commit()
 }
 
 // Delete removes the group from every list. Its versions stay in the store,
-// and the members' own reviews are never touched.
+// and the members' own reviews are never touched. A deleted stack group
+// keeps its flag, so SyncStacks makes no new group for its pull requests.
 func (s *Store) Delete(ctx context.Context, id string) error {
 	result, err := s.db.ExecContext(ctx, `UPDATE groups SET deleted=? WHERE id=? AND deleted=0`, time.Now().UnixMilli(), id)
 	if err != nil {
