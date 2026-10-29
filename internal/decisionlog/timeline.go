@@ -675,13 +675,14 @@ FROM feature WHERE version_id=?1 AND repository=?2 AND merged_into IS NULL AND (
 	if len(snap.features) == 0 {
 		return snap, nil
 	}
-	if strings.TrimSpace(q) != "" {
+	// A query with no searchable word filters nothing, as on the decisions list.
+	if match := matchQuery(q); match != "" {
 		number, _ := strconv.Atoi(strings.TrimPrefix(strings.TrimSpace(q), "#"))
 		matched, err := collect(scanString)(db.QueryContext(ctx, `SELECT id FROM feature WHERE version_id=?1 AND repository=?2
 AND (rowid IN (SELECT rowid FROM feature_search WHERE feature_search MATCH ?3)
  OR id IN (SELECT fp.feature_id FROM feature_pull fp JOIN pull_request p ON p.repository=fp.repository AND p.number=fp.number
   WHERE fp.version_id=?1 AND fp.repository=?2 AND (p.number=?4 OR p.rowid IN (SELECT rowid FROM pull_search WHERE pull_search MATCH ?3))))`,
-			version, repository, cmp.Or(matchQuery(q), `""`), number))
+			version, repository, match, number))
 		if err != nil {
 			return nil, err
 		}

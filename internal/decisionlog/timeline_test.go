@@ -254,6 +254,13 @@ func TestTimelineFeatures(t *testing.T) {
 			t.Errorf("q=%q = %q, want %q", query, page.ids(), want)
 		}
 	}
+	// A query with no word filters nothing, as on the decisions list.
+	all, punctuation := featurePage{}, featurePage{}
+	f.get("/api/timeline/features", url.Values{"repository": {repo}}, &all)
+	f.get("/api/timeline/features", url.Values{"repository": {repo}, "q": {"!!!"}}, &punctuation)
+	if punctuation.ids() != all.ids() || all.ids() == "" {
+		t.Errorf("q=!!! = %q, want %q", punctuation.ids(), all.ids())
+	}
 	page = featurePage{}
 	f.get("/api/timeline/features", url.Values{"repository": {repo}, "status": {"shipped,abandoned"}}, &page)
 	if page.ids() != "" {
@@ -751,8 +758,8 @@ func TestTimelinePagesByKeyset(t *testing.T) {
 	}
 }
 
-// A store from before the index is indexed when opened; pruned decisions
-// leave it, and a prefix finds a longer word.
+// A store from before the index is indexed when opened; decisions stay in
+// it, and a prefix finds a longer word.
 func TestTimelineSearchIndex(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "decisions", "decisions.sqlite")
 	s, err := Open(path, OpenOptions{})
