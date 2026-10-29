@@ -253,11 +253,8 @@ func (c caller) plan(ctx context.Context, prefs repos.Preferences, settings repo
 	if p.Backend == agent.BackendCursorAgent {
 		return p, ReasonUnsupported
 	}
-	reserved, ok := reserveFor(c.prices, p.Backend, p.Model, maxTokens, maxOutput)
-	if !ok {
-		return p, ReasonUnpriced
-	}
-	p.Reserved = reserved
+	// Prices only report: a model the list does not price runs, reserved at 0.
+	p.Reserved, _ = reserveFor(c.prices, p.Backend, p.Model, maxTokens, maxOutput)
 	return p, ""
 }
 

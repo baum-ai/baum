@@ -27,7 +27,7 @@ export function UsageDetails({
   return (
     <div className="text-xs space-y-1">
       <p>
-        Charged-token budget counter {formatCount(charged)} · Recorded cost {cost(amount)}
+        Charged-token budget counter {formatCount(charged)} · At API prices {cost(amount)}
       </p>
       {usage ? (
         <>
@@ -76,7 +76,8 @@ export function UsageDetails({
       )}
       {amount == null ? (
         <p>
-          Cost unknown: {reasons[reason ?? ""] ?? "Exact pricing is unavailable for this record."}
+          Cost at API prices unknown:{" "}
+          {reasons[reason ?? ""] ?? "Exact pricing is unavailable for this record."}
         </p>
       ) : null}
     </div>

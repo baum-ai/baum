@@ -77,9 +77,10 @@ not a failure.
    may make a second call, after the harness rejected its first reply against
    the schema; that resends the cached prompt, so it is reserved at the
    cache-read rate plus another reply. The Codex CLI has no option capping the
-   reply, so its 16,384 tokens are an estimate rather than a limit. A model the
-   price list does not price is skipped (`unpriced_model`). There is no
-   spending cap: as for reviews, each call keeps its token and time budgets.
+   reply, so its 16,384 tokens are an estimate rather than a limit. Prices
+   only report: a model the price list does not price runs, reserved at 0.
+   There is no spending cap: as for reviews, each call keeps its token and
+   time budgets.
 8. The attempt is recorded as pending and the completion made: one request for
    anthropic; `claude -p` with no tools besides its structured reply, which
    normally ends after one call and may retry a rejected reply once; or one
@@ -102,8 +103,8 @@ not a failure.
    transcript, given IDs and saved.
 
 A failed call is not cached. After 3 failures in a row the session is marked
-`extraction_failed` until its transcript changes. Skips for a missing backend
-or an unpriced model are tried again the next day or when the transcript
+`extraction_failed` until its transcript changes. Skips for a missing or
+unsupported backend are tried again the next day or when the transcript
 changes; other skips only when it changes.
 
 ## Stored data
@@ -211,9 +212,8 @@ summary), 10-minute bound and ledger, each attempt recorded with its stage
 (`feature_assign`, `feature_summary` or `pr_summary`) and item. Rejected
 replies and a ledger that cannot be written are handled as capture's. The
 preferences and the repository's settings are read again before every call,
-so a repository turned off makes no further call. A repository turned off,
-a missing backend or an unpriced model stops the stage until its next run,
-with no failure counted.
+so a repository turned off makes no further call. A repository turned off or
+a missing backend stops the stage until its next run, with no failure counted.
 
 ### Placement
 
