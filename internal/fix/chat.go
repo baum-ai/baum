@@ -29,9 +29,11 @@ type ChatTurn struct {
 }
 
 // ChatContext is the conversation a fix is made from: the turns up to the
-// one the fix was confirmed for, oldest first, within MaxChatBytes.
+// one the fix was confirmed for, oldest first, within MaxChatBytes. Omitted
+// counts the earlier turns CapChat left out.
 type ChatContext struct {
 	Conversation string     `json:"conversation"`
+	Omitted      int        `json:"omitted,omitempty"`
 	Turns        []ChatTurn `json:"turns"`
 }
 
@@ -44,9 +46,9 @@ func (t ChatTurn) size() int {
 }
 
 // CapChat keeps the newest turns of turns (oldest first) that fit in
-// MaxChatBytes, dropping the oldest first. A turn is never cut, except the
-// newest when it alone exceeds the cap: it is then truncated, with a marker,
-// to what fits.
+// MaxChatBytes, dropping the oldest first and counting them in Omitted. A
+// turn is never cut, except the newest when it alone exceeds the cap: it is
+// then truncated, with a marker, to what fits.
 func CapChat(conversation string, turns []ChatTurn) ChatContext {
 	out := ChatContext{Conversation: conversation}
 	total := 0
@@ -55,7 +57,9 @@ func CapChat(conversation string, turns []ChatTurn) ChatContext {
 		if total+t.size() > MaxChatBytes {
 			if len(out.Turns) == 0 {
 				out.Turns = append(out.Turns, cutTurn(t))
+				i--
 			}
+			out.Omitted = i + 1
 			break
 		}
 		total += t.size()
@@ -66,36 +70,46 @@ func CapChat(conversation string, turns []ChatTurn) ChatContext {
 
 // cutTurn truncates a turn that alone exceeds the cap: the question, the
 // suggestion and the citations keep a bounded share, the answer takes the
-// rest.
+// rest. The marker is added when any of them was cut.
 func cutTurn(t ChatTurn) ChatTurn {
-	t.Question = cutText(t.Question, MaxChatBytes/4)
-	t.Suggestion = cutText(t.Suggestion, MaxChatBytes/8)
+	cut := false
+	shorten := func(text string, n int) string {
+		if len(text) > n {
+			cut = true
+			return cutText(text, n)
+		}
+		return text
+	}
+	t.Question = shorten(t.Question, MaxChatBytes/4)
+	t.Suggestion = shorten(t.Suggestion, MaxChatBytes/8)
 	var cites []string
 	used := 0
 	for _, c := range t.Citations {
 		if used+len(c) > MaxChatBytes/8 {
+			cut = true
 			break
 		}
 		cites, used = append(cites, c), used+len(c)
 	}
 	t.Citations = cites
 	room := MaxChatBytes - len(t.Question) - len(t.Suggestion) - used - len(chatCutMarker)
-	if len(t.Answer) > room {
-		t.Answer = cutText(t.Answer, room) + chatCutMarker
+	t.Answer = shorten(t.Answer, room)
+	if cut {
+		t.Answer += chatCutMarker
 	}
 	return t
 }
 
-// cutText cuts text to at most n bytes without splitting a character.
+// cutText cuts text to at most n bytes without splitting a character: it
+// steps back over continuation bytes only.
 func cutText(text string, n int) string {
 	if len(text) <= n {
 		return text
 	}
-	text = text[:n]
-	for len(text) > 0 && !utf8.ValidString(text) {
-		text = text[:len(text)-1]
+	for n > 0 && !utf8.RuneStart(text[n]) {
+		n--
 	}
-	return text
+	return text[:n]
 }
 
 // ChatDigest identifies the conversation a fix was confirmed for, with its

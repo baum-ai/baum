@@ -87,6 +87,9 @@ func buildPrompt(ctx context.Context, t task, conflicts, checks bool) (string, s
 		}
 	}
 	if t.Chat != nil {
+		if t.Chat.Omitted > 0 {
+			fmt.Fprintf(&b, "\n(%d earlier %s of the conversation %s left out.)\n", t.Chat.Omitted, plural(t.Chat.Omitted, "turn", "turns"), plural(t.Chat.Omitted, "was", "were"))
+		}
 		for _, turn := range t.Chat.Turns {
 			if err := block(fmt.Sprintf("Conversation turn %d", turn.Seq), chatTurnText(turn)); err != nil {
 				return "", "", err
@@ -102,4 +105,11 @@ func buildPrompt(ctx context.Context, t task, conflicts, checks bool) (string, s
 		fmt.Fprintf(&b, "\n## Answer block\n\nOpen the answer block with exactly this line:\n\n    %s\n\nand close it with a line of three backticks.\n", answerFence(tag))
 	}
 	return b.String(), tag, nil
+}
+
+func plural(n int, one, many string) string {
+	if n == 1 {
+		return one
+	}
+	return many
 }

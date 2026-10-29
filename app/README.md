@@ -141,14 +141,15 @@ estimate item then carries `fix_chat: {conversation_id, turn}` (`estimateFix`
 in `src/api.ts`): only ids, never the question or the answer, which the
 daemon reads from the clone's store. The dialog says "Uses this conversation as
 context" with the agent's suggested change, and otherwise works as above; the
-fix is named "Fix from conversation", or with what else it fixes ("Fix CI and
-from conversation": `fixName`'s `chat`), and nothing has to be broken, so the
-offer depends only on `fixEligible` (open, not a fork, `viewer_can_push`, a local
-clone). The estimate pins the conversation's last turn (`fix.chat_turn`,
+fix is named "Fix from this answer" (`fixName`'s `chat`, never combined with
+conflicts, CI or review comments, which stay their own fixes), and nothing has
+to be broken, so the offer depends only on `fixEligible` (open, not a fork,
+`viewer_can_push`, a local clone). The estimate pins the conversation's last turn (`fix.chat_turn`,
 `fix_chat.turn`), so a question asked afterwards does not change what the
 confirmed fix uses; a refusal (`chat_unavailable`: no answered turn or a
 conversation of another pull request) or a conversation that changed
-(`chat_changed`) is shown in words. The job's `fix.chat` is the conversation's
+(`chat_changed`) or about an older review than the newest (`chat_outdated`) is
+shown in words. The job's `fix.chat` is the conversation's
 id.
 
 A fix can be watched live. A fix job with `has_transcript` has a transcript

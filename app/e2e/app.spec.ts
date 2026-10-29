@@ -1019,13 +1019,14 @@ test("makes a fix or a review comment from an answer", async ({ page }) => {
   await expect(panel.locator(".ask-answer")).toHaveCount(before + 1);
   const answer = panel.locator(".ask-turn").last();
   await expect(answer.getByRole("button", { name: "Add as comment", exact: true })).toBeVisible();
-  // The fixture's checks fail, so the conversation is one more part of the fix.
+  // The fixture's checks fail, yet the fix is of the answer only.
   await answer.getByRole("button", { name: "Fix this", exact: true }).click();
-  const dialog = page.getByRole("dialog", { name: "Fix CI and from conversation" });
+  const dialog = page.getByRole("dialog", { name: "Fix from this answer" });
   await expect(dialog).toBeVisible();
   await expect(dialog.getByText("Uses this conversation as context")).toBeVisible();
   await expect(dialog.getByText("Estimate")).toBeVisible();
   await expect(dialog.getByText("makes the change the conversation asks for")).toBeVisible();
+  await expect(dialog.getByText("failing checks")).toHaveCount(0);
   await page.screenshot({ path: "test-results/ask-fix-from-answer.png" });
   await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
   await expect(dialog).toBeHidden();

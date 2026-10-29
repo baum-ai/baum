@@ -38,6 +38,7 @@ const (
 	ReasonNoPushAccess       = "no_push_access"
 	ReasonNothingToFix       = "nothing_to_fix"
 	ReasonNoChat             = "chat_unavailable"
+	ReasonChatOutdated       = "chat_outdated"
 	ReasonUnsupportedBackend = "unsupported_backend"
 )
 
@@ -276,7 +277,7 @@ func Run(ctx context.Context, o Options) (out Outcome, err error) {
 		return out, fail(ReasonHistoryRewritten, errors.New("the result does not build on the pull request's head; baum never rewrites a branch's history"))
 	}
 	if (len(o.Threads) > 0 || o.hasChat()) && !o.Conflicts && !o.Checks {
-		// A fix of review comments or a conversation alone never pushes a
+		// A fix of review comments or of a conversation never pushes a
 		// workflow change: they are other people's or an agent's words, and
 		// a workflow runs with the repository's secrets as soon as it is
 		// pushed.
@@ -395,8 +396,6 @@ func commitMessage(o Options) string {
 	switch {
 	case o.Conflicts:
 		return fmt.Sprintf("Merge branch '%s' into %s\n\n%s by an agent (%s) through baum, on request.", o.BaseRef, o.HeadRef, what, agentName)
-	case o.hasChat() && (o.Checks || len(o.Threads) > 0):
-		return fmt.Sprintf("Fix and make the change from a conversation\n\n%s by an agent (%s) through baum, on request.", what, agentName)
 	case o.hasChat():
 		return fmt.Sprintf("Make the change from a conversation\n\nChanged by an agent (%s) through baum, on request.", agentName)
 	case o.Checks && len(o.Threads) > 0:

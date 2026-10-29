@@ -90,6 +90,24 @@ func (l *Local) prepareFix(ctx context.Context, item Item) (Prepared, string, er
 			p.BlockedReason = fix.ReasonNoPushAccess
 			break
 		}
+		if item.FixChat != nil {
+			// A fix from a conversation makes that conversation's change and
+			// nothing else: conflicts, checks and review threads are
+			// separate fixes.
+			chat, turn, reason, err := fixChat(ctx, c, item.PR, *item.FixChat)
+			if err != nil {
+				return Prepared{}, "", err
+			}
+			if reason != "" {
+				p.BlockedReason = reason
+				break
+			}
+			// The estimate pins the last turn: the confirmed fix uses the
+			// conversation up to it, whatever is asked after.
+			p.Item.FixChat = &FixChatRef{Conversation: chat.Conversation, Turn: turn}
+			p.Fix.Chat, p.Fix.ChatTurn, p.Fix.ChatDigest = chat.Conversation, turn, fix.ChatDigest(chat)
+			break
+		}
 		checks, err := fix.FailingChecks(ctx, reader, repository, pr.HeadSHA)
 		if err != nil {
 			return Prepared{}, "", err
@@ -120,21 +138,7 @@ func (l *Local) prepareFix(ctx context.Context, item Item) (Prepared, string, er
 				p.FixThreads = append(p.FixThreads, FixThread{Ref: t.Ref, Path: t.Path, Line: t.Line, Outdated: t.Outdated, Author: author, Excerpt: excerpt})
 			}
 		}
-		if item.FixChat != nil {
-			chat, turn, reason, err := fixChat(ctx, c, item.PR, *item.FixChat)
-			if err != nil {
-				return Prepared{}, "", err
-			}
-			if reason != "" {
-				p.BlockedReason = reason
-				break
-			}
-			// The estimate pins the last turn: the confirmed fix uses the
-			// conversation up to it, whatever is asked after.
-			p.Item.FixChat = &FixChatRef{Conversation: chat.Conversation, Turn: turn}
-			p.Fix.Chat, p.Fix.ChatTurn, p.Fix.ChatDigest = chat.Conversation, turn, fix.ChatDigest(chat)
-		}
-		if !p.Fix.Conflicts && !p.Fix.Checks && p.Fix.Threads == "" && p.Fix.ChatDigest == "" {
+		if !p.Fix.Conflicts && !p.Fix.Checks && p.Fix.Threads == "" {
 			p.BlockedReason = fix.ReasonNothingToFix
 		}
 	}

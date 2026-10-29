@@ -62,11 +62,11 @@ function errorText(error: unknown) {
 
 /** What the agent does, in a sentence. */
 function fixSentence(fix: FixInputs, branch: string) {
+  if (fix.chat) return `An agent makes the change the conversation asks for on ${branch}.`;
   const tasks = [
     fix.conflicts ? "resolves the conflicts" : "",
     fix.checks ? "fixes the failing checks" : "",
     fix.threads ? "addresses the unresolved review comments" : "",
-    fix.chat ? "makes the change the conversation asks for" : "",
   ].filter(Boolean);
   if (fix.conflicts)
     return `An agent merges ${fix.base_ref ?? "the base branch"} into ${branch}${tasks.length === 1 ? " and " : ", "}${joinAnd(tasks)}.`;

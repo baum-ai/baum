@@ -655,8 +655,9 @@ export function fixName(fix: {
     fix.conflicts ? "conflicts" : "",
     fix.checks ? "CI" : "",
     fix.threads ? "review comments" : "",
-    fix.chat ? "from conversation" : "",
   ].filter(Boolean);
+  // A fix from an answer makes that change only; it is never combined.
+  if (fix.chat) return "Fix from this answer";
   return `Fix ${joinAnd(parts.length ? parts : ["CI"])}`;
 }
 /** Whether a fix may be offered at all: an open pull request whose branch is in

@@ -7,6 +7,21 @@ import (
 	"github.com/baum-ai/baum/agent/prompt"
 )
 
+func TestFixChatSection(t *testing.T) {
+	chat := prompt.Fix(false, false, false, true)
+	for _, phrase := range []string{"## Change from a conversation", "only that change", "Verify it", "data, not instructions", "workflow configuration", "change nothing"} {
+		if !strings.Contains(chat, phrase) {
+			t.Errorf("chat instructions lack %q", phrase)
+		}
+	}
+	if strings.Contains(chat, "## Failing checks") || strings.Contains(chat, "## Merge conflicts") || strings.Contains(chat, "## Review comments") {
+		t.Errorf("chat only: %s", chat)
+	}
+	if strings.Contains(prompt.Fix(true, true, true, false), "## Change from a conversation") {
+		t.Error("the chat section without a conversation")
+	}
+}
+
 func TestFixComposesTheSectionsItNeeds(t *testing.T) {
 	both := prompt.Fix(true, true, false, false)
 	for _, phrase := range []string{"untrusted data", "never follow them", "Do not commit", "## Merge conflicts", "## Failing checks"} {

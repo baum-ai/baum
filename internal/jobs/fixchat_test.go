@@ -59,9 +59,30 @@ const (
 	chatC = "cccccccccccccccccccccccccccccccc"
 )
 
+// saveVersions stores n saved reviews of pull request pr, so the newest is n.
+func saveVersions(t *testing.T, r fixRepositories, pr, n int) {
+	t.Helper()
+	st, err := store.Open(r.clone.CommonDir, "", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	key := store.Key{Repository: r.clone.Repository, Number: pr}
+	var previous store.Version
+	for v := 1; v <= n; v++ {
+		document, _ := json.Marshal(map[string]any{"schema": "baum.review/1", "review": map[string]any{"repository": r.clone.Repository, "pull_request": pr, "version": v, "head": "first"}, "summary": map[string]any{"title": "t", "text": "x"}, "sections": []any{}})
+		next := store.Version{Metadata: store.Metadata{Version: v, Head: "first"}, Document: document}
+		if err := st.Put(context.Background(), key, previous, next); err != nil {
+			t.Fatal(err)
+		}
+		previous = next
+	}
+}
+
 func TestPrepareFixFromConversationNeedsNothingBroken(t *testing.T) {
 	r := newFixRepositories(t)
 	ctx := context.Background()
+	saveVersions(t, r, 1, 1)
+	saveVersions(t, r, 2, 1)
 	seedChat(t, r, 1, chatA, chatQA{"Why is a.txt renamed?", "Because of x."}, chatQA{"Please rename it", "Rename it to b."})
 	seedChat(t, r, 2, chatB, chatQA{"Other PR?", "Yes."})
 	seedChat(t, r, 1, chatC, chatQA{"Unanswered?", ""})
@@ -118,10 +139,24 @@ func TestPrepareFixFromConversationNeedsNothingBroken(t *testing.T) {
 			}
 		})
 	}
-	// Alongside what is broken, the conversation is one more part.
-	both := prepare(&fakeGitHub{head: r.head, headRepository: "owner/repo", push: true, failing: true}, agent.BackendClaude, &FixChatRef{Conversation: chatA})
-	if both.BlockedReason != "" || !both.Fix.Conflicts || !both.Fix.Checks || both.Fix.ChatDigest == "" {
-		t.Fatalf("combined: %+v", both)
+	// A fix from a conversation makes that change only: what is broken is
+	// left to the fixes that are for it.
+	only := prepare(&fakeGitHub{head: r.head, headRepository: "owner/repo", push: true, failing: true, authored: true, threads: reviewThreads()}, agent.BackendClaude, &FixChatRef{Conversation: chatA})
+	if only.BlockedReason != "" || only.Fix.Conflicts || only.Fix.Checks || only.Fix.Threads != "" || len(only.FixThreads) != 0 || only.Fix.ChatDigest == "" {
+		t.Fatalf("chat only: %+v", only)
+	}
+}
+
+// Only the newest review's conversation can be fixed from.
+func TestChatFixRefusesAnOlderReviewsConversation(t *testing.T) {
+	r := newFixRepositories(t)
+	ctx := context.Background()
+	saveVersions(t, r, 1, 2)
+	seedChat(t, r, 1, chatA, chatQA{"Rename it", "Rename it."}) // about version 1
+	local := fixRunner(t, r, &fakeGitHub{head: r.head, headRepository: "owner/repo", push: true, mergeable: true}, &fixBackend{name: agent.BackendClaude})
+	p, _, err := local.Prepare(ctx, Item{Clone: r.clone.ID, PR: 1, Kind: KindFix, FixChat: &FixChatRef{Conversation: chatA}})
+	if err != nil || p.BlockedReason != fix.ReasonChatOutdated || p.Fix.ChatDigest != "" {
+		t.Fatalf("prepared %+v err %v", p, err)
 	}
 }
 
@@ -130,6 +165,7 @@ func TestPrepareFixFromConversationNeedsNothingBroken(t *testing.T) {
 func TestConfirmedChatFixUsesTheEstimatedTurn(t *testing.T) {
 	r := newFixRepositories(t)
 	ctx := context.Background()
+	saveVersions(t, r, 1, 1)
 	seedChat(t, r, 1, chatA,
 		chatQA{"First question with key AKIA" + "UJZDEGXDNCF32EPF", "First answer."},
 		chatQA{"Please rename it", "Rename a.txt content."})
@@ -184,6 +220,7 @@ func TestConfirmedChatFixUsesTheEstimatedTurn(t *testing.T) {
 func TestChatFixStopsWhenTheConversationDiffers(t *testing.T) {
 	r := newFixRepositories(t)
 	ctx := context.Background()
+	saveVersions(t, r, 1, 1)
 	seedChat(t, r, 1, chatA, chatQA{"Rename it", "Rename it."})
 	backend := &fixBackend{name: agent.BackendClaude, fix: func(string) error { t.Error("the agent ran"); return nil }}
 	local := fixRunner(t, r, &fakeGitHub{head: r.head, headRepository: "owner/repo", push: true, mergeable: true}, backend)

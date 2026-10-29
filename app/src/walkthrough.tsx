@@ -71,10 +71,29 @@ export function Walkthrough({
   useEffect(() => {
     saveProgress(key, progress);
   }, [key, progress]);
+  // The stop whose comment is being edited and its note as it was when the
+  // editing began, to keep what the Ask panel adds to it meanwhile.
+  const editingRef = useRef<string | null>(null);
+  const editBase = useRef("");
   // The Ask panel adds an answer to the draft from outside this page.
   useEffect(() => {
     const changed = (event: Event) => {
-      if ((event as CustomEvent<string>).detail === key) setProgress(loadProgress(key));
+      if ((event as CustomEvent<string>).detail !== key) return;
+      const next = loadProgress(key);
+      setProgress(next);
+      const id = editingRef.current;
+      if (id === null) return;
+      // Text appended to the stop's note since the editing began joins the
+      // text being edited.
+      const stored = next.notes[id] ?? "";
+      if (stored !== editBase.current && stored.startsWith(editBase.current)) {
+        const tail = stored.slice(editBase.current.length);
+        editBase.current = stored;
+        const added = tail.replace(/^\s+/, "");
+        setDraft((current) =>
+          current.trim() ? `${current.replace(/\s+$/, "")}\n\n${added}` : added,
+        );
+      }
     };
     window.addEventListener(PROGRESS_EVENT, changed);
     return () => window.removeEventListener(PROGRESS_EVENT, changed);
@@ -97,6 +116,7 @@ export function Walkthrough({
   const [cur, setCur] = useState(0);
   const [skipped, setSkipped] = useState(0);
   const [editing, setEditing] = useState<string | null>(null);
+  editingRef.current = editing;
   const [draft, setDraft] = useState("");
   const [open, setOpen] = useState<Set<string>>(new Set());
   const [filter, setFilter] = useState<"all" | "unseen" | "commented">("all");
@@ -154,7 +174,8 @@ export function Walkthrough({
     });
   };
   const startComment = (stop: Stop) => {
-    setDraft(progress.notes[stop.id] ?? "");
+    editBase.current = progress.notes[stop.id] ?? "";
+    setDraft(editBase.current);
     setEditing(stop.id);
   };
 

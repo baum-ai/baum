@@ -2,8 +2,12 @@ package fix
 
 import (
 	"context"
+	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/baum-ai/baum/internal/github"
 )
@@ -68,6 +72,66 @@ func TestCapChatDropsTheOldestTurnsFirst(t *testing.T) {
 	mid := CapChat("c", []ChatTurn{turnOf(1, half), turnOf(2, half), turnOf(3, 100)})
 	if len(mid.Turns) != 2 || mid.Turns[0].Seq != 2 || mid.Turns[1].Seq != 3 || strings.Contains(mid.Turns[0].Answer, "cut") {
 		t.Fatalf("kept %+v", mid.Turns)
+	}
+}
+
+func TestCapChatCountsTheTurnsItLeftOut(t *testing.T) {
+	half := MaxChatBytes / 2
+	got := CapChat("c", []ChatTurn{turnOf(1, half), turnOf(2, half), turnOf(3, half)})
+	if got.Omitted != 2 || len(got.Turns) != 1 {
+		t.Fatalf("omitted %d, kept %d", got.Omitted, len(got.Turns))
+	}
+	text, _, err := buildPrompt(context.Background(), task{Chat: &got}, false, false)
+	if err != nil || !strings.Contains(text, "2 earlier turns of the conversation were left out") {
+		t.Fatalf("%v\n%s", err, text)
+	}
+	if kept := CapChat("c", []ChatTurn{turnOf(1, 5)}); kept.Omitted != 0 || ChatDigest(kept) == ChatDigest(ChatContext{Conversation: "c", Omitted: 1, Turns: kept.Turns}) {
+		t.Fatal("omitted turns are not part of the digest")
+	}
+	if big := CapChat("c", []ChatTurn{turnOf(1, 5), turnOf(2, MaxChatBytes*2)}); big.Omitted != 1 {
+		t.Fatalf("omitted %d", big.Omitted)
+	}
+	one := CapChat("c", []ChatTurn{turnOf(1, half), turnOf(2, half)})
+	text, _, _ = buildPrompt(context.Background(), task{Chat: &one}, false, false)
+	if !strings.Contains(text, "1 earlier turn of the conversation was left out") {
+		t.Fatalf("%s", text)
+	}
+}
+
+// Any field of the newest turn that was cut marks the turn as cut.
+func TestCapChatMarksACutQuestionAndKeepsCharactersWhole(t *testing.T) {
+	long := ChatTurn{Seq: 1, Question: strings.Repeat("é", MaxChatBytes), Answer: "short"}
+	got := CapChat("c", []ChatTurn{long}).Turns[0]
+	if !strings.HasSuffix(got.Answer, "[the rest of this turn was cut]") || len(got.Question) > MaxChatBytes/4 || !utf8.ValidString(got.Question) || len(got.Question) < MaxChatBytes/4-1 {
+		t.Fatalf("question %d bytes valid %v, answer %q", len(got.Question), utf8.ValidString(got.Question), got.Answer)
+	}
+	cites := ChatTurn{Seq: 1, Answer: strings.Repeat("x", MaxChatBytes)}
+	for range 200 {
+		cites.Citations = append(cites.Citations, strings.Repeat("p", 100)+".go:1-2")
+	}
+	if got := CapChat("c", []ChatTurn{cites}).Turns[0]; !strings.HasSuffix(got.Answer, "[the rest of this turn was cut]") || len(got.Citations) >= 200 {
+		t.Fatalf("citations %d", len(got.Citations))
+	}
+	if uncut := CapChat("c", []ChatTurn{turnOf(1, 10)}).Turns[0]; strings.Contains(uncut.Answer, "cut") {
+		t.Fatal("an uncut turn was marked")
+	}
+}
+
+// A chat-only fix never pushes a GitHub workflow change.
+func TestChatFixRefusesAWorkflowChange(t *testing.T) {
+	r := NewRepositories(t)
+	a := &scriptedAgent{fix: func(_ string, dir string) (string, error) {
+		if err := os.MkdirAll(filepath.Join(dir, ".github", "workflows"), 0o755); err != nil {
+			return "", err
+		}
+		return "Done.", os.WriteFile(filepath.Join(dir, ".github", "workflows", "x.yml"), []byte("on: push\n"), 0o644)
+	}}
+	o := options(t, r, a)
+	o.Chat = &ChatContext{Conversation: "c", Turns: []ChatTurn{{Seq: 1, Question: "q", Answer: "add a workflow"}}}
+	_, err := Run(context.Background(), o)
+	var failure *Error
+	if !errors.As(err, &failure) || failure.Reason != ReasonWorkflowChanged {
+		t.Fatalf("err %v", err)
 	}
 }
 

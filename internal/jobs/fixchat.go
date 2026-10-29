@@ -42,6 +42,15 @@ func fixChat(ctx context.Context, c repos.Clone, pr int, ref FixChatRef) (chat f
 	if err != nil {
 		return fix.ChatContext{}, 0, "", err
 	}
+	// Only the newest review's conversation can be fixed from: an older
+	// review describes code that has since been reviewed again.
+	latest, err := st.Latest(ctx, store.Key{Repository: c.Repository, Number: pr})
+	if err != nil && !errors.Is(err, store.ErrNotFound) {
+		return fix.ChatContext{}, 0, "", err
+	}
+	if err != nil || latest.Metadata.Version != conversation.Version {
+		return fix.ChatContext{}, 0, fix.ReasonChatOutdated, nil
+	}
 	var turns []fix.ChatTurn
 	for _, t := range conversation.Turns {
 		if ref.Turn > 0 && t.Seq > ref.Turn {

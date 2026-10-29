@@ -6,6 +6,7 @@ import example from "../../schema/review-example.json" with { type: "json" };
 import type { Entry } from "./api";
 import { Walkthrough, type WalkView } from "./walkthrough";
 import {
+  appendToDraft,
   buildTour,
   firstSentence,
   loadProgress,
@@ -261,4 +262,47 @@ it("returns to the tour after sending a review", async () => {
   expect(node.textContent).toContain("Your review is on GitHub.");
   act(() => exact("Guided tour").click());
   expect(view).toBe("tour");
+});
+
+it("keeps what the Ask panel adds to a stop while its comment is being written", () => {
+  render();
+  click("Start the tour");
+  const stop = buildTour(doc).stops[0]!;
+  key("c");
+  type(node.querySelector("textarea")!, "My own note.");
+  // An answer is added to this stop from the panel while the box is open.
+  act(() => {
+    appendToDraft(
+      progressKey(doc),
+      { kind: "stop", id: stop.id, title: stop.title },
+      "From the answer.",
+    );
+  });
+  expect(node.querySelector("textarea")!.value).toBe("My own note.\n\nFrom the answer.");
+  click("Save comment");
+  expect(loadProgress(progressKey(doc)).notes[stop.id]).toBe("My own note.\n\nFrom the answer.");
+});
+
+it("merges text appended to a stop's stored note since the box was opened", () => {
+  render();
+  click("Start the tour");
+  const stop = buildTour(doc).stops[0]!;
+  key("c");
+  type(node.querySelector("textarea")!, "Earlier.");
+  click("Save comment");
+  click("Edit");
+  expect(node.querySelector("textarea")!.value).toBe("Earlier.");
+  act(() => {
+    appendToDraft(
+      progressKey(doc),
+      { kind: "stop", id: stop.id, title: stop.title },
+      "From the answer.",
+    );
+  });
+  expect(node.querySelector("textarea")!.value).toBe("Earlier.\n\nFrom the answer.");
+  type(node.querySelector("textarea")!, "Earlier.\n\nFrom the answer. And mine.");
+  click("Save comment");
+  expect(loadProgress(progressKey(doc)).notes[stop.id]).toBe(
+    "Earlier.\n\nFrom the answer. And mine.",
+  );
 });

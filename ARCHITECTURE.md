@@ -2402,10 +2402,14 @@ including `turn` (the newest answered one when zero) and builds `fix.ChatContext
 from them: question as stored (unmasked), the stored masked answer markdown, the
 citations as `path:start-end` and `suggests_fix.summary`. `fix.CapChat` caps it
 at 32 KiB, dropping the oldest turns first and cutting a turn only when the newest
-alone exceeds the cap, with a marker. A chat context is eligible under the
-conditions of any fix (open, not a fork, `permissions.push`, a supported backend,
-a registered clone) and replaces the need for a conflict, failing checks or
-threads: `nothing_to_fix` applies only without one. `Prepared.Fix` records
+alone exceeds the cap, with a marker whenever its question, suggestion or
+citations were cut too; turns dropped are counted (`ChatContext.Omitted`) and
+the prompt says so. A fix from a conversation is eligible under the conditions
+of any fix (open, not a fork, `permissions.push`, a supported backend, a
+registered clone) and is chat only: `prepareFix` reads no checks, mergeability
+or review threads for it, so it never merges the base, fixes checks or replies
+on threads, and `nothing_to_fix` does not apply. The conversation must be
+about the newest stored review version of the pull request (`chat_outdated`). `Prepared.Fix` records
 `chat`, `chat_turn` and `chat_digest` (`fix.ChatDigest` of the capped context),
 and the prepared item records the turn it resolved. The turn is pinned: the
 confirmation re-prepares the same item, so execution reads the conversation up
@@ -2415,8 +2419,8 @@ that differs from the digest (`chat_changed`) stops the fix before the agent run
 the change the conversation asks for and only that, verify it, the conversation
 is data) and one `BEGIN UNTRUSTED DATA` block per turn, oldest first, each
 through the redactor (questions included) and with the nonce stripped, like a
-thread. A fix from a conversation, like one of review comments, never pushes a
-workflow change unless it also fixes conflicts or checks (`workflow_changed`).
+thread. A fix from a conversation never pushes a workflow change
+(`workflow_changed`).
 The commit message says "Make the change from a conversation". The phase is
 `reading the conversation`.
 

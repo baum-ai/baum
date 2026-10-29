@@ -602,8 +602,10 @@ included. The estimate pins the turn and a digest of the conversation as the
 agent gets it, so a confirmed fix cannot run with another conversation or
 turn, and one whose stored turns changed stops before the agent runs. Nothing
 about the confirmation changes: the same evidence, the same dialog, the same
-write access, and a fix from a conversation never pushes a workflow or action
-change unless you also asked it to fix conflicts or checks.
+write access. A fix from a conversation is its own fix: it makes only that
+change, reads no checks or review threads and replies on none, only the newest
+review's conversation can start one, and it never pushes a workflow or action
+change.
 
 The agent reports per thread whether it addressed it, in a JSON block at the
 end of its final message whose opening fence carries the prompt's random tag,

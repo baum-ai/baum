@@ -325,7 +325,7 @@ it("confirms a fix made from a conversation, sending only its ids", async () => 
   expect(text).toContain("Lower the cap to 30s");
   expect(text).toContain("makes the change the conversation asks for");
   const confirm = Array.from(node.querySelectorAll("button")).find(
-    (button) => button.textContent === "Fix from conversation",
+    (button) => button.textContent === "Fix from this answer",
   )!;
   await act(async () => confirm.click());
   expect(requests[1]).toEqual({
@@ -353,8 +353,9 @@ it("shows why a conversation cannot be fixed from", async () => {
 });
 
 it("names a fix from a conversation and offers it whenever a fix may run", () => {
-  expect(fixName({ chat: "c1" })).toBe("Fix from conversation");
-  expect(fixName({ checks: true, chat: "c1" })).toBe("Fix CI and from conversation");
+  expect(fixName({ chat: "c1" })).toBe("Fix from this answer");
+  // It is never combined with the other fixes.
+  expect(fixName({ checks: true, chat: "c1" })).toBe("Fix from this answer");
   const clean = variant({ merge: "ready", checks: "passing" });
   expect(fixLabel(clean)).toBeNull();
   expect(fixEligible(clean)).toBe(true);

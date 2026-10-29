@@ -147,6 +147,15 @@ func TestChatJobsRunBesideAReview(t *testing.T) {
 		t.Errorf("a completed turn was settled again: %+v", service.settledTurns())
 	}
 	close(f.release)
+	// The completed event is recorded a moment after the job reads as done.
+	for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); time.Sleep(5 * time.Millisecond) {
+		mu.Lock()
+		n := len(events)
+		mu.Unlock()
+		if n >= 2 {
+			break
+		}
+	}
 	mu.Lock()
 	defer mu.Unlock()
 	if len(events) != 2 || events[0]["state"] != "queued" || events[1]["state"] != "completed" || events[1]["conversation"] != "c1" || events[1]["turn"] != 1 || events[1]["pr"] != 7 {
