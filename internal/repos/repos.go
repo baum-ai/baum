@@ -39,6 +39,10 @@ type Settings struct {
 	Automatic *bool           `json:"automatic"`
 	Backend   *config.Backend `json:"backend,omitempty"`
 	Model     *string         `json:"model,omitempty"`
+	// Decisions is the repository's choice for local decision capture under
+	// the global switches (see DecisionsEnabled): nil and true follow them,
+	// false turns the repository off.
+	Decisions *bool `json:"decisions,omitempty"`
 }
 
 func (s Settings) Validate() error {
@@ -60,6 +64,22 @@ func (s Settings) AutomaticEnabled(p Preferences) bool {
 		return false
 	}
 	return s.Automatic == nil || *s.Automatic
+}
+
+// DecisionsEnabled reports whether the daemon captures the decisions of this
+// repository's agent sessions: the automatic master switch (which the tray's
+// pause turns off) and the decisions switch are both on, and the repository
+// has not turned capture off.
+func (s Settings) DecisionsEnabled(p Preferences) bool {
+	return p.Automatic && (p.Decisions.Enabled == nil || *p.Decisions.Enabled) && (s.Decisions == nil || *s.Decisions)
+}
+
+// DecisionPreferences are the global choices for local decision capture and
+// the feature log. A nil Enabled is on. Model, when set, replaces the
+// backend's default decision model.
+type DecisionPreferences struct {
+	Enabled *bool   `json:"enabled,omitempty"`
+	Model   *string `json:"model,omitempty"`
 }
 
 // Preferences are the registry's global choices, edited in the app. Fields
@@ -85,6 +105,8 @@ type Preferences struct {
 	// AgentEnv, when it sets any variable, replaces the config file's
 	// agent_env (config.Config.AgentEnv).
 	AgentEnv map[string]string `json:"agent_env,omitempty"`
+	// Decisions configures local decision capture.
+	Decisions DecisionPreferences `json:"decisions,omitzero"`
 }
 
 // The PullRequests choices besides both.
@@ -117,6 +139,9 @@ func (p Preferences) Validate() error {
 	}
 	if p.Model != nil && len(*p.Model) > 256 {
 		return errors.New("model must be at most 256 bytes")
+	}
+	if m := p.Decisions.Model; m != nil && len(*m) > 256 {
+		return errors.New("decisions model must be at most 256 bytes")
 	}
 	if p.FixBackend != nil && *p.FixBackend != config.BackendClaude && *p.FixBackend != config.BackendCodex {
 		return errors.New("fixes run with Claude Code or Codex only")

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
 import { Button } from "@baum/viewer/components/ui";
 import { PAGES, type Page } from "./pages";
 
@@ -205,28 +205,81 @@ export function useShortcuts(
   }, [allowSheet]);
 }
 
+/** Each list's last row, by the list's name, for as long as the app runs. */
+const lastRows = new Map<string, string>();
+/** Forgets every list's last row, as a fresh start of the app does. */
+export function forgetLastRows() {
+  lastRows.clear();
+}
+
+/** A list's selected row that outlives the list, as `useState` does not: a
+ *  list drawn again (Escape, `u` or Back from the page one of its rows
+ *  opened, or its page from the sidebar) comes back on the same row. A link
+ *  clicked in a row (`[data-row-id]` inside `list`) makes that row the one
+ *  to come back to, so a row opened by the pointer is kept as one opened by
+ *  the keyboard is. */
+export function useLastRow(name: string, list?: RefObject<HTMLElement | null>) {
+  const [id, setId] = useState(() => lastRows.get(name) ?? null);
+  const set = useCallback(
+    (next: string | null) => {
+      if (next === null) lastRows.delete(name);
+      else lastRows.set(name, next);
+      setId(next);
+    },
+    [name],
+  );
+  useEffect(() => {
+    if (!list) return;
+    const click = (event: MouseEvent) => {
+      const target = event.target instanceof Element ? event.target : null;
+      const row = target?.closest<HTMLElement>("[data-row-id]");
+      if (row?.dataset.rowId && target?.closest("a[href]") && list.current?.contains(row))
+        lastRows.set(name, row.dataset.rowId);
+    };
+    document.addEventListener("click", click, true);
+    return () => document.removeEventListener("click", click, true);
+  }, [name, list]);
+  return [id, set] as const;
+}
+
+/** Focuses a row's link and scrolls the row into view: to the middle when a
+ *  list comes back on its last row, which may be far down, and just enough
+ *  as the keys move it. */
+export function useFocusRow(
+  focused: string | null,
+  rowLink: (id: string) => HTMLElement | null | undefined,
+) {
+  const returning = useRef(focused !== null);
+  useEffect(() => {
+    if (!focused) return;
+    const target = rowLink(focused);
+    target?.focus({ preventScroll: true });
+    target
+      ?.closest("[data-row-id]")
+      ?.scrollIntoView?.({ block: returning.current ? "center" : "nearest" });
+    returning.current = false;
+  }, [focused]);
+}
+
 /** A row focus that the keyboard moves through a list's rows: each row is
  *  drawn with `data-row-id` (and `data-focused` while focused) inside
  *  `list`, and focus goes to the row's own link (`link`), so a screen reader
  *  reads the row as it moves, and the row scrolls into view. A row that
- *  left `ids` (collapsed, filtered out, gone) is no longer focused. */
+ *  left `ids` (collapsed, filtered out, gone) is no longer focused. `name`
+ *  keeps the row for when the list is drawn again (`useLastRow`). */
 export function useRowFocus<List extends HTMLElement = HTMLElement>(
+  name: string,
   ids: string[],
   link = "[data-row-link]",
 ) {
   const list = useRef<List>(null);
-  const [focusedId, setFocused] = useState<string | null>(null);
+  const [focusedId, setFocused] = useLastRow(name, list);
   const focused = focusedId !== null && ids.includes(focusedId) ? focusedId : null;
   const rowLink = (id: string) =>
     Array.from(list.current?.querySelectorAll<HTMLElement>("[data-row-id]") ?? [])
       .find((element) => element.dataset.rowId === id)
       ?.querySelector<HTMLElement>(link);
-  useEffect(() => {
-    if (!focused) return;
-    const target = rowLink(focused);
-    target?.focus({ preventScroll: true });
-    target?.closest("[data-row-id]")?.scrollIntoView?.({ block: "nearest" });
-  }, [focused]);
+  useFocusRow(focused, rowLink);
   return {
     list,
     focused,

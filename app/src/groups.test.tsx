@@ -6,6 +6,7 @@ import example from "../../schema/review-example.json" with { type: "json" };
 import { App } from "./app";
 import { groupJob, reviewJob, type Clone, type Entry, type Job, type ReviewGroup } from "./api";
 import { inboxGroups } from "./inbox";
+import { forgetLastRows } from "./shortcuts";
 
 vi.mock("@baum/viewer/components/review-viewer", () => ({
   ReviewViewer: ({ document, header, placeholder, notices }: ReviewViewerProps) => (
@@ -132,6 +133,7 @@ afterEach(async () => {
   await act(async () => root.unmount());
   node.remove();
   vi.unstubAllGlobals();
+  forgetLastRows();
 });
 const buttons = (scope: ParentNode = node) =>
   Array.from(scope.querySelectorAll<HTMLButtonElement>("button"));

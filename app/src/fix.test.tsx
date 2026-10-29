@@ -15,6 +15,7 @@ import {
 } from "./api";
 import { FixNotice } from "./fix";
 import { Inbox } from "./inbox";
+import { forgetLastRows } from "./shortcuts";
 
 const broken: Entry = {
   pull_request: {
@@ -81,6 +82,7 @@ afterEach(async () => {
   await act(async () => root.unmount());
   node.remove();
   vi.unstubAllGlobals();
+  forgetLastRows();
 });
 
 it("offers a fix only for broken pull requests the person can push to", () => {

@@ -242,6 +242,11 @@ on buttons (class `key-hint`) show only while Alt, Option on a Mac, is held:
 the window loses focus. The focused row has an
 accent bar and a faint fill, distinct from hover and selection; focus moves to
 the row's own link, so screen readers follow, and the row scrolls into view.
+Each list (Pull requests, Inbox, Sessions, Jobs, Repositories) keeps its
+focused or selected row for as long as the app runs (`useLastRow`), and a link
+clicked in a row keeps that row too, so coming back from what a row opened
+(`Esc`, `u`, Back or the sidebar) lands on the same row, scrolled to the middle.
+`Esc` on the list gives the row up.
 Keys are ignored with Ctrl, Meta or Alt held, in text fields, selects, text areas
 and editable content (checkboxes and radios still pass them) and while any dialog
 is open. On a pull request or group page, `u`, or `Esc` with nothing focused,
@@ -283,8 +288,9 @@ colours and sizes rather than the app's tokens and type scale (`--un-*` in
 panel scroll on their own, and below 760px the list stacks above the panel.
 `upNext` places each open pull request in at most one kind, from discovery's
 flags only: **Review** (their review is requested), **Clone** (a requested
-review whose repository has no local clone), **Merge** (theirs, and
-`canMerge`), **Fix** (theirs, with changes requested, unresolved threads, a
+review whose repository has no local clone), **Merge** (theirs, `canMerge`
+and no checks running: GitHub can call a head just pushed clean before its
+checks are queued), **Fix** (theirs, with changes requested, unresolved threads, a
 conflict or failing checks) and **Update** (theirs, and `canUpdateBranch`).
 The queue runs in that order, which is the order of the list's groups:
 **Needs your eyes** (Review, Clone), **Ready to merge** (Merge) and **Hand to
@@ -485,13 +491,12 @@ with the exact time as a tooltip), with a turning mark while a refresh runs.
 A row's last cell holds its action and **Peek**, which wait for the pointer or
 keyboard focus in the wide table. Peek (or `Space` on the focused row) opens
 the saved review under the row, read when first opened and again only for a
-new version: the summary, the first reason for its risk (in the critical tone
-at 4 and 5), the first four sections in review order with their lines added
+new version: the summary (the row already shows the risk score), the first four sections in review order with their lines added
 and removed, and **Open the review**. Without a saved review it says why (no
 clone, being written, failed, none yet) and offers **Generate the review**
 where it can run. A row whose state (review, checks, merge state, threads,
-score, estimate or version) changed in the latest read flashes once. The keys
-that work on the list are listed at its foot, except on touch screens. Generating and failed reviews remain visible under the
+score, estimate or version) changed in the latest read flashes once. The keys that work on the list are
+in the shortcuts sheet (`?`). Generating and failed reviews remain visible under the
 title, with agent sessions in progress beside them. Incomplete risk assessments show a lower bound (`≥N/5`) with an explicit
 “at least” description and caution styling rather than a reassuring low-risk
 colour. Collapsible groups say who acts next, with each row in one group:
@@ -681,6 +686,40 @@ never a path; a session's transcript comes only when the Sessions page opens it
 from disk again, where the full session is. A daemon without the record serves
 none.
 
+Decision capture (`GET api/decisions`, see the daemon's
+[decision capture README](../internal/decisionlog/README.md)) adds
+"Decisions (n)" to each row of that panel: the session's decision titles
+behind a disclosure, and "Updated N minutes ago", "Capturing…" or why it was
+not captured, in words (Cursor Agent as the review harness cannot capture),
+followed by why capture will not run again (paused, off, off for the
+repository, or not a picked repository; `capture_off`).
+Below it, "Decisions from sessions" lists the decisions of every session of
+the pull request, in progress or linked by the saved review, marking those
+made after that review was generated "Provisional", ended sessions the
+tracker still holds included; it is not drawn while no session has decisions,
+a capture state or a capture in flight. Both read again on the `decisions`
+event, which carries no data (events within 250 ms make one read), and when
+the event stream opens or resets or the automatic switch changes. Settings' **Decision capture** section holds
+the switch, the decision log model (the harness's cheap default, or another
+of its models), read with `GET api/settings/decisions` and saved with `PUT
+api/settings/decisions` (`enabled`, `model`; the whole object). Only these two answer
+with what the daemon makes of them: the harness capture resolves to, its model
+and whether the saved model is ignored (unknown, with a note that capture
+does not run, when no harness resolves); the section reads them again when
+the review harness changes. A saved model it ignores is listed as
+"<model> (not used)" with a note naming the harness, so choosing the default
+clears it. When the harness cannot be resolved the section says so, apart
+from a check that did not answer in time. A repository's dialog turns capture off for it (`decisions: false`; on sends
+`null`). The desktop setup's review step (which shows `auto` as the harness the daemon resolved, else
+its own guess) offers the decision log model beside the harness, reset to that
+harness's cheap model when the harness changes, and says what capture sends;
+the default is saved as none, so it follows the harness, and a saved model
+the daemon reports ignored (`baum internal reviews show`, with the harness it
+resolved) is shown the same way while that harness is chosen, and kept unless
+changed.
+Analytics shows decision capture's calls, failures by reason, calls cut short
+by a stop and spend under baum's work; an unknown cost stays unknown.
+
 The Sessions page (`?page=sessions`) is a live feed of the same sessions, in three
 sections of cards; the `live` event updates it and the sidebar count, and times
 tick every second. The daemon keeps ended sessions for 24 hours, across restarts.
@@ -698,7 +737,9 @@ tick every second. The daemon keeps ended sessions for 24 hours, across restarts
   what was done, and when nobody waits it reads "Nobody is waiting on you." with the
   last action. A session waiting with no request (it finished its turn, or asks for
   something only its terminal can answer) gets a quieter card with the reason, the
-  wait, the agent's last message, the line it showed and Open transcript, plus
+  wait, the agent's last message (rendered as Markdown when it finished its turn, its
+  opening lines fading into Open transcript; a quote clamped to three lines
+  otherwise), the line it showed and Open transcript, plus
   "Answer in the terminal" for a permission or an answer. It has no reply box: the app
   sends messages only to running sessions. A daemon without `api/agent-requests`
   shows no requests.

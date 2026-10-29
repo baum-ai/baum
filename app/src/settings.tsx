@@ -7,7 +7,7 @@ import {
   type FormEvent,
   type ReactNode,
 } from "react";
-import { Alert, Button, SegmentedControl } from "@baum/viewer/components/ui";
+import { Alert, Button, SegmentedControl, Toggle } from "@baum/viewer/components/ui";
 import {
   automaticNotice,
   parseAgentRequests,
@@ -19,6 +19,7 @@ import {
   type GitHubConnection,
   type Repository,
   type DiagnosticReport,
+  type DecisionSettings,
 } from "./api";
 import { RepositoryPicker, CloneActions } from "./repositories";
 import { GitHubConnectionSection } from "./github-connection";
@@ -32,18 +33,27 @@ import claudeLogo from "./desktop/claude-code.svg";
 import {
   TerminalIcon,
   SessionsIcon,
+  LightbulbIcon,
   CheckIcon,
   SearchIcon,
   CloseIcon,
   PlusIcon,
 } from "@baum/viewer/components/icons";
-import { HarnessPicker, ModelPicker, harnesses, harnessName } from "./desktop/reviews";
+import {
+  DecisionModelPicker,
+  DecisionsDisclosure,
+  HarnessPicker,
+  ModelPicker,
+  harnesses,
+  harnessName,
+} from "./desktop/reviews";
 import {
   describeCommand,
   describeAgent,
   displayPath,
   type SetupView,
   type Outcome,
+  decisionModelDefaults,
   modelPresets,
   withModel,
   type PullRequests,
@@ -1123,7 +1133,11 @@ export function SettingsPage({
             </section>
           ) : section === "reviews" ? (
             automatic && defaults ? (
-              <ReviewsSection automatic={automatic} defaults={defaults} changed={changed} />
+              <>
+                <ReviewsSection automatic={automatic} defaults={defaults} changed={changed} />
+                {/* A new review harness changes what capture resolves to. */}
+                <DecisionSettingsSection key={defaults.backend} defaults={defaults} />
+              </>
             ) : (
               loading
             )
@@ -1254,6 +1268,113 @@ function ZoomSection() {
           <Alert>{error}</Alert>
         </div>
       ) : null}
+    </section>
+  );
+}
+
+/** Decision capture: the switch and the model. */
+function DecisionSettingsSection({ defaults }: { defaults: ReviewDefaults }) {
+  const [saved, setSaved] = useState<DecisionSettings | null>(null);
+  // The model is null while it is inherited and a string, "" included, once
+  // one is picked or being typed: "" is not the harness's default here.
+  const [draft, setDraft] = useState<{ enabled: boolean; model: string | null } | null>(null);
+  const [pending, setPending] = useState(false);
+  const [done, setDone] = useState(false);
+  const [error, setError] = useState("");
+  const load = (settings: DecisionSettings) => {
+    setSaved(settings);
+    setDraft({ enabled: settings.enabled, model: settings.model || null });
+  };
+  useEffect(() => {
+    request<{ decisions?: DecisionSettings }>("api/settings/decisions").then(
+      (settings) => {
+        if (settings.decisions) load(settings.decisions);
+      },
+      (e) => setError(errorText(e)),
+    );
+  }, []);
+  if (!saved || !draft) return error ? <Alert>{error}</Alert> : null;
+  // The daemon resolves the harness capture uses, auto included.
+  const backend = saved.backend || shownBackend(defaults.backend);
+  // A blank custom name is saved as none, as a repository's model is.
+  const next = { enabled: draft.enabled, model: draft.model?.trim() ?? "" };
+  const dirty = next.enabled !== saved.enabled || next.model !== saved.model;
+  const save = async () => {
+    setPending(true);
+    setError("");
+    setDone(false);
+    try {
+      const answer = await request<{ decisions: DecisionSettings }>(
+        "api/settings/decisions",
+        next,
+        "PUT",
+      );
+      load(answer.decisions);
+      setDone(true);
+    } catch (e) {
+      setError(errorText(e));
+    } finally {
+      setPending(false);
+    }
+  };
+  const fallback = decisionModelDefaults[backend];
+  // A saved model the daemon reports capture ignores is shown as such.
+  const ignored = saved.model_ignored && saved.model ? saved.model : undefined;
+  return (
+    <section aria-labelledby="decisions-heading" className="local-panel settings-card p-0!">
+      <PanelHeader
+        id="decisions-heading"
+        icon={<LightbulbIcon size={20} />}
+        title="Decision capture"
+        detail="baum records the decisions made in your agent sessions, with a small model through the review harness, and shows them beside each pull request."
+        actions={
+          <Toggle
+            checked={draft.enabled}
+            disabled={pending}
+            onChange={(enabled) => {
+              setDone(false);
+              setDraft({ ...draft, enabled });
+            }}
+          >
+            Capture decisions
+          </Toggle>
+        }
+      />
+      {error ? <Alert className="mx-5 mb-4">{error}</Alert> : null}
+      <div className="review-card settings-form">
+        <DecisionModelPicker
+          id="settings-decisions-model"
+          backend={backend}
+          value={draft.model}
+          unused={ignored}
+          inherit={`Default${fallback ? ` (${fallback})` : ""}`}
+          disabled={pending || !draft.enabled}
+          onChange={(model) => {
+            setDone(false);
+            setDraft({ ...draft, model });
+          }}
+        />
+        {saved.backend === "" ? (
+          <div className="review-section">
+            <p className="review-note">
+              {saved.backend_undetermined
+                ? "The harness capture uses could not be determined: its check did not answer in time."
+                : "No harness that can capture decisions is available on this computer, so capture does not run."}
+            </p>
+          </div>
+        ) : null}
+        <div className="review-section">
+          <DecisionsDisclosure />
+        </div>
+      </div>
+      <footer className="flex flex-wrap items-center justify-between gap-3 border-t border-(--border-subtle) px-5 py-3">
+        <p role="status" className="text-xs text-(--text-tertiary)">
+          {done ? "Saved." : dirty ? "You have unsaved changes." : ""}
+        </p>
+        <Button size="compact" disabled={!dirty || pending} onClick={() => void save()}>
+          {pending ? "Saving…" : "Save decision capture"}
+        </Button>
+      </footer>
     </section>
   );
 }
@@ -1548,7 +1669,10 @@ export function RepositoriesPage({
   const [error, setError] = useState("");
   // The keyboard moves through the repositories as through any list, onto
   // each one's Settings; `a` opens or closes the picker and `/` searches it.
-  const rows = useRowFocus<HTMLUListElement>(repositories.map((r) => r.repository));
+  const rows = useRowFocus<HTMLUListElement>(
+    "settings-repositories",
+    repositories.map((r) => r.repository),
+  );
   const page = useRef<HTMLElement>(null);
   useShortcuts((event) => {
     if (listKeys(event, rows)) return;
@@ -1651,6 +1775,7 @@ function RepositorySettings({
         ? "on"
         : "off",
   );
+  const [decisions, setDecisions] = useState(clone.settings.decisions !== false);
   const [pending, setPending] = useState(false);
   const [removing, setRemoving] = useState(false);
   const globalBackend = shownBackend(defaults?.backend ?? "auto");
@@ -1662,6 +1787,7 @@ function RepositorySettings({
       automatic: mode === "default" ? null : mode === "on",
       backend,
       model: model?.trim() ? model.trim() : null,
+      decisions: decisions ? null : false,
     }).finally(() => setPending(false));
   };
   const unregister = () => {
@@ -1724,6 +1850,9 @@ function RepositorySettings({
           onChange={setModel}
         />
       </div>
+      <Toggle checked={decisions} disabled={pending || removing} onChange={setDecisions}>
+        Capture the decisions of agent sessions in this repository
+      </Toggle>
       <div className="local-dialog-actions">
         {remove ? (
           <Button

@@ -35,6 +35,44 @@ so is a hunk's section heading that is pure base64 of that length. Base64
 data embedded in a file, such as an inline image or a test fixture, is
 masked the same way.
 
+Local decision capture, on by default for picked repositories, also sends
+to the provider of the backend reviews use, without asking each time: the
+redacted transcript of a coding-agent session in such a repository (your
+prompts, the agent's visible text, its plans and question-and-answer
+dialogue, and the names of the files it edited, never tool output or file
+contents), with the published extraction prompt. The `claude` and `codex`
+CLIs get no tools besides the structured reply, run in an empty temporary
+directory and persist no session; Codex's read-only sandbox applies and its
+shell tools are turned off. The reply is masked again before it is stored in
+the private decision store. Turning off automatic generation (the tray's
+pause), the decisions switch or a repository's decisions setting stops it.
+For the same repositories, and stopped by the same switches, the daemon
+lists the repository's pull requests through the GitHub API with your
+GitHub credential, about once a minute and conditionally. For the open and
+merged ones not opened by a bot it fetches the commits the clone lacks, as
+a review fetches a missing pull request commit: heads from
+`refs/pull/<N>/head` and bases by id, force-updated under
+`refs/baum/pull/<N>/`. Each such pull request of the 180 days before the
+feature log was activated for the repository, and every one after, gets
+refs in the clone, which are kept and not pruned. When a fetch fails it
+asks the remote for its HEAD (`git ls-remote`); when the remote answers,
+the failed batch is fetched again one ref at a time, and otherwise the
+fetch is tried again after 15 minutes. A pull request whose commits still
+cannot be read is tried again after 15 minutes. It keeps the pull
+requests' titles, descriptions, authors, commits and changed paths in the private decision store, and links
+the commits to the sessions on this machine there; these rows are not
+pruned.
+The feature log then sends to the same provider, with the published feature
+prompts: a pull request's title, description, branch and
+changed paths, with candidate features' titles, descriptions, digests and
+their pull requests' titles and summaries, to place it; and, to write a
+feature's text, its pull requests' titles, descriptions, states and the
+summaries of their reviews saved in the clone, the attributed decisions of
+your captured sessions (what was decided and why, and the files cited, never
+your prompts or quoted evidence) and the feature's paths. A pull request
+without a saved review summary gets one generated from its title,
+description and those decisions.
+
 Redaction is best effort. Review `baum internal bundle` output before using
 `generate` on a repository whose sessions may contain sensitive material, and
 do not run it against repositories you are not allowed to share with your
@@ -1031,6 +1069,21 @@ ended one is kept for a day, its identifiers and times also in
 `live-sessions.json` beside the record. Nothing of it goes to a baum server.
 A finished session's content is still read from the session files on disk,
 through the redacted transcript routes below.
+
+`GET /api/decisions` serves the decisions decision capture stored, behind the
+same checks and limited to `GET`: for a session, or the sessions of a pull
+request, each decision's id, title, summary, category, who decided, rationale,
+rejected alternative, edited file names, date and whether it is superseded or
+provisional, all derived from redacted transcripts and masked again after the
+model replied. Each session comes with its agent and id, its capture state
+(coverage, skip reason, when it last changed, whether a call is in flight and
+why capture is off), and for a pull request whether it is in progress and, for
+a session the saved review links, its title as the PR page's sessions list
+shows it, and when the saved review the provisional marks are relative to was
+generated. Evidence quotes, turns, branches and repositories stay in the
+store.
+The `decisions` event carries no data. Its settings change only through the authenticated
+`PUT /api/settings/decisions` and repository settings routes.
 
 One line of text is the exception: a Claude Code notification's `message`,
 the sentence Claude Code shows you when it asks for something ("Claude needs

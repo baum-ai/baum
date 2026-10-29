@@ -68,7 +68,8 @@ bundle types to resolve anchors and carry history; `bundle` never imports
 | `agent` | the backend interface and its implementations, the prompt interface, the generate-and-repair loop, budgets |
 | `viewer` | the React components that render a document and its versions, and the standalone single-page app that `baum internal view` embeds |
 | `sessions`, `linkage` | session discovery and commit-to-session matching, used by `bundle` sources |
-| `decisions` | the decisions an agent session made: the decision schema, the cleaned transcript a model reads, the strict reply schema and parser, and the citation validator; no prompt |
+| `decisions` | the decisions an agent session made: the decision schema, the cleaned transcript a model reads, the strict reply schema and parser, the citation validator, and the published extraction prompt |
+| `features` | grouping work into features: the assigner, summarizer and consolidation model calls with their published prompt versions, decision attribution, status and the large-update rule; [rules](features/README.md) |
 | `validation/commitlabel` | deterministic validation-run commit labels from supplied session events and verified Git objects; [rule and limits](validation/commitlabel/README.md) |
 | `redact` | the one redaction engine used for input, output and logs |
 | `githubapi` | GitHub API plumbing every host shares: the GraphQL transport that turns primary and secondary rate limits into a typed error with the reset time, and GitHub's `BigInt` and `GitObjectID` scalars |
@@ -480,6 +481,19 @@ type Backend interface {
 }
 ```
 
+A backend may also implement `agent.Completer`: one structured completion
+with a system prompt, a user message and a schema, no working files, used by
+decision capture. It is normally one model call. The anthropic backend makes one Messages call offering only
+the StructuredOutput tool (`tool_choice` auto, one call, since current models
+refuse a forced choice while thinking); claude runs `claude -p` with no tools
+but StructuredOutput, no settings, MCP servers or session persistence, and at
+most two turns so a reply the harness rejects is retried once; codex
+runs `codex exec --ephemeral --ignore-user-config` read-only with its shell
+tools disabled, low reasoning effort and the system prompt as its model
+instructions, in one turn, which a call to one of its remaining tools would
+extend by a request. Both CLIs run in an empty temporary directory with the prompt on
+stdin after `sessions.GenerationRunMarker`.
+
 A request carries the prompt, the model-facing schema, the checkout directory
 and the call and token budgets, and optionally an `Endpoint` (a complete
 provider base URL and key) that replaces the backend's default. A result
@@ -863,7 +877,8 @@ A decision is a choice between plausible alternatives that lands in the
 repository, made by the human, by the agent, or proposed by the agent and
 approved by the human. `decisions` holds everything about extracting them
 that does not depend on where a session is stored or which prompt asks for
-them; the hosted service imports it with its own private prompt.
+them, and the published extraction prompt; the hosted service imports it
+with its own prompt.
 
 - **Transcript.** `Render` reduces a session tree
   (`sessions/session`) to one turn per root-session user input, numbered by
@@ -890,7 +905,10 @@ them; the hosted service imports it with its own private prompt.
   strict JSON Schema whose properties marshal in the order the model should
   write them. `PromptVersion` is the first 12 hex characters of the SHA-256 of
   the prompt and the marshalled schema, so cached extractions can be keyed on
-  it. The package ships no prompt.
+  it. `NewPublicExtractor` sends the published prompt,
+  `decisions-public-v1`; its `PromptVersion` is that name followed by the
+  hash, so its extractions never share a cache with a host's prompt of the
+  same text.
 - **Reply.** `ParseReply` decodes the reply strictly (unknown, missing or
   trailing data is an error) and normalizes it. `ValidateCitations` keeps the
   model's order and removes only what is wrong: turns that are not transcript
@@ -2056,7 +2074,14 @@ new head, or a new pull request, sets the next poll `settleInterval` (15 s)
 away (or GitHub's polling interval, if longer), as do up to `maxSettles` (3)
 more while a non-draft pull request's `mergeable` or `mergeStateStatus` is
 still `UNKNOWN`; the snapshot says `settling`, and the background worker polls
-the repository at that deadline instead of its interval. A repository never polled or not returned waits for its scheduled
+the repository at that deadline instead of its interval. A fix that pushed
+polls its repository at once and again 5, 15, 30 and 60 s later
+(`discovery.AfterPush`) until the pull request shows the pushed head with
+checks running or finished: GitHub queues the checks seconds after the push,
+the first poll finds none and a clean merge state, and neither the probe
+(check results do not move `updated_at`) nor the settle poll (the background
+worker does not see a poll it did not make) would read them before the usual
+backoff. A repository never polled or not returned waits for its scheduled
 poll; the probe assumes one credential, leaving out any repository whose
 credential differs from the first's.
 GraphQL cost, remaining points and reset time map to the public rate projection.
@@ -2814,8 +2839,8 @@ endpoint.
   also reports how many it missed, so it rereads only after a miss. This is the
   interface the live features (in-progress sessions, refresh on session end
   or push, decision capture) build on. In-progress sessions (see "Live
-  sessions") and refresh on session end or push (see "Refresh on hook
-  events") do; decision capture is not built yet.
+  sessions"), refresh on session end or push (see "Refresh on hook
+  events") and decision capture (see "Decision capture") do.
 
 ### Refresh on hook events
 
@@ -3036,7 +3061,8 @@ replace it.
   one-line masked `target` of at most 160 characters, `at`), `files_touched`
   (distinct files written by Edit, Write, MultiEdit, NotebookEdit or a Codex
   `apply_patch`, over the whole transcript read, at most 10 000 remembered)
-  and `last_message` (the latest assistant text, at most 400 characters).
+  and `last_message` (the latest assistant text, at most 1 200 characters,
+  its line breaks kept so the app renders it as Markdown).
   Targets are paths relative to the session's working directory when inside
   it. Claude Code's `assistant` lines and Codex's `response_item` payloads
   (`function_call`, `custom_tool_call`, `local_shell_call`, assistant
@@ -3215,6 +3241,62 @@ saved, in `agent-requests.json` in the state directory.
   `session_not_running`); `DELETE /api/agent-messages/{agent}/{id}` is
   idempotent. Every change publishes `live`, which the app already rereads
   the sessions on.
+
+### Decision capture
+
+`internal/decisionlog` extracts the decisions of the tracked sessions (see
+"Live sessions") into `<state>/decisions/decisions.sqlite`, with the published
+prompt (`decisions-public-v1`) and the `decisions` package's renderer,
+parser and validator. Its scheduler reads `Tracker.Sessions` every 30 seconds
+and keeps no per-session timers: a session that ended, or is not running and
+has been quiet for two minutes, is queued once per last activity; one running
+20 minutes since it last entered running or was queued for it, or that sends
+`pre-compact`, is queued at once; and every five minutes so is every settled
+session. One worker captures the
+queue, deduplicated. The gate is the automatic master switch, the decisions
+switch (`preferences.decisions.enabled`) and the repository's
+`settings.decisions`, all on by default.
+
+A capture locates the transcript with `livesessions.Locate` (the agent's own
+store, symbolic links resolved, the mapped root session the event's), skips
+files over 64 MiB, baum's own generation runs and prompts over 272,000
+estimated tokens, and reuses, extends or replaces the session's head
+extraction as hosted extraction does. Its structured completion goes through
+the review backend's `agent.Completer` (default models `claude-haiku-5-5` and
+`gpt-6-luna`); cursor-agent has none. A model the price list cannot price
+runs, reserved at 0, and every call is recorded in a ledger that throttles a session (5
+minutes apart, 10 after a failure, 12 a day unless it ended). The reply is masked before it is parsed; decisions keep
+their IDs across extractions and are marked obsolete, never deleted, when a
+newer one drops them, and nothing is pruned. The app reads it through `GET /api/decisions` (a session, or the
+sessions of a pull request: those the tracker links to it and those its saved
+review links, with decisions newer than that review marked provisional) and
+rereads on the `decisions` event the store's writes publish. See [its
+README](internal/decisionlog/README.md).
+
+### Feature log
+
+`decisionlog.FeatureWorker` runs in the daemon beside the capture scheduler,
+on the same store, every minute and on a settings change, for each picked
+repository with a clone that passes the capture gate. It lists the repository's pull requests through the REST API
+(`github.ListPullRequests`, `state=all`, sorted by update, to the stored
+cursor, the first page conditional on its ETag, a page too large read again
+at half the size), fetches the missing heads (from `refs/pull/<N>/head`) and
+bases (by id) of open and merged non-bot pull requests (`gitlocal.FetchPulls`,
+100 refspecs a `git fetch`; after a failed one, an `ls-remote` probe, then
+one at a time), records each changed one's commits and paths from the
+clone's own objects (a failed read is retried after 15 minutes, and after 3
+failures at one head its paths are unknown until the daily re-link), and
+links commits to this machine's sessions with `locallink.LinkCommits`, the
+per-commit matching `Resolve` uses. It then places pending pull requests
+and sessions in features (`FeatureWorker.Assign`: hosted triggers, a Go port
+of the hosted weighted candidate ranking, `assign.Public`) and writes the
+text of features whose members changed (`FeatureWorker.Summarize`,
+`summary.Public`, reusing text and generated pull request summaries whose
+input hash is unchanged). Both stages call through the same helper as
+capture (`caller` in `model.go`: backend and model resolution, reservation
+and the `capture_attempt` ledger, with the call's stage and item). The constants are in `featureconfig.go` and the live feature
+version of a repository is chosen in one place (`liveVersion`). See
+[its README](internal/decisionlog/README.md#feature-log).
 
 ### Transports and control protocol
 

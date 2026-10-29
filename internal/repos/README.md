@@ -9,12 +9,16 @@ metadata only and contacts nothing.
 - `repositories(identity, settings)`: settings shared by every clone of a
   repository. `identity` is the lowercase `owner/name` on github.com and
   `host/owner/name` elsewhere. `settings` is JSON (`automatic`, `backend`,
-  `model`); a `daily_cap` an older baum stored is ignored.
+  `model`, `decisions`); a `daily_cap` an older baum stored is ignored.
 - `clones(id, path, common_dir, repository)`: registered working trees. A list
   reprobes each path and reports a changed or missing one unavailable without
   rewriting it.
 - `picked(identity)`: repositories picked by name, possibly without a clone.
-- `preferences(key, value)`: the global preferences as one JSON row.
+- `preferences(key, value)`: the global preferences as one JSON row. Its
+  `decisions` object (`enabled`, `model`) configures local
+  decision capture; `Settings.DecisionsEnabled` combines it with the automatic
+  master switch and the repository's `decisions` (nil is on). See
+  [`decisionlog`](../decisionlog/README.md).
 
 A repository is picked exactly when it has a `picked` row. Adding a clone also
 picks its repository, and removing the clone keeps it picked with zero clones.

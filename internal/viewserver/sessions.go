@@ -103,6 +103,12 @@ func (s *Server) sessionsResult(ctx context.Context) (locallink.Result, bool) {
 	return entry.result, true
 }
 
+// LinkedSessions is the /api/sessions answer for the document being served,
+// sharing its computation; false when ctx ends or the server stops first.
+func (s *Server) LinkedSessions(ctx context.Context) (locallink.Result, bool) {
+	return s.sessionsResult(ctx)
+}
+
 // sessionsAnswer is sessionsResult's entry, finished, for what else is
 // kept beside the answer.
 func (s *Server) sessionsAnswer(ctx context.Context) (*sessionsEntry, bool) {
