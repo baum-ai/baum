@@ -313,6 +313,7 @@ it("lists exactly the keys that work in the sheet", async () => {
     "Sessions",
     "Jobs",
     "Repositories",
+    "Settings",
     "A session or job transcript",
   ]);
   // jsdom is not a Mac: Ctrl, and Alt with the arrows for back and forward.
@@ -340,6 +341,7 @@ it("lists exactly the keys that work in the sheet", async () => {
     "Enter",
     "o",
     "x",
+    "Space",
     "m",
     "f",
     "g",
@@ -365,6 +367,7 @@ it("lists exactly the keys that work in the sheet", async () => {
     "Enter",
     "o",
     "x",
+    " ",
     "m",
     "f",
     "g",
@@ -383,6 +386,7 @@ it("lists the keys of where the sheet was opened first", async () => {
     "Sessions",
     "Jobs",
     "Repositories",
+    "Settings",
     "A session or job transcript",
   ]);
 });

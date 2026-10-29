@@ -37,6 +37,9 @@ type Task struct {
 	// Framing is how the backend frames the task; the zero value frames a
 	// generic task.
 	Framing Framing
+	// PersistSession keeps the backend's session of every call, so the
+	// Outcome's SessionID can be resumed later (Request.PersistSession).
+	PersistSession bool
 }
 
 // Framing is how a backend frames a task's prompt.
@@ -118,13 +121,18 @@ func (g *Generator) RunTask(ctx context.Context, task Task) (outcome Outcome, do
 		if err != nil {
 			return outcome, nil, err
 		}
-		result, callErr := g.call(ctx, budgets, Request{Directory: task.Directory, Prompt: text, Schema: task.Schema, Logger: logger, Endpoint: task.Endpoint, Task: task.Framing == TaskFraming}, &outcome, &stalls)
+		result, callErr := g.call(ctx, budgets, Request{Directory: task.Directory, Prompt: text, Schema: task.Schema, Logger: logger, Endpoint: task.Endpoint, Task: task.Framing == TaskFraming, PersistSession: task.PersistSession}, &outcome, &stalls)
 		if callErr != nil {
 			if pass.Number > 1 {
 				outcome.RejectedDocument = RetainedDocument(document)
 			}
 			return outcome, nil, callErr
 		}
+		// Every call is a fresh session carrying the whole context pack (a
+		// repair resends the bundle and the rejected document), so the
+		// session of the call that produced the accepted document is
+		// self-contained.
+		outcome.SessionID = result.SessionID
 		verdict, err := accept(ctx, pass, result.Document, &outcome)
 		if err != nil {
 			return outcome, nil, err

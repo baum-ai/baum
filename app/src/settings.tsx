@@ -3,13 +3,16 @@ import {
   useLayoutEffect,
   useRef,
   useState,
+  type FocusEvent,
   type FormEvent,
   type ReactNode,
 } from "react";
 import { Alert, Button, SegmentedControl } from "@baum/viewer/components/ui";
 import {
   automaticNotice,
+  parseAgentRequests,
   request,
+  saveAgentSettings,
   type Automatic,
   type AutomaticStatus,
   type Clone,
@@ -23,7 +26,7 @@ import { messages as githubMessages } from "./github-auth";
 import { DiagnosticsSection } from "./diagnostics";
 import { invoke } from "./desktop/native";
 import { Notice, PageBar, PanelHeader } from "./shell";
-import { listKeys, useRowFocus, useShortcuts } from "./shortcuts";
+import { listKeys, onBody, useRowFocus, useShortcuts } from "./shortcuts";
 import codexLogo from "./desktop/codex.svg";
 import claudeLogo from "./desktop/claude-code.svg";
 import {
@@ -85,6 +88,112 @@ const sectionTitles: Record<SettingsSection, string> = {
   connections: "Connections",
   computer: "This computer",
 };
+
+/** The controls the keyboard steps through in the shown section, in reading
+ *  order. */
+const SECTION_CONTROLS = [
+  "button:not(:disabled)",
+  "input:not(:disabled):not([type='hidden'])",
+  "select:not(:disabled)",
+  "textarea:not(:disabled)",
+  "a[href]",
+  "summary",
+].join(", ");
+
+/** Settings' keys (`SETTINGS_SHORTCUTS`). Tab moves nothing in the app, so
+ *  the section list is the selection, as Up next's list is: j/↓ and k/↑ move
+ *  it, 1 to 5 jump to a section, and Enter, l or → goes into the shown
+ *  section. There j/↓ and k/↑ step through its controls, Enter or Space
+ *  changes the focused one, and Esc, h or ← go back to the list. Esc in a text
+ *  field or select gives it up first (`useEscapeBlurs`), leaving the place in
+ *  the section, so j and k go on from it. */
+function useSettingsKeys(
+  sections: readonly SettingsSection[],
+  section: SettingsSection,
+  setSection: (section: SettingsSection) => void,
+) {
+  const nav = useRef<HTMLElement>(null);
+  const content = useRef<HTMLDivElement>(null);
+  // The control last focused in the section, kept while a field is given up.
+  const at = useRef<HTMLElement | null>(null);
+  const navItem = (id: SettingsSection) =>
+    nav.current?.querySelector<HTMLElement>(`[data-section="${id}"]`) ?? null;
+  const controls = () =>
+    Array.from(content.current?.querySelectorAll<HTMLElement>(SECTION_CONTROLS) ?? []).filter(
+      (control) => !control.closest("[hidden], [inert], details:not([open]) > :not(summary)"),
+    );
+  const focus = (target: HTMLElement | null | undefined) => {
+    target?.focus({ preventScroll: true });
+    target?.scrollIntoView?.({ block: "nearest" });
+  };
+  const show = (next: SettingsSection) => {
+    at.current = null;
+    setSection(next);
+    focus(navItem(next));
+  };
+  // A section opened from the overview's buttons leaves the focus on nothing;
+  // it goes to the section's place in the list, so the keys go on from there.
+  useEffect(() => {
+    at.current = null;
+    if (document.activeElement === document.body) navItem(section)?.focus({ preventScroll: true });
+  }, [section]);
+  useShortcuts((event) => {
+    const key = event.key;
+    const step = key === "j" || key === "ArrowDown" ? 1 : key === "k" || key === "ArrowUp" ? -1 : 0;
+    const active = document.activeElement;
+    const inSection =
+      active instanceof HTMLElement &&
+      content.current?.contains(active) &&
+      active !== content.current;
+    const current = inSection
+      ? active
+      : onBody(event) && at.current?.isConnected && content.current?.contains(at.current)
+        ? at.current
+        : null;
+    if (current) {
+      if (step) {
+        event.preventDefault();
+        const list = controls();
+        const index = list.indexOf(current);
+        focus(list[Math.min(list.length - 1, Math.max(0, index + step))] ?? list[0]);
+      } else if (key === "Escape" || key === "h" || key === "ArrowLeft") {
+        event.preventDefault();
+        at.current = null;
+        focus(navItem(section));
+      } else if (
+        key === "Enter" &&
+        current instanceof HTMLInputElement &&
+        (current.type === "checkbox" || current.type === "radio")
+      ) {
+        // Space already does this; Enter does too, as on a button.
+        event.preventDefault();
+        current.click();
+      }
+      return;
+    }
+    if (step) {
+      event.preventDefault();
+      const index = sections.indexOf(section);
+      show(sections[Math.min(sections.length - 1, Math.max(0, index + step))]!);
+    } else if (/^[1-9]$/.test(key) && sections[Number(key) - 1]) {
+      event.preventDefault();
+      show(sections[Number(key) - 1]!);
+    } else if (key === "Enter" || key === "l" || key === "ArrowRight") {
+      const first = controls()[0];
+      if (!first) return;
+      event.preventDefault();
+      focus(first);
+    }
+  });
+  return {
+    nav,
+    content,
+    onFocus: (event: FocusEvent) => {
+      if (event.target instanceof HTMLElement && event.target !== content.current)
+        at.current = event.target;
+    },
+  };
+}
 
 /** The section a `section` query value names; anything else is the overview. */
 export function settingsSection(value: string | null): SettingsSection {
@@ -937,9 +1046,14 @@ export function SettingsPage({
       tone: problems > 0 ? "critical" : undefined,
     },
   ];
+  const keys = useSettingsKeys(
+    nav.map((item) => item.id),
+    section,
+    setSection,
+  );
   const loading = <LoadingStatus block>Reading your review settings…</LoadingStatus>;
   return (
-    <section>
+    <section className="settings-page">
       <PageBar
         title="Settings"
         detail="How baum reviews and fixes pull requests on this computer"
@@ -953,13 +1067,15 @@ export function SettingsPage({
         />
       ) : null}
       <div className="local-page-body settings-layout">
-        <nav aria-label="Settings sections" className="settings-nav">
-          {nav.map((item) => (
+        <nav ref={keys.nav} aria-label="Settings sections" className="settings-nav">
+          {nav.map((item, index) => (
             <button
               key={item.id}
               type="button"
               className="settings-nav-item"
+              data-section={item.id}
               aria-current={item.id === section ? "page" : undefined}
+              aria-keyshortcuts={String(index + 1)}
               onClick={() => setSection(item.id)}
             >
               <span className="settings-nav-text">
@@ -970,7 +1086,7 @@ export function SettingsPage({
             </button>
           ))}
         </nav>
-        <div className="settings-content">
+        <div ref={keys.content} className="settings-content" onFocus={keys.onFocus}>
           {section === "overview" ? (
             <section aria-labelledby="settings-overview-heading" className="settings-section">
               <header className="settings-overview-head">
@@ -1068,6 +1184,7 @@ export function SettingsPage({
                 </>
               ) : null}
               <AgentEnvSection />
+              <AgentApprovalsSection />
             </section>
           )}
         </div>
@@ -1161,6 +1278,63 @@ function envProblems(rows: EnvRow[]): Record<number, string> {
     seen.add(row.name);
   }
   return problems;
+}
+
+/** Whether Codex approvals are answered from the Sessions page. Hidden
+ *  while the daemon does not serve the setting (an older one). */
+function AgentApprovalsSection() {
+  const [enabled, setEnabled] = useState<boolean | null>(null);
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState("");
+  useEffect(() => {
+    request<unknown>("api/agent-requests").then(
+      (body) => setEnabled(parseAgentRequests(body).settings?.codex_approvals ?? null),
+      () => setEnabled(null),
+    );
+  }, []);
+  if (enabled === null) return null;
+  const change = async (next: boolean) => {
+    setEnabled(next);
+    setPending(true);
+    setError("");
+    try {
+      await saveAgentSettings({ codex_approvals: next });
+    } catch (e) {
+      setEnabled(!next);
+      setError(errorText(e));
+    } finally {
+      setPending(false);
+    }
+  };
+  return (
+    <section aria-labelledby="agent-approvals-heading" className="local-panel settings-card p-0!">
+      <PanelHeader
+        id="agent-approvals-heading"
+        icon={<SessionsIcon size={20} />}
+        title="Answering agents"
+        detail="Approve commands and answer questions from the Sessions page."
+      />
+      <div className="review-section px-5 pb-4">
+        <label className="switch-row">
+          <span>
+            Answer Codex approvals from the app
+            <small>
+              While on, Codex hides its own approval prompt for up to 25 seconds while it waits for
+              an answer here.
+            </small>
+          </span>
+          <input
+            type="checkbox"
+            role="switch"
+            checked={enabled}
+            disabled={pending}
+            onChange={(event) => void change(event.target.checked)}
+          />
+        </label>
+        {error ? <Alert className="mt-3">{error}</Alert> : null}
+      </div>
+    </section>
+  );
 }
 
 /** Variables set for every agent baum runs and for the git commands that

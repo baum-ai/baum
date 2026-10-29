@@ -7,6 +7,7 @@ export type InboxAction =
   | "previous"
   | "open"
   | "select"
+  | "peek"
   | "merge"
   | "fix"
   | "generate"
@@ -19,6 +20,7 @@ export const INBOX_SHORTCUTS: { keys: string[]; action: InboxAction; label: stri
   { keys: ["k", "ArrowUp"], action: "previous", label: "Previous row" },
   { keys: ["Enter", "o"], action: "open", label: "Open the pull request or group" },
   { keys: ["x"], action: "select", label: "Select or deselect" },
+  { keys: [" "], action: "peek", label: "Peek at the review below the row" },
   { keys: ["m"], action: "merge", label: "Merge, where offered" },
   { keys: ["f"], action: "fix", label: "Fix, where offered" },
   { keys: ["g"], action: "generate", label: "Generate the review" },
@@ -53,6 +55,15 @@ const LIST_SHORTCUTS = [
   { keys: ["Enter", "o"], label: "Open the row" },
   { keys: ["Escape"], label: "Clear the row focus" },
 ];
+/** Settings' keys, which `SettingsPage` handles itself. */
+const SETTINGS_SHORTCUTS = [
+  { keys: ["j", "ArrowDown"], label: "Next section, or next control in one" },
+  { keys: ["k", "ArrowUp"], label: "Previous section, or previous control in one" },
+  { keys: ["1–5"], label: "Go to a section" },
+  { keys: ["Enter", "l", "ArrowRight"], label: "Go into the section" },
+  { keys: ["Space", "Enter"], label: "Change or press the focused control" },
+  { keys: ["Escape", "h", "ArrowLeft"], label: "Back to the sections" },
+];
 /** Where each group of keys works; the sheet lists the current one first. */
 export type ShortcutsPlace =
   | "anywhere"
@@ -62,6 +73,7 @@ export type ShortcutsPlace =
   | "sessions"
   | "jobs"
   | "repositories"
+  | "settings"
   | "page"
   | "walkthrough";
 export const MAC = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
@@ -71,6 +83,7 @@ const KEY_NAMES: Record<string, string> = {
   ArrowLeft: "←",
   ArrowRight: "→",
   Escape: "Esc",
+  " ": "Space",
 };
 /** The app's command modifier as drawn: ⌘ on a Mac, Ctrl elsewhere. */
 const COMMAND = MAC ? "⌘" : "Ctrl+";
@@ -409,6 +422,7 @@ export function ShortcutsSheet({
         { keys: ["/"], label: "Search GitHub repositories while adding" },
       ],
     },
+    { place: "settings", title: "Settings", rows: SETTINGS_SHORTCUTS },
     { place: "page", title: "A session or job transcript", rows: [back] },
   ];
   const ordered = [

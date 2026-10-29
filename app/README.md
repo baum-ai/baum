@@ -135,11 +135,11 @@ request is open, is not a fork,
 discovery says the signed-in account can push to the repository
 (`viewer_can_push`) and the repository has a local clone. The PR page puts the
 button first beside the version menu, Pull requests puts a small **Fix** in
-the row's Status cell, and the Inbox's card offers it as its action; `f` presses
+the row's actions, and the Inbox's card offers it as its action; `f` presses
 it on each. Any of them starts the fix at once, with no dialog and no cost
 estimate: `fix` in `src/app.tsx` posts `POST api/jobs` with
 `{"items":[{"clone","pr","kind":"fix"}],"mode":"single"}` (`startFix`), and
-the button reads **Starting…** (in Pull requests' Status cell, **Fixing…**)
+the button reads **Starting…** (in Pull requests' row actions, **Fixing…**)
 from the click (the app's `fixStarting` set) until the job arrives. The daemon checks GitHub again and runs it with the
 fix agent Settings chooses, else the review's harness and model. A fix it refuses answers `409` with
 `blocked_reason` (fork, no push access, unsupported harness, nothing to fix),
@@ -158,9 +158,15 @@ push, so the new head appears without a manual refresh.
 
 A fix can be watched live. A fix job with `has_transcript` has a transcript
 page, `?page=jobs&job=<id>` (`JobPage` and `JobTranscript` in
-`src/job-transcript.tsx`): the job's phase while it runs, then its summary or
-failure, above the agent's messages, collapsed reasoning, tool calls (a status
-mark, expandable to their output) and errors. `JobTranscript` reads
+`src/job-transcript.tsx`), its panels in the inbox's light sand on its darker
+sand: the job's phase while it runs, then its summary or failure, above the
+agent's messages, collapsed reasoning, tool calls (a status mark, expandable to
+their output) and errors.
+The summary, messages and reasoning are Markdown, without raw HTML. Consecutive
+tool calls form one run (`groupEntries`; reasoning does not break it) that shows
+only its latest call, with the earlier ones folded behind "N earlier tool
+calls" above it. A call shows its tool once (Claude's titles start with the
+tool's name) and Codex's tools as Run, Edit, MCP and Search. `JobTranscript` reads
 `GET api/jobs/{id}/transcript?after=N` from 0, again at once while `more`,
 otherwise every second until `done`, and follows the end while the reader is
 there (`useFollowScroll`). Entries are append-only; a later entry with a tool's
@@ -170,9 +176,9 @@ after. A failure's `detail` (git's own words for the `signing` reason, which the
 daemon checks before the agent runs) shows under **What happened**.
 
 Merging: a pull request whose Merge state is Ready (open, not a draft) shows a
-Merge button in the PR page header and, on hover or keyboard focus, beside Ready
-in its Pull requests row (always drawn on touch screens), and as the Inbox
-card's action. It opens a confirmation dialog
+Merge button in the PR page header and, on hover or keyboard focus, in its
+Pull requests row's actions (always drawn on touch screens and below 72rem,
+where the columns fold), and as the Inbox card's action. It opens a confirmation dialog
 that reads `GET /api/prs/merge-options` for the repository's allowed methods
 (merge commit, squash, rebase), preselects GitHub's default for the user and
 offers only the allowed ones. "Merge pull request" posts `POST /api/prs/merge`
@@ -205,7 +211,7 @@ any focus a click left on a control.
 On Pull requests, `j`/`↓` and `k`/`↑` move a row focus through the
 rows as drawn (group rows count; rows of collapsed buckets and collapsed groups
 are skipped), `Enter` or `o` opens the focused pull request or group, `x` toggles
-its selection, `m` opens Merge and `f` starts the fix where the row offers them (Merge wins
+its selection, `Space` opens or closes its peek, `m` opens Merge and `f` starts the fix where the row offers them (Merge wins
 where both could), `g` generates the pull request's review through the same path
 as the PR page's Generate (so the same confirmations and the instant "Starting"
 state), `r` refreshes from GitHub at once rather than after the polling backoff,
@@ -217,7 +223,12 @@ settings) and `Esc` clears the focus. On Sessions the three sections are one
 list and `p` opens the focused session's pull request; on Jobs `t` opens the
 transcript (Watch while a fix runs); on Repositories `a` opens or closes the
 picker and `/` searches it (the search takes the focus when the picker opens,
-and `Esc` in an empty search leaves it). On a pull request or group page `j`
+and `Esc` in an empty search leaves it). Settings' section list is its
+selection, as Up next's list is: `j`/`↓` and `k`/`↑` move it, `1` to `5` jump
+to a section, and `Enter`, `l` or `→` go into the shown section, where `j` and
+`k` step through its controls, `Space` or `Enter` changes the focused one and
+`Esc`, `h` or `←` go back to the list (`Esc` in a text field or select gives
+it up first, and `j` and `k` go on from it). On a pull request or group page `j`
 and `k` step to the next and previous place in reading order, as the
 navigator's arrows do (`ReviewViewer`'s `steps` ref), and `m`, `f` and `g`
 merge, fix and generate or regenerate where the header offers them. On any
@@ -242,9 +253,9 @@ breakdown toggles are pressed buttons in a group), and its charts' bars take
 the focus for their tooltips.
 
 Update branch and Re-run checks (`src/unblock.tsx`) are secondary buttons in the
-PR page header beside Fix and Merge…, not in Pull requests: the Status cell is
-9.5rem wide and holds one action (Merge on a ready row, else Fix), and a second
-button would crowd "Checks failing" or wrap. `canUpdateBranch` offers the first
+PR page header beside Fix and Merge…, not in Pull requests: a row's actions
+hold one action (Merge on a ready row, else Fix) beside Peek, and a third
+button would crowd the column or wrap. `canUpdateBranch` offers the first
 when discovery's `behind` is true (GitHub's `BEHIND`, never for a draft or a
 conflict), the pull request is open, not a fork, and `viewer_can_push` is true;
 `canRerunChecks` offers the second when `checks` is `failing`, the pull request
@@ -467,7 +478,20 @@ open pull requests with a paginated GraphQL query per repository, including
 review decisions, head checks, merge state and the first 100 review threads;
 when more threads exist the unresolved count shows a lower bound (`N+`). The
 columns follow the hosted Focus view's labels, icons and tones and fold under
-the title below 1024px. Generating and failed reviews remain visible under the
+the title below 72rem. The list is drawn as the Up next design's live table,
+in the Inbox's palette (`--un-*`) on the app's type scale. The page bar says
+when the list last read the daemon ("Updated just now", then how long ago,
+with the exact time as a tooltip), with a turning mark while a refresh runs.
+A row's last cell holds its action and **Peek**, which wait for the pointer or
+keyboard focus in the wide table. Peek (or `Space` on the focused row) opens
+the saved review under the row, read when first opened and again only for a
+new version: the summary, the first reason for its risk (in the critical tone
+at 4 and 5), the first four sections in review order with their lines added
+and removed, and **Open the review**. Without a saved review it says why (no
+clone, being written, failed, none yet) and offers **Generate the review**
+where it can run. A row whose state (review, checks, merge state, threads,
+score, estimate or version) changed in the latest read flashes once. The keys
+that work on the list are listed at its foot, except on touch screens. Generating and failed reviews remain visible under the
 title, with agent sessions in progress beside them. Incomplete risk assessments show a lower bound (`≥N/5`) with an explicit
 “at least” description and caution styling rather than a reassuring low-risk
 colour. Collapsible groups say who acts next, with each row in one group:
@@ -489,7 +513,11 @@ one notice covers every repository GitHub could not refresh, says whether
 GitHub is disconnected or needs attention, and links to Settings' Connections; another
 covers an exhausted GitHub allowance. Neither appears merely because the cache
 is old. Refresh asks
-GitHub through the local server. Generate, for one pull request or a checkbox
+GitHub through the local server. While anything is selected a dark bar over
+the list counts it and offers **Merge N** for the selected pull requests that
+can merge (one opens its Merge confirmation; more open the Inbox's Merge all
+confirmation), **Generate reviews (N)**, **Review together (N)** for two or
+more, and **Clear**. Generate, for one pull request or a checkbox
 selection, starts at once (`POST api/jobs` with the items): no dialog, no
 price, whatever the model, `cursor-agent` and models baum has no price for
 included. The one confirmation left is for a fork or an author without write
@@ -508,7 +536,7 @@ bot reports and local session links. Cached data loads immediately; offline,
 rate-limited and failed refreshes are visible and retried with backoff.
 
 Review groups (`internal/reviewgroups` owns the daemon side). Selecting two or
-more rows shows "Review together (N)": it asks for a name (prefilled with the
+more rows shows "Review together (N)" in the selection bar: it asks for a name (prefilled with the
 first pull request's title) and creates a group of 2 to 8 pull requests of one
 repository, then opens `?group=<id>`; a selection across repositories or of
 more than eight is refused in the app without a request. In Pull requests a group
@@ -645,32 +673,56 @@ a "Sessions in progress" panel (agent, working or waiting, title, branch, last
 activity and Open transcript) on its PR page, updated by the `live` event, which carries no
 data: the app rereads the list. Only the agent, session id, state, times, last
 event kind, why and since when it waits on the person with the one masked line
-its agent showed, repository, branch, PR number and the session's title (see
-"Live sessions" in ARCHITECTURE.md) reach the app in the list,
+its agent showed, repository, branch, PR number, the session's title and its
+activity (latest tool calls with masked targets, files written, latest assistant
+message; see "Live sessions" in ARCHITECTURE.md) reach the app in the list,
 never a path; a session's transcript comes only when the Sessions page opens it
 (below). When a session ends the panel goes and the page reads its sessions
 from disk again, where the full session is. A daemon without the record serves
 none.
 
-The Sessions page (`?page=sessions`) lists the same sessions: "Needs you", "Running
-now" (agent, working or waiting for you, the session's title and, once the agent
-compacted it, the request its compaction summary records, repository and branch,
-a link to the pull request's page when the inbox has it, start and last activity) and
-"Ended recently"
-(sessions that ended in the last 24 hours, newest first, with when they ended and how
-long they ran). Times are relative, with the exact time on hover. The daemon keeps
-ended sessions for 24 hours, across restarts, and the `live` event updates the page
-and the sidebar count.
+The Sessions page (`?page=sessions`) is a live feed of the same sessions, in three
+sections of cards; the `live` event updates it and the sidebar count, and times
+tick every second. The daemon keeps ended sessions for 24 hours, across restarts.
 
-"Needs you" (`NeedsYou` in `src/sessions.tsx`) is the first card, shown only while a
-session waits on the person: one whose `waiting_reason` is `permission` ("Asking
-permission"), `input` ("Waiting for your answer") or `turn_finished` ("Finished its
-turn"), the longest wait (`waiting_since`) first. Each row has the agent's mark, the
-reason in words, the session's title, the agent's message when it sent one ("Claude needs your permission
-to use Bash"), "Waiting 4 min" (redrawn every 10 seconds, without waiting for a `live`
-event), the repository, branch chip and pull request link, and Open transcript. A
-session there is not listed again under Running now; a session idle only because it
-went silent, or with a reason this app does not know, stays there. While anything
+- "Needs you" (`SessionsPage` in `src/sessions.tsx`) shows only while something waits
+  on the person: the requests the app can answer first, then the longest wait. A session with a pending `permission`
+  request (from `api/agent-requests`) gets an amber card titled by its tool ("wants to
+  run a command", "wants to edit a file", "wants to use X"), the session's title and
+  branch, the agent's last message, what the request would do (`code` rows in a dark
+  mono block) and the buttons Allow once, one Always allow per suggestion, and Deny. A
+  `question` request shows its options as buttons (toggles and Submit for
+  multi-select or several questions). A button disables the card and shows "Sending…"
+  at once; the card says "Sent" until the next `live` refresh drops the request, and a
+  409 `request_gone` shows "Already answered in the terminal". A green notice says
+  what was done, and when nobody waits it reads "Nobody is waiting on you." with the
+  last action. A session waiting with no request (it finished its turn, or asks for
+  something only its terminal can answer) gets a quieter card with the reason, the
+  wait, the agent's last message, the line it showed and Open transcript, plus
+  "Answer in the terminal" for a permission or an answer. It has no reply box: the app
+  sends messages only to running sessions. A daemon without `api/agent-requests`
+  shows no requests.
+- "Running now" has one card per running session, or one quiet for a while (a muted
+  dot and "Quiet for 12 min"): the agent, title, branch, pull request link, and the time
+  since it started. From the session's `activity` it shows the current step (the tool
+  in its colour and its target, with a blinking caret while running, still under
+  reduced motion), a "Trail" of chips for the earlier steps and "N files touched";
+  without `activity` it reads "Active 2 min ago". "Send when it finishes" posts a
+  message to `api/agent-messages`; the daemon delivers it when the session's turn
+  ends, one per session, and the card then shows "Queued for when it finishes" with
+  Cancel.
+- "Ended recently" has one compact row per session that ended in the last 24 hours,
+  newest first: the agent, title, how long it ran and the files it touched, when it
+  ended, and Open transcript.
+
+The Settings page has "Answer Codex approvals from the app" (`codex_approvals`, saved
+through `PUT api/agent-requests/settings`, hidden when the daemon lacks the route):
+while on, Codex hides its own approval prompt for up to 25 seconds while it waits for an
+answer from the app.
+
+A session in Needs you is not listed again under Running now; a session idle only
+because it went silent, or with a reason this app does not know, stays there. Times
+are relative where they are not clocks, with the exact time on hover. While anything
 needs the person the sidebar's Sessions badge counts those sessions in the caution
 tone; otherwise it counts the running ones. The desktop app notifies when a session
 starts asking for a permission or an answer (see the desktop README).

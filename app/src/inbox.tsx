@@ -9,7 +9,7 @@ import {
   type SetStateAction,
 } from "react";
 import { cn, FOCUS_RING } from "@baum/viewer/components/classnames";
-import { formatCount } from "@baum/viewer/components/format";
+import { formatCount, formatRelative } from "@baum/viewer/components/format";
 import {
   CheckIcon,
   ChevronRightIcon,
@@ -22,8 +22,13 @@ import {
   WarningIcon,
   type IconProps,
 } from "@baum/viewer/components/icons";
+import { Lines } from "@baum/viewer/components/review-parts";
 import { Badge } from "@baum/viewer/components/ui";
-import { riskScoreTone, type RiskScoreLevel } from "@baum/viewer/review-document";
+import {
+  riskScoreTone,
+  sectionsInReviewOrder,
+  type RiskScoreLevel,
+} from "@baum/viewer/review-document";
 import type { ViewerLinkProps } from "@baum/viewer/navigation";
 import {
   appURL,
@@ -39,10 +44,11 @@ import {
   type LiveSession,
   type ReviewGroup,
 } from "./api";
-import { LiveBadge } from "./live";
-import { NineDots } from "./nine-dots";
+import { LiveBadge, useNow } from "./live";
+import { LoadingStatus, NineDots } from "./nine-dots";
 import { canMerge, MergeDialog } from "./merge";
 import { inboxAction, moveFocus, onBody, useShortcuts } from "./shortcuts";
+import { MergeReadyDialog, useSavedReview, type SavedReviews } from "./up-next";
 
 /** One row the keyboard can reach: a pull request or a review group. */
 type Item = { id: string; entry?: Entry; group?: ReviewGroup };
@@ -160,6 +166,7 @@ export function Inbox({
   jobs = [],
   generate,
   refresh,
+  bulk,
 }: {
   rows: Entry[];
   cloneFor: (entry: Entry) => string;
@@ -182,10 +189,19 @@ export function Inbox({
   generate?: (entry: Entry) => void;
   /** Refreshes from GitHub. */
   refresh?: () => void;
+  /** The page's own actions on the selection, drawn in the selection bar
+   *  after Merge. */
+  bulk?: ReactNode;
 }) {
   const section = useRef<HTMLElement>(null);
   const [collapsed, setCollapsed] = useState(new Set<string>());
   const [merging, setMerging] = useState<Entry | null>(null);
+  const [mergingAll, setMergingAll] = useState<Entry[] | null>(null);
+  // The rows whose peek is open, by row key.
+  const [peeked, setPeeked] = useState(new Set<string>());
+  // The saved reviews peeks have read, kept when a peek closes.
+  const savedReviews: SavedReviews = useState({});
+  const changedRows = useChangedRows(rows);
   // Review groups start collapsed.
   const [expanded, setExpanded] = useState(new Set<string>());
   const groups = inboxGroups(rows, reviewGroups);
@@ -271,13 +287,20 @@ export function Inbox({
         event.preventDefault();
         toggle(rowKey(entry), !selection.has(rowKey(entry)));
         return;
+      case "peek":
+        // Space still presses a button or ticks a box it is on.
+        if (!entry) return;
+        if (event.target instanceof HTMLElement && event.target.closest("button, input")) return;
+        event.preventDefault();
+        peek(rowKey(entry));
+        return;
       case "merge":
         if (!entry || !canMerge(entry)) return;
         event.preventDefault();
         setMerging(entry);
         return;
       case "fix":
-        // Merge takes the Status cell's action when both could apply.
+        // Merge takes the row's action when both could apply.
         if (!entry || canMerge(entry) || !fixLabel(entry) || !fix || !cloneFor(entry)) return;
         if (isActiveJob(fixJob(entry, jobs)) || fixStarting?.(entry)) return;
         event.preventDefault();
@@ -297,6 +320,15 @@ export function Inbox({
       else next.delete(key);
       return next;
     });
+  const peek = (key: string) =>
+    setPeeked((previous) => {
+      const next = new Set(previous);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  const selected = rows.filter((row) => selection.has(rowKey(row)));
+  const mergeable = selected.filter(canMerge);
   const renderRow = (entry: Entry, nested: boolean) => (
     <InboxRow
       key={rowKey(entry)}
@@ -312,6 +344,11 @@ export function Inbox({
       merge={canMerge(entry) ? () => setMerging(entry) : undefined}
       fix={fix && cloneFor(entry) ? () => fix(entry) : undefined}
       fixing={isActiveJob(fixJob(entry, jobs)) || !!fixStarting?.(entry)}
+      peeked={peeked.has(rowKey(entry))}
+      peek={() => peek(rowKey(entry))}
+      savedReviews={savedReviews}
+      changed={changedRows.has(rowKey(entry))}
+      generate={generate && cloneFor(entry) ? () => generate(entry) : undefined}
     />
   );
   return (
@@ -320,6 +357,30 @@ export function Inbox({
       aria-label="Pull request inbox"
       className={cn("local-inbox", selection.size > 0 && "selecting")}
     >
+      {selection.size > 0 ? (
+        <div role="toolbar" aria-label="Selected pull requests" className="inbox-selection-bar">
+          <span className="inbox-selection-count">{formatCount(selection.size)} selected</span>
+          {mergeable.length > 0 ? (
+            <button
+              type="button"
+              className="inbox-bulk inbox-bulk-merge"
+              onClick={() =>
+                mergeable.length === 1 ? setMerging(mergeable[0]!) : setMergingAll(mergeable)
+              }
+            >
+              Merge {formatCount(mergeable.length)}
+            </button>
+          ) : null}
+          {bulk}
+          <button
+            type="button"
+            className="inbox-bulk inbox-bulk-clear"
+            onClick={() => setSelection(new Set())}
+          >
+            Clear
+          </button>
+        </div>
+      ) : null}
       <div className="inbox-columns inbox-columns-head">
         <input
           type="checkbox"
@@ -344,6 +405,7 @@ export function Inbox({
             {column}
           </span>
         ))}
+        <span className="sr-only">Actions</span>
       </div>
       {groups.map((group) => (
         <Bucket
@@ -383,6 +445,29 @@ export function Inbox({
           {group.rows.map((entry) => renderRow(entry, false))}
         </Bucket>
       ))}
+      <footer className="inbox-keys" aria-hidden="true">
+        <span>
+          <kbd>j</kbd> <kbd>k</kbd> move
+        </span>
+        <span>
+          <kbd>x</kbd> select
+        </span>
+        <span>
+          <kbd>space</kbd> peek
+        </span>
+        <span>
+          <kbd>o</kbd> open
+        </span>
+        <span>
+          <kbd>m</kbd> merge
+        </span>
+        <span>
+          <kbd>f</kbd> fix
+        </span>
+        <span>
+          <kbd>?</kbd> every key
+        </span>
+      </footer>
       {merging ? (
         <MergeDialog
           key={rowKey(merging)}
@@ -391,7 +476,68 @@ export function Inbox({
           merged={changed ?? (async () => {})}
         />
       ) : null}
+      {mergingAll ? (
+        <MergeReadyDialog
+          entries={mergingAll}
+          close={() => setMergingAll(null)}
+          merged={async () => {
+            setSelection(new Set());
+            await changed?.();
+          }}
+        />
+      ) : null}
     </section>
+  );
+}
+
+/** What a row shows that can change while the list is open; a row whose
+ *  state differs from the last read flashes once. */
+const rowState = (entry: Entry) =>
+  [
+    entry.status,
+    entry.review,
+    entry.checks,
+    entry.merge,
+    entry.unresolved,
+    entry.risk_score?.score,
+    entry.review_minutes,
+    entry.latest?.version,
+  ].join("|");
+const FLASH_MS = 1200;
+
+/** The row keys whose state changed in the latest read, for a moment. Rows
+ *  seen for the first time are not changes. */
+function useChangedRows(rows: Entry[]) {
+  const seen = useRef<Map<string, string> | null>(null);
+  const [changed, setChanged] = useState(new Set<string>());
+  const states = rows.map((row) => [rowKey(row), rowState(row)] as const);
+  const signature = states.map(([key, state]) => `${key}=${state}`).join("\n");
+  useEffect(() => {
+    const previous = seen.current;
+    seen.current = new Map(states);
+    if (!previous) return;
+    const now = states.filter(([key, state]) => previous.has(key) && previous.get(key) !== state);
+    if (now.length === 0) return;
+    setChanged(new Set(now.map(([key]) => key)));
+    const timer = setTimeout(() => setChanged(new Set()), FLASH_MS);
+    return () => clearTimeout(timer);
+    // `signature` stands for the rows' states.
+  }, [signature]);
+  return changed;
+}
+
+/** When the list last read the daemon, kept current while the page is open;
+ *  its mark turns while a read is under way. */
+export function UpdatedAgo({ at, busy }: { at: number | null; busy: boolean }) {
+  const now = useNow(5_000);
+  if (at == null && !busy) return null;
+  return (
+    <span className="inbox-updated" title={at == null ? undefined : new Date(at).toLocaleString()}>
+      <span aria-hidden="true" className={cn("inbox-updated-mark", busy && "busy")} />
+      {busy || at == null
+        ? "Updating…"
+        : `Updated ${now - at < 10_000 ? "just now" : formatRelative(new Date(at).toISOString(), now)}`}
+    </span>
   );
 }
 function Bucket({
@@ -521,7 +667,6 @@ function StatusCell({
   title,
   empty,
   children,
-  action,
 }: {
   column: string;
   label?: string;
@@ -529,8 +674,6 @@ function StatusCell({
   title?: string;
   empty: string;
   children?: ReactNode;
-  /** A control for this state, drawn after it. */
-  action?: ReactNode;
 }) {
   const Icon = style?.icon;
   const text = label ?? style?.label;
@@ -554,7 +697,6 @@ function StatusCell({
       {Icon && text ? <Icon size={14} className={cn("flex-none", style?.iconTone)} /> : null}
       {text}
       {children}
-      {action}
     </span>
   );
 }
@@ -577,7 +719,7 @@ function MergeAction({ entry, merge }: { entry: Entry; merge: () => void }) {
   );
 }
 
-/** The small fix action in a broken pull request's status cell. */
+/** The small fix action in a broken pull request's row. */
 function FixAction({ label, fix, fixing }: { label: string; fix?: () => void; fixing: boolean }) {
   if (fixing)
     return (
@@ -603,25 +745,7 @@ function FixAction({ label, fix, fixing }: { label: string; fix?: () => void; fi
     </button>
   );
 }
-function StatusColumns({
-  entry,
-  merge,
-  fix,
-  fixing = false,
-}: {
-  entry: Entry;
-  merge?: () => void;
-  fix?: () => void;
-  fixing?: boolean;
-}) {
-  // The Status cell carries the one thing to do about the state it shows:
-  // merge a ready pull request, or fix a broken one.
-  const label = fixLabel(entry);
-  const action = merge ? (
-    <MergeAction entry={entry} merge={merge} />
-  ) : label ? (
-    <FixAction label={label} fix={fix} fixing={fixing} />
-  ) : null;
+function StatusColumns({ entry }: { entry: Entry }) {
   const unresolved = entry.unresolved;
   const status = mergeStatus(entry);
   // Unresolved threads belong to the GitHub review, beside its decision; none
@@ -672,8 +796,144 @@ function StatusColumns({
                 .join(", ")
             : undefined
         }
-        action={action ?? undefined}
       />
+    </div>
+  );
+}
+/** The row's actions: the one thing to do about its state (merge a ready
+ *  pull request, or fix a broken one) and Peek. */
+function RowActions({
+  entry,
+  merge,
+  fix,
+  fixing,
+  peeked,
+  peek,
+  peekId,
+}: {
+  entry: Entry;
+  merge?: () => void;
+  fix?: () => void;
+  fixing: boolean;
+  peeked: boolean;
+  peek: () => void;
+  peekId: string;
+}) {
+  const label = fixLabel(entry);
+  const pr = entry.pull_request;
+  return (
+    <span className="inbox-row-actions">
+      {merge ? (
+        <MergeAction entry={entry} merge={merge} />
+      ) : label ? (
+        <FixAction label={label} fix={fix} fixing={fixing} />
+      ) : null}
+      <button
+        type="button"
+        className={cn("inbox-action inbox-peek", FOCUS_RING)}
+        aria-label={`Peek at ${pr.repository} #${pr.number}`}
+        aria-expanded={peeked}
+        aria-controls={peekId}
+        onClick={peek}
+      >
+        {peeked ? "Close" : "Peek"}
+        <kbd aria-hidden="true" className="key-hint">
+          space
+        </kbd>
+      </button>
+    </span>
+  );
+}
+const PEEK_SECTIONS = 4;
+/** A look at the saved review under its row: the summary, the first reason
+ *  for its risk and the first sections with their lines, and a way in. */
+function RowPeek({
+  id,
+  entry,
+  clone,
+  href,
+  Link,
+  generate,
+  savedReviews,
+}: {
+  id: string;
+  entry: Entry;
+  clone: string;
+  href: string;
+  Link: ComponentType<ViewerLinkProps>;
+  generate?: () => void;
+  savedReviews: SavedReviews;
+}) {
+  const saved = useSavedReview(entry, clone, savedReviews);
+  const doc = saved && saved !== "failed" ? saved : null;
+  const pr = entry.pull_request;
+  const reason = doc?.summary.risk_score?.reasons[0];
+  const reasonTitle = reason
+    ? doc?.sections.find((section) => section.id === reason.section)?.title
+    : undefined;
+  const sections = doc
+    ? sectionsInReviewOrder(doc.sections).filter((section) => section.derived.state !== "stale")
+    : [];
+  const score = entry.risk_score?.score ?? 0;
+  const lead = doc
+    ? doc.summary.text
+    : entry.needs_clone
+      ? `No review yet: baum needs a local clone of ${pr.repository}. Choose a folder or clone it in Repositories, and the review can be written.`
+      : entry.status === "generating"
+        ? "baum is writing the review. It shows here once it is saved."
+        : entry.status === "failed"
+          ? `The review failed${entry.failure_reason ? `: ${entry.failure_reason}` : "."}`
+          : saved === "failed"
+            ? "The saved review could not be read."
+            : entry.version_count > 0 && clone
+              ? null
+              : "No review yet.";
+  return (
+    <div id={id} className="inbox-peek-panel" role="region" aria-label={`Peek at #${pr.number}`}>
+      <div className="inbox-peek-summary">
+        <h3>Summary</h3>
+        {lead == null ? <LoadingStatus>Reading the review…</LoadingStatus> : <p>{lead}</p>}
+        {reason ? (
+          <p className={cn("inbox-peek-risk", score >= 4 && "high")}>
+            {reasonTitle ? <strong>{reasonTitle}: </strong> : null}
+            {reason.text}
+          </p>
+        ) : null}
+      </div>
+      <div className="inbox-peek-changes">
+        {sections.length > 0 ? (
+          <>
+            <h3>Key changes</h3>
+            <ul>
+              {sections.slice(0, PEEK_SECTIONS).map((section) => (
+                <li key={section.id}>
+                  <span title={section.title}>{section.title}</span>
+                  <Lines
+                    additions={section.derived.additions}
+                    deletions={section.derived.deletions}
+                    format={formatCount}
+                  />
+                </li>
+              ))}
+            </ul>
+            {sections.length > PEEK_SECTIONS ? (
+              <p className="inbox-peek-more">
+                and {formatCount(sections.length - PEEK_SECTIONS)} more
+              </p>
+            ) : null}
+          </>
+        ) : null}
+        <div className="inbox-peek-actions">
+          <Link href={href} className={cn("inbox-peek-open", FOCUS_RING)}>
+            {doc ? "Open the review" : "Open the pull request"}
+          </Link>
+          {!doc && generate && entry.status !== "generating" && !entry.needs_clone ? (
+            <button type="button" className={cn("inbox-action", FOCUS_RING)} onClick={generate}>
+              Generate the review
+            </button>
+          ) : null}
+        </div>
+      </div>
     </div>
   );
 }
@@ -819,6 +1079,11 @@ function InboxRow({
   merge,
   fix,
   fixing,
+  peeked,
+  peek,
+  savedReviews,
+  changed,
+  generate,
 }: {
   rowId: string;
   /** The row the keyboard is on. */
@@ -834,13 +1099,24 @@ function InboxRow({
   merge?: () => void;
   fix?: () => void;
   fixing: boolean;
+  peeked: boolean;
+  peek: () => void;
+  savedReviews: SavedReviews;
+  /** Its state changed in the latest read. */
+  changed: boolean;
+  generate?: () => void;
 }) {
   const pr = entry.pull_request;
   const metadata = [pr.repository, `#${pr.number}`, pr.author].filter(Boolean);
+  const peekId = useId();
+  const href = appURL(
+    `?page=pulls&${clone ? `clone=${encodeURIComponent(clone)}` : `repository=${encodeURIComponent(pr.repository)}`}&pr=${pr.number}`,
+  );
   return (
     <li
       data-row-id={rowId}
       data-focused={focused || undefined}
+      data-changed={changed || undefined}
       className={cn(
         "inbox-columns inbox-row",
         nested && "inbox-nested",
@@ -858,9 +1134,7 @@ function InboxRow({
       <div className="min-w-0">
         <div className="flex min-w-0 items-baseline gap-2">
           <Link
-            href={appURL(
-              `?page=pulls&${clone ? `clone=${encodeURIComponent(clone)}` : `repository=${encodeURIComponent(pr.repository)}`}&pr=${pr.number}`,
-            )}
+            href={href}
             title={pr.title}
             className="inbox-pr-title min-w-0 font-medium text-(--text-primary) hover:underline"
           >
@@ -879,7 +1153,27 @@ function InboxRow({
           <LiveBadge sessions={live} />
         </div>
       </div>
-      <StatusColumns entry={entry} merge={merge} fix={fix} fixing={fixing} />
+      <StatusColumns entry={entry} />
+      <RowActions
+        entry={entry}
+        merge={merge}
+        fix={fix}
+        fixing={fixing}
+        peeked={peeked}
+        peek={peek}
+        peekId={peekId}
+      />
+      {peeked ? (
+        <RowPeek
+          id={peekId}
+          entry={entry}
+          clone={clone}
+          href={href}
+          Link={Link}
+          generate={generate}
+          savedReviews={savedReviews}
+        />
+      ) : null}
     </li>
   );
 }

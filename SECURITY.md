@@ -256,7 +256,11 @@ as far as the tool allows:
   only the inline `--settings` baum passes is applied; administrator-managed
   policy settings may still apply. No MCP server is loaded
   (`--strict-mcp-config` with an empty list), and no session is written
-  (`--no-session-persistence`).
+  (`--no-session-persistence`), unless the caller asks the local run to keep,
+  resume (`--resume`) or fork (`--fork-session`) a session; the hosted profile
+  never does. `--restricted` and the tool allowlist apply on every launch,
+  resume and fork included. Callers must resume only session ids baum itself
+  recorded: an id could otherwise name any session the user's CLI stored.
 - The process gets an allowlist of your environment variables. Provider
   credentials and configuration (`ANTHROPIC_*`, `OPENAI_*`, `AWS_*`,
   `GOOGLE_*`, `AZURE_*`), GitHub tokens, Git settings and the SSH agent are
@@ -288,7 +292,11 @@ Codex's own read-only sandbox:
   model can read any file your account can, such as `~/.ssh` or `~/.aws`, and
   a pull request could try to persuade it to. Baum adds no further
   restriction, and the model's answer is the only thing baum keeps.
-- `--ephemeral` writes no session, and the `hooks`, `apps` and `multi_agent`
+- `--ephemeral` writes no session (a local run that keeps, resumes or forks a
+  session omits it and runs `exec resume` or `exec fork`, with the sandbox set
+  as `-c sandbox_mode="read-only"` because those subcommands take no
+  `--sandbox`; approvals stay `-c approval_policy="never"` and the other flags
+  apply as on every launch), and the `hooks`, `apps` and `multi_agent`
   features are disabled. Web search is off and approvals are never requested.
 - `--ignore-rules` skips user and project execpolicy `.rules` files, and
   `--ignore-user-config` skips `$CODEX_HOME/config.toml` (auth still uses
@@ -324,6 +332,26 @@ What remains for `codex`:
   `config.toml` may appear logged out, because `--ignore-user-config` skips that
   file. Baum does not pass the desktop session variables the keyring needs; sign
   in with `codex login` so the login is stored in `CODEX_HOME`.
+
+A review the daemon runs with `claude` or `codex` keeps its agent session and
+run directory so a chat can continue it. The kept directory holds what the
+model was given: the unpacked head and merge-base checkouts, the description
+images, `bundle.json` (already redacted) and `schema.json`. The raw model output
+of a repair (`rejected-N.json`, unredacted) is deleted before the directory is
+kept. The CLI also keeps its transcript of the kept session in its usual store
+(`$CLAUDE_CONFIG_DIR` or `~/.claude` for Claude Code, `$CODEX_HOME` or
+`~/.codex` for Codex), which holds the prompt, the bundle and the model's
+answers. Only the session that produced the saved review stays: the sessions of
+retries and repairs are deleted when the run ends, and all of them when the run
+fails, is rejected or interrupted. The directory lives under baum's user cache
+directory (`<cache>/baum/review-runs/`), not in the system temporary directory
+or your repository, with mode 0700. Baum deletes the directories of a pull
+request's versions beyond the latest two and any directory untouched for 14
+days, together with the CLI sessions that ran in them (chat forks included),
+only ever real directories with the run prefix directly under that root, Claude
+project directories named after such a directory and Codex rollouts that record
+such a directory as their cwd; it never follows a symlink. Runs for other
+backends and review groups keep nothing and are removed at once.
 
 The unsandboxed mode (`--sandbox danger-full-access`) exists only as the
 `Container` profile for the hosted review agent, which runs inside its own
@@ -1015,8 +1043,9 @@ addresses, your home directory as `~`) and cut to 160 characters, and only
 while the session waits. The desktop app shows it as the text of the
 "needs your permission" or "waiting for your answer" notification, the
 `notice` event that names the session (agent, id, repository, branch, pull
-request number) and carries the same masked line. Codex's permission request
-keeps nothing of the command it asks about. Nothing of it goes to a baum
+request number) and carries the same masked line. A permission request's
+event keeps nothing of the command it asks about (what the app is shown of
+it is held in memory only, below). Nothing of it goes to a baum
 server, and an ended session's saved state (`live-sessions.json`) holds none
 of it.
 
@@ -1058,6 +1087,61 @@ by its id. The transcript is redacted exactly as the PR page's linked sessions
 written as `~`, nothing else removed. The path itself never reaches the app.
 At most 8 transcripts are held in memory, and only while their session is
 listed.
+
+The desktop app can answer what your agents ask you, and send a running
+session a message. Approving from the app means that anything that can reach
+the daemon's authenticated local API (the app, or a process running as you
+that reads its credential file) can approve commands, file edits and other
+tool calls for your Claude Code sessions, and for Codex sessions once you turn
+on Codex approvals in the app (`codex_approvals`, off by default).
+`GET /api/agent-requests`, `POST /api/agent-requests/{id}/answer`,
+`PUT /api/agent-requests/settings`, `POST /api/agent-messages` and
+`DELETE /api/agent-messages/{agent}/{id}` sit behind the same authentication,
+Origin and Host checks as every application route. How it works:
+
+- Claude Code's `PermissionRequest` hook (user-wide plugin 1.2.0) and Codex's
+  hold their agent while the daemon waits for your answer, over the control
+  socket only you can reach. Claude Code keeps its own dialog in the terminal
+  at the same time, and the first answer wins; the hook stops waiting when
+  the same tool call finishes or fails, the session's turn ends or a new
+  prompt is submitted (a subagent's request waits for that subagent's stop
+  instead), and Claude Code kills it after an hour, leaving the dialog as it
+  was. A Claude Code session nobody answers in a terminal (`claude -p` and
+  the SDK, whose `CLAUDE_CODE_ENTRYPOINT` is not `cli` or whose
+  `CLAUDE_CODE_SESSION_ATTENDED` is `0`) is never held. Codex hides its
+  prompt while the hook waits, so the daemon answers a Codex request only
+  with the setting on, and only for about 25 seconds; then the hook prints
+  nothing and Codex asks in its terminal. With no daemon, an older one or
+  any failure, the hooks print nothing and the agent asks as it always did.
+- The app is shown everything the approval covers: rows for what the tool
+  call does (a command and its description; an edit's file, the text it
+  replaces and the new text, every edit of a MultiEdit with their count; a
+  file's new content; a URL; a subagent's description, type, model and
+  prompt), a row for each switch that widens it when it is on (a command
+  run outside the sandbox or in the background, an edit of every
+  occurrence), then every other member of the tool's input that is not
+  empty, as compact JSON (all of it for a tool baum has no rows for).
+  Claude Code's own suggestions for "always allow" are listed, and only the
+  one you pick is applied; a question shows its options. Every string is
+  cleaned and masked as transcripts are (secrets and e-mail addresses
+  masked, your home directory as `~`) and cut (4000 characters for a value),
+  so what you approve can differ from the real input only where a secret
+  was masked or a long value cut. When masking fails, or a question's
+  answers could not be told apart, the request is not shown and the agent
+  asks in its terminal. The hook keeps the agent's own payload and builds
+  the answer from it; the daemon never hands tool input back to an agent.
+- To notice an answer given in the terminal, the `post-tool-use` and
+  `post-tool-use-failure` hook events carry a SHA-256 digest of the tool's
+  name and input (`tool_digest`), never the input, and the subagent's
+  `agent_id` when the tool ran in one.
+- A message you queue is held for its session until that session's next
+  Stop hook, which tells the agent it came from you through the baum app.
+  One message per session; a new one replaces it, and a new prompt or the
+  session's end drops one queued before it.
+- Pending requests and messages are held in the daemon's memory only: never
+  written to disk, logged or sent to a baum server, and gone when the daemon
+  stops. Only the Codex setting is saved, in `agent-requests.json` in the
+  daemon's state directory.
 
 Document selectors must name a registered clone. Linked transcripts use the
 same redaction and linked-session allowlist as `baum internal view`; file patches are

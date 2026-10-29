@@ -32,6 +32,14 @@ type Outcome struct {
 	// pass of the run. The loop sets it on every outcome it builds; nil is a
 	// producer that predates the pass.
 	IdentifierRedaction *IdentifierRedaction `json:"identifier_redaction,omitempty"`
+	// SessionID is the backend session of the last successful call, set only
+	// when the run asked to persist its session (Run.PersistSession). It is
+	// not part of the diagnostics.
+	SessionID string `json:"-"`
+	// Sessions is every session id the run's calls reported, retries and
+	// repairs included, so a host can delete the CLI's files of the ones it
+	// does not keep. Set only with Run.PersistSession.
+	Sessions []string `json:"-"`
 }
 
 // IdentifierRedaction counts the spans the identifier pass masked, and the

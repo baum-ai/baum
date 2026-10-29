@@ -4,7 +4,9 @@ import {
   useRef,
   useState,
   type ComponentType,
+  type Dispatch,
   type ReactNode,
+  type SetStateAction,
 } from "react";
 import { formatCount } from "@baum/viewer/components/format";
 import { Lines } from "@baum/viewer/components/review-parts";
@@ -523,10 +525,17 @@ const sumMinutes = (items: { minutes?: number | null }[]) =>
  *  one of the person's own that waits on checks or reviewers. */
 type Row = { key: string; entry: Entry; item?: UpNextItem; job?: Job; waiting?: boolean };
 
-/** The saved review of the selected pull request, once read; read again only
- *  when a new version is saved. */
-function useReviewDocument(entry: Entry | undefined, clone: string) {
-  const [docs, setDocs] = useState<Record<string, ReviewDocument | "failed">>({});
+/** Saved reviews read so far, by clone, number and version. */
+type SavedReviewDocs = Record<string, ReviewDocument | "failed">;
+export type SavedReviews = [SavedReviewDocs, Dispatch<SetStateAction<SavedReviewDocs>>];
+
+/** The saved review of a pull request, once read, or "failed"; read again
+ *  only when a new version is saved. Nothing while it is read, or for a pull
+ *  request without a saved review. `shared` keeps what was read for a parent
+ *  that outlives the caller, as the Pull requests list does for its peeks. */
+export function useSavedReview(entry: Entry | undefined, clone: string, shared?: SavedReviews) {
+  const own = useState<SavedReviewDocs>({});
+  const [docs, setDocs] = shared ?? own;
   const id =
     entry && clone && entry.version_count > 0
       ? `${clone}#${entry.pull_request.number}@${entry.latest?.version ?? 0}`
@@ -543,7 +552,12 @@ function useReviewDocument(entry: Entry | undefined, clone: string) {
     return () => abort.abort();
     // `id` stands for the entry and clone.
   }, [id]);
-  const doc = id ? docs[id] : undefined;
+  return id ? docs[id] : undefined;
+}
+
+/** The saved review of the selected pull request, once read. */
+function useReviewDocument(entry: Entry | undefined, clone: string) {
+  const doc = useSavedReview(entry, clone);
   return doc && doc !== "failed" ? doc : null;
 }
 
@@ -1549,7 +1563,7 @@ type Merge = {
 /** Merges every ready pull request in one confirmation, each with GitHub's
  *  default method for it and at the head commit the inbox showed. One that
  *  GitHub refuses is named with the reason; the others still merge. */
-function MergeReadyDialog({
+export function MergeReadyDialog({
   entries,
   close,
   merged,

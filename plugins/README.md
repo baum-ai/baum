@@ -34,7 +34,7 @@ running Entire cannot be enumerated; avoid enabling overlapping plugins.
 
 ## Compatibility and behavior
 
-Plugin **1.1.0** uses the existing shared user-wide dispatcher:
+Plugin **1.2.0** uses the existing shared user-wide dispatcher:
 `baum hooks agent --check --user AGENT EVENT`, then
 `baum hooks agent --user AGENT EVENT`. It needs a CLI supporting that contract;
 a missing baum or one too old to recognize the check makes the plugin quietly
@@ -49,7 +49,24 @@ which prints nothing, so it never allows or denies anything. They never run
 Entire. A baum older than them refuses their check and the hooks stay quiet;
 an older daemon ignores their events. Codex asks you to trust the new hook
 definitions; the ones 1.0.0 had are unchanged, so their trust stands. Install/update the CLI or desktop app before relying on the
-plugin. Keep `baum` and `sh` available in the agent's execution environment;
+plugin.
+
+1.2.0 lets the desktop app answer permission requests and questions, and
+send a running session a message. It adds Claude Code's `PermissionRequest`
+for every tool, with a one-hour timeout: the hook holds while the app can
+answer, alongside Claude Code's own dialog in the terminal (the first answer
+wins, and the hook stops waiting once the terminal answered); when it times
+out Claude Code kills it and the dialog stays as it was. A session run with
+`claude -p` or the SDK is never held. It also adds `PostToolUseFailure` for
+every tool (`async`, record-only), so a tool call that failed after you
+allowed it in the terminal still ends the app's request, and the session
+shows as working. Codex's hooks are
+unchanged, so their trust stands: its `PermissionRequest` hook waits for the
+app (about 25 seconds) only when you turn Codex approvals on in the app, since
+Codex hides its own prompt while the hook waits, and otherwise still prints
+nothing. A message you send from the app reaches the session through its
+next Stop hook. All of this needs a baum CLI and daemon that know it; an
+older one leaves the hooks deciding nothing. Keep `baum` and `sh` available in the agent's execution environment;
 on Windows use an environment providing a POSIX shell. Plugins never download
 or upgrade the CLI.
 
@@ -66,7 +83,9 @@ The existing daemon hook-event protocol/version handshake and bounded spool
 remain the compatibility contract. An absent daemon starts only under those
 existing rules; an incompatible daemon receives events through the spool,
 and an older busy daemon restarts when idle. Plugins introduce no daemon
-protocol or independent daemon version requirement.
+protocol or independent daemon version requirement: a permission request
+asks the daemon only once it took the hook's event, and a daemon that does
+not know the request answers `unknown_method`, which leaves the hook quiet.
 
 Claude Code needs plugin marketplaces and command hooks. Codex needs Git
 marketplaces, plugin lifecycle hooks and hook trust review (`/hooks`). These

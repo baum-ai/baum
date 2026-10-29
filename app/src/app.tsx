@@ -17,7 +17,7 @@ import {
 } from "@baum/viewer/navigation";
 import { CloneActions, type FoundClones } from "./repositories";
 import { GroupMissing, GroupPage, NameDialog } from "./group";
-import { Inbox } from "./inbox";
+import { Inbox, UpdatedAgo } from "./inbox";
 import {
   EditInboxPage,
   editInboxHref,
@@ -73,6 +73,9 @@ import {
   automaticLabel,
   jobReasonText,
   parseLive,
+  parseAgentRequests,
+  noAgentRequests,
+  type AgentRequests,
   parseGroups,
   sameRepository,
   MAX_GROUP_MEMBERS,
@@ -203,6 +206,8 @@ function Workspace({ url }: { url: UrlState }) {
   >([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  // When the latest read of the daemon completed, for Pull requests' bar.
+  const [updatedAt, setUpdatedAt] = useState<number | null>(null);
   const [revision, setRevision] = useState(0);
   const [authRevision, setAuthRevision] = useState(0);
   const [selection, setSelection] = useState(new Set<string>());
@@ -235,6 +240,9 @@ function Workspace({ url }: { url: UrlState }) {
   const [github, setGitHub] = useState<GitHubConnection | null>(null);
   const [defaults, setDefaults] = useState<ReviewDefaults | null>(null);
   const [live, setLive] = useState<LiveSession[]>([]);
+  // What agents wait on and the messages queued for them; none from a daemon
+  // without the route.
+  const [agentRequests, setAgentRequests] = useState<AgentRequests>(noAgentRequests);
   // Counts the `live` events, which an open transcript reads itself again on.
   const [liveTick, setLiveTick] = useState(0);
   const [groups, setGroups] = useState<ReviewGroup[]>([]);
@@ -255,8 +263,14 @@ function Workspace({ url }: { url: UrlState }) {
   const reloadLive = useCallback(async () => {
     const sequence = ++lastLive.current;
     // A failed read keeps what the page shows: it is not the end of every session.
-    const sessions = await request<unknown>("api/live-sessions").then(parseLive, () => null);
-    if (sessions && sequence === lastLive.current) setLive(sessions);
+    const [sessions, pending] = await Promise.all([
+      request<unknown>("api/live-sessions").then(parseLive, () => null),
+      // A daemon without the route has no requests or messages to show.
+      request<unknown>("api/agent-requests").then(parseAgentRequests, () => noAgentRequests),
+    ]);
+    if (sequence !== lastLive.current) return;
+    if (sessions) setLive(sessions);
+    setAgentRequests(pending);
   }, []);
   const reloadPending = useRef(false);
   const reloadInFlight = useRef<Promise<void> | null>(null);
@@ -320,6 +334,7 @@ function Workspace({ url }: { url: UrlState }) {
           setDefaults(settings);
           setGitHub(connection);
           setError("");
+          setUpdatedAt(Date.now());
           setRevision((n) => n + 1);
         } catch (e) {
           setError(errorText(e));
@@ -586,7 +601,11 @@ function Workspace({ url }: { url: UrlState }) {
         ? "review"
         : (page === "sessions" && openSession) || openJob
           ? "page"
-          : page === "inbox" || page === "sessions" || page === "jobs" || page === "repositories"
+          : page === "inbox" ||
+              page === "sessions" ||
+              page === "jobs" ||
+              page === "repositories" ||
+              page === "settings"
             ? page
             : "anywhere";
   const [openAgent = "", openID = ""] = openSession
@@ -867,9 +886,14 @@ function Workspace({ url }: { url: UrlState }) {
             <AnalyticsPage Link={LocalLink} />
           ) : page === "sessions" ? (
             <>
-              <PageBar title="Sessions" detail="Agent sessions on this computer" />
+              <PageBar title="Sessions" detail="Agent sessions on this computer, live" />
               <div className="local-page-body">
-                <SessionsPage sessions={live} Link={LocalLink} prHref={sessionPR} />
+                <SessionsPage
+                  sessions={live}
+                  requests={agentRequests}
+                  Link={LocalLink}
+                  prHref={sessionPR}
+                />
               </div>
             </>
           ) : page === "jobs" && url.search.get("job") ? (
@@ -992,37 +1016,7 @@ function Workspace({ url }: { url: UrlState }) {
                 title="Pull requests"
                 actions={
                   <>
-                    {selection.size > 1 ? (
-                      <Button
-                        variant="secondary"
-                        size="compact"
-                        disabled={generating}
-                        onClick={reviewTogether}
-                      >
-                        Review together ({selection.size})
-                      </Button>
-                    ) : null}
-                    {selection.size > 0 ? (
-                      <Button
-                        size="compact"
-                        disabled={
-                          generating ||
-                          indexedEntries.some(
-                            (entry) =>
-                              selection.has(rowKey(entry)) &&
-                              (entry.needs_clone || isActiveJob(reviewJob(entry, jobs))),
-                          )
-                        }
-                        onClick={() =>
-                          void generate(
-                            snapshot.entries.filter((e) => selection.has(rowKey(e))),
-                            "batch",
-                          )
-                        }
-                      >
-                        {generating ? "Starting reviews…" : `Generate selected (${selection.size})`}
-                      </Button>
-                    ) : null}
+                    <UpdatedAgo at={updatedAt} busy={loading} />
                     <button
                       type="button"
                       aria-label="Keyboard shortcuts"
@@ -1145,6 +1139,42 @@ function Workspace({ url }: { url: UrlState }) {
                   jobs={jobs}
                   generate={(entry) => void generate([entry], "single")}
                   refresh={loading ? undefined : () => void refresh()}
+                  bulk={
+                    <>
+                      <button
+                        type="button"
+                        className="inbox-bulk"
+                        disabled={
+                          generating ||
+                          indexedEntries.some(
+                            (entry) =>
+                              selection.has(rowKey(entry)) &&
+                              (entry.needs_clone || isActiveJob(reviewJob(entry, jobs))),
+                          )
+                        }
+                        onClick={() =>
+                          void generate(
+                            snapshot.entries.filter((e) => selection.has(rowKey(e))),
+                            "batch",
+                          )
+                        }
+                      >
+                        {generating
+                          ? "Starting reviews…"
+                          : `Generate reviews (${formatCount(selection.size)})`}
+                      </button>
+                      {selection.size > 1 ? (
+                        <button
+                          type="button"
+                          className="inbox-bulk"
+                          disabled={generating}
+                          onClick={reviewTogether}
+                        >
+                          Review together ({formatCount(selection.size)})
+                        </button>
+                      ) : null}
+                    </>
+                  }
                 />
               ) : null}
             </>

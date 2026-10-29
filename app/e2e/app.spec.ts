@@ -111,9 +111,29 @@ test("local inbox, reused PR viewer, versions, generation and settings", async (
     fullPage: false,
     animations: "disabled",
   });
+  // Peek opens the saved review under its row.
+  await approved.hover();
+  await approved.getByRole("button", { name: "Peek at acme/demo #7", exact: true }).click();
+  const peek = approved.getByRole("region", { name: "Peek at #7" });
+  await expect(peek).toContainText("Summary");
+  await expect(peek.getByRole("link", { name: "Open the review", exact: true })).toBeVisible();
+  // Selecting rows draws their actions in a bar over the list.
+  await page.getByRole("checkbox", { name: "Select acme/demo #7", exact: true }).check();
+  await page.getByRole("checkbox", { name: "Select acme/demo #8", exact: true }).check();
+  const bar = page.getByRole("toolbar", { name: "Selected pull requests" });
+  await expect(bar).toContainText("2 selected");
+  await expect(bar.getByRole("button", { name: "Merge 1", exact: true })).toBeVisible();
+  await page.screenshot({
+    path: "test-results/inbox-peek.png",
+    fullPage: false,
+    animations: "disabled",
+  });
+  await bar.getByRole("button", { name: "Clear", exact: true }).click();
+  await expect(bar).toHaveCount(0);
+  await approved.getByRole("button", { name: "Peek at acme/demo #7", exact: true }).click();
+  await expect(peek).toHaveCount(0);
   await page.setViewportSize({ width: 720, height: 900 });
   await expect(approved.getByText("Status:", { exact: true })).toBeVisible();
-  // The cell also holds the Merge button of a ready pull request.
   await expect(
     approved.locator(".inbox-status").filter({ hasText: "Status: Ready" }),
   ).toBeVisible();
@@ -148,7 +168,7 @@ test("local inbox, reused PR viewer, versions, generation and settings", async (
   await expect(unknown).not.toContainText("—");
   await page.screenshot({ path: "test-results/inbox-others.png", animations: "disabled" });
   await page.getByRole("checkbox", { name: "Select acme/demo #9", exact: true }).check();
-  await page.getByRole("button", { name: "Generate selected (1)", exact: true }).click();
+  await page.getByRole("button", { name: "Generate reviews (1)", exact: true }).click();
   // Only a fork asks before generating, in a batch as on its own page.
   await expect(page.getByRole("dialog")).toContainText("Review code from outside your team?");
   await page.getByRole("button", { name: "Cancel", exact: true }).click();
@@ -464,12 +484,10 @@ test("a running agent session shows in the inbox and on the PR page until it end
   await page.getByRole("link", { name: "Sessions", exact: true }).first().click();
   const ended = page.getByRole("region", { name: "Ended recently", exact: true });
   await expect(ended.getByText("Claude Code")).toBeVisible();
-  await expect(ended.getByText("feature")).toBeVisible();
-  // Its title, and the request its compaction summary records.
+  // Its title leads the compact row.
   await expect(
     ended.getByText("Reuse the PR page in the local app", { exact: true }),
   ).toBeVisible();
-  await expect(ended.getByText(/^Serve saved reviews in the local app/)).toBeVisible();
   await expect(
     page.getByRole("region", { name: "Running now", exact: true }).getByText("Claude Code"),
   ).toHaveCount(0);
@@ -554,8 +572,8 @@ test("a session asking for a permission shows in Needs you and leaves once it wo
   await expect(row.getByText("Asking permission")).toBeVisible();
   await expect(row.getByText("Claude needs your permission to use Bash")).toBeVisible();
   // The title Claude Code gave the session leads the row.
-  await expect(row.getByText("Run the migration tests", { exact: true })).toBeVisible();
-  await expect(row.getByText("Waiting under a minute")).toBeVisible();
+  await expect(row.getByText("Run the migration tests")).toBeVisible();
+  await expect(row.getByText(/^waiting \d+s$/)).toBeVisible();
   await expect(row.getByText("feature")).toBeVisible();
   await expect(running.locator('li[title="needs-e2e"]')).toHaveCount(0);
   // The sidebar counts it, in the caution tone.
@@ -974,7 +992,7 @@ test("the whole app can be used from the keyboard", async ({ page }) => {
       .getByRole("link", { name: /^Open transcript/ }),
   ).toBeVisible({ timeout: 10000 });
   await page.keyboard.press("j");
-  await expect(page.locator(".local-session-row[data-focused]")).toHaveCount(1);
+  await expect(page.locator(".local-feed-card[data-focused]")).toHaveCount(1);
   await page.keyboard.press("Enter");
   await expect.poll(() => search().get("session")).not.toBeNull();
   await expect(page.getByRole("region", { name: "Transcript", exact: true })).toBeVisible();

@@ -248,7 +248,7 @@ it("renders a group as one row with its members nested when expanded", async () 
   ).toBe("Auth rework");
   // Select all covers the loose row and the expanded members.
   await selectAll();
-  expect(node.textContent).toContain("Generate selected (3)");
+  expect(node.textContent).toContain("Generate reviews (3)");
 });
 
 it("keeps group jobs apart from pull request jobs", () => {
