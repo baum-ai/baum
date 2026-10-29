@@ -6,6 +6,9 @@
    panel laid on sand beside the sidebar, with rounded controls inside. */
 :root {
   --surface-canvas: #f1e9da;
+  /* Dialogs and menus float on the panel in warm paper, so they are not one
+     more white sheet. */
+  --surface-popup: var(--paper-50);
   --panel-border: #e3d9c8;
   --panel-radius: 14px;
   --panel-shadow: 0 1px 2px rgba(42, 29, 21, 0.04), 0 6px 24px rgba(42, 29, 21, 0.04);
@@ -19,6 +22,7 @@
    forest, so the forest is the only colour around the work. */
 :root[data-theme="dark"] {
   --surface-canvas: var(--brand-forest);
+  --surface-popup: var(--surface-card);
   --panel-border: #262626;
   --panel-shadow: 0 0 0 1px rgba(255, 255, 255, 0.02);
 }
@@ -751,8 +755,32 @@ select.local-field {
   border-radius: var(--radius-md);
   cursor: pointer;
 }
+.merge-methods label:hover {
+  border-color: var(--border-strong);
+}
+/* The chosen method takes the primary action's colour. */
 .merge-methods label:has(input:checked) {
-  background: var(--surface-selected);
+  border-color: var(--action-primary);
+  background: color-mix(in srgb, var(--action-primary) 8%, transparent);
+}
+/* Drawn rather than native, so the dot is the primary colour on every
+   platform and sits centred on the label's first line. */
+.merge-methods input {
+  flex: none;
+  appearance: none;
+  width: 1rem;
+  height: 1rem;
+  margin: calc((1lh - 1rem) / 2) 0 0;
+  border: 1px solid var(--border-strong);
+  border-radius: 50%;
+  background: var(--surface-card);
+}
+.merge-methods input:checked {
+  border: 0.3rem solid var(--action-primary);
+}
+/* In a radio group the focus is the choice, which the tile already shows. */
+.merge-methods input:focus-visible {
+  outline: none;
 }
 .merge-methods small {
   display: block;
@@ -804,7 +832,7 @@ select.local-field {
 
 dialog {
   margin: auto;
-  background: var(--surface-card);
+  background: var(--surface-popup);
   color: var(--text-primary);
   border: 1px solid var(--panel-border);
   border-radius: var(--radius-lg);
@@ -812,6 +840,10 @@ dialog {
   padding: 1.5rem;
   max-width: calc(100vw - 2rem);
   width: 36rem;
+}
+/* On the paper, a menu row warms as any hovered row does. */
+:root:not([data-theme="dark"]) .upnext-menu {
+  --un-menu-hover: var(--surface-hover);
 }
 dialog::backdrop {
   background: rgba(42, 29, 21, 0.35);
@@ -1975,80 +2007,6 @@ span.inbox-fix {
 span.inbox-fix svg {
   color: inherit;
 }
-.local-fix-confirmation {
-  display: grid;
-  gap: 0.75rem;
-  margin: 0.75rem 0 1rem;
-}
-.local-fix-confirmation p {
-  margin: 0;
-}
-.local-fix-facts {
-  display: grid;
-  grid-template-columns: max-content minmax(0, 1fr);
-  gap: 0.25rem 1rem;
-  margin: 0;
-  font-size: var(--text-xs);
-}
-.local-fix-facts dt {
-  color: var(--text-tertiary);
-}
-.local-fix-facts dd {
-  margin: 0;
-  overflow-wrap: anywhere;
-}
-/* The notice's colours: something to know before confirming. */
-.local-fix-warning {
-  display: flex;
-  gap: 0.5rem;
-  align-items: flex-start;
-  padding: 0.5rem 0.75rem;
-  border-radius: var(--radius-md);
-  background: #f8efdc;
-  color: #6b4a1f;
-  font-size: var(--text-xs);
-}
-/* The review threads a fix addresses: where each is, and its first line. */
-.local-fix-threads {
-  display: grid;
-  gap: 0.5rem;
-}
-.local-fix-threads ul {
-  display: grid;
-  gap: 0.25rem;
-  max-height: 12rem;
-  margin: 0;
-  padding: 0.5rem 0.75rem;
-  overflow-y: auto;
-  list-style: none;
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-md);
-  background: var(--surface-wash);
-  font-size: var(--text-xs);
-}
-.local-fix-threads li {
-  display: flex;
-  gap: 0.5rem;
-  min-width: 0;
-}
-.local-fix-threads code {
-  flex: none;
-  max-width: 50%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.local-fix-thread-excerpt {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  color: var(--text-secondary);
-}
-.local-fix-thread-note {
-  font-size: var(--text-xs);
-  color: var(--text-tertiary);
-}
 .local-fix-outcomes {
   display: grid;
   gap: 0.25rem;
@@ -2078,10 +2036,6 @@ span.inbox-fix svg {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
   color: var(--text-secondary);
-}
-:root[data-theme="dark"] .local-fix-warning {
-  background: #2a2214;
-  color: #e9cf9a;
 }
 /* The Codex and Cursor marks are drawn in black; on a dark page they turn
    light, as their makers draw them there. */
@@ -2648,12 +2602,6 @@ kbd.key-hint {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.upnext-note {
-  margin: 14px 10px 0;
-  color: var(--un-muted);
-  font-size: 12.5px;
-  line-height: 1.45;
-}
 .upnext-keys {
   display: flex;
   flex-wrap: wrap;
@@ -2740,6 +2688,10 @@ kbd.key-hint {
 .upnext-chip-update {
   background: var(--un-update-bg);
   color: var(--un-update);
+}
+.upnext-chip-waiting {
+  background: var(--surface-wash);
+  color: var(--un-muted);
 }
 .upnext-chip-clone {
   background: var(--un-clone-bg);
@@ -2844,7 +2796,7 @@ kbd.key-hint {
   padding: 6px;
   border: 1px solid var(--un-line-strong);
   border-radius: 10px;
-  background: var(--un-card);
+  background: var(--surface-popup);
   box-shadow: var(--un-shadow-menu);
   animation: upnext-drop 0.15s ease-out;
 }

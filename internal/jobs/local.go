@@ -33,9 +33,6 @@ type Local struct {
 	Config   config.Config
 	Client   *github.Client
 	Backends generate.Backends
-	// RefreshPrices downloads and installs the signed price list; nil disables
-	// the refresh for jobs confirmed against a newer list than the active one.
-	RefreshPrices func(context.Context) error
 	// FixDirectory holds fixes' temporary checkouts; empty is
 	// fix.DefaultDirectory.
 	FixDirectory string
@@ -126,9 +123,6 @@ func (l *Local) Prepare(ctx context.Context, item Item) (Prepared, string, error
 	digest := sha256.Sum256(fingerprint)
 	list := pricing.Active()
 	p := Prepared{MaxTokens: cfg.Budgets.MaxTokens, MaxCalls: cfg.Budgets.MaxCalls, ConfigDigest: hex.EncodeToString(digest[:]), PriceVersion: list.Version(), Item: item, Repository: c.Repository, HeadSHA: pr.Head, Backend: selected.Backend.Name(), Model: selected.Model, RequiresIsolationConfirmation: pr.Untrusted, Draft: pr.Draft, GroupName: group.name, Members: group.members}
-	// The estimate is informational: a backend billed by its own subscription,
-	// or a model the price list does not know, has none and still runs.
-	p.EstimateUSD, p.EstimateReason = list.BackendEstimate(selected.Backend.Name(), selected.Model, cfg.Budgets.MaxTokens, cfg.Budgets.MaxCalls)
 	return p, list.Version(), nil
 }
 
@@ -174,24 +168,18 @@ func readPull(ctx context.Context, reader *github.RESTReader, repository github.
 	return pull{Head: pr.Head.SHA, Draft: pr.Draft, Untrusted: !trusted || !strings.EqualFold(pr.Head.Repo.FullName, repository.Owner+"/"+repository.Name)}, nil
 }
 
-// confirmed rechecks a job's confirmed inputs. A job confirmed against a newer
-// list than the active one (a restart that has not yet reinstalled it) refreshes
-// the signed list once before deciding. An automatic job (RefuseDraft) whose
-// pull request is a draft now is refused with ReasonDraft; a confirmed run of
-// a draft is not.
+// confirmed rechecks a job's confirmed inputs. The price list is not one: a
+// job runs, and is priced, with whichever list is active when it runs. An
+// automatic job (RefuseDraft) whose pull request is a draft now is refused
+// with ReasonDraft; a confirmed run of a draft is not.
 func (l *Local) confirmed(ctx context.Context, p Prepared) error {
 	current, _, e := l.Prepare(ctx, p.Item)
-	if e == nil && l.RefreshPrices != nil && pricing.CompareVersions(p.PriceVersion, current.PriceVersion) > 0 {
-		if l.RefreshPrices(ctx) == nil {
-			current, _, e = l.Prepare(ctx, p.Item)
-		}
-	}
 	if e != nil {
 		return e
 	}
-	if current.PriceVersion != p.PriceVersion || current.ConfigDigest != p.ConfigDigest || current.HeadSHA != p.HeadSHA || current.Members != p.Members || current.Backend != p.Backend || current.Model != p.Model || current.EstimateReason != p.EstimateReason || current.RequiresIsolationConfirmation != p.RequiresIsolationConfirmation {
+	if current.ConfigDigest != p.ConfigDigest || current.HeadSHA != p.HeadSHA || current.Members != p.Members || current.Backend != p.Backend || current.Model != p.Model || current.RequiresIsolationConfirmation != p.RequiresIsolationConfirmation {
 		if p.Kind == KindFix && current.HeadSHA != p.HeadSHA {
-			return &fix.Error{Reason: fix.ReasonHeadChanged, Err: errors.New("the pull request's head changed since the fix was confirmed")}
+			return &fix.Error{Reason: fix.ReasonHeadChanged, Err: errors.New("the pull request's head changed since the fix was started")}
 		}
 		return errors.New("generation inputs changed")
 	}
@@ -206,7 +194,7 @@ func (l *Local) confirmed(ctx context.Context, p Prepared) error {
 		default:
 			reason = fix.ReasonNothingToFix
 		}
-		return &fix.Error{Reason: reason, Err: errors.New("what the fix was confirmed for changed; confirm it again")}
+		return &fix.Error{Reason: reason, Err: errors.New("what the fix was started for changed; start it again")}
 	}
 	if p.RefuseDraft && current.Draft {
 		return &NotAutomaticError{ReasonDraft}
@@ -282,10 +270,9 @@ func (l *Local) Execute(ctx context.Context, p Prepared, progress func(Progress)
 	if e != nil {
 		return nil, e
 	}
+	// The active list prices the run and is recorded with the saved review,
+	// even when it is newer than the one the job was prepared with.
 	list := pricing.Active()
-	if list.Version() != p.PriceVersion {
-		return nil, errors.New("price list changed; estimate again")
-	}
 	backend := &trackedBackend{Backend: selected.Backend, progress: progress, prices: list}
 	assembler := &assemble.Assembler{GitHub: l.Client, Git: clone, Fetcher: clone, Sessions: assemble.LocalSessions{Dir: clone.Dir(), Warn: io.Discard}, Images: assemble.NewHTTPImageFetcher(nil), Warn: io.Discard}
 	// An assembly which observes a changed head must stop before calling a model.
@@ -371,7 +358,7 @@ type headAssembler struct {
 func (a headAssembler) Assemble(ctx context.Context, r assemble.Request) (assemble.Result, error) {
 	result, e := a.Assembler.Assemble(ctx, r)
 	if e == nil && result.Head != a.head {
-		return assemble.Result{}, errors.New("pull request head changed; estimate again")
+		return assemble.Result{}, errors.New("pull request head changed; start it again")
 	}
 	return result, e
 }

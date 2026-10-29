@@ -125,11 +125,6 @@ func newReviewsCommand() *cobra.Command {
 			if pullRequests != nil {
 				next.PullRequests = *pullRequests
 			}
-			// Choosing cursor-agent here is the acknowledgement that its
-			// cost cannot be estimated, so its automatic reviews run.
-			if backend != nil && *backend == config.BackendCursorAgent {
-				next.CursorAgentAcknowledged = true
-			}
 			if invalid = next.Validate(); invalid != nil {
 				return p
 			}

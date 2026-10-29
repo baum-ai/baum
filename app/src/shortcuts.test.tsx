@@ -331,7 +331,7 @@ it("lists exactly the keys that work in the sheet", async () => {
     "Alt",
     "Esc",
   ]);
-  expect(listed("Inbox")).toEqual(["j", "↓", "k", "↑", "Enter", "m", "s", "u"]);
+  expect(listed("Inbox")).toEqual(["j", "↓", "k", "↑", "Enter", "m", "f", "s", "u"]);
   expect(listed("Pull requests")).toEqual([
     "j",
     "↓",

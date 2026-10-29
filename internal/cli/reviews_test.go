@@ -2,13 +2,10 @@ package cli
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
-
-	"github.com/baum-ai/baum/internal/repos"
 )
 
 func TestReviewsCLI(t *testing.T) {
@@ -62,18 +59,12 @@ func TestReviewsCLI(t *testing.T) {
 	if got := show(); got.Model != "" || got.PullRequests != "both" || got.Backend != "codex" {
 		t.Fatalf("after clearing the model %+v", got)
 	}
-	// Choosing cursor-agent acknowledges that its cost is unknown.
+	// cursor-agent is chosen like any other harness: nothing to acknowledge.
 	if _, e := run("set", "--backend=cursor-agent", "--model=composer-2.5"); e != nil {
 		t.Fatal(e)
 	}
-	r, e := repos.Open("")
-	if e != nil {
-		t.Fatal(e)
-	}
-	prefs, e := r.Preferences(context.Background())
-	_ = r.Close()
-	if e != nil || !prefs.CursorAgentAcknowledged {
-		t.Fatalf("cursor-agent not acknowledged %+v %v", prefs, e)
+	if got := show(); got.Backend != "cursor-agent" || got.Model != "composer-2.5" {
+		t.Fatalf("after choosing cursor-agent %+v", got)
 	}
 	if _, e := run("set", "--backend=codex"); e != nil {
 		t.Fatal(e)

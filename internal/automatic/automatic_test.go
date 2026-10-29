@@ -2,6 +2,7 @@ package automatic
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -96,7 +97,6 @@ type executor struct {
 func (e *executor) Prepare(_ context.Context, item jobs.Item) (jobs.Prepared, string, error) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	price := 2.0
 	backend := e.backend
 	if backend == "" {
 		backend = "claude"
@@ -108,7 +108,7 @@ func (e *executor) Prepare(_ context.Context, item jobs.Item) (jobs.Prepared, st
 	if item.Clone == "clone-org/other" {
 		repository = "org/other"
 	}
-	return jobs.Prepared{ConfigDigest: "d", Item: item, Repository: repository, HeadSHA: e.heads[item.PR], Backend: backend, Model: "claude-sonnet-4-5", EstimateUSD: &price}, "2026-10-01", nil
+	return jobs.Prepared{ConfigDigest: "d", Item: item, Repository: repository, HeadSHA: e.heads[item.PR], Backend: backend, Model: "claude-sonnet-4-5"}, "2026-10-01", nil
 }
 func (e *executor) Execute(ctx context.Context, p jobs.Prepared, _ func(jobs.Progress)) (*float64, error) {
 	// Like jobs.Local's recheck: an automatic job of a PR now a draft is
@@ -387,61 +387,7 @@ func TestOneJobPerPRAndNewerHeadWaitsForTheRunningJob(t *testing.T) {
 	h.want("org/repo#1@a2:new_head", "org/repo#1@a3:new_head")
 }
 
-func TestDailyCapPausesTheRepositoryUntilTomorrow(t *testing.T) {
-	h := newHarness(t)
-	h.registry.set(func(_ *repos.Preferences, s *repos.Settings) { s.DailyCap = new(3.0) })
-	h.observe(pr{number: 1, head: "a1", authored: true}, pr{number: 2, head: "b1", authored: true})
-	h.observe(pr{number: 1, head: "a2", authored: true}, pr{number: 2, head: "b2", authored: true})
-	h.pass()
-	h.want("org/repo#1@a2:new_head")
-	if len(h.notices) != 1 || h.notices[0].Notice != NoticeDailyCap || h.notices[0].PausedUntil == nil || !h.notices[0].PausedUntil.Equal(time.Date(2026, 10, 20, 0, 0, 0, 0, time.Local)) {
-		t.Fatalf("pause notice %+v", h.notices)
-	}
-	o, err := h.scheduler.Overview(context.Background())
-	if err != nil || len(o.Repositories) != 1 || o.Repositories[0].Notice != NoticeDailyCap || o.Repositories[0].Pending != 1 || o.Repositories[0].SpentToday != 2 {
-		t.Fatalf("overview %+v %v", o, err)
-	}
-	h.waitIdle()
-	h.now = h.now.Add(13 * time.Hour)
-	h.pass()
-	h.want("org/repo#1@a2:new_head")
-	h.now = time.Date(2026, 10, 20, 0, 1, 0, 0, time.Local)
-	h.pass()
-	h.want("org/repo#1@a2:new_head", "org/repo#2@b2:new_head")
-	last := h.notices[len(h.notices)-1]
-	if last.PausedUntil != nil || last.Notice != "" {
-		t.Fatalf("resume not announced %+v", h.notices)
-	}
-}
-
-// The cap's day is the scheduler clock's calendar day in its own zone, also
-// when that differs from the UTC day the job was stamped in.
-func TestDailyCapDayFollowsTheClockZoneNearMidnight(t *testing.T) {
-	for _, zone := range []*time.Location{time.FixedZone("west", -8*3600), time.FixedZone("east", 10*3600), time.UTC} {
-		t.Run(zone.String(), func(t *testing.T) {
-			h := newHarness(t)
-			h.now = time.Date(2026, 10, 19, 23, 30, 0, 0, zone)
-			h.registry.set(func(_ *repos.Preferences, s *repos.Settings) { s.DailyCap = new(3.0) })
-			h.observe(pr{number: 1, head: "a1", authored: true}, pr{number: 2, head: "b1", authored: true})
-			h.observe(pr{number: 1, head: "a2", authored: true}, pr{number: 2, head: "b2", authored: true})
-			h.pass()
-			h.want("org/repo#1@a2:new_head")
-			midnight := time.Date(2026, 10, 20, 0, 0, 0, 0, zone)
-			if len(h.notices) != 1 || h.notices[0].PausedUntil == nil || !h.notices[0].PausedUntil.Equal(midnight) {
-				t.Fatalf("pause notice %+v", h.notices)
-			}
-			h.waitIdle()
-			h.now = midnight.Add(-time.Minute)
-			h.pass()
-			h.want("org/repo#1@a2:new_head")
-			h.now = midnight.Add(time.Minute)
-			h.pass()
-			h.want("org/repo#1@a2:new_head", "org/repo#2@b2:new_head")
-		})
-	}
-}
-
-// cursor-agent, whose cost baum cannot estimate, runs like any backend.
+// cursor-agent, which baum cannot price, runs like any backend.
 func TestCursorAgentRunsWithoutAnAcknowledgement(t *testing.T) {
 	h := newHarness(t)
 	h.exec.backend = agent.BackendCursorAgent
@@ -489,9 +435,9 @@ func TestTurningOffStopsNewJobsKeepsRunningOnesAndReenablingDoesNotCatchUp(t *te
 	h.want("org/repo#1@a2:new_head", "org/repo#2@b2:new_head", "org/repo#2@b5:new_head")
 }
 
-// A repository turned off, or cursor-agent no longer acknowledged, cancels
-// that scope's queued automatic jobs; the worker re-checks before starting.
-func TestRepositoryOffAndWithdrawnAcknowledgementCancelQueuedJobs(t *testing.T) {
+// A repository turned off cancels its queued automatic jobs; the worker
+// re-checks before starting.
+func TestRepositoryOffCancelsQueuedJobs(t *testing.T) {
 	for _, tc := range []struct {
 		name    string
 		backend string
@@ -503,7 +449,6 @@ func TestRepositoryOffAndWithdrawnAcknowledgementCancelQueuedJobs(t *testing.T) 
 		t.Run(tc.name, func(t *testing.T) {
 			h := newHarness(t)
 			h.exec.backend = tc.backend
-			h.registry.set(func(p *repos.Preferences, _ *repos.Settings) { p.CursorAgentAcknowledged = true })
 			h.exec.block = make(chan struct{})
 			h.exec.started = make(chan struct{}, 10)
 			h.observe(pr{number: 1, head: "a1", authored: true}, pr{number: 2, head: "b1", authored: true})
@@ -538,31 +483,6 @@ func TestStalePassCannotQueueAfterOff(t *testing.T) {
 	v := view{prefs: repos.Preferences{Automatic: true}, repos: map[string]repository{"org/repo": {clone: repos.Clone{ID: "clone", Repository: "org/repo", Available: true}, enabled: true}}}
 	h.scheduler.submit(context.Background(), v, work{name: "org/repo", repo: v.repos["org/repo"], number: 1, head: "a2", trigger: jobs.TriggerNewHead}, h.now)
 	h.want()
-}
-
-func TestRaisingOrClearingTheCapLiftsThePause(t *testing.T) {
-	h := newHarness(t)
-	h.registry.set(func(_ *repos.Preferences, s *repos.Settings) { s.DailyCap = new(3.0) })
-	h.observe(pr{number: 1, head: "a1", authored: true}, pr{number: 2, head: "b1", authored: true}, pr{number: 3, head: "c1", authored: true})
-	h.observe(pr{number: 1, head: "a2", authored: true}, pr{number: 2, head: "b2", authored: true}, pr{number: 3, head: "c2", authored: true})
-	h.pass()
-	h.want("org/repo#1@a2:new_head")
-	// Lowering keeps the pause.
-	h.registry.set(func(_ *repos.Preferences, s *repos.Settings) { s.DailyCap = new(1.0) })
-	h.pass()
-	h.want("org/repo#1@a2:new_head")
-	// Raising lifts it; the next job that fits runs, the one after pauses again.
-	h.registry.set(func(_ *repos.Preferences, s *repos.Settings) { s.DailyCap = new(5.0) })
-	h.waitIdle()
-	h.pass()
-	h.want("org/repo#1@a2:new_head", "org/repo#2@b2:new_head")
-	if last := h.notices[len(h.notices)-1]; last.Notice != NoticeDailyCap {
-		t.Fatalf("not paused again %+v", last)
-	}
-	h.waitIdle()
-	h.registry.set(func(_ *repos.Preferences, s *repos.Settings) { s.DailyCap = nil })
-	h.pass()
-	h.want("org/repo#1@a2:new_head", "org/repo#2@b2:new_head", "org/repo#3@c2:new_head")
 }
 
 // The baseline is a snapshot fetched after enabling, never an older cached one.
@@ -672,23 +592,27 @@ func TestTriggerFeedsTheSameScheduler(t *testing.T) {
 func TestHandlerUpdatesPreferences(t *testing.T) {
 	h := newHarness(t)
 	o, err := h.scheduler.Overview(context.Background())
-	if err != nil || !o.Enabled || o.CursorAgentAcknowledged || len(o.Repositories) != 1 || !o.Repositories[0].Enabled {
+	if err != nil || !o.Enabled || len(o.Repositories) != 1 || !o.Repositories[0].Enabled {
 		t.Fatalf("%+v %v", o, err)
 	}
-	if code := put(h.scheduler, `{"enabled":false,"cursor_agent_acknowledged":true}`); code != 200 {
+	if code := put(h.scheduler, `{"enabled":false}`); code != 200 {
 		t.Fatal(code)
 	}
-	if code := put(h.scheduler, `{"unknown":true}`); code != 400 {
-		t.Fatal(code)
+	// The cursor-agent acknowledgement is gone, so it is unknown like any
+	// other field.
+	for _, body := range []string{`{"unknown":true}`, `{"cursor_agent_acknowledged":true}`} {
+		if code := put(h.scheduler, body); code != 400 {
+			t.Fatalf("%s: %d", body, code)
+		}
 	}
 	o, _ = h.scheduler.Overview(context.Background())
-	if o.Enabled || !o.CursorAgentAcknowledged || o.Repositories[0].Enabled {
+	if o.Enabled || o.Repositories[0].Enabled {
 		t.Fatalf("%+v", o)
 	}
 }
 
 // The settings page chooses the backend, model and pull requests; a bad
-// value changes nothing, and choosing cursor-agent acknowledges its cost.
+// value changes nothing, and cursor-agent is chosen like any other harness.
 func TestHandlerSavesReviewChoices(t *testing.T) {
 	h := newHarness(t)
 	for _, body := range []string{`{"backend":"nope"}`, `{"pull_requests":"everyone"}`} {
@@ -700,7 +624,7 @@ func TestHandlerSavesReviewChoices(t *testing.T) {
 		t.Fatal(code)
 	}
 	prefs, _ := h.registry.Preferences(context.Background())
-	if prefs.Backend == nil || *prefs.Backend != "cursor-agent" || prefs.Model == nil || *prefs.Model != "composer-2.5" || prefs.PullRequests != repos.PullRequestsRequested || !prefs.CursorAgentAcknowledged {
+	if prefs.Backend == nil || *prefs.Backend != "cursor-agent" || prefs.Model == nil || *prefs.Model != "composer-2.5" || prefs.PullRequests != repos.PullRequestsRequested {
 		t.Fatalf("%+v", prefs)
 	}
 	if code := put(h.scheduler, `{"pull_requests":"all"}`); code != 200 {
@@ -868,9 +792,8 @@ func TestGateReadsEachRepositoryOwnSettings(t *testing.T) {
 	h.registry.mu.Lock()
 	h.registry.others = map[string]repos.Settings{"org/other": {Automatic: new(false)}}
 	h.registry.mu.Unlock()
-	price := 2.0
 	job := func(repository string) jobs.Job {
-		return jobs.Job{Prepared: jobs.Prepared{Repository: repository, EstimateUSD: &price}}
+		return jobs.Job{Prepared: jobs.Prepared{Repository: repository}}
 	}
 	if a := h.scheduler.Gate(job("org/repo")); a.Reason != "" {
 		t.Fatalf("org/repo gated: %q", a.Reason)
@@ -927,58 +850,37 @@ func TestOlderSnapshotArrivingLateIsIgnored(t *testing.T) {
 	h.want("org/repo#1@a2:new_head")
 }
 
-// A queued job the daily cap stops before it starts (here the cap was lowered
-// while it waited) pauses the repository with the daily cap notice and keeps
-// its head pending; raising the cap runs it.
-func TestDailyCapReachedWhileQueuedPausesAndKeepsTheHead(t *testing.T) {
+// A repository an older baum paused for its daily cap, with the cap and its
+// notice saved, is not paused now: the saved pause and notice are ignored and
+// its pending head runs.
+func TestAnOldDailyCapPauseIsIgnored(t *testing.T) {
 	h := newHarness(t)
-	h.exec.block = make(chan struct{})
-	h.exec.started = make(chan struct{}, 10)
-	h.registry.set(func(_ *repos.Preferences, s *repos.Settings) { s.DailyCap = new(10.0) })
-	h.observe(pr{number: 1, head: "a1", authored: true}, pr{number: 2, head: "b1", authored: true})
-	h.observe(pr{number: 1, head: "a2", authored: true}, pr{number: 2, head: "b2", authored: true})
-	h.pass()
-	h.want("org/repo#1@a2:new_head", "org/repo#2@b2:new_head")
-	<-h.exec.started
-	h.registry.set(func(_ *repos.Preferences, s *repos.Settings) { s.DailyCap = new(0.0) })
-	close(h.exec.block)
-	h.waitIdle()
-	select {
-	case <-h.exec.started:
-		t.Fatal("a job started over the lowered cap")
-	default:
+	h.observe(pr{number: 1, head: "a1", authored: true})
+	h.observe(pr{number: 1, head: "a2", authored: true})
+	raw, err := os.ReadFile(h.scheduler.Path)
+	if err != nil {
+		t.Fatal(err)
 	}
-	states := map[int]jobs.Job{}
-	for _, j := range h.queue.List() {
-		states[j.PR] = j
+	var state map[string]map[string]map[string]any
+	if err = json.Unmarshal(raw, &state); err != nil {
+		t.Fatal(err)
 	}
-	if states[1].State != "completed" || states[2].State != "cancelled" || states[2].Reason != jobs.ReasonDailyCap {
-		t.Fatalf("states %+v", states)
+	state["repositories"]["org/repo"]["paused_until"] = "2999-01-01T00:00:00Z"
+	state["repositories"]["org/repo"]["paused_cap"] = 1.0
+	state["repositories"]["org/repo"]["notice"] = "daily_cap"
+	if raw, err = json.Marshal(state); err != nil {
+		t.Fatal(err)
 	}
-	h.pass()
-	h.want("org/repo#1@a2:new_head", "org/repo#2@b2:new_head")
-	last := h.notices[len(h.notices)-1]
-	if last.Notice != NoticeDailyCap || last.PausedUntil == nil || !last.PausedUntil.Equal(time.Date(2026, 10, 20, 0, 0, 0, 0, time.Local)) || last.Pending != 1 {
-		t.Fatalf("pause notice %+v", h.notices)
+	if err = os.WriteFile(h.scheduler.Path, raw, 0o600); err != nil {
+		t.Fatal(err)
 	}
-	// Still paused: nothing is submitted, and the head is put back only once.
-	h.pass()
-	h.want("org/repo#1@a2:new_head", "org/repo#2@b2:new_head")
-	h.registry.set(func(_ *repos.Preferences, s *repos.Settings) { s.DailyCap = new(10.0) })
-	h.pass()
-	h.want("org/repo#1@a2:new_head", "org/repo#2@b2:new_head", "org/repo#2@b2:new_head")
-	h.waitIdle()
-	completed := 0
-	for _, j := range h.queue.List() {
-		if j.PR == 2 && j.State == "completed" {
-			completed++
-		}
-	}
-	if completed != 1 {
-		t.Fatalf("head not run after the cap was raised: %+v", h.queue.List())
+	h.restart()
+	o, err := h.scheduler.Overview(context.Background())
+	if err != nil || len(o.Repositories) != 1 || o.Repositories[0].Notice != "" {
+		t.Fatalf("overview %+v %v", o, err)
 	}
 	h.pass()
-	h.want("org/repo#1@a2:new_head", "org/repo#2@b2:new_head", "org/repo#2@b2:new_head")
+	h.want("org/repo#1@a2:new_head")
 }
 
 // A PR converted back to draft while its automatic job waited gets no model
@@ -1064,7 +966,7 @@ func TestPassWaitingAtIdentityFenceStopsWithItsContext(t *testing.T) {
 
 func TestIdentityTransitionFencesQueuedAdmission(t *testing.T) {
 	h := newHarness(t)
-	j := jobs.Job{Prepared: jobs.Prepared{Repository: "org/repo", EstimateUSD: new(1.0)}, CreatedAt: h.now}
+	j := jobs.Job{Prepared: jobs.Prepared{Repository: "org/repo"}, CreatedAt: h.now}
 	if admission := h.scheduler.Gate(j); admission.Reason != "" {
 		t.Fatal(admission)
 	}
@@ -1129,9 +1031,6 @@ func TestHeadWaitsForACloneAfterAJobLostIt(t *testing.T) {
 	}
 	if c, _ := states(); c != 1 {
 		t.Fatalf("jobs %+v", h.queue.List())
-	}
-	if spent, known := h.queue.AutomaticSpend("org/repo", startOfDay(h.now)); spent != 0 || !known {
-		t.Fatalf("a job that never ran counted as spend: %v %v", spent, known)
 	}
 	h.registry.mu.Lock()
 	h.registry.noClone = true

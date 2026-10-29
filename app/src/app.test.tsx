@@ -663,11 +663,12 @@ const demoClone = {
   path: "/work/demo",
   repository: "acme/demo",
   available: true,
-  settings: { automatic: null, daily_cap: 5, backend: null, model: null },
+  settings: { automatic: null, backend: null, model: null },
 };
+// An older daemon still reports the daily cap pause baum no longer has; the
+// app ignores it.
 const automaticOverview = {
   enabled: true,
-  cursor_agent_acknowledged: false,
   repositories: [
     {
       repository: "acme/demo",
@@ -860,12 +861,13 @@ it("edits the environment agents run with and shows server errors inline", async
   await act(async () => save().click());
   expect(section().textContent).toContain("GIT_DIR cannot be set");
 });
-it("sets automatic reviews per repository and clears an old daily cap", async () => {
+it("sets automatic reviews per repository, with no daily cap", async () => {
   history.replaceState(null, "", "/s/test-ns/?page=repositories");
   stubDiagnostics(async () => Response.json({ local: true, report: diagnosticsReport }));
   const puts = stubAutomatic();
   await act(async () => root.render(<App />));
-  expect(node.textContent).toContain("acme/demo: Automatic generation is paused");
+  expect(node.textContent).not.toContain("Automatic generation is paused");
+  expect(node.textContent).not.toMatch(/daily cap/i);
   const region = await openRepository();
   const mode = region.querySelector<HTMLSelectElement>("select")!;
   expect(mode.value).toBe("default");
@@ -881,7 +883,7 @@ it("sets automatic reviews per repository and clears an old daily cap", async ()
   );
   expect(puts).toContainEqual({
     path: "/s/test-ns/api/repositories/acme/demo/settings",
-    body: { automatic: false, daily_cap: null, backend: null, model: null },
+    body: { automatic: false, backend: null, model: null },
   });
 });
 /** Opens a repository's settings dialog and returns it. */
@@ -909,10 +911,9 @@ it("offers GitHub repositories only, with no local folder fallback", async () =>
   expect(node.textContent).not.toContain("local folder");
   expect(node.querySelector('input[placeholder="/path/to/a/local/clone"]')).toBeNull();
 });
-it("saves a repository without a cap as explicit null when automatic settings are unavailable", async () => {
+it("saves a repository's automatic choice as explicit null when automatic settings are unavailable", async () => {
   history.replaceState(null, "", "/s/test-ns/?page=repositories");
   stubDiagnostics(async () => Response.json({ local: true, report: diagnosticsReport }));
-  // The server omits daily_cap when there is none.
   const puts = stubAutomatic({
     ...demoClone,
     settings: { automatic: null, backend: null, model: null },
@@ -932,7 +933,7 @@ it("saves a repository without a cap as explicit null when automatic settings ar
   );
   expect(puts).toContainEqual({
     path: "/s/test-ns/api/repositories/acme/demo/settings",
-    body: { automatic: null, daily_cap: null, backend: null, model: null },
+    body: { automatic: null, backend: null, model: null },
   });
 });
 it("shows a repository set to On as paused while the global switch is off", async () => {
@@ -942,14 +943,10 @@ it("shows a repository set to On as paused while the global switch is off", asyn
     { ...demoClone, settings: { ...demoClone.settings, automatic: true } },
     {
       enabled: false,
-      cursor_agent_acknowledged: false,
       repositories: [
         {
           repository: "acme/demo",
           enabled: false,
-          daily_cap: 5,
-          spent_today: 0,
-          spent_known: true,
           pending: 0,
         },
       ],
@@ -1162,7 +1159,7 @@ it("opens clone-less PR deep links by repository and refreshes picked repositori
         Response.json([
           {
             repository: "acme/demo",
-            settings: { automatic: null, daily_cap: null, backend: null, model: null },
+            settings: { automatic: null, backend: null, model: null },
             clones: [],
           },
         ]),

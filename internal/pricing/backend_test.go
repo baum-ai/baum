@@ -11,15 +11,6 @@ import (
 func TestCursorAgentIsNeverPricedFromTheList(t *testing.T) {
 	list := Embedded()
 	const model = "claude-opus-5-5"
-	if list.Estimate(model, 100000, 10) == nil {
-		t.Fatalf("the list does not price %s; pick a listed model", model)
-	}
-	if estimate, reason := list.BackendEstimate(agent.BackendCursorAgent, model, 100000, 10); estimate != nil || reason != ReasonBilledByCursor {
-		t.Errorf("estimate = %v (%q)", estimate, reason)
-	}
-	if estimate, reason := list.BackendEstimate(agent.BackendClaude, model, 100000, 10); estimate == nil || reason != "" {
-		t.Errorf("claude estimate = %v (%q)", estimate, reason)
-	}
 
 	speed, hour, prompt := "standard", int64(0), int64(1000)
 	usage := agent.Usage{Input: 1000, Output: 100, Speed: &speed, CacheCreate1h: &hour, MinPrompt: &prompt, MaxPrompt: &prompt}

@@ -133,8 +133,6 @@ func (l *Local) prepareFix(ctx context.Context, item Item) (Prepared, string, er
 	}{KindFix, cfg.Budgets, selected.Version, reader.CacheIdentity()})
 	digest := sha256.Sum256(fingerprint)
 	p.ConfigDigest = hex.EncodeToString(digest[:])
-	// Like a review's, the estimate assumes the whole budget is used.
-	p.EstimateUSD, p.EstimateReason = list.BackendEstimate(p.Backend, p.Model, cfg.Budgets.MaxTokens, cfg.Budgets.MaxCalls)
 	return p, list.Version(), nil
 }
 
@@ -216,9 +214,9 @@ func (l *Local) executeFix(ctx context.Context, p Prepared, progress func(Progre
 		if err != nil {
 			return nil, err
 		}
-		// The agent gets exactly the threads that were confirmed.
+		// The agent gets exactly the threads the fix was started for.
 		if threads = selection.Threads; fix.Digest(threads) != p.Fix.Threads {
-			return nil, &fix.Error{Reason: fix.ReasonThreadsChanged, Err: errors.New("the review comments changed since the fix was confirmed; confirm it again")}
+			return nil, &fix.Error{Reason: fix.ReasonThreadsChanged, Err: errors.New("the review comments changed since the fix was started; start it again")}
 		}
 	}
 	var transcript func(agent.TranscriptEntry)

@@ -8,7 +8,6 @@ export type Clone = {
   settings: {
     /** null follows the global automatic generation preference. */
     automatic: boolean | null;
-    daily_cap: number | null;
     backend: string | null;
     model: string | null;
   };
@@ -177,7 +176,7 @@ export type Job = {
   fix_threads?: FixThread[];
   thread_outcomes?: ThreadOutcome[];
 };
-/** What a fix was confirmed for. `threads`, when set, identifies the review
+/** What a fix was started for. `threads`, when set, identifies the review
  *  threads it addresses. */
 export type FixInputs = {
   conflicts?: boolean;
@@ -208,16 +207,11 @@ export type ThreadOutcome = {
 export type AutomaticStatus = {
   repository: string;
   enabled: boolean;
-  daily_cap: number | null;
-  spent_today: number;
-  spent_known: boolean;
-  paused_until?: string;
   notice?: string;
   pending: number;
 };
 export type Automatic = {
   enabled: boolean;
-  cursor_agent_acknowledged: boolean;
   /** Which pull requests get automatic reviews; absent from older daemons. */
   pull_requests?: "all" | "both" | "authored" | "requested";
   repositories: AutomaticStatus[];
@@ -232,13 +226,15 @@ const jobReasons: Record<string, string> = {
   internal: "Something went wrong inside baum.",
   signing: "Git couldn't sign a commit, so the agent didn't run.",
   superseded: "A newer commit replaced it.",
+  // A job an older baum stopped for its daily spending cap, which is gone.
+  daily_cap: "It stopped before it started.",
   draft: "The pull request became a draft.",
   fork: "The pull request's branch is in a fork, which baum never pushes to.",
   no_push_access: "Your GitHub account can't push to this repository.",
   nothing_to_fix:
     "GitHub reports no merge conflict, failing check or unresolved review comment to fix on this pull request now.",
   threads_changed:
-    "The review comments changed after you confirmed the fix, so it stopped. Check them and start it again.",
+    "The review comments changed after you started the fix, so it stopped. Check them and start it again.",
   unsupported_backend:
     "Fixes run with Claude Code or Codex only. Choose one of them as the agent for fixes in Settings.",
   head_changed: "New commits arrived on the branch, so the fix stopped. Try again on the new head.",
@@ -278,52 +274,20 @@ export function automaticNotice(status: AutomaticStatus): string | null {
   switch (status.notice) {
     case undefined:
     case "":
-      return null;
-    case "daily_cap":
-      return `Automatic generation is paused: today's automatic spending reached the daily cap${
-        status.daily_cap === null ? "" : ` of ${formatUSD(status.daily_cap)}`
-      }. It resumes ${
-        status.paused_until ? new Date(status.paused_until).toLocaleString() : "tomorrow"
-      }.`;
+    // An older daemon refused or paused these for the price; nothing does
+    // now, so a notice it left behind says nothing.
     case "cursor_agent_acknowledgement_required":
-      return "A pull request was not generated automatically: cursor-agent has no cost estimate. Acknowledge this in Repositories & settings to let automatic generation use it.";
+    case "unknown_model_price":
+    case "daily_cap":
+      return null;
     case "isolation_confirmation_required":
       return "A pull request was not generated automatically: it comes from a fork or an author without known write access, which always needs your confirmation.";
-    case "unknown_model_price":
-      return "A pull request was not generated automatically: the configured model has no known price. Choose a priced model.";
     case "unavailable":
       return "A pull request was not generated automatically: GitHub or the local clone was unavailable after several attempts.";
     default:
       return `A pull request was not generated automatically (${status.notice}).`;
   }
 }
-export type Estimate = {
-  id: string;
-  estimate_usd: number | null;
-  price_version: string;
-  expires_at: string;
-  items: {
-    clone: string;
-    pr: number;
-    kind?: "fix";
-    fix?: FixInputs;
-    /** The review threads a fix would address; capped when there were more
-     *  than baum includes, and how many were left out because an account
-     *  without access to the repository started them. */
-    fix_threads?: FixThread[];
-    fix_threads_capped?: boolean;
-    fix_threads_untrusted?: number;
-    head_sha: string;
-    backend: string;
-    model: string;
-    estimate_usd: number | null;
-    estimate_reason?: string;
-    max_tokens: number;
-    max_calls: number;
-    requires_isolation_confirmation: boolean;
-    blocked_reason?: string;
-  }[];
-};
 export type DiagnosticStatus = "ok" | "warning" | "problem" | "info";
 export type DiagnosticCheck = {
   id: string;
@@ -457,17 +421,26 @@ export async function request<T>(
   });
   if (!response.ok) {
     const text = (await response.text()).slice(0, 240);
-    let body: { code?: string; message?: string; needs_clone?: boolean } = {};
+    let body: {
+      code?: string;
+      message?: string;
+      needs_clone?: boolean;
+      blocked_reason?: string;
+    } = {};
     try {
       body = JSON.parse(text);
     } catch {
       /* The daemon also returns plain text. */
     }
+    // A run the daemon will not start (a fix of a fork, with nothing to
+    // fix…) names its reason, which is said in words.
     throw new LocalRequestError(
       body.needs_clone
         ? "Needs a local clone"
-        : (body.message ?? `Local request failed (${response.status}): ${text}`),
-      body.needs_clone ? "needs_clone" : body.code,
+        : body.blocked_reason
+          ? jobReasonText(body.blocked_reason)
+          : (body.message ?? `Local request failed (${response.status}): ${text}`),
+      body.needs_clone ? "needs_clone" : (body.blocked_reason ?? body.code),
       response.status,
     );
   }
@@ -668,19 +641,15 @@ export function threadOutcomesSummary(outcomes: ThreadOutcome[] | undefined): st
   if (failed) text += `; ${failed} ${failed === 1 ? "reply" : "replies"} failed`;
   return text;
 }
-/** Prepares a fix of the pull request: what it would fix, with which harness
- *  and model, and on which branch, or why it cannot run. */
-export async function estimateFix(clone: string, pr: number): Promise<Estimate> {
-  return request<Estimate>("api/jobs/estimate", {
+/** Starts a fix of the pull request at once: the daemon checks GitHub, picks
+ *  the review's harness and model and queues it, with nothing to confirm. A
+ *  fix it will not run (a fork, no push access, nothing to fix) is refused
+ *  with its reason in words, as a `LocalRequestError` whose code is the
+ *  reason. */
+export async function startFix(clone: string, pr: number): Promise<Job[]> {
+  const answer = await request<{ jobs: Job[] }>("api/jobs", {
     items: [{ clone, pr, kind: "fix" }],
     mode: "single",
-  });
-}
-/** Starts a fix the person confirmed. */
-export async function startFix(estimate: Estimate): Promise<Job[]> {
-  const answer = await request<{ jobs: Job[] }>("api/jobs", {
-    estimate_id: estimate.id,
-    confirm_estimate: true,
   });
   return answer.jobs;
 }

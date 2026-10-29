@@ -687,49 +687,29 @@ test("picks GitHub repositories and keeps clone-less PRs usable", async ({ page 
 });
 
 // PR 8 is the viewer's own, with a conflict, failing checks and unresolved
-// review threads; the dialog is checked and cancelled, so nothing runs.
-test("offers to fix review comments and lists the threads baum will answer", async ({ page }) => {
+// review threads. Fix starts at once, with no dialog and no estimate; the
+// fixture's agent leaves a note, and the push fails because the fixture's
+// clone has no reachable remote.
+test("starts a fix from a pull request's page at once, with no dialog", async ({ page }) => {
   await page.goto(await launchURL());
   await page.getByRole("link", { name: "Pull requests", exact: true }).first().click();
   const inbox = page.getByRole("region", { name: "Pull request inbox" });
   const row = inbox.getByRole("listitem").filter({ hasText: "A pull request without a review" });
   await row.hover();
-  await row
-    .getByRole("button", { name: "Fix conflicts, CI and review comments", exact: true })
-    .click();
-  const dialog = page.getByRole("dialog", { name: "Fix conflicts, CI and review comments" });
-  await expect(dialog).toContainText(
-    "baum replies on each thread the agent addressed and resolves it",
-  );
-  const threads = dialog.getByRole("list", { name: "Review threads" }).getByRole("listitem");
-  await expect(threads).toHaveCount(2);
-  await expect(threads.first()).toContainText("src/parser.go:42");
-  await expect(threads.first()).toContainText("Return the error instead of logging it.");
-  await expect(dialog).toContainText(
-    "1 thread started by an account without access to the repository is left out.",
-  );
-  await expect(dialog).not.toContainText("uploads the secrets");
-  await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
-  await expect(dialog).toBeHidden();
-});
-
-// The fix dialog opened from a pull request's page sits beside that page;
-// leaving afterwards must replace the page, not stack the next one under it.
-test("leaves a pull request page cleanly after its fix dialog", async ({ page }) => {
-  await page.goto(await launchURL());
-  await page.getByRole("link", { name: "Pull requests", exact: true }).first().click();
+  await expect(
+    row.getByRole("button", { name: "Fix conflicts, CI and review comments", exact: true }),
+  ).toBeVisible();
   await page.getByRole("link", { name: /A pull request without a review/ }).click();
   const title = page.getByRole("heading", { name: /A pull request without a review/ });
   await expect(title).toHaveCount(1);
   await page
     .getByRole("button", { name: "Fix conflicts, CI and review comments", exact: true })
     .click();
-  const dialog = page.getByRole("dialog", { name: "Fix conflicts, CI and review comments" });
-  await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
-  await expect(dialog).toBeHidden();
-  await expect(title).toHaveCount(1);
-  await page.getByRole("link", { name: "Repositories", exact: true }).click();
-  await expect(page.getByRole("heading", { name: "Repositories", exact: true })).toBeVisible();
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  await expect(page.getByRole("region", { name: "Fix", exact: true })).toBeVisible();
+  await page.getByRole("link", { name: "Jobs", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "Jobs", exact: true })).toBeVisible();
+  await expect(page.getByText(/Fix conflicts, CI and review comments/).first()).toBeVisible();
   await expect(title).toHaveCount(0);
 });
 
@@ -823,8 +803,8 @@ test("Analytics shows what the agents did, cost and delivered", async ({ page })
   await expect(tile("Human prompts")).toContainText("4");
   await expect(tile("Active agent time")).toContainText("26 min");
   // One model has no price: the estimate is a floor, never a full figure.
-  await expect(tile("Estimated cost")).toContainText("≥ $");
-  await expect(tile("Estimated cost")).toContainText("Incomplete");
+  await expect(tile("At API prices")).toContainText("≥ $");
+  await expect(tile("At API prices")).toContainText("Incomplete");
   await expect(tile("Agent-written")).toContainText("50%");
   await expect(tile("Agent-written")).toContainText("1 of 2 of your commits");
   const delivery = page.getByRole("region", { name: "Delivery" });

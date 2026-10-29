@@ -28,13 +28,12 @@ func (s *Scheduler) Handler() http.Handler {
 	mux.HandleFunc("GET /api/automatic", write)
 	mux.HandleFunc("PUT /api/automatic", func(w http.ResponseWriter, r *http.Request) {
 		var input struct {
-			Enabled                 *bool   `json:"enabled"`
-			CursorAgentAcknowledged *bool   `json:"cursor_agent_acknowledged"`
-			Backend                 *string `json:"backend"`
-			Model                   *string `json:"model"`
-			FixBackend              *string `json:"fix_backend"`
-			FixModel                *string `json:"fix_model"`
-			PullRequests            *string `json:"pull_requests"`
+			Enabled      *bool   `json:"enabled"`
+			Backend      *string `json:"backend"`
+			Model        *string `json:"model"`
+			FixBackend   *string `json:"fix_backend"`
+			FixModel     *string `json:"fix_model"`
+			PullRequests *string `json:"pull_requests"`
 		}
 		r.Body = http.MaxBytesReader(w, r.Body, 4<<10)
 		d := json.NewDecoder(r.Body)
@@ -49,9 +48,6 @@ func (s *Scheduler) Handler() http.Handler {
 			if input.Enabled != nil {
 				next.Automatic = *input.Enabled
 			}
-			if input.CursorAgentAcknowledged != nil {
-				next.CursorAgentAcknowledged = *input.CursorAgentAcknowledged
-			}
 			if input.Backend != nil {
 				backend, err := config.ParseBackend(*input.Backend)
 				if err != nil {
@@ -59,11 +55,6 @@ func (s *Scheduler) Handler() http.Handler {
 					return p
 				}
 				next.Backend = &backend
-				// Choosing cursor-agent is the acknowledgement that its cost
-				// cannot be estimated, as in the desktop app's setup.
-				if backend == config.BackendCursorAgent {
-					next.CursorAgentAcknowledged = true
-				}
 			}
 			if input.Model != nil {
 				model := strings.TrimSpace(*input.Model)

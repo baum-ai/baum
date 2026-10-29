@@ -73,7 +73,7 @@ commit panes, tokens and system theme as the current hosted PR page. Its host
 adapter supplies local document, history, attachment, patch and redacted session
 sources through the same slots as the hosted PR route. Hosted discussion and approvals are absent. Merging, updating a branch,
 re-running checks, a review submitted from the walkthrough and a fix the person
-confirms, with its replies on the review threads it addressed, are the app's
+starts, with its replies on the review threads it addressed, are the app's
 only GitHub writes (see below).
 
 The PR page's **Walk through** button (beside Regenerate, once a review is
@@ -112,19 +112,17 @@ request is open, is not a fork,
 discovery says the signed-in account can push to the repository
 (`viewer_can_push`) and the repository has a local clone. The PR page puts the
 button first beside the version menu, Pull requests puts a small **Fix** in
-the row's Status cell, and the Inbox's card offers it as its action. Either opens
-`FixDialog` (`src/fix.tsx`), which estimates the fix
-(`POST api/jobs/estimate` with `kind: "fix"`) and shows the harness and model
-(the fix agent Settings chooses, else the review's), the branch the result is pushed to, the estimate, and that the
-agent runs with write access to a temporary checkout (Claude Code cannot run
-commands, so it cannot run the tests; Codex runs them without network). A fix
-of review comments also lists the threads (`fix_threads`: file, line, author
-and the first line of the first comment), says that baum replies on each
-thread the agent addressed and resolves it, and notes threads left out
-because there were more than 20 (`fix_threads_capped`) or because an account
-without access to the repository started them (`fix_threads_untrusted`). A fix
-the daemon refuses shows its reason instead of a confirmation. Confirming
-queues it (`POST api/jobs` with the estimate id); nothing runs without that.
+the row's Status cell, and the Inbox's card offers it as its action; `f` presses
+it on each. Any of them starts the fix at once, with no dialog and no cost
+estimate: `fix` in `src/app.tsx` posts `POST api/jobs` with
+`{"items":[{"clone","pr","kind":"fix"}],"mode":"single"}` (`startFix`), and
+the button reads **Starting…** (in Pull requests' Status cell, **Fixing…**)
+from the click (the app's `fixStarting` set) until the job arrives. The daemon checks GitHub again and runs it with the
+fix agent Settings chooses, else the review's harness and model. A fix it refuses answers `409` with
+`blocked_reason` (fork, no push access, unsupported harness, nothing to fix),
+which `request` turns into the reason in words (`jobReasonText`); the app
+shows "Couldn't start the fix: …" where it was asked for: under the PR page's
+header, in the Inbox panel, or below Pull requests.
 The fix is a job like a review: the Jobs list labels it with the fix's name
 and, once done, links the pushed commit and keeps the agent's summary behind
 **What the agent did**; the PR page shows its phase with **Cancel fix**, then
@@ -175,12 +173,14 @@ number, author or branch; what waits in the Inbox first), the review groups and
 the agent sessions: every word typed must match, a label that starts with the
 query ranks first, `↑` and `↓` move, `Enter` opens and `Esc` closes. The sidebar
 draws each page's key while Alt is held and names it in the link's tooltip and
-`aria-keyshortcuts`.
+`aria-keyshortcuts`. Tab moves nothing anywhere, dialogs included: the keys act
+on the selection, and a place that needs more gets its own keys. `Esc` gives up
+any focus a click left on a control.
 
 On Pull requests, `j`/`↓` and `k`/`↑` move a row focus through the
 rows as drawn (group rows count; rows of collapsed buckets and collapsed groups
 are skipped), `Enter` or `o` opens the focused pull request or group, `x` toggles
-its selection, `m` opens Merge and `f` Fix where the row offers them (Merge wins
+its selection, `m` opens Merge and `f` starts the fix where the row offers them (Merge wins
 where both could), `g` generates the pull request's review through the same path
 as the PR page's Generate (so the same confirmations and the instant "Starting"
 state), `r` refreshes from GitHub at once rather than after the polling backoff,
@@ -229,7 +229,9 @@ is open and `viewer_can_push` is true. Each opens a small confirmation
 the first names the two branches, the second lists the failed GitHub Actions
 workflow runs it will re-run and, under "Not re-runnable from baum", the
 failing checks of other apps; with no failed run it has nothing to confirm.
-Confirming posts `POST /api/prs/update-branch` or `POST /api/prs/rerun-checks`
+Both dialogs put the focus on the confirm button once GitHub allows the write,
+so `Enter` confirms and `Esc` cancels without Tab. Confirming posts
+`POST /api/prs/update-branch` or `POST /api/prs/rerun-checks`
 with the head commit the page showed (labels turn to "Updating…" and
 "Re-running…" in the same frame), so a moved branch is refused in words
 (`{code, message}`, shown inline). A successful update stays open until Closed
@@ -274,7 +276,8 @@ baum's reading estimate and the title (linking to the PR page), then why it
 waits on the person in a sentence built from its state (none for a Merge, whose
 group says it). Its default action is always **Open** (the PR page); beside it
 is what the kind asks for: Merge (`MergeDialog`), Update the branch
-(`UpdateBranchDialog`), the fix's own label (`FixDialog`), Watch the agent for
+(`UpdateBranchDialog`), the fix's own label (which starts the fix at once, with
+`f` as its key), Watch the agent for
 a running fix, else Open on GitHub; then **Snooze**. A scored pull request has
 a risk card: the score as five blocks, its meaning and, from the saved review,
 its first reason. Below it the panel lists, by kind: for a Review or Merge,
@@ -291,8 +294,9 @@ Snooze offers 1 hour, this afternoon (3 PM, while that is more than an hour
 away), tomorrow morning (9 AM) and **Until it changes**, which hides the pull
 request until its head moves. A snooze selects the next pull request and shows
 a toast with **Undo**; **Bring back** under Snoozed ends one early. Keys:
-`j`/`↓` and `k`/`↑` move the selection, `Enter` opens, `m` merges a Merge, `s`
-opens Snooze and `1`–`4` choose from it, `u` undoes a snooze.
+`j`/`↓` and `k`/`↑` move the selection, `Enter` opens, `m` merges a Merge, `f`
+starts a Fix item's fix (where its panel offers the button), `s` opens Snooze
+and `1`–`4` choose from it, `u` undoes a snooze.
 
 "Done today" lists the pull requests that left the queue since first seen
 today because the person's part is done: it merged or closed, the review
@@ -351,16 +355,12 @@ one notice covers every repository GitHub could not refresh, says whether
 GitHub is disconnected or needs attention, and links to Settings' Connections; another
 covers an exhausted GitHub allowance. Neither appears merely because the cache
 is old. Refresh asks
-GitHub through the local server. Checkbox selection requests a batch estimate;
-restricted fork/author entries are excluded from batches and require explicit
-isolation confirmation when generated individually. Generation confirms an
-approximate price and configured model; an unknown model price cannot start a
-run. The exception is the `cursor-agent` backend, which Cursor bills through
-the user's subscription: its item shows "cost unknown" with that reason in
-words instead of a price, the total is unknown, and the run starts only after a
-separate acknowledgement that baum cannot estimate it. The app sends it as
-`confirm_unpriced`, and the server refuses such a run without it. Exclusion and
-estimate reasons are shown in words, never as reason codes.
+GitHub through the local server. Generate, for one pull request or a checkbox
+selection, starts at once (`POST api/jobs` with the items): no dialog, no
+price, whatever the model, `cursor-agent` and models baum has no price for
+included. The one confirmation left is for a fork or an author without write
+access (`isolation_required`, then `confirm_isolation`); a batch with such an
+entry asks the same. Refusals are shown in words, never as reason codes.
 Progress and completion arrive over the authenticated SSE stream; reconnection
 rebuilds the inbox and jobs. Jobs appear newest first and can be cancelled. Existing reviews stay readable
 while regeneration runs. A PR page uses the queue’s active job for that
@@ -425,12 +425,13 @@ Its bar holds the window (7, 30 or 90 days, as a segmented control) and the
 repository and agent selects in the inbox's select style; all three live in the
 address. A new choice shows at once and the last report stays, faded, until the
 new one answers. Cards: summary tiles (sessions, active agent time, human prompts,
-the estimated cost marked "Incomplete" when part is unpriced, and the
+the cost at API prices, marked "Incomplete" when part is unpriced, and the
 agent-written share of commits); agent activity per day, sessions or active time
 stacked by agent, with a legend and a table behind "Show as a table"; a breakdown
 by agent, model or repository (sessions, prompts, tool calls, failed share, active
-time, tokens, estimated cost); agent-written commits by evidence; baum's work
-(reviews, fixes pushed, threads resolved, spend, failures by reason, merges,
+time, tokens, cost at API prices); agent-written commits by evidence; baum's
+work (reviews, fixes pushed, threads resolved, cost at API prices, failures by
+reason, merges,
 branch updates and re-runs from the app); delivery from GitHub ("Loading from
 GitHub…" for that card only while the daemon searches); plan usage over time per
 provider, with how often each window hit its limit; busiest hours; and the longest
@@ -475,8 +476,7 @@ and push a fix: NAME/value rows (names `^[A-Za-z_][A-Za-z0-9_]*$`, no duplicates
 object clears the app's value). `GET api/settings` returns `agent_env` and
 `agent_env_source` (`app`, or `file` while the config file's `[agent_env]`
 applies, which the section notes). `~` and `$VARS` are expanded; the values
-are stored on this computer, so no secrets belong there. Choosing cursor-agent, globally or for a repository, is the
-one-time acknowledgement that its cost cannot be estimated.
+are stored on this computer, so no secrets belong there.
 Automatic reviews are on by default. The global switch is a master switch (the
 desktop tray's pause sets it): off stops automatic generation everywhere. Each
 repository chooses "Global setting", "On" or "Off" (`automatic`: `null`,
@@ -487,8 +487,8 @@ opens the searchable account picker, the only way to add one: baum works with
 GitHub repositories only. Explicit per-repository folder attachment uses any
 matching remote, including an upstream remote in a fork clone. Settings apply
 to the repository through `PUT api/repositories/{owner}/{name}/settings`, with
-automatic generation and harness/model overrides. Saving clears an old daily
-spending cap. Removing a repository unpicks it but leaves its files and saved
+automatic generation and harness/model overrides; there is no spending cap.
+Removing a repository unpicks it but leaves its files and saved
 reviews on disk. Change local clone offers the existing clone registrations and
 lets the person remove one or register another folder. Explicit unpicks are
 remembered locally across picker reopens and app reloads; picking it again is
@@ -499,9 +499,9 @@ automatically because new commits were pushed" (or "because your review was
 requested", "because the pull request was marked ready for review", or
 "Started automatically again" for the one retry of a run a daemon stop or
 restart interrupted); it is cancelled like any other. Drafts get no automatic
-review, but Generate works on them as usual. `automatic` SSE events (a pause,
-its end, a notice, and every repository's status after a settings change in
-any window) reload the page and are what the desktop app can notify on.
+review, but Generate works on them as usual. `automatic` SSE events (a notice,
+and every repository's status after a settings change in any window) reload
+the page.
 Agent sessions in progress (`GET api/live-sessions`, tracked by the daemon from
 hook events, see "Live sessions" in ARCHITECTURE.md) show as a compact "Agent
 running" or "Agent idle" marker on the Pull requests rows of their pull request and as
@@ -587,7 +587,7 @@ when a refresh failed or the request allowance is used up; a cache that is
 merely older than the poll interval is normal and says nothing.
 The daemon keeps generating after the app closes, until "Quit and stop
 background reviews" or `baum daemon stop`. Every other model call runs only
-after an explicit generation request and spend confirmation.
+after an explicit generation or fix request.
 
 Run workloads in the repository's `ui-test` Docker service (see root AGENTS.md):
 `pnpm check`, `pnpm build`, `pnpm test:e2e`. `pnpm build` writes the assets the
@@ -628,7 +628,7 @@ answers the update-branch and re-run calls: tests re-run PR 8's failed checks
 and update PR 11's branch from their pages, each writing a marker (`rerun-8`,
 `updated-11`) the fixture's discovery reads and the test removes again. Unit tests cover
 first-run/authorization, namespaced URLs and navigation, each review state,
-unknown costs, selection and filters, automatic settings and pause notices,
+unknown costs, selection and filters, automatic settings and notices,
 and the automatic job labels. The fixture also writes two Claude Code sessions in
 the demo clone under its fake home, commits of the person's in the other clone,
 plan usage samples and GitHub's answer to the delivery search, and a test opens
@@ -642,15 +642,12 @@ after secret masking; progress retains numeric buckets while masking runs.
 The charged-token budget counter excludes cache reads;
 total processed tokens includes them. Missing older accounting remains unknown,
 and interrupted providers show reported subtotals rather than exact totals.
-Saved review usage follows the version selected in history. Unknown actual
-costs show a reason; configured model identity is distinguished from a provider
-report. Each attempt is priced independently when its model and pricing inputs
-are known.
-
-The confirmation amount is budget planning, not a PR-sized prediction. It shows
-the configured charged-token and backend-call limits and assumes one
-budget-sized cache read per call at the highest listed rates. Cached reads and
-provider overshoot can exceed those assumptions, so this is not a dollar cap.
+Saved review usage follows the version selected in history. Its cost reads
+"At API prices": what the usage would cost at API prices, not what a
+subscription charges. Unknown costs show a reason; configured model identity
+is distinguished from a provider report. Each attempt is priced independently
+when its model and pricing inputs are known. Pricing only reports: no budget,
+cap, confirmation or decision about a run reads it.
 
 GitHub browser scenarios use the real auth manager/controller and mocked GitHub
 HTTP and credential-store boundaries. The `github-auth-mode` marker selects

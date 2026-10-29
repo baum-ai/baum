@@ -9,7 +9,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"math"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -33,20 +32,16 @@ var ErrInvalidRepository = errors.New("repository must be a github.com owner/nam
 // global settings. Automatic is the repository's choice under the global
 // master switch (see AutomaticEnabled): nil follows it, false turns the
 // repository off, true is an explicit on that still stops while the global
-// switch is off. A nil cap is
-// unset (no daily limit) and zero permits no automatic spending; the daemon's
-// automatic scheduler enforces it. Registration itself starts no generation.
+// switch is off. Registration itself starts no generation. A daily_cap an
+// older baum stored is ignored on read and dropped on the next write: baum
+// sets no spending limits, since it cannot price what a subscription bills.
 type Settings struct {
 	Automatic *bool           `json:"automatic"`
-	DailyCap  *float64        `json:"daily_cap,omitempty"`
 	Backend   *config.Backend `json:"backend,omitempty"`
 	Model     *string         `json:"model,omitempty"`
 }
 
 func (s Settings) Validate() error {
-	if s.DailyCap != nil && (math.IsNaN(*s.DailyCap) || math.IsInf(*s.DailyCap, 0) || *s.DailyCap < 0) {
-		return errors.New("daily cap must be finite and nonnegative")
-	}
 	if s.Backend != nil && !s.Backend.Valid() {
 		return errors.New("invalid backend")
 	}
@@ -67,14 +62,13 @@ func (s Settings) AutomaticEnabled(p Preferences) bool {
 	return s.Automatic == nil || *s.Automatic
 }
 
-// Preferences are the registry's global choices, edited in the app.
+// Preferences are the registry's global choices, edited in the app. Fields
+// an older baum saved and this one dropped, such as
+// cursor_agent_acknowledged, are ignored on read and gone after the next
+// write.
 type Preferences struct {
 	// Automatic is the default for repositories without an explicit choice.
 	Automatic bool `json:"automatic"`
-	// CursorAgentAcknowledged records the one-time acknowledgement that
-	// cursor-agent runs have no cost estimate; automatic generation uses
-	// cursor-agent only once it is set.
-	CursorAgentAcknowledged bool `json:"cursor_agent_acknowledged"`
 	// Backend and Model, when set, replace the config file's for generation
 	// in the app; a repository's own settings still override them.
 	Backend *config.Backend `json:"backend,omitempty"`
@@ -176,7 +170,7 @@ func (p Preferences) ResolveFix(review config.Config) config.Config {
 }
 
 // DefaultPreferences apply until the user changes them: automatic generation
-// on, cursor-agent not acknowledged.
+// on.
 func DefaultPreferences() Preferences { return Preferences{Automatic: true} }
 
 // Resolve overlays generation choices without changing credentials or budgets.
