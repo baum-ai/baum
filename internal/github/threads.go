@@ -10,8 +10,9 @@ import (
 
 // The review threads a fix addresses (internal/fix). baum reads a pull
 // request's unresolved threads for the agent and, after the fix's push, replies
-// on each thread the agent addressed and resolves it. These are, with merging,
-// the client's writes to GitHub, made once each and never retried.
+// on each thread the agent addressed and resolves it. The app also lists them
+// and resolves one the person chose (internal/prupdate). These are, with
+// merging, the client's writes to GitHub, made once each and never retried.
 
 // MaxThreadComments is how many comments of a thread a fix reads: the first
 // ones, which state what the reviewer asked.
@@ -28,7 +29,7 @@ const fixThreadsQuery = `query FixReviewThreads($owner: String!, $name: String!,
     pageInfo { hasNextPage endCursor }
     nodes {
      id path line originalLine isResolved isOutdated viewerCanReply viewerCanResolve
-     comments(first: 10) { totalCount nodes { state authorAssociation body author { __typename login } } }
+     comments(first: 10) { totalCount nodes { state authorAssociation body url author { __typename login } } }
     }
    }
   }
@@ -71,6 +72,8 @@ type ReviewThread struct {
 	Outdated bool
 	// CanReply and CanResolve are the signed-in account's.
 	CanReply, CanResolve bool
+	// URL is the thread's first submitted comment on GitHub.
+	URL string
 	// Comments are the first MaxThreadComments submitted comments; Total
 	// counts them all.
 	Comments []ThreadComment
@@ -139,8 +142,8 @@ func (c *Client) UnresolvedThreads(ctx context.Context, repository Repository, n
 							Comments               struct {
 								TotalCount int
 								Nodes      []struct {
-									State, AuthorAssociation, Body string
-									Author                         *struct {
+									State, AuthorAssociation, Body, URL string
+									Author                              *struct {
 										Typename string `json:"__typename"`
 										Login    string
 									}
@@ -181,6 +184,9 @@ func (c *Client) UnresolvedThreads(ctx context.Context, repository Repository, n
 				if comment.State == "PENDING" {
 					thread.Total--
 					continue
+				}
+				if thread.URL == "" {
+					thread.URL = comment.URL
 				}
 				entry := ThreadComment{Association: comment.AuthorAssociation, Body: comment.Body}
 				if comment.Author != nil {

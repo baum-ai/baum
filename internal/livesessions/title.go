@@ -58,6 +58,11 @@ type Listed struct {
 	// first section), one line, masked; absent until the agent compacted the
 	// session. The transcript route serves the whole summary.
 	Summary string `json:"summary,omitempty"`
+	// Activity is what the transcript says the session is doing: its latest
+	// tool calls, how many files it wrote and its latest message (see
+	// Activity). Absent for Cursor sessions and until a transcript has a tool
+	// call or assistant text.
+	Activity *Activity `json:"activity,omitempty"`
 }
 
 // described is what was last read of a session.
@@ -68,6 +73,7 @@ type described struct {
 	version string
 	// title, excerpt and summary are as served: masked and cut.
 	title, excerpt, summary string
+	activity                *Activity
 	// found is the file a lookup by id found, so the store is searched once.
 	found string
 	scan  scanState
@@ -80,6 +86,8 @@ type scanState struct {
 	// custom and generated are Claude Code's titles; prompt is the first one
 	// typed; summary is the latest compaction summary, raw.
 	custom, generated, prompt, summary string
+	// act is what the transcript's assistant lines did, kept across passes.
+	act activityScan
 }
 
 // safeID is a session id that can name a file: Claude Code and Codex ids are
@@ -95,8 +103,8 @@ func (t *Transcripts) listed() []Listed {
 		_, path, _ := t.Tracker.Lookup(s.Agent, s.ID)
 		k := key{s.Agent, s.ID}
 		keep[k] = true
-		title, excerpt, _ := t.describe(k, path)
-		out = append(out, Listed{Session: s, Title: title, Summary: excerpt})
+		title, excerpt, _, activity := t.describe(k, path)
+		out = append(out, Listed{Session: s, Title: title, Summary: excerpt, Activity: activity})
 	}
 	t.mu.Lock()
 	for k := range t.described {
@@ -108,12 +116,12 @@ func (t *Transcripts) listed() []Listed {
 	return out
 }
 
-// describe is the session's title, the opening of its compaction summary and
-// the whole summary, read again when its files changed and it was last looked
+// describe is the session's title, the opening of its compaction summary, the
+// whole summary and its activity, read again when its files changed and it was last looked
 // at long enough ago. A failed read keeps what was read before and is tried
 // again by the next request, since a transcript can be named before it is
 // written.
-func (t *Transcripts) describe(k key, path string) (title, excerpt, summary string) {
+func (t *Transcripts) describe(k key, path string) (title, excerpt, summary string, activity *Activity) {
 	t.mu.Lock()
 	if t.described == nil {
 		t.described = map[key]*described{}
@@ -133,23 +141,23 @@ func (t *Transcripts) describe(k key, path string) (title, excerpt, summary stri
 	}
 	now := t.now()
 	if !e.checked.IsZero() && now.Sub(e.checked) < every {
-		return e.title, e.excerpt, e.summary
+		return e.title, e.excerpt, e.summary, e.activity
 	}
 	src, err := t.describeFiles(k, cmp.Or(path, e.found))
 	if err != nil {
-		return e.title, e.excerpt, e.summary
+		return e.title, e.excerpt, e.summary, e.activity
 	}
 	version, err := Location{files: src.files(), store: src.store}.Version()
 	if err != nil {
-		return e.title, e.excerpt, e.summary
+		return e.title, e.excerpt, e.summary, e.activity
 	}
 	if version == e.version {
 		e.checked = now
-		return e.title, e.excerpt, e.summary
+		return e.title, e.excerpt, e.summary, e.activity
 	}
 	if err := src.read(k.id, &e.scan); err != nil {
 		t.logger().Debug("live session title not read", "agent", k.agent, "error", err)
-		return e.title, e.excerpt, e.summary
+		return e.title, e.excerpt, e.summary, e.activity
 	}
 	caught := e.scan.offset >= src.size
 	if !caught && k.agent == AgentClaudeCode {
@@ -163,12 +171,13 @@ func (t *Transcripts) describe(k key, path string) (title, excerpt, summary stri
 	e.title = t.Tracker.oneLine(title, maxTitle)
 	e.excerpt = t.Tracker.oneLine(summaryOpening(body), maxExcerpt)
 	e.summary = t.block(body, maxSummary)
+	e.activity = t.activity(&e.scan.act, t.Tracker.workdir(k.agent, k.id))
 	e.found = src.found
 	if caught {
 		e.version = version
 	}
 	e.checked = now
-	return e.title, e.excerpt, e.summary
+	return e.title, e.excerpt, e.summary, e.activity
 }
 
 // block is text an agent wrote, kept as lines: format characters dropped,
@@ -400,7 +409,8 @@ func (s *describeSource) read(id string, scan *scanState) error {
 
 // readClaude reads a Claude Code transcript's whole lines from from to to:
 // the titles it sets (custom-title, the user's; ai-title, its own), the first
-// prompt typed and the latest compaction summary. scan.offset moves past the
+// prompt typed, the latest compaction summary and what its assistant lines
+// did (tool calls, files written, latest text). scan.offset moves past the
 // last whole line read.
 func readClaude(path string, from, to int64, scan *scanState) error {
 	return eachLine(path, from, to, scan, func(line []byte, whole bool) {
@@ -408,6 +418,8 @@ func readClaude(path string, from, to int64, scan *scanState) error {
 			return
 		}
 		switch {
+		case mayHaveActivity(line):
+			scan.act.claudeActivity(line)
 		case bytes.Contains(line, []byte(`"type":"custom-title"`)):
 			var v struct {
 				CustomTitle string `json:"customTitle"`
@@ -472,7 +484,7 @@ func claudeText(line []byte, summary bool) (string, bool) {
 }
 
 // readCodex reads a Codex rollout's whole lines from from to to: the first
-// message the user typed and the latest compaction that kept its summary as
+// message the user typed, what its response items did and the latest compaction that kept its summary as
 // text (a compaction done by the server keeps it encrypted).
 func readCodex(path string, from, to int64, scan *scanState) error {
 	return eachLine(path, from, to, scan, func(line []byte, whole bool) {
@@ -482,6 +494,8 @@ func readCodex(path string, from, to int64, scan *scanState) error {
 			if message := codexCompaction(line); strings.TrimSpace(message) != "" {
 				scan.summary = message
 			}
+		case whole && bytes.Contains(line, []byte(`"type":"response_item"`)):
+			scan.act.codexActivity(line)
 		case whole && scan.prompt == "" && bytes.Contains(line, []byte(`"user_message"`)):
 			var v struct {
 				Type    string `json:"type"`

@@ -38,10 +38,9 @@ const (
 	// Transient.
 	ReasonUnsupported = "backend_unsupported"
 	ReasonUnavailable = "backend_unavailable"
-	ReasonUnpriced    = "unpriced_model"
 )
 
-var transient = map[string]bool{ReasonUnsupported: true, ReasonUnavailable: true, ReasonUnpriced: true}
+var transient = map[string]bool{ReasonUnsupported: true, ReasonUnavailable: true}
 
 // Outcomes of a capture.
 const (
@@ -395,10 +394,8 @@ func (c *Capturer) Capture(ctx context.Context, t Target, o Options) (Report, er
 	if report.Backend == agent.BackendCursorAgent {
 		return skip(ReasonUnsupported)
 	}
-	reserved, ok := reserve(c.prices(), report.Backend, report.Model, report.MaxTokens)
-	if !ok {
-		return skip(ReasonUnpriced)
-	}
+	// Prices only report: a model the list does not price runs, reserved at 0.
+	reserved, _ := reserve(c.prices(), report.Backend, report.Model, report.MaxTokens)
 	report.Reserved = reserved
 	if o.DryRun {
 		report.Outcome = OutcomeDryRun

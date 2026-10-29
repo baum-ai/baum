@@ -88,6 +88,12 @@ func TestProbeComparesWithTheLastCompletePoll(t *testing.T) {
 	if err != nil || !second.NextPoll.Equal(now.Add(time.Minute)) {
 		t.Fatalf("second poll next=%v err=%v", second.NextPoll, err)
 	}
+	// Each pull request's update time reaches the snapshot.
+	for _, pr := range second.PullRequests {
+		if pr.Number == 2 && !pr.UpdatedAt.Equal(updated) {
+			t.Fatalf("pull request 2 updated %v, want %v", pr.UpdatedAt, updated)
+		}
+	}
 	probe = answer(2, 2, updated)
 	if changed, err := s.Probe(context.Background(), []github.Repository{app}); err != nil || len(changed) != 0 {
 		t.Fatalf("after poll: changed=%v err=%v", changed, err)

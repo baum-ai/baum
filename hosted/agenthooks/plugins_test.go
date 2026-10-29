@@ -11,8 +11,9 @@ import (
 // pluginVersion is the version both plugin manifests and the Claude catalog
 // carry. A hook change ships as a new version, which agents update to; 1.1.0
 // added the record-only events (Claude Code's notifications and every tool
-// call, Codex's permission requests).
-const pluginVersion = "1.1.0"
+// call, Codex's permission requests), and 1.2.0 Claude Code's permission
+// requests, which the desktop app answers.
+const pluginVersion = "1.2.0"
 
 // Read the shipped files, not generated fixtures: the OSS subtree is the
 // marketplace root after publication and must carry everything it references.
