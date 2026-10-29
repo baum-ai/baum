@@ -634,9 +634,10 @@ read at most once.
 
 `Changed` is called by the capturer once a capture's call is recorded as
 pending, by the capture scheduler after a capture that saved decisions,
-recorded a skip or settled an attempt, and by the feature worker after a
-repository's pass that listed pull requests, linked sessions, placed an
-item or wrote a feature's text. The daemon publishes a `timeline` event on
+recorded a skip or settled an attempt, and by the feature worker once a
+repository's pass, consolidation included, listed pull requests, linked
+sessions, placed an item, wrote a feature's text, or merged or split a
+feature. The daemon publishes a `timeline` event on
 the app's event stream then, at most once a second, and after a settings
 change.
 

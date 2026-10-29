@@ -8,6 +8,9 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/baum-ai/baum/internal/github"
+	"github.com/baum-ai/baum/internal/repos"
 )
 
 // feature adds a feature to version holding the pull requests numbers.
@@ -116,6 +119,41 @@ func TestConsolidationMerge(t *testing.T) {
 	resolved, err := f.store.ResolveFeature(context.Background(), "B")
 	if err != nil || resolved.ID != "A" || resolved.Archived {
 		t.Fatalf("resolved = %+v, %v", resolved, err)
+	}
+}
+
+// clonedRegistry lists the fixture's repository with a clone in dir.
+type clonedRegistry struct {
+	FeatureRegistry
+	dir string
+}
+
+func (r clonedRegistry) Repositories(context.Context) ([]repos.Repository, error) {
+	return []repos.Repository{{Repository: repo, Clones: []repos.Clone{{Path: r.dir, Available: true}}}}, nil
+}
+
+// A pass whose only change is consolidation's merge still reports it, after
+// the merge is written.
+func TestRunOnceReportsAConsolidationChange(t *testing.T) {
+	f := newFeatureFixture(t)
+	version := f.live()
+	f.pull(1, "One", t0, "h1", []string{"a.go"})
+	f.pull(2, "Two", t0, "h2", []string{"a.go"})
+	f.feature(version, "A", 1)
+	f.feature(version, "B", 2)
+	f.backend.merge = func(user string) (string, error) {
+		refs := mergeRefs(t, user)
+		return mergeReply(refs["Feature A"], refs["Feature B"]), nil
+	}
+	reader := &fakeReader{}
+	reader.set()
+	f.worker.GitHub = func(context.Context, github.Repository) (github.Reader, error) { return reader, nil }
+	f.worker.Registry = clonedRegistry{registryOf(f), t.TempDir()}
+	var merged []string
+	f.worker.Changed = func() { merged = append(merged, f.featureOf(2)) }
+	f.worker.RunOnce(context.Background())
+	if len(merged) != 1 || merged[0] != "A" {
+		t.Fatalf("changed with pull request 2 in %v; want once, in A", merged)
 	}
 }
 

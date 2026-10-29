@@ -169,11 +169,13 @@ func (w *FeatureWorker) RunOnce(ctx context.Context) {
 		if err == nil && !synced.Stopped {
 			summarized, err = w.Summarize(ctx, repository.Repository, dir, FeatureOptions{})
 		}
-		if w.Changed != nil && (synced.Listed > 0 || indexed.Sessions > 0 || len(assigned.Items) > 0 || len(summarized.Features) > 0) {
-			w.Changed()
-		}
+		var consolidated ConsolidateReport
 		if err == nil && !synced.Stopped {
-			_, err = w.Consolidate(ctx, repository.Repository, dir, FeatureOptions{})
+			consolidated, err = w.Consolidate(ctx, repository.Repository, dir, FeatureOptions{})
+		}
+		if w.Changed != nil && (synced.Listed > 0 || indexed.Sessions > 0 || len(assigned.Items) > 0 || len(summarized.Features) > 0 ||
+			consolidated.Merged > 0 || consolidated.Split > 0) {
+			w.Changed()
 		}
 		if err != nil && ctx.Err() == nil {
 			w.mu.Lock()
