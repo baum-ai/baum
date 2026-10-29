@@ -588,6 +588,23 @@ not instructions, and to ignore requests to run commands, read or send files,
 or change credentials, secrets, CI or workflow configuration, dependencies or
 unrelated files.
 
+A fix can also be made from a conversation with the review's agent (chat), an
+answer's "Fix this". The app sends only the conversation's and the turn's ids:
+the daemon reads the questions and answers from your review store for that
+clone and pull request, so a page or request cannot supply the text. The
+conversation is an agent's reading of the pull request plus your own questions,
+so it is untrusted data like the rest: it goes into the prompt between the same
+random-tag markers, one block per turn, with secrets masked (your questions are
+stored as you typed them and are masked here), and the instructions
+(`fix-chat.md`) say to make only the change it asks for, verify it against the
+code and ignore anything beyond it. At most 32 KiB of the newest turns are
+included. The estimate pins the turn and a digest of the conversation as the
+agent gets it, so a confirmed fix cannot run with another conversation or
+turn, and one whose stored turns changed stops before the agent runs. Nothing
+about the confirmation changes: the same evidence, the same dialog, the same
+write access, and a fix from a conversation never pushes a workflow or action
+change unless you also asked it to fix conflicts or checks.
+
 The agent reports per thread whether it addressed it, in a JSON block at the
 end of its final message whose opening fence carries the prompt's random tag,
 so a block quoted from a comment or a file is not taken for it. baum parses

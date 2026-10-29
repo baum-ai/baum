@@ -135,6 +135,22 @@ outcome with the agent's summary (`FixDetails`). `reviewJob` ignores fix jobs an
 never shows as a review being generated. The daemon polls discovery after a
 push, so the new head appears without a manual refresh.
 
+A fix can also be made from a conversation with the review's agent
+(`FixDialog`'s `chat` prop, `{conversation_id, turn, suggestion?}`). The
+estimate item then carries `fix_chat: {conversation_id, turn}` (`estimateFix`
+in `src/api.ts`): only ids, never the question or the answer, which the
+daemon reads from the clone's store. The dialog says "Uses this conversation as
+context" with the agent's suggested change, and otherwise works as above; the
+fix is named "Fix from conversation", or with what else it fixes ("Fix CI and
+from conversation": `fixName`'s `chat`), and nothing has to be broken, so the
+offer depends only on `fixEligible` (open, not a fork, `viewer_can_push`, a local
+clone). The estimate pins the conversation's last turn (`fix.chat_turn`,
+`fix_chat.turn`), so a question asked afterwards does not change what the
+confirmed fix uses; a refusal (`chat_unavailable`: no answered turn or a
+conversation of another pull request) or a conversation that changed
+(`chat_changed`) is shown in words. The job's `fix.chat` is the conversation's
+id.
+
 A fix can be watched live. A fix job with `has_transcript` has a transcript
 page, `?page=jobs&job=<id>` (`JobPage` and `JobTranscript` in
 `src/job-transcript.tsx`): the job's phase while it runs, then its summary or
@@ -235,9 +251,24 @@ with a link to the file at the review's head on GitHub, because the daemon
 serves no file text other than patches. A turn that failed, was cancelled or was
 interrupted says why in words (`turnReasonText`: `validation`, `budget`,
 `backend`, `input`, `internal`, `needs_clone`, `unsupported_backend`,
-`cancelled`, `interrupted`), with its cost. Each answer has an empty
+`cancelled`, `interrupted`), with its cost. Each answer has a
 `data-answer-actions` slot (`AskPanel`'s `answerActions` prop) for the actions
-that follow an answer. Chat jobs are not reviews or fixes: `reviewJob` and
+that follow an answer: `AnswerActions` (`src/answer-actions.tsx`), drawn only
+under answers of the newest review version. **Fix this** (boxed, emphasised
+and with the answer's `suggests_fix.summary` above it when there is one) opens
+`FixDialog` with the conversation's id and the answer's turn; it is offered
+where a fix is (`fixEligible` and a local clone) and disabled while a fix of the
+pull request runs. **Add as comment** writes the answer's markdown and one
+`path:start–end` line per citation into the walkthrough draft through
+`walkthrough-model.ts` (`appendToDraft`): after the comment of the stop the
+question's focus names (`draftTarget`), else after the review's overall comment
+(`Progress.note`). It only writes the draft, kept per review version in local
+storage, and calls no GitHub API: the draft is sent only with the review. The
+confirmation, "Added to your review draft", offers **Undo** (`removeFromDraft`,
+which takes back what was added while it is still at the end of the draft) and
+**Open the draft**, which opens the walkthrough's Everything view and its Submit
+panel. A walkthrough that is open reads its progress again on the
+`PROGRESS_EVENT` the model sends. Chat jobs are not reviews or fixes: `reviewJob` and
 `fixJob` ignore them, `chatJobs` lists a pull request's, and the Jobs list and
 transcript page call one "Question on #<pr>". The key `a` is in the shortcuts
 sheet for the pull request page and the walkthrough.

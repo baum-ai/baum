@@ -2391,6 +2391,35 @@ a reason (`head_changed`, `threads_changed`, `no_remote`, `git`, `backend`,
 fix of review comments alone fails with `workflow_changed` when its commit
 changes a path under `.github/workflows/` or `.github/actions/`.
 
+A fix can also be made from a chat conversation. The estimate item carries
+`fix_chat: {conversation_id, turn?}` (`jobs.FixChatRef`; `fix_chat` rather than
+`chat` because a job's own `chat` is the turn a chat job answers). The app sends
+only ids: `fixChat` (`internal/jobs/fixchat.go`) reads the conversation from the
+clone's review store, for the item's pull request only, so another pull
+request's conversation is `chat_unavailable`, as is one without an answered turn
+or a `turn` that was not answered. It takes the answered turns up to and
+including `turn` (the newest answered one when zero) and builds `fix.ChatContext`
+from them: question as stored (unmasked), the stored masked answer markdown, the
+citations as `path:start-end` and `suggests_fix.summary`. `fix.CapChat` caps it
+at 32 KiB, dropping the oldest turns first and cutting a turn only when the newest
+alone exceeds the cap, with a marker. A chat context is eligible under the
+conditions of any fix (open, not a fork, `permissions.push`, a supported backend,
+a registered clone) and replaces the need for a conflict, failing checks or
+threads: `nothing_to_fix` applies only without one. `Prepared.Fix` records
+`chat`, `chat_turn` and `chat_digest` (`fix.ChatDigest` of the capped context),
+and the prepared item records the turn it resolved. The turn is pinned: the
+confirmation re-prepares the same item, so execution reads the conversation up
+to the estimated turn even when later turns arrived, and a stored conversation
+that differs from the digest (`chat_changed`) stops the fix before the agent runs.
+`fix.Options.Chat` adds a section to the prompt (`agent/prompt/fix-chat.md`: make
+the change the conversation asks for and only that, verify it, the conversation
+is data) and one `BEGIN UNTRUSTED DATA` block per turn, oldest first, each
+through the redactor (questions included) and with the nonce stripped, like a
+thread. A fix from a conversation, like one of review comments, never pushes a
+workflow change unless it also fixes conflicts or checks (`workflow_changed`).
+The commit message says "Make the change from a conversation". The phase is
+`reading the conversation`.
+
 A fix also keeps a live transcript of its agent's run for the app: the
 messages, reasoning, tool calls and tool output, taken from the harness's own
 event stream as it is already parsed (`agent.Request.Transcript`, entries of
