@@ -93,6 +93,14 @@ export function MergeDialog({
     return () => abort.abort();
   }, [pr.repository, pr.number]);
   const refusal = options ? mergeRefusal(options, entry) : "";
+  const methods = options && !refusal ? options.methods : [];
+  const ready = Boolean(options) && !refusal && Boolean(method) && !merging;
+  const focusMethod = (name: string) =>
+    dialog.current?.querySelector<HTMLInputElement>(`input[value="${name}"]`)?.focus();
+  // Once the methods arrive, the chosen one takes the focus from Cancel.
+  useEffect(() => {
+    if (options) focusMethod(defaultMergeMethod(options));
+  }, [options]);
   const merge = async () => {
     setMerging(true);
     setError("");
@@ -116,6 +124,28 @@ export function MergeDialog({
       onCancel={(event) => {
         if (merging) event.preventDefault();
         else close();
+      }}
+      // Escape cancels through onCancel. Enter merges unless a button has the
+      // focus, and j/k or the arrows step through the methods.
+      onKeyDown={(event) => {
+        if (event.ctrlKey || event.metaKey || event.altKey || event.nativeEvent.isComposing) return;
+        if (event.key === "Enter") {
+          if (event.target instanceof HTMLElement && event.target.closest("button")) return;
+          event.preventDefault();
+          if (ready) void merge();
+          return;
+        }
+        const step = ["j", "ArrowDown", "ArrowRight"].includes(event.key)
+          ? 1
+          : ["k", "ArrowUp", "ArrowLeft"].includes(event.key)
+            ? -1
+            : 0;
+        if (!step || methods.length === 0 || merging) return;
+        event.preventDefault();
+        const index = methods.indexOf(method);
+        const next = methods[Math.min(methods.length - 1, Math.max(0, index + step))]!;
+        setMethod(next);
+        focusMethod(next);
       }}
       aria-labelledby="merge-title"
     >
@@ -151,19 +181,23 @@ export function MergeDialog({
       <div className="mt-4 flex justify-end gap-2">
         <Button variant="ghost" size="compact" disabled={merging} onClick={close}>
           Cancel
+          <kbd aria-hidden="true" className="key-hint">
+            Esc
+          </kbd>
         </Button>
-        <Button
-          size="compact"
-          disabled={!options || Boolean(refusal) || !method || merging}
-          onClick={() => void merge()}
-        >
+        <Button size="compact" disabled={!ready} onClick={() => void merge()}>
           {merging ? (
             <>
               <NineDots tone="text" />
               Merging…
             </>
           ) : (
-            "Merge pull request"
+            <>
+              Merge pull request
+              <kbd aria-hidden="true" className="key-hint">
+                ↵
+              </kbd>
+            </>
           )}
         </Button>
       </div>

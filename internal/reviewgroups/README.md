@@ -59,9 +59,9 @@ no pull request logic (automatic scheduling, duplicate heads, notices)
 matches a group job. Preparation reads every member's head, state and
 author permission from GitHub like a pull request job: a member from a fork
 or an author without known write access needs the isolation confirmation
-for the whole group. The estimate is one run's budget, as for a pull
-request. A confirmed job is rechecked before running: every member head must
-be the confirmed one.
+for the whole group. Its budgets are one run's, as for a pull request. A
+queued job is rechecked before running: every member head must be the one it
+started from.
 
 `generate.Run` with `Options.Group`:
 

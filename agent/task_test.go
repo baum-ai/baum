@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -83,6 +84,48 @@ func TestRunTaskKeepsTheLastRejectedReply(t *testing.T) {
 	// Not JSON, so it is returned but not retained.
 	if string(document) != `{"features":[]} trailing` || outcome.RejectedDocument != nil {
 		t.Fatalf("document %s rejected %s", document, outcome.RejectedDocument)
+	}
+}
+
+// A task's PassPrompt and Accept replace the prompt, the repair text and the
+// schema check: Accept rewrites a reply, its findings send it back with the
+// pass's prompt, and a Verdict that stops rejects it with repairs left.
+func TestRunTaskUsesItsPassPromptAndAccept(t *testing.T) {
+	backend := &stubBackend{run: func(_ context.Context, _ Request, n int) (Result, error) {
+		return Result{Document: []byte(fmt.Sprintf(`{"n":%d}`, n)), Calls: 1, Tokens: 10}, nil
+	}}
+	g := Generator{Backend: backend}
+	var passes []TaskPass
+	task := Task{
+		Directory: t.TempDir(), Schema: []byte(taskSchema), Budgets: taskBudgets(),
+		PassPrompt: func(pass TaskPass) (string, error) {
+			passes = append(passes, pass)
+			return fmt.Sprintf("pass %d after %q", pass.Number, pass.Findings), nil
+		},
+		// The schema would refuse every reply; Accept takes the second.
+		Accept: func(_ context.Context, pass TaskPass, document []byte, _ *Outcome) (Verdict, error) {
+			if pass.Number == 1 {
+				return Verdict{Document: document, Findings: "again"}, nil
+			}
+			return Verdict{Document: append([]byte("rewritten "), document...)}, nil
+		},
+	}
+	outcome, document, err := g.RunTask(context.Background(), task)
+	if err != nil || outcome.Reason != "" || string(document) != `rewritten {"n":1}` || outcome.ValidationRepairs != 1 {
+		t.Fatalf("%+v %s %v", outcome, document, err)
+	}
+	if len(passes) != 2 || passes[1].Number != 2 || passes[1].Repairs != 2 || string(passes[1].Rejected) != `{"n":0}` || passes[1].Findings != "again" ||
+		backend.calls[1].Prompt != `pass 2 after "again"` {
+		t.Fatalf("passes %+v, prompt %q", passes, backend.calls[1].Prompt)
+	}
+
+	backend.calls, task.Directory = nil, t.TempDir()
+	task.Accept = func(context.Context, TaskPass, []byte, *Outcome) (Verdict, error) {
+		return Verdict{Document: []byte(`{"masked":true}`), Findings: "a secret was masked", Stop: true}, nil
+	}
+	outcome, document, err = g.RunTask(context.Background(), task)
+	if err != nil || outcome.Reason != ReasonValidationRejected || outcome.ValidationRepairs != 0 || len(backend.calls) != 1 || string(document) != `{"masked":true}` {
+		t.Fatalf("stopped: %+v %s %v, %d calls", outcome, document, err, len(backend.calls))
 	}
 }
 
