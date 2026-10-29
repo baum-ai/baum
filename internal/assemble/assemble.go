@@ -145,6 +145,9 @@ type MissingCommitError struct {
 }
 
 func (e *MissingCommitError) Error() string {
+	if auth, ok := errors.AsType[*gitlocal.AuthError](e.Fetch); ok {
+		return fmt.Sprintf("%s (The pull request's %s commit %s is not in this clone.)", auth.Error(), e.Role, e.SHA)
+	}
 	remote := e.Remote
 	if remote == "" {
 		remote = "<remote for " + e.Repository + ">"

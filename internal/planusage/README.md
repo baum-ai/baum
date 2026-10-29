@@ -2,8 +2,9 @@
 
 `internal/planusage` tells the person how much of their Claude and Codex plans
 is left, so they can choose the harness for reviews knowing what each has to
-spare. The daemon serves it as `GET /api/plan-usage`; the app shows it in
-Settings and in the desktop setup's review step.
+spare. The daemon serves it as `GET /api/plan-usage`; the app shows it in its
+sidebar and in the desktop setup's review step, and the desktop tray in its
+menu and panel.
 
 ```json
 {"plans": [{"provider": "claude", "available": true, "plan": "",
@@ -21,7 +22,21 @@ is ever in it.
 
 ## Codex
 
-Codex writes the account's rate limits into its own session files. The reader
+When Codex is signed in with ChatGPT, the reader asks the endpoint the Codex
+CLI's status line uses, `GET https://chatgpt.com/backend-api/wham/usage`, with
+the `tokens.access_token` and `tokens.account_id` of `$CODEX_HOME/auth.json`
+(`Authorization: Bearer` and `ChatGPT-Account-Id`). **It is undocumented and
+may change.** `rate_limit.primary_window` and `secondary_window` become windows
+named by `limit_window_seconds`, resetting at `reset_at` (or after
+`reset_after_seconds`), and `fetched_at` is now: the figures are live. The
+token is handled as Claude's is: held only for the request, never logged,
+stored, returned or put in an error, never refreshed (that would rotate Codex's
+sign-in), and not sent once the `exp` of the JWT has passed. The client refuses
+redirects.
+
+Without that sign-in (an API key, no `auth.json`), with an expired token, or
+when the request fails or answers in a shape this reader does not know, it
+falls back to what Codex writes into its own session files. The reader
 finds `$CODEX_HOME/sessions/YYYY/MM/DD/rollout-*.jsonl` (`CODEX_HOME` defaults to
 `~/.codex`), looks at the eight newest files, newest first, and in each reads
 only the last 1 MiB, scanning lines backwards for an `event_msg` whose payload
@@ -31,7 +46,11 @@ windows named by `window_minutes` (300 is "5-hour", 10080 "weekly"). The reset i
 counted from the snapshot). `fetched_at` is the snapshot's own timestamp, so the
 figure is as old as the last Codex turn. A window whose reset has passed since
 the snapshot has `reset: true` and a null `used_percent`: the old figure no longer
-applies. This makes no network request and reads no credential.
+applies. `plan_type` becomes the plan's name as Codex shows it: "prolite",
+"pro" and "promax" are "Pro 100", "Pro 200" and "Pro 500" (the monthly price),
+"plus" is "Plus", and an unknown value is passed on unchanged (the endpoint's
+`plan_type` is named the same way). The fallback makes no network request and
+reads no credential.
 
 ## Claude
 
@@ -46,7 +65,10 @@ unknown keys are ignored.
 The token is the one Claude Code stored: on macOS the Keychain item
 "Claude Code-credentials", and otherwise (or if the item is missing)
 `$CLAUDE_CONFIG_DIR/.credentials.json` (default `~/.claude/.credentials.json`),
-field `claudeAiOauth.accessToken`. The token is held only for the request. It is
+field `claudeAiOauth.accessToken`. Its `subscriptionType` and `rateLimitTier`
+name the plan as Anthropic sells it: Pro, Max 5x or Max 20x for a person, Team
+Standard or Team Premium (the `max_5x` tier) for a Team seat, and Enterprise,
+which is billed at API prices, without a tier. The token is held only for the request. It is
 never logged, stored, cached, returned by the API or included in an error, and
 the HTTP client refuses redirects. baum never refreshes it: refreshing would
 rotate Claude Code's credential. An expired token, or a 401 or 403, reads "Open

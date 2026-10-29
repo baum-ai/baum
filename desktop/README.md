@@ -257,10 +257,27 @@ The daemon outlives the app, so the app's presence is a tray icon.
   host before it shows the window after all. The deb depends on
   `libayatana-appindicator3-1` (the Tauri bundler adds it for the tray), and a
   tray library that fails to load leaves the app running without a tray.
-- **Tray menu:** Open baum; what the daemon is doing (Idle, "2 running,
-  1 queued"); anything needing attention; Pause or Resume automatic reviews;
-  Start at login; Command Line and Hooks… (see "First run"); a Notifications
-  submenu (see "Notifications"); Quit; Quit and stop background reviews.
+- **Tray menu:** what the daemon is doing (Idle, "2 running, 1 queued");
+  anything needing attention; each agent session asking for a permission or
+  an answer (clicking one opens its transcript); "Plan usage left" with a
+  line per readable plan window ("Claude Code · 5-hour: 62% left · resets in
+  3 h"); Open baum; Pause or Resume automatic reviews; Start at login; Command
+  Line and Hooks… (see "First run"); a Notifications submenu (see
+  "Notifications"); Quit; Quit and stop background reviews. Plan usage shows
+  only the plans the daemon could read, and nothing when it can read neither
+  Claude Code nor Codex. The menu is rebuilt whenever a "resets in" text would
+  read differently, which the 3–10 s polls check.
+- **Tray panel (macOS and Windows):** a left click on the icon opens a small
+  borderless window under the icon (above it, on a bottom taskbar), drawn
+  like a menu: the status line, waiting sessions as highlighted rows that
+  open them, the plan usage left as coloured meters, Open baum, Pause or
+  Resume automatic reviews and Quit and stop background reviews. It hides
+  when it loses focus or on Escape. As in a native menu, `↓` and `↑` move
+  through its items (from the first or last, wrapping), `Home` and `End` go
+  to either end, and `Enter` or `Space` presses the focused one. The right
+  click keeps the full menu. Linux tray hosts
+  report no clicks, so Linux has the menu only. The panel is the bundled
+  `tray.html`, created hidden at startup.
 - **Waiting on you.** While some pull requests wait on the user (review
   requested from them, or their own with changes requested, failing checks or
   a conflict, the "Review requested" and "Needs changes" groups of the app's
@@ -290,9 +307,9 @@ The daemon outlives the app, so the app's presence is a tray icon.
 | --- | --- |
 | Idle | Nothing running or queued, nothing new to look at. |
 | Running | A review is running or queued. |
-| Attention | A review failed, a repository's daily cap paused automatic reviews, a diagnostics check reports a problem, or the daemon is not running. |
+| Attention | A review failed, a diagnostics check reports a problem, or the daemon is not running. |
 
-Attention for the first three clears when the window is opened or focused and
+Attention for the first two clears when the window is opened or focused and
 returns for something new (a failure found when the app first looks at the
 queue is not new; the daemon keeps finished jobs). Diagnostics warnings do not
 count. The menu lists what needs attention, and the tooltip shows the summary.
@@ -306,9 +323,12 @@ Two channels, each the least that does the job:
    over its control socket, owns the stopped-by-user marker, and the app needs
    no credential for it.
 2. **The app API on loopback, with the launch capability as a bearer token**,
-   for what the daemon exposes only there: `GET /api/jobs` and
-   `GET /api/automatic` and `GET /api/index?view=waiting` every 3 s while jobs run and every 10 s otherwise,
-   `GET /api/diagnostics` every 5 minutes (it runs the doctor's checks), and
+   for what the daemon exposes only there: `GET /api/jobs`,
+   `GET /api/automatic`, `GET /api/index?view=waiting` and
+   `GET /api/live-sessions` every 3 s while jobs run and every 10 s otherwise,
+   `GET /api/diagnostics` every 5 minutes (it runs the doctor's checks),
+   `GET /api/plan-usage?refresh=1` every 5 minutes (a fresh reading; the
+   daemon reads again at most once a minute), and
    `PUT /api/automatic`. This is the credential the app already reads for the
    window and the health check, accepted on `/api/` routes only; the request
    that changes state sends the daemon's own origin and JSON, as the daemon
@@ -317,9 +337,14 @@ Two channels, each the least that does the job:
 
 Notifications read the events stream separately (see "Notifications").
 
-The tray adds no Tauri capability, and none names a remote URL: the tray, the
-dialogs and the autostart entry are used from Rust only, so pages the daemon
-serves still reach no command or plugin.
+The tray menu adds no Tauri capability, and none names a remote URL: the
+tray, the dialogs and the autostart entry are used from Rust only, so pages
+the daemon serves still reach no command or plugin. The tray panel's
+capability (`tray-panel`) lets only its bundled page, in its own window, read
+the tray's last view (`tray_panel`), fit the window to its height
+(`tray_panel_height`) and run Open, pause or resume, Quit and stop or open a
+waiting session, or only hide the panel (`close`) (`tray_action`, which
+refuses any other menu id).
 
 ## Start at login
 
@@ -377,7 +402,6 @@ daemon serves are not involved.
 | Fix failed, with its failure category | `notice` `fix_failed` |
 | Agent needs my permission | `notice` `session_permission` |
 | Agent waiting for my answer | `notice` `session_input` |
-| Daily cost cap reached | `automatic`, when a repository is paused for `daily_cap` |
 
 The agent session notifications read like "Claude Code needs your
 permission · acme/demo" or "Codex is waiting for your answer · acme/demo",
@@ -394,9 +418,7 @@ pull request seen for the first time or for the daemon's first look at a
 repository.
 
 `notice` events are published by the daemon (`oss/internal/notices`, see
-`ARCHITECTURE.md`); the cap notification comes from the scheduler's existing
-`automatic` event. There is no default cap, so the cap notification exists only
-for a user who set one. The text comes only from fields the daemon already
+`ARCHITECTURE.md`). The text comes only from fields the daemon already
 redacted: the repository, the pull request title as GitHub returned it
 (control characters stripped, 200 characters at most), the stored risk score,
 the failure category, and an agent session's branch and masked message. A title is shown unchanged; where a Linux
@@ -406,8 +428,8 @@ title is not interpreted.
 - **Click.** Clicking a notification shows the window if it is hidden or
   minimised, brings it to the front and loads
   the pull request (`?clone=<id>&pr=<number>`), for an agent session its
-  transcript (`?page=sessions&session=<agent>:<id>`) or, for the cap and for a
-  notice with no registered clone, the jobs list (`?page=jobs`). The app learns
+  transcript (`?page=sessions&session=<agent>:<id>`) or, for a notice with no
+  registered clone, the jobs list (`?page=jobs`). The app learns
   the daemon's secret app path with one `POST /api/auth/exchange` and loads the
   URL itself; the page's own scripts do not navigate. Linux, macOS and Windows
   toasts report clicks through `notify-rust`. The logic is unit-tested with a fake
@@ -424,10 +446,9 @@ title is not interpreted.
 - **Settings.** Each kind is on by default, and so is a kind added after
   `notifications.json` was written. A "Notifications" submenu with one
   check item per kind is in the macOS menu bar and in the tray menu. Linux and
-  Windows windows have no menu bar, so there the tray holds them. The choices, the
-  permission answer, and the daily-cap pauses already announced (so a restart
-  or a replaced daemon does not announce one again) are saved in
-  `notifications.json` in the app's config directory
+  Windows windows have no menu bar, so there the tray holds them. The choices
+  and the permission answer are saved in `notifications.json` in the app's
+  config directory
   (`~/.config/com.usebaum.desktop/` on Linux). Those saved settings are the
   only copy of the state: a click on either menu flips them, then both menus
   are rebuilt or updated from them. Native menus need no page capability.
@@ -494,7 +515,9 @@ doing anything (`src/zoom.rs`).
   share `setup_state`, the four CLI and hook install/removal commands and
   `choose_repository`. GitHub connection, repository registration, review
   settings and finishing setup remain restricted to the bundled setup screen.
-- The opener plugin is used only from Rust, to open links in the browser. The
+- The opener plugin is used only from Rust, to open links in the browser. Its
+  click script (`open_js_links_on_click`) is off: it would call the plugin from
+  the page, which no page may do, and swallow the click. The
   dialog and updater plugins are used only from Rust too (see Updates). No
   page is granted any plugin's commands.
 

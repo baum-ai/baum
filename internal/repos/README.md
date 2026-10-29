@@ -9,8 +9,8 @@ its HTTP handler uses.
 
 - `repositories(identity, settings)`: settings shared by every clone of a
   repository. `identity` is the lowercase `owner/name` on github.com and
-  `host/owner/name` elsewhere. `settings` is JSON (`automatic`, `daily_cap`,
-  `backend`, `model`).
+  `host/owner/name` elsewhere. `settings` is JSON (`automatic`, `backend`,
+  `model`, `decisions`); a `daily_cap` an older baum stored is ignored.
 - `clones(id, path, common_dir, repository)`: registered working trees. A list
   reprobes each path and reports a changed or missing one unavailable without
   rewriting it.
@@ -28,6 +28,11 @@ its HTTP handler uses.
   Aliases are never checked again; the remote is never rewritten.
   `Repositories` lists them as `earlier_names`.
 - `preferences(key, value)`: the global preferences as one JSON row.
+- `preferences(key, value)`: the global preferences as one JSON row. Its
+  `decisions` object (`enabled`, `model`) configures local
+  decision capture; `Settings.DecisionsEnabled` combines it with the automatic
+  master switch and the repository's `decisions` (nil is on). See
+  [`decisionlog`](../decisionlog/README.md).
 
 A repository is picked exactly when it has a `picked` row. Adding a clone also
 picks its repository, and removing the clone keeps it picked with zero clones.
@@ -105,8 +110,10 @@ clone row) and `CloneRows` (clones as stored, `available` false) read the
 registry only and run no git, unlike `List` and `Repositories`, which probe
 every clone.
 
-Settings PUTs replace the whole object and require `automatic` and
-`daily_cap`, `null` for the default.
+Settings PUTs replace the whole object and require `automatic`, `null` for
+the default. A `daily_cap` an older app still sends, in a settings PUT or in
+the settings of a `POST`, is dropped rather than refused: baum sets no
+spending limits.
 
 ## CLI
 

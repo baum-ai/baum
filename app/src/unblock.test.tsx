@@ -146,6 +146,22 @@ it("confirms an update with the branches named, then sends the head the page sho
   expect(node.textContent).not.toContain("Cancel");
 });
 
+it("confirms from the keyboard with Enter, since Tab moves nothing", async () => {
+  optionsAnswer = updateOptions;
+  writeAnswer = Response.json({ updating: true });
+  await act(async () =>
+    root.render(<UpdateBranchDialog entry={entry()} close={() => {}} updated={async () => {}} />),
+  );
+  // The confirm button holds the focus once GitHub's answer allows the write.
+  expect(document.activeElement).toBe(button("Update branch"));
+  await act(async () => {
+    node
+      .querySelector("dialog")!
+      .dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+  });
+  expect(posts).toHaveLength(1);
+});
+
 it("answers an update click at once and shows GitHub's refusal", async () => {
   optionsAnswer = updateOptions;
   let reply!: (response: Response) => void;

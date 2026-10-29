@@ -2,8 +2,7 @@ package pricing
 
 import "github.com/baum-ai/baum/agent"
 
-// ReasonBilledByCursor is why a cursor-agent run has no estimate or recorded
-// cost: Cursor bills it through the user's own subscription, so no list price
+// ReasonBilledByCursor is why a cursor-agent run has no recorded cost: Cursor bills it through the user's own subscription, so no list price
 // describes it, and pricing its tokens at an API rate would mislead.
 const ReasonBilledByCursor = "billed_by_cursor_subscription"
 
@@ -14,15 +13,6 @@ func subscriptionReason(backend string) string {
 		return ReasonBilledByCursor
 	}
 	return ""
-}
-
-// BackendEstimate is Estimate for a run of backend: nil with the reason for a
-// backend the list does not price.
-func (l *List) BackendEstimate(backend, model string, maxTokens, maxCalls int) (*float64, string) {
-	if reason := subscriptionReason(backend); reason != "" {
-		return nil, reason
-	}
-	return l.Estimate(model, maxTokens, maxCalls), ""
 }
 
 // BackendOutcomeCost is OutcomeCost for a run of backend: nil for a backend

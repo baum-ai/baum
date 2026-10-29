@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
@@ -35,19 +36,29 @@ type LocalAPI struct {
 	// Live serves /api/live-sessions: the agent sessions in progress, and
 	// /api/live-sessions/{agent}/{id}/transcript: one of their transcripts.
 	Live http.Handler
+	// AgentRequests serves /api/agent-requests and /api/agent-messages: the
+	// permission requests and questions agents wait on the app to answer, and
+	// the messages queued for running sessions (internal/agentrequests).
+	AgentRequests http.Handler
 	// Clones serves /api/clones/found: the local clones found without asking.
 	Clones http.Handler
 	// Merge serves /api/prs/merge-options and /api/prs/merge: merging a pull
 	// request from the app.
 	Merge http.Handler
+	// Review serves /api/prs/review: submitting a pull request review with
+	// inline comments from the app.
+	Review http.Handler
 	// Update serves /api/prs/update-branch and /api/prs/rerun-checks, with
 	// their -options reads: updating a pull request's branch and re-running its
-	// failed workflow runs. With merging and a fix's push, they are the
-	// GitHub writes the app makes.
+	// failed workflow runs. With merging, submitting a review and a
+	// fix's push, they are the GitHub writes the app makes.
 	Update http.Handler
 	// Groups serves /api/groups: review groups and their combined reviews
 	// (internal/reviewgroups).
 	Groups http.Handler
+	// Inboxes serves /api/inboxes: the saved filters listed under Inbox in
+	// the app. Without it the route reports the capability unavailable.
+	Inboxes http.Handler
 	// GitHubRepositories serves the account's repositories for picking
 	// (/api/github/repositories) and cloning one
 	// (/api/repositories/{owner}/{name}/clone and clone-target).
@@ -62,6 +73,23 @@ type LocalAPI struct {
 	// an earlier name of the repository (repos.Registry.HandlerWith).
 	CurrentName repos.CurrentName
 	Changed     func()
+	// Timeline serves /api/timeline/: the features and decisions of the
+	// local decision log (internal/decisionlog).
+	Timeline http.Handler
+	// Decisions builds the handler of /api/decisions, the decisions captured
+	// from agent sessions (internal/decisionlog), given the sessions a pull
+	// request's saved review links, as its PR page lists them.
+	Decisions func(LinkedSessions) http.Handler
+	// DecisionModel resolves the decision model capture uses with the given
+	// preferences, for GET and PUT /api/settings/decisions; nil reports none.
+	DecisionModel func(context.Context, repos.Preferences) DecisionModel
+	// DecisionsChanged, when set, is called after a change to what decision
+	// capture does: its settings or a repository's. The daemon publishes the
+	// app's decisions event with it.
+	DecisionsChanged func()
+	// Log receives what the API logs; nil is slog.Default.
+	Log     *slog.Logger
+	Changed func()
 	// Diagnostics builds the report served at /api/diagnostics; nil serves the
 	// capability fields with a null report. It must honour its context.
 	Diagnostics func(context.Context) doctor.Report
@@ -91,8 +119,13 @@ func (a LocalAPI) Handler() *LocalHandler {
 	registry := a.Registry.HandlerWith(a.CurrentName)
 	mutate := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		registry.ServeHTTP(w, r)
-		if r.Method != "GET" && r.Method != "HEAD" && a.Changed != nil {
-			a.Changed()
+		if r.Method != "GET" && r.Method != "HEAD" {
+			if a.Changed != nil {
+				a.Changed()
+			}
+			if a.DecisionsChanged != nil {
+				a.DecisionsChanged()
+			}
 		}
 	})
 	mux.Handle("/api/repos", mutate)
@@ -114,19 +147,30 @@ func (a LocalAPI) Handler() *LocalHandler {
 	merge := provider(a.Merge, "merge_unavailable")
 	mux.Handle("GET /api/prs/merge-options", merge)
 	mux.Handle("POST /api/prs/merge", merge)
+	mux.Handle("POST /api/prs/review", provider(a.Review, "review_unavailable"))
 	update := provider(a.Update, "update_unavailable")
 	mux.Handle("GET /api/prs/update-branch-options", update)
 	mux.Handle("POST /api/prs/update-branch", update)
 	mux.Handle("GET /api/prs/rerun-checks-options", update)
 	mux.Handle("POST /api/prs/rerun-checks", update)
+	mux.Handle("GET /api/prs/review-threads", update)
+	mux.Handle("POST /api/prs/resolve-thread", update)
+	mux.Handle("GET /api/prs/failing-checks", update)
+	mux.Handle("POST /api/prs/rerun-job", update)
 	mux.Handle("/api/prs", provider(a.PRs, "discovery_unavailable"))
 	mux.Handle("/api/prs/", provider(a.PRs, "discovery_unavailable"))
 	mux.Handle("/api/background", provider(a.Background, "background_unavailable"))
 	mux.Handle("/api/automatic", provider(a.Automatic, "automatic_unavailable"))
 	mux.Handle("/api/live-sessions", provider(a.Live, "live_sessions_unavailable"))
 	mux.Handle("/api/live-sessions/", provider(a.Live, "live_sessions_unavailable"))
+	agentRequests := provider(a.AgentRequests, "agent_requests_unavailable")
+	mux.Handle("/api/agent-requests", agentRequests)
+	mux.Handle("/api/agent-requests/", agentRequests)
+	mux.Handle("/api/agent-messages", agentRequests)
+	mux.Handle("/api/agent-messages/", agentRequests)
 	mux.Handle("/api/groups", provider(a.Groups, "groups_unavailable"))
 	mux.Handle("/api/groups/", provider(a.Groups, "groups_unavailable"))
+	mux.Handle("/api/inboxes", provider(a.Inboxes, "inboxes_unavailable"))
 	mux.Handle("/api/clones/found", provider(a.Clones, "clones_unavailable"))
 	mux.Handle("/api/clones/found/", provider(a.Clones, "clones_unavailable"))
 	repositories := provider(a.GitHubRepositories, "github_repositories_unavailable")
@@ -136,6 +180,12 @@ func (a LocalAPI) Handler() *LocalHandler {
 	mux.Handle("POST /api/repositories/{owner}/{name}/clone", repositories)
 	mux.Handle("/api/plan-usage", provider(a.PlanUsage, "plan_usage_unavailable"))
 	mux.Handle("/api/analytics", provider(a.Analytics, "analytics_unavailable"))
+	mux.Handle("/api/timeline/", provider(a.Timeline, "timeline_unavailable"))
+	var decisions http.Handler
+	if a.Decisions != nil {
+		decisions = a.Decisions(a.linkedSessions(cache))
+	}
+	mux.Handle("/api/decisions", provider(decisions, "decisions_unavailable"))
 	mux.Handle("/api/github-auth", provider(a.GitHubAuth, "github_auth_unavailable"))
 	mux.Handle("/api/github-auth/", provider(a.GitHubAuth, "github_auth_unavailable"))
 	mux.Handle("/api/index", provider(a.Index, "index_unavailable"))
@@ -148,8 +198,15 @@ func (a LocalAPI) Handler() *LocalHandler {
 		if len(cfg.AgentEnv) > 0 {
 			source = "file"
 		}
+		fixBackend, fixModel := "", ""
 		if prefs, err := a.Registry.Preferences(r.Context()); err == nil {
 			cfg = prefs.Resolve(cfg)
+			if prefs.FixBackend != nil {
+				fixBackend = string(*prefs.FixBackend)
+			}
+			if prefs.FixModel != nil {
+				fixModel = *prefs.FixModel
+			}
 			if len(prefs.AgentEnv) > 0 {
 				source = "app"
 			}
@@ -161,8 +218,12 @@ func (a LocalAPI) Handler() *LocalHandler {
 			Caps           map[string]int    `json:"caps"`
 			AgentEnv       map[string]string `json:"agent_env"`
 			AgentEnvSource string            `json:"agent_env_source"`
-		}{cfg.Backend, cfg.Model, cfg.Budgets, cfg.Caps, cfg.AgentEnv, source})
+			FixBackend     string            `json:"fix_backend"`
+			FixModel       string            `json:"fix_model"`
+		}{cfg.Backend, cfg.Model, cfg.Budgets, cfg.Caps, cfg.AgentEnv, source, fixBackend, fixModel})
 	})
+	mux.HandleFunc("GET /api/settings/decisions", a.getDecisionSettings)
+	mux.HandleFunc("PUT /api/settings/decisions", a.putDecisionSettings)
 	// The app's agent environment replaces the config file's; an empty one
 	// goes back to the file's.
 	mux.HandleFunc("PUT /api/settings/agent-env", func(w http.ResponseWriter, r *http.Request) {

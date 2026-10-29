@@ -4,9 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"time"
 
 	"github.com/baum-ai/baum/internal/pricing"
+	"github.com/baum-ai/baum/internal/reviewruns"
 	"github.com/baum-ai/baum/internal/store"
 	"github.com/baum-ai/baum/review"
 )
@@ -84,7 +86,17 @@ func Publish(ctx context.Context, versions Versions, key store.Key, o Options, c
 	if err != nil {
 		return result, err
 	}
+	// A kept session is only worth its directory once the version is stored.
+	keptSession := result.Metadata.Session
+	dropSession := func() {
+		if keptSession != nil {
+			RemoveTree(keptSession.Directory)
+			_ = reviewruns.RemoveSessions(filepath.Dir(keptSession.Directory), keptSession.Directory)
+			result.Metadata.Session, result.RunDir = nil, ""
+		}
+	}
 	if ctx.Err() != nil {
+		dropSession()
 		return result, &Error{Category: CategoryInterrupted, Err: errors.New("interrupted")}
 	}
 	list := o.PriceList
@@ -102,6 +114,7 @@ func Publish(ctx context.Context, versions Versions, key store.Key, o Options, c
 		}
 	}
 	if err = versions.Put(ctx, key, latest, store.Version{Metadata: result.Metadata, Document: result.Document, Attachments: result.Attachments}); err != nil {
+		dropSession()
 		return result, fmt.Errorf("store generated version: %w", err)
 	}
 	published = true

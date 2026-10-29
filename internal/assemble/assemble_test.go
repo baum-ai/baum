@@ -404,6 +404,17 @@ func TestFailedFetchReportsTheMissingCommit(t *testing.T) {
 	}
 }
 
+// A fetch that could not sign in leads with how to make the credential
+// available, not git's output.
+func TestMissingCommitLeadsWithTheSignInFailure(t *testing.T) {
+	auth := &gitlocal.AuthError{Host: "github.com", SSH: true, Err: errors.New("git fetch: Permission denied (publickey)")}
+	err := &assemble.MissingCommitError{Role: "head", SHA: strings.Repeat("a", 40), Number: 7, Remote: "origin",
+		Fetch: fmt.Errorf("%w: fetching pull request 7: %w", gitlocal.ErrObjectNotFound, errors.Join(auth, auth))}
+	if got := err.Error(); !strings.HasPrefix(got, auth.Error()) || strings.Count(got, "couldn't sign in") != 1 || strings.Contains(got, "publickey") {
+		t.Fatalf("message = %q", got)
+	}
+}
+
 // A remote that reaches GitHub over SSH on port 443 names the repository
 // as pull request resolution reads it, ssh.github.com being github.com.
 func TestFetchHintNamesAnSSHOverHTTPSRemote(t *testing.T) {

@@ -48,7 +48,12 @@ func (r *Registry) HandlerWith(current CurrentName) http.Handler {
 	write := func(w http.ResponseWriter, v any) { writeStatus(w, http.StatusOK, v) }
 	decode := func(w http.ResponseWriter, req *http.Request, v any) bool {
 		req.Body = http.MaxBytesReader(w, req.Body, 16<<10)
-		d := json.NewDecoder(req.Body)
+		raw, err := io.ReadAll(req.Body)
+		if err != nil {
+			http.Error(w, "invalid JSON request", http.StatusBadRequest)
+			return false
+		}
+		d := json.NewDecoder(bytes.NewReader(withoutDailyCap(raw)))
 		d.DisallowUnknownFields()
 		if d.Decode(v) != nil || d.Decode(new(any)) != io.EOF {
 			http.Error(w, "invalid JSON request", http.StatusBadRequest)
@@ -65,13 +70,11 @@ func (r *Registry) HandlerWith(current CurrentName) http.Handler {
 			http.Error(w, "invalid JSON request", http.StatusBadRequest)
 			return Settings{}, false
 		}
-		// The whole settings object is replaced, so removing the cap or the
-		// automatic choice must be explicit: null, never a missing field.
-		for _, name := range []string{"automatic", "daily_cap"} {
-			if _, ok := fields[name]; !ok {
-				http.Error(w, name+" is required (null for the default)", http.StatusBadRequest)
-				return Settings{}, false
-			}
+		// The whole settings object is replaced, so removing the automatic
+		// choice must be explicit: null, never a missing field.
+		if _, ok := fields["automatic"]; !ok {
+			http.Error(w, "automatic is required (null for the default)", http.StatusBadRequest)
+			return Settings{}, false
 		}
 		req.Body = io.NopCloser(bytes.NewReader(raw))
 		var s Settings
@@ -270,4 +273,34 @@ func registerError(e error) string {
 		return fmt.Sprintf("This folder has no GitHub remote. Choose a clone of %s.", mismatch.Repository)
 	}
 	return "cannot register path: check that it is an existing git working tree with a GitHub remote"
+}
+
+// withoutDailyCap drops the daily_cap an older app still sends, in a request
+// or in its settings object: baum no longer has a spending cap, and such an
+// app is not refused for it. Anything that is not a JSON object is left for
+// the strict decoder to refuse.
+func withoutDailyCap(raw []byte) []byte {
+	var fields map[string]json.RawMessage
+	if json.Unmarshal(raw, &fields) != nil {
+		return raw
+	}
+	_, found := fields["daily_cap"]
+	delete(fields, "daily_cap")
+	var settings map[string]json.RawMessage
+	if json.Unmarshal(fields["settings"], &settings) == nil && settings != nil {
+		if _, ok := settings["daily_cap"]; ok {
+			delete(settings, "daily_cap")
+			fields["settings"], _ = json.Marshal(settings)
+			found = true
+		}
+	}
+	if !found {
+		return raw
+	}
+	out, err := json.Marshal(fields)
+	if err != nil {
+		return raw
+	}
+	return out
+
 }

@@ -5,8 +5,7 @@
 //! and the app keeps running). `toast` turns the events that matter into text: a `notice` event (review finished or failed,
 //! review requested from the user, review generated automatically, news of
 //! the user's own pull requests and fixes, an agent session waiting for the
-//! user's permission or answer) and an `automatic` event reporting the daily
-//! cost cap. `notifier` applies the
+//! user's permission or answer). `notifier` applies the
 //! settings, the operating system's permission and the focused window;
 //! `platform` shows the notification. A click makes Rust load the right app
 //! URL in the window, so pages the daemon serves need no capability.
@@ -221,6 +220,17 @@ fn sync_window_menu(app: &AppHandle) {
             let _ = item.set_checked(kinds.get(kind));
         }
     }
+}
+
+/// Opens an agent session's transcript in the window, as a click on its
+/// notification does, for the tray's waiting sessions. The app path is asked
+/// of the daemon, so this runs off the main thread.
+pub fn open_session(app: &AppHandle, key: String) {
+    let Some(service) = app.try_state::<Service>() else {
+        return;
+    };
+    let host = service.host.clone();
+    thread::spawn(move || host.open(&Route::Session { key }));
 }
 
 /// Starts reading the attached daemon's events until `stop` returns true (the

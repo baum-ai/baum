@@ -1,10 +1,16 @@
 //! The tray icon and its menu: the app's presence while the window is closed.
 //!
 //! The icon follows `status::View`, which a poll thread computes from the
-//! attached daemon's `/api/jobs` and `/api/automatic` (every 3 s while jobs
-//! run, else every 10 s) and a slower thread computes from `/api/diagnostics`
-//! (every 5 minutes, since it runs the doctor's checks). `main` tells this
-//! module when it attaches to a daemon, loses it, or starts connecting.
+//! attached daemon's `/api/jobs`, `/api/automatic`, `/api/index?view=waiting`
+//! and `/api/live-sessions` (every 3 s while jobs run, else every 10 s) and a
+//! slower thread computes from `/api/diagnostics` and `/api/plan-usage`
+//! (every 5 minutes: the first runs the doctor's checks, the second is
+//! cached that long by the daemon). `main` tells this module when it attaches
+//! to a daemon, loses it, or starts connecting.
+//!
+//! On macOS and Windows a left click opens `panel`, a small window drawn like
+//! a menu with meters, and a right click this menu. Linux tray hosts report no
+//! clicks, so there the menu is all, with plan usage as lines of text.
 //!
 //! Start at login can also be toggled from the window's menu bar, the app's
 //! settings surface: the pages the daemon serves have no Tauri capability,
@@ -14,7 +20,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{self, RecvTimeoutError};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use tauri::image::Image;
 use tauri::menu::{CheckMenuItem, IsMenuItem, Menu, MenuItem, PredefinedMenuItem, Submenu};
@@ -22,12 +28,16 @@ use tauri::tray::{TrayIcon, TrayIconBuilder};
 use tauri::{AppHandle, Manager, Wry};
 
 use crate::daemon::Launch;
-use crate::status::{self, Icon, Link, Observed, Tracker, View};
-use crate::{autostart, client, lifecycle, notifications, onboarding};
+use crate::status::{self, Icon, Link, Observed, Plan, Tracker, View};
+use crate::{autostart, client, lifecycle, notifications, onboarding, panel};
 
 const BUSY_INTERVAL: Duration = Duration::from_secs(3);
 const IDLE_INTERVAL: Duration = Duration::from_secs(10);
 const DIAGNOSTICS_INTERVAL: Duration = Duration::from_secs(300);
+/// The daemon caches plan usage this long, so asking sooner repeats it.
+const PLAN_USAGE_INTERVAL: Duration = Duration::from_secs(300);
+/// The prefix of a waiting session's menu id, before its `agent:id` key.
+pub const SESSION_PREFIX: &str = "session:";
 
 const TRAY_ID: &str = "baum";
 /// The window menu's own item, so its events never match the tray's.
@@ -63,20 +73,26 @@ impl Entry {
     }
 }
 
-/// The tray menu for a view: Open, what the daemon is doing, anything needing
-/// attention, pause or resume, start at login, Command Line and Hooks…, Quit,
-/// and Quit and stop.
-pub fn menu_spec(view: &View, login: bool) -> Vec<Entry> {
+/// Seconds since the Unix epoch, for "resets in" and "ago".
+pub fn now() -> i64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |d| i64::try_from(d.as_secs()).unwrap_or(i64::MAX))
+}
+
+/// The tray menu for a view, in the order of the panel: what the daemon is
+/// doing and anything needing the user (a waiting session opens its
+/// transcript), the plan usage left when any can be read, then Open, pause
+/// or resume, start at login, Command Line and Hooks…, Quit, and Quit and
+/// stop.
+pub fn menu_spec(view: &View, login: bool, now: i64) -> Vec<Entry> {
     let separator = |id: &str| Entry {
         id: id.into(),
         text: String::new(),
         kind: Kind::Separator,
         enabled: false,
     };
-    let mut entries = vec![
-        Entry::item("open", "Open baum", true),
-        Entry::item("summary", view.summary.clone(), false),
-    ];
+    let mut entries = vec![Entry::item("summary", view.summary.clone(), false)];
     if let Some(waiting) = view.waiting_label() {
         entries.push(Entry::item("waiting", waiting, false));
     }
@@ -87,7 +103,26 @@ pub fn menu_spec(view: &View, login: bool) -> Vec<Entry> {
             false,
         ));
     }
+    for needs in &view.needs {
+        entries.push(Entry::item(
+            &format!("{SESSION_PREFIX}{}", needs.key),
+            format!("{} · {}", needs.title, needs.detail),
+            true,
+        ));
+    }
+    if !view.usage.is_empty() {
+        entries.push(separator("separator-usage"));
+        entries.push(Entry::item("usage", "Plan usage left", false));
+        for (i, meter) in view.usage.iter().enumerate() {
+            entries.push(Entry::item(
+                &format!("usage-{i}"),
+                format!("{}: {}", meter.label, meter.text(now)),
+                false,
+            ));
+        }
+    }
     entries.push(separator("separator-1"));
+    entries.push(Entry::item("open", "Open baum", true));
     entries.push(Entry::item(
         "pause",
         status::pause_label(view.automatic),
@@ -251,7 +286,9 @@ struct Inner {
     launch: Mutex<Option<Launch>>,
     observed: Mutex<Observed>,
     tracker: Mutex<Tracker>,
-    rendered: Mutex<Option<View>>,
+    /// The view last shown and its "resets in" texts, which change with the
+    /// clock as well as the view.
+    rendered: Mutex<Option<(View, Vec<String>)>>,
     ui: Mutex<Option<Ui>>,
     wake: Mutex<Option<mpsc::Sender<()>>>,
 }
@@ -396,22 +433,20 @@ fn build_tray(app: &AppHandle, login: bool) -> Result<TrayIcon, String> {
     TrayIconBuilder::with_id(TRAY_ID)
         .icon(icon(Icon::Idle)?)
         .tooltip(view.tooltip())
-        .menu(&build_menu(app, &menu_spec(&view, login)).map_err(e)?)
-        // Windows opens the window on a left click and keeps the menu for the
-        // right one; elsewhere a click shows the menu.
-        .show_menu_on_left_click(!cfg!(windows))
+        .menu(&build_menu(app, &menu_spec(&view, login, now())).map_err(e)?)
+        // A left click opens the panel and the right one keeps the menu. Linux
+        // hosts report no clicks and show the menu on either.
+        .show_menu_on_left_click(false)
         .on_tray_icon_event(|tray, event| {
-            #[cfg(windows)]
             if let tauri::tray::TrayIconEvent::Click {
                 button: tauri::tray::MouseButton::Left,
                 button_state: tauri::tray::MouseButtonState::Up,
+                rect,
                 ..
             } = event
             {
-                lifecycle::show_window(tray.app_handle());
+                panel::toggle(tray.app_handle(), rect);
             }
-            #[cfg(not(windows))]
-            let _ = (tray, event);
         })
         .build(app)
         .map_err(e)
@@ -467,6 +502,8 @@ fn build_menu(app: &AppHandle, spec: &[Entry]) -> tauri::Result<Menu<Wry>> {
 #[derive(Debug, PartialEq, Eq)]
 enum Action {
     Open,
+    /// A waiting agent session, by its `agent:id` key: opens its transcript.
+    Session(String),
     Pause,
     Login,
     /// "Command Line and Hooks…", in the tray and the window's menu bar.
@@ -486,13 +523,17 @@ fn route(id: &str) -> Action {
         "quit" => Action::Quit,
         "quit-stop" => Action::QuitStop,
         _ if notifications::is_menu_id(id) => Action::Notification,
-        _ => Action::Ignore,
+        _ => match id.strip_prefix(SESSION_PREFIX) {
+            Some(key) if !key.is_empty() => Action::Session(key.to_string()),
+            _ => Action::Ignore,
+        },
     }
 }
 
-fn on_menu(app: &AppHandle, id: &str) {
+pub fn on_menu(app: &AppHandle, id: &str) {
     match route(id) {
         Action::Open => lifecycle::show_window(app),
+        Action::Session(key) => notifications::open_session(app, key),
         Action::Pause => toggle_pause(app),
         Action::Login => toggle_login(app),
         Action::Setup => onboarding::show(app),
@@ -544,13 +585,13 @@ fn toggle_pause(app: &AppHandle) {
     });
 }
 
-/// `main` attached to a daemon.
 /// The attached daemon's launch credential, while one is attached.
 pub fn launch(app: &AppHandle) -> Option<Launch> {
     let shared = shared(app)?;
     lock(&shared.0.launch).clone()
 }
 
+/// `main` attached to a daemon.
 pub fn attached(app: &AppHandle, launch: &Launch) {
     let Some(shared) = shared(app) else { return };
     *lock(&shared.0.launch) = Some(launch.clone());
@@ -592,6 +633,19 @@ pub fn window_seen(app: &AppHandle) {
     render(app, &shared, false);
 }
 
+/// What the panel shows: the view last shown and the plans behind its meters.
+pub fn snapshot(app: &AppHandle) -> Option<(View, Vec<Plan>)> {
+    let shared = shared(app)?;
+    let (view, _) = lock(&shared.0.rendered).clone()?;
+    // The view already left the figures out when the daemon is not up.
+    let plans = if view.usage.is_empty() {
+        Vec::new()
+    } else {
+        lock(&shared.0.observed).plans.clone().unwrap_or_default()
+    };
+    Some((view, plans))
+}
+
 /// Running and queued jobs, asked of the daemon now. `None` when it cannot be
 /// asked: the last poll may be seconds old, so it is not a substitute.
 pub fn job_counts(app: &AppHandle) -> Option<(usize, usize)> {
@@ -610,12 +664,18 @@ fn wake(shared: &Shared) {
 }
 
 /// Whether a computed view needs showing, and records it as shown.
-fn next_view(rendered: &mut Option<View>, view: View, force: bool) -> Option<View> {
+fn next_view<T: PartialEq + Clone>(rendered: &mut Option<T>, view: T, force: bool) -> Option<T> {
     if !force && rendered.as_ref() == Some(&view) {
         return None;
     }
     *rendered = Some(view.clone());
     Some(view)
+}
+
+/// The plan usage lines as the menu would show them now. Part of what counts
+/// as a change, so the polls (every 10 s at most) keep "resets in" current.
+fn usage_texts(view: &View, now: i64) -> Vec<String> {
+    view.usage.iter().map(|meter| meter.text(now)).collect()
 }
 
 /// Recomputes the view and queues the icon, tooltip and menu update when it
@@ -634,8 +694,9 @@ fn render(app: &AppHandle, shared: &Shared, force: bool) {
     let ui = lock(&shared.0.ui)
         .as_ref()
         .map(|ui| (ui.tray.clone(), ui.menu_login.clone()));
+    let texts = usage_texts(&view, now());
     let mut rendered = lock(&shared.0.rendered);
-    let Some(view) = next_view(&mut rendered, view, force) else {
+    let Some((view, _)) = next_view(&mut rendered, (view, texts), force) else {
         return;
     };
     let Some((tray, menu_login)) = ui else {
@@ -667,7 +728,7 @@ fn apply(
         let _ = tray.set_icon(Some(image));
     }
     let _ = tray.set_tooltip(Some(view.tooltip()));
-    if let Ok(menu) = build_menu(app, &menu_spec(view, login)) {
+    if let Ok(menu) = build_menu(app, &menu_spec(view, login, now())) {
         let _ = tray.set_menu(Some(menu));
     }
 }
@@ -706,6 +767,28 @@ fn spawn_polls(app: &AppHandle, shared: &Shared) {
             }
         }
     });
+    let (plan_app, plan_shared) = (app.clone(), shared.clone());
+    thread::spawn(move || {
+        let mut checked: Option<(u64, Instant)> = None;
+        loop {
+            thread::sleep(Duration::from_secs(2));
+            let generation = plan_shared.0.generation.load(Ordering::Relaxed);
+            let due = checked
+                .is_none_or(|(g, at)| g != generation || at.elapsed() >= PLAN_USAGE_INTERVAL);
+            let Some(launch) = lock(&plan_shared.0.launch).clone().filter(|_| due) else {
+                continue;
+            };
+            checked = Some((generation, Instant::now()));
+            // The figures are a convenience: a failed reading keeps the last
+            // one, and a daemon without the route has none to show.
+            if let Ok(plans) =
+                client::plan_usage(&launch).and_then(|b| status::parse_plan_usage(&b))
+            {
+                lock(&plan_shared.0.observed).plans = Some(plans);
+                render(&plan_app, &plan_shared, false);
+            }
+        }
+    });
 }
 
 /// One look at the daemon. A failed request forgets that answer, so the menu
@@ -719,11 +802,13 @@ fn poll_once(app: &AppHandle, shared: &Shared) -> Duration {
     let jobs = client::jobs(&launch).and_then(|b| status::parse_jobs(&b));
     let automatic = client::automatic(&launch).and_then(|b| status::parse_automatic(&b));
     let waiting = client::waiting(&launch).and_then(|b| status::parse_waiting(&b));
+    let needs = client::live_sessions(&launch).and_then(|b| status::parse_live(&b));
     {
         let mut observed = lock(&shared.0.observed);
         observed.jobs = jobs.ok();
         observed.automatic = automatic.ok().flatten();
         observed.waiting = waiting.ok();
+        observed.needs = needs.ok();
     }
     render(app, shared, false);
     let busy = lock(&shared.0.observed)
@@ -749,14 +834,15 @@ mod tests {
                 running,
                 ..Jobs::default()
             }),
-            automatic: Some(Automatic {
-                enabled: automatic,
-                capped: Vec::new(),
-            }),
+            automatic: Some(Automatic { enabled: automatic }),
             diagnostics: Some(Vec::new()),
             waiting: None,
+            plans: None,
+            needs: None,
         }
     }
+
+    const NOW: i64 = 1_793_016_000;
 
     fn texts(spec: &[Entry]) -> Vec<&str> {
         spec.iter()
@@ -768,7 +854,7 @@ mod tests {
     #[test]
     fn every_menu_id_has_exactly_one_action() {
         use crate::notifications;
-        let ids = menu_spec(&View::default(), false)
+        let ids = menu_spec(&View::default(), false, NOW)
             .into_iter()
             .map(|e| e.id)
             .chain([MENU_LOGIN.to_string(), onboarding::MENU_ID.to_string()])
@@ -777,6 +863,7 @@ mod tests {
             let action = route(&id);
             let expected = match id.as_str() {
                 "open" => Action::Open,
+                _ if id.starts_with(SESSION_PREFIX) => Action::Session(id[8..].to_string()),
                 "pause" => Action::Pause,
                 "login" | MENU_LOGIN => Action::Login,
                 "setup" | onboarding::MENU_ID => Action::Setup,
@@ -788,6 +875,11 @@ mod tests {
             assert_eq!(action, expected, "{id}");
         }
         assert_eq!(route("unknown"), Action::Ignore);
+        assert_eq!(route("session:"), Action::Ignore);
+        assert_eq!(
+            route("session:claude-code:a"),
+            Action::Session("claude-code:a".into())
+        );
     }
 
     /// Tauri hands every menu's events to the app listener, so a listener on
@@ -806,12 +898,12 @@ mod tests {
 
     #[test]
     fn the_menu_has_the_decided_entries_in_order() {
-        let spec = menu_spec(&view(up(2, true)), false);
+        let spec = menu_spec(&view(up(2, true)), false, NOW);
         assert_eq!(
             texts(&spec),
             vec![
-                "Open baum",
                 "2 running",
+                "Open baum",
                 "Pause automatic reviews",
                 "Start at login",
                 "Command Line and Hooks…",
@@ -823,9 +915,9 @@ mod tests {
         assert_eq!(
             ids,
             vec![
-                "open",
                 "summary",
                 "separator-1",
+                "open",
                 "pause",
                 "login",
                 "setup",
@@ -840,24 +932,25 @@ mod tests {
     fn the_menu_says_how_many_pull_requests_wait_only_when_some_do() {
         let mut observed = up(0, true);
         observed.waiting = Some(3);
-        let spec = menu_spec(&view(observed.clone()), false);
-        assert_eq!(spec[1].text, "Idle");
-        assert_eq!(spec[2].id, "waiting");
-        assert_eq!(spec[2].text, "3 pull requests waiting on you");
-        assert!(!spec[2].enabled);
+        let spec = menu_spec(&view(observed.clone()), false, NOW);
+        assert_eq!(spec[0].text, "Idle");
+        assert_eq!(spec[1].id, "waiting");
+        assert_eq!(spec[1].text, "3 pull requests waiting on you");
+        assert!(!spec[1].enabled);
         for waiting in [Some(0), None] {
             observed.waiting = waiting;
-            let spec = menu_spec(&view(observed.clone()), false);
+            let spec = menu_spec(&view(observed.clone()), false, NOW);
             assert!(spec.iter().all(|e| e.id != "waiting"));
         }
     }
 
     #[test]
     fn the_menu_offers_resume_while_paused_and_disables_pause_while_unknown() {
-        let paused = menu_spec(&view(up(0, false)), false);
-        assert_eq!(paused[3].text, "Resume automatic reviews");
-        assert!(paused[3].enabled);
-        let unknown = menu_spec(&View::default(), false);
+        let paused = menu_spec(&view(up(0, false)), false, NOW);
+        let pause = paused.iter().find(|e| e.id == "pause").unwrap();
+        assert_eq!(pause.text, "Resume automatic reviews");
+        assert!(pause.enabled);
+        let unknown = menu_spec(&View::default(), false, NOW);
         let pause = unknown.iter().find(|e| e.id == "pause").unwrap();
         assert!(!pause.enabled);
     }
@@ -865,7 +958,7 @@ mod tests {
     #[test]
     fn the_start_at_login_item_shows_its_state() {
         for login in [false, true] {
-            let spec = menu_spec(&View::default(), login);
+            let spec = menu_spec(&View::default(), login, NOW);
             let item = spec.iter().find(|e| e.id == "login").unwrap();
             assert_eq!(item.kind, Kind::Check(login));
         }
@@ -875,10 +968,85 @@ mod tests {
     fn attention_lines_appear_under_the_summary() {
         let mut observed = up(0, true);
         observed.diagnostics = Some(vec!["git".into()]);
-        let spec = menu_spec(&view(observed), false);
-        assert_eq!(spec[1].text, "Idle");
-        assert_eq!(spec[2].text, "! A diagnostics check reports a problem");
-        assert!(!spec[2].enabled);
+        let spec = menu_spec(&view(observed), false, NOW);
+        assert_eq!(spec[0].text, "Idle");
+        assert_eq!(spec[1].text, "! A diagnostics check reports a problem");
+        assert!(!spec[1].enabled);
+    }
+
+    #[test]
+    fn the_menu_is_shown_again_when_a_reset_time_reads_differently() {
+        let mut observed = up(0, true);
+        observed.plans = Some(
+            status::parse_plan_usage(
+                br#"{"plans":[{"provider":"claude","available":true,"windows":[
+                    {"name":"5-hour","used_percent":38,"resets_at":"2026-10-26T12:30:00Z"}],
+                    "fetched_at":"2026-10-26T12:00:00Z"}]}"#,
+            )
+            .unwrap(),
+        );
+        let view = view(observed);
+        let mut rendered = None;
+        let at = |now| (view.clone(), usage_texts(&view, now));
+        assert!(next_view(&mut rendered, at(NOW), false).is_some());
+        // Within the same minute nothing changes; a minute on, "30 min" is "29 min".
+        assert!(next_view(&mut rendered, at(NOW + 10), false).is_none());
+        assert!(next_view(&mut rendered, at(NOW + 60), false).is_some());
+    }
+
+    #[test]
+    fn plan_usage_lines_sit_under_the_status_only_when_some_can_be_read() {
+        let mut observed = up(0, true);
+        observed.plans = Some(
+            status::parse_plan_usage(
+                br#"{"plans":[{"provider":"claude","available":true,"windows":[
+                    {"name":"5-hour","used_percent":38,"resets_at":"2026-10-26T15:00:00Z"},
+                    {"name":"weekly","used_percent":74,"resets_at":"2026-10-28T12:00:00Z"}],
+                    "fetched_at":"2026-10-26T11:40:00Z"}]}"#,
+            )
+            .unwrap(),
+        );
+        let spec = menu_spec(&view(observed.clone()), false, NOW);
+        assert_eq!(
+            texts(&spec)[..4],
+            [
+                "Idle",
+                "Plan usage left",
+                "Claude Code · 5-hour: 62% left · resets in 3 h",
+                "Claude Code · Weekly: 26% left · resets in 2 d",
+            ]
+        );
+        assert!(
+            spec.iter()
+                .filter(|e| e.id.starts_with("usage"))
+                .all(|e| !e.enabled)
+        );
+        // Neither agent readable: no heading, no separator.
+        observed.plans = Some(Vec::new());
+        let spec = menu_spec(&view(observed), false, NOW);
+        assert!(
+            spec.iter()
+                .all(|e| !e.id.starts_with("usage") && e.id != "separator-usage")
+        );
+    }
+
+    #[test]
+    fn a_session_waiting_on_the_user_is_an_item_that_opens_it() {
+        let mut observed = up(0, true);
+        observed.needs = Some(vec![status::NeedsYou {
+            key: "claude-code:a".into(),
+            title: "Claude needs your permission to use Bash".into(),
+            detail: "Tidy the app's buttons".into(),
+        }]);
+        let spec = menu_spec(&view(observed), false, NOW);
+        let item = &spec[1];
+        assert_eq!(item.id, "session:claude-code:a");
+        assert_eq!(
+            item.text,
+            "Claude needs your permission to use Bash · Tidy the app's buttons"
+        );
+        assert!(item.enabled);
+        assert_eq!(route(&item.id), Action::Session("claude-code:a".into()));
     }
 
     #[cfg(unix)]

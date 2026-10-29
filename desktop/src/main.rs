@@ -18,6 +18,7 @@ mod lifecycle;
 mod navigation;
 mod notifications;
 mod onboarding;
+mod panel;
 mod status;
 mod tray;
 mod updater;
@@ -291,8 +292,15 @@ fn main() {
         .plugin(tauri_plugin_single_instance::init(|app, _, _| {
             lifecycle::show_window(app);
         }))
-        // Used only from Rust; no page is granted their commands.
-        .plugin(tauri_plugin_opener::init())
+        // Used only from Rust; no page is granted their commands. Its default
+        // script would catch every `target="_blank"` click and call the
+        // plugin from the page, which is refused, so the link never reached
+        // `on_new_window` below.
+        .plugin(
+            tauri_plugin_opener::Builder::new()
+                .open_js_links_on_click(false)
+                .build(),
+        )
         .plugin(tauri_plugin_dialog::init())
         // Updates are driven from Rust only (see updater.rs).
         .plugin(tauri_plugin_updater::Builder::new().build())
@@ -313,6 +321,9 @@ fn main() {
             onboarding::github_connection,
             onboarding::repositories,
             onboarding::finish_setup,
+            panel::tray_panel,
+            panel::tray_panel_height,
+            panel::tray_action,
             zoom::zoom_state,
             zoom::set_zoom,
             zoom::step_zoom,
@@ -368,6 +379,10 @@ fn main() {
                     tauri::webview::NewWindowResponse::Deny
                 })
                 .build()?;
+            // The panel is a convenience: the menu still works without it.
+            if let Err(e) = panel::create(app.handle()) {
+                eprintln!("baum desktop: no tray panel: {e}");
+            }
             zoom::apply(window.as_ref());
             // A hidden start shows the window after all if no tray appears.
             tray::watch_host(app.handle(), hidden);
@@ -391,9 +406,9 @@ fn main() {
 #[cfg(test)]
 mod tests {
     /// The daemon's pages are remote to Tauri. They get only the folder
-    /// picker, CLI/hook management and the zoom, on loopback; the bundled
-    /// screens get exactly their commands and no remote URL. Every page gets
-    /// the zoom shortcuts.
+    /// picker and CLI/hook management, on loopback; the bundled screens get
+    /// exactly their commands and no remote URL, and the tray panel's page
+    /// only its own, in its own window. Every page gets the zoom shortcuts.
     #[test]
     fn pages_have_only_their_declared_capabilities() {
         let expected = serde_json::json!({
@@ -414,6 +429,7 @@ mod tests {
                 "allow-finish-setup",
                 "allow-step-zoom"
             ],
+            "tray-panel": ["allow-tray-panel", "allow-tray-panel-height", "allow-tray-action"],
         });
         let mut found = serde_json::Map::new();
         for entry in
@@ -430,7 +446,12 @@ mod tests {
             } else {
                 assert!(capability.get("remote").is_none(), "{capability}");
             }
-            assert_eq!(capability["windows"], serde_json::json!(["main"]));
+            let window = if capability["identifier"] == "tray-panel" {
+                crate::panel::LABEL
+            } else {
+                crate::MAIN
+            };
+            assert_eq!(capability["windows"], serde_json::json!([window]));
             found.insert(
                 capability["identifier"].as_str().unwrap().to_string(),
                 capability["permissions"].clone(),
@@ -447,7 +468,12 @@ mod tests {
         .unwrap();
         assert_eq!(
             config["app"]["security"]["capabilities"],
-            serde_json::json!(["connecting-screen", "setup-screen", "daemon-pages"])
+            serde_json::json!([
+                "connecting-screen",
+                "setup-screen",
+                "daemon-pages",
+                "tray-panel"
+            ])
         );
         assert_eq!(config["app"]["withGlobalTauri"], false);
     }

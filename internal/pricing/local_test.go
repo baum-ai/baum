@@ -15,16 +15,6 @@ import (
 	"github.com/baum-ai/baum/agent"
 )
 
-func TestLocalEstimateRequiresKnownExplicitModel(t *testing.T) {
-	for _, model := range []string{"", "not-a-model"} {
-		if Embedded().Estimate(model, 1000, 3) != nil {
-			t.Fatal("invented model price", model)
-		}
-	}
-	if estimate := Embedded().Estimate("claude-sonnet-4-5", 1000, 3); estimate == nil || *estimate <= 0 {
-		t.Fatal(estimate)
-	}
-}
 func TestRefreshedListSurvivesRestartOnlyWhileItsSignatureVerifies(t *testing.T) {
 	t.Cleanup(func() { Install(Embedded()) })
 	public, private, err := ed25519.GenerateKey(nil)

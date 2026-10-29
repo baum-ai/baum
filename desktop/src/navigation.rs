@@ -52,6 +52,13 @@ pub fn decide_new_window(url: &Url) -> Decision {
     }
 }
 
+/// The tray panel's window loads its bundled page and nothing else. The check
+/// compares scheme and host, as `is_bundled` does: `tauri://` is not a special
+/// scheme, so its `origin()` is opaque and never equal to another.
+pub fn is_tray_panel(url: &Url) -> bool {
+    is_bundled(url) && url.path() == "/tray.html"
+}
+
 /// The bundled screen's own origin: `tauri://localhost` on macOS and Linux,
 /// `http://tauri.localhost` on Windows.
 fn is_bundled(url: &Url) -> bool {
@@ -96,6 +103,23 @@ mod tests {
 
     fn url(s: &str) -> Url {
         Url::parse(s).unwrap()
+    }
+
+    #[test]
+    fn the_tray_panel_loads_only_its_bundled_page() {
+        let page = bundled_screen().join("tray.html").unwrap();
+        assert!(is_tray_panel(&page));
+        // Opaque origins never compare equal, which is why this is not an
+        // origin check.
+        assert_ne!(page.origin(), bundled_screen().origin());
+        for other in [
+            bundled_screen().as_str(),
+            "http://127.0.0.1:4100/tray.html",
+            "https://example.com/tray.html",
+            "tauri://elsewhere/tray.html",
+        ] {
+            assert!(!is_tray_panel(&url(other)), "{other}");
+        }
     }
 
     #[test]

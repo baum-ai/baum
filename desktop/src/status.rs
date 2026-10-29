@@ -4,14 +4,17 @@
 //!
 //! The icon has three states. Idle is the default. Running means a job is
 //! running or queued. Attention means something needs the user and they have
-//! not yet opened the window since it appeared: a job failed, a repository's
-//! daily cap paused its automatic generation, a diagnostics check reports a
-//! problem, or the daemon is not running. Opening the window acknowledges
-//! the first three; the last stays until the daemon runs again.
+//! not yet opened the window since it appeared: a job failed, a diagnostics
+//! check reports a problem, or the daemon is not running. Opening the window
+//! acknowledges the first two; the last stays until the daemon runs again.
+//!
+//! The menu and the panel also show what is left of the agents' plans
+//! (`GET /api/plan-usage`) and the agent sessions waiting for the user's
+//! permission or answer (`GET /api/live-sessions`).
 
 use std::collections::{BTreeSet, HashSet};
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 #[derive(Deserialize)]
 struct JobsBody {
@@ -71,20 +74,6 @@ pub fn parse_waiting(body: &[u8]) -> Result<usize, String> {
 #[derive(Deserialize)]
 struct AutomaticBody {
     enabled: Option<bool>,
-    #[serde(default)]
-    repositories: Vec<RepositoryRow>,
-}
-
-#[derive(Deserialize)]
-struct RepositoryRow {
-    #[serde(default)]
-    repository: String,
-    #[serde(default)]
-    enabled: bool,
-    #[serde(default)]
-    notice: String,
-    #[serde(default)]
-    paused_until: Option<String>,
 }
 
 /// Automatic generation as the tray needs it.
@@ -92,24 +81,13 @@ struct RepositoryRow {
 pub struct Automatic {
     /// The global switch.
     pub enabled: bool,
-    /// Repositories whose daily cap paused automatic generation.
-    pub capped: Vec<String>,
 }
 
 /// `GET /api/automatic`. `None` when the daemon has no scheduler.
 pub fn parse_automatic(body: &[u8]) -> Result<Option<Automatic>, String> {
     let body: AutomaticBody =
         serde_json::from_slice(body).map_err(|e| format!("unreadable automatic status: {e}"))?;
-    let Some(enabled) = body.enabled else {
-        return Ok(None);
-    };
-    let capped = body
-        .repositories
-        .iter()
-        .filter(|r| r.enabled && (r.paused_until.is_some() || r.notice == "daily_cap"))
-        .map(|r| r.repository.clone())
-        .collect();
-    Ok(Some(Automatic { enabled, capped }))
+    Ok(body.enabled.map(|enabled| Automatic { enabled }))
 }
 
 #[derive(Deserialize)]
@@ -154,6 +132,259 @@ pub fn parse_diagnostics(body: &[u8]) -> Result<Vec<String>, String> {
     Ok(problems)
 }
 
+/// One window of a plan, as `GET /api/plan-usage` reports it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PlanWindow {
+    pub name: String,
+    /// `None` when the window reset since the figure was taken.
+    #[serde(default)]
+    pub used_percent: Option<f64>,
+    #[serde(default)]
+    pub resets_at: Option<String>,
+}
+
+/// A plan the daemon could read.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Plan {
+    pub provider: String,
+    #[serde(default)]
+    pub available: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub plan: Option<String>,
+    #[serde(default)]
+    pub windows: Vec<PlanWindow>,
+    #[serde(default)]
+    pub fetched_at: String,
+}
+
+#[derive(Deserialize)]
+struct PlansBody {
+    #[serde(default)]
+    plans: Vec<serde_json::Value>,
+}
+
+/// `GET /api/plan-usage`: the plans it could read, each with at least one
+/// window. A provider that is not installed, signed out or has not run yet
+/// is left out, as is a plan in a shape this app does not know, so the tray
+/// shows only what it can.
+pub fn parse_plan_usage(body: &[u8]) -> Result<Vec<Plan>, String> {
+    let body: PlansBody =
+        serde_json::from_slice(body).map_err(|e| format!("unreadable plan usage: {e}"))?;
+    Ok(body
+        .plans
+        .into_iter()
+        .filter_map(|plan| serde_json::from_value::<Plan>(plan).ok())
+        .filter(|plan| plan.available && !plan.windows.is_empty())
+        .collect())
+}
+
+/// One plan window as the menu shows it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Meter {
+    /// "Claude Code · 5-hour".
+    pub label: String,
+    /// The share left, as a whole percent; `None` after a reset the figure
+    /// predates.
+    pub left: Option<u8>,
+    /// When it resets, in Unix seconds.
+    pub resets_at: Option<i64>,
+}
+
+impl Meter {
+    /// "62% left · resets in 3 h".
+    pub fn text(&self, now: i64) -> String {
+        let Some(left) = self.left else {
+            return "reset since baum last saw it".to_string();
+        };
+        match self.resets_at {
+            Some(at) => format!("{left}% left · resets in {}", span(at - now)),
+            None => format!("{left}% left"),
+        }
+    }
+}
+
+fn provider_name(provider: &str) -> &str {
+    match provider {
+        "claude" => "Claude Code",
+        "codex" => "Codex",
+        other => other,
+    }
+}
+
+fn capital(text: &str) -> String {
+    let mut chars = text.chars();
+    chars.next().map_or_else(String::new, |first| {
+        first.to_uppercase().chain(chars).collect()
+    })
+}
+
+fn meters(plans: &[Plan]) -> Vec<Meter> {
+    plans
+        .iter()
+        .flat_map(|plan| {
+            plan.windows.iter().map(|win| Meter {
+                label: format!("{} · {}", provider_name(&plan.provider), capital(&win.name)),
+                left: win
+                    .used_percent
+                    .filter(|used| used.is_finite())
+                    .map(|used| (100.0 - used).round().clamp(0.0, 100.0) as u8),
+                resets_at: win.resets_at.as_deref().and_then(parse_time),
+            })
+        })
+        .collect()
+}
+
+/// "3 h", "25 min", "2 d": a span in seconds rounded to a readable unit, as
+/// the app rounds it.
+pub fn span(seconds: i64) -> String {
+    let minutes = (seconds.max(0) as f64 / 60.0).round() as i64;
+    if minutes < 60 {
+        format!("{} min", minutes.max(1))
+    } else if minutes < 48 * 60 {
+        format!("{} h", (minutes as f64 / 60.0).round() as i64)
+    } else {
+        format!("{} d", (minutes as f64 / 1440.0).round() as i64)
+    }
+}
+
+/// An RFC 3339 time, as Go writes one, in Unix seconds.
+pub fn parse_time(text: &str) -> Option<i64> {
+    let bytes = text.as_bytes();
+    let number = |from: usize, to: usize| -> Option<i64> {
+        let part = text.get(from..to)?;
+        part.bytes()
+            .all(|b| b.is_ascii_digit())
+            .then(|| part.parse().ok())?
+    };
+    if bytes.len() < 20
+        || bytes[4] != b'-'
+        || bytes[7] != b'-'
+        || !matches!(bytes[10], b'T' | b't')
+        || bytes[13] != b':'
+        || bytes[16] != b':'
+    {
+        return None;
+    }
+    let (year, month, day) = (number(0, 4)?, number(5, 7)?, number(8, 10)?);
+    let (hour, minute, second) = (number(11, 13)?, number(14, 16)?, number(17, 19)?);
+    if !(1..=12).contains(&month) || !(1..=31).contains(&day) || hour > 23 || minute > 59 {
+        return None;
+    }
+    let mut zone = text.get(19..)?;
+    if let Some(fraction) = zone.strip_prefix('.') {
+        zone = fraction.trim_start_matches(|c: char| c.is_ascii_digit());
+    }
+    let offset = match zone {
+        "Z" | "z" => 0,
+        _ if zone.len() == 6 && zone.as_bytes()[3] == b':' => {
+            let sign = match zone.as_bytes()[0] {
+                b'+' => 1,
+                b'-' => -1,
+                _ => return None,
+            };
+            let (h, m) = (
+                zone[1..3].parse::<i64>().ok()?,
+                zone[4..6].parse::<i64>().ok()?,
+            );
+            sign * (h * 3600 + m * 60)
+        }
+        _ => return None,
+    };
+    // Days since 1970-01-01, by Howard Hinnant's days_from_civil.
+    let y = if month <= 2 { year - 1 } else { year };
+    let era = y.div_euclid(400);
+    let yoe = y - era * 400;
+    let doy = (153 * ((month + 9) % 12) + 2) / 5 + day - 1;
+    let days = era * 146_097 + yoe * 365 + yoe / 4 - yoe / 100 + doy - 719_468;
+    Some(days * 86_400 + hour * 3600 + minute * 60 + second - offset)
+}
+
+#[derive(Deserialize)]
+struct LiveBody {
+    #[serde(default)]
+    sessions: Vec<serde_json::Value>,
+}
+
+#[derive(Deserialize)]
+struct LiveRow {
+    agent: String,
+    session_id: String,
+    #[serde(default)]
+    state: String,
+    #[serde(default)]
+    waiting_reason: Option<String>,
+    #[serde(default)]
+    waiting_since: Option<String>,
+    #[serde(default)]
+    waiting_message: Option<String>,
+    #[serde(default)]
+    title: Option<String>,
+    #[serde(default)]
+    repository: String,
+}
+
+/// An agent session waiting for the user's permission or answer.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct NeedsYou {
+    /// The session's `agent:id` key, which opens its transcript.
+    pub key: String,
+    /// "Claude needs your permission to use Bash", as the agent said it, or
+    /// what kind of wait it is.
+    pub title: String,
+    /// The session's name, else its repository.
+    pub detail: String,
+}
+
+fn agent_name(agent: &str) -> &str {
+    match agent {
+        "claude-code" | "claude_code" => "Claude Code",
+        "codex" => "Codex",
+        "cursor" => "Cursor",
+        other => other,
+    }
+}
+
+/// `GET /api/live-sessions`: the sessions asking for a permission or an
+/// answer, the longest wait first. A session that only finished its turn is
+/// not one: that is no question, and the Sessions page lists it.
+pub fn parse_live(body: &[u8]) -> Result<Vec<NeedsYou>, String> {
+    let body: LiveBody =
+        serde_json::from_slice(body).map_err(|e| format!("unreadable live sessions: {e}"))?;
+    let mut waiting: Vec<(Option<i64>, NeedsYou)> = body
+        .sessions
+        .into_iter()
+        .filter_map(|row| serde_json::from_value::<LiveRow>(row).ok())
+        .filter(|row| row.state != "ended" && !row.session_id.is_empty())
+        .filter_map(|row| {
+            let agent = agent_name(&row.agent).to_string();
+            let fallback = match row.waiting_reason.as_deref()? {
+                "permission" => format!("{agent} needs your permission"),
+                "input" => format!("{agent} is waiting for your answer"),
+                _ => return None,
+            };
+            let title = row
+                .waiting_message
+                .filter(|m| !m.trim().is_empty())
+                .unwrap_or(fallback);
+            let detail = row
+                .title
+                .filter(|t| !t.trim().is_empty())
+                .unwrap_or(row.repository);
+            let since = row.waiting_since.as_deref().and_then(parse_time);
+            Some((
+                since,
+                NeedsYou {
+                    key: format!("{}:{}", row.agent, row.session_id),
+                    title,
+                    detail,
+                },
+            ))
+        })
+        .collect();
+    waiting.sort_by(|(a, x), (b, y)| a.cmp(b).then_with(|| x.key.cmp(&y.key)));
+    Ok(waiting.into_iter().map(|(_, n)| n).collect())
+}
+
 /// The body of the request that sets the global automatic switch.
 pub fn automatic_request(enabled: bool) -> String {
     format!("{{\"enabled\":{enabled}}}")
@@ -179,6 +410,10 @@ pub struct Observed {
     /// Pull requests waiting on the user; `None` while unknown, such as a
     /// daemon without GitHub discovery.
     pub waiting: Option<usize>,
+    /// The plans the daemon could read; `None` until it answered.
+    pub plans: Option<Vec<Plan>>,
+    /// Agent sessions waiting on the user; `None` while unknown.
+    pub needs: Option<Vec<NeedsYou>>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -202,6 +437,10 @@ pub struct View {
     pub queued: usize,
     /// Pull requests waiting on the user while the daemon is up and said so.
     pub waiting: Option<usize>,
+    /// Agent sessions waiting for the user's permission or answer.
+    pub needs: Vec<NeedsYou>,
+    /// One line per readable plan window; empty when none can be read.
+    pub usage: Vec<Meter>,
 }
 
 impl View {
@@ -259,9 +498,6 @@ impl Tracker {
                 self.seeded = true;
             }
         }
-        if let Some(automatic) = seen.automatic.as_ref().filter(|a| a.enabled) {
-            keys.extend(automatic.capped.iter().map(|r| format!("cap:{r}")));
-        }
         if let Some(problems) = &seen.diagnostics {
             keys.extend(problems.iter().map(|id| format!("diagnostics:{id}")));
         }
@@ -270,7 +506,6 @@ impl Tracker {
         self.acknowledged.retain(|k| {
             keys.contains(k)
                 || (k.starts_with("failed:") && seen.jobs.is_none())
-                || (k.starts_with("cap:") && seen.automatic.is_none())
                 || (k.starts_with("diagnostics:") && seen.diagnostics.is_none())
         });
         let unseen: Vec<&String> = keys
@@ -285,19 +520,13 @@ impl Tracker {
         if failed > 0 {
             attention.push(count_label(failed, "review failed", "reviews failed"));
         }
-        match count("cap:") {
-            0 => {}
-            1 => attention.push("Daily cap reached; automatic reviews paused".to_string()),
-            n => attention.push(format!(
-                "Daily cap reached in {n} repositories; automatic reviews paused"
-            )),
-        }
         match count("diagnostics:") {
             0 => {}
             1 => attention.push("A diagnostics check reports a problem".to_string()),
             n => attention.push(format!("{n} diagnostics checks report a problem")),
         }
 
+        let plans = seen.plans.as_deref().filter(|_| seen.link == Link::Up);
         let (icon, summary) = match seen.link {
             Link::Connecting => (Icon::Idle, "Connecting to the baum daemon".to_string()),
             Link::Down => (
@@ -320,6 +549,12 @@ impl Tracker {
             queued,
             // A daemon that is not running has nobody waiting on anything.
             waiting: seen.waiting.filter(|_| seen.link == Link::Up),
+            needs: seen
+                .needs
+                .clone()
+                .filter(|_| seen.link == Link::Up)
+                .unwrap_or_default(),
+            usage: plans.map(meters).unwrap_or_default(),
         }
     }
 
@@ -372,12 +607,11 @@ mod tests {
         Observed {
             link: Link::Up,
             jobs: Some(jobs),
-            automatic: Some(Automatic {
-                enabled: true,
-                capped: Vec::new(),
-            }),
+            automatic: Some(Automatic { enabled: true }),
             diagnostics: Some(Vec::new()),
             waiting: None,
+            plans: None,
+            needs: None,
         }
     }
 
@@ -397,17 +631,14 @@ mod tests {
     }
 
     #[test]
-    fn parses_the_global_switch_and_capped_repositories() {
-        let body = br#"{"enabled":false,"cursor_agent_acknowledged":false,"repositories":[
-            {"repository":"a/b","enabled":true,"paused_until":"2026-10-21T00:00:00Z","notice":"daily_cap","pending":0},
-            {"repository":"a/c","enabled":true,"notice":"unavailable","pending":0},
-            {"repository":"a/d","enabled":false,"notice":"daily_cap","pending":0}]}"#;
+    fn parses_the_global_switch() {
+        // An older daemon's daily cap fields are ignored.
+        let body = br#"{"enabled":false,"repositories":[
+            {"repository":"a/b","enabled":true,"daily_cap":5.0,"paused_until":"2026-10-21T00:00:00Z","notice":"daily_cap","pending":0},
+            {"repository":"a/c","enabled":true,"notice":"unavailable","pending":0}]}"#;
         assert_eq!(
             parse_automatic(body).unwrap(),
-            Some(Automatic {
-                enabled: false,
-                capped: vec!["a/b".to_string()]
-            })
+            Some(Automatic { enabled: false })
         );
         assert_eq!(
             parse_automatic(br#"{"available":false,"code":"automatic_unavailable"}"#).unwrap(),
@@ -494,51 +725,19 @@ mod tests {
     }
 
     #[test]
-    fn a_daily_cap_needs_attention_only_while_automatic_is_on() {
+    fn each_problem_is_its_own_attention() {
         let mut tracker = Tracker::default();
         let mut seen = up(jobs(0, 0, &[]));
-        seen.automatic = Some(Automatic {
-            enabled: true,
-            capped: vec!["a/b".into()],
-        });
-        let view = tracker.update(&seen);
-        assert_eq!(view.icon, Icon::Attention);
-        assert_eq!(
-            view.attention,
-            vec!["Daily cap reached; automatic reviews paused"]
-        );
-        seen.automatic = Some(Automatic {
-            enabled: false,
-            capped: vec!["a/b".into()],
-        });
-        assert_eq!(tracker.update(&seen).icon, Icon::Idle);
-    }
-
-    #[test]
-    fn each_capped_repository_and_each_problem_is_its_own_attention() {
-        let mut tracker = Tracker::default();
-        let mut seen = up(jobs(0, 0, &[]));
-        seen.automatic = Some(Automatic {
-            enabled: true,
-            capped: vec!["a/b".into()],
-        });
         seen.diagnostics = Some(vec!["git".into()]);
         tracker.update(&seen);
         tracker.acknowledge();
         assert_eq!(tracker.update(&seen).icon, Icon::Idle);
-        // A second repository and a second problem are new.
-        seen.automatic = Some(Automatic {
-            enabled: true,
-            capped: vec!["a/b".into(), "a/c".into()],
-        });
+        // A second problem is new.
         seen.diagnostics = Some(vec!["git".into(), "gh".into()]);
         let view = tracker.update(&seen);
         assert_eq!(
             view.attention,
-            vec![
-                "Daily cap reached; automatic reviews paused",
-                "A diagnostics check reports a problem"
-            ]
+            vec!["A diagnostics check reports a problem"]
         );
     }
 
@@ -644,5 +843,124 @@ mod tests {
         assert_eq!(toggled(None), None);
         assert_eq!(automatic_request(false), r#"{"enabled":false}"#);
         assert_eq!(automatic_request(true), r#"{"enabled":true}"#);
+    }
+
+    const PLANS: &[u8] = br#"{"plans":[
+        {"provider":"claude","available":true,"windows":[
+            {"name":"5-hour","used_percent":38,"resets_at":"2026-10-26T15:00:00Z"},
+            {"name":"weekly","used_percent":74.4,"resets_at":"2026-10-28T12:00:00.123+01:00"}],
+         "fetched_at":"2026-10-26T12:00:00Z"},
+        {"provider":"codex","available":true,"plan":"pro","windows":[
+            {"name":"weekly","used_percent":null,"resets_at":"2026-10-26T10:00:00Z","reset":true}],
+         "fetched_at":"2026-10-26T11:40:00Z"}]}"#;
+
+    #[test]
+    fn plan_windows_become_menu_lines() {
+        let mut observed = up(jobs(0, 0, &[]));
+        observed.plans = Some(parse_plan_usage(PLANS).unwrap());
+        let view = Tracker::default().update(&observed);
+        let now = parse_time("2026-10-26T12:00:00Z").unwrap();
+        let lines: Vec<(String, String)> = view
+            .usage
+            .iter()
+            .map(|m| (m.label.clone(), m.text(now)))
+            .collect();
+        assert_eq!(
+            lines,
+            vec![
+                (
+                    "Claude Code · 5-hour".into(),
+                    "62% left · resets in 3 h".into()
+                ),
+                (
+                    "Claude Code · Weekly".into(),
+                    "26% left · resets in 47 h".into()
+                ),
+                (
+                    "Codex · Weekly".into(),
+                    "reset since baum last saw it".into()
+                ),
+            ]
+        );
+        // A daemon that is not running vouches for no figures.
+        observed.link = Link::Down;
+        assert!(Tracker::default().update(&observed).usage.is_empty());
+    }
+
+    #[test]
+    fn only_plans_that_could_be_read_are_kept() {
+        let body = br#"{"plans":[
+            {"provider":"claude","available":false,"reason":"Claude Code is not signed in on this computer.","windows":[],"fetched_at":"2026-10-26T12:00:00Z"},
+            {"provider":"codex","available":true,"windows":[],"fetched_at":"2026-10-26T12:00:00Z"},
+            {"provider":"codex","available":true,"windows":"weekly"},
+            42]}"#;
+        assert_eq!(parse_plan_usage(body).unwrap(), Vec::new());
+        assert_eq!(parse_plan_usage(br#"{}"#).unwrap(), Vec::new());
+        assert!(parse_plan_usage(b"not json").is_err());
+        let mut observed = up(jobs(0, 0, &[]));
+        observed.plans = Some(parse_plan_usage(body).unwrap());
+        let view = Tracker::default().update(&observed);
+        assert!(view.usage.is_empty());
+    }
+
+    #[test]
+    fn rfc3339_times_parse_with_any_offset() {
+        assert_eq!(parse_time("1970-01-01T00:00:00Z"), Some(0));
+        assert_eq!(parse_time("2026-10-26T12:00:00Z"), Some(1_793_016_000));
+        assert_eq!(
+            parse_time("2026-10-26T13:30:00.5+01:30"),
+            parse_time("2026-10-26T12:00:00Z")
+        );
+        assert_eq!(parse_time("2024-02-29T00:00:00-00:00"), Some(1_709_164_800));
+        for bad in [
+            "",
+            "2026-10-26",
+            "2026-13-01T00:00:00Z",
+            "2026-10-26T12:00:00",
+            "2026-10-26T12:00:00+0100",
+        ] {
+            assert_eq!(parse_time(bad), None, "{bad}");
+        }
+    }
+
+    #[test]
+    fn spans_round_as_the_app_rounds_them() {
+        assert_eq!(span(10), "1 min");
+        assert_eq!(span(25 * 60), "25 min");
+        assert_eq!(span(5 * 3600), "5 h");
+        assert_eq!(span(72 * 3600), "3 d");
+        assert_eq!(span(-5), "1 min");
+    }
+
+    #[test]
+    fn sessions_asking_for_permission_or_an_answer_need_the_user() {
+        let body = br#"{"sessions":[
+            {"agent":"claude-code","session_id":"b","state":"idle","waiting_reason":"input","waiting_since":"2026-10-26T12:05:00Z","repository":"acme/demo"},
+            {"agent":"claude-code","session_id":"a","state":"running","waiting_reason":"permission","waiting_since":"2026-10-26T12:00:00Z","waiting_message":"Claude needs your permission to use Bash","title":"Tidy the app's buttons","repository":"acme/demo"},
+            {"agent":"codex","session_id":"c","state":"idle","waiting_reason":"turn_finished","repository":"acme/demo"},
+            {"agent":"codex","session_id":"d","state":"ended","waiting_reason":"permission","repository":"acme/demo"},
+            {"agent":"codex","session_id":"e","state":"running","repository":"acme/demo"},
+            {"session_id":"f"}]}"#;
+        assert_eq!(
+            parse_live(body).unwrap(),
+            vec![
+                NeedsYou {
+                    key: "claude-code:a".into(),
+                    title: "Claude needs your permission to use Bash".into(),
+                    detail: "Tidy the app's buttons".into(),
+                },
+                NeedsYou {
+                    key: "claude-code:b".into(),
+                    title: "Claude Code is waiting for your answer".into(),
+                    detail: "acme/demo".into(),
+                },
+            ]
+        );
+        assert_eq!(parse_live(br#"{"available":false}"#).unwrap(), Vec::new());
+        let mut observed = up(jobs(0, 0, &[]));
+        observed.needs = Some(parse_live(body).unwrap());
+        assert_eq!(Tracker::default().update(&observed).needs.len(), 2);
+        observed.link = Link::Down;
+        assert!(Tracker::default().update(&observed).needs.is_empty());
     }
 }

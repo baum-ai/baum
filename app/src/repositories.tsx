@@ -318,12 +318,15 @@ export function RepositoryPicker({
   onPicked,
   changed,
   connected = true,
+  autoFocus = false,
 }: {
   call?: RepositoryCall;
   home?: string;
   onPicked?: (count: number) => void;
   changed?: () => Promise<void>;
   connected?: boolean;
+  /** Whether the search takes the focus when it shows. */
+  autoFocus?: boolean;
 }) {
   const [list, setList] = useState<RepositoryItem[]>([]);
   const [found, setFound] = useState<FoundClones | null>(null);
@@ -444,8 +447,14 @@ export function RepositoryPicker({
             </svg>
             <input
               type="search"
+              autoFocus={autoFocus}
               value={query}
               onChange={(e) => setQuery(e.target.value)}
+              onKeyDown={(e) => {
+                // Escape clears a search first, then leaves the field, so the
+                // page's own keys work again.
+                if (e.key === "Escape" && !query) e.currentTarget.blur();
+              }}
               placeholder="Find a GitHub repository"
             />
           </span>

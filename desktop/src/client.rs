@@ -22,6 +22,8 @@ const MAX_BODY: u64 = 16 << 20;
 pub const POLL_TIMEOUT: Duration = Duration::from_secs(5);
 /// Diagnostics run the doctor's checks; the daemon gives them up to 45 s.
 pub const DIAGNOSTICS_TIMEOUT: Duration = Duration::from_secs(50);
+/// A plan usage reading may ask Claude's usage endpoint first.
+pub const PLAN_USAGE_TIMEOUT: Duration = Duration::from_secs(20);
 
 #[derive(Debug)]
 pub struct Response {
@@ -105,6 +107,17 @@ pub fn waiting(launch: &Launch) -> Result<Vec<u8>, String> {
 
 pub fn automatic(launch: &Launch) -> Result<Vec<u8>, String> {
     get(launch, "/api/automatic", POLL_TIMEOUT)
+}
+
+/// What remains of the agents' plans, read afresh: the daemon serves a
+/// reading up to a minute old and otherwise reads again.
+pub fn plan_usage(launch: &Launch) -> Result<Vec<u8>, String> {
+    get(launch, "/api/plan-usage?refresh=1", PLAN_USAGE_TIMEOUT)
+}
+
+/// The agent sessions in progress, for those waiting on the user.
+pub fn live_sessions(launch: &Launch) -> Result<Vec<u8>, String> {
+    get(launch, "/api/live-sessions", POLL_TIMEOUT)
 }
 
 pub fn diagnostics(launch: &Launch) -> Result<Vec<u8>, String> {

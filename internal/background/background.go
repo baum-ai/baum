@@ -8,6 +8,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"sort"
 	"strings"
@@ -60,10 +61,9 @@ type Service struct {
 	mu          sync.Mutex
 	states      map[string]State
 	hostPause   map[string]time.Time
-	cursors     map[string]int
-	nextRepo    string
+	reads       map[string]read
 	epoch       uint64
-	cursorEpoch uint64
+	probedEpoch uint64
 	probed      time.Time
 }
 
@@ -75,6 +75,7 @@ func (s *Service) ResetIdentity() {
 	s.epoch++
 	s.states = nil
 	s.hostPause = nil
+	s.reads = nil
 }
 func (s *Service) identityEpoch() uint64 { s.mu.Lock(); defer s.mu.Unlock(); return s.epoch }
 
@@ -128,32 +129,134 @@ func (s *Service) Handler() http.Handler {
 // from HTTP startup; a slow/offline GitHub never holds the cached inbox hostage.
 // One worker bounds both GitHub and local session reads across all repositories.
 func (s *Service) Run(ctx context.Context) {
-	ticker := time.NewTicker(min(s.interval(), 30*time.Second))
-	defer ticker.Stop()
 	for {
 		if ctx.Err() != nil {
 			return
 		}
 		s.Sync(ctx)
+		timer := time.NewTimer(s.wait())
 		select {
 		case <-ctx.Done():
+			timer.Stop()
 			return
-		case <-ticker.C:
+		case <-timer.C:
 		}
 	}
 }
 
+// wait is how long Run sleeps between passes: at most 30 seconds, less when a
+// repository is due sooner, as one settling after a new head is. A deadline
+// past by more than the interval is a repository no longer picked.
+func (s *Service) wait() time.Duration {
+	wait := min(s.interval(), 30*time.Second)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, state := range s.states {
+		if until := state.NextRefresh.Sub(s.now()); until < wait && until > -s.interval() {
+			wait = max(until, time.Second)
+		}
+	}
+	return wait
+}
+
+// How long a saved review's evidence goes unread while GitHub reports no
+// change to its pull request: a push, edit, review or comment moves the pull
+// request's updated time, which discovery reads with every poll, and a pull
+// request that leaves the open ones is read once to learn whether it merged
+// or closed. Check results do not move it, but discovery reports them for
+// open pull requests.
+const (
+	openReadAge   = 15 * time.Minute
+	closedReadAge = time.Hour
+	// refreshBudget bounds the pull request reads of one pass, so the next
+	// pass's polls never wait long behind them; the oldest due reads go first
+	// and the rest wait for the next pass.
+	refreshBudget = 30 * time.Second
+)
+
+// read is this process's last read of a saved pull request in a clone.
+type read struct {
+	at time.Time
+	// failures counts the reads that failed since the last that did not.
+	failures int
+	// head and open are what discovery showed of the pull request when it was
+	// read: a change from them is what makes it due, so a GitHub that still
+	// reports the old state is not read every pass.
+	head string
+	open bool
+}
+
+func readKey(clone repos.Clone, number int) string {
+	return fmt.Sprintf("%s\x00%s#%d", clone.CommonDir, strings.ToLower(clone.Repository), number)
+}
+
+func (s *Service) lastRead(key string) read {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.reads[key]
+}
+
+// recordRead notes a read that GitHub did not rate-limit, of a pull request
+// discovery showed at head, open or not.
+func (s *Service) recordRead(key string, err error, epoch uint64, head string, open bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if epoch != s.epoch {
+		return
+	}
+	if s.reads == nil {
+		s.reads = map[string]read{}
+	}
+	r := read{at: s.now(), head: head, open: open}
+	// A conflict means a generation or another refresh published first, with
+	// fresh evidence of its own.
+	if err != nil && !errors.Is(err, store.ErrConflict) {
+		r.failures = s.reads[key].failures + 1
+	}
+	s.reads[key] = r
+}
+
+// due says whether a saved pull request's evidence should be read now, and
+// whether first (urgent): GitHub reported a change since the last read.
+func (s *Service) due(r read, observation discovery.Observation, observed bool, pr discovery.PullRequest, open bool) (due, urgent bool) {
+	last := maxTime(observation.FetchedAt, r.at)
+	// Unread in this process: what was last observed stands for it.
+	head, wasOpen := r.head, r.open
+	if r.at.IsZero() {
+		head, wasOpen = observation.HeadSHA, true
+	}
+	switch {
+	case last.IsZero():
+		return true, true
+	case open && pr.UpdatedAt.After(last):
+		return true, true
+	case r.failures > 0:
+		return !s.now().Before(r.at.Add(min(s.interval()*time.Duration(1<<min(r.failures-1, 8)), openReadAge))), false
+	case open && observed && pr.HeadSHA != head:
+		return true, true
+	// It left the open pull requests since it was read open: merged or closed.
+	case !open && observed && observation.State == "OPEN" && wasOpen:
+		return true, true
+	}
+	age := closedReadAge
+	if open {
+		age = openReadAge
+	}
+	return !s.now().Before(last.Add(age)), false
+}
+
 // Sync is a single serialized scheduling pass, exposed for deterministic tests.
 // Discovery itself owns conditional requests and credential-wide rate budgets.
+// It polls every due repository first, so no repository's pull requests wait
+// behind another's reads, then reads the saved pull requests that are due,
+// those GitHub reported changed first, within refreshBudget.
 func (s *Service) Sync(ctx context.Context) {
 	s.runMu.Lock()
 	defer s.runMu.Unlock()
 	epoch := s.identityEpoch()
-	if s.cursorEpoch != epoch {
-		s.cursors = nil
-		s.nextRepo = ""
+	if s.probedEpoch != epoch {
 		s.probed = time.Time{}
-		s.cursorEpoch = epoch
+		s.probedEpoch = epoch
 	}
 	picked, err := s.Registry.Repositories(ctx)
 	if err != nil {
@@ -185,17 +288,28 @@ func (s *Service) Sync(ctx context.Context) {
 		names = append(names, name)
 	}
 	sort.Strings(names)
-	if s.nextRepo != "" {
-		index := sort.SearchStrings(names, s.nextRepo)
-		if index < len(names) {
-			names = append(append([]string{}, names[index:]...), names[:index]...)
-		}
-	}
-	if s.cursors == nil {
-		s.cursors = map[string]int{}
-	}
 	changed := s.probe(ctx, names)
-	for repoIndex, name := range names {
+
+	type polled struct {
+		repo     github.Repository
+		state    State
+		previous State
+		next     time.Time
+	}
+	type target struct {
+		polled *polled
+		clone  repos.Clone
+		number int
+		key    string
+		urgent bool
+		last   time.Time
+		// head and open are discovery's, for recordRead.
+		head string
+		open bool
+	}
+	var passed []*polled
+	var targets []target
+	for _, name := range names {
 		if ctx.Err() != nil {
 			return
 		}
@@ -207,7 +321,8 @@ func (s *Service) Sync(ctx context.Context) {
 		if s.now().Before(previous.NextRefresh) && !changed[repo.String()] {
 			continue
 		}
-		state := State{Repository: name}
+		p := &polled{repo: repo, state: State{Repository: name}, previous: previous}
+		passed = append(passed, p)
 		poll := s.Discovery.Poll
 		if changed[repo.String()] {
 			poll = s.Discovery.PollNow
@@ -218,106 +333,142 @@ func (s *Service) Sync(ctx context.Context) {
 		if pollErr == nil && s.Discovered != nil {
 			s.Discovered(ctx, snapshot)
 		}
-		next := s.now().Add(s.interval())
+		p.next = s.now().Add(s.interval())
+		// A new head: discovery reads its mergeability again soon.
+		if pollErr == nil && snapshot.Settling && snapshot.NextPoll.Before(p.next) {
+			p.next = snapshot.NextPoll
+		}
 		if pollErr != nil {
-			state.Error = "discovery_unavailable"
-			state.Failures = previous.Failures + 1
-			backoff := min(s.interval()*time.Duration(1<<min(state.Failures-1, 8)), 15*time.Minute)
-			next = s.now().Add(backoff)
-			if snapshot.NextPoll.After(next) {
-				next = snapshot.NextPoll
+			p.state.Error = "discovery_unavailable"
+			p.state.Failures = previous.Failures + 1
+			backoff := min(s.interval()*time.Duration(1<<min(p.state.Failures-1, 8)), 15*time.Minute)
+			p.next = s.now().Add(backoff)
+			if snapshot.NextPoll.After(p.next) {
+				p.next = snapshot.NextPoll
 			}
-		} else {
-			pause := s.pause(repo.Host)
-			exhausted := snapshot.Rate.Remaining != nil && *snapshot.Rate.Remaining == 0
-			if exhausted || snapshot.Rate.RetryAt.After(s.now()) || pause.After(s.now()) {
-				state.Error = "rate_limited"
-				next = maxTime(next, pause)
-				if exhausted || snapshot.Rate.RetryAt.After(s.now()) {
-					next = maxTime(next, maxTime(snapshot.Rate.Reset, snapshot.Rate.RetryAt))
+			continue
+		}
+		pause := s.pause(repo.Host)
+		exhausted := snapshot.Rate.Remaining != nil && *snapshot.Rate.Remaining == 0
+		if exhausted || snapshot.Rate.RetryAt.After(s.now()) || pause.After(s.now()) {
+			p.state.Error = "rate_limited"
+			p.next = maxTime(p.next, pause)
+			if exhausted || snapshot.Rate.RetryAt.After(s.now()) {
+				p.next = maxTime(p.next, maxTime(snapshot.Rate.Reset, snapshot.Rate.RetryAt))
+			}
+			continue
+		}
+		open := map[int]discovery.PullRequest{}
+		for _, pr := range snapshot.PullRequests {
+			open[pr.Number] = pr
+		}
+		observations := map[int]discovery.Observation{}
+		for _, observation := range snapshot.Observations {
+			observations[observation.Number] = observation
+		}
+		for cloneIndex, clone := range groups[name] {
+			numbers := map[int]bool{}
+			if cloneIndex == 0 {
+				for number := range open {
+					numbers[number] = true
 				}
-			} else {
-
-				type target struct {
-					clone  repos.Clone
-					number int
-				}
-				var targets []target
-				for cloneIndex, clone := range groups[name] {
-					numbers := map[int]bool{}
-					if cloneIndex == 0 {
-						for _, pr := range snapshot.PullRequests {
-							numbers[pr.Number] = true
-						}
+			}
+			saved, err := s.Saved(ctx, clone)
+			if err != nil {
+				p.state.Error = "store_unreadable"
+			}
+			for _, number := range saved {
+				numbers[number] = true
+			}
+			for number := range numbers {
+				key := readKey(clone, number)
+				r := s.lastRead(key)
+				observation, observed := observations[number]
+				pr, isOpen := open[number]
+				if due, urgent := s.due(r, observation, observed, pr, isOpen); due {
+					head := pr.HeadSHA
+					if !isOpen {
+						head = observation.HeadSHA
 					}
-					saved, err := s.Saved(ctx, clone)
-					if err != nil {
-						state.Error = "store_unreadable"
-					}
-					for _, number := range saved {
-						numbers[number] = true
-					}
-					sorted := make([]int, 0, len(numbers))
-					for number := range numbers {
-						sorted = append(sorted, number)
-					}
-					sort.Ints(sorted)
-					for _, number := range sorted {
-						targets = append(targets, target{clone, number})
-					}
-				}
-				cursor := 0
-				if len(targets) > 0 {
-					cursor = s.cursors[name] % len(targets)
-				}
-				for i := 0; i < len(targets); i++ {
-					if ctx.Err() != nil {
-						return
-					}
-					current := targets[(cursor+i)%len(targets)]
-					requestCtx, cancel := context.WithTimeout(ctx, 45*time.Second)
-					observation, err := s.Refresh(requestCtx, current.clone, current.number)
-					cancel()
-					s.cursors[name] = (cursor + i + 1) % len(targets)
-					if observation.Number > 0 && observation.HeadSHA != "" {
-						if observeErr := s.Discovery.Observe(ctx, repo, observation); observeErr != nil {
-							state.Error = "cache_unavailable"
-						}
-					}
-					// A conflict means a generation or another refresh published first;
-					// the next pass refreshes the latest document normally.
-					if err != nil && !errors.Is(err, store.ErrConflict) {
-						state.Error = "metadata_unavailable"
-						state.Problems = append(state.Problems, Problem{current.number, "metadata_unavailable"})
-						var limited *github.RateLimitedError
-						if errors.As(err, &limited) {
-							state.Error = "rate_limited"
-							// Retry the uncompleted target with the next budget window. Skipping
-							// it can starve every second target when each window funds one PR.
-							s.cursors[name] = (cursor + i) % len(targets)
-							next = maxTime(next, limited.ResumeAt)
-							s.setPause(repo.Host, next, epoch)
-							s.nextRepo = names[(repoIndex+1)%len(names)]
-							break
-						}
-					}
+					targets = append(targets, target{p, clone, number, key, urgent, maxTime(observation.FetchedAt, r.at), head, isOpen})
 				}
 			}
 		}
-		state.LastSuccess = previous.LastSuccess
+	}
+	if len(passed) > 0 && s.Changed != nil {
+		s.Changed()
+	}
+
+	// What GitHub reported changed goes first, then the longest unread.
+	sort.Slice(targets, func(i, j int) bool {
+		a, b := targets[i], targets[j]
+		switch {
+		case a.urgent != b.urgent:
+			return a.urgent
+		case !a.last.Equal(b.last):
+			return a.last.Before(b.last)
+		case a.polled.repo.String() != b.polled.repo.String():
+			return a.polled.repo.String() < b.polled.repo.String()
+		case a.clone.CommonDir != b.clone.CommonDir:
+			return a.clone.CommonDir < b.clone.CommonDir
+		}
+		return a.number < b.number
+	})
+	started := s.now()
+	for _, current := range targets {
+		if ctx.Err() != nil {
+			return
+		}
+		p := current.polled
+		if pause := s.pause(p.repo.Host); pause.After(s.now()) {
+			// A read on this host was rate-limited: the rest wait for its reset.
+			p.state.Error = "rate_limited"
+			p.next = maxTime(p.next, pause)
+			continue
+		}
+		if s.now().Sub(started) >= refreshBudget {
+			break
+		}
+		requestCtx, cancel := context.WithTimeout(ctx, 45*time.Second)
+		observation, err := s.Refresh(requestCtx, current.clone, current.number)
+		cancel()
+		if observation.Number > 0 && observation.HeadSHA != "" {
+			if observeErr := s.Discovery.Observe(ctx, p.repo, observation); observeErr != nil {
+				p.state.Error = "cache_unavailable"
+			}
+		}
+		if limited, ok := errors.AsType[*github.RateLimitedError](err); ok {
+			// Unrecorded, the read stays due and goes first after the reset.
+			p.state.Error = "rate_limited"
+			p.state.Problems = append(p.state.Problems, Problem{current.number, "metadata_unavailable"})
+			p.next = maxTime(p.next, limited.ResumeAt)
+			s.setPause(p.repo.Host, p.next, epoch)
+			continue
+		}
+		s.recordRead(current.key, err, epoch, current.head, current.open)
+		if err != nil && !errors.Is(err, store.ErrConflict) {
+			p.state.Error = "metadata_unavailable"
+			p.state.Problems = append(p.state.Problems, Problem{current.number, "metadata_unavailable"})
+		}
+	}
+
+	for _, p := range passed {
+		state, next := p.state, p.next
+		state.LastSuccess = p.previous.LastSuccess
 		if state.Error == "" {
 			state.LastSuccess = s.now()
 		} else if state.Failures == 0 {
-			state.Failures = previous.Failures + 1
-			if state.Error != "rate_limited" {
+			state.Failures = p.previous.Failures + 1
+			// A failed read backs off on its own; the polls go on.
+			if state.Error != "rate_limited" && state.Error != "metadata_unavailable" {
 				next = maxTime(next, s.now().Add(min(s.interval()*time.Duration(1<<min(state.Failures-1, 8)), 15*time.Minute)))
 			}
 		}
 		state.NextRefresh = next
 		s.put(state, epoch)
-		if s.Changed != nil {
-			s.Changed()
-		}
+	}
+	if len(passed) > 0 && s.Changed != nil {
+		s.Changed()
 	}
 }
 
@@ -394,12 +545,14 @@ func (s *Service) RefreshNow(ctx context.Context, clone repos.Clone, numbers []i
 				errs = append(errs, observeErr)
 			}
 		}
+		if limited, ok := errors.AsType[*github.RateLimitedError](err); ok {
+			errs = append(errs, err)
+			s.setPause(repo.Host, limited.ResumeAt, epoch)
+			break
+		}
+		s.recordRead(readKey(clone, number), err, epoch, observation.HeadSHA, observation.State == "OPEN" || observation.State == "")
 		if err != nil && !errors.Is(err, store.ErrConflict) {
 			errs = append(errs, err)
-			if limited, ok := errors.AsType[*github.RateLimitedError](err); ok {
-				s.setPause(repo.Host, limited.ResumeAt, epoch)
-				break
-			}
 		}
 	}
 	if len(observations) > 0 && s.Changed != nil {

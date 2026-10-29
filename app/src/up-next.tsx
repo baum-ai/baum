@@ -1,9 +1,26 @@
-import { useEffect, useId, useLayoutEffect, useRef, useState, type ComponentType } from "react";
+import {
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type ComponentType,
+  type Dispatch,
+  type ReactNode,
+  type SetStateAction,
+} from "react";
 import { formatCount } from "@baum/viewer/components/format";
+import { Lines } from "@baum/viewer/components/review-parts";
 import { Alert, Button } from "@baum/viewer/components/ui";
 import type { ViewerLinkProps } from "@baum/viewer/navigation";
 import {
+  RISK_SCORE_MEANING,
+  sectionsInReviewOrder,
+  type ReviewDocument,
+  type RiskScoreLevel,
+} from "@baum/viewer/review-document";
+import {
   appURL,
+  documentRequest,
   fixJob,
   fixLabel,
   isActiveJob,
@@ -12,10 +29,12 @@ import {
   liveFor,
   request,
   type Entry,
+  type FixOnly,
   type Job,
   type LiveSession,
 } from "./api";
-import { phaseText } from "./fix";
+import { phaseText, type FixState } from "./fix";
+import { inboxesOf, matches, sentence, type Inbox } from "./inboxes";
 import { useNow } from "./live";
 import {
   canMerge,
@@ -26,6 +45,9 @@ import {
   type MergeOptions,
 } from "./merge";
 import { LoadingStatus, NineDots } from "./nine-dots";
+import { onBody, useLastRow, useShortcuts } from "./shortcuts";
+import { FailingChecks } from "./checks";
+import { ReviewThreads } from "./threads";
 import { canUpdateBranch, UpdateBranchDialog } from "./unblock";
 
 /** What the person does next about a pull request: read a review they were
@@ -38,26 +60,35 @@ export type UpNextItem = {
   key: string;
   kind: UpNextKind;
   entry: Entry;
-  /** Why it is the person's to do now, in a sentence built from its state. */
+  /** Why it is the person's to do now, in a sentence built from its state;
+   *  empty when its group says it all. */
   why: string;
-  facts: { label: string; value: string }[];
   /** The reading estimate of a review; null when there is none. */
   minutes: number | null;
+  /** Agent sessions working on its branch now. */
+  working: number;
   /** The latest fix of a pull request in the queue as a fix, when it failed. */
   failedFix?: Job;
 };
 
-// The order of the queue: someone else waits on a review, the person's own
-// blocked work next, then what finishes a pull request, then the setup a
-// requested review needs.
+// The order of the queue, which is the order of its groups: what someone
+// waits on the person to read, then what finishes a pull request, then what
+// an agent can take on.
 const KINDS: Record<UpNextKind, { label: string; done: string; order: number }> = {
   review: { label: "Review", done: "Reviewed", order: 0 },
-  fix: { label: "Fix", done: "Fixed", order: 1 },
-  merge: { label: "Merge", done: "Merged", order: 2 },
-  update: { label: "Update", done: "Updated", order: 3 },
   // It leaves the queue only when the review request goes, whoever answered it.
-  clone: { label: "Clone", done: "Handled", order: 4 },
+  clone: { label: "Clone", done: "Handled", order: 1 },
+  merge: { label: "Merge", done: "Merged", order: 2 },
+  fix: { label: "Fix", done: "Fixed", order: 3 },
+  update: { label: "Update", done: "Updated", order: 4 },
 };
+
+/** The list's groups, by what the person does about their pull requests. */
+export const GROUPS: { id: "eyes" | "merge" | "agent"; title: string; kinds: UpNextKind[] }[] = [
+  { id: "eyes", title: "Needs your eyes", kinds: ["review", "clone"] },
+  { id: "merge", title: "Ready to merge", kinds: ["merge"] },
+  { id: "agent", title: "Hand to an agent", kinds: ["fix", "update"] },
+];
 
 /** A fix job's transcript when it has one, else the job in the list. */
 function jobHref(job: Job) {
@@ -93,7 +124,9 @@ function kindOf(entry: Entry, jobs: Job[]): UpNextKind | null {
   // An agent already fixing it leaves nothing for the person until it ends.
   if (isActiveJob(fixJob(entry, jobs))) return null;
   if (blocked(entry)) return "fix";
-  if (canMerge(entry)) return "merge";
+  // GitHub can call a head just pushed clean before its checks are queued;
+  // checks running say the merge is not ready yet, whatever the merge state.
+  if (canMerge(entry) && entry.checks !== "running") return "merge";
   if (canUpdateBranch(entry)) return "update";
   return null;
 }
@@ -113,28 +146,14 @@ const REVIEW_WORDS: Record<string, string> = {
   commented: "Commented",
 };
 const CHECK_WORDS: Record<string, string> = {
-  passing: "Passing",
-  failing: "Failing",
-  running: "Running",
-  none: "None",
+  passing: "Checks passing",
+  failing: "Checks failing",
+  running: "Checks running",
+  none: "No checks",
 };
 
-function agentsText(sessions: LiveSession[]) {
-  const working = sessions.filter((s) => s.state === "running").length;
-  const idle = sessions.length - working;
-  return joinAnd([working ? `${working} working` : "", idle ? `${idle} idle` : ""].filter(Boolean));
-}
-
-function baumReview(entry: Entry) {
-  if (entry.status === "generating") return "Generating";
-  if (entry.status === "failed") return "Failed";
-  if (entry.version_count === 0) return "None yet";
-  return entry.status === "outdated" || entry.stale ? "Outdated" : "Ready";
-}
-
-function why(kind: UpNextKind, entry: Entry, sessions: LiveSession[]): string {
+function why(kind: UpNextKind, entry: Entry, working: number): string {
   const pr = entry.pull_request;
-  const working = sessions.filter((s) => s.state === "running").length;
   switch (kind) {
     case "review": {
       const review =
@@ -151,7 +170,7 @@ function why(kind: UpNextKind, entry: Entry, sessions: LiveSession[]): string {
         working > 0
           ? ` ${plural(working, "agent session")} ${working === 1 ? "is" : "are"} still working on its branch, so reviewing now catches problems before more commits pile up.`
           : "";
-      return `${pr.author ? `${pr.author} asked` : "Asked"} for your review. ${review}${agents}`;
+      return `${review}${agents}`;
     }
     case "fix": {
       const unresolved = entry.unresolved ?? 0;
@@ -164,47 +183,22 @@ function why(kind: UpNextKind, entry: Entry, sessions: LiveSession[]): string {
         entry.checks === "failing" ? "checks are failing" : "",
       ].filter(Boolean);
       const sentence = joinAnd(problems);
-      return `Yours. ${sentence.charAt(0).toUpperCase()}${sentence.slice(1)}.${
+      return `${sentence.charAt(0).toUpperCase()}${sentence.slice(1)}.${
         fixLabel(entry) ? " An agent can fix it while you do something else." : ""
       }`;
     }
     case "merge":
-      return entry.checks === "passing"
-        ? "Yours. Checks pass and GitHub would merge it now."
-        : "Yours. GitHub would merge it now.";
+      // Its group already says it is ready to merge.
+      return "";
     case "update":
       // Only an approved branch with passing checks is held back by being
       // behind alone; otherwise updating is one step of several.
       return entry.review === "approved" && entry.checks === "passing"
-        ? "Yours and approved, but behind its base. Update the branch and it can merge."
-        : "Yours, but behind its base. Update the branch to bring it up to date.";
+        ? "Approved, but behind its base. Update the branch and it can merge."
+        : "Behind its base. Update the branch to bring it up to date.";
     case "clone":
-      return `${pr.author ? `${pr.author} asked` : "Asked"} for your review, but baum has no local clone of ${pr.repository}, so there is no review yet.`;
+      return `baum has no local clone of ${pr.repository}, so there is no review to read yet. Once it has one, the review generates on its own.`;
   }
-}
-
-function facts(kind: UpNextKind, entry: Entry, sessions: LiveSession[]) {
-  const unresolved = entry.unresolved ?? 0;
-  const all: Record<string, string> = {
-    Risk: riskText(entry),
-    "baum review": baumReview(entry),
-    Review: REVIEW_WORDS[entry.review] ?? "",
-    Checks: CHECK_WORDS[entry.checks] ?? "",
-    Unresolved:
-      unresolved > 0 ? `${formatCount(unresolved)}${entry.unresolved_capped ? "+" : ""}` : "",
-    Merge: entry.merge === "conflict" ? "Conflict" : entry.pull_request.behind ? "Behind base" : "",
-    Agents: agentsText(sessions),
-  };
-  const shown: Record<UpNextKind, string[]> = {
-    review: ["Risk", "baum review", "Review", "Agents"],
-    fix: ["Review", "Unresolved", "Merge", "Checks"],
-    merge: ["Risk", "Checks", "Review"],
-    update: ["Review", "Merge", "Checks"],
-    clone: ["Review", "Checks"],
-  };
-  return shown[kind]
-    .map((label) => ({ label, value: all[label] ?? "" }))
-    .filter((fact) => fact.value);
 }
 
 /** The pull requests waiting on the person, in the order to take them, and
@@ -239,14 +233,14 @@ export function upNext(
       continue;
     }
     const last = kind === "fix" ? fixJob(entry, jobs) : undefined;
-    const sessions = liveFor(live, entry.pull_request);
+    const working = liveFor(live, entry.pull_request).filter((s) => s.state === "running").length;
     items.push({
       key,
       kind,
       entry,
-      why: why(kind, entry, sessions),
-      facts: facts(kind, entry, sessions),
+      why: why(kind, entry, working),
       minutes: kind === "review" ? (entry.review_minutes ?? null) : null,
+      working,
       ...(last?.state === "failed" ? { failedFix: last } : {}),
     });
   }
@@ -275,15 +269,19 @@ type Seen = {
   cleared?: number;
 };
 /** What the inbox remembers on this computer: today's pull requests and
- *  which it cleared, the person's skips and promotion, and their snoozes. */
+ *  which it cleared, and the person's snoozes. */
 type Stored = {
   day: string;
   seen: Record<string, Seen>;
-  skipped: string[];
-  promoted: string | null;
+  /** Snoozes until a time. */
   snoozed: Record<string, number>;
+  /** Snoozes until the pull request changes: the head it had then. */
+  held: Record<string, string>;
 };
 const STORAGE_KEY = "baum.inbox.v1";
+
+/** A snooze's end: a time, or the pull request's next push. */
+export type SnoozeEnd = number | "change";
 
 function dayOf(time: number) {
   const date = new Date(time);
@@ -291,8 +289,12 @@ function dayOf(time: number) {
 }
 
 /** A new day starts empty, keeping only the snoozes that still run. */
-function fresh(day: string, snoozed: Record<string, number> = {}): Stored {
-  return { day, seen: {}, skipped: [], promoted: null, snoozed };
+function fresh(
+  day: string,
+  snoozed: Record<string, number> = {},
+  held: Record<string, string> = {},
+): Stored {
+  return { day, seen: {}, snoozed, held };
 }
 
 function stillSnoozed(snoozed: Record<string, number>, now: number) {
@@ -309,17 +311,17 @@ function load(now: number): Stored {
     if (stored && typeof stored === "object") {
       // Rebuilt field by field: whatever else the storage holds, the page works.
       const snoozed = stillSnoozed(record(stored.snoozed) as Record<string, number>, now);
+      const held = Object.fromEntries(
+        Object.entries(record(stored.held)).filter(([, head]) => typeof head === "string"),
+      ) as Record<string, string>;
       return stored.day === dayOf(now)
         ? {
             day: stored.day,
             seen: record(stored.seen) as Record<string, Seen>,
-            skipped: Array.isArray(stored.skipped)
-              ? stored.skipped.filter((key) => typeof key === "string")
-              : [],
-            promoted: typeof stored.promoted === "string" ? stored.promoted : null,
             snoozed,
+            held,
           }
-        : fresh(dayOf(now), snoozed);
+        : fresh(dayOf(now), snoozed, held);
     }
   } catch {
     // Storage may be unavailable or hold something else; start empty.
@@ -327,32 +329,39 @@ function load(now: number): Stored {
   return fresh(dayOf(now));
 }
 
-/** The next whole hour three hours from now, or 9 AM tomorrow once that is
- *  past 6 PM. */
-export function snoozeUntil(now: number): number {
-  const until = new Date(now + 3 * 3_600_000);
-  if (until.getMinutes() || until.getSeconds() || until.getMilliseconds())
-    until.setHours(until.getHours() + 1, 0, 0, 0);
-  if (dayOf(until.getTime()) !== dayOf(now) || until.getHours() > 18) {
-    const morning = new Date(now);
-    morning.setDate(morning.getDate() + 1);
-    morning.setHours(9, 0, 0, 0);
-    return morning.getTime();
-  }
-  return until.getTime();
+/** The snoozes offered at `now`: an hour, this afternoon while 3 PM is more
+ *  than an hour away, tomorrow morning, and until the next push. */
+export function snoozeOptions(now: number): { label: string; until: SnoozeEnd }[] {
+  const afternoon = new Date(now);
+  afternoon.setHours(15, 0, 0, 0);
+  const morning = new Date(now);
+  morning.setDate(morning.getDate() + 1);
+  morning.setHours(9, 0, 0, 0);
+  return [
+    { label: "1 hour", until: now + 3_600_000 },
+    ...(afternoon.getTime() - now > 3_600_000
+      ? [{ label: "This afternoon", until: afternoon.getTime() }]
+      : []),
+    { label: "Tomorrow morning", until: morning.getTime() },
+    { label: "Until it changes", until: "change" as const },
+  ];
 }
 
-export function snoozeText(until: number, now: number) {
-  // Snoozes always end on the hour.
-  const time = new Date(until).toLocaleTimeString([], { hour: "numeric" });
+export function snoozeText(until: SnoozeEnd, now: number) {
+  if (until === "change") return "the next push";
+  const date = new Date(until);
+  const time = date.toLocaleTimeString([], {
+    hour: "numeric",
+    ...(date.getMinutes() ? { minute: "2-digit" } : {}),
+  });
   return dayOf(until) === dayOf(now) ? time : `tomorrow ${time}`;
 }
 
 export type UpNextState = ReturnType<typeof useUpNext>;
 
-/** The inbox's queue with the person's skips, promotion and snoozes applied,
- *  and what they cleared today. `ready` holds the bookkeeping back until a
- *  complete read, so an empty first read or a failed one clears nothing.
+/** The inbox's queue with the person's snoozes applied, and what they cleared
+ *  today. `ready` holds the bookkeeping back until a complete read, so an
+ *  empty first read or a failed one clears nothing.
  *
  *  A pull request that left the queue counts as cleared only when that says
  *  the person did their part: it closed or merged, the review request went,
@@ -364,24 +373,21 @@ export function useUpNext(entries: Entry[], live: LiveSession[], jobs: Job[], re
   const now = useNow(30_000);
   const [stored, setStored] = useState(() => load(Date.now()));
   const day = dayOf(now);
-  const state = stored.day === day ? stored : fresh(day, stillSnoozed(stored.snoozed, now));
+  const state =
+    stored.day === day ? stored : fresh(day, stillSnoozed(stored.snoozed, now), stored.held);
   const { items, waiting, fixing } = upNext(entries, live, jobs);
-  const snoozed = items.filter((item) => (state.snoozed[item.key] ?? 0) > now);
-  const active = items.filter((item) => !((state.snoozed[item.key] ?? 0) > now));
-  const rank = (item: UpNextItem) =>
-    item.key === state.promoted
-      ? -1
-      : state.skipped.includes(item.key)
-        ? items.length + state.skipped.indexOf(item.key)
-        : items.indexOf(item);
-  const queue = active.slice().sort((a, b) => rank(a) - rank(b));
+  const snoozedNow = (item: UpNextItem) =>
+    (state.snoozed[item.key] ?? 0) > now ||
+    state.held[item.key] === item.entry.pull_request.head_sha;
+  const snoozed = items.filter(snoozedNow);
+  const queue = items.filter((item) => !snoozedNow(item));
   const update = (change: (state: Stored) => Stored) =>
     setStored((previous) => {
       const time = Date.now();
       const base =
         previous.day === dayOf(time)
           ? previous
-          : fresh(dayOf(time), stillSnoozed(previous.snoozed, time));
+          : fresh(dayOf(time), stillSnoozed(previous.snoozed, time), previous.held);
       const next = change(base);
       try {
         localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
@@ -398,7 +404,8 @@ export function useUpNext(entries: Entry[], live: LiveSession[], jobs: Job[], re
   );
   const signature = [
     ...items.map(
-      (item) => `${item.key}:${item.kind}:${item.minutes}:${item.entry.pull_request.title}`,
+      (item) =>
+        `${item.key}:${item.kind}:${item.minutes}:${item.entry.pull_request.head_sha}:${item.entry.pull_request.title}`,
     ),
     ...entries
       .filter((entry) => waitingKeys.has(upNextKey(entry.pull_request)))
@@ -411,6 +418,7 @@ export function useUpNext(entries: Entry[], live: LiveSession[], jobs: Job[], re
   useEffect(() => {
     if (!ready) return;
     const keys = new Set(items.map((item) => item.key));
+    const heads = new Map(items.map((item) => [item.key, item.entry.pull_request.head_sha]));
     // A fix counts once it pushed: not while it runs, nor after it failed.
     const fixed = (key: string) => {
       const entry = entries.find((e) => upNextKey(e.pull_request) === key);
@@ -422,6 +430,9 @@ export function useUpNext(entries: Entry[], live: LiveSession[], jobs: Job[], re
       record.cleared == null &&
       listed.has(record.repository.toLowerCase()) &&
       (!waitingKeys.has(key) || (record.kind === "fix" && fixed(key)) || record.kind === "update");
+    // A snooze until the next push ends once the pull request is in the
+    // queue on another head, or gone from it.
+    const pushed = (key: string, head: string) => heads.get(key) !== head;
     const changed =
       stored.day !== day ||
       items.some((item) => {
@@ -434,7 +445,8 @@ export function useUpNext(entries: Entry[], live: LiveSession[], jobs: Job[], re
           seen.minutes !== item.minutes
         );
       }) ||
-      Object.entries(stored.seen).some(([key, record]) => clears(key, record));
+      Object.entries(stored.seen).some(([key, record]) => clears(key, record)) ||
+      Object.entries(stored.held).some(([key, head]) => pushed(key, head));
     if (!changed) return;
     update((previous) => {
       const seen: Record<string, Seen> = {};
@@ -450,12 +462,10 @@ export function useUpNext(entries: Entry[], live: LiveSession[], jobs: Job[], re
           minutes: item.minutes,
         };
       }
-      return {
-        ...previous,
-        seen,
-        skipped: previous.skipped.filter((key) => keys.has(key)),
-        promoted: previous.promoted && keys.has(previous.promoted) ? previous.promoted : null,
-      };
+      const held = Object.fromEntries(
+        Object.entries(previous.held).filter(([key, head]) => !pushed(key, head)),
+      );
+      return { ...previous, seen, held };
     });
     // `signature` stands for `items`.
   }, [ready, signature, day]);
@@ -470,23 +480,30 @@ export function useUpNext(entries: Entry[], live: LiveSession[], jobs: Job[], re
     waiting,
     fixing,
     cleared,
-    snoozedUntil: (key: string) => state.snoozed[key] ?? 0,
-    skip: (key: string) =>
-      update((s) => ({
-        ...s,
-        skipped: [...s.skipped.filter((k) => k !== key), key],
-        promoted: s.promoted === key ? null : s.promoted,
-      })),
-    promote: (key: string) =>
-      update((s) => ({ ...s, promoted: key, skipped: s.skipped.filter((k) => k !== key) })),
-    snooze: (key: string) =>
-      update((s) => ({
-        ...s,
-        snoozed: { ...s.snoozed, [key]: snoozeUntil(Date.now()) },
-        promoted: s.promoted === key ? null : s.promoted,
-      })),
-    wake: () => update((s) => ({ ...s, snoozed: {} })),
+    snoozedUntil: (key: string): SnoozeEnd =>
+      key in state.held ? "change" : (state.snoozed[key] ?? 0),
+    snooze: (item: UpNextItem, until: SnoozeEnd) =>
+      update((s) =>
+        until === "change"
+          ? { ...s, held: { ...s.held, [item.key]: item.entry.pull_request.head_sha } }
+          : { ...s, snoozed: { ...s.snoozed, [item.key]: until } },
+      ),
+    wake: (key: string) =>
+      update((s) => {
+        const { [key]: _until, ...snoozed } = s.snoozed;
+        const { [key]: _head, ...held } = s.held;
+        return { ...s, snoozed, held };
+      }),
   };
+}
+
+/** What one of the person's own pull requests waits on, in a few words. */
+export function waitingOn(entry: Entry) {
+  if (entry.pull_request.draft || entry.merge === "draft") return "Draft";
+  if (entry.checks === "running") return "Checks running";
+  if (entry.review === "changes_requested") return "Changes requested";
+  if (entry.review !== "approved") return "Waiting on review";
+  return "Waiting on GitHub";
 }
 
 function prHref(entry: Entry, cloneFor: (entry: Entry) => string) {
@@ -504,26 +521,93 @@ function minutesText(minutes: number) {
 const sumMinutes = (items: { minutes?: number | null }[]) =>
   items.reduce((sum, item) => sum + (typeof item.minutes === "number" ? item.minutes : 0), 0);
 
-// How long the card takes to slide away before a skip or snooze takes effect.
-const LEAVE_MS = 260;
+/** One row of the list: a pull request in the queue, or one of the person's
+ *  own that an agent is fixing now. */
+/** A row of the list: a queued item, a pull request an agent is fixing, or
+ *  one of the person's own that waits on checks or reviewers. */
+type Row = { key: string; entry: Entry; item?: UpNextItem; job?: Job; waiting?: boolean };
 
-/** The inbox: the one thing to do next, what follows it, and what the person
- *  cleared today. */
+/** Saved reviews read so far, by clone, number and version. */
+type SavedReviewDocs = Record<string, ReviewDocument | "failed">;
+export type SavedReviews = [SavedReviewDocs, Dispatch<SetStateAction<SavedReviewDocs>>];
+
+/** The saved review of a pull request, once read, or "failed"; read again
+ *  only when a new version is saved. Nothing while it is read, or for a pull
+ *  request without a saved review. `shared` keeps what was read for a parent
+ *  that outlives the caller, as the Pull requests list does for its peeks. */
+export function useSavedReview(entry: Entry | undefined, clone: string, shared?: SavedReviews) {
+  const own = useState<SavedReviewDocs>({});
+  const [docs, setDocs] = shared ?? own;
+  const id =
+    entry && clone && entry.version_count > 0
+      ? `${clone}#${entry.pull_request.number}@${entry.latest?.version ?? 0}`
+      : "";
+  useEffect(() => {
+    if (!id || docs[id] || !entry) return;
+    const abort = new AbortController();
+    documentRequest(clone, entry.pull_request.number, undefined, abort.signal).then(
+      (doc) => setDocs((all) => ({ ...all, [id]: doc })),
+      () => {
+        if (!abort.signal.aborted) setDocs((all) => ({ ...all, [id]: "failed" }));
+      },
+    );
+    return () => abort.abort();
+    // `id` stands for the entry and clone.
+  }, [id]);
+  return id ? docs[id] : undefined;
+}
+
+/** The saved review of the selected pull request, once read. */
+function useReviewDocument(entry: Entry | undefined, clone: string) {
+  const doc = useSavedReview(entry, clone);
+  return doc && doc !== "failed" ? doc : null;
+}
+
+/** The row's inboxes, in the sidebar's order. A pull request an agent is
+ *  fixing is in those that take a fix; one that waits on others is in none. */
+function rowInboxes(row: Row, inboxes: Inbox[]) {
+  const item = row.item ?? (row.job ? { kind: "fix" as const, entry: row.entry } : null);
+  return item ? inboxesOf(item, inboxes) : [];
+}
+
+export function InboxTag({ inbox }: { inbox: Inbox }) {
+  return <span className={`upnext-tag inbox-${inbox.color}`}>{inbox.name}</span>;
+}
+
+/** The inbox: what waits on the person, grouped by what they do about it, and
+ *  the selected pull request's panel beside it. In one of the person's inboxes
+ *  (`selected`) it lists only what matches that inbox; what was done today and
+ *  the person's pull requests waiting on others are only in the Inbox. */
 export function UpNextPage({
-  inbox,
+  inbox: all,
+  inboxes = [],
+  selected: scope = null,
+  login,
+  headerAction,
   loading,
   hasRepositories,
   cloneFor,
   fix,
+  fixState = () => ({ starting: false, error: "" }),
   changed,
   Link,
 }: {
   inbox: UpNextState;
+  /** All of the person's inboxes, for the tags. */
+  inboxes?: Inbox[];
+  /** The inbox whose queue this is; none for the Inbox. */
+  selected?: Inbox | null;
+  /** The signed-in GitHub account, for "my own repositories". */
+  login?: string;
+  /** Shown beside an inbox's name: where its Edit link goes. */
+  headerAction?: ReactNode;
   loading: boolean;
   hasRepositories: boolean;
   cloneFor: (entry: Entry) => string;
-  /** Opens the fix confirmation. */
-  fix: (entry: Entry) => void;
+  /** Starts the fix at once, of the failing checks alone with "checks". */
+  fix: (entry: Entry, only?: FixOnly) => void;
+  /** A pull request's fix that is starting or did not start. */
+  fixState?: (entry: Entry) => FixState;
   /** Reloads the inbox after a write to GitHub. */
   changed: () => Promise<void>;
   Link: ComponentType<ViewerLinkProps>;
@@ -531,75 +615,387 @@ export function UpNextPage({
   const [merging, setMerging] = useState<Entry | null>(null);
   const [mergingAll, setMergingAll] = useState<Entry[] | null>(null);
   const [updating, setUpdating] = useState<Entry | null>(null);
-  const { queue, cleared } = inbox;
-  const current = queue[0];
-  const rest = queue.slice(1);
-  const ready = queue.filter((item) => item.kind === "merge").map((item) => item.entry);
+  // Kept for when the inbox is drawn again, back from a pull request.
+  const [chosen, setChosen] = useLastRow("inbox");
+  const [menu, setMenu] = useState(false);
+  const [snoozedOpen, setSnoozedOpen] = useState(false);
+  const [doneOpen, setDoneOpen] = useState(false);
+  const [toast, setToast] = useState<{ id: number; text: string; undo?: () => void } | null>(null);
+  const list = useRef<HTMLDivElement>(null);
+  const detail = useRef<HTMLDivElement>(null);
+  const inScope = (item: { kind: UpNextKind; entry: Entry }) => !scope || matches(scope, item);
+  const queue = all.queue.filter(inScope);
+  const snoozed = all.snoozed.filter(inScope);
+  const fixing = all.fixing.filter(({ entry }) => inScope({ kind: "fix", entry }));
+  // Done today and what waits on others are the Inbox's alone.
+  const cleared = scope ? [] : all.cleared;
+  const waiting = scope ? [] : all.waiting;
+  const inbox = { ...all, queue, snoozed, fixing, cleared, waiting };
+  const { now } = all;
+  // Those an agent is fixing are listed under Hand to an agent.
+  const fixingKeys = new Set(fixing.map(({ entry }) => upNextKey(entry.pull_request)));
+  const others = waiting.filter((entry) => !fixingKeys.has(upNextKey(entry.pull_request)));
+  const groups = [
+    ...GROUPS.map((group) => ({
+      id: group.id as string,
+      title: group.title,
+      rows: [
+        ...queue
+          .filter((item) => group.kinds.includes(item.kind))
+          .map((item): Row => ({ key: item.key, entry: item.entry, item })),
+        ...(group.id === "agent"
+          ? fixing.map(
+              ({ entry, job }): Row => ({ key: upNextKey(entry.pull_request), entry, job }),
+            )
+          : []),
+      ],
+    })),
+    {
+      id: "waiting",
+      title: "Waiting on checks or reviews",
+      rows: others.map(
+        (entry): Row => ({ key: upNextKey(entry.pull_request), entry, waiting: true }),
+      ),
+    },
+  ].filter((group) => group.rows.length > 0);
+  const rows = groups.flatMap((group) => group.rows);
+  // A selected pull request that leaves the list hands the selection to the
+  // one that takes its place. Waiting rows come last and are shown only when
+  // picked, so an emptied queue still reads as inbox zero.
+  const last = useRef(0);
+  const found = chosen ? rows.findIndex((row) => row.key === chosen) : -1;
+  const actionable = rows.filter((row) => !row.waiting).length;
+  const index = found >= 0 ? found : Math.min(last.current, actionable - 1);
+  const selected = index >= 0 ? rows[index] : undefined;
+  useEffect(() => {
+    if (index >= 0) last.current = index;
+  });
+  const select = (key: string) => {
+    setChosen(key);
+    setMenu(false);
+  };
+  // The list is one tab stop, on the selected row (or the first, with none
+  // selected), and the focus follows the selection while it is in the list,
+  // so the ring and the keys always act on the same row.
+  const tabbable = selected?.key ?? rows[0]?.key;
+  useEffect(() => {
+    if (!selected) return;
+    const element = Array.from(
+      list.current?.querySelectorAll<HTMLElement>("[data-row]") ?? [],
+    ).find((element) => element.dataset.row === selected.key);
+    element?.scrollIntoView?.({ block: "nearest" });
+    if (list.current?.contains(document.activeElement))
+      element?.querySelector<HTMLElement>(".upnext-row")?.focus({ preventScroll: true });
+  }, [selected?.key]);
+  useEffect(() => {
+    if (!toast) return;
+    const timer = setTimeout(() => setToast((t) => (t?.id === toast.id ? null : t)), 5000);
+    return () => clearTimeout(timer);
+  }, [toast?.id]);
+  const doc = useReviewDocument(selected?.entry, selected ? cloneFor(selected.entry) : "");
+  // The panel's fix button, which `f` presses too: a Fix item whose pull
+  // request offers a fix and has a clone.
+  const selectedFix =
+    selected?.item?.kind === "fix" && fixLabel(selected.entry) && cloneFor(selected.entry)
+      ? () => fix(selected.entry)
+      : undefined;
+  const selectedFixState = selected ? fixState(selected.entry) : { starting: false, error: "" };
+  const options = snoozeOptions(now);
+  const snooze = (until: SnoozeEnd) => {
+    const item = selected?.item;
+    if (!item) return;
+    inbox.snooze(item, until);
+    setMenu(false);
+    setToast({
+      id: Date.now(),
+      text: `Snoozed #${item.entry.pull_request.number} until ${snoozeText(until, now)}`,
+      undo: () => {
+        inbox.wake(item.key);
+        setChosen(item.key);
+      },
+    });
+  };
+  const undo = () => {
+    if (!toast?.undo) return;
+    toast.undo();
+    setToast(null);
+  };
+  useShortcuts((event) => {
+    if (loading) return;
+    const key = event.key;
+    if (menu && /^[1-9]$/.test(key)) {
+      const option = options[Number(key) - 1];
+      if (!option) return;
+      event.preventDefault();
+      snooze(option.until);
+      return;
+    }
+    if (key === "Escape" && menu) {
+      event.preventDefault();
+      setMenu(false);
+    } else if (key === "j" || key === "ArrowDown" || key === "k" || key === "ArrowUp") {
+      if (rows.length === 0) return;
+      event.preventDefault();
+      const step = key === "j" || key === "ArrowDown" ? 1 : -1;
+      select(rows[Math.min(rows.length - 1, Math.max(0, index + step))]!.key);
+    } else if (key === "Enter") {
+      // Enter on a link or button already does what it says, except on a
+      // row, where it opens the pull request like anywhere else in the list.
+      if (
+        !onBody(event) &&
+        event.target instanceof HTMLElement &&
+        event.target.closest("a, button") &&
+        !event.target.closest(".upnext-row")
+      )
+        return;
+      const primary = detail.current?.querySelector<HTMLElement>(".upnext-primary");
+      if (!primary) return;
+      event.preventDefault();
+      primary.click();
+    } else if (key === "s") {
+      if (!selected?.item) return;
+      event.preventDefault();
+      setMenu((open) => !open);
+    } else if (key === "m") {
+      if (selected?.item?.kind !== "merge") return;
+      event.preventDefault();
+      setMenu(false);
+      setMerging(selected.entry);
+    } else if (key === "f") {
+      if (!selectedFix || selectedFixState.starting) return;
+      event.preventDefault();
+      setMenu(false);
+      selectedFix();
+    } else if (key === "u") {
+      if (!toast?.undo) return;
+      event.preventDefault();
+      undo();
+    }
+  });
+  const yours = queue.length;
   const minutes = Math.round(sumMinutes(queue));
-  const detail = loading
-    ? null
-    : queue.length === 0
-      ? "Nothing left"
-      : `${plural(queue.length, "thing")} in your inbox${minutes ? ` · about ${plural(minutes, "minute")} of work` : ""}, sorted by what unblocks the most`;
+  const summary = loading
+    ? "Loading your inbox…"
+    : actionable === 0
+      ? scope
+        ? "Nothing waiting."
+        : cleared.length
+          ? `Nothing left. ${formatCount(cleared.length)} handled today.`
+          : "Nothing waits on you."
+      : [
+          yours ? `${plural(yours, "thing")} for you` : "",
+          minutes ? `about ${plural(minutes, "minute")}` : "",
+          fixing.length ? `${formatCount(fixing.length)} with agents` : "",
+          cleared.length ? `${formatCount(cleared.length)} done` : "",
+        ]
+          .filter(Boolean)
+          .join(" · ");
+  const total = cleared.length + queue.length;
+  const alsoIn = (row: Row) => rowInboxes(row, inboxes).filter((other) => other.id !== scope?.id);
   return (
     <>
       <div className="upnext-page">
-        <header className="upnext-header">
-          <div className="upnext-heading">
-            <h1>Up next</h1>
-            {detail ? <p>{detail}</p> : null}
+        <div className="upnext-list">
+          <header className="upnext-list-head">
+            {scope ? (
+              <>
+                <div className={`upnext-list-title inbox-${scope.color}`}>
+                  <span aria-hidden="true" className="inbox-dot inbox-dot-large" />
+                  <h1>{scope.name}</h1>
+                  {headerAction}
+                </div>
+                <p>{sentence(scope, login)}</p>
+                <p className="upnext-list-summary">{summary}</p>
+              </>
+            ) : (
+              <>
+                <h1>Up next</h1>
+                <p>{summary}</p>
+                <div
+                  className="upnext-bar"
+                  role="progressbar"
+                  aria-label="Cleared today"
+                  aria-valuemin={0}
+                  aria-valuemax={total}
+                  aria-valuenow={cleared.length}
+                >
+                  <div style={{ width: `${total ? (100 * cleared.length) / total : 0}%` }} />
+                </div>
+              </>
+            )}
+          </header>
+          <div ref={list} className="upnext-list-body">
+            {groups.map((group) => {
+              const ready = group.id === "merge" ? group.rows.map((row) => row.entry) : [];
+              return (
+                <section key={group.id} aria-label={group.title} className="upnext-group">
+                  <div className="upnext-group-head">
+                    <h2>
+                      {group.title} · {formatCount(group.rows.length)}
+                    </h2>
+                    {ready.length > 1 ? (
+                      <button
+                        type="button"
+                        className="upnext-batch"
+                        onClick={() => setMergingAll(ready)}
+                      >
+                        Merge all {formatCount(ready.length)}
+                      </button>
+                    ) : null}
+                  </div>
+                  <ul>
+                    {group.rows.map((row) => (
+                      <li key={row.key} data-row={row.key}>
+                        <ListRow
+                          row={row}
+                          tag={scope ? undefined : rowInboxes(row, inboxes)[0]}
+                          on={row.key === selected?.key}
+                          tabbable={row.key === tabbable}
+                          pick={select}
+                        />
+                      </li>
+                    ))}
+                  </ul>
+                </section>
+              );
+            })}
+            {snoozed.length > 0 ? (
+              <section aria-label="Snoozed" className="upnext-group">
+                <div className="upnext-group-head">
+                  <h2>
+                    <button
+                      type="button"
+                      className="upnext-toggle"
+                      aria-expanded={snoozedOpen}
+                      onClick={() => setSnoozedOpen((open) => !open)}
+                    >
+                      {snoozedOpen ? "▾" : "▸"} Snoozed · {formatCount(snoozed.length)}
+                    </button>
+                  </h2>
+                </div>
+                <ul className="upnext-snoozed" hidden={!snoozedOpen}>
+                  {snoozed.map((item) => (
+                    <li key={item.key}>
+                      <span className="upnext-snoozed-title">
+                        #{item.entry.pull_request.number} {item.entry.pull_request.title}
+                      </span>
+                      <span className="upnext-snoozed-until">
+                        {snoozeText(inbox.snoozedUntil(item.key), now)}
+                      </span>
+                      <button
+                        type="button"
+                        className="upnext-small"
+                        onClick={() => {
+                          inbox.wake(item.key);
+                          select(item.key);
+                        }}
+                      >
+                        Bring back
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              </section>
+            ) : null}
+            {cleared.length > 0 ? (
+              <section aria-label="Done today" className="upnext-group">
+                <div className="upnext-group-head">
+                  <h2>
+                    <button
+                      type="button"
+                      className="upnext-toggle"
+                      aria-expanded={doneOpen}
+                      onClick={() => setDoneOpen((open) => !open)}
+                    >
+                      {doneOpen ? "▾" : "▸"} Done today · {formatCount(cleared.length)}
+                    </button>
+                  </h2>
+                </div>
+                {doneOpen ? (
+                  <ul className="upnext-done">
+                    {cleared.map((item) => (
+                      <li key={item.key} title={`${item.repository} #${item.number}`}>
+                        <span aria-hidden="true" className="upnext-done-check">
+                          ✓
+                        </span>
+                        <span className="upnext-done-text">
+                          {KINDS[item.kind].done} #{item.number} {item.title}
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                ) : null}
+              </section>
+            ) : null}
           </div>
-          {ready.length > 1 ? (
-            <button type="button" className="upnext-quick" onClick={() => setMergingAll(ready)}>
-              <svg
-                width="16"
-                height="16"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                aria-hidden="true"
-              >
-                <path d="M13 2 3 14h9l-1 8 10-12h-9z" />
-              </svg>
-              Quick wins: merge {formatCount(ready.length)} ready · under a minute
-            </button>
-          ) : null}
-        </header>
-        {loading ? (
-          <div className="local-page-body">
-            <LoadingStatus block>Loading your inbox…</LoadingStatus>
-          </div>
-        ) : (
-          <div className="upnext">
-            <div className="upnext-main">
-              {current ? (
-                <Card
-                  key={current.key}
-                  item={current}
-                  href={prHref(current.entry, cloneFor)}
-                  Link={Link}
-                  fix={
-                    fixLabel(current.entry) && cloneFor(current.entry)
-                      ? () => fix(current.entry)
-                      : undefined
-                  }
-                  merge={() => setMerging(current.entry)}
-                  update={() => setUpdating(current.entry)}
-                  snooze={() => inbox.snooze(current.key)}
-                  snoozeLabel={`Snooze until ${snoozeText(snoozeUntil(inbox.now), inbox.now)}`}
-                  skip={rest.length > 0 ? () => inbox.skip(current.key) : undefined}
-                />
-              ) : (
-                <Zero inbox={inbox} hasRepositories={hasRepositories} Link={Link} />
-              )}
-              <Queue items={rest} promote={inbox.promote} inbox={inbox} Link={Link} />
+          <footer className="upnext-keys key-hint" aria-hidden="true">
+            <span>
+              <kbd>j</kbd> <kbd>k</kbd> move
+            </span>
+            <span>
+              <kbd>↵</kbd> act
+            </span>
+            <span>
+              <kbd>m</kbd> merge
+            </span>
+            <span>
+              <kbd>f</kbd> fix
+            </span>
+            <span>
+              <kbd>s</kbd> snooze
+            </span>
+            <span>
+              <kbd>u</kbd> undo
+            </span>
+          </footer>
+        </div>
+        <div ref={detail} className="upnext-detail">
+          {loading ? (
+            <div className="upnext-panel">
+              <LoadingStatus block>Loading your inbox…</LoadingStatus>
             </div>
-            <Cleared cleared={cleared} remaining={queue.length} />
+          ) : selected ? (
+            <Panel
+              key={selected.key}
+              row={selected}
+              doc={doc}
+              tags={alsoIn(selected)}
+              href={prHref(selected.entry, cloneFor)}
+              Link={Link}
+              fix={selectedFix}
+              fixChecks={
+                fixLabel(selected.entry) &&
+                cloneFor(selected.entry) &&
+                selected.entry.checks === "failing"
+                  ? () => fix(selected.entry, "checks")
+                  : undefined
+              }
+              fixState={selectedFixState}
+              merge={() => setMerging(selected.entry)}
+              update={() => setUpdating(selected.entry)}
+              menu={menu}
+              setMenu={setMenu}
+              options={options}
+              snooze={snooze}
+              now={now}
+            />
+          ) : (
+            <Zero inbox={inbox} scoped={!!scope} hasRepositories={hasRepositories} Link={Link} />
+          )}
+        </div>
+        {toast ? (
+          <div role="status" className="upnext-toast">
+            <span>{toast.text}</span>
+            {toast.undo ? (
+              <button type="button" onClick={undo}>
+                Undo
+                <kbd aria-hidden="true" className="key-hint">
+                  u
+                </kbd>
+              </button>
+            ) : null}
           </div>
-        )}
+        ) : null}
       </div>
       {merging ? (
         <MergeDialog
@@ -624,249 +1020,502 @@ export function UpNextPage({
   );
 }
 
-function KindChip({ kind, className }: { kind: UpNextKind; className?: string }) {
+function ListRow({
+  row,
+  tag,
+  on,
+  tabbable,
+  pick,
+}: {
+  row: Row;
+  /** The first inbox the row is in, in the Inbox. */
+  tag?: Inbox;
+  on: boolean;
+  tabbable: boolean;
+  pick: (key: string) => void;
+}) {
+  const pr = row.entry.pull_request;
+  // The group heading already names the kind, so the line starts with the
+  // pull request's number.
+  const sub = [
+    `#${pr.number}`,
+    ...(row.job
+      ? ["Agent fixing", phaseText(row.job)]
+      : row.waiting
+        ? [waitingOn(row.entry), pr.repository]
+        : row.item?.failedFix
+          ? ["Last fix failed"]
+          : [pr.repository, row.item?.minutes != null ? minutesText(row.item.minutes) : ""]),
+  ]
+    .filter(Boolean)
+    .join(" · ");
+  const hot = (row.entry.risk_score?.score ?? 0) >= 5;
   return (
-    <span className={`upnext-chip upnext-chip-${kind}${className ? ` ${className}` : ""}`}>
-      {KINDS[kind].label}
-    </span>
+    <button
+      type="button"
+      className="upnext-row"
+      tabIndex={tabbable ? 0 : -1}
+      aria-current={on || undefined}
+      onClick={() => pick(row.key)}
+    >
+      <span className={`upnext-mark${row.job ? " upnext-mark-working" : ""}`}>
+        {row.job ? <NineDots size={12} /> : null}
+      </span>
+      <span className="upnext-row-text">
+        <span className="upnext-row-title">{pr.title || "Untitled pull request"}</span>
+        <span
+          className={`upnext-row-sub${row.job ? " upnext-row-working" : row.item?.failedFix ? " upnext-row-failed" : ""}`}
+        >
+          {sub}
+        </span>
+      </span>
+      {tag ? <InboxTag inbox={tag} /> : null}
+      {hot ? (
+        <span className="upnext-hot" role="img" aria-label="Critical risk" title="Critical risk" />
+      ) : null}
+    </button>
   );
 }
 
-function Card({
-  item,
+type PanelRow = {
+  badge?: string;
+  main: string;
+  sub?: string;
+  /** Lines added and deleted. */
+  lines?: { additions: number; deletions: number };
+  /** The row lists the unresolved review threads under it. */
+  threads?: boolean;
+  /** The row lists the failing checks under it. */
+  checks?: boolean;
+};
+type PanelBlock = { title: string; lead?: string; rows: PanelRow[]; more?: string };
+
+const SECTIONS_SHOWN = 6;
+
+/** What the panel lists under the pull request, by kind: what changed for a
+ *  review or a merge, what blocks it for a fix, where it stands for an
+ *  update, and what baum will do for a clone. */
+function blocks(row: Row, doc: ReviewDocument | null): PanelBlock[] {
+  const entry = row.entry;
+  const pr = entry.pull_request;
+  const unresolved = entry.unresolved ?? 0;
+  const changes: PanelBlock[] = doc
+    ? (() => {
+        const sections = sectionsInReviewOrder(doc.sections).filter(
+          (section) => section.derived.state !== "stale",
+        );
+        return [
+          {
+            title: "What changed",
+            lead: doc.summary.text,
+            rows: sections.slice(0, SECTIONS_SHOWN).map((section) => ({
+              badge:
+                section.derived.review_score != null
+                  ? String(section.derived.review_score)
+                  : undefined,
+              main: section.title,
+              lines: section.derived,
+            })),
+            more:
+              sections.length > SECTIONS_SHOWN
+                ? `and ${plural(sections.length - SECTIONS_SHOWN, "more section")}`
+                : undefined,
+          },
+        ];
+      })()
+    : [];
+  if (row.job) return changes;
+  if (row.waiting)
+    return [
+      {
+        title: "Where it stands",
+        rows: [
+          { main: waitingOn(entry) },
+          ...(REVIEW_WORDS[entry.review] && entry.review !== "changes_requested"
+            ? [{ main: REVIEW_WORDS[entry.review]! }]
+            : []),
+          ...(CHECK_WORDS[entry.checks] && entry.checks !== "running"
+            ? [{ main: CHECK_WORDS[entry.checks]! }]
+            : []),
+        ],
+      },
+      ...changes,
+    ];
+  switch (row.item?.kind) {
+    case "review":
+    case "merge":
+      return changes;
+    case "fix":
+      return [
+        {
+          title: "What needs fixing",
+          rows: [
+            ...(entry.review === "changes_requested"
+              ? [
+                  {
+                    main: "Changes requested",
+                    sub: "A reviewer asked for changes before it merges.",
+                  },
+                ]
+              : []),
+            ...(unresolved > 0
+              ? [
+                  {
+                    main: `${plural(unresolved, "unresolved review thread")}${entry.unresolved_capped ? " or more" : ""}`,
+                    sub: "Resolve each one here once it is addressed.",
+                    threads: true,
+                  },
+                ]
+              : []),
+            ...(entry.merge === "conflict"
+              ? [
+                  {
+                    main: "Conflicts with its base",
+                    sub: "The branch and its base changed the same lines.",
+                  },
+                ]
+              : []),
+            ...(entry.checks === "failing" ? [{ main: "Checks failing", checks: true }] : []),
+          ],
+        },
+        ...changes,
+      ];
+    case "update":
+      return [
+        {
+          title: "Where it stands",
+          rows: [
+            {
+              main: "Behind its base",
+              sub: "Updating merges the base into the branch on GitHub and reruns its checks.",
+            },
+            ...(REVIEW_WORDS[entry.review] ? [{ main: REVIEW_WORDS[entry.review]! }] : []),
+            ...(CHECK_WORDS[entry.checks] ? [{ main: CHECK_WORDS[entry.checks]! }] : []),
+          ],
+        },
+        ...changes,
+      ];
+    case "clone":
+      return [
+        {
+          title: "What baum will do",
+          rows: [
+            {
+              main: `Use a local clone of ${pr.repository}`,
+              sub: "Choose a folder that holds it, or clone it.",
+            },
+            { main: "Generate the review", sub: "Usually a few minutes." },
+          ],
+        },
+      ];
+    default:
+      return changes;
+  }
+}
+
+function Panel({
+  row,
+  doc,
+  tags,
   href,
   Link,
   fix,
+  fixChecks,
+  fixState,
   merge,
   update,
+  menu,
+  setMenu,
+  options,
   snooze,
-  snoozeLabel,
-  skip,
+  now,
 }: {
-  item: UpNextItem;
+  row: Row;
+  doc: ReviewDocument | null;
+  /** The other inboxes it is in, or all of them in the Inbox. */
+  tags: Inbox[];
   href: string;
   Link: ComponentType<ViewerLinkProps>;
   fix?: () => void;
+  /** Starts the fix of the failing checks alone. */
+  fixChecks?: () => void;
+  fixState: FixState;
   merge: () => void;
   update: () => void;
-  snooze: () => void;
-  snoozeLabel: string;
-  skip?: () => void;
+  menu: boolean;
+  setMenu: (open: boolean | ((open: boolean) => boolean)) => void;
+  options: { label: string; until: SnoozeEnd }[];
+  snooze: (until: SnoozeEnd) => void;
+  now: number;
 }) {
-  const title = useId();
-  const pr = item.entry.pull_request;
-  // The card slides away at once, and the skip or snooze lands as it goes.
-  const [leaving, setLeaving] = useState(false);
-  const leave = (then: () => void) => () => {
-    if (leaving) return;
-    setLeaving(true);
-    setTimeout(then, LEAVE_MS);
-  };
-  const open = (
-    <Link href={href} className="upnext-secondary">
-      Open pull request
-    </Link>
+  const { entry, item, job, waiting } = row;
+  const pr = entry.pull_request;
+  const kind = item?.kind ?? "fix";
+  const menuRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!menu) return;
+    const close = (event: MouseEvent) => {
+      if (!menuRef.current?.contains(event.target as Node)) setMenu(false);
+    };
+    document.addEventListener("mousedown", close);
+    return () => document.removeEventListener("mousedown", close);
+  }, [menu]);
+  const who = pr.review_requested_from_me
+    ? `${pr.author ?? "Someone"} asked for your review`
+    : "Yours";
+  const github = (
+    <a href={pr.url} target="_blank" rel="noreferrer" className="upnext-secondary">
+      Open on GitHub
+    </a>
   );
-  // The one thing the card asks for; a write to GitHub opens its confirmation.
-  const action =
-    item.kind === "review" ? (
+  // Opening the pull request is always the default; what the kind asks for
+  // follows it. A merge or branch update opens its confirmation; a fix starts
+  // at once.
+  const actions = (
+    <>
       <Link href={href} className="upnext-primary">
-        Start reviewing
+        Open
+        <kbd aria-hidden="true" className="key-hint">
+          ↵
+        </kbd>
       </Link>
-    ) : item.kind === "clone" ? (
-      <Link href={href} className="upnext-primary">
-        Choose a local clone
-      </Link>
-    ) : item.kind === "merge" ? (
-      <>
-        <button type="button" className="upnext-primary" onClick={merge}>
+      {job ? (
+        <Link href={jobHref(job)} className="upnext-secondary">
+          Watch the agent
+        </Link>
+      ) : waiting ? (
+        github
+      ) : kind === "merge" ? (
+        <button type="button" className="upnext-secondary" onClick={merge}>
           Merge
+          <kbd aria-hidden="true" className="key-hint">
+            m
+          </kbd>
         </button>
-        {open}
-      </>
-    ) : item.kind === "update" ? (
-      <>
-        <button type="button" className="upnext-primary" onClick={update}>
-          Update branch
+      ) : kind === "update" ? (
+        <button type="button" className="upnext-secondary" onClick={update}>
+          Update the branch
         </button>
-        {open}
-      </>
-    ) : fix ? (
-      <>
-        <button type="button" className="upnext-primary" onClick={fix}>
-          {fixLabel(item.entry)}
+      ) : kind === "fix" && fix ? (
+        <button
+          type="button"
+          className="upnext-secondary"
+          disabled={fixState.starting}
+          onClick={fix}
+        >
+          {fixState.starting ? (
+            "Starting…"
+          ) : (
+            <>
+              {fixLabel(entry)}
+              <kbd aria-hidden="true" className="key-hint">
+                f
+              </kbd>
+            </>
+          )}
         </button>
-        {open}
-      </>
-    ) : (
-      <Link href={href} className="upnext-primary">
-        Open pull request
-      </Link>
-    );
+      ) : (
+        github
+      )}
+    </>
+  );
+  const score = entry.risk_score?.score ?? null;
+  const reason = doc?.summary.risk_score?.reasons[0];
+  const reasonTitle = reason
+    ? (doc?.sections.find((section) => section.id === reason.section)?.title ?? "")
+    : "";
   return (
-    <article
-      aria-labelledby={title}
-      className={`upnext-card${leaving ? " upnext-card-leaving" : ""}`}
-    >
-      <div className="upnext-card-meta">
-        <KindChip kind={item.kind} />
-        <span className="upnext-card-repo">
-          {pr.repository} · #{pr.number}
+    <article className="upnext-panel" aria-labelledby="upnext-title">
+      <div className="upnext-panel-meta">
+        {waiting ? (
+          <span className="upnext-chip upnext-chip-waiting">Waiting</span>
+        ) : (
+          <span className={`upnext-chip upnext-chip-${kind}`}>{KINDS[kind].label}</span>
+        )}
+        <span className="upnext-panel-where">
+          {pr.repository} · #{pr.number} · {who}
           {pr.draft ? " · Draft" : ""}
           {pr.fork ? " · Fork" : ""}
         </span>
-        {item.minutes != null ? (
+        {tags.length > 0 ? (
+          <span className="upnext-tags" role="group" aria-label="Inboxes">
+            {tags.map((tag) => (
+              <InboxTag key={tag.id} inbox={tag} />
+            ))}
+          </span>
+        ) : null}
+        {item?.minutes != null ? (
           <span className="upnext-minutes" title="baum's estimate of the time to read the change">
             {minutesText(item.minutes)}
           </span>
         ) : null}
       </div>
-      <h2 id={title} className="upnext-title">
+      <h2 id="upnext-title" className="upnext-title">
         <Link href={href}>{pr.title || "Untitled pull request"}</Link>
       </h2>
-      <p className="upnext-why">
-        <svg
-          width="18"
-          height="18"
-          viewBox="0 0 24 24"
-          fill="none"
-          strokeWidth="2"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          aria-hidden="true"
-        >
-          <circle cx="12" cy="12" r="9" />
-          <path d="M12 7v5l3 2" />
-        </svg>
-        <span>
-          <strong>Why now:</strong> {item.why}
-        </span>
-      </p>
-      {item.failedFix ? (
-        <p className="upnext-why upnext-failed" role="status">
-          <span>
-            The last fix failed
-            {item.failedFix.reason ? `: ${jobReasonText(item.failedFix.reason)}` : "."}{" "}
-            <Link href={jobHref(item.failedFix)}>See what the agent did</Link>
-          </span>
-        </p>
+      {item?.why ? <p className="upnext-why">{item.why}</p> : null}
+      {job ? (
+        <div className="upnext-working" role="status">
+          <NineDots size={14} />
+          <span>An agent is fixing it · {phaseText(job)}.</span>
+          <span className="upnext-working-aside">You can move on</span>
+        </div>
       ) : null}
-      {item.facts.length > 0 ? (
-        <dl className="upnext-facts">
-          {item.facts.map((fact) => (
-            <div key={fact.label}>
-              <dt>{fact.label}</dt>
-              <dd>{fact.value}</dd>
-            </div>
-          ))}
-        </dl>
+      {fixState.error ? (
+        <div className="upnext-failed" role="alert">
+          Couldn't start the fix: {fixState.error}
+        </div>
+      ) : null}
+      {item?.failedFix ? (
+        <div className="upnext-failed" role="status">
+          The last fix failed
+          {item.failedFix.reason ? `: ${jobReasonText(item.failedFix.reason)}` : "."}{" "}
+          <Link href={jobHref(item.failedFix)}>See what the agent did</Link>
+        </div>
       ) : null}
       <div className="upnext-actions">
-        {action}
-        <button type="button" className="upnext-secondary" onClick={leave(snooze)}>
-          {snoozeLabel}
-        </button>
-        {skip ? (
-          <button type="button" className="upnext-secondary" onClick={leave(skip)}>
-            Skip
-          </button>
+        {actions}
+        {item ? (
+          <div className="upnext-snooze" ref={menuRef}>
+            <button
+              type="button"
+              className="upnext-secondary"
+              aria-haspopup="menu"
+              aria-expanded={menu}
+              onClick={() => setMenu((open) => !open)}
+            >
+              Snooze ▾
+              <kbd aria-hidden="true" className="key-hint">
+                s
+              </kbd>
+            </button>
+            {menu ? (
+              <div role="menu" className="upnext-menu">
+                {options.map((option, index) => (
+                  <button
+                    key={option.label}
+                    type="button"
+                    role="menuitem"
+                    onClick={() => snooze(option.until)}
+                  >
+                    <span className="upnext-menu-key">{index + 1}</span>
+                    <span className="upnext-menu-label">{option.label}</span>
+                    <span className="upnext-menu-when">{snoozeText(option.until, now)}</span>
+                  </button>
+                ))}
+              </div>
+            ) : null}
+          </div>
         ) : null}
       </div>
-    </article>
-  );
-}
-
-/** What follows the card, then what is not in the queue: snoozed pull
- *  requests and the person's own that wait on someone or something else. */
-function Queue({
-  items,
-  promote,
-  inbox,
-  Link,
-}: {
-  items: UpNextItem[];
-  promote: (key: string) => void;
-  inbox: UpNextState;
-  Link: ComponentType<ViewerLinkProps>;
-}) {
-  const heading = useId();
-  const minutes = Math.round(sumMinutes(items));
-  const { snoozed, waiting, fixing, now } = inbox;
-  const others = waiting.length - fixing.length;
-  const latest = Math.max(...snoozed.map((item) => inbox.snoozedUntil(item.key)));
-  return (
-    <section aria-labelledby={heading} className="upnext-queue">
-      <div className="upnext-queue-head">
-        <h2 id={heading}>Then</h2>
-        <span>
-          {items.length
-            ? `${formatCount(items.length)} more${minutes ? ` · ~${formatCount(minutes)} min` : ""}`
-            : "Nothing after this"}
-        </span>
-      </div>
-      {items.length > 0 ? (
-        <ol>
-          {items.map((item, index) => {
-            const pr = item.entry.pull_request;
-            return (
-              <li key={item.key}>
-                <button
-                  type="button"
-                  className="upnext-row"
-                  onClick={() => promote(item.key)}
-                  title="Take this one next"
-                >
-                  <span className="upnext-row-number">{index + 2}</span>
-                  <KindChip kind={item.kind} className="upnext-row-kind" />
-                  <span className="upnext-row-text">
-                    <span className="upnext-row-title">{pr.title || "Untitled pull request"}</span>
-                    <span className="upnext-row-repo">
-                      {pr.repository} · #{pr.number}
-                    </span>
+      {score != null ? (
+        <div className="upnext-risk">
+          <div className="upnext-risk-head">
+            <span className="upnext-label">Risk</span>
+            <span className="upnext-risk-blocks" aria-hidden="true">
+              {[1, 2, 3, 4, 5].map((n) => (
+                <span
+                  key={n}
+                  className={
+                    n <= score ? `upnext-risk-on upnext-risk-${Math.min(score, 5)}` : undefined
+                  }
+                />
+              ))}
+            </span>
+            <span className="upnext-risk-text">
+              {riskText(entry)} · {RISK_SCORE_MEANING[score as RiskScoreLevel]}
+            </span>
+          </div>
+          {reason ? (
+            <p>
+              {reasonTitle ? <strong>{reasonTitle}. </strong> : null}
+              {reason.text}
+            </p>
+          ) : null}
+        </div>
+      ) : null}
+      {blocks(row, doc).map((block) => (
+        <section key={block.title} className="upnext-block" aria-label={block.title}>
+          <h3 className="upnext-label">{block.title}</h3>
+          {block.lead ? <p className="upnext-lead">{block.lead}</p> : null}
+          <ul>
+            {block.rows.map((line) => (
+              <li
+                key={line.main}
+                className={line.threads || line.checks ? "upnext-has-threads" : undefined}
+              >
+                {line.badge ? (
+                  <span
+                    className={`upnext-badge upnext-badge-${line.badge === "✓" ? "done" : line.badge}`}
+                  >
+                    {line.badge}
                   </span>
-                  {item.minutes != null ? (
-                    <span className="upnext-row-minutes">{minutesText(item.minutes)}</span>
-                  ) : null}
-                  <span className="sr-only">: take this one next</span>
-                </button>
+                ) : null}
+                <span className="upnext-block-text">
+                  <span>{line.main}</span>
+                  {line.sub ? <span className="upnext-block-sub">{line.sub}</span> : null}
+                </span>
+                {line.lines ? (
+                  <Lines
+                    additions={line.lines.additions}
+                    deletions={line.lines.deletions}
+                    format={formatCount}
+                    className="upnext-block-right"
+                  />
+                ) : null}
+                {line.threads ? (
+                  <ReviewThreads
+                    key={`${pr.repository}#${pr.number}`}
+                    repository={pr.repository}
+                    number={pr.number}
+                    unresolved={entry.unresolved ?? 0}
+                    url={pr.url}
+                  />
+                ) : null}
+                {line.checks && fixChecks ? (
+                  <button
+                    type="button"
+                    className="upnext-secondary upnext-thread-resolve"
+                    disabled={fixState.starting}
+                    onClick={fixChecks}
+                  >
+                    Fix CI
+                  </button>
+                ) : null}
+                {line.checks ? (
+                  <FailingChecks
+                    key={`${pr.repository}#${pr.number}`}
+                    repository={pr.repository}
+                    number={pr.number}
+                    head={pr.head_sha}
+                    url={pr.url}
+                    canRetry={pr.viewer_can_push === true}
+                  />
+                ) : null}
               </li>
-            );
-          })}
-        </ol>
-      ) : null}
-      {snoozed.length > 0 ? (
-        <p className="upnext-note">
-          {formatCount(snoozed.length)} snoozed until {snoozeText(latest, now)}:{" "}
-          {snoozed.map((item) => `#${item.entry.pull_request.number}`).join(", ")}.{" "}
-          <button type="button" className="upnext-link" onClick={inbox.wake}>
-            Bring them back
-          </button>
-        </p>
-      ) : null}
-      {fixing.map(({ entry, job }) => (
-        <p key={job.id} className="upnext-note">
-          An agent is fixing #{entry.pull_request.number} {entry.pull_request.title} ·{" "}
-          {phaseText(job)}.{" "}
-          <Link href={appURL(`?page=jobs&job=${encodeURIComponent(job.id)}`)}>Watch</Link>
-        </p>
+            ))}
+          </ul>
+          {block.more ? <p className="upnext-block-more">{block.more}</p> : null}
+        </section>
       ))}
-      {others > 0 ? (
-        <p className="upnext-note">
-          {plural(others, "pull request")} of yours {others === 1 ? "waits" : "wait"} on reviewers,
-          checks or an agent.{" "}
-          <Link href={appURL("?page=pulls&filter=mine")}>See them in Pull requests</Link>
+      {item && item.working > 0 ? (
+        <p className="upnext-agents">
+          <span className="upnext-pulse" aria-hidden="true" />
+          {plural(item.working, "agent session")} working on its branch right now
         </p>
       ) : null}
-    </section>
+    </article>
   );
 }
 
 function Zero({
   inbox,
+  scoped,
   hasRepositories,
   Link,
 }: {
   inbox: UpNextState;
+  scoped: boolean;
   hasRepositories: boolean;
   Link: ComponentType<ViewerLinkProps>;
 }) {
@@ -880,87 +1529,29 @@ function Zero({
         </p>
       </div>
     );
-  const { snoozed, cleared, now } = inbox;
-  const latest = Math.max(...snoozed.map((item) => inbox.snoozedUntil(item.key)));
+  const { snoozed, cleared } = inbox;
+  if (scoped)
+    return (
+      <div className="upnext-zero">
+        <h2>Nothing here right now.</h2>
+        <p>
+          {snoozed.length > 0
+            ? `Everything here is handled except ${plural(snoozed.length, "snoozed pull request")}; they come back on their own.`
+            : "It fills up as matching pull requests come in."}
+        </p>
+      </div>
+    );
   return (
     <div className="upnext-zero">
       <h2>Inbox zero.</h2>
       <p>
         {snoozed.length > 0
-          ? `Everything is handled except ${formatCount(snoozed.length)} snoozed until ${snoozeText(latest, now)}.`
+          ? `Everything is handled except ${plural(snoozed.length, "snoozed pull request")}; they come back on their own.`
           : cleared.length > 0
-            ? `All ${formatCount(cleared.length)} handled. Go get a coffee.`
+            ? `All ${formatCount(cleared.length)} handled. Nothing needs you right now.`
             : "No review is asked of you and none of your pull requests needs you."}
       </p>
     </div>
-  );
-}
-
-const RING = 2 * Math.PI * 42;
-
-function Cleared({ cleared, remaining }: { cleared: UpNextState["cleared"]; remaining: number }) {
-  const total = cleared.length + remaining;
-  const share = total ? cleared.length / total : 0;
-  const done = Math.round(sumMinutes(cleared));
-  const label = `${formatCount(cleared.length)} of ${formatCount(total)} cleared today`;
-  return (
-    <aside aria-label="Cleared today" className="upnext-aside">
-      <div className="upnext-progress">
-        <svg width="96" height="96" viewBox="0 0 100 100" role="img" aria-label={label}>
-          <circle cx="50" cy="50" r="42" className="upnext-ring-track" />
-          {/* A round cap on an empty arc would still draw a dot. */}
-          {share > 0 ? (
-            <circle
-              cx="50"
-              cy="50"
-              r="42"
-              className="upnext-ring-fill"
-              strokeDasharray={`${RING * share} ${RING}`}
-              transform="rotate(-90 50 50)"
-            />
-          ) : null}
-          <text x="50" y="56" textAnchor="middle" aria-hidden="true">
-            {formatCount(cleared.length)}/{formatCount(total)}
-          </text>
-        </svg>
-        <div className="upnext-progress-text">
-          <span>Cleared today</span>
-          <span>
-            {cleared.length
-              ? `${done ? `About ${formatCount(done)} min of work done. ` : ""}${formatCount(remaining)} to go.`
-              : "Clear the card on the left to start."}
-          </span>
-        </div>
-      </div>
-      {cleared.length > 0 ? (
-        <ul className="upnext-cleared">
-          {cleared.map((item) => (
-            <li key={item.key} title={`${item.repository} #${item.number}`}>
-              <span className="upnext-check">
-                <svg
-                  width="12"
-                  height="12"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="3.5"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  aria-hidden="true"
-                >
-                  <path d="M5 12.5 10 17 19 7" />
-                </svg>
-              </span>
-              <span className="upnext-cleared-text">
-                {KINDS[item.kind].done} #{item.number} {item.title}
-              </span>
-            </li>
-          ))}
-        </ul>
-      ) : (
-        <p className="upnext-cleared-empty">Nothing cleared yet. The ring fills as you go.</p>
-      )}
-    </aside>
   );
 }
 
@@ -975,7 +1566,7 @@ type Merge = {
 /** Merges every ready pull request in one confirmation, each with GitHub's
  *  default method for it and at the head commit the inbox showed. One that
  *  GitHub refuses is named with the reason; the others still merge. */
-function MergeReadyDialog({
+export function MergeReadyDialog({
   entries,
   close,
   merged,
