@@ -16,6 +16,10 @@ export const SERIES = [
 /** The deliberate absence of identity: unattributed commits, "Other" rollups. */
 export const MUTED = "var(--data-muted)";
 
+/** A step firmer than MUTED: a held-previous-render state, or a category
+ *  past the eighth that must still read as one. */
+export const MUTED_STRONG = "var(--data-muted-strong)";
+
 export function seriesColor(index: number): string {
   return index >= 0 && index < SERIES.length ? SERIES[index]! : MUTED;
 }

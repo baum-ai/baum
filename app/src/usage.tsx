@@ -11,6 +11,7 @@ const reasons: Record<string, string> = {
   cache_ttl_not_reported: "The provider did not report cache creation TTL.",
   model_or_prompt_rates_unknown: "Model rates or prompt pricing tiers could not be established.",
   billed_by_cursor_subscription: "Billed by your Cursor subscription; baum can't price it.",
+  unpriced_calls: "Some calls could not be priced; the cost is at least the amount shown.",
 };
 export function UsageDetails({
   accounting,
@@ -27,7 +28,9 @@ export function UsageDetails({
   return (
     <div className="text-xs space-y-1">
       <p>
-        Charged-token budget counter {formatCount(charged)} · Recorded cost {cost(amount)}
+        Charged-token budget counter {formatCount(charged)} · At API prices{" "}
+        {reason === "unpriced_calls" && amount != null ? "≥ " : ""}
+        {cost(amount)}
       </p>
       {usage ? (
         <>
@@ -76,8 +79,11 @@ export function UsageDetails({
       )}
       {amount == null ? (
         <p>
-          Cost unknown: {reasons[reason ?? ""] ?? "Exact pricing is unavailable for this record."}
+          Cost at API prices unknown:{" "}
+          {reasons[reason ?? ""] ?? "Exact pricing is unavailable for this record."}
         </p>
+      ) : reason === "unpriced_calls" ? (
+        <p>{reasons.unpriced_calls}</p>
       ) : null}
     </div>
   );

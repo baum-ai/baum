@@ -60,8 +60,15 @@ func (b *Backend) Run(ctx context.Context, request agent.Request) (agent.Result,
 	if err != nil {
 		return agent.Result{}, err
 	}
-	return agent.Result{Document: document, Model: "stub-model", Calls: 1, Tokens: 100, Usage: agent.Usage{Input: 60, Output: 40}}, nil
+	result := agent.Result{Document: document, Model: "stub-model", Calls: 1, Tokens: 100, Usage: agent.Usage{Input: 60, Output: 40}}
+	if request.PersistSession {
+		result.SessionID = SessionID
+	}
+	return result, nil
 }
+
+// SessionID is the session the default Run reports when asked to persist one.
+const SessionID = "11111111-2222-4333-8444-555555555555"
 
 // Document builds a valid model document for the bundle the loop wrote into
 // dir: one section holding every hunk, anchored at the first. edit, when not
