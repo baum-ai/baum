@@ -555,11 +555,12 @@ requests, then Other pull requests; Saved history only when every shown member i
 historical). Its shown members leave the loose rows and nest under the group
 row, which is collapsed by default; members the current filter hides are not
 shown, bucket counts count the group once, and Select all covers loose rows and
-the members of expanded groups. The group row shows the group's risk, its name,
-"Review group · N pull requests · repository" (a stack group, which baum made
-for stacked pull requests, shows the hosted list's stack icon and count
-instead of "Group of N", and "Stack" on its page) and, when it applies,
-"Generating group review", "Group review outdated" or "No group review yet".
+the members of expanded groups. The group row shows the group's risk, its name
+with a "Group of N" badge, "repository · #n, …" and, when it applies,
+"Generating group review", "Group review outdated" or "No group review yet". A
+stack group, which baum made for stacked pull requests, shows the hosted
+list's stack icon and member count before its name instead of the badge, and
+"Stack" instead of "Review group" on its page.
 The group page (`?group=<id>`) is the shared viewer with the group's name as
 heading, member labels on sections, and above the review the members (state and
 their own review status, each linking to its page) with Rename, Add pull
