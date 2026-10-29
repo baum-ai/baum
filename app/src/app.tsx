@@ -492,7 +492,11 @@ function Workspace({ url }: { url: UrlState }) {
         ? "review"
         : (page === "sessions" && openSession) || openJob
           ? "page"
-          : page === "inbox" || page === "sessions" || page === "jobs" || page === "repositories"
+          : page === "inbox" ||
+              page === "sessions" ||
+              page === "jobs" ||
+              page === "repositories" ||
+              page === "settings"
             ? page
             : "anywhere";
   const [openAgent = "", openID = ""] = openSession

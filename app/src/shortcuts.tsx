@@ -53,6 +53,15 @@ const LIST_SHORTCUTS = [
   { keys: ["Enter", "o"], label: "Open the row" },
   { keys: ["Escape"], label: "Clear the row focus" },
 ];
+/** Settings' keys, which `SettingsPage` handles itself. */
+const SETTINGS_SHORTCUTS = [
+  { keys: ["j", "ArrowDown"], label: "Next section, or next control in one" },
+  { keys: ["k", "ArrowUp"], label: "Previous section, or previous control in one" },
+  { keys: ["1–5"], label: "Go to a section" },
+  { keys: ["Enter", "l", "ArrowRight"], label: "Go into the section" },
+  { keys: ["Space", "Enter"], label: "Change or press the focused control" },
+  { keys: ["Escape", "h", "ArrowLeft"], label: "Back to the sections" },
+];
 /** Where each group of keys works; the sheet lists the current one first. */
 export type ShortcutsPlace =
   | "anywhere"
@@ -62,6 +71,7 @@ export type ShortcutsPlace =
   | "sessions"
   | "jobs"
   | "repositories"
+  | "settings"
   | "page"
   | "walkthrough";
 export const MAC = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
@@ -409,6 +419,7 @@ export function ShortcutsSheet({
         { keys: ["/"], label: "Search GitHub repositories while adding" },
       ],
     },
+    { place: "settings", title: "Settings", rows: SETTINGS_SHORTCUTS },
     { place: "page", title: "A session or job transcript", rows: [back] },
   ];
   const ordered = [

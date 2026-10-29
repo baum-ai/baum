@@ -859,6 +859,50 @@ it("opens on an overview that sends each problem to its section", async () => {
   expect(node.querySelector("#fix-agent")).not.toBeNull();
   expect(nav.querySelector('[aria-current="page"]')!.textContent).toContain("Fixes");
 });
+it("moves through Settings' sections and their controls from the keyboard", async () => {
+  history.replaceState(null, "", "/s/test-ns/?page=settings");
+  stubDiagnostics(async () => Response.json({ local: true, report: diagnosticsReport }));
+  stubAutomatic();
+  await act(async () => root.render(<App />));
+  const current = () =>
+    node.querySelector<HTMLElement>('nav[aria-label="Settings sections"] [aria-current="page"]')!;
+  // Keys pressed where the focus is, as a person's would be.
+  const key = (name: string) =>
+    act(async () => {
+      (document.activeElement ?? document.body).dispatchEvent(
+        new KeyboardEvent("keydown", { key: name, bubbles: true, cancelable: true }),
+      );
+    });
+  await key("j");
+  expect(location.search).toBe("?page=settings&section=reviews");
+  expect(document.activeElement).toBe(current());
+  await key("4");
+  expect(location.search).toBe("?page=settings&section=connections");
+  await key("k");
+  await key("k");
+  expect(location.search).toBe("?page=settings&section=reviews");
+  // Enter goes into the section, where j and k step through its controls.
+  await key("Enter");
+  const automatic = node.querySelector<HTMLInputElement>("#review-automatic")!;
+  expect(document.activeElement).toBe(automatic);
+  await key("j");
+  expect(document.activeElement!.textContent).toBe("All");
+  await key("k");
+  expect(document.activeElement).toBe(automatic);
+  // Enter changes a switch as Space does; with automatic reviews off, the
+  // next control is the agent.
+  await key("Enter");
+  expect(automatic.checked).toBe(false);
+  await key("j");
+  expect(document.activeElement).toBe(node.querySelector("#review-agent"));
+  automatic.focus();
+  // Escape goes back to the list, where j moves the section again.
+  await key("Escape");
+  expect(document.activeElement).toBe(current());
+  expect(current().textContent).toContain("Reviews");
+  await key("j");
+  expect(location.search).toBe("?page=settings&section=fixes");
+});
 it("edits the environment agents run with and shows server errors inline", async () => {
   history.replaceState(null, "", "/s/test-ns/?page=settings&section=computer");
   stubDiagnostics(async () => Response.json({ local: true, report: diagnosticsReport }));

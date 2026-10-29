@@ -216,7 +216,12 @@ settings) and `Esc` clears the focus. On Sessions the three sections are one
 list and `p` opens the focused session's pull request; on Jobs `t` opens the
 transcript (Watch while a fix runs); on Repositories `a` opens or closes the
 picker and `/` searches it (the search takes the focus when the picker opens,
-and `Esc` in an empty search leaves it). On a pull request or group page `j`
+and `Esc` in an empty search leaves it). Settings' section list is its
+selection, as Up next's list is: `j`/`↓` and `k`/`↑` move it, `1` to `5` jump
+to a section, and `Enter`, `l` or `→` go into the shown section, where `j` and
+`k` step through its controls, `Space` or `Enter` changes the focused one and
+`Esc`, `h` or `←` go back to the list (`Esc` in a text field or select gives
+it up first, and `j` and `k` go on from it). On a pull request or group page `j`
 and `k` step to the next and previous place in reading order, as the
 navigator's arrows do (`ReviewViewer`'s `steps` ref), and `m`, `f` and `g`
 merge, fix and generate or regenerate where the header offers them. On any
