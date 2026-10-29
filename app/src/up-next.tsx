@@ -43,7 +43,7 @@ import {
   type MergeOptions,
 } from "./merge";
 import { LoadingStatus, NineDots } from "./nine-dots";
-import { onBody, useShortcuts } from "./shortcuts";
+import { onBody, useLastRow, useShortcuts } from "./shortcuts";
 import { FailingChecks } from "./checks";
 import { ReviewThreads } from "./threads";
 import { canUpdateBranch, UpdateBranchDialog } from "./unblock";
@@ -122,7 +122,9 @@ function kindOf(entry: Entry, jobs: Job[]): UpNextKind | null {
   // An agent already fixing it leaves nothing for the person until it ends.
   if (isActiveJob(fixJob(entry, jobs))) return null;
   if (blocked(entry)) return "fix";
-  if (canMerge(entry)) return "merge";
+  // GitHub can call a head just pushed clean before its checks are queued;
+  // checks running say the merge is not ready yet, whatever the merge state.
+  if (canMerge(entry) && entry.checks !== "running") return "merge";
   if (canUpdateBranch(entry)) return "update";
   return null;
 }
@@ -586,7 +588,8 @@ export function UpNextPage({
   const [merging, setMerging] = useState<Entry | null>(null);
   const [mergingAll, setMergingAll] = useState<Entry[] | null>(null);
   const [updating, setUpdating] = useState<Entry | null>(null);
-  const [chosen, setChosen] = useState<string | null>(null);
+  // Kept for when the inbox is drawn again, back from a pull request.
+  const [chosen, setChosen] = useLastRow("inbox");
   const [menu, setMenu] = useState(false);
   const [snoozedOpen, setSnoozedOpen] = useState(false);
   const [doneOpen, setDoneOpen] = useState(false);

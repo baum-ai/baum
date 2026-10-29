@@ -362,6 +362,49 @@ func (t *Tracker) oneLine(text string, limit int) string {
 	return string([]rune(text)[:limit-1]) + "…"
 }
 
+// block is text an agent wrote as the application is shown it with its line
+// breaks kept, so it can be rendered as Markdown: format characters dropped,
+// line endings made "\n", other control characters but tabs made one space,
+// trailing spaces of each line and blank lines at its ends dropped, runs of
+// blank lines made one, masked (before it is cut), then cut to limit
+// characters.
+func (t *Tracker) block(text string, limit int) string {
+	text = strings.ReplaceAll(strings.ToValidUTF8(text, "�"), "\r\n", "\n")
+	text = strings.Map(func(r rune) rune {
+		switch {
+		case unicode.Is(unicode.Cf, r):
+			return -1
+		case r == '\n' || r == '\t':
+			return r
+		case unicode.IsControl(r):
+			return ' '
+		}
+		return r
+	}, text)
+	var lines []string
+	blank := false
+	for _, line := range strings.Split(text, "\n") {
+		line = strings.TrimRightFunc(line, unicode.IsSpace)
+		if line == "" {
+			blank = len(lines) > 0
+			continue
+		}
+		if blank {
+			lines = append(lines, "")
+			blank = false
+		}
+		lines = append(lines, line)
+	}
+	text = strings.Join(lines, "\n")
+	if text != "" && t.Mask != nil {
+		text = t.Mask(text)
+	}
+	if utf8.RuneCountInString(text) <= limit {
+		return text
+	}
+	return string([]rune(text)[:limit-1]) + "…"
+}
+
 // expired reports whether the session is dropped at now.
 func (e *entry) expired(now time.Time) bool {
 	if e.ended {

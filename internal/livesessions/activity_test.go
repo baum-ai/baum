@@ -104,13 +104,13 @@ func TestActivityKeepsTheLatestTwelveStepsAndTheFilesTouchedAcrossPasses(t *test
 func TestActivityLastMessageIsTheLatestAssistantTextCutAndMasked(t *testing.T) {
 	f := newTranscriptFixture(t)
 	f.tracker.Mask = func(s string) string { return strings.ReplaceAll(s, plantedDSN, "[masked]") }
-	long := "First line\n\n  second " + plantedDSN + " " + strings.Repeat("word ", 200)
+	long := "\n# First line  \r\n\n\n\n  second " + plantedDSN + " " + strings.Repeat("word ", 400)
 	appendLines(t, f.path, fmt.Sprintf(`{"type":"assistant","timestamp":"2026-10-27T18:00:00Z","message":{"role":"assistant","content":[{"type":"thinking","thinking":"hmm"},{"type":"text","text":%q}]}}`, long))
 	a := activities(t, f)["claude-code/s1"]
-	if !strings.HasPrefix(a.LastMessage, "First line second [masked] word word") || strings.ContainsAny(a.LastMessage, "\n") {
+	if !strings.HasPrefix(a.LastMessage, "# First line\n\n  second [masked] word word") {
 		t.Fatalf("message %q", a.LastMessage)
 	}
-	if n := len([]rune(a.LastMessage)); n != 400 || !strings.HasSuffix(a.LastMessage, "…") {
+	if n := len([]rune(a.LastMessage)); n != 1200 || !strings.HasSuffix(a.LastMessage, "…") {
 		t.Fatalf("message of %d characters: %q", n, a.LastMessage)
 	}
 }

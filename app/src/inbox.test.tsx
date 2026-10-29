@@ -3,6 +3,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { Inbox } from "./inbox";
 import type { Entry } from "./api";
+import { forgetLastRows } from "./shortcuts";
 
 const entry = (number: number, merge: Entry["merge"] = "ready"): Entry => ({
   pull_request: {
@@ -107,6 +108,7 @@ afterEach(async () => {
   await act(async () => root.unmount());
   node.remove();
   vi.unstubAllGlobals();
+  forgetLastRows();
 });
 const Link = ({ children, ...props }: { children?: ReactNode; href: string }) => (
   <a {...props}>{children}</a>
@@ -139,11 +141,8 @@ it("peeks at the saved review under its row and closes it again", async () => {
   const panel = node.querySelector(".inbox-peek-panel")!;
   expect(requests.some((path) => path.includes("api/document"))).toBe(true);
   expect(panel.textContent).toContain("Retries failed jobs with backoff.");
-  // The first reason for its risk names its section, in the high-risk tone.
-  expect(panel.querySelector(".inbox-peek-risk")?.textContent).toBe(
-    "Role from request: Any caller can claim the operator role.",
-  );
-  expect(panel.querySelector(".inbox-peek-risk")?.className).toContain("high");
+  // The row already shows the risk score, so the peek leaves its reasons out.
+  expect(panel.textContent).not.toContain("Any caller can claim the operator role.");
   expect(Array.from(panel.querySelectorAll("li")).map((li) => li.textContent)).toEqual([
     "Retry policy and backoff+87 −4",
     "Role from request+34 −5",

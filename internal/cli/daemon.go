@@ -435,13 +435,10 @@ func localApplication(paths daemon.Paths, concurrency int, log *slog.Logger) fun
 				go notify.JobDone(ctx, job)
 				// A PR whose job finished may have a pending head.
 				scheduler.Wake()
-				// A fix pushed a new head: show it, and its checks, soon.
+				// A fix pushed a new head: show it at once, and poll again
+				// until its checks appear, which takes GitHub a few seconds.
 				if repo, err := github.ParseRepository(job.Repository); err == nil && job.Kind == jobs.KindFix && job.Commit != "" {
-					go func() {
-						if _, err := discover.PollNow(ctx, repo); err == nil {
-							changed()
-						}
-					}()
+					go discovery.AfterPush(ctx, discover.PollNow, repo, job.PR, job.Commit, changed, nil)
 				}
 			}
 		})

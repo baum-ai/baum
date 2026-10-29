@@ -1548,7 +1548,10 @@ export function RepositoriesPage({
   const [error, setError] = useState("");
   // The keyboard moves through the repositories as through any list, onto
   // each one's Settings; `a` opens or closes the picker and `/` searches it.
-  const rows = useRowFocus<HTMLUListElement>(repositories.map((r) => r.repository));
+  const rows = useRowFocus<HTMLUListElement>(
+    "settings-repositories",
+    repositories.map((r) => r.repository),
+  );
   const page = useRef<HTMLElement>(null);
   useShortcuts((event) => {
     if (listKeys(event, rows)) return;
