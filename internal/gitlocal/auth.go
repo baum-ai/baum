@@ -32,19 +32,18 @@ func (e *AuthError) Unwrap() error { return e.Err }
 // authFailure returns err as an *AuthError when git's output (in the C
 // locale) says signing in to remote needed an answer, and err otherwise.
 func (r *Repo) authFailure(ctx context.Context, remote string, err error) error {
-	var gitErr *Error
-	if ctx.Err() != nil || !errors.As(err, &gitErr) {
+	gitErr, ok := errors.AsType[*Error](err)
+	if ctx.Err() != nil || !ok {
+		return err
+	}
+	publickey := strings.Contains(gitErr.Stderr, "Permission denied (publickey")
+	if !publickey && !strings.Contains(gitErr.Stderr, "terminal prompts disabled") {
 		return err
 	}
 	fetchURL, urlErr := r.RemoteFetchURL(ctx, remote)
-	if urlErr != nil {
-		return err
-	}
-	ssh := sshRemote(fetchURL)
-	if ssh && !strings.Contains(gitErr.Stderr, "Permission denied (publickey") ||
-		!ssh && !strings.Contains(gitErr.Stderr, "terminal prompts disabled") && !strings.Contains(gitErr.Stderr, "Authentication failed for") {
+	if urlErr != nil || sshRemote(fetchURL) != publickey {
 		return err
 	}
 	host, _, _ := RemoteRepository(fetchURL)
-	return &AuthError{Host: host, SSH: ssh, Err: err}
+	return &AuthError{Host: host, SSH: publickey, Err: err}
 }

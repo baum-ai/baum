@@ -26,7 +26,7 @@ func TestFetchSignInFailures(t *testing.T) {
 		name, url, ssh string
 		want           *AuthError
 	}{
-		{"SSH key needs a passphrase", "ssh://git@example.invalid/acme/demo.git",
+		{"SSH key needs a passphrase", "git@example.invalid:acme/demo.git",
 			"echo 'git@example.invalid: Permission denied (publickey).' >&2", &AuthError{Host: "example.invalid", SSH: true}},
 		{"SSH host unreachable", "ssh://git@example.invalid/acme/demo.git",
 			"echo 'ssh: connect to host example.invalid port 22: Connection refused' >&2", nil},
