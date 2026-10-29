@@ -4,10 +4,9 @@
 //!
 //! The icon has three states. Idle is the default. Running means a job is
 //! running or queued. Attention means something needs the user and they have
-//! not yet opened the window since it appeared: a job failed, a repository's
-//! daily cap paused its automatic generation, a diagnostics check reports a
-//! problem, or the daemon is not running. Opening the window acknowledges
-//! the first three; the last stays until the daemon runs again.
+//! not yet opened the window since it appeared: a job failed, a diagnostics
+//! check reports a problem, or the daemon is not running. Opening the window
+//! acknowledges the first two; the last stays until the daemon runs again.
 //!
 //! The menu and the panel also show what is left of the agents' plans
 //! (`GET /api/plan-usage`) and the agent sessions waiting for the user's
@@ -75,20 +74,6 @@ pub fn parse_waiting(body: &[u8]) -> Result<usize, String> {
 #[derive(Deserialize)]
 struct AutomaticBody {
     enabled: Option<bool>,
-    #[serde(default)]
-    repositories: Vec<RepositoryRow>,
-}
-
-#[derive(Deserialize)]
-struct RepositoryRow {
-    #[serde(default)]
-    repository: String,
-    #[serde(default)]
-    enabled: bool,
-    #[serde(default)]
-    notice: String,
-    #[serde(default)]
-    paused_until: Option<String>,
 }
 
 /// Automatic generation as the tray needs it.
@@ -96,24 +81,13 @@ struct RepositoryRow {
 pub struct Automatic {
     /// The global switch.
     pub enabled: bool,
-    /// Repositories whose daily cap paused automatic generation.
-    pub capped: Vec<String>,
 }
 
 /// `GET /api/automatic`. `None` when the daemon has no scheduler.
 pub fn parse_automatic(body: &[u8]) -> Result<Option<Automatic>, String> {
     let body: AutomaticBody =
         serde_json::from_slice(body).map_err(|e| format!("unreadable automatic status: {e}"))?;
-    let Some(enabled) = body.enabled else {
-        return Ok(None);
-    };
-    let capped = body
-        .repositories
-        .iter()
-        .filter(|r| r.enabled && (r.paused_until.is_some() || r.notice == "daily_cap"))
-        .map(|r| r.repository.clone())
-        .collect();
-    Ok(Some(Automatic { enabled, capped }))
+    Ok(body.enabled.map(|enabled| Automatic { enabled }))
 }
 
 #[derive(Deserialize)]
@@ -524,9 +498,6 @@ impl Tracker {
                 self.seeded = true;
             }
         }
-        if let Some(automatic) = seen.automatic.as_ref().filter(|a| a.enabled) {
-            keys.extend(automatic.capped.iter().map(|r| format!("cap:{r}")));
-        }
         if let Some(problems) = &seen.diagnostics {
             keys.extend(problems.iter().map(|id| format!("diagnostics:{id}")));
         }
@@ -535,7 +506,6 @@ impl Tracker {
         self.acknowledged.retain(|k| {
             keys.contains(k)
                 || (k.starts_with("failed:") && seen.jobs.is_none())
-                || (k.starts_with("cap:") && seen.automatic.is_none())
                 || (k.starts_with("diagnostics:") && seen.diagnostics.is_none())
         });
         let unseen: Vec<&String> = keys
@@ -549,13 +519,6 @@ impl Tracker {
         let failed = count("failed:");
         if failed > 0 {
             attention.push(count_label(failed, "review failed", "reviews failed"));
-        }
-        match count("cap:") {
-            0 => {}
-            1 => attention.push("Daily cap reached; automatic reviews paused".to_string()),
-            n => attention.push(format!(
-                "Daily cap reached in {n} repositories; automatic reviews paused"
-            )),
         }
         match count("diagnostics:") {
             0 => {}
@@ -644,10 +607,7 @@ mod tests {
         Observed {
             link: Link::Up,
             jobs: Some(jobs),
-            automatic: Some(Automatic {
-                enabled: true,
-                capped: Vec::new(),
-            }),
+            automatic: Some(Automatic { enabled: true }),
             diagnostics: Some(Vec::new()),
             waiting: None,
             plans: None,
@@ -671,17 +631,14 @@ mod tests {
     }
 
     #[test]
-    fn parses_the_global_switch_and_capped_repositories() {
-        let body = br#"{"enabled":false,"cursor_agent_acknowledged":false,"repositories":[
-            {"repository":"a/b","enabled":true,"paused_until":"2026-10-21T00:00:00Z","notice":"daily_cap","pending":0},
-            {"repository":"a/c","enabled":true,"notice":"unavailable","pending":0},
-            {"repository":"a/d","enabled":false,"notice":"daily_cap","pending":0}]}"#;
+    fn parses_the_global_switch() {
+        // An older daemon's daily cap fields are ignored.
+        let body = br#"{"enabled":false,"repositories":[
+            {"repository":"a/b","enabled":true,"daily_cap":5.0,"paused_until":"2026-10-21T00:00:00Z","notice":"daily_cap","pending":0},
+            {"repository":"a/c","enabled":true,"notice":"unavailable","pending":0}]}"#;
         assert_eq!(
             parse_automatic(body).unwrap(),
-            Some(Automatic {
-                enabled: false,
-                capped: vec!["a/b".to_string()]
-            })
+            Some(Automatic { enabled: false })
         );
         assert_eq!(
             parse_automatic(br#"{"available":false,"code":"automatic_unavailable"}"#).unwrap(),
@@ -768,51 +725,19 @@ mod tests {
     }
 
     #[test]
-    fn a_daily_cap_needs_attention_only_while_automatic_is_on() {
+    fn each_problem_is_its_own_attention() {
         let mut tracker = Tracker::default();
         let mut seen = up(jobs(0, 0, &[]));
-        seen.automatic = Some(Automatic {
-            enabled: true,
-            capped: vec!["a/b".into()],
-        });
-        let view = tracker.update(&seen);
-        assert_eq!(view.icon, Icon::Attention);
-        assert_eq!(
-            view.attention,
-            vec!["Daily cap reached; automatic reviews paused"]
-        );
-        seen.automatic = Some(Automatic {
-            enabled: false,
-            capped: vec!["a/b".into()],
-        });
-        assert_eq!(tracker.update(&seen).icon, Icon::Idle);
-    }
-
-    #[test]
-    fn each_capped_repository_and_each_problem_is_its_own_attention() {
-        let mut tracker = Tracker::default();
-        let mut seen = up(jobs(0, 0, &[]));
-        seen.automatic = Some(Automatic {
-            enabled: true,
-            capped: vec!["a/b".into()],
-        });
         seen.diagnostics = Some(vec!["git".into()]);
         tracker.update(&seen);
         tracker.acknowledge();
         assert_eq!(tracker.update(&seen).icon, Icon::Idle);
-        // A second repository and a second problem are new.
-        seen.automatic = Some(Automatic {
-            enabled: true,
-            capped: vec!["a/b".into(), "a/c".into()],
-        });
+        // A second problem is new.
         seen.diagnostics = Some(vec!["git".into(), "gh".into()]);
         let view = tracker.update(&seen);
         assert_eq!(
             view.attention,
-            vec![
-                "Daily cap reached; automatic reviews paused",
-                "A diagnostics check reports a problem"
-            ]
+            vec!["A diagnostics check reports a problem"]
         );
     }
 

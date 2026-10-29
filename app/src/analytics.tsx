@@ -184,8 +184,8 @@ export function parseAnalytics(body: unknown): Analytics | null {
     : null;
 }
 
-/** An estimate's text and its tooltip. Nothing priced is the em dash, never
- *  $0.00; a partly priced total is a floor. */
+/** A cost at API prices, as text and its tooltip. Nothing priced is the em
+ *  dash, never $0.00; a partly priced total is a floor. */
 export function costText(cost: Cost): { text: string; title: string } {
   const why = cost.reasons.join(" ");
   if (cost.usd === null) {
@@ -197,7 +197,10 @@ export function costText(cost: Cost): { text: string; title: string } {
       title: `At least this much; part of the usage has no price. ${why}`.trim(),
     };
   }
-  return { text: formatUSD(cost.usd), title: "Estimated at API prices from the price list." };
+  return {
+    text: formatUSD(cost.usd),
+    title: "What this usage would cost at API prices, not what you were charged.",
+  };
 }
 
 /** Active time in whole units, or null when unknown. */
@@ -325,7 +328,7 @@ function Summary({ data }: { data: Analytics }) {
         }
       />
       <Tile
-        label="Estimated cost"
+        label="At API prices"
         value={s.cost.usd === null ? null : cost.text}
         reason={cost.title}
         badge={
@@ -335,7 +338,7 @@ function Summary({ data }: { data: Analytics }) {
             </Badge>
           ) : null
         }
-        detail="Estimate at API prices"
+        detail="Not what a subscription charges"
       />
       <Tile
         label="Agent-written"
@@ -515,7 +518,7 @@ const rowHeads = (
       Tokens
     </th>
     <th scope="col" className="num">
-      Est. cost
+      At API prices
     </th>
   </>
 );
@@ -557,7 +560,7 @@ function Breakdown({ data }: { data: Analytics }) {
                   Tokens
                 </th>
                 <th scope="col" className="num">
-                  Est. cost
+                  At API prices
                 </th>
               </tr>
             </thead>
@@ -618,8 +621,9 @@ function Breakdown({ data }: { data: Analytics }) {
         )}
       </div>
       <p className="analytics-note">
-        Cost is an estimate at API prices, not what a subscription charges. A figure marked ≥ is a
-        floor: part of the usage has no price or reported no tokens.
+        Costs are what the usage would cost at API prices, not what you were charged: most agents
+        run on a subscription. A figure marked ≥ is a floor: part of the usage has no price or
+        reported no tokens.
       </p>
     </Card>
   );
@@ -773,7 +777,11 @@ function BaumWork({ data }: { data: Analytics }) {
               value: `${formatCount(b.fixes_pushed)} of ${formatCount(b.fixes)}`,
             },
             { label: "Review threads resolved", value: formatCount(b.threads_resolved) },
-            { label: "Spend", value: b.cost.usd === null ? null : cost.text, reason: cost.title },
+            {
+              label: "At API prices",
+              value: b.cost.usd === null ? null : cost.text,
+              reason: cost.title,
+            },
             { label: "Failed runs", value: formatCount(b.failed) },
           ]}
         />
@@ -1156,7 +1164,7 @@ export function AnalyticsPage({ Link }: { Link: ComponentType<ViewerLinkProps> }
     <>
       <PageBar
         title="Analytics"
-        detail="What your agents did, what it cost and what you delivered"
+        detail="What your agents did, its cost at API prices and what you delivered"
       />
       <div className="local-filter-bar analytics-filters">
         <SegmentedControl

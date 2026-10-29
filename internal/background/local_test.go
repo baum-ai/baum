@@ -211,3 +211,17 @@ func TestLocalNoReviewMetadataNeverCreatesStore(t *testing.T) {
 		t.Fatal("no-review refresh created a version")
 	}
 }
+
+// An observation is as of its first GitHub read, not of the end of the
+// refresh, so one that began before a merge cannot supersede it.
+func TestLocalObservationIsAsOfItsRead(t *testing.T) {
+	var fetched time.Time
+	remote := &source{evidence: github.Evidence{PullRequest: bundle.PullRequest{Number: 7, State: "open", HeadSHA: "new"}}, before: func() {
+		fetched = time.Now().UTC()
+		time.Sleep(10 * time.Millisecond)
+	}}
+	observation, err := (Local{Client: remote}).Refresh(context.Background(), repos.Clone{Repository: "acme/app", CommonDir: t.TempDir()}, 7)
+	if err != nil || observation.FetchedAt.After(fetched) {
+		t.Fatalf("observed at %v, after the read at %v: %v", observation.FetchedAt, fetched, err)
+	}
+}

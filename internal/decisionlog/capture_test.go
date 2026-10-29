@@ -238,15 +238,25 @@ func TestCaptureGate(t *testing.T) {
 	}
 }
 
+// TestCaptureRunsUnpricedModel: prices only report, so a model the price list
+// does not price is called like any other, reserved at 0.
+func TestCaptureRunsUnpricedModel(t *testing.T) {
+	f := newFixture(t)
+	unknown := "no-such-model"
+	f.registry.prefs.Decisions.Model = &unknown
+	report := f.capture(t, Options{})
+	if report.Outcome != OutcomeExtracted || report.Model != unknown || f.backend.calls != 1 || report.Reserved != 0 {
+		t.Fatalf("%+v", report)
+	}
+}
+
 func TestCaptureSkips(t *testing.T) {
 	cursor := config.BackendCursorAgent
-	unknown := "no-such-model"
 	cases := map[string]struct {
 		edit func(*testing.T, *fixture)
 		want string
 	}{
 		"cursor-agent": {func(_ *testing.T, f *fixture) { f.registry.prefs.Backend = &cursor }, ReasonUnsupported},
-		"unpriced":     {func(_ *testing.T, f *fixture) { f.registry.prefs.Decisions.Model = &unknown }, ReasonUnpriced},
 		"generation run": {func(t *testing.T, f *fixture) {
 			write(t, f.path, claudeTurn("s1", 1, sessions.GenerationRunMarker+"\nReview the pull request.", "Done."))
 		}, ReasonGenerationRun},

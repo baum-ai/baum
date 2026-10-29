@@ -26,6 +26,11 @@ const submitPrompt = "Submit the finished document by calling the StructuredOutp
 
 // args are the flags of every run, whatever the profile. An empty Model
 // leaves the flag out so Claude Code uses its own default model.
+//
+// Unless the request keeps its session (agent.Request.KeepsSession),
+// --no-session-persistence discards it. ResumeSession adds --resume and
+// ForkSession --fork-session; resuming implies persisting, so a resumed or
+// forked session can be resumed again.
 func (c *Backend) args(request agent.Request) []string {
 	args := []string{"--print", "--output-format", "stream-json", "--verbose", "--include-partial-messages"}
 	if c.Model != "" {
@@ -35,14 +40,23 @@ func (c *Backend) args(request agent.Request) []string {
 	if request.Task {
 		system = taskSystemPrompt
 	}
-	return append(args, "--system-prompt", system, "--max-turns", strconv.Itoa(request.MaxCalls),
+	args = append(args, "--system-prompt", system, "--max-turns", strconv.Itoa(request.MaxCalls),
 		// Restricted mode drops every command-running and network tool
 		// (Bash, WebFetch, ...) regardless of --tools, confines file tools to
 		// the working directory and refuses bypassPermissions, so the
 		// read-only tools named here can never execute code, reach the
 		// network or escape the run's scratch directory.
-		"--restricted", "--tools", "Read,Glob,Grep", "--json-schema", string(request.Schema), "--no-session-persistence",
-		"--settings", `{"permissions":{"blockReadsOutsideWorkingDirectories":true}}`,
+		"--restricted", "--tools", "Read,Glob,Grep", "--json-schema", string(request.Schema))
+	if !request.KeepsSession() {
+		args = append(args, "--no-session-persistence")
+	}
+	if request.ResumeSession != "" {
+		args = append(args, "--resume", request.ResumeSession)
+		if request.ForkSession {
+			args = append(args, "--fork-session")
+		}
+	}
+	return append(args, "--settings", `{"permissions":{"blockReadsOutsideWorkingDirectories":true}}`,
 		"--setting-sources", "", "--strict-mcp-config", "--mcp-config", `{"mcpServers":{}}`)
 }
 

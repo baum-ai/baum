@@ -14,7 +14,6 @@ pub enum Kind {
     Finished,
     Failed,
     Requested,
-    CapReached,
     Automatic,
     /// The user's own pull request: its checks began failing.
     ChecksFailed,
@@ -34,11 +33,10 @@ pub enum Kind {
 }
 
 impl Kind {
-    pub const ALL: [Kind; 13] = [
+    pub const ALL: [Kind; 12] = [
         Kind::Finished,
         Kind::Failed,
         Kind::Requested,
-        Kind::CapReached,
         Kind::Automatic,
         Kind::ChecksFailed,
         Kind::Conflict,
@@ -56,7 +54,6 @@ impl Kind {
             Kind::Finished => "Review finished",
             Kind::Failed => "Review failed",
             Kind::Requested => "Review requested from me",
-            Kind::CapReached => "Daily cost cap reached",
             Kind::Automatic => "Review generated automatically",
             Kind::ChecksFailed => "My pull request: checks failing",
             Kind::Conflict => "My pull request: merge conflict",
@@ -75,7 +72,6 @@ impl Kind {
             Kind::Finished => "notifications:finished",
             Kind::Failed => "notifications:failed",
             Kind::Requested => "notifications:requested",
-            Kind::CapReached => "notifications:cap_reached",
             Kind::Automatic => "notifications:automatic",
             Kind::ChecksFailed => "notifications:checks_failed",
             Kind::Conflict => "notifications:conflict",
@@ -159,9 +155,6 @@ pub struct Toast {
     pub title: String,
     pub body: String,
     pub route: Route,
-    /// An event that repeats while its condition lasts names itself, so it
-    /// is shown once.
-    pub dedupe: Option<String>,
 }
 
 /// The daemon's `notice` event.
@@ -194,21 +187,6 @@ struct Notice {
     message: Option<String>,
 }
 
-/// The daemon's `automatic` event: one repository's automatic generation.
-#[derive(Debug, Deserialize)]
-struct Automatic {
-    #[serde(default)]
-    repository: String,
-    #[serde(default)]
-    daily_cap: Option<f64>,
-    #[serde(default)]
-    spent_today: f64,
-    #[serde(default)]
-    paused_until: Option<String>,
-    #[serde(default)]
-    notice: Option<String>,
-}
-
 const MAX_TITLE: usize = 200;
 const MAX_FIELD: usize = 120;
 
@@ -217,7 +195,6 @@ const MAX_FIELD: usize = 120;
 pub fn from_event(name: &str, data: &str) -> Option<Toast> {
     match name {
         "notice" => from_notice(serde_json::from_str(data).ok()?),
-        "automatic" => from_automatic(serde_json::from_str(data).ok()?),
         _ => None,
     }
 }
@@ -263,7 +240,6 @@ fn from_notice(n: Notice) -> Option<Toast> {
         Kind::ReadyToMerge => "Ready to merge",
         Kind::FixPushed => "Fix pushed",
         Kind::FixFailed => "Fix failed",
-        Kind::CapReached => unreachable!("a notice never names the cap"),
         Kind::SessionPermission | Kind::SessionInput => {
             unreachable!("a session notice is read by from_session_notice")
         }
@@ -321,7 +297,6 @@ fn from_notice(n: Notice) -> Option<Toast> {
         title,
         body,
         route,
-        dedupe: None,
     })
 }
 
@@ -337,8 +312,7 @@ fn agent_name(agent: &str) -> String {
 
 /// An agent session waiting on the user, like "Claude Code needs your
 /// permission · acme/demo" over the line the agent showed and the branch. A
-/// click opens the session's transcript. The daemon announces each wait once,
-/// so there is nothing to dedupe here.
+/// click opens the session's transcript. The daemon announces each wait once.
 fn from_session_notice(kind: Kind, n: Notice) -> Option<Toast> {
     if n.agent.is_empty() || n.session.is_empty() {
         return None;
@@ -381,27 +355,6 @@ fn from_session_notice(kind: Kind, n: Notice) -> Option<Toast> {
         route: Route::Session {
             key: format!("{}:{}", n.agent, n.session),
         },
-        dedupe: None,
-    })
-}
-
-fn from_automatic(a: Automatic) -> Option<Toast> {
-    // No default cap exists: a pause for the cap means the user set one.
-    let cap = a.daily_cap?;
-    let until = a.paused_until?;
-    if a.notice.as_deref() != Some("daily_cap") {
-        return None;
-    }
-    let repository = clean(&a.repository, MAX_FIELD);
-    Some(Toast {
-        kind: Kind::CapReached,
-        title: "Daily cost cap reached".into(),
-        body: format!(
-            "Automatic reviews for {repository} are paused. Spent ${:.2} of the ${cap:.2} daily cap.",
-            a.spent_today
-        ),
-        route: Route::Jobs,
-        dedupe: Some(format!("cap:{}:{until}", a.repository.to_lowercase())),
     })
 }
 
@@ -654,40 +607,11 @@ mod tests {
         assert!(from_event("notice", r#"{"kind":"review_finished"}"#).is_none());
     }
 
-    fn automatic(extra: &str) -> String {
-        format!(
-            r#"{{"repository":"Acme/Widgets","enabled":true,"spent_today":5.5,"pending":0{extra}}}"#
-        )
-    }
-
     #[test]
-    fn the_cap_pause_notifies_only_when_a_cap_is_set() {
-        let paused =
-            r#","daily_cap":5.0,"paused_until":"2026-10-21T00:00:00Z","notice":"daily_cap""#;
-        let t = from_event("automatic", &automatic(paused)).unwrap();
-        assert_eq!(t.kind, Kind::CapReached);
-        assert_eq!(t.title, "Daily cost cap reached");
-        assert_eq!(
-            t.body,
-            "Automatic reviews for Acme/Widgets are paused. Spent $5.50 of the $5.00 daily cap."
-        );
-        assert_eq!(t.route, Route::Jobs);
-        assert_eq!(
-            t.dedupe.as_deref(),
-            Some("cap:acme/widgets:2026-10-21T00:00:00Z")
-        );
-        // No cap, no pause, or another notice: nothing to say.
-        for extra in [
-            r#","daily_cap":null,"paused_until":"2026-10-21T00:00:00Z","notice":"daily_cap""#,
-            r#","daily_cap":5.0,"notice":"daily_cap""#,
-            r#","daily_cap":5.0,"paused_until":"2026-10-21T00:00:00Z","notice":"unavailable""#,
-            "",
-        ] {
-            assert!(
-                from_event("automatic", &automatic(extra)).is_none(),
-                "{extra}"
-            );
-        }
+    fn an_automatic_status_is_not_a_notification() {
+        // An older daemon's daily cap pause is news no more.
+        let paused = r#"{"repository":"acme/widgets","enabled":true,"daily_cap":5.0,"spent_today":5.5,"paused_until":"2026-10-21T00:00:00Z","notice":"daily_cap","pending":0}"#;
+        assert!(from_event("automatic", paused).is_none());
     }
 
     #[test]
