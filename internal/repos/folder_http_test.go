@@ -140,14 +140,14 @@ func TestRecheckAliasesDropsNamesNoLongerForwarded(t *testing.T) {
 	}
 	gitlocal.AddRenamed(again, current+"-was")
 	err := r.RecheckAliases(context.Background(), "", func(_ context.Context, repo github.Repository) (string, error) {
-		switch name := repo.String(); {
-		case name == again || name == current+"-was":
+		switch name := repo.String(); name {
+		case again, current + "-was":
 			return renamedAgain, nil
-		case name == current:
+		case current:
 			return current, nil
-		case name == hidden:
+		case hidden:
 			return "", github.ErrNotFound
-		case name == unchecked:
+		case unchecked:
 			return "", errors.New("offline")
 		default:
 			return answers[name], nil
