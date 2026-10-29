@@ -779,7 +779,6 @@ func maintainReviewRuns(ctx context.Context, log *slog.Logger) {
 	}
 	reviewruns.Maintain(ctx, root, 24*time.Hour, func(err error) { log.Warn("expiring kept review runs", "error", err) })
 }
-}
 
 // newCloneFinder builds the service that finds local clones of picked
 // repositories from the folders agents worked in and the usual code folders.

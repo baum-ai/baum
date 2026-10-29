@@ -88,8 +88,7 @@ type LocalAPI struct {
 	// app's decisions event with it.
 	DecisionsChanged func()
 	// Log receives what the API logs; nil is slog.Default.
-	Log     *slog.Logger
-	Changed func()
+	Log *slog.Logger
 	// Diagnostics builds the report served at /api/diagnostics; nil serves the
 	// capability fields with a null report. It must honour its context.
 	Diagnostics func(context.Context) doctor.Report
