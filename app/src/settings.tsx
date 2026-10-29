@@ -499,13 +499,15 @@ function ReviewSettingsSection({
 /** Decision capture: the switch and the model. */
 function DecisionSettingsSection({ defaults }: { defaults: ReviewDefaults }) {
   const [saved, setSaved] = useState<DecisionSettings | null>(null);
-  const [draft, setDraft] = useState<DecisionSettings | null>(null);
+  // The model is null while it is inherited and a string, "" included, once
+  // one is picked or being typed: "" is not the harness's default here.
+  const [draft, setDraft] = useState<{ enabled: boolean; model: string | null } | null>(null);
   const [pending, setPending] = useState(false);
   const [done, setDone] = useState(false);
   const [error, setError] = useState("");
   const load = (settings: DecisionSettings) => {
     setSaved(settings);
-    setDraft(settings);
+    setDraft({ enabled: settings.enabled, model: settings.model || null });
   };
   useEffect(() => {
     request<{ decisions?: DecisionSettings }>("api/settings/decisions").then(
@@ -518,7 +520,8 @@ function DecisionSettingsSection({ defaults }: { defaults: ReviewDefaults }) {
   if (!saved || !draft) return error ? <Alert>{error}</Alert> : null;
   // The daemon resolves the harness capture uses, auto included.
   const backend = saved.backend || shownBackend(defaults.backend);
-  const next = { enabled: draft.enabled, model: draft.model };
+  // A blank custom name is saved as none, as a repository's model is.
+  const next = { enabled: draft.enabled, model: draft.model?.trim() ?? "" };
   const dirty = next.enabled !== saved.enabled || next.model !== saved.model;
   const save = async () => {
     setPending(true);
@@ -566,13 +569,13 @@ function DecisionSettingsSection({ defaults }: { defaults: ReviewDefaults }) {
         <DecisionModelPicker
           id="settings-decisions-model"
           backend={backend}
-          value={draft.model || null}
+          value={draft.model}
           unused={ignored}
           inherit={`Default${fallback ? ` (${fallback})` : ""}`}
           disabled={pending || !draft.enabled}
           onChange={(model) => {
             setDone(false);
-            setDraft({ ...draft, model: model ?? "" });
+            setDraft({ ...draft, model });
           }}
         />
         {saved.backend === "" ? (

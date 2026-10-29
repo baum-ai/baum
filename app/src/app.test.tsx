@@ -948,6 +948,41 @@ it("saves the decision capture switch and model", async () => {
     body: { enabled: false, model: "gpt-6-sol" },
   });
 });
+it("types a custom decision capture model", async () => {
+  history.replaceState(null, "", "/s/test-ns/?page=settings");
+  stubDiagnostics(async () => Response.json({ local: true, report: diagnosticsReport }));
+  const puts = stubAutomatic(demoClone, automaticOverview, {
+    backend: "codex",
+    model: "gpt-6-sol",
+    decisions: { enabled: true, model: "" },
+  });
+  await act(async () => root.render(<App />));
+  const section = node.querySelector('[aria-labelledby="decisions-heading"]')!;
+  const model = section.querySelector<HTMLSelectElement>("#settings-decisions-model")!;
+  await act(async () => {
+    model.value = [...model.options].find((o) => o.textContent === "Custom…")!.value;
+    model.dispatchEvent(new Event("change", { bubbles: true }));
+  });
+  const custom = section.querySelector<HTMLInputElement>("#settings-decisions-model-custom");
+  expect(custom).not.toBeNull();
+  expect(model.selectedOptions[0]!.textContent).toBe("Custom…");
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(
+      custom,
+      "gpt-6-custom",
+    );
+    custom!.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  await act(async () =>
+    [...section.querySelectorAll("button")]
+      .find((b) => b.textContent === "Save decision capture")!
+      .click(),
+  );
+  expect(puts.at(-1)).toEqual({
+    path: "/s/test-ns/api/settings/decisions",
+    body: { enabled: true, model: "gpt-6-custom" },
+  });
+});
 /** Opens a repository's settings dialog and returns it. */
 async function openRepository(name = "acme/demo") {
   await act(async () =>
