@@ -12,16 +12,17 @@ import (
 // directory. The call made no model request, so nothing was spent.
 var ErrSessionNotFound = errors.New("the agent session to continue was not found")
 
-// sessionMissing reports, conservatively, whether a failed call failed only
-// because the session it resumes is gone: it resumed one, made no model call
-// and used no tokens, and the CLI's error names a missing session. Claude
-// Code says "No conversation found with session ID"; Codex names the thread,
-// session or rollout it could not find.
-func sessionMissing(request Request, result Result, err error) bool {
-	if err == nil || request.ResumeSession == "" || result.Calls > 0 || result.Tokens > 0 {
-		return false
-	}
-	text := strings.ToLower(err.Error())
+// ValidSessionID reports whether id is a session id a request may resume: a
+// canonical UUID, as both CLIs report.
+func ValidSessionID(id string) bool { return sessionID.MatchString(id) }
+
+// missingSessionText reports whether one line of a CLI's error output says
+// the session it was asked to continue does not exist. Claude Code says "No
+// conversation found with session ID"; Codex names the thread, session or
+// rollout it could not find ("thread/resume failed: no rollout found for
+// thread id ...").
+func missingSessionText(line string) bool {
+	text := strings.ToLower(line)
 	if strings.Contains(text, "no conversation found") {
 		return true
 	}
@@ -34,6 +35,36 @@ func sessionMissing(request Request, result Result, err error) bool {
 		}
 	}
 	return false
+}
+
+// MissingSession finds the line of a CLI's error output, every line of it,
+// that says the session to continue does not exist: a CLI may print warnings
+// first.
+func MissingSession(output string) (string, bool) {
+	for _, line := range strings.Split(output, "\n") {
+		if missingSessionText(line) {
+			return strings.TrimSpace(line), true
+		}
+	}
+	return "", false
+}
+
+// SessionNotFound is the error a backend returns for a resume or fork whose
+// session is gone, with the CLI's own line.
+func SessionNotFound(cli, line string) error {
+	return fmt.Errorf("%w: %s: %s", ErrSessionNotFound, cli, line)
+}
+
+// sessionMissing reports, conservatively, whether a failed call failed only
+// because the session it resumes is gone: it resumed one, made no model call
+// and used no tokens, and the error names a missing session. A backend that
+// recognises the case itself returns ErrSessionNotFound.
+func sessionMissing(request Request, result Result, err error) bool {
+	if err == nil || request.ResumeSession == "" || result.Calls > 0 || result.Tokens > 0 {
+		return false
+	}
+	_, missing := MissingSession(err.Error())
+	return missing
 }
 
 // Continue runs one call of a conversation that keeps its agent session
@@ -52,5 +83,10 @@ func (g *Generator) Continue(ctx context.Context, budgets Budgets, request Reque
 	return g.call(ctx, budgets, request, outcome, &stalls)
 }
 
-// sessionNotFound wraps a CLI's missing-session error.
-func sessionNotFound(err error) error { return fmt.Errorf("%w: %v", ErrSessionNotFound, err) }
+// sessionNotFound wraps an error that names a missing session.
+func sessionNotFound(err error) error {
+	if errors.Is(err, ErrSessionNotFound) {
+		return err
+	}
+	return fmt.Errorf("%w: %v", ErrSessionNotFound, err)
+}

@@ -318,6 +318,8 @@ func (c *Backend) run(ctx context.Context, request agent.Request, fix bool) (res
 			Tools         []string `json:"tools"`
 			IsError       bool     `json:"is_error"`
 			Errors        []string `json:"errors"`
+			// NumTurns is how many turns a result's run took.
+			NumTurns int `json:"num_turns"`
 			// APIErrorStatus is the HTTP status of the provider response
 			// a failed result ended on, when it ended on one.
 			APIErrorStatus int `json:"api_error_status"`
@@ -462,6 +464,15 @@ func (c *Backend) run(ctx context.Context, request agent.Request, fix bool) (res
 				break
 			}
 			if event.IsError || event.Subtype != "success" {
+				// A resume or fork of a session Claude Code cannot find ends
+				// at once with a failed result naming it; on a fork the
+				// result carries a fresh session id that holds nothing.
+				if line, missing := agent.MissingSession(strings.Join(event.Errors, "\n")); missing && request.ResumeSession != "" && event.NumTurns == 0 {
+					record(agent.Event{Kind: "error", Status: "session_not_found"})
+					result.SessionID = ""
+					err = agent.SessionNotFound("claude code", line)
+					break
+				}
 				// Only the provider's status may refuse; the errors' text is
 				// classified for the diagnostics alone.
 				status := agent.HTTPErrorStatus(event.APIErrorStatus)
@@ -549,6 +560,10 @@ func (c *Backend) run(ctx context.Context, request agent.Request, fix bool) (res
 		return result, err
 	}
 	if waitErr != nil {
+		if line, missing := agent.MissingSession(stderr.String()); missing && request.ResumeSession != "" && result.Calls == 0 {
+			result.SessionID = ""
+			return result, agent.SessionNotFound("claude code", line)
+		}
 		if c.Profile == User && unknownOption(stderr.String()) {
 			return result, fmt.Errorf("claude does not accept the options baum needs (%s); upgrade Claude Code to %s or newer", firstLine(stderr.String()), minimumVersion)
 		}

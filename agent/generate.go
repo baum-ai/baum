@@ -254,7 +254,7 @@ func (g *Generator) call(ctx context.Context, budgets Budgets, request Request, 
 			return result, nil
 		}
 		// A session that is gone stays gone: a retry would fail the same way.
-		if sessionMissing(request, result, err) {
+		if errors.Is(err, ErrSessionNotFound) || sessionMissing(request, result, err) {
 			return result, sessionNotFound(err)
 		}
 		var stall *stallError
