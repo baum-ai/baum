@@ -83,21 +83,6 @@ func reserveFor(list *pricing.List, backend, model string, inputTokens, outputTo
 	return (first + further) / 1_000_000, true
 }
 
-// callCost is what one call of inputTokens and outputTokens is expected to
-// cost: reserveFor's first call.
-func callCost(list *pricing.List, backend, model string, inputTokens, outputTokens int64) (float64, bool) {
-	v := vendor(backend)
-	rates, ok := list.RatesFor(list.Normalize(model, v), pricing.Usage{Vendor: v, InputTokens: inputTokens, OutputTokens: outputTokens, SingleRequest: true})
-	if !ok {
-		return 0, false
-	}
-	input := rates.Input
-	if backend == agent.BackendClaude {
-		input = max(input, rates.CacheWrite)
-	}
-	return (float64(inputTokens)*input + float64(outputTokens)*rates.Output) / 1_000_000, true
-}
-
 // cost prices a call's reported usage as review accounting does
 // (pricing.List.OutcomeCost): nil when it cannot be priced or any part of it
 // is unknown, such as an unreported speed or 1-hour cache-write split, or a
@@ -299,11 +284,8 @@ func (c caller) plan(ctx context.Context, prefs repos.Preferences, settings repo
 	if p.Backend == agent.BackendCursorAgent {
 		return p, ReasonUnsupported
 	}
-	reserved, ok := reserveFor(c.prices, p.Backend, p.Model, maxTokens, maxOutput)
-	if !ok {
-		return p, ReasonUnpriced
-	}
-	p.Reserved = reserved
+	// Prices only report: a model the list does not price runs, reserved at 0.
+	p.Reserved, _ = reserveFor(c.prices, p.Backend, p.Model, maxTokens, maxOutput)
 	return p, ""
 }
 
@@ -357,7 +339,7 @@ func (c caller) finish(ctx context.Context, id int64, m *completerModel, callErr
 // callResult is one feature stage call: its reply, or why none was made.
 type callResult struct {
 	JSON []byte
-	// Skip is the reason no call was made (a backend or price reason).
+	// Skip is the reason no call was made (a backend reason).
 	Skip string
 	// Called is set once the backend was called, so a failure may have been
 	// billed.

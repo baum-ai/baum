@@ -23,6 +23,7 @@ import (
 	"github.com/baum-ai/baum/internal/pricing"
 	"github.com/baum-ai/baum/internal/repos"
 	"github.com/baum-ai/baum/internal/reviewgroups"
+	"github.com/baum-ai/baum/internal/reviewruns"
 	"github.com/baum-ai/baum/internal/store"
 )
 
@@ -33,14 +34,20 @@ type Local struct {
 	Config   config.Config
 	Client   *github.Client
 	Backends generate.Backends
-	// RefreshPrices downloads and installs the signed price list; nil disables
-	// the refresh for jobs confirmed against a newer list than the active one.
-	RefreshPrices func(context.Context) error
 	// FixDirectory holds fixes' temporary checkouts; empty is
 	// fix.DefaultDirectory.
 	FixDirectory string
 	// Features builds feature histories; nil refuses feature builds.
 	Features FeatureBuilder
+	// ReviewRuns holds the run directories of reviews that keep their agent
+	// session; empty is reviewruns.DefaultRoot.
+	ReviewRuns string
+}
+
+// keepsSession reports whether a review by the named backend keeps its agent
+// session: only a local Claude Code or Codex session can be resumed.
+func keepsSession(backend string) bool {
+	return backend == string(config.BackendClaude) || backend == string(config.BackendCodex)
 }
 
 type identityVersions struct {
@@ -131,9 +138,6 @@ func (l *Local) Prepare(ctx context.Context, item Item) (Prepared, string, error
 	digest := sha256.Sum256(fingerprint)
 	list := pricing.Active()
 	p := Prepared{MaxTokens: cfg.Budgets.MaxTokens, MaxCalls: cfg.Budgets.MaxCalls, ConfigDigest: hex.EncodeToString(digest[:]), PriceVersion: list.Version(), Item: item, Repository: c.Repository, HeadSHA: pr.Head, Backend: selected.Backend.Name(), Model: selected.Model, RequiresIsolationConfirmation: pr.Untrusted, Draft: pr.Draft, GroupName: group.name, Members: group.members}
-	// The estimate is informational: a backend billed by its own subscription,
-	// or a model the price list does not know, has none and still runs.
-	p.EstimateUSD, p.EstimateReason = list.BackendEstimate(selected.Backend.Name(), selected.Model, cfg.Budgets.MaxTokens, cfg.Budgets.MaxCalls)
 	return p, list.Version(), nil
 }
 
@@ -179,24 +183,18 @@ func readPull(ctx context.Context, reader *github.RESTReader, repository github.
 	return pull{Head: pr.Head.SHA, Draft: pr.Draft, Untrusted: !trusted || !strings.EqualFold(pr.Head.Repo.FullName, repository.Owner+"/"+repository.Name)}, nil
 }
 
-// confirmed rechecks a job's confirmed inputs. A job confirmed against a newer
-// list than the active one (a restart that has not yet reinstalled it) refreshes
-// the signed list once before deciding. An automatic job (RefuseDraft) whose
-// pull request is a draft now is refused with ReasonDraft; a confirmed run of
-// a draft is not.
+// confirmed rechecks a job's confirmed inputs. The price list is not one: a
+// job runs, and is priced, with whichever list is active when it runs. An
+// automatic job (RefuseDraft) whose pull request is a draft now is refused
+// with ReasonDraft; a confirmed run of a draft is not.
 func (l *Local) confirmed(ctx context.Context, p Prepared) error {
 	current, _, e := l.Prepare(ctx, p.Item)
-	if e == nil && l.RefreshPrices != nil && pricing.CompareVersions(p.PriceVersion, current.PriceVersion) > 0 {
-		if l.RefreshPrices(ctx) == nil {
-			current, _, e = l.Prepare(ctx, p.Item)
-		}
-	}
 	if e != nil {
 		return e
 	}
-	if current.PriceVersion != p.PriceVersion || current.ConfigDigest != p.ConfigDigest || current.HeadSHA != p.HeadSHA || current.Members != p.Members || current.Backend != p.Backend || current.Model != p.Model || current.EstimateReason != p.EstimateReason || current.RequiresIsolationConfirmation != p.RequiresIsolationConfirmation {
+	if current.ConfigDigest != p.ConfigDigest || current.HeadSHA != p.HeadSHA || current.Members != p.Members || current.Backend != p.Backend || current.Model != p.Model || current.RequiresIsolationConfirmation != p.RequiresIsolationConfirmation {
 		if p.Kind == KindFix && current.HeadSHA != p.HeadSHA {
-			return &fix.Error{Reason: fix.ReasonHeadChanged, Err: errors.New("the pull request's head changed since the fix was confirmed")}
+			return &fix.Error{Reason: fix.ReasonHeadChanged, Err: errors.New("the pull request's head changed since the fix was started")}
 		}
 		return errors.New("generation inputs changed")
 	}
@@ -211,7 +209,7 @@ func (l *Local) confirmed(ctx context.Context, p Prepared) error {
 		default:
 			reason = fix.ReasonNothingToFix
 		}
-		return &fix.Error{Reason: reason, Err: errors.New("what the fix was confirmed for changed; confirm it again")}
+		return &fix.Error{Reason: reason, Err: errors.New("what the fix was started for changed; start it again")}
 	}
 	if p.RefuseDraft && current.Draft {
 		return &NotAutomaticError{ReasonDraft}
@@ -228,6 +226,16 @@ func (l *Local) resolve(ctx context.Context, c repos.Clone) (config.Config, erro
 		return config.Config{}, e
 	}
 	return c.Settings.Resolve(prefs.Resolve(l.Config)), nil
+}
+
+// resolveFix is resolve for a fix: the preferences' fix agent, when set,
+// replaces the review's backend and model (repos.Preferences.ResolveFix).
+func (l *Local) resolveFix(ctx context.Context, c repos.Clone) (config.Config, error) {
+	prefs, e := l.Registry.Preferences(ctx)
+	if e != nil {
+		return config.Config{}, e
+	}
+	return prefs.ResolveFix(c.Settings.Resolve(prefs.Resolve(l.Config))), nil
 }
 
 func (l *Local) Execute(ctx context.Context, p Prepared, progress func(Progress)) (*float64, error) {
@@ -280,10 +288,9 @@ func (l *Local) Execute(ctx context.Context, p Prepared, progress func(Progress)
 	if e != nil {
 		return nil, e
 	}
+	// The active list prices the run and is recorded with the saved review,
+	// even when it is newer than the one the job was prepared with.
 	list := pricing.Active()
-	if list.Version() != p.PriceVersion {
-		return nil, errors.New("price list changed; estimate again")
-	}
 	backend := &trackedBackend{Backend: selected.Backend, progress: progress, prices: list}
 	assembler := &assemble.Assembler{GitHub: l.Client, Git: clone, Fetcher: clone, Sessions: assemble.LocalSessions{Dir: clone.Dir(), Warn: io.Discard}, Images: assemble.NewHTTPImageFetcher(nil), Warn: io.Discard}
 	// An assembly which observes a changed head must stop before calling a model.
@@ -303,7 +310,7 @@ func (l *Local) Execute(ctx context.Context, p Prepared, progress func(Progress)
 		key.Number = group.Members[0].Number
 	}
 	progress(Progress{Phase: "assembling"})
-	result, e := generate.Publish(ctx, published, key, generate.Options{Group: group, PriceList: list, Assembler: guarded, Request: assemble.Request{Repository: repository, Number: key.Number, Limits: assemble.LimitsFrom(caps)}, Backend: backend, BackendVersion: selected.Version, Model: p.Model, Budgets: agent.Budgets{WallClock: time.Duration(cfg.Budgets.RunTimeout), MaxCalls: cfg.Budgets.MaxCalls, MaxTokens: cfg.Budgets.MaxTokens, MaxProviderAttempts: 3, MaxRepairAttempts: 2}, OnValidation: func(pass int, valid bool) {
+	result, e := l.publish(ctx, published, versions, key, p.Backend, generate.Options{Group: group, PriceList: list, Assembler: guarded, Request: assemble.Request{Repository: repository, Number: key.Number, Limits: assemble.LimitsFrom(caps)}, Backend: backend, BackendVersion: selected.Version, Model: p.Model, Budgets: agent.Budgets{WallClock: time.Duration(cfg.Budgets.RunTimeout), MaxCalls: cfg.Budgets.MaxCalls, MaxTokens: cfg.Budgets.MaxTokens, MaxProviderAttempts: 3, MaxRepairAttempts: 2}, OnValidation: func(pass int, valid bool) {
 		backend.repairs = pass - 1
 		if !valid {
 			backend.repairs = pass
@@ -317,6 +324,19 @@ func (l *Local) Execute(ctx context.Context, p Prepared, progress func(Progress)
 	backend.redacted = true
 	backend.report("publishing")
 	return list.BackendOutcomeCost(p.Backend, result.Outcome.Model, result.Outcome), e
+}
+
+// publish generates and stores a review. A single pull request reviewed by a
+// local Claude Code or Codex keeps its agent session and run directory, and
+// the directories of its older versions are pruned once the new one is stored.
+func (l *Local) publish(ctx context.Context, published generate.Versions, versions *store.Store, key store.Key, backend string, o generate.Options, cost func(generate.Result) *float64) (generate.Result, error) {
+	o.KeepSession = o.Group == nil && keepsSession(backend)
+	o.SessionRoot = l.ReviewRuns
+	result, e := generate.Publish(ctx, published, key, o, cost)
+	if e == nil && result.Metadata.Session != nil {
+		l.pruneReviewRuns(ctx, versions, key)
+	}
+	return result, e
 }
 
 type trackedBackend struct {
@@ -369,13 +389,13 @@ type headAssembler struct {
 func (a headAssembler) Assemble(ctx context.Context, r assemble.Request) (assemble.Result, error) {
 	result, e := a.Assembler.Assemble(ctx, r)
 	if e == nil && result.Head != a.head {
-		return assemble.Result{}, errors.New("pull request head changed; estimate again")
+		return assemble.Result{}, errors.New("pull request head changed; start it again")
 	}
 	return result, e
 }
 
-// prepareFeatureBuild estimates a feature build of the clone's repository.
-// A build with nothing to price, or none that can call now, is blocked.
+// prepareFeatureBuild plans a feature build of the clone's repository. One
+// with no backend that can call now is blocked; nothing about its price is.
 func (l *Local) prepareFeatureBuild(ctx context.Context, item Item) (Prepared, string, error) {
 	if item.PR != 0 || item.Group != "" || l.Features == nil {
 		return Prepared{}, "", errors.New("invalid feature build")
@@ -384,23 +404,18 @@ func (l *Local) prepareFeatureBuild(ctx context.Context, item Item) (Prepared, s
 	if e != nil {
 		return Prepared{}, "", e
 	}
-	estimate, e := l.Features.EstimateFeatureBuild(ctx, c.Repository, c.Path)
+	plan, e := l.Features.PlanFeatureBuild(ctx, c.Repository, c.Path)
 	if e != nil {
 		return Prepared{}, "", e
 	}
 	list := pricing.Active()
-	p := Prepared{Item: item, Repository: c.Repository, Backend: estimate.Backend, Model: estimate.Model, PriceVersion: list.Version(),
-		EstimateUSD: estimate.EstimateUSD, BuildPullRequests: estimate.PullRequests, BuildDiscoveryUSD: estimate.DiscoveryUSD,
-		BuildHistoryTruncated: estimate.HistoryTruncated, BlockedReason: estimate.Reason}
-	if p.EstimateUSD == nil && p.BlockedReason == "" {
-		p.BlockedReason = "unknown_model_price"
-	}
-	return p, list.Version(), nil
+	return Prepared{Item: item, Repository: c.Repository, Backend: plan.Backend, Model: plan.Model, PriceVersion: list.Version(),
+		BlockedReason: plan.Reason}, list.Version(), nil
 }
 
-// executeFeatureBuild runs a confirmed feature build.
+// executeFeatureBuild runs a started feature build.
 func (l *Local) executeFeatureBuild(ctx context.Context, p Prepared, progress func(Progress)) (*float64, error) {
-	if l.Features == nil || p.EstimateUSD == nil {
+	if l.Features == nil {
 		return nil, errors.New("invalid feature build")
 	}
 	c, e := l.clone(ctx, p.Clone)
@@ -409,4 +424,20 @@ func (l *Local) executeFeatureBuild(ctx context.Context, p Prepared, progress fu
 	}
 	spent, e := l.Features.BuildFeatures(ctx, c.Repository, c.Path, progress)
 	return &spent, e
+}
+
+// pruneReviewRuns removes the kept run directories of the pull request's
+// versions beyond the latest two. A failure only leaves them for the daily
+// expiry.
+func (l *Local) pruneReviewRuns(ctx context.Context, versions *store.Store, key store.Key) {
+	root := l.ReviewRuns
+	if root == "" {
+		var e error
+		if root, e = reviewruns.DefaultRoot(); e != nil {
+			return
+		}
+	}
+	if all, e := versions.Versions(ctx, key); e == nil {
+		_ = reviewruns.PruneVersions(root, all)
+	}
 }

@@ -160,8 +160,8 @@ type Selected struct {
 // choice, claude, only: a backend auto falls back to runs with its own
 // default model, and skipped says so. skipped also receives why each earlier
 // choice was skipped; nil discards both. anthropic's default model is
-// resolved here (anthropic.DefaultModel), so Selected.Model names it and a
-// price estimate can use it.
+// resolved here (anthropic.DefaultModel), so Selected.Model names it and the
+// run's cost at API prices can be worked out from it.
 func Select(ctx context.Context, requested config.Backend, model string, backends Backends, skipped io.Writer) (Selected, error) {
 	try := func(name config.Backend, build func(string) CheckedBackend, model string) (Selected, error) {
 		if build == nil {

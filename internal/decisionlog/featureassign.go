@@ -108,7 +108,7 @@ type PlacedItem struct {
 
 // Assign places the repository's pending pull requests and sessions, oldest
 // trigger first, at most FeatureAssignRunLimit (or o.Limit) of them. A
-// backend or price reason stops it until the next run.
+// backend reason stops it until the next run.
 func (w *FeatureWorker) Assign(ctx context.Context, repository, dir string, o FeatureOptions) (AssignReport, error) {
 	report := AssignReport{Repository: repository, Items: []PlacedItem{}}
 	r, err := w.newRun(ctx, repository, dir, o)

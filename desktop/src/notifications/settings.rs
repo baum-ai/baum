@@ -29,7 +29,6 @@ pub struct Kinds {
     pub finished: bool,
     pub failed: bool,
     pub requested: bool,
-    pub cap_reached: bool,
     pub automatic: bool,
     pub checks_failed: bool,
     pub conflict: bool,
@@ -47,7 +46,6 @@ impl Default for Kinds {
             finished: true,
             failed: true,
             requested: true,
-            cap_reached: true,
             automatic: true,
             checks_failed: true,
             conflict: true,
@@ -67,7 +65,6 @@ impl Kinds {
             Kind::Finished => self.finished,
             Kind::Failed => self.failed,
             Kind::Requested => self.requested,
-            Kind::CapReached => self.cap_reached,
             Kind::Automatic => self.automatic,
             Kind::ChecksFailed => self.checks_failed,
             Kind::Conflict => self.conflict,
@@ -85,7 +82,6 @@ impl Kinds {
             Kind::Finished => self.finished = on,
             Kind::Failed => self.failed = on,
             Kind::Requested => self.requested = on,
-            Kind::CapReached => self.cap_reached = on,
             Kind::Automatic => self.automatic = on,
             Kind::ChecksFailed => self.checks_failed = on,
             Kind::Conflict => self.conflict = on,
@@ -104,10 +100,8 @@ impl Kinds {
 pub struct Settings {
     pub kinds: Kinds,
     pub permission: Permission,
-    /// Keys of the notifications that repeat while their condition lasts (the
-    /// daily cap, one key per repository and pause) already shown, oldest
-    /// first, so a restart or a replaced daemon does not announce one again.
-    pub announced: Vec<String>,
+    // An older file's cap_reached kind and announced keys, from the daily
+    // cap baum no longer has, are ignored.
 }
 
 /// Where the settings live; `None` keeps them in memory only.
@@ -193,7 +187,7 @@ mod tests {
         fs::create_dir_all(&dir).unwrap();
         fs::write(dir.join(FILE), r#"{"kinds":{"failed":false}}"#).unwrap();
         let settings = Store::in_dir(dir.clone()).load();
-        assert!(!settings.kinds.failed && settings.kinds.finished && settings.kinds.cap_reached);
+        assert!(!settings.kinds.failed && settings.kinds.finished && settings.kinds.automatic);
         // The kinds added after this file was written are on.
         assert!(
             [
@@ -226,7 +220,6 @@ mod tests {
         assert!(!settings.kinds.conflict && settings.kinds.fix_failed);
         assert!(settings.kinds.session_permission && settings.kinds.session_input);
         assert_eq!(settings.permission, Permission::Granted);
-        assert_eq!(settings.announced.len(), 1);
         let _ = fs::remove_dir_all(dir);
     }
 

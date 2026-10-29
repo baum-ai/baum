@@ -10,7 +10,6 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
-	"math"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -227,30 +226,6 @@ func writePrivate(path string, data []byte) (err error) {
 		return err
 	}
 	return os.Rename(file.Name(), path)
-}
-
-// Estimate is a planning estimate from configured charged-token and call
-// budgets, not a dollar ceiling. It reserves one budget-sized cache read per
-// call, and uses the highest listed rate over all tiers and speeds.
-func (l *List) Estimate(model string, maxTokens, maxCalls int) *float64 {
-	if model == "" || maxTokens <= 0 || maxCalls <= 0 {
-		return nil
-	}
-	m := l.Normalize(model, "")
-	entry, ok := l.entry(m.Canonical)
-	if !ok {
-		return nil
-	}
-	charged, read := 0.0, 0.0
-	for _, r := range []RateSet{entry.Base(), entry.Above.RateSet(), entry.Fast, entry.FastAbove.RateSet()} {
-		charged = math.Max(charged, math.Max(math.Max(r.Input, r.Output), math.Max(r.CacheWrite, r.CacheWrite1h)))
-		read = math.Max(read, r.CacheRead)
-	}
-	cost := float64(maxTokens) * (charged + float64(maxCalls)*read) / 1e6
-	if math.IsInf(cost, 0) || math.IsNaN(cost) {
-		return nil
-	}
-	return &cost
 }
 
 // OutcomeCost keeps unknown or ambiguous usage unknown. Agent usage is already

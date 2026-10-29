@@ -79,7 +79,7 @@ func TestJobDoneIgnoresOtherStatesAndUnscoredReviews(t *testing.T) {
 	running := job("completed", "", false)
 	running.Phase = "generating"
 	s.JobDone(context.Background(), running)
-	build := job("failed", "unpriced_model", false)
+	build := job("failed", "backend_unavailable", false)
 	build.Kind = jobs.KindFeatureBuild
 	s.JobDone(context.Background(), build)
 	if len(*got) != 0 {

@@ -531,31 +531,8 @@ const buildJob = (state: string, calls = 3): Job => ({
   actual_cost_usd: null,
 });
 
-it("builds a repository's feature history from the empty state after its estimate", async () => {
+it("starts a repository's feature history build at once from the empty state", async () => {
   answers["api/timeline/features"] = { features: [], next_cursor: null };
-  answers["api/jobs/estimate"] = {
-    id: "est-1",
-    estimate_usd: 1.2,
-    price_version: "v1",
-    expires_at: "2026-10-28T12:00:00Z",
-    items: [
-      {
-        clone: "clone-1",
-        pr: 0,
-        kind: "feature_build",
-        build_pull_requests: 40,
-        build_discovery_usd: 5,
-        build_history_truncated: true,
-        head_sha: "",
-        backend: "claude",
-        model: "claude-haiku-5-5",
-        estimate_usd: 1.2,
-        max_tokens: 0,
-        max_calls: 0,
-        requires_isolation_confirmation: false,
-      },
-    ],
-  };
   answers["api/jobs"] = { jobs: [buildJob("queued", 0)] };
   bodies.length = 0;
   jobsChanged = 0;
@@ -565,29 +542,12 @@ it("builds a repository's feature history from the empty state after its estimat
   )!;
   await act(async () => build.click());
   await act(async () => {});
-  expect(bodies[0]).toEqual({
-    items: [{ clone: "clone-1", pr: 0, kind: "feature_build" }],
-    mode: "single",
-  });
-  const dialog = node.querySelector("dialog")!;
-  expect(dialog.textContent).toContain("40 to place (the most recently updated)");
-  expect(dialog.textContent).toContain("About $1.20");
-  // The whole history, with discovery first on a token budget.
-  expect(dialog.textContent).toContain("baum first discovers this repository's features");
-  expect(dialog.textContent).toContain("pull requests of its whole history");
-  expect(dialog.textContent).toContain("its least recently updated pull requests are left out");
-  expect(dialog.textContent).toContain(
-    "feature discovery runs first with a token budget of what about $5.00 buys",
-  );
-  const confirm = [...dialog.querySelectorAll("button")].find(
-    (b) => b.textContent === "Build feature history",
-  )!;
-  await act(async () => confirm.click());
-  await act(async () => {});
-  expect(bodies[1]).toEqual({ estimate_id: "est-1", confirm_estimate: true });
+  // No estimate and no dialog: the job starts as every requested run does.
+  expect(bodies).toEqual([
+    { items: [{ clone: "clone-1", pr: 0, kind: "feature_build" }], mode: "single" },
+  ]);
+  expect(node.querySelector("dialog")).toBeNull();
   expect(jobsChanged).toBe(1);
-  const link = [...dialog.querySelectorAll("a")].find((a) => a.textContent === "View it in Jobs");
-  expect(link?.getAttribute("href")).toBe("/s/test-ns/?page=jobs&job=job-1");
 });
 
 it("shows a build in progress above the features it keeps, and offers to resume one that stopped", async () => {
@@ -618,7 +578,7 @@ it("shows a build in progress above the features it keeps, and offers to resume 
   expect(node.textContent).toContain(
     "The feature history build stopped. The model backend is not available on this computer.",
   );
-  expect(node.textContent).toContain("30 of 40 pull requests placed, $1.50 spent");
+  expect(node.textContent).toContain("30 of 40 pull requests placed, $1.50 at API prices so far");
   expect([...node.querySelectorAll("button")].some((b) => b.textContent === "Resume build")).toBe(
     true,
   );
@@ -634,65 +594,21 @@ it("offers a quieter rebuild when the repository has features, whatever the filt
   ).toBe(true);
 });
 
-const estimateOf = (item: Record<string, unknown>) => ({
-  id: "est-1",
-  estimate_usd: 1.2,
-  price_version: "v1",
-  expires_at: "2026-10-28T12:00:00Z",
-  items: [
-    {
-      clone: "clone-1",
-      pr: 0,
-      kind: "feature_build",
-      build_pull_requests: 40,
-      head_sha: "",
-      backend: "claude",
-      model: "claude-haiku-5-5",
-      estimate_usd: 1.2,
-      max_tokens: 0,
-      max_calls: 0,
-      requires_isolation_confirmation: false,
-      ...item,
-    },
-  ],
-});
-
 const button = (label: string, within: ParentNode = node) =>
   [...within.querySelectorAll("button")].find((b) => b.textContent === label);
 
-it("says why a build cannot run, in the build's words", async () => {
+it("says why a build cannot start, in the build's words", async () => {
   answers["api/timeline/features"] = { features: [], next_cursor: null };
-  answers["api/jobs/estimate"] = estimateOf({
-    blocked_reason: "unknown_model_price",
-    estimate_usd: null,
-  });
+  answers["api/jobs"] = async () =>
+    Response.json({ blocked_reason: "backend_unavailable" }, { status: 409 });
   await show();
   await act(async () => button("Build feature history")!.click());
   await act(async () => {});
-  const dialog = node.querySelector("dialog")!;
-  expect(dialog.textContent).toContain("so the build's cost cannot be estimated");
-  expect(button("Build feature history", dialog)).toBeUndefined();
-  expect(button("Close", dialog)).toBeDefined();
-});
-
-it("estimates again when starting a build is refused", async () => {
-  answers["api/timeline/features"] = { features: [], next_cursor: null };
-  answers["api/jobs/estimate"] = estimateOf({});
-  answers["api/jobs"] = async () => new Response("estimate expired", { status: 409 });
-  bodies.length = 0;
-  await show();
-  await act(async () => button("Build feature history")!.click());
-  await act(async () => {});
-  const dialog = node.querySelector("dialog")!;
-  await act(async () => button("Build feature history", dialog)!.click());
-  await act(async () => {});
-  expect(dialog.textContent).toContain("estimate expired");
-  expect(button("Build feature history", dialog)).toBeUndefined();
-  await act(async () => button("Estimate again", dialog)!.click());
-  await act(async () => {});
-  expect(bodies.filter((body) => JSON.stringify(body).includes("feature_build"))).toHaveLength(2);
-  expect(button("Build feature history", dialog)).toBeDefined();
-  expect(dialog.textContent).not.toContain("estimate expired");
+  expect(node.textContent).toContain(
+    "Couldn't start the feature build: The model backend is not available on this computer.",
+  );
+  // It can be asked for again.
+  expect(button("Build feature history")).toBeDefined();
 });
 
 it("resumes a build that stopped, and says a failed or unexplained one in its own words", async () => {
@@ -700,13 +616,16 @@ it("resumes a build that stopped, and says a failed or unexplained one in its ow
     building: { placed: 30, total: 40, stopped: "backend_unavailable", spent_usd: 1.5 },
     has_features: true,
   };
-  answers["api/jobs/estimate"] = estimateOf({ build_pull_requests: 10 });
+  answers["api/jobs"] = { jobs: [buildJob("queued", 0)] };
+  bodies.length = 0;
   await show();
   await act(async () => button("Resume build")!.click());
   await act(async () => {});
-  const dialog = node.querySelector("dialog")!;
-  expect(dialog.textContent).toContain("Resume the feature history build");
-  expect(button("Resume build", dialog)).toBeDefined();
+  // Resuming starts the same build again at once.
+  expect(bodies).toEqual([
+    { items: [{ clone: "clone-1", pr: 0, kind: "feature_build" }], mode: "single" },
+  ]);
+  expect(node.querySelector("dialog")).toBeNull();
   await act(async () => root.unmount());
   root = createRoot(node);
   // Its version records no reason: the failed job's is read.
@@ -731,7 +650,7 @@ it("resumes a build that stopped, and says a failed or unexplained one in its ow
   await act(async () => {});
   await act(async () => {});
   expect(node.textContent).toContain("A feature history build is in progress or stopped");
-  // Never a dead end: confirming estimates the rest and resumes it.
+  // Never a dead end: starting it again resumes it.
   expect(button("Resume build")).toBeDefined();
   // A cancelled build whose version records no reason reads as stopped.
   await act(async () =>
@@ -790,7 +709,7 @@ it("names a feature build's reasons in its own words, and others' as before", ()
     "baum stopped before the build finished.",
   );
   expect(jobReasonText("interrupted")).toBe("The run stopped before it finished.");
-  expect(jobReasonText("daily_cap")).toBe("daily cap");
+  expect(jobReasonText("daily_cap")).toBe("It stopped before it started.");
 });
 
 it("keeps the build state shown when a read of it fails", async () => {

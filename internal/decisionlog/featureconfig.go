@@ -89,15 +89,10 @@ const (
 	FeatureBuildSummarizeEvery = 3
 )
 
-// The sizes a build's estimate assumes of what it cannot know beforehand
-// (local only; hosted builds have no estimate).
+// What a build's estimate assumes of what it cannot know beforehand (local
+// only; hosted builds have no estimate): the pull requests a new feature
+// gathers, and how many times a new feature's text is written.
 const (
-	FeatureEstimateBytesPerToken    = 3
-	FeatureEstimateCandidateBytes   = 4000
-	FeatureEstimateItemOutputTokens = 550
-	FeatureEstimatePullsPerFeature  = 3
-	FeatureEstimateTextPasses       = 2
-	FeatureEstimateTextBytes        = 20000
-	FeatureEstimateTextOutputTokens = 1000
-	FeatureEstimatePullOutputTokens = 300
+	FeatureEstimatePullsPerFeature = 3
+	FeatureEstimateTextPasses      = 2
 )

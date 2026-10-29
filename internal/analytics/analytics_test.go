@@ -495,7 +495,7 @@ func TestBaumWorkCountsJobsAndActions(t *testing.T) {
 		job("", "completed", "", ptr(1.0)), job("", "failed", "budget_exceeded", nil), job("", "failed", "budget_exceeded", nil),
 		pushed, job(jobs.KindFix, "failed", "push_rejected", nil), group, old,
 		// A feature build is the decision log's spend, not baum's work.
-		job(jobs.KindFeatureBuild, "failed", "unpriced_model", ptr(3.0)),
+		job(jobs.KindFeatureBuild, "failed", "backend_unavailable", ptr(3.0)),
 	}
 	dir := t.TempDir()
 	actions := &Actions{Path: filepath.Join(dir, "actions.json"), Now: func() time.Time { return recent }}
@@ -631,6 +631,18 @@ func (f fakeWrites) RerunOptions(context.Context, github.Repository, int) (prupd
 }
 func (f fakeWrites) RerunFailedChecks(context.Context, github.Repository, int, string) (prupdate.RerunResult, error) {
 	return prupdate.RerunResult{}, f.result()
+}
+func (f fakeWrites) ReviewThreads(context.Context, github.Repository, int, int) (prupdate.Threads, error) {
+	return prupdate.Threads{}, nil
+}
+func (f fakeWrites) ResolveThread(context.Context, github.Repository, int, string) error {
+	return f.result()
+}
+func (f fakeWrites) RerunJob(context.Context, github.Repository, int, string, int64) error {
+	return f.result()
+}
+func (f fakeWrites) FailingChecks(context.Context, github.Repository, int, string) (prupdate.Checks, error) {
+	return prupdate.Checks{}, nil
 }
 
 func TestActionsRecordOnlyWritesThatSucceeded(t *testing.T) {

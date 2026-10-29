@@ -1,34 +1,16 @@
 import type { ComponentType, ReactNode } from "react";
 import { LogoMark, Wordmark } from "@baum/viewer/components/editorial";
-import {
-  ChartIcon,
-  type IconProps,
-  InboxIcon,
-  PullRequestIcon,
-  RepositoryIcon,
-  SessionsIcon,
-  SettingsIcon,
-  SparkleIcon,
-  TimelineIcon,
-} from "@baum/viewer/components/icons";
 import type { ViewerLinkProps } from "@baum/viewer/navigation";
 import { appURL } from "./api";
+import { PAGES, type Page } from "./pages";
 import { PlanUsageRail } from "./plan-usage";
-
-type Page =
-  | "inbox"
-  | "pulls"
-  | "timeline"
-  | "sessions"
-  | "analytics"
-  | "jobs"
-  | "repositories"
-  | "settings";
+import { pageKeyLabel, pageKeyShortcut } from "./shortcuts";
 
 /** The application chrome, after the hosted sidebar: the mark, the sections
  *  and where the work happens, standing on the sand canvas beside the page's
  *  panel, with what is left of the agents' plans above the foot. Below `lg`
- *  it folds to its glyphs. */
+ *  it folds to its glyphs. Each section's key shows beside it while Alt is
+ *  held, like every key hint. */
 export function Sidebar({
   page,
   inbox,
@@ -49,92 +31,39 @@ export function Sidebar({
   problems: number;
   Link: ComponentType<ViewerLinkProps>;
 }) {
-  type Item = {
-    page: Page;
-    label: string;
-    href: string;
-    icon: ComponentType<IconProps>;
-    badge?: ReactNode;
-    tone?: "warn" | "caution";
-  };
-  const main: Item[] = [
-    {
-      page: "inbox",
-      label: "Inbox",
-      href: appURL(),
-      icon: InboxIcon,
-      badge: inbox > 0 ? inbox : null,
-    },
-    {
-      page: "pulls",
-      label: "Pull requests",
-      href: appURL("?page=pulls"),
-      icon: PullRequestIcon,
-    },
-    {
-      page: "timeline",
-      label: "Timeline",
-      href: appURL("?page=timeline"),
-      icon: TimelineIcon,
-    },
-    {
-      page: "sessions",
-      label: "Sessions",
-      href: appURL("?page=sessions"),
-      icon: SessionsIcon,
+  const badges: Partial<Record<Page, { badge: ReactNode; tone?: "warn" | "caution" }>> = {
+    inbox: { badge: inbox > 0 ? inbox : null },
+    sessions: {
       badge: needsYou > 0 ? needsYou : runningSessions > 0 ? runningSessions : null,
       tone: needsYou > 0 ? "caution" : undefined,
     },
-    {
-      page: "analytics",
-      label: "Analytics",
-      href: appURL("?page=analytics"),
-      icon: ChartIcon,
-    },
-    {
-      page: "repositories",
-      label: "Repositories",
-      href: appURL("?page=repositories"),
-      icon: RepositoryIcon,
-    },
-  ];
-  // Jobs and settings are looked at now and then, so they sit at the foot.
-  const secondary: Item[] = [
-    {
-      page: "jobs",
-      label: "Jobs",
-      href: appURL("?page=jobs"),
-      icon: SparkleIcon,
-      badge: activeJobs > 0 ? activeJobs : null,
-    },
-    {
-      page: "settings",
-      label: "Settings",
-      href: appURL("?page=settings"),
-      icon: SettingsIcon,
-      badge: problems > 0 ? problems : null,
-    },
-  ];
-  const link = ({ page: target, label, href, icon: Icon, badge, tone }: Item) => (
-    <Link
-      key={target}
-      href={href}
-      title={label}
-      aria-current={page === target ? "page" : undefined}
-      className="local-rail-link"
-    >
-      <Icon size={18} className="local-rail-glyph" />
-      <span className="local-rail-label">{label}</span>
-      {badge ? (
-        <span
-          aria-hidden="true"
-          className={`local-rail-badge ${target === "settings" ? "warn" : (tone ?? "")}`.trim()}
-        >
-          {badge}
-        </span>
-      ) : null}
-    </Link>
-  );
+    jobs: { badge: activeJobs > 0 ? activeJobs : null },
+    settings: { badge: problems > 0 ? problems : null, tone: "warn" },
+  };
+  const link = ({ page: target, label, href, icon: Icon }: (typeof PAGES)[number]) => {
+    const { badge, tone } = badges[target] ?? {};
+    return (
+      <Link
+        key={target}
+        href={href()}
+        title={`${label} (${pageKeyLabel(target)})`}
+        aria-current={page === target ? "page" : undefined}
+        aria-keyshortcuts={pageKeyShortcut(target)}
+        className="local-rail-link"
+      >
+        <Icon size={18} className="local-rail-glyph" />
+        <span className="local-rail-label">{label}</span>
+        {badge ? (
+          <span aria-hidden="true" className={`local-rail-badge ${tone ?? ""}`.trim()}>
+            {badge}
+          </span>
+        ) : null}
+        <kbd aria-hidden="true" className="key-hint local-rail-key">
+          {pageKeyLabel(target)}
+        </kbd>
+      </Link>
+    );
+  };
   return (
     <aside className="local-rail">
       <Link href={appURL()} className="local-rail-mark" title="Inbox">
@@ -142,12 +71,12 @@ export function Sidebar({
         <Wordmark size="sidebar" className="local-rail-label" />
       </Link>
       <nav aria-label="Main" className="local-rail-nav">
-        {main.map(link)}
+        {PAGES.filter((item) => !item.foot).map(link)}
       </nav>
       <div className="local-rail-foot">
         <PlanUsageRail />
         <nav aria-label="More" className="local-rail-nav">
-          {secondary.map(link)}
+          {PAGES.filter((item) => item.foot).map(link)}
         </nav>
       </div>
     </aside>

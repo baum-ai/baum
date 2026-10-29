@@ -20,9 +20,9 @@ type PullRequestMerger interface {
 }
 
 // MergeHandler serves /api/prs/merge-options and /api/prs/merge for picked
-// repositories only. refresh re-reads the repository's pull requests after a
-// merge so the inbox drops it; its failure never turns a merge into an error.
-func MergeHandler(registry *repos.Registry, merger PullRequestMerger, refresh func(context.Context, github.Repository), changed func()) http.Handler {
+// repositories only. merged records a merge GitHub accepted, so the inbox
+// shows it merged at once; its failure never turns a merge into an error.
+func MergeHandler(registry *repos.Registry, merger PullRequestMerger, merged func(ctx context.Context, repository github.Repository, number int, head string), changed func()) http.Handler {
 	picked := func(w http.ResponseWriter, r *http.Request, name string) (github.Repository, bool) {
 		name, err := pickedRepository(r.Context(), registry, name)
 		if err == nil {
@@ -80,8 +80,8 @@ func MergeHandler(registry *repos.Registry, merger PullRequestMerger, refresh fu
 			mergeFailure(w, err)
 			return
 		}
-		if refresh != nil {
-			refresh(r.Context(), repo)
+		if merged != nil {
+			merged(r.Context(), repo, body.PR, body.HeadSHA)
 		}
 		if changed != nil {
 			changed()

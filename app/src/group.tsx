@@ -7,7 +7,7 @@ import {
   useState,
   type FormEvent,
 } from "react";
-import { ReviewViewer } from "@baum/viewer/components/review-viewer";
+import { ReviewViewer, type ReviewSteps } from "@baum/viewer/components/review-viewer";
 import { Alert, Badge, Button, LiveDot } from "@baum/viewer/components/ui";
 import { useHistoryView } from "@baum/viewer/use-review-version";
 import { ViewerLink, useUrlState } from "@baum/viewer/navigation";
@@ -34,6 +34,7 @@ import { PullRequestState } from "./inbox";
 import { CloneActions } from "./repositories";
 import { CancelJob, GenerationOutcome, ReviewJob } from "./review";
 import { Notice, PageBar } from "./shell";
+import { useShortcuts } from "./shortcuts";
 import { LoadingStatus } from "./nine-dots";
 
 const errorText = (error: unknown) =>
@@ -413,6 +414,20 @@ export function GroupPage({
     </Button>
   );
   const saved = provenance.find((p) => p.version === doc?.review.version);
+  // As on a pull request's page: j and k step through the review, g
+  // generates it again.
+  const steps = useRef<ReviewSteps>(null);
+  useShortcuts((event) => {
+    const step =
+      event.key === "j" ? steps.current?.next : event.key === "k" ? steps.current?.previous : null;
+    if (step) {
+      event.preventDefault();
+      step.go();
+    } else if (event.key === "g" && !generating && !busy && clone) {
+      event.preventDefault();
+      void generate();
+    }
+  });
 
   return (
     <>
@@ -422,6 +437,7 @@ export function GroupPage({
         versions={provenance.map((p) => p.version).filter((v) => v !== doc?.review.version)}
         loadVersion={loadVersion}
         versionsFailed={historyFailed ? { retry: () => setRetry((n) => n + 1) } : undefined}
+        steps={steps}
         header={{
           heading: group.name,
           titleAside: <Badge size="compact">Review group</Badge>,

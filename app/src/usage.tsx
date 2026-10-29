@@ -28,7 +28,7 @@ export function UsageDetails({
   return (
     <div className="text-xs space-y-1">
       <p>
-        Charged-token budget counter {formatCount(charged)} · Recorded cost{" "}
+        Charged-token budget counter {formatCount(charged)} · At API prices{" "}
         {reason === "unpriced_calls" && amount != null ? "≥ " : ""}
         {cost(amount)}
       </p>
@@ -79,7 +79,8 @@ export function UsageDetails({
       )}
       {amount == null ? (
         <p>
-          Cost unknown: {reasons[reason ?? ""] ?? "Exact pricing is unavailable for this record."}
+          Cost at API prices unknown:{" "}
+          {reasons[reason ?? ""] ?? "Exact pricing is unavailable for this record."}
         </p>
       ) : reason === "unpriced_calls" ? (
         <p>{reasons.unpriced_calls}</p>
