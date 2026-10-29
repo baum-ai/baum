@@ -2,7 +2,9 @@ package decisionlog
 
 import (
 	"context"
+	"slices"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -81,6 +83,47 @@ func TestFeatureTextDebounceReuseAndPullSummaries(t *testing.T) {
 	}
 	report = f.summarize(FeatureOptions{Manual: true})
 	if report.Features[0].Outcome != FeatureSummarized || f.backend.calls["pull"] != 2 || f.backend.calls["text"] != 2 {
+		t.Fatalf("report = %+v, calls %v", report, f.backend.calls)
+	}
+}
+
+// Features' text is written concurrently: a second feature's calls do not
+// wait for the first's.
+func TestFeatureTextConcurrent(t *testing.T) {
+	f := newFeatureFixture(t)
+	f.clock.now = t0.Add(time.Hour)
+	f.pull(1, "Export widgets", t0.Add(time.Minute), "h1", []string{"export.go"}, "Adds a CSV export.")
+	f.pull(2, "Import widgets", t0.Add(2*time.Minute), "h2", []string{"import.go"}, "Adds a CSV import.")
+	f.assign(FeatureOptions{})
+	if f.featureOf(1) == f.featureOf(2) {
+		t.Fatal("one feature for both pull requests")
+	}
+	// The first two calls return only once both started, which one feature
+	// at a time never does.
+	var arrived atomic.Int32
+	together := make(chan struct{})
+	f.backend.wait = func() {
+		switch arrived.Add(1) {
+		case 1:
+			select {
+			case <-together:
+			case <-time.After(5 * time.Second):
+				t.Error("the features' calls ran one after another")
+			}
+		case 2:
+			close(together)
+		}
+	}
+	report := f.summarize(FeatureOptions{Manual: true})
+	var pulls []int
+	for _, out := range report.Features {
+		if out.Outcome != FeatureSummarized {
+			t.Fatalf("report = %+v", report)
+		}
+		pulls = append(pulls, out.PullRequests...)
+	}
+	slices.Sort(pulls)
+	if !slices.Equal(pulls, []int{1, 2}) || f.backend.calls["text"] != 2 || f.backend.calls["pull"] != 2 {
 		t.Fatalf("report = %+v, calls %v", report, f.backend.calls)
 	}
 }

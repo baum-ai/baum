@@ -2094,7 +2094,8 @@ optional non-rate team or permission failures keep their fields unknown.
 Snapshots and minimal typed response fields are atomically replaced in private
 cache files, partitioned by host/credential fingerprint/repository. The index
 consumes these snapshots; missing PRs in an open-only snapshot are never treated
-as closed. Each pull keeps its head branch (`head_ref`). Old cache formats drop
+as closed. Each pull keeps its head and base branches (`head_ref`,
+`base_ref`). Old cache formats drop
 conditional REST responses once so newly retained fields can be populated.
 `Service.PollNow` skips the next deadline for local triggers, while honoring both
 shared rate budgets. `GET /api/prs` lists every picked repository, and
@@ -2263,13 +2264,14 @@ isolation as a confirmed one, and refuses for good (`NotAutomaticError`) what
 a person would have to confirm: a fork or an author without known write
 access, and a draft. A model without a price, cursor-agent included, runs
 automatically like any other. Under the queue mutex
-it refuses with `ErrRestarting` while draining, `ErrBusy` while the PR has a
-queued or running job (it never joins or supersedes one), `ErrDuplicate` when
-any job, manual or automatic, already exists for that head (except a single
+it refuses with `ErrRestarting` while draining, `ErrBusy` while the PR (or the
+group) has a queued or running job (it never joins or supersedes one),
+`ErrDuplicate` when any job, manual or automatic, already exists for that head
+(a group's: its member heads) (except a single
 automatic job a daemon stop or restart interrupted, which `Interrupted` lists
 and which may run once more; failed and cancelled jobs are final). Jobs
 record `automatic` and `trigger` (`new_head`, `review_requested`,
-`ready_for_review`, `retry`). A job an older baum cancelled with reason
+`ready_for_review`, `retry`, `stack_reviewed`). A job an older baum cancelled with reason
 `daily_cap`, for the spending cap baum no longer has, loads as an ordinary
 cancelled job. The executor's recheck of the confirmed inputs, before any model call, also refuses an automatic job whose
 pull request GitHub now reports as a draft (the queue marks its inputs
@@ -2317,9 +2319,19 @@ metadata, risk, the members that version covered and whether it is outdated
 (other members, or a member head in the review index that differs from the one
 reviewed), and a group's versions, documents and patches.
 
-A job item names `{clone, group}` with `pr` 0, so automatic scheduling,
-duplicate-head checks and notices, all keyed by pull request, never match a
-group job. Preparation reads every member from GitHub like a pull request
+Stacked pull requests are grouped by default. After every complete discovery
+snapshot `localApplication` passes the repository's open pull requests to
+`Store.SyncStacks`. It plans stacks with the hosted platform's rules
+(`stacks.Plan`: pull requests by one author, each based on another's head
+branch, as chains or trees; see `stacks/README.md`) over the live stack groups
+and creates, updates or dissolves stack groups (`stack` true) of 2 to 8
+members. Pull requests in a person's group, or in a stack group the person
+deleted, take no part, and a person's rename or member change makes a stack
+group theirs.
+
+A job item names `{clone, group}` with `pr` 0, so pull request scheduling and
+notices, keyed by pull request, never match a group job; the queue's busy and
+duplicate checks key a group job by group ID and member heads. Preparation reads every member from GitHub like a pull request
 job (`Prepared.Members` holds each member's head, which the confirmation
 covers) and needs a saved review of each member in the clone's store, or
 answers `409 {"members_need_reviews": [...]}`. Execution passes
@@ -2723,10 +2735,27 @@ it and `Queue.SubmitAutomatic` decides each job.
   cancelled runs are never retried; the next push triggers as usual. A run
   interrupted before a repository's baseline (turned off, then on again) is not
   retried: the baseline marks its heads as already retried.
+- **Stack groups.** After the pull requests, each pass looks at the
+  repository's stack groups (`Scheduler.Groups`). Once every member is
+  recorded, eligible and has no pending head, and every member's saved
+  review is of its current head, it queues the group's review (trigger
+  `stack_reviewed`) with those member heads, unless the group's latest
+  version already read every current member at its current head (a merged
+  member alone calls for none). Automatic generation must have handled at
+  least one member's current head (its `done`): a stack reviewed before the
+  baseline, or only by hand, is not caught up. Each set of member heads is
+  submitted once (`done`), with the pull requests' retry rules and triggers:
+  failures to prepare back off and give up after five attempts, an
+  interrupted run is retried once (`retry`), and a job stopped before it
+  started is submitted again (`ready_for_review` after a draft). A
+  member GitHub shows moved on or turned draft before discovery does is
+  retried a minute later. Groups a person made are never generated
+  automatically.
 - **State.** `automatic.json` in the job state directory (0700) holds each
   enabled repository's PRs (recorded head, request and draft flags,
   eligibility, pending head and trigger, last head handled, retried head,
-  last stopped job put back) and its notice. A `paused_until` and
+  last stopped job put back), its stack groups (member heads handled,
+  attempts, retried heads, last stopped job put back, trigger) and its notice. A `paused_until` and
   `paused_cap` an older baum saved for its daily cap are ignored on load, and
   its `daily_cap` notice is dropped. It is rewritten
   atomically on every change, so a restart neither forgets pending heads nor

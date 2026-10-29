@@ -31,6 +31,10 @@ type PullRequest struct {
 	// branch to the pull request. It is empty in a snapshot cached before it
 	// was kept, until the next poll.
 	HeadRef string `json:"head_ref"`
+	// BaseRef is the base branch's name; a pull request whose base is
+	// another open pull request's head branch is stacked on it. Empty in a
+	// snapshot cached before it was kept, until the next poll.
+	BaseRef string `json:"base_ref"`
 	Title   string `json:"title"`
 	URL     string `json:"url"`
 	Author  string `json:"author"`
@@ -131,9 +135,9 @@ const (
 )
 
 // cacheFormat changes when the minimal responses keep more fields: 1 added
-// the pull requests' head branch. A 304 answer reuses the stored body, which
-// would otherwise never gain the new fields.
-const cacheFormat = 1
+// the pull requests' head branch, 2 their base branch. A 304 answer reuses
+// the stored body, which would otherwise never gain the new fields.
+const cacheFormat = 2
 
 // Budget files are shared by service instances, alongside repository caches.
 // Serialize in-process polls so a newly exhausted budget is visible before the
@@ -369,6 +373,7 @@ type apiPR struct {
 		} `json:"repo"`
 	} `json:"head"`
 	Base struct {
+		Ref  string `json:"ref"`
 		Repo struct {
 			ID       int64  `json:"id"`
 			FullName string `json:"full_name"`
@@ -564,7 +569,7 @@ func (p *poll) discover(ctx context.Context, repository github.Repository) (Snap
 		if pr.Number <= 0 || pr.Head.SHA == "" {
 			return snapshot, errors.New("incomplete GitHub pull request")
 		}
-		item := PullRequest{Repository: repository.String(), Number: pr.Number, Title: pr.Title, URL: "https://" + repository.Host + "/" + repository.Owner + "/" + repository.Name + "/pull/" + strconv.Itoa(pr.Number), HeadSHA: pr.Head.SHA, HeadRef: pr.Head.Ref, Author: pr.User.Login, AuthorBot: pr.User.Typename == "Bot", State: "OPEN", Draft: pr.Draft, Fork: pr.Head.Repo == nil || pr.Base.Repo.ID == 0 || pr.Head.Repo.ID != pr.Base.Repo.ID || !strings.EqualFold(pr.Head.Repo.FullName, pr.Base.Repo.FullName), AuthoredByMe: strings.EqualFold(pr.User.Login, viewer.Login), TeamMembershipKnown: teamErr == nil}
+		item := PullRequest{Repository: repository.String(), Number: pr.Number, Title: pr.Title, URL: "https://" + repository.Host + "/" + repository.Owner + "/" + repository.Name + "/pull/" + strconv.Itoa(pr.Number), HeadSHA: pr.Head.SHA, HeadRef: pr.Head.Ref, BaseRef: pr.Base.Ref, Author: pr.User.Login, AuthorBot: pr.User.Typename == "Bot", State: "OPEN", Draft: pr.Draft, Fork: pr.Head.Repo == nil || pr.Base.Repo.ID == 0 || pr.Head.Repo.ID != pr.Base.Repo.ID || !strings.EqualFold(pr.Head.Repo.FullName, pr.Base.Repo.FullName), AuthoredByMe: strings.EqualFold(pr.User.Login, viewer.Login), TeamMembershipKnown: teamErr == nil}
 		for _, user := range pr.RequestedReviewers {
 			if strings.EqualFold(user.Login, viewer.Login) {
 				item.ReviewRequestedFromMe = true

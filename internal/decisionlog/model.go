@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"sync"
 	"time"
 
 	"github.com/baum-ai/baum/agent"
@@ -282,6 +283,8 @@ type caller struct {
 // added to its version's spend, with its calls whose cost is unknown
 // counted on the version.
 type buildSpend struct {
+	// mu guards the counts: the text stage calls concurrently.
+	mu       sync.Mutex
 	version  int64
 	run      float64
 	calls    int
@@ -292,6 +295,8 @@ type buildSpend struct {
 // the version could not record is logged; the call and its ledger row
 // stand.
 func (b *buildSpend) add(ctx context.Context, s *Store, log *slog.Logger, cost *float64) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
 	b.calls++
 	query, args := `UPDATE feature_version SET unpriced_calls=unpriced_calls+1 WHERE id=?`, []any{b.version}
 	if cost == nil {
