@@ -48,7 +48,7 @@ const (
 type ConsolidateReport struct {
 	Repository string `json:"repository"`
 	Outcome    string `json:"outcome"`
-	// Stopped is the reason a call was not made (a backend, price or cap
+	// Stopped is the reason a call was not made (a backend or price
 	// reason); what was called is still written.
 	Stopped  string `json:"stopped,omitempty"`
 	Features int    `json:"features"`

@@ -373,8 +373,10 @@ internal features build`.
   request a sync saved with a later update; a listing that stops at
   its bound, leaving out the least recently updated pull requests, is
   reported (`history_truncated`) and not retried. The build then reads the
-  paths of every pull request due, as a sync does, and links the commits it
-  read to this machine's sessions, before it places any.
+  paths of every pull request due, as a sync does, and, before it places
+  any, links to this machine's sessions those of the commits it read that
+  were made in the last 7 days (`FeatureLookback`), as a sync links its
+  fresh commits; older commits are not linked.
 - **Estimate.** The pull requests left to place and a resumed version's
   features whose text is behind (with their pull requests' summaries still
   to write) are counted, and their calls priced from their sizes at the
