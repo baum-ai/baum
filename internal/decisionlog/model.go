@@ -4,6 +4,8 @@ import (
 	"cmp"
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"time"
@@ -128,6 +130,8 @@ type completerModel struct {
 	detail     string
 	// attempt names the ledger row, for the log.
 	attempt Attempt
+	// timeout bounds each call; zero is CallTimeout.
+	timeout time.Duration
 }
 
 func (m *completerModel) Complete(ctx context.Context, req decisions.ModelRequest) (decisions.ModelResponse, error) {
@@ -136,8 +140,15 @@ func (m *completerModel) Complete(ctx context.Context, req decisions.ModelReques
 		return decisions.ModelResponse{}, err
 	}
 	m.called, m.user = true, req.User
-	out, err := m.completer.Complete(ctx, agent.CompleteRequest{System: req.System, User: req.User, Schema: schema,
+	timeout := cmp.Or(m.timeout, CallTimeout)
+	call, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	out, err := m.completer.Complete(call, agent.CompleteRequest{System: req.System, User: req.User, Schema: schema,
 		MaxOutputTokens: int(req.MaxOutputTokens)})
+	if err != nil && ctx.Err() == nil && errors.Is(call.Err(), context.DeadlineExceeded) {
+		// The call's own bound, not the daemon stopping: a failure.
+		err = fmt.Errorf("%w: no reply within %s: %w", context.DeadlineExceeded, timeout, err)
+	}
 	m.model, m.usage, m.raw, m.rejections, m.detail = out.Model, out.Usage, out.Document, out.Rejections, out.RejectionDetail
 	billed := func(err error) error {
 		return &decisions.BilledError{Model: out.Model, Usage: decisionUsage(out.Usage), Err: err}
@@ -218,6 +229,8 @@ type caller struct {
 	build *buildSpend
 	// begun is called once an attempt is recorded as pending.
 	begun func()
+	// timeout bounds each call; zero is CallTimeout.
+	timeout time.Duration
 }
 
 // buildSpend is a first build's run's calls and known spend, which are also
@@ -312,7 +325,7 @@ func (c caller) begin(ctx context.Context, p planned, a Attempt) (*completerMode
 	if err == nil && c.begun != nil {
 		c.begun()
 	}
-	return &completerModel{completer: completer, redactor: c.redactor, attempt: a}, id, "", err
+	return &completerModel{completer: completer, redactor: c.redactor, attempt: a, timeout: c.timeout}, id, "", err
 }
 
 // finish settles the attempt once its call returned: abandoned when the

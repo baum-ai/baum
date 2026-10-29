@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/baum-ai/baum/agent"
+	"github.com/baum-ai/baum/internal/github"
 )
 
 // batchReply starts one feature with the batch's first item and joins the
@@ -213,5 +214,43 @@ func TestGatedBuildStopsWhenTurnedOffAndResumes(t *testing.T) {
 	}
 	if state, stopped := f.versionState(report.Version); state != VersionCurrent || stopped != "" {
 		t.Fatalf("version %s, stopped %q", state, stopped)
+	}
+}
+
+// A pull request's new title, synced while a build runs, marks its feature
+// in the building version as well as in the current one.
+func TestSavePullsMarksTheBuildingVersionsFeature(t *testing.T) {
+	ctx := context.Background()
+	s := openStore(t, &clock{t0})
+	pull := github.ListedPull{Number: 1, Title: "Old", State: "open", HeadSHA: "h1", BaseSHA: "b", CreatedAt: t0, UpdatedAt: t0}
+	if err := s.SavePulls(ctx, "o/r", []github.ListedPull{pull}, "", time.Time{}); err != nil {
+		t.Fatal(err)
+	}
+	for version, state := range map[int64]string{1: VersionCurrent, 2: VersionBuilding, 3: VersionRetired} {
+		id := fmt.Sprintf("f%d", version)
+		for _, insert := range []struct {
+			query string
+			args  []any
+		}{
+			{`INSERT INTO feature_version(id, repository, state, created_at) VALUES (?, 'o/r', ?, 0)`, []any{version, state}},
+			{`INSERT INTO feature(id, version_id, repository, membership_version, summarized_version, changed_at, created_at, updated_at)
+VALUES (?, ?, 'o/r', 1, 1, 0, 0, 0)`, []any{id, version}},
+			{`INSERT INTO feature_pull(version_id, repository, number, feature_id, assigned_by, assigned_at) VALUES (?, 'o/r', 1, ?, 'model', 0)`,
+				[]any{version, id}},
+		} {
+			if _, err := s.db.Exec(insert.query, insert.args...); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	pull.Title, pull.UpdatedAt = "New", t0.Add(time.Minute)
+	if err := s.SavePulls(ctx, "o/r", []github.ListedPull{pull}, "", time.Time{}); err != nil {
+		t.Fatal(err)
+	}
+	for id, want := range map[string]int{"f1": 2, "f2": 2, "f3": 1} {
+		var membership int
+		if err := s.db.QueryRow(`SELECT membership_version FROM feature WHERE id=?`, id).Scan(&membership); err != nil || membership != want {
+			t.Errorf("%s: membership version %d, want %d (%v)", id, membership, want, err)
+		}
 	}
 }

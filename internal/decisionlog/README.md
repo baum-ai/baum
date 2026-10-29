@@ -85,9 +85,12 @@ not a failure.
    normally ends after one call and may retry a rejected reply once; or one
    `codex exec` turn with its shell tools off, normally one request (a call to
    a tool Codex still offers, such as its patch or plan tool, makes another
-   within the turn). The attempt is settled with its cost from the reported
-   usage, priced as reviews price theirs (`pricing.List.OutcomeCost`): when
-   any part of it is unknown (a run cut short, a speed or 1-hour cache-write
+   within the turn). The completion, a retry included, has 10 minutes, the
+   default `pass_timeout` of a review pass: a backend still running then is
+   stopped and the attempt fails (reason `timeout`), so a hung backend does
+   not hold up the sessions queued behind it. The attempt is settled with its
+   cost from the reported usage, priced as reviews price theirs
+   (`pricing.List.OutcomeCost`): when any part of it is unknown (a run cut short, a speed or 1-hour cache-write
    split not reported, as Codex never reports its speed, or several calls
    whose prompt sizes may straddle a long-prompt tier) the cost is unknown,
    not estimated. It is also settled with how many replies the harness
@@ -207,9 +210,9 @@ session with no capture row has none.
 Placement, feature text and consolidation call as capture does (steps 6 to
 8 above): the same backend, model, reservation (the request's byte bound and
 the call's reply bound: 4,096 tokens for a placement, 32,768 for a batch,
-merge or split, 8,192 for a text or pull request summary) and ledger, each
-attempt recorded with its stage (`feature_assign`, `feature_summary`,
-`pr_summary` or `feature_consolidate`) and item. Rejected
+merge or split, 8,192 for a text or pull request summary), 10-minute bound
+and ledger, each attempt recorded with its stage (`feature_assign`,
+`feature_summary`, `pr_summary` or `feature_consolidate`) and item. Rejected
 replies and a ledger that cannot be written are handled as capture's. The
 preferences and the repository's settings are read again before every call,
 so a repository turned off makes no further call. A repository turned off,
@@ -270,7 +273,7 @@ A placement marks every feature it changes: the one joined, the one left
 and the features of the pull request's linked sessions; an identical one
 marks none. Also marked: a session's features when its decisions are saved;
 a feature pull request's feature when its title, description or state
-changes, and, with the features of the sessions linked to its old and new
+changes (in the current version and in a building one), and, with the features of the sessions linked to its old and new
 commits, when its commits or paths change; and when the sessions linked to
 a commit change, the features holding a pull request with it and the
 features of those sessions (an unchanged re-link marks none). Marking
