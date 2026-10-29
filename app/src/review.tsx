@@ -31,10 +31,12 @@ import {
   jobReasonText,
   liveFor,
   fixLabel,
+  jobHref,
+  navigate,
   type LiveSession,
   type Provenance,
 } from "./api";
-import { FixNotice, type FixState } from "./fix";
+import { FixNotice, FixRuns, type FixState } from "./fix";
 import { CloneActions } from "./repositories";
 import { Notice } from "./shell";
 import { LiveSessions } from "./sessions";
@@ -103,6 +105,7 @@ export function LocalReview({
   fix,
   fixState = { starting: false, error: "" },
   fixJob,
+  fixRuns = [],
 }: {
   entry: Entry;
   clone: string;
@@ -122,6 +125,8 @@ export function LocalReview({
   fixState?: FixState;
   /** The pull request's latest fix job. */
   fixJob?: Job;
+  /** Every fix job of the pull request, newest first. */
+  fixRuns?: Job[];
 }) {
   const pr = entry.pull_request;
   const url = useUrlState();
@@ -142,6 +147,9 @@ export function LocalReview({
   // one it started from, or the commit it pushed.
   const showFix =
     !!fixJob && (fixing || fixJob.head_sha === pr.head_sha || fixJob.commit === pr.head_sha);
+  // The runs the notice does not show stay one fold away, transcripts and all.
+  const earlierRuns = fixRuns.filter((run) => !showFix || run.id !== fixJob?.id);
+  const watchable = [fixJob, ...fixRuns].find((run) => run?.has_transcript);
   const running = liveFor(live, pr);
   // A session that ends is read from disk like any other: reload the list
   // when one leaves the live section.
@@ -194,6 +202,9 @@ export function LocalReview({
     } else if (event.key === "g" && !generating && !entry.needs_clone) {
       event.preventDefault();
       generate();
+    } else if (event.key === "t" && watchable) {
+      event.preventDefault();
+      navigate(jobHref(watchable));
     }
   });
   const loadVersion = useCallback(
@@ -450,6 +461,7 @@ export function LocalReview({
                 {showFix && fixJob ? (
                   <FixNotice key={fixJob.id} job={fixJob} changed={changed} />
                 ) : null}
+                <FixRuns runs={earlierRuns} earlier={showFix} />
                 <LiveSessions sessions={running} Link={ViewerLink} />
                 {entry.needs_clone && doc ? (
                   <Notice>

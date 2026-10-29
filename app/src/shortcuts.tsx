@@ -11,7 +11,11 @@ export type InboxAction =
   | "merge"
   | "fix"
   | "generate"
+  | "transcript"
   | "refresh";
+
+/** The fix transcript key's label: `t` wherever a pull request is in hand. */
+const TRANSCRIPT_LABEL = "Watch the fix agent, or read its last transcript";
 
 /** The inbox's keys, the one table both the key handling and the shortcuts
  *  sheet read, so the sheet lists exactly the keys that work. */
@@ -24,6 +28,7 @@ export const INBOX_SHORTCUTS: { keys: string[]; action: InboxAction; label: stri
   { keys: ["m"], action: "merge", label: "Merge, where offered" },
   { keys: ["f"], action: "fix", label: "Fix, where offered" },
   { keys: ["g"], action: "generate", label: "Generate the review" },
+  { keys: ["t"], action: "transcript", label: TRANSCRIPT_LABEL },
   { keys: ["r"], action: "refresh", label: "Refresh from GitHub" },
 ];
 /** Pull requests' views (For you, Requested, Mine…), one either way. */
@@ -35,6 +40,7 @@ const UP_NEXT_SHORTCUTS = [
   { keys: ["Enter"], label: "Open the pull request" },
   { keys: ["m"], label: "Merge, where offered" },
   { keys: ["f"], label: "Fix, where offered" },
+  { keys: ["t"], label: TRANSCRIPT_LABEL },
   { keys: ["s"], label: "Snooze, then 1–4 to choose until when" },
   { keys: ["u"], label: "Undo a snooze" },
 ];
@@ -394,6 +400,7 @@ export function ShortcutsSheet({
         { keys: ["m"], label: "Merge, where offered" },
         { keys: ["f"], label: "Fix, where offered" },
         { keys: ["g"], label: "Generate or regenerate the review" },
+        { keys: ["t"], label: TRANSCRIPT_LABEL },
         back,
       ],
     },
@@ -408,7 +415,7 @@ export function ShortcutsSheet({
       title: "Jobs",
       rows: [
         ...LIST_SHORTCUTS,
-        { keys: ["t"], label: "Watch the agent or read its transcript, where there is one" },
+        { keys: ["t"], label: "Watch the fix agent or read its transcript, where there is one" },
       ],
     },
     {

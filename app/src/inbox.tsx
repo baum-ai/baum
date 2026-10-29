@@ -36,9 +36,12 @@ import {
   fixLabel,
   groupJob,
   isActiveJob,
+  jobHref,
   liveFor,
+  navigate,
   rowKey,
   sameRepository,
+  watchableFix,
   type Entry,
   type Job,
   type LiveSession,
@@ -311,6 +314,13 @@ export function Inbox({
         event.preventDefault();
         generate(entry);
         return;
+      case "transcript": {
+        const run = entry && watchableFix(entry, jobs);
+        if (!run) return;
+        event.preventDefault();
+        navigate(jobHref(run));
+        return;
+      }
     }
   });
   const toggle = (key: string, checked: boolean) =>

@@ -163,6 +163,7 @@ export type Job = {
   fix?: FixInputs;
   /** The fix agent's transcript can be read from `api/jobs/{id}/transcript`. */
   has_transcript?: boolean;
+  created_at?: string;
   head_sha?: string;
   backend?: string;
   model?: string;
@@ -527,6 +528,17 @@ export function appBase(pathname = location.pathname): string {
 export function appURL(path = ""): string {
   return appBase() + path;
 }
+/** Opens one of the app's own addresses in place, as a link in it does. */
+export function navigate(href: string) {
+  history.pushState(null, "", href);
+  dispatchEvent(new PopStateEvent("popstate"));
+}
+/** A fix job's transcript when it has one, else the job in the list. */
+export function jobHref(job: Job) {
+  return job.has_transcript
+    ? appURL(`?page=jobs&job=${encodeURIComponent(job.id)}`)
+    : appURL(`?page=jobs#job-${encodeURIComponent(job.id)}`);
+}
 /** Where a pull request or group page goes back to: Pull requests, with its
  *  view, when the page was opened from there, else the Inbox. `prefix` starts
  *  the query of a link that should go back to the same place. */
@@ -707,12 +719,24 @@ export function reviewJob(entry: Entry, jobs: Job[]): Job | undefined {
 export function fixJob(entry: Entry, jobs: Job[]): Job | undefined {
   return prJob(entry, jobs, (job) => job.kind === "fix");
 }
-function prJob(entry: Entry, jobs: Job[], kind: (job: Job) => boolean): Job | undefined {
-  const matches = (job: Job) =>
+/** Every fix job of the PR, newest first. */
+export function fixJobs(entry: Entry, jobs: Job[]): Job[] {
+  return jobs.filter((job) => job.kind === "fix" && ofPR(entry, job)).reverse();
+}
+/** The fix whose transcript `t` opens: the running one, else the latest that
+ *  kept a transcript. */
+export function watchableFix(entry: Entry, jobs: Job[]): Job | undefined {
+  return [fixJob(entry, jobs), ...fixJobs(entry, jobs)].find((job) => job?.has_transcript);
+}
+function ofPR(entry: Entry, job: Job) {
+  return (
     !job.group &&
-    kind(job) &&
     job.pr === entry.pull_request.number &&
-    job.repository.toLowerCase() === entry.pull_request.repository.toLowerCase();
+    job.repository.toLowerCase() === entry.pull_request.repository.toLowerCase()
+  );
+}
+function prJob(entry: Entry, jobs: Job[], kind: (job: Job) => boolean): Job | undefined {
+  const matches = (job: Job) => kind(job) && ofPR(entry, job);
   return jobs.findLast((job) => matches(job) && isActiveJob(job)) ?? jobs.findLast(matches);
 }
 /** The group's latest active job, else its latest job. */

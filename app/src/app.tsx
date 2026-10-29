@@ -49,8 +49,10 @@ import {
   request,
   reviewJob,
   fixJob,
+  fixJobs,
   fixName,
   isActiveJob,
+  navigate,
   startFix,
   filtered,
   rowKey,
@@ -106,11 +108,6 @@ const VIEWS = [
   ["no_review", "Not reviewed"],
   ["history", "Saved history"],
 ] as const;
-/** Opens one of the app's own addresses in place, as a link in it does. */
-function navigate(href: string) {
-  history.pushState(null, "", href);
-  dispatchEvent(new PopStateEvent("popstate"));
-}
 function LocalLink({ href, onClick, ...props }: ViewerLinkProps) {
   return (
     <a
@@ -831,6 +828,7 @@ function Workspace({ url }: { url: UrlState }) {
               fix={cloneFor(selectedEntry) ? () => void fix(selectedEntry) : undefined}
               fixState={fixState(selectedEntry)}
               fixJob={fixJob(selectedEntry, jobs)}
+              fixRuns={fixJobs(selectedEntry, jobs)}
             />
           ) : page !== "pulls" ? (
             <UpNextPage

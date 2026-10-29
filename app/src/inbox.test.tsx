@@ -2,7 +2,7 @@ import { act, useState, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { Inbox } from "./inbox";
-import type { Entry } from "./api";
+import type { Entry, Job } from "./api";
 
 const entry = (number: number, merge: Entry["merge"] = "ready"): Entry => ({
   pull_request: {
@@ -170,6 +170,42 @@ it("opens the focused row's peek with Space", async () => {
   expect(panels[0]!.getAttribute("aria-label")).toBe("Peek at #2");
   await press(" ");
   expect(node.querySelector(".inbox-peek-panel")).toBeNull();
+});
+
+it("opens the focused row's latest fix transcript with t", async () => {
+  const fix = (id: string, pr: number): Job => ({
+    id,
+    clone: "clone",
+    repository: "acme/demo",
+    pr,
+    state: "completed",
+    phase: "finished",
+    calls: 0,
+    tokens: 0,
+    repairs: 0,
+    actual_cost_usd: null,
+    kind: "fix",
+    has_transcript: true,
+  });
+  await act(async () =>
+    root.render(
+      <Inbox
+        rows={[entry(1), entry(2)]}
+        cloneFor={() => "clone"}
+        selection={new Set()}
+        setSelection={() => {}}
+        Link={Link}
+        jobs={[fix("fix-1", 2), fix("fix-2", 2)]}
+      />,
+    ),
+  );
+  // The first row has no fix: t does nothing.
+  await press("j");
+  await press("t");
+  expect(location.search).toBe("");
+  await press("j");
+  await press("t");
+  expect(location.search).toBe("?page=jobs&job=fix-2");
 });
 
 it("says why there is no review to peek at", async () => {
