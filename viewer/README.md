@@ -455,7 +455,8 @@ address.
   loads on scroll, the order (a ranked search reads as one list, best match
   first) and `reordered` (said at the end with `reorderedNote`), and
   `pending` to show it stale. The page asks `readDecision` and
-  `readFeature` for details, each once until `revision` changes, and
+  `readFeature` for details, each once until `revision` changes (an open
+  detail stays shown until the newer read answers), and
   `readPeople` for a tab's authors, keeping each tab's list. Decisions group
   by local day (`decisionSections`) and features by month and day of their
   last activity (`featureHeadings`, which skips a feature with none); on a

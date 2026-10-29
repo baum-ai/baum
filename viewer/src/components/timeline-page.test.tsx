@@ -3,8 +3,9 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 
-import type { DecisionSummary, FeatureSummary } from "../decision-log";
+import type { DecisionDetail, DecisionSummary, FeatureSummary } from "../decision-log";
 import { type UrlState, UrlStateProvider } from "../navigation";
+import type { DetailState } from "./decision-log";
 import { type TimelineList, TimelinePage, type TimelinePageProps } from "./timeline-page";
 
 declare global {
@@ -41,6 +42,8 @@ let writes: { search: string; replace?: boolean }[];
 
 beforeEach(() => {
   globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+  // The page brings an opened row into view, which jsdom does not draw.
+  Element.prototype.scrollIntoView ??= () => {};
   container = document.createElement("div");
   document.body.append(container);
   root = createRoot(container);
@@ -152,4 +155,57 @@ it("shows a list still being read, one that failed, and a failed older page with
   );
   act(() => button?.click());
   expect(loadMore).toHaveBeenCalledOnce();
+});
+
+/** The detail of `d1`, its rejected alternative saying which read it came
+ *  from. */
+function detailOf(alternative: string): DetailState {
+  const detail: DecisionDetail = {
+    session: {
+      id: "s1",
+      person: null,
+      vendor: "claude_code",
+      branch: "main",
+      started_at: null,
+      ended_at: null,
+    },
+    decisions: [
+      {
+        id: "d1",
+        turn: 3,
+        turns: [3],
+        decided_at: "2026-10-05T15:00:00",
+        who: "human",
+        category: "data_model",
+        summary: "Store per session",
+        rejected_alternative: alternative,
+        superseded: false,
+        files: [],
+      },
+    ],
+    turns: [],
+    prompts_withheld: false,
+    pull_requests: [],
+  };
+  return { status: "ready", detail };
+}
+
+it("keeps an open decision's detail shown while a newer revision reads it again", async () => {
+  search = new URLSearchParams("open=d1");
+  const pending: { answer?: (state: DetailState) => void } = {};
+  const readDecision = vi
+    .fn<TimelinePageProps<string>["readDecision"]>()
+    .mockResolvedValueOnce(detailOf("One row per pull request"))
+    .mockImplementationOnce(() => new Promise((resolve) => (pending.answer = resolve)));
+  const decisions = list([decision("d1", "2026-10-05T15:00:00", "Store per session")]);
+  await act(async () => draw({ readDecision, decisions, revision: 0 }));
+  expect(container.textContent).toContain("One row per pull request");
+
+  await act(async () => draw({ readDecision, decisions, revision: 1 }));
+  expect(readDecision).toHaveBeenCalledTimes(2);
+  expect(container.textContent).toContain("One row per pull request");
+  expect(container.textContent).not.toContain("Loading this decision");
+
+  await act(async () => pending.answer?.(detailOf("One row per pull request, then per session")));
+  expect(container.textContent).toContain("then per session");
 });
