@@ -339,7 +339,10 @@ also in. Colours are six palette names (`--inbox-*` in `src/style.css`, with
 dark variants).
 
 In the sidebar a chevron beside Inbox folds the inboxes nested under it
-(remembered in `localStorage`; hidden with the glyph-only rail). Each row links
+(remembered in `localStorage`; hidden with the glyph-only rail). The pages and
+inboxes scroll within the sidebar, so with many inboxes plan usage, Jobs and
+Settings stay in view; a row's menu is placed against the window, under its row
+or above it near the bottom, and closes when the sidebar scrolls. Each row links
 to `?inbox=<id>`, is the current page when selected (then Inbox is not), and
 shows a dot, the name and how many unsnoozed items match, none when 0. The `⋯`
 button opens a short list of buttons, focused on the first, to leave the inbox

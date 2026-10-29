@@ -1,4 +1,11 @@
-import { useEffect, useRef, useState, type ComponentType, type ReactNode } from "react";
+import {
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type ComponentType,
+  type ReactNode,
+} from "react";
 import { LogoMark, Wordmark } from "@baum/viewer/components/editorial";
 import type { ViewerLinkProps } from "@baum/viewer/navigation";
 import { appURL } from "./api";
@@ -108,7 +115,7 @@ export function Sidebar({
         <LogoMark size={24} />
         <Wordmark size="sidebar" className="local-rail-label" />
       </Link>
-      <nav aria-label="Main" className="local-rail-nav">
+      <nav aria-label="Main" className="local-rail-nav local-rail-main">
         {PAGES.filter((item) => !item.foot).map((item) =>
           item.page === "inbox" && inboxes && nested ? (
             <div key="inbox">
@@ -160,6 +167,7 @@ function InboxRows({
 }) {
   const [open, setOpen] = useState<string | null>(null);
   const menu = useRef<HTMLDivElement>(null);
+  const popup = useRef<HTMLDivElement>(null);
   // The `⋯` button of the row whose menu is open.
   const more = () => menu.current?.querySelector<HTMLElement>(".local-rail-more") ?? null;
   // The menu is a disclosure of plain buttons: it opens on the first, Esc and
@@ -169,6 +177,17 @@ function InboxRows({
     if (restoreFocus) more()?.focus();
     setOpen(null);
   };
+  // The menu is placed against the window, under its row or above it when
+  // the row is near the bottom, so the sidebar's scrolling list cannot clip it.
+  useLayoutEffect(() => {
+    const row = menu.current?.getBoundingClientRect();
+    const element = popup.current;
+    if (!open || !row || !element) return;
+    const height = element.offsetHeight;
+    const below = row.bottom + 2;
+    element.style.top = `${below + height > window.innerHeight - 8 ? Math.max(8, row.top - height - 2) : below}px`;
+    element.style.left = `${row.left + 8}px`;
+  }, [open]);
   useEffect(() => {
     if (!open) return;
     menu.current?.querySelector<HTMLElement>(".local-rail-menu button")?.focus();
@@ -185,11 +204,18 @@ function InboxRows({
       event.stopPropagation();
       close(true);
     };
+    // A placed menu would drift from its row as the sidebar scrolls or the
+    // window resizes, so either closes it.
+    const away = () => close(!!menu.current?.contains(document.activeElement));
     document.addEventListener("mousedown", outside);
     window.addEventListener("keydown", escape, true);
+    window.addEventListener("scroll", away, true);
+    window.addEventListener("resize", away);
     return () => {
       document.removeEventListener("mousedown", outside);
       window.removeEventListener("keydown", escape, true);
+      window.removeEventListener("scroll", away, true);
+      window.removeEventListener("resize", away);
     };
   }, [open]);
   // A deleted row takes its button with it: focus moves to its neighbour, or
@@ -243,7 +269,7 @@ function InboxRows({
               ⋯
             </button>
             {open === inbox.id ? (
-              <div className="local-rail-menu">
+              <div ref={popup} className="local-rail-menu">
                 <button
                   type="button"
                   onClick={() => {

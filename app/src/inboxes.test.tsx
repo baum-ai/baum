@@ -338,6 +338,17 @@ it("deletes an inbox with Undo", async () => {
   expect(node.querySelector(".inbox-toast")).toBeNull();
 });
 
+it("closes an inbox's menu when the sidebar scrolls, giving focus back to its button", async () => {
+  await render();
+  await click(more("Acme"));
+  expect(node.querySelector(".local-rail-menu")).not.toBeNull();
+  await act(async () => {
+    node.querySelector(".local-rail-main")!.dispatchEvent(new Event("scroll"));
+  });
+  expect(node.querySelector(".local-rail-menu")).toBeNull();
+  expect(document.activeElement).toBe(more("Acme"));
+});
+
 it("switches an inbox in and out of the badge, and closes its menu with Esc", async () => {
   await render();
   await click(node.querySelector('[aria-label="More for Merges"]'));

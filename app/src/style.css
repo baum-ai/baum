@@ -93,6 +93,15 @@ body {
   flex-direction: column;
   gap: 0.125rem;
 }
+/* The pages and the inboxes nested under Inbox scroll within the sidebar,
+   so however many inboxes there are, plan usage and the foot stay in view. */
+.local-rail-main {
+  flex: 0 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+}
 .local-rail-link {
   display: flex;
   align-items: center;
@@ -276,11 +285,13 @@ body {
     opacity: 1;
   }
 }
+/* Fixed, placed by `InboxRows` from its row, so the scrolling nav cannot
+   clip it. */
 .local-rail-menu {
-  position: absolute;
+  position: fixed;
   z-index: 10;
-  top: calc(100% + 2px);
-  left: 0.5rem;
+  top: 0;
+  left: 0;
   display: flex;
   min-width: 14rem;
   flex-direction: column;

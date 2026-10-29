@@ -155,12 +155,11 @@ func TestValidation(t *testing.T) {
 	for i := range many {
 		many[i] = strings.Replace(entry("n"), `"n"`, `"n`+strings.Repeat("a", i)+`"`, 1)
 	}
-	owners := `"owners":[` + strings.TrimSuffix(strings.Repeat(`"a",`, 0), ",") + `]`
 	var fifty []string
-	for i := 0; i < 51; i++ {
+	for i := range 51 {
 		fifty = append(fifty, `"o`+strings.Repeat("a", i)+`"`)
 	}
-	owners = `"owners":[` + strings.Join(fifty, ",") + `]`
+	owners := `"owners":[` + strings.Join(fifty, ",") + `]`
 	repos := `"repositories":[` + strings.ReplaceAll(strings.Join(fifty, ","), `"o`, `"o/`) + `]`
 	for name, tc := range map[string]struct{ body, code string }{
 		"too many":        {`[` + strings.Join(many, ",") + `]`, "too_many_inboxes"},
