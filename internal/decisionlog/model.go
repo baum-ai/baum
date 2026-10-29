@@ -1,9 +1,13 @@
 package decisionlog
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"io"
+	"time"
 
 	"github.com/baum-ai/baum/agent"
 	"github.com/baum-ai/baum/agent/claude"
@@ -98,6 +102,8 @@ type completerModel struct {
 	user  string
 	model string
 	usage agent.Usage
+	// timeout bounds each call; zero is CallTimeout.
+	timeout time.Duration
 }
 
 func (m *completerModel) Complete(ctx context.Context, req decisions.ModelRequest) (decisions.ModelResponse, error) {
@@ -106,7 +112,14 @@ func (m *completerModel) Complete(ctx context.Context, req decisions.ModelReques
 		return decisions.ModelResponse{}, err
 	}
 	m.called, m.user = true, req.User
-	out, err := m.completer.Complete(ctx, agent.CompleteRequest{System: req.System, User: req.User, Schema: schema, MaxOutputTokens: int(req.MaxOutputTokens)})
+	timeout := cmp.Or(m.timeout, CallTimeout)
+	call, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	out, err := m.completer.Complete(call, agent.CompleteRequest{System: req.System, User: req.User, Schema: schema, MaxOutputTokens: int(req.MaxOutputTokens)})
+	if err != nil && ctx.Err() == nil && errors.Is(call.Err(), context.DeadlineExceeded) {
+		// The call's own bound, not the daemon stopping: a failure.
+		err = fmt.Errorf("%w: no reply within %s: %w", context.DeadlineExceeded, timeout, err)
+	}
 	m.model, m.usage, m.raw = out.Model, out.Usage, out.Document
 	billed := func(err error) error {
 		return &decisions.BilledError{Model: out.Model, Usage: decisionUsage(out.Usage), Err: err}
