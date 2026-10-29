@@ -520,6 +520,16 @@ func (p markedPrompts) Instructions(ctx context.Context, backend string) (agent.
 }
 
 // passBounded applies the per-call timeout to a backend.
+// BoundPasses bounds each call of backend by timeout as a review's
+// pass_timeout does: a call that runs out fails with the budget
+// "pass_timeout", which the loop does not retry. Zero leaves it unbounded.
+func BoundPasses(backend agent.Backend, timeout time.Duration) agent.Backend {
+	if timeout <= 0 {
+		return backend
+	}
+	return passBounded{Backend: backend, timeout: timeout}
+}
+
 type passBounded struct {
 	agent.Backend
 	timeout time.Duration

@@ -316,7 +316,13 @@ func (s *Service) Settle(ctx context.Context, ref Ref, state, reason string, cos
 	if err != nil {
 		return err
 	}
-	_, err = st.SettleTurn(ctx, store.Key{Repository: c.Repository, Number: ref.PR}, ref.Conversation, ref.Turn,
+	key := store.Key{Repository: c.Repository, Number: ref.PR}
+	settled, err := st.SettleTurn(ctx, key, ref.Conversation, ref.Turn,
 		store.Settlement{State: state, Reason: reason, CostUSD: cost, CostReason: costReason, Finished: s.now()})
-	return err
+	if err != nil || settled {
+		return err
+	}
+	// A next question may have settled the turn from its ended job first,
+	// without the job's cost.
+	return st.FillTurnCost(ctx, key, ref.Conversation, ref.Turn, cost, costReason)
 }

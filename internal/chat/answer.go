@@ -80,6 +80,12 @@ var resolvedSchema = sync.OnceValues(func() (*jsonschema.Resolved, error) {
 	return schema.Resolve(nil)
 })
 
+// schemaInvalid reports whether a reply is not an answer document.
+func schemaInvalid(document []byte) bool {
+	_, findings := parse(document)
+	return findings != ""
+}
+
 // parse reads a reply as an answer, returning findings when the schema
 // rejects it.
 func parse(document []byte) (Answer, string) {
@@ -115,6 +121,57 @@ const maxCitedFile = 64 << 20
 // relative and clean, stay inside the head tree after symlinks are resolved
 // and name a regular file with the cited lines.
 func checkCitation(head string, c Citation) string {
+	_, problem := citedPath(head, c)
+	return problem
+}
+
+// citedPath checks a citation (checkCitation) and returns its path as the
+// checkout spells it: on a case-insensitive file system a path that differs
+// only in case names the same file, and the answer keeps the real spelling.
+func citedPath(head string, c Citation) (string, string) {
+	problem := citationProblem(head, c)
+	if problem != "" {
+		return "", problem
+	}
+	spelled, ok := onDisk(head, c.Path)
+	if !ok {
+		return "", "the path does not match the checkout's spelling"
+	}
+	return spelled, ""
+}
+
+// onDisk spells path, component by component, as the directory entries
+// under root do: an exact name wins, else the one entry that differs only in
+// case.
+func onDisk(root, path string) (string, bool) {
+	dir := root
+	parts := strings.Split(path, "/")
+	for i, part := range parts {
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			return "", false
+		}
+		match, folded := "", 0
+		for _, entry := range entries {
+			if entry.Name() == part {
+				match, folded = part, 1
+				break
+			}
+			if strings.EqualFold(entry.Name(), part) {
+				match = entry.Name()
+				folded++
+			}
+		}
+		if folded != 1 {
+			return "", false
+		}
+		parts[i] = match
+		dir = filepath.Join(dir, match)
+	}
+	return strings.Join(parts, "/"), true
+}
+
+func citationProblem(head string, c Citation) string {
 	p := c.Path
 	switch {
 	case p == "" || len(p) > maxPath || strings.ContainsRune(p, '\\') || strings.ContainsRune(p, 0):
@@ -196,7 +253,8 @@ func invalidCitations(head string, answer Answer) []string {
 func keepValid(head string, answer Answer) (Answer, int) {
 	kept := make([]Citation, 0, len(answer.Citations))
 	for _, c := range answer.Citations {
-		if checkCitation(head, c) == "" {
+		if spelled, problem := citedPath(head, c); problem == "" {
+			c.Path = spelled
 			kept = append(kept, c)
 		}
 	}

@@ -1,12 +1,14 @@
 package chat
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/baum-ai/baum/agent/prompt"
+	"github.com/baum-ai/baum/bundle"
 	"github.com/baum-ai/baum/internal/store"
 )
 
@@ -87,12 +89,22 @@ func TestSeedConversationKeepsTheNewestTurns(t *testing.T) {
 		turns = append(turns, store.Turn{Seq: i + 1, Question: "q" + string(rune('A'+i%26)), Answer: []byte(answer), State: store.TurnCompleted})
 	}
 	turns = append(turns, store.Turn{Seq: 41, Question: "failed", State: store.TurnFailed})
-	raw, err := seedConversation(turns)
+	secret := "AKIA" + "UJZDEGXDNCF32EPF"
+	turns = append(turns, store.Turn{Seq: 42, Question: "is " + secret + " live?", Answer: []byte(`{"answer_markdown":"no","citations":[],"suggests_fix":null}`), State: store.TurnCompleted})
+	redactor, err := bundle.NewRedactor()
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := seedConversation(context.Background(), redactor, turns)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(raw) > maxSeedTurns+4096 || strings.Contains(string(raw), "failed") || !strings.Contains(string(raw), `"qN"`) {
 		t.Errorf("%d bytes", len(raw))
+	}
+	// The reviewer's questions are stored as typed and masked here.
+	if strings.Contains(string(raw), secret) || !strings.Contains(string(raw), "live?") {
+		t.Errorf("question not masked: %s", raw[len(raw)-200:])
 	}
 }
 
@@ -107,5 +119,33 @@ func TestChatPromptReframesPerBackend(t *testing.T) {
 	}
 	if !strings.Contains(claude, "StructuredOutput") || strings.Contains(codex, "StructuredOutput") || !strings.Contains(codex, "final message") {
 		t.Error("submit instructions do not match the backend")
+	}
+}
+
+// A citation keeps the checkout's spelling of its path: on a
+// case-insensitive file system a path differing only in case finds the file.
+func TestOnDiskSpelling(t *testing.T) {
+	head := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(head, "Src"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(head, "Src", "README.md"), []byte("x\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for path, want := range map[string]string{"Src/README.md": "Src/README.md", "src/readme.md": "Src/README.md", "src/other.md": ""} {
+		got, ok := onDisk(head, path)
+		if got != want || ok != (want != "") {
+			t.Errorf("%s: %q %v", path, got, ok)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(head, "Src", "readme.MD"), []byte("y\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := onDisk(head, "src/Readme.md"); ok {
+		t.Error("an ambiguous spelling was resolved")
+	}
+	answer, dropped := keepValid(head, Answer{Citations: []Citation{{Path: "Src/README.md", StartLine: 1, EndLine: 1}}})
+	if dropped != 0 || answer.Citations[0].Path != "Src/README.md" {
+		t.Errorf("%+v", answer)
 	}
 }

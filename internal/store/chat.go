@@ -352,6 +352,22 @@ func (s *Store) SettleTurn(ctx context.Context, k Key, id string, seq int, settl
 		settled.State, settled.Reason, nullable(settled.Answer), cost, settled.CostReason, millis(settled.Finished))
 }
 
+// FillTurnCost records what a turn's job cost on a turn already settled
+// without it: one a new question settled from its ended job a moment before
+// the job's own settlement arrived. A completed turn, or one with a cost,
+// keeps its own.
+func (s *Store) FillTurnCost(ctx context.Context, k Key, id string, seq int, cost *float64, reason string) error {
+	if cost == nil && reason == "" {
+		return nil
+	}
+	var value any
+	if cost != nil {
+		value = *cost
+	}
+	_, err := s.updateTurn(ctx, k, id, seq, `UPDATE turns SET cost_usd=?, cost_reason=? WHERE conversation_id=? AND seq=? AND state NOT IN ('queued','running','completed') AND cost_usd IS NULL AND cost_reason=''`, value, reason)
+	return err
+}
+
 // updateTurn runs statement, whose last two arguments are the conversation
 // and turn, on a turn of a conversation of the pull request.
 func (s *Store) updateTurn(ctx context.Context, k Key, id string, seq int, statement string, args ...any) (bool, error) {

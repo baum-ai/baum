@@ -42,9 +42,17 @@ type RunOptions struct {
 	Progress func(Report)
 }
 
-// SeededNote is the note on a turn whose conversation had to start a new
-// session without the review agent's own context.
+// SeededNote starts the note on a turn whose conversation had to start a
+// new session without the review agent's own context.
 const SeededNote = "Started without the review's own context: "
+
+// NoSessionNote is the note on a turn whose agent reported no session: the
+// next question starts from the saved review and the earlier turns.
+const NoSessionNote = "The agent kept no session for this answer, so the next question starts without this conversation's context."
+
+// PassTimeout bounds each agent call of a turn: half of a review's
+// pass_timeout.
+func PassTimeout(cfg config.Config) time.Duration { return time.Duration(cfg.Budgets.PassTimeout) / 2 }
 
 // Budgets are a turn's: half of a review's calls, tokens and wall clock.
 func Budgets(cfg config.Config) agent.Budgets {
@@ -148,7 +156,7 @@ func (s *Service) Run(ctx context.Context, ref Ref, o RunOptions) (report Report
 	budgets := Budgets(cfg)
 	runCtx, cancel := context.WithTimeout(ctx, budgets.WallClock)
 	defer cancel()
-	generator := agent.Generator{Backend: selected.Backend, Redactor: redactor, RetryDelay: s.RetryDelay}
+	generator := agent.Generator{Backend: generate.BoundPasses(selected.Backend, PassTimeout(cfg)), Redactor: redactor, RetryDelay: s.RetryDelay}
 	var outcome agent.Outcome
 	list := pricing.Active()
 	backend := selected.Backend.Name()
@@ -185,14 +193,22 @@ func (s *Service) Run(ctx context.Context, ref Ref, o RunOptions) (report Report
 	fork := false
 	review := version.Metadata.Session
 	switch {
+	case conversation.SessionID != "" && !agent.ValidSessionID(conversation.SessionID):
+		why = "the conversation's agent session id is not valid"
 	case conversation.SessionID != "":
 		if reviewruns.Use(root, conversation.Directory, now) {
 			directory, resume = conversation.Directory, conversation.SessionID
 		} else {
 			why = "the conversation's run directory is gone"
 		}
+	case answered(conversation.Turns[:ref.Turn-1]):
+		// An earlier answer's agent kept no session: forking the review
+		// again would lose the earlier turns.
+		why = "the conversation has no agent session to continue"
 	case review == nil || review.ID == "":
 		why = "the review kept no agent session"
+	case !agent.ValidSessionID(review.ID):
+		why = "the review's agent session id is not valid"
 	case review.Backend != conversation.Backend:
 		why = "the review's agent session is another harness's"
 	case !reviewruns.Use(root, review.Directory, now):
@@ -201,6 +217,11 @@ func (s *Service) Run(ctx context.Context, ref Ref, o RunOptions) (report Report
 		directory, resume, fork = review.Directory, review.ID, true
 	}
 	fellBack, recorded := false, false
+	var notes []string
+	note := func(text string) error {
+		notes = append(notes, text)
+		return st.NoteTurn(ctx, key, ref.Conversation, ref.Turn, strings.Join(notes, " "))
+	}
 	// A seeded directory no session was recorded for is not used again.
 	defer func() {
 		if fellBack && !recorded {
@@ -209,7 +230,7 @@ func (s *Service) Run(ctx context.Context, ref Ref, o RunOptions) (report Report
 	}()
 	fallback := func(reason string) error {
 		progress("preparing a new session")
-		dir, err := s.seed(ctx, root, c, cfg, version, conversation.Turns[:ref.Turn-1])
+		dir, err := s.seed(ctx, root, c, cfg, version, redactor, conversation.Turns[:ref.Turn-1])
 		if err != nil {
 			return err
 		}
@@ -217,7 +238,7 @@ func (s *Service) Run(ctx context.Context, ref Ref, o RunOptions) (report Report
 		if s.Log != nil {
 			s.Log.Info("chat session seeded", "conversation", ref.Conversation, "turn", ref.Turn, "reason", reason)
 		}
-		return st.NoteTurn(ctx, key, ref.Conversation, ref.Turn, SeededNote+reason)
+		return note(SeededNote + reason + ".")
 	}
 	if directory == "" {
 		if err := fallback(why); err != nil {
@@ -244,6 +265,12 @@ func (s *Service) Run(ctx context.Context, ref Ref, o RunOptions) (report Report
 		return report, err
 	}
 	session := result.SessionID
+	if session != "" && !agent.ValidSessionID(session) {
+		if s.Log != nil {
+			s.Log.Warn("chat agent reported an invalid session id", "conversation", ref.Conversation, "turn", ref.Turn, "bytes", len(session))
+		}
+		session = ""
+	}
 	if session == "" && !fork {
 		session = resume
 	}
@@ -252,6 +279,15 @@ func (s *Service) Run(ctx context.Context, ref Ref, o RunOptions) (report Report
 			return report, err
 		}
 		recorded = true
+	} else {
+		// The answer stands, but the next question cannot continue this
+		// session: it starts from the saved review and the earlier turns.
+		if s.Log != nil {
+			s.Log.Warn("chat agent reported no session", "conversation", ref.Conversation, "turn", ref.Turn)
+		}
+		if err := note(NoSessionNote); err != nil {
+			return report, err
+		}
 	}
 	head := filepath.Join(directory, "head")
 	document := result.Document
@@ -266,9 +302,12 @@ func (s *Service) Run(ctx context.Context, ref Ref, o RunOptions) (report Report
 		progress("checking citations")
 		repaired, repairErr := call(agent.Request{Directory: directory, Prompt: repairPrompt(backend, findings, invalid), ResumeSession: session})
 		switch {
+		case repairErr == nil && findings == "" && schemaInvalid(repaired.Document):
+			// Only citations were wrong and the repair broke the answer:
+			// keep the first, without its invalid citations.
 		case repairErr == nil:
 			document = repaired.Document
-			if repaired.SessionID != "" && repaired.SessionID != session {
+			if repaired.SessionID != "" && repaired.SessionID != session && agent.ValidSessionID(repaired.SessionID) {
 				session = repaired.SessionID
 				if err := st.SetConversationSession(ctx, key, ref.Conversation, session, directory, seeded, s.now()); err != nil {
 					return report, err
@@ -304,6 +343,16 @@ func (s *Service) Run(ctx context.Context, ref Ref, o RunOptions) (report Report
 		s.Log.Info("chat turn answered", "conversation", ref.Conversation, "turn", ref.Turn, "answer_bytes", len(answer.Markdown), "citations", len(answer.Citations), "dropped_citations", dropped, "calls", outcome.Calls, "tokens", outcome.Tokens)
 	}
 	return report, nil
+}
+
+// answered reports whether any of turns was answered.
+func answered(turns []store.Turn) bool {
+	for _, t := range turns {
+		if t.State == store.TurnCompleted {
+			return true
+		}
+	}
+	return false
 }
 
 // maskAccounting masks the provider's model names, which are model-reported
@@ -351,7 +400,7 @@ func classify(parent, run context.Context, redactor *bundle.Redactor, err error)
 // the clone (head/), the saved review as review.json and the earlier
 // answered turns as conversation.json. A clone that lacks the commit needs a
 // fresh clone.
-func (s *Service) seed(ctx context.Context, root string, c repos.Clone, cfg config.Config, version store.Version, earlier []store.Turn) (dir string, err error) {
+func (s *Service) seed(ctx context.Context, root string, c repos.Clone, cfg config.Config, version store.Version, redactor *bundle.Redactor, earlier []store.Turn) (dir string, err error) {
 	caps, err := cfg.EffectiveCaps()
 	if err != nil {
 		return "", err
@@ -389,7 +438,7 @@ func (s *Service) seed(ctx context.Context, root string, c repos.Clone, cfg conf
 	if err := os.WriteFile(filepath.Join(dir, "review.json"), version.Document, 0o400); err != nil {
 		return "", err
 	}
-	transcript, err := seedConversation(earlier)
+	transcript, err := seedConversation(ctx, redactor, earlier)
 	if err != nil {
 		return "", err
 	}
@@ -401,8 +450,9 @@ func (s *Service) seed(ctx context.Context, root string, c repos.Clone, cfg conf
 
 // seedConversation is the earlier answered turns, oldest first, as
 // [{"question","answer_markdown"}], keeping the newest that fit in
-// maxSeedTurns bytes. Answers are stored masked.
-func seedConversation(turns []store.Turn) ([]byte, error) {
+// maxSeedTurns bytes. Answers are stored masked; the questions, stored as
+// the reviewer typed them, are masked here.
+func seedConversation(ctx context.Context, redactor *bundle.Redactor, turns []store.Turn) ([]byte, error) {
 	type exchange struct {
 		Question string `json:"question"`
 		Answer   string `json:"answer_markdown"`
@@ -418,7 +468,11 @@ func seedConversation(turns []store.Turn) ([]byte, error) {
 		if json.Unmarshal(t.Answer, &answer) != nil {
 			continue
 		}
-		e := exchange{Question: t.Question, Answer: answer.Markdown}
+		question, _, err := redactor.RedactString(ctx, t.Question)
+		if err != nil {
+			return nil, err
+		}
+		e := exchange{Question: question, Answer: answer.Markdown}
 		raw, err := json.Marshal(e)
 		if err != nil {
 			return nil, err
