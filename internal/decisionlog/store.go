@@ -35,10 +35,6 @@ const (
 	AttemptAbandoned = "abandoned"
 )
 
-// Retention: settled ledger attempts older than this are pruned. Decisions,
-// obsolete ones included, are kept for good.
-const Retention = 90 * 24 * time.Hour
-
 const schema = `
 CREATE TABLE IF NOT EXISTS capture_session(
   agent TEXT NOT NULL, session_id TEXT NOT NULL,
@@ -477,12 +473,6 @@ FROM capture_attempt WHERE agent=?1 AND session_id=?2`, agent, id, AttemptFailed
 		st.LastFail = time.UnixMilli(failed.Int64)
 	}
 	return st, err
-}
-
-// Prune deletes settled attempts older than Retention.
-func (s *Store) Prune(ctx context.Context) error {
-	_, err := s.db.ExecContext(ctx, `DELETE FROM capture_attempt WHERE state != ? AND started_at < ?`, AttemptPending, s.now().Add(-Retention).UnixMilli())
-	return err
 }
 
 // Decision is a current decision as the log keeps it.
