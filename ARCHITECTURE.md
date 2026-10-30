@@ -3389,10 +3389,16 @@ replace it.
     Linux nothing outside Hyprland and X11; `session` for tmux with a recorded
     terminal, a Claude desktop process in the chain (`claude-desktop`, `Claude`),
     a kitty with its socket, and on macOS iTerm2 or Terminal with a terminal device;
-    `window` otherwise. A Codex session without a terminal whose recorded chain
-    contains only `codex`, `systemd` or `launchd` has no focus action; a direct
-    focus request explains that the background process has no window. An
-    unfamiliar ancestor keeps the normal window fallback.
+    `window` otherwise. Codex hooks whose chain contains only `codex`, `systemd`
+    or `launchd` and no terminal can belong to a shared app server with separate
+    TUI clients. They offer session focus. Focus matches the thread ID in terminal
+    titles (`tui.terminal_title` including `thread-id`): first Codex tmux panes
+    on the recorded server (`list-panes`), then kitty's tabs through its recorded
+    remote-control socket, iTerm2/Terminal tabs on macOS, or Hyprland/X11 window
+    titles. A failed tmux lookup falls through to native terminals, since its
+    variables may be inherited. A shortened ID needs at least 24 characters and
+    an ellipsis. Missing or ambiguous matches select nothing and explain why.
+    This selects an existing TUI; it never resumes a second conversation.
 - **Transcripts.** `GET /api/live-sessions/{agent}/{id}/transcript`
   (`Transcripts`, mounted beside the list by the same `LocalAPI.Live`
   provider) serves the transcript of a session the tracker lists, and only
