@@ -1042,7 +1042,7 @@ test("walks through a review, comments on a behaviour and submits the review", a
         .getByText("1 comment", { exact: true }),
     ).toBeVisible();
     await expect(
-      freshPage.getByRole("region", { name: "Walkthrough" }).getByText(/1 of .* looked at/),
+      freshPage.getByRole("region", { name: "Walkthrough" }).getByText(/^1 of \d+ looked at$/),
     ).toBeVisible();
   } finally {
     await freshContext.close();
@@ -1269,7 +1269,7 @@ test("the whole app can be used from the keyboard", async ({ page }) => {
   await page.keyboard.press("Enter");
   await expect(goTo).toHaveCount(0);
   // It opens on the overview; v opens the full review.
-  await expect(page.getByRole("button", { name: "Start the review" })).toBeVisible();
+  await expect(page.getByRole("button", { name: /^(Start|Continue) the review$/ })).toBeVisible();
   await page.keyboard.press("v");
   await expect(page.locator("[data-review-page]")).toBeVisible();
   await expect.poll(() => search().get("pr")).toBe("7");
