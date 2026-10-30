@@ -2,9 +2,10 @@ package livesessions
 
 import (
 	"context"
-	"github.com/baum-ai/baum/internal/hookevents"
 	"testing"
 	"time"
+
+	"github.com/baum-ai/baum/internal/hookevents"
 )
 
 type recordedLinker struct {
