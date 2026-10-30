@@ -40,7 +40,7 @@ test("GitHub device lifecycle, recovery and saved reviews through the real daemo
   expect((await mutate("disconnect")).status()).toBe(200);
   await page.reload();
   const panel = page.getByRole("region", { name: "GitHub connection", exact: true });
-  // Settings opens on its overview; the GitHub panel is under Connections.
+  // Settings opens on General; the GitHub panel is under Connections.
   const openConnections = async () => {
     await page.getByRole("link", { name: "Settings", exact: true }).click();
     await page

@@ -82,6 +82,12 @@ type DecisionPreferences struct {
 	Model   *string `json:"model,omitempty"`
 }
 
+// AppearancePreferences are device choices kept independently of the daemon HTTP origin.
+type AppearancePreferences struct {
+	Theme    string `json:"theme,omitempty"`
+	KeyHints *bool  `json:"key_hints,omitempty"`
+}
+
 // Preferences are the registry's global choices, edited in the app. Fields
 // an older baum saved and this one dropped, such as
 // cursor_agent_acknowledged, are ignored on read and gone after the next
@@ -105,6 +111,8 @@ type Preferences struct {
 	// AgentEnv, when it sets any variable, replaces the config file's
 	// agent_env (config.Config.AgentEnv).
 	AgentEnv map[string]string `json:"agent_env,omitempty"`
+	// Appearance survives daemon restarts and changes to its loopback origin.
+	Appearance AppearancePreferences `json:"appearance,omitzero"`
 	// Decisions configures local decision capture.
 	Decisions DecisionPreferences `json:"decisions,omitzero"`
 }

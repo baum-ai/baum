@@ -303,10 +303,8 @@ test("local inbox, reused PR viewer, versions, generation and settings", async (
   await expect(page.getByText(/claude-sonnet-4-5/)).toBeVisible();
   await page.screenshot({ path: "test-results/repositories.png", animations: "disabled" });
   await page.getByRole("link", { name: "Settings", exact: true }).click();
-  await expect(
-    page.getByRole("region", { name: /things? needs? you|Everything is working/ }),
-  ).toBeVisible();
-  await page.screenshot({ path: "test-results/settings-overview.png", animations: "disabled" });
+  await expect(page.getByRole("region", { name: "General" })).toBeVisible();
+  await page.screenshot({ path: "test-results/settings-general.png", animations: "disabled" });
   await openSettings(page, "Reviews");
   await expect(
     page
@@ -1291,4 +1289,54 @@ test("the whole app can be used from the keyboard", async ({ page }) => {
   await page.keyboard.up("Alt");
   await writeFile(marker, "ended\nWalk the app by keyboard\n");
   expect(errors).toEqual([]);
+});
+
+test("General preferences persist, follow system theme and control keyboard hints", async ({
+  page,
+}) => {
+  await page.emulateMedia({ colorScheme: "dark" });
+  await page.goto(await launchURL());
+  await openSettings(page, "General");
+  await expect(page.locator(".settings-dot").first()).toBeVisible();
+  const theme = page.getByLabel("Preferred theme");
+  await expect(theme).toHaveValue("system");
+  await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
+  await theme.selectOption("light");
+  await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
+  const hints = page.getByRole("switch", { name: "Show keyboard shortcuts with Alt/Option" });
+  await hints.uncheck();
+  await page.keyboard.down("Alt");
+  await expect(page.locator("html")).not.toHaveAttribute("data-key-hints");
+  await page.keyboard.up("Alt");
+  await expect(hints).toBeEnabled();
+  await page.evaluate(() => localStorage.clear());
+  await page.reload();
+  await expect(theme).toHaveValue("light");
+  await expect(hints).not.toBeChecked();
+  await hints.check();
+  await page.keyboard.down("Alt");
+  await expect(page.locator("html")).toHaveAttribute("data-key-hints", "");
+  await page.keyboard.up("Alt");
+  await theme.selectOption("dark");
+  await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
+  await page.route("**/api/settings/appearance", async (route) => {
+    if (route.request().method() === "PUT")
+      await route.fulfill({ status: 500, body: "Could not save appearance settings" });
+    else await route.continue();
+  });
+  await theme.selectOption("light");
+  await expect(page.getByRole("alert")).toContainText("Could not save appearance settings");
+  await expect(theme).toHaveValue("dark");
+  await page.unroute("**/api/settings/appearance");
+  await theme.selectOption("system");
+  await page.emulateMedia({ colorScheme: "light" });
+  await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
+  await page.screenshot({ path: "test-results/settings-general-wide.png", animations: "disabled" });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(theme).toBeVisible();
+  await expect(page.locator("html")).toHaveJSProperty("scrollWidth", 390);
+  await page.screenshot({
+    path: "test-results/settings-general-narrow.png",
+    animations: "disabled",
+  });
 });
