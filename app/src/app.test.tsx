@@ -1022,7 +1022,7 @@ it("shows a saved decision model capture ignores, and lets it be cleared", async
   stubDiagnostics(async () => Response.json({ local: true, report: diagnosticsReport }));
   const puts = stubAutomatic(demoClone, automaticOverview, {
     backend: "codex",
-    model: "gpt-6-sol",
+    model: "gpt-6.1-sol",
   });
   const stubbed = vi.mocked(fetch).getMockImplementation()!;
   vi.mocked(fetch).mockImplementation((...args) =>
@@ -1085,7 +1085,7 @@ it("saves the decision capture switch and model", async () => {
   stubDiagnostics(async () => Response.json({ local: true, report: diagnosticsReport }));
   const puts = stubAutomatic(demoClone, automaticOverview, {
     backend: "codex",
-    model: "gpt-6-sol",
+    model: "gpt-6.1-sol",
     decisions: { enabled: true, model: "" },
   });
   await act(async () => root.render(<App />));
@@ -1099,13 +1099,13 @@ it("saves the decision capture switch and model", async () => {
   expect(section().textContent).toContain("never tool output or file contents");
   expect(save().disabled).toBe(true);
   await act(async () => {
-    model.value = "gpt-6-sol";
+    model.value = "gpt-6.1-sol";
     model.dispatchEvent(new Event("change", { bubbles: true }));
   });
   await act(async () => save().click());
   expect(puts).toContainEqual({
     path: "/s/test-ns/api/settings/decisions",
-    body: { enabled: true, model: "gpt-6-sol" },
+    body: { enabled: true, model: "gpt-6.1-sol" },
   });
   expect(section().textContent).toContain("Saved.");
   await act(async () => section().querySelector<HTMLInputElement>('input[role="switch"]')!.click());
@@ -1113,7 +1113,7 @@ it("saves the decision capture switch and model", async () => {
   await act(async () => save().click());
   expect(puts.at(-1)).toEqual({
     path: "/s/test-ns/api/settings/decisions",
-    body: { enabled: false, model: "gpt-6-sol" },
+    body: { enabled: false, model: "gpt-6.1-sol" },
   });
 });
 it("types a custom decision capture model", async () => {
@@ -1121,7 +1121,7 @@ it("types a custom decision capture model", async () => {
   stubDiagnostics(async () => Response.json({ local: true, report: diagnosticsReport }));
   const puts = stubAutomatic(demoClone, automaticOverview, {
     backend: "codex",
-    model: "gpt-6-sol",
+    model: "gpt-6.1-sol",
     decisions: { enabled: true, model: "" },
   });
   await act(async () => root.render(<App />));
