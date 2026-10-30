@@ -71,6 +71,8 @@ export function Walkthrough({
   actions,
   notices,
   ask,
+  toDraft = false,
+  drafted,
 }: {
   entry: Entry;
   document: ReviewDocument;
@@ -89,6 +91,10 @@ export function Walkthrough({
   /** The Ask panel: whether it is open, toggling it, and asking about a part
    *  of the review. Absent, the walkthrough offers no questions. */
   ask?: { open: boolean; toggle: () => void; about: (focus: ChatFocus) => void };
+  /** Asks for the page with the draft, the wrap-up, as the Ask panel's
+   *  Open the draft does; `drafted` says it is shown. */
+  toDraft?: boolean;
+  drafted?: () => void;
 }) {
   const tour = useMemo(() => buildTour(document), [document]);
   const key = progressKey(document);
@@ -162,6 +168,15 @@ export function Walkthrough({
       .getElementById(`walk-behaviour-${tour.stops[cur]?.id}`)
       ?.scrollIntoView?.({ block: "nearest" });
   }, [cur, page]);
+  // Opening the draft goes straight to the wrap-up, where it is; it counts
+  // nothing as looked at.
+  useEffect(() => {
+    if (!toDraft) return;
+    reveal.current = false;
+    setPage(last);
+    setEditing(null);
+    drafted?.();
+  }, [toDraft]);
 
   /** Opens a page; on a chapter, picks `at` or the chapter's first
    *  behaviour. Leaving a chapter counts all of it as looked at. */

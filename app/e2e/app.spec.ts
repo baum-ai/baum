@@ -1173,8 +1173,8 @@ test("makes a fix or a review comment from an answer", async ({ page }) => {
   await answer.getByRole("button", { name: "Add as comment", exact: true }).click();
   await expect(answer.getByText("Added to your review draft")).toBeVisible();
   await answer.getByRole("button", { name: "Open the draft", exact: true }).click();
-  await expect(page).toHaveURL(/walk=all/);
-  const submit = page.getByRole("complementary", { name: "Submit review" });
+  await expect(page).toHaveURL(/walk=tour/);
+  const submit = page.getByRole("region", { name: "Your review" });
   const overall = submit.getByLabel("Overall comment (optional)");
   await expect(overall).toHaveValue(/so a long outage cannot push retries out forever/);
   await expect(overall).toHaveValue(/docs\/guide\.md:3–6/);

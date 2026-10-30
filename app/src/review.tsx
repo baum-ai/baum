@@ -182,6 +182,8 @@ export function LocalReview({
     });
   // The part of the review the next question is about.
   const [askFocus, setAskFocus] = useState<ChatFocus | null>(null);
+  // An answer's Open the draft asks the walkthrough for its wrap-up page.
+  const [toDraft, setToDraft] = useState(false);
   // Below 72rem the panel overlays the review, which is then inert behind it.
   const narrow = useMedia("(width < 72rem)");
   // Docked on a window under 104rem, the review has too little width for its
@@ -378,6 +380,8 @@ export function LocalReview({
                   toggle: () => (askOpen ? closeAsk() : setAsk(true)),
                   about: askAbout,
                 }}
+                toDraft={toDraft}
+                drafted={() => setToDraft(false)}
                 actions={
                   <>
                     {fix && fixLabelText ? (
@@ -743,6 +747,7 @@ export function LocalReview({
                       fixRunning={fixing || fixStarting}
                       openDraft={() => {
                         setWalk("tour");
+                        setToDraft(true);
                         // The overlay would cover the draft and keep it inert.
                         if (narrow) closeAsk();
                       }}
