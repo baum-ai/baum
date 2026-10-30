@@ -48,7 +48,7 @@ import { canMerge, MergeDialog } from "./merge";
 import { useShortcuts } from "./shortcuts";
 import { PullRequestState, pullRequestStates } from "./inbox";
 import { canRerunChecks, canUpdateBranch, RerunChecksDialog, UpdateBranchDialog } from "./unblock";
-import { Walkthrough, type WalkView } from "./walkthrough";
+import { Walkthrough, type WalkMode } from "./walkthrough";
 import { buildTour } from "./walkthrough-model";
 import { AnswerActions } from "./answer-actions";
 import { AskPanel, sectionFocus } from "./chat";
@@ -154,13 +154,22 @@ export function LocalReview({
   const pr = entry.pull_request;
   const url = useUrlState();
   const back = backTo(url.search);
-  // The walkthrough is opt-in: the full review stays the page's default.
+  // A pull request opens on the walkthrough's overview, the tour one step
+  // in; walk=full, or a link to a place in the review (pane=…), is the full
+  // review. walk=all named the list view the walkthrough once had.
   const walk = url.search.get("walk");
-  const walkView: WalkView | null = walk === "all" ? "all" : walk === "tour" ? "tour" : null;
-  const setWalk = (view: WalkView | null) =>
+  const walkMode: WalkMode | null =
+    walk === "full" || (!walk && url.search.has("pane"))
+      ? null
+      : walk === "tour" || walk === "all"
+        ? "tour"
+        : "landing";
+  const setWalk = (mode: WalkMode | null) =>
     url.update((current) => {
-      if (view) current.set("walk", view);
-      else current.delete("walk");
+      if (mode === "tour") current.set("walk", "tour");
+      else if (mode === "landing") current.delete("walk");
+      else current.set("walk", "full");
+      current.delete("pane");
       return current;
     });
   // The Ask panel docks beside the review; the URL keeps it open over a reload.
@@ -173,6 +182,8 @@ export function LocalReview({
     });
   // The part of the review the next question is about.
   const [askFocus, setAskFocus] = useState<ChatFocus | null>(null);
+  // An answer's Open the draft asks the walkthrough for its wrap-up page.
+  const [toDraft, setToDraft] = useState(false);
   // Below 72rem the panel overlays the review, which is then inert behind it.
   const narrow = useMedia("(width < 72rem)");
   // Docked on a window under 104rem, the review has too little width for its
@@ -245,8 +256,8 @@ export function LocalReview({
       else setAsk(true);
       return;
     }
-    // The walkthrough has keys of its own.
-    if (walkView && doc) return;
+    // The tour has keys of its own; the overview leaves the page's to it.
+    if (walkMode === "tour" && doc) return;
     const step =
       event.key === "j" ? steps.current?.next : event.key === "k" ? steps.current?.previous : null;
     if (step) {
@@ -352,15 +363,16 @@ export function LocalReview({
       <AttachmentUrlProvider resolve={attachments}>
         <div className="ask-layout">
           <div className="ask-main" inert={narrow && askOpen ? true : undefined}>
-            {walkView && doc ? (
+            {walkMode && doc ? (
               // A new version starts afresh, with that version's own progress.
               <Walkthrough
                 key={doc.review.version}
                 entry={entry}
                 document={doc}
-                view={walkView}
-                setView={setWalk}
+                mode={walkMode}
+                setMode={setWalk}
                 close={() => setWalk(null)}
+                back={back}
                 patches={patches}
                 changed={changed}
                 ask={{
@@ -368,6 +380,89 @@ export function LocalReview({
                   toggle: () => (askOpen ? closeAsk() : setAsk(true)),
                   about: askAbout,
                 }}
+                toDraft={toDraft}
+                drafted={() => setToDraft(false)}
+                actions={
+                  <>
+                    {fix && fixLabelText ? (
+                      <button
+                        type="button"
+                        className="walk-secondary"
+                        disabled={fixing || fixStarting}
+                        onClick={() => fix()}
+                      >
+                        <SparkleIcon size={14} className="flex-none text-(--status-critical)" />
+                        {fixing ? "Fixing…" : fixStarting ? "Starting…" : fixLabelText}
+                      </button>
+                    ) : null}
+                    {canMerge(entry) ? (
+                      <button
+                        type="button"
+                        className="walk-secondary"
+                        onClick={() => setMerging(true)}
+                      >
+                        Merge…
+                      </button>
+                    ) : null}
+                    {canUpdateBranch(entry) ? (
+                      <button
+                        type="button"
+                        className="walk-secondary"
+                        onClick={() => setUpdating(true)}
+                      >
+                        Update branch
+                      </button>
+                    ) : null}
+                    {canRerunChecks(entry) ? (
+                      <button
+                        type="button"
+                        className="walk-secondary"
+                        onClick={() => setRerunning(true)}
+                      >
+                        Re-run checks
+                      </button>
+                    ) : null}
+                    {entry.status === "outdated" || generating ? (
+                      <button
+                        type="button"
+                        className="walk-secondary"
+                        disabled={generating || entry.needs_clone}
+                        onClick={generate}
+                      >
+                        {generating ? "Generating review…" : "Regenerate review"}
+                      </button>
+                    ) : null}
+                  </>
+                }
+                notices={
+                  <>
+                    {fixState.error ? (
+                      <Alert>Couldn't start the fix: {fixState.error}</Alert>
+                    ) : null}
+                    {showFix && fixJob ? (
+                      <FixNotice key={fixJob.id} job={fixJob} changed={changed} />
+                    ) : null}
+                    <PullRequestDecisionsList
+                      repository={pr.repository}
+                      number={pr.number}
+                      live={running}
+                      revision={`${ended}:${doc.review.version}`}
+                    />
+                    <LiveSessions sessions={running} Link={ViewerLink} />
+                    {failed ? (
+                      <Alert>
+                        The latest review could not be read. This saved version remains available.{" "}
+                        <Button onClick={() => setRetry((n) => n + 1)}>Retry review</Button>
+                      </Alert>
+                    ) : null}
+                    {generating ? (
+                      <Notice>
+                        A new review is being generated. This saved version remains available while
+                        it runs.
+                      </Notice>
+                    ) : null}
+                  </>
+                }
               />
             ) : (
               <ReviewViewer
@@ -465,7 +560,7 @@ export function LocalReview({
                           <Button
                             variant="secondary"
                             size="compact"
-                            onClick={() => setWalk("tour")}
+                            onClick={() => setWalk("landing")}
                           >
                             Walk through
                           </Button>
@@ -632,7 +727,7 @@ export function LocalReview({
                 latestVersion={doc.review.version}
                 // Questions are about the version on screen, which is an older
                 // one while the viewer reads it.
-                document={!walkView && viewedDocument ? viewedDocument : doc}
+                document={!walkMode && viewedDocument ? viewedDocument : doc}
                 patches={patches}
                 focus={askFocus}
                 clearFocus={() => setAskFocus(null)}
@@ -651,7 +746,8 @@ export function LocalReview({
                       fix={fix && fixEligible(entry) ? fix : undefined}
                       fixRunning={fixing || fixStarting}
                       openDraft={() => {
-                        setWalk("all");
+                        setWalk("tour");
+                        setToDraft(true);
                         // The overlay would cover the draft and keep it inert.
                         if (narrow) closeAsk();
                       }}

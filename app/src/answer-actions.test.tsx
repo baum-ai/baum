@@ -211,9 +211,10 @@ it("puts an answer about no stop in the overall comment, which an open walkthrou
       turns: [answered({ focus: { kind: "section", id: "sec_retry", title: "Retry" } })],
     }),
   ];
-  await open({ search: "ask=1&walk=all", fix: vi.fn() });
+  await open({ search: "ask=1&walk=tour", fix: vi.fn() });
+  await act(async () => button(/^Send review/)!.click());
   const overall = () =>
-    node.querySelector<HTMLTextAreaElement>("aside[aria-label='Submit review'] textarea")!;
+    node.querySelector<HTMLTextAreaElement>("section[aria-label='Your review'] textarea")!;
   expect(overall().value).toBe("");
   await act(async () => button("Add as comment")!.click());
   expect(node.querySelector(".ask-added")!.textContent).toContain("as the overall comment");
@@ -230,8 +231,8 @@ it("opens the walkthrough's submit panel from the confirmation", async () => {
   await act(async () => button("Add as comment")!.click());
   await act(async () => button("Open the draft")!.click());
   await settle();
-  expect(node.querySelector("[data-search]")!.textContent).toContain("walk=all");
-  expect(node.querySelector("aside[aria-label='Submit review']")!.textContent).toContain(
+  expect(node.querySelector("[data-search]")!.textContent).toContain("walk=tour");
+  expect(node.querySelector("section[aria-label='Your review']")!.textContent).toContain(
     "The cap keeps **retries** bounded.",
   );
   expect(tour.stops.some((stop) => stop.id === "beh_delay")).toBe(true);

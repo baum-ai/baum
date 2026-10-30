@@ -23,6 +23,7 @@ export type Agent = {
   installed: boolean;
   enabled: boolean;
   plugin: string;
+  version?: string | null;
   error?: string | null;
 };
 export type SetupView = {

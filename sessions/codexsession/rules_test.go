@@ -896,6 +896,36 @@ func TestGoalUpdateAndImageGenerationAreContext(t *testing.T) {
 	}
 }
 
+func TestConfigurationUpdateIsContext(t *testing.T) {
+	lines := basicStart()
+	lines = append(lines,
+		// Codex 0.165 writes a reasoning effort changed mid-session as a response item.
+		envelope("2026-08-01T12:00:04Z", "response_item", `{"type":"configuration_update","reasoning":{"effort":"medium"}}`),
+	)
+	_, report := buildLines(t, lines...)
+	if report.Records.Discarded["context/configuration_update"] != 1 || !report.Records.Balanced() {
+		t.Fatalf("records = %+v", report.Records)
+	}
+}
+
+func TestUnknownTypesAreDiscardedNotFatal(t *testing.T) {
+	lines := basicStart()
+	lines = append(lines,
+		envelope("2026-08-01T12:00:04Z", "response_item", `{"type":"future_item"}`),
+		envelope("2026-08-01T12:00:05Z", "event_msg", `{"type":"future_event"}`),
+		envelope("2026-08-01T12:00:06Z", "future_record", `{"type":"x"}`),
+	)
+	_, report := buildLines(t, lines...)
+	discarded := report.Records.Discarded
+	if discarded["unknown/response_item/future_item"] != 1 || discarded["unknown/event_msg/future_event"] != 1 ||
+		discarded["unknown/future_record"] != 1 || report.UnknownRecords != 3 || !report.Records.Balanced() {
+		t.Fatalf("records = %+v", report.Records)
+	}
+	if len(report.Notes) != 3 {
+		t.Fatalf("notes = %q", report.Notes)
+	}
+}
+
 func TestAdditionalToolsAreContext(t *testing.T) {
 	lines := basicStart()
 	lines = append(lines,

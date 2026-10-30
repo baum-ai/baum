@@ -176,5 +176,10 @@ func delegateCodex(snapshot *entirecheckpoint.SessionSnapshot, _ []*entirecheckp
 	if !inner.Records.Balanced() || inner.UnsupportedTurns != 0 {
 		return nil, nil, fmt.Errorf("embedded Codex mapper report is unsupported or unbalanced: read %d, accounted %d, unsupported turns %d", inner.Records.Total, inner.Records.Accounted(), inner.UnsupportedTurns)
 	}
+	// A checkpoint whose transcript has a record the mapper would leave out
+	// falls back to its compact transcript, as one that failed to decode did.
+	if inner.UnknownRecords != 0 {
+		return nil, nil, fmt.Errorf("embedded Codex transcript has %d records of unknown type", inner.UnknownRecords)
+	}
 	return graph, &DelegateReport{SessionID: snapshot.Metadata.SessionID, Agent: snapshot.Metadata.Agent, Codex: inner}, nil
 }

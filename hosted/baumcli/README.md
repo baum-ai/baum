@@ -165,7 +165,11 @@ handshake, in [`apiclient`](../apiclient).
   marketplace and installs/enables `baum@baum` through Claude Code or Codex's
   native CLI, for executable agents on `PATH` or those named with `--agent`.
   `uninstall --user` removes that user plugin through the native CLI, leaving
-  the marketplace and other plugins. No raw hook settings are edited and no
+  the marketplace and other plugins. `update --user` refreshes the marketplace
+  and brings an installed plugin to its latest version (installing again
+  keeps the installed version). Without `--agent` it updates the agents with the
+  plugin enabled (and reports agents whose status failed); a named agent
+  without it, or with it disabled, is an error. No raw hook settings are edited and no
   migration markers or compatibility cleanup are maintained. Installation
   downloads from GitHub; it needs no baum sign-in and calls no baum server.
 - [`agentplugins`](../agentplugins/README.md) owns the native commands. Claude

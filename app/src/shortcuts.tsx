@@ -51,12 +51,13 @@ const UP_NEXT_SHORTCUTS: Shortcut[] = [
 ];
 /** The walkthrough's keys, which `Walkthrough` handles itself. */
 const WALKTHROUGH_SHORTCUTS: Shortcut[] = [
-  { keys: ["ArrowRight", "j"], label: "Tour: next stop", short: "move" },
-  { keys: ["ArrowLeft", "k"], label: "Tour: previous stop", short: "move" },
-  { keys: ["c"], label: "Comment on the stop or row", short: "comment" },
-  { keys: ["o", "Enter"], label: "Everything: details and evidence" },
-  { keys: ["t"], label: "Everything: walk me through it" },
-  { keys: ["e"], label: "Switch between the tour and everything", short: "switch view" },
+  { keys: ["j", "ArrowDown"], label: "Next behaviour", short: "move" },
+  { keys: ["k", "ArrowUp"], label: "Previous behaviour", short: "move" },
+  { keys: ["ArrowRight"], label: "Next chapter", short: "chapter" },
+  { keys: ["ArrowLeft"], label: "Previous chapter", short: "chapter" },
+  { keys: ["o"], label: "Show the behaviour's code", short: "code" },
+  { keys: ["c"], label: "Comment on the behaviour", short: "comment" },
+  { keys: ["v"], label: "Open the full review", short: "full review" },
   { keys: ["a"], label: "Ask the review's agent a question", short: "ask" },
 ];
 /** The keys of every other list (Sessions, Jobs, Repositories), which

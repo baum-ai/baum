@@ -21,7 +21,14 @@ arrays without a shell and propagate cancellation. The desktop resolves the logi
 allows 240 seconds total for that resolution, both agents and overhead.
 
 Installation registers the intended public marketplace through the native
-idempotent add command before installing. Removal leaves that marketplace
+idempotent add command before installing. Neither agent updates an installed
+plugin on a repeated install, so update is separate: it refreshes the
+marketplace (Claude `plugin marketplace update`, Codex `plugin marketplace
+upgrade`), then updates the plugin (Claude `plugin update --scope user`;
+Codex has no update command, and adding the plugin again installs the
+refreshed version), and verifies it installed and enabled. It refuses a
+plugin that is not installed or disabled, and reports the version before and
+after. Removal leaves that marketplace
 and other plugins alone. Neither installation nor removal touches repository
 hooks, signs in to baum, or asserts that the agent trusted the hooks.
 See [plugin usage](../../plugins/README.md) for trust and network behavior.

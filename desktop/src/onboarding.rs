@@ -339,6 +339,8 @@ pub struct AgentHooks {
     #[serde(default)]
     enabled: bool,
     #[serde(default)]
+    version: Option<String>,
+    #[serde(default)]
     error: Option<String>,
 }
 
@@ -513,6 +515,13 @@ pub async fn uninstall_command(app: AppHandle) -> Result<Outcome, String> {
 #[tauri::command]
 pub async fn install_hooks(app: AppHandle, agent: Option<String>) -> Result<Outcome, String> {
     change_hooks(app, "install", agent).await
+}
+
+/// Runs the bundled `baum hooks update --user`, which brings an installed
+/// plugin to the marketplace's latest version.
+#[tauri::command]
+pub async fn update_hooks(app: AppHandle, agent: Option<String>) -> Result<Outcome, String> {
+    change_hooks(app, "update", agent).await
 }
 
 /// Runs the bundled `baum hooks uninstall --user`.
