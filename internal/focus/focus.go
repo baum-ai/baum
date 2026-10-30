@@ -639,19 +639,27 @@ func (f *Focuser) raiseHyprland(ctx context.Context, chain []hookevents.Process,
 func (f *Focuser) raiseX11(ctx context.Context, chain []hookevents.Process, env map[string]string) (bool, string) {
 	vars := pairs(env)
 	if _, err := f.lookPath("xdotool"); err == nil {
-		for _, p := range chain {
-			out, err := f.run(ctx, vars, "xdotool", "search", "--onlyvisible", "--pid", strconv.Itoa(p.PID))
-			if err != nil {
-				continue
+		// Visible windows first; a minimized window is unmapped, which
+		// --onlyvisible leaves out, so the chain is searched again without it.
+		for _, visible := range []bool{true, false} {
+			for _, p := range chain {
+				args := []string{"search", "--pid", strconv.Itoa(p.PID)}
+				if visible {
+					args = []string{"search", "--onlyvisible", "--pid", strconv.Itoa(p.PID)}
+				}
+				out, err := f.run(ctx, vars, "xdotool", args...)
+				if err != nil {
+					continue
+				}
+				ids := strings.Fields(string(out))
+				if len(ids) == 0 {
+					continue
+				}
+				if _, err := f.run(ctx, vars, "xdotool", "windowactivate", ids[len(ids)-1]); err != nil {
+					return false, fmt.Sprintf("Could not bring the window forward: %v.", err)
+				}
+				return true, ""
 			}
-			ids := strings.Fields(string(out))
-			if len(ids) == 0 {
-				continue
-			}
-			if _, err := f.run(ctx, vars, "xdotool", "windowactivate", ids[len(ids)-1]); err != nil {
-				return false, fmt.Sprintf("Could not bring the window forward: %v.", err)
-			}
-			return true, ""
 		}
 		return false, "Could not find the window this session runs in."
 	}

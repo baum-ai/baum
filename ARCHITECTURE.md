@@ -3348,7 +3348,8 @@ replace it.
     argument as Lua and says so, and is then given `hl.dsp.focus({ workspace
     = … })` and `hl.dsp.focus({ window = "address:…" })`;
     on X11 (`DISPLAY` without `WAYLAND_DISPLAY` or a `wayland` session type)
-    `xdotool search --onlyvisible --pid` and `windowactivate`, else `wmctrl
+    `xdotool search --onlyvisible --pid`, then without `--onlyvisible` for a
+    minimized window, and `windowactivate`, else `wmctrl
     -lp` and `-i -a`. Other Wayland compositors give one program no way to
     raise another's window. The display variables come from the recorded
     `terminal` over the daemon's own, since the daemon may have started in

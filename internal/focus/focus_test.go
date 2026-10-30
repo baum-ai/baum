@@ -304,6 +304,22 @@ func TestX11(t *testing.T) {
 	}
 }
 
+// A minimized window is unmapped, which --onlyvisible leaves out.
+func TestX11MinimizedWindow(t *testing.T) {
+	m, terminal := kittyShell()
+	m.paths = map[string]bool{"xdotool": true}
+	m.answers = map[string]answer{
+		"xdotool search --onlyvisible": {err: errors.New("exit status 1")},
+		"xdotool search --pid 100":     {err: errors.New("exit status 1")},
+		"xdotool search --pid 101":     {err: errors.New("exit status 1")},
+		"xdotool search --pid 300":     {out: "41943041\n41943050\n"},
+	}
+	result := m.focuser("linux", map[string]string{"DISPLAY": ":0"}).Focus(context.Background(), "codex", "s1", terminal)
+	if result.Precision != Window || m.calls[len(m.calls)-1] != "xdotool windowactivate 41943050" {
+		t.Fatalf("result = %+v, calls:\n%s", result, strings.Join(m.calls, "\n"))
+	}
+}
+
 func TestX11WithWmctrl(t *testing.T) {
 	m, terminal := kittyShell()
 	m.paths = map[string]bool{"wmctrl": true}
