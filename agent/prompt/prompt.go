@@ -35,8 +35,9 @@
 //	review-context-public-v1.md  the summary's codebase context
 //
 // Each stage file ends with a "## Submitting" heading, under which the
-// backend's submit block goes, and names its schema file
-// (agent.TaskSchemaFile).
+// backend's stage submit block goes (submit-stage-claude.md,
+// submit-stage-codex.md, submit-stage-cursor.md, with {part} replaced by what
+// the stage returns), and names its schema file (agent.TaskSchemaFile).
 package prompt
 
 import (
@@ -128,6 +129,22 @@ var stagedDetails string
 //go:embed review-context-public-v1.md
 var stagedContext string
 
+//go:embed submit-stage-claude.md
+var submitStageClaude string
+
+//go:embed submit-stage-codex.md
+var submitStageCodex string
+
+//go:embed submit-stage-cursor.md
+var submitStageCursor string
+
+// What each stage returns, in its submit block.
+const (
+	outlinePart = "the outline"
+	detailsPart = "the section details"
+	contextPart = "the context"
+)
+
 // StagedPrompts implements agent.StagedPrompts with this module's public
 // staged review prompts.
 type StagedPrompts struct{}
@@ -135,18 +152,26 @@ type StagedPrompts struct{}
 var _ agent.StagedPrompts = StagedPrompts{}
 
 // StagedInstructions returns the staged review prompts for a backend: the
-// shared text, and each stage's text with the backend's submit block
-// appended, as Prompts does for a review written in one pass. Digest is the
-// sha256 of the four texts, each followed by a NUL byte. Any other backend
-// is an error.
+// shared text, and each stage's text with the backend's stage submit block
+// appended, naming what the stage returns, as Prompts appends the submit
+// block for a review written in one pass. Digest is the sha256 of the four
+// texts, each followed by a NUL byte. Any other backend is an error.
 func (StagedPrompts) StagedInstructions(_ context.Context, backend string) (agent.StagedPrompt, error) {
-	submit, err := submitBlock(backend)
-	if err != nil {
-		return agent.StagedPrompt{}, err
+	var submit string
+	switch backend {
+	case agent.BackendClaude, agent.BackendAnthropic:
+		submit = submitStageClaude
+	case agent.BackendCodex:
+		submit = submitStageCodex
+	case agent.BackendCursorAgent:
+		submit = submitStageCursor
+	default:
+		return agent.StagedPrompt{}, fmt.Errorf("no public staged review prompt for backend %q", backend)
 	}
+	block := func(part string) string { return "\n" + strings.ReplaceAll(submit, "{part}", part) }
 	staged := agent.StagedPrompt{
 		Version: StagedVersion, Shared: stagedShared,
-		Outline: stagedOutline + "\n" + submit, Details: stagedDetails + "\n" + submit, Context: stagedContext + "\n" + submit,
+		Outline: stagedOutline + block(outlinePart), Details: stagedDetails + block(detailsPart), Context: stagedContext + block(contextPart),
 	}
 	digest := sha256.New()
 	for _, text := range []string{staged.Shared, staged.Outline, staged.Details, staged.Context} {

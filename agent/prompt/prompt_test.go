@@ -147,7 +147,8 @@ func TestStagedInstructions(t *testing.T) {
 		}
 	}
 	digests := map[string]bool{}
-	for backend, file := range map[string]string{agent.BackendClaude: "submit-claude.md", agent.BackendAnthropic: "submit-claude.md", agent.BackendCodex: "submit-codex.md", agent.BackendCursorAgent: "submit-cursor.md"} {
+	parts := map[string]string{agent.StageOutline: "the outline", agent.StageDetails: "the section details", agent.StageContext: "the context"}
+	for backend, file := range map[string]string{agent.BackendClaude: "submit-stage-claude.md", agent.BackendAnthropic: "submit-stage-claude.md", agent.BackendCodex: "submit-stage-codex.md", agent.BackendCursorAgent: "submit-stage-cursor.md"} {
 		got, err := (prompt.StagedPrompts{}).StagedInstructions(context.Background(), backend)
 		if err != nil {
 			t.Fatal(err)
@@ -156,9 +157,13 @@ func TestStagedInstructions(t *testing.T) {
 			t.Fatalf("%s: version %q, or the shared text differs", backend, got.Version)
 		}
 		submit := readFile(t, file)
+		if !strings.Contains(submit, "{part}") || strings.Contains(submit, "document") {
+			t.Fatalf("%s must name the stage's part, not a document", file)
+		}
 		for stage, text := range map[string]string{agent.StageOutline: got.Outline, agent.StageDetails: got.Details, agent.StageContext: got.Context} {
-			if text != readFile(t, stages[stage].file)+"\n"+submit {
-				t.Fatalf("%s %s: not the stage text then %s", backend, stage, file)
+			block := strings.ReplaceAll(submit, "{part}", parts[stage])
+			if text != readFile(t, stages[stage].file)+"\n"+block || !strings.Contains(block, parts[stage]) {
+				t.Fatalf("%s %s: not the stage text then %s naming %s", backend, stage, file, parts[stage])
 			}
 		}
 		digest := sha256.New()
