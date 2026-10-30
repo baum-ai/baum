@@ -416,6 +416,11 @@ func (c *Backend) run(ctx context.Context, request agent.Request, fix bool, extr
 		return result, err
 	}
 	if waitErr != nil {
+		// A resume or fork of a thread Codex cannot find exits before any
+		// turn, naming it on some line of stderr (warnings may come first).
+		if line, missing := agent.MissingSession(stderr.String()); missing && c.Profile == Local && request.ResumeSession != "" && result.Calls == 0 {
+			return result, agent.SessionNotFound("codex", line)
+		}
 		if lastError != "" {
 			status, structured := failureStatus(lastError)
 			result.Events = append(result.Events, agent.Event{Kind: "error", Status: status, FromProvider: structured})

@@ -71,6 +71,18 @@ func candidate(root, dir string) bool {
 	return err == nil && info.IsDir()
 }
 
+// Use readies a kept run directory for another agent call: it must be a real
+// run directory directly under root, and its modification time is set to now
+// so Expire, which goes by it, does not remove a directory a chat is still
+// using. It reports false for a directory that is gone or not a run
+// directory.
+func Use(root, dir string, now time.Time) bool {
+	if dir == "" || !filepath.IsAbs(dir) || !underRoot(root, dir) || !candidate(root, dir) {
+		return false
+	}
+	return os.Chtimes(dir, now, now) == nil
+}
+
 // Remove removes the listed run directories under root and the agent CLI
 // sessions that ran in them, and ignores anything else.
 func Remove(root string, dirs ...string) error {

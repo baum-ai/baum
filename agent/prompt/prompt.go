@@ -1,7 +1,8 @@
 // Package prompt is the review prompt this module ships: the instructions the
 // generate-and-repair loop (agent.Generator) gives a model backend. It also
 // holds the fix instructions (Fix): fix-public-v1.md, with fix-conflicts.md
-// and fix-checks.md for what a fix is for.
+// and fix-checks.md for what a fix is for, and the instructions of a chat turn
+// (Chat): chat-public-v1.md.
 //
 // Five review files are embedded:
 //

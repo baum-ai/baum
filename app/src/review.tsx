@@ -24,19 +24,21 @@ import {
   request,
   selector,
   documentRequest,
+  type ChatFocus,
   type Entry,
   type Job,
   isActiveJob,
   automaticLabel,
   jobReasonText,
   liveFor,
+  fixEligible,
   fixLabel,
   jobHref,
   navigate,
   type LiveSession,
   type Provenance,
 } from "./api";
-import { FixNotice, FixRuns, type FixState } from "./fix";
+import { FixNotice, FixRuns, type FixState, type FixChat } from "./fix";
 import { CloneActions } from "./repositories";
 import { Notice } from "./shell";
 import { LiveSessions } from "./sessions";
@@ -47,6 +49,9 @@ import { useShortcuts } from "./shortcuts";
 import { PullRequestState, pullRequestStates } from "./inbox";
 import { canRerunChecks, canUpdateBranch, RerunChecksDialog, UpdateBranchDialog } from "./unblock";
 import { Walkthrough, type WalkView } from "./walkthrough";
+import { buildTour } from "./walkthrough-model";
+import { AnswerActions } from "./answer-actions";
+import { AskPanel, sectionFocus } from "./chat";
 function Transcript({ id, query }: { id: string; query: string }) {
   const [load, setLoad] = useState<LocalTranscript | null>(null);
   const [error, setError] = useState(false);
@@ -92,6 +97,21 @@ function Transcript({ id, query }: { id: string; query: string }) {
     </>
   );
 }
+/** Whether the window matches a media query, as it changes. */
+function useMedia(query: string) {
+  const [matches, setMatches] = useState(
+    () => typeof matchMedia === "function" && matchMedia(query).matches,
+  );
+  useEffect(() => {
+    if (typeof matchMedia !== "function") return;
+    const list = matchMedia(query);
+    const change = () => setMatches(list.matches);
+    change();
+    list.addEventListener("change", change);
+    return () => list.removeEventListener("change", change);
+  }, [query]);
+  return matches;
+}
 /** The hosted PR page's shared viewer, with local sources for its slots. */
 export function LocalReview({
   entry,
@@ -106,6 +126,7 @@ export function LocalReview({
   fix,
   fixState = { starting: false, error: "" },
   fixJob,
+  chats = [],
   fixRuns = [],
 }: {
   entry: Entry;
@@ -121,13 +142,14 @@ export function LocalReview({
   /** The review groups this pull request belongs to. */
   groups?: { id: string; name: string }[];
   /** Starts the fix at once; absent when the pull request has no clone. */
-  fix?: () => void;
+  fix?: (chat?: FixChat) => void;
   /** The fix asked for here: starting, or why it did not start. */
   fixState?: FixState;
   /** The pull request's latest fix job. */
   fixJob?: Job;
   /** Every fix job of the pull request, newest first. */
   fixRuns?: Job[];
+  chats?: Job[];
 }) {
   const pr = entry.pull_request;
   const url = useUrlState();
@@ -141,6 +163,32 @@ export function LocalReview({
       else current.delete("walk");
       return current;
     });
+  // The Ask panel docks beside the review; the URL keeps it open over a reload.
+  const askOpen = url.search.get("ask") === "1";
+  const setAsk = (open: boolean) =>
+    url.update((current) => {
+      if (open) current.set("ask", "1");
+      else current.delete("ask");
+      return current;
+    });
+  // The part of the review the next question is about.
+  const [askFocus, setAskFocus] = useState<ChatFocus | null>(null);
+  // Below 72rem the panel overlays the review, which is then inert behind it.
+  const narrow = useMedia("(width < 72rem)");
+  // Docked on a window under 104rem, the review has too little width for its
+  // side pane, which folds to its strip meanwhile.
+  const tight = useMedia("(72rem <= width < 104rem)");
+  // Closing hands the keyboard back to the Ask button that opened it.
+  const closeAsk = () => {
+    setAsk(false);
+    requestAnimationFrame(() =>
+      window.document.querySelector<HTMLElement>("[data-ask-button]")?.focus(),
+    );
+  };
+  const askAbout = (focus: ChatFocus) => {
+    setAskFocus(focus);
+    if (!askOpen) setAsk(true);
+  };
   const fixLabelText = fixLabel(entry);
   const fixing = isActiveJob(fixJob);
   const fixStarting = fixState.starting && !fixing;
@@ -177,6 +225,8 @@ export function LocalReview({
           ? entry.status
           : undefined;
   const [doc, setDoc] = useState<ReviewDocument | null>(null);
+  // Where an answer's comment lands when it is added to the draft.
+  const tour = useMemo(() => (doc ? buildTour(doc) : null), [doc]);
   const [failed, setFailed] = useState(false);
   const [retry, setRetry] = useState(0);
   const [provenance, setProvenance] = useState<Provenance[]>([]);
@@ -187,6 +237,14 @@ export function LocalReview({
   // and the header's actions have the list's keys.
   const steps = useRef<ReviewSteps>(null);
   useShortcuts((event) => {
+    // a opens the Ask panel, or puts the cursor in its box when open; it
+    // works in the walkthrough too.
+    if (event.key === "a" && doc) {
+      event.preventDefault();
+      if (askOpen) window.document.getElementById("ask-question")?.focus();
+      else setAsk(true);
+      return;
+    }
     // The walkthrough has keys of its own.
     if (walkView && doc) return;
     const step =
@@ -292,226 +350,318 @@ export function LocalReview({
   return (
     <ReviewBoundary key={`${clone}:${pr.number}`}>
       <AttachmentUrlProvider resolve={attachments}>
-        {walkView && doc ? (
-          // A new version starts afresh, with that version's own progress.
-          <Walkthrough
-            key={doc.review.version}
-            entry={entry}
-            document={doc}
-            view={walkView}
-            setView={setWalk}
-            close={() => setWalk(null)}
-            patches={patches}
-            changed={changed}
-          />
-        ) : (
-          <ReviewViewer
-            document={doc}
-            history={history}
-            versions={versions.filter((v) => v !== doc?.review.version)}
-            loadVersion={loadVersion}
-            versionsFailed={historyFailed ? { retry: () => setRetry((n) => n + 1) } : undefined}
-            steps={steps}
-            header={{
-              pullRequest: {
-                number: pr.number,
-                title: pr.title,
-                repository: pr.repository,
-                url: pr.url,
-                state: pr.state.toLowerCase(),
-              },
-              back: { href: back.href, label: back.label },
-              generation: { state: generationState, rewriting: generating && Boolean(doc) },
-              // Without a review, the button in the page's middle generates it.
-              // The GitHub state leads, so a reader sees why a fix, a re-run or an
-              // update is offered; a fix comes first of those, re-running checks
-              // and updating the branch are its smaller remedies.
-              beside:
-                doc ||
-                pullRequestStates(entry).length > 0 ||
-                (fix && fixLabelText) ||
-                canMerge(entry) ||
-                canRerunChecks(entry) ||
-                canUpdateBranch(entry) ? (
-                  <div className="flex flex-wrap items-center gap-2">
-                    <span className="mr-2 empty:hidden">
-                      <PullRequestState entry={entry} />
-                    </span>
-                    {fix && fixLabelText ? (
-                      <Button
-                        variant="secondary"
-                        size="compact"
-                        disabled={fixing || fixStarting}
-                        onClick={fix}
-                        className="gap-1.5"
-                      >
-                        <SparkleIcon size={14} className="flex-none text-(--status-critical)" />
-                        {fixing ? "Fixing…" : fixStarting ? "Starting…" : fixLabelText}
-                      </Button>
-                    ) : null}
-                    {canRerunChecks(entry) ? (
-                      <Button variant="secondary" size="compact" onClick={() => setRerunning(true)}>
-                        Re-run checks
-                      </Button>
-                    ) : null}
-                    {canUpdateBranch(entry) ? (
-                      <Button variant="secondary" size="compact" onClick={() => setUpdating(true)}>
-                        Update branch
-                      </Button>
-                    ) : null}
-                    {doc ? (
-                      <Button
-                        variant="secondary"
-                        size="compact"
-                        disabled={generating || entry.needs_clone}
-                        onClick={generate}
-                      >
-                        {generating
-                          ? starting
-                            ? "Starting review…"
-                            : job?.state === "queued"
-                              ? "Review queued"
-                              : "Generating review…"
-                          : "Regenerate review"}
-                      </Button>
-                    ) : null}
-                    {doc ? (
-                      <Button variant="secondary" size="compact" onClick={() => setWalk("tour")}>
-                        Walk through
-                      </Button>
-                    ) : null}
-                    {canMerge(entry) ? (
-                      <Button size="compact" onClick={() => setMerging(true)}>
-                        Merge…
-                      </Button>
-                    ) : null}
-                  </div>
-                ) : null,
-            }}
-            placeholder={
-              entry.needs_clone ? (
-                <div className="local-review-empty">
-                  <h2>Needs a local clone</h2>
-                  <CloneActions repository={pr.repository} changed={changed} />
-                </div>
-              ) : generating ? (
-                <section aria-label="Review generation" className="local-review-empty">
-                  <LiveDot />
-                  <h2 role="status">
-                    {starting
-                      ? "Starting the review"
-                      : job?.state === "queued"
-                        ? "Review queued"
-                        : "Generating the review"}
-                  </h2>
-                  <p>
-                    {!starting && job && automaticLabel(job) ? `${automaticLabel(job)}. ` : ""}This
-                    page updates when it is ready.
-                  </p>
-                  {!starting && job ? <CancelJob job={job} changed={changed} /> : null}
-                </section>
-              ) : failed && entry.version_count > 0 ? (
-                <div className="local-review-empty">
-                  <h2>The saved review couldn't be read</h2>
-                  <Button size="compact" onClick={() => setRetry((n) => n + 1)}>
-                    Retry review
-                  </Button>
-                </div>
-              ) : entry.version_count > 0 ? (
-                <div className="local-review-empty">
-                  <LoadingStatus block>Loading review…</LoadingStatus>
-                </div>
-              ) : job && job.state !== "completed" && !isActiveJob(job) ? (
-                <div className="local-review-empty">
-                  <GenerationOutcome job={job} />
-                  <Button size="compact" onClick={generate}>
-                    {job.state === "failed" ? "Try again" : "Generate review"}
-                  </Button>
-                </div>
-              ) : (
-                <div className="local-review-empty">
-                  <h2>No review yet</h2>
-                  <p>Generate one to see this pull request's summary, risks and changes.</p>
-                  <Button size="compact" onClick={generate}>
-                    Generate review
-                  </Button>
-                </div>
-              )
-            }
-            detailsFooter={(document) => (
-              <GeneratedBy
-                saved={provenance.find((p) => p.version === document.review.version)}
+        <div className="ask-layout">
+          <div className="ask-main" inert={narrow && askOpen ? true : undefined}>
+            {walkView && doc ? (
+              // A new version starts afresh, with that version's own progress.
+              <Walkthrough
+                key={doc.review.version}
                 entry={entry}
-                version={document.review.version}
-                job={job}
+                document={doc}
+                view={walkView}
+                setView={setWalk}
+                close={() => setWalk(null)}
+                patches={patches}
+                changed={changed}
+                ask={{
+                  open: askOpen,
+                  toggle: () => (askOpen ? closeAsk() : setAsk(true)),
+                  about: askAbout,
+                }}
+              />
+            ) : (
+              <ReviewViewer
+                document={doc}
+                history={history}
+                versions={versions.filter((v) => v !== doc?.review.version)}
+                loadVersion={loadVersion}
+                versionsFailed={historyFailed ? { retry: () => setRetry((n) => n + 1) } : undefined}
+                steps={steps}
+                foldSidePane={askOpen && tight}
+                header={{
+                  pullRequest: {
+                    number: pr.number,
+                    title: pr.title,
+                    repository: pr.repository,
+                    url: pr.url,
+                    state: pr.state.toLowerCase(),
+                  },
+                  back: { href: back.href, label: back.label },
+                  generation: { state: generationState, rewriting: generating && Boolean(doc) },
+                  // Without a review, the button in the page's middle generates it.
+                  // The GitHub state leads, so a reader sees why a fix, a re-run or an
+                  // update is offered; a fix comes first of those, re-running checks
+                  // and updating the branch are its smaller remedies.
+                  beside:
+                    doc ||
+                    pullRequestStates(entry).length > 0 ||
+                    (fix && fixLabelText) ||
+                    canMerge(entry) ||
+                    canRerunChecks(entry) ||
+                    canUpdateBranch(entry) ? (
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="mr-2 empty:hidden">
+                          <PullRequestState entry={entry} />
+                        </span>
+                        {fix && fixLabelText ? (
+                          <Button
+                            variant="secondary"
+                            size="compact"
+                            disabled={fixing || fixStarting}
+                            onClick={() => fix()}
+                            className="gap-1.5"
+                          >
+                            <SparkleIcon size={14} className="flex-none text-(--status-critical)" />
+                            {fixing ? "Fixing…" : fixStarting ? "Starting…" : fixLabelText}
+                          </Button>
+                        ) : null}
+                        {canRerunChecks(entry) ? (
+                          <Button
+                            variant="secondary"
+                            size="compact"
+                            onClick={() => setRerunning(true)}
+                          >
+                            Re-run checks
+                          </Button>
+                        ) : null}
+                        {canUpdateBranch(entry) ? (
+                          <Button
+                            variant="secondary"
+                            size="compact"
+                            onClick={() => setUpdating(true)}
+                          >
+                            Update branch
+                          </Button>
+                        ) : null}
+                        {doc ? (
+                          <Button
+                            variant="secondary"
+                            size="compact"
+                            disabled={generating || entry.needs_clone}
+                            onClick={generate}
+                          >
+                            {generating
+                              ? starting
+                                ? "Starting review…"
+                                : job?.state === "queued"
+                                  ? "Review queued"
+                                  : "Generating review…"
+                              : "Regenerate review"}
+                          </Button>
+                        ) : null}
+                        {doc ? (
+                          <Button
+                            variant="secondary"
+                            size="compact"
+                            aria-pressed={askOpen}
+                            aria-keyshortcuts="a"
+                            data-ask-button=""
+                            onClick={() => (askOpen ? closeAsk() : setAsk(true))}
+                          >
+                            Ask
+                          </Button>
+                        ) : null}
+                        {doc ? (
+                          <Button
+                            variant="secondary"
+                            size="compact"
+                            onClick={() => setWalk("tour")}
+                          >
+                            Walk through
+                          </Button>
+                        ) : null}
+                        {canMerge(entry) ? (
+                          <Button size="compact" onClick={() => setMerging(true)}>
+                            Merge…
+                          </Button>
+                        ) : null}
+                      </div>
+                    ) : null,
+                }}
+                placeholder={
+                  entry.needs_clone ? (
+                    <div className="local-review-empty">
+                      <h2>Needs a local clone</h2>
+                      <CloneActions repository={pr.repository} changed={changed} />
+                    </div>
+                  ) : generating ? (
+                    <section aria-label="Review generation" className="local-review-empty">
+                      <LiveDot />
+                      <h2 role="status">
+                        {starting
+                          ? "Starting the review"
+                          : job?.state === "queued"
+                            ? "Review queued"
+                            : "Generating the review"}
+                      </h2>
+                      <p>
+                        {!starting && job && automaticLabel(job) ? `${automaticLabel(job)}. ` : ""}
+                        This page updates when it is ready.
+                      </p>
+                      {!starting && job ? <CancelJob job={job} changed={changed} /> : null}
+                    </section>
+                  ) : failed && entry.version_count > 0 ? (
+                    <div className="local-review-empty">
+                      <h2>The saved review couldn't be read</h2>
+                      <Button size="compact" onClick={() => setRetry((n) => n + 1)}>
+                        Retry review
+                      </Button>
+                    </div>
+                  ) : entry.version_count > 0 ? (
+                    <div className="local-review-empty">
+                      <LoadingStatus block>Loading review…</LoadingStatus>
+                    </div>
+                  ) : job && job.state !== "completed" && !isActiveJob(job) ? (
+                    <div className="local-review-empty">
+                      <GenerationOutcome job={job} />
+                      <Button size="compact" onClick={generate}>
+                        {job.state === "failed" ? "Try again" : "Generate review"}
+                      </Button>
+                    </div>
+                  ) : (
+                    <div className="local-review-empty">
+                      <h2>No review yet</h2>
+                      <p>Generate one to see this pull request's summary, risks and changes.</p>
+                      <Button size="compact" onClick={generate}>
+                        Generate review
+                      </Button>
+                    </div>
+                  )
+                }
+                detailsFooter={(document) => (
+                  <GeneratedBy
+                    saved={provenance.find((p) => p.version === document.review.version)}
+                    entry={entry}
+                    version={document.review.version}
+                    job={job}
+                  />
+                )}
+                notices={
+                  <>
+                    {groups.map((group) => (
+                      <Notice key={group.id}>
+                        In review group{" "}
+                        <ViewerLink
+                          href={appURL(`?${back.prefix}group=${encodeURIComponent(group.id)}`)}
+                        >
+                          {group.name}
+                        </ViewerLink>
+                      </Notice>
+                    ))}
+                    {fixState.error ? (
+                      <Alert>Couldn't start the fix: {fixState.error}</Alert>
+                    ) : null}
+                    {showFix && fixJob ? (
+                      <FixNotice key={fixJob.id} job={fixJob} changed={changed} />
+                    ) : null}
+                    <FixRuns runs={earlierRuns} earlier={showFix} />
+                    {doc || failed || entry.version_count === 0 ? (
+                      <PullRequestDecisionsList
+                        repository={pr.repository}
+                        number={pr.number}
+                        live={running}
+                        revision={`${ended}:${doc?.review.version ?? 0}`}
+                      />
+                    ) : null}
+                    <LiveSessions sessions={running} Link={ViewerLink} />
+                    {entry.needs_clone && doc ? (
+                      <Notice>
+                        Needs a local clone. This saved review remains available.
+                        <CloneActions repository={pr.repository} changed={changed} />
+                      </Notice>
+                    ) : null}
+                    {job && isActiveJob(job) && doc ? (
+                      <ReviewJob key={job.id} job={job} changed={changed} />
+                    ) : job && doc && job.state !== "completed" ? (
+                      <div className="local-job-outcome">
+                        <GenerationOutcome job={job} compact />
+                      </div>
+                    ) : null}
+                    {failed && doc ? (
+                      <Alert>
+                        The latest review could not be read. This saved version remains available.{" "}
+                        <Button onClick={() => setRetry((n) => n + 1)}>Retry review</Button>
+                      </Alert>
+                    ) : null}
+                    {generating && doc ? (
+                      <Notice>
+                        A new review is being generated. This saved version remains available while
+                        it runs.
+                      </Notice>
+                    ) : null}
+                  </>
+                }
+                sessions={
+                  lists
+                    ? sessionsSlot(lists.sessions, {
+                        renderSession: (session) => <Transcript id={session.id} query={query} />,
+                      })
+                    : undefined
+                }
+                commits={lists?.commits ? commitsSlot(lists.commits) : undefined}
+                hunkPatches={patches}
+                renderSectionAside={
+                  doc
+                    ? (id) => (
+                        <div className="ask-aside">
+                          <Button
+                            variant="secondary"
+                            size="compact"
+                            onClick={() => {
+                              const focus = sectionFocus(doc, id);
+                              if (focus) askAbout(focus);
+                            }}
+                          >
+                            Ask about this section
+                          </Button>
+                        </div>
+                      )
+                    : undefined
+                }
               />
             )}
-            notices={
-              <>
-                {groups.map((group) => (
-                  <Notice key={group.id}>
-                    In review group{" "}
-                    <ViewerLink
-                      href={appURL(`?${back.prefix}group=${encodeURIComponent(group.id)}`)}
-                    >
-                      {group.name}
-                    </ViewerLink>
-                  </Notice>
-                ))}
-                {fixState.error ? <Alert>Couldn't start the fix: {fixState.error}</Alert> : null}
-                {showFix && fixJob ? (
-                  <FixNotice key={fixJob.id} job={fixJob} changed={changed} />
-                ) : null}
-                <FixRuns runs={earlierRuns} earlier={showFix} />
-                <LiveSessions sessions={running} Link={ViewerLink} />
-                {/* Read once the latest review has settled, and again when a
-                    newly saved one moves the provisional marks. */}
-                {doc || failed || entry.version_count === 0 ? (
-                  <PullRequestDecisionsList
-                    repository={pr.repository}
-                    number={pr.number}
-                    live={running}
-                    revision={`${ended}:${doc?.review.version ?? 0}`}
-                  />
-                ) : null}
-                {entry.needs_clone && doc ? (
-                  <Notice>
-                    Needs a local clone. This saved review remains available.
-                    <CloneActions repository={pr.repository} changed={changed} />
-                  </Notice>
-                ) : null}
-                {job && isActiveJob(job) && doc ? (
-                  <ReviewJob key={job.id} job={job} changed={changed} />
-                ) : job && doc && job.state !== "completed" ? (
-                  <div className="local-job-outcome">
-                    <GenerationOutcome job={job} compact />
-                  </div>
-                ) : null}
-                {failed && doc ? (
-                  <Alert>
-                    The latest review could not be read. This saved version remains available.{" "}
-                    <Button onClick={() => setRetry((n) => n + 1)}>Retry review</Button>
-                  </Alert>
-                ) : null}
-                {generating && doc ? (
-                  <Notice>
-                    A new review is being generated. This saved version remains available while it
-                    runs.
-                  </Notice>
-                ) : null}
-              </>
-            }
-            sessions={
-              lists
-                ? sessionsSlot(lists.sessions, {
-                    renderSession: (session) => <Transcript id={session.id} query={query} />,
-                  })
-                : undefined
-            }
-            commits={lists?.commits ? commitsSlot(lists.commits) : undefined}
-            hunkPatches={patches}
-          />
-        )}
+          </div>
+          {askOpen && doc ? (
+            <>
+              <div className="ask-backdrop" aria-hidden onClick={closeAsk} />
+              <AskPanel
+                key={`${clone}:${pr.number}`}
+                clone={clone}
+                pr={pr.number}
+                pullRequestUrl={pr.url}
+                latestVersion={doc.review.version}
+                // Questions are about the version on screen, which is an older
+                // one while the viewer reads it.
+                document={!walkView && viewedDocument ? viewedDocument : doc}
+                patches={patches}
+                focus={askFocus}
+                clearFocus={() => setAskFocus(null)}
+                close={closeAsk}
+                jobs={chats}
+                answerActions={({ conversation, turn, answer }) =>
+                  // Only an answer about the newest review goes to its draft or
+                  // to a fix of the pull request as it is now.
+                  tour && conversation.version === doc.review.version ? (
+                    <AnswerActions
+                      conversation={conversation}
+                      turn={turn}
+                      answer={answer}
+                      document={doc}
+                      tour={tour}
+                      fix={fix && fixEligible(entry) ? fix : undefined}
+                      fixRunning={fixing || fixStarting}
+                      openDraft={() => {
+                        setWalk("all");
+                        // The overlay would cover the draft and keep it inert.
+                        if (narrow) closeAsk();
+                      }}
+                    />
+                  ) : null
+                }
+              />
+            </>
+          ) : null}
+        </div>
         {merging ? (
           <MergeDialog entry={entry} close={() => setMerging(false)} merged={changed} />
         ) : null}

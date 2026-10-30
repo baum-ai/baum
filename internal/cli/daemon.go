@@ -25,6 +25,7 @@ import (
 	"github.com/baum-ai/baum/internal/analytics"
 	"github.com/baum-ai/baum/internal/automatic"
 	"github.com/baum-ai/baum/internal/background"
+	"github.com/baum-ai/baum/internal/chat"
 	"github.com/baum-ai/baum/internal/clonefind"
 	"github.com/baum-ai/baum/internal/config"
 	"github.com/baum-ai/baum/internal/daemon"
@@ -399,7 +400,6 @@ func localApplication(paths daemon.Paths, concurrency int, log *slog.Logger) fun
 		if err := pricing.LoadPersisted(state); err != nil {
 			log.Warn("stored price list not loaded", "error", err)
 		}
-		refresh := func(ctx context.Context) error { return pricing.Refresh(ctx, state) }
 		// Review groups live in the daemon's state, not in a clone.
 		groups, err := reviewgroups.Open(filepath.Join(state, "groups.sqlite"))
 		if err != nil {
@@ -438,10 +438,14 @@ func localApplication(paths daemon.Paths, concurrency int, log *slog.Logger) fun
 			scheduler.Observe(ctx, snapshot)
 			notify.Observe(ctx, snapshot)
 		}
+		chats := &chat.Service{Registry: registry, Config: cfg, Log: log}
 		// Feature builds run on the feature worker made below.
 		builds := &featureBuilder{}
-		queue, err := jobs.Open(filepath.Join(state, "jobs.json"), &jobs.Local{Registry: registry, Groups: groups, Config: cfg, Client: github.NewFromConfig(cfg, github.Options{}), Features: builds}, concurrency, func(job jobs.Job) {
+		queue, err := jobs.Open(filepath.Join(state, "jobs.json"), &jobs.Local{Registry: registry, Groups: groups, Config: cfg, Client: github.NewFromConfig(cfg, github.Options{}), Features: builds, Chat: chats}, concurrency, func(job jobs.Job) {
 			_ = server.Publish("progress", map[string]any{"job": job})
+			if event, ok := jobs.ChatEvent(job); ok {
+				_ = server.Publish("chat", event)
+			}
 			if job.Phase == "finished" {
 				changed()
 				// Reading the index takes a moment; the queue must not wait.
@@ -463,6 +467,7 @@ func localApplication(paths daemon.Paths, concurrency int, log *slog.Logger) fun
 		}
 		scheduler.Queue = queue
 		queue.SetAutomaticGate(scheduler.Gate)
+		queue.SetChat(chats)
 		hookRefresh := &hookrefresh.Service{Registry: registry, Cached: discover.Cached, Refresh: worker.RefreshNow, Trigger: scheduler.Trigger, Changed: changed, Log: log}
 		// Subscribed before the spool drains or the socket serves, so no
 		// event arrives unseen.
@@ -619,7 +624,7 @@ func localApplication(paths daemon.Paths, concurrency int, log *slog.Logger) fun
 		endedSessions, unsubscribeEnded := events.Subscribe(4, func(e hookevents.Event) bool {
 			return e.Kind == hookevents.KindAgent && e.Name == "session-end"
 		})
-		api := uiserver.LocalAPI{GitHubAuth: githubConnection.Handler(), Registry: registry, Config: cfg, PRs: uiserver.DiscoveryHandler(registry, discover, changed), Index: index.Handler(), Jobs: queue.Handler(), Background: worker.Handler(), Automatic: scheduler.Handler(), Live: liveAPI, AgentRequests: requestsAPI, Clones: clones.Handler(), GitHubRepositories: pickList.Handler(), PlanUsage: plans.Handler(), Analytics: insights.Handler(), Timeline: timeline, Merge: uiserver.MergeHandler(registry, actions.RecordMerges(githubClient), mergedPullRequest, changed), Review: uiserver.ReviewHandler(registry, githubClient, changed), Update: uiserver.UpdateHandler(registry, actions.RecordUpdates(prupdate.Service{Client: githubClient, Cache: panelCache, Counted: countedThreads}), refreshRepository, changed), Changed: settingsChanged,
+		api := uiserver.LocalAPI{GitHubAuth: githubConnection.Handler(), Registry: registry, Config: cfg, PRs: uiserver.DiscoveryHandler(registry, discover, changed), Index: index.Handler(), Jobs: queue.Handler(), Chat: uiserver.ChatHandler(registry, queue), Background: worker.Handler(), Automatic: scheduler.Handler(), Live: liveAPI, AgentRequests: requestsAPI, Clones: clones.Handler(), GitHubRepositories: pickList.Handler(), PlanUsage: plans.Handler(), Analytics: insights.Handler(), Timeline: timeline, Merge: uiserver.MergeHandler(registry, actions.RecordMerges(githubClient), mergedPullRequest, changed), Review: uiserver.ReviewHandler(registry, githubClient, changed), Update: uiserver.UpdateHandler(registry, actions.RecordUpdates(prupdate.Service{Client: githubClient, Cache: panelCache, Counted: countedThreads}), refreshRepository, changed), Changed: settingsChanged,
 			Inboxes:   (&inboxes.API{Store: inboxes.Open(filepath.Join(state, "inboxes.json")), Changed: changed}).Handler(),
 			Groups:    (&reviewgroups.API{Store: groups, Registry: registry, Index: index.Build, Changed: changed}).Handler(),
 			Decisions: decisionsAPI, Log: log,
@@ -641,7 +646,7 @@ func localApplication(paths daemon.Paths, concurrency int, log *slog.Logger) fun
 					wg.Go(func() { hookRefresh.Run(ctx, refreshEvents) })
 				}
 				wg.Go(func() {
-					if err := refresh(ctx); err != nil && ctx.Err() == nil {
+					if err := pricing.Refresh(ctx, state); err != nil && ctx.Err() == nil {
 						log.Warn("price list not refreshed", "error", err)
 					}
 				})

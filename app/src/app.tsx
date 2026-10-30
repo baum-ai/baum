@@ -70,8 +70,9 @@ import {
   request,
   reviewJob,
   fixJob,
+  jobName,
+  chatJobs,
   fixJobs,
-  fixName,
   isActiveJob,
   navigate,
   startFix,
@@ -98,7 +99,7 @@ import {
   type LiveSession,
 } from "./api";
 import { LoadingStatus } from "./nine-dots";
-import { FixDetails, TranscriptLink } from "./fix";
+import { FixDetails, TranscriptLink, type FixChat } from "./fix";
 import { JobPage } from "./job-transcript";
 import { useLocation } from "./location";
 
@@ -560,14 +561,14 @@ function Workspace({ url }: { url: UrlState }) {
   // A fix starts at once, from its button or key: there is no dialog and no
   // price to confirm. One the daemon will not run (a fork, no push access,
   // nothing to fix) says why where it was asked for.
-  const fix = async (entry: Entry, only?: FixOnly) => {
+  const fix = async (entry: Entry, only?: FixOnly, chat?: FixChat) => {
     const clone = cloneFor(entry);
     const key = rowKey(entry);
     if (!clone || fixStarting.has(key) || isActiveJob(fixJob(entry, jobs))) return;
     setFixError(null);
     setFixStarting((now) => new Set([...now, key]));
     try {
-      await startFix(clone, entry.pull_request.number, only);
+      await startFix(clone, entry.pull_request.number, only, chat);
       await reload();
     } catch (e) {
       setFixError({ key, number: entry.pull_request.number, text: errorText(e) });
@@ -1012,10 +1013,15 @@ function Workspace({ url }: { url: UrlState }) {
                 )}
                 generate={() => void generate([selectedEntry], "single")}
                 starting={starting.has(rowKey(selectedEntry))}
-                fix={cloneFor(selectedEntry) ? () => void fix(selectedEntry) : undefined}
+                fix={
+                  cloneFor(selectedEntry)
+                    ? (chat) => void fix(selectedEntry, undefined, chat)
+                    : undefined
+                }
                 fixState={fixState(selectedEntry)}
                 fixJob={fixJob(selectedEntry, jobs)}
                 fixRuns={fixJobs(selectedEntry, jobs)}
+                chats={chatJobs(selectedEntry, jobs)}
               />
             </DecisionsRevision.Provider>
           ) : page !== "pulls" ? (
@@ -1441,7 +1447,7 @@ function JobRow({
           </LocalLink>
         )}
         <p className="local-job-meta">
-          {job.kind === "fix" ? `${fixName(job.fix ?? {})} · ` : null}
+          {job.kind === "fix" || job.kind === "chat" ? `${jobName(job)} · ` : null}
           {started ?? (job.automatic ? null : "Started by you")}
         </p>
         {job.kind === "fix" && job.commit ? (

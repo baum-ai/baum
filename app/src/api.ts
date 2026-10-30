@@ -169,8 +169,10 @@ export type Job = {
   updated_at?: string;
   /** "fix" for a fix of the pull request, "feature_build" for a
    * repository's first feature build (its `pr` is 0); absent for a review. */
-  kind?: "fix" | "feature_build";
+  kind?: "fix" | "feature_build" | "chat";
   fix?: FixInputs;
+  /** The conversation turn a chat job answers. */
+  chat?: { conversation: string; turn: number; version: number };
   /** The fix agent's transcript can be read from `api/jobs/{id}/transcript`. */
   has_transcript?: boolean;
   created_at?: string;
@@ -193,6 +195,10 @@ export type FixInputs = {
   conflicts?: boolean;
   checks?: boolean;
   threads?: string;
+  /** The conversation with the review's agent the fix makes the change of,
+   *  and the last turn it uses. */
+  chat?: string;
+  chat_turn?: number;
   head_ref?: string;
   base_ref?: string;
 };
@@ -244,6 +250,12 @@ const jobReasons: Record<string, string> = {
   no_push_access: "Your GitHub account can't push to this repository.",
   nothing_to_fix:
     "GitHub reports no merge conflict, failing check or unresolved review comment to fix on this pull request now.",
+  chat_unavailable:
+    "The conversation has no answer to fix from, or does not belong to this pull request.",
+  chat_changed:
+    "The conversation changed after you confirmed the fix, so it stopped. Start it again from the answer.",
+  chat_outdated:
+    "This conversation is about an older review of the pull request. Ask again on the current review to fix from its answer.",
   threads_changed:
     "The review comments changed after you started the fix, so it stopped. Check them and start it again.",
   unsupported_backend:
@@ -828,10 +840,23 @@ export function isActiveJob(job: Job | undefined): boolean {
   return job?.state === "queued" || job?.state === "running";
 }
 /** A queue entry belongs to the PR, including its GitHub host, across clones.
- * Active work takes precedence over earlier terminal attempts. A fix is not
- * a review: see fixJob. */
+ * Active work takes precedence over earlier terminal attempts. A fix and a
+ * question to the review's agent are not reviews: see fixJob and chatJobs. */
 export function reviewJob(entry: Entry, jobs: Job[]): Job | undefined {
-  return prJob(entry, jobs, (job) => job.kind !== "fix");
+  return prJob(entry, jobs, (job) => !job.kind);
+}
+/** The PR's questions to the review's agent, oldest first. */
+export function chatJobs(entry: Pick<Entry, "pull_request">, jobs: Job[]): Job[] {
+  return jobs.filter(
+    (job) =>
+      job.kind === "chat" &&
+      job.pr === entry.pull_request.number &&
+      job.repository.toLowerCase() === entry.pull_request.repository.toLowerCase(),
+  );
+}
+/** What a fix or chat job is called: the Jobs list and transcript page title. */
+export function jobName(job: Job): string {
+  return job.kind === "chat" ? `Question on #${job.pr}` : fixName(job.fix ?? {});
 }
 /** The PR's latest fix job, an active one first. */
 export function fixJob(entry: Entry, jobs: Job[]): Job | undefined {
@@ -873,13 +898,25 @@ export function fixName(fix: {
   conflicts?: boolean;
   checks?: boolean;
   threads?: string | boolean;
+  chat?: string | boolean;
 }): string {
   const parts = [
     fix.conflicts ? "conflicts" : "",
     fix.checks ? "CI" : "",
     fix.threads ? "review comments" : "",
   ].filter(Boolean);
+  // A fix from an answer makes that change only; it is never combined.
+  if (fix.chat) return "Fix from this answer";
   return `Fix ${joinAnd(parts.length ? parts : ["CI"])}`;
+}
+/** Whether a fix may be offered at all: an open pull request whose branch is in
+ *  the repository itself, in a repository the signed-in account may push to,
+ *  with a local clone. A fix from a conversation needs nothing else; the daemon
+ *  checks it all again against GitHub. */
+export function fixEligible(entry: Entry): boolean {
+  const pr = entry.pull_request;
+  if (entry.historical || entry.needs_clone || pr.fork || pr.viewer_can_push !== true) return false;
+  return !pr.state || pr.state.toUpperCase() === "OPEN";
 }
 /** The fix a pull request offers, or null: only an open pull request whose
  *  branch is in the repository itself (not a fork), in a repository the
@@ -887,9 +924,8 @@ export function fixName(fix: {
  *  on the person's own pull request, unresolved review threads. The daemon
  *  checks all of it again against GitHub before anything runs. */
 export function fixLabel(entry: Entry): string | null {
+  if (!fixEligible(entry)) return null;
   const pr = entry.pull_request;
-  if (entry.historical || entry.needs_clone || pr.fork || pr.viewer_can_push !== true) return null;
-  if (pr.state && pr.state.toUpperCase() !== "OPEN") return null;
   const conflicts = entry.merge === "conflict";
   const checks = entry.checks === "failing";
   const threads = pr.authored_by_me && (entry.unresolved ?? 0) > 0;
@@ -937,9 +973,22 @@ export type FixOnly = "checks";
  *  fix it will not run (a fork, no push access, nothing to fix) is refused
  *  with its reason in words, as a `LocalRequestError` whose code is the
  *  reason. `only` limits it, as Fix CI on the Inbox's failing checks does. */
-export async function startFix(clone: string, pr: number, only?: FixOnly): Promise<Job[]> {
+export async function startFix(
+  clone: string,
+  pr: number,
+  only?: FixOnly,
+  chat?: { conversation_id: string; turn: number },
+): Promise<Job[]> {
   const answer = await request<{ jobs: Job[] }>("api/jobs", {
-    items: [{ clone, pr, kind: "fix", ...(only ? { only } : {}) }],
+    items: [
+      {
+        clone,
+        pr,
+        kind: "fix",
+        ...(only ? { only } : {}),
+        ...(chat ? { fix_chat: { conversation_id: chat.conversation_id, turn: chat.turn } } : {}),
+      },
+    ],
     mode: "single",
   });
   return answer.jobs;
@@ -963,3 +1012,89 @@ export type GitHubConnection = {
   error?: string;
   message?: string;
 };
+
+/** What a question is about: a section of the review, a stop of the
+ *  walkthrough, or the pull request as a whole. */
+export type ChatFocus = {
+  kind: "section" | "stop" | "overview";
+  id?: string;
+  title?: string;
+  anchors?: ChatAnchor[];
+};
+/** A file, or lines of it, that a focus points at. */
+export type ChatAnchor = { path: string; start_line?: number; end_line?: number };
+export type ChatCitation = { path: string; start_line: number; end_line: number };
+export type ChatAnswer = {
+  answer_markdown: string;
+  citations: ChatCitation[];
+  suggests_fix: { summary: string } | null;
+};
+export type ChatTurnState =
+  | "queued"
+  | "running"
+  | "completed"
+  | "failed"
+  | "cancelled"
+  | "interrupted";
+export type ChatTurn = {
+  seq: number;
+  question: string;
+  focus?: ChatFocus | null;
+  answer?: ChatAnswer;
+  job_id: string;
+  state: ChatTurnState;
+  reason?: string;
+  note?: string;
+  cost_usd?: number | null;
+  cost_reason?: string;
+  created: string;
+  finished?: string;
+};
+export type ChatConversation = {
+  id: string;
+  /** The review version the conversation is about. */
+  version: number;
+  backend: string;
+  model: string;
+  /** It started without the review's own agent session. */
+  seeded: boolean;
+  created: string;
+  updated: string;
+  turns: ChatTurn[];
+};
+/** A turn that has not settled. */
+export const chatTurnActive = (turn: ChatTurn) =>
+  turn.state === "queued" || turn.state === "running";
+/** The pull request's conversations with the review's agent, newest first;
+ *  null when the daemon has no chat. */
+export async function listChats(
+  clone: string,
+  pr: number,
+  signal?: AbortSignal,
+): Promise<ChatConversation[] | null> {
+  try {
+    const body = await request<{ conversations?: ChatConversation[] | null }>(
+      `api/prs/chat?${selector(clone, pr)}`,
+      undefined,
+      "GET",
+      signal,
+    );
+    return body.conversations ?? [];
+  } catch (e) {
+    // Without the capability the daemon answers 503 {code: "chat_unavailable"}.
+    if (e instanceof LocalRequestError && e.code === "chat_unavailable") return null;
+    throw e;
+  }
+}
+/** Asks the review's agent a question; the conversation is new without an id.
+ *  A refusal is a LocalRequestError whose message is the daemon's own words. */
+export function askChat(ask: {
+  clone: string;
+  pr: number;
+  version: number;
+  conversation_id?: string;
+  question: string;
+  focus?: ChatFocus;
+}) {
+  return request<{ conversation_id: string; turn: number; job: Job }>("api/prs/chat", ask);
+}

@@ -20,6 +20,7 @@ export const phases: Record<string, string> = {
   preparing: "Checking the pull request",
   "reading checks": "Reading the failing checks",
   "reading review comments": "Reading the review comments",
+  "reading the conversation": "Reading the conversation",
   fetching: "Fetching the branch",
   merging: "Merging the base branch",
   fixing: "The agent is fixing it",
@@ -27,6 +28,9 @@ export const phases: Record<string, string> = {
   pushing: "Pushing",
   replying: "Replying on the review threads",
   finishing: "Finishing",
+  answering: "The agent is answering",
+  "preparing a new session": "Starting a new agent session",
+  "checking citations": "Checking the answer's citations",
 };
 
 /** Where a fix the person asked for stands before its job exists: on its way
@@ -108,6 +112,10 @@ function RunOutcome({ job }: { job: Job }) {
     return <>failed{job.reason ? `: ${jobReasonText(job.reason)}` : ""}</>;
   return <>{job.state === "completed" ? "finished without pushing" : job.state}</>;
 }
+
+/** A conversation with the review's agent a fix is made from: its ids, and the
+ *  agent's suggested change when the answer made one, for the dialog to show. */
+export type FixChat = { conversation_id: string; turn: number; suggestion?: string };
 
 /** Where a thread is: its file and line. */
 function threadPlace(thread: FixThread) {

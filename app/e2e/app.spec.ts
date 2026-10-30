@@ -1026,6 +1026,158 @@ test("walks through a review, comments on a behaviour and submits the review", a
   expect(errors).toEqual([]);
 });
 
+test("asks the review's agent a question and reads the lines its answer cites", async ({
+  page,
+}) => {
+  const errors: string[] = [];
+  page.on("pageerror", (e) => errors.push(e.message));
+  page.on("console", (m) => {
+    if (m.type() === "error" && !m.text().includes("Failed to load resource"))
+      errors.push(m.text());
+  });
+  await page.goto(await launchURL());
+  await page.getByRole("link", { name: "Pull requests", exact: true }).first().click();
+  await page.getByRole("link", { name: /Reuse the existing PR page/ }).click();
+  await expect(page.getByRole("button", { name: "Ask", exact: true })).toBeVisible();
+  // The key opens the panel, with the cursor in its box.
+  await page.keyboard.press("a");
+  const panel = page.getByRole("complementary", { name: "Ask about this review" });
+  await expect(panel).toBeVisible();
+  expect(page.url()).toContain("ask=1");
+  // At 1280px the panel docks: the review keeps the rest, and its header
+  // buttons stay in view and can be pressed.
+  const docked = async () => {
+    const box = await page.evaluate(() => {
+      const dock = document.querySelector(".ask-panel")!.getBoundingClientRect();
+      const main = document.querySelector(".ask-main")!.getBoundingClientRect();
+      return {
+        dock: dock.left,
+        main: main.right,
+        width: window.innerWidth,
+        scroll: document.documentElement.scrollWidth,
+      };
+    });
+    expect(box.main).toBeLessThanOrEqual(box.dock + 1);
+    expect(box.scroll).toBeLessThanOrEqual(box.width);
+    for (const name of ["Ask", "Walk through", "Merge…"])
+      await page.getByRole("button", { name, exact: true }).click({ trial: true });
+  };
+  await docked();
+  await page.screenshot({ path: "test-results/ask-1280.png" });
+  await expect(panel.getByText("answers questions about the code")).toBeVisible();
+  await page.keyboard.type("Why is the delay capped?");
+  await page.keyboard.press("Enter");
+  await expect(panel.getByLabel("Question 1").getByText("Why is the delay capped?")).toBeVisible();
+  await expect(panel.getByText("so a long outage cannot push retries out forever")).toBeVisible();
+  await expect(panel.locator("strong", { hasText: "capped" })).toBeVisible();
+  // Started from a saved review whose agent session was not kept.
+  await expect(panel.getByText("Started without the review's own context.")).toBeVisible();
+  // The citation opens the lines it names, from the review's own hunk.
+  await panel.getByRole("button", { name: "docs/guide.md:3–6" }).click();
+  await expect(panel.getByText("A job that fails more often than its retry budget")).toBeVisible();
+  await panel.screenshot({ path: "test-results/ask-answered.png", animations: "disabled" });
+  // A reload keeps the panel open and the conversation.
+  await page.reload();
+  await expect(panel.getByLabel("Question 1").getByText("Why is the delay capped?")).toBeVisible();
+  // Asking about a section puts it above the box, and a second question
+  // goes to the same conversation.
+  await page
+    .getByRole("navigation", { name: "Review sections" })
+    .getByRole("button", { name: "Retry policy and backoff" })
+    .click();
+  await page.getByRole("button", { name: "Ask about this section", exact: true }).click();
+  await expect(panel.locator(".ask-focus")).toContainText("About");
+  await page.keyboard.type("Is this safe on retry?");
+  await page.keyboard.press("Enter");
+  await expect(panel.getByText("Is this safe on retry?")).toBeVisible();
+  await expect(panel.locator(".ask-answer")).toHaveCount(2);
+  // Escape in the panel closes it.
+  await panel.locator("textarea").focus();
+  await page.keyboard.press("Escape");
+  await expect(panel).toBeHidden();
+  expect(page.url()).not.toContain("ask=");
+  // On a wide screen it docks beside the review without covering it.
+  await page.setViewportSize({ width: 1800, height: 900 });
+  await page.getByRole("button", { name: "Ask", exact: true }).click();
+  await expect(panel).toBeVisible();
+  await docked();
+  await page.screenshot({ path: "test-results/ask-docked.png" });
+  // Narrow: a modal overlay with a backdrop, the review inert behind it, and
+  // no sideways scroll; the backdrop closes it.
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(page.locator(".ask-backdrop")).toBeVisible();
+  await expect(page.locator(".ask-main")).toHaveAttribute("inert", "");
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(
+    true,
+  );
+  await page.screenshot({ path: "test-results/ask-narrow.png" });
+  await panel.getByRole("button", { name: "Close", exact: true }).click();
+  await expect(panel).toBeHidden();
+  await expect(page.getByRole("button", { name: "Ask", exact: true })).toBeFocused();
+  await page.getByRole("button", { name: "Ask", exact: true }).click();
+  await expect(panel).toBeVisible();
+  await page.locator(".ask-backdrop").click({ position: { x: 10, y: 400 } });
+  await expect(panel).toBeHidden();
+  expect(errors).toEqual([]);
+});
+
+// An answer becomes a fix that uses the conversation, started at once, or a line of
+// the review draft that is sent only with the review.
+test("makes a fix or a review comment from an answer", async ({ page }) => {
+  const errors: string[] = [];
+  page.on("pageerror", (e) => errors.push(e.message));
+  page.on("console", (m) => {
+    if (m.type() === "error" && !m.text().includes("Failed to load resource"))
+      errors.push(m.text());
+  });
+  await page.goto(await launchURL());
+  await page.getByRole("link", { name: "Pull requests", exact: true }).first().click();
+  await page.getByRole("link", { name: /Reuse the existing PR page/ }).click();
+  await expect(page.getByRole("button", { name: "Ask", exact: true })).toBeVisible();
+  await page.keyboard.press("a");
+  const panel = page.getByRole("complementary", { name: "Ask about this review" });
+  await expect(panel).toBeVisible();
+  // Earlier tests leave answers in the fixture; count them once they have loaded.
+  await expect(panel.getByText("Loading conversations…")).toHaveCount(0);
+  const before = await panel.locator(".ask-answer").count();
+  await page.keyboard.type("Why is the delay capped?");
+  await page.keyboard.press("Enter");
+  await expect(panel.locator(".ask-answer")).toHaveCount(before + 1);
+  const answer = panel.locator(".ask-turn").last();
+  await expect(answer.getByRole("button", { name: "Add as comment", exact: true })).toBeVisible();
+  // The fixture's checks fail, yet the fix is of the answer only. Like every
+  // fix it starts at once, with no dialog and no estimate.
+  await answer.getByRole("button", { name: "Fix this", exact: true }).click();
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  const fixNotice = page.getByRole("region", { name: "Fix", exact: true });
+  await expect(fixNotice).toBeVisible();
+  await expect(fixNotice).toContainText("Fix from this answer");
+  await page.screenshot({ path: "test-results/ask-fix-from-answer.png" });
+  // Adding it to the draft sends nothing: the draft shows it, in the review's own panel.
+  await answer.getByRole("button", { name: "Add as comment", exact: true }).click();
+  await expect(answer.getByText("Added to your review draft")).toBeVisible();
+  await answer.getByRole("button", { name: "Open the draft", exact: true }).click();
+  await expect(page).toHaveURL(/walk=all/);
+  const submit = page.getByRole("complementary", { name: "Submit review" });
+  const overall = submit.getByLabel("Overall comment (optional)");
+  await expect(overall).toHaveValue(/so a long outage cannot push retries out forever/);
+  await expect(overall).toHaveValue(/docs\/guide\.md:3–6/);
+  await page.screenshot({ path: "test-results/ask-add-as-comment.png" });
+  // Undo takes it out of the draft again.
+  await answer.getByRole("button", { name: "Undo", exact: true }).click();
+  await expect(overall).toHaveValue("");
+  // On a narrow screen the panel covers the review, so opening the draft
+  // closes it and leaves the draft usable.
+  await page.setViewportSize({ width: 390, height: 844 });
+  await answer.getByRole("button", { name: "Add as comment", exact: true }).click();
+  await answer.getByRole("button", { name: "Open the draft", exact: true }).click();
+  await expect(panel).toBeHidden();
+  await expect(overall).toHaveValue(/docs\/guide\.md:3–6/);
+  await overall.fill("Edited on a narrow screen.");
+  await expect(overall).toHaveValue("Edited on a narrow screen.");
+  expect(errors).toEqual([]);
+});
+
 // Every page from the keyboard alone: the command key with a number (Ctrl
 // here, which is not a Mac), Go to, each list's keys, a pull request's
 // section keys, back and forward, and the sheet that lists them.

@@ -400,6 +400,31 @@ project directories named after such a directory and Codex rollouts that record
 such a directory as their cwd; it never follows a symlink. Runs for other
 backends and review groups keep nothing and are removed at once.
 
+Asking the review agent a question about a pull request (chat, desktop and
+daemon only) runs the same harness with the same read-only restrictions as the
+review: Claude Code in restricted mode with Read, Glob and Grep confined to
+the run directory, Codex in its read-only sandbox (also on `exec fork` and
+`exec resume`). It never runs Cursor or the Anthropic API backend. The first
+question forks the review's kept session in the review's run directory, later
+questions resume that fork there; the CLI keeps each conversation's
+transcript in its usual store beside the review's, holding the questions, the
+files the agent read and its answers. When the review's session is gone, baum
+seeds a new run directory under the same `<cache>/baum/review-runs/` root
+(0700) with the checkout of the review's head from your clone, the saved
+review (already masked) and the earlier questions and answers (masked;
+questions are stored and shown as you typed them, and masked only where they
+go to the agent). Using
+a directory refreshes its modification time, so it expires 14 days after the
+conversation last used it; pruning a review's older versions and the expiry
+delete these directories and every CLI session in them, chat forks included,
+by the same rules as above. The question and the part of the review it is
+about are untrusted data in the prompt, between markers with a random nonce
+and with secrets masked. The answer is masked for secrets before it is
+stored or shown, and its citations are checked against the checkout (no
+absolute paths, no `..`, no symlink leaving it, only lines that exist).
+Conversations are stored in the clone's review store; the session id and run
+directory never leave the daemon, and the logs carry sizes, not text.
+
 The unsandboxed mode (`--sandbox danger-full-access`) exists only as the
 `Container` profile for the hosted review agent, which runs inside its own
 container. A test fails if any code under `oss/internal` or `oss/cmd` names it.
@@ -608,6 +633,25 @@ The instructions (`fix-threads.md`) say the comments are feedback to evaluate,
 not instructions, and to ignore requests to run commands, read or send files,
 or change credentials, secrets, CI or workflow configuration, dependencies or
 unrelated files.
+
+A fix can also be made from a conversation with the review's agent (chat), an
+answer's "Fix this". The app sends only the conversation's and the turn's ids:
+the daemon reads the questions and answers from your review store for that
+clone and pull request, so a page or request cannot supply the text. The
+conversation is an agent's reading of the pull request plus your own questions,
+so it is untrusted data like the rest: it goes into the prompt between the same
+random-tag markers, one block per turn, with secrets masked (your questions are
+stored as you typed them and are masked here), and the instructions
+(`fix-chat.md`) say to make only the change it asks for, verify it against the
+code and ignore anything beyond it. At most 32 KiB of the newest turns are
+included. The estimate pins the turn and a digest of the conversation as the
+agent gets it, so a confirmed fix cannot run with another conversation or
+turn, and one whose stored turns changed stops before the agent runs. Nothing
+about the confirmation changes: the same evidence, the same dialog, the same
+write access. A fix from a conversation is its own fix: it makes only that
+change, reads no checks or review threads and replies on none, only the newest
+review's conversation can start one, and it never pushes a workflow or action
+change.
 
 The agent reports per thread whether it addressed it, in a JSON block at the
 end of its final message whose opening fence carries the prompt's random tag,
