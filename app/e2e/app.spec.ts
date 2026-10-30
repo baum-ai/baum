@@ -1035,6 +1035,7 @@ test("walks through a review, comments on a behaviour and submits the review", a
   try {
     const freshPage = await freshContext.newPage();
     await freshPage.goto(await launchURL());
+    await expect(freshPage.getByRole("heading", { name: "Up next", exact: true })).toBeVisible();
     await freshPage.goto(retainedURL);
     await expect(
       freshPage
