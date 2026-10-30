@@ -62,6 +62,8 @@ export function PreferencesProvider({ children }: { children: ReactNode }) {
   const update = async (patch: Partial<Preferences>) => {
     if (!ready || busy.current) return;
     busy.current = true;
+    const previous = preferences;
+    setPreferences({ ...previous, ...patch });
     ++revision.current;
     setSaving(true);
     setError("");
@@ -69,6 +71,7 @@ export function PreferencesProvider({ children }: { children: ReactNode }) {
       const saved = await request<Preferences>("api/settings/appearance", patch, "PUT");
       setPreferences(normalize(saved));
     } catch (cause) {
+      setPreferences(previous);
       setError(String(cause));
     } finally {
       busy.current = false;

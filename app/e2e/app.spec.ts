@@ -1144,6 +1144,7 @@ test("General preferences persist, follow system theme and control keyboard hint
   await page.keyboard.down("Alt");
   await expect(page.locator("html")).not.toHaveAttribute("data-key-hints");
   await page.keyboard.up("Alt");
+  await expect(hints).toBeEnabled();
   await page.evaluate(() => localStorage.clear());
   await page.reload();
   await expect(theme).toHaveValue("light");
