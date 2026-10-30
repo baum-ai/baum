@@ -114,6 +114,24 @@ type Preferences struct {
 	Appearance AppearancePreferences `json:"appearance,omitzero"`
 	// Decisions configures local decision capture.
 	Decisions DecisionPreferences `json:"decisions,omitzero"`
+	// JobConcurrency, when set, is how many jobs the daemon runs at once
+	// besides questions to a review's agent; Concurrency resolves it.
+	JobConcurrency int `json:"job_concurrency,omitempty"`
+}
+
+// MaxJobConcurrency is the most jobs the daemon runs at once besides
+// questions to a review's agent, and the default. A person lowers it when
+// parallel agents load the computer too much.
+const MaxJobConcurrency = 4
+
+// Concurrency is how many jobs run at once: JobConcurrency, or
+// MaxJobConcurrency when it is unset or out of range (a hand edit, or a newer
+// baum's).
+func (p Preferences) Concurrency() int {
+	if p.JobConcurrency < 1 || p.JobConcurrency > MaxJobConcurrency {
+		return MaxJobConcurrency
+	}
+	return p.JobConcurrency
 }
 
 // The PullRequests choices besides both.

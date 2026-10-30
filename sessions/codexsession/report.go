@@ -8,12 +8,14 @@ import (
 )
 
 // Report accounts for every rollout record and every emitted graph row.
+// UnknownRecords are records of a type the reader does not know, discarded.
 type Report struct {
 	Sessions         int                   `json:"sessions"`
 	Rows             Rows                  `json:"rows"`
 	Records          Records               `json:"records"`
 	Tokens           Tokens                `json:"tokens"`
 	UnsupportedTurns int                   `json:"unsupported_turns"`
+	UnknownRecords   int                   `json:"unknown_records,omitempty"`
 	Transcript       codextranscript.Shape `json:"transcript"`
 	Notes            []string              `json:"notes,omitempty"`
 }

@@ -704,7 +704,8 @@ without the gate, throttle or unchanged check and prints its report as JSON.
 `--dry-run` stops before the call and writes nothing but the `--debug-dir`
 files: it reads an existing store read-only, and uses an empty one in memory
 when there is none. The hidden `--debug-dir <dir>` creates the private
-directory and writes the rendered transcript, and after a call the message
+directory (0700 on Unix, a current-user-only DACL on Windows) and writes
+the rendered transcript, and after a call the message
 sent and the raw reply, there, replacing a previous capture's files; a
 capture that stops before rendering leaves it empty.
 

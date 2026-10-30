@@ -485,15 +485,15 @@ it("opens the Ask panel with a, keeps it in the URL, and ignores a typed in a te
   await settle();
   expect(node.querySelector(".ask-panel")).toBeNull();
   // The keyboard goes back to the Ask button.
-  expect(document.activeElement).toBe(button("Ask"));
+  expect(document.activeElement).toBe(node.querySelector("[data-ask-button]"));
   expect(node.querySelector("[data-search]")!.textContent).toBe("");
   // The button does the same, and a reload with ask=1 starts open.
-  await act(async () => button("Ask")!.click());
+  await act(async () => node.querySelector<HTMLButtonElement>("[data-ask-button]")!.click());
   expect(node.querySelector(".ask-panel")).not.toBeNull();
 });
 
 it("starts open when the URL says ask=1, and asks about a section from the review", async () => {
-  await act(async () => root.render(<Harness search="ask=1" />));
+  await act(async () => root.render(<Harness search="walk=full&ask=1" />));
   await settle();
   expect(node.querySelector(".ask-panel")).not.toBeNull();
   await act(async () => button("Ask about this section")!.click());

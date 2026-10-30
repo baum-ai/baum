@@ -187,11 +187,14 @@ func (f *Focuser) Predict(agent string, t *hookevents.Terminal) string {
 	if !f.supported() || t == nil || len(t.Processes) == 0 {
 		return ""
 	}
+	if backgroundCodex(agent, t) {
+		return ""
+	}
 	env := f.environment(t.Env)
 	if f.goos() == "linux" && !hyprland(env) && !x11(env) {
 		return ""
 	}
-	if t.Env["TMUX"] != "" && t.Env["TMUX_PANE"] != "" {
+	if tmuxTerminalRecorded(t) {
 		return Session
 	}
 	for _, p := range t.Processes {
@@ -219,6 +222,9 @@ func (f *Focuser) Focus(ctx context.Context, agent, id string, t *hookevents.Ter
 	if len(chain) == 0 {
 		return Result{Message: "The session's process has exited."}
 	}
+	if backgroundCodex(agent, t) {
+		return Result{Message: "This Codex session runs in a background process without a terminal or desktop window to bring forward."}
+	}
 	env := f.environment(t.Env)
 	if agent == "claude-code" && slices.ContainsFunc(chain, func(p hookevents.Process) bool { return claudeDesktopProcess(p.Name) }) {
 		if result, ok := f.claudeDesktop(ctx, id, chain, env); ok {
@@ -227,7 +233,7 @@ func (f *Focuser) Focus(ctx context.Context, agent, id string, t *hookevents.Ter
 	}
 	outer, tty := chain, t.TTY
 	pane := false
-	if t.Env["TMUX"] != "" && t.Env["TMUX_PANE"] != "" {
+	if tmuxTerminalRecorded(t) {
 		client, inPane, why := f.tmux(ctx, t.Env["TMUX"], t.Env["TMUX_PANE"], t.TTY)
 		switch {
 		case why != "":
@@ -259,6 +265,20 @@ func cmpOr(s, fallback string) string {
 		return s
 	}
 	return fallback
+}
+
+// A detached Codex app server can inherit terminal variables from its launcher.
+// Only classify known background ancestors; an unfamiliar application may own
+// a window that the normal fallback can raise.
+func backgroundCodex(agent string, t *hookevents.Terminal) bool {
+	return agent == "codex" && t.TTY == "" && len(t.Processes) > 0 &&
+		!slices.ContainsFunc(t.Processes, func(p hookevents.Process) bool {
+			return p.Name != "codex" && p.Name != "systemd" && p.Name != "launchd"
+		})
+}
+
+func tmuxTerminalRecorded(t *hookevents.Terminal) bool {
+	return t.TTY != "" && t.Env["TMUX"] != "" && t.Env["TMUX_PANE"] != ""
 }
 
 // displayEnv are the variables the window commands read, taken from the
@@ -321,7 +341,11 @@ func (f *Focuser) tmux(ctx context.Context, server, pane, tty string) (tmuxClien
 		return tmuxClient{}, false, "The session's tmux pane is gone."
 	}
 	session, paneTTY, _ := strings.Cut(strings.TrimSpace(string(out)), "\t")
-	if tty != "" && paneTTY != "" && paneTTY != tty {
+	// display-message can succeed with empty fields for a pane that is gone.
+	if session == "" || paneTTY == "" {
+		return tmuxClient{}, false, "The session's tmux pane is gone."
+	}
+	if paneTTY != tty {
 		return tmuxClient{}, false, ""
 	}
 	out, err = tmux("list-clients", "-F", "#{client_pid}\t#{client_tty}\t#{session_id}\t#{client_activity}")

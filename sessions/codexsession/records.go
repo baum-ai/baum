@@ -28,6 +28,14 @@ var eventDiscards = map[string]string{
 
 func (f *threadState) process(line codextranscript.Line, next *codextranscript.Line) (accountCategory, string, error) {
 	f.times.Observe(&line.Timestamp)
+	if line.Unknown {
+		reason := unknownReason(line)
+		if f.b.report.Records.Discarded[reason] == 0 {
+			f.b.report.note("thread %s line %d has a record of unknown type, left out: %s", f.meta.ID, line.Ordinal, reason)
+		}
+		f.b.report.UnknownRecords++
+		return accountDiscarded, reason, nil
+	}
 	if reason, ok := classDiscards[line.Class]; ok {
 		return accountDiscarded, reason, nil
 	}
@@ -60,6 +68,19 @@ func (f *threadState) process(line codextranscript.Line, next *codextranscript.L
 	}
 }
 
+// unknownReason discards a record of a type the reader does not know, named
+// so a new Codex type shows in the report instead of failing the session.
+func unknownReason(line codextranscript.Line) string {
+	switch {
+	case line.ResponseItem != nil:
+		return "unknown/response_item/" + line.ResponseItem.Type
+	case line.EventMsg != nil:
+		return "unknown/event_msg/" + line.EventMsg.Type
+	default:
+		return "unknown/" + line.Type
+	}
+}
+
 func (f *threadState) responseItem(line codextranscript.Line) (accountCategory, string, error) {
 	item := line.ResponseItem
 	switch {
@@ -79,6 +100,8 @@ func (f *threadState) responseItem(line codextranscript.Line) (accountCategory, 
 		return accountDiscarded, "context/image_generation_call", nil
 	case item.AdditionalTools != nil:
 		return accountDiscarded, "context/additional_tools", nil
+	case item.ConfigurationUpdate != nil:
+		return accountDiscarded, "context/configuration_update", nil
 	case item.FunctionCall != nil:
 		return f.ownedCall(line, item.FunctionCall.CallID, func() error {
 			return f.addFunctionCall(line, item.FunctionCall)

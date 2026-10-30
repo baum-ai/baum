@@ -15,28 +15,38 @@ import (
 )
 
 func newInstallUserHooksCommand(stdout, stderr io.Writer) *cobra.Command {
-	return newChangeUserPluginsCommand(true, stdout, stderr)
+	return newChangeUserPluginsCommand("install", stdout, stderr)
 }
 func newUninstallUserHooksCommand(stdout, stderr io.Writer) *cobra.Command {
-	return newChangeUserPluginsCommand(false, stdout, stderr)
+	return newChangeUserPluginsCommand("uninstall", stdout, stderr)
+}
+func newUpdateUserHooksCommand(stdout, stderr io.Writer) *cobra.Command {
+	return newChangeUserPluginsCommand("update", stdout, stderr)
 }
 
-func newChangeUserPluginsCommand(install bool, stdout, stderr io.Writer) *cobra.Command {
+func newChangeUserPluginsCommand(action string, stdout, stderr io.Writer) *cobra.Command {
 	var user bool
 	var agents []string
-	action := "install"
-	if !install {
-		action = "uninstall"
+	defaults := "supported coding-agent CLIs found on PATH"
+	if action == "update" {
+		defaults = "the coding agents with the plugin enabled"
 	}
 	cmd := &cobra.Command{Use: action + " --user [--agent AGENT]...", Short: strings.ToUpper(action[:1]) + action[1:] + " baum's user-scoped agent marketplace plugins", Long: `Uses Claude Code or Codex's native plugin CLI to manage baum@baum.
 Installation registers the public baum-ai/baum Git marketplace, downloads the
-plugin and enables it. The agent owns plugin settings; baum edits no hook files.
-Review hook trust in the agent afterwards (Codex: /hooks). Installed and enabled
+plugin and enables it. Update refreshes the marketplace and brings an installed
+plugin to its latest version. The agent owns plugin settings; baum edits no hook
+files. Review hook trust in the agent afterwards (Codex: /hooks). Installed and enabled
 do not mean trusted. No baum sign-in is needed and no baum server is contacted.
-Without --agent, uses supported coding-agent CLIs found on PATH.`, Args: cobra.NoArgs,
+Without --agent, uses ` + defaults + `.`, Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if !user {
 				return errors.New("pass --user to manage user-scoped agent marketplace plugins")
+			}
+			if len(agents) == 0 && action == "update" {
+				agents = updatableUserHookAgents(cmd.Context())
+				if len(agents) == 0 {
+					return errors.New("no coding agent has baum@baum installed and enabled; install or enable it with `baum hooks install --user` first")
+				}
 			}
 			if len(agents) == 0 {
 				agents = detectedUserHookAgents()
@@ -44,10 +54,10 @@ Without --agent, uses supported coding-agent CLIs found on PATH.`, Args: cobra.N
 					return errors.New("no supported coding-agent CLI on PATH; install/update Claude Code or Codex, then retry")
 				}
 			}
-			return changeUserHooks(cmd.Context(), agents, install, stdout, stderr)
+			return changeUserHooks(cmd.Context(), agents, action, stdout, stderr)
 		}}
 	cmd.Flags().BoolVar(&user, "user", false, "manage user-scoped agent marketplace plugins")
-	cmd.Flags().StringSliceVar(&agents, "agent", nil, "coding agent, "+strings.Join(agentplugins.Agents(), " or ")+" (default: CLIs found on PATH)")
+	cmd.Flags().StringSliceVar(&agents, "agent", nil, "coding agent, "+strings.Join(agentplugins.Agents(), " or ")+" (default: "+defaults+")")
 	cmd.SetOut(stdout)
 	cmd.SetErr(stderr)
 	return cmd
@@ -123,33 +133,53 @@ func userHooksStatuses(ctx context.Context) []userHooksStatus {
 	return statuses
 }
 
-func changeUserHooks(ctx context.Context, agents []string, install bool, stdout, stderr io.Writer) error {
+func changeUserHooks(ctx context.Context, agents []string, action string, stdout, stderr io.Writer) error {
 	for _, agent := range agents {
 		if !slices.Contains(agentplugins.Agents(), agent) {
 			return fmt.Errorf("unsupported coding agent %q; use %s", agent, strings.Join(agentplugins.Agents(), " or "))
 		}
 	}
 	client := agentplugins.New()
-	change := client.Uninstall
-	if install {
-		change = client.Install
-	}
 	var failures []error
 	for _, agent := range slices.Compact(slices.Clone(agents)) {
-		status, err := change(ctx, agent)
+		name := agentDisplayName(agent)
+		var status agentplugins.Status
+		var before string
+		var err error
+		switch action {
+		case "install":
+			status, err = client.Install(ctx, agent)
+		case "update":
+			before, status, err = client.Update(ctx, agent)
+		default:
+			status, err = client.Uninstall(ctx, agent)
+		}
 		if err != nil {
-			failures = append(failures, fmt.Errorf("%s: %w", agentDisplayName(agent), err))
-			_, _ = fmt.Fprintf(stderr, "error: %s plugin: %v\n", agentDisplayName(agent), err)
+			failures = append(failures, fmt.Errorf("%s: %w", name, err))
+			_, _ = fmt.Fprintf(stderr, "error: %s plugin: %v\n", name, err)
 			continue
 		}
-		if install {
-			_, _ = fmt.Fprintf(stdout, "Installed and enabled %s for %s", agentplugins.Plugin, agentDisplayName(agent))
+		switch {
+		case action == "install":
+			_, _ = fmt.Fprintf(stdout, "Installed and enabled %s for %s", agentplugins.Plugin, name)
 			if status.Version != "" {
 				_, _ = fmt.Fprintf(stdout, " (%s)", status.Version)
 			}
 			_, _ = fmt.Fprintln(stdout, ". Review hook trust in the agent before relying on the hooks (Codex: /hooks).")
-		} else {
-			_, _ = fmt.Fprintf(stdout, "%s is not installed for %s. The marketplace and other plugins are unchanged.\n", agentplugins.Plugin, agentDisplayName(agent))
+		case action == "update" && status.Version != "" && before == status.Version:
+			_, _ = fmt.Fprintf(stdout, "%s for %s is already the latest version (%s).\n", agentplugins.Plugin, name, status.Version)
+		case action == "update":
+			_, _ = fmt.Fprintf(stdout, "Updated %s for %s", agentplugins.Plugin, name)
+			if before != "" && status.Version != "" {
+				_, _ = fmt.Fprintf(stdout, " from %s to %s", before, status.Version)
+			}
+			_, _ = fmt.Fprintf(stdout, ". Restart running %s sessions to use the new hooks.", name)
+			if agent == "codex" {
+				_, _ = fmt.Fprint(stdout, " Trust new or changed hooks with /hooks in Codex.")
+			}
+			_, _ = fmt.Fprintln(stdout)
+		default:
+			_, _ = fmt.Fprintf(stdout, "%s is not installed for %s. The marketplace and other plugins are unchanged.\n", agentplugins.Plugin, name)
 		}
 	}
 	return errors.Join(failures...)
@@ -160,7 +190,7 @@ func installUserHooksDuringSetup(ctx context.Context, stdout, stderr io.Writer) 
 	if len(agents) == 0 {
 		return
 	}
-	if err := changeUserHooks(ctx, agents, true, stdout, stderr); err != nil {
+	if err := changeUserHooks(ctx, agents, "install", stdout, stderr); err != nil {
 		_, _ = fmt.Fprintln(stderr, "warning: could not install all agent plugins; update the agent CLI or use its plugin UI, then retry `baum hooks install --user`.")
 	}
 }
@@ -186,6 +216,19 @@ func writeUserHooksPlan(ctx context.Context, stdout io.Writer) {
 	if len(names) > 0 {
 		_, _ = fmt.Fprintf(stdout, "Setup also registers the public %s Git marketplace and installs/enables %s for %s (network download; --skip-user-hooks skips plugins). Review hook trust afterwards.\n", agentplugins.Marketplace, agentplugins.Plugin, strings.Join(names, " and "))
 	}
+}
+
+// updatableUserHookAgents are the agents update brings to the latest version
+// when none is named: those with the plugin enabled, and those whose status
+// failed, so the update reports the failure rather than skipping them.
+func updatableUserHookAgents(ctx context.Context) []string {
+	var agents []string
+	for _, s := range userHooksStatuses(ctx) {
+		if s.Error != "" || (s.Installed && s.Enabled) {
+			agents = append(agents, s.Agent)
+		}
+	}
+	return agents
 }
 
 func detectedUserHookAgents() []string {

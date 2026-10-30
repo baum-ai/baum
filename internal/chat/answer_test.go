@@ -138,11 +138,17 @@ func TestOnDiskSpelling(t *testing.T) {
 			t.Errorf("%s: %q %v", path, got, ok)
 		}
 	}
-	if err := os.WriteFile(filepath.Join(head, "Src", "readme.MD"), []byte("y\n"), 0o600); err != nil {
+	// O_EXCL detects filesystems where this spelling names the existing file.
+	f, err := os.OpenFile(filepath.Join(head, "Src", "readme.MD"), os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err == nil {
+		if err := f.Close(); err != nil {
+			t.Fatal(err)
+		}
+		if _, ok := onDisk(head, "src/Readme.md"); ok {
+			t.Error("an ambiguous spelling was resolved")
+		}
+	} else if !os.IsExist(err) {
 		t.Fatal(err)
-	}
-	if _, ok := onDisk(head, "src/Readme.md"); ok {
-		t.Error("an ambiguous spelling was resolved")
 	}
 	answer, dropped := keepValid(head, Answer{Citations: []Citation{{Path: "Src/README.md", StartLine: 1, EndLine: 1}}})
 	if dropped != 0 || answer.Citations[0].Path != "Src/README.md" {
