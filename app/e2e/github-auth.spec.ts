@@ -20,9 +20,8 @@ async function launchURL() {
 test("GitHub device lifecycle, recovery and saved reviews through the real daemon", async ({
   page,
   context,
-  browser,
 }) => {
-  test.setTimeout(150000);
+  test.setTimeout(60000);
   const errors: string[] = [];
   page.on("pageerror", (error) => errors.push(error.message));
   await mode("pending");
@@ -69,11 +68,9 @@ test("GitHub device lifecycle, recovery and saved reviews through the real daemo
   const popup = await popupPromise;
   await expect(popup).toHaveURL("https://github.com/login/device");
   await popup.close();
-  await page.screenshot({ path: "test-results/github-auth-waiting.png", animations: "disabled" });
   await page.setViewportSize({ width: 390, height: 844 });
   await expect(panel.getByRole("button", { name: "Cancel sign-in" })).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
-  await page.screenshot({ path: "test-results/github-auth-narrow.png", animations: "disabled" });
   await page.setViewportSize({ width: 1280, height: 900 });
   const attempt = (await (await page.request.get(`${base}api/github-auth`)).json()).pending.id;
   await page.reload();
@@ -90,10 +87,6 @@ test("GitHub device lifecycle, recovery and saved reviews through the real daemo
     .toBe("alice");
   await openConnections();
   await expect(panel).toContainText("Signed in as alice");
-  await panel.screenshot({
-    path: "test-results/github-auth-connected.png",
-    animations: "disabled",
-  });
   await page.reload();
   await expect(panel).toContainText("Signed in as alice");
   await expect(panel).toContainText("baum credential store");
@@ -125,71 +118,6 @@ test("GitHub device lifecycle, recovery and saved reviews through the real daemo
   await page.getByRole("link", { name: /Reuse the existing PR page/ }).click();
   await expect(page.getByText(/Local fixture review version/).first()).toBeVisible();
   await openConnections();
-  for (const [scenario, text] of [
-    ["denied", "sign-in was denied"],
-    ["expired", "code expired"],
-  ]) {
-    await mode(scenario!);
-    await panel.getByRole("button", { name: "Sign in with GitHub", exact: true }).click();
-    await expect(panel).toContainText(text!);
-  }
-  await mode("network");
-  await panel.getByRole("button", { name: "Sign in with GitHub", exact: true }).click();
-  await expect(panel).toContainText("Check your connection");
-  await mode("alice");
-  await expect(panel).toContainText("Signed in as alice");
-  await panel.getByRole("button", { name: "Disconnect", exact: true }).click();
-  await mode("scopes");
-  await panel.getByRole("button", { name: "Sign in with GitHub", exact: true }).click();
-  await expect(panel).toContainText("grant both permissions");
-  await panel.getByRole("button", { name: "Cancel sign-in" }).click();
-  await mode("locked");
-  await panel.getByRole("button", { name: "Check connection", exact: true }).click();
-  await expect(panel).toContainText("Unlock your operating system");
-  await mode("pending");
-  await panel.getByRole("button", { name: "Check connection", exact: true }).click();
-  await expect(panel.getByText(/Unlock your operating system/)).toHaveCount(0);
-  await panel.getByRole("button", { name: "Sign in with GitHub", exact: true }).click();
-  await mode("locked");
-  await expect(panel).toContainText("Unlock your operating system");
-  await mode("alice");
-  await expect(panel).toContainText("Signed in as alice");
-
-  // Every endpoint uses the real session namespace and mutation boundary.
-  const anonymous = await browser.newContext();
-  for (const suffix of ["", "/start", "/cancel", "/disconnect", "/retry"]) {
-    const path = `api/github-auth${suffix}`;
-    const unauth = suffix
-      ? await anonymous.request.post(`${origin}${base}${path}`, {
-          headers: { Origin: origin },
-          data: {},
-        })
-      : await anonymous.request.get(`${origin}${base}${path}`);
-    expect(unauth.status()).toBe(401);
-    expect((await page.request.get(`/api/github-auth${suffix}`)).status()).toBe(401);
-    expect((await page.request.get(`/s/wrong/api/github-auth${suffix}`)).status()).toBe(404);
-    if (suffix) {
-      for (const badOrigin of ["https://evil.example", "null", ""]) {
-        expect(
-          (
-            await page.request.post(`${base}${path}`, {
-              headers: badOrigin ? { Origin: badOrigin } : {},
-              data: {},
-            })
-          ).status(),
-        ).toBe(403);
-      }
-      expect(
-        (
-          await page.request.post(`${base}${path}`, {
-            headers: { Origin: origin, "Content-Type": "text/plain" },
-            data: "{}",
-          })
-        ).status(),
-      ).toBe(403);
-    }
-  }
-  await anonymous.close();
   const publicState = await (await page.request.get(`${base}api/github-auth`)).text();
   expect(publicState).not.toMatch(/fixture-access|fixture-refresh|fixture-device/);
   await mode("pending");

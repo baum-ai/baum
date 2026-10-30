@@ -1271,39 +1271,18 @@ the credential survives relaunches. A temporary fixture git clone and fake
 GitHub/model boundaries make the run offline and avoid personal session stores.
 Before the browser suite build its Linux test helper in `oss-test`:
 `CGO_ENABLED=0 go test -c ./internal/uiserver -o app/e2e/fixture`.
-The suite verifies bootstrap into the namespace (every app request stays under
-it; the cookie alone gets 401 on unprefixed `/api/...`), filtering, shared PR
-viewing and reloading a PR deep link, narrow layout, estimation,
-generation/progress and repository settings. The fixture also runs a live
-session tracker over a real hook event record, fed from a marker file in the
-state directory, and a test follows that session from the inbox and the PR page
-through running, idle and ended. A second marker, `live-transcript`, drives
-another session whose hooks name a Claude Code transcript the fixture writes
-under its home's `.claude/projects` (the marker's first line is the state, the
-others the prompts); a test opens it from the Sessions page, adds a turn
-without a hook event and sees it appear, its e-mail address masked, without a
-reload. A third, `live-needs`, also takes `permission` (a Claude Code
-permission prompt notification): a test sees that session move from Running now
-to Needs you, with its message and the caution badge, open its transcript, and
-leave Needs you once it works again. The fixture also runs the
-automatic generation scheduler, fed a discovery snapshot every quarter second;
-a second test writes `push-10` in the state directory to give PR 10 a new head
-and follows the automatic review it starts on the PR page and in the jobs list,
-then turns the global switch off and on. The fixture's fake GitHub also
-answers the update-branch and re-run calls: tests re-run PR 8's failed checks
-and update PR 11's branch from their pages, each writing a marker (`rerun-8`,
-`updated-11`) the fixture's discovery reads and the test removes again. Unit tests cover
-first-run/authorization, namespaced URLs and navigation, each review state,
-unknown costs, selection and filters, automatic settings and notices,
-and the automatic job labels. The fixture also writes two Claude Code sessions in
-the demo clone under its fake home, commits of the person's in the other clone,
-plan usage samples and GitHub's answer to the delivery search, and a test opens
-Analytics and checks the figures they make, at desktop and narrow widths. The
-fixture also serves a real inbox store (`inboxes.json` in its state directory), and
-`e2e/inboxes.spec.ts` makes an inbox from a template, changes a part of its
-sentence and sees the preview say what changed, switches its badge and sees the
-Inbox badge change, and deletes it from the sidebar with Undo. `e2e/inbox-screens.spec.ts`
-takes pictures of the inbox pages, light and dark, only with `INBOX_SCREENSHOTS=1`.
+The suite keeps browser/daemon integration for credential bootstrap in a fresh
+window, namespaced requests, saved review versions, automatic generation after
+a head push and its persisted settings, a live redacted transcript without a
+reload, merging a ready pull request, a walkthrough comment surviving reload and
+submission, agent questions with citations and saved answers, inbox edits and
+Undo through the real store, and a local feature's source transcript. Shared
+viewer behavior is covered by the standalone viewer and hosted UI suites;
+formatting, controls, filtering and state matrices belong in unit/component or
+Go handler tests. Keep browser stories focused on one risky workflow and avoid
+repeating them for themes or collecting screenshots on passing runs.
+`e2e/inbox-screens.spec.ts` takes pictures of the inbox pages, light and dark,
+only with `INBOX_SCREENSHOTS=1`.
 
 Generation usage is retained as provider-reported input, output, cache-read and
 cache-creation buckets, with available TTL, speed, prompt range and model-call
@@ -1322,10 +1301,9 @@ feature build some of whose calls could not be priced) is a lower bound, shown
 "≥" with a note. Pricing only reports: no budget, cap, confirmation or decision
 about a run reads it.
 
-GitHub browser scenarios use the real auth manager/controller and mocked GitHub
-HTTP and credential-store boundaries. The `github-auth-mode` marker selects
-pending, alice/bob approval, denial, expiry, network failure, insufficient scopes
-or locked persistence. Tests cover copy/open, background completion, reload,
-account replacement, disconnect with saved-review access, recovery and the local
-session/namespace/CSRF boundary. Waiting and narrow screenshots go to ignored
-`test-results/` for PR attachments.
+GitHub browser coverage uses the real auth manager/controller with mocked
+GitHub HTTP and credential-store boundaries. It checks device-page navigation,
+clipboard access, reload/background completion, saved-account replacement and
+use by generation, disconnect, and access to saved reviews. Denial, expiry,
+network/scope/persistence failures and the endpoint namespace/CSRF matrix stay
+in component and Go handler tests.
