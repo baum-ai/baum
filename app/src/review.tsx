@@ -15,7 +15,11 @@ import { SparkleIcon, WarningIcon } from "@baum/viewer/components/icons";
 import { useHistoryView } from "@baum/viewer/use-review-version";
 import { AttachmentUrlProvider } from "@baum/viewer/host";
 import { ViewerLink, useUrlState } from "@baum/viewer/navigation";
-import type { ReviewDocument, ReviewVersionState } from "@baum/viewer/review-document";
+import {
+  sectionDetails,
+  type ReviewDocument,
+  type ReviewVersionState,
+} from "@baum/viewer/review-document";
 import { parseSessionsAnswer, sessionLists, type SessionsLoad } from "@baum/viewer/local-sessions";
 import { parseTranscript, type LocalTranscript } from "@baum/viewer/local-transcript";
 import {
@@ -30,6 +34,7 @@ import {
   isActiveJob,
   automaticLabel,
   jobReasonText,
+  LocalRequestError,
   liveFor,
   fixEligible,
   fixLabel,
@@ -125,6 +130,7 @@ export function LocalReview({
   generate,
   starting = false,
   job,
+  detailsJob,
   changed,
   live = [],
   groups = [],
@@ -141,6 +147,8 @@ export function LocalReview({
   /** The review was asked for and the daemon has not answered yet. */
   starting?: boolean;
   job?: Job;
+  /** The latest retry of this review's failed section details. */
+  detailsJob?: Job;
   changed: () => Promise<void>;
   /** Agent sessions in progress; those of this pull request are listed. */
   live?: LiveSession[];
@@ -255,14 +263,14 @@ export function LocalReview({
   useShortcuts((event) => {
     // a opens the Ask panel, or puts the cursor in its box when open; it
     // works in the walkthrough too.
-    if (event.key === "a" && doc) {
+    if (event.key === "a" && doc && !showingDraft) {
       event.preventDefault();
       if (askOpen) window.document.getElementById("ask-question")?.focus();
       else setAsk(true);
       return;
     }
     // The tour has keys of its own; the overview leaves the page's to it.
-    if (walkMode === "tour" && doc) return;
+    if (walkMode === "tour" && doc && !showingDraft) return;
     const step =
       event.key === "j" ? steps.current?.next : event.key === "k" ? steps.current?.previous : null;
     if (step) {
@@ -302,6 +310,146 @@ export function LocalReview({
     : doc;
   const query = selector(clone, pr.number, viewedVersion);
   const latestQuery = selector(clone, pr.number);
+  // While the daemon writes a review in stages it holds a draft of it. It is
+  // never a version: nothing is saved, listed or asked about until published.
+  const draftCount = isActiveJob(job) ? (job?.draft ?? 0) : 0;
+  const [draft, setDraft] = useState<ReviewDocument | null>(null);
+  const [viewDraft, setViewDraft] = useState(false);
+  useEffect(() => {
+    if (!job || draftCount === 0) {
+      setDraft(null);
+      setViewDraft(false);
+      return;
+    }
+    const abort = new AbortController();
+    request<{ document?: ReviewDocument }>(
+      `api/jobs/${encodeURIComponent(job.id)}/draft`,
+      undefined,
+      "GET",
+      abort.signal,
+    )
+      .then((body) => {
+        if (!abort.signal.aborted && Array.isArray(body.document?.sections))
+          setDraft(body.document);
+      })
+      .catch(() => {
+        /* The draft is gone, or the next one is on its way. */
+      });
+    return () => abort.abort();
+  }, [job?.id, draftCount]);
+  // A page without a review shows the draft as soon as there is one; one with
+  // a saved version keeps it until the reader asks for the draft.
+  const showingDraft = draft !== null && (viewDraft || (!doc && entry.version_count === 0));
+  // The failed sections of the latest saved version, which a retry writes
+  // again; they read as being written while that job runs.
+  const failedSections = useMemo(
+    () =>
+      doc?.sections
+        .filter((s) => s.derived?.state !== "stale" && sectionDetails(s) === "failed")
+        .map((s) => s.id) ?? [],
+    [doc],
+  );
+  const retrying =
+    isActiveJob(detailsJob) &&
+    (detailsJob?.version === undefined || detailsJob.version === doc?.review.version);
+  const shownDocument = useMemo(
+    () =>
+      showingDraft
+        ? draft
+        : retrying && doc && failedSections.length > 0
+          ? {
+              ...doc,
+              sections: doc.sections.map((s) =>
+                failedSections.includes(s.id) ? { ...s, details: "pending" as const } : s,
+              ),
+            }
+          : doc,
+    [showingDraft, draft, retrying, doc, failedSections],
+  );
+  const contextPending = showingDraft && isActiveJob(job) && !draft?.summary.context;
+  // Why the last retry did not write the details, said until it is dismissed.
+  const [headChanged, setHeadChanged] = useState(false);
+  const [retryError, setRetryError] = useState("");
+  const [watchedDetails, setWatchedDetails] = useState("");
+  useEffect(() => {
+    if (detailsJob && isActiveJob(detailsJob)) setWatchedDetails(detailsJob.id);
+  }, [detailsJob?.id, detailsJob?.state]);
+  const retryDetails = async () => {
+    if (!doc) return;
+    setHeadChanged(false);
+    setRetryError("");
+    try {
+      await request("api/jobs", {
+        items: [{ clone, pr: pr.number, kind: "details", version: doc.review.version }],
+        mode: "single",
+      });
+      await changed();
+    } catch (e) {
+      if (e instanceof LocalRequestError && e.code === "head_changed") setHeadChanged(true);
+      else setRetryError(e instanceof Error ? e.message : "The details could not be retried.");
+    }
+  };
+  // What the saved review lacks: sections' details and the context. A review
+  // from before contexts existed lacks one without having failed to write it,
+  // so only the job that published the review says that.
+  const missing = failedSections.length;
+  const contextMissing =
+    Boolean(doc) &&
+    !doc?.summary.context &&
+    job?.context_failed === true &&
+    job.state === "completed";
+  const gaps =
+    !doc || showingDraft || viewedVersion || (!missing && !contextMissing) ? null : (
+      <Notice>
+        {retrying
+          ? "Writing the details that couldn't be written."
+          : [
+              missing
+                ? `${missing === 1 ? "1 section" : `${missing} sections`} couldn't be written.`
+                : "",
+              contextMissing ? "The codebase context couldn't be written." : "",
+            ]
+              .filter(Boolean)
+              .join(" ")}
+      </Notice>
+    );
+  const retryNotices = (
+    <>
+      {headChanged ? (
+        <Alert>
+          This pull request has new commits since this review, so its details can't be retried.
+          Regenerate the review instead.{" "}
+          <Button variant="secondary" size="compact" disabled={generating} onClick={generate}>
+            Regenerate
+          </Button>
+        </Alert>
+      ) : null}
+      {retryError ? <Alert>{retryError}</Alert> : null}
+      {detailsJob &&
+      detailsJob.id === watchedDetails &&
+      !isActiveJob(detailsJob) &&
+      detailsJob.state !== "completed" ? (
+        <div className="local-job-outcome">
+          <GenerationOutcome job={detailsJob} compact />
+          <Button variant="secondary" size="compact" onClick={() => setWatchedDetails("")}>
+            Dismiss
+          </Button>
+        </div>
+      ) : null}
+    </>
+  );
+  const viewDraftButton =
+    doc && isActiveJob(job) ? (
+      <Button
+        variant="secondary"
+        size="compact"
+        aria-pressed={showingDraft}
+        disabled={!draft}
+        onClick={() => setViewDraft((on) => !on)}
+      >
+        View draft
+      </Button>
+    ) : null;
   useEffect(() => {
     const abort = new AbortController();
     setFailed(false);
@@ -424,7 +572,7 @@ export function LocalReview({
       <AttachmentUrlProvider resolve={attachments}>
         <div className="ask-layout">
           <div className="ask-main" inert={narrow && askOpen ? true : undefined}>
-            {walkMode && doc ? (
+            {walkMode && doc && !showingDraft ? (
               // A new version starts afresh, with that version's own progress.
               <Walkthrough
                 key={doc.review.version}
@@ -483,6 +631,7 @@ export function LocalReview({
                         Re-run checks
                       </button>
                     ) : null}
+                    {viewDraftButton}
                     {entry.status === "outdated" || generating ? (
                       <button
                         type="button"
@@ -510,6 +659,8 @@ export function LocalReview({
                       revision={`${ended}:${doc.review.version}`}
                     />
                     <LiveSessions sessions={running} Link={ViewerLink} />
+                    {gaps}
+                    {retryNotices}
                     {failed ? (
                       <Alert>
                         The latest review could not be read. This saved version remains available.{" "}
@@ -527,11 +678,21 @@ export function LocalReview({
               />
             ) : (
               <ReviewViewer
-                document={doc}
-                history={history}
-                versions={versions.filter((v) => v !== doc?.review.version)}
-                loadVersion={loadVersion}
-                versionsFailed={historyFailed ? { retry: () => setRetry((n) => n + 1) } : undefined}
+                document={shownDocument}
+                history={showingDraft ? undefined : history}
+                versions={showingDraft ? [] : versions.filter((v) => v !== doc?.review.version)}
+                loadVersion={showingDraft ? undefined : loadVersion}
+                versionsFailed={
+                  historyFailed && !showingDraft
+                    ? { retry: () => setRetry((n) => n + 1) }
+                    : undefined
+                }
+                contextPending={contextPending}
+                onRetryDetails={
+                  doc && !showingDraft && !generating && failedSections.length > 0
+                    ? retryDetails
+                    : undefined
+                }
                 steps={steps}
                 foldSidePane={askOpen && tight}
                 header={{
@@ -605,7 +766,8 @@ export function LocalReview({
                               : "Regenerate review"}
                           </Button>
                         ) : null}
-                        {doc ? (
+                        {viewDraftButton}
+                        {doc && !showingDraft ? (
                           <Button
                             variant="secondary"
                             size="compact"
@@ -617,7 +779,7 @@ export function LocalReview({
                             Ask
                           </Button>
                         ) : null}
-                        {doc ? (
+                        {doc && !showingDraft ? (
                           <Button
                             variant="secondary"
                             size="compact"
@@ -734,7 +896,13 @@ export function LocalReview({
                         <CloneActions repository={pr.repository} changed={changed} />
                       </Notice>
                     ) : null}
-                    {job && isActiveJob(job) && doc ? (
+                    {showingDraft ? (
+                      <Notice>
+                        Draft — the review is still being written. Sections fill in as they're
+                        written.
+                      </Notice>
+                    ) : null}
+                    {job && isActiveJob(job) && (doc || showingDraft) ? (
                       <ReviewJob key={job.id} job={job} changed={changed} />
                     ) : job && doc && job.state !== "completed" ? (
                       <div className="local-job-outcome">
@@ -747,16 +915,18 @@ export function LocalReview({
                         <Button onClick={() => setRetry((n) => n + 1)}>Retry review</Button>
                       </Alert>
                     ) : null}
-                    {generating && doc ? (
+                    {generating && doc && !showingDraft ? (
                       <Notice>
                         A new review is being generated. This saved version remains available while
                         it runs.
                       </Notice>
                     ) : null}
+                    {gaps}
+                    {retryNotices}
                   </>
                 }
                 sessions={
-                  lists
+                  lists && !(showingDraft && doc)
                     ? sessionsSlot(lists.sessions, {
                         renderSession: (session) =>
                           viewedDocument ? (
@@ -771,16 +941,20 @@ export function LocalReview({
                       })
                     : undefined
                 }
-                commits={lists?.commits ? commitsSlot(lists.commits) : undefined}
+                commits={
+                  lists?.commits && !(showingDraft && doc) ? commitsSlot(lists.commits) : undefined
+                }
                 facts={shownFacts}
                 files={
                   factsMode
                     ? factsFilesSlot(facts, () => setFactsRetry((n) => n + 1), factsPatches, pr.url)
                     : undefined
                 }
-                hunkPatches={patches}
+                hunkPatches={
+                  showingDraft ? (doc ? undefined : (path: string) => factsPatches(path)) : patches
+                }
                 renderSectionAside={
-                  doc
+                  doc && !showingDraft
                     ? (id) => (
                         <div className="ask-aside">
                           <Button
@@ -800,7 +974,7 @@ export function LocalReview({
               />
             )}
           </div>
-          {askOpen && doc ? (
+          {askOpen && doc && !showingDraft ? (
             <>
               <div className="ask-backdrop" aria-hidden onClick={closeAsk} />
               <AskPanel
@@ -916,13 +1090,18 @@ function GeneratedBy({
  *  happened in a sentence, and the generator's own words behind a toggle. */
 export function GenerationOutcome({ job, compact = false }: { job: Job; compact?: boolean }) {
   const failed = job.state === "failed";
-  const title = failed
-    ? compact
-      ? "The latest regeneration failed"
-      : "The review couldn't be generated"
-    : job.state === "interrupted"
-      ? "Review generation was interrupted"
-      : "Review generation was cancelled";
+  const details = job.kind === "details";
+  const title = details
+    ? failed
+      ? "The details couldn't be written"
+      : "Writing the details was stopped"
+    : failed
+      ? compact
+        ? "The latest regeneration failed"
+        : "The review couldn't be generated"
+      : job.state === "interrupted"
+        ? "Review generation was interrupted"
+        : "Review generation was cancelled";
   const started = automaticLabel(job);
   return (
     <section aria-label="Review generation" className="local-outcome">
@@ -931,7 +1110,7 @@ export function GenerationOutcome({ job, compact = false }: { job: Job; compact?
       </span>
       <div className="min-w-0">
         <h2 role="status">{title}</h2>
-        {job.reason ? <p>{jobReasonText(job.reason)}</p> : null}
+        {job.reason ? <p>{jobReasonText(job.reason, job.kind)}</p> : null}
         {started ? <p className="local-outcome-meta">{started}</p> : null}
         {job.detail ? (
           <details>

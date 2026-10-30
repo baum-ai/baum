@@ -70,6 +70,7 @@ import {
   appURL,
   request,
   reviewJob,
+  detailsJob,
   fixJob,
   jobName,
   chatJobs,
@@ -1013,6 +1014,7 @@ function Workspace({ url }: { url: UrlState }) {
                 clone={cloneFor(selectedEntry)}
                 revision={revision}
                 job={reviewJob(selectedEntry, jobs)}
+                detailsJob={detailsJob(selectedEntry, jobs)}
                 changed={reload}
                 live={live}
                 groups={groups.filter(
@@ -1456,7 +1458,9 @@ function JobRow({
           </LocalLink>
         )}
         <p className="local-job-meta">
-          {job.kind === "fix" || job.kind === "chat" ? `${jobName(job)} · ` : null}
+          {job.kind === "fix" || job.kind === "chat" || job.kind === "details"
+            ? `${jobName(job)} · `
+            : null}
           {started ?? (job.automatic ? null : "Started by you")}
         </p>
         {job.kind === "fix" && job.commit ? (

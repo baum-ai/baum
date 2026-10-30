@@ -716,7 +716,28 @@ while regeneration runs. A PR page uses the queue’s active job for that
 repository and PR across registered clones, showing queued/running progress
 and cancellation even before its first document exists. Duplicate generation
 controls stay disabled until that job finishes, and completion/cancellation
-updates the page through SSE. Repository settings share backend and model overrides across registered clones.
+updates the page through SSE.
+
+A review of one pull request is written in stages (outline, each section's
+details, then the codebase context), and the daemon holds a draft while the
+job runs (`Job.draft`, read from `GET api/jobs/{id}/draft`). A page with no
+saved version shows the draft in the viewer as soon as there is one, with
+sections still being written reading "Writing details…" and a notice that it
+is a draft; before that it keeps the facts view. A page with a saved version
+keeps it and offers **View draft** (a toggle, enabled once a draft exists)
+beside the generation status; it goes when the job ends. A draft is never a
+version: no version menu, Ask, Walk through, "Ask about this section" or
+retry, and nothing is read or written under its number. A version published
+without some sections' details or without its context says so in a notice
+("2 sections couldn't be written.", "The codebase context couldn't be
+written."; the context notice only when the job that wrote it recorded the
+failure, since older reviews have none). The latest saved version's failed
+sections have **Retry**, which queues a details job (`POST api/jobs` with
+`kind: "details"` and the version) that writes all its failed sections again
+and updates the same version in place; meanwhile they read "Writing details…".
+If the pull request has new commits (`head_changed`) the page says the details
+can't be retried and offers **Regenerate**; a details job that ends cancelled
+or failed shows why until dismissed. Repository settings share backend and model overrides across registered clones.
 GitHub discovery and the latest saved review's free evidence refresh periodically
 while the local server runs, including PR heads/states, checks, conversation,
 bot reports and local session links. Cached data loads immediately; offline,

@@ -176,7 +176,16 @@ export type Job = {
   updated_at?: string;
   /** "fix" for a fix of the pull request, "feature_build" for a
    * repository's first feature build (its `pr` is 0); absent for a review. */
-  kind?: "fix" | "feature_build" | "chat";
+  kind?: "fix" | "feature_build" | "chat" | "details";
+  /** While a review of one pull request is written in stages, how many drafts
+   *  the daemon holds so far; above 0 `api/jobs/{id}/draft` answers. */
+  draft?: number;
+  /** The sections the review was published without details for, and whether
+   *  without its context. */
+  failed_sections?: string[];
+  context_failed?: boolean;
+  /** A details job's saved version, the one it writes the details of. */
+  version?: number;
   fix?: FixInputs;
   /** The conversation turn a chat job answers. */
   chat?: { conversation: string; turn: number; version: number };
@@ -250,6 +259,8 @@ const jobReasons: Record<string, string> = {
   internal: "Something went wrong inside baum.",
   signing: "Git couldn't sign a commit, so the agent didn't run.",
   superseded: "A newer commit replaced it.",
+  version_changed: "A newer review replaced this version, so its details weren't written.",
+  nothing_to_retry: "Every section of this review already has its details.",
   // A job an older baum stopped for its daily spending cap, which is gone.
   daily_cap: "It stopped before it started.",
   draft: "The pull request became a draft.",
@@ -283,9 +294,16 @@ const jobReasons: Record<string, string> = {
 /** A job's reason in words: a feature build's in its own, others' as
  *  reviews and fixes say them. */
 export function jobReasonText(reason: string, kind?: Job["kind"]): string {
+  if (kind === "details" && Object.hasOwn(detailsReasons, reason)) return detailsReasons[reason]!;
   if (kind === "feature_build" && Object.hasOwn(buildReasons, reason)) return buildReasons[reason]!;
   return jobReasons[reason] ?? reason.replaceAll("_", " ");
 }
+/** Why a retry of a review's details stopped or cannot run. */
+const detailsReasons: Record<string, string> = {
+  superseded: "A newer review replaced this version, so its details weren't written.",
+  head_changed:
+    "This pull request has new commits since this review, so its details weren't written.",
+};
 /** Why a feature build stopped or cannot run. None asks to confirm it again:
  *  where a build can be resumed, the page offers that itself. */
 const buildReasons: Record<string, string> = {
@@ -867,6 +885,10 @@ export function isActiveJob(job: Job | undefined): boolean {
 export function reviewJob(entry: Entry, jobs: Job[]): Job | undefined {
   return prJob(entry, jobs, (job) => !job.kind);
 }
+/** The PR's latest retry of a review's details, an active one first. */
+export function detailsJob(entry: Entry, jobs: Job[]): Job | undefined {
+  return prJob(entry, jobs, (job) => job.kind === "details");
+}
 /** The PR's questions to the review's agent, oldest first. */
 export function chatJobs(entry: Pick<Entry, "pull_request">, jobs: Job[]): Job[] {
   return jobs.filter(
@@ -878,6 +900,7 @@ export function chatJobs(entry: Pick<Entry, "pull_request">, jobs: Job[]): Job[]
 }
 /** What a fix or chat job is called: the Jobs list and transcript page title. */
 export function jobName(job: Job): string {
+  if (job.kind === "details") return `Details of #${job.pr}`;
   return job.kind === "chat" ? `Question on #${job.pr}` : fixName(job.fix ?? {});
 }
 /** The PR's latest fix job, an active one first. */

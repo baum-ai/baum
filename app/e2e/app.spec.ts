@@ -243,25 +243,33 @@ test("local inbox, reused PR viewer, versions, generation and settings", async (
     fullPage: false,
     animations: "disabled",
   });
-  await expect(
-    page.getByText("Adds notes, settings and a renamed guide.", { exact: true }),
-  ).toBeVisible({ timeout: 30000 });
-  // The finished review opens on its overview; the full review links to the
-  // job that generated it, where its usage is.
-  await page.getByRole("button", { name: "Full review", exact: true }).click();
+  // The outline is on screen as a draft while the details are written; the
+  // draft is no version, so no Ask or Walk through is offered.
+  const sections = page.getByRole("navigation", { name: "Review sections" });
+  await sections.getByRole("button", { name: /The rest/ }).click({ timeout: 30000 });
+  await expect(page.getByText("Writing details…").first()).toBeVisible();
+  await expect(page.getByText(/Draft — the review is still being written/)).toBeVisible();
+  await expect(page.getByRole("button", { name: "Ask", exact: true })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Walk through", exact: true })).toHaveCount(0);
+  await page.screenshot({ path: "test-results/review-draft.png", animations: "disabled" });
+  // Choosing the section opened the full review, which stays when the version
+  // is published; it links to the job that generated it, where its usage is.
+  await expect(page.getByRole("link", { name: "View job", exact: true })).toBeVisible({
+    timeout: 30000,
+  });
   await page.getByRole("link", { name: "View job", exact: true }).click();
   const job = page.getByRole("region", { name: "Generation jobs" }).getByRole("listitem").first();
   await expect(job.getByText("Completed")).toBeVisible();
-  await expect(job.getByText("1 call", { exact: true })).toBeVisible();
+  await expect(job.getByText("7 calls · 2 repairs", { exact: true })).toBeVisible();
   await page.screenshot({ path: "test-results/jobs.png", animations: "disabled" });
   await job.getByText("Usage", { exact: true }).click();
   await expect(
     page.getByText(
-      /Provider-reported usage: Input 60 · Output 40 · Cache reads 900 · Cache creation 0/,
+      /Provider-reported usage: Input 420 · Output 280 · Cache reads 6,300 · Cache creation 0/,
     ),
   ).toBeVisible();
-  await expect(page.getByText(/Total processed tokens 1,000/)).toBeVisible();
-  await expect(page.getByText(/Charged-token budget counter 100/)).toBeVisible();
+  await expect(page.getByText(/Total processed tokens 7,000/)).toBeVisible();
+  await expect(page.getByText(/Charged-token budget counter 700/)).toBeVisible();
   await expect(page.getByText(/provider did not report its pricing speed/)).toBeVisible();
   await page.screenshot({ path: "test-results/usage-wide.png", animations: "disabled" });
   await page.setViewportSize({ width: 390, height: 844 });
@@ -271,6 +279,33 @@ test("local inbox, reused PR viewer, versions, generation and settings", async (
   await page.getByRole("link", { name: "Pull requests", exact: true }).first().click();
   await page.getByRole("link", { name: /A pull request without a review/ }).click();
   await page.getByRole("button", { name: "Full review", exact: true }).click();
+  // The first review was published without one section's details and its
+  // context. Retrying writes the details again into the same version.
+  await expect(page.getByText("1 section couldn't be written.")).toBeVisible();
+  await expect(page.getByText("The codebase context couldn't be written.")).toBeVisible();
+  await page
+    .getByRole("navigation", { name: "Review sections" })
+    .getByRole("button", { name: /The rest/ })
+    .click();
+  await expect(page.getByText("Details unavailable")).toBeVisible();
+  const versionCount = async () => {
+    const query = new URLSearchParams({
+      clone: new URL(page.url()).searchParams.get("clone") ?? "",
+      pr: "8",
+    });
+    const rows = await (await page.request.get(`${base}api/versions?${query}`)).json();
+    return rows.length;
+  };
+  expect(await versionCount()).toBe(1);
+  await page.getByRole("button", { name: "Retry", exact: true }).click();
+  await expect(page.getByText("Writing details…").first()).toBeVisible();
+  await expect(page.getByText("Details unavailable")).toHaveCount(0, { timeout: 15000 });
+  await expect(page.getByText("1 section couldn't be written.")).toHaveCount(0);
+  expect(await versionCount()).toBe(1);
+  await page
+    .getByRole("navigation", { name: "Review sections" })
+    .getByRole("button", { name: "Summary", exact: true })
+    .click();
   await page.getByRole("button", { name: "Regenerate review", exact: true }).click();
   await expect(
     page.getByText("Adds notes, settings and a renamed guide.", { exact: true }),
