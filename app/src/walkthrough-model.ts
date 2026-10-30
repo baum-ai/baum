@@ -4,9 +4,11 @@ import {
   sectionsInReviewOrder,
   type Anchor,
   type Block,
+  type Evidence,
   type IndexedHunk,
   type ReviewDocument,
   type RiskScoreLevel,
+  type RiskTier,
   type Section,
 } from "@baum/viewer/review-document";
 
@@ -25,15 +27,14 @@ export type Stop = {
   id: string;
   chapter: number;
   title: string;
-  before: string | null;
-  after: string;
+  /** The question to judge it by, offered as the comment box's prompt. */
   question: string | null;
   /** The review's own statement of the behaviour. */
   text: string;
   /** The hunks that implement it. */
   anchors: Anchor[];
-  /** The test files its evidence names. */
-  tests: string[];
+  /** What backs the statement: tests, CI, runs, or what was only asserted. */
+  evidence: Evidence[];
   place: CommentPlace | null;
   /** The place in a few characters, such as `service.go:241`. */
   where: string;
@@ -47,6 +48,15 @@ export type Chapter = {
   meaning: string | null;
   /** Why the section carries its level. */
   why: string;
+  /** What the section changes, in a sentence or three. */
+  summary: string;
+  /** The lines its hunks add and remove. */
+  lines: { additions: number; deletions: number };
+  /** What the change set out to do, as the pull request and its sessions
+   *  say, when the review found it. */
+  intent: string | null;
+  /** The section's open risks, worst first. */
+  risks: { text: string; tier: RiskTier }[];
   /** Indexes into `Tour.stops`. */
   stops: number[];
 };
@@ -64,12 +74,18 @@ export type Tour = {
   minutes: number | null;
 };
 
+const TIERS: RiskTier[] = ["critical", "high", "medium", "low", "mechanical"];
+
 const text = (value: unknown) => (typeof value === "string" ? value.trim() : "");
 
-/** The first sentence, for a step written before steps had titles. */
+/** A headline for a step written before steps had titles: its first
+ *  sentence, cut at its first clause when the sentence strings several
+ *  together with semicolons. The whole statement is still shown beneath. */
 export function firstSentence(value: string): string {
   const match = /^(.+?[.!?])(\s|$)/.exec(value);
-  return (match ? match[1]! : value).replace(/[.!?]$/, "");
+  const sentence = (match ? match[1]! : value).replace(/[.!?]$/, "");
+  const clause = sentence.indexOf("; ");
+  return clause > 0 ? sentence.slice(0, clause) : sentence;
 }
 
 const basename = (path: string) => path.slice(path.lastIndexOf("/") + 1);
@@ -143,29 +159,16 @@ export function buildTour(document: ReviewDocument): Tour {
     for (const step of steps) {
       const statement = text(step.text);
       if (!statement) continue;
-      const tests = new Set<string>();
-      for (const id of step.evidence ?? []) {
-        const item = evidence.get(id);
-        if (item?.kind !== "test") continue;
-        for (const anchor of item.anchors ?? []) {
-          const path =
-            anchor.type === "hunk"
-              ? hunks.get(anchor.id)?.path
-              : anchor.type === "file"
-                ? anchor.path
-                : undefined;
-          if (path) tests.add(basename(path));
-        }
-      }
       add({
         id: step.id,
         title: text(step.title) || firstSentence(statement),
-        before: text(step.before) || null,
-        after: text(step.after) || statement,
         question: text(step.question) || null,
         text: statement,
         anchors: (step.anchors ?? []).filter((anchor) => anchor.type === "hunk"),
-        tests: [...tests],
+        evidence: (step.evidence ?? []).flatMap((id) => {
+          const item = evidence.get(id);
+          return item ? [item] : [];
+        }),
       });
     }
     if (own.length === 0) {
@@ -174,14 +177,12 @@ export function buildTour(document: ReviewDocument): Tour {
       add({
         id: section.id,
         title: section.title,
-        before: null,
-        after: summary || section.title,
         question: null,
         text: summary,
         anchors: anchors.length
           ? anchors
           : section.hunks.slice(0, 1).map((id) => ({ type: "hunk" as const, id })),
-        tests: [],
+        evidence: [],
       });
     }
     const level = sectionLevel(section);
@@ -191,6 +192,21 @@ export function buildTour(document: ReviewDocument): Tour {
       level,
       meaning: level ? RISK_SCORE_MEANING[level] : null,
       why: sectionWhy(section),
+      summary: text(section.summary?.text),
+      lines: { additions: section.derived.additions, deletions: section.derived.deletions },
+      risks: (section.risks ?? [])
+        .filter((risk) => risk.state !== "mitigated" && text(risk.text))
+        .map((risk) => ({ text: text(risk.text), tier: risk.tier }))
+        .sort((a, b) => TIERS.indexOf(a.tier) - TIERS.indexOf(b.tier)),
+      intent:
+        (section.blocks ?? [])
+          .flatMap((block: Block) =>
+            block.kind === "intent"
+              ? [text((block as Extract<Block, { kind: "intent" }>).text)]
+              : [],
+          )
+          .filter(Boolean)
+          .join("\n\n") || null,
       stops: own,
     });
   }

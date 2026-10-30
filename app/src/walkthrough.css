@@ -1,0 +1,1073 @@
+/* The walkthrough (walkthrough.tsx), drawn as the inbox is: its colours and
+   sizes are the Up next design's (the --un-* tokens in style.css), the stops
+   listed on the left and the one being read beside them. */
+
+/* The page fills the panel to the window's foot, and its list and panel
+   scroll on their own. */
+.local-shell:has(.walkthrough) {
+  height: 100vh;
+}
+.local-frame:has(.walkthrough) {
+  min-height: 0;
+  background: var(--un-panel);
+}
+.local-main:has(.walkthrough) {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+  padding-bottom: 0;
+  container-type: inline-size;
+}
+/* The Ask panel's layout sits between the page and the walkthrough; it
+   passes the height on, so the walkthrough's page scrolls on its own. */
+.ask-layout:has(.walkthrough) {
+  flex: 1;
+  min-height: 0;
+}
+.ask-main:has(.walkthrough) {
+  display: flex;
+  flex-direction: column;
+  align-self: stretch;
+  min-height: 0;
+}
+.walkthrough {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--un-panel);
+  color: var(--un-ink);
+  font-family: var(--font-sans);
+}
+.walkthrough a {
+  color: var(--un-link);
+}
+.walkthrough a:hover {
+  color: var(--un-link-hover);
+}
+.walkthrough button {
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+.walkthrough :is(button, a, textarea):focus-visible {
+  outline: 2px solid var(--un-focus);
+  outline-offset: 2px;
+}
+.walkthrough kbd {
+  padding: 1px 5px;
+  border: 1px solid currentColor;
+  border-radius: 4px;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 10.5px;
+  opacity: 0.6;
+}
+.walk-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  color: var(--un-muted);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.walk-label-where {
+  font-family: var(--font-mono, ui-monospace, monospace);
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+/* The header: what is being reviewed, how far the reader is, and the views */
+.walk-head {
+  position: relative;
+  padding-top: 14px;
+  border-bottom: 1px solid var(--un-line);
+}
+/* On the page's column, so the tour lines up with the overview it left. */
+.walk-head-inner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px 20px;
+  max-width: 780px;
+  margin: 0 auto;
+  padding: 0 40px;
+}
+.walk-head-text {
+  display: flex;
+  flex: 1 1 0;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+/* One line: the overview it came from has the title in full. */
+.walk-head h1 {
+  margin: 0;
+  overflow: hidden;
+  font-size: 18px;
+  font-weight: 600;
+  line-height: 1.3;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.walk-head-number {
+  color: var(--un-muted);
+  font-weight: 500;
+}
+.walk-head p {
+  margin: 0;
+  color: var(--un-muted);
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+.walk-head strong {
+  color: var(--un-ink-soft);
+  font-weight: 600;
+}
+.walk-head-comments {
+  color: var(--un-working);
+  font-weight: 600;
+}
+.walk-head-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+/* How much has been looked at, along the header's foot. */
+.walk-head-bar {
+  position: absolute;
+  right: 0;
+  bottom: -1px;
+  left: 0;
+  display: flex;
+  height: 3px;
+}
+.walk-head-bar span {
+  transition: width 0.4s;
+}
+.walk-head-bar-seen {
+  background: var(--un-done);
+}
+.walk-head-bar-commented {
+  background: var(--un-risk-mid);
+}
+.walk-stale {
+  margin: 0;
+  padding: 8px 20px;
+  border-bottom: 1px solid var(--un-working-line);
+  background: var(--un-working-bg);
+  color: var(--un-working-ink);
+  font-size: 13px;
+}
+
+/* The tour's pages in a row under the header */
+.walk-steps {
+  display: flex;
+  flex-basis: 100%;
+  gap: 2px;
+  margin-top: 2px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.walkthrough .walk-step {
+  display: flex;
+  flex: 1 1 0;
+  flex-direction: column;
+  gap: 7px;
+  min-width: 84px;
+  padding: 8px 10px 10px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  border-radius: 8px 8px 0 0;
+  background: transparent;
+  color: var(--un-ink-soft);
+  text-align: left;
+}
+.walkthrough .walk-step:hover {
+  background: var(--un-hover);
+}
+.walkthrough .walk-step[aria-current] {
+  border-bottom-color: var(--un-ink);
+  color: var(--un-ink);
+}
+.walkthrough .walk-step-end {
+  flex: none;
+  flex-direction: row;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  color: var(--un-muted);
+  font-size: 13px;
+}
+.walk-step-name {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+  min-width: 0;
+}
+.walk-step-title {
+  display: -webkit-box;
+  overflow: hidden;
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.35;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+.walk-step[aria-current] .walk-step-title {
+  font-weight: 600;
+}
+.walk-step-dots {
+  display: flex;
+  gap: 3px;
+  padding-left: 1px;
+}
+.walk-step-dots span {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--un-line);
+}
+.walk-step-dots .seen {
+  background: var(--un-done);
+}
+.walk-step-dots .commented {
+  background: var(--un-risk-mid);
+}
+.walk-mark {
+  display: flex;
+  width: 16px;
+  height: 16px;
+  flex: none;
+  box-sizing: border-box;
+  align-items: center;
+  justify-content: center;
+  border: 1.5px solid var(--un-mark);
+  border-radius: 50%;
+  color: var(--un-on-hot);
+}
+.walk-mark.seen {
+  border: 0;
+  background: var(--un-done);
+}
+.walk-mark.commented {
+  border: 0;
+  background: var(--un-risk-mid);
+}
+/* Risk, as the inbox's numbered badges show it */
+.walk-badge {
+  display: flex;
+  width: 22px;
+  height: 20px;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  background: var(--un-clone-bg);
+  color: var(--un-clone);
+  font-size: 11.5px;
+  font-weight: 700;
+  letter-spacing: 0;
+}
+.walk-badge.risk-3 {
+  background: var(--un-review-bg);
+  color: var(--un-review);
+}
+.walk-badge.risk-4 {
+  background: var(--un-score4-bg);
+  color: var(--un-score4);
+}
+.walk-badge.risk-5 {
+  background: var(--un-hot);
+  color: var(--un-on-hot);
+}
+
+/* The panel */
+.walk-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  max-width: 780px;
+  padding: 30px 40px 80px;
+  animation: walk-rise 0.25s ease-out;
+}
+@keyframes walk-rise {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+}
+.walk-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+.walk-chip {
+  flex: none;
+  max-width: 100%;
+  padding: 2px 8px;
+  overflow: hidden;
+  border-radius: 4px;
+  background: var(--un-clone-bg);
+  color: var(--un-clone);
+  font-size: 12px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.walk-chip.risk-3 {
+  background: var(--un-review-bg);
+  color: var(--un-review);
+}
+.walk-chip:is(.risk-4, .risk-5) {
+  background: var(--un-score4-bg);
+  color: var(--un-score4);
+}
+.walk-where {
+  color: var(--un-muted);
+  font-size: 13.5px;
+}
+.walk-minutes {
+  margin-left: auto;
+  color: var(--un-ink-soft);
+  font-size: 13.5px;
+  white-space: nowrap;
+}
+.walk-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+  color: var(--un-done);
+  font-size: 13px;
+  font-weight: 600;
+}
+.walk-state.commented {
+  color: var(--un-working);
+}
+.walk-title {
+  margin: 0;
+  font-size: 28px;
+  font-weight: 600;
+  line-height: 1.2;
+  letter-spacing: -0.015em;
+  overflow-wrap: anywhere;
+}
+/* A step written before steps had short titles takes its first sentence;
+   at full size it would fill the screen. */
+.walk-title.long {
+  font-size: 22px;
+  line-height: 1.3;
+  letter-spacing: -0.01em;
+}
+.walk-why {
+  margin: 0;
+  color: var(--un-ink-soft);
+  font-size: 16px;
+  line-height: 1.6;
+}
+/* What backs the statement, as the full review badges it. */
+.walk-evidence {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.walk-why p,
+.walk-lead p {
+  margin: 0;
+}
+.walk-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.walkthrough :is(.walk-primary, .walk-secondary) {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 8px 14px;
+  border-radius: 6px;
+  font-size: 14px;
+  line-height: 1.3;
+  white-space: nowrap;
+}
+.walkthrough .walk-primary {
+  border: 1px solid var(--un-primary-line);
+  background: var(--un-primary);
+  box-shadow: var(--un-shadow-primary);
+  color: var(--un-on-primary);
+  font-weight: 600;
+}
+.walkthrough .walk-secondary {
+  border: 1px solid var(--un-line);
+  background: var(--un-card);
+  box-shadow: var(--un-shadow-button);
+  color: var(--un-ink);
+  font-weight: 500;
+}
+.walkthrough .walk-primary:hover:not(:disabled) {
+  border-color: var(--un-on-primary);
+}
+.walkthrough .walk-secondary:hover:not(:disabled) {
+  border-color: var(--un-line-strong);
+  background: var(--un-list);
+}
+.walkthrough .walk-small {
+  flex: none;
+  padding: 3px 9px;
+  border: 1px solid var(--un-line);
+  border-radius: 6px;
+  background: var(--un-card);
+  box-shadow: var(--un-shadow-button);
+  color: var(--un-ink-soft);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.3;
+  white-space: nowrap;
+}
+.walkthrough .walk-small:hover {
+  border-color: var(--un-line-strong);
+  background: var(--un-hover);
+  color: var(--un-ink);
+}
+.walkthrough :is(.walk-primary, .walk-secondary, .walk-small, .walk-step):active:not(:disabled) {
+  transform: translateY(1px);
+}
+.walkthrough :is(.walk-primary, .walk-secondary):disabled {
+  box-shadow: none;
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.walk-skipped {
+  color: var(--un-muted);
+  font-size: 12.5px;
+}
+.walk-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--un-link);
+  font-weight: 600;
+  text-align: left;
+  text-decoration: underline;
+  text-decoration-color: color-mix(in srgb, currentColor 35%, transparent);
+  text-underline-offset: 2px;
+}
+.walk-link:hover {
+  color: var(--un-link-hover);
+  text-decoration-color: currentColor;
+}
+
+/* A comment being written, or one saved */
+.walk-comment {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px 16px;
+  border: 1px solid var(--un-working-line);
+  border-radius: 12px;
+  background: var(--un-working-bg);
+  animation: walk-drop 0.15s ease-out;
+}
+@keyframes walk-drop {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+}
+.walk-comment label {
+  font-size: 14px;
+  font-weight: 600;
+}
+.walk-comment.saved {
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 10px;
+}
+.walk-comment-icon {
+  flex: none;
+  margin-top: 2px;
+  color: var(--un-working);
+}
+.walk-comment-body {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 12rem;
+}
+.walk-comment-where {
+  color: var(--un-muted);
+  font-size: 12.5px;
+}
+.walk-comment-body p {
+  margin: 0;
+  font-size: 15px;
+  line-height: 1.5;
+  white-space: pre-line;
+}
+.walk-textarea {
+  min-height: 84px;
+  padding: 8px 10px;
+  border: 1px solid var(--un-line-strong);
+  border-radius: 6px;
+  background: var(--un-card);
+  color: var(--un-ink);
+  font: inherit;
+  font-size: 14.5px;
+  line-height: 1.5;
+  resize: vertical;
+}
+
+/* The risk card, as the inbox panel draws it */
+.walk-risk {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 14px 16px;
+  border: 1px solid var(--un-line);
+  border-radius: 12px;
+  background: var(--un-card);
+}
+.walk-risk-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+.walk-risk-blocks {
+  display: flex;
+  gap: 2px;
+}
+.walk-risk-blocks span {
+  width: 14px;
+  height: 7px;
+  border-radius: 2px;
+  background: var(--un-line);
+}
+.walk-risk-blocks .on {
+  background: var(--un-muted);
+}
+.walk-risk-blocks :is(.risk-3, .risk-4) {
+  background: var(--un-risk-mid);
+}
+.walk-risk-blocks .risk-5 {
+  background: var(--un-hot);
+}
+.walk-risk-text {
+  font-size: 13.5px;
+  font-weight: 600;
+}
+.walk-risk p {
+  margin: 0;
+  font-size: 14.5px;
+  line-height: 1.5;
+}
+
+/* The chapter's own risks, under its reason */
+.walk-risks {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 4px 0 0;
+  padding: 10px 0 0;
+  border-top: 1px solid var(--un-hairline);
+  list-style: none;
+}
+.walk-risks li {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  font-size: 14px;
+  line-height: 1.5;
+}
+.walk-tier {
+  flex: none;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: var(--un-clone-bg);
+  color: var(--un-clone);
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: capitalize;
+}
+.walk-tier.medium {
+  background: var(--un-review-bg);
+  color: var(--un-review);
+}
+.walk-tier:is(.high, .critical) {
+  background: var(--un-score4-bg);
+  color: var(--un-score4);
+}
+
+/* The chapter's behaviours, the picked one raised as the list's current row */
+.walk-behaviours {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0 -14px;
+  padding: 0;
+  list-style: none;
+}
+.walk-behaviour {
+  display: flex;
+  gap: 12px;
+  padding: 14px;
+  border-radius: 10px;
+  cursor: pointer;
+  scroll-margin: 16px;
+}
+.walk-behaviour + .walk-behaviour {
+  box-shadow: 0 -1px 0 var(--un-hairline);
+}
+.walk-behaviour:hover:not(.picked) {
+  background: color-mix(in srgb, var(--un-hover) 55%, transparent);
+}
+.walk-behaviour.picked {
+  background: var(--un-card);
+  box-shadow:
+    inset 3px 0 0 var(--un-done),
+    var(--un-shadow-selected);
+  cursor: default;
+}
+.walk-behaviour.picked + .walk-behaviour {
+  box-shadow: none;
+}
+.walk-behaviour-number {
+  display: flex;
+  width: 22px;
+  height: 22px;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  border: 1.5px solid var(--un-mark);
+  border-radius: 50%;
+  color: var(--un-muted);
+  font-size: 11.5px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+.walk-behaviour-number.seen {
+  border-color: var(--un-done);
+  background: var(--un-done);
+  color: var(--un-on-hot);
+}
+.walk-behaviour.commented .walk-behaviour-number {
+  border-color: var(--un-risk-mid);
+  background: var(--un-risk-mid);
+  color: var(--un-on-hot);
+}
+.walk-behaviour-body {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+.walk-behaviour-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 4px 12px;
+}
+.walk-behaviour-head h4 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+  line-height: 1.35;
+}
+.walk-behaviour-text {
+  color: var(--un-ink-soft);
+  font-size: 14.5px;
+  line-height: 1.55;
+}
+.walk-behaviour-text p {
+  margin: 0;
+}
+.walk-behaviour-foot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+}
+.walk-behaviour-foot .walk-code {
+  flex: 1;
+  min-width: 0;
+}
+.walk-behaviour-foot .walk-small {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.walk-page-foot {
+  padding-top: 8px;
+  border-top: 1px solid var(--un-hairline);
+}
+
+/* Labelled blocks of rows */
+.walk-block {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.walk-block > .walk-label {
+  padding-bottom: 4px;
+}
+.walk-block ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.walk-block li {
+  border-top: 1px solid var(--un-hairline);
+  font-size: 14px;
+}
+.walk-block-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  width: 100%;
+  margin: 0 -8px;
+  padding: 9px 8px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  text-align: left;
+  box-sizing: content-box;
+}
+.walk-block-row:hover {
+  background: var(--un-hover);
+}
+.walk-block-row .walk-mark {
+  margin-top: 1px;
+}
+.walk-number {
+  display: flex;
+  width: 22px;
+  height: 20px;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  background: var(--un-hairline);
+  color: var(--un-ink-soft);
+  font-size: 11.5px;
+  font-weight: 700;
+}
+.walk-block-text {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  line-height: 1.4;
+}
+.walk-block-sub {
+  color: var(--un-muted);
+  font-size: 13px;
+  line-height: 1.45;
+}
+.walk-block-right {
+  flex: none;
+  align-self: center;
+  color: var(--un-ink-soft);
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+.walk-lead {
+  margin: 0;
+  color: var(--un-ink-soft);
+  font-size: 14.5px;
+  line-height: 1.5;
+}
+.walk-note {
+  margin: 0;
+  color: var(--un-muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+/* The code stays inside the panel's width and height: a long excerpt
+   scrolls in its own box rather than pushing the page miles down. */
+.walk-code details[open] > :not(summary) {
+  max-height: 70vh;
+  overflow: auto;
+  border: 1px solid var(--un-line);
+  border-radius: 8px;
+}
+
+/* Sending the review */
+.walk-submit {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.walk-events {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.walkthrough .walk-event {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--un-line);
+  border-radius: 8px;
+  background: var(--un-card);
+  box-shadow: var(--un-shadow-button);
+  text-align: left;
+}
+.walkthrough .walk-event:hover:not([aria-disabled="true"]) {
+  border-color: var(--un-line-strong);
+}
+.walkthrough .walk-event[aria-checked="true"] {
+  border-color: var(--un-primary-line);
+  background: var(--un-primary);
+}
+.walkthrough .walk-event[aria-disabled="true"] {
+  box-shadow: none;
+  background: transparent;
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+.walk-event-dot {
+  flex: none;
+  box-sizing: border-box;
+  width: 14px;
+  height: 14px;
+  margin-top: 2px;
+  border: 1.5px solid var(--un-mark);
+  border-radius: 50%;
+  background: var(--un-card);
+}
+.walk-event[aria-checked="true"] .walk-event-dot {
+  border: 4px solid var(--un-done);
+}
+.walk-event-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.walk-event-label {
+  font-size: 14px;
+  font-weight: 600;
+}
+.walk-event-hint {
+  color: var(--un-muted);
+  font-size: 12.5px;
+  line-height: 1.4;
+}
+.walk-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  color: var(--un-muted);
+  font-size: 12.5px;
+}
+.walk-field > p {
+  margin: 0;
+}
+.walk-notes {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.walk-notes li {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 10px;
+  border: 1px solid var(--un-working-line);
+  border-radius: 6px;
+  background: var(--un-working-bg);
+}
+.walk-notes p {
+  margin: 0;
+  color: var(--un-ink);
+  font-size: 14px;
+  white-space: pre-line;
+}
+.walk-failed {
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--un-line);
+  border-radius: 8px;
+  background: var(--un-fix-bg);
+  color: var(--un-fix);
+  font-size: 14px;
+}
+.walk-sent {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 14px 16px;
+  border: 1px solid var(--un-primary-line);
+  border-radius: 12px;
+  background: var(--un-primary);
+}
+.walk-sent p {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  color: var(--un-on-primary);
+  font-weight: 600;
+}
+.walk-sent a {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+/* A narrow window keeps the steps in their row, scrolled to the current. */
+@container (width < 760px) {
+  .walk-head-inner {
+    padding: 0 20px;
+  }
+  .walk-panel {
+    padding: 24px 20px 60px;
+  }
+  .walk-title {
+    font-size: 22px;
+  }
+  .walk-title.long {
+    font-size: 19px;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .walk-panel,
+  .walk-comment {
+    animation: none;
+  }
+  .walk-head-bar span {
+    transition: none;
+  }
+}
+/* The code's disclosure reads as a control, not small print. */
+.walk-code summary {
+  align-self: flex-start;
+  gap: 6px;
+  padding: 7px 12px;
+  border: 1px solid var(--un-line);
+  border-radius: 6px;
+  background: var(--un-card);
+  box-shadow: var(--un-shadow-button);
+  color: var(--un-ink-soft);
+  font-size: 13.5px;
+}
+.walk-code summary:hover {
+  border-color: var(--un-line-strong);
+  color: var(--un-ink);
+}
+.walk-code details[open] > summary {
+  margin-bottom: 10px;
+}
+
+/* The overview a pull request opens on: one column, no list beside it. */
+.walk-landing {
+  display: flex;
+  flex: 1;
+  justify-content: center;
+  min-height: 0;
+  overflow: auto;
+}
+.walk-landing .walk-panel {
+  flex: 1;
+  padding-top: 22px;
+}
+.walkthrough .walk-back {
+  display: inline-flex;
+  align-items: center;
+  align-self: flex-start;
+  gap: 4px;
+  margin-bottom: -6px;
+  color: var(--un-muted);
+  font-size: 13px;
+  text-decoration: none;
+}
+.walkthrough .walk-back:hover {
+  color: var(--un-ink);
+}
+.walk-facts {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 16px;
+  margin-top: -6px;
+  color: var(--un-ink-soft);
+  font-size: 13.5px;
+  font-variant-numeric: tabular-nums;
+}
+.walk-facts:empty {
+  display: none;
+}
+.walk-fact {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.walk-fact.caution {
+  color: var(--un-working);
+  font-weight: 600;
+}
+.walk-add {
+  color: var(--un-done);
+}
+.walk-del {
+  color: var(--un-hot);
+}
+.walk-notices {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.walk-notices:empty {
+  display: none;
+}
+/* What the approver must not miss, and what breaks for others. */
+.walk-flag {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding: 14px 16px;
+  border-left: 3px solid var(--un-risk-mid);
+  border-radius: 0 10px 10px 0;
+  background: var(--un-working-bg);
+  color: var(--un-ink);
+  font-size: 14.5px;
+  line-height: 1.5;
+}
+.walk-flag.breaking {
+  border-left-color: var(--un-hot);
+  background: var(--un-fix-bg);
+}
+.walk-flag p {
+  margin: 0;
+}
+.walk-landing .walk-block-row .walk-badge {
+  margin-top: 1px;
+}
+.walk-fact.failing {
+  color: var(--un-hot);
+}

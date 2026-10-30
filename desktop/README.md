@@ -619,6 +619,9 @@ Saving React components or CSS in `oss/app` or `oss/viewer` refreshes the window
 including the setup screen. Native Rust and connecting screen changes require
 restarting the command. Ctrl-C removes the Vite container and its private shared directory;
 the host daemon continues running, just as when the normal desktop app closes.
+A second Vite, such as another worktree's, can serve the same daemon beside
+it with `BAUM_DESKTOP_DEV_PORT` set to another port; open it in a browser with
+the launch URL from the daemon's `credential.json`.
 
 Only debug builds with `BAUM_DESKTOP_DEV_DIR` set use the development frontend
 on port 1420. The private directory shares only the daemon origin with Vite,
