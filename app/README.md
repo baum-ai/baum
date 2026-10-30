@@ -1085,6 +1085,13 @@ exited, no terminal attached to its tmux server) is a notice on the Sessions pag
 the transcript page the button reads "Focusing…" until the daemon answers, and the
 note shows on its own line after the actions, a failure as an alert.
 
+Inherited tmux variables without a recorded terminal do not identify a session's
+pane. Codex sessions whose recorded ancestors are only background Codex processes
+and the service manager offer no focus action: they have no terminal or desktop
+window to bring forward. Terminal-based Codex sessions keep their normal focus
+action; navigating to a conversation through a detached Codex app server is not
+supported.
+
 A session in Needs you or Waiting for you is not listed again under Running now; a session idle only
 because it went silent, or with a reason this app does not know, stays there. Times
 are relative where they are not clocks, with the exact time on hover. While anything
