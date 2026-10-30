@@ -2,6 +2,7 @@ package analytics
 
 import (
 	"context"
+	"slices"
 	"strings"
 	"time"
 
@@ -59,9 +60,28 @@ func (s *Service) flow(ctx context.Context, start, today time.Time, loc *time.Lo
 	for i := range report.Days {
 		days[report.Days[i].Date] = &report.Days[i]
 	}
+	// The feature log keeps a repository's pull requests current only while
+	// it reads it, as FeatureWorker does: decisions on and a clone at hand.
+	// Rows it kept from before would be stale, so such a repository is not
+	// counted.
+	reads := func(r repos.Repository) bool {
+		return (r.Settings.Decisions == nil || *r.Settings.Decisions) && slices.ContainsFunc(r.Clones, func(c repos.Clone) bool { return c.Available })
+	}
+	if p, ok := s.Registry.(interface {
+		Preferences(context.Context) (repos.Preferences, error)
+	}); ok {
+		if prefs, err := p.Preferences(ctx); err == nil {
+			base := reads
+			reads = func(r repos.Repository) bool { return r.Settings.DecisionsEnabled(prefs) && base(r) }
+		}
+	}
 	for _, r := range picked {
 		name := strings.ToLower(r.Repository)
 		if q.Repository != "" && name != q.Repository {
+			continue
+		}
+		if !reads(r) {
+			report.Unlisted = append(report.Unlisted, name)
 			continue
 		}
 		pulls, listed, err := s.Pulls(ctx, name, start)

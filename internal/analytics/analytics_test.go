@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -706,18 +707,30 @@ func TestDecisionCaptureCounts(t *testing.T) {
 }
 
 // The flow counts each day's pull requests opened and merged, the person's
-// own apart, and names a repository the feature log has not listed.
+// own apart, and names a repository the feature log has not listed or no
+// longer reads, whose kept rows would be stale.
 func TestFlowCountsOpenedAndMergedPerDay(t *testing.T) {
 	now := time.Date(2026, 10, 27, 12, 0, 0, 0, time.UTC)
 	at := func(day int, hour int) time.Time { return time.Date(2026, 10, day, hour, 0, 0, 0, time.UTC) }
 	merged := at(27, 10)
+	clone := []repos.Clone{{Available: true}}
 	s := &Service{
-		Registry: fakeRegistry{picked: []repos.Repository{{Repository: "acme/demo"}, {Repository: "acme/off"}}},
+		Registry: fakeRegistry{picked: []repos.Repository{
+			{Repository: "acme/demo", Clones: clone},
+			{Repository: "acme/off", Clones: clone},
+			{Repository: "acme/turned-off", Clones: clone, Settings: repos.Settings{Decisions: ptr(false)}},
+			{Repository: "acme/no-clone"},
+		}},
 		Location: time.UTC, Now: func() time.Time { return now },
 		Login: func(context.Context) string { return "Me" },
 		Pulls: func(_ context.Context, repository string, _ time.Time) ([]decisionlog.FlowPull, bool, error) {
-			if repository != "acme/demo" {
+			switch repository {
+			case "acme/off":
 				return nil, false, nil
+			case "acme/demo":
+			default:
+				// Listed once, but no longer read: never asked.
+				return []decisionlog.FlowPull{{Author: "ada", CreatedAt: at(27, 9)}}, true, nil
 			}
 			return []decisionlog.FlowPull{
 				{Author: "me", CreatedAt: at(26, 9), MergedAt: &merged},
@@ -733,7 +746,7 @@ func TestFlowCountsOpenedAndMergedPerDay(t *testing.T) {
 		t.Fatal(err)
 	}
 	f := report.Flow
-	if !f.Available || !f.Yours || len(f.Unlisted) != 1 || f.Unlisted[0] != "acme/off" || len(f.Days) != 7 {
+	if !f.Available || !f.Yours || !slices.Equal(f.Unlisted, []string{"acme/off", "acme/turned-off", "acme/no-clone"}) || len(f.Days) != 7 {
 		t.Fatalf("flow = %+v", f)
 	}
 	monday, tuesday := f.Days[5], f.Days[6]
