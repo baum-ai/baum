@@ -32,8 +32,7 @@ const (
 
 // StartOptions apply only when a client starts a daemon.
 type StartOptions struct {
-	Port        int
-	Concurrency int
+	Port int
 	// Env, when not nil, is the environment the daemon process starts with;
 	// nil passes the caller's.
 	Env []string

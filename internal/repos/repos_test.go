@@ -321,6 +321,17 @@ func TestPreferencesCoverTheChosenPullRequests(t *testing.T) {
 	}
 }
 
+func TestPreferencesConcurrencyFallsBackToTheMaximum(t *testing.T) {
+	for stored, want := range map[int]int{0: MaxJobConcurrency, 2: 2, MaxJobConcurrency + 1: MaxJobConcurrency, -1: MaxJobConcurrency} {
+		p := Preferences{JobConcurrency: stored}
+		if got := p.Concurrency(); got != want {
+			t.Errorf("stored %d: %d, want %d", stored, got, want)
+		}
+		if err := p.Validate(); err != nil {
+			t.Errorf("stored %d blocks other settings: %v", stored, err)
+		}
+	}
+}
 func TestPreferencesFixAgent(t *testing.T) {
 	claude, codex, cursor := config.BackendClaude, config.BackendCodex, config.BackendCursorAgent
 	for _, b := range []*config.Backend{nil, &claude, &codex} {

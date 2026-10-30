@@ -699,7 +699,7 @@ function stubAutomatic(
     const init = args[1] as RequestInit | undefined;
     if (init?.method === "PUT") {
       puts.push({ path, body: JSON.parse(String(init.body)) });
-      if (path.endsWith("api/settings/agent-env"))
+      if (path.endsWith("api/settings/agent-env") || path.endsWith("api/settings/job-concurrency"))
         return Promise.resolve(Response.json(puts.at(-1)!.body));
       if (path.endsWith("api/settings/decisions"))
         return Promise.resolve(Response.json({ decisions: puts.at(-1)!.body }));
@@ -965,6 +965,34 @@ it("edits the environment agents run with and shows server errors inline", async
   await type(names()[2]!, "GIT_DIR");
   await act(async () => save().click());
   expect(section().textContent).toContain("GIT_DIR cannot be set");
+});
+it("sets how many jobs run at once and puts it back when refused", async () => {
+  history.replaceState(null, "", "/s/test-ns/?page=settings&section=computer");
+  stubDiagnostics(async () => Response.json({ local: true, report: diagnosticsReport }));
+  const puts = stubAutomatic(demoClone, automaticOverview, {
+    backend: "auto",
+    model: "",
+    job_concurrency: 4,
+  });
+  await act(async () => root.render(<App />));
+  const select = () => node.querySelector<HTMLSelectElement>("#job-concurrency")!;
+  expect(select().value).toBe("4");
+  expect([...select().options].map((o) => o.value)).toEqual(["1", "2", "3", "4"]);
+  await choose(select(), "2");
+  expect(puts).toContainEqual({
+    path: "/s/test-ns/api/settings/job-concurrency",
+    body: { job_concurrency: 2 },
+  });
+  expect(select().value).toBe("2");
+  const accepted = vi.mocked(fetch).getMockImplementation()!;
+  vi.mocked(fetch).mockImplementation((...args) =>
+    String(args[0]).endsWith("api/settings/job-concurrency")
+      ? Promise.resolve(Response.json({ message: "settings unavailable" }, { status: 500 }))
+      : accepted(...args),
+  );
+  await choose(select(), "1");
+  expect(select().value).toBe("2");
+  expect(node.textContent).toContain("settings unavailable");
 });
 it("sets automatic reviews per repository, with no daily cap", async () => {
   history.replaceState(null, "", "/s/test-ns/?page=repositories");

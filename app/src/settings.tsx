@@ -1083,6 +1083,7 @@ export function SettingsPage({
                     </>
                   }
                 />
+                <JobConcurrencyRow />
               </div>
               {setup.desktop ? (
                 <>
@@ -1098,6 +1099,69 @@ export function SettingsPage({
         </div>
       </div>
     </section>
+  );
+}
+
+/** The most jobs the daemon runs at once (repos.MaxJobConcurrency). */
+const MAX_JOB_CONCURRENCY = 4;
+
+/** How many reviews, fixes and feature builds run at once; questions to a
+ *  review's agent run beside them. The daemon applies a change at once. */
+function JobConcurrencyRow() {
+  const [value, setValue] = useState<number | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  useEffect(() => {
+    request<{ job_concurrency?: number }>("api/settings").then(
+      (settings) => setValue(settings.job_concurrency ?? MAX_JOB_CONCURRENCY),
+      (e) => setError(errorText(e)),
+    );
+  }, []);
+  async function choose(next: number) {
+    const before = value;
+    setValue(next);
+    setSaving(true);
+    setError("");
+    try {
+      const answer = await request<{ job_concurrency: number }>(
+        "api/settings/job-concurrency",
+        { job_concurrency: next },
+        "PUT",
+      );
+      setValue(answer.job_concurrency);
+    } catch (e) {
+      setValue(before);
+      setError(errorText(e));
+    } finally {
+      setSaving(false);
+    }
+  }
+  return (
+    <SettingRow
+      label="Jobs at once"
+      htmlFor="job-concurrency"
+      detail={
+        error ? (
+          <Alert>{error}</Alert>
+        ) : (
+          "How many reviews, fixes and feature builds run in parallel. Lower it if they slow this computer down; running jobs are not stopped."
+        )
+      }
+    >
+      <select
+        id="job-concurrency"
+        className="local-field settings-select"
+        disabled={value === null || saving}
+        value={value ?? MAX_JOB_CONCURRENCY}
+        onChange={(e) => void choose(Number(e.target.value))}
+      >
+        {Array.from({ length: MAX_JOB_CONCURRENCY }, (_, i) => i + 1).map((n) => (
+          <option key={n} value={n}>
+            {n}
+          </option>
+        ))}
+      </select>
+    </SettingRow>
   );
 }
 
