@@ -60,6 +60,9 @@ func (f Fixture) AddCheckpoint(t *testing.T) {
 func (f Fixture) AddCheckpointEditing(t *testing.T, path string) {
 	t.Helper()
 	f.addCheckpoint(t, CheckpointID, func(text string) string {
+		// The edited checkpoint ran before the fixture's 10:30 commit.
+		text = strings.ReplaceAll(text, "2026-07-26T15:52:", "2026-07-01T10:15:")
+		text = strings.ReplaceAll(text, "2026-07-26T15:53:", "2026-07-01T10:16:")
 		return strings.ReplaceAll(text, `"name":"Read","input":{"file_path":"/repo/parse.go"}`,
 			`"name":"Edit","input":{"file_path":"/repo/`+path+`","old_string":"a","new_string":"b"}`)
 	})

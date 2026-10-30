@@ -128,14 +128,17 @@ type Commit struct {
 	CommittedAt string `json:"committed_at,omitempty"`
 	// Links are the sessions matched to the commit, strongest first.
 	Links []Link `json:"links"`
+	// CheckpointSessions are candidate IDs recorded by the commit's checkpoints,
+	// including sessions whose transcripts could not be read. Membership alone
+	// never adds a session to Links, Sessions or Graphs.
+	CheckpointSessions []string `json:"checkpoint_sessions,omitempty"`
 }
 
 // Link is one session matched to a commit.
 type Link struct {
 	Session string `json:"session"`
-	// Method is how the link was made: entire_checkpoint when the commit's
-	// Entire-Checkpoint trailer names a checkpoint recording the session, or
-	// the linkage step that matched: commit_ref, start_commit or files_overlap.
+	// Method is the independent evidence that matched: commit_ref for commit
+	// creation or files_overlap for inferred contribution.
 	Method     string  `json:"method"`
 	Confidence float64 `json:"confidence"`
 }
@@ -230,19 +233,17 @@ func Resolve(ctx context.Context, req Request) (Result, error) {
 		return Result{Available: true, Sessions: []Session{}, Commits: []Commit{}}, nil
 	}
 
-	found, truth, err := loadSessions(ctx, dir, req.Sessions, commits, remoteFor(remotes, req.Repository), req.Warn)
+	found, associations, err := loadSessions(ctx, dir, req.Sessions, commits, remoteFor(remotes, req.Repository), req.Warn)
 	if err != nil {
 		return Result{}, err
 	}
-	return match(ctx, engine, found, commits, truth)
+	return match(ctx, engine, found, commits, associations)
 }
 
-// loadSessions reads the sessions recorded for the clone containing dir that
-// were written recently enough to match commits, and the ground truth the
-// commits' Entire-Checkpoint trailers give, with the sessions only those
-// checkpoints hold. baum's own generation runs are left out of both. remote
-// is the clone's remote a missing checkpoint's fetch hint names; "" names a
-// placeholder.
+// loadSessions reads recent local sessions and the candidate associations named
+// by the commits' checkpoints. Missing local transcripts are recovered from
+// checkpoints where possible. Generation runs are excluded from both. remote
+// names the remote in a missing-checkpoint fetch hint; nothing is fetched here.
 func loadSessions(ctx context.Context, dir string, opts sessions.Options, commits []gitlocal.Commit, remote string, warn io.Writer) ([]sessions.Session, map[string][]string, error) {
 	if since, ok := sessionsSince(commits); ok && opts.Since.Before(since) {
 		opts.Since = since
@@ -259,17 +260,15 @@ func loadSessions(ctx context.Context, dir string, opts sessions.Options, commit
 			_, _ = fmt.Fprintf(warn, "warning: %s session %s: %v\n", failure.Source, failure.Path, failure.Err)
 		}
 	}
-	truth, extra := checkpointLinks(ctx, dir, commits, found, remote, warn)
-	found, truth = withoutGenerationRuns(append(found, extra...), truth)
-	return found, truth, nil
+	associations, extra := checkpointLinks(ctx, dir, commits, found, remote, warn)
+	found, associations = withoutGenerationRuns(append(found, extra...), associations)
+	return found, associations, nil
 }
 
-// match links sessions to commits and builds the redacted result. Each commit
-// is linked as the hosted resolver links it (commitEdges): to the sessions its
-// Entire checkpoint records, if any, then by the matcher's default steps until
-// its files are explained.
-func match(ctx context.Context, engine *redact.Engine, found []sessions.Session, commits []gitlocal.Commit, truth map[string][]string) (Result, error) {
-	ids, latest, edges, err := linkSessions(ctx, found, commits, truth)
+// match builds the redacted result, keeping checkpoint candidates separate
+// from independently supported commit links.
+func match(ctx context.Context, engine *redact.Engine, found []sessions.Session, commits []gitlocal.Commit, associations map[string][]string) (Result, error) {
+	ids, latest, edges, err := linkSessions(ctx, found, commits)
 	if err != nil {
 		return Result{}, err
 	}
@@ -325,7 +324,7 @@ func match(ctx context.Context, engine *redact.Engine, found []sessions.Session,
 		sortLinks(commitLinks)
 		result.Commits = append(result.Commits, Commit{
 			OID: c.OID, Subject: truncate(subject, maxSubject), Author: truncate(author, maxSubject),
-			CommittedAt: c.CommittedAt, Links: commitLinks,
+			CommittedAt: c.CommittedAt, Links: commitLinks, CheckpointSessions: slices.Clone(associations[c.OID]),
 		})
 	}
 	return result, nil
@@ -334,7 +333,7 @@ func match(ctx context.Context, engine *redact.Engine, found []sessions.Session,
 // linkSessions matches found to commits. ids are the distinct session ids in
 // the order found lists them, latest the best reading of each, and edges the
 // matched edges that name a session.
-func linkSessions(ctx context.Context, found []sessions.Session, commits []gitlocal.Commit, truth map[string][]string) ([]string, map[string]snapshot, []linkage.Edge, error) {
+func linkSessions(ctx context.Context, found []sessions.Session, commits []gitlocal.Commit) ([]string, map[string]snapshot, []linkage.Edge, error) {
 	// A session can arrive more than once under one id, and the matcher
 	// identifies a run by its id, so only the best reading of each id is
 	// matched: one with a transcript, then the newest.
@@ -365,7 +364,7 @@ func linkSessions(ctx context.Context, found []sessions.Session, commits []gitlo
 		if err := ctx.Err(); err != nil {
 			return nil, nil, nil, err
 		}
-		commitEdges, err := commitEdges(enrichedOf(c), truth[c.OID], candidates, cfg)
+		commitEdges, err := commitEdges(enrichedOf(c), candidates, cfg)
 		if err != nil {
 			return nil, nil, nil, fmt.Errorf("matching commit %s: %w", c.OID, err)
 		}
