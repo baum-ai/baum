@@ -34,14 +34,22 @@ type DocumentValidator struct {
 	Schema   []byte
 	Revision string
 	strict   map[string]any
-	resolved *jsonschema.Resolved
-	section  *jsonschema.Resolved
-	// rest is the authored contract with the sections' content left
-	// unchecked, so document-level violations are reported even when every
-	// section has its own.
-	rest  *jsonschema.Resolved
-	full  *jsonschema.Resolved
-	items *sectionItemSchemas
+	authored authoredView
+	// staged is the authored contract of a document a staged generator
+	// assembles (stagedContract): a section may lack its details and the
+	// summary its context.
+	staged authoredView
+	full   *jsonschema.Resolved
+	items  *sectionItemSchemas
+}
+
+// authoredView is one authored contract with its resolved schemas: the whole
+// document, a section on its own, and the rest, which is the contract with
+// the sections' content left unchecked, so document-level violations are
+// reported even when every section has its own.
+type authoredView struct {
+	tree                    map[string]any
+	resolved, section, rest *jsonschema.Resolved
 }
 
 // Contract returns a copy of the strict authored schema as a decoded tree, with
@@ -121,46 +129,17 @@ func newDocumentValidator() (*DocumentValidator, error) {
 	risks := defs["section"].(map[string]any)["properties"].(map[string]any)["risks"].(map[string]any)["items"].(map[string]any)
 	omitProperties(risks, "state", "introduced_version", "mitigated_version")
 	delete(risks, "allOf")
-	encoded, err := json.Marshal(contract)
+	authored, err := resolveAuthoredView(contract)
 	if err != nil {
 		return nil, err
 	}
-	var schema jsonschema.Schema
-	if err := json.Unmarshal(encoded, &schema); err != nil {
-		return nil, err
-	}
-	resolved, err := schema.Resolve(nil)
+	stagedTree, err := stagedContract(contract)
 	if err != nil {
 		return nil, err
 	}
-	sectionContract, err := json.Marshal(map[string]any{"$ref": "#/$defs/section", "$defs": defs})
+	staged, err := resolveAuthoredView(stagedTree)
 	if err != nil {
-		return nil, err
-	}
-	var sectionSchema jsonschema.Schema
-	if err := json.Unmarshal(sectionContract, &sectionSchema); err != nil {
-		return nil, err
-	}
-	section, err := sectionSchema.Resolve(nil)
-	if err != nil {
-		return nil, err
-	}
-	var restContract map[string]any
-	if err := json.Unmarshal(encoded, &restContract); err != nil {
-		return nil, err
-	}
-	restContract["properties"].(map[string]any)["sections"] = map[string]any{"type": "array"}
-	restEncoded, err := json.Marshal(restContract)
-	if err != nil {
-		return nil, err
-	}
-	var restSchema jsonschema.Schema
-	if err := json.Unmarshal(restEncoded, &restSchema); err != nil {
-		return nil, err
-	}
-	rest, err := restSchema.Resolve(nil)
-	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("staged review contract: %w", err)
 	}
 	lenient, err := lenientContract(contract)
 	if err != nil {
@@ -182,14 +161,61 @@ func newDocumentValidator() (*DocumentValidator, error) {
 		return nil, err
 	}
 	revision := defs["schemaRevision"].(map[string]any)["const"].(string)
-	return &DocumentValidator{Schema: modelSchema, Revision: revision, strict: contract, resolved: resolved, section: section, rest: rest, full: full, items: items}, nil
+	return &DocumentValidator{Schema: modelSchema, Revision: revision, strict: contract, authored: authored, staged: staged, full: full, items: items}, nil
+}
+
+// resolveAuthoredView resolves an authored contract as a whole, a section of
+// it on its own, and the rest of it with the sections' content unchecked.
+func resolveAuthoredView(contract map[string]any) (authoredView, error) {
+	resolve := func(tree map[string]any) (*jsonschema.Resolved, error) {
+		encoded, err := json.Marshal(tree)
+		if err != nil {
+			return nil, err
+		}
+		var schema jsonschema.Schema
+		if err := json.Unmarshal(encoded, &schema); err != nil {
+			return nil, err
+		}
+		return schema.Resolve(nil)
+	}
+	resolved, err := resolve(contract)
+	if err != nil {
+		return authoredView{}, err
+	}
+	section, err := resolve(map[string]any{"$ref": "#/$defs/section", "$defs": contract["$defs"]})
+	if err != nil {
+		return authoredView{}, err
+	}
+	rest, err := cloneTree(contract)
+	if err != nil {
+		return authoredView{}, err
+	}
+	rest["properties"].(map[string]any)["sections"] = map[string]any{"type": "array"}
+	resolvedRest, err := resolve(rest)
+	if err != nil {
+		return authoredView{}, err
+	}
+	return authoredView{tree: contract, resolved: resolved, section: section, rest: resolvedRest}, nil
+}
+
+// cloneTree deep-copies a decoded JSON object.
+func cloneTree(tree map[string]any) (map[string]any, error) {
+	encoded, err := json.Marshal(tree)
+	if err != nil {
+		return nil, err
+	}
+	var clone map[string]any
+	if err := json.Unmarshal(encoded, &clone); err != nil {
+		return nil, err
+	}
+	return clone, nil
 }
 
 // schemaFindings locates a schema violation. The library reports only the
 // first violation it meets, so each section is checked on its own and the rest
 // of the document separately; a repair then sees every failing section and
 // any document-level problem at once instead of one per pass.
-func (v *DocumentValidator) schemaFindings(document []byte, err error) []string {
+func (v *DocumentValidator) schemaFindings(view authoredView, document []byte, err error) []string {
 	var outline struct {
 		Sections []json.RawMessage `json:"sections"`
 	}
@@ -203,7 +229,7 @@ func (v *DocumentValidator) schemaFindings(document []byte, err error) []string 
 		if json.Unmarshal(raw, &section) != nil {
 			return []string{err.Error()}
 		}
-		if sectionErr := v.section.Validate(section); sectionErr != nil {
+		if sectionErr := view.section.Validate(section); sectionErr != nil {
 			var named struct {
 				ID any `json:"id"`
 			}
@@ -214,14 +240,14 @@ func (v *DocumentValidator) schemaFindings(document []byte, err error) []string 
 			}
 			location := fmt.Sprintf("section %d (%s)", i+1, id)
 			object, _ := section.(map[string]any)
-			if located := v.items.findings(location, object, v.section); len(located) > 0 {
+			if located := v.items.findings(location, object, view.section); len(located) > 0 {
 				findings = append(findings, located...)
 			} else {
 				findings = append(findings, location+": "+conciseSchemaError(sectionErr))
 			}
 		}
 	}
-	if restErr := v.rest.Validate(value); restErr != nil {
+	if restErr := view.rest.Validate(value); restErr != nil {
 		findings = append(findings, conciseSchemaError(restErr))
 	}
 	if len(findings) == 0 {
@@ -339,11 +365,15 @@ func omitProperties(schema map[string]any, keys ...string) {
 // document's semantic rules, and returns every finding in one pass, or "" when
 // it is valid.
 func (v *DocumentValidator) Validate(document []byte, bundle *bundlepkg.Bundle) string {
+	return v.validate(v.authored, document, bundle)
+}
+
+func (v *DocumentValidator) validate(view authoredView, document []byte, bundle *bundlepkg.Bundle) string {
 	var value any
 	if err := json.Unmarshal(document, &value); err != nil {
 		return "output is not a JSON document"
 	}
-	if err := v.resolved.Validate(value); err != nil {
+	if err := view.resolved.Validate(value); err != nil {
 		return err.Error()
 	}
 	var doc struct {
@@ -634,21 +664,25 @@ func walkJSON(value any, visit func(map[string]any)) {
 
 // Unresolved evidence remains visible as a model assertion; it cannot claim verification.
 func (v *DocumentValidator) Prepare(document []byte, bundle *bundlepkg.Bundle, directory string) ([]byte, string) {
+	return v.prepare(v.authored, document, bundle, directory)
+}
+
+func (v *DocumentValidator) prepare(view authoredView, document []byte, bundle *bundlepkg.Bundle, directory string) ([]byte, string) {
 	var value any
 	if err := json.Unmarshal(document, &value); err != nil {
 		return document, "output is not a JSON document"
 	}
 	// The model wrote against the lenient contract; everything the host
 	// can decide for it is decided here, before the strict contract applies.
-	value, derived := normalizeAuthored(value, v.strict, bundle, directory)
+	value, derived := normalizeAuthored(value, view.tree, bundle, directory)
 	if normalized, err := json.Marshal(value); err == nil {
 		document = normalized
 	}
-	if err := v.resolved.Validate(value); err != nil {
+	if err := view.resolved.Validate(value); err != nil {
 		// The schema-dependent checks assume a well-formed document. The
 		// partition rules do not, and they are the findings most often left
 		// for a further repair, so they are reported alongside the schema ones.
-		findings := v.schemaFindings(document, err)
+		findings := v.schemaFindings(view, document, err)
 		var outline struct {
 			Sections []sectionOutline `json:"sections"`
 		}
@@ -684,7 +718,7 @@ func (v *DocumentValidator) Prepare(document []byte, bundle *bundlepkg.Bundle, d
 		return encoded, err.Error()
 	}
 	findings := derived
-	if semantic := v.Validate(reconciled, bundle); semantic != "" {
+	if semantic := v.validate(view, reconciled, bundle); semantic != "" {
 		findings = append(findings, semantic)
 	}
 	findings = append(findings, validateTileSources(restored.Sections, bundle, directory)...)
@@ -850,7 +884,11 @@ func (v *DocumentValidator) Complete(document []byte, b *bundlepkg.Bundle, direc
 // prompt: promptVersion is recorded as generator.prompt_version, and an empty
 // one records nothing. The model's output never sets it.
 func (v *DocumentValidator) CompleteWithPrompt(document []byte, b *bundlepkg.Bundle, directory string, model, promptVersion string, now time.Time) ([]byte, string) {
-	document, findings := v.Prepare(document, b, directory)
+	return v.complete(v.authored, document, b, directory, model, promptVersion, now)
+}
+
+func (v *DocumentValidator) complete(view authoredView, document []byte, b *bundlepkg.Bundle, directory string, model, promptVersion string, now time.Time) ([]byte, string) {
+	document, findings := v.prepare(view, document, b, directory)
 	if findings != "" {
 		return nil, findings
 	}
