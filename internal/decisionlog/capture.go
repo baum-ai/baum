@@ -17,6 +17,7 @@ import (
 	"github.com/baum-ai/baum/internal/generate"
 	"github.com/baum-ai/baum/internal/livesessions"
 	"github.com/baum-ai/baum/internal/pricing"
+	"github.com/baum-ai/baum/internal/privatefs"
 	"github.com/baum-ai/baum/internal/repos"
 	"github.com/baum-ai/baum/internal/transcript"
 	"github.com/baum-ai/baum/sessions"
@@ -374,8 +375,8 @@ func (c *Capturer) Capture(ctx context.Context, t Target, o Options) (Report, er
 		return report, c.Store.Save(ctx, extraction)
 	}
 	calls := caller{store: c.Store, config: c.Config, backends: c.Backends, prices: c.prices(), redactor: c.redactor, log: c.logger(), now: now,
-		timeout: c.CallTimeout, prefs: prefs, settings: settings, begun: c.Changed}
-	planned, reason := calls.plan(ctx, prefs, settings, o.Backend, o.Model, report.MaxTokens, MaxOutputTokens)
+		timeout: c.CallTimeout, prefs: prefs, begun: c.Changed}
+	planned, reason := calls.plan(ctx, prefs, o.Backend, o.Model, report.MaxTokens, MaxOutputTokens)
 	report.Backend, report.Model, report.Reserved = planned.Backend, planned.Model, planned.Reserved
 	extraction.Backend, extraction.Model = report.Backend, report.Model
 	if reason != "" {
@@ -441,7 +442,7 @@ func debugFile(dir, name string, data []byte) error {
 	if dir == "" {
 		return nil
 	}
-	if err := os.MkdirAll(dir, 0o700); err != nil {
+	if err := privatefs.MkdirAll(dir); err != nil {
 		return err
 	}
 	file, err := os.OpenFile(filepath.Join(dir, name), os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)

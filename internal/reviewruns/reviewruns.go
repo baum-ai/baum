@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/baum-ai/baum/agent"
+	"github.com/baum-ai/baum/internal/privatefs"
 	"github.com/baum-ai/baum/internal/store"
 )
 
@@ -41,11 +42,16 @@ func DefaultRoot() (string, error) {
 // the directory with symlinks resolved, which is the working directory the
 // agent CLI records its session under.
 func Create(root string) (string, error) {
-	if err := os.MkdirAll(root, 0o700); err != nil {
+	root = resolvedRoot(root)
+	if err := privatefs.MkdirAll(root); err != nil {
 		return "", err
 	}
 	dir, err := os.MkdirTemp(root, agent.RunDirPrefix+"*")
 	if err != nil {
+		return "", err
+	}
+	if err := privatefs.ProtectDirectory(dir); err != nil {
+		_ = os.RemoveAll(dir)
 		return "", err
 	}
 	resolved, err := filepath.EvalSymlinks(dir)
@@ -57,14 +63,10 @@ func Create(root string) (string, error) {
 }
 
 // candidate reports whether dir is a real directory (not a symlink) directly
-// under root with the run directory prefix. Root is compared with its
-// symlinks resolved, as Create returns directories.
+// under root with the run directory prefix. Parent directory aliases are
+// resolved, but the run directory itself must not be a symlink.
 func candidate(root, dir string) bool {
-	if resolved, err := filepath.EvalSymlinks(root); err == nil {
-		root = resolved
-	}
-	root, dir = filepath.Clean(root), filepath.Clean(dir)
-	if filepath.Dir(dir) != root || !strings.HasPrefix(filepath.Base(dir), agent.RunDirPrefix) {
+	if !underRoot(root, dir) {
 		return false
 	}
 	info, err := os.Lstat(dir)

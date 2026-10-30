@@ -6,7 +6,9 @@ import {
   commandAction,
   forgetLastRows,
   INBOX_SHORTCUTS,
+  KeyBar,
   listKeys,
+  MAC,
   moveFocus,
   ShortcutsSheet,
   useCommandKeys,
@@ -692,4 +694,35 @@ it("settles a reread with its own read, or when the page goes", async () => {
   await act(async () => root.render(null));
   await pending;
   expect(done).toHaveBeenCalledTimes(2);
+});
+
+it("draws a place's key bar from the sheet's table, keys sharing a name together", async () => {
+  const bar = async (place: Parameters<typeof KeyBar>[0]["place"]) => {
+    await act(async () => root.render(<KeyBar place={place} />));
+    return [...node.querySelectorAll(".key-bar > span")].map((item) => item.textContent);
+  };
+  const command = MAC ? "⌘" : "Ctrl+";
+  expect(await bar("jobs")).toEqual([
+    "jk move",
+    "↵ open",
+    "t transcript",
+    `${command}. actions`,
+    `${command}K go to`,
+    "? all keys",
+  ]);
+  // The Inbox's bar is what its foot always said; Settings has no row menu.
+  expect(await bar("inbox")).toEqual([
+    "jk move",
+    "↵ act",
+    "m merge",
+    "f fix",
+    "s snooze",
+    "u undo",
+    `${command}K go to`,
+    "? all keys",
+  ]);
+  expect(await bar("settings")).not.toContain(`${command}. actions`);
+  // It shows only while Alt is held, and is for the eye alone.
+  expect(node.querySelector(".key-bar")!.classList.contains("key-hint")).toBe(true);
+  expect(node.querySelector(".key-bar")!.getAttribute("aria-hidden")).toBe("true");
 });

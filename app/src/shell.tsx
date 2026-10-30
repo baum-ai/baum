@@ -459,10 +459,7 @@ export function RefreshButton({
       aria-keyshortcuts={REFRESH_KEY_SHORTCUT}
       aria-busy={shown || undefined}
       aria-disabled={shown || undefined}
-      onClick={() => {
-        if (page) page.press(self);
-        else if (!busy) void refresh();
-      }}
+      onClick={() => page?.press(self)}
       className="local-icon-button local-refresh"
     >
       {shown ? <NineDots size={16} /> : <RefreshIcon size={16} />}

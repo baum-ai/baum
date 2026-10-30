@@ -154,6 +154,72 @@ func TestTmuxWithoutClients(t *testing.T) {
 	}
 }
 
+func TestTmuxMissingPaneStopsBeforeSelectingAClient(t *testing.T) {
+	for _, lookup := range []answer{
+		{err: errors.New("can't find pane: %7")},
+		{out: "\t\n"},
+		{out: "$1\t\n"},
+		{out: "\t/dev/pts/12\n"},
+	} {
+		m := tmuxInKitty()
+		m.answers["tmux -S /tmp/tmux-1000/default display-message"] = lookup
+		result := m.focuser("linux", hyprEnv).Focus(context.Background(), "codex", "s1", tmuxTerminal(m))
+		if result.Precision != "" || result.Message != "The session's tmux pane is gone." || len(m.calls) != 1 {
+			t.Fatalf("lookup %+v: result %+v, calls %v", lookup, result, m.calls)
+		}
+	}
+}
+
+func TestBackgroundCodexDoesNotOfferOrAttemptFocus(t *testing.T) {
+	for _, parent := range []string{"systemd", "launchd"} {
+		t.Run(parent, func(t *testing.T) {
+			m := &machine{procs: map[int]proc{
+				100: {"codex", "a", 101},
+				101: {"codex", "b", 50},
+				50:  {parent, "c", 1},
+			}}
+			terminal := tmuxTerminal(m)
+			terminal.TTY = ""
+			for _, goos := range []string{"linux", "darwin"} {
+				f := m.focuser(goos, hyprEnv)
+				if got := f.Predict("codex", terminal); got != "" {
+					t.Fatalf("%s Predict = %q", goos, got)
+				}
+				result := f.Focus(context.Background(), "codex", "s1", terminal)
+				if result.Precision != "" || !strings.Contains(result.Message, "background process") || len(m.calls) != 0 {
+					t.Fatalf("%s result %+v, calls %v", goos, result, m.calls)
+				}
+			}
+		})
+	}
+}
+
+func TestTmuxVariablesWithoutATerminalDoNotSelectAPane(t *testing.T) {
+	m, terminal := kittyShell()
+	terminal.Env["TMUX"], terminal.Env["TMUX_PANE"] = "/tmp/tmux-1000/default,50,0", "%7"
+	f := m.focuser("linux", hyprEnv)
+	if got := f.Predict("codex", terminal); got != Window {
+		t.Fatalf("Predict = %q", got)
+	}
+	result := f.Focus(context.Background(), "codex", "s1", terminal)
+	if result.Precision != Window || slices.ContainsFunc(m.calls, func(call string) bool { return strings.HasPrefix(call, "tmux ") }) {
+		t.Fatalf("result %+v, calls %v", result, m.calls)
+	}
+}
+
+func TestCodexInTmuxStillFocusesItsPane(t *testing.T) {
+	m := tmuxInKitty()
+	f := m.focuser("linux", hyprEnv)
+	terminal := tmuxTerminal(m)
+	if got := f.Predict("codex", terminal); got != Session {
+		t.Fatalf("Predict = %q", got)
+	}
+	result := f.Focus(context.Background(), "codex", "s1", terminal)
+	if result != (Result{Precision: Session}) || !slices.Contains(m.calls, "tmux -S /tmp/tmux-1000/default select-pane -t %7") {
+		t.Fatalf("result %+v, calls %v", result, m.calls)
+	}
+}
+
 func TestExitedSession(t *testing.T) {
 	m := tmuxInKitty()
 	terminal := tmuxTerminal(m)
@@ -276,7 +342,8 @@ func TestKittenFromKittysBundle(t *testing.T) {
 	m.exes = map[int]string{300: "/Applications/kitty.app/Contents/MacOS/kitty"}
 	terminal.Env["KITTY_LISTEN_ON"] = "unix:/tmp/kitty-300"
 	result := m.focuser("darwin", nil).Focus(context.Background(), "codex", "s1", terminal)
-	want := []string{"/Applications/kitty.app/Contents/MacOS/kitten @ --to unix:/tmp/kitty-300 focus-window --match pid:101", "open -a /Applications/kitty.app"}
+	kitten := filepath.Join(filepath.Dir(m.exes[300]), "kitten")
+	want := []string{kitten + " @ --to unix:/tmp/kitty-300 focus-window --match pid:101", "open -a /Applications/kitty.app"}
 	if result != (Result{Precision: Session}) || !reflect.DeepEqual(m.calls, want) {
 		t.Fatalf("result = %+v, calls:\n%s", result, strings.Join(m.calls, "\n"))
 	}
@@ -401,7 +468,10 @@ func TestClaudeDesktopConversation(t *testing.T) {
 	}
 	f := m.focuser("linux", hyprEnv)
 	f.ClaudeDir = dir
-	terminal := &hookevents.Terminal{Processes: m.recorded(100)}
+	terminal := &hookevents.Terminal{
+		Processes: m.recorded(100),
+		Env:       map[string]string{"TMUX": "/tmp/tmux-1000/default,50,0", "TMUX_PANE": "%7"},
+	}
 	if got := f.Predict("claude-code", terminal); got != Session {
 		t.Fatalf("Predict = %q", got)
 	}

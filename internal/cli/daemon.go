@@ -14,7 +14,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -89,8 +88,8 @@ that path is too long for a socket. TMPDIR never changes where it is.`,
 		Long: `Ensure starts the daemon unless one of this version or newer is running,
 waits until it serves, and prints its status. An older daemon is stopped
 (running jobs are recorded as interrupted) and replaced. A daemon speaking a
-newer control protocol is an error. --port and --concurrency apply only when
-this command starts the daemon.`,
+newer control protocol is an error. --port applies only when this command
+starts the daemon.`,
 		Args: cobra.NoArgs,
 		RunE: runDaemonEnsure,
 	}
@@ -133,23 +132,18 @@ is already running.`,
 
 func startFlags(cmd *cobra.Command) {
 	cmd.Flags().Int("port", 0, "serve the app on this loopback port instead of a free one")
-	cmd.Flags().Int("concurrency", 1, "maximum concurrent generation jobs (1–16)")
+	// The app's settings choose how many jobs run at once; an older daemon
+	// may still pass the flag when it respawns a newer one.
+	cmd.Flags().Int("concurrency", 0, "ignored")
+	_ = cmd.Flags().MarkDeprecated("concurrency", "set how many jobs run at once in the app's settings, under This computer")
 }
 
 func startOptions(cmd *cobra.Command) (daemon.StartOptions, error) {
 	port, _ := cmd.Flags().GetInt("port")
-	concurrency, _ := cmd.Flags().GetInt("concurrency")
 	if port < 0 || port > 65535 {
 		return daemon.StartOptions{}, fmt.Errorf("--port %d is out of range", port)
 	}
-	if concurrency < 1 || concurrency > 16 {
-		return daemon.StartOptions{}, fmt.Errorf("--concurrency %d is out of range (1–16)", concurrency)
-	}
-	start := daemon.StartOptions{Port: port}
-	if concurrency != 1 {
-		start.Concurrency = concurrency
-	}
-	return start, nil
+	return daemon.StartOptions{Port: port}, nil
 }
 
 func daemonClient(cmd *cobra.Command, start daemon.StartOptions) (*daemon.Client, error) {
@@ -266,10 +260,6 @@ func runDaemonRun(cmd *cobra.Command, _ []string) error {
 	}
 	ctx, stop := viewContext()
 	defer stop()
-	concurrency := start.Concurrency
-	if concurrency == 0 {
-		concurrency = 1
-	}
 	err = daemon.Run(ctx, daemon.Options{
 		Paths:      paths,
 		Version:    version(),
@@ -284,7 +274,7 @@ func runDaemonRun(cmd *cobra.Command, _ []string) error {
 			return nil
 		},
 		Start: func(ctx context.Context, server *uiserver.Server) (daemon.App, error) {
-			return localApplication(paths, concurrency, logger)(ctx, server)
+			return localApplication(paths, logger)(ctx, server)
 		},
 		Respawn: func(executable string, status daemon.Status) error {
 			return respawnDaemon(paths, executable, status, start)
@@ -312,9 +302,6 @@ func respawnDaemon(paths daemon.Paths, executable string, status daemon.Status, 
 	args := []string{"daemon", "run", "--detached"}
 	if u, err := url.Parse(status.App); err == nil && u.Port() != "" {
 		args = append(args, "--port", u.Port())
-	}
-	if start.Concurrency != 0 {
-		args = append(args, "--concurrency", strconv.Itoa(start.Concurrency))
 	}
 	_, err := daemon.Spawn(paths, exec.Command(executable, args...))
 	return err
@@ -374,7 +361,7 @@ func applyLoginEnvironment(ctx context.Context, log *slog.Logger) {
 // A session ending or a push in a registered clone refreshes its pull requests
 // at once (hookrefresh), and reaches the scheduler only through
 // Scheduler.Trigger.
-func localApplication(paths daemon.Paths, concurrency int, log *slog.Logger) func(context.Context, *uiserver.Server) (daemon.App, error) {
+func localApplication(paths daemon.Paths, log *slog.Logger) func(context.Context, *uiserver.Server) (daemon.App, error) {
 	return func(ctx context.Context, server *uiserver.Server) (daemon.App, error) {
 		cfg, err := config.Load(config.Overrides{})
 		if err != nil {
@@ -442,7 +429,8 @@ func localApplication(paths daemon.Paths, concurrency int, log *slog.Logger) fun
 		chats := &chat.Service{Registry: registry, Config: cfg, Log: log}
 		// Feature builds run on the feature worker made below.
 		builds := &featureBuilder{}
-		queue, err := jobs.Open(filepath.Join(state, "jobs.json"), &jobs.Local{Registry: registry, Groups: groups, Config: cfg, Client: github.NewFromConfig(cfg, github.Options{}), Features: builds, Chat: chats}, concurrency, func(job jobs.Job) {
+		prefs, _ := registry.Preferences(ctx)
+		queue, err := jobs.Open(filepath.Join(state, "jobs.json"), &jobs.Local{Registry: registry, Groups: groups, Config: cfg, Client: github.NewFromConfig(cfg, github.Options{}), Features: builds, Chat: chats}, prefs.Concurrency(), func(job jobs.Job) {
 			_ = server.Publish("progress", map[string]any{"job": job})
 			if event, ok := jobs.ChatEvent(job); ok {
 				_ = server.Publish("chat", event)
@@ -636,7 +624,8 @@ func localApplication(paths daemon.Paths, concurrency int, log *slog.Logger) fun
 			Inboxes:   (&inboxes.API{Store: inboxes.Open(filepath.Join(state, "inboxes.json")), Changed: changed}).Handler(),
 			Groups:    (&reviewgroups.API{Store: groups, Registry: registry, Index: index.Build, Changed: changed}).Handler(),
 			Decisions: decisionsAPI, Log: log,
-			DecisionsChanged: func() { _ = server.Publish("decisions", struct{}{}) },
+			DecisionsChanged:   func() { _ = server.Publish("decisions", struct{}{}) },
+			ConcurrencyChanged: func(n int) { _ = queue.SetConcurrency(n) },
 			DecisionModel: func(ctx context.Context, prefs repos.Preferences) uiserver.DecisionModel {
 				e := decisionlog.EffectiveModel(ctx, cfg, prefs, generate.Backends{}, nil)
 				return uiserver.DecisionModel{Backend: e.Backend, Undetermined: e.Undetermined, Model: e.Model, Ignored: e.Ignored}

@@ -158,13 +158,12 @@ comments** or a combination such as **Fix conflicts, CI and review comments**
 request is open, is not a fork,
 discovery says the signed-in account can push to the repository
 (`viewer_can_push`) and the repository has a local clone. The PR page puts the
-button first beside the version menu, Pull requests puts a small **Fix** in
-the row's actions, and the Inbox's card offers it as its action; `f` presses
-it on each. Any of them starts the fix at once, with no dialog and no cost
+button first beside the version menu, Pull requests offers it in the row's
+menu, and the Inbox's card offers it as its action; `f` presses it on each. Any of them starts the fix at once, with no dialog and no cost
 estimate: `fix` in `src/app.tsx` posts `POST api/jobs` with
 `{"items":[{"clone","pr","kind":"fix"}],"mode":"single"}` (`startFix`), and
-the button reads **Starting…** (in Pull requests' row actions, **Fixing…**)
-from the click (the app's `fixStarting` set) until the job arrives. The daemon checks GitHub again and runs it with the
+the button reads **Starting…** (in a Pull requests row, **Fixing…** beside
+its review) from the click (the app's `fixStarting` set) until the job arrives. The daemon checks GitHub again and runs it with the
 fix agent Settings chooses, else the review's harness and model. A fix it refuses answers `409` with
 `blocked_reason` (fork, no push access, unsupported harness, nothing to fix),
 which `request` turns into the reason in words (`jobReasonText`); the app
@@ -335,9 +334,8 @@ Jobs. The daemon keeps the 50 newest transcripts; an older run's link finds
 "No transcript to show".
 
 Merging: a pull request whose Merge state is Ready (open, not a draft) shows a
-Merge button in the PR page header and, on hover or keyboard focus, in its
-Pull requests row's actions (always drawn on touch screens and below 72rem,
-where the columns fold), and as the Inbox card's action. It opens a confirmation dialog
+Merge button in the PR page header, **Merge…** in its Pull requests row's
+menu, and the Inbox card's action. It opens a confirmation dialog
 that reads `GET /api/prs/merge-options` for the repository's allowed methods
 (merge commit, squash, rebase), preselects GitHub's default for the user and
 offers only the allowed ones. "Merge pull request" posts `POST /api/prs/merge`
@@ -425,7 +423,12 @@ Repositories, a session or job transcript), with the current page's group
 first; `?` or `Esc` closes it. Key hints drawn
 on buttons (class `key-hint`) show only while Alt, Option on a Mac, is held:
 `useKeyHints` marks the document root then and clears it on release or when
-the window loses focus. The focused row has an
+the window loses focus. Every page also shows its own keys then, in one line
+along the foot of its panel (`KeyBar` in `src/shortcuts.tsx`): the keys of its
+group in the sheet that carry a short name, those sharing one together ("j k
+move"), then ⌘. for the row menu on a list, Go to and `?`. The bar reads the
+sheet's table, so it names only keys that work. The Inbox draws it at the foot
+of its list instead. The focused row has an
 accent bar and a faint fill, distinct from hover and selection; focus moves to
 the row's own link, so screen readers follow, and the row scrolls into view.
 Each list (Pull requests, Inbox, Sessions, Jobs, Repositories) keeps its
@@ -444,9 +447,9 @@ breakdown toggles are pressed buttons in a group), and its charts' bars take
 the focus for their tooltips.
 
 Update branch and Re-run checks (`src/unblock.tsx`) are secondary buttons in the
-PR page header beside Fix and Merge…, not in Pull requests: a row's actions
-hold one action (Merge on a ready row, else Fix) beside Peek, and a third
-button would crowd the column or wrap. `canUpdateBranch` offers the first
+PR page header beside Fix and Merge…, not in Pull requests: a row's menu
+holds the one action its state asks for (Merge on a ready row, else Fix), and
+the page is where the rest of a pull request's state is read. `canUpdateBranch` offers the first
 when discovery's `behind` is true (GitHub's `BEHIND`, never for a draft or a
 conflict), the pull request is open, not a fork, and `viewer_can_push` is true;
 `canRerunChecks` offers the second when `checks` is `failing`, the pull request
@@ -521,7 +524,8 @@ branch are counted at the foot of the panel.
 Snooze offers 1 hour, this afternoon (3 PM, while that is more than an hour
 away), tomorrow morning (9 AM) and **Until it changes**, which hides the pull
 request until its head moves. A snooze selects the next pull request and shows
-a toast with **Undo**; **Bring back** under Snoozed ends one early. Keys:
+a toast with **Undo**; **Bring back**, in a snoozed row's menu under Snoozed,
+ends one early. Keys:
 `j`/`↓` and `k`/`↑` move the selection, `Enter` opens, `m` merges a Merge, `f`
 starts a Fix item's fix (where its panel offers the button), `t` opens its fix
 transcript (Watch the agent, See what the agent did, or the last run's), `s` opens Snooze
@@ -645,9 +649,11 @@ a label, with no key of its own, as Tab moves nothing in the app.
   over the last moments (no fade with reduced motion). An unknown id says "This inbox no longer
   exists" and links to Inbox.
 - **Manage** (`?page=inboxes`): the inboxes in the sidebar's order, each with
-  its colour dot, name, how many are in it now, sentence, up and down buttons
-  ("Move <name> up", disabled at the ends), a labelled badge switch and Edit; a
-  save sends the whole list in its new order. A tinted note says how many queue items
+  its colour dot, name (a link to edit it), how many are in it now ("not
+  counted in the badge" when it is left out), and sentence. Its menu holds
+  Edit…, Move up and Move down (each only where the inbox can move) and
+  **Count in the Inbox badge**, an on-or-off choice; a save sends the whole
+  list in its new order. A tinted note says how many queue items
   are in no inbox (they show only under Inbox and always count in its badge; in
   the caution tone), or that every one is in some (in the positive tone). With none, it leads to New inbox.
 
@@ -675,8 +681,9 @@ the title below 72rem. The list is drawn as the Up next design's live table,
 in the Inbox's palette (`--un-*`) on the app's type scale. The page bar says
 when the list last read the daemon ("Updated just now", then how long ago,
 with the exact time as a tooltip), with a turning mark while a refresh runs.
-A row's last cell holds its action and **Peek**, which wait for the pointer or
-keyboard focus in the wide table. Peek (or `Space` on the focused row) opens
+A row's menu (its ⋯, a right click or ⌘.) holds Peek, Merge… on a ready row
+or the fix it offers, the fix's transcript, Generate or Regenerate review,
+Select and Open on GitHub, each with its key. Peek (or `Space` on the focused row) opens
 the saved review under the row, read when first opened and again only for a
 new version: the summary (the row already shows the risk score), the first four sections in review order with their lines added
 and removed, and **Open the review**. Without a saved review it says why (no
@@ -721,7 +728,7 @@ while regeneration runs. A PR page uses the queue’s active job for that
 repository and PR across registered clones, showing queued/running progress
 and cancellation even before its first document exists. Duplicate generation
 controls stay disabled until that job finishes, and completion/cancellation
-updates the page through SSE. Repository settings share backend and model overrides across registered clones.
+updates the page through SSE. Repository settings (automatic reviews and decision capture) are shared across registered clones.
 GitHub discovery and the latest saved review's free evidence refresh periodically
 while the local server runs, including PR heads/states, checks, conversation,
 bot reports and local session links. Cached data loads immediately; offline,
@@ -898,21 +905,29 @@ harness cannot fix. **Reviews** holds
 the global review settings, one per row: whether reviews run automatically,
 for which pull requests (authored, requested, both, or all open pull requests
 in the repository), the harness and its model (a listed model or a custom
-name, saved when its field is left or Enter is pressed). Each change is saved
+name, saved when its field is left or Enter is pressed) and the reasoning
+effort (Default, which leaves it to the agent, Low, Medium or High; no row for
+Cursor Agent, whose models name their own). Each change is saved
 at once, with "Saved" beside the title, through `PUT api/automatic`
-(`enabled`, `backend`, `model`, `pull_requests`), which the daemon keeps as
-app preferences over the config file; `GET api/settings` reports the
-effective harness and model. Each section sends all its choices and runs one
+(`enabled`, `backend`, `model`, `effort`, `pull_requests`), which the daemon
+keeps as app preferences over the config file; `GET api/settings` reports the
+effective harness, model and effort. Each section sends all its choices and runs one
 save at a time; changes made while one runs are sent together afterwards, so
 an older choice never lands after a newer one. A failed save shows the error
 and puts the control back. **Fixes** chooses the agent that fixes: "Same as reviews" (the
-default, which follows a repository's own review harness too) or Claude Code
-or Codex with a model, sent as `fix_backend` and `fix_model` (`""` returns to
-the reviews') and reported by `GET api/settings`. A chosen fix agent applies
+default) or Claude Code
+or Codex with a model and a reasoning effort, sent as `fix_backend`,
+`fix_model` and `fix_effort` (`""` returns to the reviews', effort included)
+and reported by `GET api/settings`. A chosen fix agent applies
 in every repository. **Connections** holds the GitHub connection and, in the
-desktop app, the Agent hooks card with installation, enablement and removal
-for each agent. **This computer** holds the diagnostics, the background
-daemon note, in the desktop app the Command line card (inline CLI install,
+desktop app, the Agent hooks card with installation, enablement, update
+(to the latest plugin, without removing it first; shown with the installed
+plugin version) and removal for each agent. **This computer** holds the diagnostics, the background
+daemon note, **Jobs at once** (how many reviews, fixes and feature builds run
+in parallel, 1–4 and 4 by default, saved with `PUT
+api/settings/job-concurrency` and reported as `job_concurrency` by `GET
+api/settings`; the daemon applies it at once, and lowering it lets running jobs
+finish), in the desktop app the Command line card (inline CLI install,
 update and removal) and Zoom, and the environment for agents. Home paths are
 displayed with `~`. **Environment for agents** (`AgentEnvSection`) edits
 variables set for every agent baum runs and for the git commands that commit
@@ -935,7 +950,8 @@ an earlier name GitHub forwards to the repository, which the picker and
 Repositories rows then show (`earlier_names`); a folder of another repository
 shows the daemon's error naming that repository. Settings apply
 to the repository through `PUT api/repositories/{owner}/{name}/settings`, with
-automatic generation and harness/model overrides; there is no spending cap.
+automatic generation and decision capture only: the harnesses and models are
+global; there is no spending cap.
 Removing a repository unpicks it but leaves its files and saved
 reviews on disk. Change local clone offers the existing clone registrations and
 lets the person remove one or register another folder. Explicit unpicks are
@@ -981,16 +997,20 @@ marking those made after that review was generated "Provisional", ended sessions
 tracker still holds included; it is not drawn while no session has decisions,
 a capture state or a capture in flight. Both read again on the `decisions`
 event, which carries no data (events within 250 ms make one read), and when
-the event stream opens or resets or the automatic switch changes. Settings' **Decision capture** section holds
-the switch, the decision log model (the harness's cheap default, or another
-of its models), read with `GET api/settings/decisions` and saved with `PUT
-api/settings/decisions` (`enabled`, `model`; the whole object). Only these two answer
-with what the daemon makes of them: the harness capture resolves to, its model
-and whether the saved model is ignored (unknown, with a note that capture
-does not run, when no harness resolves); the section reads them again when
-the review harness changes. A saved model it ignores is listed as
-"<model> (not used)" with a note naming the harness, so choosing the default
-clears it. When the harness cannot be resolved the section says so, apart
+the event stream opens or resets or the automatic switch changes. Settings' **Data extraction** section, in
+Reviews, holds the switch for decision capture and the feature log, the agent
+("Same as reviews", the default, or Claude Code, Codex or the Anthropic API)
+and the model (the harness's cheap default, or another of its models; a new
+agent starts over at its default) and the reasoning effort, one per row like
+the review settings and saved as they change, read with `GET
+api/settings/decisions` and saved with `PUT api/settings/decisions`
+(`enabled`, `backend`, `model`, `effort`; the whole object, `""` for the reviews' agent and the default model, which is saved as
+none so it follows the agent). Only these
+two answer with what the daemon makes of them: the harness extraction
+resolves to (`effective_backend`), its model and whether the saved model is
+ignored (unknown, with a note that extraction does not run, when no harness
+resolves); the section reads them again when the review harness changes. A saved model it ignores is shown with a note naming the harness, so
+choosing the default clears it. When the harness cannot be resolved the section says so, apart
 from a check that did not answer in time. A repository's dialog turns capture off for it (`decisions: false`; on sends
 `null`). The desktop setup's review step (which shows `auto` as the harness the daemon resolved, else
 its own guess) offers the decision log model beside the harness, reset to that
@@ -1002,9 +1022,41 @@ changed.
 Analytics shows decision capture's calls, failures by reason, calls cut short
 by a stop and spend under baum's work; an unknown cost stays unknown.
 
+Every list page draws its list one way: Pull requests, the Inbox's queue, Sessions,
+Jobs, Repositories and Manage inboxes. The page lies on the panel's warm paper
+(`--un-panel`), its sections are `ListSection`s (`src/list.tsx`: a heading with a dot
+in the section's tone, its name and count, folding where the list is long), and its
+rows are `list-row`s spanning the panel between hairlines, with no boxed panels. The
+row the keyboard is on, and the Inbox's selected pull request, take the same bar and
+fill. Jobs groups its jobs under Running now and Finished, newest first in each. The
+Timeline and Analytics keep their own layouts.
+
+A row carries no buttons. Its title opens it (a pull request, a job's pull
+request, a repository's settings, an inbox's editor), and everything else it
+offers is in its menu (`MenuButton` and `useContextMenu` in
+`src/context-menu.tsx`), opened three ways: the row's ⋯ at its end, a right
+click on the row, and ⌘. (Ctrl+. elsewhere) on the focused row. The ⋯ shows
+while the row is under the pointer, holds the keys or has its menu open, and
+always on a touch screen; it keeps its place while hidden, so nothing moves.
+It is a WAI-ARIA menu button: named "Actions for <row>", `aria-haspopup="menu"`,
+`aria-expanded` while open, and Enter, Space or ↓ open the menu on its first
+choice, ↑ on its last. In the menu ↑ and ↓ move and wrap, Home and End go to
+either end, a letter goes to the next choice starting with it, Enter chooses,
+and Escape or Tab close it with the keys back on the ⋯. An on-or-off choice is
+a `menuitemcheckbox` with its tick; what stops or removes something is in the
+critical tone, set apart below a separator. A row offers only what applies to
+it now, each choice with its key where it has one. Choices that open more
+(a path form for a clone, a job's usage, a pull request's peek) open it under
+the row. Pull requests: Peek, Merge… or the fix, the fix's transcript,
+Generate review, Select, Open on GitHub. Jobs: Open pull request, Watch or
+Transcript, Show usage, Cancel job. Repositories: Settings…, Change local
+clone… or, without a clone, Choose folder… and Clone it…. Manage inboxes:
+Edit…, Move up, Move down, Count in the Inbox badge. Snoozed: Bring back.
+Sessions: the session menu below.
+
 The Sessions page (`?page=sessions`) is a live feed of the same sessions, in three
-sections drawn as the Pull requests list (bucket headings with a dot and a count, then
-rows between hairlines, no panels). Each heading folds its section, as an inbox
+sections drawn as every list (headings with a dot and a count, then rows between
+hairlines, no panels). Each heading folds its section, as an inbox
 bucket's does; Ended recently starts folded, and the fold holds while the app runs.
 The keys move only through rows on show. The `live` event updates it and the sidebar count, and times
 tick every second. The daemon keeps ended sessions for 24 hours, across restarts, and
@@ -1024,8 +1076,8 @@ confirmed in a toast: the app's own (`src/toast.tsx`; any page raises one with
 goes after six seconds or when dismissed, is read out from one live region, and can
 carry an action such as Undo; a failure shows in the critical tone.
 
-A right click on a session's card opens the app's own menu (`src/context-menu.tsx`)
-in place of the browser's: Reply when the daemon offers it (`messageable`, with its
+A session card's ⋯, or a right click on the card, opens the app's own menu
+(`src/context-menu.tsx`) in place of the browser's: Reply when the daemon offers it (`messageable`, with its
 key r), Focus session or Show window when the daemon can bring the session forward
 (see below, key f), Open transcript, Peek (Space), Open pull request when it has one, and End session when the
 daemon offers it (`endable`). ⌘. (Ctrl+. elsewhere), anywhere in the app, opens
@@ -1108,6 +1160,13 @@ control, a refused Automation permission) or why nothing could (the session's pr
 exited, no terminal attached to its tmux server) is a notice on the Sessions page; on
 the transcript page the button reads "Focusing…" until the daemon answers, and the
 note shows on its own line after the actions, a failure as an alert.
+
+Inherited tmux variables without a recorded terminal do not identify a session's
+pane. Codex sessions whose recorded ancestors are only background Codex processes
+and the service manager offer no focus action: they have no terminal or desktop
+window to bring forward. Terminal-based Codex sessions keep their normal focus
+action; navigating to a conversation through a detached Codex app server is not
+supported.
 
 A session in Needs you or Waiting for you is not listed again under Running now; a session idle only
 because it went silent, or with a reason this app does not know, stays there. Times

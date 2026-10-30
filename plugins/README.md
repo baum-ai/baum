@@ -14,12 +14,17 @@ With a supported Claude Code or Codex CLI on `PATH`, run:
 baum hooks install --user
 # Or select one agent:
 baum hooks install --user --agent codex
+# Bring an installed plugin to the latest version:
+baum hooks update --user
 ```
 
 baum registers the public `baum-ai/baum` Git marketplace and installs/enables
 `baum@baum` through the native agent CLI. Repeating it is safe and re-enables
-an installed disabled plugin. No baum sign-in is required; installation
-fetches the public GitHub marketplace but calls no baum server. An old/missing
+an installed disabled plugin, but keeps the installed version: `update`
+refreshes the marketplace and updates the plugin, as the desktop app's
+Update in Settings does per agent. Restart running agent sessions to use new
+hooks, and review trust again where the agent asks (Codex: `/hooks`). No baum sign-in
+is required; installation fetches the public GitHub marketplace but calls no baum server. An old/missing
 agent CLI or failed command gives an error with upgrade/manual instructions.
 baum never edits hook settings directly, keeps no migration markers and
 performs no settings migration or backward-compatibility cleanup.

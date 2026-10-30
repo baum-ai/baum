@@ -181,10 +181,10 @@ func (w *FeatureWorker) PlanBuild(ctx context.Context, repository, dir string, o
 	if err != nil {
 		return "", "", "", err
 	}
-	if _, _, on, err := w.gate(ctx, repository); err != nil || (o.Gated && !on) {
+	if _, on, err := w.gate(ctx, repository); err != nil || (o.Gated && !on) {
 		return "", "", ReasonDisabled, err
 	}
-	p, skip := r.calls.plan(ctx, r.prefs, r.settings, o.Backend, o.Model, 1, 1)
+	p, skip := r.calls.plan(ctx, r.prefs, o.Backend, o.Model, 1, 1)
 	return p.Backend, p.Model, skip, nil
 }
 
@@ -196,7 +196,7 @@ func (w *FeatureWorker) EstimateBuild(ctx context.Context, repository, dir strin
 	if err != nil {
 		return estimate, err
 	}
-	if _, _, on, err := w.gate(ctx, repository); err != nil || (o.Gated && !on) {
+	if _, on, err := w.gate(ctx, repository); err != nil || (o.Gated && !on) {
 		estimate.Reason = ReasonDisabled
 		return estimate, err
 	}
@@ -213,7 +213,7 @@ func (w *FeatureWorker) EstimateBuild(ctx context.Context, repository, dir strin
 	}
 	estimate.PullRequests = len(items)
 	estimate.Batches = (len(items) + FeatureBatch - 1) / FeatureBatch
-	p, skip := r.calls.plan(ctx, r.prefs, r.settings, o.Backend, o.Model, 1, 1)
+	p, skip := r.calls.plan(ctx, r.prefs, o.Backend, o.Model, 1, 1)
 	estimate.Backend, estimate.Model, estimate.Reason = p.Backend, p.Model, skip
 	if skip != "" {
 		return estimate, nil

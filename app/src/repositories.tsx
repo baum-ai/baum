@@ -107,24 +107,22 @@ export function hasFolderPicker() {
   return Boolean((window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__);
 }
 
-/** One set of local actions, shared by setup, the repository picker and a PR.
- *  With a status they shrink to one line of text actions after it. While
- *  `looking` (baum is searching for a clone) they wait, unless a clone this
- *  set started is running: that one is reported instead. */
-export function CloneActions({
+/** What a repository without a local clone can do about it: `choose` a
+ *  folder that holds one (the native picker, or a path form where there is
+ *  none) and `clone` it (a form with the folder to clone into). `progress`
+ *  reports a running clone, `form` is the open path form and `errors` what
+ *  went wrong; a list row draws them under itself and offers the two from
+ *  its menu, while `CloneActions` draws them as buttons. */
+export function useCloneActions({
   repository,
   call = repositoryCall,
   home,
   changed,
-  status,
-  looking = false,
 }: {
   repository: string;
   call?: RepositoryCall;
   home?: string;
   changed: () => Promise<void>;
-  status?: ReactNode;
-  looking?: boolean;
 }) {
   const [mode, setMode] = useState<"" | "folder" | "clone">("");
   const fieldId = useId();
@@ -197,117 +195,145 @@ export function CloneActions({
       setPath("");
     }
   };
+  const choose = () =>
+    void run("choose", async () => {
+      if (hasFolderPicker()) {
+        const selected = await invoke<string | null>("choose_repository");
+        if (selected) await attach(selected);
+      } else setMode("folder");
+    });
+  const clone = () =>
+    void run("clone", async () => {
+      const target = await call<{ dir: string }>("target", { repository });
+      if (active.current) {
+        // Shown with ~ for the home directory; submitting expands it.
+        setPath(displayPath(target.dir, home));
+        setMode("clone");
+      }
+    });
+  const running = state?.state === "running";
+  const progress =
+    state?.state === "running" ? (
+      <LoadingStatus>Cloning to {displayPath(state.dir, home)}…</LoadingStatus>
+    ) : null;
+  const form = mode ? (
+    <form
+      onSubmit={(e) => {
+        e.preventDefault();
+        const full = repositoryPath(path.trim(), home ?? "");
+        if (!full) {
+          setError("Enter an absolute folder path.");
+          return;
+        }
+        void run("submit", async () => {
+          if (mode === "folder") await attach(full);
+          else {
+            const next = await call<CloneState>("clone", { repository, dir: full });
+            if (active.current) {
+              setState(next);
+              setMode("");
+            }
+            await changed();
+          }
+        });
+      }}
+    >
+      <div className="repository-path">
+        <label htmlFor={fieldId}>{mode === "clone" ? "Clone into" : "Local clone path"}</label>
+        <span className="repository-path-field">
+          <input
+            id={fieldId}
+            value={path}
+            onChange={(e) => setPath(e.target.value)}
+            disabled={busy}
+            required
+          />
+          {mode === "clone" && hasFolderPicker() ? (
+            <button
+              type="button"
+              disabled={busy}
+              aria-label="Choose a folder to clone into"
+              title="Choose a folder"
+              onClick={() =>
+                void run("parent", async () => {
+                  const parent = await invoke<string | null>("choose_repository", {
+                    cloneTarget: true,
+                  });
+                  if (parent && active.current)
+                    setPath(displayPath(cloneDirectory(parent, repository), home));
+                })
+              }
+            >
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M3.5 7.5a2 2 0 0 1 2-2h4l2 2.5h7a2 2 0 0 1 2 2v7.5a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2z" />
+              </svg>
+            </button>
+          ) : null}
+        </span>
+      </div>
+      <div className="repository-buttons">
+        <button type="submit" disabled={busy}>
+          {busy ? "Working…" : mode === "clone" ? "Clone repository" : "Use folder"}
+        </button>
+        <button type="button" disabled={busy} onClick={() => setMode("")}>
+          Cancel
+        </button>
+      </div>
+    </form>
+  ) : null;
+  const errors =
+    state?.state === "failed" || error ? (
+      <>
+        {state?.state === "failed" ? (
+          <p role="alert">{state.error ?? "The clone failed. Try again."}</p>
+        ) : null}
+        {error ? <p role="alert">{error}</p> : null}
+      </>
+    ) : null;
+  return { busy, doing, mode, running, choose, clone, progress, form, errors };
+}
+
+/** One set of local actions, shared by setup, the repository picker and a PR.
+ *  With a status they shrink to one line of text actions after it. While
+ *  `looking` (baum is searching for a clone) they wait, unless a clone this
+ *  set started is running: that one is reported instead. */
+export function CloneActions({
+  repository,
+  call = repositoryCall,
+  home,
+  changed,
+  status,
+  looking = false,
+}: {
+  repository: string;
+  call?: RepositoryCall;
+  home?: string;
+  changed: () => Promise<void>;
+  status?: ReactNode;
+  looking?: boolean;
+}) {
+  const actions = useCloneActions({ repository, call, home, changed });
+  const { busy, doing } = actions;
   return (
     <div className="repository-actions">
-      {state?.state === "running" ? (
-        <LoadingStatus>Cloning to {displayPath(state.dir, home)}…</LoadingStatus>
+      {actions.running ? (
+        actions.progress
       ) : looking ? (
         <LoadingStatus>Looking for a local clone…</LoadingStatus>
-      ) : status && mode ? null : (
+      ) : status && actions.mode ? null : (
         // The one-line form gives way to an open path form, which has Cancel.
         <div className={status ? "repository-buttons repository-inline" : "repository-buttons"}>
           {status ? <span className="repository-inline-status">{status}</span> : null}
-          <button
-            type="button"
-            disabled={busy}
-            onClick={() =>
-              void run("choose", async () => {
-                if (hasFolderPicker()) {
-                  const selected = await invoke<string | null>("choose_repository");
-                  if (selected) await attach(selected);
-                } else setMode("folder");
-              })
-            }
-          >
+          <button type="button" disabled={busy} onClick={actions.choose}>
             {busy && doing === "choose" ? "Choosing…" : "Choose folder"}
           </button>
-          <button
-            type="button"
-            disabled={busy}
-            onClick={() =>
-              void run("clone", async () => {
-                const target = await call<{ dir: string }>("target", { repository });
-                if (active.current) {
-                  // Shown with ~ for the home directory; submitting expands it.
-                  setPath(displayPath(target.dir, home));
-                  setMode("clone");
-                }
-              })
-            }
-          >
+          <button type="button" disabled={busy} onClick={actions.clone}>
             {busy && doing === "clone" ? "Preparing…" : "Clone it"}
           </button>
         </div>
       )}
-      {mode ? (
-        <form
-          onSubmit={(e) => {
-            e.preventDefault();
-            const full = repositoryPath(path.trim(), home ?? "");
-            if (!full) {
-              setError("Enter an absolute folder path.");
-              return;
-            }
-            void run("submit", async () => {
-              if (mode === "folder") await attach(full);
-              else {
-                const next = await call<CloneState>("clone", { repository, dir: full });
-                if (active.current) {
-                  setState(next);
-                  setMode("");
-                }
-                await changed();
-              }
-            });
-          }}
-        >
-          <div className="repository-path">
-            <label htmlFor={fieldId}>{mode === "clone" ? "Clone into" : "Local clone path"}</label>
-            <span className="repository-path-field">
-              <input
-                id={fieldId}
-                value={path}
-                onChange={(e) => setPath(e.target.value)}
-                disabled={busy}
-                required
-              />
-              {mode === "clone" && hasFolderPicker() ? (
-                <button
-                  type="button"
-                  disabled={busy}
-                  aria-label="Choose a folder to clone into"
-                  title="Choose a folder"
-                  onClick={() =>
-                    void run("parent", async () => {
-                      const parent = await invoke<string | null>("choose_repository", {
-                        cloneTarget: true,
-                      });
-                      if (parent && active.current)
-                        setPath(displayPath(cloneDirectory(parent, repository), home));
-                    })
-                  }
-                >
-                  <svg viewBox="0 0 24 24" aria-hidden="true">
-                    <path d="M3.5 7.5a2 2 0 0 1 2-2h4l2 2.5h7a2 2 0 0 1 2 2v7.5a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2z" />
-                  </svg>
-                </button>
-              ) : null}
-            </span>
-          </div>
-          <div className="repository-buttons">
-            <button type="submit" disabled={busy}>
-              {busy ? "Working…" : mode === "clone" ? "Clone repository" : "Use folder"}
-            </button>
-            <button type="button" disabled={busy} onClick={() => setMode("")}>
-              Cancel
-            </button>
-          </div>
-        </form>
-      ) : null}
-      {state?.state === "failed" ? (
-        <p role="alert">{state.error ?? "The clone failed. Try again."}</p>
-      ) : null}
-      {error ? <p role="alert">{error}</p> : null}
+      {actions.form}
+      {actions.errors}
     </div>
   );
 }

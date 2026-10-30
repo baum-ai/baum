@@ -111,9 +111,44 @@ test("local inbox, reused PR viewer, versions, generation and settings", async (
     fullPage: false,
     animations: "disabled",
   });
-  // Peek opens the saved review under its row.
+  // A row carries no buttons: its ⋯ shows under the pointer and opens its
+  // menu, the one a right click opens, with each choice's key beside it.
+  const more = approved.getByRole("button", { name: "Actions for acme/demo #7", exact: true });
+  await expect(more).toHaveCSS("opacity", "0");
   await approved.hover();
-  await approved.getByRole("button", { name: "Peek at acme/demo #7", exact: true }).click();
+  await expect(more).toHaveCSS("opacity", "1");
+  await expect(more).toHaveAttribute("aria-haspopup", "menu");
+  await more.click();
+  await expect(more).toHaveAttribute("aria-expanded", "true");
+  const actions = page.getByRole("menu", { name: "Actions for acme/demo #7" });
+  await expect(actions.getByRole("menuitem")).toHaveText([
+    "PeekSpace",
+    "Merge…m",
+    "Regenerate reviewg",
+    "Selectx",
+    "Open on GitHub",
+  ]);
+  await expect(actions.getByRole("menuitem", { name: "Peek" })).toBeFocused();
+  await page.screenshot({ path: "test-results/row-menu.png", animations: "disabled" });
+  // The keys move through it and Escape gives them back to the ⋯.
+  await page.keyboard.press("End");
+  await expect(actions.getByRole("menuitem", { name: "Open on GitHub" })).toBeFocused();
+  await page.keyboard.press("ArrowDown");
+  await expect(actions.getByRole("menuitem", { name: "Peek" })).toBeFocused();
+  await page.keyboard.press("s");
+  await expect(actions.getByRole("menuitem", { name: "Select" })).toBeFocused();
+  await page.keyboard.press("Escape");
+  await expect(actions).toHaveCount(0);
+  await expect(more).toBeFocused();
+  await expect(more).toHaveAttribute("aria-expanded", "false");
+  // Enter on the ⋯ opens it again; a right click on the row opens the same.
+  await page.keyboard.press("Enter");
+  await expect(actions.getByRole("menuitem", { name: "Peek" })).toBeFocused();
+  await page.keyboard.press("Escape");
+  await approved.getByText("acme/demo · #7").click({ button: "right" });
+  await expect(actions).toBeVisible();
+  // Peek opens the saved review under its row.
+  await actions.getByRole("menuitem", { name: "Peek" }).click();
   const peek = approved.getByRole("region", { name: "Peek at #7" });
   await expect(peek).toContainText("Summary");
   await expect(peek.getByRole("link", { name: "Open the review", exact: true })).toBeVisible();
@@ -130,7 +165,9 @@ test("local inbox, reused PR viewer, versions, generation and settings", async (
   });
   await bar.getByRole("button", { name: "Clear", exact: true }).click();
   await expect(bar).toHaveCount(0);
-  await approved.getByRole("button", { name: "Peek at acme/demo #7", exact: true }).click();
+  await approved.hover();
+  await more.click();
+  await actions.getByRole("menuitem", { name: "Close peek" }).click();
   await expect(peek).toHaveCount(0);
   await page.setViewportSize({ width: 720, height: 900 });
   await expect(approved.getByText("Status:", { exact: true })).toBeVisible();
@@ -254,7 +291,9 @@ test("local inbox, reused PR viewer, versions, generation and settings", async (
   await expect(job.getByText("Completed")).toBeVisible();
   await expect(job.getByText("1 call", { exact: true })).toBeVisible();
   await page.screenshot({ path: "test-results/jobs.png", animations: "disabled" });
-  await job.getByText("Usage", { exact: true }).click();
+  await job.hover();
+  await job.getByRole("button", { name: /^Actions for / }).click();
+  await page.getByRole("menuitem", { name: "Show usage", exact: true }).click();
   await expect(
     page.getByText(
       /Provider-reported usage: Input 60 · Output 40 · Cache reads 900 · Cache creation 0/,
@@ -297,15 +336,11 @@ test("local inbox, reused PR viewer, versions, generation and settings", async (
   await expect(settings.getByRole("combobox", { name: /Automatic reviews/ })).toHaveValue(
     "default",
   );
-  // The repository picks its model with the dropdown the desktop setup uses.
-  await settings
-    .getByRole("combobox", { name: "Model for this repository" })
-    .selectOption("Custom…");
-  await settings.getByRole("textbox", { name: "Custom model" }).fill("claude-sonnet-4-5");
+  // The harnesses and models are global: the repository has none of its own.
+  await expect(settings.getByRole("combobox", { name: /Model/ })).toHaveCount(0);
   await page.screenshot({ path: "test-results/repository-dialog.png", animations: "disabled" });
   await settings.getByRole("button", { name: "Save repository settings" }).click();
   await expect(settings).toBeHidden();
-  await expect(page.getByText(/claude-sonnet-4-5/)).toBeVisible();
   await page.screenshot({ path: "test-results/repositories.png", animations: "disabled" });
   await page.getByRole("link", { name: "Settings", exact: true }).click();
   await expect(page.getByRole("region", { name: "General" })).toBeVisible();
@@ -323,6 +358,12 @@ test("local inbox, reused PR viewer, versions, generation and settings", async (
   ).toBeVisible();
   await page.screenshot({ path: "test-results/settings-fixes.png", animations: "disabled" });
   await openSettings(page, "This computer");
+  const jobsAtOnce = page.getByLabel("Jobs at once");
+  await expect(jobsAtOnce).toHaveValue("4");
+  await jobsAtOnce.selectOption("2");
+  await expect(jobsAtOnce).toBeEnabled();
+  await expect(jobsAtOnce).toHaveValue("2");
+  await page.screenshot({ path: "test-results/settings-computer.png", animations: "disabled" });
   await page.getByRole("button", { name: "Check this computer", exact: true }).click();
   const diagnostics = page
     .getByRole("dialog")
@@ -629,6 +670,7 @@ test("desktop Settings has CLI and hook cards in their sections at desktop and n
               detected: true,
               installed: true,
               enabled: true,
+              version: "1.2.0",
             })),
           },
         }),
@@ -641,6 +683,7 @@ test("desktop Settings has CLI and hook cards in their sections at desktop and n
   const fits = () => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth);
   await openSettings(page, "Connections");
   await expect(hooks.getByText("Connected", { exact: true })).toHaveCount(2);
+  await expect(hooks.getByRole("button", { name: /^Update .* hooks$/ })).toHaveCount(2);
   await page.screenshot({ path: testInfo.outputPath("settings-connections.png"), fullPage: true });
   await openSettings(page, "This computer");
   await expect(cli.getByText("baum is installed at ~/.local/bin/baum.")).toBeVisible();
@@ -659,6 +702,10 @@ test("desktop Settings has CLI and hook cards in their sections at desktop and n
   await openSettings(page, "Connections");
   await expect(hooks).toBeVisible();
   expect(await fits()).toBe(true);
+  await page.screenshot({
+    path: testInfo.outputPath("settings-connections-narrow.png"),
+    fullPage: true,
+  });
 });
 
 test("picks GitHub repositories and keeps clone-less PRs usable", async ({ page }) => {
@@ -745,10 +792,13 @@ test("starts a fix from a pull request's page at once, with no dialog", async ({
   await page.getByRole("link", { name: "Pull requests", exact: true }).first().click();
   const inbox = page.getByRole("region", { name: "Pull request inbox" });
   const row = inbox.getByRole("listitem").filter({ hasText: "A pull request without a review" });
+  // The row offers the fix from its menu.
   await row.hover();
+  await row.getByRole("button", { name: "Actions for acme/demo #8", exact: true }).click();
   await expect(
-    row.getByRole("button", { name: "Fix conflicts, CI and review comments", exact: true }),
+    page.getByRole("menuitem", { name: "Fix conflicts, CI and review comments", exact: true }),
   ).toBeVisible();
+  await page.keyboard.press("Escape");
   await page.getByRole("link", { name: /A pull request without a review/ }).click();
   const title = page.getByRole("heading", { name: /A pull request without a review/ });
   await expect(title).toHaveCount(1);
@@ -771,12 +821,15 @@ test("merges a ready pull request from the inbox after choosing a method", async
   const inbox = page.getByRole("region", { name: "Pull request inbox" });
   const row = inbox.getByRole("listitem").filter({ hasText: "Reuse the existing PR page" });
   await expect(row).toContainText("Status: Ready");
-  // Only a ready pull request offers Merge.
-  await expect(inbox.getByRole("button", { name: "Merge acme/demo #8", exact: true })).toHaveCount(
-    0,
-  );
+  // Only a ready pull request offers Merge, from its row's menu.
+  const broken = inbox.getByRole("listitem").filter({ hasText: "A pull request without a review" });
+  await broken.hover();
+  await broken.getByRole("button", { name: "Actions for acme/demo #8", exact: true }).click();
+  await expect(page.getByRole("menuitem", { name: "Merge…", exact: true })).toHaveCount(0);
+  await page.keyboard.press("Escape");
   await row.hover();
-  await row.getByRole("button", { name: "Merge acme/demo #7", exact: true }).click();
+  await row.getByRole("button", { name: "Actions for acme/demo #7", exact: true }).click();
+  await page.getByRole("menuitem", { name: "Merge…", exact: true }).click();
   const dialog = page.getByRole("dialog", { name: "Merge pull request #7?" });
   // The fixture repository allows merge commits and squashing, not rebasing.
   await expect(dialog.getByRole("radio")).toHaveCount(2);
@@ -784,8 +837,8 @@ test("merges a ready pull request from the inbox after choosing a method", async
   await dialog.getByRole("radio", { name: /Create a merge commit/ }).check();
   await dialog.getByRole("button", { name: "Merge pull request", exact: true }).click();
   await expect(dialog).toBeHidden();
-  // The inbox refreshed: the merged pull request is no longer open or mergeable.
-  await expect(inbox.getByRole("button", { name: /^Merge acme\/demo #7/ })).toHaveCount(0);
+  // The inbox refreshed: the merged pull request is no longer open.
+  await expect(row).toHaveCount(0);
   await rm(join(process.env.BAUM_APP_STATE_DIR ?? "", "merged-7"), { force: true });
 });
 
@@ -907,6 +960,9 @@ test("captured decisions show on the PR page, in Settings and in Analytics", asy
   await page.goto(await launchURL());
   await page.getByRole("link", { name: "Pull requests", exact: true }).first().click();
   await page.getByRole("link", { name: /Reuse the existing PR page/ }).click();
+  // The page shows the full review until the review has loaded and then
+  // swaps to the walkthrough's overview, closing anything opened before.
+  await expect(page.getByRole("button", { name: "Start the review" })).toBeVisible();
   const live = page.getByRole("region", { name: "Sessions in progress", exact: true });
   const summary = live.getByText(/^Decisions \(3\)/);
   await expect(summary).toBeVisible({ timeout: 10000 });
@@ -946,9 +1002,18 @@ test("captured decisions show on the PR page, in Settings and in Analytics", asy
   await page.emulateMedia({ colorScheme: "light" });
 
   await openSettings(page, "Reviews");
-  const capture = page.getByRole("region", { name: "Decision capture", exact: true });
-  await expect(capture.getByRole("switch", { name: "Capture decisions" })).toBeChecked();
-  await expect(capture.getByRole("combobox", { name: "Decision log model" })).toBeVisible();
+  const capture = page.getByRole("region", { name: "Data extraction", exact: true });
+  await expect(
+    capture.getByRole("switch", { name: "Extract decisions and features" }),
+  ).toBeChecked();
+  await expect(capture.getByRole("combobox", { name: "Agent that extracts" })).toHaveValue("");
+  await expect(capture.getByRole("combobox", { name: "Model", exact: true })).toBeVisible();
+  await expect(capture.getByRole("group", { name: "Extraction reasoning effort" })).toBeVisible();
+  await capture.scrollIntoViewIfNeeded();
+  await page.screenshot({ path: "test-results/settings-reviews-extraction.png" });
+  const reviews = page.getByRole("region", { name: "Reviews", exact: true });
+  await reviews.getByRole("group", { name: "Review reasoning effort" }).scrollIntoViewIfNeeded();
+  await page.screenshot({ path: "test-results/settings-reviews-effort.png" });
   for (const scheme of ["light", "dark"] as const) {
     await page.emulateMedia({ colorScheme: scheme });
     await capture.screenshot({ path: `test-results/decisions-settings-${scheme}.png` });
@@ -1306,9 +1371,31 @@ test("the whole app can be used from the keyboard", async ({ page }) => {
   await page.screenshot({ path: "test-results/go-to.png", animations: "disabled" });
   await page.keyboard.press("Escape");
   await expect(goTo).toHaveCount(0);
+  // Holding Alt shows the sidebar's keys and, along the foot of the page, the
+  // page's own: here Sessions'.
+  const keyBar = page.locator(".local-key-bar");
+  await expect(keyBar).toBeHidden();
   await page.keyboard.down("Alt");
   await expect(page.locator(".local-rail-key").first()).toBeVisible();
+  await expect(keyBar).toBeVisible();
+  await expect(keyBar).toContainText("jk move");
+  await expect(keyBar).toContainText("r reply");
+  await expect(keyBar).toContainText("Ctrl+. actions");
+  await expect(keyBar).toContainText("? all keys");
   await page.screenshot({ path: "test-results/sidebar-keys.png", animations: "disabled" });
+  await page.keyboard.up("Alt");
+  await expect(keyBar).toBeHidden();
+  // Jobs has its own; the Inbox keeps its bar under its queue instead.
+  await page.keyboard.press("Control+7");
+  await expect(heading("Jobs")).toBeVisible();
+  await page.keyboard.down("Alt");
+  await expect(keyBar).toContainText("t transcript");
+  await page.screenshot({ path: "test-results/jobs-keys.png", animations: "disabled" });
+  await page.keyboard.up("Alt");
+  await page.keyboard.press("Control+1");
+  await page.keyboard.down("Alt");
+  await expect(page.locator(".upnext-keys")).toContainText("s snooze");
+  await expect(keyBar).toBeHidden();
   await page.keyboard.up("Alt");
   await writeFile(marker, "ended\nWalk the app by keyboard\n");
   expect(errors).toEqual([]);

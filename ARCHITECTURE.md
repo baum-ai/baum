@@ -489,7 +489,8 @@ refuse a forced choice while thinking); claude runs `claude -p` with no tools
 but StructuredOutput, no settings, MCP servers or session persistence, and at
 most two turns so a reply the harness rejects is retried once; codex
 runs `codex exec --ephemeral --ignore-user-config` read-only with its shell
-tools disabled, low reasoning effort and the system prompt as its model
+tools disabled, the chosen reasoning effort (Codex's own when none) and the
+system prompt as its model
 instructions, in one turn, which a call to one of its remaining tools would
 extend by a request. Both CLIs run in an empty temporary directory with the prompt on
 stdin after `sessions.GenerationRunMarker`.
@@ -626,6 +627,18 @@ that ends without one is nudged twice before the run fails. The key and base
 URL come from the request's `Endpoint`, else the `Backend`'s own (the local
 host sets the key from `ANTHROPIC_API_KEY`). The default model is
 `claude-opus-5-5` at `medium` effort; another model is sent without an effort.
+A chosen effort (`Backend.Effort`) replaces both.
+
+The local app's reasoning effort is one of the preferences, per use case
+(`effort` for reviews, which chat follows, `fix_effort` with a fix agent of
+its own, and `decisions.effort` for data extraction): Default (empty) or
+`low`, `medium` or `high` (`config.Efforts`). It reaches the backends through
+`config.Config.Effort` and `generate.DefaultBackendsFor`: Claude Code as
+`--effort`, Codex as `-c model_reasoning_effort` and the Anthropic API as
+`output_config.effort`; cursor-agent has none. Default leaves it to the
+harness: local Claude Code runs (the User profile) think as Claude Code
+decides, while the Isolated profile of hosted and evaluation runs always sets
+`MAX_THINKING_TOKENS=0` and `CLAUDE_CODE_DISABLE_THINKING=1`.
 
 Every request sent is one call, charged before the next is made: a call the
 request's `MaxCalls` or `MaxTokens` cannot pay for is not sent, and
@@ -1951,8 +1964,12 @@ an explicit `true`/`false`. The global preference is a master switch
 (`Settings.AutomaticEnabled`): off disables every repository, `true` included;
 on, only an explicit `false` disables one. The `preferences` table holds the
 global preferences as one JSON row: `automatic` (true until changed), the
-harness and model, `pull_requests` and `agent_env`; a field an older baum
-saved and this one dropped (`cursor_agent_acknowledged`) is ignored on read.
+review harness and model, the fix agent (`fix_backend`, `fix_model`), data
+extraction's (`decisions`: `enabled`, `backend`, `model`), `pull_requests`
+and `agent_env`; a field an older baum saved and this one dropped
+(`cursor_agent_acknowledged`) is ignored on read. The harnesses and models are
+global: a repository's `backend` and `model` an older baum stored are ignored
+on read and dropped on the next write.
 `PRAGMA user_version` 1 marks the schema in which
 `null` exists: `Open` migrates an older file once, in a `BEGIN IMMEDIATE`
 transaction, turning the `automatic: false` every earlier registration stored
@@ -2325,6 +2342,14 @@ without duplicating review documents. `jobs.Open` takes an exclusive
 `internal/filelock` lock beside the journal (`jobs.json.lock`) and keeps it
 until its workers stop, so two processes never run one queue; it waits up to
 10 s for a predecessor whose shutdown timed out and that is exiting.
+Reviews, fixes and feature builds share one lane, which runs up to
+`repos.MaxJobConcurrency` (4) jobs at once, oldest first; questions have their
+own lane (see the chat section). The `job_concurrency` preference lowers the
+limit (`PUT api/settings/job-concurrency`, 1–4), and `Queue.SetConcurrency`
+applies it to the running queue: lowering it stops no running job, it only
+holds new ones until fewer run. A job waits while another job of one of its
+pull requests (a group's members count) runs, and later jobs may start before
+it.
 `Queue.Drain` refuses new jobs and reports true only when none is queued or
 running, under the mutex `Submit` checks, so a restart never cuts a started
 job short: one started during it gets `503` with `Retry-After` and is started
@@ -2462,7 +2487,8 @@ reviews and shows in the same Jobs list. A fix starts alone, at once
 checks: preparation leaves `conflicts` false and reads no review threads, and
 any other `only` is refused);
 one in a batch is refused, and automatic generation never queues one. A review and a fix of one pull request
-neither supersede nor block each other, and a fix of a head does not count as
+are neither refused nor superseded by each other, though they never run at the
+same time (the queue starts no job while another of its pull request runs), and a fix of a head does not count as
 that head's review for the automatic scheduler.
 
 `jobs.Local` prepares a fix from fresh REST evidence (`internal/fix`):
@@ -2487,8 +2513,7 @@ fix, or nothing broken is the item's `blocked_reason` (`fork`,
 clicked. The budgets resolve as a review's. The harness and model are the
 preferences' fix agent (`fix_backend` and `fix_model`, Claude Code or Codex,
 set with `PUT /api/automatic` or `baum reviews set --fix-backend`) when one
-is chosen, winning over a repository's review override
-(`Preferences.ResolveFix`), and otherwise the review's. Before running, the executor prepares
+is chosen (`Preferences.ResolveFix`), and otherwise the review's. Before running, the executor prepares
 again and refuses a changed head (`head_changed`) or changed fix inputs, then
 reads the failing checks' output and the last 200 lines of up to four GitHub
 Actions job logs (`RESTReader.Tail`, which follows the signed log redirect
@@ -3317,15 +3342,18 @@ replace it.
     `claude://code/continue?session=local_…` (`xdg-open`, `open`), then its
     window is raised as below. These are Claude desktop's internal files and
     link: a record it no longer writes reads as no session.
-  - In tmux (`TMUX` and `TMUX_PANE` recorded), on the server of the recorded
-    socket: the client attached to the pane's session used last, else the
-    client used last at all (`list-clients`), is switched to the session, and
+  - In tmux (`TMUX`, `TMUX_PANE` and a terminal device recorded), on the server
+    of the recorded socket: the client attached to the pane's session used
+    last, else the client used last at all (`list-clients`), is switched to the session, and
     the pane's window and the pane are selected. The chain from then on is the
     client's, read now, and the terminal device is the client's: the recorded
     variables describe the terminal the tmux server started in. No client
     attached says so. A pane whose `pane_tty` is not the recorded terminal
     device is not the session's (a terminal started from a tmux pane passes
     `TMUX` on to its own shells), and the session is treated as outside tmux.
+    A lookup with an empty session or pane terminal is treated as a missing pane
+    before any client is switched. Without a recorded terminal, inherited tmux
+    variables are ignored.
   - The terminal's tab, from the first match in the chain: kitty focuses the
     window whose program is the process below kitty (`kitten @ --to
     $KITTY_LISTEN_ON focus-window --match pid:…`), only when the recorded
@@ -3358,10 +3386,13 @@ replace it.
   - `session` when the tmux pane, the tab or the conversation was selected,
     `window` when only the window was raised. `Predict`, which the list's
     `focus` is, judges the same from the record without running anything: on
-    Linux nothing outside Hyprland and X11; `session` for tmux, a Claude
-    desktop process in the chain (`claude-desktop`, `Claude`), a kitty with
-    its socket, and on macOS iTerm2 or Terminal with a terminal device;
-    `window` otherwise.
+    Linux nothing outside Hyprland and X11; `session` for tmux with a recorded
+    terminal, a Claude desktop process in the chain (`claude-desktop`, `Claude`),
+    a kitty with its socket, and on macOS iTerm2 or Terminal with a terminal device;
+    `window` otherwise. A Codex session without a terminal whose recorded chain
+    contains only `codex`, `systemd` or `launchd` has no focus action; a direct
+    focus request explains that the background process has no window. An
+    unfamiliar ancestor keeps the normal window fallback.
 - **Transcripts.** `GET /api/live-sessions/{agent}/{id}/transcript`
   (`Transcripts`, mounted beside the list by the same `LocalAPI.Live`
   provider) serves the transcript of a session the tracker lists, and only
@@ -3564,8 +3595,9 @@ store, symbolic links resolved, the mapped root session the event's), skips
 files over 64 MiB, baum's own generation runs and prompts over 272,000
 estimated tokens, and reuses, extends or replaces the session's head
 extraction as hosted extraction does. Its structured completion goes through
-the review backend's `agent.Completer` (default models `claude-haiku-5-5` and
-`gpt-6-luna`); cursor-agent has none. A model the price list cannot price
+the data extraction backend's `agent.Completer`, the reviews' unless the
+preferences choose another (`preferences.decisions.backend`; default models
+`claude-haiku-5-5` and `gpt-6-luna`); cursor-agent has none. A model the price list cannot price
 runs, reserved at 0, and every call is recorded in a ledger that throttles a session (5
 minutes apart, 10 after a failure, 12 a day unless it ended). The reply is masked before it is parsed; decisions keep
 their IDs across extractions and are marked obsolete, never deleted, when a
@@ -3602,7 +3634,7 @@ read). A first build (`FeatureWorker.Build`) lists a repository's whole
 history once (`FeatureWorker.ListHistory`), reads its paths, seeds a new
 `building` version from a feature taxonomy (`featureseed.go`), running
 feature discovery first when there is none newer than the version
-(`featurediscover.go`: the review backend and model through
+(`featurediscover.go`: the data extraction backend and model through
 `generate.RunTask`, `discover.PublicPrompt`, a head-only checkout of
 `refs/baum/default` and `discover.HistoryDigest`), and places the history
 in the version with the batch prompt (`assign.Public.RenderBatch`), its
@@ -3681,8 +3713,7 @@ and two files:
    `stopping` appears only while it shuts down, and `restart_pending` when an
    older daemon was kept because it is running jobs and will restart as this
    version once they finish (see Lifecycle). On failure it exits non-zero
-   with the reason on stderr. `--port` and `--concurrency` apply only when it
-   starts the daemon.
+   with the reason on stderr. `--port` applies only when it starts the daemon.
 2. `<state>/credential.json`, mode 0600 (Windows: current-user DACL), holds
    `{"url":"http://127.0.0.1:PORT/#token=<43 characters>"}`, the launch URL.
    Loading it runs the bootstrap page, which exchanges the fragment for the
@@ -3709,7 +3740,8 @@ and two files:
    from native plugin registries, with executable detection and installation/
    enablement separate from the agent's hook trust decision. It installs and
    removes `baum@baum` through native CLIs with `baum hooks install --user`
-   and `uninstall --user`. Native status queries have a 10-second bound and
+   and `uninstall --user`, and `update --user` refreshes the marketplace and
+   brings an installed plugin to its latest version. Native status queries have a 10-second bound and
    actions a 90-second total budget; the desktop resolves the login shell PATH for native plugin commands and allows
    240 seconds for PATH resolution, both agents and process overhead.
 5. `baum daemon stop` stops the daemon gracefully and waits for it to exit

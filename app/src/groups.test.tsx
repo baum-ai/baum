@@ -81,7 +81,7 @@ const clone: Clone = {
   path: "/work/demo",
   repository: "acme/demo",
   available: true,
-  settings: { automatic: null, backend: null, model: null },
+  settings: { automatic: null },
 };
 
 let root: Root, node: HTMLDivElement;
@@ -242,7 +242,7 @@ it("renders a group as one row with its members nested when expanded", async () 
   expect(bucket("Your pull requests").textContent).toContain("acme/demo · #2, #3");
   expect(bucket("Your pull requests").textContent).toContain("Group review outdated");
   // One group row, counted as one row; nothing is repeated loose.
-  expect(bucket("Your pull requests").textContent).toContain("Your pull requests1");
+  expect(bucket("Your pull requests").textContent).toContain("Your pull requests 1");
   expect(bucket("Other pull requests")).toBeNull();
   expect(node.querySelectorAll('input[aria-label="Select acme/demo #3"]')).toHaveLength(1);
   const toggle = node.querySelector<HTMLButtonElement>('button[aria-label="Expand Auth rework"]')!;

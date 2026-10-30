@@ -8,8 +8,6 @@ export type Clone = {
   settings: {
     /** null follows the global automatic generation preference. */
     automatic: boolean | null;
-    backend: string | null;
-    model: string | null;
     /** Decision capture for this repository: false turns it off, null and
      *  true follow the global switches. Absent from an older daemon. */
     decisions?: boolean | null;
@@ -640,13 +638,18 @@ export type PullRequestDecisions = {
   sessions: (SessionDecisions & { title?: string; live: boolean })[];
   review_generated_at: string | null;
 };
-/** The global decision capture settings, from `api/settings`. */
+/** The global data extraction settings (decision capture and the feature
+ *  log), from `api/settings/decisions`. An empty `backend` follows the
+ *  reviews' harness; an empty `model` is the harness's default. */
 export type DecisionSettings = {
   enabled: boolean;
+  backend: string;
   model: string;
-  /** What the daemon makes of them (`api/settings/decisions` only): the
-   *  harness capture resolves to, its model, and whether `model` is ignored. */
-  backend?: string;
+  /** The reasoning effort; empty or absent is the agent's own. */
+  effort?: string;
+  /** What the daemon makes of them: the harness extraction resolves to, its
+   *  model, and whether `model` is ignored. */
+  effective_backend?: string;
   /** The harness's checks did not answer in time, so it is unknown. */
   backend_undetermined?: boolean;
   effective_model?: string;

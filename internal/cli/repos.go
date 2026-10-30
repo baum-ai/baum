@@ -6,7 +6,6 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/baum-ai/baum/internal/config"
 	"github.com/baum-ai/baum/internal/repos"
 )
 
@@ -30,25 +29,7 @@ func newReposCommand() *cobra.Command {
 			if clear, _ := cmd.Flags().GetBool("clear-automatic"); clear {
 				s.Automatic = nil
 			}
-			if cmd.Flags().Changed("backend") {
-				v, _ := cmd.Flags().GetString("backend")
-				s.Backend = nil
-				if v != "" {
-					b, e := config.ParseBackend(v)
-					if e != nil {
-						return s, e
-					}
-					s.Backend = &b
-				}
-			}
-			if cmd.Flags().Changed("model") {
-				v, _ := cmd.Flags().GetString("model")
-				s.Model = nil
-				if v != "" {
-					s.Model = &v
-				}
-			}
-			return s, s.Validate()
+			return s, nil
 		})
 		if e != nil {
 			return e
@@ -58,8 +39,6 @@ func newReposCommand() *cobra.Command {
 	}}
 	add.Flags().Bool("automatic", false, "generate reviews of this repository automatically while the global setting is on (--automatic=false turns it off)")
 	add.Flags().Bool("clear-automatic", false, "follow the global automatic generation setting again")
-	add.Flags().String("backend", "", "repository backend override (empty resets to global)")
-	add.Flags().String("model", "", "repository model override (empty resets to global)")
 	remove := &cobra.Command{Use: "remove <path-or-id>", Short: "Remove a registered clone, even if its path is gone", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 		r, e := open()
 		if e != nil {

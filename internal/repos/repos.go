@@ -29,31 +29,20 @@ var ErrNotFound = errors.New("registered clone or picked repository not found")
 // ErrInvalidRepository reports a name that is not a github.com owner/name.
 var ErrInvalidRepository = errors.New("repository must be a github.com owner/name")
 
-// Settings are shared by all clones of a repository. Nil overrides inherit
-// global settings. Automatic is the repository's choice under the global
-// master switch (see AutomaticEnabled): nil follows it, false turns the
-// repository off, true is an explicit on that still stops while the global
-// switch is off. Registration itself starts no generation. A daily_cap an
-// older baum stored is ignored on read and dropped on the next write: baum
-// sets no spending limits, since it cannot price what a subscription bills.
+// Settings are shared by all clones of a repository. Automatic is the
+// repository's choice under the global master switch (see AutomaticEnabled):
+// nil follows it, false turns the repository off, true is an explicit on that
+// still stops while the global switch is off. Registration itself starts no
+// generation. A daily_cap, backend or model an older baum stored is ignored
+// on read and dropped on the next write: baum sets no spending limits, since
+// it cannot price what a subscription bills, and the harnesses and models are
+// global (Preferences).
 type Settings struct {
-	Automatic *bool           `json:"automatic"`
-	Backend   *config.Backend `json:"backend,omitempty"`
-	Model     *string         `json:"model,omitempty"`
+	Automatic *bool `json:"automatic"`
 	// Decisions is the repository's choice for local decision capture under
 	// the global switches (see DecisionsEnabled): nil and true follow them,
 	// false turns the repository off.
 	Decisions *bool `json:"decisions,omitempty"`
-}
-
-func (s Settings) Validate() error {
-	if s.Backend != nil && !s.Backend.Valid() {
-		return errors.New("invalid backend")
-	}
-	if s.Model != nil && (strings.TrimSpace(*s.Model) == "" || len(*s.Model) > 256) {
-		return errors.New("model must be nonempty and at most 256 bytes")
-	}
-	return nil
 }
 
 // AutomaticEnabled reports whether the daemon generates reviews of this
@@ -76,11 +65,15 @@ func (s Settings) DecisionsEnabled(p Preferences) bool {
 }
 
 // DecisionPreferences are the global choices for local decision capture and
-// the feature log. A nil Enabled is on. Model, when set, replaces the
-// backend's default decision model.
+// the feature log, the data extraction the app's settings name. A nil Enabled
+// is on. A nil Backend follows the reviews' backend. Model, when set,
+// replaces the backend's default decision model. Effort is the reasoning
+// effort (config.Efforts), empty or nil for the harness's own.
 type DecisionPreferences struct {
-	Enabled *bool   `json:"enabled,omitempty"`
-	Model   *string `json:"model,omitempty"`
+	Enabled *bool           `json:"enabled,omitempty"`
+	Backend *config.Backend `json:"backend,omitempty"`
+	Model   *string         `json:"model,omitempty"`
+	Effort  *string         `json:"effort,omitempty"`
 }
 
 // AppearancePreferences are device choices kept independently of the daemon HTTP origin.
@@ -100,11 +93,16 @@ type Preferences struct {
 	// in the app; a repository's own settings still override them.
 	Backend *config.Backend `json:"backend,omitempty"`
 	Model   *string         `json:"model,omitempty"`
-	// FixBackend and FixModel choose the agent that fixes pull requests
-	// (ResolveFix). A nil FixBackend means the same as reviews; an empty
-	// FixModel is the fix backend's default model.
+	// Effort is the reviews' reasoning effort (config.Efforts), empty or nil
+	// for the harness's own.
+	Effort *string `json:"effort,omitempty"`
+	// FixBackend, FixModel and FixEffort choose the agent that fixes pull
+	// requests (ResolveFix). A nil FixBackend means the same as reviews; an
+	// empty FixModel is the fix backend's default model and an empty
+	// FixEffort its own effort.
 	FixBackend *config.Backend `json:"fix_backend,omitempty"`
 	FixModel   *string         `json:"fix_model,omitempty"`
+	FixEffort  *string         `json:"fix_effort,omitempty"`
 	// PullRequests narrows which pull requests get automatic reviews:
 	// PullRequestsAuthored, PullRequestsRequested, PullRequestsAll, or empty
 	// for both authored and requested.
@@ -116,6 +114,24 @@ type Preferences struct {
 	Appearance AppearancePreferences `json:"appearance,omitzero"`
 	// Decisions configures local decision capture.
 	Decisions DecisionPreferences `json:"decisions,omitzero"`
+	// JobConcurrency, when set, is how many jobs the daemon runs at once
+	// besides questions to a review's agent; Concurrency resolves it.
+	JobConcurrency int `json:"job_concurrency,omitempty"`
+}
+
+// MaxJobConcurrency is the most jobs the daemon runs at once besides
+// questions to a review's agent, and the default. A person lowers it when
+// parallel agents load the computer too much.
+const MaxJobConcurrency = 4
+
+// Concurrency is how many jobs run at once: JobConcurrency, or
+// MaxJobConcurrency when it is unset or out of range (a hand edit, or a newer
+// baum's).
+func (p Preferences) Concurrency() int {
+	if p.JobConcurrency < 1 || p.JobConcurrency > MaxJobConcurrency {
+		return MaxJobConcurrency
+	}
+	return p.JobConcurrency
 }
 
 // The PullRequests choices besides both.
@@ -152,6 +168,9 @@ func (p Preferences) Validate() error {
 	if m := p.Decisions.Model; m != nil && len(*m) > 256 {
 		return errors.New("decisions model must be at most 256 bytes")
 	}
+	if b := p.Decisions.Backend; b != nil && *b != config.BackendClaude && *b != config.BackendCodex && *b != config.BackendAnthropic {
+		return errors.New("data extraction runs with Claude Code, Codex or the Anthropic API only")
+	}
 	if p.FixBackend != nil && *p.FixBackend != config.BackendClaude && *p.FixBackend != config.BackendCodex {
 		return errors.New("fixes run with Claude Code or Codex only")
 	}
@@ -160,6 +179,14 @@ func (p Preferences) Validate() error {
 	}
 	if p.FixBackend == nil && p.FixModel != nil && strings.TrimSpace(*p.FixModel) != "" {
 		return errors.New("choose the agent for fixes before its model")
+	}
+	for _, effort := range []*string{p.Effort, p.FixEffort, p.Decisions.Effort} {
+		if effort != nil && !config.ValidEffort(*effort) {
+			return fmt.Errorf("unknown reasoning effort %q; use %s or leave it empty for the agent's own", *effort, strings.Join(config.Efforts, ", "))
+		}
+	}
+	if p.FixBackend == nil && p.FixEffort != nil && *p.FixEffort != "" {
+		return errors.New("choose the agent for fixes before its effort")
 	}
 	if err := config.ValidateAgentEnv(p.AgentEnv); err != nil {
 		return fmt.Errorf("agent environment: %w", err)
@@ -183,22 +210,38 @@ func (p Preferences) Resolve(global config.Config) config.Config {
 	if p.Model != nil {
 		global.Model = strings.TrimSpace(*p.Model)
 	}
+	if p.Effort != nil {
+		global.Effort = *p.Effort
+	}
 	return global
 }
 
+// ResolveExtraction gives the config data extraction runs with, from cfg,
+// the config resolved for reviews: the extraction's own effort. Its backend
+// and model are decisionlog's to resolve.
+func (p Preferences) ResolveExtraction(cfg config.Config) config.Config {
+	cfg.Effort = ""
+	if p.Decisions.Effort != nil {
+		cfg.Effort = *p.Decisions.Effort
+	}
+	return cfg
+}
+
 // ResolveFix gives the config a fix runs with, from review, the config
-// already resolved for reviews (the global preferences and the repository's
-// overrides). A set FixBackend wins over the repository's own review backend
-// and model, and takes FixModel (empty for the backend's default); without
-// one the fix follows the reviews, repository overrides included.
+// already resolved for reviews. A set FixBackend replaces the review backend,
+// model and effort, and takes FixModel and FixEffort (empty for the backend's
+// own); without one the fix follows the reviews.
 func (p Preferences) ResolveFix(review config.Config) config.Config {
 	if p.FixBackend == nil {
 		return review
 	}
 	review.Backend = *p.FixBackend
-	review.Model = ""
+	review.Model, review.Effort = "", ""
 	if p.FixModel != nil {
 		review.Model = strings.TrimSpace(*p.FixModel)
+	}
+	if p.FixEffort != nil {
+		review.Effort = *p.FixEffort
 	}
 	return review
 }
@@ -206,17 +249,6 @@ func (p Preferences) ResolveFix(review config.Config) config.Config {
 // DefaultPreferences apply until the user changes them: automatic generation
 // on.
 func DefaultPreferences() Preferences { return Preferences{Automatic: true} }
-
-// Resolve overlays generation choices without changing credentials or budgets.
-func (s Settings) Resolve(global config.Config) config.Config {
-	if s.Backend != nil {
-		global.Backend = *s.Backend
-	}
-	if s.Model != nil {
-		global.Model = *s.Model
-	}
-	return global
-}
 
 type Clone struct {
 	ID         string   `json:"id"`
@@ -642,7 +674,7 @@ func (e *RemoteMismatchError) Is(target error) bool { return target == ErrNoMatc
 func (r *Registry) Add(ctx context.Context, path string, settings *Settings) (Clone, error) {
 	return r.AddPatch(ctx, path, func(previous Settings) (Settings, error) {
 		if settings != nil {
-			return *settings, settings.Validate()
+			return *settings, nil
 		}
 		return previous, nil
 	})
@@ -699,7 +731,7 @@ func (r *Registry) AttachFound(ctx context.Context, path, repository string) (Cl
 func (r *Registry) addFor(ctx context.Context, path, repository string, settings *Settings, guard addGuard) (Clone, error) {
 	return r.addPatch(ctx, path, repository, guard, func(previous Settings) (Settings, error) {
 		if settings != nil {
-			return *settings, settings.Validate()
+			return *settings, nil
 		}
 		return previous, nil
 	})
@@ -751,9 +783,6 @@ func (r *Registry) addPatch(ctx context.Context, path, repository string, guard 
 	}
 	c.Settings, e = edit(c.Settings)
 	if e != nil {
-		return Clone{}, e
-	}
-	if e = c.Settings.Validate(); e != nil {
 		return Clone{}, e
 	}
 	data, e := json.Marshal(c.Settings)
@@ -880,9 +909,6 @@ func probe(ctx context.Context, clones []Clone) error {
 
 // Update replaces shared repository settings without needing an available clone.
 func (r *Registry) Update(ctx context.Context, id string, s Settings) error {
-	if e := s.Validate(); e != nil {
-		return e
-	}
 	data, e := json.Marshal(s)
 	if e != nil {
 		return e
@@ -1002,11 +1028,6 @@ func (r *Registry) Pick(ctx context.Context, repository string, settings *Settin
 		return Repository{}, ErrInvalidRepository
 	}
 	identity := strings.ToLower(gh.String())
-	if settings != nil {
-		if e = settings.Validate(); e != nil {
-			return Repository{}, e
-		}
-	}
 	tx, e := r.db.BeginTx(ctx, nil)
 	if e != nil {
 		return Repository{}, e
@@ -1121,9 +1142,6 @@ func (r *Registry) repositories(ctx context.Context, only string) ([]Repository,
 
 // UpdateRepository replaces a picked repository's shared settings by identity.
 func (r *Registry) UpdateRepository(ctx context.Context, repository string, s Settings) error {
-	if e := s.Validate(); e != nil {
-		return e
-	}
 	res, e := r.db.ExecContext(ctx, `UPDATE repositories AS r SET settings=? WHERE r.identity=? AND (`+r.pickedSQL()+`)`, mustJSON(s), strings.ToLower(repository))
 	if e != nil {
 		return e
