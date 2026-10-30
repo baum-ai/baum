@@ -227,3 +227,58 @@ func TestContinueWritesOnlyTheFailedDetails(t *testing.T) {
 		t.Fatalf("err %v, %d request(s)", err, len(f.backend.Requests))
 	}
 }
+
+// A stale section carried from an earlier version is not a gap: nothing
+// writes its details again.
+func TestGapsSkipStaleSections(t *testing.T) {
+	failed, noContext := generate.Gaps([]byte(`{"summary":{"context":{"area":{"text":"A.","refs":[]}}},"sections":[{"id":"sec_a","details":"failed","derived":{"state":"new"}},{"id":"sec_old","details":"failed","derived":{"state":"stale"}},{"id":"sec_b","derived":{"state":"unchanged"}}]}`))
+	if !slices.Equal(failed, []string{"sec_a"}) || noContext {
+		t.Fatalf("failed %v, no context %v", failed, noContext)
+	}
+}
+
+// A draft is masked before anyone sees it, and a run that masked a secret in
+// a closed value, which the host rejects, shows no draft at all.
+func TestStagedDraftsAreMasked(t *testing.T) {
+	outline := func(edit func(string) string) generatetest.Answer {
+		return func(stage string, request agent.Request) (agent.Result, error, bool) {
+			if stage != agent.StageOutline {
+				return agent.Result{}, nil, false
+			}
+			document, err := generatetest.Document(request.Directory, generatetest.TwoSections)
+			return agent.Result{Document: []byte(edit(string(generatetest.ForStage(request, document)))), Model: "stub-model", Calls: 1, Tokens: 100}, err, true
+		}
+	}
+	run := func(t *testing.T, answer generatetest.Answer) ([][]byte, error) {
+		f := newFixture(t)
+		f.backend.RunFunc = generatetest.StagedReplies(answer)
+		o := stagedOptions(t, f)
+		var mu sync.Mutex
+		var drafts [][]byte
+		o.OnDraft = func(document []byte) {
+			mu.Lock()
+			defer mu.Unlock()
+			drafts = append(drafts, document)
+		}
+		_, err := generate.Run(context.Background(), o)
+		return drafts, err
+	}
+	drafts, err := run(t, outline(func(reply string) string {
+		return strings.Replace(reply, "Adds notes, settings and a renamed guide.", "Adds notes; the token is "+assembletest.PlantedSecret+".", 1)
+	}))
+	if err != nil || len(drafts) == 0 {
+		t.Fatalf("%v, %d draft(s)", err, len(drafts))
+	}
+	for _, draft := range drafts {
+		if strings.Contains(string(draft), assembletest.PlantedSecret) {
+			t.Fatal("a draft holds the secret")
+		}
+	}
+	const closed = "sk_live_4ec3b2a1f9d84c7e6b5a3f2e1d0c9b8a"
+	drafts, err = run(t, outline(func(reply string) string {
+		return strings.Replace(reply, `"id":"sec_rest"`, `"id":"sec_`+closed+`"`, 1)
+	}))
+	if generate.CategoryOf(err) != generate.CategoryValidation || len(drafts) != 0 {
+		t.Fatalf("%v, %d draft(s)", err, len(drafts))
+	}
+}

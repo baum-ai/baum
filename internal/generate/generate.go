@@ -397,7 +397,7 @@ func Run(ctx context.Context, o Options) (result Result, err error) {
 		}
 		var stopDrafts func()
 		if o.OnDraft != nil {
-			continued.Progress, stopDrafts = drafts(redactCtx, o.OnDraft, func(draft []byte) []byte {
+			continued.Progress, stopDrafts = drafts(runCtx, o.OnDraft, func(draft []byte) []byte {
 				var scratch agent.Outcome
 				masked, closed, err := agent.RedactOutput(redactCtx, validator, redactor, draft, &b, checkout, &scratch)
 				if err != nil || closed > 0 {

@@ -362,6 +362,47 @@ func DetailsOf(section []byte) []byte {
 	return encoded
 }
 
+// SpliceSections returns latest, the stored version as it is now (refreshed
+// since, perhaps), with the sections ids replaced by those of completed, the
+// same version completed again after their details were written
+// (CompleteStaged), so that the details land without losing what a refresh
+// brought in the meantime. What follows from the sections is taken from
+// completed, which derived it from the same sections: the risk score and
+// its limitations, the reading time and the risk line counts; the open
+// agent findings per section are counted again from latest's agent reviews.
+// The two must be the same generation (repository, pull request, version,
+// head, base, merge base and generation time), and every id a section of
+// both.
+func (v *DocumentValidator) SpliceSections(latest, completed []byte, ids []string) ([]byte, error) {
+	now, err := v.decodeFullDocument(latest)
+	if err != nil {
+		return nil, &StoredDocumentError{Err: err}
+	}
+	done, err := v.decodeFullDocument(completed)
+	if err != nil {
+		return nil, &StoredDocumentError{Err: err}
+	}
+	a, b := now.Review, done.Review
+	if a.Repository != b.Repository || a.PullRequest != b.PullRequest || a.Version != b.Version || a.Head != b.Head || a.Base != b.Base || a.MergeBase != b.MergeBase || a.GeneratedAt != b.GeneratedAt {
+		return nil, fmt.Errorf("the completed document is not the generation of the version")
+	}
+	written := map[string]documentSection{}
+	for _, section := range done.Sections {
+		written[section.ID] = section
+	}
+	for _, id := range ids {
+		index := slices.IndexFunc(now.Sections, func(section documentSection) bool { return section.ID == id })
+		section, ok := written[id]
+		if index < 0 || !ok {
+			return nil, fmt.Errorf("section %s is not in both documents", id)
+		}
+		now.Sections[index] = section
+	}
+	now.Summary.RiskScore, now.Summary.ReviewMinutes, now.Stats.RiskLOC = done.Summary.RiskScore, done.Summary.ReviewMinutes, done.Stats.RiskLOC
+	countFindings(now)
+	return v.encodeFullDocument(now)
+}
+
 // StoredOutline returns the outline and the context of a stored document
 // written in stages, for a host that writes again the details of its failed
 // sections (agent's StagedRun.Outline): the summary and the sections the

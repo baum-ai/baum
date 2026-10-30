@@ -44,23 +44,29 @@ func continuing(saved store.Version, assembled assemble.Result) (agent.StagedRun
 // OnDraft receives, through prepare (masking and completion; nil skips the
 // draft), and returns the run's Progress and the function that waits for the
 // last draft. A draft that lands while the previous one is being prepared
-// replaces any still waiting, so the stages never wait on it.
-func drafts(ctx context.Context, deliver func([]byte), prepare func([]byte) []byte) (func(agent.StagedProgress), func()) {
+// replaces any still waiting, so the stages never wait on it. Once run, the
+// run's context, is done, or a secret was masked in a closed value (which
+// rejects the run), no draft is delivered.
+func drafts(run context.Context, deliver func([]byte), prepare func([]byte) []byte) (func(agent.StagedProgress), func()) {
 	waiting := make(chan []byte, 1)
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
 		for draft := range waiting {
-			if ctx.Err() != nil {
+			if run.Err() != nil {
 				continue
 			}
-			if prepared := prepare(draft); prepared != nil {
+			if prepared := prepare(draft); prepared != nil && run.Err() == nil {
 				deliver(prepared)
 			}
 		}
 	}()
+	var rejected bool
 	progress := func(p agent.StagedProgress) {
 		// Progress calls come one at a time, so only this call sends.
+		if rejected = rejected || p.MaskedClosed; rejected {
+			return
+		}
 		for {
 			select {
 			case waiting <- p.Document:
@@ -80,7 +86,9 @@ func drafts(ctx context.Context, deliver func([]byte), prepare func([]byte) []by
 }
 
 // Gaps names the sections of a completed staged document published
-// without their details, and reports whether it has no context.
+// without their details, and reports whether it has no context. A stale
+// section, carried from an earlier version, is not one: nothing writes its
+// details again.
 func Gaps(document []byte) ([]string, bool) {
 	var doc struct {
 		Summary struct {
@@ -89,6 +97,9 @@ func Gaps(document []byte) ([]string, bool) {
 		Sections []struct {
 			ID      string `json:"id"`
 			Details string `json:"details"`
+			Derived struct {
+				State string `json:"state"`
+			} `json:"derived"`
 		} `json:"sections"`
 	}
 	if json.Unmarshal(document, &doc) != nil {
@@ -96,7 +107,7 @@ func Gaps(document []byte) ([]string, bool) {
 	}
 	var failed []string
 	for _, section := range doc.Sections {
-		if section.Details == "failed" {
+		if section.Details == "failed" && section.Derived.State != "stale" {
 			failed = append(failed, section.ID)
 		}
 	}

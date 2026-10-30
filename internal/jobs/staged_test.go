@@ -216,9 +216,22 @@ func TestCompleteDetailsUpdatesTheVersionInPlace(t *testing.T) {
 	})
 	t.Run("refreshed meanwhile", func(t *testing.T) {
 		o, versions, key, before := detailsFixture(t)
+		// A refresh while the details are written brings a failed check.
 		*before = func() {
 			saved, _ := versions.Latest(ctx, key)
-			if err := versions.RefreshCurrent(ctx, key, saved, append(append([]byte(nil), saved.Document...), ' ')); err != nil {
+			var doc map[string]any
+			if err := json.Unmarshal(saved.Document, &doc); err != nil {
+				t.Error(err)
+				return
+			}
+			for _, check := range doc["index"].(map[string]any)["checks"].([]any) {
+				if check := check.(map[string]any); check["name"] == "build" {
+					check["conclusion"] = "failure"
+				}
+			}
+			doc["review"].(map[string]any)["evidence_refreshed_at"] = "2099-01-01T00:00:00Z"
+			refreshed, _ := json.Marshal(doc)
+			if err := versions.RefreshCurrent(ctx, key, saved, refreshed); err != nil {
 				t.Error(err)
 			}
 		}
@@ -228,6 +241,36 @@ func TestCompleteDetailsUpdatesTheVersionInPlace(t *testing.T) {
 		latest, _ := versions.Latest(ctx, key)
 		if failed, _ := generate.Gaps(latest.Document); len(failed) != 0 {
 			t.Fatalf("still failed %v", failed)
+		}
+		var doc struct {
+			Review struct {
+				EvidenceRefreshedAt string `json:"evidence_refreshed_at"`
+			} `json:"review"`
+			Index struct {
+				Checks []struct{ Name, Conclusion string } `json:"checks"`
+			} `json:"index"`
+			Sections []struct {
+				ID      string `json:"id"`
+				Summary *struct {
+					Text string `json:"text"`
+				} `json:"summary"`
+			} `json:"sections"`
+		}
+		if err := json.Unmarshal(latest.Document, &doc); err != nil {
+			t.Fatal(err)
+		}
+		if doc.Review.EvidenceRefreshedAt != "2099-01-01T00:00:00Z" {
+			t.Errorf("the refresh was lost: %q", doc.Review.EvidenceRefreshedAt)
+		}
+		for _, check := range doc.Index.Checks {
+			if check.Name == "build" && check.Conclusion != "failure" {
+				t.Errorf("the refreshed check was lost: %+v", check)
+			}
+		}
+		for _, section := range doc.Sections {
+			if section.ID == "sec_rest" && (section.Summary == nil || section.Summary.Text == "") {
+				t.Errorf("sec_rest has no details: %+v", section)
+			}
 		}
 	})
 	t.Run("new version meanwhile", func(t *testing.T) {

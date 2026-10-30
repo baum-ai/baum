@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"net/url"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -413,9 +414,11 @@ func (l *Local) Execute(ctx context.Context, p Prepared, progress func(Progress)
 
 // completeDetails writes again the failed section details of the latest
 // version, p.Version, and updates it in place (store.Store.CompleteCurrent).
-// A refresh of the version in the meantime is retried once against its new
-// bytes; a newer version, or a second conflict, stands it down with
-// ErrSuperseded.
+// Each write rebases on the version as it is then: the sections it wrote are
+// spliced into the latest bytes (review.DocumentValidator.SpliceSections), so
+// a refresh in the meantime keeps its newer evidence, and a conflict reads
+// and splices once more. A newer version, a changed generation, or a second
+// conflict stands it down with ErrSuperseded.
 func (l *Local) completeDetails(ctx context.Context, versions *store.Store, manager *githubauth.Manager, key store.Key, p Prepared, o generate.Options) (generate.Result, error) {
 	latest, e := versions.Latest(ctx, key)
 	if e != nil {
@@ -435,28 +438,56 @@ func (l *Local) completeDetails(ctx context.Context, versions *store.Store, mana
 			return generate.Result{}, e
 		}
 	}
+	validator := o.Validator
+	if validator == nil {
+		if validator, e = review.NewDocumentValidator(); e != nil {
+			return generate.Result{}, e
+		}
+		o.Validator = validator
+	}
 	o.Continue = &latest
 	result, e := generate.Run(ctx, o)
 	if e != nil {
 		return result, e
 	}
-	write := func(previous store.Version) error {
-		if manager == nil {
-			return versions.CompleteCurrent(ctx, key, previous, result.Document)
-		}
-		return manager.WithIdentity(ctx, func() error { return versions.CompleteCurrent(ctx, key, previous, result.Document) })
-	}
-	e = write(latest)
-	if errors.Is(e, store.ErrConflict) {
-		current, readErr := versions.Latest(ctx, key)
-		if readErr != nil || current.Metadata.Version != p.Version {
-			return result, ErrSuperseded
-		}
-		if e = write(current); errors.Is(e, store.ErrConflict) {
-			return result, ErrSuperseded
+	// Only the sections that failed and now have their details change.
+	failed, _ := generate.Gaps(latest.Document)
+	var written []string
+	for _, id := range failed {
+		if !slices.Contains(result.FailedSections, id) {
+			written = append(written, id)
 		}
 	}
-	return result, e
+	if len(written) == 0 {
+		return result, nil
+	}
+	for range 2 {
+		current, e := versions.Latest(ctx, key)
+		if e != nil {
+			return result, e
+		}
+		if current.Metadata.Version != p.Version {
+			return result, ErrSuperseded
+		}
+		spliced, e := validator.SpliceSections(current.Document, result.Document, written)
+		if e != nil {
+			return result, ErrSuperseded
+		}
+		if findings := validator.ValidateStored(spliced, nil); len(findings) > 0 {
+			return result, &generate.Error{Category: generate.CategoryInternal, Err: errors.New("the completed version is not a valid stored document")}
+		}
+		write := func() error { return versions.CompleteCurrent(ctx, key, current, spliced) }
+		if manager != nil {
+			e = manager.WithIdentity(ctx, write)
+		} else {
+			e = write()
+		}
+		if !errors.Is(e, store.ErrConflict) {
+			result.Document = spliced
+			return result, e
+		}
+	}
+	return result, ErrSuperseded
 }
 
 // publish generates and stores a review. A single pull request reviewed by a

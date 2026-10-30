@@ -67,6 +67,9 @@ type StagedProgress struct {
 	// written. It is not redacted: a host masks it before it shows it, and
 	// completes it with review.DocumentValidator.CompleteStaged.
 	Document []byte
+	// MaskedClosed says the identifier pass has masked a secret in a closed
+	// value: the host rejects the run (RejectSecrets), so it shows no draft.
+	MaskedClosed bool
 }
 
 // StagedOutcome is what a staged review reports besides the document. Its
@@ -379,7 +382,7 @@ func (s *stagedReview) report(progress StagedProgress) {
 	if err != nil {
 		return
 	}
-	progress.Document = draft
+	progress.Document, progress.MaskedClosed = draft, s.closed() > 0
 	s.run.Progress(progress)
 }
 
