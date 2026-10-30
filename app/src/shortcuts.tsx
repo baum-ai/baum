@@ -1,3 +1,4 @@
+import { usePreferences } from "./preferences";
 import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
 import { Button } from "@baum/viewer/components/ui";
 import { PAGES, type Page } from "./pages";
@@ -333,11 +334,14 @@ export function listKeys(
 /** Shows the app's keyboard hints (`.key-hint`) while Alt, Option on a Mac,
  *  is held, and hides them when it is let go or the window loses focus. */
 export function useKeyHints() {
+  const [preferences] = usePreferences();
   useEffect(() => {
     const root = document.documentElement;
     const show = (shown: boolean) => root.toggleAttribute("data-key-hints", shown);
-    const down = (event: KeyboardEvent) => show(event.key === "Alt" || event.altKey);
-    const up = (event: KeyboardEvent) => show(event.key !== "Alt" && event.altKey);
+    const down = (event: KeyboardEvent) =>
+      show(preferences.keyHints && (event.key === "Alt" || event.altKey));
+    const up = (event: KeyboardEvent) =>
+      show(preferences.keyHints && event.key !== "Alt" && event.altKey);
     const hide = () => show(false);
     window.addEventListener("keydown", down);
     window.addEventListener("keyup", up);
@@ -348,7 +352,7 @@ export function useKeyHints() {
       window.removeEventListener("blur", hide);
       hide();
     };
-  }, []);
+  }, [preferences.keyHints]);
 }
 
 /** Escape gives up whatever the keyboard focused, so the page's keys act on

@@ -1862,15 +1862,9 @@ dialog.local-dialog-wide {
   font-size: var(--text-2xl);
   font-weight: 600;
 }
-.settings-section-head p,
-.settings-overview-head p {
+.settings-section-head p {
   margin: 0.25rem 0 0;
   color: var(--un-ink-soft);
-}
-.settings-overview-head h2 {
-  margin: 0;
-  font-size: var(--text-2xl);
-  font-weight: 600;
 }
 .settings-saved {
   margin: 0;

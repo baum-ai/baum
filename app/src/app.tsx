@@ -867,7 +867,7 @@ function Workspace({ url }: { url: UrlState }) {
               setSection={(section) =>
                 url.update((current) => {
                   current.set("page", "settings");
-                  if (section === "overview") current.delete("section");
+                  if (section === "general") current.delete("section");
                   else current.set("section", section);
                   return current;
                 })
