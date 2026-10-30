@@ -3203,6 +3203,29 @@ span.inbox-fix svg {
   overflow-wrap: anywhere;
   color: var(--text-secondary);
 }
+/* A pull request's fix runs: one line folded, a run a line open. */
+.local-fix-runs {
+  margin-bottom: 0.75rem;
+}
+.local-fix-runs ol {
+  display: grid;
+  gap: 0.25rem;
+  margin: 0.375rem 0;
+  padding: 0;
+  list-style: none;
+  color: var(--text-secondary);
+}
+.local-fix-runs li {
+  display: flex;
+  align-items: baseline;
+  gap: 0.75rem;
+  overflow-wrap: anywhere;
+}
+.local-fix-run-when {
+  flex: none;
+  min-width: 6.5rem;
+  color: var(--text-tertiary);
+}
 /* The Codex and Cursor marks are drawn in black; on a dark page they turn
    light, as their makers draw them there. */
 :root[data-theme="dark"] img[src*="codex"],

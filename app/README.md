@@ -179,6 +179,19 @@ notice and Up next link to it: **Watch** while the fix runs, **Transcript**
 after. A failure's `detail` (git's own words for the `signing` reason, which the
 daemon checks before the agent runs) shows under **What happened**.
 
+`t` opens a pull request's fix transcript wherever the pull request is in hand:
+the PR page, the focused row in Pull requests, the selected one in Up next and
+the focused job in Jobs. It opens the running fix's transcript (Watch), else
+the latest run that kept one, so the key keeps working after the agent stops
+and after the fix notice leaves the page. The PR page also keeps the pull
+request's fix runs (`fixJobs`, newest first) one fold away under the notice
+(`FixRuns`): a single line, "2 fix runs, the last 3 hours ago" ("2 earlier fix
+runs" while the notice shows the latest), that opens to a line per run with
+when it started, how it ended (its phase, the pushed commit, the failure's
+reason) and its transcript. It lists the five newest and links the rest to
+Jobs. The daemon keeps the 50 newest transcripts; an older run's link finds
+"No transcript to show".
+
 Merging: a pull request whose Merge state is Ready (open, not a draft) shows a
 Merge button in the PR page header and, on hover or keyboard focus, in its
 Pull requests row's actions (always drawn on touch screens and below 72rem,
@@ -219,7 +232,7 @@ are skipped), `Enter` or `o` opens the focused pull request or group, `x` toggle
 its selection, `Space` opens or closes its peek, `m` opens Merge and `f` starts the fix where the row offers them (Merge wins
 where both could), `g` generates the pull request's review through the same path
 as the PR page's Generate (so the same confirmations and the instant "Starting"
-state), `r` refreshes from GitHub at once rather than after the polling backoff,
+state), `t` opens its fix transcript, `r` refreshes from GitHub at once rather than after the polling backoff,
 `h`/`←` and `l`/`→` move to the previous and next view (For you, Requested, …),
 and `Esc` clears the focus. Sessions, Jobs and Repositories share the list keys
 (`useRowFocus` and `listKeys`): `j`/`↓` and `k`/`↑` move, `Enter` or `o` opens
@@ -235,8 +248,10 @@ to a section, and `Enter`, `l` or `→` go into the shown section, where `j` and
 `Esc`, `h` or `←` go back to the list (`Esc` in a text field or select gives
 it up first, and `j` and `k` go on from it). On a pull request or group page `j`
 and `k` step to the next and previous place in reading order, as the
-navigator's arrows do (`ReviewViewer`'s `steps` ref), and `m`, `f` and `g`
-merge, fix and generate or regenerate where the header offers them. On any
+navigator's arrows do (`ReviewViewer`'s `steps` ref), `m`, `f` and `g`
+merge, fix and generate or regenerate where the header offers them, and `t`
+opens the fix transcript (its hint is on the notice's Watch or Transcript, else
+on the runs' fold). On any
 page, `?` (or the `?` button in Pull
 requests' page bar) shows the sheet of every key, grouped by where it works
 (anywhere, the Inbox, Pull requests, a pull request or group, Sessions, Jobs,
@@ -342,7 +357,8 @@ away), tomorrow morning (9 AM) and **Until it changes**, which hides the pull
 request until its head moves. A snooze selects the next pull request and shows
 a toast with **Undo**; **Bring back** under Snoozed ends one early. Keys:
 `j`/`↓` and `k`/`↑` move the selection, `Enter` opens, `m` merges a Merge, `f`
-starts a Fix item's fix (where its panel offers the button), `s` opens Snooze
+starts a Fix item's fix (where its panel offers the button), `t` opens its fix
+transcript (Watch the agent, See what the agent did, or the last run's), `s` opens Snooze
 and `1`–`4` choose from it, `u` undoes a snooze.
 
 "Done today" lists the pull requests that left the queue since first seen
