@@ -105,6 +105,20 @@ type scanState struct {
 	act activityScan
 }
 
+// claudeTranscriptByID is the transcript of Claude Code session id in the
+// project folders under root, for a session whose hooks' path is not known.
+// The caller checks it is inside the store, as for any path.
+func claudeTranscriptByID(root, id string) (string, bool) {
+	if !safeID.MatchString(id) {
+		return "", false
+	}
+	matches, _ := filepath.Glob(filepath.Join(root, "*", id+".jsonl"))
+	if len(matches) == 0 {
+		return "", false
+	}
+	return matches[0], true
+}
+
 // safeID is a session id that can name a file: Claude Code and Codex ids are
 // UUIDs.
 var safeID = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
@@ -394,14 +408,11 @@ func (t *Transcripts) describeFiles(k key, path string) (describeSource, error) 
 	case AgentClaudeCode:
 		root := filepath.Join(home, ".claude", "projects")
 		if path == "" {
-			if !safeID.MatchString(k.id) {
+			found, ok := claudeTranscriptByID(root, k.id)
+			if !ok {
 				return src, errors.New("no transcript")
 			}
-			matches, _ := filepath.Glob(filepath.Join(root, "*", k.id+".jsonl"))
-			if len(matches) == 0 {
-				return src, errors.New("no transcript")
-			}
-			path, src.found = matches[0], matches[0]
+			path, src.found = found, found
 		}
 		main, err := inStore(root, path, func(name string) bool { return strings.HasSuffix(name, ".jsonl") })
 		if err != nil {

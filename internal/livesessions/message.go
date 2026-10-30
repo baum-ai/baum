@@ -8,6 +8,8 @@ import (
 	"strings"
 	"time"
 	"unicode/utf8"
+
+	"github.com/baum-ai/baum/sessions/prompttext"
 )
 
 // Sender puts a message the user wrote in the app into one of its agent's
@@ -20,10 +22,9 @@ type Sender func(ctx context.Context, id, text string) error
 const maxMessage = 10000
 
 // fromBaum is how a message the app sends to Claude Code opens (ClaudeInbox),
-// so the agent knows its user sent it: Claude Code tells its model a message
-// on its inbox came from another session. Codex takes a queued message as the
+// so the agent knows its user sent it. Codex takes a queued message as the
 // user's own turn, so it gets the text alone.
-const fromBaum = "Your user sent this from the baum desktop app, in place of typing it in this terminal:"
+const fromBaum = prompttext.AppMessageLead
 
 // framed is a message as an agent receives it.
 func framed(text string) string { return fromBaum + "\n\n" + text }

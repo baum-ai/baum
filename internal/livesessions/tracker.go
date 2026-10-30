@@ -84,9 +84,10 @@ const (
 )
 
 // Timings and bounds. A session is dropped when it has been silent for
-// DropAfter or ended for EndedFor, which is long enough for the Sessions page
-// to show what ended recently; at most MaxSessions are tracked, the least
-// recently active (an ended one first) making room for a new one.
+// DropAfter, unless its agent is seen still running (Tracker.Alive), or
+// ended for EndedFor, which is long enough for the Sessions page to show
+// what ended recently; at most MaxSessions are tracked, the least recently
+// active (an ended one first) making room for a new one.
 const (
 	IdleAfter   = 10 * time.Minute
 	DropAfter   = 2 * time.Hour
@@ -95,6 +96,10 @@ const (
 	// SweepEvery is how often Run applies the timings, which events do not
 	// trigger.
 	SweepEvery = 30 * time.Second
+	// aliveFor is how long a sighting of a silent session's agent keeps it
+	// listed past DropAfter: Sweep looks again each time, so one whose agent
+	// exited without its end event goes within a minute.
+	aliveFor = 2 * SweepEvery
 	// RelinkEvery is the least time between two lookups of a session's
 	// repository, branch and pull request: the branch changes while a
 	// session runs, and a lookup runs git.
@@ -117,7 +122,8 @@ const (
 	maxAgent = 32
 	// StateFile is the name of the file in StateDir holding the ended
 	// sessions, since the hook event record rotates by size and may not reach
-	// back EndedFor.
+	// back EndedFor, and the open ones, which a session waiting for its user
+	// outlives the record's DropAfter in.
 	StateFile = "live-sessions.json"
 	// rememberedEvents is how many applied event ids are kept, so applying
 	// an event twice (the subscription and a reconcile) changes nothing.
@@ -133,6 +139,10 @@ type Session struct {
 	// daemon saw when it did not see the start.
 	StartedAt      time.Time `json:"started_at"`
 	LastActivityAt time.Time `json:"last_activity_at"`
+	// LastPromptAt is the latest prompt event, absent before the daemon saw
+	// one: what the Sessions page orders running sessions by, as their
+	// activity moves with each tool call.
+	LastPromptAt time.Time `json:"last_prompt_at,omitzero"`
 	// LastEvent is the normalised kind of the latest event (EventStart,
 	// EventPrompt, EventTool, EventWait, EventStop or EventEnd).
 	LastEvent string `json:"last_event"`
@@ -189,9 +199,15 @@ type Tracker struct {
 	Log    *slog.Logger
 	// Now is the clock; nil is time.Now.
 	Now func() time.Time
-	// StateDir, when set, is a private directory where the ended sessions
-	// are kept across restarts (StateFile): identifiers and times only.
+	// StateDir, when set, is a private directory where the sessions are kept
+	// across restarts (StateFile): identifiers and times only. An open one is
+	// restored only while Alive says its agent runs.
 	StateDir string
+	// Alive, when set, reports whether a session's agent still runs: true
+	// only for a process it confirms is the session's. A session silent for
+	// DropAfter stays listed while it does, as one waiting for its user may be
+	// answered hours later; nil drops it then.
+	Alive func(agent, id string) bool
 	// Buffer is the subscription's size; zero is 256. A subscriber that falls
 	// behind misses events, which Reconcile applies from the record once the
 	// subscription reports it missed some.
@@ -253,6 +269,9 @@ type entry struct {
 	ended     bool
 	endedAt   time.Time
 	linkedAt  time.Time
+	// aliveAt is when Alive last saw the agent of a session silent for
+	// DropAfter still running.
+	aliveAt time.Time
 	// stale is set when an event arrived within RelinkEvery of the last lookup
 	// and so skipped one: the link may be out of date until Sweep looks again.
 	stale bool
@@ -421,7 +440,14 @@ func (e *entry) expired(now time.Time) bool {
 	if e.ended {
 		return now.Sub(e.endedAt) > EndedFor
 	}
-	return now.Sub(e.LastActivityAt) > DropAfter
+	return now.Sub(e.LastActivityAt) > DropAfter && now.Sub(e.aliveAt) > aliveFor
+}
+
+// silent reports whether an open session is about to be dropped for its
+// silence, or already would be but for its agent: what Sweep asks Alive
+// about.
+func (e *entry) silent(now time.Time) bool {
+	return !e.ended && now.Sub(e.LastActivityAt) > DropAfter-aliveFor
 }
 
 func matchAgent(e hookevents.Event) bool {
@@ -554,7 +580,7 @@ func (t *Tracker) Rebuild(ctx context.Context) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	t.sessions, t.pending, t.seen, t.order = map[key]*entry{}, map[key]bool{}, map[string]bool{}, nil
-	t.loadEndedLocked(now)
+	t.loadSavedLocked(now)
 	for _, e := range events {
 		t.applyLocked(e, now)
 	}
@@ -928,6 +954,9 @@ func (t *Tracker) applyEvent(e hookevents.Event, now time.Time) {
 	if kind == EventStart && at.Before(s.StartedAt) {
 		s.StartedAt = at
 	}
+	if kind == EventPrompt && at.After(s.LastPromptAt) {
+		s.LastPromptAt = at
+	}
 	if at.Before(s.LastActivityAt) {
 		// A late delivery of an older event tells nothing newer.
 		return
@@ -982,6 +1011,7 @@ func (t *Tracker) makeRoom() {
 // application sees changed, by that or by a running session going idle.
 func (t *Tracker) Sweep() bool {
 	t.init()
+	t.confirmAlive()
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	now := t.now()
@@ -1005,6 +1035,33 @@ func (t *Tracker) Sweep() bool {
 		}
 	}
 	return changed
+}
+
+// confirmAlive asks Alive about each silent session (entry.silent), without
+// the lock, since it reads files, and records the ones still running.
+func (t *Tracker) confirmAlive() {
+	if t.Alive == nil {
+		return
+	}
+	t.mu.Lock()
+	now := t.now()
+	var due []key
+	for k, s := range t.sessions {
+		if s.silent(now) {
+			due = append(due, k)
+		}
+	}
+	t.mu.Unlock()
+	for _, k := range due {
+		if !t.Alive(k.agent, k.id) {
+			continue
+		}
+		t.mu.Lock()
+		if s := t.sessions[k]; s != nil && !s.ended {
+			s.aliveAt = now
+		}
+		t.mu.Unlock()
+	}
 }
 
 // Sessions returns the tracked sessions, the most recently active first.
@@ -1086,14 +1143,17 @@ func (t *Tracker) Terminal(agent, id string) (*hookevents.Terminal, bool) {
 	return s.terminal, true
 }
 
-// persisted is the ended sessions' file: identifiers and times, no paths.
+// persisted is the sessions' file: identifiers and times, no paths. Sessions
+// are the ended ones; Open the others, which an older daemon ignores.
 type persisted struct {
 	Sessions []Session `json:"sessions"`
+	Open     []Session `json:"open,omitempty"`
 }
 
-// persist writes the ended sessions to StateDir when they changed since the
-// last write, so a restart keeps them even once the record has rotated past
-// them. A failure is logged and retried at the next sweep.
+// persist writes the sessions to StateDir when they changed since the last
+// write, so a restart keeps the ended ones even once the record has rotated
+// past them, and the open ones the record no longer reaches. A failure is
+// logged and retried at the next sweep.
 func (t *Tracker) persist() {
 	if t.StateDir == "" {
 		return
@@ -1101,17 +1161,24 @@ func (t *Tracker) persist() {
 	t.init()
 	t.mu.Lock()
 	now := t.now()
-	var ended []Session
+	var ended, open []Session
 	for _, s := range t.sessions {
-		if s.ended && !s.unlinked && !s.expired(now) {
+		switch {
+		case s.unlinked || s.expired(now):
+		case s.ended:
 			ended = append(ended, s.Session)
+		default:
+			open = append(open, s.Session)
 		}
 	}
 	t.mu.Unlock()
 	slices.SortFunc(ended, func(a, b Session) int {
 		return cmp.Or(a.EndedAt.Compare(b.EndedAt), cmp.Compare(a.Agent, b.Agent), cmp.Compare(a.ID, b.ID))
 	})
-	data, err := json.Marshal(persisted{ended})
+	slices.SortFunc(open, func(a, b Session) int {
+		return cmp.Or(a.LastActivityAt.Compare(b.LastActivityAt), cmp.Compare(a.Agent, b.Agent), cmp.Compare(a.ID, b.ID))
+	})
+	data, err := json.Marshal(persisted{Sessions: ended, Open: open})
 	if err != nil || bytes.Equal(data, t.saved) {
 		return
 	}
@@ -1122,9 +1189,11 @@ func (t *Tracker) persist() {
 	t.saved = data
 }
 
-// loadEndedLocked adds the ended sessions of the last run that have not
-// expired; the record's events then apply over them.
-func (t *Tracker) loadEndedLocked(now time.Time) {
+// loadSavedLocked adds the ended sessions of the last run that have not
+// expired, and the open ones whose agent still runs (Alive) that the record's
+// events no longer reach, being silent for DropAfter; the record's events
+// then apply over them.
+func (t *Tracker) loadSavedLocked(now time.Time) {
 	if t.StateDir == "" {
 		return
 	}
@@ -1145,6 +1214,20 @@ func (t *Tracker) loadEndedLocked(now time.Time) {
 		}
 		s.State = StateEnded
 		t.sessions[key{s.Agent, s.ID}] = &entry{Session: s, ended: true, endedAt: s.EndedAt, linkedAt: now}
+	}
+	if t.Alive == nil {
+		return
+	}
+	for _, s := range saved.Open {
+		k := key{s.Agent, s.ID}
+		if s.Repository == "" || s.ID == "" || len(s.ID) > maxID || len(s.Agent) > maxAgent ||
+			now.Sub(s.LastActivityAt) <= DropAfter || t.sessions[k] != nil || !t.Alive(s.Agent, s.ID) {
+			continue
+		}
+		e := &entry{Session: s, linkedAt: now, aliveAt: now}
+		e.EndedAt = time.Time{}
+		e.State = e.state(now)
+		t.sessions[k] = e
 	}
 }
 

@@ -740,11 +740,23 @@ func (h hookEvents) liveSessions(paths daemon.Paths, registry *repos.Registry, d
 	return &livesessions.Tracker{
 		Source: h.service.Store,
 		Linker: &livesessions.Resolver{Registry: registry, Discovery: discover},
-		// Ended sessions are kept for a day, longer than the record may reach.
+		// Ended sessions are kept for a day, longer than the record may reach,
+		// and a Claude Code session waiting for its user while its process runs.
 		StateDir: hookevents.RecordDir(paths),
+		Alive:    liveAlive(),
 		Notify:   func() { _ = server.Publish("live", struct{}{}) },
 		Log:      log,
 	}
+}
+
+// liveAlive is how the tracker tells a silent session's agent still runs:
+// Claude Code registers its processes (macOS and Linux). Codex's run in a
+// shared app server, so there is none for them.
+func liveAlive() func(agent, id string) bool {
+	if runtime.GOOS == "windows" {
+		return nil
+	}
+	return livesessions.ClaudeAlive{}.Alive
 }
 
 // liveSenders are how the app's messages reach a waiting session: Claude

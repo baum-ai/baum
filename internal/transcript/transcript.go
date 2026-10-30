@@ -666,7 +666,7 @@ func newOwnership(g *session.Graph) *ownership {
 	root := g.Root()
 	for _, input := range g.UserInputs {
 		o.inputSession[input.ID] = input.SessionID
-		if input.SessionID == root.ID && input.Origin == session.OriginHuman &&
+		if input.SessionID == root.ID && input.Origin == session.OriginHuman && !metaInput(input) && !agentInput(input) &&
 			(input.Kind == session.KindPrompt || input.Kind == session.KindSlashCommand) {
 			o.prompts[input.ID] = true
 			o.ordered = append(o.ordered, input)
@@ -692,6 +692,26 @@ func newOwnership(g *session.Graph) *ownership {
 		o.owner[s.ID] = spawnedBy
 	}
 	return o
+}
+
+// agentInput is another agent's message delivered as an input, such as a
+// subagent's report coming back: the local mapping keeps it as a person's,
+// but nobody typed it.
+func agentInput(input session.UserInput) bool {
+	return strings.HasPrefix(strings.TrimSpace(input.Text), `<agent-message from="`)
+}
+
+// metaInput is an input the agent's harness wrote under the person's name
+// and marked as its own (Claude Code's isMeta), such as the line naming where
+// a pasted image was saved: nobody typed it. A message another session or
+// the app sent is marked so too, but names where it came from, and stays.
+func metaInput(input session.UserInput) bool {
+	var fields struct {
+		IsMeta bool            `json:"isMeta"`
+		Origin json.RawMessage `json:"origin"`
+	}
+	return len(input.Metadata) > 0 && json.Unmarshal(input.Metadata, &fields) == nil &&
+		fields.IsMeta && len(fields.Origin) == 0
 }
 
 // key is the top-level input that owns an input: the one that started its

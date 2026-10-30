@@ -159,6 +159,29 @@ func TestBuildWithoutAnInnerTraceLeavesTheEffectsUnknown(t *testing.T) {
 	}
 }
 
+// What the harness wrote under the person's name is no prompt: the line
+// naming where a pasted image was saved, and a subagent's report coming back.
+// The app's own message, from a peer, is one.
+func TestBuildLeavesTheHarnessInputsOutOfThePrompts(t *testing.T) {
+	g := &session.Graph{
+		Sessions: []session.Session{{ID: "root", Outcome: session.OutcomeUnknown}},
+		UserInputs: []session.UserInput{
+			{ID: "p", SessionID: "root", Ordinal: 1, Text: "Look [Image #1]", Kind: session.KindPrompt, Origin: session.OriginHuman},
+			{ID: "meta", SessionID: "root", Ordinal: 2, Text: "[Image: source: /tmp/1.png]", Kind: session.KindPrompt, Origin: session.OriginHuman, Metadata: json.RawMessage(`{"isMeta":true}`)},
+			{ID: "report", SessionID: "root", Ordinal: 3, Text: "<agent-message from=\"a1\">\n[Subagent hand-back] Done.\n</agent-message>", Kind: session.KindPrompt, Origin: session.OriginHuman},
+			{ID: "app", SessionID: "root", Ordinal: 4, Text: "Ship it", Kind: session.KindPrompt, Origin: session.OriginHuman, Metadata: json.RawMessage(`{"isMeta":true,"origin":{"kind":"peer","from":"baum"}}`)},
+		},
+	}
+	got := build(t, g, Meta{ID: "root"}, DefaultLimits)
+	var ids []string
+	for _, prompt := range got.Session.Prompts {
+		ids = append(ids, prompt.TurnID)
+	}
+	if strings.Join(ids, ",") != "p,app" {
+		t.Errorf("prompts = %v", ids)
+	}
+}
+
 func build(t *testing.T, g *session.Graph, meta Meta, limits Limits) Transcript {
 	t.Helper()
 	got, err := Build(g, meta, limits, nil)

@@ -354,7 +354,9 @@ func TestEndedSessionsSurviveARestartPastTheRecord(t *testing.T) {
 	apply(tr, event("s2", "user-prompt-submit", c.now, "/work/demo"))
 	tr.persist()
 	data, err := os.ReadFile(filepath.Join(dir, StateFile))
-	if err != nil || strings.Contains(string(data), "/work") || strings.Contains(string(data), "transcripts") || strings.Contains(string(data), `"s2"`) {
+	var saved persisted
+	if err != nil || strings.Contains(string(data), "/work") || strings.Contains(string(data), "transcripts") ||
+		json.Unmarshal(data, &saved) != nil || len(saved.Sessions) != 1 || len(saved.Open) != 1 || saved.Open[0].ID != "s2" {
 		t.Fatalf("state file = %s, %v", data, err)
 	}
 	// 20 hours later the record holds nothing of it.
@@ -371,6 +373,70 @@ func TestEndedSessionsSurviveARestartPastTheRecord(t *testing.T) {
 	late.Rebuild(context.Background())
 	if len(late.Sessions()) != 0 {
 		t.Fatalf("restored an expired session: %+v", late.Sessions())
+	}
+}
+
+// The latest prompt is kept apart from the activity, which every tool call
+// moves; a late delivery of an older prompt does not move it back.
+func TestLastPromptAtIsTheLatestPrompt(t *testing.T) {
+	c := &clock{t0}
+	tr := newTracker(c, newLinker())
+	apply(tr, event("s1", "user-prompt-submit", c.now, "/work/demo"))
+	prompted := c.now
+	c.advance(time.Minute)
+	apply(tr, event("s1", "post-tool-use", c.now, "/work/demo"))
+	apply(tr, event("s1", "user-prompt-submit", prompted.Add(-time.Second), "/work/demo"))
+	if s := only(t, tr); !s.LastPromptAt.Equal(prompted) || !s.LastActivityAt.Equal(c.now) {
+		t.Fatalf("session = %+v", s)
+	}
+}
+
+// A session waiting for its user is kept past DropAfter while its agent
+// runs, across a restart too, and goes once its agent is gone.
+func TestASilentSessionStaysWhileItsAgentRuns(t *testing.T) {
+	dir := t.TempDir()
+	c := &clock{t0}
+	running := map[string]bool{"s1": true, "s2": true}
+	alive := func(agent, id string) bool { return agent == AgentClaudeCode && running[id] }
+	tr := &Tracker{Source: &source{}, Linker: newLinker(), Now: c.Now, StateDir: dir, Alive: alive}
+	apply(tr, event("s1", "stop", c.now, "/work/demo"))
+	apply(tr, event("s2", "stop", c.now, "/work/demo"))
+	for range 4 {
+		c.advance(DropAfter / 4)
+		tr.Sweep()
+	}
+	c.advance(SweepEvery)
+	tr.Sweep()
+	if got := tr.Sessions(); len(got) != 2 || got[0].State != StateIdle {
+		t.Fatalf("sessions past DropAfter = %+v", got)
+	}
+	tr.persist()
+
+	// The daemon restarts; the record no longer reaches them.
+	c.advance(time.Hour)
+	running["s2"] = false
+	again := &Tracker{Source: &source{}, Linker: newLinker(), Now: c.Now, StateDir: dir, Alive: alive}
+	again.Rebuild(context.Background())
+	if s := only(t, again); s.ID != "s1" || s.State != StateIdle || s.WaitingReason != WaitTurnFinished || s.Repository != "acme/demo" {
+		t.Fatalf("restored = %+v", s)
+	}
+	// Its agent exits without its end event.
+	running["s1"] = false
+	c.advance(SweepEvery)
+	again.Sweep()
+	c.advance(SweepEvery)
+	again.Sweep()
+	c.advance(SweepEvery)
+	again.Sweep()
+	if got := again.Sessions(); len(got) != 0 {
+		t.Fatalf("kept after its agent exited: %+v", got)
+	}
+	// Without Alive, nothing open is restored.
+	running["s1"] = true
+	blind := &Tracker{Source: &source{}, Linker: newLinker(), Now: c.Now, StateDir: dir}
+	blind.Rebuild(context.Background())
+	if got := blind.Sessions(); len(got) != 0 {
+		t.Fatalf("restored without Alive: %+v", got)
 	}
 }
 
@@ -475,7 +541,7 @@ func TestAPIPayloadHasNoPathsOrTranscript(t *testing.T) {
 		t.Fatal(err)
 	}
 	fields := decoded["sessions"][0]
-	want := []string{"agent", "session_id", "state", "started_at", "last_activity_at", "last_event", "repository", "branch", "pr"}
+	want := []string{"agent", "session_id", "state", "started_at", "last_activity_at", "last_prompt_at", "last_event", "repository", "branch", "pr"}
 	if len(fields) != len(want) {
 		t.Fatalf("fields = %v", fields)
 	}

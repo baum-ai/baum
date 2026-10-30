@@ -1454,7 +1454,11 @@ hold up another, and a build that fails is tried again on the next request.
 session card and conversation (`oss/viewer/src/transcript.ts`, in the hosted
 API's field names), with the hosted service's rules: a prompt is a top-level
 input of kind prompt or slash command from a human with text left once
-wrapper constructs are stripped; a nested session's activity counts toward
+wrapper constructs (and the lead of a message the desktop app sent,
+`prompttext.AppMessageLead`) are stripped, and not one the harness wrote under
+the human's name: Claude Code's `isMeta` lines without an origin (such as the
+line saying where a pasted image was saved) and another agent's
+`<agent-message>`, such as a subagent's report; a nested session's activity counts toward
 the prompt whose tool call started it; activity under any other input is the
 session's and no prompt's (`unattributed`). `session` is the hosted session
 detail's shape: each prompt carries its last text replies (`replies`, a
@@ -3215,7 +3219,10 @@ replace it.
   wrote to it: a prompt, a message the app sent (which Claude Code records as
   a peer's meta line), an answer to its question (`toolUseResult.answers`) or
   a message sent while it worked (a `queued_command` attachment, read from the
-  start of a line an image makes too long). Neither route runs on Windows.
+  start of a line an image makes too long), but not what the harness queues
+  the same way: a background task's `<task-notification>` or another agent's
+  `<agent-message>`, such as a subagent's report. Neither route runs on
+  Windows.
   A notification's `message` becomes
   `waiting_message`: format characters dropped, control characters and runs of
   spaces made one space, masked as transcripts are (`transcript.Renderer.Mask`,
@@ -3232,7 +3239,11 @@ replace it.
   resumed session: `started_at` restarts), and an event older than the end is
   ignored. A late-delivered older event never moves `last_activity_at` back,
   but an older start can move `started_at` earlier. A session silent for
-  `DropAfter` (2 hours) is dropped, an ended one `EndedFor` (24 hours) after
+  `DropAfter` (2 hours) is dropped, unless `Tracker.Alive` confirms its agent
+  still runs (a Claude Code session's process, as `FindClaude` finds it; no
+  other agent registers one), which `Sweep` asks again each time, so one
+  waiting hours for its user stays and one whose agent exited without its end
+  event goes within a minute. An ended one goes `EndedFor` (24 hours) after
   its end, so the Sessions page can list what ended recently. At most
   `MaxSessions` (200) are held: a new one evicts an ended session (the one
   that ended longest ago), else the least recently active, so a running session
@@ -3243,9 +3254,15 @@ replace it.
   record's directory when they change, and a rebuild loads them first and then
   applies the record's events over them; a rebuild also takes all events of a
   session that ended within `EndedFor`, not only those of the last two hours.
+  The file's `open` holds the sessions that had not ended, likewise without a
+  path: a rebuild restores one only when it was silent for `DropAfter`, which
+  the record's events then no longer reach, and `Alive` confirms its agent
+  still runs.
   An ended session waits for nothing, so the file holds no waiting fields,
   and files written before them load unchanged; a running session's wait is
-  rebuilt from the record's events, its message included.
+  rebuilt from the record's events, its message included. `last_prompt_at`
+  is the latest prompt event, which the Sessions page orders running sessions
+  by.
 - **Linkage.** Not a second linkage: `Resolver` uses what session linkage and
   discovery already have. The directory's repository is found with
   `gitlocal.Open` (so a subdirectory or a linked worktree is its clone), whose
@@ -3415,9 +3432,9 @@ replace it.
   session): the `rollout-*-<id>.jsonl` under `~/.codex/sessions` whose first
   line names that thread as a root. Only names are walked, so the rollouts
   Codex compresses as they age (`.jsonl.zst`, which a store scan rejects) do
-  not stop it; a Claude Code one
-  has no such lookup and is unavailable, as after a restart has only the
-  saved ended sessions. A Cursor session is read from Cursor's own database
+  not stop it; a Claude Code one is found by its id in the project folders
+  under `~/.claude/projects` (`<folder>/<id>.jsonl`), as a session read back
+  from `live-sessions.json` has no path. A Cursor session is read from Cursor's own database
   (`cursortranscript.DefaultStorePath`, a regular file) by its conversation
   id, since Cursor keeps no transcript file baum reads. The files are mapped
   with `sessions.Map`, as discovery maps them (a Codex root rollout without
@@ -3432,9 +3449,10 @@ replace it.
   dropped first, and a session the tracker no longer lists is dropped at the
   next request. A rebuild that fails (a line caught mid-write) keeps the last
   good transcript. The answer is `{"available":true,"version","live",
-  "transcript"}`, `version` a hash of the files' paths, sizes and times and
-  `transcript` the body `GET /api/sessions/{id}` answers, omitted when the
-  request's `?version=` is the current one; or `{"available":false,"live",
+  "transcript","images"?}`, `version` a hash of the files' paths, sizes and
+  times, `transcript` the body `GET /api/sessions/{id}` answers and `images`
+  the media types of the images pasted with each prompt, by its turn, both
+  omitted when the request's `?version=` is the current one; or `{"available":false,"live",
   "code":"transcript_unavailable","message"}` with why, in a sentence the app
   shows. The Timeline's `GET /api/timeline/sessions/{agent}:{id}/transcript`
   answers the same way for a captured session of a repository it serves,
@@ -3443,6 +3461,17 @@ replace it.
   store rules; `live` is false once the tracker does not list it. Its cache
   entries are kept until the least recently asked for makes room, not dropped
   with the tracker's list.
+- **Pasted images.** `GET /api/live-sessions/{agent}/{id}/transcript/images/
+  {turn}/{n}` serves the n-th image (from 0) pasted with a prompt of a session
+  the tracker lists, as it was pasted: images are not masked. Only PNG, JPEG,
+  GIF and WebP are served, with `nosniff` and a `default-src 'none'` policy;
+  anything else is 404. Each rebuild finds them in the session's own
+  transcript file (`findImages`): a Claude Code prompt's record holds them as
+  `image` blocks, found by the record's uuid the graph's vendor ids give the
+  prompt; a Codex prompt's record names only where the image was saved, so its
+  images are read from the user `response_item` of the turn the prompt opened
+  (`internal_chat_message_metadata_passthrough.turn_id`), as data URLs. A
+  request reads the file again for the one image it asks for.
 - **Stream.** The tracker publishes a `live` event with no data (like `index`,
   a notification the app answers by reading the endpoint) when what the app
   sees changes, at most once a second, and on a `reset` the app rereads like
