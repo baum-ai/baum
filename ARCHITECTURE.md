@@ -3781,8 +3781,11 @@ stable path of the bundled binary; an AppImage and Windows run and link a
 copy in the app's data directory, which Windows adds to the user `PATH`;
 the password prompt only for root-owned system directories) and the
 native `baum@baum` marketplace plugins; after that the window opens the
-daemon's diagnostics page. `setup.json` records onboarding and the command
-links/copies it installed; agent registries own plugin installation and
-enablement. Plugin status/install/removal use the resolved login shell PATH,
+daemon's diagnostics page. The `setup` section of the native shell's
+`desktop.json` records onboarding and the command links/copies it installed;
+its other sections hold notification settings, zoom and failed updates.
+Section updates share one lock and atomic file replacement, and the file is
+readable before the daemon connects. Agent registries own plugin installation
+and enablement. Plugin status/install/removal use the resolved login shell PATH,
 with an inherited-PATH fallback warning if resolution fails. Command removal
 uses its saved command records; plugin removal targets only `baum@baum`. See [`desktop/README.md`](desktop/README.md).

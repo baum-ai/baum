@@ -13,6 +13,7 @@
 //! directory and never offered for installation again.
 
 use std::ffi::OsStr;
+#[cfg(test)]
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::thread;
@@ -48,7 +49,7 @@ const STATUS_TIMEOUT: Duration = Duration::from_secs(10);
 #[cfg(windows)]
 const STOP_TIMEOUT: Duration = Duration::from_secs(30);
 /// In the app's config directory: versions whose installation failed.
-const STATE_FILE: &str = "updates.json";
+const SECTION: &str = "updates";
 
 /// What the app does with an update.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -111,10 +112,7 @@ struct Remembered {
 }
 
 fn load(path: &Path) -> Remembered {
-    fs::read(path)
-        .ok()
-        .and_then(|data| serde_json::from_slice(&data).ok())
-        .unwrap_or_default()
+    crate::settings::load(path, SECTION)
 }
 
 fn install_failed_before(path: &Path, version: &str) -> bool {
@@ -122,23 +120,18 @@ fn install_failed_before(path: &Path, version: &str) -> bool {
 }
 
 fn remember_failed_install(path: &Path, version: &str) -> std::io::Result<()> {
-    let mut remembered = load(path);
-    if !remembered.failed_installs.iter().any(|v| v == version) {
-        remembered.failed_installs.push(version.to_string());
-    }
-    if let Some(dir) = path.parent() {
-        fs::create_dir_all(dir)?;
-    }
-    let partial = path.with_extension("json.partial");
-    fs::write(&partial, serde_json::to_vec_pretty(&remembered)?)?;
-    fs::rename(partial, path)
+    crate::settings::update(path, SECTION, |remembered: &mut Remembered| {
+        if !remembered.failed_installs.iter().any(|v| v == version) {
+            remembered.failed_installs.push(version.to_string());
+        }
+    })
 }
 
 fn state_file<R: Runtime>(app: &AppHandle<R>) -> Option<PathBuf> {
     app.path()
         .app_config_dir()
         .ok()
-        .map(|dir| dir.join(STATE_FILE))
+        .map(|dir| dir.join(crate::settings::FILE))
 }
 
 fn running_jobs() -> usize {
@@ -344,18 +337,38 @@ mod tests {
     fn remembers_failed_installs() {
         let dir = std::env::temp_dir().join(format!("baum-desktop-updates-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
-        let path = dir.join("config").join(STATE_FILE);
+        let path = dir.join("config").join(crate::settings::FILE);
         assert!(!install_failed_before(&path, "1.2.3"));
         remember_failed_install(&path, "1.2.3").unwrap();
         remember_failed_install(&path, "1.2.3").unwrap();
         assert!(install_failed_before(&path, "1.2.3"));
         assert!(!install_failed_before(&path, "1.2.4"));
         assert_eq!(load(&path).failed_installs, vec!["1.2.3"]);
-        // A damaged file forgets, rather than blocking updates.
+        // A damaged file does not block checks, but must not be overwritten.
         fs::write(&path, "not json").unwrap();
         assert!(!install_failed_before(&path, "1.2.3"));
-        remember_failed_install(&path, "1.2.4").unwrap();
-        assert_eq!(load(&path).failed_installs, vec!["1.2.4"]);
+        assert!(remember_failed_install(&path, "1.2.4").is_err());
+        assert_eq!(fs::read_to_string(&path).unwrap(), "not json");
+    }
+
+    #[test]
+    fn concurrent_failed_updates_are_all_remembered() {
+        let dir = std::env::temp_dir().join(format!(
+            "baum-desktop-updates-concurrent-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&dir);
+        let path = dir.join(crate::settings::FILE);
+        std::thread::scope(|scope| {
+            for version in ["1.2.3", "1.2.4", "1.2.3"] {
+                let path = &path;
+                scope.spawn(move || remember_failed_install(path, version).unwrap());
+            }
+        });
+        let mut failed = load(&path).failed_installs;
+        failed.sort();
+        assert_eq!(failed, vec!["1.2.3", "1.2.4"]);
+        let _ = fs::remove_dir_all(dir);
     }
 
     fn config() -> serde_json::Value {

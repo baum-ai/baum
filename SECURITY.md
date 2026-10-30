@@ -1417,8 +1417,13 @@ installs its bundled `baum` as your `baum` command, because agent hooks run
   runs, since its own files vanish when it quits.
 - On Windows it keeps a copy of its `baum.exe` alone in a directory of its
   data directory and adds that directory to the front of your user `PATH`.
-- It records what it created in `setup.json` in its configuration directory.
-  Removing the command deletes only that link, and only while it still points
+- It records what it created in the `setup` section of `desktop.json` in its
+  configuration directory. Notification preferences, zoom and update state
+  use other sections of the same file. Native writes preserve unrelated
+  sections under one process-wide lock and replace the file atomically
+  (mode 0600 on Unix). Corrupt JSON or a malformed target section is never
+  overwritten; command install/removal refuses unreadable setup records
+  before changing a link. Removing the command deletes only that link, and only while it still points
   at the app's baum, and puts back a baum it replaced; on Windows it removes
   the `PATH` entry. Since you (and your programs) can edit that file, the app
   asks for the password to remove a link only when the record has the shape

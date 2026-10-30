@@ -11,8 +11,8 @@
 //! URL in the window, so pages the daemon serves need no capability.
 //!
 //! The toggles are a "Notifications" submenu in both the window's menu bar
-//! and the tray menu, one check item per kind, saved in `notifications.json`
-//! in the app's config directory. The saved settings are the only state; a
+//! and the tray menu, one check item per kind, saved in the `notifications`
+//! section of `desktop.json` in the app's config directory. The saved settings are the only state; a
 //! click flips them and both menus are brought to them.
 
 mod events;
