@@ -184,6 +184,8 @@ test("local inbox, reused PR viewer, versions, generation and settings", async (
   // A deep link reloads into the same PR page under the namespace.
   await page.reload();
   await expect(page.getByText("Local fixture review version 2", { exact: true })).toBeVisible();
+  // The pull request opens on its overview; the versions are in the full review.
+  await page.getByRole("button", { name: "Full review", exact: true }).click();
   await page.getByRole("button", { name: "Review version", exact: true }).click();
   await page.getByRole("button", { name: "View v1", exact: true }).click();
   await expect(page.getByText("Local fixture review version 1", { exact: true })).toBeVisible();
@@ -244,7 +246,9 @@ test("local inbox, reused PR viewer, versions, generation and settings", async (
   await expect(
     page.getByText("Adds notes, settings and a renamed guide.", { exact: true }),
   ).toBeVisible({ timeout: 30000 });
-  // The review links to the job that generated it, where its usage is.
+  // The finished review opens on its overview; the full review links to the
+  // job that generated it, where its usage is.
+  await page.getByRole("button", { name: "Full review", exact: true }).click();
   await page.getByRole("link", { name: "View job", exact: true }).click();
   const job = page.getByRole("region", { name: "Generation jobs" }).getByRole("listitem").first();
   await expect(job.getByText("Completed")).toBeVisible();
@@ -266,6 +270,7 @@ test("local inbox, reused PR viewer, versions, generation and settings", async (
   await page.setViewportSize({ width: 1280, height: 900 });
   await page.getByRole("link", { name: "Pull requests", exact: true }).first().click();
   await page.getByRole("link", { name: /A pull request without a review/ }).click();
+  await page.getByRole("button", { name: "Full review", exact: true }).click();
   await page.getByRole("button", { name: "Regenerate review", exact: true }).click();
   await expect(
     page.getByText("Adds notes, settings and a renamed guide.", { exact: true }),
@@ -630,6 +635,7 @@ test("desktop Settings has CLI and hook cards in their sections at desktop and n
               detected: true,
               installed: true,
               enabled: true,
+              version: "1.2.0",
             })),
           },
         }),
@@ -642,6 +648,7 @@ test("desktop Settings has CLI and hook cards in their sections at desktop and n
   const fits = () => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth);
   await openSettings(page, "Connections");
   await expect(hooks.getByText("Connected", { exact: true })).toHaveCount(2);
+  await expect(hooks.getByRole("button", { name: /^Update .* hooks$/ })).toHaveCount(2);
   await page.screenshot({ path: testInfo.outputPath("settings-connections.png"), fullPage: true });
   await openSettings(page, "This computer");
   await expect(cli.getByText("baum is installed at ~/.local/bin/baum.")).toBeVisible();
@@ -660,6 +667,10 @@ test("desktop Settings has CLI and hook cards in their sections at desktop and n
   await openSettings(page, "Connections");
   await expect(hooks).toBeVisible();
   expect(await fits()).toBe(true);
+  await page.screenshot({
+    path: testInfo.outputPath("settings-connections-narrow.png"),
+    fullPage: true,
+  });
 });
 
 test("picks GitHub repositories and keeps clone-less PRs usable", async ({ page }) => {
@@ -998,31 +1009,27 @@ test("walks through a review, comments on a behaviour and submits the review", a
   await page.goto(await launchURL());
   await page.getByRole("link", { name: "Pull requests", exact: true }).first().click();
   await page.getByRole("link", { name: /Reuse the existing PR page/ }).click();
-  await page.getByRole("button", { name: "Walk through", exact: true }).click();
+  // A pull request opens on the walkthrough's overview.
   const walk = page.getByRole("region", { name: "Walkthrough" });
-  await expect(walk.getByText("The route · riskiest first")).toBeVisible();
-  expect(page.url()).toContain("walk=tour");
+  await expect(walk.getByText("The tour · riskiest first")).toBeVisible();
   await walk.screenshot({ path: "test-results/walkthrough-intro.png", animations: "disabled" });
-  await walk.getByRole("button", { name: "Start the tour", exact: true }).click();
-  await expect(walk.getByRole("article")).toContainText(
-    "Chapter 1 · Operator-only dead-letter endpoints",
+  await walk.getByRole("button", { name: "Start the review", exact: true }).click();
+  await expect(page).toHaveURL(/walk=tour/);
+  await expect(walk.getByRole("article").getByRole("heading", { level: 2 })).toHaveText(
+    "Operator-only dead-letter endpoints",
   );
   await walk.getByRole("button", { name: /Something looks off/ }).click();
   await page.keyboard.type("Trusts a client-supplied header");
   await walk.getByRole("button", { name: "Save comment", exact: true }).click();
   await expect(walk.getByText("1 comment", { exact: true })).toBeVisible();
   await walk.screenshot({ path: "test-results/walkthrough-stop.png", animations: "disabled" });
-  // A reload keeps the view, what was looked at and the comment.
+  // A reload keeps the walkthrough, what was looked at and the comment.
   await page.reload();
   await expect(walk.getByText("1 comment", { exact: true })).toBeVisible();
-  await page.keyboard.press("e");
-  await expect(page).toHaveURL(/walk=all/);
-  await expect(walk.getByRole("button", { name: /^With comments/ })).toContainText("1");
+  await expect(page).toHaveURL(/walk=tour/);
+  await walk.getByRole("button", { name: "Send review", exact: true }).click();
   await walk.getByRole("radio", { name: /Request changes/ }).click();
-  await walk.screenshot({
-    path: "test-results/walkthrough-everything.png",
-    animations: "disabled",
-  });
+  await walk.screenshot({ path: "test-results/walkthrough-submit.png", animations: "disabled" });
   await walk.getByRole("button", { name: "Request changes", exact: true }).click();
   await expect(walk.getByText("Your review is on GitHub.")).toBeVisible();
   expect(submitted).toEqual([
@@ -1037,13 +1044,13 @@ test("walks through a review, comments on a behaviour and submits the review", a
   ]);
   // Narrow: no sideways scroll.
   await page.setViewportSize({ width: 390, height: 844 });
-  await walk.getByRole("button", { name: "Guided tour", exact: true }).click();
+  await walk.getByRole("button", { name: /^Retry policy and backoff,/ }).click();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(
     true,
   );
   await page.screenshot({ path: "test-results/walkthrough-narrow.png", fullPage: true });
   await walk.getByRole("button", { name: "Full review", exact: true }).click();
-  await expect(page).not.toHaveURL(/walk=/);
+  await expect(page).toHaveURL(/walk=full/);
   expect(errors).toEqual([]);
 });
 
@@ -1059,6 +1066,8 @@ test("asks the review's agent a question and reads the lines its answer cites", 
   await page.goto(await launchURL());
   await page.getByRole("link", { name: "Pull requests", exact: true }).first().click();
   await page.getByRole("link", { name: /Reuse the existing PR page/ }).click();
+  // The pull request opens on its overview; the sections are in the full review.
+  await page.getByRole("button", { name: "Full review", exact: true }).click();
   await expect(page.getByRole("button", { name: "Ask", exact: true })).toBeVisible();
   // The key opens the panel, with the cursor in its box.
   await page.keyboard.press("a");
@@ -1178,8 +1187,8 @@ test("makes a fix or a review comment from an answer", async ({ page }) => {
   await answer.getByRole("button", { name: "Add as comment", exact: true }).click();
   await expect(answer.getByText("Added to your review draft")).toBeVisible();
   await answer.getByRole("button", { name: "Open the draft", exact: true }).click();
-  await expect(page).toHaveURL(/walk=all/);
-  const submit = page.getByRole("complementary", { name: "Submit review" });
+  await expect(page).toHaveURL(/walk=tour/);
+  const submit = page.getByRole("region", { name: "Your review" });
   const overall = submit.getByLabel("Overall comment (optional)");
   await expect(overall).toHaveValue(/so a long outage cannot push retries out forever/);
   await expect(overall).toHaveValue(/docs\/guide\.md:3–6/);
@@ -1235,6 +1244,9 @@ test("the whole app can be used from the keyboard", async ({ page }) => {
   );
   await page.keyboard.press("Enter");
   await expect(goTo).toHaveCount(0);
+  // It opens on the overview; v opens the full review.
+  await expect(page.getByRole("button", { name: "Start the review" })).toBeVisible();
+  await page.keyboard.press("v");
   await expect(page.locator("[data-review-page]")).toBeVisible();
   await expect.poll(() => search().get("pr")).toBe("7");
   // j and k step through the review in reading order, from the Summary, once

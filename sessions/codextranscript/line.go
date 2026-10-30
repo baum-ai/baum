@@ -25,6 +25,8 @@ const (
 
 // Line is one decoded rollout envelope. Exactly one typed payload pointer is
 // set according to Class; Raw and Payload retain the complete source record.
+// A line whose class, response_item type or event_msg type this reader does
+// not know is Unknown: no typed payload is set beyond the item's Type and Raw.
 type Line struct {
 	Ordinal   int             `json:"ordinal"`
 	Timestamp time.Time       `json:"timestamp"`
@@ -43,6 +45,7 @@ type Line struct {
 	InterAgentCommunication *InterAgentCommunication `json:"inter_agent_communication,omitempty"`
 	TokenUsageRecord        *TokenUsageRecord        `json:"token_usage_record,omitempty"`
 	Realtime                *RawPayload              `json:"realtime_item,omitempty"`
+	Unknown                 bool                     `json:"unknown,omitempty"`
 }
 
 type File struct {
@@ -193,7 +196,10 @@ type ResponseItem struct {
 	// AdditionalTools are the tools Codex 0.165 offers the model beyond its
 	// own, kept as written: they are context, not conversation.
 	AdditionalTools *RawPayload `json:"additional_tools,omitempty"`
-	ImageGeneration *RawPayload `json:"image_generation_call,omitempty"`
+	// ConfigurationUpdate is a setting, such as the reasoning effort,
+	// changed during the session.
+	ConfigurationUpdate *RawPayload `json:"configuration_update,omitempty"`
+	ImageGeneration     *RawPayload `json:"image_generation_call,omitempty"`
 }
 
 type ContentItem struct {

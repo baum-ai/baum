@@ -76,6 +76,20 @@ submitting a review from the walkthrough, a fix the person starts (with its
 replies on the review threads it addressed), and resolving a review thread the
 person chose are the app's only GitHub writes (see below).
 
+A pull request with a saved review opens on the walkthrough's overview
+(`src/walkthrough.tsx`): what matters about it on one page, with no list beside
+it. It shows only what says something: the GitHub states that ask for something
+(as the inbox draws them, plus failing checks behind a conflict), unresolved
+threads, lines and files changed, the review time, the summary, the review's
+attention and breaking change, the risk with its reasons, and the chapters with
+their lines. Its actions are **Start the review**, the page's own fix, merge,
+update and re-run (and regenerate when the review is outdated), **Full review**
+(v) and GitHub; agents on the branch, a regeneration and a review that could not
+be read show beneath them. **Start the review** opens the tour, `?…&walk=tour`
+(or the retired `walk=all`), so a reload stays there. `walk=full`, or a link to a
+place in the review (`pane=…`), opens the full review, whose **Walk through**
+returns to the overview.
+
 The Inbox's panel lists a fix's unresolved review threads under the row that
 counts them (`ReviewThreads` in `src/threads.tsx`), asked for with `GET
 api/prs/review-threads` and discovery's `unresolved` count when the panel shows
@@ -104,26 +118,36 @@ saved) opens the walkthrough (`src/walkthrough.tsx`): `?…&walk=tour` or
 `walk=all`, so a reload stays there, and **Full review** returns to the viewer.
 `buildTour` (`src/walkthrough-model.ts`) turns the document into chapters, the
 logical sections with hunks in `sectionsInReviewOrder` (mechanical and obsolete
-sections are left out), and stops, one per behaviour step: its `title`,
-`before`, `after` and `question` (schema revision 2026-10-27.1), falling back to
-the step's `text` for a review written before them, and to the section summary
-for a section without steps. A stop's code is the viewer's `HunkEvidence` for
-the step's hunk anchors, reading omitted excerpts through the page's patch
-source. **Guided tour** walks intro, stops and wrap-up; Next and → skip stops
-already looked at. **Everything** lists every stop by chapter with filters,
-details and a comment box per row, and the submit panel beside it. Leaving a
-stop, opening its details or commenting marks it looked at; seen marks and
+sections are left out), and behaviours, one per behaviour step: its `title` (schema revision 2026-10-27.1), its
+`text`, the evidence it cites and its `question`, offered as the comment box's
+prompt. A review written before titles takes the text's first sentence, cut at
+the first semicolon; a section without steps is one behaviour, its summary. A
+chapter carries its section's summary, its `intent` block (what the pull request
+and its sessions say the change is for), its risk reason and its open risks. A behaviour's code is the viewer's
+`HunkEvidence` for the step's hunk anchors, reading omitted excerpts through the
+page's patch source. The walkthrough is drawn as the inbox is, with the Up next
+design's `--un-*` colours (`src/walkthrough.css`). It is one guided tour, a
+page per chapter, in the overview's column: a row of steps under the header
+leads back to the overview, names each chapter (shortened to fit, with a dot per
+behaviour: looked at, commented or not yet) and ends at the wrap-up. A
+chapter's page states its summary, intent and risk once, then lists its
+behaviours as the full review does (title, statement, evidence badges, code);
+one is picked, and only the picked one offers Something looks off. The
+wrap-up lists the behaviours not looked at and sends the review. j and k move
+the pick behaviour by behaviour, across chapters; → and ← move a chapter.
+Moving the pick off a behaviour, leaving its chapter or commenting on it marks it
+looked at; seen marks and
 drafts are kept in `localStorage` (`baum.walkthrough`) per repository, pull
 request and review version, the 40 most recent. Submitting posts
 `POST api/prs/review` with `{repository, pr, head_sha, event, body, comments}`:
 `head_sha` is the reviewed head, each comment `{path, line, side, start_line?,
 body}` sits on the step's anchored lines (or the hunk's first added line), and
-a stop without a place goes into the body under the overall comment. The
+a behaviour without a place goes into the body under the overall comment. The
 daemon sends it once and maps refusals to `{code, message}` (`forbidden` 403,
 `not_found` 404, `own_pull_request` and `invalid_line` 422, `failed` 502); on
 `invalid_line` the panel offers to resend with every comment in the body. A
-sent review clears the drafts and links to it on GitHub. The tour's keys (→/j,
-←/k, c, e; in Everything j/k, o, c, t, e) are listed in the shortcuts sheet.
+sent review clears the drafts and links to it on GitHub. The tour's keys (j/k,
+→/←, o, c) are listed in the shortcuts sheet.
 
 A pull request with a merge conflict (`merge` is `conflict`), failing checks
 (`checks` is `failing`) or, on the person's own pull request
@@ -862,8 +886,9 @@ default, which follows a repository's own review harness too) or Claude Code
 or Codex with a model, sent as `fix_backend` and `fix_model` (`""` returns to
 the reviews') and reported by `GET api/settings`. A chosen fix agent applies
 in every repository. **Connections** holds the GitHub connection and, in the
-desktop app, the Agent hooks card with installation, enablement and removal
-for each agent. **This computer** holds the diagnostics, the background
+desktop app, the Agent hooks card with installation, enablement, update
+(to the latest plugin, without removing it first; shown with the installed
+plugin version) and removal for each agent. **This computer** holds the diagnostics, the background
 daemon note, **Jobs at once** (how many reviews, fixes and feature builds run
 in parallel, 1–4 and 4 by default, saved with `PUT
 api/settings/job-concurrency` and reported as `job_concurrency` by `GET
@@ -1019,7 +1044,7 @@ stays.
   status dot. Every card in Needs you and Running now shows the latest message the user
   typed (`activity.last_prompt`) on one line under its head, after "You". A session
   the daemon marks `messageable` (waiting at its prompt) can be replied to: r on its
-  focused card, or Reply in its right-click menu, opens a "Reply" box under it, Enter
+  focused card, a click on it, or Reply in its right-click menu, opens a "Reply" box under it, Enter
   posts to `api/live-sessions/{agent}/{id}/message` and Escape closes it. The reply
   starts its next turn in its own terminal and the card moves to Running now; a
   notice says what was sent. One marked `endable` (waiting or quiet, Claude Code
@@ -1034,8 +1059,8 @@ stays.
   the agent has said anything, the current step (the tool in its colour and its
   target), either with a blinking caret while running, still under reduced motion;
   and "N files touched" before the time;
-  without `activity` it reads "Active 2 min ago". r on its focused row, or "Reply when
-  it finishes" in its right-click menu, opens "Send when it finishes" (Enter posts a
+  without `activity` it reads "Active 2 min ago". r on its focused row, a click on it, or "Reply when
+  it finishes" in its right-click menu, opens "Send when it finishes" while no message is queued (Enter posts a
   message to `api/agent-messages`, Escape closes it); the daemon delivers it when the session's turn
   ends, one per session, and the card then shows "Queued for when it finishes" with
   Cancel.
@@ -1073,9 +1098,14 @@ those sessions in the caution tone; otherwise it counts the running ones, so a
 finished or quiet session waiting for its next word does not raise it. The desktop app notifies when a session
 starts asking for a permission or an answer (see the desktop README).
 
-A click on a session's card (anywhere but its buttons, fields and links, and not
-while selecting text) opens its transcript, as does its link (the waiting card's
-title, else the agent's name), which j/k focus and Enter or o follow. The transcript
+A click on a session's card (anywhere but its buttons, links, fields and reply
+or answer box, and not while selecting text) focuses it and opens its peek and,
+where the session takes one, its reply (a waiting session's Reply, a running
+one's message for when it finishes, unless one is queued); a click on another
+card moves both there. A click on a card showing both, or its peek where it
+takes no reply, closes them; one showing only its peek (after Space or Escape
+in the box) gains its reply. Its link (the waiting card's title, else the agent's
+name), which j/k focus and Enter or o follow, opens its transcript. The transcript
 opens at `?page=sessions&session=<agent>:<id>`
 (`src/session-transcript.tsx`), titled with the session's title (else "Claude
 Code session"), with the agent's compaction summary, when it has one, closed above

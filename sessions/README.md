@@ -10,6 +10,13 @@ accounting report. Keep record accounting balanced and preserve graph ids,
 ordering, relationships, file evidence, usage and errors. A balanced report
 alone does not establish that a graph is valid.
 
+Codex adds record and item types between releases. The Codex reader keeps a
+line whose record class, `response_item` type or `event_msg` type it does not
+know, and the mapper discards it as `unknown/...` in the report, so one new
+type does not fail the whole session. A malformed line of a known type still
+fails it. An Entire checkpoint whose embedded Codex transcript has an unknown
+record falls back to its compact transcript instead.
+
 ## Product profiles
 
 `traceprocessing.Local` is the zero value and the default of existing public

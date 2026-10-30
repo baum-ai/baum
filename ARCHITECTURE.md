@@ -3435,7 +3435,7 @@ replace it.
   session: when one leaves their list the page reads the session
   list from disk again, where the finished session now is (the existing
   sessions UI), so nothing is lost if the files were not complete earlier.
-  Each Sessions row opens the session's transcript
+  Each Sessions row's link opens the session's transcript
   (`?page=sessions&session=<agent>:<id>`), drawn with the viewer's
   `SessionCard`. The view reads it 500 ms after the last of a burst of `live`
   events and every 3 seconds while the session works (15 while it waits; a
@@ -3717,7 +3717,8 @@ and two files:
    from native plugin registries, with executable detection and installation/
    enablement separate from the agent's hook trust decision. It installs and
    removes `baum@baum` through native CLIs with `baum hooks install --user`
-   and `uninstall --user`. Native status queries have a 10-second bound and
+   and `uninstall --user`, and `update --user` refreshes the marketplace and
+   brings an installed plugin to its latest version. Native status queries have a 10-second bound and
    actions a 90-second total budget; the desktop resolves the login shell PATH for native plugin commands and allows
    240 seconds for PATH resolution, both agents and process overhead.
 5. `baum daemon stop` stops the daemon gracefully and waits for it to exit

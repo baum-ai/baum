@@ -8,6 +8,8 @@ import type { Plugin } from "vite";
  * Without host networking (macOS), `daemonHost` names the address that
  * reaches the host's loopback; requests keep the daemon's own Host. */
 export function desktopDevelopment(directory: string, daemonHost?: string): Plugin {
+  // Another worktree's Vite can run beside the desktop's on its own port.
+  const port = Number(process.env.BAUM_DESKTOP_DEV_PORT) || 1420;
   function target(): string {
     const origin = readFileSync(join(directory, "daemon-origin"), "utf8");
     const url = new URL(origin);
@@ -23,7 +25,7 @@ export function desktopDevelopment(directory: string, daemonHost?: string): Plug
         base: "/",
         server: {
           host: daemonHost ? "0.0.0.0" : "127.0.0.1",
-          port: 1420,
+          port,
           strictPort: true,
           fs: {
             allow: [resolve(import.meta.dirname), resolve(import.meta.dirname, "../viewer")],
@@ -50,7 +52,8 @@ export function desktopDevelopment(directory: string, daemonHost?: string): Plug
         }
         try {
           const origin = target();
-          if (request.headers.origin === "http://127.0.0.1:1420") request.headers.origin = origin;
+          if (request.headers.origin === `http://127.0.0.1:${port}`)
+            request.headers.origin = origin;
           // The daemon rejects any Host but its own loopback address.
           request.headers.host = new URL(origin).host;
           const upstream = new URL(origin);

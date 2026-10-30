@@ -1374,6 +1374,15 @@ it("manages CLI and hooks inline in desktop Settings", async () => {
           enabled: false,
           plugin: "baum@baum",
         },
+        {
+          agent: "claude-code",
+          name: "Claude Code",
+          detected: true,
+          installed: true,
+          enabled: true,
+          plugin: "baum@baum",
+          version: "1.0.0",
+        },
       ],
     },
   };
@@ -1398,6 +1407,19 @@ it("manages CLI and hooks inline in desktop Settings", async () => {
     expect(location.search).toBe("?page=settings&section=connections");
     await click("Connect Codex");
     expect(invoke).toHaveBeenCalledWith("install_hooks", { agent: "codex" });
+    // A connected agent updates in place; one not yet connected has nothing to update.
+    expect(node.textContent).toContain("Plugin 1.0.0");
+    expect(node.querySelector('button[aria-label="Update Codex hooks"]')).toBeNull();
+    await act(async () =>
+      node
+        .querySelector<HTMLButtonElement>('button[aria-label="Update Claude Code hooks"]')!
+        .click(),
+    );
+    expect(invoke).toHaveBeenCalledWith("update_hooks", { agent: "claude-code" });
+    // It stays to update again later, labelled as before.
+    expect(node.querySelector('button[aria-label="Update Claude Code hooks"]')!.textContent).toBe(
+      "Update",
+    );
     const computer = [...node.querySelectorAll("nav button")].find((b) =>
       b.textContent!.startsWith("This computer"),
     )!;

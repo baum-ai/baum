@@ -756,6 +756,9 @@ function AgentHooksPanel({ setup }: { setup: DesktopSetup }) {
                         : "Not connected",
                     agent.installed && agent.enabled && !agent.error,
                   )}
+                  {agent.installed && agent.version ? (
+                    <span className="text-xs text-(--text-tertiary)">Plugin {agent.version}</span>
+                  ) : null}
                 </div>
                 {agent.error || !agent.installed ? (
                   <p className="text-xs text-(--text-secondary)">{display(describeAgent(agent))}</p>
@@ -782,6 +785,17 @@ function AgentHooksPanel({ setup }: { setup: DesktopSetup }) {
                       ? "Enabling…"
                       : "Connecting…"
                     : `${agent.installed ? "Enable" : "Connect"} ${agent.name}`}
+                </Button>
+              ) : null}
+              {agent.detected && !agent.error && agent.installed && agent.enabled ? (
+                <Button
+                  disabled={busy}
+                  size="compact"
+                  variant="secondary"
+                  aria-label={`Update ${agent.name} hooks`}
+                  onClick={() => void run("update_hooks", { agent: agent.agent })}
+                >
+                  {doing === `update_hooks:${agent.agent}` && busy ? "Updating…" : "Update"}
                 </Button>
               ) : null}
               {agent.installed ? (
