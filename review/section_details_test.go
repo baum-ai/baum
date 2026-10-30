@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	bundlepkg "github.com/baum-ai/baum/bundle"
 	"github.com/baum-ai/baum/review/tilecatalogue"
 )
 
@@ -101,5 +102,52 @@ func TestModelSchemasDoNotOfferSectionDetails(t *testing.T) {
 	checkNoError(t, err)
 	if findings := validator.Validate(authored, nil); !strings.Contains(findings, "details") {
 		t.Fatalf("an authored section with details was accepted: %q", findings)
+	}
+}
+
+// A section the next version drops is Obsolete: nothing will write details
+// it was still waiting for, so a pending one is carried as failed, and a
+// failed one stays failed.
+func TestAnObsoleteSectionNeverWaitsForDetails(t *testing.T) {
+	for _, prior := range []string{sectionDetailsPending, sectionDetailsFailed} {
+		dropped := historySection("gone", testHunk)
+		withoutDetails(dropped, prior, true)
+		content, err := json.Marshal(dropped)
+		checkNoError(t, err)
+		previous := &bundlepkg.PreviousVersion{Version: 1, Sections: []bundlepkg.PreviousSection{{ID: "sec_gone", Content: content}}}
+		candidate := historyCandidate(t, []any{historySection("new", testHunk)})
+		for name, carry := range map[string]func() ([]byte, error){
+			"completion": func() ([]byte, error) { return reconcileAuthoredHistory(candidate, previous, nil, nil, true) },
+			"restore":    func() ([]byte, error) { return RestoreOmittedPreviousSections(candidate, previous, nil) },
+		} {
+			document, err := carry()
+			checkNoError(t, err)
+			section := mustDecode(t, document)["sections"].([]any)[0].(map[string]any)
+			checkEqual(t, "sec_gone", section["id"])
+			if section["details"] != sectionDetailsFailed {
+				t.Errorf("%s of a %s section: details = %v, want failed", name, prior, section["details"])
+			}
+		}
+	}
+}
+
+// Only a live draft holds pending details: before a version is published or
+// saved every pending section becomes failed, and nothing else changes.
+func TestFailPendingDetails(t *testing.T) {
+	doc := storedExample(t)
+	sections := doc["sections"].([]any)
+	withoutDetails(sections[0].(map[string]any), sectionDetailsPending, true)
+	withoutDetails(sections[1].(map[string]any), sectionDetailsFailed, false)
+	draft, err := json.Marshal(doc)
+	checkNoError(t, err)
+	got := mustDecode(t, FailPendingDetails(draft))
+	sections[0].(map[string]any)["details"] = sectionDetailsFailed
+	checkEqual(t, doc, got)
+	if findings := validateStored(t, got, nil); findings != nil {
+		t.Fatalf("published draft rejected: %q", findings)
+	}
+	// A document without pending details is returned as it is.
+	for _, unchanged := range []string{`{"sections":[{"id":"sec_a","details":"failed"}]}`, "not json"} {
+		checkEqual(t, unchanged, string(FailPendingDetails([]byte(unchanged))))
 	}
 }

@@ -1,6 +1,7 @@
 package review
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -70,6 +71,7 @@ func reconcileAuthoredHistory(document []byte, previous *bundlepkg.PreviousVersi
 			current = cloneObject(prior)
 			current["hunks"] = []any{}
 			dropUnlistedImages(current, attachments)
+			failPendingDetails(current)
 		}
 		if err := appendSection(prior, current); err != nil {
 			return nil, err
@@ -201,6 +203,7 @@ func RestoreOmittedPreviousSections(document []byte, previous *bundlepkg.Previou
 			current = cloneObject(prior)
 			current["hunks"] = []any{}
 			dropUnlistedImages(current, attachments)
+			failPendingDetails(current)
 			risks, _ := current["risks"].([]any)
 			for _, value := range risks {
 				if risk, ok := value.(map[string]any); ok {
@@ -224,6 +227,49 @@ func RestoreOmittedPreviousSections(document []byte, previous *bundlepkg.Previou
 	}
 	next["sections"] = sections
 	return json.Marshal(next)
+}
+
+// failPendingDetails marks a section whose details were still being written
+// as failed: nothing will write them now, so a carried or published section
+// never waits for details. A failed one stays failed; its summary may be null.
+func failPendingDetails(section map[string]any) {
+	if section["details"] == sectionDetailsPending {
+		section["details"] = sectionDetailsFailed
+	}
+}
+
+// FailPendingDetails returns the document with every section whose details
+// are still being written (pending) marked as failed. Only a live draft
+// holds pending details: a host applies this before it publishes or saves a
+// version. The document is returned unchanged when no section is pending or
+// it cannot be read as an object with sections.
+func FailPendingDetails(document []byte) []byte {
+	if !bytes.Contains(document, []byte(`"`+sectionDetailsPending+`"`)) {
+		return document
+	}
+	// Numbers stay as written, so nothing but the states changes meaning.
+	decoder := json.NewDecoder(bytes.NewReader(document))
+	decoder.UseNumber()
+	var root map[string]any
+	if decoder.Decode(&root) != nil {
+		return document
+	}
+	sections, _ := root["sections"].([]any)
+	changed := false
+	for _, value := range sections {
+		if section, ok := value.(map[string]any); ok && section["details"] == sectionDetailsPending {
+			section["details"] = sectionDetailsFailed
+			changed = true
+		}
+	}
+	if !changed {
+		return document
+	}
+	encoded, err := json.Marshal(root)
+	if err != nil {
+		return document
+	}
+	return encoded
 }
 
 func previousSections(previous *bundlepkg.PreviousVersion) ([]any, error) {

@@ -880,6 +880,26 @@ describe("ReviewViewer with sections that lack their details", () => {
     expect(retryButton(container)).toBeUndefined();
   });
 
+  it("reads an obsolete section without details as unavailable, with no retry", async () => {
+    for (const details of ["pending", "failed"] as const) {
+      const document = withoutDetails(details);
+      const section = document.sections.find((item) => item.id === "sec_api")!;
+      section.hunks = [];
+      section.derived.state = "stale";
+      delete section.derived.review_score;
+      const container = await render(
+        <Host initial="pane=section&section=sec_api">
+          <ReviewViewer document={document} onRetryDetails={() => {}} />
+        </Host>,
+      );
+      expect(detailsStatus(container)).toBe("Details unavailable");
+      expect(container.querySelector("#review-section")?.textContent).toContain("Obsolete");
+      expect(retryButton(container)).toBeUndefined();
+      act(() => root?.unmount());
+      root = null;
+    }
+  });
+
   it("says the context is being written while a draft has none", async () => {
     const draft = withoutDetails("pending");
     delete draft.summary.context;

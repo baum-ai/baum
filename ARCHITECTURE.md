@@ -299,6 +299,15 @@ The model never writes the state: the strict authored contract and every
 schema derived from it for a model (`ModelSchema`, Codex's strict schema)
 leave it out and require an object summary, exactly as before the state
 existed, so an authored section that carries it is a validation finding.
+`pending` belongs to a live draft only: a host never publishes or saves a
+version with it, and turns any section still pending into `failed` first
+(`review.FailPendingDetails`). A section the next version drops keeps
+`failed` and turns `pending` into `failed`, since nothing will write its
+details; the viewer shows an obsolete section without details as
+"Details unavailable", with no retry. After a rollback to a release without
+the state, a desktop daemon fails stored validation and refresh of a local
+document that carries `details` or the `incomplete_sections` limitation;
+the hosted service never stores either, so a hosted rollback is unaffected.
 
 ### Validation and derivation
 

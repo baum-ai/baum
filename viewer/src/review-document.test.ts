@@ -1776,6 +1776,8 @@ describe("sectionDetails", () => {
   });
   it("reads a section that holds only its outline as failed", () => {
     expect(sectionDetails({ summary: null })).toBe("failed");
+    // Nothing writes the details of a section the review dropped.
+    expect(sectionDetails({ details: "pending", derived: { state: "stale" } })).toBe("failed");
     expect(sectionDetails({})).toBe("failed");
     expect(sectionDetails({ details: "partial" as unknown as SectionDetailsState, summary })).toBe(
       "failed",

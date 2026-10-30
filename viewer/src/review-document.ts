@@ -929,11 +929,12 @@ export function riskScoreTone(score: RiskScoreLevel): Tone {
 
 /** Whether a section has its details, or why not. A section without a
  *  summary, or with a state this viewer does not know, reads as failed: what
- *  it holds is its outline. */
+ *  it holds is its outline. So does an obsolete one still marked pending:
+ *  nothing writes the details of a section the review dropped. */
 export function sectionDetails(
-  section: Pick<Section, "details" | "summary">,
+  section: Pick<Section, "details" | "summary"> & { derived?: Pick<Section["derived"], "state"> },
 ): "complete" | SectionDetailsState {
-  if (section.details === "pending") return "pending";
+  if (section.details === "pending" && section.derived?.state !== "stale") return "pending";
   if (section.details !== undefined || !section.summary) return "failed";
   return "complete";
 }

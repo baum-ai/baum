@@ -206,7 +206,13 @@ export function ReviewSection({
             document={document}
             section={section}
             details={details}
-            onRetry={onRetryDetails && (() => onRetryDetails(section.id))}
+            onRetry={
+              // An obsolete section is not part of the review any more, so
+              // its details are not written again.
+              onRetryDetails && derived.state !== "stale"
+                ? () => onRetryDetails(section.id)
+                : undefined
+            }
           />
         )}
 
