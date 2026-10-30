@@ -16,10 +16,11 @@ import (
 
 // Work is what a working tree has checked out, as far as pull requests go.
 type Work struct {
+	Repository, UpstreamRepository string
 	// Branch is the current branch, "" when HEAD is detached.
 	Branch string
-	// Upstream is the branch of the same repository that Branch's upstream
-	// names, "" when it has none there.
+	// Upstream names the configured upstream branch on the same GitHub host;
+	// UpstreamRepository distinguishes a fork from the base repository.
 	Upstream string
 	// Head is the commit checked out.
 	Head string
@@ -29,13 +30,20 @@ type Work struct {
 // ("owner/name", as the registry names it). A part git cannot read stays
 // empty.
 func Local(ctx context.Context, repo *gitlocal.Repo, repository string) Work {
-	var w Work
+	w := Work{Repository: strings.ToLower(repository)}
 	parsed, parseErr := github.ParseRepository(repository)
 	if branch, err := repo.CurrentBranch(ctx); err == nil {
 		w.Branch = branch
 	}
+	if parseErr == nil {
+		if origin, err := repo.RemoteFetchURL(ctx, "origin"); err == nil {
+			if source, err := github.RepositoryFromRemote(origin); err == nil && strings.EqualFold(source.Host, parsed.Host) {
+				w.Repository = strings.ToLower(source.String())
+			}
+		}
+	}
 	if w.Branch != "" && parseErr == nil {
-		w.Upstream = upstreamBranch(ctx, repo, parsed, w.Branch)
+		w.Upstream, w.UpstreamRepository = upstreamWork(ctx, repo, parsed, w.Branch)
 	}
 	if head, err := repo.HeadCommit(ctx); err == nil {
 		w.Head = head
@@ -43,26 +51,25 @@ func Local(ctx context.Context, repo *gitlocal.Repo, repository string) Work {
 	return w
 }
 
-// upstreamBranch is the name of the branch of repository that branch's
-// upstream is, "" when it has none there. The host counts: on an Enterprise
-// host the same owner/name elsewhere is another repository.
-func upstreamBranch(ctx context.Context, repo *gitlocal.Repo, repository github.Repository, branch string) string {
+// upstreamWork keeps head identity, including a fork, but never crosses hosts.
+func upstreamWork(ctx context.Context, repo *gitlocal.Repo, repository github.Repository, branch string) (string, string) {
 	remote, merge, err := repo.BranchUpstream(ctx, branch)
 	name, ok := strings.CutPrefix(merge, "refs/heads/")
 	if err != nil || !ok || name == "" || remote == "" || remote == "." {
-		return ""
+		return "", ""
 	}
 	url, err := repo.RemoteFetchURL(ctx, remote)
 	if err != nil {
-		return ""
+		return "", ""
 	}
 	if url == "" {
 		url = remote
 	}
-	if !github.RemoteNames(url, repository) {
-		return ""
+	head, err := github.RepositoryFromRemote(url)
+	if err != nil || !strings.EqualFold(head.Host, repository.Host) {
+		return "", ""
 	}
-	return name
+	return name, strings.ToLower(head.String())
 }
 
 // Selection preserves how a live PR association was established.
@@ -75,17 +82,14 @@ type Selection struct {
 func Resolve(snapshot discovery.Snapshot, w Work) Selection {
 	matches := map[int]string{}
 	for _, pr := range snapshot.PullRequests {
-		if pr.Fork {
-			continue
-		}
 		method := ""
-		if w.Branch != "" && pr.HeadRef == w.Branch {
+		if sameHeadRepository(snapshot, pr, w.Repository) && w.Branch != "" && pr.HeadRef == w.Branch {
 			method = "branch"
 		}
-		if w.Upstream != "" && pr.HeadRef == w.Upstream {
+		if sameHeadRepository(snapshot, pr, upstreamRepository(w)) && w.Upstream != "" && pr.HeadRef == w.Upstream {
 			method = "upstream"
 		}
-		if w.Head != "" && strings.EqualFold(pr.HeadSHA, w.Head) {
+		if sameHeadRepository(snapshot, pr, w.Repository) && w.Head != "" && strings.EqualFold(pr.HeadSHA, w.Head) {
 			method = "head"
 		}
 		if method != "" {
@@ -111,3 +115,23 @@ func Resolve(snapshot discovery.Snapshot, w Work) Selection {
 // Find returns the unique matching open pull request, or zero when evidence
 // is missing, conflicting or ambiguous.
 func Find(snapshot discovery.Snapshot, w Work) int { return Resolve(snapshot, w).PR }
+
+func upstreamRepository(w Work) string {
+	if w.UpstreamRepository != "" {
+		return w.UpstreamRepository
+	}
+	return w.Repository
+}
+func sameHeadRepository(snapshot discovery.Snapshot, pr discovery.PullRequest, want string) bool {
+	head := pr.HeadRepository
+	if head == "" {
+		if pr.Fork {
+			return false
+		}
+		head = snapshot.Repository
+	}
+	if want == "" {
+		return !pr.Fork
+	}
+	return strings.EqualFold(head, want)
+}

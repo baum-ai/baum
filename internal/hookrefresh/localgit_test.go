@@ -68,7 +68,7 @@ func TestLocalGitReadsTheWorkingTreeTheHookRanIn(t *testing.T) {
 	ctx := context.Background()
 	common := filepath.Join(clone, ".git")
 	work, err := LocalGit(ctx, clone, "acme/app", "")
-	if err != nil || work.Work.Branch != "main" || work.Work.Upstream != "" {
+	if err != nil || work.Work.Branch != "main" || work.Work.Upstream != "main-fork" || work.Work.UpstreamRepository != "someone/app" {
 		t.Fatalf("clone work %+v %v", work, err)
 	}
 
