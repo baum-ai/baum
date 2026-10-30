@@ -393,8 +393,19 @@ export type LiveSession = {
   messageable?: boolean;
   repository: string;
   branch?: string;
-  /** Absent while the branch has no pull request. */
+  /** Absent while the branch has no unique matching pull request. */
   pr?: number;
+  link_status?:
+    | "resolved"
+    | "unmatched"
+    | "ambiguous"
+    | "stale"
+    | "unavailable"
+    | "unknown_history";
+  link_method?: "branch" | "upstream" | "head";
+  head_sha?: string;
+  upstream?: string;
+  observed_at?: string;
   /** The session's name as its agent shows it (Claude Code's title, Codex's
    *  thread name, Cursor's conversation name), else its first prompt; one
    *  line, masked by the daemon. Absent when the agent's files cannot be

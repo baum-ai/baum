@@ -354,7 +354,7 @@ func TestEndedSessionsSurviveARestartPastTheRecord(t *testing.T) {
 	apply(tr, event("s2", "user-prompt-submit", c.now, "/work/demo"))
 	tr.persist()
 	data, err := os.ReadFile(filepath.Join(dir, StateFile))
-	if err != nil || strings.Contains(string(data), "/work") || strings.Contains(string(data), "transcripts") || strings.Contains(string(data), `"s2"`) {
+	if err != nil || strings.Contains(string(data), "/work") || strings.Contains(string(data), "transcripts") || !strings.Contains(string(data), `"s2"`) {
 		t.Fatalf("state file = %s, %v", data, err)
 	}
 	// 20 hours later the record holds nothing of it.
@@ -475,7 +475,7 @@ func TestAPIPayloadHasNoPathsOrTranscript(t *testing.T) {
 		t.Fatal(err)
 	}
 	fields := decoded["sessions"][0]
-	want := []string{"agent", "session_id", "state", "started_at", "last_activity_at", "last_event", "repository", "branch", "pr"}
+	want := []string{"agent", "session_id", "state", "started_at", "last_activity_at", "last_event", "repository", "branch", "pr", "observed_at", "work_history"}
 	if len(fields) != len(want) {
 		t.Fatalf("fields = %v", fields)
 	}

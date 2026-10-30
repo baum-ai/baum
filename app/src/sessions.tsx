@@ -173,6 +173,16 @@ export function SessionWhere({
   Link: ComponentType<ViewerLinkProps>;
 }) {
   const href = s.pr ? prHref(s) : null;
+  const note =
+    s.link_status === "ambiguous"
+      ? "Several pull requests match"
+      : s.link_status === "stale"
+        ? "PR link may be out of date"
+        : s.link_status === "unavailable"
+          ? "PR lookup unavailable"
+          : s.link_status === "unknown_history"
+            ? "Historical branch unknown"
+            : null;
   return (
     <div className="local-session-where">
       <span className="local-session-repo">{s.repository}</span>
@@ -190,6 +200,7 @@ export function SessionWhere({
           <span className="local-session-pr">PR #{s.pr}</span>
         )
       ) : null}
+      {note ? <span className="local-session-pr">{note}</span> : null}
     </div>
   );
 }

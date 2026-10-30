@@ -124,6 +124,20 @@ const (
 	rememberedEvents = 4096
 )
 
+// WorkObservation is recorded Git context, not proof of code contribution.
+type WorkObservation struct {
+	At         time.Time `json:"at"`
+	Repository string    `json:"repository"`
+	Branch     string    `json:"branch,omitempty"`
+	HeadSHA    string    `json:"head_sha,omitempty"`
+	Upstream   string    `json:"upstream,omitempty"`
+	PR         int       `json:"pr,omitempty"`
+}
+
+type WorkHistory struct {
+	Entries []WorkObservation `json:"entries"`
+}
+
 // Session is what the application is told of a tracked session.
 type Session struct {
 	Agent string `json:"agent"`
@@ -153,7 +167,13 @@ type Session struct {
 	Branch     string    `json:"branch,omitempty"`
 	// PR is the pull request whose head is Branch, 0 when there is none
 	// (yet) or it cannot be told.
-	PR int `json:"pr,omitempty"`
+	PR          int          `json:"pr,omitempty"`
+	HeadSHA     string       `json:"head_sha,omitempty"`
+	Upstream    string       `json:"upstream,omitempty"`
+	LinkMethod  string       `json:"link_method,omitempty"`
+	LinkStatus  string       `json:"link_status,omitempty"`
+	ObservedAt  time.Time    `json:"observed_at,omitzero"`
+	WorkHistory *WorkHistory `json:"work_history,omitempty"`
 }
 
 // Link is where a working directory belongs.
@@ -164,13 +184,19 @@ type Link struct {
 	// Branch is the branch checked out, empty when detached.
 	Branch string
 	// PR is the pull request of Branch, 0 when none is known.
-	PR int
+	PR                                int
+	HeadSHA, Upstream, Method, Status string
 }
 
 // Linker links a hook's working directory to a repository, branch and pull
 // request, and reports false for a directory in no registered clone.
 type Linker interface {
 	Link(ctx context.Context, cwd string) (Link, bool)
+}
+
+// RecordedLinker resolves a saved Git observation without reading today's checkout.
+type RecordedLinker interface {
+	Relink(context.Context, Session) (Link, bool)
 }
 
 // Source is the daemon's record of hook events; *hookevents.Store is one.
@@ -189,8 +215,8 @@ type Tracker struct {
 	Log    *slog.Logger
 	// Now is the clock; nil is time.Now.
 	Now func() time.Time
-	// StateDir, when set, is a private directory where the ended sessions
-	// are kept across restarts (StateFile): identifiers and times only.
+	// StateDir keeps live and ended observations across restarts (StateFile),
+	// without local paths or notification message text.
 	StateDir string
 	// Buffer is the subscription's size; zero is 256. A subscriber that falls
 	// behind misses events, which Reconcile applies from the record once the
@@ -607,7 +633,28 @@ func (t *Tracker) Reconcile(ctx context.Context) bool {
 }
 
 func (e *entry) setLink(link Link, now time.Time) {
+	if e.Repository != link.Repository || e.Branch != link.Branch || e.HeadSHA != link.HeadSHA || e.Upstream != link.Upstream || e.ObservedAt.IsZero() {
+		e.ObservedAt = now
+	}
+	if e.WorkHistory == nil || e.Repository != link.Repository || e.Branch != link.Branch || e.HeadSHA != link.HeadSHA || e.Upstream != link.Upstream || e.PR != link.PR {
+		var history []WorkObservation
+		if e.WorkHistory != nil {
+			history = slices.Clone(e.WorkHistory.Entries)
+		}
+		observation := WorkObservation{At: e.ObservedAt, Repository: link.Repository, Branch: link.Branch, HeadSHA: link.HeadSHA, Upstream: link.Upstream, PR: link.PR}
+		if len(history) > 0 && history[len(history)-1].At.Equal(observation.At) {
+			history[len(history)-1] = observation
+		} else {
+			history = append(history, observation)
+		}
+		if len(history) > 32 {
+			history = history[len(history)-32:]
+		}
+		e.WorkHistory = &WorkHistory{Entries: history}
+	}
 	e.Repository, e.Branch, e.PR = link.Repository, link.Branch, link.PR
+	e.HeadSHA, e.Upstream = link.HeadSHA, link.Upstream
+	e.LinkMethod, e.LinkStatus = link.Method, link.Status
 	e.linkedAt = now
 	e.stale = false
 }
@@ -751,15 +798,17 @@ func (t *Tracker) announce(waits []Session) {
 func (t *Tracker) ResolvePending(ctx context.Context) bool {
 	t.init()
 	type request struct {
-		k   key
-		s   *entry
-		cwd string
+		k        key
+		s        *entry
+		cwd      string
+		ended    bool
+		snapshot Session
 	}
 	t.mu.Lock()
 	var todo []request
 	for k := range t.pending {
 		if s := t.sessions[k]; s != nil {
-			todo = append(todo, request{k, s, s.cwd})
+			todo = append(todo, request{k: k, s: s, cwd: s.cwd, ended: s.ended, snapshot: s.Session})
 		} else {
 			delete(t.pending, k)
 		}
@@ -768,11 +817,31 @@ func (t *Tracker) ResolvePending(ctx context.Context) bool {
 	changed := false
 	var announcements []Session
 	for _, r := range todo {
-		link, ok := t.Linker.Link(ctx, r.cwd)
+		var link Link
+		var ok bool
+		if r.ended && r.snapshot.Repository != "" {
+			if resolver, supported := t.Linker.(RecordedLinker); supported {
+				link, ok = resolver.Relink(ctx, r.snapshot)
+			} else {
+				link, ok = Link{Repository: r.snapshot.Repository, Branch: r.snapshot.Branch, PR: r.snapshot.PR}, true
+			}
+		} else {
+			link, ok = t.Linker.Link(ctx, r.cwd)
+			if r.ended {
+				// Replay has no historical Git observation. Only clone identity
+				// is recoverable; today's branch must not explain old work.
+				link = Link{Repository: link.Repository, Status: "unknown_history"}
+			}
+		}
 		now := t.now()
 		t.mu.Lock()
 		delete(t.pending, r.k)
 		if t.sessions[r.k] == r.s {
+			if r.s.cwd != r.cwd || r.s.ended != r.ended {
+				t.queue(r.k)
+				t.mu.Unlock()
+				continue
+			}
 			before, existed := t.view(r.k, now)
 			switch {
 			case ok:
@@ -785,6 +854,7 @@ func (t *Tracker) ResolvePending(ctx context.Context) bool {
 			default:
 				// A directory that no longer resolves keeps the last link.
 				r.s.linkedAt = now
+				r.s.LinkStatus = "stale"
 				r.s.stale = false
 			}
 			after, exists := t.view(r.k, now)
@@ -996,11 +1066,9 @@ func (t *Tracker) Sweep() bool {
 			s.State = s.state(now)
 			changed = changed || !s.unlinked
 		}
-		// A throttled lookup is retried once the window has passed, and a
-		// session with no pull request is looked at again, as discovery may
-		// have learned of one since.
-		if t.sessions[k] == s && !s.ended && !s.unlinked && !t.pending[k] && s.cwd != "" &&
-			now.Sub(s.linkedAt) >= RelinkEvery && (s.stale || s.PR == 0) {
+		_, recorded := t.Linker.(RecordedLinker)
+		if t.sessions[k] == s && !s.unlinked && !t.pending[k] && now.Sub(s.linkedAt) >= RelinkEvery &&
+			((!s.ended && s.cwd != "" && (recorded || s.stale || s.PR == 0)) || (s.ended && recorded && s.Repository != "")) {
 			t.queue(k)
 		}
 	}
@@ -1086,12 +1154,13 @@ func (t *Tracker) Terminal(agent, id string) (*hookevents.Terminal, bool) {
 	return s.terminal, true
 }
 
-// persisted is the ended sessions' file: identifiers and times, no paths.
+// persisted holds bounded live and ended observations: identifiers and times,
+// no paths or notification message text.
 type persisted struct {
 	Sessions []Session `json:"sessions"`
 }
 
-// persist writes the ended sessions to StateDir when they changed since the
+// persist writes live and ended observations when they changed since the
 // last write, so a restart keeps them even once the record has rotated past
 // them. A failure is logged and retried at the next sweep.
 func (t *Tracker) persist() {
@@ -1103,8 +1172,10 @@ func (t *Tracker) persist() {
 	now := t.now()
 	var ended []Session
 	for _, s := range t.sessions {
-		if s.ended && !s.unlinked && !s.expired(now) {
-			ended = append(ended, s.Session)
+		if !s.unlinked && !s.expired(now) {
+			snapshot := s.Session
+			snapshot.WaitingMessage = ""
+			ended = append(ended, snapshot)
 		}
 	}
 	t.mu.Unlock()
@@ -1122,7 +1193,7 @@ func (t *Tracker) persist() {
 	t.saved = data
 }
 
-// loadEndedLocked adds the ended sessions of the last run that have not
+// loadEndedLocked adds saved live and ended sessions that have not
 // expired; the record's events then apply over them.
 func (t *Tracker) loadEndedLocked(now time.Time) {
 	if t.StateDir == "" {
@@ -1140,11 +1211,14 @@ func (t *Tracker) loadEndedLocked(now time.Time) {
 		return
 	}
 	for _, s := range saved.Sessions {
-		if s.EndedAt.IsZero() || s.Repository == "" || s.ID == "" || len(s.ID) > maxID || len(s.Agent) > maxAgent || now.Sub(s.EndedAt) > EndedFor {
+		if s.Repository == "" || s.ID == "" || len(s.ID) > maxID || len(s.Agent) > maxAgent || (!s.EndedAt.IsZero() && now.Sub(s.EndedAt) > EndedFor) || (s.EndedAt.IsZero() && now.Sub(s.LastActivityAt) > DropAfter) {
 			continue
 		}
-		s.State = StateEnded
-		t.sessions[key{s.Agent, s.ID}] = &entry{Session: s, ended: true, endedAt: s.EndedAt, linkedAt: now}
+		ended := !s.EndedAt.IsZero()
+		if ended {
+			s.State = StateEnded
+		}
+		t.sessions[key{s.Agent, s.ID}] = &entry{Session: s, ended: ended, endedAt: s.EndedAt, linkedAt: now}
 	}
 }
 
