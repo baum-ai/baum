@@ -1131,14 +1131,15 @@ stays.
   only) can be ended from its right-click menu, which posts `.../end`; the card leaves
   when the session's end arrives. Neither shows on a card until asked. A daemon without `api/agent-requests`
   shows no requests.
-- "Running now" has one card per running session, including one silent for a while
+- "Running now" has one card per running session, ordered by the user's latest
+  prompt (`last_prompt_at`, else its start), newest first, so the agents' steps
+  do not reorder it, including one silent for a while
   whose tool call (a subagent, a long command) has not returned, or, from a daemon
   older than `quiet`, one quiet for a while ("Quiet for 12 min"): the agent, title, branch, pull request link, and the time
   since it started. From the session's `activity` it shows the opening of the agent's
   latest message on one line (its Markdown emphasis and code rendered), else, until
   the agent has said anything, the current step (the tool in its colour and its
-  target), either with a blinking caret while running, still under reduced motion;
-  and "N files touched" before the time;
+  target); and "N files touched" before the time;
   without `activity` it reads "Active 2 min ago". r on its focused row, a click on it, or "Reply when
   it finishes" in its right-click menu, opens "Send when it finishes" while no message is queued (Enter posts a
   message to `api/agent-messages`, Escape closes it); the daemon delivers it when the session's turn
@@ -1160,8 +1161,8 @@ while on, Codex hides its own approval prompt for up to 25 seconds while it wait
 answer from the app.
 
 A session the daemon can bring forward (its `focus`, absent once it ended) offers it
-in its right-click menu, with the key f on its focused card, and as a button before
-Back to sessions on its transcript page: "Focus session" when the daemon can select
+in its right-click menu, with the key f on its focused card, and as a button on
+its transcript page, with the key f there too: "Focus session" when the daemon can select
 its own tmux pane, terminal tab or Claude desktop conversation, "Show window" when
 only the window it runs in. It posts `api/live-sessions/{agent}/{id}/focus` (see
 "Live sessions" in ARCHITECTURE.md). What could not be done (a kitty without remote
@@ -1171,11 +1172,13 @@ the transcript page the button reads "Focusing…" until the daemon answers, and
 note shows on its own line after the actions, a failure as an alert.
 
 Inherited tmux variables without a recorded terminal do not identify a session's
-pane. Codex sessions whose recorded ancestors are only background Codex processes
-and the service manager offer no focus action: they have no terminal or desktop
-window to bring forward. Terminal-based Codex sessions keep their normal focus
-action; navigating to a conversation through a detached Codex app server is not
-supported.
+pane. Codex's shared app server runs hooks separately from its terminal clients;
+baum locates those clients by the thread ID in their terminal titles. Include
+`thread-id` in Codex's `tui.terminal_title` setting. A unique matching tmux pane,
+kitty tab (with remote control), iTerm2 session, Terminal tab, Hyprland window or
+X11 window can then be selected. Shortened thread IDs need at least 24 characters;
+missing or ambiguous titles produce a notice without selecting another session.
+Sessions whose hooks still record their own terminal keep the existing focus path.
 
 A session in Needs you or Waiting for you is not listed again under Running now; a session idle only
 because it went silent, or with a reason this app does not know, stays there. Times
@@ -1192,15 +1195,28 @@ one's message for when it finishes, unless one is queued); a click on another
 card moves both there. A click on a card showing both, or its peek where it
 takes no reply, closes them; one showing only its peek (after Space or Escape
 in the box) gains its reply. Its link (the waiting card's title, else the agent's
-name), which j/k focus and Enter or o follow, opens its transcript. The transcript
-opens at `?page=sessions&session=<agent>:<id>`
-(`src/session-transcript.tsx`), titled with the session's title (else "Claude
-Code session"), with the agent's compaction summary, when it has one, closed above
-the transcript: the session's header (agent, working, waiting
-or ended, repository, branch, pull request, start and last activity) above its
-transcript, drawn with the viewer's `SessionCard` as a review's linked session
-is on the PR page, with the same "Local transcript; secrets and e-mail
-addresses masked." note. It reads
+name), which j/k focus and Enter or o follow, opens its transcript; a click on it
+peeks, as a click anywhere on the card does. For a pointer, Open transcript sits
+at the right of the reply's field, or beside the latest response in a peek
+without one, shown while the pointer is over the card or its peek.
+
+The transcript opens at `?page=sessions&session=<agent>:<id>`
+(`src/session-transcript.tsx`), on the Sessions page's paper. Its bar, titled
+with the session's title (else "Claude Code session") after a back chevron
+(Escape's hint while Alt is held), and two lines of small print under it stay
+at the top of the page while the transcript scrolls: the agent, its state,
+repository, branch, pull request and times, then its models, tokens, files read
+and edited, lines and tool calls. The agent's compaction summary, when it has
+one, is closed above the transcript. The transcript is read in one column held
+to a reading measure, drawn by the viewer's `SessionTranscript` in its `log`
+layout: each prompt under a rule in the app's accent, with the images pasted
+with it as thumbnails that open full size; the agent named once per turn; its
+messages on the way to its reply folded under "N progress updates"; its reply
+in full, set as long text (headings, quieter code, spaced lists and tables). j
+and k move a message at a time (prompts and replies, passing over the progress
+updates), Space shows all of the marked one or less again, and Enter opens it
+on its own, nearly the window's size, where j and k scroll it and Escape closes
+it. It reads
 `GET api/live-sessions/{agent}/{id}/transcript` (see "Live sessions" in
 ARCHITECTURE.md) when it opens, 500 ms after the last of a burst of `live`
 events, and every 3 seconds while the session works (15 while it waits for
@@ -1209,10 +1225,15 @@ events. Each read names the version shown, so an unchanged transcript costs a
 few bytes and draws nothing again; a new version keeps the turns the reader
 opened (the card's source carries the version as its `revision`, so an opened
 turn's activity is read again) and, when the reader is at the end of the page,
-keeps them there; a running session opens at its end. A transcript the daemon
+keeps them there; every session opens at its end, on its latest turn. A transcript the daemon
 does not serve says why (the agent named no transcript, it is outside the
 agent's session folder, the file is gone), and a failed read keeps what is
-shown. Back to sessions, `u` or Esc returns to the list.
+shown. The back chevron, `u` or Esc returns to the list. A reply bar stays at
+the foot of the panel, at the foot of the window while the transcript is short,
+while the session is not over: a reply to a session
+waiting at its prompt, as the Sessions page's Reply sends it, or a message for
+when a running session's turn ends, the queued message in its place once
+there is one. `r` focuses it.
 
 GitHub connection is available in Settings, the first-run
 diagnostics dialog and the desktop setup's first step, which share
@@ -1259,39 +1280,18 @@ the credential survives relaunches. A temporary fixture git clone and fake
 GitHub/model boundaries make the run offline and avoid personal session stores.
 Before the browser suite build its Linux test helper in `oss-test`:
 `CGO_ENABLED=0 go test -c ./internal/uiserver -o app/e2e/fixture`.
-The suite verifies bootstrap into the namespace (every app request stays under
-it; the cookie alone gets 401 on unprefixed `/api/...`), filtering, shared PR
-viewing and reloading a PR deep link, narrow layout, estimation,
-generation/progress and repository settings. The fixture also runs a live
-session tracker over a real hook event record, fed from a marker file in the
-state directory, and a test follows that session from the inbox and the PR page
-through running, idle and ended. A second marker, `live-transcript`, drives
-another session whose hooks name a Claude Code transcript the fixture writes
-under its home's `.claude/projects` (the marker's first line is the state, the
-others the prompts); a test opens it from the Sessions page, adds a turn
-without a hook event and sees it appear, its e-mail address masked, without a
-reload. A third, `live-needs`, also takes `permission` (a Claude Code
-permission prompt notification): a test sees that session move from Running now
-to Needs you, with its message and the caution badge, open its transcript, and
-leave Needs you once it works again. The fixture also runs the
-automatic generation scheduler, fed a discovery snapshot every quarter second;
-a second test writes `push-10` in the state directory to give PR 10 a new head
-and follows the automatic review it starts on the PR page and in the jobs list,
-then turns the global switch off and on. The fixture's fake GitHub also
-answers the update-branch and re-run calls: tests re-run PR 8's failed checks
-and update PR 11's branch from their pages, each writing a marker (`rerun-8`,
-`updated-11`) the fixture's discovery reads and the test removes again. Unit tests cover
-first-run/authorization, namespaced URLs and navigation, each review state,
-unknown costs, selection and filters, automatic settings and notices,
-and the automatic job labels. The fixture also writes two Claude Code sessions in
-the demo clone under its fake home, commits of the person's in the other clone,
-plan usage samples and GitHub's answer to the delivery search, and a test opens
-Analytics and checks the figures they make, at desktop and narrow widths. The
-fixture also serves a real inbox store (`inboxes.json` in its state directory), and
-`e2e/inboxes.spec.ts` makes an inbox from a template, changes a part of its
-sentence and sees the preview say what changed, switches its badge and sees the
-Inbox badge change, and deletes it from the sidebar with Undo. `e2e/inbox-screens.spec.ts`
-takes pictures of the inbox pages, light and dark, only with `INBOX_SCREENSHOTS=1`.
+The suite keeps browser/daemon integration for credential bootstrap in a fresh
+window, namespaced requests, saved review versions, automatic generation after
+a head push and its persisted settings, a live redacted transcript without a
+reload, merging a ready pull request, a walkthrough comment surviving reload and
+submission, agent questions with citations and saved answers, inbox edits and
+Undo through the real store, and a local feature's source transcript. Shared
+viewer behavior is covered by the standalone viewer and hosted UI suites;
+formatting, controls, filtering and state matrices belong in unit/component or
+Go handler tests. Keep browser stories focused on one risky workflow and avoid
+repeating them for themes or collecting screenshots on passing runs.
+`e2e/inbox-screens.spec.ts` takes pictures of the inbox pages, light and dark,
+only with `INBOX_SCREENSHOTS=1`.
 
 Generation usage is retained as provider-reported input, output, cache-read and
 cache-creation buckets, with available TTL, speed, prompt range and model-call
@@ -1310,10 +1310,9 @@ feature build some of whose calls could not be priced) is a lower bound, shown
 "≥" with a note. Pricing only reports: no budget, cap, confirmation or decision
 about a run reads it.
 
-GitHub browser scenarios use the real auth manager/controller and mocked GitHub
-HTTP and credential-store boundaries. The `github-auth-mode` marker selects
-pending, alice/bob approval, denial, expiry, network failure, insufficient scopes
-or locked persistence. Tests cover copy/open, background completion, reload,
-account replacement, disconnect with saved-review access, recovery and the local
-session/namespace/CSRF boundary. Waiting and narrow screenshots go to ignored
-`test-results/` for PR attachments.
+GitHub browser coverage uses the real auth manager/controller with mocked
+GitHub HTTP and credential-store boundaries. It checks device-page navigation,
+clipboard access, reload/background completion, saved-account replacement and
+use by generation, disconnect, and access to saved reviews. Denial, expiry,
+network/scope/persistence failures and the endpoint namespace/CSRF matrix stay
+in component and Go handler tests.

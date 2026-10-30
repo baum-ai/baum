@@ -3,8 +3,10 @@ import { type ReactNode, useEffect, useId, useRef, useState } from "react";
 import { harnessName } from "../agent-names";
 import { harnessBrand } from "../brands";
 import { dayBreaks, promptSegments } from "../conversation";
+import type { TranscriptImage } from "../transcript";
 import { BrandMark } from "./brand-logo";
 import { cn, FOCUS_RING } from "./classnames";
+import { useLogLayout } from "./conversation-layout";
 import { formatCompact, formatTime } from "./format";
 import { Markdown } from "./markdown";
 
@@ -14,7 +16,8 @@ import { Markdown } from "./markdown";
  *  whole transcript and a prompt quoted on its own are built from the same
  *  pieces, so a prompt reads the same wherever it appears. */
 
-/** The conversation's own background, which the bubbles sit on. */
+/** The conversation's own background, which the bubbles sit on. A log has
+ *  none. */
 export function ChatSurface({
   children,
   className,
@@ -24,11 +27,13 @@ export function ChatSurface({
   className?: string;
   plain?: boolean;
 }) {
+  const log = useLogLayout();
   return (
     <div
       className={cn(
-        "flex flex-col rounded-xl p-3 sm:p-4",
-        !plain && "bg-(--surface-sunken)",
+        "flex flex-col",
+        !log && "rounded-xl p-3 sm:p-4",
+        !plain && !log && "bg-(--surface-sunken)",
         className,
       )}
     >
@@ -48,11 +53,13 @@ export function SystemNote({
   className?: string;
   align?: "center" | "start";
 }) {
+  const log = useLogLayout();
   return (
     <p
       className={cn(
-        "flex max-w-full items-center gap-2 rounded-2xl border border-(--border-subtle) bg-(--surface-card) px-3 py-1 text-xs text-(--text-tertiary)",
-        align === "start" ? "self-start text-left" : "self-center text-center",
+        "flex max-w-full items-center gap-2 text-xs text-(--text-tertiary)",
+        !log && "rounded-2xl border border-(--border-subtle) bg-(--surface-card) px-3 py-1",
+        align === "start" || log ? "self-start text-left" : "self-center text-center",
         className,
       )}
     >
@@ -73,6 +80,7 @@ const BUBBLE = "min-w-0 max-w-[88%] rounded-2xl border px-3 pt-2 pb-1.5 sm:max-w
 export function PromptBubble({
   kind = "human",
   text,
+  images,
   author,
   avatar,
   length = [...text].length,
@@ -82,6 +90,8 @@ export function PromptBubble({
 }: {
   kind?: "human" | "instruction";
   text: string;
+  /** The images pasted with it, under its text. */
+  images?: TranscriptImage[];
   author?: string | null;
   avatar?: ReactNode;
   length?: number;
@@ -90,6 +100,38 @@ export function PromptBubble({
   /** The small print in the corner: the turn, and when. */
   meta?: ReactNode;
 }) {
+  const log = useLogLayout();
+  const body = (
+    <CollapsibleText
+      length={length}
+      // Characters as the platform counts them, not UTF-16 units.
+      shown={[...text].length}
+      truncated={truncated}
+      lines={8}
+      onExpand={onExpand}
+      measure={text}
+    >
+      <PromptText text={text} />
+    </CollapsibleText>
+  );
+  const pictures = images?.length ? <PromptImages images={images} /> : null;
+  if (log)
+    return (
+      <div
+        data-message={kind}
+        // Set apart by a rule in the app's accent, not a fill.
+        className="min-w-0 border-l-2 border-(--action-primary) pl-3.5"
+      >
+        <p className="mb-1 flex flex-wrap items-baseline gap-x-2 text-xs text-(--text-tertiary)">
+          {author ? (
+            <span className="min-w-0 truncate font-medium text-(--text-secondary)">{author}</span>
+          ) : null}
+          {meta}
+        </p>
+        {body}
+        {pictures}
+      </div>
+    );
   return (
     <div className="flex items-start justify-end gap-2">
       <div
@@ -101,22 +143,88 @@ export function PromptBubble({
             {author}
           </p>
         ) : null}
-        <CollapsibleText
-          length={length}
-          // Characters as the platform counts them, not UTF-16 units.
-          shown={[...text].length}
-          truncated={truncated}
-          lines={8}
-          onExpand={onExpand}
-          measure={text}
-        >
-          <PromptText text={text} />
-        </CollapsibleText>
+        {body}
+        {pictures}
         {meta ? <BubbleMeta>{meta}</BubbleMeta> : null}
       </div>
       {/* The person, beside their message as a group chat shows a sender. */}
       {avatar === undefined ? null : <span className="w-7 flex-none">{avatar}</span>}
     </div>
+  );
+}
+
+const IMAGE_DIALOG = {
+  width: "auto",
+  maxWidth: "none",
+  maxHeight: "none",
+  padding: 0,
+  border: 0,
+  borderRadius: 0,
+  background: "transparent",
+  boxShadow: "none",
+  overflow: "visible",
+} as const;
+
+/** A prompt's images as thumbnails, each opening at full size in a dialog
+ *  that a click on the image or Escape closes. */
+function PromptImages({ images }: { images: TranscriptImage[] }) {
+  const [open, setOpen] = useState<TranscriptImage | null>(null);
+  const dialog = useRef<HTMLDialogElement>(null);
+  useEffect(() => {
+    const element = dialog.current;
+    if (!element) return;
+    if (open && !element.open) element.showModal();
+    if (!open && element.open) element.close();
+  }, [open]);
+  return (
+    <>
+      <ul className="mt-2 flex flex-wrap gap-2">
+        {images.map((image) => (
+          <li key={image.src}>
+            <button
+              type="button"
+              onClick={() => setOpen(image)}
+              className={cn(
+                "block cursor-zoom-in overflow-hidden rounded-(--radius-md) border border-(--border-subtle) bg-(--surface-sunken) transition-colors hover:border-(--border-strong)",
+                FOCUS_RING,
+              )}
+            >
+              <img
+                src={image.src}
+                alt={image.alt}
+                loading="lazy"
+                className="block h-auto max-h-36 w-auto max-w-full object-contain sm:max-w-80"
+              />
+            </button>
+          </li>
+        ))}
+      </ul>
+      <dialog
+        ref={dialog}
+        aria-label={open?.alt}
+        onClose={() => setOpen(null)}
+        className="m-auto outline-none backdrop:bg-(--surface-scrim)"
+        // Inline, so a host's own dialog box (its width, padding and card)
+        // cannot frame the image.
+        style={IMAGE_DIALOG}
+      >
+        {open ? (
+          // The image closes itself, as Escape does.
+          <button
+            type="button"
+            aria-label="Close image"
+            onClick={() => dialog.current?.close()}
+            className="block cursor-zoom-out border-0 bg-transparent p-0"
+          >
+            <img
+              src={open.src}
+              alt={open.alt}
+              className="block max-h-[90vh] max-w-[90vw] rounded-(--radius-md) object-contain shadow-lg"
+            />
+          </button>
+        ) : null}
+      </dialog>
+    </>
   );
 }
 
@@ -200,7 +308,9 @@ function useMounted(): boolean {
 /** The agent's picture: its harness's mark in a circle, beside the first
  *  bubble of a run; later bubbles keep the column so they line up. */
 export function AgentAvatar({ vendor }: { vendor?: string }) {
+  const log = useLogLayout();
   const brand = vendor === undefined ? null : harnessBrand(vendor);
+  if (log) return null;
   return (
     <span className="flex w-7 flex-none justify-center">
       {vendor !== undefined ? (
@@ -245,11 +355,24 @@ function PromptText({ text }: { text: string }) {
 
 /** An agent's reply, as the markdown agents write: code fences, lists and
  *  inline code render, and raw HTML tags read as written. */
-function MessageText({ text }: { text: string }) {
+function MessageText({
+  text,
+  muted = false,
+  reading = false,
+}: {
+  text: string;
+  muted?: boolean;
+  /** Set as long text to read (Markdown's `reading`). */
+  reading?: boolean;
+}) {
   return (
     <Markdown
       html={false}
-      className="text-base leading-[1.6] text-(--text-primary) [overflow-wrap:anywhere]"
+      reading={reading}
+      className={cn(
+        "text-base leading-[1.6] [overflow-wrap:anywhere]",
+        muted ? "text-(--text-secondary)" : "text-(--text-primary)",
+      )}
     >
       {text}
     </Markdown>
@@ -276,6 +399,7 @@ export function AgentText({
   truncated = false,
   onExpand,
   caption,
+  progress = false,
 }: {
   vendor?: string;
   author?: string;
@@ -284,9 +408,50 @@ export function AgentText({
   truncated?: boolean;
   onExpand?: () => void;
   caption?: string | null;
+  /** In a log, a message the agent wrote on its way to its reply: said
+   *  quietly, as a point in a list, held to a few lines. */
+  progress?: boolean;
 }) {
+  const log = useLogLayout();
+  const quiet = log && progress;
+  const body = (
+    <CollapsibleText
+      length={length ?? [...text].length}
+      // Characters as the platform counts them, not UTF-16 units.
+      shown={[...text].length}
+      truncated={truncated}
+      lines={quiet ? 4 : log ? 24 : 12}
+      onExpand={onExpand}
+      measure={text}
+    >
+      <MessageText text={text} muted={quiet} reading={log && !quiet} />
+    </CollapsibleText>
+  );
+  if (log) {
+    // A run of messages is named once; the later ones keep their model and
+    // time for whoever points at them.
+    return (
+      // A progress note is marked as one, so keys moving a message at a time
+      // can pass over it.
+      <div data-agent-text={quiet ? "progress" : ""} className="flex min-w-0 flex-col gap-1">
+        {vendor !== undefined ? (
+          <AgentByline vendor={vendor} author={author} caption={caption} />
+        ) : null}
+        <div
+          title={vendor === undefined ? (caption ?? undefined) : undefined}
+          className={cn(
+            "min-w-0",
+            quiet &&
+              "relative pl-4 before:absolute before:top-[0.7em] before:left-0.5 before:size-1.5 before:rounded-full before:bg-(--border-strong)",
+          )}
+        >
+          {body}
+        </div>
+      </div>
+    );
+  }
   return (
-    <div className="flex items-start gap-2">
+    <div data-agent-text className="flex items-start gap-2">
       <AgentAvatar vendor={vendor} />
       <div
         className={cn(
@@ -300,20 +465,31 @@ export function AgentText({
             {author ?? harnessName(vendor)}
           </p>
         ) : null}
-        <CollapsibleText
-          length={length ?? [...text].length}
-          // Characters as the platform counts them, not UTF-16 units.
-          shown={[...text].length}
-          truncated={truncated}
-          lines={12}
-          onExpand={onExpand}
-          measure={text}
-        >
-          <MessageText text={text} />
-        </CollapsibleText>
+        {body}
         {caption ? <BubbleMeta>{caption}</BubbleMeta> : null}
       </div>
     </div>
+  );
+}
+
+/** Who is speaking in a log, once above a run of its messages: the agent's
+ *  mark and name, or `author` in its place, then `caption`. */
+export function AgentByline({
+  vendor,
+  author,
+  caption,
+}: {
+  vendor: string;
+  author?: string;
+  caption?: string | null;
+}) {
+  const brand = harnessBrand(vendor);
+  return (
+    <p className="flex flex-wrap items-center gap-x-1.5 text-xs text-(--text-tertiary)">
+      {brand && !author ? <BrandMark brand={brand} size={12} /> : null}
+      <span className="font-medium text-(--text-secondary)">{author ?? harnessName(vendor)}</span>
+      {caption ? <span>{caption}</span> : null}
+    </p>
   );
 }
 

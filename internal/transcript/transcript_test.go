@@ -159,6 +159,51 @@ func TestBuildWithoutAnInnerTraceLeavesTheEffectsUnknown(t *testing.T) {
 	}
 }
 
+// What the harness wrote under the person's name is no prompt: the line
+// naming where a pasted image was saved, and a subagent's report coming back.
+// What the agent does after one is the turn before it going on. The app's own
+// message, from a peer, is a prompt.
+func TestBuildLeavesTheHarnessInputsOutOfThePrompts(t *testing.T) {
+	g := &session.Graph{
+		Sessions: []session.Session{{ID: "root", Outcome: session.OutcomeUnknown}},
+		UserInputs: []session.UserInput{
+			{ID: "p", SessionID: "root", Ordinal: 1, Text: "Look [Image #1]", Kind: session.KindPrompt, Origin: session.OriginHuman},
+			{ID: "meta", SessionID: "root", Ordinal: 2, Text: "[Image: source: /tmp/1.png]", Kind: session.KindPrompt, Origin: session.OriginHuman, Metadata: json.RawMessage(`{"isMeta":true}`)},
+			{ID: "report", SessionID: "root", Ordinal: 3, Text: "<agent-message from=\"a1\">\n[Subagent hand-back] Done.\n</agent-message>", Kind: session.KindPrompt, Origin: session.OriginHuman},
+			{ID: "app", SessionID: "root", Ordinal: 4, Text: "Ship it", Kind: session.KindPrompt, Origin: session.OriginHuman, Metadata: json.RawMessage(`{"isMeta":true,"origin":{"kind":"peer","from":"baum"}}`)},
+		},
+		ModelInvocations: []session.ModelInvocation{
+			{ID: "m1", SessionID: "root", UserInputID: "p", Model: ptr("claude-opus"), StartedAt: at(1)},
+			{ID: "m2", SessionID: "root", UserInputID: "report", Model: ptr("claude-opus"), StartedAt: at(3)},
+		},
+		AssistantMessages: []session.AssistantMessage{
+			{ID: "a1", SessionID: "root", UserInputID: "p", ModelInvocationID: "m1", Text: ptr("Asking a subagent."), Timestamp: at(1)},
+			{ID: "a2", SessionID: "root", UserInputID: "report", ModelInvocationID: "m2", Text: ptr("The subagent is done; all fixed."), Timestamp: at(4)},
+		},
+		ToolUses: []session.ToolUse{
+			{ID: "edit", SessionID: "root", UserInputID: "report", ModelInvocationID: "m2", Name: "Edit", Verb: session.VerbEdit, Input: json.RawMessage(`{"file_path":"a.go"}`), Status: session.StatusOK, Timestamp: at(4)},
+		},
+	}
+	got := build(t, g, Meta{ID: "root"}, DefaultLimits)
+	var ids []string
+	for _, prompt := range got.Session.Prompts {
+		ids = append(ids, prompt.TurnID)
+	}
+	if strings.Join(ids, ",") != "p,app" {
+		t.Fatalf("prompts = %v", ids)
+	}
+	first := got.Session.Prompts[0]
+	if n := len(first.Replies); n != 2 || first.Replies[1].Text != "The subagent is done; all fixed." {
+		t.Errorf("replies = %+v", first.Replies)
+	}
+	if first.Effects == nil || first.Effects.ToolCalls != 1 {
+		t.Errorf("effects = %+v", first.Effects)
+	}
+	if calls := got.Activity["p"].ToolCalls; len(calls) != 1 || calls[0].Name != "Edit" {
+		t.Errorf("activity = %+v", got.Activity["p"])
+	}
+}
+
 func build(t *testing.T, g *session.Graph, meta Meta, limits Limits) Transcript {
 	t.Helper()
 	got, err := Build(g, meta, limits, nil)

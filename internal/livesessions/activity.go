@@ -103,11 +103,19 @@ func (a *activityScan) answered(line []byte) {
 
 // said records something the user wrote without starting a turn: an answer
 // to the agent's question, or a message sent while it works. It is the
-// latest prompt, and the tool calls running go on.
+// latest prompt, and the tool calls running go on. What the harness queues
+// the same way is not the user's (harnessWrote).
 func (a *activityScan) said(text string) {
-	if text = strings.TrimSpace(text); text != "" {
+	if text = strings.TrimSpace(text); text != "" && !harnessWrote(text) {
 		a.prompt = text
 	}
+}
+
+// harnessWrote reports whether a message queued for the agent is the
+// harness's: a background task's notification, or another agent's message,
+// such as a subagent's report.
+func harnessWrote(text string) bool {
+	return strings.HasPrefix(text, "<task-notification>") || strings.HasPrefix(text, "<agent-message ")
 }
 
 // prompted records a user line: it ends the tool calls still open, since the

@@ -24,6 +24,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -187,14 +188,11 @@ func (f *Focuser) Predict(agent string, t *hookevents.Terminal) string {
 	if !f.supported() || t == nil || len(t.Processes) == 0 {
 		return ""
 	}
-	if backgroundCodex(agent, t) {
-		return ""
-	}
 	env := f.environment(t.Env)
 	if f.goos() == "linux" && !hyprland(env) && !x11(env) {
 		return ""
 	}
-	if tmuxTerminalRecorded(t) {
+	if tmuxTerminalRecorded(t) || sharedCodex(agent, t) {
 		return Session
 	}
 	for _, p := range t.Processes {
@@ -222,8 +220,19 @@ func (f *Focuser) Focus(ctx context.Context, agent, id string, t *hookevents.Ter
 	if len(chain) == 0 {
 		return Result{Message: "The session's process has exited."}
 	}
-	if backgroundCodex(agent, t) {
-		return Result{Message: "This Codex session runs in a background process without a terminal or desktop window to bring forward."}
+	if sharedCodex(agent, t) {
+		var located *hookevents.Terminal
+		if t.Env["TMUX"] != "" {
+			var why string
+			located, why = f.codexTmuxPane(ctx, id, t)
+			if why == codexTmuxAmbiguous {
+				return Result{Message: why}
+			}
+		}
+		if located == nil {
+			return f.codexNative(ctx, id, t)
+		}
+		t = located
 	}
 	env := f.environment(t.Env)
 	if agent == "claude-code" && slices.ContainsFunc(chain, func(p hookevents.Process) bool { return claudeDesktopProcess(p.Name) }) {
@@ -267,10 +276,9 @@ func cmpOr(s, fallback string) string {
 	return fallback
 }
 
-// A detached Codex app server can inherit terminal variables from its launcher.
-// Only classify known background ancestors; an unfamiliar application may own
-// a window that the normal fallback can raise.
-func backgroundCodex(agent string, t *hookevents.Terminal) bool {
+// Shared Codex app servers run hooks separately from the TUI clients. Their
+// inherited terminal variables locate the server's launcher, not the thread.
+func sharedCodex(agent string, t *hookevents.Terminal) bool {
 	return agent == "codex" && t.TTY == "" && len(t.Processes) > 0 &&
 		!slices.ContainsFunc(t.Processes, func(p hookevents.Process) bool {
 			return p.Name != "codex" && p.Name != "systemd" && p.Name != "launchd"
@@ -279,6 +287,38 @@ func backgroundCodex(agent string, t *hookevents.Terminal) bool {
 
 func tmuxTerminalRecorded(t *hookevents.Terminal) bool {
 	return t.TTY != "" && t.Env["TMUX"] != "" && t.Env["TMUX_PANE"] != ""
+}
+
+// Codex can include the thread ID as the final part of its terminal title.
+// Long titles shorten the UUID with an ellipsis; require at least 24 characters
+// and one matching pane rather than guessing from a conversation's name.
+func (f *Focuser) codexTmuxPane(ctx context.Context, id string, t *hookevents.Terminal) (*hookevents.Terminal, string) {
+	socket, _, _ := strings.Cut(t.Env["TMUX"], ",")
+	out, err := f.run(ctx, nil, "tmux", "-S", socket, "list-panes", "-a", "-F", "#{pane_id}\t#{pane_tty}\t#{pane_current_command}\t#{pane_title}")
+	if err != nil {
+		return nil, fmt.Sprintf("Could not find Codex's terminal in tmux: %v.", err)
+	}
+	var pane, tty string
+	for line := range strings.SplitSeq(string(out), "\n") {
+		fields := strings.SplitN(line, "\t", 4)
+		if len(fields) != 4 || fields[0] == "" || fields[1] == "" || fields[2] != "codex" {
+			continue
+		}
+		if !codexTitleMatches(fields[3], id) {
+			continue
+		}
+		if pane != "" {
+			return nil, codexTmuxAmbiguous
+		}
+		pane, tty = fields[0], fields[1]
+	}
+	if pane == "" {
+		return nil, "Could not find this Codex session's tmux pane. Open the session in Codex and include thread-id in its tui.terminal_title setting."
+	}
+	located := *t
+	located.Env = maps.Clone(t.Env)
+	located.Env["TMUX_PANE"], located.TTY = pane, tty
+	return &located, ""
 }
 
 // displayEnv are the variables the window commands read, taken from the
@@ -573,6 +613,7 @@ func appBundle(exe string) string {
 // hyprClient is a window as hyprctl lists it.
 type hyprClient struct {
 	Address        string        `json:"address"`
+	Title          string        `json:"title"`
 	PID            int           `json:"pid"`
 	FocusHistoryID int           `json:"focusHistoryID"`
 	Workspace      hyprWorkspace `json:"workspace"`
