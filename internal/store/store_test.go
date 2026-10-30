@@ -275,6 +275,53 @@ func TestRefreshFencesConcurrentWritersAndPreservesHistory(t *testing.T) {
 	}
 }
 
+// A completion of the latest version is fenced as a refresh is: by its
+// identity, its exact bytes and its being the latest.
+func TestCompleteCurrentIsFencedLikeARefresh(t *testing.T) {
+	ctx := context.Background()
+	s := opened(t)
+	key := Key{"owner/repo", 7}
+	saved := version(key, 1)
+	saved.Document = []byte(`{"review":{"repository":"owner/repo","pull_request":7,"version":1,"head":"aaa","generated_at":"2026-10-30T10:00:00Z"},"details":"failed"}`)
+	if err := s.Put(ctx, key, Version{}, saved); err != nil {
+		t.Fatal(err)
+	}
+	moved := []byte(`{"review":{"repository":"owner/repo","pull_request":7,"version":1,"head":"bbb","generated_at":"2026-10-30T10:00:00Z"},"details":"complete"}`)
+	if err := s.CompleteCurrent(ctx, key, saved, moved); err == nil || errors.Is(err, ErrConflict) {
+		t.Fatalf("completed another head: %v", err)
+	}
+	later := []byte(`{"review":{"repository":"owner/repo","pull_request":7,"version":1,"head":"aaa","generated_at":"2026-10-30T11:00:00Z"},"details":"complete"}`)
+	if err := s.CompleteCurrent(ctx, key, saved, later); err == nil || errors.Is(err, ErrConflict) {
+		t.Fatalf("completed another generation: %v", err)
+	}
+	refreshed := []byte(`{"review":{"repository":"owner/repo","pull_request":7,"version":1,"head":"aaa","generated_at":"2026-10-30T10:00:00Z"},"details":"failed","checks":"newer"}`)
+	if err := s.RefreshCurrent(ctx, key, saved, refreshed); err != nil {
+		t.Fatal(err)
+	}
+	completed := []byte(`{"review":{"repository":"owner/repo","pull_request":7,"version":1,"head":"aaa","generated_at":"2026-10-30T10:00:00Z"},"details":"complete"}`)
+	if err := s.CompleteCurrent(ctx, key, saved, completed); !errors.Is(err, ErrConflict) {
+		t.Fatalf("overwrote a refresh: %v", err)
+	}
+	current, err := s.Latest(ctx, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.CompleteCurrent(ctx, key, current, completed); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := s.Latest(ctx, key); err != nil || string(got.Document) != string(completed) || got.Metadata != saved.Metadata {
+		t.Fatalf("latest: %+v %v", got, err)
+	}
+	next := version(key, 2)
+	got, _ := s.Latest(ctx, key)
+	if err := s.Put(ctx, key, got, next); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.CompleteCurrent(ctx, key, got, completed); !errors.Is(err, ErrConflict) {
+		t.Fatalf("completed an older version: %v", err)
+	}
+}
+
 func TestConcurrentRefreshesCompareExactPreviousDocument(t *testing.T) {
 	s := opened(t)
 	ctx := context.Background()
