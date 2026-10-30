@@ -991,7 +991,10 @@ test("captured decisions show on the PR page, in Settings and in Analytics", asy
   expect(errors).toEqual([]);
 });
 
-test("walks through a review, comments on a behaviour and submits the review", async ({ page }) => {
+test("walks through a review, comments on a behaviour and submits the review", async ({
+  page,
+  browser,
+}) => {
   const errors: string[] = [];
   page.on("pageerror", (e) => errors.push(e.message));
   // A render failure is caught by the page's boundary and only logged.
@@ -1024,7 +1027,27 @@ test("walks through a review, comments on a behaviour and submits the review", a
   await walk.getByRole("button", { name: "Save comment", exact: true }).click();
   await expect(walk.getByText("1 comment", { exact: true })).toBeVisible();
   await walk.screenshot({ path: "test-results/walkthrough-stop.png", animations: "disabled" });
-  // A reload keeps the walkthrough, what was looked at and the comment.
+  // Saved drafts belong to this computer, across browser storage and contexts.
+  await expect(walk.getByText("Saving review draft…", { exact: true })).toHaveCount(0);
+  const retainedURL = page.url();
+  await page.evaluate(() => localStorage.clear());
+  const freshContext = await browser.newContext();
+  try {
+    const freshPage = await freshContext.newPage();
+    await freshPage.goto(await launchURL());
+    await freshPage.goto(retainedURL);
+    await expect(
+      freshPage
+        .getByRole("region", { name: "Walkthrough" })
+        .getByText("1 comment", { exact: true }),
+    ).toBeVisible();
+    await expect(
+      freshPage.getByRole("region", { name: "Walkthrough" }).getByText(/1 of .* looked at/),
+    ).toBeVisible();
+  } finally {
+    await freshContext.close();
+  }
+  // A reload also keeps what was looked at and the comment.
   await page.reload();
   await expect(walk.getByText("1 comment", { exact: true })).toBeVisible();
   await expect(page).toHaveURL(/walk=tour/);

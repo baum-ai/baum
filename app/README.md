@@ -137,8 +137,12 @@ wrap-up lists the behaviours not looked at and sends the review. j and k move
 the pick behaviour by behaviour, across chapters; → and ← move a chapter.
 Moving the pick off a behaviour, leaving its chapter or commenting on it marks it
 looked at; seen marks and
-drafts are kept in `localStorage` (`baum.walkthrough`) per repository, pull
-request and review version, the 40 most recent. Submitting posts
+drafts are kept by the daemon in `app.sqlite` per repository, pull
+request and review version, the 40 most recently saved. They survive browser
+storage clearing, a fresh window and a daemon restart. The app loads saved
+progress before writing; queued changes preserve unrelated concurrent edits.
+A failed read or save leaves drafts in the window and shows a retry action.
+Submitting posts
 `POST api/prs/review` with `{repository, pr, head_sha, event, body, comments}`:
 `head_sha` is the reviewed head, each comment `{path, line, side, start_line?,
 body}` sits on the step's anchored lines (or the hunk's first added line), and
@@ -311,13 +315,14 @@ pull request runs. **Add as comment** writes the answer's markdown and one
 `path:start–end` line per citation into the walkthrough draft through
 `walkthrough-model.ts` (`appendToDraft`): after the comment of the stop the
 question's focus names (`draftTarget`), else after the review's overall comment
-(`Progress.note`). It only writes the draft, kept per review version in local
-storage, and calls no GitHub API: the draft is sent only with the review. The
+(`Progress.note`). It only writes the draft, kept per review version in the
+application database, and calls no GitHub API: the draft is sent only with the
+review. The
 confirmation, "Added to your review draft", offers **Undo** (`removeFromDraft`,
 which takes back what was added while it is still at the end of the draft) and
 **Open the draft**, which opens the walkthrough's Everything view and its Submit
-panel. A walkthrough that is open reads its progress again on the
-`PROGRESS_EVENT` the model sends. Chat jobs are not reviews or fixes: `reviewJob` and
+panel. An open walkthrough shares the same hydrated draft record. Chat jobs
+are not reviews or fixes: `reviewJob` and
 `fixJob` ignore them, `chatJobs` lists a pull request's, and the Jobs list and
 transcript page call one "Question on #<pr>". The key `a` is in the shortcuts
 sheet for the pull request page and the walkthrough.
@@ -512,9 +517,11 @@ reviewers, or their branch update did. Their own pull request that only stopped
 being mergeable (a push, checks running) waits uncleared, and nothing is
 cleared for a repository the latest read lists no open pull request of, since
 GitHub may only be unreachable; one that comes back is no longer cleared.
-Snoozes and today's record are kept in this browser's `localStorage`
-(`baum.inbox.v1`) and start again each day, snoozes excepted; nothing reaches
-the daemon. The sidebar's Inbox badge counts the queue without snoozed pull
+Snoozes and today's record are kept in the daemon's `app.sqlite`,
+independently of the browser origin, and start again each local day, snoozes
+excepted. Initial bookkeeping waits until saved state has loaded. Failed reads
+or saves show a retry action and preserve unsaved changes in the window. The
+sidebar's Inbox badge counts the queue without snoozed pull
 requests. It is not the desktop tray's waiting count, which counts only review
 requests and the person's blocked pull requests.
 
@@ -1242,3 +1249,23 @@ or locked persistence. Tests cover copy/open, background completion, reload,
 account replacement, disconnect with saved-review access, recovery and the local
 session/namespace/CSRF boundary. Waiting and narrow screenshots go to ignored
 `test-results/` for PR attachments.
+
+## Durable reading state
+
+`GET` and `PUT api/ui-state/inbox` store the Inbox's local-day seen/cleared
+record, time snoozes and head-based snoozes. `GET` and
+`PUT api/ui-state/walkthrough?key=<repository>#<PR>@v<version>` store seen stops,
+per-stop draft comments and the overall comment. The key is URL encoded;
+`src/api.ts` keeps both routes under the authenticated session namespace.
+The backend contract is in [`internal/uistate`](../internal/uistate/README.md).
+
+Each record has its own revision. The window shares a hydrated record across
+the walkthrough and Ask panel, queues changes while a read or save is in
+flight, and rebases semantic changes on a conflict. A stable mutation ID makes
+a retry safe even when a save committed but its response was lost. An Ask
+answer appends to the current draft; Undo removes only its suffix while no
+later text follows it. Neither operation sends the draft to GitHub.
+
+Sidebar folding and viewer panel/tab layout remain presentation preferences
+in browser storage. Durable inbox records and review drafts do not use or
+import legacy localStorage values.

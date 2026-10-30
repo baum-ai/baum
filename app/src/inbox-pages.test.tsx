@@ -1,3 +1,4 @@
+import { mockStateFetch, seedUIState } from "./ui-state-test-helper";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
@@ -118,7 +119,7 @@ beforeEach(() => {
   );
   vi.stubGlobal(
     "fetch",
-    vi.fn(async (path: string, init?: RequestInit) => {
+    mockStateFetch(async (path: string, init?: RequestInit) => {
       if (path.endsWith("api/inboxes")) {
         if (inboxesHold) await inboxesHold;
         if (inboxesFail) return new Response("no", { status: inboxesFail });
@@ -552,15 +553,12 @@ it("tags the preview's rows with the other inboxes and says what an empty one wa
 
 it("leaves snoozed pull requests out of the preview, as the queue does", async () => {
   const day = new Date();
-  localStorage.setItem(
-    "baum.inbox.v1",
-    JSON.stringify({
-      day: `${day.getFullYear()}-${day.getMonth() + 1}-${day.getDate()}`,
-      seen: {},
-      snoozed: { "acme/demo#3": Date.now() + 3600_000 },
-      held: {},
-    }),
-  );
+  seedUIState("api/ui-state/inbox", {
+    day: `${day.getFullYear()}-${day.getMonth() + 1}-${day.getDate()}`,
+    seen: {},
+    snoozed: { "acme/demo#3": Date.now() + 3600_000 },
+    held: {},
+  });
   await render("?page=inbox-edit&inbox=Acme");
   expect(previewTitles()).toEqual(["Change 1", "Change 2"]);
 });

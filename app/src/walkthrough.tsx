@@ -1,3 +1,4 @@
+import { SavedStateNotice, useUIState } from "./ui-state";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { cn } from "@baum/viewer/components/classnames";
 import {
@@ -27,11 +28,9 @@ import { useShortcuts } from "./shortcuts";
 import {
   buildTour,
   commentedStops,
-  PROGRESS_EVENT,
-  loadProgress,
+  progressState,
   progressKey,
   reviewSubmission,
-  saveProgress,
   type Chapter,
   type Progress,
   type ReviewEvent,
@@ -98,42 +97,30 @@ export function Walkthrough({
 }) {
   const tour = useMemo(() => buildTour(document), [document]);
   const key = progressKey(document);
-  const [progress, setProgress] = useState<Progress>(() => loadProgress(key));
-  useEffect(() => {
-    saveProgress(key, progress);
-  }, [key, progress]);
-  // The stop whose comment is being edited and its note as it was when the
-  // editing began, to keep what the Ask panel adds to it meanwhile.
+  const saved = useUIState(progressState(key));
+  const progress = saved.value;
+  const setProgress = saved.update;
+  // Keep text typed in the open editor while the Ask panel appends or undoes.
   const editingRef = useRef<string | null>(null);
   const editBase = useRef("");
-  // The Ask panel adds an answer to the draft from outside this page.
   useEffect(() => {
-    const changed = (event: Event) => {
-      if ((event as CustomEvent<string>).detail !== key) return;
-      const next = loadProgress(key);
-      setProgress(next);
-      const id = editingRef.current;
-      if (id === null) return;
-      // Text appended to the stop's note since the editing began joins the
-      // text being edited, and text the panel takes back (Undo) leaves it.
-      const stored = next.notes[id] ?? "";
-      const base = editBase.current;
-      if (stored === base) return;
-      if (stored.startsWith(base)) {
-        editBase.current = stored;
-        const added = stored.slice(base.length).replace(/^\s+/, "");
-        setDraft((current) =>
-          current.trim() ? `${current.replace(/\s+$/, "")}\n\n${added}` : added,
-        );
-      } else if (base.startsWith(stored)) {
-        editBase.current = stored;
-        const removed = base.slice(stored.length).trim();
-        if (removed) setDraft((current) => withoutLast(current, removed));
-      }
-    };
-    window.addEventListener(PROGRESS_EVENT, changed);
-    return () => window.removeEventListener(PROGRESS_EVENT, changed);
-  }, [key]);
+    const id = editingRef.current;
+    if (id === null) return;
+    const stored = progress.notes[id] ?? "";
+    const base = editBase.current;
+    if (stored === base) return;
+    if (stored.startsWith(base)) {
+      editBase.current = stored;
+      const added = stored.slice(base.length).replace(/^\s+/, "");
+      setDraft((current) =>
+        current.trim() ? `${current.replace(/\s+$/, "")}\n\n${added}` : added,
+      );
+    } else if (base.startsWith(stored)) {
+      editBase.current = stored;
+      const removed = base.slice(stored.length).trim();
+      if (removed) setDraft((current) => withoutLast(current, removed));
+    }
+  }, [progress.notes]);
   const seen = useMemo(() => new Set(progress.seen), [progress.seen]);
   const commented = (stop: Stop) => Boolean(progress.notes[stop.id]?.trim());
   const done = (stop: Stop) => seen.has(stop.id) || commented(stop);
@@ -242,6 +229,7 @@ export function Walkthrough({
       event.preventDefault();
       return close();
     }
+    if (!saved.ready) return;
     if (mode === "landing") {
       // The overview's one move is into the tour; the page's own keys, such
       // as m to merge, stay with the page.
@@ -289,6 +277,16 @@ export function Walkthrough({
       : `${unseen.length} left`
     : "all looked at";
 
+  if (!saved.ready)
+    return (
+      <section aria-label="Walkthrough" className="walkthrough">
+        <SavedStateNotice state={saved} label="review draft" />
+        <button type="button" className="walk-secondary" onClick={close}>
+          Full review
+        </button>
+      </section>
+    );
+
   if (total === 0)
     return (
       <div className="walkthrough">
@@ -305,6 +303,7 @@ export function Walkthrough({
   if (mode === "landing")
     return (
       <section aria-label="Walkthrough" className="walkthrough">
+        <SavedStateNotice state={saved} label="review draft" />
         <div className="walk-landing">
           <Landing
             entry={entry}
@@ -324,6 +323,7 @@ export function Walkthrough({
 
   return (
     <section aria-label="Walkthrough" className="walkthrough">
+      <SavedStateNotice state={saved} label="review draft" />
       <header className="walk-head">
         <div className="walk-head-inner">
           <div className="walk-head-text">

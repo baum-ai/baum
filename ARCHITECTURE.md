@@ -2070,6 +2070,27 @@ started in `localApplication`:
 
 See its [README](internal/analytics/README.md).
 
+## Durable desktop reading state
+
+`internal/uistate` stores the Inbox's seen/cleared record and snoozes, and the
+walkthrough's seen stops and draft comments, in `app.sqlite`'s `ui` document
+bucket. The records survive changing loopback origins and fresh webviews;
+localStorage is used only for presentation choices. Walkthrough keys include
+repository, pull request and review version; one transaction retains the 40
+most recently saved records, using write order even if the wall clock moves
+backwards.
+
+`GET`/`PUT /api/ui-state/inbox` and
+`GET`/`PUT /api/ui-state/walkthrough?key=…` run inside the existing local
+Host/authentication/Origin/JSON boundary. Each value is a bounded typed record.
+Writes compare that record's revision inside an immediate transaction and
+return the current value on conflict. Mutation IDs acknowledge retried writes
+without replaying an already committed append; the retry ledger is not served.
+The frontend shares a hydrated record, queues semantic changes and rebases
+conflicts without replacing unrelated fields. It never saves initial defaults
+before a successful read. Failed reads/writes keep unsaved text and offer Retry.
+Drafts remain local until the person explicitly submits a GitHub review.
+
 ## Authenticated local application host
 
 `internal/uiserver` binds only IPv4 loopback and owns launch-token exchange,

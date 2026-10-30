@@ -1,3 +1,4 @@
+import { mockStateFetch, seedUIState } from "./ui-state-test-helper";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
@@ -117,7 +118,7 @@ beforeEach(() => {
   );
   vi.stubGlobal(
     "fetch",
-    vi.fn(async (path: string, init?: RequestInit) => {
+    mockStateFetch(async (path: string, init?: RequestInit) => {
       if (path.endsWith("api/inboxes")) {
         if (init?.method === "PUT") {
           const body = JSON.parse(init.body as string) as { revision: number; inboxes: Inbox[] };
@@ -201,18 +202,15 @@ const press = (key: string) =>
   });
 const panelTitle = () => node.querySelector("#upnext-title")?.textContent;
 const snoozeUntilLater = (...keys: string[]) =>
-  localStorage.setItem(
-    "baum.inbox.v1",
-    JSON.stringify({
-      day: (() => {
-        const d = new Date();
-        return `${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate()}`;
-      })(),
-      seen: {},
-      snoozed: Object.fromEntries(keys.map((key) => [key, Date.now() + 3600_000])),
-      held: {},
-    }),
-  );
+  seedUIState("api/ui-state/inbox", {
+    day: (() => {
+      const d = new Date();
+      return `${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate()}`;
+    })(),
+    seen: {},
+    snoozed: Object.fromEntries(keys.map((key) => [key, Date.now() + 3600_000])),
+    held: {},
+  });
 
 it("nests the inboxes under Inbox with their counts and the current one", async () => {
   await render();

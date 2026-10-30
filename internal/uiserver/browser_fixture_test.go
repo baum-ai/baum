@@ -47,6 +47,7 @@ import (
 	"github.com/baum-ai/baum/internal/store"
 	"github.com/baum-ai/baum/internal/transcript"
 	"github.com/baum-ai/baum/internal/uiserver"
+	"github.com/baum-ai/baum/internal/uistate"
 )
 
 // browserDiscovery serves fixed pull requests. Once pushed reports true (the
@@ -589,6 +590,7 @@ func TestLocalAppBrowserFixture(t *testing.T) {
 			}
 			return "", github.ErrNotFound
 		}, PlanUsage: browserPlanUsage, Analytics: insights.Handler(), Timeline: timeline.Handler(),
+			UIState:   (&uistate.Store{Path: filepath.Join(home, "app.sqlite")}).Handler(),
 			Inboxes:   (&inboxes.API{Store: inboxes.Open(filepath.Join(home, "app.sqlite"))}).Handler(),
 			Groups:    (&reviewgroups.API{Store: groups, Registry: registry, Index: index.Build, Changed: func() { _ = server.Publish("index", struct{}{}) }}).Handler(),
 			Decisions: browserDecisionsAPI(decided, registry, live),

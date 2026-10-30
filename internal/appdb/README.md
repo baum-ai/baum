@@ -18,6 +18,7 @@ configuration is still read from `config.toml`.
 | `state/inboxes` | `inboxes`: saved filters and their revision |
 | `state/analytics-actions` | `analytics`: accepted GitHub writes, retained 90 days |
 | `state/plan-usage-history` | `planusage`: plan-window samples, retained 90 days |
+| `ui/inbox`, `ui/walkthrough` | `uistate`: inbox day/snoozes and per-version walkthrough drafts with revisions and retry receipts |
 | `state/agent-requests` | `agentrequests`: Codex approval preference |
 | `cache/analytics-index` | `analytics`: derived per-session statistics without conversation text |
 | `cache/discovery/<hash>` | `discovery`: snapshots/conditional responses and API budgets, partitioned by host, credential identity and repository |

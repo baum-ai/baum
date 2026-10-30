@@ -1,3 +1,4 @@
+import { SavedStateNotice } from "./ui-state";
 import { PreferencesProvider } from "./preferences";
 import { formatCount } from "@baum/viewer/components/format";
 import { UsageDetails } from "./usage";
@@ -858,6 +859,7 @@ function Workspace({ url }: { url: UrlState }) {
           ) : null}
         </div>
         <main className="local-main">
+          <SavedStateNotice state={inbox.persistence} label="inbox state" />
           {error ? (
             <Alert>
               {error} <Button onClick={() => void reload()}>Retry</Button>
