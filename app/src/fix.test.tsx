@@ -241,11 +241,16 @@ it("starts a fix made from a conversation, sending only its ids", async () => {
 });
 
 it("reports why a conversation cannot be fixed from", async () => {
-  vi.stubGlobal("fetch", vi.fn(async () => new Response(
-    JSON.stringify({ blocked_reason: "chat_unavailable" }), { status: 409 },
-  )));
-  await expect(startFix("clone", 8, undefined, { conversation_id: "c1", turn: 1 }))
-    .rejects.toMatchObject({ code: "chat_unavailable" });
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(
+      async () =>
+        new Response(JSON.stringify({ blocked_reason: "chat_unavailable" }), { status: 409 }),
+    ),
+  );
+  await expect(
+    startFix("clone", 8, undefined, { conversation_id: "c1", turn: 1 }),
+  ).rejects.toMatchObject({ code: "chat_unavailable" });
 });
 
 it("names a fix from a conversation and offers it whenever a fix may run", () => {

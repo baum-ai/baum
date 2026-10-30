@@ -1005,7 +1005,11 @@ function Workspace({ url }: { url: UrlState }) {
                 )}
                 generate={() => void generate([selectedEntry], "single")}
                 starting={starting.has(rowKey(selectedEntry))}
-                fix={cloneFor(selectedEntry) ? (chat) => void fix(selectedEntry, undefined, chat) : undefined}
+                fix={
+                  cloneFor(selectedEntry)
+                    ? (chat) => void fix(selectedEntry, undefined, chat)
+                    : undefined
+                }
                 fixState={fixState(selectedEntry)}
                 fixJob={fixJob(selectedEntry, jobs)}
                 fixRuns={fixJobs(selectedEntry, jobs)}

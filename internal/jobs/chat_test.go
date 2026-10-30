@@ -83,8 +83,7 @@ func (e chatExecutor) Execute(ctx context.Context, p Prepared, progress func(Pro
 
 func chatQueue(t *testing.T, run func(context.Context, Prepared, func(Progress)) (*float64, error), changed func(Job)) (*Queue, *fakeExecutor, *fakeChat) {
 	t.Helper()
-	price := 2.0
-	f := &fakeExecutor{head: "first", price: &price, started: make(chan Prepared, 10), release: make(chan struct{})}
+	f := &fakeExecutor{head: "first", started: make(chan Prepared, 10), release: make(chan struct{})}
 	q, err := Open(filepath.Join(privateDir(t), "jobs.json"), chatExecutor{f, run}, 1, changed)
 	if err != nil {
 		t.Fatal(err)
@@ -267,8 +266,7 @@ func TestRestartLeavesARunningQuestionInterrupted(t *testing.T) {
 	if err := os.WriteFile(path, raw, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	price := 2.0
-	q, err := Open(path, &fakeExecutor{price: &price, started: make(chan Prepared, 1), release: make(chan struct{})}, 1, nil)
+	q, err := Open(path, &fakeExecutor{started: make(chan Prepared, 1), release: make(chan struct{})}, 1, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

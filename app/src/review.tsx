@@ -548,7 +548,9 @@ export function LocalReview({
                         </ViewerLink>
                       </Notice>
                     ))}
-                    {fixState.error ? <Alert>Couldn't start the fix: {fixState.error}</Alert> : null}
+                    {fixState.error ? (
+                      <Alert>Couldn't start the fix: {fixState.error}</Alert>
+                    ) : null}
                     {showFix && fixJob ? (
                       <FixNotice key={fixJob.id} job={fixJob} changed={changed} />
                     ) : null}

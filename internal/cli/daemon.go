@@ -645,7 +645,7 @@ func localApplication(paths daemon.Paths, concurrency int, log *slog.Logger) fun
 					wg.Go(func() { hookRefresh.Run(ctx, refreshEvents) })
 				}
 				wg.Go(func() {
-					if err := refresh(ctx); err != nil && ctx.Err() == nil {
+					if err := pricing.Refresh(ctx, state); err != nil && ctx.Err() == nil {
 						log.Warn("price list not refreshed", "error", err)
 					}
 				})
