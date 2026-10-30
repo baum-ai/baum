@@ -153,13 +153,18 @@ func TestDecisionSettingsAndRoute(t *testing.T) {
 			t.Errorf("%s answered %d", body, code)
 		}
 	}
-	// A whole replacement: on and the default model.
-	if code, _ := serve("PUT", "/api/settings/decisions", `{"enabled":true,"backend":"","model":""}`); code != 200 {
-		t.Fatal(code)
+	// A whole replacement: on, an empty backend ("Same as reviews") clears the
+	// chosen one, and the default model.
+	if code, body := serve("PUT", "/api/settings/decisions", `{"enabled":true,"backend":"","model":""}`); code != 200 ||
+		!strings.Contains(body, `"backend":"",`) {
+		t.Fatal(code, body)
 	}
 	prefs, _ := registry.Preferences(context.Background())
 	if prefs.Decisions != (repos.DecisionPreferences{}) {
 		t.Fatalf("stored %+v", prefs.Decisions)
+	}
+	if got := settings(); got.Backend != "" {
+		t.Fatalf("after following the reviews again %+v", got)
 	}
 }
 

@@ -1116,6 +1116,26 @@ it("chooses the data extraction agent apart from the reviews'", async () => {
     "claude-haiku-5-5",
   );
 });
+it("goes back to the reviews' agent from a chosen one", async () => {
+  history.replaceState(null, "", "/s/test-ns/?page=settings&section=reviews");
+  stubDiagnostics(async () => Response.json({ local: true, report: diagnosticsReport }));
+  const puts = stubAutomatic(demoClone, automaticOverview, {
+    backend: "codex",
+    model: "gpt-6.1-sol",
+    decisions: { enabled: true, backend: "claude", model: "", effective_backend: "claude" },
+  });
+  await act(async () => root.render(<App />));
+  const section = node.querySelector('[aria-labelledby="decisions-heading"]')!;
+  const agent = section.querySelector<HTMLSelectElement>("#decisions-agent")!;
+  expect(agent.value).toBe("claude");
+  await choose(agent, "");
+  // The empty backend is sent, not left out, so the daemon clears the saved one.
+  expect(puts.at(-1)).toEqual({
+    path: "/s/test-ns/api/settings/decisions",
+    body: { enabled: true, backend: "", model: "" },
+  });
+  expect(agent.value).toBe("");
+});
 it("says when the reviews' agent cannot extract", async () => {
   history.replaceState(null, "", "/s/test-ns/?page=settings&section=reviews");
   stubDiagnostics(async () => Response.json({ local: true, report: diagnosticsReport }));
