@@ -291,6 +291,9 @@ type Queue struct {
 	executor    Executor
 	jobs        []Job
 	estimates   map[string]Estimate
+	// superseded marks the running details retries a review of a newer head
+	// replaced: their cancellation ends them as superseded.
+	superseded map[string]bool
 	// drafts holds the latest draft of each running staged review, by job.
 	drafts  map[string][]byte
 	cancels map[string]context.CancelFunc
@@ -382,7 +385,7 @@ func Open(path string, executor Executor, concurrency int, changed func(Job)) (*
 		return nil, err
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	q := &Queue{path: path, transcripts: filepath.Join(filepath.Dir(path), "transcripts"), executor: executor, estimates: map[string]Estimate{}, drafts: map[string][]byte{}, cancels: map[string]context.CancelFunc{}, wake: make(chan struct{}, 1), chatWake: make(chan struct{}, 1), ctx: ctx, cancel: cancel, changed: changed, lock: lock}
+	q := &Queue{path: path, transcripts: filepath.Join(filepath.Dir(path), "transcripts"), executor: executor, estimates: map[string]Estimate{}, drafts: map[string][]byte{}, superseded: map[string]bool{}, cancels: map[string]context.CancelFunc{}, wake: make(chan struct{}, 1), chatWake: make(chan struct{}, 1), ctx: ctx, cancel: cancel, changed: changed, lock: lock}
 	opened := false
 	defer func() {
 		if !opened {
@@ -706,6 +709,7 @@ func (q *Queue) SubmitConfirmed(ctx context.Context, estimateID string, c Confir
 	before := append([]Job(nil), q.jobs...)
 	out := []Job{}
 	changes := []Job{}
+	var stop []string
 	for _, p := range prepared {
 		existing := -1
 		for i, j := range q.jobs {
@@ -731,6 +735,10 @@ func (q *Queue) SubmitConfirmed(ctx context.Context, estimateID string, c Confir
 			j.UpdatedAt = time.Now().UTC()
 			changes = append(changes, *j)
 		}
+		if p.Kind == "" && p.Group == "" {
+			superseded, running := q.supersedeDetails(p.Repository, p.PR, p.HeadSHA)
+			changes, stop = append(changes, superseded...), append(stop, running...)
+		}
 		now := time.Now().UTC()
 		j := Job{ID: id(), Prepared: p, State: "queued", Phase: "queued", CreatedAt: now, UpdatedAt: now}
 		q.jobs = append(q.jobs, j)
@@ -741,6 +749,7 @@ func (q *Queue) SubmitConfirmed(ctx context.Context, estimateID string, c Confir
 		q.jobs = before
 		return nil, err
 	}
+	q.stopSuperseded(stop)
 	notifications = changes
 	delete(q.estimates, estimateID)
 	q.signal()
@@ -788,6 +797,40 @@ func (q *Queue) Cancel(jobID string) (Job, error) {
 		return result, nil
 	}
 	return Job{}, os.ErrNotExist
+}
+
+// supersedeDetails cancels, as superseded, the queued retries of the pull
+// request's section details (KindDetails) at a head other than head, which a
+// review of head replaces, and returns them with the running ones, which
+// stopSuperseded stops once the caller has saved. The caller holds mu.
+func (q *Queue) supersedeDetails(repository string, pr int, head string) ([]Job, []string) {
+	var cancelled []Job
+	var running []string
+	for i := range q.jobs {
+		j := &q.jobs[i]
+		if j.Kind != KindDetails || !strings.EqualFold(j.Repository, repository) || j.PR != pr || j.HeadSHA == head {
+			continue
+		}
+		switch j.State {
+		case "queued":
+			j.State, j.Reason, j.Phase, j.UpdatedAt = "cancelled", "superseded", "finished", time.Now().UTC()
+			cancelled = append(cancelled, *j)
+		case "running":
+			running = append(running, j.ID)
+		}
+	}
+	return cancelled, running
+}
+
+// stopSuperseded cancels the running details retries supersedeDetails
+// named; the worker ends each as superseded. The caller holds mu.
+func (q *Queue) stopSuperseded(ids []string) {
+	for _, id := range ids {
+		if cancel := q.cancels[id]; cancel != nil {
+			q.superseded[id] = true
+			cancel()
+		}
+	}
 }
 
 // worker runs queued jobs of its lane: chat jobs (KindChat) when chat is
@@ -955,6 +998,12 @@ func (q *Queue) worker(chat bool) {
 				current.Reason = "interrupted"
 				if q.ctx.Err() != nil {
 					current.State = "interrupted"
+				}
+			}
+			if q.superseded[j.ID] {
+				delete(q.superseded, j.ID)
+				if current.State != "completed" {
+					current.State, current.Reason = "cancelled", "superseded"
 				}
 			}
 			cancel()

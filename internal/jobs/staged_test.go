@@ -358,3 +358,70 @@ func TestPrepareDetailsChecksTheVersion(t *testing.T) {
 		t.Fatalf("moved base: %+v %v", p, err)
 	}
 }
+
+// A review of a new head, manual or automatic, supersedes a retry of the old
+// head's details, running or queued; a review of the same head does not,
+// and the retry never makes an automatic review busy.
+func TestANewHeadSupersedesADetailsRetry(t *testing.T) {
+	ctx := context.Background()
+	details := Item{Clone: "clone", PR: 1, Kind: KindDetails, Version: 1}
+	for _, test := range []struct {
+		name      string
+		automatic bool
+		queued    bool
+	}{{"running, manual", false, false}, {"running, automatic", true, false}, {"queued, manual", false, true}} {
+		t.Run(test.name, func(t *testing.T) {
+			q, f := newQueue(t)
+			if test.queued {
+				// Another pull request's review holds the only worker.
+				if _, err := q.Generate(ctx, []Item{{Clone: "clone", PR: 2}}, "single", false); err != nil {
+					t.Fatal(err)
+				}
+				<-f.started
+			}
+			retry, err := q.Generate(ctx, []Item{details}, "single", false)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !test.queued {
+				<-f.started
+				waitState(t, q, retry[0].ID, "running")
+			}
+			// A review of the same head leaves the retry alone.
+			if _, err := q.Generate(ctx, []Item{{Clone: "clone", PR: 1}}, "single", false); err != nil {
+				t.Fatal(err)
+			}
+			for _, j := range q.List() {
+				if j.ID == retry[0].ID && j.State == "cancelled" {
+					t.Fatal("a review of the same head superseded the retry")
+				}
+			}
+			f.mu.Lock()
+			f.head = "second"
+			f.mu.Unlock()
+			if test.automatic {
+				if _, err := q.SubmitAutomatic(ctx, AutomaticRequest{Item: Item{Clone: "clone", PR: 1}, Repository: "org/repo", Head: "second", Trigger: TriggerNewHead}); err != nil && !errors.Is(err, ErrBusy) {
+					t.Fatal(err)
+				} else if errors.Is(err, ErrBusy) {
+					// Busy only with the review of the old head queued above,
+					// never with the retry.
+					for _, j := range q.List() {
+						if j.Kind == "" && j.PR == 1 && j.State == "queued" {
+							if _, err := q.Cancel(j.ID); err != nil {
+								t.Fatal(err)
+							}
+						}
+					}
+					if _, err := q.SubmitAutomatic(ctx, AutomaticRequest{Item: Item{Clone: "clone", PR: 1}, Repository: "org/repo", Head: "second", Trigger: TriggerNewHead}); err != nil {
+						t.Fatalf("an automatic review of the new head: %v", err)
+					}
+				}
+			} else if _, err := q.Generate(ctx, []Item{{Clone: "clone", PR: 1}}, "single", false); err != nil {
+				t.Fatal(err)
+			}
+			if j := waitState(t, q, retry[0].ID, "cancelled"); j.Reason != "superseded" {
+				t.Fatalf("retry %+v", j)
+			}
+		})
+	}
+}

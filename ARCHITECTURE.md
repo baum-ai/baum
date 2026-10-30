@@ -2678,15 +2678,26 @@ they are, and the bundle is assembled again against the same head, base and
 merge base (anything else fails the job before a model call), with the
 version before it as the previous version, so completion reconciles risks and
 sections as it did. The document keeps the version's number, model, prompt
-version and generation time, and its metadata is unchanged; it replaces the
-version in place with `store.Store.CompleteCurrent`, fenced like
-`RefreshCurrent` by the generation identity, the exact previous bytes and the
-version being the latest. A refresh in the meantime is retried once against
-the refreshed bytes; a second conflict, or a newer version, stands the job
-down, `cancelled` with reason `superseded`, and so does a moved head or a
-replaced version when the job starts (`head_changed`, `version_changed`). It
-never writes the outline or the context again, keeps no agent session, and a
-section that fails again stays `failed`.
+version and generation time, and its metadata is unchanged. The write
+rebases on the version as it is then: the sections it wrote are spliced into
+the latest bytes by ID (`review.DocumentValidator.SpliceSections`), with the
+risk score, the reading time and the risk line counts taken from the
+completion, which derived them from the same sections, and the open agent
+findings per section counted again, so a refresh in the meantime keeps its
+newer checks, threads and sessions. The result is checked with
+`ValidateStored` and replaces the version in place with
+`store.Store.CompleteCurrent`, fenced like `RefreshCurrent` by the generation
+identity, the exact previous bytes and the version being the latest; a
+conflict reads and splices once more. A second conflict, a changed
+generation, or a newer version stands the job down, `cancelled` with reason
+`superseded`, and so does a moved head, base or replaced version when the job
+starts (`head_changed`, `base_changed`, `version_changed`). A review queued
+for the pull request at another head, manual or automatic, supersedes a
+queued or running retry at once (`cancelled`, `superseded`); a retry never
+makes the pull request busy or a head duplicate for the automatic scheduler.
+It never writes the outline or the context again, keeps no agent session, and
+a section that fails again stays `failed`. A failed retry's notice is
+`details_failed`; a completed one has none.
 
 `Queue.SubmitAutomatic` is how the automatic scheduler (see "Automatic
 generation") queues a job nobody confirmed. It prepares the item like a
