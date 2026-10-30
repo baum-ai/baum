@@ -286,7 +286,19 @@ helpers the card uses) and what the host adds:
 - `renderAvatar`, the picture beside a person's prompt;
 - `modelLabel`, which names models (the id by default), and
   `restrictedNote`, the host's reason a restricted session shows only that
-  it is restricted (a neutral one by default).
+  it is restricted (a neutral one by default);
+- `layout`, `chat` (the default, as above) or `log`: a compact log read from
+  the left in one column. Each prompt sits under a rule in the host's
+  `--action-primary`, its number and time above it; the agent is named once
+  a turn, its messages before its last reply fold under "N progress updates",
+  and the reply is set as long text (`Markdown`'s `reading`). Notes are small
+  print, and runs of tool calls start folded. The desktop app's transcript
+  page uses it.
+
+A prompt can carry `images`, each a `src` the host serves and an `alt`: they
+show under its text as thumbnails that open full size in a dialog. Agent
+messages are marked `data-agent-text` (`progress` for the folded ones), for a
+host's keys that move a message at a time.
 
 Leaving one out turns its feature off: no "Agent activity" without
 `loadTurnActivity`, no subagent conversation without `loadSubagentActivity`,
@@ -528,7 +540,13 @@ the highlighter adds no path for contributor markup.
 
 `Markdown` parses raw HTML into sanitized elements, as GitHub renders a
 comment. With `html={false}` it skips that step and raw HTML prints as the
-text it is, for prose that names tags rather than containing them.
+text it is, for prose that names tags rather than containing them. With
+`reading` it sets long text read on its own: headings in the heading font with
+more room above than below (a top-level one ruled off), body-size code spans
+that break after their slashes, grey list markers, lists spaced by depth, and
+tables with their cells at the top and a header on a fill. Code everywhere
+sits on `--code-fill`, a faint tint of the text that reads the same on any
+surface and in the dark theme.
 
 ## Schema and tile types
 

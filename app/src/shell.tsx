@@ -327,13 +327,17 @@ export function PageBar({
   title,
   detail,
   actions,
+  back,
 }: {
   title: ReactNode;
   detail?: ReactNode;
   actions?: ReactNode;
+  /** The way back to where the page was opened from, before its name. */
+  back?: ReactNode;
 }) {
   return (
     <header className="local-page-bar">
+      {back}
       <div className="local-page-title">
         <h1>{title}</h1>
         {detail ? <p>{detail}</p> : null}

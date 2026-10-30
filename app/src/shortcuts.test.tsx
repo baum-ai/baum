@@ -381,7 +381,16 @@ it("lists exactly the keys that work in the sheet", async () => {
   expect(listed("Sessions")).toEqual([...list, "p", "r", "f", "Space", "1–9"]);
   expect(listed("Jobs")).toEqual([...list, "t"]);
   expect(listed("Repositories")).toEqual([...list, "a", "/"]);
-  expect(listed("A session or job transcript")).toEqual(["u", "Esc"]);
+  expect(listed("A session or job transcript")).toEqual([
+    "u",
+    "Esc",
+    "j",
+    "k",
+    "Space",
+    "Enter",
+    "f",
+    "r",
+  ]);
   expect(INBOX_SHORTCUTS.flatMap((s) => s.keys)).toEqual([
     "j",
     "ArrowDown",

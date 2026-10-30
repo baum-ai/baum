@@ -1122,14 +1122,15 @@ stays.
   only) can be ended from its right-click menu, which posts `.../end`; the card leaves
   when the session's end arrives. Neither shows on a card until asked. A daemon without `api/agent-requests`
   shows no requests.
-- "Running now" has one card per running session, including one silent for a while
+- "Running now" has one card per running session, ordered by the user's latest
+  prompt (`last_prompt_at`, else its start), newest first, so the agents' steps
+  do not reorder it, including one silent for a while
   whose tool call (a subagent, a long command) has not returned, or, from a daemon
   older than `quiet`, one quiet for a while ("Quiet for 12 min"): the agent, title, branch, pull request link, and the time
   since it started. From the session's `activity` it shows the opening of the agent's
   latest message on one line (its Markdown emphasis and code rendered), else, until
   the agent has said anything, the current step (the tool in its colour and its
-  target), either with a blinking caret while running, still under reduced motion;
-  and "N files touched" before the time;
+  target); and "N files touched" before the time;
   without `activity` it reads "Active 2 min ago". r on its focused row, a click on it, or "Reply when
   it finishes" in its right-click menu, opens "Send when it finishes" while no message is queued (Enter posts a
   message to `api/agent-messages`, Escape closes it); the daemon delivers it when the session's turn
@@ -1151,8 +1152,8 @@ while on, Codex hides its own approval prompt for up to 25 seconds while it wait
 answer from the app.
 
 A session the daemon can bring forward (its `focus`, absent once it ended) offers it
-in its right-click menu, with the key f on its focused card, and as a button before
-Back to sessions on its transcript page: "Focus session" when the daemon can select
+in its right-click menu, with the key f on its focused card, and as a button on
+its transcript page, with the key f there too: "Focus session" when the daemon can select
 its own tmux pane, terminal tab or Claude desktop conversation, "Show window" when
 only the window it runs in. It posts `api/live-sessions/{agent}/{id}/focus` (see
 "Live sessions" in ARCHITECTURE.md). What could not be done (a kitty without remote
@@ -1162,11 +1163,13 @@ the transcript page the button reads "Focusing…" until the daemon answers, and
 note shows on its own line after the actions, a failure as an alert.
 
 Inherited tmux variables without a recorded terminal do not identify a session's
-pane. Codex sessions whose recorded ancestors are only background Codex processes
-and the service manager offer no focus action: they have no terminal or desktop
-window to bring forward. Terminal-based Codex sessions keep their normal focus
-action; navigating to a conversation through a detached Codex app server is not
-supported.
+pane. Codex's shared app server runs hooks separately from its terminal clients;
+baum locates those clients by the thread ID in their terminal titles. Include
+`thread-id` in Codex's `tui.terminal_title` setting. A unique matching tmux pane,
+kitty tab (with remote control), iTerm2 session, Terminal tab, Hyprland window or
+X11 window can then be selected. Shortened thread IDs need at least 24 characters;
+missing or ambiguous titles produce a notice without selecting another session.
+Sessions whose hooks still record their own terminal keep the existing focus path.
 
 A session in Needs you or Waiting for you is not listed again under Running now; a session idle only
 because it went silent, or with a reason this app does not know, stays there. Times
@@ -1183,15 +1186,28 @@ one's message for when it finishes, unless one is queued); a click on another
 card moves both there. A click on a card showing both, or its peek where it
 takes no reply, closes them; one showing only its peek (after Space or Escape
 in the box) gains its reply. Its link (the waiting card's title, else the agent's
-name), which j/k focus and Enter or o follow, opens its transcript. The transcript
-opens at `?page=sessions&session=<agent>:<id>`
-(`src/session-transcript.tsx`), titled with the session's title (else "Claude
-Code session"), with the agent's compaction summary, when it has one, closed above
-the transcript: the session's header (agent, working, waiting
-or ended, repository, branch, pull request, start and last activity) above its
-transcript, drawn with the viewer's `SessionCard` as a review's linked session
-is on the PR page, with the same "Local transcript; secrets and e-mail
-addresses masked." note. It reads
+name), which j/k focus and Enter or o follow, opens its transcript; a click on it
+peeks, as a click anywhere on the card does. For a pointer, Open transcript sits
+at the right of the reply's field, or beside the latest response in a peek
+without one, shown while the pointer is over the card or its peek.
+
+The transcript opens at `?page=sessions&session=<agent>:<id>`
+(`src/session-transcript.tsx`), on the Sessions page's paper. Its bar, titled
+with the session's title (else "Claude Code session") after a back chevron
+(Escape's hint while Alt is held), and two lines of small print under it stay
+at the top of the page while the transcript scrolls: the agent, its state,
+repository, branch, pull request and times, then its models, tokens, files read
+and edited, lines and tool calls. The agent's compaction summary, when it has
+one, is closed above the transcript. The transcript is read in one column held
+to a reading measure, drawn by the viewer's `SessionTranscript` in its `log`
+layout: each prompt under a rule in the app's accent, with the images pasted
+with it as thumbnails that open full size; the agent named once per turn; its
+messages on the way to its reply folded under "N progress updates"; its reply
+in full, set as long text (headings, quieter code, spaced lists and tables). j
+and k move a message at a time (prompts and replies, passing over the progress
+updates), Space shows all of the marked one or less again, and Enter opens it
+on its own, nearly the window's size, where j and k scroll it and Escape closes
+it. It reads
 `GET api/live-sessions/{agent}/{id}/transcript` (see "Live sessions" in
 ARCHITECTURE.md) when it opens, 500 ms after the last of a burst of `live`
 events, and every 3 seconds while the session works (15 while it waits for
@@ -1200,10 +1216,15 @@ events. Each read names the version shown, so an unchanged transcript costs a
 few bytes and draws nothing again; a new version keeps the turns the reader
 opened (the card's source carries the version as its `revision`, so an opened
 turn's activity is read again) and, when the reader is at the end of the page,
-keeps them there; a running session opens at its end. A transcript the daemon
+keeps them there; every session opens at its end, on its latest turn. A transcript the daemon
 does not serve says why (the agent named no transcript, it is outside the
 agent's session folder, the file is gone), and a failed read keeps what is
-shown. Back to sessions, `u` or Esc returns to the list.
+shown. The back chevron, `u` or Esc returns to the list. A reply bar stays at
+the foot of the panel, at the foot of the window while the transcript is short,
+while the session is not over: a reply to a session
+waiting at its prompt, as the Sessions page's Reply sends it, or a message for
+when a running session's turn ends, the queued message in its place once
+there is one. `r` focuses it.
 
 GitHub connection is available in Settings, the first-run
 diagnostics dialog and the desktop setup's first step, which share

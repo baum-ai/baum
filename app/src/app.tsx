@@ -965,6 +965,9 @@ function Workspace({ url }: { url: UrlState }) {
               agent={openAgent}
               id={openID}
               session={live.find((s) => s.agent === openAgent && s.session_id === openID) ?? null}
+              queued={agentRequests.messages.find(
+                (m) => m.agent === openAgent && m.session_id === openID,
+              )}
               tick={liveTick}
               prHref={sessionPR}
               Link={LocalLink}

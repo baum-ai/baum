@@ -509,6 +509,23 @@ body {
   font-size: var(--text-xs);
   color: var(--text-tertiary);
 }
+/* A page's way back, before its name: the glyph alone, its key hinted. */
+.local-page-back {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  min-width: 2rem;
+  height: 2rem;
+  margin: 0 -0.5rem 0 -0.5rem;
+  padding: 0 0.25rem;
+  border-radius: var(--radius-md);
+  color: var(--text-secondary);
+}
+.local-page-back:hover {
+  background: var(--surface-hover);
+  color: var(--text-primary);
+}
 .local-page-actions {
   display: flex;
   flex-wrap: wrap;
@@ -2926,6 +2943,47 @@ a.local-session-pr:hover {
   font-size: var(--text-xs);
   line-height: 1.55;
 }
+/* The response, the way into the transcript at its right. */
+.local-feed-peek-response {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 1rem;
+}
+.local-feed-peek-response .local-feed-open-transcript {
+  position: sticky;
+  top: 0;
+}
+/* A reply's field, the way into the transcript at the row's right. */
+.local-feed-send-row {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+.local-feed-send-row > :first-child {
+  flex: 1;
+  min-width: 0;
+}
+.local-feed-send-row .local-feed-open-transcript {
+  flex: none;
+  margin-left: auto;
+}
+/* Shown while the pointer is over its card or peek, or Tab is on it (Enter
+   opens a transcript from the keys); it keeps its place meanwhile, so
+   nothing moves when it shows. */
+:is(.local-feed-card, .local-feed-peek-row) .local-feed-open-transcript {
+  opacity: 0;
+  transition: opacity 0.12s ease-out;
+}
+:is(.local-feed-card, .local-feed-peek-row):hover .local-feed-open-transcript,
+.local-feed-open-transcript:focus-visible {
+  opacity: 1;
+}
+@media (hover: none) {
+  :is(.local-feed-card, .local-feed-peek-row) .local-feed-open-transcript {
+    opacity: 1;
+  }
+}
 @media (width < 48rem) {
   .local-feed-peek {
     grid-template-columns: minmax(0, 1fr);
@@ -2948,13 +3006,13 @@ a.local-session-pr:hover {
 .local-feed-peek-said :not(pre) > code {
   padding: 0.05rem 0.3rem;
   border-radius: 4px;
-  background: var(--un-hairline);
+  background: var(--code-fill);
   font-size: 12px;
 }
 .local-feed-peek-said pre {
   padding: 0.5rem 0.75rem;
   border-radius: 6px;
-  background: var(--un-hover);
+  background: var(--code-fill);
   font-size: 12px;
   line-height: 1.5;
 }
@@ -2981,12 +3039,6 @@ a.local-session-pr:hover {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.local-feed-said .local-feed-caret {
-  flex: none;
-  width: 6px;
-  height: 12px;
-  margin-left: 4px;
-}
 .local-feed-said code {
   font-size: 12px;
 }
@@ -3011,15 +3063,6 @@ a.local-session-pr:hover {
 .local-feed-tool.bash {
   color: var(--feed-bash);
 }
-.local-feed-caret {
-  display: inline-block;
-  width: 7px;
-  height: 14px;
-  margin-left: 2px;
-  background: var(--text-primary);
-  vertical-align: -2px;
-  animation: local-feed-blink 1s infinite;
-}
 .local-feed-sub {
   color: var(--text-secondary);
   font-size: var(--text-xs);
@@ -3038,9 +3081,10 @@ a.local-session-pr:hover {
   border-radius: var(--radius-md);
   background: var(--un-panel);
 }
+/* Ringed in the sand of secondary things, not the green of the Send in it. */
 .local-feed-compose:focus-within {
-  border-color: var(--un-focus);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--un-focus) 14%, transparent);
+  border-color: var(--un-mark);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--un-mark) 28%, transparent);
 }
 .local-feed-compose input {
   flex: 1;
@@ -3233,16 +3277,6 @@ a.local-session-pr:hover {
     width: calc(100vw - 2rem);
   }
 }
-@keyframes local-feed-blink {
-  0%,
-  49% {
-    opacity: 1;
-  }
-  50%,
-  100% {
-    opacity: 0;
-  }
-}
 @keyframes local-feed-rise {
   from {
     opacity: 0;
@@ -3254,32 +3288,190 @@ a.local-session-pr:hover {
   }
 }
 @media (prefers-reduced-motion: reduce) {
-  .local-feed-caret,
   .local-feed-card,
   .local-toast {
     animation: none;
   }
 }
 
-/* The session at the top of its transcript: the row's three columns, on its
-   own panel. */
-.local-session-head {
+/* A session's transcript, on the Sessions page's paper: its panels drawn in
+   the inbox's palette (`--un-*`) on the paper itself, not white. */
+.local-frame:has(.local-session-page) {
+  background: var(--un-panel);
+}
+.local-frame:has(.local-session-page) .local-page-bar {
+  border-bottom-color: var(--un-line);
+}
+.local-session-page,
+.local-session-top {
+  --text-primary: var(--un-ink);
+  --text-secondary: var(--un-ink-soft);
+  --text-tertiary: var(--un-muted);
+  --surface-card: var(--un-panel);
+  --surface-sunken: var(--un-hairline);
+  --surface-wash: var(--un-hairline);
+  --border-default: var(--un-line-strong);
+  --border-strong: var(--un-line-strong);
+  --border-subtle: var(--un-line);
+  --action-secondary-hover: var(--un-hover);
+}
+.local-session-page .local-panel {
+  border-color: var(--un-line);
+}
+/* The page reads as a document: one column held to a reading measure, under
+   the bar and the session, which stay at the top of the panel. */
+.local-session-top {
+  position: sticky;
+  z-index: 3;
+  top: 0;
+  background: var(--un-panel);
+  border-bottom: 1px solid var(--un-line);
+}
+.local-session-top .local-page-bar {
+  border-bottom: 0;
+}
+/* Under the title, aligned with it: who, where and when on one line, what
+   the session did on the next, each a run of facts between dots. */
+.local-session-top-body {
   display: grid;
-  grid-template-columns: 12rem minmax(0, 1fr) 10rem;
+  gap: 0.25rem;
+  padding: 0 1.5rem 0.75rem;
+}
+/* The message j or k moved to, washed in the selection's sand, a little
+   wider than its text. */
+.local-message-current {
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--surface-selected) 70%, transparent);
+  box-shadow: 0 0 0 0.5rem color-mix(in srgb, var(--surface-selected) 70%, transparent);
+}
+
+/* A message opened on its own (Enter): nearly the window's size, on the
+   transcript's paper, its text at the reading measure. */
+dialog.local-message-reader {
+  width: min(60rem, calc(100vw - 4rem));
+  max-width: none;
+  height: calc(100vh - 4rem);
+  max-height: none;
+  padding: 0;
+  overflow: hidden;
+  background: var(--un-panel);
+}
+dialog.local-message-reader[open] {
+  display: flex;
+  flex-direction: column;
+}
+.local-message-reader-bar {
+  display: flex;
+  justify-content: flex-end;
+  padding: 0.75rem 1rem;
+  border-bottom: 1px solid var(--un-line);
+}
+.local-message-reader-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 1.5rem 2rem 2.5rem;
+  outline: none;
+}
+.local-message-reader-body > * {
+  max-width: 40rem;
+  margin-inline: auto;
+}
+
+/* The reply at the foot of the transcript, on the paper and in its column,
+   kept in view as the bar at the top is. */
+.local-reply-bar {
+  position: sticky;
+  z-index: 3;
+  bottom: 0;
+  padding: 0.75rem 1.5rem;
+  background: var(--un-panel);
+  border-top: 1px solid var(--un-line);
+}
+.local-reply-bar .local-feed-send {
+  max-width: 42rem;
+  margin-inline: auto;
+}
+.local-reply-bar .local-feed-compose {
+  max-width: none;
+  margin-top: 0;
+  padding-block: 0.375rem;
+}
+.local-reply-bar .local-feed-compose input {
+  font-size: var(--text-base);
+}
+/* The transcript takes the panel's height, so the reply sits at its foot
+   while the session is still short. */
+.local-main:has(.local-reply-bar) {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  padding-bottom: 0;
+}
+.local-main:has(.local-reply-bar) .local-page-body.local-session-page {
+  flex: 1;
+  align-content: start;
+}
+.local-page-body.local-session-page {
+  box-sizing: border-box;
+  /* Held to the column: a wide code block scrolls in it rather than
+     widening the page. */
+  grid-template-columns: minmax(0, 1fr);
+  width: 100%;
+  max-width: calc(42rem + 3rem);
+  margin-inline: auto;
+  padding: 1rem 1.5rem 3rem;
+  gap: 0;
+}
+.local-session-line {
+  display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  column-gap: 1.5rem;
-  row-gap: 0.5rem;
-  padding: 0.875rem 1.25rem;
+  gap: 0.25rem 0;
+  min-width: 0;
+  margin: 0;
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+}
+.local-session-line > * + *::before {
+  content: "·";
+  margin: 0 0.5rem;
+  color: var(--text-tertiary);
+}
+.local-session-line img {
+  width: 14px;
+  height: 14px;
+}
+.local-session-line .local-session-state {
+  padding-left: 0;
+}
+/* These lay their dot out as their own first item, already a gap away. */
+.local-session-line > .local-session-state::before,
+.local-session-line > .local-session-where::before {
+  margin-right: 0;
+}
+.local-session-line .local-session-where {
+  flex-wrap: nowrap;
 }
 .local-transcript {
   display: grid;
-  gap: 0.5rem;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 1rem;
   min-width: 0;
+}
+.local-session-facts {
+  color: var(--text-tertiary);
+}
+.local-session-added {
+  color: var(--status-positive);
+}
+.local-session-removed {
+  color: var(--status-critical);
 }
 .local-transcript-note {
   margin: 0;
   font-size: var(--text-xs);
-  color: var(--text-secondary);
+  color: var(--text-tertiary);
 }
 .local-transcript-card {
   min-width: 0;
@@ -3472,8 +3664,7 @@ a.local-session-pr:hover {
 }
 @media (width < 64rem) {
   .local-session-row,
-  .local-session-row:has(.local-session-open),
-  .local-session-head {
+  .local-session-row:has(.local-session-open) {
     grid-template-columns: minmax(0, 1fr) auto;
   }
   .local-session-where,

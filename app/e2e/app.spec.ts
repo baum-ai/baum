@@ -556,20 +556,20 @@ test("a session's transcript opens from the Sessions page and grows without a re
   await writeFile(marker, "running\nFix the flaky retry test\n");
   await page.goto(await launchURL());
   await page.getByRole("link", { name: "Sessions", exact: true }).first().click();
-  const open = page
-    .getByRole("region", { name: "Running now", exact: true })
-    .getByRole("link", { name: /^Open transcript/ });
-  await expect(open).toBeVisible({ timeout: 10000 });
+  const runningNow = page.getByRole("region", { name: "Running now", exact: true });
+  const title = runningNow.getByRole("link", { name: /^Open transcript/ });
+  await expect(title).toBeVisible({ timeout: 10000 });
   await page.screenshot({ path: "test-results/sessions-running.png", animations: "disabled" });
-  await open.click();
+  // A click on the card's title peeks, as a click anywhere on it does; the
+  // transcript opens from Open transcript beside the reply.
+  await title.click();
+  await expect(page.getByRole("region", { name: /^Preview of/ })).toBeVisible();
+  await runningNow.getByRole("link", { name: "Open transcript", exact: true }).first().click();
   // The session has no title of its own yet, so its first prompt names it.
   await expect(
     page.getByRole("heading", { name: "Fix the flaky retry test", exact: true }),
   ).toBeVisible();
   await expect(page.getByRole("region", { name: "Session", exact: true })).toContainText("Working");
-  await expect(
-    page.getByText("Local transcript; secrets and e-mail addresses masked."),
-  ).toBeVisible();
   const transcript = page.getByRole("region", { name: "Transcript", exact: true });
   // The card's title is the session's first prompt too; the prompts are the
   // conversation's list items below it.
@@ -633,8 +633,9 @@ test("a session asking for a permission shows in Needs you and leaves once it wo
   // The sidebar counts it, in the caution tone.
   const badge = page.locator('a[href$="?page=sessions"] .local-rail-badge.caution');
   await expect(badge).toHaveText("1");
-  // Its transcript opens from the row.
-  await row.getByRole("link", { name: /^Open transcript/ }).click();
+  // Its transcript opens from the row's link, by the keys.
+  await row.getByRole("link", { name: /^Open transcript/ }).focus();
+  await page.keyboard.press("Enter");
   await expect(page).toHaveURL(/[?&]session=claude-code%3Aneeds-e2e/);
   await page.keyboard.press("u");
   // Given the permission, the agent works again: the row goes back.

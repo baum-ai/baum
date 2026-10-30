@@ -202,15 +202,31 @@ export function SessionWhere({
 export function FocusSession({
   session: s,
   children,
+  hotkey = false,
 }: {
   session: LiveSession;
   /** The actions after it; its note follows them, on its own line. */
   children?: ReactNode;
+  /** `f` presses it, as on the Sessions page, its hint drawn on it. */
+  hotkey?: boolean;
 }) {
   const [state, setState] = useState<{ busy: boolean; note?: string; failed?: boolean }>({
     busy: false,
   });
-  if (!s.focus || s.state === "ended") return children;
+  const button = useRef<HTMLButtonElement>(null);
+  const offered = Boolean(s.focus) && s.state !== "ended";
+  useEffect(() => {
+    if (!hotkey || !offered) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== "f" || event.metaKey || event.ctrlKey || event.altKey) return;
+      if (event.target !== document.body || document.querySelector("dialog[open]")) return;
+      event.preventDefault();
+      button.current?.click();
+    };
+    addEventListener("keydown", onKey);
+    return () => removeEventListener("keydown", onKey);
+  }, [hotkey, offered]);
+  if (!offered) return children;
   const label = s.focus === "session" ? "Focus session" : "Show window";
   const focus = async () => {
     setState({ busy: true });
@@ -228,6 +244,7 @@ export function FocusSession({
   return (
     <>
       <button
+        ref={button}
         type="button"
         className="inbox-action local-session-focus"
         disabled={state.busy}
@@ -236,6 +253,11 @@ export function FocusSession({
         onClick={() => void focus()}
       >
         {state.busy ? "Focusing…" : label}
+        {hotkey ? (
+          <kbd aria-hidden="true" className="key-hint">
+            f
+          </kbd>
+        ) : null}
       </button>
       {children}
       {state.note ? (
@@ -835,17 +857,26 @@ function Reply({
   session: s,
   onDone,
   close,
+  docked = false,
+  aside,
 }: {
   session: LiveSession;
   onDone: (notice: Notice) => void;
   close: () => void;
+  /** Beside the field, at the right: the way into the transcript. */
+  aside?: ReactNode;
+  /** Always open, at the foot of the session's transcript: it waits to be
+   *  focused, Escape leaves it, and a reply sent empties it. */
+  docked?: boolean;
 }) {
   const id = useId();
   const input = useRef<HTMLInputElement>(null);
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-  useEffect(() => input.current?.focus(), []);
+  useEffect(() => {
+    if (!docked) input.current?.focus();
+  }, [docked]);
   const submit = async (event: FormEvent) => {
     event.preventDefault();
     const message = text.trim();
@@ -855,6 +886,7 @@ function Reply({
     try {
       await messageSession(s.agent, s.session_id, message);
       onDone({ title: "Replied", detail: message, agent: s.agent, session: sessionName(s) });
+      setText("");
       close();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Could not reach the session.");
@@ -864,33 +896,37 @@ function Reply({
   };
   return (
     <div className="local-feed-send">
-      <form className="local-feed-compose" onSubmit={(event) => void submit(event)}>
-        <label htmlFor={id} className="sr-only">
-          Reply
-        </label>
-        <input
-          ref={input}
-          id={id}
-          value={text}
-          maxLength={10000}
-          disabled={busy}
-          placeholder="Reply…"
-          onChange={(event) => setText(event.target.value)}
-          onKeyDown={(event) => {
-            if (event.key !== "Escape") return;
-            event.preventDefault();
-            close();
-          }}
-        />
-        <span className="local-feed-compose-hint" aria-hidden="true">
-          Enter to send · Esc to close
-        </span>
-        <SendButton
-          label={labelFor("Send reply", s)}
-          busy={busy}
-          disabled={busy || text.trim() === ""}
-        />
-      </form>
+      <div className="local-feed-send-row">
+        <form className="local-feed-compose" onSubmit={(event) => void submit(event)}>
+          <label htmlFor={id} className="sr-only">
+            Reply
+          </label>
+          <input
+            ref={input}
+            id={id}
+            value={text}
+            maxLength={10000}
+            disabled={busy}
+            placeholder="Reply…"
+            onChange={(event) => setText(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key !== "Escape") return;
+              event.preventDefault();
+              if (docked) input.current?.blur();
+              else close();
+            }}
+          />
+          <span className="local-feed-compose-hint" aria-hidden="true">
+            {docked ? "Enter to send" : "Enter to send · Esc to close"}
+          </span>
+          <SendButton
+            label={labelFor("Send reply", s)}
+            busy={busy}
+            disabled={busy || text.trim() === ""}
+          />
+        </form>
+        {aside}
+      </div>
       {error ? (
         <p role="alert" className="local-feed-note error">
           {error}
@@ -911,30 +947,68 @@ const originalRequest = (summary: string) =>
 
 /** A session's preview under its row (Space), the row grown open: what it
  *  was started for, when its compaction summary says, and the agent's latest
- *  response, rendered, each beside its label. What the user last wrote is on
- *  the row already. */
-function SessionPeek({ session: s }: { session: LiveSession }) {
+ *  response, rendered, each beside its label, the way into its transcript
+ *  beside the response for a pointer, as Enter is for the keys. What the user last
+ *  wrote is on the row already. */
+function SessionPeek({
+  session: s,
+  Link,
+  withOpen,
+}: {
+  session: LiveSession;
+  Link: ComponentType<ViewerLinkProps>;
+  /** Whether it offers the transcript itself: not while the card's reply,
+   *  which offers it beside the field, is open. */
+  withOpen: boolean;
+}) {
   const said = s.activity?.last_message;
   const asked = s.summary ? originalRequest(s.summary) : "";
   return (
-    <dl className="local-feed-peek" aria-label={`Preview of ${sessionName(s)}`} role="region">
-      {asked ? (
-        <>
-          <dt>Original request</dt>
-          <dd className="local-feed-peek-asked">{asked}</dd>
-        </>
+    <div aria-label={`Preview of ${sessionName(s)}`} role="region">
+      <dl className="local-feed-peek">
+        {asked ? (
+          <>
+            <dt>Original request</dt>
+            <dd className="local-feed-peek-asked">{asked}</dd>
+          </>
+        ) : null}
+        <dt>Latest response</dt>
+        <dd className="local-feed-peek-response">
+          {said ? (
+            <Markdown html={false} className="local-feed-peek-said">
+              {said}
+            </Markdown>
+          ) : (
+            <span className="local-feed-note">{agentName(s.agent)} has said nothing yet.</span>
+          )}
+          {withOpen ? <OpenTranscript session={s} Link={Link} hint /> : null}
+        </dd>
+      </dl>
+    </div>
+  );
+}
+
+/** The way into a session's transcript for a pointer, beside its reply or
+ *  in its peek; `hint` draws Enter on it, the key that opens it from its
+ *  row (in the reply, Enter sends). */
+function OpenTranscript({
+  session: s,
+  Link,
+  hint = false,
+}: {
+  session: LiveSession;
+  Link: ComponentType<ViewerLinkProps>;
+  hint?: boolean;
+}) {
+  return (
+    <Link href={transcriptHref(s)} className="inbox-action local-feed-open-transcript">
+      Open transcript
+      {hint ? (
+        <kbd aria-hidden="true" className="key-hint">
+          Enter
+        </kbd>
       ) : null}
-      <dt>Latest response</dt>
-      <dd>
-        {said ? (
-          <Markdown html={false} className="local-feed-peek-said">
-            {said}
-          </Markdown>
-        ) : (
-          <span className="local-feed-note">{agentName(s.agent)} has said nothing yet.</span>
-        )}
-      </dd>
-    </dl>
+    </Link>
   );
 }
 
@@ -953,6 +1027,7 @@ function WaitingCard({
   since,
   now,
   open,
+  Link,
   row,
   onDone,
   replying,
@@ -962,6 +1037,7 @@ function WaitingCard({
   since: string;
   now: number;
   open: (s: LiveSession, children: ReactNode) => ReactNode;
+  Link: ComponentType<ViewerLinkProps>;
   row: RowProps;
   /** Whether its reply is open (Reply). */
   replying: boolean;
@@ -1005,7 +1081,14 @@ function WaitingCard({
       ) : null}
       {s.waiting_message ? <p className="local-needs-message">{s.waiting_message}</p> : null}
       {waitNotes[reason] ? <p className="local-feed-note">{waitNotes[reason]}</p> : null}
-      {s.messageable && replying ? <Reply session={s} onDone={onDone} close={closeReply} /> : null}
+      {s.messageable && replying ? (
+        <Reply
+          session={s}
+          onDone={onDone}
+          close={closeReply}
+          aside={<OpenTranscript session={s} Link={Link} />}
+        />
+      ) : null}
     </li>
   );
 }
@@ -1018,6 +1101,8 @@ function SendWhenFinished({
   onDone,
   replying,
   close,
+  docked = false,
+  aside,
 }: {
   session: LiveSession;
   queued?: AgentMessage;
@@ -1027,6 +1112,11 @@ function SendWhenFinished({
    *  either way. */
   replying: boolean;
   close: () => void;
+  /** Always open, at the foot of the session's transcript, as a docked
+   *  Reply. */
+  docked?: boolean;
+  /** Beside the field or the queued message, at the right. */
+  aside?: ReactNode;
 }) {
   const id = useId();
   const input = useRef<HTMLInputElement>(null);
@@ -1039,8 +1129,8 @@ function SendWhenFinished({
   useEffect(() => setLocal(undefined), [queued?.text]);
   const shown = local !== undefined ? local : (queued?.text ?? null);
   useEffect(() => {
-    if (replying) input.current?.focus();
-  }, [replying]);
+    if (replying && !docked) input.current?.focus();
+  }, [replying, docked]);
   const run = async (task: () => Promise<unknown>, after: () => void) => {
     setBusy(true);
     setError("");
@@ -1074,53 +1164,57 @@ function SendWhenFinished({
   };
   return (
     <div className="local-feed-send">
-      {shown !== null ? (
-        <div className="local-feed-queued">
-          <p>Queued for when it finishes: “{shown}”</p>
-          <Button
-            variant="secondary"
-            size="compact"
-            aria-label={labelFor("Cancel queued message", s)}
-            disabled={busy}
-            onClick={() =>
-              void run(
-                () => cancelMessage(s.agent, s.session_id),
-                () => setLocal(null),
-              )
-            }
-          >
-            {busy ? "Cancelling…" : "Cancel"}
-          </Button>
-        </div>
-      ) : replying ? (
-        <form className="local-feed-compose" onSubmit={submit}>
-          <label htmlFor={id} className="sr-only">
-            Send when it finishes
-          </label>
-          <input
-            ref={input}
-            id={id}
-            value={text}
-            maxLength={4000}
-            disabled={busy}
-            placeholder="Message for when its turn ends…"
-            onChange={(event) => setText(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key !== "Escape") return;
-              event.preventDefault();
-              close();
-            }}
-          />
-          <span className="local-feed-compose-hint" aria-hidden="true">
-            Enter to send · Esc to close
-          </span>
-          <SendButton
-            label={labelFor("Send message", s)}
-            busy={busy}
-            disabled={busy || text.trim() === ""}
-          />
-        </form>
-      ) : null}
+      <div className="local-feed-send-row">
+        {shown !== null ? (
+          <div className="local-feed-queued">
+            <p>Queued for when it finishes: “{shown}”</p>
+            <Button
+              variant="secondary"
+              size="compact"
+              aria-label={labelFor("Cancel queued message", s)}
+              disabled={busy}
+              onClick={() =>
+                void run(
+                  () => cancelMessage(s.agent, s.session_id),
+                  () => setLocal(null),
+                )
+              }
+            >
+              {busy ? "Cancelling…" : "Cancel"}
+            </Button>
+          </div>
+        ) : replying ? (
+          <form className="local-feed-compose" onSubmit={submit}>
+            <label htmlFor={id} className="sr-only">
+              Send when it finishes
+            </label>
+            <input
+              ref={input}
+              id={id}
+              value={text}
+              maxLength={4000}
+              disabled={busy}
+              placeholder="Message for when its turn ends…"
+              onChange={(event) => setText(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key !== "Escape") return;
+                event.preventDefault();
+                if (docked) input.current?.blur();
+                else close();
+              }}
+            />
+            <span className="local-feed-compose-hint" aria-hidden="true">
+              {docked ? "Enter to send" : "Enter to send · Esc to close"}
+            </span>
+            <SendButton
+              label={labelFor("Send message", s)}
+              busy={busy}
+              disabled={busy || text.trim() === ""}
+            />
+          </form>
+        ) : null}
+        {shown !== null || replying ? aside : null}
+      </div>
       {error ? (
         <p role="alert" className="local-feed-note error">
           {error}
@@ -1182,13 +1276,11 @@ function RunningCard({
       {said ? (
         <div className="local-feed-said">
           <InlineMarkdown className="local-feed-said-text">{opening(said)}</InlineMarkdown>
-          {running ? <span className="local-feed-caret" aria-hidden="true" /> : null}
         </div>
       ) : current ? (
         <div className="local-feed-step" title={current.target}>
           <span className={`local-feed-tool ${toolTone(current.tool)}`}>{current.tool}</span>
           {current.target ? <span className="local-feed-target"> {current.target}</span> : null}
-          {running ? <span className="local-feed-caret" aria-hidden="true" /> : null}
         </div>
       ) : (
         <p className="local-feed-note" title={absolute(s.last_activity_at)}>
@@ -1202,6 +1294,7 @@ function RunningCard({
           onDone={onDone}
           replying={replying}
           close={closeReply}
+          aside={<OpenTranscript session={s} Link={Link} />}
         />
       ) : null}
     </li>
@@ -1276,6 +1369,66 @@ function SectionHead({
  *  `prHref` is where a session's pull request opens in the app, or null when
  *  it is not one the app knows. A click on a card peeks at the session and
  *  opens its reply; its link opens the transcript. */
+/** Says what was done to a session in a toast, under the session's name
+ *  and its agent's mark. */
+function useSessionNotice() {
+  const toast = useToast();
+  return ({ agent, session, ...n }: Notice) => {
+    const logo = agent ? agentLogos[agent] : undefined;
+    toast({
+      ...n,
+      context: session,
+      icon: logo ? { src: logo, alt: agentName(agent!) } : undefined,
+    });
+  };
+}
+
+/** The foot of a session's transcript: a reply to a session waiting at its
+ *  prompt, or a message for when a running one's turn ends, the message
+ *  already queued in its place; nothing for one that ended or takes no
+ *  reply. `r` focuses it, as it opens a reply on the Sessions page. */
+export function SessionReplyBar({
+  session: s,
+  queued,
+}: {
+  session: LiveSession;
+  queued?: AgentMessage;
+}) {
+  const notify = useSessionNotice();
+  const bar = useRef<HTMLDivElement>(null);
+  const open = (s.state === "idle" && s.messageable) || s.state === "running";
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== "r" || event.metaKey || event.ctrlKey || event.altKey) return;
+      if (event.target !== document.body || document.querySelector("dialog[open]")) return;
+      const input = bar.current?.querySelector("input");
+      if (!input) return;
+      event.preventDefault();
+      input.focus();
+    };
+    addEventListener("keydown", onKey);
+    return () => removeEventListener("keydown", onKey);
+  }, [open]);
+  if (!open) return null;
+  return (
+    <div ref={bar} className="local-reply-bar">
+      {s.state === "running" ? (
+        <SendWhenFinished
+          session={s}
+          queued={queued}
+          onDone={notify}
+          replying
+          close={() => {}}
+          docked
+        />
+      ) : (
+        <Reply session={s} onDone={notify} close={() => {}} docked />
+      )}
+    </div>
+  );
+}
+
 export function SessionsPage({
   sessions,
   requests = noAgentRequests,
@@ -1291,15 +1444,7 @@ export function SessionsPage({
   navigate?: (href: string) => void;
 }) {
   const now = useNow(1000);
-  const toast = useToast();
-  const notify = ({ agent, session, ...n }: Notice) => {
-    const logo = agent ? agentLogos[agent] : undefined;
-    toast({
-      ...n,
-      context: session,
-      icon: logo ? { src: logo, alt: agentName(agent!) } : undefined,
-    });
-  };
+  const notify = useSessionNotice();
   const menu = useContextMenu();
   const live = sessions.filter((s) => s.state !== "ended");
   const find = (agent: string, id: string) =>
@@ -1329,8 +1474,13 @@ export function SessionsPage({
   const asking = waiting.filter((w) => w.request || asks(w.session?.waiting_reason));
   const idle = waiting.filter((w) => !asking.includes(w));
   const waitingKeys = new Set(waiting.flatMap((w) => (w.session ? [sessionKey(w.session)] : [])));
-  // A session in Needs you is not listed again under Running now.
-  const active = live.filter((s) => !waitingKeys.has(sessionKey(s)));
+  // A session in Needs you is not listed again under Running now, which
+  // lists the sessions by the user's latest prompt, newest first, so a busy
+  // agent's every step does not move it.
+  const promptedAt = (s: LiveSession) => s.last_prompt_at ?? s.started_at;
+  const active = live
+    .filter((s) => !waitingKeys.has(sessionKey(s)))
+    .sort((a, b) => promptedAt(b).localeCompare(promptedAt(a)));
   const endedAtOf = (s: LiveSession) => s.ended_at ?? s.last_activity_at;
   const ended = sessions
     .filter((s) => s.state === "ended")
@@ -1362,7 +1512,7 @@ export function SessionsPage({
   const peekRow = (s?: LiveSession) =>
     s && peeking === sessionKey(s) ? (
       <li key={`peek:${sessionKey(s)}`} className="local-feed-peek-row">
-        <SessionPeek session={s} />
+        <SessionPeek session={s} Link={Link} withOpen={replying !== sessionKey(s)} />
       </li>
     ) : null;
   // The reply open on a card, by its session's key, at most one.
@@ -1441,13 +1591,26 @@ export function SessionsPage({
     pr.click();
   });
   // A session's card opens its transcript by its link, which the keys focus
-  // and follow.
+  // and follow (Enter). A click on it peeks, as anywhere on the card does:
+  // the transcript opens from the peek or the reply beside it.
   const open = (s: LiveSession, children: ReactNode) => (
     <Link
       href={transcriptHref(s)}
       data-row-link=""
       className="local-feed-open"
       aria-label={labelFor("Open transcript", s)}
+      onClick={(event) => {
+        // A pointer's click, not one the keys made (detail 0), nor one asking
+        // for another window.
+        if (
+          event.detail > 0 &&
+          event.button === 0 &&
+          !event.metaKey &&
+          !event.ctrlKey &&
+          !event.shiftKey
+        )
+          event.preventDefault();
+      }}
     >
       {children}
     </Link>
@@ -1481,12 +1644,11 @@ export function SessionsPage({
   // click on a card with both open closes them.
   const openCard = (event: MouseEvent) => {
     const target = event.target as HTMLElement;
-    if (
-      target.closest(
-        "a, button, input, textarea, select, label, summary, .local-feed-send, .local-feed-compose",
-      )
-    )
-      return;
+    // The title's link peeks too (open); every other control does its own.
+    const control = target.closest(
+      "a, button, input, textarea, select, label, summary, .local-feed-send, .local-feed-compose",
+    );
+    if (control && !control.matches(".local-feed-open")) return;
     if (window.getSelection()?.toString()) return;
     const id = target.closest("[data-row-id]")?.getAttribute("data-row-id");
     const s = id ? sessions.find((x) => sessionKey(x) === id) : undefined;
@@ -1587,6 +1749,7 @@ export function SessionsPage({
           since={w.since}
           now={now}
           open={open}
+          Link={Link}
           row={row}
           onDone={notify}
           replying={replying === sessionKey(w.session!)}

@@ -552,7 +552,27 @@ const GROUPS: { place: ShortcutsPlace; title: string; rows: Shortcut[] }[] = [
     ],
   },
   { place: "settings", title: "Settings", rows: SETTINGS_SHORTCUTS },
-  { place: "page", title: "A session or job transcript", rows: [back] },
+  {
+    place: "page",
+    title: "A session or job transcript",
+    rows: [
+      back,
+      { keys: ["j"], label: "Next message of a session's transcript", short: "next" },
+      { keys: ["k"], label: "Previous message", short: "previous" },
+      { keys: [" "], label: "Show all of the message, or less again", short: "show all" },
+      { keys: ["Enter"], label: "Open the message on its own", short: "open" },
+      {
+        keys: ["f"],
+        label: "Bring the session's terminal or window forward, where offered",
+        short: "focus",
+      },
+      {
+        keys: ["r"],
+        label: "Reply to the session, or write a message for when its turn ends",
+        short: "reply",
+      },
+    ],
+  },
 ];
 
 /** Where a row menu opens with ⌘.: the lists. */

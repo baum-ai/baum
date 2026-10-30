@@ -371,6 +371,8 @@ export type LiveSession = {
   state: "running" | "idle" | "ended";
   started_at: string;
   last_activity_at: string;
+  /** When the user last prompted it, absent before a prompt the daemon saw. */
+  last_prompt_at?: string;
   /** When an ended session ended; absent otherwise. */
   ended_at?: string;
   /** The normalised kind of the latest hook event. */
