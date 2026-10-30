@@ -4,7 +4,8 @@ import { type ReactNode, useEffect, useId, useRef } from "react";
  *  application keeps the plain b as its mark, and there Stumpy only turns up
  *  at the edges of the work — nothing waiting, a missing page, a failure — and
  *  at most once per screen. Never beside a loader or in the middle of a task.
- *  The desktop app wears Stumpy as its mark: in its rail and as its tray icon.
+ *  The desktop app wears Stumpy as its mark: in its rail, as its app icon and
+ *  as its tray icon.
  *
  *  - `awake`  eyes open, leaf up: the public pages.
  *  - `dozing` eyes shut, a couple of z's: nothing left to do.

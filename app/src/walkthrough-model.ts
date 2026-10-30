@@ -302,6 +302,87 @@ export function saveProgress(key: string, progress: Progress, now = Date.now()) 
   }
 }
 
+/** Sent on `window` when something other than the walkthrough changed a
+ *  review version's draft, with that version's progress key as `detail`. An
+ *  open walkthrough reads its progress again. */
+export const PROGRESS_EVENT = "baum:walkthrough-progress";
+
+/** Where an answer lands in the draft: a stop's own comment, or the review's
+ *  overall comment. */
+export type DraftTarget = { kind: "stop"; id: string; title: string } | { kind: "overall" };
+
+/** The draft comment an answer goes to: the stop the question was about when
+ *  the tour has it, else the overall comment. */
+export function draftTarget(
+  tour: Tour,
+  focus: { kind?: string; id?: string } | null | undefined,
+): DraftTarget {
+  const stop = focus?.kind === "stop" ? tour.stops.find((s) => s.id === focus.id) : undefined;
+  return stop ? { kind: "stop", id: stop.id, title: stop.title } : { kind: "overall" };
+}
+
+function citationLine(c: { path: string; start_line: number; end_line: number }) {
+  return c.end_line > c.start_line
+    ? `${c.path}:${c.start_line}–${c.end_line}`
+    : `${c.path}:${c.start_line}`;
+}
+
+/** An answer as a comment: its markdown, then one `path:start–end` line for
+ *  each code it cites. */
+export function answerComment(answer: {
+  answer_markdown: string;
+  citations: { path: string; start_line: number; end_line: number }[];
+}): string {
+  return [text(answer.answer_markdown), answer.citations.map(citationLine).join("\n")]
+    .filter(Boolean)
+    .join("\n\n");
+}
+
+function notify(key: string) {
+  try {
+    window.dispatchEvent(new CustomEvent(PROGRESS_EVENT, { detail: key }));
+  } catch {
+    /* No window: nothing is listening. */
+  }
+}
+
+/** Appends comment to the draft of the review version `key` at target, after
+ *  what is there, and returns what was appended so it can be taken back. It
+ *  only writes the draft: nothing is sent to GitHub. */
+export function appendToDraft(key: string, target: DraftTarget, comment: string): string {
+  const progress = loadProgress(key);
+  const existing = target.kind === "stop" ? (progress.notes[target.id] ?? "") : progress.note;
+  const added = (text(existing) ? "\n\n" : "") + comment;
+  const next = text(existing) ? existing.replace(/\s+$/, "") + added : comment;
+  saveProgress(
+    key,
+    target.kind === "stop"
+      ? { ...progress, notes: { ...progress.notes, [target.id]: next } }
+      : { ...progress, note: next },
+  );
+  notify(key);
+  return added;
+}
+
+/** Takes back what appendToDraft appended, while it is still at the end of
+ *  the draft; a draft edited since keeps its text. Returns whether it did. */
+export function removeFromDraft(key: string, target: DraftTarget, added: string): boolean {
+  const progress = loadProgress(key);
+  const current = target.kind === "stop" ? (progress.notes[target.id] ?? "") : progress.note;
+  const trimmed = current.replace(/\s+$/, "");
+  const tail = added.replace(/\s+$/, "");
+  if (!trimmed.endsWith(tail)) return false;
+  const rest = trimmed.slice(0, trimmed.length - tail.length).replace(/\s+$/, "");
+  if (target.kind === "stop") {
+    const notes = { ...progress.notes };
+    if (rest) notes[target.id] = rest;
+    else delete notes[target.id];
+    saveProgress(key, { ...progress, notes });
+  } else saveProgress(key, { ...progress, note: rest });
+  notify(key);
+  return true;
+}
+
 export type ReviewEvent = "APPROVE" | "COMMENT" | "REQUEST_CHANGES";
 
 export type ReviewSubmission = {

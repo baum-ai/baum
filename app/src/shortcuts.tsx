@@ -1,3 +1,4 @@
+import { usePreferences } from "./preferences";
 import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
 import { Button } from "@baum/viewer/components/ui";
 import { PAGES, type Page } from "./pages";
@@ -11,7 +12,11 @@ export type InboxAction =
   | "merge"
   | "fix"
   | "generate"
+  | "transcript"
   | "refresh";
+
+/** The fix transcript key's label: `t` wherever a pull request is in hand. */
+const TRANSCRIPT_LABEL = "Watch the fix agent, or read its last transcript";
 
 /** The inbox's keys, the one table both the key handling and the shortcuts
  *  sheet read, so the sheet lists exactly the keys that work. */
@@ -24,6 +29,7 @@ export const INBOX_SHORTCUTS: { keys: string[]; action: InboxAction; label: stri
   { keys: ["m"], action: "merge", label: "Merge, where offered" },
   { keys: ["f"], action: "fix", label: "Fix, where offered" },
   { keys: ["g"], action: "generate", label: "Generate the review" },
+  { keys: ["t"], action: "transcript", label: TRANSCRIPT_LABEL },
   { keys: ["r"], action: "refresh", label: "Refresh from GitHub" },
 ];
 /** Pull requests' views (For you, Requested, Mine…), one either way. */
@@ -35,6 +41,7 @@ const UP_NEXT_SHORTCUTS = [
   { keys: ["Enter"], label: "Open the pull request" },
   { keys: ["m"], label: "Merge, where offered" },
   { keys: ["f"], label: "Fix, where offered" },
+  { keys: ["t"], label: TRANSCRIPT_LABEL },
   { keys: ["s"], label: "Snooze, then 1–4 to choose until when" },
   { keys: ["u"], label: "Undo a snooze" },
 ];
@@ -47,6 +54,7 @@ const WALKTHROUGH_SHORTCUTS = [
   { keys: ["o"], label: "Show the behaviour's code" },
   { keys: ["c"], label: "Comment on the behaviour" },
   { keys: ["v"], label: "Open the full review" },
+  { keys: ["a"], label: "Ask the review's agent a question" },
 ];
 /** The keys of every other list (Sessions, Jobs, Repositories), which
  *  `listKeys` handles. */
@@ -131,6 +139,34 @@ export function commandAction(
   if (mac && (event.key === "[" || event.code === "BracketLeft")) return { kind: "back" };
   if (mac && (event.key === "]" || event.code === "BracketRight")) return { kind: "forward" };
   return null;
+}
+
+/** Ctrl+N and Ctrl+P (the readline keys, Control on a Mac too) as ↓ and ↑,
+ *  everywhere the arrows move: they are turned into those keys on the same
+ *  element before anything else sees them, so the lists, the context menu
+ *  and Go to follow without knowing them, and the browser's new window and
+ *  print stay out of the way. A text field keeps its own, except one that
+ *  steers a list (a combobox). Mounted once, for the whole app. */
+export function useReadlineArrows() {
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (!event.ctrlKey || event.metaKey || event.altKey || event.shiftKey || event.isComposing)
+        return;
+      const key = { n: "ArrowDown", p: "ArrowUp" }[event.key.toLowerCase()];
+      const target = event.target;
+      if (!key || !(target instanceof HTMLElement)) return;
+      const field = target.closest("input, textarea, select, [contenteditable]");
+      if (field && field.getAttribute("role") !== "combobox") return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      target.dispatchEvent(
+        new KeyboardEvent("keydown", { key, code: key, bubbles: true, cancelable: true }),
+      );
+    };
+    // Captured, so it comes before every other listener.
+    window.addEventListener("keydown", onKeyDown, true);
+    return () => window.removeEventListener("keydown", onKeyDown, true);
+  }, []);
 }
 
 /** Calls `handler` for the app-wide keys (`commandAction`), which work in
@@ -328,11 +364,14 @@ export function listKeys(
 /** Shows the app's keyboard hints (`.key-hint`) while Alt, Option on a Mac,
  *  is held, and hides them when it is let go or the window loses focus. */
 export function useKeyHints() {
+  const { preferences } = usePreferences();
   useEffect(() => {
     const root = document.documentElement;
     const show = (shown: boolean) => root.toggleAttribute("data-key-hints", shown);
-    const down = (event: KeyboardEvent) => show(event.key === "Alt" || event.altKey);
-    const up = (event: KeyboardEvent) => show(event.key !== "Alt" && event.altKey);
+    const down = (event: KeyboardEvent) =>
+      show(preferences.key_hints && (event.key === "Alt" || event.altKey));
+    const up = (event: KeyboardEvent) =>
+      show(preferences.key_hints && event.key !== "Alt" && event.altKey);
     const hide = () => show(false);
     window.addEventListener("keydown", down);
     window.addEventListener("keyup", up);
@@ -343,7 +382,7 @@ export function useKeyHints() {
       window.removeEventListener("blur", hide);
       hide();
     };
-  }, []);
+  }, [preferences.key_hints]);
 }
 
 /** Escape gives up whatever the keyboard focused, so the page's keys act on
@@ -419,6 +458,11 @@ export function ShortcutsSheet({
       title: "Anywhere",
       rows: [
         { keys: [`${COMMAND}K`], label: "Go to a page, pull request or session" },
+        { keys: [`${COMMAND}.`], label: "Actions for the focused row, as a right click" },
+        {
+          keys: MAC ? ["⌃N", "⌃P"] : ["Ctrl+N", "Ctrl+P"],
+          label: "Down, up in any list or menu, as ↓ and ↑",
+        },
         ...PAGES.map((item) => ({ keys: [pageKeyLabel(item.page)], label: item.label })),
         MAC
           ? { keys: ["⌘[", "⌘]"], label: "Back, forward" }
@@ -448,6 +492,8 @@ export function ShortcutsSheet({
         { keys: ["m"], label: "Merge, where offered" },
         { keys: ["f"], label: "Fix, where offered" },
         { keys: ["g"], label: "Generate or regenerate the review" },
+        { keys: ["t"], label: TRANSCRIPT_LABEL },
+        { keys: ["a"], label: "Ask the review's agent a question; Esc in the panel closes it" },
         back,
       ],
     },
@@ -455,14 +501,23 @@ export function ShortcutsSheet({
     {
       place: "sessions",
       title: "Sessions",
-      rows: [...LIST_SHORTCUTS, { keys: ["p"], label: "Open the session's pull request" }],
+      rows: [
+        ...LIST_SHORTCUTS,
+        { keys: ["p"], label: "Open the session's pull request" },
+        { keys: ["r"], label: "Reply to the session; Enter sends it" },
+        { keys: [" "], label: "Peek at the session below its row" },
+        {
+          keys: ["1–9"],
+          label: "Answer the focused question or permission; Enter submits several",
+        },
+      ],
     },
     {
       place: "jobs",
       title: "Jobs",
       rows: [
         ...LIST_SHORTCUTS,
-        { keys: ["t"], label: "Watch the agent or read its transcript, where there is one" },
+        { keys: ["t"], label: "Watch the fix agent or read its transcript, where there is one" },
       ],
     },
     {

@@ -1,3 +1,4 @@
+import { PreferencesProvider } from "./preferences";
 import { formatCount } from "@baum/viewer/components/format";
 import { UsageDetails } from "./usage";
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -47,6 +48,7 @@ import {
   useShortcuts,
   VIEW_KEYS,
   type ShortcutsPlace,
+  useReadlineArrows,
 } from "./shortcuts";
 import { GoTo, type GoToItem } from "./go-to";
 import { PAGES, type Page } from "./pages";
@@ -54,7 +56,9 @@ import { LocalReview } from "./review";
 import { DecisionsRevision } from "./decisions";
 import { useDiagnosticProblems } from "./diagnostics";
 import { RepositoriesPage, SettingsPage, settingsSection, type ReviewDefaults } from "./settings";
-import { needsYou, SessionsPage, transcriptHref } from "./sessions";
+import { asksYou, SessionsPage, transcriptHref } from "./sessions";
+import { ToastProvider } from "./toast";
+import { useActionsKey } from "./context-menu";
 import { SessionTranscriptPage } from "./session-transcript";
 import { AnalyticsPage } from "./analytics";
 import { TimelinePage } from "./timeline";
@@ -67,8 +71,11 @@ import {
   request,
   reviewJob,
   fixJob,
-  fixName,
+  jobName,
+  chatJobs,
+  fixJobs,
   isActiveJob,
+  navigate,
   startFix,
   filtered,
   rowKey,
@@ -93,7 +100,7 @@ import {
   type LiveSession,
 } from "./api";
 import { LoadingStatus } from "./nine-dots";
-import { FixDetails, TranscriptLink } from "./fix";
+import { FixDetails, TranscriptLink, type FixChat } from "./fix";
 import { JobPage } from "./job-transcript";
 import { useLocation } from "./location";
 
@@ -106,11 +113,6 @@ const VIEWS = [
   ["no_review", "Not reviewed"],
   ["history", "Saved history"],
 ] as const;
-/** Opens one of the app's own addresses in place, as a link in it does. */
-function navigate(href: string) {
-  history.pushState(null, "", href);
-  dispatchEvent(new PopStateEvent("popstate"));
-}
 function LocalLink({ href, onClick, ...props }: ViewerLinkProps) {
   return (
     <a
@@ -137,6 +139,14 @@ function errorText(error: unknown) {
   return error instanceof Error ? error.message : "Local request failed.";
 }
 export function App() {
+  return (
+    <PreferencesProvider>
+      <Application />
+    </PreferencesProvider>
+  );
+}
+
+function Application() {
   const [auth, setAuth] = useState<"loading" | "ready" | "failed">("loading");
   const [authError, setAuthError] = useState("");
   const url = useLocation();
@@ -161,20 +171,22 @@ export function App() {
   }, []);
   return (
     <UrlStateProvider value={url}>
-      <ViewerLinkProvider link={LocalLink}>
-        {auth === "ready" ? (
-          <Workspace url={url} />
-        ) : (
-          <main className="local-connecting">
-            <LogoMark size={40} />
-            {auth === "loading" ? (
-              <LoadingStatus block>Connecting to the local application…</LoadingStatus>
-            ) : (
-              <Alert>{authError} Open this page from the baum desktop app.</Alert>
-            )}
-          </main>
-        )}
-      </ViewerLinkProvider>
+      <ToastProvider>
+        <ViewerLinkProvider link={LocalLink}>
+          {auth === "ready" ? (
+            <Workspace url={url} />
+          ) : (
+            <main className="local-connecting">
+              <LogoMark size={40} />
+              {auth === "loading" ? (
+                <LoadingStatus block>Connecting to the local application…</LoadingStatus>
+              ) : (
+                <Alert>{authError} Open this page from the baum desktop app.</Alert>
+              )}
+            </main>
+          )}
+        </ViewerLinkProvider>
+      </ToastProvider>
     </UrlStateProvider>
   );
 }
@@ -558,14 +570,14 @@ function Workspace({ url }: { url: UrlState }) {
   // A fix starts at once, from its button or key: there is no dialog and no
   // price to confirm. One the daemon will not run (a fork, no push access,
   // nothing to fix) says why where it was asked for.
-  const fix = async (entry: Entry, only?: FixOnly) => {
+  const fix = async (entry: Entry, only?: FixOnly, chat?: FixChat) => {
     const clone = cloneFor(entry);
     const key = rowKey(entry);
     if (!clone || fixStarting.has(key) || isActiveJob(fixJob(entry, jobs))) return;
     setFixError(null);
     setFixStarting((now) => new Set([...now, key]));
     try {
-      await startFix(clone, entry.pull_request.number, only);
+      await startFix(clone, entry.pull_request.number, only, chat);
       await reload();
     } catch (e) {
       setFixError({ key, number: entry.pull_request.number, text: errorText(e) });
@@ -714,6 +726,8 @@ function Workspace({ url }: { url: UrlState }) {
   useKeyHints();
   useEscapeBlurs();
   useNoTab();
+  useActionsKey();
+  useReadlineArrows();
   useCommandKeys((action) => {
     setShortcuts(false);
     if (action.kind === "go-to") {
@@ -812,7 +826,7 @@ function Workspace({ url }: { url: UrlState }) {
         }
         activeJobs={jobs.filter(isActiveJob).length}
         runningSessions={live.filter((s) => s.state === "running").length}
-        needsYou={needsYou(live).length}
+        needsYou={asksYou(live).length}
         problems={diagnostics.problems}
         Link={LocalLink}
       />
@@ -870,7 +884,7 @@ function Workspace({ url }: { url: UrlState }) {
               setSection={(section) =>
                 url.update((current) => {
                   current.set("page", "settings");
-                  if (section === "overview") current.delete("section");
+                  if (section === "general") current.delete("section");
                   else current.set("section", section);
                   return current;
                 })
@@ -918,6 +932,7 @@ function Workspace({ url }: { url: UrlState }) {
                   requests={agentRequests}
                   Link={LocalLink}
                   prHref={sessionPR}
+                  navigate={navigate}
                 />
               </div>
             </>
@@ -1007,9 +1022,15 @@ function Workspace({ url }: { url: UrlState }) {
                 )}
                 generate={() => void generate([selectedEntry], "single")}
                 starting={starting.has(rowKey(selectedEntry))}
-                fix={cloneFor(selectedEntry) ? () => void fix(selectedEntry) : undefined}
+                fix={
+                  cloneFor(selectedEntry)
+                    ? (chat) => void fix(selectedEntry, undefined, chat)
+                    : undefined
+                }
                 fixState={fixState(selectedEntry)}
                 fixJob={fixJob(selectedEntry, jobs)}
+                fixRuns={fixJobs(selectedEntry, jobs)}
+                chats={chatJobs(selectedEntry, jobs)}
               />
             </DecisionsRevision.Provider>
           ) : page !== "pulls" ? (
@@ -1435,7 +1456,7 @@ function JobRow({
           </LocalLink>
         )}
         <p className="local-job-meta">
-          {job.kind === "fix" ? `${fixName(job.fix ?? {})} · ` : null}
+          {job.kind === "fix" || job.kind === "chat" ? `${jobName(job)} · ` : null}
           {started ?? (job.automatic ? null : "Started by you")}
         </p>
         {job.kind === "fix" && job.commit ? (

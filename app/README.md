@@ -180,6 +180,16 @@ outcome with the agent's summary (`FixDetails`). `reviewJob` ignores fix jobs an
 never shows as a review being generated. The daemon polls discovery after a
 push, so the new head appears without a manual refresh.
 
+A fix can also be made from a conversation with the review’s agent.
+`startFix` sends `fix_chat: {conversation_id, turn}` with the fix item to
+`POST api/jobs`: only ids, never the question or answer. The daemon reads
+that conversation up to the selected answer from the clone’s store. It starts
+at once, like other fixes, and is named “Fix from this answer”. It is offered
+where `fixEligible` permits a fix, even when nothing is broken, and is never
+combined with conflicts, CI or review comments. Refusals such as
+`chat_unavailable`, `chat_changed` and `chat_outdated` appear beside the pull
+request. The job’s `fix.chat` is the conversation’s id.
+
 The Jobs page lists a repository's first feature build (`kind:
 "feature_build"`, `pr` 0) as "Feature build · <repository>", with no link; it
 starts at once when asked for, like any other run.
@@ -202,6 +212,127 @@ there (`useFollowScroll`). Entries are append-only; a later entry with a tool's
 notice and Up next link to it: **Watch** while the fix runs, **Transcript**
 after. A failure's `detail` (git's own words for the `signing` reason, which the
 daemon checks before the agent runs) shows under **What happened**.
+
+Questions to the review agent (chat). The daemon
+serves a pull request's conversations with the agent that wrote a saved review,
+by registered clone ID and pull request as for `api/versions`:
+
+- `GET api/prs/chat?clone=<id>&pr=<n>` returns `{conversations: [{id, version,
+  backend, model, seeded, created, updated, turns: [{seq, question, focus,
+  answer?, job_id, state, reason?, note?, cost_usd?, cost_reason?, created,
+  finished?}]}]}`, newest first. `answer` is `{answer_markdown, citations:
+  [{path, start_line, end_line}], suggests_fix: {summary} | null}`, masked for
+  secrets, its citations checked against the head. `question` is the
+  reviewer's own text as typed, not masked (it is masked only when sent to the
+  agent). A turn whose `note` says the agent kept no session answered, but the
+  next question starts without the conversation's context. `state` is `queued`,
+  `running`, `completed`, `failed`, `cancelled` or `interrupted` (a turn whose
+  job a stopped daemon left behind). A conversation whose `version` is not the
+  latest review is about an older one. `seeded` with a turn's `note` means the
+  conversation started without the review's own context.
+- `POST api/prs/chat` with `{clone, pr, version, conversation_id?, question,
+  focus?}` (question 1–4000 characters; `focus` `{kind: "section" | "stop" |
+  "overview", id?, title?, anchors?: [{path, start_line?, end_line?}]}`, at
+  most 20 anchors) starts a conversation, or asks the next question of one,
+  and answers 202 `{conversation_id, turn, job}`. Refusals are `{code,
+  message}`: `invalid_request` 400 (unknown fields included), `not_found` 404
+  (an unregistered clone or an unknown conversation), `no_review` 404 (no
+  saved review at that version), `needs_clone` 409, `busy` 409 (the
+  conversation's last question is still queued or running),
+  `unsupported_backend` 422 (the review was not written by Claude Code or
+  Codex on this computer), `restarting` 503. Without the capability both
+  answer 503 `{code: "chat_unavailable"}`.
+
+Each question is a job of `kind: "chat"` (`chat: {conversation, turn,
+version}`, the pull request in `pr`), queued at once without an estimate, which
+the app can label "Question on #<pr>". It runs beside reviews, not behind
+them, keeps a transcript (`has_transcript`, `GET api/jobs/{id}/transcript`),
+reports its phase and cost, and can be cancelled, which settles the turn as
+cancelled. A `chat` event `{conversation, repository, pr, turn, state}` goes
+out on the SSE stream when a question is queued and when it settles; the
+answer itself is read with `GET api/prs/chat`.
+
+The **Ask** panel (`AskPanel` in `src/chat.tsx`) is how the app asks them. A
+boxed **Ask** button in the PR page's header (beside Walk through) and in the
+walkthrough's header, or the key `a` (ignored while typing in a text field;
+inside the panel's own box it types an a), opens it; Escape with focus in the
+panel, its **Close** button or **Ask** again closes it. It is kept in the URL
+as `ask=1`, like the walkthrough's `walk=`, so a reload keeps it. `LocalReview`
+renders it beside the review (`.ask-layout`): a 22rem right-hand column from
+72rem, where the review takes the rest and nothing is covered (under 104rem the viewer folds its side pane to its strip meanwhile, `foldSidePane`), and below that
+a modal overlay from the right edge with a backdrop (a click on it closes the
+panel) and the review inert behind it. Closing returns the keyboard to the Ask
+button. The button needs a loaded review. **Ask about this section** (the viewer's `renderSectionAside`, drawn on
+the current version's section pane), **Ask about this** on a tour stop and
+**Ask** on an Everything row set the question's focus: a removable chip above the
+box, sent as the API's `focus`, which also opens the panel (`sectionFocus` and
+`stopFocus` turn the section's or the stop's hunks into `{path, start_line,
+end_line}` anchors, at most 20). The pull request's overview has no button of
+its own; a question without a focus is about the pull request as a whole.
+
+The panel lists the pull request's conversations (`GET api/prs/chat`, read
+when one of the pull request's chat jobs changes state, through the app's own
+event stream, and every 4 s while a question is being answered), named by their
+first question. Conversations belong to a review version, and the panel follows
+the version on screen: reading an older version in the viewer makes the
+questions go to that version. The version on screen is first, under "Review
+v<N>"; the others are read-only, under "Outdated: asked about review v<M>" when
+M is older than the latest review and "Asked about review v<M>" when it is newer
+than the one on screen. A read-only conversation has no box, a note, and **New
+conversation**, which starts one on the version on screen (also offered beside
+the list). A conversation
+with `seeded` shows "Started without the review's own context.", and a turn's
+`note` shows under it. The box takes Enter to send and Shift+Enter for a new
+line; **Send** reads "Sending…" at once and is disabled while a question of the
+conversation is queued or running, which the daemon also refuses as `busy`. A
+refusal's `message` shows beside the box as the daemon wrote it, and the
+question stays for another try.
+
+A queued or running turn shows its question, its status and the agent's live
+transcript (`useJobTranscript` and `EntryView` of `src/job-transcript.tsx`, tool
+calls collapsed) with **Cancel** (`POST api/jobs/{id}/cancel`). An answered turn
+draws `answer_markdown` with the viewer's `Markdown` component (raw HTML stays
+text), the cost when there is one, and the citations as `path:start–end`
+buttons. A citation inside one of the review's hunks opens that hunk's cited
+lines with `HunkEvidence` (an omitted excerpt is read through the page's patch
+source, `api/patch`); one outside the review's changes shows its path and lines
+with a link to the file at the review's head on GitHub, because the daemon
+serves no file text other than patches. A turn that failed, was cancelled or was
+interrupted says why in words (`turnReasonText`: `validation`, `budget`,
+`backend`, `input`, `internal`, `needs_clone`, `unsupported_backend`,
+`cancelled`, `interrupted`), with its cost. Each answer has a
+`data-answer-actions` slot (`AskPanel`'s `answerActions` prop) for the actions
+that follow an answer: `AnswerActions` (`src/answer-actions.tsx`), drawn only
+under answers of the newest review version. **Fix this** (boxed, emphasised
+and with the answer's `suggests_fix.summary` above it when there is one) starts
+a fix with the conversation's id and the answer's turn; it is offered
+where a fix is (`fixEligible` and a local clone) and disabled while a fix of the
+pull request runs. **Add as comment** writes the answer's markdown and one
+`path:start–end` line per citation into the walkthrough draft through
+`walkthrough-model.ts` (`appendToDraft`): after the comment of the stop the
+question's focus names (`draftTarget`), else after the review's overall comment
+(`Progress.note`). It only writes the draft, kept per review version in local
+storage, and calls no GitHub API: the draft is sent only with the review. The
+confirmation, "Added to your review draft", offers **Undo** (`removeFromDraft`,
+which takes back what was added while it is still at the end of the draft) and
+**Open the draft**, which opens the walkthrough's Everything view and its Submit
+panel. A walkthrough that is open reads its progress again on the
+`PROGRESS_EVENT` the model sends. Chat jobs are not reviews or fixes: `reviewJob` and
+`fixJob` ignore them, `chatJobs` lists a pull request's, and the Jobs list and
+transcript page call one "Question on #<pr>". The key `a` is in the shortcuts
+sheet for the pull request page and the walkthrough.
+`t` opens a pull request's fix transcript wherever the pull request is in hand:
+the PR page, the focused row in Pull requests, the selected one in Up next and
+the focused job in Jobs. It opens the running fix's transcript (Watch), else
+the latest run that kept one, so the key keeps working after the agent stops
+and after the fix notice leaves the page. The PR page also keeps the pull
+request's fix runs (`fixJobs`, newest first) one fold away under the notice
+(`FixRuns`): a single line, "2 fix runs, the last 3 hours ago" ("2 earlier fix
+runs" while the notice shows the latest), that opens to a line per run with
+when it started, how it ended (its phase, the pushed commit, the failure's
+reason) and its transcript. It lists the five newest and links the rest to
+Jobs. The daemon keeps the 50 newest transcripts; an older run's link finds
+"No transcript to show".
 
 Merging: a pull request whose Merge state is Ready (open, not a draft) shows a
 Merge button in the PR page header and, on hover or keyboard focus, in its
@@ -243,7 +374,7 @@ are skipped), `Enter` or `o` opens the focused pull request or group, `x` toggle
 its selection, `Space` opens or closes its peek, `m` opens Merge and `f` starts the fix where the row offers them (Merge wins
 where both could), `g` generates the pull request's review through the same path
 as the PR page's Generate (so the same confirmations and the instant "Starting"
-state), `r` refreshes from GitHub at once rather than after the polling backoff,
+state), `t` opens its fix transcript, `r` refreshes from GitHub at once rather than after the polling backoff,
 `h`/`←` and `l`/`→` move to the previous and next view (For you, Requested, …),
 and `Esc` clears the focus. Sessions, Jobs and Repositories share the list keys
 (`useRowFocus` and `listKeys`): `j`/`↓` and `k`/`↑` move, `Enter` or `o` opens
@@ -259,8 +390,10 @@ to a section, and `Enter`, `l` or `→` go into the shown section, where `j` and
 `Esc`, `h` or `←` go back to the list (`Esc` in a text field or select gives
 it up first, and `j` and `k` go on from it). On a pull request or group page `j`
 and `k` step to the next and previous place in reading order, as the
-navigator's arrows do (`ReviewViewer`'s `steps` ref), and `m`, `f` and `g`
-merge, fix and generate or regenerate where the header offers them. On any
+navigator's arrows do (`ReviewViewer`'s `steps` ref), `m`, `f` and `g`
+merge, fix and generate or regenerate where the header offers them, and `t`
+opens the fix transcript (its hint is on the notice's Watch or Transcript, else
+on the runs' fold). On any
 page, `?` (or the `?` button in Pull
 requests' page bar) shows the sheet of every key, grouped by where it works
 (anywhere, the Inbox, Pull requests, a pull request or group, Sessions, Jobs,
@@ -366,7 +499,8 @@ away), tomorrow morning (9 AM) and **Until it changes**, which hides the pull
 request until its head moves. A snooze selects the next pull request and shows
 a toast with **Undo**; **Bring back** under Snoozed ends one early. Keys:
 `j`/`↓` and `k`/`↑` move the selection, `Enter` opens, `m` merges a Merge, `f`
-starts a Fix item's fix (where its panel offers the button), `s` opens Snooze
+starts a Fix item's fix (where its panel offers the button), `t` opens its fix
+transcript (Watch the agent, See what the agent did, or the last run's), `s` opens Snooze
 and `1`–`4` choose from it, `u` undoes a snooze.
 
 "Done today" lists the pull requests that left the queue since first seen
@@ -729,12 +863,14 @@ shows one section at a time, listed on the left with a line on where each
 stands and a dot when it needs attention; at narrow widths the list becomes
 a scrolling strip above the section. The section is in the address, so a
 reload or Back keeps it, and the GitHub notice's **Open settings** goes
-straight to Connections. **Overview**, the default, says how many things need
-the person ("Everything is working" otherwise) and in one sentence how baum
-reviews, then lists GitHub, Reviews, Fixes, the agent hooks (desktop app) and
-this computer, each with a dot and a button to the section that deals with it
-(**Check** on this computer opens the diagnostics dialog). Fixes needs
-attention when it follows reviews whose harness cannot fix. **Reviews** holds
+straight to Connections. **General**, the default, offers System, Light and Dark
+themes and whether holding Alt/Option shows keyboard shortcut hints. Preferences
+are read and saved through `GET`/`PUT api/settings/appearance` (`theme`,
+`key_hints`), in the daemon’s SQLite registry, so they survive daemon restarts
+and loopback port changes. Saves report failures and keep the previous choice;
+returning to a window rereads the saved preferences. Orange or red markers
+beside section names identify issues needing attention. Fixes needs attention when it follows reviews whose
+harness cannot fix. **Reviews** holds
 the global review settings, one per row: whether reviews run automatically,
 for which pull requests (authored, requested, both, or all open pull requests
 in the repository), the harness and its model (a listed model or a custom
@@ -770,7 +906,10 @@ it is off a repository set to "On" is shown as paused by the global switch.
 Repositories lists picked GitHub repositories and their clones. Add repositories
 opens the searchable account picker, the only way to add one: baum works with
 GitHub repositories only. Explicit per-repository folder attachment uses any
-matching remote, including an upstream remote in a fork clone. Settings apply
+matching remote, including an upstream remote in a fork clone, or one using
+an earlier name GitHub forwards to the repository, which the picker and
+Repositories rows then show (`earlier_names`); a folder of another repository
+shows the daemon's error naming that repository. Settings apply
 to the repository through `PUT api/repositories/{owner}/{name}/settings`, with
 automatic generation and harness/model overrides; there is no spending cap.
 Removing a repository unpicks it but leaves its files and saved
@@ -840,11 +979,43 @@ Analytics shows decision capture's calls, failures by reason, calls cut short
 by a stop and spend under baum's work; an unknown cost stays unknown.
 
 The Sessions page (`?page=sessions`) is a live feed of the same sessions, in three
-sections of cards; the `live` event updates it and the sidebar count, and times
-tick every second. The daemon keeps ended sessions for 24 hours, across restarts.
+sections drawn as the Pull requests list (bucket headings with a dot and a count, then
+rows between hairlines, no panels). Each heading folds its section, as an inbox
+bucket's does; Ended recently starts folded, and the fold holds while the app runs.
+The keys move only through rows on show. The `live` event updates it and the sidebar count, and times
+tick every second. The daemon keeps ended sessions for 24 hours, across restarts, and
+leaves out a session that never had a conversation (no title and no activity).
+Space on a focused row, in any section, peeks at the session under it (`SessionPeek`):
+the row grows open, in its sand and behind its bar, the full width under the title:
+"Original request", what its compaction summary (`summary`) says it was started for
+without Claude Code's "Initial:" label and quotes, cut at two lines, and "Latest
+response", the agent's last message rendered, each beside its label (above it in a
+narrow window), scrolled past 22rem; what the user last wrote is on the row already. Space
+again or Escape closes it, before Escape clears the row.
 
-- "Needs you" (`SessionsPage` in `src/sessions.tsx`) shows only while something waits
-  on the person: the requests the app can answer first, then the longest wait. A session with a pending `permission`
+What the person does on the page (answering, replying, queueing, ending) is
+confirmed in a toast: the app's own (`src/toast.tsx`; any page raises one with
+`useToast()`), dark over the window's foot, saying what happened, what it was about
+(the question, the command, the message) and the session with its agent's logo. It
+goes after six seconds or when dismissed, is read out from one live region, and can
+carry an action such as Undo; a failure shows in the critical tone.
+
+A right click on a session's card opens the app's own menu (`src/context-menu.tsx`)
+in place of the browser's: Reply when the daemon offers it (`messageable`, with its
+key r), Open transcript, Peek (Space), Open pull request when it has one, and End session when the
+daemon offers it (`endable`). ⌘. (Ctrl+. elsewhere), anywhere in the app, opens
+the focused element's menu (`useActionsKey`), as the Menu key or Shift+F10 do; here
+it opens under the focused card. Ctrl+N and Ctrl+P (`useReadlineArrows`) move as ↓
+and ↑ in every list and menu of the app, and in Go to, but not in a plain text field. In the menu the arrows move, Enter chooses, and a click
+elsewhere or a scroll closes it; Escape closes it wherever the keys are and gives them
+back to the row that opened it. In a field, or over selected text, the browser's menu
+stays.
+
+- "Needs you" (`SessionsPage` in `src/sessions.tsx`) shows only while something asks
+  the person for a permission or an answer (`asks`), and "Waiting for you", after it,
+  only while a session finished its turn or went quiet: the same rows, split by
+  whether the session is blocked on a decision or only waits for the next word. Each
+  lists the requests the app can answer first, then the longest wait. A session with a pending `permission`
   request (from `api/agent-requests`) gets an amber card titled by its tool ("wants to
   run a command", "wants to edit a file", "wants to use X"), the session's title and
   branch, the agent's last message, what the request would do (`code` rows in a dark
@@ -854,40 +1025,66 @@ tick every second. The daemon keeps ended sessions for 24 hours, across restarts
   at once; the card says "Sent" until the next `live` refresh drops the request, and a
   409 `request_gone` shows "Already answered in the terminal". A green notice says
   what was done, and when nobody waits it reads "Nobody is waiting on you." with the
-  last action. A session waiting with no request (it finished its turn, or asks for
-  something only its terminal can answer) gets a quieter card with the reason, the
-  wait, the agent's last message (rendered as Markdown when it finished its turn, its
-  opening lines fading into Open transcript; a quote clamped to three lines
-  otherwise), the line it showed and Open transcript, plus
-  "Answer in the terminal" for a permission or an answer. It has no reply box: the app
-  sends messages only to running sessions. A daemon without `api/agent-requests`
+  last action. A session waiting with no request (it finished its turn, asks for
+  something only its terminal can answer, or went quiet) gets a quieter card headed by the agent's
+  mark, the session's title, its branch and the wait, then the opening paragraph of
+  the agent's last message (at most two lines, its Markdown emphasis and code
+  rendered) and the line it showed, plus "Asks permission in its
+  terminal" or "Asks a question in its terminal" when only the terminal can answer.
+  A session that went quiet (`quiet`: the daemon heard nothing for 10 minutes and no
+  tool call of it is still running, as after an interrupted turn or an agent that
+  died) has "quiet", in a muted tone, before the time since its last activity (a
+  waiting one has "waiting" in amber), and no note. Rows carry the agent's logo, no
+  status dot. Every card in Needs you and Running now shows the latest message the user
+  typed (`activity.last_prompt`) on one line under its head, after "You". A session
+  the daemon marks `messageable` (waiting at its prompt) can be replied to: r on its
+  focused card, or Reply in its right-click menu, opens a "Reply" box under it, Enter
+  posts to `api/live-sessions/{agent}/{id}/message` and Escape closes it. The reply
+  starts its next turn in its own terminal and the card moves to Running now; a
+  notice says what was sent. One marked `endable` (waiting or quiet, Claude Code
+  only) can be ended from its right-click menu, which posts `.../end`; the card leaves
+  when the session's end arrives. Neither shows on a card until asked. A daemon without `api/agent-requests`
   shows no requests.
-- "Running now" has one card per running session, or one quiet for a while (a muted
-  dot and "Quiet for 12 min"): the agent, title, branch, pull request link, and the time
-  since it started. From the session's `activity` it shows the current step (the tool
-  in its colour and its target, with a blinking caret while running, still under
-  reduced motion), a "Trail" of chips for the earlier steps and "N files touched";
-  without `activity` it reads "Active 2 min ago". "Send when it finishes" posts a
-  message to `api/agent-messages`; the daemon delivers it when the session's turn
+- "Running now" has one card per running session, including one silent for a while
+  whose tool call (a subagent, a long command) has not returned, or, from a daemon
+  older than `quiet`, one quiet for a while ("Quiet for 12 min"): the agent, title, branch, pull request link, and the time
+  since it started. From the session's `activity` it shows the opening of the agent's
+  latest message on one line (its Markdown emphasis and code rendered), else, until
+  the agent has said anything, the current step (the tool in its colour and its
+  target), either with a blinking caret while running, still under reduced motion;
+  and "N files touched" before the time;
+  without `activity` it reads "Active 2 min ago". r on its focused row, or "Reply when
+  it finishes" in its right-click menu, opens "Send when it finishes" (Enter posts a
+  message to `api/agent-messages`, Escape closes it); the daemon delivers it when the session's turn
   ends, one per session, and the card then shows "Queued for when it finishes" with
   Cancel.
 - "Ended recently" has one compact row per session that ended in the last 24 hours,
   newest first: the agent, title, how long it ran and the files it touched, when it
-  ended, and Open transcript.
+  ended.
+
+The Codex model picker offers `gpt-6-luna` (the default), `gpt-6.1-sol`,
+`gpt-6.1-terra` and `gpt-6-astra`, following the
+[OpenAI model recommendations](https://developers.openai.com/codex/models).
+Terra requires Codex CLI 0.159.0 or later. Other model IDs can still be entered
+as custom models.
 
 The Settings page has "Answer Codex approvals from the app" (`codex_approvals`, saved
 through `PUT api/agent-requests/settings`, hidden when the daemon lacks the route):
 while on, Codex hides its own approval prompt for up to 25 seconds while it waits for an
 answer from the app.
 
-A session in Needs you is not listed again under Running now; a session idle only
+A session in Needs you or Waiting for you is not listed again under Running now; a session idle only
 because it went silent, or with a reason this app does not know, stays there. Times
 are relative where they are not clocks, with the exact time on hover. While anything
-needs the person the sidebar's Sessions badge counts those sessions in the caution
-tone; otherwise it counts the running ones. The desktop app notifies when a session
+asks the person something (Needs you, `asksYou`) the sidebar's Sessions badge counts
+those sessions in the caution tone; otherwise it counts the running ones, so a
+finished or quiet session waiting for its next word does not raise it. The desktop app notifies when a session
 starts asking for a permission or an answer (see the desktop README).
 
-Each row's "Open transcript" opens `?page=sessions&session=<agent>:<id>`
+A click on a session's card (anywhere but its buttons, fields and links, and not
+while selecting text) opens its transcript, as does its link (the waiting card's
+title, else the agent's name), which j/k focus and Enter or o follow. The transcript
+opens at `?page=sessions&session=<agent>:<id>`
 (`src/session-transcript.tsx`), titled with the session's title (else "Claude
 Code session"), with the agent's compaction summary, when it has one, closed above
 the transcript: the session's header (agent, working, waiting

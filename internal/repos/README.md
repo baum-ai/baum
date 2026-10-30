@@ -2,7 +2,8 @@
 
 This package owns `repos.sqlite`, a private (0600) SQLite database beside the
 config file. It stores what the user chose to review. It reads local git
-metadata only and contacts nothing.
+metadata only and contacts nothing; the daemon supplies the one GitHub lookup
+its HTTP handler uses.
 
 ## Stored data
 
@@ -14,7 +15,28 @@ metadata only and contacts nothing.
   reprobes each path and reports a changed or missing one unavailable without
   rewriting it.
 - `picked(identity)`: repositories picked by name, possibly without a clone.
+- `aliases(alias, repository)`: earlier github.com names GitHub forwards to a
+  repository after a rename or transfer, recorded when a folder whose remote
+  uses one is registered (`AddForwarded`). `Open` and `OpenReadOnly` load them
+  into `gitlocal` (every `baum` command opens the registry read-only first), so
+  in that process every remote URL using an earlier name
+  reads as the current one (`gitlocal.RemoteRepository`,
+  `github.RepositoryFromRemote`) and the clone is a clone of the repository
+  everywhere. Clones registered under the earlier name move to the current
+  one, which is picked once and takes the earlier name's settings while its
+  own are still the default. Renames chain, and renaming back undoes them.
+  The daemon asks GitHub again at startup, and a fix before it pushes for
+  its repository (`RecheckAliases`): an alias GitHub now answers with
+  another repository than the recorded one (a new one took the name) is
+  dropped, so its remotes name that repository again; one it could not
+  check or does not show the token is kept, but a fix does not push while
+  one is: a repository the token cannot see may have taken the name. The
+  remote is never rewritten.
+  `Repositories` lists them as `earlier_names`.
+- `preferences(key, value)`: the global preferences as one JSON row.
 - `preferences(key, value)`: the global preferences as one JSON row. Its
+  `appearance` object (`theme`, `key_hints`) stores the device’s General
+  settings independently of the daemon’s loopback port. Its
   `decisions` object (`enabled`, `model`) configures local
   decision capture; `Settings.DecisionsEnabled` combines it with the automatic
   master switch and the repository's `decisions` (nil is on). See
@@ -48,7 +70,7 @@ authenticated host and origin checks. JSON is decoded strictly.
 | --- | --- |
 | `GET /api/repos` | clones |
 | `GET /api/repos/check?path=` | whether a path can be registered |
-| `POST /api/repos` `{"path","settings"?,"repository"?}` | register a clone; optional repository uses any matching remote |
+| `POST /api/repos` `{"path","settings"?,"repository"?}` | register a clone; optional repository uses any matching remote (400 `{"message"}`) |
 | `DELETE /api/repos/{id}` | remove a clone (204, 404) |
 | `PUT /api/repos/{id}/settings` | replace the repository's settings |
 | `GET /api/repositories` | picked repositories, `[{"repository","settings","clones":[]}]` |
@@ -78,7 +100,12 @@ the repository if needed, clones in the background and registers the clone with
 `AddFor`; 202, 400, 409) and `GET .../clone` (the current or last state).
 
 The explicit Choose folder action supplies `repository` to `POST /api/repos`,
-which calls `AddFor` and rejects a folder without a matching remote. Omitting
+which calls `AddFor`. When no remote names the repository, `HandlerWith`'s
+`CurrentName` (the daemon asks GitHub) checks each GitHub remote, origin
+first; the first GitHub answers with the repository's current name is
+registered through `AddForwarded`. Otherwise the request fails with 400 and a
+JSON `message` naming the repositories the remotes use, or saying GitHub could
+not be asked. `Handler` has no `CurrentName` and refuses such folders. Omitting
 it preserves the standalone path registration behavior.
 
 `AddFor` moves a path already registered to another repository to the new

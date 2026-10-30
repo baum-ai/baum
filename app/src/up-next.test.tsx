@@ -447,12 +447,26 @@ it("does not clear a pull request whose fix is running, and offers to watch it",
   expect(await cleared()).toBeNull();
   await act(async () => row("Change 2").click());
   expect(panel().textContent).toContain("An agent is fixing it · The agent is fixing it.");
-  const watch = Array.from(panel().querySelectorAll("a")).find(
-    (a) => a.textContent === "Watch the agent",
+  const watch = Array.from(panel().querySelectorAll("a")).find((a) =>
+    a.textContent?.startsWith("Watch the agent"),
   )!;
   expect(watch.getAttribute("href")).toBe("/s/test-ns/?page=jobs&job=fix-1");
+  expect(watch.querySelector(".key-hint")!.textContent).toBe("t");
   // The one other waiting pull request is listed as waiting.
   expect(row("Change 5").textContent).toContain("#5 · Draft");
+  // t opens the transcript of the selected pull request's fix.
+  await press("t");
+  expect(location.search).toBe("?page=jobs&job=fix-1");
+});
+
+it("opens a finished fix's transcript with t once the agent stopped", async () => {
+  await render();
+  jobsList = [fixJobOf({ state: "completed", commit: "abc1234" })];
+  entries = entries.map((e) => (e.pull_request.number === 2 ? mine(2, { checks: "running" }) : e));
+  await render();
+  await act(async () => row("Change 2").click());
+  await press("t");
+  expect(location.search).toBe("?page=jobs&job=fix-1");
 });
 
 it("waits on checks that run before calling a pull request ready to merge", async () => {
@@ -485,8 +499,8 @@ it("brings back a pull request whose fix failed, with what happened", async () =
   expect(row("Change 2").textContent).toContain("Last fix failed");
   await act(async () => row("Change 2").click());
   expect(panel().textContent).toContain("The last fix failed: Git couldn't sign a commit");
-  const see = Array.from(panel().querySelectorAll("a")).find(
-    (a) => a.textContent === "See what the agent did",
+  const see = Array.from(panel().querySelectorAll("a")).find((a) =>
+    a.textContent?.startsWith("See what the agent did"),
   )!;
   expect(see.getAttribute("href")).toBe("/s/test-ns/?page=jobs&job=fix-1");
   expect(panel().querySelector("button.upnext-secondary")!.textContent).toMatch(/^Fix/);

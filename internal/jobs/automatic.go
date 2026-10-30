@@ -216,7 +216,7 @@ func (q *Queue) automaticConflict(repository string, pr int, group, head string)
 	sameHead := 0
 	retryable := false
 	for _, j := range q.jobs {
-		if !strings.EqualFold(j.Repository, repository) || j.PR != pr || j.Group != group {
+		if !strings.EqualFold(j.Repository, repository) || j.PR != pr || j.Group != group || j.Kind == KindChat {
 			continue
 		}
 		if j.State == "queued" || j.State == "running" {

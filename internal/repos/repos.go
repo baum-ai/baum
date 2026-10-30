@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 
@@ -82,6 +83,12 @@ type DecisionPreferences struct {
 	Model   *string `json:"model,omitempty"`
 }
 
+// AppearancePreferences are device choices kept independently of the daemon HTTP origin.
+type AppearancePreferences struct {
+	Theme    string `json:"theme,omitempty"`
+	KeyHints *bool  `json:"key_hints,omitempty"`
+}
+
 // Preferences are the registry's global choices, edited in the app. Fields
 // an older baum saved and this one dropped, such as
 // cursor_agent_acknowledged, are ignored on read and gone after the next
@@ -105,6 +112,8 @@ type Preferences struct {
 	// AgentEnv, when it sets any variable, replaces the config file's
 	// agent_env (config.Config.AgentEnv).
 	AgentEnv map[string]string `json:"agent_env,omitempty"`
+	// Appearance survives daemon restarts and changes to its loopback origin.
+	Appearance AppearancePreferences `json:"appearance,omitzero"`
 	// Decisions configures local decision capture.
 	Decisions DecisionPreferences `json:"decisions,omitzero"`
 }
@@ -274,9 +283,12 @@ func Open(path string) (*Registry, error) {
 		return nil, e
 	}
 	db.SetMaxOpenConns(1)
-	_, e = db.Exec(`CREATE TABLE IF NOT EXISTS repositories(identity TEXT PRIMARY KEY,settings TEXT NOT NULL); CREATE TABLE IF NOT EXISTS clones(id TEXT PRIMARY KEY,path TEXT NOT NULL UNIQUE,common_dir TEXT NOT NULL,repository TEXT NOT NULL REFERENCES repositories(identity)); CREATE TABLE IF NOT EXISTS preferences(key TEXT PRIMARY KEY,value TEXT NOT NULL); CREATE TABLE IF NOT EXISTS picked(identity TEXT PRIMARY KEY REFERENCES repositories(identity) ON DELETE CASCADE);`)
+	_, e = db.Exec(`CREATE TABLE IF NOT EXISTS repositories(identity TEXT PRIMARY KEY,settings TEXT NOT NULL); CREATE TABLE IF NOT EXISTS clones(id TEXT PRIMARY KEY,path TEXT NOT NULL UNIQUE,common_dir TEXT NOT NULL,repository TEXT NOT NULL REFERENCES repositories(identity)); CREATE TABLE IF NOT EXISTS preferences(key TEXT PRIMARY KEY,value TEXT NOT NULL); CREATE TABLE IF NOT EXISTS picked(identity TEXT PRIMARY KEY REFERENCES repositories(identity) ON DELETE CASCADE); CREATE TABLE IF NOT EXISTS aliases(alias TEXT PRIMARY KEY,repository TEXT NOT NULL);`)
 	if e == nil {
 		e = migrate(context.Background(), db)
+	}
+	if e == nil {
+		e = loadAliases(db)
 	}
 	if e != nil {
 		_ = db.Close()
@@ -407,10 +419,138 @@ func OpenReadOnly(path string) (*Registry, error) {
 		_ = db.Close()
 		return nil, e
 	}
+	// A registry from before aliases has none to load.
+	_ = loadAliases(db)
 	return &Registry{db: db, noSchema: tables < 2, noPreferences: preferences == 0, legacy: version < schemaVersion, noPicked: picked == 0}, nil
 }
 
 func (r *Registry) Close() error { return r.db.Close() }
+
+// loadAliases makes remote URLs using a recorded earlier name read as the
+// repository's current one, in this process (gitlocal.AddRenamed).
+func loadAliases(db *sql.DB) error {
+	rows, e := db.Query("SELECT alias,repository FROM aliases")
+	if e != nil {
+		return e
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var alias, repository string
+		if e = rows.Scan(&alias, &repository); e != nil {
+			return e
+		}
+		gitlocal.AddRenamed(alias, repository)
+	}
+	return rows.Err()
+}
+
+// RecheckAliases asks GitHub (current) again about the recorded earlier names
+// of repository, or of every repository when it is "", and drops each one it
+// now answers with another repository than the recorded one does, as when a
+// new repository took the name: remotes using it then name that one. One it
+// could not check or does not show the token is kept, and returned as
+// unconfirmed: a repository the token cannot see may have taken it.
+func (r *Registry) RecheckAliases(ctx context.Context, repository string, current func(context.Context, github.Repository) (string, error)) (unconfirmed []string, err error) {
+	rows, e := r.db.QueryContext(ctx, "SELECT alias,repository FROM aliases WHERE ?1='' OR repository=lower(?1)", repository)
+	if e != nil {
+		return nil, e
+	}
+	var aliases [][2]string
+	for rows.Next() {
+		var alias [2]string
+		if e = rows.Scan(&alias[0], &alias[1]); e != nil {
+			_ = rows.Close()
+			return nil, e
+		}
+		aliases = append(aliases, alias)
+	}
+	if e = errors.Join(rows.Err(), rows.Close()); e != nil {
+		return nil, e
+	}
+	for _, alias := range aliases {
+		earlier, e := github.ParseRepository(alias[0])
+		if e != nil {
+			continue
+		}
+		now, e := current(ctx, earlier)
+		if e != nil {
+			unconfirmed = append(unconfirmed, alias[0])
+			continue
+		}
+		if strings.EqualFold(now, alias[1]) {
+			continue
+		}
+		// Renamed again since: both names still lead to the same repository.
+		if recorded, e := github.ParseRepository(alias[1]); e != nil {
+			continue
+		} else if then, e := current(ctx, recorded); e != nil {
+			unconfirmed = append(unconfirmed, alias[0])
+			continue
+		} else if strings.EqualFold(now, then) {
+			continue
+		}
+		// Unless AddForwarded recorded it anew meanwhile.
+		result, e := r.db.ExecContext(ctx, "DELETE FROM aliases WHERE alias=? AND repository=?", alias[0], alias[1])
+		if e != nil {
+			return unconfirmed, e
+		}
+		if n, _ := result.RowsAffected(); n > 0 {
+			gitlocal.RemoveRenamed(alias[0])
+		}
+	}
+	return unconfirmed, nil
+}
+
+// AddForwarded registers a clone for repository, as AddFor does, whose remote
+// uses alias, an earlier name GitHub forwards to repository, which the caller
+// has checked. The alias is recorded first: from then on remote URLs using it
+// read as repository (gitlocal.RenamedTo), so the clone stays a clone of
+// repository everywhere, until RecheckAliases finds GitHub no longer
+// forwards it.
+func (r *Registry) AddForwarded(ctx context.Context, path, repository, alias string, settings *Settings) (Clone, error) {
+	gh, e := github.ParseRepository(repository)
+	old, oe := github.ParseRepository(alias)
+	if e != nil || oe != nil || gh.Host != config.GitHubHost || old.Host != config.GitHubHost {
+		return Clone{}, ErrInvalidRepository
+	}
+	current, earlier := strings.ToLower(gh.String()), strings.ToLower(old.String())
+	// As gitlocal.AddRenamed: names forwarded to the earlier one follow it,
+	// and the current name is no longer an earlier one.
+	if e = r.exec(ctx, []string{"DELETE FROM aliases WHERE alias=?2", "UPDATE aliases SET repository=?2 WHERE repository=?1", "INSERT INTO aliases VALUES (?1,?2) ON CONFLICT(alias) DO UPDATE SET repository=excluded.repository"}, earlier, current); e != nil {
+		return Clone{}, e
+	}
+	gitlocal.AddRenamed(earlier, current)
+	c, e := r.AddFor(ctx, path, current, settings)
+	if e != nil {
+		return Clone{}, e
+	}
+	// The earlier name is the same repository: its clones move to the
+	// current one, and it is not picked twice.
+	// Settings chosen under a still-picked earlier name replace the current
+	// name's default.
+	if e = r.exec(ctx, []string{
+		`UPDATE repositories SET settings=(SELECT settings FROM repositories WHERE identity=?1) WHERE identity=?2 AND settings='{"automatic":null}' AND EXISTS (SELECT 1 FROM picked WHERE identity=?1)`,
+		"UPDATE clones SET repository=?2 WHERE repository=?1", "DELETE FROM picked WHERE identity=?1",
+	}, earlier, current); e != nil {
+		return Clone{}, e
+	}
+	return c, nil
+}
+
+// exec runs statements with the same arguments in one transaction.
+func (r *Registry) exec(ctx context.Context, statements []string, args ...any) error {
+	tx, e := r.db.BeginTx(ctx, nil)
+	if e != nil {
+		return e
+	}
+	defer func() { _ = tx.Rollback() }()
+	for _, statement := range statements {
+		if _, e = tx.ExecContext(ctx, statement, args...); e != nil {
+			return e
+		}
+	}
+	return tx.Commit()
+}
 
 // Inspect reports the clone a path would register as, or why it cannot be
 // registered, without registering it.
@@ -425,7 +565,7 @@ func inspect(ctx context.Context, path string) (Clone, error) { return inspectFo
 func inspectFor(ctx context.Context, path, repository string) (Clone, error) {
 	repo, e := gitlocal.Open(ctx, path, gitlocal.Options{})
 	if e != nil {
-		return Clone{}, errors.New("path is unavailable or is not a git working tree")
+		return Clone{}, ErrNotWorkingTree
 	}
 	defer func() { _ = repo.Close() }()
 	p, e := filepath.EvalSymlinks(repo.Dir())
@@ -454,6 +594,7 @@ func inspectFor(ctx context.Context, path, repository string) (Clone, error) {
 	if names["origin"] {
 		ordered = append([]string{"origin"}, ordered...)
 	}
+	var others []string
 	for _, name := range ordered {
 		remote, e := repo.RemoteFetchURL(ctx, name)
 		if e != nil {
@@ -464,16 +605,37 @@ func inspectFor(ctx context.Context, path, repository string) (Clone, error) {
 			continue
 		}
 		if repository != "" && !strings.EqualFold(gh.String(), repository) {
+			if other := strings.ToLower(gh.String()); !slices.Contains(others, other) {
+				others = append(others, other)
+			}
 			continue
 		}
 		sum := sha256.Sum256([]byte(p))
 		return Clone{ID: hex.EncodeToString(sum[:]), Path: p, CommonDir: common, Repository: strings.ToLower(gh.String()), Available: true}, nil
 	}
 	if repository != "" {
-		return Clone{}, ErrNoMatchingRemote
+		return Clone{}, &RemoteMismatchError{Repository: strings.ToLower(repository), Remotes: others}
 	}
 	return Clone{}, errors.New("working tree has no GitHub remote")
 }
+
+// ErrNotWorkingTree reports a path that is missing or not in a git working
+// tree.
+var ErrNotWorkingTree = errors.New("path is unavailable or is not a git working tree")
+
+// RemoteMismatchError is ErrNoMatchingRemote, naming the repositories the
+// working tree's GitHub remotes name instead, origin's first; none when it
+// has no GitHub remote.
+type RemoteMismatchError struct {
+	Repository string
+	Remotes    []string
+	// Unchecked is set when GitHub could not be asked whether a remote uses
+	// an earlier name of Repository.
+	Unchecked bool
+}
+
+func (e *RemoteMismatchError) Error() string        { return ErrNoMatchingRemote.Error() }
+func (e *RemoteMismatchError) Is(target error) bool { return target == ErrNoMatchingRemote }
 
 // Add registers an existing clone. Nil settings preserve existing settings;
 // explicit settings replace the settings shared by all its repository's clones.
@@ -826,6 +988,9 @@ type Repository struct {
 	Repository string   `json:"repository"`
 	Settings   Settings `json:"settings"`
 	Clones     []Clone  `json:"clones"`
+	// EarlierNames are names GitHub forwards to the repository that clones'
+	// remotes were registered with (AddForwarded).
+	EarlierNames []string `json:"earlier_names,omitempty"`
 }
 
 // Pick registers a github.com repository by owner/name without a local
@@ -933,6 +1098,7 @@ func (r *Registry) repositories(ctx context.Context, only string) ([]Repository,
 			v.Settings.Automatic = nil
 		}
 		v.Clones = []Clone{}
+		v.EarlierNames = gitlocal.EarlierNames(v.Repository)
 		byIdentity[v.Repository] = len(result)
 		result = append(result, v)
 	}

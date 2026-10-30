@@ -82,7 +82,8 @@ var ErrNotGitHubRemote = errors.New("the remote does not name a repository on a 
 // resolved through `ssh -G`, and ssh.github.com is github.com. The host must
 // be one gh treats as GitHub: github.com, a *.ghe.com tenant, a host gh is
 // logged in to, or the one GH_HOST names. Any other host is another service,
-// which must never be sent a GitHub token.
+// which must never be sent a GitHub token. An earlier github.com name GitHub
+// forwards reads as the current one (gitlocal.RenamedTo).
 func RepositoryFromRemote(remote string) (Repository, error) {
 	u, ok := remoteURL(strings.TrimSpace(remote))
 	if !ok {
@@ -103,6 +104,11 @@ func RepositoryFromRemote(remote string) (Repository, error) {
 	repo, ok := checkedRepository(parsed.Host, parsed.Owner, parsed.Name)
 	if !ok || !gitHubHost(repo.Host) {
 		return Repository{}, ErrNotGitHubRemote
+	}
+	if repo.Host == config.GitHubHost {
+		if current := gitlocal.RenamedTo(repo.Owner + "/" + repo.Name); current != strings.ToLower(repo.Owner+"/"+repo.Name) {
+			repo.Owner, repo.Name, _ = strings.Cut(current, "/")
+		}
 	}
 	return repo, nil
 }

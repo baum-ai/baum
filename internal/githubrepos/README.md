@@ -34,6 +34,8 @@ call. A response started before an account change cannot refill the cache
 afterward. `picked` comes
 from the registry; `clone` is an available registered path, otherwise the best
 path the clone finder's last result has for the repository, or `""`.
+`earlier_names` are a picked repository's recorded earlier names (see
+[`internal/repos`](../repos/README.md)).
 
 A failure answers a JSON `{"code","message"}` (never a token or an upstream
 body) with the codes the app already explains for the GitHub connection:

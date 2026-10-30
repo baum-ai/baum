@@ -77,6 +77,8 @@ func (f *threadState) responseItem(line codextranscript.Line) (accountCategory, 
 		return accountDiscarded, "context/compaction_item", nil
 	case item.ImageGeneration != nil:
 		return accountDiscarded, "context/image_generation_call", nil
+	case item.AdditionalTools != nil:
+		return accountDiscarded, "context/additional_tools", nil
 	case item.FunctionCall != nil:
 		return f.ownedCall(line, item.FunctionCall.CallID, func() error {
 			return f.addFunctionCall(line, item.FunctionCall)

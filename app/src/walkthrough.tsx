@@ -20,12 +20,14 @@ import {
   type ReviewDocument,
   type RiskScoreLevel,
 } from "@baum/viewer/review-document";
-import { LocalRequestError, request, type Entry } from "./api";
+import { LocalRequestError, request, type ChatFocus, type Entry } from "./api";
+import { stopFocus } from "./chat";
 import { PullRequestState } from "./inbox";
 import { useShortcuts } from "./shortcuts";
 import {
   buildTour,
   commentedStops,
+  PROGRESS_EVENT,
   loadProgress,
   progressKey,
   reviewSubmission,
@@ -68,6 +70,7 @@ export function Walkthrough({
   changed,
   actions,
   notices,
+  ask,
 }: {
   entry: Entry;
   document: ReviewDocument;
@@ -83,6 +86,9 @@ export function Walkthrough({
   actions?: ReactNode;
   /** What is happening on it now, such as agents on its branch. */
   notices?: ReactNode;
+  /** The Ask panel: whether it is open, toggling it, and asking about a part
+   *  of the review. Absent, the walkthrough offers no questions. */
+  ask?: { open: boolean; toggle: () => void; about: (focus: ChatFocus) => void };
 }) {
   const tour = useMemo(() => buildTour(document), [document]);
   const key = progressKey(document);
@@ -90,6 +96,38 @@ export function Walkthrough({
   useEffect(() => {
     saveProgress(key, progress);
   }, [key, progress]);
+  // The stop whose comment is being edited and its note as it was when the
+  // editing began, to keep what the Ask panel adds to it meanwhile.
+  const editingRef = useRef<string | null>(null);
+  const editBase = useRef("");
+  // The Ask panel adds an answer to the draft from outside this page.
+  useEffect(() => {
+    const changed = (event: Event) => {
+      if ((event as CustomEvent<string>).detail !== key) return;
+      const next = loadProgress(key);
+      setProgress(next);
+      const id = editingRef.current;
+      if (id === null) return;
+      // Text appended to the stop's note since the editing began joins the
+      // text being edited, and text the panel takes back (Undo) leaves it.
+      const stored = next.notes[id] ?? "";
+      const base = editBase.current;
+      if (stored === base) return;
+      if (stored.startsWith(base)) {
+        editBase.current = stored;
+        const added = stored.slice(base.length).replace(/^\s+/, "");
+        setDraft((current) =>
+          current.trim() ? `${current.replace(/\s+$/, "")}\n\n${added}` : added,
+        );
+      } else if (base.startsWith(stored)) {
+        editBase.current = stored;
+        const removed = base.slice(stored.length).trim();
+        if (removed) setDraft((current) => withoutLast(current, removed));
+      }
+    };
+    window.addEventListener(PROGRESS_EVENT, changed);
+    return () => window.removeEventListener(PROGRESS_EVENT, changed);
+  }, [key]);
   const seen = useMemo(() => new Set(progress.seen), [progress.seen]);
   const commented = (stop: Stop) => Boolean(progress.notes[stop.id]?.trim());
   const done = (stop: Stop) => seen.has(stop.id) || commented(stop);
@@ -107,6 +145,7 @@ export function Walkthrough({
   // The behaviour the keys act on, an index into `tour.stops`.
   const [cur, setCur] = useState(0);
   const [editing, setEditing] = useState<string | null>(null);
+  editingRef.current = editing;
   const [draft, setDraft] = useState("");
   const detail = useRef<HTMLDivElement>(null);
   // Each page starts at its top, as a new page would.
@@ -171,7 +210,8 @@ export function Walkthrough({
     open(page - 1, previous ? previous.stops[previous.stops.length - 1] : undefined);
   };
   const startComment = (stop: Stop) => {
-    setDraft(progress.notes[stop.id] ?? "");
+    editBase.current = progress.notes[stop.id] ?? "";
+    setDraft(editBase.current);
     setEditing(stop.id);
   };
   const toggleCode = (stop: Stop) => {
@@ -261,6 +301,7 @@ export function Walkthrough({
             back={back}
             actions={actions}
             notices={notices}
+            ask={ask}
           />
         </div>
       </section>
@@ -287,6 +328,7 @@ export function Walkthrough({
             </p>
           </div>
           <div className="walk-head-actions">
+            {ask ? <AskButton ask={ask} /> : null}
             <button type="button" className="walk-secondary" onClick={close}>
               Full review
               <kbd aria-hidden>v</kbd>
@@ -335,6 +377,7 @@ export function Walkthrough({
               }}
               cancelComment={() => setEditing(null)}
               removeComment={(stop) => setNote(stop, "")}
+              ask={ask ? (stop) => ask.about(stopFocus(document, stop)) : undefined}
               next={() => open(page + 1)}
               back={() => open(page - 1)}
             />
@@ -376,6 +419,23 @@ function Mark({ state }: { state: "seen" | "commented" | null }) {
         <CheckIcon size={10} />
       ) : null}
     </span>
+  );
+}
+
+/** Opens or closes the Ask panel, which hands the keyboard back to it. */
+function AskButton({ ask }: { ask: { open: boolean; toggle: () => void } }) {
+  return (
+    <button
+      type="button"
+      className="walk-secondary"
+      aria-pressed={ask.open}
+      aria-keyshortcuts="a"
+      data-ask-button=""
+      onClick={ask.toggle}
+    >
+      Ask
+      <kbd aria-hidden>a</kbd>
+    </button>
   );
 }
 
@@ -504,6 +564,7 @@ function Landing({
   back,
   actions,
   notices,
+  ask,
 }: {
   entry: Entry;
   document: ReviewDocument;
@@ -514,6 +575,7 @@ function Landing({
   back: { href: string; label: string };
   actions?: ReactNode;
   notices?: ReactNode;
+  ask?: { open: boolean; toggle: () => void };
 }) {
   const pr = entry.pull_request;
   const level = tour.level;
@@ -574,6 +636,7 @@ function Landing({
           <kbd aria-hidden>→</kbd>
         </button>
         {actions}
+        {ask ? <AskButton ask={ask} /> : null}
         <button type="button" className="walk-secondary" onClick={close}>
           Full review
           <kbd aria-hidden>v</kbd>
@@ -689,6 +752,7 @@ function ChapterPage({
   saveComment,
   cancelComment,
   removeComment,
+  ask,
   next,
   back,
 }: {
@@ -707,6 +771,8 @@ function ChapterPage({
   saveComment: (stop: Stop) => void;
   cancelComment: () => void;
   removeComment: (stop: Stop) => void;
+  /** Asks the review's agent about a behaviour. */
+  ask?: (stop: Stop) => void;
   next: () => void;
   back: () => void;
 }) {
@@ -769,6 +835,7 @@ function ChapterPage({
                 saveComment={() => saveComment(stop)}
                 cancelComment={cancelComment}
                 removeComment={() => removeComment(stop)}
+                ask={ask ? () => ask(stop) : undefined}
               />
             );
           })}
@@ -803,6 +870,7 @@ function Behaviour({
   saveComment,
   cancelComment,
   removeComment,
+  ask,
 }: {
   number: number;
   stop: Stop;
@@ -818,6 +886,8 @@ function Behaviour({
   saveComment: () => void;
   cancelComment: () => void;
   removeComment: () => void;
+  /** Asks the review's agent about this stop. */
+  ask?: () => void;
 }) {
   const hasNote = Boolean(note.trim());
   const target = stop.where || "the review";
@@ -864,6 +934,18 @@ function Behaviour({
               <CommentsIcon size={12} />
               Something looks off
               <kbd aria-hidden>c</kbd>
+            </button>
+          ) : null}
+          {picked && ask ? (
+            <button
+              type="button"
+              className="walk-small"
+              onClick={(event) => {
+                event.stopPropagation();
+                ask();
+              }}
+            >
+              Ask about this
             </button>
           ) : null}
         </div>
@@ -1186,4 +1268,14 @@ function Submit({
       </div>
     </div>
   );
+}
+
+/** The text with the last occurrence of a part taken out, along with the blank
+ *  line that joined it; the text unchanged when the part is no longer in it. */
+function withoutLast(text: string, part: string): string {
+  const at = text.lastIndexOf(part);
+  if (at < 0) return text;
+  const before = text.slice(0, at).replace(/\s+$/, "");
+  const after = text.slice(at + part.length).replace(/^\s+/, "");
+  return before && after ? `${before}\n\n${after}` : before || after;
 }

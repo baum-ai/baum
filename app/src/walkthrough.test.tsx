@@ -6,10 +6,12 @@ import example from "../../schema/review-example.json" with { type: "json" };
 import type { Entry } from "./api";
 import { Walkthrough, type WalkMode } from "./walkthrough";
 import {
+  appendToDraft,
   buildTour,
   firstSentence,
   loadProgress,
   progressKey,
+  removeFromDraft,
   reviewSubmission,
   saveProgress,
 } from "./walkthrough-model";
@@ -268,4 +270,67 @@ it("keeps what was written while the review was being sent", async () => {
   const kept = loadProgress(progressKey(doc));
   expect(Object.values(kept.notes)).toEqual([]);
   expect(kept.note).toBe("Thanks");
+});
+
+it("keeps what the Ask panel adds to a stop while its comment is being written", () => {
+  render();
+  click("Start the review");
+  const stop = buildTour(doc).stops[0]!;
+  key("c");
+  type(node.querySelector("textarea")!, "My own note.");
+  // An answer is added to this stop from the panel while the box is open.
+  act(() => {
+    appendToDraft(
+      progressKey(doc),
+      { kind: "stop", id: stop.id, title: stop.title },
+      "From the answer.",
+    );
+  });
+  expect(node.querySelector("textarea")!.value).toBe("My own note.\n\nFrom the answer.");
+  click("Save comment");
+  expect(loadProgress(progressKey(doc)).notes[stop.id]).toBe("My own note.\n\nFrom the answer.");
+});
+
+it("merges text appended to a stop's stored note since the box was opened", () => {
+  render();
+  click("Start the review");
+  const stop = buildTour(doc).stops[0]!;
+  key("c");
+  type(node.querySelector("textarea")!, "Earlier.");
+  click("Save comment");
+  click("Edit");
+  expect(node.querySelector("textarea")!.value).toBe("Earlier.");
+  act(() => {
+    appendToDraft(
+      progressKey(doc),
+      { kind: "stop", id: stop.id, title: stop.title },
+      "From the answer.",
+    );
+  });
+  expect(node.querySelector("textarea")!.value).toBe("Earlier.\n\nFrom the answer.");
+  type(node.querySelector("textarea")!, "Earlier.\n\nFrom the answer. And mine.");
+  click("Save comment");
+  expect(loadProgress(progressKey(doc)).notes[stop.id]).toBe(
+    "Earlier.\n\nFrom the answer. And mine.",
+  );
+});
+
+it("takes an undone answer out of the comment being written, keeping the rest", () => {
+  render();
+  click("Start the review");
+  const stop = buildTour(doc).stops[0]!;
+  const target = { kind: "stop" as const, id: stop.id, title: stop.title };
+  key("c");
+  type(node.querySelector("textarea")!, "My own note.");
+  let added = "";
+  act(() => {
+    added = appendToDraft(progressKey(doc), target, "From the answer.");
+  });
+  type(node.querySelector("textarea")!, "My own note.\n\nFrom the answer.\n\nAnd more.");
+  act(() => {
+    expect(removeFromDraft(progressKey(doc), target, added)).toBe(true);
+  });
+  expect(node.querySelector("textarea")!.value).toBe("My own note.\n\nAnd more.");
+  click("Save comment");
+  expect(loadProgress(progressKey(doc)).notes[stop.id]).toBe("My own note.\n\nAnd more.");
 });

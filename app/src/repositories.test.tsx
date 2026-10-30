@@ -234,3 +234,25 @@ it("clones into the repository's own folder inside the folder picked", () => {
     "C:\\Users\\me\\code\\widgets",
   );
 });
+it("warns about a picked repository whose clone uses an earlier name", async () => {
+  const call: RepositoryCall = async (action) =>
+    (action === "list"
+      ? {
+          repositories: [
+            {
+              repository: "new/repo",
+              clone: "/code/repo",
+              earlier_names: ["old/repo"],
+              picked: true,
+              description: "",
+            },
+          ],
+        }
+      : action === "picked"
+        ? [{ repository: "new/repo", clones: [], settings: {} }]
+        : { running: false, repositories: {}, attached: [] }) as never;
+  await act(async () => root.render(<RepositoryPicker call={call} />));
+  expect(node.querySelector(".repository-warning")!.textContent).toBe(
+    "GitHub forwards old/repo to new/repo; clones whose remote still uses that earlier name count as its clones.",
+  );
+});

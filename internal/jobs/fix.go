@@ -6,8 +6,10 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/url"
+	"strings"
 	"time"
 
 	"github.com/baum-ai/baum/agent"
@@ -89,6 +91,24 @@ func (l *Local) prepareFix(ctx context.Context, item Item) (Prepared, string, er
 		}
 		if !push {
 			p.BlockedReason = fix.ReasonNoPushAccess
+			break
+		}
+		if item.FixChat != nil {
+			// A fix from a conversation makes that conversation's change and
+			// nothing else: conflicts, checks and review threads are
+			// separate fixes.
+			chat, turn, reason, err := fixChat(ctx, c, item.PR, *item.FixChat)
+			if err != nil {
+				return Prepared{}, "", err
+			}
+			if reason != "" {
+				p.BlockedReason = reason
+				break
+			}
+			// The estimate pins the last turn: the confirmed fix uses the
+			// conversation up to it, whatever is asked after.
+			p.FixChat = &FixChatRef{Conversation: chat.Conversation, Turn: turn}
+			p.Fix.Chat, p.Fix.ChatTurn, p.Fix.ChatDigest = chat.Conversation, turn, fix.ChatDigest(chat)
 			break
 		}
 		checks, err := fix.FailingChecks(ctx, reader, repository, pr.HeadSHA)
@@ -223,6 +243,19 @@ func (l *Local) executeFix(ctx context.Context, p Prepared, progress func(Progre
 			return nil, &fix.Error{Reason: fix.ReasonThreadsChanged, Err: errors.New("the review comments changed since the fix was started; start it again")}
 		}
 	}
+	var conversation *fix.ChatContext
+	if p.Fix.ChatDigest != "" && p.FixChat != nil {
+		progress(Progress{Phase: "reading the conversation"})
+		chat, _, reason, err := fixChat(ctx, c, p.PR, *p.FixChat)
+		if err != nil {
+			return nil, err
+		}
+		// The agent gets exactly the conversation that was confirmed.
+		if reason != "" || fix.ChatDigest(chat) != p.Fix.ChatDigest {
+			return nil, &fix.Error{Reason: fix.ReasonChatChanged, Err: errors.New("the conversation changed since the fix was confirmed; confirm it again")}
+		}
+		conversation = &chat
+	}
 	var transcript func(agent.TranscriptEntry)
 	hasTranscript := false
 	if target, ok := transcriptTargetOf(ctx); ok {
@@ -231,10 +264,21 @@ func (l *Local) executeFix(ctx context.Context, p Prepared, progress func(Progre
 			transcript, hasTranscript = func(entry agent.TranscriptEntry) { writer.Add(ctx, entry) }, true
 		}
 	}
+	// A remote using an earlier name pushes to whatever GitHub forwards it to
+	// now: one no longer forwarded to the repository stops naming it, and one
+	// GitHub does not confirm, which a repository the token cannot see may
+	// have taken, is not pushed through.
+	unconfirmed, e := l.Registry.RecheckAliases(ctx, c.Repository, l.Client.CurrentName)
+	if e != nil {
+		return nil, e
+	}
+	if len(unconfirmed) > 0 {
+		return nil, &fix.Error{Reason: fix.ReasonNoRemote, Err: fmt.Errorf("GitHub did not confirm that %s still leads to %s; point the clone's remote at %s", strings.Join(unconfirmed, ", "), c.Repository, c.Repository)}
+	}
 	list := pricing.Active()
 	out, err := fix.Run(ctx, fix.Options{ID: id(), Clone: c.Path, Repository: repository, Number: p.PR, Title: pr.Title,
 		HeadRef: p.Fix.HeadRef, HeadSHA: p.HeadSHA, BaseRef: p.Fix.BaseRef, Conflicts: p.Fix.Conflicts, Checks: p.Fix.Checks, Evidence: evidence,
-		Threads: threads, Replies: l.Client, Agent: fixer, Backend: p.Backend, Model: p.Model, MaxCalls: cfg.Budgets.MaxCalls, MaxTokens: cfg.Budgets.MaxTokens,
+		Threads: threads, Chat: conversation, Replies: l.Client, Agent: fixer, Backend: p.Backend, Model: p.Model, MaxCalls: cfg.Budgets.MaxCalls, MaxTokens: cfg.Budgets.MaxTokens,
 		WallClock: time.Duration(cfg.Budgets.RunTimeout), Directory: l.FixDirectory, Env: cfg.AgentEnviron(), Transcript: transcript,
 		Progress: func(phase string) { progress(Progress{Phase: phase, HasTranscript: hasTranscript}) }})
 	report := Progress{Phase: "finishing", HasTranscript: hasTranscript}

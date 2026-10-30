@@ -10,7 +10,7 @@ import { Markdown } from "@baum/viewer/components/markdown";
 import type { ViewerLinkProps } from "@baum/viewer/navigation";
 import {
   appURL,
-  fixName,
+  jobName,
   isActiveJob,
   jobReasonText,
   LocalRequestError,
@@ -55,7 +55,7 @@ export function mergeEntries(
   return merged;
 }
 
-type State =
+export type TranscriptState =
   | { kind: "loading" }
   | { kind: "ready"; entries: TranscriptEntry[]; done: boolean }
   | { kind: "missing" }
@@ -63,8 +63,8 @@ type State =
 
 /** The transcript read from the start, then again at once while the daemon
  *  has more, otherwise every second until it is done. Stops when unmounted. */
-function useJobTranscript(id: string): State {
-  const [state, setState] = useState<State>({ kind: "loading" });
+export function useJobTranscript(id: string): TranscriptState {
+  const [state, setState] = useState<TranscriptState>({ kind: "loading" });
   useEffect(() => {
     let stopped = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
@@ -180,7 +180,7 @@ function ToolRun({ tools }: { tools: TranscriptEntry[] }) {
   );
 }
 
-function EntryView({ entry }: { entry: TranscriptEntry }) {
+export function EntryView({ entry }: { entry: TranscriptEntry }) {
   switch (entry.kind) {
     case "message":
       return (
@@ -236,7 +236,7 @@ export function groupEntries(entries: TranscriptEntry[]): Item[] {
 /** What a fix job is doing or did: its phase while it runs, its result once
  *  it is done. */
 function JobHeader({ job }: { job: Job }) {
-  const name = fixName(job.fix ?? {});
+  const name = jobName(job);
   const active = isActiveJob(job);
   return (
     <section aria-label="Job" className="local-panel local-job-head">
@@ -260,6 +260,8 @@ function JobHeader({ job }: { job: Job }) {
             </>
           ) : job.state === "failed" ? (
             `${name} failed`
+          ) : job.state === "completed" ? (
+            `${name} was answered`
           ) : (
             `${name} was ${job.state}`
           )}
@@ -343,7 +345,7 @@ export function JobPage({
   return (
     <>
       <PageBar
-        title={job ? fixName(job.fix ?? {}) : "Job"}
+        title={job ? jobName(job) : "Job"}
         detail={job ? `${job.repository} #${job.pr}` : "Agent run on this computer"}
         actions={
           <Link href={appURL("?page=jobs")} className="inbox-action">

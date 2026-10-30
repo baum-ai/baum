@@ -3,6 +3,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { ViewerLinkProps } from "@baum/viewer/navigation";
 import {
+  fixEligible,
   fixJob,
   fixLabel,
   fixName,
@@ -226,4 +227,41 @@ it("shows what became of each review thread after the push", async () => {
   expect(text).toContain("Replied and resolved 1 of 2 threads");
   expect(text).toContain("src/a.go:12 Replied and resolved: Renamed it.");
   expect(text).toContain("src/b.go Left open: A question for the author.");
+});
+
+it("starts a fix made from a conversation, sending only its ids", async () => {
+  await startFix("clone", 8, undefined, { conversation_id: "c1", turn: 2 });
+  expect(requests[0]).toEqual({
+    path: "/s/test-ns/api/jobs",
+    body: {
+      items: [{ clone: "clone", pr: 8, kind: "fix", fix_chat: { conversation_id: "c1", turn: 2 } }],
+      mode: "single",
+    },
+  });
+});
+
+it("reports why a conversation cannot be fixed from", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(
+      async () =>
+        new Response(JSON.stringify({ blocked_reason: "chat_unavailable" }), { status: 409 }),
+    ),
+  );
+  await expect(
+    startFix("clone", 8, undefined, { conversation_id: "c1", turn: 1 }),
+  ).rejects.toMatchObject({ code: "chat_unavailable" });
+});
+
+it("names a fix from a conversation and offers it whenever a fix may run", () => {
+  expect(fixName({ chat: "c1" })).toBe("Fix from this answer");
+  // It is never combined with the other fixes.
+  expect(fixName({ checks: true, chat: "c1" })).toBe("Fix from this answer");
+  const clean = variant({ merge: "ready", checks: "passing" });
+  expect(fixLabel(clean)).toBeNull();
+  expect(fixEligible(clean)).toBe(true);
+  expect(fixEligible(variant({}, { fork: true }))).toBe(false);
+  expect(fixEligible(variant({}, { viewer_can_push: false }))).toBe(false);
+  expect(fixEligible(variant({}, { state: "MERGED" }))).toBe(false);
+  expect(fixEligible(variant({ needs_clone: true }))).toBe(false);
 });

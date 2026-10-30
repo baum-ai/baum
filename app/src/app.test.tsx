@@ -853,17 +853,16 @@ it("puts a control back when its save fails", async () => {
     "registry is busy",
   );
 });
-it("opens on an overview that sends each problem to its section", async () => {
+it("opens on General and marks sections needing attention", async () => {
   history.replaceState(null, "", "/s/test-ns/?page=settings");
   stubDiagnostics(async () => Response.json({ local: true, report: diagnosticsReport }));
   stubAutomatic(demoClone, automaticOverview, { backend: "anthropic", model: "claude-opus-5-5" });
   await act(async () => root.render(<App />));
-  const overview = node.querySelector('[aria-labelledby="settings-overview-heading"]')!;
-  expect(overview.textContent).toContain("Same as reviews (Anthropic API) can't fix");
-  expect(overview.textContent).toContain("with Anthropic API.");
+  expect(node.querySelector("#preferred-theme")).not.toBeNull();
   const nav = node.querySelector('nav[aria-label="Settings sections"]')!;
-  expect(nav.querySelector('[aria-current="page"]')!.textContent).toContain("Overview");
-  const fixes = overview.querySelector<HTMLButtonElement>('button[aria-label="Choose: Fixes"]')!;
+  expect(nav.querySelector('[aria-current="page"]')!.textContent).toContain("General");
+  const fixes = nav.querySelector<HTMLButtonElement>('[data-section="fixes"]')!;
+  expect(fixes.querySelector('[aria-label="Needs attention"]')).not.toBeNull();
   await act(async () => fixes.click());
   expect(location.search).toBe("?page=settings&section=fixes");
   expect(node.querySelector("#fix-agent")).not.toBeNull();
@@ -1022,7 +1021,7 @@ it("shows a saved decision model capture ignores, and lets it be cleared", async
   stubDiagnostics(async () => Response.json({ local: true, report: diagnosticsReport }));
   const puts = stubAutomatic(demoClone, automaticOverview, {
     backend: "codex",
-    model: "gpt-6-sol",
+    model: "gpt-6.1-sol",
   });
   const stubbed = vi.mocked(fetch).getMockImplementation()!;
   vi.mocked(fetch).mockImplementation((...args) =>
@@ -1085,7 +1084,7 @@ it("saves the decision capture switch and model", async () => {
   stubDiagnostics(async () => Response.json({ local: true, report: diagnosticsReport }));
   const puts = stubAutomatic(demoClone, automaticOverview, {
     backend: "codex",
-    model: "gpt-6-sol",
+    model: "gpt-6.1-sol",
     decisions: { enabled: true, model: "" },
   });
   await act(async () => root.render(<App />));
@@ -1099,13 +1098,13 @@ it("saves the decision capture switch and model", async () => {
   expect(section().textContent).toContain("never tool output or file contents");
   expect(save().disabled).toBe(true);
   await act(async () => {
-    model.value = "gpt-6-sol";
+    model.value = "gpt-6.1-sol";
     model.dispatchEvent(new Event("change", { bubbles: true }));
   });
   await act(async () => save().click());
   expect(puts).toContainEqual({
     path: "/s/test-ns/api/settings/decisions",
-    body: { enabled: true, model: "gpt-6-sol" },
+    body: { enabled: true, model: "gpt-6.1-sol" },
   });
   expect(section().textContent).toContain("Saved.");
   await act(async () => section().querySelector<HTMLInputElement>('input[role="switch"]')!.click());
@@ -1113,7 +1112,7 @@ it("saves the decision capture switch and model", async () => {
   await act(async () => save().click());
   expect(puts.at(-1)).toEqual({
     path: "/s/test-ns/api/settings/decisions",
-    body: { enabled: false, model: "gpt-6-sol" },
+    body: { enabled: false, model: "gpt-6.1-sol" },
   });
 });
 it("types a custom decision capture model", async () => {
@@ -1121,7 +1120,7 @@ it("types a custom decision capture model", async () => {
   stubDiagnostics(async () => Response.json({ local: true, report: diagnosticsReport }));
   const puts = stubAutomatic(demoClone, automaticOverview, {
     backend: "codex",
-    model: "gpt-6-sol",
+    model: "gpt-6.1-sol",
     decisions: { enabled: true, model: "" },
   });
   await act(async () => root.render(<App />));
@@ -1361,10 +1360,12 @@ it("manages CLI and hooks inline in desktop Settings", async () => {
       expect(button).toBeTruthy();
       await act(async () => button!.click());
     };
-    // The overview points at the agent whose hooks are missing.
-    expect(node.textContent).toContain("Codex isn't connected");
+    // Connections marks the agent hooks needing attention.
+    expect(
+      node.querySelector('[data-section="connections"] [aria-label="Needs attention"]'),
+    ).not.toBeNull();
     await act(async () =>
-      node.querySelector<HTMLButtonElement>('button[aria-label="Connect: Agent hooks"]')!.click(),
+      node.querySelector<HTMLButtonElement>('button[data-section="connections"]')!.click(),
     );
     expect(location.search).toBe("?page=settings&section=connections");
     await click("Connect Codex");

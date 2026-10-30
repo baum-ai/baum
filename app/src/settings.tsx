@@ -1,3 +1,4 @@
+import { usePreferences } from "./preferences";
 import {
   useEffect,
   useLayoutEffect,
@@ -21,7 +22,7 @@ import {
   type DiagnosticReport,
   type DecisionSettings,
 } from "./api";
-import { RepositoryPicker, CloneActions } from "./repositories";
+import { RepositoryPicker, CloneActions, earlierNamesWarning } from "./repositories";
 import { GitHubConnectionSection } from "./github-connection";
 import { messages as githubMessages } from "./github-auth";
 import { DiagnosticsSection } from "./diagnostics";
@@ -83,16 +84,10 @@ function shownBackend(backend: string) {
  *  they fix pull requests. */
 const fixHarnesses = ["claude", "codex"];
 
-export const settingsSections = [
-  "overview",
-  "reviews",
-  "fixes",
-  "connections",
-  "computer",
-] as const;
+export const settingsSections = ["general", "reviews", "fixes", "connections", "computer"] as const;
 export type SettingsSection = (typeof settingsSections)[number];
 const sectionTitles: Record<SettingsSection, string> = {
-  overview: "Overview",
+  general: "General",
   reviews: "Reviews",
   fixes: "Fixes",
   connections: "Connections",
@@ -141,7 +136,7 @@ function useSettingsKeys(
     setSection(next);
     focus(navItem(next));
   };
-  // A section opened from the overview's buttons leaves the focus on nothing;
+  // A section opened through navigation can leave focus on nothing;
   // it goes to the section's place in the list, so the keys go on from there.
   useEffect(() => {
     at.current = null;
@@ -205,11 +200,11 @@ function useSettingsKeys(
   };
 }
 
-/** The section a `section` query value names; anything else is the overview. */
+/** The section a `section` query value names; anything else is General. */
 export function settingsSection(value: string | null): SettingsSection {
   return settingsSections.includes(value as SettingsSection)
     ? (value as SettingsSection)
-    : "overview";
+    : "general";
 }
 
 type Tone = "positive" | "caution" | "critical" | "neutral";
@@ -219,7 +214,7 @@ function Dot({ tone }: { tone: Tone }) {
   return <span className="settings-dot" data-tone={tone} aria-hidden="true" />;
 }
 
-/** How the GitHub connection reads in the overview and the section list. */
+/** How the GitHub connection reads in the section list. */
 function githubHealth(github: GitHubConnection | null): { tone: Tone; detail: string } {
   if (!github) return { tone: "neutral", detail: "Checking the connection…" };
   if (github.pending) return { tone: "caution", detail: "Waiting for you to finish signing in." };
@@ -233,21 +228,6 @@ function githubHealth(github: GitHubConnection | null): { tone: Tone; detail: st
   if (github.saved)
     return { tone: "positive", detail: `Signed in as ${github.login ?? "you"} on ${github.host}.` };
   return { tone: "critical", detail: "Not connected. baum needs GitHub to find pull requests." };
-}
-
-/** "baum reviews your pull requests on its own, with Claude Code." */
-function reviewSentence(automatic: Automatic | null, defaults: ReviewDefaults) {
-  const harness = harnessName(shownBackend(defaults.backend));
-  if (!automatic?.enabled) return `baum reviews pull requests when you ask, with ${harness}.`;
-  const which: Record<string, string> = {
-    all: "every open pull request in your repositories",
-    authored: "your pull requests",
-    requested: "pull requests you're asked to review",
-  };
-  const scope =
-    which[automatic.pull_requests ?? "both"] ??
-    "your pull requests and those you're asked to review";
-  return `baum reviews ${scope} on its own, with ${harness}.`;
 }
 
 /** The agent that fixes, in words, and whether it can. */
@@ -898,7 +878,7 @@ function CommandLinePanel({ setup }: { setup: DesktopSetup }) {
   );
 }
 
-/** How the agent hooks stand, for the overview: none connected is a caution
+/** How the agent hooks stand, for the section list: none connected is a caution
  *  only where an agent was found to connect. */
 function hooksHealth(view: SetupView | null): { tone: Tone; detail: string } | null {
   if (!view) return null;
@@ -949,84 +929,12 @@ export function SettingsPage({
   const gh = githubHealth(github);
   const hooks = setup.desktop ? hooksHealth(setup.view) : null;
   const fix = defaults ? fixSummary(defaults) : null;
-  const computer: { tone: Tone; detail: string } =
-    problems > 0
-      ? {
-          tone: "critical",
-          detail: `${problems} ${problems === 1 ? "problem" : "problems"} found. Check this computer to see how to fix ${problems === 1 ? "it" : "them"}.`,
-        }
-      : { tone: "positive", detail: "No problems found on this computer." };
-  // The overview's rows, each with where to go about it.
-  const health: {
-    id: string;
-    name: string;
-    tone: Tone;
-    detail: string;
-    action: string;
-    go: () => void;
-  }[] = [
-    {
-      id: "github",
-      name: "GitHub",
-      ...gh,
-      action: gh.tone === "critical" && !github?.error ? "Connect" : "Open",
-      go: () => setSection("connections"),
-    },
-    ...(defaults
-      ? [
-          {
-            id: "reviews",
-            name: "Reviews",
-            tone: "positive" as Tone,
-            detail: `${automatic?.enabled ? "Automatic" : "When you ask"} · ${[harnessName(shownBackend(defaults.backend)), defaults.backend === "auto" ? "" : defaults.model].filter(Boolean).join(" · ")}`,
-            action: "Change",
-            go: () => setSection("reviews"),
-          },
-        ]
-      : []),
-    ...(fix
-      ? [
-          {
-            id: "fixes",
-            name: "Fixes",
-            tone: (fix.fixable ? "positive" : "caution") as Tone,
-            detail: fix.fixable
-              ? fix.label
-              : `${fix.label} can't fix pull requests. Choose Claude Code or Codex.`,
-            action: fix.fixable ? "Change" : "Choose",
-            go: () => setSection("fixes"),
-          },
-        ]
-      : []),
-    ...(hooks
-      ? [
-          {
-            id: "hooks",
-            name: "Agent hooks",
-            ...hooks,
-            action: hooks.tone === "caution" ? "Connect" : "Open",
-            go: () => setSection("connections"),
-          },
-        ]
-      : []),
-    {
-      id: "computer",
-      name: "This computer",
-      ...computer,
-      action: "Check",
-      go: () => setDiagnosticsOpen(true),
-    },
-  ];
-  const attention = health.filter((h) => h.tone === "critical" || h.tone === "caution").length;
   const connectionTone: Tone =
     gh.tone === "critical" ? "critical" : hooks?.tone === "caution" ? "caution" : gh.tone;
   const nav: { id: SettingsSection; sub: string; tone?: Tone }[] = [
     {
-      id: "overview",
-      sub: attention
-        ? `${attention} ${attention === 1 ? "thing needs" : "things need"} you`
-        : "All good",
-      tone: attention ? "critical" : undefined,
+      id: "general",
+      sub: "Appearance and keyboard",
     },
     {
       id: "reviews",
@@ -1089,48 +997,27 @@ export function SettingsPage({
               onClick={() => setSection(item.id)}
             >
               <span className="settings-nav-text">
-                <span className="settings-nav-label">{sectionTitles[item.id]}</span>
+                <span className="settings-nav-label">
+                  {sectionTitles[item.id]}{" "}
+                  {item.tone ? (
+                    <span
+                      role="img"
+                      aria-label="Needs attention"
+                      title="Needs attention"
+                      className="ml-2 inline-flex"
+                    >
+                      <Dot tone={item.tone} />
+                    </span>
+                  ) : null}
+                </span>
                 <span className="settings-nav-sub">{item.sub}</span>
               </span>
-              {item.tone ? <Dot tone={item.tone} /> : null}
             </button>
           ))}
         </nav>
         <div ref={keys.content} className="settings-content" onFocus={keys.onFocus}>
-          {section === "overview" ? (
-            <section aria-labelledby="settings-overview-heading" className="settings-section">
-              <header className="settings-overview-head">
-                <h2 id="settings-overview-heading">
-                  {attention
-                    ? `${attention} ${attention === 1 ? "thing needs" : "things need"} you`
-                    : "Everything is working"}
-                </h2>
-                {defaults ? <p>{reviewSentence(automatic, defaults)}</p> : null}
-              </header>
-              <ul className="local-panel settings-list" aria-label="How baum is set up">
-                {health.map((row) => (
-                  <li key={row.id} className="settings-row">
-                    <Dot tone={row.tone} />
-                    <div className="settings-row-text">
-                      <span className="settings-row-label">{row.name}</span>
-                      <span className="settings-row-detail">{row.detail}</span>
-                    </div>
-                    <Button
-                      variant="secondary"
-                      size="compact"
-                      aria-label={`${row.action}: ${row.name}`}
-                      onClick={row.go}
-                    >
-                      {row.action}
-                    </Button>
-                  </li>
-                ))}
-              </ul>
-              <p className="settings-footnote">
-                Plan usage for Claude Code and Codex is in the sidebar, so it stays in view on every
-                page.
-              </p>
-            </section>
+          {section === "general" ? (
+            <GeneralSection />
           ) : section === "reviews" ? (
             automatic && defaults ? (
               <>
@@ -1170,7 +1057,14 @@ export function SettingsPage({
                 detail="What baum needs here, and how it runs."
               />
               <div className="local-panel settings-list">
-                <SettingRow label="Diagnostics" detail={computer.detail}>
+                <SettingRow
+                  label="Diagnostics"
+                  detail={
+                    problems > 0
+                      ? `${problems} ${problems === 1 ? "problem" : "problems"} found. Check this computer to see how to fix them.`
+                      : "No problems found on this computer."
+                  }
+                >
                   <Button
                     variant="secondary"
                     size="compact"
@@ -1935,6 +1829,11 @@ function RepositoryRow({
         ) : (
           <p className="local-repo-missing">Needs a local clone</p>
         )}
+        {clone.available && repository.earlier_names?.length ? (
+          <p className="repository-warning">
+            {earlierNamesWarning(repository.earlier_names, repository.repository)}
+          </p>
+        ) : null}
         <p className="local-repo-summary">{summary.join(" · ")}</p>
       </div>
       <div className="local-repo-actions">
@@ -2082,4 +1981,55 @@ function RepositoryDialog({
 /** Whether the daemon page runs in the desktop app. */
 function hasFolderPicker() {
   return Boolean((window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__);
+}
+
+function GeneralSection() {
+  const { preferences, update, ready, saving, error, refresh } = usePreferences();
+  return (
+    <section aria-labelledby="settings-general-heading" className="settings-section">
+      <SectionHead
+        id="settings-general-heading"
+        title="General"
+        detail="Appearance and keyboard preferences on this device."
+      />
+      {error ? (
+        <Alert>
+          {error}
+          <Button variant="secondary" size="compact" onClick={refresh}>
+            Try again
+          </Button>
+        </Alert>
+      ) : null}
+      <div className="local-panel settings-list">
+        <SettingRow label="Preferred theme" htmlFor="preferred-theme">
+          <select
+            id="preferred-theme"
+            disabled={!ready || saving}
+            className="local-field settings-select"
+            value={preferences.theme}
+            onChange={(event) => update({ theme: event.target.value as typeof preferences.theme })}
+          >
+            <option value="system">System</option>
+            <option value="light">Light</option>
+            <option value="dark">Dark</option>
+          </select>
+        </SettingRow>
+        <SettingRow
+          label="Show keyboard shortcuts with Alt/Option"
+          htmlFor="keyboard-hints"
+          detail="Hold Alt (Option on Mac) to show shortcut hints."
+        >
+          <input
+            id="keyboard-hints"
+            disabled={!ready || saving}
+            type="checkbox"
+            role="switch"
+            className="local-switch"
+            checked={preferences.key_hints}
+            onChange={(event) => update({ key_hints: event.target.checked })}
+          />
+        </SettingRow>
+      </div>
+    </section>
+  );
 }

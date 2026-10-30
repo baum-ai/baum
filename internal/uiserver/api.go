@@ -48,6 +48,9 @@ type LocalAPI struct {
 	// Review serves /api/prs/review: submitting a pull request review with
 	// inline comments from the app.
 	Review http.Handler
+	// Chat serves /api/prs/chat: asking the agent that wrote a review about
+	// the pull request, and the conversations so far (ChatHandler).
+	Chat http.Handler
 	// Update serves /api/prs/update-branch and /api/prs/rerun-checks, with
 	// their -options reads: updating a pull request's branch and re-running its
 	// failed workflow runs. With merging, submitting a review and a
@@ -69,6 +72,10 @@ type LocalAPI struct {
 	// Analytics serves /api/analytics: what the agents did, cost and
 	// delivered (internal/analytics).
 	Analytics http.Handler
+	// CurrentName lets POST /api/repos register a folder whose remote uses
+	// an earlier name of the repository (repos.Registry.HandlerWith).
+	CurrentName repos.CurrentName
+	Changed     func()
 	// Timeline serves /api/timeline/: the features and decisions of the
 	// local decision log (internal/decisionlog).
 	Timeline http.Handler
@@ -84,8 +91,7 @@ type LocalAPI struct {
 	// app's decisions event with it.
 	DecisionsChanged func()
 	// Log receives what the API logs; nil is slog.Default.
-	Log     *slog.Logger
-	Changed func()
+	Log *slog.Logger
 	// Diagnostics builds the report served at /api/diagnostics; nil serves the
 	// capability fields with a null report. It must honour its context.
 	Diagnostics func(context.Context) doctor.Report
@@ -112,7 +118,7 @@ func (h *LocalHandler) Close() { h.documents.close() }
 func (a LocalAPI) Handler() *LocalHandler {
 	cache := newDocumentCache()
 	mux := http.NewServeMux()
-	registry := a.Registry.Handler()
+	registry := a.Registry.HandlerWith(a.CurrentName)
 	mutate := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		registry.ServeHTTP(w, r)
 		if r.Method != "GET" && r.Method != "HEAD" {
@@ -144,6 +150,9 @@ func (a LocalAPI) Handler() *LocalHandler {
 	mux.Handle("GET /api/prs/merge-options", merge)
 	mux.Handle("POST /api/prs/merge", merge)
 	mux.Handle("POST /api/prs/review", provider(a.Review, "review_unavailable"))
+	chat := provider(a.Chat, "chat_unavailable")
+	mux.Handle("GET /api/prs/chat", chat)
+	mux.Handle("POST /api/prs/chat", chat)
 	update := provider(a.Update, "update_unavailable")
 	mux.Handle("GET /api/prs/update-branch-options", update)
 	mux.Handle("POST /api/prs/update-branch", update)
@@ -218,6 +227,8 @@ func (a LocalAPI) Handler() *LocalHandler {
 			FixModel       string            `json:"fix_model"`
 		}{cfg.Backend, cfg.Model, cfg.Budgets, cfg.Caps, cfg.AgentEnv, source, fixBackend, fixModel})
 	})
+	mux.HandleFunc("GET /api/settings/appearance", a.getAppearance)
+	mux.HandleFunc("PUT /api/settings/appearance", a.putAppearance)
 	mux.HandleFunc("GET /api/settings/decisions", a.getDecisionSettings)
 	mux.HandleFunc("PUT /api/settings/decisions", a.putDecisionSettings)
 	// The app's agent environment replaces the config file's; an empty one

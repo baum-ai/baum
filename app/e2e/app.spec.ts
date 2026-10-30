@@ -308,10 +308,8 @@ test("local inbox, reused PR viewer, versions, generation and settings", async (
   await expect(page.getByText(/claude-sonnet-4-5/)).toBeVisible();
   await page.screenshot({ path: "test-results/repositories.png", animations: "disabled" });
   await page.getByRole("link", { name: "Settings", exact: true }).click();
-  await expect(
-    page.getByRole("region", { name: /things? needs? you|Everything is working/ }),
-  ).toBeVisible();
-  await page.screenshot({ path: "test-results/settings-overview.png", animations: "disabled" });
+  await expect(page.getByRole("region", { name: "General" })).toBeVisible();
+  await page.screenshot({ path: "test-results/settings-general.png", animations: "disabled" });
   await openSettings(page, "Reviews");
   await expect(
     page
@@ -488,13 +486,18 @@ test("a running agent session shows in the inbox and on the PR page until it end
   // The Sessions page keeps it under "Ended recently" and has none running.
   await page.getByRole("link", { name: "Sessions", exact: true }).first().click();
   const ended = page.getByRole("region", { name: "Ended recently", exact: true });
-  await expect(ended.getByText("Claude Code")).toBeVisible();
+  // Folded at first, as the section is looked back at; its heading opens it.
+  await ended.getByRole("button", { name: /Ended recently/ }).click();
+  // The agent shows by its mark.
+  await expect(ended.getByRole("img", { name: "Claude Code" })).toBeVisible();
   // Its title leads the compact row.
   await expect(
     ended.getByText("Reuse the PR page in the local app", { exact: true }),
   ).toBeVisible();
   await expect(
-    page.getByRole("region", { name: "Running now", exact: true }).getByText("Claude Code"),
+    page
+      .getByRole("region", { name: "Running now", exact: true })
+      .getByRole("img", { name: "Claude Code" }),
   ).toHaveCount(0);
   await page.getByRole("link", { name: "Pull requests", exact: true }).first().click();
   await expect(row).toBeVisible();
@@ -516,6 +519,7 @@ test("a session's transcript opens from the Sessions page and grows without a re
     .getByRole("region", { name: "Running now", exact: true })
     .getByRole("link", { name: /^Open transcript/ });
   await expect(open).toBeVisible({ timeout: 10000 });
+  await page.screenshot({ path: "test-results/sessions-running.png", animations: "disabled" });
   await open.click();
   // The session has no title of its own yet, so its first prompt names it.
   await expect(
@@ -569,18 +573,22 @@ test("a session asking for a permission shows in Needs you and leaves once it wo
   await page.getByRole("link", { name: "Sessions", exact: true }).first().click();
   const running = page.getByRole("region", { name: "Running now", exact: true });
   const needs = page.getByRole("region", { name: "Needs you", exact: true });
-  await expect(running.locator('li[title="needs-e2e"]')).toBeVisible({ timeout: 10000 });
+  await expect(running.locator('li[data-row-id="claude-code:needs-e2e"]')).toBeVisible({
+    timeout: 10000,
+  });
   await expect(needs).toHaveCount(0);
   await writeFile(marker, "permission");
-  const row = needs.locator('li[title="needs-e2e"]');
+  const row = needs.locator('li[data-row-id="claude-code:needs-e2e"]');
   await expect(row).toBeVisible({ timeout: 10000 });
-  await expect(row.getByText("Asking permission")).toBeVisible();
+  // Only its terminal can answer: the row says so.
+  await expect(row.getByText("Asks permission in its terminal")).toBeVisible();
   await expect(row.getByText("Claude needs your permission to use Bash")).toBeVisible();
   // The title Claude Code gave the session leads the row.
   await expect(row.getByText("Run the migration tests")).toBeVisible();
   await expect(row.getByText(/^waiting \d+s$/)).toBeVisible();
   await expect(row.getByText("feature")).toBeVisible();
-  await expect(running.locator('li[title="needs-e2e"]')).toHaveCount(0);
+  await expect(running.locator('li[data-row-id="claude-code:needs-e2e"]')).toHaveCount(0);
+  await page.screenshot({ path: "test-results/sessions-needs.png", animations: "disabled" });
   // The sidebar counts it, in the caution tone.
   const badge = page.locator('a[href$="?page=sessions"] .local-rail-badge.caution');
   await expect(badge).toHaveText("1");
@@ -591,10 +599,12 @@ test("a session asking for a permission shows in Needs you and leaves once it wo
   // Given the permission, the agent works again: the row goes back.
   await writeFile(marker, "running");
   await expect(needs).toHaveCount(0, { timeout: 10000 });
-  await expect(running.locator('li[title="needs-e2e"]')).toBeVisible();
+  await expect(running.locator('li[data-row-id="claude-code:needs-e2e"]')).toBeVisible();
   await expect(page.locator('a[href$="?page=sessions"] .local-rail-badge.caution')).toHaveCount(0);
   await writeFile(marker, "ended");
-  await expect(running.locator('li[title="needs-e2e"]')).toHaveCount(0, { timeout: 10000 });
+  await expect(running.locator('li[data-row-id="claude-code:needs-e2e"]')).toHaveCount(0, {
+    timeout: 10000,
+  });
   expect(errors).toEqual([]);
 });
 
@@ -675,7 +685,7 @@ test("picks GitHub repositories and keeps clone-less PRs usable", async ({ page 
   await page.getByRole("button", { name: "Choose folder", exact: true }).click();
   await page.getByRole("textbox", { name: "Local clone path", exact: true }).fill("/not/a/clone");
   await page.getByRole("button", { name: "Use folder", exact: true }).click();
-  await expect(page.getByRole("alert")).toContainText("cannot register path");
+  await expect(page.getByRole("alert")).toContainText("is not a git working tree");
   await page.getByRole("link", { name: "Repositories", exact: true }).click();
   await page.getByRole("button", { name: "Add repositories", exact: true }).click();
   const picker = page.getByRole("region", { name: "Choose GitHub repositories" });
@@ -706,6 +716,23 @@ test("picks GitHub repositories and keeps clone-less PRs usable", async ({ page 
   await row.getByRole("button", { name: "Clone repository", exact: true }).click();
   await expect(row).toContainText("Found at", { timeout: 15000 });
   await row.getByRole("checkbox", { name: "Pick acme/clone-me", exact: true }).uncheck();
+  // A folder whose remote uses the repository's earlier name is accepted,
+  // with a warning.
+  await picker.getByRole("searchbox", { name: "Search repositories" }).fill("renamed");
+  await picker.getByRole("checkbox", { name: "Pick acme/renamed", exact: true }).click();
+  const renamed = picker.getByRole("listitem").filter({ hasText: "acme/renamed" });
+  await renamed.getByRole("button", { name: "Choose folder", exact: true }).click();
+  const folder = await readFile(
+    join(process.env.BAUM_APP_STATE_DIR ?? "", "renamed-folder"),
+    "utf8",
+  );
+  await renamed.getByRole("textbox", { name: "Local clone path" }).fill(folder);
+  await renamed.getByRole("button", { name: "Use folder", exact: true }).click();
+  await expect(renamed).toContainText("Found at");
+  await expect(renamed).toContainText(
+    "GitHub forwards acme/old-renamed to acme/renamed; clones whose remote still uses that earlier name count as its clones.",
+  );
+  await page.screenshot({ path: "test-results/forwarded-remote.png", animations: "disabled" });
   await picker.getByRole("searchbox", { name: "Search repositories" }).fill("");
 });
 
@@ -1015,6 +1042,158 @@ test("walks through a review, comments on a behaviour and submits the review", a
   expect(errors).toEqual([]);
 });
 
+test("asks the review's agent a question and reads the lines its answer cites", async ({
+  page,
+}) => {
+  const errors: string[] = [];
+  page.on("pageerror", (e) => errors.push(e.message));
+  page.on("console", (m) => {
+    if (m.type() === "error" && !m.text().includes("Failed to load resource"))
+      errors.push(m.text());
+  });
+  await page.goto(await launchURL());
+  await page.getByRole("link", { name: "Pull requests", exact: true }).first().click();
+  await page.getByRole("link", { name: /Reuse the existing PR page/ }).click();
+  await expect(page.getByRole("button", { name: "Ask", exact: true })).toBeVisible();
+  // The key opens the panel, with the cursor in its box.
+  await page.keyboard.press("a");
+  const panel = page.getByRole("complementary", { name: "Ask about this review" });
+  await expect(panel).toBeVisible();
+  expect(page.url()).toContain("ask=1");
+  // At 1280px the panel docks: the review keeps the rest, and its header
+  // buttons stay in view and can be pressed.
+  const docked = async () => {
+    const box = await page.evaluate(() => {
+      const dock = document.querySelector(".ask-panel")!.getBoundingClientRect();
+      const main = document.querySelector(".ask-main")!.getBoundingClientRect();
+      return {
+        dock: dock.left,
+        main: main.right,
+        width: window.innerWidth,
+        scroll: document.documentElement.scrollWidth,
+      };
+    });
+    expect(box.main).toBeLessThanOrEqual(box.dock + 1);
+    expect(box.scroll).toBeLessThanOrEqual(box.width);
+    for (const name of ["Ask", "Walk through", "Merge…"])
+      await page.getByRole("button", { name, exact: true }).click({ trial: true });
+  };
+  await docked();
+  await page.screenshot({ path: "test-results/ask-1280.png" });
+  await expect(panel.getByText("answers questions about the code")).toBeVisible();
+  await page.keyboard.type("Why is the delay capped?");
+  await page.keyboard.press("Enter");
+  await expect(panel.getByLabel("Question 1").getByText("Why is the delay capped?")).toBeVisible();
+  await expect(panel.getByText("so a long outage cannot push retries out forever")).toBeVisible();
+  await expect(panel.locator("strong", { hasText: "capped" })).toBeVisible();
+  // Started from a saved review whose agent session was not kept.
+  await expect(panel.getByText("Started without the review's own context.")).toBeVisible();
+  // The citation opens the lines it names, from the review's own hunk.
+  await panel.getByRole("button", { name: "docs/guide.md:3–6" }).click();
+  await expect(panel.getByText("A job that fails more often than its retry budget")).toBeVisible();
+  await panel.screenshot({ path: "test-results/ask-answered.png", animations: "disabled" });
+  // A reload keeps the panel open and the conversation.
+  await page.reload();
+  await expect(panel.getByLabel("Question 1").getByText("Why is the delay capped?")).toBeVisible();
+  // Asking about a section puts it above the box, and a second question
+  // goes to the same conversation.
+  await page
+    .getByRole("navigation", { name: "Review sections" })
+    .getByRole("button", { name: "Retry policy and backoff" })
+    .click();
+  await page.getByRole("button", { name: "Ask about this section", exact: true }).click();
+  await expect(panel.locator(".ask-focus")).toContainText("About");
+  await page.keyboard.type("Is this safe on retry?");
+  await page.keyboard.press("Enter");
+  await expect(panel.getByText("Is this safe on retry?")).toBeVisible();
+  await expect(panel.locator(".ask-answer")).toHaveCount(2);
+  // Escape in the panel closes it.
+  await panel.locator("textarea").focus();
+  await page.keyboard.press("Escape");
+  await expect(panel).toBeHidden();
+  expect(page.url()).not.toContain("ask=");
+  // On a wide screen it docks beside the review without covering it.
+  await page.setViewportSize({ width: 1800, height: 900 });
+  await page.getByRole("button", { name: "Ask", exact: true }).click();
+  await expect(panel).toBeVisible();
+  await docked();
+  await page.screenshot({ path: "test-results/ask-docked.png" });
+  // Narrow: a modal overlay with a backdrop, the review inert behind it, and
+  // no sideways scroll; the backdrop closes it.
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(page.locator(".ask-backdrop")).toBeVisible();
+  await expect(page.locator(".ask-main")).toHaveAttribute("inert", "");
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(
+    true,
+  );
+  await page.screenshot({ path: "test-results/ask-narrow.png" });
+  await panel.getByRole("button", { name: "Close", exact: true }).click();
+  await expect(panel).toBeHidden();
+  await expect(page.getByRole("button", { name: "Ask", exact: true })).toBeFocused();
+  await page.getByRole("button", { name: "Ask", exact: true }).click();
+  await expect(panel).toBeVisible();
+  await page.locator(".ask-backdrop").click({ position: { x: 10, y: 400 } });
+  await expect(panel).toBeHidden();
+  expect(errors).toEqual([]);
+});
+
+// An answer becomes a fix that uses the conversation, started at once, or a line of
+// the review draft that is sent only with the review.
+test("makes a fix or a review comment from an answer", async ({ page }) => {
+  const errors: string[] = [];
+  page.on("pageerror", (e) => errors.push(e.message));
+  page.on("console", (m) => {
+    if (m.type() === "error" && !m.text().includes("Failed to load resource"))
+      errors.push(m.text());
+  });
+  await page.goto(await launchURL());
+  await page.getByRole("link", { name: "Pull requests", exact: true }).first().click();
+  await page.getByRole("link", { name: /Reuse the existing PR page/ }).click();
+  await expect(page.getByRole("button", { name: "Ask", exact: true })).toBeVisible();
+  await page.keyboard.press("a");
+  const panel = page.getByRole("complementary", { name: "Ask about this review" });
+  await expect(panel).toBeVisible();
+  // Earlier tests leave answers in the fixture; count them once they have loaded.
+  await expect(panel.getByText("Loading conversations…")).toHaveCount(0);
+  const before = await panel.locator(".ask-answer").count();
+  await page.keyboard.type("Why is the delay capped?");
+  await page.keyboard.press("Enter");
+  await expect(panel.locator(".ask-answer")).toHaveCount(before + 1);
+  const answer = panel.locator(".ask-turn").last();
+  await expect(answer.getByRole("button", { name: "Add as comment", exact: true })).toBeVisible();
+  // The fixture's checks fail, yet the fix is of the answer only. Like every
+  // fix it starts at once, with no dialog and no estimate.
+  await answer.getByRole("button", { name: "Fix this", exact: true }).click();
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  const fixNotice = page.getByRole("region", { name: "Fix", exact: true });
+  await expect(fixNotice).toBeVisible();
+  await expect(fixNotice).toContainText("Fix from this answer");
+  await page.screenshot({ path: "test-results/ask-fix-from-answer.png" });
+  // Adding it to the draft sends nothing: the draft shows it, in the review's own panel.
+  await answer.getByRole("button", { name: "Add as comment", exact: true }).click();
+  await expect(answer.getByText("Added to your review draft")).toBeVisible();
+  await answer.getByRole("button", { name: "Open the draft", exact: true }).click();
+  await expect(page).toHaveURL(/walk=all/);
+  const submit = page.getByRole("complementary", { name: "Submit review" });
+  const overall = submit.getByLabel("Overall comment (optional)");
+  await expect(overall).toHaveValue(/so a long outage cannot push retries out forever/);
+  await expect(overall).toHaveValue(/docs\/guide\.md:3–6/);
+  await page.screenshot({ path: "test-results/ask-add-as-comment.png" });
+  // Undo takes it out of the draft again.
+  await answer.getByRole("button", { name: "Undo", exact: true }).click();
+  await expect(overall).toHaveValue("");
+  // On a narrow screen the panel covers the review, so opening the draft
+  // closes it and leaves the draft usable.
+  await page.setViewportSize({ width: 390, height: 844 });
+  await answer.getByRole("button", { name: "Add as comment", exact: true }).click();
+  await answer.getByRole("button", { name: "Open the draft", exact: true }).click();
+  await expect(panel).toBeHidden();
+  await expect(overall).toHaveValue(/docs\/guide\.md:3–6/);
+  await overall.fill("Edited on a narrow screen.");
+  await expect(overall).toHaveValue("Edited on a narrow screen.");
+  expect(errors).toEqual([]);
+});
+
 // Every page from the keyboard alone: the command key with a number (Ctrl
 // here, which is not a Mac), Go to, each list's keys, a pull request's
 // section keys, back and forward, and the sheet that lists them.
@@ -1131,4 +1310,54 @@ test("the whole app can be used from the keyboard", async ({ page }) => {
   await page.keyboard.up("Alt");
   await writeFile(marker, "ended\nWalk the app by keyboard\n");
   expect(errors).toEqual([]);
+});
+
+test("General preferences persist, follow system theme and control keyboard hints", async ({
+  page,
+}) => {
+  await page.emulateMedia({ colorScheme: "dark" });
+  await page.goto(await launchURL());
+  await openSettings(page, "General");
+  await expect(page.locator(".settings-dot").first()).toBeVisible();
+  const theme = page.getByLabel("Preferred theme");
+  await expect(theme).toHaveValue("system");
+  await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
+  await theme.selectOption("light");
+  await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
+  const hints = page.getByRole("switch", { name: "Show keyboard shortcuts with Alt/Option" });
+  await hints.uncheck();
+  await page.keyboard.down("Alt");
+  await expect(page.locator("html")).not.toHaveAttribute("data-key-hints");
+  await page.keyboard.up("Alt");
+  await expect(hints).toBeEnabled();
+  await page.evaluate(() => localStorage.clear());
+  await page.reload();
+  await expect(theme).toHaveValue("light");
+  await expect(hints).not.toBeChecked();
+  await hints.check();
+  await page.keyboard.down("Alt");
+  await expect(page.locator("html")).toHaveAttribute("data-key-hints", "");
+  await page.keyboard.up("Alt");
+  await theme.selectOption("dark");
+  await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
+  await page.route("**/api/settings/appearance", async (route) => {
+    if (route.request().method() === "PUT")
+      await route.fulfill({ status: 500, body: "Could not save appearance settings" });
+    else await route.continue();
+  });
+  await theme.selectOption("light");
+  await expect(page.getByRole("alert")).toContainText("Could not save appearance settings");
+  await expect(theme).toHaveValue("dark");
+  await page.unroute("**/api/settings/appearance");
+  await theme.selectOption("system");
+  await page.emulateMedia({ colorScheme: "light" });
+  await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
+  await page.screenshot({ path: "test-results/settings-general-wide.png", animations: "disabled" });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(theme).toBeVisible();
+  await expect(page.locator("html")).toHaveJSProperty("scrollWidth", 390);
+  await page.screenshot({
+    path: "test-results/settings-general-narrow.png",
+    animations: "disabled",
+  });
 });

@@ -11,7 +11,10 @@ import {
   type AgentRequests,
   type LiveSession,
 } from "./api";
-import { SessionsPage } from "./sessions";
+import { forgetFoldedSections, SessionsPage } from "./sessions";
+import { ToastProvider } from "./toast";
+import { useActionsKey } from "./context-menu";
+import { useReadlineArrows } from "./shortcuts";
 import { SettingsPage } from "./settings";
 import { forgetLastRows } from "./shortcuts";
 
@@ -84,19 +87,23 @@ afterEach(async () => {
   node.remove();
   vi.unstubAllGlobals();
   forgetLastRows();
+  forgetFoldedSections();
 });
 
 async function render(sessions: LiveSession[], pending = requests()) {
   await act(async () =>
     root.render(
-      <SessionsPage sessions={sessions} requests={pending} prHref={() => null} Link={Link} />,
+      <ToastProvider>
+        <SessionsPage sessions={sessions} requests={pending} prHref={() => null} Link={Link} />
+      </ToastProvider>,
     ),
   );
 }
+// A choice's text after the number of its key.
 const button = (text: string) =>
-  [...node.querySelectorAll("button")].find((b) => b.textContent?.startsWith(text)) as
-    | HTMLButtonElement
-    | undefined;
+  [...node.querySelectorAll("button")].find((b) =>
+    (b.textContent ?? "").replace(/^[1-9]/, "").startsWith(text),
+  ) as HTMLButtonElement | undefined;
 const click = (b: HTMLButtonElement | undefined) => act(async () => b!.click());
 const posts = () => calls.filter((c) => c.method !== "GET");
 
@@ -109,11 +116,14 @@ it("shows a permission request with its input rows and posts Allow once, Always 
   });
   await render([waiting], requests({ requests: [permission()] }));
   const card = node.querySelector('[aria-label="Needs you"] li')!;
-  expect(card.querySelector("h3")!.textContent).toBe("Claude Code wants to run a command");
+  // Headed as the session's other rows, then what it asks.
+  expect(card.querySelector("h3")!.textContent).toBe("Tidy the buttons");
+  expect(card.querySelector(".local-feed-ask-text")!.textContent).toBe("Wants to run a command");
   expect(card.textContent).toContain("waiting 41s");
   expect(card.classList.contains("local-feed-ask")).toBe(true);
-  expect(card.querySelector(".local-feed-where")!.textContent).toBe("Tidy the buttons · feature");
-  expect(card.querySelector(".local-feed-quote")!.textContent).toContain("Running the githubgit");
+  expect(card.querySelector(".local-feed-branch")!.textContent).toBe("feature");
+  // The agent's earlier words are not the request's.
+  expect(card.querySelector(".local-feed-quote")).toBeNull();
   expect(card.querySelector("pre.local-feed-code")!.textContent).toContain(
     "just platform::test ./internal/githubgit/...",
   );
@@ -139,21 +149,28 @@ it("shows a permission request with its input rows and posts Allow once, Always 
   // Sent: disabled until the next refresh drops the request, with the notice.
   expect(button("Deny")!.disabled).toBe(true);
   expect(node.textContent).toContain("Sent");
-  expect(node.querySelector('[aria-live="polite"]')!.textContent).toBe(
-    "Bash(just platform::test:*) in this project is now always allowed.",
+  // The toast: what happened, to what, on which session.
+  const toast = () => node.querySelector('[aria-live="polite"] .local-toast');
+  expect(toast()!.querySelector(".local-toast-title")!.textContent).toBe("Always allowed");
+  expect(toast()!.querySelector(".local-toast-detail")!.textContent).toBe(
+    "Bash(just platform::test:*) in this project",
+  );
+  expect(toast()!.querySelector(".local-toast-context")!.textContent).toBe("Tidy the buttons");
+  expect(toast()!.querySelector(".local-toast-context img")!.getAttribute("alt")).toBe(
+    "Claude Code",
   );
 
   await render([waiting], requests({ requests: [permission({ id: "r2" })] }));
   await click(button("Deny"));
   expect(posts()[2]!.body).toEqual({ behavior: "deny" });
-  expect(node.querySelector('[aria-live="polite"]')!.textContent).toContain("You denied");
+  expect(toast()!.querySelector(".local-toast-title")!.textContent).toBe("Denied");
 
   // Nothing waits any more: the notice says so, with what was done.
   await render([session()]);
   expect(node.querySelector('[aria-label="Needs you"]')).toBeNull();
-  expect(node.querySelector('[aria-live="polite"]')!.textContent).toMatch(
-    /^Nobody is waiting on you\. You denied/,
-  );
+  // Dismissed, it goes.
+  await click(toast()!.querySelector<HTMLButtonElement>('button[aria-label="Dismiss"]')!);
+  expect(toast()).toBeNull();
 });
 
 it("names the request by its tool", async () => {
@@ -167,9 +184,9 @@ it("names the request by its tool", async () => {
       ],
     }),
   );
-  const titles = [...node.querySelectorAll("h3")].map((h) => h.textContent);
-  expect(titles).toContain("Claude Code wants to edit a file");
-  expect(titles).toContain("Claude Code wants to use WebFetch");
+  const asks = [...node.querySelectorAll(".local-feed-ask-text")].map((h) => h.textContent);
+  expect(asks).toContain("Wants to edit a file");
+  expect(asks).toContain("Wants to use WebFetch");
 });
 
 it("posts a question's answers, joining multi-select labels, once every question has one", async () => {
@@ -197,7 +214,8 @@ it("posts a question's answers, joining multi-select labels, once every question
     ],
   };
   await render([s], requests({ requests: [question] }));
-  expect(button("A")!.getAttribute("title")).toBe("Fast");
+  // What a choice means shows beside it.
+  expect(button("A")!.querySelector(".local-feed-choice-note")!.textContent).toBe("Fast");
   expect(button("Submit")!.disabled).toBe(true);
   await click(button("B"));
   await click(button("Unit"));
@@ -237,7 +255,10 @@ it("shows a finished turn without a reply box and a terminal-only wait with a no
       state: "idle",
       waiting_reason: "turn_finished",
       waiting_since: ago(720),
-      activity: { steps: [], last_message: "Want me to open a pull request?" },
+      activity: {
+        steps: [],
+        last_message: "**Done.** Want me to open a pull request?\n\n## Checks\n\n- All pass.",
+      },
     }),
     session({
       session_id: "s2",
@@ -247,29 +268,36 @@ it("shows a finished turn without a reply box and a terminal-only wait with a no
       waiting_message: "Claude needs your permission to use Bash",
     }),
   ]);
-  const [finished, asking] = [...node.querySelectorAll('[aria-label="Needs you"] li')];
-  expect(finished!.textContent).toContain("finished its turn");
-  expect(finished!.querySelector(".local-feed-soft")!.textContent).toBe(
-    "Want me to open a pull request?",
-  );
-  expect(finished!.textContent).not.toContain("Answer in the terminal");
+  const finished = node.querySelector('[aria-label="Waiting for you"] li')!;
+  const asking = node.querySelector('[aria-label="Needs you"] li')!;
+  // The agent by its mark and the session by its title: no "finished its
+  // turn" heading.
+  expect(finished!.querySelector("img")!.getAttribute("alt")).toBe("Claude Code");
+  expect(finished!.querySelector("h3")!.textContent).toBe("Tidy the buttons");
+  expect(finished!.querySelector(".local-feed-branch")!.textContent).toBe("feature");
+  expect(finished!.textContent).not.toContain("finished its turn");
+  // Only the message's opening paragraph, its Markdown rendered.
+  const said = finished!.querySelector(".local-feed-soft")!;
+  expect(said.textContent!.trim()).toBe("Done. Want me to open a pull request?");
+  expect(said.querySelector("strong")!.textContent).toBe("Done.");
+  expect(finished!.textContent).not.toContain("in its terminal");
   expect(finished!.querySelector("input, textarea")).toBeNull();
   expect(finished!.querySelectorAll("button")).toHaveLength(0);
-  expect(finished!.querySelector("a.local-session-open")!.getAttribute("aria-label")).toContain(
+  expect(finished!.querySelector("a.local-feed-open")!.getAttribute("aria-label")).toContain(
     "Tidy the buttons",
   );
-  expect(asking!.textContent).toContain("Answer in the terminal");
+  expect(asking!.textContent).toContain("Asks permission in its terminal");
   expect(asking!.textContent).toContain("Claude needs your permission to use Bash");
 });
 
-it("shows a running session's current step, trail and files touched, and a quiet one", async () => {
+it("shows a running session's current step and files touched, and a quiet one", async () => {
   const steps = [
     { tool: "Read", target: "oss/app/src/sessions.tsx" },
     { tool: "Edit", target: "oss/app/README.md" },
     { tool: "Bash", target: "pnpm test sessions" },
   ];
   await render([
-    session({ activity: { steps, files_touched: 3 } }),
+    session({ activity: { steps, files_touched: 3, last_prompt: "Run the session tests" } }),
     session({
       session_id: "s2",
       state: "idle",
@@ -284,26 +312,52 @@ it("shows a running session's current step, trail and files touched, and a quiet
     }),
   ]);
   const [busy, quiet, bare] = [...node.querySelectorAll('[aria-label="Running now"] li')];
+  expect(busy!.querySelector(".local-feed-prompt")!.textContent).toBe("You Run the session tests");
   expect(busy!.querySelector(".local-feed-tool")!.textContent).toBe("Bash");
   expect(busy!.querySelector(".local-feed-target")!.textContent).toContain("pnpm test sessions");
   expect(busy!.querySelector(".local-feed-caret")).not.toBeNull();
-  const chips = [...busy!.querySelectorAll(".local-feed-trail .local-feed-chip")];
-  expect(chips.map((c) => c.textContent)).toEqual(["Read", "Edit"]);
-  expect(chips[1]!.getAttribute("title")).toBe("oss/app/README.md");
-  expect(busy!.querySelector(".local-feed-files")!.textContent).toBe("3 files touched");
-  expect(busy!.querySelector(".local-feed-time")!.textContent).toBe("7m 00s");
+  // Only the current step: no trail of the earlier ones.
+  expect(busy!.textContent).not.toContain("Trail");
+  expect(busy!.textContent).not.toContain("Read");
+  expect(busy!.querySelector(".local-feed-time")!.textContent).toBe("3 files touched · 7m 00s");
   expect(quiet!.textContent).toContain("Quiet for 12 min");
   expect(quiet!.querySelector(".local-feed-caret")).toBeNull();
-  expect(quiet!.querySelector(".local-feed-dot.muted")).not.toBeNull();
   expect(bare!.textContent).toContain("Active 2 minutes ago");
+
+  // Once the agent has said something, its words show in place of the step.
+  await render([
+    session({
+      activity: {
+        steps,
+        last_message: "Running the **session** tests.\n\nThen the browser ones.",
+      },
+    }),
+  ]);
+  const said = node.querySelector('[aria-label="Running now"] .local-feed-said')!;
+  expect(said.textContent!.trim()).toBe("Running the session tests.");
+  expect(said.querySelector("strong")!.textContent).toBe("session");
+  expect(said.querySelector(".local-feed-caret")).not.toBeNull();
+  expect(node.querySelector('[aria-label="Running now"] .local-feed-step')).toBeNull();
   expect(bare!.querySelector(".local-feed-step")).toBeNull();
 });
 
 it("sends a message for when the turn finishes, and cancels a queued one", async () => {
   await render([session()]);
+  // No box until r opens it on the focused card.
+  expect(node.querySelector("input")).toBeNull();
+  const key = (k: string) =>
+    act(async () => {
+      window.dispatchEvent(
+        new KeyboardEvent("keydown", { key: k, bubbles: true, cancelable: true }),
+      );
+    });
+  await key("j");
+  await key("r");
   const input = node.querySelector("input")! as HTMLInputElement;
+  expect(document.activeElement).toBe(input);
   expect(node.querySelector(`label[for="${input.id}"]`)!.textContent).toBe("Send when it finishes");
-  expect(button("Send")!.disabled).toBe(true);
+  const send = () => node.querySelector<HTMLButtonElement>('button[aria-label^="Send message"]')!;
+  expect(send().disabled).toBe(true);
   await act(async () => {
     Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(
       input,
@@ -311,7 +365,7 @@ it("sends a message for when the turn finishes, and cancels a queued one", async
     );
     input.dispatchEvent(new Event("input", { bubbles: true }));
   });
-  await click(button("Send"));
+  await click(send());
   expect(posts()[0]).toMatchObject({
     path: "/s/test-ns/api/agent-messages",
     method: "POST",
@@ -325,7 +379,8 @@ it("sends a message for when the turn finishes, and cancels a queued one", async
     path: "/s/test-ns/api/agent-messages/claude-code/s1",
     method: "DELETE",
   });
-  expect(node.querySelector("input")).not.toBeNull();
+  // Cancelled, the box stays closed until asked again.
+  expect(node.querySelector("input")).toBeNull();
 
   // A message the daemon reports shows the same way.
   await render(
@@ -348,6 +403,13 @@ it("lists ended sessions compactly with their length and files", async () => {
       activity: { steps: [], files_touched: 14 },
     }),
   ]);
+  // Folded at first: its heading unfolds it.
+  expect(node.querySelector('[aria-label="Ended recently"] li')).toBeNull();
+  await click(
+    node.querySelector<HTMLButtonElement>(
+      '[aria-label="Ended recently"] button[aria-expanded="false"]',
+    )!,
+  );
   const row = node.querySelector('[aria-label="Ended recently"] li')!;
   expect(row.textContent).toContain("2.8 h · 14 files touched");
   expect(row.textContent).toContain("Ended 10 minutes ago");
@@ -425,4 +487,571 @@ it("toggles Codex approvals in Settings, and hides the toggle without the route"
   respond = () => new Response("missing", { status: 404 });
   await render();
   expect(node.textContent).not.toContain("Answer Codex approvals");
+});
+
+it("opens a session's transcript on a click anywhere on its card but its controls", async () => {
+  await render([session({ state: "running" })]);
+  const card = node.querySelector('[aria-label="Running now"] li')!;
+  const link = card.querySelector<HTMLAnchorElement>("a.local-feed-open")!;
+  expect(card.textContent).not.toContain("Open transcript");
+  let opened = 0;
+  link.addEventListener("click", (e) => {
+    e.preventDefault();
+    opened++;
+  });
+  await act(async () => card.querySelector<HTMLElement>(".local-feed-time")!.click());
+  expect(opened).toBe(1);
+  // Its box, once r opens it, keeps its clicks.
+  await act(async () => {
+    window.dispatchEvent(new KeyboardEvent("keydown", { key: "j", bubbles: true }));
+  });
+  await act(async () => {
+    window.dispatchEvent(
+      new KeyboardEvent("keydown", { key: "r", bubbles: true, cancelable: true }),
+    );
+  });
+  await act(async () => card.querySelector<HTMLElement>("input")!.click());
+  await act(async () => card.querySelector<HTMLElement>("button")!.click());
+  expect(opened).toBe(1);
+});
+
+it("lists a session that went quiet under Waiting for you, muted, with its last words", async () => {
+  await render([
+    session({
+      state: "idle",
+      waiting_reason: "quiet",
+      waiting_since: ago(1680),
+      activity: {
+        steps: [],
+        last_message: "Re-running the browser tests.",
+        last_prompt: "The cards are too long",
+      },
+    }),
+  ]);
+  const card = node.querySelector('[aria-label="Waiting for you"] li')!;
+  expect(card.textContent).toContain("quiet 28m 00s");
+  expect(card.querySelector(".local-feed-soft")!.textContent!.trim()).toBe(
+    "Re-running the browser tests.",
+  );
+  // The muted dot and the time say it went quiet: no note.
+  expect(card.querySelector(".local-feed-note")).toBeNull();
+  // What the user last typed, which it went quiet on.
+  expect(card.querySelector(".local-feed-prompt")!.textContent).toBe("You The cards are too long");
+  expect(node.querySelector('[aria-label="Running now"] li')).toBeNull();
+});
+
+it("never shows End session on a card: the menu offers it where the daemon can stop the agent", async () => {
+  await render([
+    session({
+      state: "idle",
+      waiting_reason: "turn_finished",
+      waiting_since: ago(60),
+      endable: true,
+    }),
+    session({ session_id: "s2", state: "idle", waiting_reason: "quiet", waiting_since: ago(900) }),
+  ]);
+  expect(button("End session")).toBeUndefined();
+  const menuOf = async (id: string) => {
+    await act(async () => {
+      node.querySelector(`[data-row-id="${id}"] h3`)!.dispatchEvent(
+        new MouseEvent("contextmenu", {
+          bubbles: true,
+          cancelable: true,
+          clientX: 9,
+          clientY: 9,
+        }),
+      );
+    });
+    const items = [...node.querySelectorAll('[role="menu"] [role="menuitem"]')].map(
+      (b) => b.textContent,
+    );
+    await act(async () => {
+      node
+        .querySelector('[role="menu"] button')!
+        .dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    });
+    return items;
+  };
+  expect(await menuOf("claude-code:s1")).toContain("End session");
+  expect(await menuOf("claude-code:s2")).not.toContain("End session");
+});
+
+it("offers a session's actions on a right click, in place of the browser's menu", async () => {
+  const went: string[] = [];
+  await act(async () =>
+    root.render(
+      <ToastProvider>
+        <SessionsPage
+          sessions={[
+            session({
+              state: "idle",
+              waiting_reason: "turn_finished",
+              waiting_since: ago(60),
+              endable: true,
+              pr: 7,
+            }),
+          ]}
+          requests={requests()}
+          prHref={() => "/s/test-ns/?page=pull-requests&pr=7"}
+          Link={Link}
+          navigate={(href) => went.push(href)}
+        />
+      </ToastProvider>,
+    ),
+  );
+  const card = node.querySelector(
+    '[data-row-id="claude-code:s1"] .local-feed-prompt, [data-row-id="claude-code:s1"] h3',
+  )!;
+  const rightClick = () => {
+    const event = new MouseEvent("contextmenu", {
+      bubbles: true,
+      cancelable: true,
+      clientX: 40,
+      clientY: 50,
+    });
+    card.dispatchEvent(event);
+    return event;
+  };
+  let event!: MouseEvent;
+  await act(async () => {
+    event = rightClick();
+  });
+  expect(event.defaultPrevented).toBe(true);
+  const items = () =>
+    [...node.querySelectorAll('[role="menu"] [role="menuitem"]')] as HTMLButtonElement[];
+  expect(items().map((b) => b.textContent)).toEqual([
+    "Open transcript",
+    "PeekSpace",
+    "Open pull request #7",
+    "End session",
+  ]);
+  expect(document.activeElement).toBe(items()[0]);
+  // Escape closes it.
+  await act(async () => {
+    items()[0]!.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+  });
+  expect(node.querySelector('[role="menu"]')).toBeNull();
+  // A choice closes it and does what it says.
+  await act(async () => {
+    rightClick();
+  });
+  await click(items()[2]);
+  expect(went).toEqual(["/s/test-ns/?page=pull-requests&pr=7"]);
+  expect(node.querySelector('[role="menu"]')).toBeNull();
+  await act(async () => {
+    rightClick();
+  });
+  await click(items()[3]);
+  expect(posts()).toEqual([
+    { path: "/s/test-ns/api/live-sessions/claude-code/s1/end", method: "POST", body: {} },
+  ]);
+  expect(node.querySelector(".local-toast-title")!.textContent).toBe("Ended the session");
+});
+
+it("opens a reply with r on a session waiting at its prompt, sends it with Enter and closes it with Escape", async () => {
+  await render([
+    session({
+      state: "idle",
+      waiting_reason: "turn_finished",
+      waiting_since: ago(60),
+      messageable: true,
+    }),
+    session({
+      session_id: "s2",
+      state: "idle",
+      waiting_reason: "permission",
+      waiting_since: ago(30),
+    }),
+  ]);
+  // Nothing to type in until asked.
+  expect(node.querySelector(".local-feed input")).toBeNull();
+  const key = (k: string) =>
+    act(async () => {
+      window.dispatchEvent(
+        new KeyboardEvent("keydown", { key: k, bubbles: true, cancelable: true }),
+      );
+    });
+  // The session asking a permission (Needs you, first) has no reply.
+  await key("j");
+  await key("r");
+  expect(node.querySelector(".local-feed input")).toBeNull();
+  await key("j");
+  await key("r");
+  const input = node.querySelector<HTMLInputElement>('[data-row-id="claude-code:s1"] input')!;
+  expect(document.activeElement).toBe(input);
+  expect(input.value).toBe("");
+  // Escape closes it, and the keys go back to the card.
+  await act(async () => {
+    input.dispatchEvent(
+      new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }),
+    );
+  });
+  expect(node.querySelector(".local-feed input")).toBeNull();
+  expect(document.activeElement).toBe(
+    node.querySelector('[data-row-id="claude-code:s1"] a.local-feed-open'),
+  );
+  await key("r");
+  const again = node.querySelector<HTMLInputElement>('[data-row-id="claude-code:s1"] input')!;
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(
+      again,
+      " Open the PR ",
+    );
+    again.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  // Enter submits the form.
+  await act(async () => again.form!.requestSubmit());
+  expect(posts()).toEqual([
+    {
+      path: "/s/test-ns/api/live-sessions/claude-code/s1/message",
+      method: "POST",
+      body: { text: "Open the PR" },
+    },
+  ]);
+  expect(node.querySelector(".local-feed input")).toBeNull();
+  expect(node.querySelector(".local-toast-title")!.textContent).toBe("Replied");
+  expect(node.querySelector(".local-toast-detail")!.textContent).toBe("Open the PR");
+});
+
+it("answers the focused question or permission with its number keys, Enter submitting several", async () => {
+  const s = session({ state: "idle", waiting_reason: "input", waiting_since: ago(5) });
+  const key = (k: string) =>
+    act(async () => {
+      window.dispatchEvent(
+        new KeyboardEvent("keydown", { key: k, bubbles: true, cancelable: true }),
+      );
+    });
+  const question: AgentRequest = {
+    id: "q1",
+    agent: "claude-code",
+    session_id: "s1",
+    kind: "question",
+    tool: "AskUserQuestion",
+    created_at: ago(5),
+    input: [],
+    suggestions: [],
+    questions: [
+      {
+        question: "Open the PR?",
+        header: "Open PR",
+        options: [{ label: "Yes" }, { label: "Not yet" }],
+      },
+    ],
+  };
+  await render([s], requests({ requests: [question] }));
+  expect(button("Not yet")!.querySelector("kbd")!.textContent).toBe("2");
+  await key("j");
+  await key("2");
+  expect(posts()[0]).toMatchObject({
+    path: "/s/test-ns/api/agent-requests/q1/answer",
+    body: { behavior: "allow", answers: { "Open the PR?": "Not yet" } },
+  });
+
+  // Several choices: the numbers toggle them, Enter submits.
+  const several: AgentRequest = {
+    ...question,
+    id: "q2",
+    questions: [
+      {
+        question: "Which checks?",
+        multi_select: true,
+        options: [{ label: "Unit" }, { label: "E2E" }],
+      },
+    ],
+  };
+  await render([s], requests({ requests: [several] }));
+  await key("1");
+  await key("2");
+  expect(button("E2E")!.getAttribute("aria-pressed")).toBe("true");
+  await key("Enter");
+  expect(posts()[1]).toMatchObject({ body: { answers: { "Which checks?": "Unit, E2E" } } });
+
+  // A permission: 1 allows once, the last number denies.
+  await render([s], requests({ requests: [permission({ id: "p1" })] }));
+  const deny = button("Deny")!.querySelector("kbd")!.textContent!;
+  await key(deny);
+  expect(posts()[2]).toMatchObject({
+    path: "/s/test-ns/api/agent-requests/p1/answer",
+    body: { behavior: "deny" },
+  });
+});
+
+it("takes an answer typed in place of a choice", async () => {
+  const s = session({ state: "idle", waiting_reason: "input", waiting_since: ago(5) });
+  const question: AgentRequest = {
+    id: "q1",
+    agent: "claude-code",
+    session_id: "s1",
+    kind: "question",
+    tool: "AskUserQuestion",
+    created_at: ago(5),
+    input: [],
+    suggestions: [],
+    questions: [{ question: "Open the PR?", options: [{ label: "Yes" }, { label: "Not yet" }] }],
+  };
+  await render([s], requests({ requests: [question] }));
+  const field = () => node.querySelector<HTMLInputElement>(".local-feed-card input");
+  const type = async (text: string) => {
+    const input = field()!;
+    expect(document.activeElement).toBe(input);
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, text);
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await act(async () => input.form!.requestSubmit());
+  };
+  // Its own number, after the choices.
+  expect(button("Type an answer")!.querySelector("kbd")!.textContent).toBe("3");
+  await click(button("Type an answer"));
+  // Escape closes it unanswered.
+  await act(async () => {
+    field()!.dispatchEvent(
+      new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }),
+    );
+  });
+  expect(field()).toBeNull();
+  await click(button("Type an answer"));
+  await type("After the toast lands");
+  expect(posts()[0]).toMatchObject({
+    path: "/s/test-ns/api/agent-requests/q1/answer",
+    body: { behavior: "allow", answers: { "Open the PR?": "After the toast lands" } },
+  });
+
+  // Among several, it joins the choices until Submit.
+  await render(
+    [s],
+    requests({
+      requests: [
+        {
+          ...question,
+          id: "q2",
+          questions: [
+            { question: "Which checks?", multi_select: true, options: [{ label: "Unit" }] },
+          ],
+        },
+      ],
+    }),
+  );
+  await click(button("Unit"));
+  await click(button("Type an answer"));
+  await type("Lint");
+  expect(button("“Lint”")!.getAttribute("aria-pressed")).toBe("true");
+  await click(button("Submit"));
+  expect(posts()[1]).toMatchObject({ body: { answers: { "Which checks?": "Unit, Lint" } } });
+});
+
+it("opens the focused row's menu with Ctrl+., as the Menu key does", async () => {
+  function WithActionsKey() {
+    useActionsKey();
+    return (
+      <SessionsPage
+        sessions={[
+          session({
+            state: "idle",
+            waiting_reason: "turn_finished",
+            waiting_since: ago(60),
+            endable: true,
+          }),
+        ]}
+        requests={requests()}
+        prHref={() => null}
+        Link={Link}
+      />
+    );
+  }
+  await act(async () =>
+    root.render(
+      <ToastProvider>
+        <WithActionsKey />
+      </ToastProvider>,
+    ),
+  );
+  const key = (k: string, init: KeyboardEventInit = {}) =>
+    act(async () => {
+      window.dispatchEvent(
+        new KeyboardEvent("keydown", { key: k, bubbles: true, cancelable: true, ...init }),
+      );
+    });
+  // Nothing focused: nothing to act on.
+  await key(".", { ctrlKey: true });
+  expect(node.querySelector('[role="menu"]')).toBeNull();
+  await key("j");
+  await key(".", { ctrlKey: true });
+  const items = [...node.querySelectorAll('[role="menu"] [role="menuitem"]')].map(
+    (b) => b.textContent,
+  );
+  expect(items).toContain("End session");
+  // The menu has the keys: down to End session, Enter.
+  const menu = node.querySelector('[role="menu"]')!;
+  const press = (k: string) =>
+    act(async () => {
+      (document.activeElement ?? menu).dispatchEvent(
+        new KeyboardEvent("keydown", { key: k, bubbles: true }),
+      );
+    });
+  while (document.activeElement?.textContent !== "End session") await press("ArrowDown");
+  await act(async () => (document.activeElement as HTMLButtonElement).click());
+  expect(posts()).toEqual([
+    { path: "/s/test-ns/api/live-sessions/claude-code/s1/end", method: "POST", body: {} },
+  ]);
+});
+
+it("moves with Ctrl+N and Ctrl+P as ↓ and ↑, in the list and its menu, not in a text field", async () => {
+  function WithKeys() {
+    useActionsKey();
+    useReadlineArrows();
+    return (
+      <SessionsPage
+        sessions={[
+          session({
+            state: "idle",
+            waiting_reason: "turn_finished",
+            waiting_since: ago(90),
+            messageable: true,
+          }),
+          session({
+            session_id: "s2",
+            state: "idle",
+            waiting_reason: "turn_finished",
+            waiting_since: ago(30),
+          }),
+        ]}
+        requests={requests()}
+        prHref={() => null}
+        Link={Link}
+      />
+    );
+  }
+  await act(async () =>
+    root.render(
+      <ToastProvider>
+        <WithKeys />
+      </ToastProvider>,
+    ),
+  );
+  const ctrl = (k: string, init: KeyboardEventInit = {}) =>
+    act(async () => {
+      (document.activeElement ?? window).dispatchEvent(
+        new KeyboardEvent("keydown", {
+          key: k,
+          ctrlKey: true,
+          bubbles: true,
+          cancelable: true,
+          ...init,
+        }),
+      );
+    });
+  const focused = () => node.querySelector("[data-focused]")?.getAttribute("data-row-id");
+  await ctrl("n");
+  expect(focused()).toBe("claude-code:s1");
+  await ctrl("n");
+  expect(focused()).toBe("claude-code:s2");
+  await ctrl("p");
+  expect(focused()).toBe("claude-code:s1");
+  // In the open menu, the same.
+  await ctrl(".");
+  const items = () => [...node.querySelectorAll<HTMLButtonElement>('[role="menu"] button')];
+  expect(document.activeElement).toBe(items()[0]);
+  await ctrl("n");
+  expect(document.activeElement).toBe(items()[1]);
+  await ctrl("p");
+  expect(document.activeElement).toBe(items()[0]);
+  // A text field keeps its own keys.
+  await act(async () => items()[0]!.click());
+  const input = node.querySelector<HTMLInputElement>(".local-feed-card input")!;
+  expect(document.activeElement).toBe(input);
+  const event = new KeyboardEvent("keydown", {
+    key: "n",
+    ctrlKey: true,
+    bubbles: true,
+    cancelable: true,
+  });
+  await act(async () => {
+    input.dispatchEvent(event);
+  });
+  expect(event.defaultPrevented).toBe(false);
+  expect(document.activeElement).toBe(input);
+});
+
+it("closes an open menu with Escape wherever the keys are, giving them back to its row", async () => {
+  function WithKeys() {
+    useActionsKey();
+    return (
+      <SessionsPage
+        sessions={[
+          session({ state: "idle", waiting_reason: "turn_finished", waiting_since: ago(60) }),
+        ]}
+        requests={requests()}
+        prHref={() => null}
+        Link={Link}
+      />
+    );
+  }
+  await act(async () =>
+    root.render(
+      <ToastProvider>
+        <WithKeys />
+      </ToastProvider>,
+    ),
+  );
+  const press = (k: string, init: KeyboardEventInit = {}, on: EventTarget = window) =>
+    act(async () => {
+      on.dispatchEvent(
+        new KeyboardEvent("keydown", { key: k, bubbles: true, cancelable: true, ...init }),
+      );
+    });
+  await press("j");
+  const row = document.activeElement;
+  await press(".", { ctrlKey: true });
+  expect(node.querySelector('[role="menu"]')).not.toBeNull();
+  // The keys moved off the menu: Escape still closes it, and only it.
+  (document.activeElement as HTMLElement).blur();
+  await press("Escape");
+  expect(node.querySelector('[role="menu"]')).toBeNull();
+  expect(document.activeElement).toBe(row);
+  expect(node.querySelector("[data-focused]")).not.toBeNull();
+});
+
+it("peeks at a session under its row with Space: its summary and latest response", async () => {
+  await render([
+    session({
+      state: "idle",
+      waiting_reason: "turn_finished",
+      waiting_since: ago(60),
+      // As Claude Code's compaction summary opens.
+      summary: 'Initial: "Restyle the Sessions page after the PR list."',
+      activity: {
+        steps: [],
+        last_prompt: "Make the toast lighter",
+        last_message: "The toast is now **light**.\n\n- paper card\n- menu shadow",
+      },
+    }),
+  ]);
+  const key = (k: string) =>
+    act(async () => {
+      window.dispatchEvent(
+        new KeyboardEvent("keydown", { key: k, bubbles: true, cancelable: true }),
+      );
+    });
+  const peek = () => node.querySelector('[role="region"][aria-label^="Preview of"]');
+  expect(peek()).toBeNull();
+  await key("j");
+  await key(" ");
+  // What it was started for, and its latest response, each labelled.
+  const labels = [...peek()!.querySelectorAll("dt")].map((d) => d.textContent);
+  expect(labels).toEqual(["Original request", "Latest response"]);
+  expect(peek()!.querySelector(".local-feed-peek-asked")!.textContent).toBe(
+    "Restyle the Sessions page after the PR list.",
+  );
+  // What the user last wrote is on the row, not again under it.
+  expect(peek()!.textContent).not.toContain("Make the toast lighter");
+  expect(peek()!.querySelector("strong")!.textContent).toBe("light");
+  expect(peek()!.querySelectorAll("li")).toHaveLength(2);
+  // Space again closes it; Escape too, before it clears the row.
+  await key(" ");
+  expect(peek()).toBeNull();
+  await key(" ");
+  await key("Escape");
+  expect(peek()).toBeNull();
+  expect(node.querySelector("[data-focused]")).not.toBeNull();
 });
