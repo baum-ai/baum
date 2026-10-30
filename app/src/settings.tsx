@@ -22,7 +22,13 @@ import {
   type DiagnosticReport,
   type DecisionSettings,
 } from "./api";
-import { RepositoryPicker, CloneActions, earlierNamesWarning } from "./repositories";
+import {
+  RepositoryPicker,
+  CloneActions,
+  earlierNamesWarning,
+  useCloneActions,
+} from "./repositories";
+import { MenuButton, useContextMenu, type MenuItem } from "./context-menu";
 import { GitHubConnectionSection } from "./github-connection";
 import { messages as githubMessages } from "./github-auth";
 import { DiagnosticsSection } from "./diagnostics";
@@ -1568,6 +1574,7 @@ export function RepositoriesPage({
     repositories.map((r) => r.repository),
   );
   const page = useRef<HTMLElement>(null);
+  const menu = useContextMenu();
   useShortcuts((event) => {
     if (listKeys(event, rows)) return;
     if (event.key === "a") {
@@ -1600,9 +1607,17 @@ export function RepositoriesPage({
           </Button>
         }
       />
-      <div className="local-page-body">
-        {error ? <Alert>{error}</Alert> : null}
-        {adding ? <RepositoryPicker changed={changed} autoFocus /> : null}
+      <div className="local-page-body local-list-page">
+        {error ? (
+          <div className="local-list-note">
+            <Alert>{error}</Alert>
+          </div>
+        ) : null}
+        {adding ? (
+          <div className="local-list-note local-repo-adding">
+            <RepositoryPicker changed={changed} autoFocus />
+          </div>
+        ) : null}
         {repositories.length === 0 ? (
           <div className="local-empty">
             <h2>No repositories yet</h2>
@@ -1612,11 +1627,13 @@ export function RepositoriesPage({
             </p>
           </div>
         ) : null}
+        {menu.menu}
         {repositories.length > 0 ? (
-          <ul ref={rows.list} className="local-panel local-repo-list">
+          <ul ref={rows.list} className="list">
             {repositories.map((repository) => (
               <RepositoryRow
                 key={repository.repository}
+                menu={menu}
                 focused={rows.focused === repository.repository}
                 repository={repository}
                 automatic={automatic}
@@ -1776,6 +1793,7 @@ function RepositorySettings({
  *  dialog. */
 function RepositoryRow({
   repository,
+  menu,
   focused,
   automatic,
   defaults,
@@ -1783,6 +1801,8 @@ function RepositoryRow({
   remove,
 }: {
   repository: Repository;
+  /** The list's menu, which the row's ⋯ and a right click open. */
+  menu: ReturnType<typeof useContextMenu>;
   focused: boolean;
   automatic: Automatic | null;
   defaults: ReviewDefaults | null;
@@ -1814,20 +1834,57 @@ function RepositoryRow({
     status ? (status.enabled ? "Automatic reviews on" : "Automatic reviews off") : null,
     harness,
   ].filter(Boolean);
+  // A repository without a clone is offered one from its menu; what that
+  // starts (a path form, a running clone) shows under the row.
+  const cloneActions = useCloneActions({ repository: repository.repository, changed });
+  // The row opens its settings; the rest is in its menu.
+  const actions = (): MenuItem[] => {
+    const items: MenuItem[] = [{ label: "Settings…", hint: "↵", onSelect: () => setOpen(true) }];
+    if (clone.available)
+      items.push({
+        label: changing ? "Hide local clones" : "Change local clone…",
+        onSelect: () => setChanging(!changing),
+      });
+    else if (!cloneActions.busy && !cloneActions.running)
+      items.push(
+        { label: "Choose folder…", onSelect: cloneActions.choose },
+        { label: "Clone it…", onSelect: cloneActions.clone },
+      );
+    return items;
+  };
+  const cloneState =
+    !clone.available && (cloneActions.progress || cloneActions.form || cloneActions.errors);
   return (
     <li
       data-row-id={repository.repository}
       data-focused={focused || undefined}
-      className="local-repo-row"
+      className="list-row local-repo-row"
+      onContextMenu={(event) => menu.open(event, actions(), clone.repository)}
     >
       <div className="local-repo-main">
-        <h3>{clone.repository}</h3>
+        <h3>
+          <button
+            type="button"
+            className="local-repo-name"
+            data-row-link=""
+            aria-label={`Settings for ${clone.repository}`}
+            onClick={() => setOpen(true)}
+          >
+            {clone.repository}
+          </button>
+        </h3>
         {clone.available ? (
           <p className="truncate" title={clone.path}>
             {clone.path}
           </p>
         ) : (
-          <p className="local-repo-missing">Needs a local clone</p>
+          <p className="local-repo-missing">
+            {cloneActions.busy && cloneActions.doing === "choose"
+              ? "Choosing a folder…"
+              : cloneActions.busy && cloneActions.doing === "clone"
+                ? "Preparing the clone…"
+                : "Needs a local clone"}
+          </p>
         )}
         {clone.available && repository.earlier_names?.length ? (
           <p className="repository-warning">
@@ -1837,34 +1894,18 @@ function RepositoryRow({
         <p className="local-repo-summary">{summary.join(" · ")}</p>
       </div>
       <div className="local-repo-actions">
-        {clone.available ? (
-          <Button
-            variant="secondary"
-            size="compact"
-            aria-expanded={changing}
-            onClick={() => setChanging(!changing)}
-          >
-            {changing ? "Done" : "Change clone"}
-          </Button>
-        ) : null}
-        <Button
-          variant="secondary"
-          size="compact"
-          data-row-link=""
-          aria-label={`Settings for ${clone.repository}`}
-          onClick={() => setOpen(true)}
-        >
-          Settings
-        </Button>
+        <MenuButton label={clone.repository} items={actions} menu={menu} />
       </div>
       {cloneError ? (
         <p role="alert" className="local-repo-panel">
           {cloneError}
         </p>
       ) : null}
-      {!clone.available ? (
-        <div className="local-repo-panel">
-          <CloneActions repository={repository.repository} changed={changed} />
+      {cloneState ? (
+        <div className="local-repo-panel repository-actions">
+          {cloneActions.progress}
+          {cloneActions.form}
+          {cloneActions.errors}
         </div>
       ) : null}
       {clone.available && changing ? (
@@ -1900,6 +1941,14 @@ function RepositoryRow({
             ))}
           </ul>
           <CloneActions repository={repository.repository} changed={changed} />
+          <Button
+            variant="ghost"
+            size="compact"
+            className="justify-self-start"
+            onClick={() => setChanging(false)}
+          >
+            Done
+          </Button>
         </div>
       ) : null}
       {open ? (

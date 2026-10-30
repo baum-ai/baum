@@ -1,7 +1,7 @@
 import { PreferencesProvider } from "./preferences";
 import { formatCount } from "@baum/viewer/components/format";
 import { UsageDetails } from "./usage";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type MouseEvent, type ReactNode } from "react";
 import { LogoMark } from "@baum/viewer/components/editorial";
 import {
   CircleCheckIcon,
@@ -19,6 +19,7 @@ import {
 import { CloneActions, type FoundClones } from "./repositories";
 import { GroupMissing, GroupPage, NameDialog } from "./group";
 import { Inbox, UpdatedAgo } from "./inbox";
+import { ListSection } from "./list";
 import {
   EditInboxPage,
   editInboxHref,
@@ -38,6 +39,7 @@ import {
 import { UpNextPage, useUpNext } from "./up-next";
 import {
   onBody,
+  KeyBar,
   ShortcutsSheet,
   listKeys,
   useCommandKeys,
@@ -58,7 +60,7 @@ import { useDiagnosticProblems } from "./diagnostics";
 import { RepositoriesPage, SettingsPage, settingsSection, type ReviewDefaults } from "./settings";
 import { asksYou, SessionsPage, transcriptHref } from "./sessions";
 import { ToastProvider } from "./toast";
-import { useActionsKey } from "./context-menu";
+import { MenuButton, useActionsKey, useContextMenu, type MenuItem } from "./context-menu";
 import { SessionTranscriptPage } from "./session-transcript";
 import { AnalyticsPage } from "./analytics";
 import { TimelinePage } from "./timeline";
@@ -75,6 +77,7 @@ import {
   chatJobs,
   fixJobs,
   isActiveJob,
+  jobHref,
   navigate,
   startFix,
   filtered,
@@ -100,7 +103,7 @@ import {
   type LiveSession,
 } from "./api";
 import { LoadingStatus } from "./nine-dots";
-import { FixDetails, TranscriptLink, type FixChat } from "./fix";
+import { FixDetails, type FixChat } from "./fix";
 import { JobPage } from "./job-transcript";
 import { useLocation } from "./location";
 
@@ -926,7 +929,7 @@ function Workspace({ url }: { url: UrlState }) {
           ) : page === "sessions" ? (
             <>
               <PageBar title="Sessions" detail="Agent sessions on this computer, live" />
-              <div className="local-page-body">
+              <div className="local-page-body local-list-page">
                 <SessionsPage
                   sessions={live}
                   requests={agentRequests}
@@ -945,7 +948,7 @@ function Workspace({ url }: { url: UrlState }) {
           ) : page === "jobs" ? (
             <>
               <PageBar title="Jobs" detail="Reviews and fixes run on this computer" />
-              <div className="local-page-body">
+              <div className="local-page-body local-list-page">
                 <Jobs jobs={jobs} changed={reload} />
               </div>
             </>
@@ -1286,6 +1289,7 @@ function Workspace({ url }: { url: UrlState }) {
             />
           ) : null}
         </main>
+        <KeyBar place={shortcutsPlace} className="local-key-bar" />
       </div>
     </div>
   );
@@ -1330,24 +1334,84 @@ function ForkConfirmation({
     </dialog>
   );
 }
-/** The jobs, newest first. The keyboard moves through them as through any
- *  list; Enter opens the job's pull request or group and `t` its transcript. */
+/** The jobs, newest first: those running or waiting to, then those that
+ *  finished. The keyboard moves through them as through any list; Enter
+ *  opens the job's pull request or group and `t` its transcript. */
 function Jobs({ jobs, changed }: { jobs: Job[]; changed: () => Promise<void> }) {
   const [error, setError] = useState("");
+  const [folded, setFolded] = useState<ReadonlySet<string>>(new Set());
   const newest = jobs.slice().reverse();
-  const rows = useRowFocus<HTMLUListElement>(
+  const sections = [
+    {
+      id: "active",
+      title: "Running now",
+      tone: "positive" as const,
+      jobs: newest.filter(isActiveJob),
+    },
+    {
+      id: "finished",
+      title: "Finished",
+      tone: "quiet" as const,
+      jobs: newest.filter((job) => !isActiveJob(job)),
+    },
+  ].filter((section) => section.jobs.length > 0);
+  const rows = useRowFocus<HTMLElement>(
     "jobs",
-    newest.map((job) => job.id),
+    sections.flatMap((section) =>
+      folded.has(section.id) ? [] : section.jobs.map((job) => job.id),
+    ),
   );
+  // The jobs being cancelled, and those whose usage shows under them.
+  const [cancelling, setCancelling] = useState<ReadonlySet<string>>(new Set());
+  const [usage, setUsage] = useState<ReadonlySet<string>>(new Set());
+  const flip = (set: ReadonlySet<string>, id: string) => {
+    const next = new Set(set);
+    if (!next.delete(id)) next.add(id);
+    return next;
+  };
+  const cancel = (job: Job) => {
+    setCancelling((previous) => new Set(previous).add(job.id));
+    void request(`api/jobs/${encodeURIComponent(job.id)}/cancel`, {})
+      .then(changed)
+      .catch((e) => setError(errorText(e)))
+      .finally(() => setCancelling((previous) => flip(previous, job.id)));
+  };
+  // A job's actions, behind its ⋯ and a right click on it.
+  const menu = useContextMenu();
+  const actionsFor = (job: Job): MenuItem[] => {
+    const items: MenuItem[] = [];
+    const href = jobTarget(job);
+    if (href)
+      items.push({
+        label: job.group ? "Open review group" : "Open pull request",
+        hint: "↵",
+        onSelect: () => navigate(href),
+      });
+    if (job.has_transcript)
+      items.push({
+        label: isActiveJob(job) ? "Watch" : "Transcript",
+        hint: "t",
+        onSelect: () => navigate(jobHref(job)),
+      });
+    items.push({
+      label: usage.has(job.id) ? "Hide usage" : "Show usage",
+      onSelect: () => setUsage((previous) => flip(previous, job.id)),
+    });
+    if (isActiveJob(job) && !cancelling.has(job.id))
+      items.push({ label: "Cancel job", danger: true, onSelect: () => cancel(job) });
+    return items;
+  };
+  const jobMenu = (event: MouseEvent) => {
+    const id = (event.target as HTMLElement).closest("[data-row-id]")?.getAttribute("data-row-id");
+    const job = jobs.find((each) => each.id === id);
+    if (job) menu.open(event, actionsFor(job), jobLabel(job));
+  };
   useShortcuts((event) => {
     if (listKeys(event, rows) || event.key !== "t" || !rows.focused) return;
-    const transcript = rows
-      .rowLink(rows.focused)
-      ?.closest("[data-row-id]")
-      ?.querySelector<HTMLElement>(".local-job-actions a");
-    if (!transcript) return;
+    const job = jobs.find((each) => each.id === rows.focused);
+    if (!job?.has_transcript) return;
     event.preventDefault();
-    transcript.click();
+    navigate(jobHref(job));
   });
   // A link from a review opens the job that generated it.
   useEffect(() => {
@@ -1357,28 +1421,53 @@ function Jobs({ jobs, changed }: { jobs: Job[]; changed: () => Promise<void> }) 
       });
   }, []);
   return (
-    <section aria-label="Generation jobs" className="local-jobs">
-      {error ? <Alert>{error}</Alert> : null}
+    <section
+      ref={rows.list}
+      aria-label="Generation jobs"
+      className="local-jobs"
+      onContextMenu={jobMenu}
+    >
+      {menu.menu}
+      {error ? (
+        <div className="local-list-note">
+          <Alert>{error}</Alert>
+        </div>
+      ) : null}
       {jobs.length === 0 ? (
         <div className="local-empty">
           <h2>No jobs yet</h2>
           <p>Reviews and fixes you start, or that run automatically, show here.</p>
         </div>
       ) : (
-        <ul ref={rows.list} className="local-panel local-job-list">
-          {newest.map((job) => (
-            <JobRow
-              key={job.id}
-              job={job}
-              focused={rows.focused === job.id}
-              cancel={() =>
-                request(`api/jobs/${encodeURIComponent(job.id)}/cancel`, {})
-                  .then(changed)
-                  .catch((e) => setError(errorText(e)))
-              }
-            />
-          ))}
-        </ul>
+        sections.map((section) => (
+          <ListSection
+            key={section.id}
+            title={section.title}
+            tone={section.tone}
+            count={section.jobs.length}
+            collapsed={folded.has(section.id)}
+            toggle={() =>
+              setFolded((previous) => {
+                const next = new Set(previous);
+                if (!next.delete(section.id)) next.add(section.id);
+                return next;
+              })
+            }
+          >
+            {section.jobs.map((job) => (
+              <JobRow
+                key={job.id}
+                job={job}
+                focused={rows.focused === job.id}
+                cancelling={cancelling.has(job.id)}
+                usage={usage.has(job.id)}
+                actions={
+                  <MenuButton label={jobLabel(job)} items={() => actionsFor(job)} menu={menu} />
+                }
+              />
+            ))}
+          </ListSection>
+        ))
       )}
     </section>
   );
@@ -1406,18 +1495,39 @@ function JobState({ job }: { job: Job }) {
     </span>
   );
 }
+/** Where a job's row opens: its pull request or review group. A feature
+ *  build has neither. */
+function jobTarget(job: Job) {
+  if (job.kind === "feature_build") return null;
+  return appURL(
+    job.group
+      ? `?group=${encodeURIComponent(job.group)}`
+      : `?${job.clone ? `clone=${encodeURIComponent(job.clone)}` : `repository=${encodeURIComponent(job.repository)}`}&pr=${job.pr}`,
+  );
+}
+/** How a job is named to assistive technology and in its menu. */
+function jobLabel(job: Job) {
+  if (job.kind === "feature_build") return `Feature build of ${job.repository}`;
+  if (job.group) return `Review group ${job.group_name || job.group}`;
+  return `${jobName(job)} of ${job.repository} #${job.pr}`;
+}
 function JobRow({
   job,
   focused,
-  cancel,
+  cancelling,
+  usage,
+  actions,
 }: {
   job: Job;
   focused: boolean;
-  cancel: () => Promise<void>;
+  cancelling: boolean;
+  /** Whether its usage shows under it. */
+  usage: boolean;
+  /** The row's ⋯ button. */
+  actions: ReactNode;
 }) {
-  const [cancelling, setCancelling] = useState(false);
   const started = automaticLabel(job);
-  const active = job.state === "queued" || job.state === "running";
+  const href = jobTarget(job);
   const calls = `${formatCount(job.calls)} ${job.calls === 1 ? "call" : "calls"}${
     job.repairs ? ` · ${formatCount(job.repairs)} ${job.repairs === 1 ? "repair" : "repairs"}` : ""
   }`;
@@ -1426,24 +1536,16 @@ function JobRow({
       id={`job-${job.id}`}
       data-row-id={job.id}
       data-focused={focused || undefined}
-      className="local-job-row"
+      className="list-row local-job-row"
     >
       <JobState job={job} />
       <div className="min-w-0">
-        {job.kind === "feature_build" ? (
+        {!href ? (
           <span className="local-job-title">
             Feature build <span>· {job.repository}</span>
           </span>
         ) : (
-          <LocalLink
-            data-row-link=""
-            href={appURL(
-              job.group
-                ? `?group=${encodeURIComponent(job.group)}`
-                : `?${job.clone ? `clone=${encodeURIComponent(job.clone)}` : `repository=${encodeURIComponent(job.repository)}`}&pr=${job.pr}`,
-            )}
-            className="local-job-title"
-          >
+          <LocalLink data-row-link="" href={href} className="local-job-title">
             {job.group ? (
               <>
                 Review group: {job.group_name || job.group} <span>{job.repository}</span>
@@ -1478,35 +1580,26 @@ function JobRow({
             {jobReasonText(job.reason, job.kind)}
           </p>
         ) : null}
+        {cancelling ? (
+          <p role="status" className="local-job-meta">
+            Cancelling…
+          </p>
+        ) : null}
         {job.kind === "fix" ? <FixDetails job={job} /> : null}
       </div>
       <span className="local-job-figure">{calls}</span>
       <span className="local-job-figure">{formatCount(job.tokens)} tokens</span>
-      <div className="local-job-actions">
-        <TranscriptLink job={job} />
-        {active ? (
-          <Button
-            variant="secondary"
-            size="compact"
-            disabled={cancelling}
-            onClick={() => {
-              setCancelling(true);
-              void cancel().finally(() => setCancelling(false));
-            }}
-          >
-            {cancelling ? "Cancelling…" : "Cancel job"}
-          </Button>
-        ) : null}
-      </div>
-      <details className="local-job-usage">
-        <summary>Usage</summary>
-        <UsageDetails
-          accounting={job.accounting}
-          charged={job.tokens}
-          amount={job.actual_cost_usd}
-          reason={job.cost_reason}
-        />
-      </details>
+      <div className="local-job-actions">{actions}</div>
+      {usage ? (
+        <div className="local-job-usage">
+          <UsageDetails
+            accounting={job.accounting}
+            charged={job.tokens}
+            amount={job.actual_cost_usd}
+            reason={job.cost_reason}
+          />
+        </div>
+      ) : null}
     </li>
   );
 }

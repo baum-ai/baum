@@ -635,6 +635,145 @@ body {
   min-width: 0;
   padding: 1.25rem 1.5rem 0;
 }
+/* Lists: one way to draw them across the app (`ListSection` in list.tsx).
+   A list page lies on the panel's warm paper; its body runs to the panel's
+   edges, so each section's heading and each row spans the panel, rows
+   between hairlines. Text around a list (`local-list-note`) keeps the
+   page's gutter. */
+.local-frame:has(.local-list-page, .inbox-page) {
+  background: var(--un-panel);
+}
+.local-frame:has(.local-list-page, .inbox-page) .local-page-bar {
+  border-bottom-color: var(--un-line);
+}
+.local-page-body.local-list-page {
+  gap: 0;
+  padding: 0 0 1.5rem;
+}
+.local-list-page > .local-empty,
+.local-list-note {
+  margin: 0;
+  padding-right: 1.5rem;
+  padding-left: 1.5rem;
+}
+.local-list-note {
+  padding-top: 1rem;
+}
+.list {
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.list-heading {
+  display: flex;
+  align-items: center;
+  margin: 0;
+  border-bottom: 1px solid var(--un-hairline);
+  font-size: var(--text-xs);
+  font-weight: 600;
+}
+.list-heading-label {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: 0.5rem;
+  min-width: 0;
+  padding: 1.1rem 1.5rem 0.55rem;
+  border: 0;
+  background: none;
+  color: var(--un-ink);
+  font: inherit;
+  font-weight: 600;
+  text-align: left;
+}
+button.list-heading-label {
+  cursor: pointer;
+}
+button.list-heading-label:hover {
+  background: var(--surface-hover);
+}
+.list-heading > :not(.list-heading-label) {
+  flex: none;
+  margin-right: 1.5rem;
+}
+.list-heading-chevron {
+  flex: none;
+  color: var(--text-tertiary);
+  transition: transform 0.15s;
+}
+.list-heading-chevron.open {
+  transform: rotate(90deg);
+}
+@media (prefers-reduced-motion: reduce) {
+  .list-heading-chevron {
+    transition: none;
+  }
+}
+.list-heading-dot {
+  flex: none;
+  width: 0.375rem;
+  height: 0.375rem;
+  border-radius: 50%;
+  background: currentColor;
+}
+.list-heading-count {
+  min-width: 1.25rem;
+  padding: 0 0.35rem;
+  border-radius: 999px;
+  background: var(--un-hairline);
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-weight: 400;
+  line-height: 1.1rem;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+.list-heading-hint {
+  display: none;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-tertiary);
+  font-weight: 400;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+@media (width >= 40rem) {
+  .list-heading-hint {
+    display: inline;
+  }
+}
+/* A list's column names, above its rows. */
+.list-columns-head {
+  padding: 0.6rem 1.5rem;
+  border-bottom: 1px solid var(--un-line);
+  color: var(--un-muted);
+  font-size: var(--text-xs);
+}
+.list-row {
+  min-width: 0;
+  padding: 0.8rem 1.5rem;
+  border-bottom: 1px solid var(--un-hairline);
+}
+.list-row:last-child {
+  border-bottom: 0;
+}
+.list-row:hover {
+  background: var(--un-list);
+}
+/* The row the keyboard is on: an accent bar and a faint fill, distinct from
+   the sand under the pointer. The bar marks the row, so its link drops the
+   focus ring it would draw on top. */
+.list-row[data-focused] {
+  background: var(--un-list);
+  box-shadow: inset 3px 0 0 var(--un-ink);
+}
+.list-row[data-focused]:hover {
+  background: var(--un-hover);
+}
+.list-row[data-focused] a:focus-visible {
+  outline: none;
+}
 .local-empty {
   padding: 3rem 1rem;
   text-align: center;
@@ -790,41 +929,11 @@ select.local-field {
   padding-right: 1.5rem;
   min-width: 0;
 }
-.inbox-columns-head {
-  padding-top: 0.6rem;
-  padding-bottom: 0.6rem;
-  border-bottom: 1px solid var(--un-line);
-  font-size: var(--text-xs);
-  color: var(--un-muted);
-}
 .inbox-title-heading {
   grid-column: 3;
 }
-.inbox-bucket {
-  padding: 1.1rem 1.5rem 0.55rem;
-}
-.inbox-bucket-count {
-  min-width: 1.25rem;
-  padding: 0 0.35rem;
-  border-radius: 999px;
-  background: var(--un-hairline);
-  color: var(--text-secondary);
-  font-size: 11px;
-  line-height: 1.1rem;
-  text-align: center;
-  font-variant-numeric: tabular-nums;
-}
 .inbox-row {
   row-gap: 0.3rem;
-  padding-top: 0.8rem;
-  padding-bottom: 0.8rem;
-  border-bottom: 1px solid var(--un-hairline);
-}
-.inbox-row:last-child {
-  border-bottom: 0;
-}
-.inbox-row:hover {
-  background: var(--un-list);
 }
 /* A row whose state changed in the latest read flashes once. */
 .inbox-row[data-changed] {
@@ -926,38 +1035,20 @@ select.local-field {
   box-shadow: none;
   transform: translateY(1px);
 }
-/* Merge is the row's one green button, as in the Inbox. */
-.inbox-merge {
-  border-color: var(--un-done);
-  background: var(--un-done);
-  color: var(--un-on-hot);
-  font-weight: 600;
-}
-.inbox-merge:hover {
-  background: color-mix(in srgb, var(--un-done) 88%, black);
+/* The row's ⋯ sits at its end: in its own column in the wide table, and in
+   the row's top right corner once the columns fold under the title, which
+   leaves it room. */
+.inbox-row {
+  position: relative;
 }
 .inbox-row-actions {
-  grid-column: 3;
+  position: absolute;
+  top: 0.65rem;
+  right: 1rem;
   display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 0.375rem;
 }
-/* In the wide table they wait for the pointer or focus; folded under the
-   title, and on a touch screen, they stay drawn. */
-@media (hover: hover) and (width >= 72rem) {
-  .inbox-merge,
-  .inbox-peek {
-    opacity: 0;
-  }
-  .inbox-row:hover :is(.inbox-merge, .inbox-peek),
-  .inbox-row:focus-within :is(.inbox-merge, .inbox-peek),
-  .inbox-row[data-focused] :is(.inbox-merge, .inbox-peek),
-  .inbox-row:has(.inbox-peek[aria-expanded="true"]) .inbox-merge,
-  .inbox-peek[aria-expanded="true"],
-  :is(.inbox-merge, .inbox-peek):focus-visible {
-    opacity: 1;
-  }
+.inbox-row:has(.inbox-row-actions) {
+  padding-right: 3rem;
 }
 /* The peek: the saved review's summary and its first sections, opened under
    the row it belongs to. The summary reads at a prose measure; the changes
@@ -1197,12 +1288,14 @@ select.local-field {
 }
 @media (width >= 72rem) {
   .inbox-columns {
-    grid-template-columns: 1rem 3.25rem minmax(0, 1fr) 5rem 12.5rem 9.5rem 8.5rem;
+    grid-template-columns: 1rem 3.25rem minmax(0, 1fr) 5rem 12.5rem 9.5rem 1.75rem;
   }
   .inbox-row-actions {
-    grid-column: auto;
-    flex-wrap: nowrap;
+    position: static;
     justify-content: flex-end;
+  }
+  .inbox-row:has(.inbox-row-actions) {
+    padding-right: 1rem;
   }
   .inbox-detail-heading {
     display: inline;
@@ -1342,25 +1435,37 @@ dialog.local-dialog-wide {
 .repo-review .review-section:first-child {
   padding-top: 0;
 }
-.local-repo-list {
-  margin: 0;
-  padding: 0 1.25rem;
-  list-style: none;
-}
 .local-repo-row {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
   gap: 0.75rem 1rem;
-  padding: 0.875rem 0;
 }
-.local-repo-row + .local-repo-row {
-  border-top: 1px solid var(--border-subtle);
+/* The picker opens above the list, ruled off from it. */
+.local-repo-adding {
+  padding-bottom: 1.25rem;
+  border-bottom: 1px solid var(--un-line);
 }
 .local-repo-row h3 {
   margin: 0;
   font-size: var(--text-base);
   font-weight: 600;
+}
+/* The name opens the repository's settings, as a link reads. */
+.local-repo-name {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.local-repo-name:hover {
+  text-decoration: underline;
+}
+.local-repo-actions {
+  align-self: start;
 }
 .local-repo-main p {
   margin: 0.125rem 0 0;
@@ -1443,21 +1548,12 @@ dialog.local-dialog-wide {
   padding-top: 1rem;
   border-top: 1px solid var(--border-subtle);
 }
-.local-job-list {
-  margin: 0;
-  padding: 0 1.25rem;
-  list-style: none;
-}
 .local-job-row {
   display: grid;
-  grid-template-columns: 7rem minmax(0, 1fr) 8rem 8rem max-content;
+  grid-template-columns: 7rem minmax(0, 1fr) 8rem 8rem 1.75rem;
   align-items: start;
   column-gap: 1.25rem;
   row-gap: 0.25rem;
-  padding: 1rem 0;
-}
-.local-job-row + .local-job-row {
-  border-top: 1px solid var(--border-subtle);
 }
 .local-job-state {
   display: inline-flex;
@@ -1527,25 +1623,19 @@ dialog.local-dialog-wide {
   color: var(--text-tertiary);
 }
 .local-job-actions {
-  min-width: 7rem;
-  white-space: nowrap;
   display: flex;
   justify-content: flex-end;
+  margin-top: -0.25rem;
 }
+/* What the job used, opened under it from its menu. */
 .local-job-usage {
   grid-column: 2 / -1;
   margin-top: 0.375rem;
-  font-size: var(--text-xs);
-  color: var(--text-tertiary);
-}
-.local-job-usage summary {
-  width: fit-content;
-  cursor: pointer;
-}
-.local-job-usage[open] {
   padding: 0.5rem 0.75rem;
   border-radius: var(--radius-md);
   background: var(--surface-wash);
+  font-size: var(--text-xs);
+  color: var(--text-tertiary);
 }
 @media (width < 64rem) {
   .local-job-row {
@@ -2293,15 +2383,8 @@ a.local-session-pr:hover {
   white-space: nowrap;
 }
 /* The Sessions page as a live feed: Needs you, Running now and Ended
-   recently, each a list of rows as the Pull requests page draws them, on
-   its warm panel, its controls in the panel's paper, in the Inbox's palette
-   (`--un-*`) rather than white. */
-.local-frame:has(.local-feed) {
-  background: var(--un-panel);
-}
-.local-frame:has(.local-feed) .local-page-bar {
-  border-bottom-color: var(--un-line);
-}
+   recently, each a list (`ListSection`), its controls in the panel's paper,
+   in the Inbox's palette (`--un-*`) rather than white. */
 .local-feed {
   --text-primary: var(--un-ink);
   --text-secondary: var(--un-ink-soft);
@@ -2326,83 +2409,10 @@ a.local-session-pr:hover {
   --feed-bash: #9fd49a;
   --feed-ask-ink: #e8b866;
 }
-/* The Sessions page reads as the Pull requests list: the feed spans the
-   panel, each section headed as an inbox bucket (its dot in the section's
-   tone, its count beside), its sessions rows between hairlines. */
-.local-page-body:has(> .local-feed) {
-  padding: 0 0 1.5rem;
-}
 .local-feed-section {
   display: flex;
   flex-direction: column;
   min-width: 0;
-}
-.local-feed-section h2 {
-  margin: 0;
-  border-bottom: 1px solid var(--un-hairline);
-  font-size: var(--text-xs);
-}
-.local-feed-toggle {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  width: 100%;
-  padding: 1.1rem 1.5rem 0.55rem;
-  border: 0;
-  background: none;
-  color: var(--un-ink);
-  font: inherit;
-  font-weight: 600;
-  text-align: left;
-  cursor: pointer;
-}
-.local-feed-toggle:hover {
-  background: var(--surface-hover);
-}
-.local-feed-chevron {
-  flex: none;
-  color: var(--text-tertiary);
-  transition: transform 0.15s;
-}
-.local-feed-chevron.open {
-  transform: rotate(90deg);
-}
-@media (prefers-reduced-motion: reduce) {
-  .local-feed-chevron {
-    transition: none;
-  }
-}
-.local-feed-section-dot {
-  flex: none;
-  width: 0.375rem;
-  height: 0.375rem;
-  border-radius: 50%;
-  background: var(--text-tertiary);
-}
-.local-feed-section.needs .local-feed-section-dot {
-  background: var(--status-caution);
-}
-.local-feed-section.waiting .local-feed-section-dot {
-  background: var(--status-info);
-}
-.local-feed-section.running .local-feed-section-dot {
-  background: var(--status-positive);
-}
-/* A folded section keeps its heading's rule and nothing under it. */
-.local-feed-section:has(.local-feed-toggle[aria-expanded="false"]) h2 {
-  border-bottom-color: transparent;
-}
-.local-feed-count {
-  min-width: 1.25rem;
-  padding: 0 0.35rem;
-  border-radius: 999px;
-  background: var(--un-hairline);
-  color: var(--text-secondary);
-  font-size: 11px;
-  font-weight: 400;
-  line-height: 1.1rem;
-  text-align: center;
-  font-variant-numeric: tabular-nums;
 }
 /* One card a row. Nothing in a card widens it: long words and paths wrap,
    one-line text (the current step, a waiting card's title and branch) is
@@ -2412,24 +2422,14 @@ a.local-session-pr:hover {
 .local-feed-cards {
   display: flex;
   flex-direction: column;
-  min-width: 0;
-  margin: 0;
-  padding: 0;
-  list-style: none;
 }
 .local-feed-card {
   display: flex;
   flex-direction: column;
   gap: 0.3rem;
-  min-width: 0;
-  padding: 0.8rem 1.5rem;
   overflow-wrap: anywhere;
-  border-bottom: 1px solid var(--un-hairline);
   color: var(--un-ink);
   animation: local-feed-rise 0.3s ease-out;
-}
-.local-feed-card:last-child {
-  border-bottom: 0;
 }
 .local-feed-card.compact {
   flex-direction: row;
@@ -2476,12 +2476,12 @@ a.local-session-pr:hover {
   font-weight: 500;
 }
 /* A card with a transcript opens it on a click: its link reads as the text
-   it holds, and the card answers the pointer. */
+   it holds, and only such a card answers the pointer. */
 .local-feed-card:has(.local-feed-open) {
   cursor: pointer;
 }
-.local-feed-card:has(.local-feed-open):hover {
-  background: var(--un-list);
+.local-feed-card:not(:has(.local-feed-open), [data-focused]):hover {
+  background: none;
 }
 .local-feed-card:has(.local-feed-open) :is(input, textarea) {
   cursor: text;
@@ -2533,16 +2533,74 @@ a.local-session-pr:hover {
 .context-menu button.danger {
   color: var(--status-critical);
 }
-.context-menu button:has(kbd) {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 1rem;
-}
 .context-menu kbd {
   color: var(--un-faint);
   font-family: var(--font-mono);
   font-size: 11px;
+}
+.context-menu button {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+.context-menu-label {
+  flex: 1;
+}
+.context-menu kbd {
+  margin-left: 1rem;
+}
+/* A menu with an on-or-off choice keeps a column for its tick on every
+   choice, so the labels line up. */
+.context-menu-check {
+  display: inline-flex;
+  flex: none;
+  width: 14px;
+  color: var(--un-ink);
+}
+/* What stops or removes something sits apart, below the rest. */
+.context-menu-separator {
+  height: 1px;
+  margin: 4px 2px;
+  background: var(--un-line);
+}
+/* A row's ⋯: the list's one way to the row's actions, beside a right click
+   and ⌘. on the row. A quiet square at the row's end, shown while the row is
+   pointed at, holds the keys or has its menu open; a touch screen has no
+   pointer to show it, so there it always stays. It keeps its place while
+   hidden, so nothing moves when it shows. */
+.row-menu-button {
+  display: inline-grid;
+  flex: none;
+  place-items: center;
+  width: 1.75rem;
+  height: 1.75rem;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--text-tertiary);
+  cursor: pointer;
+}
+.row-menu-button:hover,
+.row-menu-button[aria-expanded="true"] {
+  background: var(--un-hover);
+  color: var(--text-primary);
+}
+.row-menu-button:focus-visible {
+  outline: 2px solid var(--un-focus);
+  outline-offset: 1px;
+}
+@media (hover: hover) {
+  .row-menu-button {
+    opacity: 0;
+  }
+  .list-row:hover .row-menu-button,
+  .list-row:focus-within .row-menu-button,
+  .list-row[data-focused] .row-menu-button,
+  .row-menu-button[aria-expanded="true"],
+  .row-menu-button:focus-visible {
+    opacity: 1;
+  }
 }
 @media (prefers-reduced-motion: reduce) {
   .context-menu {
@@ -3579,22 +3637,6 @@ dialog form {
   gap: 0.75rem;
 }
 
-/* The fix of a broken pull request: the action in its inbox status cell and
-   the confirmation that comes before anything runs. Unlike Merge it stays
-   drawn: a broken pull request is the thing to act on. */
-.inbox-fix svg {
-  color: var(--status-critical);
-}
-span.inbox-fix {
-  border-color: transparent;
-  background: none;
-  box-shadow: none;
-  color: var(--text-tertiary);
-  cursor: default;
-}
-span.inbox-fix svg {
-  color: inherit;
-}
 .local-fix-outcomes {
   display: grid;
   gap: 0.25rem;
@@ -3654,51 +3696,11 @@ span.inbox-fix svg {
 :root[data-theme="dark"] img[src*="cursor"] {
   filter: invert(1);
 }
-/* The row the keyboard is on: an accent bar and a faint fill, distinct from
-   the sand under the pointer and the stronger fill of a selected row. */
-.inbox-row[data-focused] {
-  background: var(--un-list);
-  box-shadow: inset 3px 0 0 var(--un-ink);
-}
-.inbox-row[data-focused]:hover {
-  background: var(--un-hover);
-}
-/* The bar already marks the row, so its title link drops the focus ring it
-   would draw on top. */
-.inbox-row[data-focused] a:focus-visible {
-  outline: none;
-}
-/* The same mark on a Sessions card, inside its own border: the bar and a
-   firmer border, not a fill, since the strips inside a card (its current
-   step, its message) are drawn in the sand a fill would take. */
-.local-feed-card[data-focused],
+/* A Sessions card keeps its fill under the pointer while the keyboard is on
+   it, since the strips inside a card (its current step, its message) are
+   drawn in the sand the pointer's fill would take. */
 .local-feed-card[data-focused]:hover {
   background: var(--un-list);
-  box-shadow: inset 3px 0 0 var(--un-ink);
-}
-.local-feed-card[data-focused] a:focus-visible {
-  outline: none;
-}
-/* And on the other lists (Jobs, Repositories), whose rows sit flush in
-   their panel: the fill runs out into the panel's padding and the bar
-   stands at its edge. */
-.local-job-row[data-focused],
-.local-repo-row[data-focused] {
-  position: relative;
-  background: var(--surface-wash);
-  box-shadow:
-    -0.75rem 0 0 var(--surface-wash),
-    0.75rem 0 0 var(--surface-wash);
-}
-.local-job-row[data-focused]::before,
-.local-repo-row[data-focused]::before {
-  content: "";
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  left: -0.75rem;
-  width: 3px;
-  background: var(--action-primary);
 }
 /* Each section's key, at the end of its sidebar link. Folded to its glyph,
    the link's tooltip names the key instead. */
@@ -3807,6 +3809,40 @@ dialog.go-to {
 }
 .shortcuts-list dd {
   margin: 0;
+}
+/* A place's keys in one line (`KeyBar`), shown with the hints while Alt is
+   held: along the foot of the page's panel, over what scrolls under it, or
+   at the panel's foot when the page is shorter than the window. */
+.key-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.375rem 0.875rem;
+  border-top: 1px solid var(--un-line);
+  color: var(--un-muted);
+  font-size: var(--text-xs);
+}
+.key-bar kbd {
+  margin-right: 0.125rem;
+  padding: 1px 5px;
+  border: 1px solid currentColor;
+  border-radius: 4px;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 10.5px;
+  font-weight: 500;
+  line-height: 1.2;
+  opacity: 0.75;
+}
+.key-bar kbd + kbd {
+  margin-left: 0.125rem;
+}
+.local-key-bar {
+  position: sticky;
+  bottom: 0;
+  z-index: 5;
+  margin-top: auto;
+  padding: 0.625rem 1.5rem;
+  background: color-mix(in srgb, var(--un-panel) 94%, transparent);
+  backdrop-filter: blur(6px);
 }
 /* Keyboard hints show only while Alt, Option on a Mac, is held. */
 :root:not([data-key-hints]) .key-hint {
@@ -4086,14 +4122,13 @@ kbd.key-hint {
   flex-direction: column;
   min-width: 0;
   border-right: 1px solid var(--un-line);
-  background: var(--un-list);
 }
 .upnext-list-head {
   display: flex;
   flex-direction: column;
   gap: 6px;
-  padding: 18px 18px 12px;
-  border-bottom: 1px solid var(--un-hairline);
+  padding: 18px 1.5rem 12px;
+  border-bottom: 1px solid var(--un-line);
 }
 .upnext-list-head h1 {
   margin: 0;
@@ -4123,36 +4158,20 @@ kbd.key-hint {
   background: var(--un-done);
   transition: width 0.4s;
 }
+/* The queue is drawn as every list: its groups headed as sections, its
+   pull requests rows between hairlines, the selected one marked as the row
+   the keyboard is on. Each row's button fills it, so the whole row picks. */
 .upnext-list-body {
   flex: 1;
   min-height: 0;
-  padding: 6px 8px 12px;
+  padding-bottom: 12px;
   overflow: auto;
 }
-.upnext-group {
-  display: flex;
-  flex-direction: column;
-  padding-top: 10px;
+.upnext-page .list-heading-label:active {
+  transform: none;
 }
-.upnext-group ul {
-  margin: 0;
+.upnext-item {
   padding: 0;
-  list-style: none;
-}
-.upnext-group-head {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 4px 10px 6px;
-}
-.upnext-group-head h2 {
-  flex: 1;
-  margin: 0;
-  color: var(--un-muted);
-  font-size: 11.5px;
-  font-weight: 600;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
 }
 .upnext-page .upnext-batch {
   padding: 4px 9px;
@@ -4169,18 +4188,13 @@ kbd.key-hint {
   align-items: center;
   gap: 10px;
   width: 100%;
-  padding: 9px 10px;
+  padding: 0.8rem 1.5rem;
   border: 0;
-  border-radius: 8px;
   background: transparent;
   text-align: left;
 }
-.upnext-row:hover {
-  background: var(--un-hover);
-}
-.upnext-row[aria-current] {
-  background: var(--un-card);
-  box-shadow: var(--un-shadow-selected);
+.upnext-page .upnext-row:active {
+  transform: none;
 }
 .upnext-mark {
   display: flex;
@@ -4233,12 +4247,6 @@ kbd.key-hint {
   border-radius: 50%;
   background: var(--un-hot);
 }
-.upnext-group .upnext-snoozed:not([hidden]) {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  padding: 0 10px;
-}
 .upnext-snoozed li {
   display: flex;
   align-items: center;
@@ -4274,24 +4282,6 @@ kbd.key-hint {
   background: var(--un-hover);
   color: var(--un-ink);
 }
-.upnext-page .upnext-toggle {
-  padding: 0;
-  border: 0;
-  background: transparent;
-  color: inherit;
-  font: inherit;
-  letter-spacing: inherit;
-  text-transform: inherit;
-}
-.upnext-page .upnext-toggle:active {
-  transform: none;
-}
-.upnext-group .upnext-done {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  padding: 0 10px;
-}
 .upnext-done li {
   display: flex;
   gap: 8px;
@@ -4306,17 +4296,13 @@ kbd.key-hint {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* The Inbox draws its key bar at the foot of its list, under the queue it
+   moves through, so the page's own bar steps aside. */
 .upnext-keys {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  padding: 9px 16px;
-  border-top: 1px solid var(--un-line);
-  color: var(--un-muted);
-  font-size: 11.5px;
+  padding: 9px 1.5rem;
 }
-.upnext-keys kbd {
-  margin: 0;
+.local-frame:has(.upnext-page) > .local-key-bar {
+  display: none;
 }
 
 /* The panel */
@@ -5378,12 +5364,6 @@ kbd.key-hint {
   box-shadow: none;
   cursor: default;
 }
-.inbox-btn-small {
-  width: 1.75rem;
-  height: 1.5rem;
-  padding: 0;
-  font-size: 10px;
-}
 .inbox-edit-link {
   height: 1.625rem;
   margin-left: auto;
@@ -5869,25 +5849,19 @@ kbd.key-hint {
   margin: 0;
   color: var(--text-secondary);
 }
-.inbox-manage {
-  display: grid;
-  margin: 0;
-  padding: 0 !important;
-  list-style: none;
-}
+/* Each inbox a row: its dot, its name (which opens it) and sentence, and its
+   ⋯ with the rest. */
 .inbox-manage-row {
   display: flex;
   align-items: center;
   gap: 0.75rem;
-  padding: 0.75rem 1.25rem;
 }
-.inbox-manage-row + .inbox-manage-row {
-  border-top: 1px solid var(--border-subtle);
+.inbox-manage-name a {
+  color: inherit;
+  text-decoration: none;
 }
-.inbox-move {
-  display: flex;
-  flex: none;
-  gap: 0.25rem;
+.inbox-manage-name a:hover {
+  text-decoration: underline;
 }
 .inbox-manage-text {
   display: grid;
@@ -5904,20 +5878,6 @@ kbd.key-hint {
   color: var(--text-secondary);
   font-size: var(--text-xs);
   font-variant-numeric: tabular-nums;
-}
-.inbox-manage-badge {
-  display: flex;
-  flex: none;
-}
-.inbox-manage-badge .local-switch {
-  margin: 0;
-}
-.inbox-badge-label {
-  margin: -0.5rem 0 0;
-  padding-right: 5.5rem;
-  color: var(--text-secondary);
-  font-size: var(--text-xs);
-  text-align: right;
 }
 .inbox-coverage {
   margin: 0;
@@ -5954,16 +5914,14 @@ kbd.key-hint {
   .inbox-preview {
     position: static;
   }
-  .inbox-manage-row {
-    flex-wrap: wrap;
-  }
-  .inbox-badge-label {
-    display: none;
-  }
 }
 @media (prefers-reduced-motion: reduce) {
   .inbox-preview-row.added,
   .inbox-preview-row.gone {
     animation: none;
   }
+}
+/* An ended session's one-line card ends with its ⋯. */
+.local-feed-card.compact .row-menu-button {
+  margin-left: auto;
 }

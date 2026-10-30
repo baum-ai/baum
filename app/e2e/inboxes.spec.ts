@@ -87,12 +87,15 @@ test("makes an inbox from a template, edits it, counts it in the badge and delet
   await badge.check();
   await expect.poll(() => inboxBadge(page)).toBe(withBadge);
 
-  // Manage lists it, with its badge switch.
+  // Manage lists it, with its badge choice in its menu.
   await sidebar.getByRole("link", { name: "Manage inboxes" }).click();
   await expect(page.getByRole("heading", { name: "Inboxes", exact: true })).toBeVisible();
+  await page.getByRole("listitem").filter({ hasText: "Needs my review" }).hover();
+  await page.getByRole("button", { name: "Actions for Needs my review", exact: true }).click();
   await expect(
-    page.getByRole("switch", { name: "Count Needs my review in the Inbox badge" }),
-  ).toBeChecked();
+    page.getByRole("menuitemcheckbox", { name: "Count in the Inbox badge" }),
+  ).toHaveAttribute("aria-checked", "true");
+  await page.keyboard.press("Escape");
 
   // Delete it from the sidebar, then Undo: it comes back where it was.
   await inboxLink.hover();

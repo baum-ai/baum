@@ -15,62 +15,66 @@ export type InboxAction =
   | "transcript"
   | "refresh";
 
+/** A key as the shortcuts sheet lists it; `short` names it in the page's key
+ *  bar (`KeyBar`), and a key without one is listed in the sheet only. */
+type Shortcut<Extra = object> = { keys: string[]; label: string; short?: string } & Extra;
+
 /** The fix transcript key's label: `t` wherever a pull request is in hand. */
 const TRANSCRIPT_LABEL = "Watch the fix agent, or read its last transcript";
 
 /** The inbox's keys, the one table both the key handling and the shortcuts
  *  sheet read, so the sheet lists exactly the keys that work. */
-export const INBOX_SHORTCUTS: { keys: string[]; action: InboxAction; label: string }[] = [
-  { keys: ["j", "ArrowDown"], action: "next", label: "Next row" },
-  { keys: ["k", "ArrowUp"], action: "previous", label: "Previous row" },
-  { keys: ["Enter", "o"], action: "open", label: "Open the pull request or group" },
-  { keys: ["x"], action: "select", label: "Select or deselect" },
-  { keys: [" "], action: "peek", label: "Peek at the review below the row" },
-  { keys: ["m"], action: "merge", label: "Merge, where offered" },
-  { keys: ["f"], action: "fix", label: "Fix, where offered" },
-  { keys: ["g"], action: "generate", label: "Generate the review" },
+export const INBOX_SHORTCUTS: Shortcut<{ action: InboxAction }>[] = [
+  { keys: ["j", "ArrowDown"], action: "next", label: "Next row", short: "move" },
+  { keys: ["k", "ArrowUp"], action: "previous", label: "Previous row", short: "move" },
+  { keys: ["Enter", "o"], action: "open", label: "Open the pull request or group", short: "open" },
+  { keys: ["x"], action: "select", label: "Select or deselect", short: "select" },
+  { keys: [" "], action: "peek", label: "Peek at the review below the row", short: "peek" },
+  { keys: ["m"], action: "merge", label: "Merge, where offered", short: "merge" },
+  { keys: ["f"], action: "fix", label: "Fix, where offered", short: "fix" },
+  { keys: ["g"], action: "generate", label: "Generate the review", short: "generate" },
   { keys: ["t"], action: "transcript", label: TRANSCRIPT_LABEL },
   { keys: ["r"], action: "refresh", label: "Refresh from GitHub" },
 ];
 /** Pull requests' views (For you, Requested, Mine…), one either way. */
 export const VIEW_KEYS = { previous: ["h", "ArrowLeft"], next: ["l", "ArrowRight"] };
 /** The Up next inbox's keys, which `UpNextPage` handles itself. */
-const UP_NEXT_SHORTCUTS = [
-  { keys: ["j", "ArrowDown"], label: "Next pull request" },
-  { keys: ["k", "ArrowUp"], label: "Previous pull request" },
-  { keys: ["Enter"], label: "Open the pull request" },
-  { keys: ["m"], label: "Merge, where offered" },
-  { keys: ["f"], label: "Fix, where offered" },
+const UP_NEXT_SHORTCUTS: Shortcut[] = [
+  { keys: ["j", "ArrowDown"], label: "Next pull request", short: "move" },
+  { keys: ["k", "ArrowUp"], label: "Previous pull request", short: "move" },
+  { keys: ["Enter"], label: "Open the pull request", short: "act" },
+  { keys: ["m"], label: "Merge, where offered", short: "merge" },
+  { keys: ["f"], label: "Fix, where offered", short: "fix" },
   { keys: ["t"], label: TRANSCRIPT_LABEL },
-  { keys: ["s"], label: "Snooze, then 1–4 to choose until when" },
-  { keys: ["u"], label: "Undo a snooze" },
+  { keys: ["s"], label: "Snooze, then 1–4 to choose until when", short: "snooze" },
+  { keys: ["u"], label: "Undo a snooze", short: "undo" },
 ];
 /** The walkthrough's keys, which `Walkthrough` handles itself. */
-const WALKTHROUGH_SHORTCUTS = [
-  { keys: ["ArrowRight", "j"], label: "Tour: next stop" },
-  { keys: ["ArrowLeft", "k"], label: "Tour: previous stop" },
-  { keys: ["c"], label: "Comment on the stop or row" },
+const WALKTHROUGH_SHORTCUTS: Shortcut[] = [
+  { keys: ["ArrowRight", "j"], label: "Tour: next stop", short: "move" },
+  { keys: ["ArrowLeft", "k"], label: "Tour: previous stop", short: "move" },
+  { keys: ["c"], label: "Comment on the stop or row", short: "comment" },
   { keys: ["o", "Enter"], label: "Everything: details and evidence" },
   { keys: ["t"], label: "Everything: walk me through it" },
-  { keys: ["e"], label: "Switch between the tour and everything" },
-  { keys: ["a"], label: "Ask the review's agent a question" },
+  { keys: ["e"], label: "Switch between the tour and everything", short: "switch view" },
+  { keys: ["a"], label: "Ask the review's agent a question", short: "ask" },
 ];
 /** The keys of every other list (Sessions, Jobs, Repositories), which
  *  `listKeys` handles. */
-const LIST_SHORTCUTS = [
-  { keys: ["j", "ArrowDown"], label: "Next row" },
-  { keys: ["k", "ArrowUp"], label: "Previous row" },
-  { keys: ["Enter", "o"], label: "Open the row" },
+const LIST_SHORTCUTS: Shortcut[] = [
+  { keys: ["j", "ArrowDown"], label: "Next row", short: "move" },
+  { keys: ["k", "ArrowUp"], label: "Previous row", short: "move" },
+  { keys: ["Enter", "o"], label: "Open the row", short: "open" },
   { keys: ["Escape"], label: "Clear the row focus" },
 ];
 /** Settings' keys, which `SettingsPage` handles itself. */
-const SETTINGS_SHORTCUTS = [
-  { keys: ["j", "ArrowDown"], label: "Next section, or next control in one" },
-  { keys: ["k", "ArrowUp"], label: "Previous section, or previous control in one" },
-  { keys: ["1–5"], label: "Go to a section" },
-  { keys: ["Enter", "l", "ArrowRight"], label: "Go into the section" },
+const SETTINGS_SHORTCUTS: Shortcut[] = [
+  { keys: ["j", "ArrowDown"], label: "Next section, or next control in one", short: "move" },
+  { keys: ["k", "ArrowUp"], label: "Previous section, or previous control in one", short: "move" },
+  { keys: ["1–5"], label: "Go to a section", short: "section" },
+  { keys: ["Enter", "l", "ArrowRight"], label: "Go into the section", short: "go in" },
   { keys: ["Space", "Enter"], label: "Change or press the focused control" },
-  { keys: ["Escape", "h", "ArrowLeft"], label: "Back to the sections" },
+  { keys: ["Escape", "h", "ArrowLeft"], label: "Back to the sections", short: "back" },
 ];
 /** Where each group of keys works; the sheet lists the current one first. */
 export type ShortcutsPlace =
@@ -427,6 +431,146 @@ export function onBody(event: KeyboardEvent) {
   );
 }
 
+const back: Shortcut = { keys: ["u", "Escape"], label: "Back to the list", short: "back" };
+/** Every key of the app, grouped by where it works: the table the shortcuts
+ *  sheet lists and each page's key bar reads. */
+const GROUPS: { place: ShortcutsPlace; title: string; rows: Shortcut[] }[] = [
+  {
+    place: "anywhere",
+    title: "Anywhere",
+    rows: [
+      { keys: [`${COMMAND}K`], label: "Go to a page, pull request or session" },
+      { keys: [`${COMMAND}.`], label: "Actions for the focused row, as a right click" },
+      {
+        keys: MAC ? ["⌃N", "⌃P"] : ["Ctrl+N", "Ctrl+P"],
+        label: "Down, up in any list or menu, as ↓ and ↑",
+      },
+      ...PAGES.map((item) => ({ keys: [pageKeyLabel(item.page)], label: item.label })),
+      MAC
+        ? { keys: ["⌘[", "⌘]"], label: "Back, forward" }
+        : { keys: ["Alt+←", "Alt+→"], label: "Back, forward" },
+      { keys: ["?"], label: "Show or hide this list" },
+      {
+        keys: [MAC ? "⌥ Option" : "Alt"],
+        label: "Hold to show the page's keys and those on buttons",
+      },
+      { keys: ["Escape"], label: "Close this list" },
+    ],
+  },
+  { place: "inbox", title: "Inbox", rows: UP_NEXT_SHORTCUTS },
+  {
+    place: "pulls",
+    title: "Pull requests",
+    rows: [
+      ...INBOX_SHORTCUTS,
+      { keys: ["Escape"], label: "Clear the row focus" },
+      { keys: VIEW_KEYS.previous, label: "Previous view", short: "views" },
+      { keys: VIEW_KEYS.next, label: "Next view", short: "views" },
+    ],
+  },
+  {
+    place: "review",
+    title: "A pull request or group",
+    rows: [
+      { keys: ["j"], label: "Next section", short: "section" },
+      { keys: ["k"], label: "Previous section", short: "section" },
+      { keys: ["m"], label: "Merge, where offered", short: "merge" },
+      { keys: ["f"], label: "Fix, where offered", short: "fix" },
+      { keys: ["g"], label: "Generate or regenerate the review", short: "generate" },
+      { keys: ["t"], label: TRANSCRIPT_LABEL },
+      {
+        keys: ["a"],
+        label: "Ask the review's agent a question; Esc in the panel closes it",
+        short: "ask",
+      },
+      back,
+    ],
+  },
+  { place: "walkthrough", title: "Walkthrough", rows: WALKTHROUGH_SHORTCUTS },
+  {
+    place: "sessions",
+    title: "Sessions",
+    rows: [
+      ...LIST_SHORTCUTS,
+      { keys: ["p"], label: "Open the session's pull request" },
+      { keys: ["r"], label: "Reply to the session; Enter sends it", short: "reply" },
+      {
+        keys: ["f"],
+        label: "Bring the session's terminal or window forward, where offered",
+        short: "focus",
+      },
+      { keys: [" "], label: "Peek at the session below its row", short: "peek" },
+      {
+        keys: ["1–9"],
+        label: "Answer the focused question or permission; Enter submits several",
+        short: "answer",
+      },
+    ],
+  },
+  {
+    place: "jobs",
+    title: "Jobs",
+    rows: [
+      ...LIST_SHORTCUTS,
+      {
+        keys: ["t"],
+        label: "Watch the fix agent or read its transcript, where there is one",
+        short: "transcript",
+      },
+    ],
+  },
+  {
+    place: "repositories",
+    title: "Repositories",
+    rows: [
+      ...LIST_SHORTCUTS.map((row) =>
+        row.keys.includes("Enter")
+          ? { ...row, label: "Open the repository's settings", short: "settings" }
+          : row,
+      ),
+      { keys: ["a"], label: "Add repositories, or finish adding", short: "add" },
+      { keys: ["/"], label: "Search GitHub repositories while adding", short: "search" },
+    ],
+  },
+  { place: "settings", title: "Settings", rows: SETTINGS_SHORTCUTS },
+  { place: "page", title: "A session or job transcript", rows: [back] },
+];
+
+/** Where a row menu opens with ⌘.: the lists. */
+const LISTS: ShortcutsPlace[] = ["pulls", "sessions", "jobs", "repositories"];
+
+/** The keys of where the person is, in one line along the foot of the page,
+ *  shown while Alt (Option on a Mac) is held, with the keys on buttons
+ *  (`useKeyHints`): each key the place's group names `short`, keys sharing a
+ *  name together ("j k move"), then the row menu's key on a list, Go to and
+ *  the sheet. It is drawn for the eye; the sheet (`?`) says the same aloud. */
+export function KeyBar({ place, className }: { place: ShortcutsPlace; className?: string }) {
+  const items: { keys: string[]; short: string }[] = [];
+  for (const row of GROUPS.find((group) => group.place === place)?.rows ?? []) {
+    if (!row.short) continue;
+    const last = items.at(-1);
+    if (last?.short === row.short) last.keys.push(row.keys[0]!);
+    else items.push({ keys: [row.keys[0]!], short: row.short });
+  }
+  if (LISTS.includes(place)) items.push({ keys: [`${COMMAND}.`], short: "actions" });
+  items.push({ keys: [`${COMMAND}K`], short: "go to" }, { keys: ["?"], short: "all keys" });
+  return (
+    <footer
+      aria-hidden="true"
+      className={["key-bar key-hint", className].filter(Boolean).join(" ")}
+    >
+      {items.map((item) => (
+        <span key={item.short}>
+          {item.keys.map((key) => (
+            <kbd key={key}>{key === "Enter" ? "↵" : (KEY_NAMES[key] ?? key)}</kbd>
+          ))}{" "}
+          {item.short}
+        </span>
+      ))}
+    </footer>
+  );
+}
+
 /** Every key of the app, grouped by where it works, as a small native dialog
  *  like the others. `?` opens it from any page. */
 export function ShortcutsSheet({
@@ -446,97 +590,9 @@ export function ShortcutsSheet({
     title.current?.focus({ preventScroll: true });
     if (dialog.current) dialog.current.scrollTop = 0;
   }, []);
-  const back = { keys: ["u", "Escape"], label: "Back to the list" };
-  const groups: {
-    place: ShortcutsPlace;
-    title: string;
-    rows: { keys: string[]; label: string }[];
-  }[] = [
-    {
-      place: "anywhere",
-      title: "Anywhere",
-      rows: [
-        { keys: [`${COMMAND}K`], label: "Go to a page, pull request or session" },
-        { keys: [`${COMMAND}.`], label: "Actions for the focused row, as a right click" },
-        {
-          keys: MAC ? ["⌃N", "⌃P"] : ["Ctrl+N", "Ctrl+P"],
-          label: "Down, up in any list or menu, as ↓ and ↑",
-        },
-        ...PAGES.map((item) => ({ keys: [pageKeyLabel(item.page)], label: item.label })),
-        MAC
-          ? { keys: ["⌘[", "⌘]"], label: "Back, forward" }
-          : { keys: ["Alt+←", "Alt+→"], label: "Back, forward" },
-        { keys: ["?"], label: "Show or hide this list" },
-        { keys: [MAC ? "⌥ Option" : "Alt"], label: "Hold to show the keys on buttons" },
-        { keys: ["Escape"], label: "Close this list" },
-      ],
-    },
-    { place: "inbox", title: "Inbox", rows: UP_NEXT_SHORTCUTS },
-    {
-      place: "pulls",
-      title: "Pull requests",
-      rows: [
-        ...INBOX_SHORTCUTS,
-        { keys: ["Escape"], label: "Clear the row focus" },
-        { keys: VIEW_KEYS.previous, label: "Previous view" },
-        { keys: VIEW_KEYS.next, label: "Next view" },
-      ],
-    },
-    {
-      place: "review",
-      title: "A pull request or group",
-      rows: [
-        { keys: ["j"], label: "Next section" },
-        { keys: ["k"], label: "Previous section" },
-        { keys: ["m"], label: "Merge, where offered" },
-        { keys: ["f"], label: "Fix, where offered" },
-        { keys: ["g"], label: "Generate or regenerate the review" },
-        { keys: ["t"], label: TRANSCRIPT_LABEL },
-        { keys: ["a"], label: "Ask the review's agent a question; Esc in the panel closes it" },
-        back,
-      ],
-    },
-    { place: "walkthrough", title: "Walkthrough", rows: WALKTHROUGH_SHORTCUTS },
-    {
-      place: "sessions",
-      title: "Sessions",
-      rows: [
-        ...LIST_SHORTCUTS,
-        { keys: ["p"], label: "Open the session's pull request" },
-        { keys: ["r"], label: "Reply to the session; Enter sends it" },
-        { keys: ["f"], label: "Bring the session's terminal or window forward, where offered" },
-        { keys: [" "], label: "Peek at the session below its row" },
-        {
-          keys: ["1–9"],
-          label: "Answer the focused question or permission; Enter submits several",
-        },
-      ],
-    },
-    {
-      place: "jobs",
-      title: "Jobs",
-      rows: [
-        ...LIST_SHORTCUTS,
-        { keys: ["t"], label: "Watch the fix agent or read its transcript, where there is one" },
-      ],
-    },
-    {
-      place: "repositories",
-      title: "Repositories",
-      rows: [
-        ...LIST_SHORTCUTS.map((row) =>
-          row.keys.includes("Enter") ? { ...row, label: "Open the repository's settings" } : row,
-        ),
-        { keys: ["a"], label: "Add repositories, or finish adding" },
-        { keys: ["/"], label: "Search GitHub repositories while adding" },
-      ],
-    },
-    { place: "settings", title: "Settings", rows: SETTINGS_SHORTCUTS },
-    { place: "page", title: "A session or job transcript", rows: [back] },
-  ];
   const ordered = [
-    ...groups.filter((group) => group.place === current),
-    ...groups.filter((group) => group.place !== current),
+    ...GROUPS.filter((group) => group.place === current),
+    ...GROUPS.filter((group) => group.place !== current),
   ];
   return (
     <dialog

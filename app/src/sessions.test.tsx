@@ -282,7 +282,8 @@ it("shows a finished turn without a reply box and a terminal-only wait with a no
   expect(said.querySelector("strong")!.textContent).toBe("Done.");
   expect(finished!.textContent).not.toContain("in its terminal");
   expect(finished!.querySelector("input, textarea")).toBeNull();
-  expect(finished!.querySelectorAll("button")).toHaveLength(0);
+  // Only the ⋯ menu button; no reply box or answer buttons.
+  expect(finished!.querySelectorAll("button:not(.row-menu-button)")).toHaveLength(0);
   expect(finished!.querySelector("a.local-feed-open")!.getAttribute("aria-label")).toContain(
     "Tidy the buttons",
   );

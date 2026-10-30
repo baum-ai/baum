@@ -38,6 +38,8 @@ import {
 } from "./api";
 import { phaseText, type FixState } from "./fix";
 import { inboxesOf, matches, sentence, type Inbox } from "./inboxes";
+import { MenuButton, useContextMenu, type MenuItem } from "./context-menu";
+import { ListSection, type ListTone } from "./list";
 import { useNow } from "./live";
 import {
   canMerge,
@@ -48,7 +50,7 @@ import {
   type MergeOptions,
 } from "./merge";
 import { LoadingStatus, NineDots } from "./nine-dots";
-import { onBody, useLastRow, useShortcuts } from "./shortcuts";
+import { KeyBar, onBody, useLastRow, useShortcuts } from "./shortcuts";
 import { FailingChecks } from "./checks";
 import { ReviewThreads } from "./threads";
 import { canUpdateBranch, UpdateBranchDialog } from "./unblock";
@@ -92,6 +94,13 @@ export const GROUPS: { id: "eyes" | "merge" | "agent"; title: string; kinds: UpN
   { id: "merge", title: "Ready to merge", kinds: ["merge"] },
   { id: "agent", title: "Hand to an agent", kinds: ["fix", "update"] },
 ];
+/** Each group's dot, as Pull requests colours the same states. */
+const GROUP_TONES: Record<(typeof GROUPS)[number]["id"] | "waiting", ListTone> = {
+  eyes: "caution",
+  merge: "positive",
+  agent: "critical",
+  waiting: "info",
+};
 
 export function upNextKey(pr: Pick<Entry["pull_request"], "repository" | "number">) {
   return `${pr.repository.toLowerCase()}#${pr.number}`;
@@ -635,7 +644,7 @@ export function UpNextPage({
   const others = waiting.filter((entry) => !fixingKeys.has(upNextKey(entry.pull_request)));
   const groups = [
     ...GROUPS.map((group) => ({
-      id: group.id as string,
+      id: group.id as keyof typeof GROUP_TONES,
       title: group.title,
       rows: [
         ...queue
@@ -649,7 +658,7 @@ export function UpNextPage({
       ],
     })),
     {
-      id: "waiting",
+      id: "waiting" as const,
       title: "Waiting on checks or reviews",
       rows: others.map(
         (entry): Row => ({ key: upNextKey(entry.pull_request), entry, waiting: true }),
@@ -794,6 +803,19 @@ export function UpNextPage({
           .filter(Boolean)
           .join(" · ");
   const total = cleared.length + queue.length;
+  // A snoozed pull request's actions, behind its ⋯ and a right click on it.
+  const actionsMenu = useContextMenu();
+  const snoozedName = (item: (typeof snoozed)[number]) =>
+    `${item.entry.pull_request.repository} #${item.entry.pull_request.number}`;
+  const snoozedActions = (item: (typeof snoozed)[number]): MenuItem[] => [
+    {
+      label: "Bring back",
+      onSelect: () => {
+        inbox.wake(item.key);
+        select(item.key);
+      },
+    },
+  ];
   const alsoIn = (row: Row) => rowInboxes(row, inboxes).filter((other) => other.id !== scope?.id);
   return (
     <>
@@ -828,15 +850,17 @@ export function UpNextPage({
             )}
           </header>
           <div ref={list} className="upnext-list-body">
+            {actionsMenu.menu}
             {groups.map((group) => {
               const ready = group.id === "merge" ? group.rows.map((row) => row.entry) : [];
               return (
-                <section key={group.id} aria-label={group.title} className="upnext-group">
-                  <div className="upnext-group-head">
-                    <h2>
-                      {group.title} · {formatCount(group.rows.length)}
-                    </h2>
-                    {ready.length > 1 ? (
+                <ListSection
+                  key={group.id}
+                  title={group.title}
+                  count={group.rows.length}
+                  tone={GROUP_TONES[group.id]}
+                  action={
+                    ready.length > 1 ? (
                       <button
                         type="button"
                         className="upnext-batch"
@@ -844,113 +868,86 @@ export function UpNextPage({
                       >
                         Merge all {formatCount(ready.length)}
                       </button>
-                    ) : null}
-                  </div>
-                  <ul>
-                    {group.rows.map((row) => (
-                      <li key={row.key} data-row={row.key}>
-                        <ListRow
-                          row={row}
-                          tag={scope ? undefined : rowInboxes(row, inboxes)[0]}
-                          on={row.key === selected?.key}
-                          tabbable={row.key === tabbable}
-                          pick={select}
-                        />
-                      </li>
-                    ))}
-                  </ul>
-                </section>
+                    ) : undefined
+                  }
+                >
+                  {group.rows.map((row) => (
+                    <li
+                      key={row.key}
+                      data-row={row.key}
+                      data-focused={row.key === selected?.key || undefined}
+                      className="list-row upnext-item"
+                    >
+                      <ListRow
+                        row={row}
+                        tag={scope ? undefined : rowInboxes(row, inboxes)[0]}
+                        on={row.key === selected?.key}
+                        tabbable={row.key === tabbable}
+                        pick={select}
+                      />
+                    </li>
+                  ))}
+                </ListSection>
               );
             })}
             {snoozed.length > 0 ? (
-              <section aria-label="Snoozed" className="upnext-group">
-                <div className="upnext-group-head">
-                  <h2>
-                    <button
-                      type="button"
-                      className="upnext-toggle"
-                      aria-expanded={snoozedOpen}
-                      onClick={() => setSnoozedOpen((open) => !open)}
-                    >
-                      {snoozedOpen ? "▾" : "▸"} Snoozed · {formatCount(snoozed.length)}
-                    </button>
-                  </h2>
-                </div>
-                <ul className="upnext-snoozed" hidden={!snoozedOpen}>
-                  {snoozed.map((item) => (
-                    <li key={item.key}>
-                      <span className="upnext-snoozed-title">
-                        #{item.entry.pull_request.number} {item.entry.pull_request.title}
-                      </span>
-                      <span className="upnext-snoozed-until">
-                        {snoozeText(inbox.snoozedUntil(item.key), now)}
-                      </span>
-                      <button
-                        type="button"
-                        className="upnext-small"
-                        onClick={() => {
-                          inbox.wake(item.key);
-                          select(item.key);
-                        }}
-                      >
-                        Bring back
-                      </button>
-                    </li>
-                  ))}
-                </ul>
-              </section>
+              <ListSection
+                title="Snoozed"
+                count={snoozed.length}
+                collapsed={!snoozedOpen}
+                toggle={() => setSnoozedOpen((open) => !open)}
+                listClassName="upnext-snoozed"
+              >
+                {snoozed.map((item) => (
+                  <li
+                    key={item.key}
+                    className="list-row"
+                    onContextMenu={(event) =>
+                      actionsMenu.open(event, snoozedActions(item), snoozedName(item))
+                    }
+                  >
+                    <span className="upnext-snoozed-title">
+                      #{item.entry.pull_request.number} {item.entry.pull_request.title}
+                    </span>
+                    <span className="upnext-snoozed-until">
+                      {snoozeText(inbox.snoozedUntil(item.key), now)}
+                    </span>
+                    <MenuButton
+                      label={snoozedName(item)}
+                      items={() => snoozedActions(item)}
+                      menu={actionsMenu}
+                    />
+                  </li>
+                ))}
+              </ListSection>
             ) : null}
             {cleared.length > 0 ? (
-              <section aria-label="Done today" className="upnext-group">
-                <div className="upnext-group-head">
-                  <h2>
-                    <button
-                      type="button"
-                      className="upnext-toggle"
-                      aria-expanded={doneOpen}
-                      onClick={() => setDoneOpen((open) => !open)}
-                    >
-                      {doneOpen ? "▾" : "▸"} Done today · {formatCount(cleared.length)}
-                    </button>
-                  </h2>
-                </div>
-                {doneOpen ? (
-                  <ul className="upnext-done">
-                    {cleared.map((item) => (
-                      <li key={item.key} title={`${item.repository} #${item.number}`}>
-                        <span aria-hidden="true" className="upnext-done-check">
-                          ✓
-                        </span>
-                        <span className="upnext-done-text">
-                          {KINDS[item.kind].done} #{item.number} {item.title}
-                        </span>
-                      </li>
-                    ))}
-                  </ul>
-                ) : null}
-              </section>
+              <ListSection
+                title="Done today"
+                count={cleared.length}
+                tone="positive"
+                collapsed={!doneOpen}
+                toggle={() => setDoneOpen((open) => !open)}
+                listClassName="upnext-done"
+              >
+                {cleared.map((item) => (
+                  <li
+                    key={item.key}
+                    title={`${item.repository} #${item.number}`}
+                    className="list-row"
+                  >
+                    <span aria-hidden="true" className="upnext-done-check">
+                      ✓
+                    </span>
+                    <span className="upnext-done-text">
+                      {KINDS[item.kind].done} #{item.number} {item.title}
+                    </span>
+                  </li>
+                ))}
+              </ListSection>
             ) : null}
           </div>
-          <footer className="upnext-keys key-hint" aria-hidden="true">
-            <span>
-              <kbd>j</kbd> <kbd>k</kbd> move
-            </span>
-            <span>
-              <kbd>↵</kbd> act
-            </span>
-            <span>
-              <kbd>m</kbd> merge
-            </span>
-            <span>
-              <kbd>f</kbd> fix
-            </span>
-            <span>
-              <kbd>s</kbd> snooze
-            </span>
-            <span>
-              <kbd>u</kbd> undo
-            </span>
-          </footer>
+          <KeyBar place="inbox" className="upnext-keys" />
         </div>
         <div ref={detail} className="upnext-detail">
           {loading ? (

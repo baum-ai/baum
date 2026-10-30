@@ -239,8 +239,13 @@ const panel = () => node.querySelector("article.upnext-panel")!;
 const shown = () => panel().querySelector("h2")!.textContent;
 const list = () =>
   Array.from(node.querySelectorAll(".upnext-row-title")).map((title) => title.textContent);
+// A heading's name and count, as "Ready to merge · 2".
 const groups = () =>
-  Array.from(node.querySelectorAll(".upnext-group-head h2")).map((h) => h.textContent);
+  Array.from(node.querySelectorAll(".upnext-list-body .list-heading")).map((h: Element) =>
+    Array.from(h.querySelectorAll(".list-heading-label > span:not([aria-hidden])"))
+      .map((part) => part.textContent)
+      .join(" · "),
+  );
 const button = (name: string) =>
   Array.from(node.querySelectorAll("button")).find((b) => b.textContent?.startsWith(name))!;
 const row = (title: string) =>
@@ -327,13 +332,18 @@ it("snoozes, undoes and brings back, and remembers it", async () => {
   await act(async () => snoozeFor("Tomorrow morning").click());
   expect(shown()).toBe("Change 4");
   // Snoozed pull requests start folded away.
-  expect(groups()).toContain("▸ Snoozed · 1");
+  expect(groups()).toContain("Snoozed · 1");
   expect(node.querySelector<HTMLElement>(".upnext-snoozed")!.hidden).toBe(true);
   // A reload keeps the snooze.
   await render();
   expect(list()).toEqual(["Change 1", "Change 4", "Change 2", "Change 5"]);
-  await act(async () => button("▸ Snoozed").click());
-  await act(async () => button("Bring back").click());
+  await act(async () => button("Snoozed").click());
+  await act(async () =>
+    node.querySelector<HTMLButtonElement>('button[aria-label="Actions for acme/demo #3"]')!.click(),
+  );
+  const choices = Array.from(node.querySelectorAll<HTMLElement>('[role="menu"] [role^=menuitem]'));
+  expect(choices.map((item) => item.textContent)).toEqual(["Bring back"]);
+  await act(async () => choices[0]!.click());
   expect(list()).toContain("Change 3");
   expect(shown()).toBe("Change 3");
 });
