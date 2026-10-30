@@ -5008,7 +5008,11 @@ kbd.key-hint {
 .upnext-page .upnext-group-toggle:hover {
   background: var(--surface-hover);
 }
+/* Beside its toggle, the row takes the rest of the line, not all of it. */
 .upnext-group-line .upnext-row {
+  flex: 1;
+  width: auto;
+  min-width: 0;
   padding-left: 7px;
 }
 .upnext-member .upnext-row {

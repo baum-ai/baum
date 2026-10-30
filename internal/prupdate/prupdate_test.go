@@ -263,7 +263,7 @@ func TestReviewThreadsListsTheUnresolvedOnes(t *testing.T) {
 	}
 	first, second := got.Threads[0], got.Threads[1]
 	wantFirst := Thread{ID: "RT_1", Path: "a.go", Line: 12, Author: "alice", Excerpt: "Rename this.", Comments: 3, URL: "https://github.com/acme/app/pull/7#discussion_r1", CanResolve: true, Messages: []ThreadComment{
-		{Author: "alice", Body: "\n  Rename this.\nIt reads badly.", URL: "https://github.com/acme/app/pull/7#discussion_r1"},
+		{Author: "alice", Body: "Rename this.\nIt reads badly.", URL: "https://github.com/acme/app/pull/7#discussion_r1"},
 		{Author: "me", Body: "ok", URL: "https://github.com/acme/app/pull/7#discussion_r2"},
 	}}
 	if !reflect.DeepEqual(first, wantFirst) {

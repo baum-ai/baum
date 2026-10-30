@@ -307,17 +307,25 @@ func Run(ctx context.Context, o Options) (out Outcome, err error) {
 	return out, nil
 }
 
-// OpenForRemote opens the clone as openForRemote does, for a read that
-// fetches from the remote naming repository. Its error is an *Error; the
-// reason is ReasonNoRemote when no remote names the repository.
-func OpenForRemote(ctx context.Context, clone string, repository github.Repository) (*gitlocal.Repo, error) {
-	return openForRemote(ctx, clone, repository)
+// OpenForFetch opens the clone with the remote whose fetch URL, as configured
+// or as git rewrites it, names repository, origin first, as the registry files
+// a clone, for a read that only fetches: where it pushes does not matter. Its
+// error is an *Error; the reason is ReasonNoRemote when no remote names the
+// repository.
+func OpenForFetch(ctx context.Context, clone string, repository github.Repository) (*gitlocal.Repo, error) {
+	return openNamed(ctx, clone, repository, false)
 }
 
 // openForRemote opens the clone with the remote whose URL, as configured or
 // as git rewrites it, names repository, origin first, as the registry files a
-// clone.
+// clone, and that pushes only to it.
 func openForRemote(ctx context.Context, clone string, repository github.Repository) (*gitlocal.Repo, error) {
+	return openNamed(ctx, clone, repository, true)
+}
+
+// openNamed opens the clone with the remote naming repository, one that also
+// pushes only to it when push is set.
+func openNamed(ctx context.Context, clone string, repository github.Repository, push bool) (*gitlocal.Repo, error) {
 	repo, err := gitlocal.Open(ctx, clone, gitlocal.Options{})
 	if err != nil {
 		return nil, fail(ReasonGit, err)
@@ -336,18 +344,7 @@ func openForRemote(ctx context.Context, clone string, repository github.Reposito
 		// Every URL git pushes to must name the repository too, as configured
 		// or as rewritten, the same trust the fetch URL gets: a pushurl to a
 		// fork would otherwise take the fix and leave the pull request as it was.
-		configured, effective, err := repo.RemotePushURLs(ctx, remote.Name)
-		if err != nil || len(effective) == 0 || len(configured) != len(effective) {
-			continue
-		}
-		pushes := true
-		for i := range effective {
-			if !names(configured[i]) && !names(effective[i]) {
-				pushes = false
-				break
-			}
-		}
-		if !pushes {
+		if push && !pushesTo(ctx, repo, remote.Name, names) {
 			continue
 		}
 		if !names(remote.URL) {
@@ -372,6 +369,21 @@ func openForRemote(ctx context.Context, clone string, repository github.Reposito
 		return nil, fail(ReasonGit, err)
 	}
 	return repo, nil
+}
+
+// pushesTo reports whether every URL remote pushes to, as configured or as
+// rewritten, names the repository.
+func pushesTo(ctx context.Context, repo *gitlocal.Repo, remote string, names func(string) bool) bool {
+	configured, effective, err := repo.RemotePushURLs(ctx, remote)
+	if err != nil || len(effective) == 0 || len(configured) != len(effective) {
+		return false
+	}
+	for i := range effective {
+		if !names(configured[i]) && !names(effective[i]) {
+			return false
+		}
+	}
+	return true
 }
 
 func commitMessage(o Options) string {

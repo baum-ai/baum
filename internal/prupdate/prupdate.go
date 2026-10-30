@@ -349,7 +349,8 @@ type Thread struct {
 }
 
 // ThreadComment is one comment of a review thread. Body is the reviewer's
-// text, untrusted, at most maxMessage characters; the app shows it as text.
+// text as plain text (fix.PlainText), untrusted, at most maxMessage
+// characters; the app shows it as text.
 type ThreadComment struct {
 	Author string `json:"author"`
 	Body   string `json:"body"`
@@ -386,7 +387,7 @@ func (s Service) ReviewThreads(ctx context.Context, repository github.Repository
 		first := t.Comments[0]
 		messages := make([]ThreadComment, 0, len(t.Comments))
 		for _, c := range t.Comments {
-			messages = append(messages, ThreadComment{Author: c.Author, Body: boundedText(c.Body, maxMessage), URL: c.URL})
+			messages = append(messages, ThreadComment{Author: c.Author, Body: boundedText(fix.PlainText(c.Body), maxMessage), URL: c.URL})
 		}
 		out.Threads = append(out.Threads, Thread{ID: t.ID, Path: t.Path, Line: t.Line, Outdated: t.Outdated, Author: first.Author, Excerpt: excerpt(first.Body), Comments: max(t.Total, len(t.Comments)), URL: t.URL, Messages: messages, CanResolve: t.CanResolve})
 	}
@@ -652,7 +653,7 @@ func (s Service) Conflicts(ctx context.Context, repository github.Repository, nu
 	if !ok {
 		return ConflictFiles{}, noClone
 	}
-	repo, err := fix.OpenForRemote(ctx, dir, repository)
+	repo, err := fix.OpenForFetch(ctx, dir, repository)
 	if err != nil {
 		if failure, ok := errors.AsType[*fix.Error](err); ok && failure.Reason == fix.ReasonNoRemote {
 			return ConflictFiles{}, noClone

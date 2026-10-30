@@ -134,11 +134,13 @@ export function PullRequestChecks({
     return () => abort.abort();
   }, [query, reads]);
   const running = read.checks?.some((check) => checkState(check) === "running") ?? false;
+  // Every read, failed or not, sets `read` anew, so the next one is
+  // scheduled after each while a check runs.
   useEffect(() => {
     if (!running) return;
     const timer = setTimeout(() => setReads((n) => n + 1), RUNNING_REFRESH_MS);
     return () => clearTimeout(timer);
-  }, [running, read.checks]);
+  }, [running, read]);
 
   const retry = async (job: number) => {
     setRetrying((ids) => new Set(ids).add(job));

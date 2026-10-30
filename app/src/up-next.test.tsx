@@ -740,6 +740,43 @@ it("lists every check of the head it shows, failing first, each linking to its d
   expect(items()).toEqual([]);
 });
 
+it("keeps reading running checks after a read fails", async () => {
+  entries = [mine(2, { checks: "failing" })];
+  let reads = 0;
+  const original = vi.mocked(fetch).getMockImplementation()!;
+  vi.mocked(fetch).mockImplementation(async (...args) => {
+    if (!String(args[0]).includes("api/prs/checks")) return original(...args);
+    reads++;
+    if (reads === 2) return Response.json({ code: "failed", message: "offline" }, { status: 502 });
+    const done = reads > 2;
+    return Response.json({
+      head_sha: "head",
+      checks: [
+        { name: "test", status: "completed", conclusion: "failure" },
+        {
+          name: "build",
+          status: done ? "completed" : "in_progress",
+          conclusion: done ? "success" : "",
+        },
+      ],
+    });
+  });
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  try {
+    await render();
+    expect(reads).toBe(1);
+    await act(async () => vi.advanceTimersByTime(20_000));
+    expect(reads).toBe(2);
+    await act(async () => vi.advanceTimersByTime(20_000));
+    expect(reads).toBe(3);
+    expect(
+      Array.from(panel().querySelectorAll('[aria-label="Checks"] li')).map((li) => li.textContent),
+    ).toEqual(["testFailed", "buildPassed"]);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
 it("reads only the failing checks from an older daemon", async () => {
   entries = [mine(2, { checks: "failing" })];
   const original = vi.mocked(fetch).getMockImplementation()!;
