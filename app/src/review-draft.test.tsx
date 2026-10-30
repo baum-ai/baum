@@ -264,7 +264,7 @@ it("offers to regenerate when the head moved under a retry", async () => {
   await render(saved, job("completed"));
   await act(async () => button("Retry")!.click());
   expect(node.textContent).toContain(
-    "This pull request has new commits since this review, so its details can't be retried. Regenerate the review instead.",
+    "This pull request changed since this review (new commits on it or on its base), so its details can't be retried. Regenerate the review instead.",
   );
   await act(async () => button("Regenerate")!.click());
   expect(generate).toHaveBeenCalledOnce();

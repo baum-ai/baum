@@ -310,7 +310,7 @@ func TestPrepareDetailsChecksTheVersion(t *testing.T) {
 	key := store.Key{Repository: clone.Repository, Number: 1}
 	put := func(previous store.Version, version int, head, details string) store.Version {
 		t.Helper()
-		v := store.Version{Metadata: store.Metadata{Version: version, Head: head, Backend: "claude", Model: "claude-opus-5-5"},
+		v := store.Version{Metadata: store.Metadata{Version: version, Head: head, Base: "base", Backend: "claude", Model: "claude-opus-5-5"},
 			Document: []byte(`{"review":{"repository":"owner/repo","pull_request":1,"version":` + string(rune('0'+version)) + `},"sections":[{"id":"sec_a","details":"` + details + `"}]}`)}
 		if err := versions.Put(ctx, key, previous, v); err != nil {
 			t.Fatal(err)
@@ -345,5 +345,16 @@ func TestPrepareDetailsChecksTheVersion(t *testing.T) {
 	stale.Version = 2
 	if err := local.confirmed(ctx, stale); !errors.As(err, &blocked) || blocked.Reason != ReasonVersionChanged {
 		t.Fatalf("stale retry: %v", err)
+	}
+	// A version written against another base commit is refused up front.
+	third, _ := versions.Latest(ctx, key)
+	moved := store.Version{Metadata: store.Metadata{Version: 4, Head: "first", Base: "elsewhere", Backend: "claude", Model: "claude-opus-5-5"},
+		Document: []byte(`{"review":{"repository":"owner/repo","pull_request":1,"version":4},"sections":[{"id":"sec_a","details":"failed"}]}`)}
+	if err := versions.Put(ctx, key, third, moved); err != nil {
+		t.Fatal(err)
+	}
+	item.Version = 4
+	if p, _, err := local.Prepare(ctx, item); err != nil || p.BlockedReason != ReasonBaseChanged {
+		t.Fatalf("moved base: %+v %v", p, err)
 	}
 }

@@ -153,7 +153,7 @@ func localRunner(registry *repos.Registry, headRepository, permission string, st
 	cfg.Backend = config.BackendClaude
 	cfg.Model = "claude-sonnet-4-5"
 	client := github.New(func(context.Context, string) (string, error) { return "fixture-token", nil }, github.Options{Transport: transportFunc(func(r *http.Request) (*http.Response, error) {
-		body := `{"state":"open","head":{"sha":"first","repo":{"full_name":"` + headRepository + `"}},"user":{"login":"author"}}`
+		body := `{"state":"open","head":{"sha":"first","repo":{"full_name":"` + headRepository + `"}},"base":{"sha":"base"},"user":{"login":"author"}}`
 		code := 200
 		if strings.HasSuffix(r.URL.Path, "/permission") {
 			code = status

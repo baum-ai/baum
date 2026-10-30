@@ -303,6 +303,9 @@ const detailsReasons: Record<string, string> = {
   superseded: "A newer review replaced this version, so its details weren't written.",
   head_changed:
     "This pull request has new commits since this review, so its details weren't written.",
+  base_changed:
+    "This pull request's base branch moved since this review, so its details weren't written.",
+  version_changed: "This version is no longer the latest, so its details weren't written.",
 };
 /** Why a feature build stopped or cannot run. None asks to confirm it again:
  *  where a build can be resumed, the page offers that itself. */

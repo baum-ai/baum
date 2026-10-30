@@ -2667,7 +2667,8 @@ A section's Retry on the latest saved version queues a `details` job
 mode). It is prepared like the pull request's review, with the backend and
 model that wrote the version, and is refused (`409`, `blocked_reason`) with
 `head_changed` when the pull request's head is no longer the version's (the
-app offers to regenerate instead), `version_changed` when the version is not
+app offers to regenerate instead), `base_changed` when its base branch has
+moved from the version's base commit (likewise), `version_changed` when the version is not
 the latest, and `nothing_to_retry` when no section of it failed. It runs only
 the details stage, for every section of the version published without its
 details (`generate.Options.Continue`): the outline and context come from the

@@ -385,7 +385,11 @@ export function LocalReview({
       });
       await changed();
     } catch (e) {
-      if (e instanceof LocalRequestError && e.code === "head_changed") setHeadChanged(true);
+      if (
+        e instanceof LocalRequestError &&
+        (e.code === "head_changed" || e.code === "base_changed")
+      )
+        setHeadChanged(true);
       else setRetryError(e instanceof Error ? e.message : "The details could not be retried.");
     }
   };
@@ -417,8 +421,8 @@ export function LocalReview({
     <>
       {headChanged ? (
         <Alert>
-          This pull request has new commits since this review, so its details can't be retried.
-          Regenerate the review instead.{" "}
+          This pull request changed since this review (new commits on it or on its base), so its
+          details can't be retried. Regenerate the review instead.{" "}
           <Button variant="secondary" size="compact" disabled={generating} onClick={generate}>
             Regenerate
           </Button>

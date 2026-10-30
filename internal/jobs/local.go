@@ -145,7 +145,7 @@ func (l *Local) Prepare(ctx context.Context, item Item) (Prepared, string, error
 	}{cfg.Budgets, cfg.Caps, selected.Version, reader.CacheIdentity()})
 	digest := sha256.Sum256(fingerprint)
 	list := pricing.Active()
-	p := Prepared{MaxTokens: cfg.Budgets.MaxTokens, MaxCalls: cfg.Budgets.MaxCalls, ConfigDigest: hex.EncodeToString(digest[:]), PriceVersion: list.Version(), Item: item, Repository: c.Repository, HeadSHA: pr.Head, Backend: selected.Backend.Name(), Model: selected.Model, RequiresIsolationConfirmation: pr.Untrusted, Draft: pr.Draft, GroupName: group.name, Members: group.members}
+	p := Prepared{MaxTokens: cfg.Budgets.MaxTokens, MaxCalls: cfg.Budgets.MaxCalls, ConfigDigest: hex.EncodeToString(digest[:]), PriceVersion: list.Version(), Item: item, Repository: c.Repository, HeadSHA: pr.Head, BaseSHA: pr.Base, Backend: selected.Backend.Name(), Model: selected.Model, RequiresIsolationConfirmation: pr.Untrusted, Draft: pr.Draft, GroupName: group.name, Members: group.members}
 	return p, list.Version(), nil
 }
 
@@ -154,6 +154,9 @@ const (
 	// ReasonHeadChanged: the pull request's head is no longer the one the
 	// version reviewed; regenerate it instead.
 	ReasonHeadChanged = "head_changed"
+	// ReasonBaseChanged: the base branch moved since the version was
+	// written, so its diff is not the one reviewed; regenerate it instead.
+	ReasonBaseChanged = "base_changed"
 	// ReasonVersionChanged: the version is no longer the latest.
 	ReasonVersionChanged = "version_changed"
 	// ReasonNothingToRetry: no section of the version lacks its details.
@@ -192,6 +195,8 @@ func (l *Local) prepareDetails(ctx context.Context, item Item) (Prepared, string
 		p.BlockedReason = ReasonVersionChanged
 	case latest.Metadata.Head != p.HeadSHA:
 		p.BlockedReason = ReasonHeadChanged
+	case p.BaseSHA != "" && latest.Metadata.Base != p.BaseSHA:
+		p.BlockedReason = ReasonBaseChanged
 	case len(failed) == 0:
 		p.BlockedReason = ReasonNothingToRetry
 	}
@@ -217,8 +222,9 @@ func (l *Local) prepareDetails(ctx context.Context, item Item) (Prepared, string
 
 // pull is what preparation reads of a pull request from GitHub.
 type pull struct {
-	Head  string
-	Draft bool
+	// Head and Base are the head commit and the base branch's commit.
+	Head, Base string
+	Draft      bool
 	// Untrusted: the pull request comes from a fork or an author without
 	// known write access, so running an agent on it needs confirmation.
 	Untrusted bool
@@ -241,6 +247,7 @@ func readPull(ctx context.Context, reader *github.RESTReader, repository github.
 				FullName string `json:"full_name"`
 			}
 		}
+		Base struct{ SHA string }
 		User struct{ Login string }
 	}
 	if e = json.Unmarshal(raw, &pr); e != nil || pr.Head.SHA == "" || pr.State != "open" || pr.User.Login == "" {
@@ -254,7 +261,7 @@ func readPull(ctx context.Context, reader *github.RESTReader, repository github.
 			trusted = permission.Permission == "write" || permission.Permission == "maintain" || permission.Permission == "admin"
 		}
 	}
-	return pull{Head: pr.Head.SHA, Draft: pr.Draft, Untrusted: !trusted || !strings.EqualFold(pr.Head.Repo.FullName, repository.Owner+"/"+repository.Name)}, nil
+	return pull{Head: pr.Head.SHA, Base: pr.Base.SHA, Draft: pr.Draft, Untrusted: !trusted || !strings.EqualFold(pr.Head.Repo.FullName, repository.Owner+"/"+repository.Name)}, nil
 }
 
 // confirmed rechecks a job's confirmed inputs. The price list is not one: a

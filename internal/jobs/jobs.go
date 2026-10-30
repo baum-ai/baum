@@ -160,6 +160,9 @@ type Prepared struct {
 	Item
 	Repository string `json:"repository"`
 	HeadSHA    string `json:"head_sha"`
+	// BaseSHA is the base branch's commit when a single pull request was
+	// prepared; a details job checks its version was written against it.
+	BaseSHA string `json:"base_sha,omitempty"`
 	Backend    string `json:"backend"`
 	Model      string `json:"model"`
 	MaxTokens  int    `json:"max_tokens,omitempty"`
