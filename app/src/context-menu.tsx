@@ -140,6 +140,12 @@ export function MenuButton({
       }}
       onPointerLeave={(event) => delete event.currentTarget.dataset.closing}
       onKeyDown={(event) => {
+        // Enter and Space press the button as it is: the page's own keys for
+        // them (Space peeking at the row) wait.
+        if (event.key === " " || event.key === "Enter") {
+          event.stopPropagation();
+          return;
+        }
         if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
         event.preventDefault();
         event.stopPropagation();
