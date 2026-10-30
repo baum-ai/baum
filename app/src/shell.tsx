@@ -1,10 +1,15 @@
 import {
+  createContext,
+  useCallback,
+  useContext,
   useEffect,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
   type ComponentType,
   type ReactNode,
+  type RefObject,
 } from "react";
 import { Wordmark } from "@baum/viewer/components/editorial";
 import { RefreshIcon } from "@baum/viewer/components/icons";
@@ -20,7 +25,6 @@ import {
   pageKeyShortcut,
   REFRESH_KEY_LABEL,
   REFRESH_KEY_SHORTCUT,
-  useRefreshKey,
 } from "./shortcuts";
 
 /** The inboxes nested under Inbox, with what changes them. Absent when the
@@ -339,6 +343,92 @@ export function PageBar({
   );
 }
 
+/** What a page's refresh button says refreshing the page does. */
+type Refresh = { refresh: () => Promise<unknown>; busy: boolean };
+type PageRefresh = {
+  /** Makes a button the page's refresh until the cleanup it returns runs;
+   *  of several, the one drawn last. */
+  register: (button: RefObject<Refresh>) => () => void;
+  /** Refreshes the page with `button`, else the page's registered one,
+   *  unless a refresh is under way or the page is busy; false when the page
+   *  has no refresh. */
+  press: (button?: RefObject<Refresh>) => boolean;
+  /** A refresh of this page is under way. */
+  pending: boolean;
+};
+const PageRefreshContext = createContext<PageRefresh | null>(null);
+export const PageRefreshProvider = PageRefreshContext.Provider;
+
+/** The page's refresh, kept above the page so that its key (⌘R) has one
+ *  place to go and a refresh under way outlives the button, as when a pull
+ *  request's walkthrough gives way to its full review. `scope` names the
+ *  page shown: a refresh started on another page is not this one's. */
+export function usePageRefresh(scope: string): PageRefresh {
+  const buttons = useRef<RefObject<Refresh>[]>([]);
+  const [pending, setPending] = useState<string | null>(null);
+  const running = useRef<string | null>(null);
+  const shown = useRef(scope);
+  shown.current = scope;
+  const register = useCallback((ref: RefObject<Refresh>) => {
+    buttons.current.push(ref);
+    return () => {
+      buttons.current = buttons.current.filter((each) => each !== ref);
+    };
+  }, []);
+  const press = useCallback((pressed?: RefObject<Refresh>) => {
+    const page = (pressed ?? buttons.current.at(-1))?.current;
+    if (!page) return false;
+    const at = shown.current;
+    if (running.current === at || page.busy) return true;
+    running.current = at;
+    setPending(at);
+    const done = () => {
+      if (running.current !== at) return;
+      running.current = null;
+      setPending(null);
+    };
+    // The page reports its own failures.
+    void Promise.resolve().then(page.refresh).then(done, done);
+    return true;
+  }, []);
+  return useMemo(
+    () => ({ register, press, pending: pending === scope }),
+    [register, press, pending, scope],
+  );
+}
+
+/** A refresh for a page whose reads an effect makes: `again` changes `count`,
+ *  which the effect reads on, and settles once a read made at that count or
+ *  later calls `settled` with its count, or when the page goes. */
+export function useReread() {
+  const [count, setCount] = useState(0);
+  const asked = useRef(0);
+  const waiting = useRef<{ count: number; resolve: () => void }[]>([]);
+  const again = useCallback(
+    () =>
+      new Promise<void>((resolve) => {
+        asked.current += 1;
+        waiting.current.push({ count: asked.current, resolve });
+        setCount(asked.current);
+      }),
+    [],
+  );
+  const settled = useCallback((read: number) => {
+    waiting.current = waiting.current.filter((each) => {
+      if (each.count > read) return true;
+      each.resolve();
+      return false;
+    });
+  }, []);
+  useEffect(
+    () => () => {
+      for (const each of waiting.current.splice(0)) each.resolve();
+    },
+    [],
+  );
+  return { count, again, settled };
+}
+
 /** The page's refresh, the last of its bar's actions: reads what the page
  *  shows again, with the loader in place of the arrow until `refresh`
  *  settles or while `busy` (a read the page started itself). The refresh key
@@ -349,25 +439,18 @@ export function RefreshButton({
   busy = false,
   label = "Refresh",
 }: {
-  refresh: () => Promise<unknown> | void;
+  refresh: () => Promise<unknown>;
   busy?: boolean;
   label?: string;
 }) {
-  const [pending, setPending] = useState(false);
-  const running = useRef(false);
-  const shown = busy || pending;
-  const press = async () => {
-    if (running.current || busy) return;
-    running.current = true;
-    setPending(true);
-    try {
-      await refresh();
-    } finally {
-      running.current = false;
-      setPending(false);
-    }
-  };
-  useRefreshKey(() => void press());
+  const page = useContext(PageRefreshContext);
+  const self = useRef<Refresh>({ refresh, busy });
+  useEffect(() => {
+    self.current = { refresh, busy };
+  });
+  const register = page?.register;
+  useEffect(() => register?.(self), [register]);
+  const shown = busy || Boolean(page?.pending);
   return (
     <button
       type="button"
@@ -376,7 +459,10 @@ export function RefreshButton({
       aria-keyshortcuts={REFRESH_KEY_SHORTCUT}
       aria-busy={shown || undefined}
       aria-disabled={shown || undefined}
-      onClick={() => void press()}
+      onClick={() => {
+        if (page) page.press(self);
+        else if (!busy) void refresh();
+      }}
       className="local-icon-button local-refresh"
     >
       {shown ? <NineDots size={16} /> : <RefreshIcon size={16} />}

@@ -157,23 +157,9 @@ export function LocalReview({
   const pr = entry.pull_request;
   const url = useUrlState();
   const back = backTo(url.search);
-  // One of the head's actions, on the walkthrough and on the full review
-  // alike. Switching between them draws another button, so the refresh
-  // under way is kept here.
-  const [refreshing, setRefreshing] = useState(false);
+  // One of the head's actions, on the walkthrough and on the full review alike.
   const refreshButton = refresh ? (
-    <RefreshButton
-      busy={refreshing}
-      refresh={async () => {
-        setRefreshing(true);
-        try {
-          await refresh();
-        } finally {
-          setRefreshing(false);
-        }
-      }}
-      label="Refresh from GitHub"
-    />
+    <RefreshButton refresh={refresh} label="Refresh from GitHub" />
   ) : undefined;
   // A pull request opens on the walkthrough's overview, the tour one step
   // in; walk=full, or a link to a place in the review (pane=…), is the full

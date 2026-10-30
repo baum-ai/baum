@@ -351,20 +351,25 @@ drop it at once.
 
 Refreshing a page: the Inbox, Pull requests, Timeline, Sessions, Analytics,
 Repositories, Jobs, and a pull request's or review group's page end their bar
-(the Inbox its list's head; a pull request its walkthrough's head, or the
-full review's title row through the viewer's `actions` header slot) with a circular-arrow button (`RefreshButton` in
-`src/shell.tsx`). It reads what the page shows again: the pages of pull
-requests (the Inbox, Pull requests, a pull request or group) ask GitHub at once
-for their repositories' pull requests (`api/prs/refresh`) and then read the
-daemon again, one repository at a time and one such refresh at a time (a
-repository GitHub refuses is named in an alert on that page); the others read
-their own data again. Until that settles (on
-the Inbox and Pull requests also during the first read, on the Timeline
-whenever its list is read from the top) the arrow becomes the nine-dots loader and
-further presses do nothing. `⌘R` (Ctrl+R elsewhere) presses it, in text fields
-too but not under a dialog, so a page with one is never reloaded whole; on a
-page without one the key reloads the app, as the browser does. `⇧⌘R` is left
-to the browser.
+(the Inbox its list's head; a pull request its walkthrough's head, or the full
+review's title row through the viewer's `actions` header slot) with a
+circular-arrow button (`RefreshButton` in `src/shell.tsx`). It reads what the
+page shows again: the pages of pull requests (the Inbox, Pull requests, a pull
+request or group) ask GitHub at once for their repositories' pull requests
+(`api/prs/refresh`, by the local clone where there is one) and then read the
+daemon again, one repository at a time and each such refresh after the one
+before it. The latest one's failures name their repositories in an alert, if
+the page it was asked on is still shown. The other pages read their own data
+again, and a page whose reads an effect makes (Timeline, Analytics) settles
+the refresh when the read made for it ends (`useReread`). Until the refresh
+settles, and on the Inbox and Pull requests while any refresh from GitHub
+runs and during the first read, the arrow becomes the nine-dots loader and
+further presses do nothing. The app keeps the page's
+refresh above the page (`usePageRefresh`, keyed by the page shown), so a
+refresh under way survives a pull request switching between its walkthrough
+and full review. `⌘R` (Ctrl+R elsewhere) is one of the app-wide keys and
+presses it, in text fields too; under a dialog it does nothing. On a page
+without a refresh the key, like `⇧⌘R`, is left to the browser.
 
 Keyboard shortcuts (`src/shortcuts.tsx`, one key table that both the handling and
 the sheet read). Every page is reached from the keyboard. With the command key
@@ -372,7 +377,9 @@ the sheet read). Every page is reached from the keyboard. With the command key
 (Inbox, Pull requests, Timeline, Sessions, Analytics, Repositories, Jobs,
 Settings; digits
 are read by their place on the keyboard, so layouts that shift them work),
-`,` opens Settings, and `K` opens **Go to** (`src/go-to.tsx`). Back and forward
+`,` opens Settings, `K` opens **Go to** (`src/go-to.tsx`) and `R` refreshes
+the page (above); letters are read by their place on a layout without Latin
+ones. Back and forward
 are `⌘[` and `⌘]` on a Mac and `Alt+←` and `Alt+→` elsewhere. These work in
 text fields too, but not under a dialog other than the sheet or Go to, which
 they close. Go to searches the pages, the pull requests (by title, repository,

@@ -112,12 +112,15 @@ export type CommandAction =
   | { kind: "page"; page: Page }
   | { kind: "back" }
   | { kind: "forward" }
-  | { kind: "go-to" };
+  | { kind: "go-to" }
+  | { kind: "refresh" };
 
 /** The app-wide key a keydown is, if any: ⌘1 to ⌘8 (Ctrl elsewhere) for the
- *  sidebar's pages, ⌘, for Settings, ⌘K for Go to, and ⌘[ and ⌘] on a Mac
- *  or Alt+← and Alt+→ elsewhere for back and forward. Digits are read by
- *  their place on the keyboard, so a layout that shifts them still works. */
+ *  sidebar's pages, ⌘, for Settings, ⌘K for Go to, ⌘R for the page's
+ *  refresh (⇧⌘R stays the browser's reload), and ⌘[ and ⌘] on a Mac or
+ *  Alt+← and Alt+→ elsewhere for back and forward. Digits are read by their
+ *  place on the keyboard, so a layout that shifts them still works, and
+ *  letters too on a layout without Latin ones. */
 export function commandAction(
   event: Pick<KeyboardEvent, "key" | "code" | "ctrlKey" | "metaKey" | "altKey" | "shiftKey">,
   mac = MAC,
@@ -135,7 +138,13 @@ export function commandAction(
     return item ? { kind: "page", page: item.page } : null;
   }
   if (event.key === ",") return { kind: "page", page: "settings" };
-  if (event.key.toLowerCase() === "k") return { kind: "go-to" };
+  // A letter by itself, or by its place on a layout without Latin letters.
+  const typed = event.key?.toLowerCase() ?? "";
+  const letter = /^[a-z]$/.test(typed)
+    ? typed
+    : /^Key([A-Z])$/.exec(event.code)?.[1]?.toLowerCase();
+  if (letter === "k") return { kind: "go-to" };
+  if (letter === "r") return { kind: "refresh" };
   if (mac && (event.key === "[" || event.code === "BracketLeft")) return { kind: "back" };
   if (mac && (event.key === "]" || event.code === "BracketRight")) return { kind: "forward" };
   return null;
@@ -145,40 +154,6 @@ export function commandAction(
  *  Ctrl+R elsewhere. */
 export const REFRESH_KEY_LABEL = `${COMMAND}R`;
 export const REFRESH_KEY_SHORTCUT = `${MAC ? "Meta" : "Control"}+R`;
-
-/** Whether a keydown is the page refresh key. With Shift it stays the
- *  browser's own reload. */
-export function isRefreshKey(
-  event: Pick<KeyboardEvent, "key" | "code" | "ctrlKey" | "metaKey" | "altKey" | "shiftKey">,
-  mac = MAC,
-) {
-  const command = mac ? event.metaKey && !event.ctrlKey : event.ctrlKey && !event.metaKey;
-  if (!command || event.altKey || event.shiftKey) return false;
-  // By the letter, or by its place for a layout without Latin letters.
-  const key = event.key?.toLowerCase() ?? "";
-  return key === "r" || (event.code === "KeyR" && !/^[a-z]$/.test(key));
-}
-
-/** Calls `refresh` for the page refresh key instead of reloading the app,
- *  in text fields too, but not under a dialog other than the shortcuts sheet
- *  or Go to. */
-export function useRefreshKey(refresh: () => void) {
-  const latest = useRef(refresh);
-  useEffect(() => {
-    latest.current = refresh;
-  });
-  useEffect(() => {
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.defaultPrevented || event.isComposing || !isRefreshKey(event)) return;
-      event.preventDefault();
-      if (document.querySelector("dialog[open]:not([data-shortcuts-sheet]):not([data-go-to])"))
-        return;
-      latest.current();
-    };
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, []);
-}
 
 /** Ctrl+N and Ctrl+P (the readline keys, Control on a Mac too) as ↓ and ↑,
  *  everywhere the arrows move: they are turned into those keys on the same
@@ -210,8 +185,9 @@ export function useReadlineArrows() {
 
 /** Calls `handler` for the app-wide keys (`commandAction`), which work in
  *  text fields too, but not under a dialog other than the shortcuts sheet
- *  or Go to, which the handler closes. */
-export function useCommandKeys(handler: (action: CommandAction) => void) {
+ *  or Go to, which the handler closes. A handler that returns false leaves
+ *  the key to the browser. */
+export function useCommandKeys(handler: (action: CommandAction) => boolean | void) {
   const latest = useRef(handler);
   useEffect(() => {
     latest.current = handler;
@@ -221,10 +197,12 @@ export function useCommandKeys(handler: (action: CommandAction) => void) {
       if (event.defaultPrevented || event.isComposing) return;
       const action = commandAction(event);
       if (!action) return;
-      if (document.querySelector("dialog[open]:not([data-shortcuts-sheet]):not([data-go-to])"))
+      if (document.querySelector("dialog[open]:not([data-shortcuts-sheet]):not([data-go-to])")) {
+        // Reloading the app would lose the dialog.
+        if (action.kind === "refresh") event.preventDefault();
         return;
-      event.preventDefault();
-      latest.current(action);
+      }
+      if (latest.current(action) !== false) event.preventDefault();
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);

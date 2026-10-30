@@ -57,7 +57,14 @@ import { useActionsKey } from "./context-menu";
 import { SessionTranscriptPage } from "./session-transcript";
 import { AnalyticsPage } from "./analytics";
 import { TimelinePage } from "./timeline";
-import { Notice, PageBar, RefreshButton, Sidebar } from "./shell";
+import {
+  Notice,
+  PageBar,
+  PageRefreshProvider,
+  RefreshButton,
+  Sidebar,
+  usePageRefresh,
+} from "./shell";
 import {
   agentName,
   appBase,
@@ -196,12 +203,14 @@ function Workspace({ url }: { url: UrlState }) {
     { repository: string; error?: string; next_refresh: string }[]
   >([]);
   const [loading, setLoading] = useState(true);
-  // A refresh from GitHub under way, from any page: reloads along the way
-  // do not end it, and another waits for it rather than running beside it.
-  const [refreshing, setRefreshing] = useState(false);
-  const refreshRunning = useRef(false);
-  // Why the latest refresh from GitHub failed, until the next one.
+  // Refreshes from GitHub asked for, from any page: reloads along the way
+  // do not end them, and each waits for the one before it.
+  const [refreshing, setRefreshing] = useState(0);
+  const refreshQueue = useRef(Promise.resolve());
+  // Why the latest refresh from GitHub failed, on the page it was asked on.
   const [refreshError, setRefreshError] = useState("");
+  const shownPageRef = useRef("");
+  const lastRefresh = useRef(0);
   const [error, setError] = useState("");
   // When the latest read of the daemon completed, for Pull requests' bar.
   const [updatedAt, setUpdatedAt] = useState<number | null>(null);
@@ -604,30 +613,45 @@ function Workspace({ url }: { url: UrlState }) {
   // after the polling backoff, then everything the pages show.
   // One at a time, as GitHub prefers; a repository that fails leaves the
   // others refreshed and is named.
-  const refreshFrom = async (repositories: string[]) => {
-    if (refreshRunning.current) return;
-    refreshRunning.current = true;
-    setRefreshing(true);
-    setRefreshError("");
-    const failed: string[] = [];
-    try {
-      for (const repository of repositories)
-        await request("api/prs/refresh", { repository }).catch((e) => {
-          failed.push(`${repository}: ${errorText(e)}`);
-        });
-      await reload();
-      if (failed.length) setRefreshError(failed.join(" "));
-    } finally {
-      refreshRunning.current = false;
-      setRefreshing(false);
-    }
+  // A repository is named by its local clone where there is one, which
+  // the daemon knows even when the repository is not picked.
+  const refreshFrom = (targets: { repository: string; clone?: string }[]) => {
+    const askedOn = shownPageRef.current;
+    const sequence = ++lastRefresh.current;
+    setRefreshing((n) => n + 1);
+    const run = refreshQueue.current.then(async () => {
+      const failed: string[] = [];
+      try {
+        for (const { repository, clone } of targets)
+          await request("api/prs/refresh", clone ? { clone } : { repository }).catch((e) => {
+            failed.push(`${repository}: ${errorText(e)}`);
+          });
+        await reload();
+        // Only the latest refresh speaks, on the page it was asked on.
+        if (sequence === lastRefresh.current && shownPageRef.current === askedOn)
+          setRefreshError(failed.join(" "));
+      } finally {
+        setRefreshing((n) => n - 1);
+      }
+    });
+    // One that fails does not hold up the next.
+    refreshQueue.current = run.catch(() => {});
+    return run;
   };
-  const refresh = () => refreshFrom(picked.map((repository) => repository.repository));
+  const refresh = () => refreshFrom(picked.map(({ repository }) => ({ repository })));
   // A failed refresh belongs to the page it was asked for on.
-  const shownPage = `${page}:${groupId ?? ""}:${requestedNumber}`;
+  const shownPage = [
+    page,
+    url.search.get("inbox"),
+    groupId,
+    requestedClone ?? requestedRepository,
+    requestedNumber,
+  ].join(":");
+  shownPageRef.current = shownPage;
   useEffect(() => setRefreshError(""), [shownPage]);
+  const pageRefresh = usePageRefresh(shownPage);
   // Before the first read there is nothing to refresh.
-  const listBusy = refreshing || (loading && revision === 0);
+  const listBusy = refreshing > 0 || (loading && revision === 0);
   // The list's own keys live in `Inbox`, which knows its rows; these are the
   // page's: the shortcuts sheet, and the way back from a pull request or group
   // to the inbox or list it was opened from.
@@ -753,6 +777,8 @@ function Workspace({ url }: { url: UrlState }) {
       return;
     }
     setGoingTo(false);
+    // A page without a refresh button leaves the key to the browser.
+    if (action.kind === "refresh") return pageRefresh.press();
     if (action.kind === "back") history.back();
     else if (action.kind === "forward") history.forward();
     else navigate(PAGES.find((item) => item.page === action.page)!.href());
@@ -811,7 +837,7 @@ function Workspace({ url }: { url: UrlState }) {
     },
     { allowSheet: true },
   );
-  return (
+  const shell = (
     <div className="local-shell">
       <Sidebar
         page={railPage}
@@ -1007,7 +1033,16 @@ function Workspace({ url }: { url: UrlState }) {
                   cloneFor={cloneFor}
                   revision={revision}
                   changed={reload}
-                  refresh={() => refreshFrom([group.repository])}
+                  refresh={() =>
+                    refreshFrom([
+                      {
+                        repository: group.repository,
+                        clone: clones.find(
+                          (c) => sameRepository(c.repository, group.repository) && c.available,
+                        )?.id,
+                      },
+                    ])
+                  }
                 />
               ) : loading ? (
                 <LoadingStatus block>Loading review group…</LoadingStatus>
@@ -1022,7 +1057,9 @@ function Workspace({ url }: { url: UrlState }) {
                 detail={`${selectedEntry.pull_request.repository} #${selectedEntry.pull_request.number}`}
                 actions={
                   <RefreshButton
-                    refresh={() => refreshFrom([selectedEntry.pull_request.repository])}
+                    refresh={() =>
+                      refreshFrom([{ repository: selectedEntry.pull_request.repository }])
+                    }
                     label="Refresh from GitHub"
                   />
                 }
@@ -1053,7 +1090,14 @@ function Workspace({ url }: { url: UrlState }) {
                 revision={revision}
                 job={reviewJob(selectedEntry, jobs)}
                 changed={reload}
-                refresh={() => refreshFrom([selectedEntry.pull_request.repository])}
+                refresh={() =>
+                  refreshFrom([
+                    {
+                      repository: selectedEntry.pull_request.repository,
+                      clone: cloneFor(selectedEntry) || undefined,
+                    },
+                  ])
+                }
                 live={live}
                 groups={groups.filter(
                   (g) =>
@@ -1106,7 +1150,7 @@ function Workspace({ url }: { url: UrlState }) {
                 title="Pull requests"
                 actions={
                   <>
-                    <UpdatedAgo at={updatedAt} busy={loading || refreshing} />
+                    <UpdatedAgo at={updatedAt} busy={loading || refreshing > 0} />
                     <button
                       type="button"
                       aria-label="Keyboard shortcuts"
@@ -1219,7 +1263,7 @@ function Workspace({ url }: { url: UrlState }) {
                   fixStarting={(entry) => fixState(entry).starting}
                   jobs={jobs}
                   generate={(entry) => void generate([entry], "single")}
-                  refresh={listBusy ? undefined : () => void refresh()}
+                  refresh={() => void pageRefresh.press()}
                   bulk={
                     <>
                       <button
@@ -1322,6 +1366,7 @@ function Workspace({ url }: { url: UrlState }) {
       </div>
     </div>
   );
+  return <PageRefreshProvider value={pageRefresh}>{shell}</PageRefreshProvider>;
 }
 /** The one confirmation generation still asks for: an agent runs with code
  *  from a fork, or from an author without known write access. */

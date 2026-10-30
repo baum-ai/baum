@@ -6,15 +6,16 @@ import {
   commandAction,
   forgetLastRows,
   INBOX_SHORTCUTS,
-  isRefreshKey,
   listKeys,
   moveFocus,
   ShortcutsSheet,
+  useCommandKeys,
   useRowFocus,
   useShortcuts,
 } from "./shortcuts";
 import { rowKey, type Entry, type ReviewGroup } from "./api";
-import { RefreshButton } from "./shell";
+import type { ReactNode } from "react";
+import { PageRefreshProvider, RefreshButton, usePageRefresh, useReread } from "./shell";
 
 const entry = (number: number, patch: Partial<Entry> = {}, mine = true): Entry => ({
   pull_request: {
@@ -441,6 +442,9 @@ it("reads the app-wide keys with the platform's command key", () => {
     page: "settings",
   });
   expect(commandAction(key({ ctrlKey: true, key: "k" }), false)).toEqual({ kind: "go-to" });
+  expect(commandAction(key({ ctrlKey: true, key: "л", code: "KeyK" }), false)).toEqual({
+    kind: "go-to",
+  });
   expect(commandAction(key({ metaKey: true, key: "K" }), true)).toEqual({ kind: "go-to" });
   // Back and forward: ⌘[ and ⌘] on a Mac, Alt with the arrows elsewhere.
   expect(commandAction(key({ metaKey: true, key: "[" }), true)).toEqual({ kind: "back" });
@@ -542,17 +546,33 @@ it("reads the refresh key with the platform's command key, leaving Shift to the 
     shiftKey: false,
     ...patch,
   });
-  expect(isRefreshKey(key({ ctrlKey: true }), false)).toBe(true);
-  expect(isRefreshKey(key({ metaKey: true, key: "R" }), true)).toBe(true);
-  expect(isRefreshKey(key({ metaKey: true }), false)).toBe(false);
-  expect(isRefreshKey(key({ ctrlKey: true }), true)).toBe(false);
-  expect(isRefreshKey(key({ ctrlKey: true, shiftKey: true }), false)).toBe(false);
-  expect(isRefreshKey(key({}), false)).toBe(false);
-  expect(isRefreshKey(key({ ctrlKey: true, key: "к" }), false)).toBe(true);
-  expect(isRefreshKey(key({ ctrlKey: true, key: "x", code: "KeyX" }), false)).toBe(false);
-  // Dvorak's P sits where QWERTY's R does; it stays P.
-  expect(isRefreshKey(key({ ctrlKey: true, key: "p" }), false)).toBe(false);
+  const refresh = { kind: "refresh" };
+  expect(commandAction(key({ ctrlKey: true }), false)).toEqual(refresh);
+  expect(commandAction(key({ metaKey: true, key: "R" }), true)).toEqual(refresh);
+  expect(commandAction(key({ metaKey: true }), false)).toBeNull();
+  expect(commandAction(key({ ctrlKey: true }), true)).toBeNull();
+  expect(commandAction(key({ ctrlKey: true, shiftKey: true }), false)).toBeNull();
+  expect(commandAction(key({}), false)).toBeNull();
+  // By its place on a layout without Latin letters, but Dvorak's P, where
+  // QWERTY's R is, stays P.
+  expect(commandAction(key({ ctrlKey: true, key: "к" }), false)).toEqual(refresh);
+  expect(commandAction(key({ ctrlKey: true, key: "p" }), false)).toBeNull();
 });
+
+/** A page as the app holds one: its refresh, and ⌘R pressing it. */
+function RefreshPage({ scope = "page", children }: { scope?: string; children: ReactNode }) {
+  const page = usePageRefresh(scope);
+  useCommandKeys((action) => (action.kind === "refresh" ? page.press() : undefined));
+  return <PageRefreshProvider value={page}>{children}</PageRefreshProvider>;
+}
+
+const pressRefreshKey = () => {
+  const event = new KeyboardEvent("keydown", { key: "r", ctrlKey: true, cancelable: true });
+  act(() => {
+    window.dispatchEvent(event);
+  });
+  return event;
+};
 
 it("refreshes from its button and the refresh key, with the loader until it settles", async () => {
   let settle = () => {};
@@ -562,45 +582,114 @@ it("refreshes from its button and the refresh key, with the loader until it sett
         settle = resolve;
       }),
   );
-  await act(async () => root.render(<RefreshButton refresh={refresh} />));
+  await act(async () =>
+    root.render(
+      <RefreshPage>
+        <RefreshButton refresh={refresh} />
+      </RefreshPage>,
+    ),
+  );
   const button = node.querySelector<HTMLButtonElement>("button")!;
   expect(button.getAttribute("aria-keyshortcuts")).toBe("Control+R");
   expect(button.querySelector(".nine-dots")).toBeNull();
-  const press = () => {
-    const event = new KeyboardEvent("keydown", { key: "r", ctrlKey: true, cancelable: true });
-    act(() => {
-      window.dispatchEvent(event);
-    });
-    return event;
-  };
   // The key never reloads the app; a press while one runs starts no other.
-  expect(press().defaultPrevented).toBe(true);
+  expect(pressRefreshKey().defaultPrevented).toBe(true);
+  await act(async () => {});
   expect(refresh).toHaveBeenCalledTimes(1);
   expect(button.getAttribute("aria-busy")).toBe("true");
   expect(button.querySelector(".nine-dots")).not.toBeNull();
-  press();
+  pressRefreshKey();
   act(() => button.click());
+  await act(async () => {});
   expect(refresh).toHaveBeenCalledTimes(1);
   await act(async () => settle());
   expect(button.getAttribute("aria-busy")).toBeNull();
   expect(button.querySelector(".nine-dots")).toBeNull();
   act(() => button.click());
+  await act(async () => {});
   expect(refresh).toHaveBeenCalledTimes(2);
   await act(async () => settle());
-  // A dialog keeps the key from refreshing under it.
+  // A dialog keeps the key from refreshing under it, or reloading the app.
   const dialog = document.createElement("dialog");
   dialog.setAttribute("open", "");
   document.body.append(dialog);
-  expect(press().defaultPrevented).toBe(true);
+  expect(pressRefreshKey().defaultPrevented).toBe(true);
+  await act(async () => {});
   expect(refresh).toHaveBeenCalledTimes(2);
   dialog.remove();
 });
 
+it("keeps a refresh under way when the page draws its button again", async () => {
+  let settle = () => {};
+  const refresh = vi.fn(
+    () =>
+      new Promise<void>((resolve) => {
+        settle = resolve;
+      }),
+  );
+  const draw = (key: string) =>
+    act(async () =>
+      root.render(
+        <RefreshPage>
+          <RefreshButton key={key} refresh={refresh} />
+        </RefreshPage>,
+      ),
+    );
+  await draw("walkthrough");
+  pressRefreshKey();
+  await act(async () => {});
+  await draw("full review");
+  const button = node.querySelector<HTMLButtonElement>("button")!;
+  expect(button.getAttribute("aria-busy")).toBe("true");
+  act(() => button.click());
+  await act(async () => {});
+  expect(refresh).toHaveBeenCalledTimes(1);
+  await act(async () => settle());
+  expect(button.getAttribute("aria-busy")).toBeNull();
+});
+
 it("shows the loader while the page reads by itself, and ignores presses meanwhile", async () => {
-  const refresh = vi.fn();
-  await act(async () => root.render(<RefreshButton refresh={refresh} busy />));
+  const refresh = vi.fn(() => Promise.resolve());
+  await act(async () =>
+    root.render(
+      <RefreshPage>
+        <RefreshButton refresh={refresh} busy />
+      </RefreshPage>,
+    ),
+  );
   const button = node.querySelector<HTMLButtonElement>("button")!;
   expect(button.querySelector(".nine-dots")).not.toBeNull();
   act(() => button.click());
+  await act(async () => {});
   expect(refresh).not.toHaveBeenCalled();
+});
+
+it("leaves the refresh key to the browser on a page without a refresh", async () => {
+  await act(async () => root.render(<RefreshPage>{null}</RefreshPage>));
+  expect(pressRefreshKey().defaultPrevented).toBe(false);
+});
+
+it("settles a reread with its own read, or when the page goes", async () => {
+  let reread: ReturnType<typeof useReread> | undefined;
+  function Page() {
+    reread = useReread();
+    return null;
+  }
+  await act(async () => root.render(<Page />));
+  const done = vi.fn();
+  let pending!: Promise<void>;
+  act(() => {
+    pending = reread!.again().then(done);
+  });
+  // A read made before the refresh does not end it.
+  await act(async () => reread!.settled(0));
+  expect(done).not.toHaveBeenCalled();
+  await act(async () => reread!.settled(reread!.count));
+  expect(done).toHaveBeenCalledTimes(1);
+  act(() => {
+    pending = reread!.again().then(done);
+  });
+  await act(async () => root.render(null));
+  await pending;
+  expect(done).toHaveBeenCalledTimes(2);
 });
