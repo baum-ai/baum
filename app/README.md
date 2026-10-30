@@ -862,8 +862,9 @@ default, which follows a repository's own review harness too) or Claude Code
 or Codex with a model, sent as `fix_backend` and `fix_model` (`""` returns to
 the reviews') and reported by `GET api/settings`. A chosen fix agent applies
 in every repository. **Connections** holds the GitHub connection and, in the
-desktop app, the Agent hooks card with installation, enablement and removal
-for each agent. **This computer** holds the diagnostics, the background
+desktop app, the Agent hooks card with installation, enablement, update
+(to the latest plugin, without removing it first; shown with the installed
+plugin version) and removal for each agent. **This computer** holds the diagnostics, the background
 daemon note, in the desktop app the Command line card (inline CLI install,
 update and removal) and Zoom, and the environment for agents. Home paths are
 displayed with `~`. **Environment for agents** (`AgentEnvSection`) edits

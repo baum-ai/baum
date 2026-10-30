@@ -3709,7 +3709,8 @@ and two files:
    from native plugin registries, with executable detection and installation/
    enablement separate from the agent's hook trust decision. It installs and
    removes `baum@baum` through native CLIs with `baum hooks install --user`
-   and `uninstall --user`. Native status queries have a 10-second bound and
+   and `uninstall --user`, and `update --user` refreshes the marketplace and
+   brings an installed plugin to its latest version. Native status queries have a 10-second bound and
    actions a 90-second total budget; the desktop resolves the login shell PATH for native plugin commands and allows
    240 seconds for PATH resolution, both agents and process overhead.
 5. `baum daemon stop` stops the daemon gracefully and waits for it to exit
