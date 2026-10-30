@@ -203,7 +203,7 @@ func (a LocalAPI) Handler() *LocalHandler {
 		if len(cfg.AgentEnv) > 0 {
 			source = "file"
 		}
-		fixBackend, fixModel := "", ""
+		fixBackend, fixModel, fixEffort := "", "", ""
 		if prefs, err := a.Registry.Preferences(r.Context()); err == nil {
 			cfg = prefs.Resolve(cfg)
 			if prefs.FixBackend != nil {
@@ -211,6 +211,9 @@ func (a LocalAPI) Handler() *LocalHandler {
 			}
 			if prefs.FixModel != nil {
 				fixModel = *prefs.FixModel
+			}
+			if prefs.FixEffort != nil {
+				fixEffort = *prefs.FixEffort
 			}
 			if len(prefs.AgentEnv) > 0 {
 				source = "app"
@@ -225,7 +228,9 @@ func (a LocalAPI) Handler() *LocalHandler {
 			AgentEnvSource string            `json:"agent_env_source"`
 			FixBackend     string            `json:"fix_backend"`
 			FixModel       string            `json:"fix_model"`
-		}{cfg.Backend, cfg.Model, cfg.Budgets, cfg.Caps, cfg.AgentEnv, source, fixBackend, fixModel})
+			Effort         string            `json:"effort"`
+			FixEffort      string            `json:"fix_effort"`
+		}{cfg.Backend, cfg.Model, cfg.Budgets, cfg.Caps, cfg.AgentEnv, source, fixBackend, fixModel, cfg.Effort, fixEffort})
 	})
 	mux.HandleFunc("GET /api/settings/appearance", a.getAppearance)
 	mux.HandleFunc("PUT /api/settings/appearance", a.putAppearance)

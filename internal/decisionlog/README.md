@@ -370,8 +370,8 @@ and splits are changes, so one that changed features is followed by another
 a week later. A pass reads the features not merged into another and active
 in the last 90 days (as placement's candidates), most recently active first.
 Its calls' replies may run to 32,768 tokens rather than hosted's 8,192:
-Claude Code's models think within the reply's bound even with thinking
-turned off, and a merge over a first build's features needs the room.
+Claude Code's models think within the reply's bound, and a merge over a
+first build's features needs the room.
 
 - **Merge.** With two features or more, one call sees each feature's text,
   digest, paths, pull requests with their summaries (the saved review's,

@@ -21,14 +21,21 @@ type reviewSettings struct {
 	Model        string         `json:"model"`
 	Automatic    bool           `json:"automatic"`
 	PullRequests string         `json:"pull_requests"`
-	// FixBackend and FixModel are empty when fixes follow the reviews.
+	// Effort is the reviews' reasoning effort, empty for the agent's own.
+	Effort string `json:"effort"`
+	// FixBackend, FixModel and FixEffort are empty when fixes follow the
+	// reviews.
 	FixBackend string `json:"fix_backend"`
 	FixModel   string `json:"fix_model"`
+	FixEffort  string `json:"fix_effort"`
 	// DecisionsChosenBackend and DecisionsModel are the data extraction
 	// backend and model the app chose, decision capture's and the feature
 	// log's: empty for the reviews' backend and its default model.
 	DecisionsChosenBackend string `json:"decisions_chosen_backend"`
 	DecisionsModel         string `json:"decisions_model"`
+	// DecisionsEffort is data extraction's reasoning effort, empty for the
+	// agent's own.
+	DecisionsEffort string `json:"decisions_effort"`
 	// DecisionsBackend and DecisionsEffectiveModel are the backend and model
 	// extraction uses (decisionlog.EffectiveModel; empty when unknown), and
 	// DecisionsModelIgnored says it does not use DecisionsModel.
@@ -61,6 +68,7 @@ func newReviewsCommand() *cobra.Command {
 		settings := reviewSettings{
 			Backend:      cfg.Backend,
 			Model:        cfg.Model,
+			Effort:       cfg.Effort,
 			Automatic:    prefs.Automatic,
 			PullRequests: cmp.Or(prefs.PullRequests, pullRequestsBoth),
 		}
@@ -69,6 +77,12 @@ func newReviewsCommand() *cobra.Command {
 		}
 		if prefs.FixModel != nil {
 			settings.FixModel = *prefs.FixModel
+		}
+		if prefs.FixEffort != nil {
+			settings.FixEffort = *prefs.FixEffort
+		}
+		if prefs.Decisions.Effort != nil {
+			settings.DecisionsEffort = *prefs.Decisions.Effort
 		}
 		if prefs.Decisions.Backend != nil {
 			settings.DecisionsChosenBackend = string(*prefs.Decisions.Backend)
@@ -140,7 +154,7 @@ func newReviewsCommand() *cobra.Command {
 				next.Model = &v
 			}
 			if clearFix {
-				next.FixBackend, next.FixModel = nil, nil
+				next.FixBackend, next.FixModel, next.FixEffort = nil, nil, nil
 			}
 			if fixBackend != nil {
 				next.FixBackend = fixBackend
@@ -149,6 +163,19 @@ func newReviewsCommand() *cobra.Command {
 				v, _ := flags.GetString("fix-model")
 				v = strings.TrimSpace(v)
 				next.FixModel = &v
+			}
+			// An empty effort is the agent's own, saved as no choice.
+			for _, f := range []struct {
+				flag   string
+				target **string
+			}{{"effort", &next.Effort}, {"fix-effort", &next.FixEffort}, {"decisions-effort", &next.Decisions.Effort}} {
+				if flags.Changed(f.flag) {
+					v, _ := flags.GetString(f.flag)
+					*f.target = nil
+					if v = strings.ToLower(strings.TrimSpace(v)); v != "" {
+						*f.target = &v
+					}
+				}
 			}
 			if flags.Changed("automatic") {
 				next.Automatic, _ = flags.GetBool("automatic")
@@ -184,6 +211,10 @@ func newReviewsCommand() *cobra.Command {
 	set.Flags().String("model", "", "model for reviews the app generates (empty uses the backend's default)")
 	set.Flags().String("fix-backend", "", "agent that fixes pull requests: claude or codex (empty follows reviews again)")
 	set.Flags().String("fix-model", "", "model for fixes (empty uses the fix agent's default)")
+	efforts := strings.Join(config.Efforts, ", ")
+	set.Flags().String("effort", "", "reasoning effort for reviews: "+efforts+" (empty uses the agent's own)")
+	set.Flags().String("fix-effort", "", "reasoning effort for fixes: "+efforts+" (empty uses the fix agent's own)")
+	set.Flags().String("decisions-effort", "", "reasoning effort for data extraction: "+efforts+" (empty uses the agent's own)")
 	set.Flags().Bool("automatic", true, "generate reviews automatically (--automatic=false turns it off)")
 	set.Flags().String("pull-requests", "", "which pull requests get automatic reviews: authored, requested, both or all")
 	set.Flags().String("decisions-backend", "", "backend for data extraction, the decisions of agent sessions and the feature log: claude, codex or anthropic (empty follows reviews again)")

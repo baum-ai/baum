@@ -103,6 +103,7 @@ type decisionSettings struct {
 	Enabled bool   `json:"enabled"`
 	Backend string `json:"backend"`
 	Model   string `json:"model"`
+	Effort  string `json:"effort"`
 }
 
 // DecisionModel is the backend and decision model capture uses
@@ -150,17 +151,21 @@ func decisionSettingsOf(p repos.Preferences) decisionSettings {
 	if d.Model != nil {
 		out.Model = *d.Model
 	}
+	if d.Effort != nil {
+		out.Effort = *d.Effort
+	}
 	return out
 }
 
 // putDecisionSettings serves PUT /api/settings/decisions, which replaces the
-// whole decision capture preferences, except that a missing backend keeps the
-// saved one, as an app from before the extraction backend sends none.
+// whole decision capture preferences, except that a missing backend or
+// effort keeps the saved one, as an app from before them sends neither.
 func (a LocalAPI) putDecisionSettings(w http.ResponseWriter, r *http.Request) {
 	var input struct {
 		Enabled *bool   `json:"enabled"`
 		Backend *string `json:"backend"`
 		Model   *string `json:"model"`
+		Effort  *string `json:"effort"`
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, 4<<10)
 	d := json.NewDecoder(r.Body)
@@ -172,7 +177,7 @@ func (a LocalAPI) putDecisionSettings(w http.ResponseWriter, r *http.Request) {
 	var invalid error
 	prefs, err := a.Registry.UpdatePreferences(r.Context(), func(p repos.Preferences) repos.Preferences {
 		next := p
-		next.Decisions = repos.DecisionPreferences{Backend: p.Decisions.Backend}
+		next.Decisions = repos.DecisionPreferences{Backend: p.Decisions.Backend, Effort: p.Decisions.Effort}
 		if !*input.Enabled {
 			next.Decisions.Enabled = new(false)
 		}
@@ -184,6 +189,12 @@ func (a LocalAPI) putDecisionSettings(w http.ResponseWriter, r *http.Request) {
 		}
 		if input.Model != nil && strings.TrimSpace(*input.Model) != "" {
 			next.Decisions.Model = new(strings.TrimSpace(*input.Model))
+		}
+		if input.Effort != nil {
+			next.Decisions.Effort = nil
+			if *input.Effort != "" {
+				next.Decisions.Effort = input.Effort
+			}
 		}
 		if invalid = next.Validate(); invalid != nil {
 			return p

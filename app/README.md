@@ -850,17 +850,20 @@ harness cannot fix. **Reviews** holds
 the global review settings, one per row: whether reviews run automatically,
 for which pull requests (authored, requested, both, or all open pull requests
 in the repository), the harness and its model (a listed model or a custom
-name, saved when its field is left or Enter is pressed). Each change is saved
+name, saved when its field is left or Enter is pressed) and the reasoning
+effort (Default, which leaves it to the agent, Low, Medium or High; no row for
+Cursor Agent, whose models name their own). Each change is saved
 at once, with "Saved" beside the title, through `PUT api/automatic`
-(`enabled`, `backend`, `model`, `pull_requests`), which the daemon keeps as
-app preferences over the config file; `GET api/settings` reports the
-effective harness and model. Each section sends all its choices and runs one
+(`enabled`, `backend`, `model`, `effort`, `pull_requests`), which the daemon
+keeps as app preferences over the config file; `GET api/settings` reports the
+effective harness, model and effort. Each section sends all its choices and runs one
 save at a time; changes made while one runs are sent together afterwards, so
 an older choice never lands after a newer one. A failed save shows the error
 and puts the control back. **Fixes** chooses the agent that fixes: "Same as reviews" (the
 default) or Claude Code
-or Codex with a model, sent as `fix_backend` and `fix_model` (`""` returns to
-the reviews') and reported by `GET api/settings`. A chosen fix agent applies
+or Codex with a model and a reasoning effort, sent as `fix_backend`,
+`fix_model` and `fix_effort` (`""` returns to the reviews', effort included)
+and reported by `GET api/settings`. A chosen fix agent applies
 in every repository. **Connections** holds the GitHub connection and, in the
 desktop app, the Agent hooks card with installation, enablement and removal
 for each agent. **This computer** holds the diagnostics, the background
@@ -938,10 +941,10 @@ the event stream opens or resets or the automatic switch changes. Settings' **Da
 Reviews, holds the switch for decision capture and the feature log, the agent
 ("Same as reviews", the default, or Claude Code, Codex or the Anthropic API)
 and the model (the harness's cheap default, or another of its models; a new
-agent starts over at its default), one per row like the review settings and
-saved as they change, read with `GET api/settings/decisions` and saved with
-`PUT api/settings/decisions` (`enabled`, `backend`, `model`; the whole
-object, `""` for the reviews' agent and the default model, which is saved as
+agent starts over at its default) and the reasoning effort, one per row like
+the review settings and saved as they change, read with `GET
+api/settings/decisions` and saved with `PUT api/settings/decisions`
+(`enabled`, `backend`, `model`, `effort`; the whole object, `""` for the reviews' agent and the default model, which is saved as
 none so it follows the agent). Only these
 two answer with what the daemon makes of them: the harness extraction
 resolves to (`effective_backend`), its model and whether the saved model is

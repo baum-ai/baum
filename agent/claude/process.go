@@ -36,6 +36,7 @@ func (c *Backend) args(request agent.Request) []string {
 	if c.Model != "" {
 		args = append(args, "--model", c.Model)
 	}
+	args = append(args, c.effortArgs()...)
 	system := systemPrompt
 	if request.Task {
 		system = taskSystemPrompt
@@ -74,17 +75,32 @@ func (c *Backend) fixArgs(request agent.Request) []string {
 	if c.Model != "" {
 		args = append(args, "--model", c.Model)
 	}
+	args = append(args, c.effortArgs()...)
 	return append(args, "--system-prompt", fixSystemPrompt, "--max-turns", strconv.Itoa(request.MaxCalls),
 		"--restricted", "--tools", "Read,Glob,Grep,Edit,Write", "--permission-mode", "acceptEdits", "--no-session-persistence",
 		"--settings", `{"permissions":{"blockReadsOutsideWorkingDirectories":true}}`,
 		"--setting-sources", "", "--strict-mcp-config", "--mcp-config", `{"mcpServers":{}}`)
 }
 
-// fixedEnvironment is set in every profile: no thinking, a bounded response,
-// and no update check, telemetry or other traffic that is not the run's.
-func fixedEnvironment() []string {
-	return []string{"CLAUDE_CODE_MAX_OUTPUT_TOKENS=" + strconv.Itoa(maxOutputTokens), "MAX_THINKING_TOKENS=0", "CLAUDE_CODE_DISABLE_THINKING=1",
-		"DISABLE_AUTOUPDATER=1", "DISABLE_TELEMETRY=1", "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1"}
+// fixedEnvironment is set in every profile: a bounded response, and no
+// update check, telemetry or other traffic that is not the run's. With
+// thinking false, as in the Isolated profile, hosted and evaluation runs never
+// think; the User profile leaves thinking to Claude Code and the chosen
+// effort.
+func fixedEnvironment(thinking bool) []string {
+	env := []string{"CLAUDE_CODE_MAX_OUTPUT_TOKENS=" + strconv.Itoa(maxOutputTokens)}
+	if !thinking {
+		env = append(env, "MAX_THINKING_TOKENS=0", "CLAUDE_CODE_DISABLE_THINKING=1")
+	}
+	return append(env, "DISABLE_AUTOUPDATER=1", "DISABLE_TELEMETRY=1", "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1")
+}
+
+// effortArgs passes Effort, when set, as --effort.
+func (c *Backend) effortArgs() []string {
+	if c.Effort == "" {
+		return nil
+	}
+	return []string{"--effort", c.Effort}
 }
 
 // environment is the process environment, which is never the caller's wholesale.
@@ -93,13 +109,13 @@ func (c *Backend) environment(directory string, endpoint *agent.Endpoint) []stri
 	if c.Profile == Isolated {
 		home := filepath.Join(directory, "home")
 		env := append([]string{"PATH=/usr/local/bin:/usr/bin:/bin", "HOME=" + home, "CLAUDE_CONFIG_DIR=" + home, "ANTHROPIC_API_KEY=" + endpoint.Key},
-			fixedEnvironment()...)
+			fixedEnvironment(false)...)
 		if endpoint.BaseURL != "" {
 			env = append(env, "ANTHROPIC_BASE_URL="+endpoint.BaseURL)
 		}
 		return env
 	}
-	env := append(agent.WithUserEnv(agent.LocalEnvironment(os.Environ(), "CLAUDE_CONFIG_DIR"), c.Env), fixedEnvironment()...)
+	env := append(agent.WithUserEnv(agent.LocalEnvironment(os.Environ(), "CLAUDE_CONFIG_DIR"), c.Env), fixedEnvironment(true)...)
 	if endpoint != nil {
 		env = append(env, "ANTHROPIC_API_KEY="+endpoint.Key)
 		if endpoint.BaseURL != "" {
@@ -155,7 +171,7 @@ func (c *Backend) checkVersion(ctx context.Context, binary string) (string, erro
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, binary, "--version")
-	cmd.Env = append(agent.WithUserEnv(agent.LocalEnvironment(os.Environ(), "CLAUDE_CONFIG_DIR"), c.Env), fixedEnvironment()...)
+	cmd.Env = append(agent.WithUserEnv(agent.LocalEnvironment(os.Environ(), "CLAUDE_CONFIG_DIR"), c.Env), fixedEnvironment(true)...)
 	// The timeout and the caller's cancellation kill the whole group, and
 	// WaitDelay stops a descendant that holds the pipe from stalling the wait.
 	proc.Configure(cmd)

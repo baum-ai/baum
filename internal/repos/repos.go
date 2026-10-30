@@ -67,11 +67,13 @@ func (s Settings) DecisionsEnabled(p Preferences) bool {
 // DecisionPreferences are the global choices for local decision capture and
 // the feature log, the data extraction the app's settings name. A nil Enabled
 // is on. A nil Backend follows the reviews' backend. Model, when set,
-// replaces the backend's default decision model.
+// replaces the backend's default decision model. Effort is the reasoning
+// effort (config.Efforts), empty or nil for the harness's own.
 type DecisionPreferences struct {
 	Enabled *bool           `json:"enabled,omitempty"`
 	Backend *config.Backend `json:"backend,omitempty"`
 	Model   *string         `json:"model,omitempty"`
+	Effort  *string         `json:"effort,omitempty"`
 }
 
 // AppearancePreferences are device choices kept independently of the daemon HTTP origin.
@@ -91,11 +93,16 @@ type Preferences struct {
 	// in the app; a repository's own settings still override them.
 	Backend *config.Backend `json:"backend,omitempty"`
 	Model   *string         `json:"model,omitempty"`
-	// FixBackend and FixModel choose the agent that fixes pull requests
-	// (ResolveFix). A nil FixBackend means the same as reviews; an empty
-	// FixModel is the fix backend's default model.
+	// Effort is the reviews' reasoning effort (config.Efforts), empty or nil
+	// for the harness's own.
+	Effort *string `json:"effort,omitempty"`
+	// FixBackend, FixModel and FixEffort choose the agent that fixes pull
+	// requests (ResolveFix). A nil FixBackend means the same as reviews; an
+	// empty FixModel is the fix backend's default model and an empty
+	// FixEffort its own effort.
 	FixBackend *config.Backend `json:"fix_backend,omitempty"`
 	FixModel   *string         `json:"fix_model,omitempty"`
+	FixEffort  *string         `json:"fix_effort,omitempty"`
 	// PullRequests narrows which pull requests get automatic reviews:
 	// PullRequestsAuthored, PullRequestsRequested, PullRequestsAll, or empty
 	// for both authored and requested.
@@ -155,6 +162,14 @@ func (p Preferences) Validate() error {
 	if p.FixBackend == nil && p.FixModel != nil && strings.TrimSpace(*p.FixModel) != "" {
 		return errors.New("choose the agent for fixes before its model")
 	}
+	for _, effort := range []*string{p.Effort, p.FixEffort, p.Decisions.Effort} {
+		if effort != nil && !config.ValidEffort(*effort) {
+			return fmt.Errorf("unknown reasoning effort %q; use %s or leave it empty for the agent's own", *effort, strings.Join(config.Efforts, ", "))
+		}
+	}
+	if p.FixBackend == nil && p.FixEffort != nil && *p.FixEffort != "" {
+		return errors.New("choose the agent for fixes before its effort")
+	}
 	if err := config.ValidateAgentEnv(p.AgentEnv); err != nil {
 		return fmt.Errorf("agent environment: %w", err)
 	}
@@ -177,21 +192,38 @@ func (p Preferences) Resolve(global config.Config) config.Config {
 	if p.Model != nil {
 		global.Model = strings.TrimSpace(*p.Model)
 	}
+	if p.Effort != nil {
+		global.Effort = *p.Effort
+	}
 	return global
 }
 
+// ResolveExtraction gives the config data extraction runs with, from cfg,
+// the config resolved for reviews: the extraction's own effort. Its backend
+// and model are decisionlog's to resolve.
+func (p Preferences) ResolveExtraction(cfg config.Config) config.Config {
+	cfg.Effort = ""
+	if p.Decisions.Effort != nil {
+		cfg.Effort = *p.Decisions.Effort
+	}
+	return cfg
+}
+
 // ResolveFix gives the config a fix runs with, from review, the config
-// already resolved for reviews. A set FixBackend replaces the review backend
-// and model, and takes FixModel (empty for the backend's default); without
-// one the fix follows the reviews.
+// already resolved for reviews. A set FixBackend replaces the review backend,
+// model and effort, and takes FixModel and FixEffort (empty for the backend's
+// own); without one the fix follows the reviews.
 func (p Preferences) ResolveFix(review config.Config) config.Config {
 	if p.FixBackend == nil {
 		return review
 	}
 	review.Backend = *p.FixBackend
-	review.Model = ""
+	review.Model, review.Effort = "", ""
 	if p.FixModel != nil {
 		review.Model = strings.TrimSpace(*p.FixModel)
+	}
+	if p.FixEffort != nil {
+		review.Effort = *p.FixEffort
 	}
 	return review
 }

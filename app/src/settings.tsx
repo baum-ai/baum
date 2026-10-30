@@ -59,8 +59,11 @@ import { LoadingStatus } from "./nine-dots";
 export type ReviewDefaults = {
   backend: string;
   model: string;
+  /** Reasoning efforts; empty is the agent's own. */
+  effort?: string;
   fix_backend?: string;
   fix_model?: string;
+  fix_effort?: string;
 };
 
 function errorText(error: unknown) {
@@ -457,8 +460,39 @@ const scopes: { value: PullRequests; label: string }[] = [
   { value: "requested", label: "Only requested" },
 ];
 
+const efforts: { value: string; label: string }[] = [
+  { value: "", label: "Default" },
+  { value: "low", label: "Low" },
+  { value: "medium", label: "Medium" },
+  { value: "high", label: "High" },
+];
+
+/** A use case's reasoning effort: "" leaves it to the agent. Cursor Agent has
+ *  none (its models name their own), so it gets no row. */
+function EffortRow({
+  label,
+  backend,
+  value,
+  onChange,
+}: {
+  label: string;
+  backend: string;
+  value: string;
+  onChange: (next: string) => void;
+}) {
+  if (backend === "cursor-agent") return null;
+  return (
+    <SettingRow
+      label="Reasoning effort"
+      detail="Default leaves it to the agent. Higher thinks longer and costs more."
+    >
+      <SegmentedControl label={label} value={value} items={efforts} onChange={onChange} />
+    </SettingRow>
+  );
+}
+
 /** The global review settings: whether baum reviews on its own, which pull
- *  requests, and the agent and model that write reviews. */
+ *  requests, and the agent, model and effort that write reviews. */
 function ReviewsSection({
   automatic,
   defaults,
@@ -468,12 +502,15 @@ function ReviewsSection({
   defaults: ReviewDefaults;
   changed: () => Promise<void>;
 }) {
-  const saved: ReviewSettings = withModel({
-    backend: shownBackend(defaults.backend),
-    model: defaults.backend === "auto" ? "" : defaults.model,
-    automatic: automatic.enabled,
-    pull_requests: (automatic.pull_requests ?? "both") as PullRequests,
-  });
+  const saved: ReviewSettings & { effort: string } = {
+    ...withModel({
+      backend: shownBackend(defaults.backend),
+      model: defaults.backend === "auto" ? "" : defaults.model,
+      automatic: automatic.enabled,
+      pull_requests: (automatic.pull_requests ?? "both") as PullRequests,
+    }),
+    effort: defaults.effort ?? "",
+  };
   const key = JSON.stringify(saved);
   const [draft, setDraft] = useState(saved);
   const { save, error, status, failures } = useAutoSave(changed);
@@ -481,13 +518,14 @@ function ReviewsSection({
   // puts the controls back.
   // biome-ignore lint/correctness/useExhaustiveDependencies: `key` stands for `saved`
   useEffect(() => setDraft(saved), [key, failures]);
-  const change = (patch: Partial<ReviewSettings>) => {
+  const change = (patch: Partial<typeof saved>) => {
     const next = { ...draft, ...patch };
     setDraft(next);
     save({
       enabled: next.automatic,
       backend: next.backend,
       model: next.model,
+      effort: next.effort,
       pull_requests: next.pull_requests,
     });
   };
@@ -558,6 +596,12 @@ function ReviewsSection({
             onChange={(model) => change({ model })}
           />
         </SettingRow>
+        <EffortRow
+          label="Review reasoning effort"
+          backend={draft.backend}
+          value={draft.effort}
+          onChange={(effort) => change({ effort })}
+        />
       </div>
       <p className="settings-footnote">
         Changes save as you make them and apply to the next review in every repository.
@@ -580,6 +624,7 @@ function FixesSection({
   const saved = {
     backend: savedBackend,
     model: savedBackend ? defaults.fix_model || (modelPresets[savedBackend]?.[0] ?? "") : "",
+    effort: savedBackend ? (defaults.fix_effort ?? "") : "",
   };
   const key = JSON.stringify(saved);
   const [draft, setDraft] = useState(saved);
@@ -588,7 +633,7 @@ function FixesSection({
   useEffect(() => setDraft(saved), [key, failures]);
   const change = (next: typeof saved) => {
     setDraft(next);
-    save({ fix_backend: next.backend, fix_model: next.model });
+    save({ fix_backend: next.backend, fix_model: next.model, fix_effort: next.effort });
   };
   const reviewModel = defaults.backend === "auto" ? "" : defaults.model;
   const reviewAgent = [harnessName(review), reviewModel].filter(Boolean).join(" · ");
@@ -625,7 +670,11 @@ function FixesSection({
             options={fixHarnesses}
             same="Same as reviews"
             onChange={(backend) =>
-              change({ backend, model: backend ? (modelPresets[backend]?.[0] ?? "") : "" })
+              change({
+                backend,
+                model: backend ? (modelPresets[backend]?.[0] ?? "") : "",
+                effort: backend ? draft.effort : "",
+              })
             }
           />
         </SettingRow>
@@ -639,6 +688,14 @@ function FixesSection({
               onChange={(model) => change({ ...draft, model })}
             />
           </SettingRow>
+        ) : null}
+        {draft.backend ? (
+          <EffortRow
+            label="Fix reasoning effort"
+            backend={draft.backend}
+            value={draft.effort}
+            onChange={(effort) => change({ ...draft, effort })}
+          />
         ) : null}
       </div>
       <p className="settings-footnote">
@@ -1177,7 +1234,12 @@ function DecisionSettingsSection({ defaults }: { defaults: ReviewDefaults }) {
   const { save, error, status, failures } = useAutoSave(load, "api/settings/decisions");
   // The agent is "" while it follows the reviews', the model "" while it is
   // the agent's default.
-  const choice = saved && { enabled: saved.enabled, backend: saved.backend, model: saved.model };
+  const choice = saved && {
+    enabled: saved.enabled,
+    backend: saved.backend,
+    model: saved.model,
+    effort: saved.effort ?? "",
+  };
   const key = JSON.stringify(choice);
   const [draft, setDraft] = useState(choice);
   // biome-ignore lint/correctness/useExhaustiveDependencies: `key` stands for `choice`
@@ -1194,7 +1256,7 @@ function DecisionSettingsSection({ defaults }: { defaults: ReviewDefaults }) {
     setDraft(next);
     // The default is saved as none, so it follows the agent.
     const model = next.model === decisionModelDefaults[resolve(next.backend)] ? "" : next.model;
-    save({ enabled: next.enabled, backend: next.backend, model });
+    save({ enabled: next.enabled, backend: next.backend, model, effort: next.effort });
   };
   // A saved model the daemon reports extraction ignores is shown as such.
   const ignored =
@@ -1279,6 +1341,14 @@ function DecisionSettingsSection({ defaults }: { defaults: ReviewDefaults }) {
               onChange={(model) => change({ model })}
             />
           </SettingRow>
+        ) : null}
+        {fallback ? (
+          <EffortRow
+            label="Extraction reasoning effort"
+            backend={backend}
+            value={draft.effort}
+            onChange={(effort) => change({ effort })}
+          />
         ) : null}
       </div>
       <div className="settings-footnote">

@@ -943,8 +943,12 @@ test("captured decisions show on the PR page, in Settings and in Analytics", asy
   ).toBeChecked();
   await expect(capture.getByRole("combobox", { name: "Agent that extracts" })).toHaveValue("");
   await expect(capture.getByRole("combobox", { name: "Model", exact: true })).toBeVisible();
+  await expect(capture.getByRole("group", { name: "Extraction reasoning effort" })).toBeVisible();
   await capture.scrollIntoViewIfNeeded();
   await page.screenshot({ path: "test-results/settings-reviews-extraction.png" });
+  const reviews = page.getByRole("region", { name: "Reviews", exact: true });
+  await reviews.getByRole("group", { name: "Review reasoning effort" }).scrollIntoViewIfNeeded();
+  await page.screenshot({ path: "test-results/settings-reviews-effort.png" });
   for (const scheme of ["light", "dark"] as const) {
     await page.emulateMedia({ colorScheme: scheme });
     await capture.screenshot({ path: `test-results/decisions-settings-${scheme}.png` });

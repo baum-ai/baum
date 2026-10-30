@@ -645,6 +645,8 @@ export type DecisionSettings = {
   enabled: boolean;
   backend: string;
   model: string;
+  /** The reasoning effort; empty or absent is the agent's own. */
+  effort?: string;
   /** What the daemon makes of them: the harness extraction resolves to, its
    *  model, and whether `model` is ignored. */
   effective_backend?: string;

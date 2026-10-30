@@ -489,7 +489,8 @@ refuse a forced choice while thinking); claude runs `claude -p` with no tools
 but StructuredOutput, no settings, MCP servers or session persistence, and at
 most two turns so a reply the harness rejects is retried once; codex
 runs `codex exec --ephemeral --ignore-user-config` read-only with its shell
-tools disabled, low reasoning effort and the system prompt as its model
+tools disabled, the chosen reasoning effort (Codex's own when none) and the
+system prompt as its model
 instructions, in one turn, which a call to one of its remaining tools would
 extend by a request. Both CLIs run in an empty temporary directory with the prompt on
 stdin after `sessions.GenerationRunMarker`.
@@ -626,6 +627,18 @@ that ends without one is nudged twice before the run fails. The key and base
 URL come from the request's `Endpoint`, else the `Backend`'s own (the local
 host sets the key from `ANTHROPIC_API_KEY`). The default model is
 `claude-opus-5-5` at `medium` effort; another model is sent without an effort.
+A chosen effort (`Backend.Effort`) replaces both.
+
+The local app's reasoning effort is one of the preferences, per use case
+(`effort` for reviews, which chat follows, `fix_effort` with a fix agent of
+its own, and `decisions.effort` for data extraction): Default (empty) or
+`low`, `medium` or `high` (`config.Efforts`). It reaches the backends through
+`config.Config.Effort` and `generate.DefaultBackendsFor`: Claude Code as
+`--effort`, Codex as `-c model_reasoning_effort` and the Anthropic API as
+`output_config.effort`; cursor-agent has none. Default leaves it to the
+harness: local Claude Code runs (the User profile) think as Claude Code
+decides, while the Isolated profile of hosted and evaluation runs always sets
+`MAX_THINKING_TOKENS=0` and `CLAUDE_CODE_DISABLE_THINKING=1`.
 
 Every request sent is one call, charged before the next is made: a call the
 request's `MaxCalls` or `MaxTokens` cannot pay for is not sent, and

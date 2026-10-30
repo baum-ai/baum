@@ -356,3 +356,40 @@ func TestPreferencesExtractionBackend(t *testing.T) {
 		}
 	}
 }
+
+// Each use case has its own reasoning effort: reviews', fixes' with a fix
+// agent, and data extraction's.
+func TestPreferencesEfforts(t *testing.T) {
+	low, high, medium, wrong, empty := "low", "high", "medium", "max", ""
+	codex := config.BackendCodex
+	for _, p := range []Preferences{{Effort: &wrong}, {FixBackend: &codex, FixEffort: &wrong}, {Decisions: DecisionPreferences{Effort: &wrong}}, {FixEffort: &high}} {
+		if p.Validate() == nil {
+			t.Fatalf("%+v accepted", p)
+		}
+	}
+	p := Preferences{Effort: &low, FixBackend: &codex, FixEffort: &high, Decisions: DecisionPreferences{Effort: &medium}}
+	if err := p.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	if err := (Preferences{FixEffort: &empty}).Validate(); err != nil {
+		t.Fatalf("an empty fix effort without a fix agent: %v", err)
+	}
+	review := p.Resolve(config.Config{Backend: config.BackendClaude})
+	if review.Effort != "low" {
+		t.Fatalf("review %+v", review)
+	}
+	if fix := p.ResolveFix(review); fix.Effort != "high" || fix.Backend != codex {
+		t.Fatalf("fix %+v", fix)
+	}
+	if extraction := p.ResolveExtraction(review); extraction.Effort != "medium" {
+		t.Fatalf("extraction %+v", extraction)
+	}
+	// Without a fix agent the fix follows the reviews, effort included; data
+	// extraction without an effort of its own uses the harness's own.
+	if fix := (Preferences{Effort: &low}).ResolveFix(review); fix.Effort != "low" {
+		t.Fatalf("same as reviews %+v", fix)
+	}
+	if extraction := (Preferences{}).ResolveExtraction(review); extraction.Effort != "" {
+		t.Fatalf("extraction default %+v", extraction)
+	}
+}
