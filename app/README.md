@@ -889,7 +889,11 @@ in every repository. **Connections** holds the GitHub connection and, in the
 desktop app, the Agent hooks card with installation, enablement, update
 (to the latest plugin, without removing it first; shown with the installed
 plugin version) and removal for each agent. **This computer** holds the diagnostics, the background
-daemon note, in the desktop app the Command line card (inline CLI install,
+daemon note, **Jobs at once** (how many reviews, fixes and feature builds run
+in parallel, 1–4 and 4 by default, saved with `PUT
+api/settings/job-concurrency` and reported as `job_concurrency` by `GET
+api/settings`; the daemon applies it at once, and lowering it lets running jobs
+finish), in the desktop app the Command line card (inline CLI install,
 update and removal) and Zoom, and the environment for agents. Home paths are
 displayed with `~`. **Environment for agents** (`AgentEnvSection`) edits
 variables set for every agent baum runs and for the git commands that commit

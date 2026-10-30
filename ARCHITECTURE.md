@@ -2325,6 +2325,14 @@ without duplicating review documents. `jobs.Open` takes an exclusive
 `internal/filelock` lock beside the journal (`jobs.json.lock`) and keeps it
 until its workers stop, so two processes never run one queue; it waits up to
 10 s for a predecessor whose shutdown timed out and that is exiting.
+Reviews, fixes and feature builds share one lane, which runs up to
+`repos.MaxJobConcurrency` (4) jobs at once, oldest first; questions have their
+own lane (see the chat section). The `job_concurrency` preference lowers the
+limit (`PUT api/settings/job-concurrency`, 1–4), and `Queue.SetConcurrency`
+applies it to the running queue: lowering it stops no running job, it only
+holds new ones until fewer run. A job waits while another job of one of its
+pull requests (a group's members count) runs, and later jobs may start before
+it.
 `Queue.Drain` refuses new jobs and reports true only when none is queued or
 running, under the mutex `Submit` checks, so a restart never cuts a started
 job short: one started during it gets `503` with `Retry-After` and is started
@@ -2462,7 +2470,8 @@ reviews and shows in the same Jobs list. A fix starts alone, at once
 checks: preparation leaves `conflicts` false and reads no review threads, and
 any other `only` is refused);
 one in a batch is refused, and automatic generation never queues one. A review and a fix of one pull request
-neither supersede nor block each other, and a fix of a head does not count as
+are neither refused nor superseded by each other, though they never run at the
+same time (the queue starts no job while another of its pull request runs), and a fix of a head does not count as
 that head's review for the automatic scheduler.
 
 `jobs.Local` prepares a fix from fresh REST evidence (`internal/fix`):
@@ -3681,8 +3690,7 @@ and two files:
    `stopping` appears only while it shuts down, and `restart_pending` when an
    older daemon was kept because it is running jobs and will restart as this
    version once they finish (see Lifecycle). On failure it exits non-zero
-   with the reason on stderr. `--port` and `--concurrency` apply only when it
-   starts the daemon.
+   with the reason on stderr. `--port` applies only when it starts the daemon.
 2. `<state>/credential.json`, mode 0600 (Windows: current-user DACL), holds
    `{"url":"http://127.0.0.1:PORT/#token=<43 characters>"}`, the launch URL.
    Loading it runs the bootstrap page, which exchanges the fragment for the

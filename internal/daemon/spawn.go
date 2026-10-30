@@ -37,9 +37,6 @@ func spawnArgs(start StartOptions) []string {
 	if start.Port != 0 {
 		args = append(args, "--port", strconv.Itoa(start.Port))
 	}
-	if start.Concurrency != 0 {
-		args = append(args, "--concurrency", strconv.Itoa(start.Concurrency))
-	}
 	return args
 }
 

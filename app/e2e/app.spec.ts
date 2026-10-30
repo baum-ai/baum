@@ -323,6 +323,12 @@ test("local inbox, reused PR viewer, versions, generation and settings", async (
   ).toBeVisible();
   await page.screenshot({ path: "test-results/settings-fixes.png", animations: "disabled" });
   await openSettings(page, "This computer");
+  const jobsAtOnce = page.getByLabel("Jobs at once");
+  await expect(jobsAtOnce).toHaveValue("4");
+  await jobsAtOnce.selectOption("2");
+  await expect(jobsAtOnce).toBeEnabled();
+  await expect(jobsAtOnce).toHaveValue("2");
+  await page.screenshot({ path: "test-results/settings-computer.png", animations: "disabled" });
   await page.getByRole("button", { name: "Check this computer", exact: true }).click();
   const diagnostics = page
     .getByRole("dialog")
