@@ -37,8 +37,12 @@ func Local(ctx context.Context, repo *gitlocal.Repo, repository string) Work {
 	}
 	if parseErr == nil {
 		if origin, err := repo.RemoteFetchURL(ctx, "origin"); err == nil {
-			if source, err := github.RepositoryFromRemote(origin); err == nil && strings.EqualFold(source.Host, parsed.Host) {
+			if source, err := github.RepositoryFromRemote(origin); err == nil {
 				w.Repository = strings.ToLower(source.String())
+			} else if host, name, ok := gitlocal.RemoteRepository(origin); ok {
+				// A known foreign origin is negative evidence even when gh
+				// does not recognize that host as a GitHub installation.
+				w.Repository = host + "/" + name
 			}
 		}
 	}

@@ -106,3 +106,23 @@ func TestForkHeadIdentitySeparatesSameNamedBranches(t *testing.T) {
 		t.Fatalf("fork upstream matched PR %d", got)
 	}
 }
+
+func TestLocalDoesNotAliasAnOriginOnAnotherHost(t *testing.T) {
+	dir := t.TempDir()
+	gitIn(t, dir, "init", "-q", "-b", "feature")
+	gitIn(t, dir, "commit", "-q", "--allow-empty", "-m", "start")
+	gitIn(t, dir, "remote", "add", "origin", "https://other.example/acme/demo")
+	repo, err := gitlocal.Open(context.Background(), dir, gitlocal.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = repo.Close() }()
+	work := Local(context.Background(), repo, "acme/demo")
+	if work.Repository != "other.example/acme/demo" {
+		t.Fatalf("origin identity lost: %+v", work)
+	}
+	snapshot := discovery.Snapshot{Repository: "acme/demo", PullRequests: []discovery.PullRequest{{Number: 1, HeadRef: "feature"}}}
+	if got := Find(snapshot, work); got != 0 {
+		t.Fatalf("cross-host branch linked to PR %d", got)
+	}
+}
