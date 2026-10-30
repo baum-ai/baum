@@ -362,6 +362,42 @@ func DetailsOf(section []byte) []byte {
 	return encoded
 }
 
+// StoredOutline returns the outline and the context of a stored document
+// written in stages, for a host that writes again the details of its failed
+// sections (agent's StagedRun.Outline): the summary and the sections the
+// version wrote, not the stale ones it carried from an earlier version, with
+// its relations, in the shape the outline stage writes, and the summary's
+// context, nil when it has none. PrepareOutline drops the host's fields left
+// in them.
+func StoredOutline(document []byte) (outline, context []byte, err error) {
+	root, _, err := decodeStored(document, "stored review")
+	if err != nil {
+		return nil, nil, err
+	}
+	sections := []any{}
+	for _, section := range jsonObjects(root["sections"]) {
+		if derived, _ := section["derived"].(map[string]any); derived["state"] == "stale" {
+			continue
+		}
+		sections = append(sections, section)
+	}
+	root["sections"] = sections
+	root["relations"] = []any{}
+	if meta, ok := root["review"].(map[string]any); ok && meta["relations"] != nil {
+		root["relations"] = meta["relations"]
+	}
+	if summary, ok := root["summary"].(map[string]any); ok && summary["context"] != nil {
+		if context, err = json.Marshal(summary["context"]); err != nil {
+			return nil, nil, err
+		}
+	}
+	encoded, err := json.Marshal(root)
+	if err != nil {
+		return nil, nil, err
+	}
+	return OutlineOf(encoded), context, nil
+}
+
 // SectionID returns the ID a section's details name, spelled as the outline
 // spells section IDs, or "" when they name none.
 func SectionID(details []byte) string {

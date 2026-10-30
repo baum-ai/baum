@@ -1,0 +1,304 @@
+package generate_test
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"slices"
+	"strings"
+	"sync"
+	"testing"
+
+	"github.com/baum-ai/baum/agent"
+	"github.com/baum-ai/baum/agent/prompt"
+	"github.com/baum-ai/baum/internal/assemble/assembletest"
+	"github.com/baum-ai/baum/internal/generate"
+	"github.com/baum-ai/baum/internal/generate/generatetest"
+	"github.com/baum-ai/baum/internal/store"
+	"github.com/baum-ai/baum/sessions"
+)
+
+// twoSections splits the stub document into a section of the first hunk
+// and one of the others, so one can fail while the other is written.
+func twoSections(d map[string]any) {
+	section := d["sections"].([]any)[0].(map[string]any)
+	hunks := section["hunks"].([]string)
+	second := map[string]any{}
+	for key, value := range section {
+		second[key] = value
+	}
+	first := map[string]any{}
+	for key, value := range section {
+		first[key] = value
+	}
+	first["hunks"] = hunks[:1]
+	second["id"], second["title"], second["hunks"] = "sec_rest", "The rest", hunks[1:]
+	anchor := []any{map[string]any{"type": "hunk", "id": hunks[1]}}
+	second["summary"] = map[string]any{"text": "The rest of the change.", "anchors": anchor}
+	second["attention"] = nil
+	second["risks"], second["evidence"] = []any{}, []any{}
+	second["assessment"] = map[string]any{"level": 2, "factors": []any{}, "reasons": []any{map[string]any{"text": "Small.", "anchors": anchor}}}
+	d["sections"] = []any{first, second}
+}
+
+// stagedReplies answers every stage from the two-section document, except
+// what answer returns first.
+func stagedReplies(answer func(stage string, request agent.Request) (agent.Result, error, bool)) func(context.Context, agent.Request, int) (agent.Result, error) {
+	return func(_ context.Context, request agent.Request, _ int) (agent.Result, error) {
+		if answer != nil {
+			if result, err, ok := answer(generatetest.Stage(request), request); ok {
+				return result, err
+			}
+		}
+		document, err := generatetest.Document(request.Directory, twoSections)
+		result := agent.Result{Document: generatetest.ForStage(request, document), Model: "stub-model", Calls: 1, Tokens: 100}
+		if request.PersistSession {
+			result.SessionID = generatetest.StageSessionID(request)
+		}
+		return result, err
+	}
+}
+
+func stagedOptions(t *testing.T, f *fixture) generate.Options {
+	o := f.options(t)
+	o.Staged = true
+	o.Budgets.MaxCalls = 16
+	return o
+}
+
+func sectionStates(t *testing.T, document []byte) map[string]any {
+	t.Helper()
+	var doc struct {
+		Sections []map[string]any `json:"sections"`
+	}
+	if err := json.Unmarshal(document, &doc); err != nil {
+		t.Fatal(err)
+	}
+	states := map[string]any{}
+	for _, section := range doc.Sections {
+		states[section["id"].(string)] = section["details"]
+	}
+	return states
+}
+
+// A staged run sends the outline, then the details and the context, each
+// prompt starting with the generation-run marker; the drafts it reports are
+// completed, with the sections not yet written pending, and the document is
+// published with the staged prompt's version and digest.
+func TestStagedRunPublishesWithDrafts(t *testing.T) {
+	f := newFixture(t)
+	f.backend.RunFunc = stagedReplies(nil)
+	o := stagedOptions(t, f)
+	var mu sync.Mutex
+	var drafts [][]byte
+	o.OnDraft = func(document []byte) {
+		mu.Lock()
+		defer mu.Unlock()
+		drafts = append(drafts, document)
+	}
+	result, err := generate.Run(context.Background(), o)
+	if err != nil {
+		t.Fatalf("%v\n%s", err, f.progress.String())
+	}
+	var stages []string
+	for _, request := range f.backend.Requests {
+		stages = append(stages, generatetest.Stage(request))
+		if !strings.HasPrefix(request.Prompt, sessions.GenerationRunMarker) {
+			t.Errorf("a %s prompt lacks the marker: %.60q", generatetest.Stage(request), request.Prompt)
+		}
+	}
+	if !slices.Equal(stages, []string{agent.StageOutline, agent.StageDetails, agent.StageContext}) {
+		t.Fatalf("stages %v", stages)
+	}
+	if len(drafts) == 0 {
+		t.Fatal("no draft was reported")
+	}
+	if states := sectionStates(t, drafts[0]); states["sec_changes"] != "pending" || states["sec_rest"] != "pending" {
+		t.Errorf("first draft %v", states)
+	}
+	staged, _ := prompt.StagedPrompts{}.StagedInstructions(context.Background(), "claude")
+	if result.Metadata.PromptVersion != staged.Version || result.Metadata.PromptDigest == staged.Digest || result.Metadata.PromptDigest == "" {
+		t.Errorf("prompt %q %q", result.Metadata.PromptVersion, result.Metadata.PromptDigest)
+	}
+	if states := sectionStates(t, result.Document); states["sec_changes"] != nil || states["sec_rest"] != nil || len(result.FailedSections) != 0 || result.ContextFailed {
+		t.Errorf("published %v, gaps %v %v", states, result.FailedSections, result.ContextFailed)
+	}
+	for _, line := range []string{"outline, pass 1: the outline is valid", "details, pass 1: the details is valid", "context, pass 1: the context is valid"} {
+		if !strings.Contains(f.progress.String(), line) {
+			t.Errorf("progress lacks %q:\n%s", line, f.progress.String())
+		}
+	}
+	f.requireClean(t)
+}
+
+// A section whose details stay invalid is published as failed, a context
+// that fails is left out, and the run succeeds; an outline that fails fails
+// it.
+func TestStagedRunPublishesWithGaps(t *testing.T) {
+	t.Run("failed section", func(t *testing.T) {
+		f := newFixture(t)
+		f.backend.RunFunc = stagedReplies(func(stage string, request agent.Request) (agent.Result, error, bool) {
+			if stage != agent.StageDetails {
+				return agent.Result{}, nil, false
+			}
+			document, err := generatetest.Document(request.Directory, twoSections)
+			var all struct {
+				Sections []json.RawMessage `json:"sections"`
+			}
+			_ = json.Unmarshal(generatetest.ForStage(request, document), &all)
+			// Only sec_changes is ever written.
+			var kept []json.RawMessage
+			for _, section := range all.Sections {
+				if strings.Contains(string(section), `"sec_changes"`) {
+					kept = append(kept, section)
+				}
+			}
+			if kept == nil {
+				kept = []json.RawMessage{json.RawMessage(`{"id":"sec_nothing"}`)}
+			}
+			encoded, _ := json.Marshal(map[string]any{"sections": kept})
+			return agent.Result{Document: encoded, Model: "stub-model", Calls: 1, Tokens: 100}, err, true
+		})
+		result, err := generate.Run(context.Background(), stagedOptions(t, f))
+		if err != nil {
+			t.Fatalf("%v\n%s", err, f.progress.String())
+		}
+		if states := sectionStates(t, result.Document); states["sec_rest"] != "failed" || states["sec_changes"] != nil || !slices.Equal(result.FailedSections, []string{"sec_rest"}) {
+			t.Fatalf("states %v, failed %v", states, result.FailedSections)
+		}
+		if !strings.Contains(f.progress.String(), "1 section(s) without their details") {
+			t.Errorf("progress:\n%s", f.progress.String())
+		}
+	})
+	t.Run("failed context", func(t *testing.T) {
+		f := newFixture(t)
+		f.backend.RunFunc = stagedReplies(func(stage string, _ agent.Request) (agent.Result, error, bool) {
+			return agent.Result{Calls: 1}, errors.New("unavailable"), stage == agent.StageContext
+		})
+		result, err := generate.Run(context.Background(), stagedOptions(t, f))
+		if err != nil {
+			t.Fatalf("%v\n%s", err, f.progress.String())
+		}
+		if !result.ContextFailed || len(result.FailedSections) != 0 || strings.Contains(string(result.Document), `"context":{`) {
+			t.Fatalf("gaps %v %v", result.FailedSections, result.ContextFailed)
+		}
+	})
+	t.Run("failed outline", func(t *testing.T) {
+		f := newFixture(t)
+		f.backend.RunFunc = stagedReplies(func(stage string, _ agent.Request) (agent.Result, error, bool) {
+			return agent.Result{Document: []byte(`{"schema":"baum.review/1","sections":[]}`), Model: "stub-model", Calls: 1}, nil, stage == agent.StageOutline
+		})
+		_, err := generate.Run(context.Background(), stagedOptions(t, f))
+		if generate.CategoryOf(err) != generate.CategoryValidation {
+			t.Fatalf("err %v", err)
+		}
+		for _, request := range f.backend.Requests {
+			if generatetest.Stage(request) != agent.StageOutline {
+				t.Fatalf("a %s call after a failed outline", generatetest.Stage(request))
+			}
+		}
+		f.requireClean(t)
+	})
+}
+
+// A staged run that keeps its session records the details stage's, which a
+// chat forks, and deletes the others; without details it keeps the
+// outline's.
+func TestStagedRunKeepsTheDetailsSession(t *testing.T) {
+	write := claudeHome(t)
+	f := newFixture(t)
+	o, _ := keptOptions(t, f)
+	o.Staged, o.Budgets.MaxCalls = true, 16
+	files := map[string]string{}
+	var mu sync.Mutex
+	f.backend.RunFunc = stagedReplies(func(stage string, request agent.Request) (agent.Result, error, bool) {
+		document, err := generatetest.Document(request.Directory, twoSections)
+		id := generatetest.StageSessionID(request)
+		mu.Lock()
+		files[stage] = write(request.Directory, id)
+		mu.Unlock()
+		return agent.Result{Document: generatetest.ForStage(request, document), Model: "stub-model", Calls: 1, Tokens: 100, SessionID: id}, err, true
+	})
+	result, err := generate.Run(context.Background(), o)
+	if err != nil {
+		t.Fatalf("%v\n%s", err, f.progress.String())
+	}
+	if result.Metadata.Session == nil || result.Metadata.Session.ID != generatetest.SessionID {
+		t.Fatalf("session %+v", result.Metadata.Session)
+	}
+	if !exists(files[agent.StageDetails]) || exists(files[agent.StageOutline]) || exists(files[agent.StageContext]) {
+		t.Errorf("sessions left: details %v, outline %v, context %v", exists(files[agent.StageDetails]), exists(files[agent.StageOutline]), exists(files[agent.StageContext]))
+	}
+}
+
+// A saved version with a failed section is completed: only the details of
+// that section are written again, and the result is the same version, with
+// its metadata and generation time, which CompleteCurrent stores in place.
+func TestContinueWritesOnlyTheFailedDetails(t *testing.T) {
+	ctx := context.Background()
+	f := newFixture(t)
+	failing := true
+	f.backend.RunFunc = stagedReplies(func(stage string, request agent.Request) (agent.Result, error, bool) {
+		if stage == agent.StageDetails && failing && slices.Contains(generatetest.AskedSections(request), "sec_rest") {
+			// Leaves sec_rest out every time.
+			document, err := generatetest.Document(request.Directory, twoSections)
+			part := generatetest.ForStage(request, document)
+			var all struct {
+				Sections []json.RawMessage `json:"sections"`
+			}
+			_ = json.Unmarshal(part, &all)
+			kept := []json.RawMessage{json.RawMessage(`{"id":"sec_nothing"}`)}
+			for _, section := range all.Sections {
+				if strings.Contains(string(section), `"sec_changes"`) {
+					kept = []json.RawMessage{section}
+				}
+			}
+			encoded, _ := json.Marshal(map[string]any{"sections": kept})
+			return agent.Result{Document: encoded, Model: "stub-model", Calls: 1, Tokens: 100}, err, true
+		}
+		return agent.Result{}, nil, false
+	})
+	s, err := store.Open("", t.TempDir(), true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	key := store.Key{Repository: assembletest.Repository.String(), Number: assembletest.Number}
+	if _, err := generate.Publish(ctx, s, key, stagedOptions(t, f), nil); err != nil {
+		t.Fatalf("%v\n%s", err, f.progress.String())
+	}
+	saved, err := s.Latest(ctx, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if states := sectionStates(t, saved.Document); states["sec_rest"] != "failed" {
+		t.Fatalf("saved %v", states)
+	}
+	failing = false
+	f.backend.Requests = nil
+	o := stagedOptions(t, f)
+	o.Continue = &saved
+	result, err := generate.Run(ctx, o)
+	if err != nil {
+		t.Fatalf("%v\n%s", err, f.progress.String())
+	}
+	if len(f.backend.Requests) != 1 || generatetest.Stage(f.backend.Requests[0]) != agent.StageDetails || !slices.Equal(generatetest.AskedSections(f.backend.Requests[0]), []string{"sec_rest"}) {
+		t.Fatalf("%d request(s)", len(f.backend.Requests))
+	}
+	if states := sectionStates(t, result.Document); states["sec_rest"] != nil || states["sec_changes"] != nil || len(result.FailedSections) != 0 {
+		t.Fatalf("completed %v", states)
+	}
+	if result.Metadata != saved.Metadata {
+		t.Errorf("metadata changed: %+v", result.Metadata)
+	}
+	if err := s.CompleteCurrent(ctx, key, saved, result.Document); err != nil {
+		t.Fatal(err)
+	}
+	// A pull request that moved since is refused before any call.
+	moved := saved
+	moved.Metadata.Head = strings.Repeat("0", 40)
+	f.backend.Requests = nil
+	o.Continue = &moved
+	if _, err := generate.Run(ctx, o); generate.CategoryOf(err) != generate.CategoryInput || len(f.backend.Requests) != 0 {
+		t.Fatalf("err %v, %d request(s)", err, len(f.backend.Requests))
+	}
+}
