@@ -21,6 +21,22 @@
 // trailing heading, sets Version to Version and Digest to the sha256 of the
 // joined Body. The repair wording stays in agent.RepairText and the tile
 // guidance in tilecatalogue, so neither belongs in these files.
+//
+// A staged review (agent.Generator.StagedReview, StagedPrompts) has four
+// more, derived from review-public-v6.md:
+//
+//	review-shared-public-v1.md   what every stage shares: the stages and what
+//	                             each writes, the ground rules, the inputs,
+//	                             checking a change, anchors, writing and
+//	                             calibration; with the bundle and the source
+//	                             excerpts, the prefix of every stage's prompt
+//	review-outline-public-v1.md  the overview and the sections' outline
+//	review-details-public-v1.md  the sections' details
+//	review-context-public-v1.md  the summary's codebase context
+//
+// Each stage file ends with a "## Submitting" heading, under which the
+// backend's submit block goes, and names its schema file
+// (agent.TaskSchemaFile).
 package prompt
 
 import (
@@ -94,6 +110,51 @@ func (GroupPrompts) Instructions(_ context.Context, backend string) (agent.Promp
 	}
 	shared := strings.TrimSuffix(reviewPublic, submitting)
 	return composed(GroupVersion, shared+groupPublic+submitting+"\n"+submit), nil
+}
+
+// StagedVersion is the prompt version of a staged review. Change it with the
+// text of any review-*-public-v1.md file of the staged review.
+const StagedVersion = "review-staged-public-v1"
+
+//go:embed review-shared-public-v1.md
+var stagedShared string
+
+//go:embed review-outline-public-v1.md
+var stagedOutline string
+
+//go:embed review-details-public-v1.md
+var stagedDetails string
+
+//go:embed review-context-public-v1.md
+var stagedContext string
+
+// StagedPrompts implements agent.StagedPrompts with this module's public
+// staged review prompts.
+type StagedPrompts struct{}
+
+var _ agent.StagedPrompts = StagedPrompts{}
+
+// StagedInstructions returns the staged review prompts for a backend: the
+// shared text, and each stage's text with the backend's submit block
+// appended, as Prompts does for a review written in one pass. Digest is the
+// sha256 of the four texts, each followed by a NUL byte. Any other backend
+// is an error.
+func (StagedPrompts) StagedInstructions(_ context.Context, backend string) (agent.StagedPrompt, error) {
+	submit, err := submitBlock(backend)
+	if err != nil {
+		return agent.StagedPrompt{}, err
+	}
+	staged := agent.StagedPrompt{
+		Version: StagedVersion, Shared: stagedShared,
+		Outline: stagedOutline + "\n" + submit, Details: stagedDetails + "\n" + submit, Context: stagedContext + "\n" + submit,
+	}
+	digest := sha256.New()
+	for _, text := range []string{staged.Shared, staged.Outline, staged.Details, staged.Context} {
+		digest.Write([]byte(text))
+		digest.Write([]byte{0})
+	}
+	staged.Digest = hex.EncodeToString(digest.Sum(nil))
+	return staged, nil
 }
 
 func submitBlock(backend string) (string, error) {
