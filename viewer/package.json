@@ -65,6 +65,7 @@
     "./components/session-list": "./src/components/session-list.tsx",
     "./components/side-nav": "./src/components/side-nav.tsx",
     "./components/states": "./src/components/states.tsx",
+    "./components/stumpy": "./src/components/stumpy.tsx",
     "./components/table": "./src/components/table.tsx",
     "./components/tabs": "./src/components/tabs.ts",
     "./components/timeline-page": "./src/components/timeline-page.tsx",

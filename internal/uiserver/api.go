@@ -48,6 +48,9 @@ type LocalAPI struct {
 	// Review serves /api/prs/review: submitting a pull request review with
 	// inline comments from the app.
 	Review http.Handler
+	// Chat serves /api/prs/chat: asking the agent that wrote a review about
+	// the pull request, and the conversations so far (ChatHandler).
+	Chat http.Handler
 	// Update serves /api/prs/update-branch and /api/prs/rerun-checks, with
 	// their -options reads: updating a pull request's branch and re-running its
 	// failed workflow runs. With merging, submitting a review and a
@@ -147,6 +150,9 @@ func (a LocalAPI) Handler() *LocalHandler {
 	mux.Handle("GET /api/prs/merge-options", merge)
 	mux.Handle("POST /api/prs/merge", merge)
 	mux.Handle("POST /api/prs/review", provider(a.Review, "review_unavailable"))
+	chat := provider(a.Chat, "chat_unavailable")
+	mux.Handle("GET /api/prs/chat", chat)
+	mux.Handle("POST /api/prs/chat", chat)
 	update := provider(a.Update, "update_unavailable")
 	mux.Handle("GET /api/prs/update-branch-options", update)
 	mux.Handle("POST /api/prs/update-branch", update)
@@ -221,6 +227,8 @@ func (a LocalAPI) Handler() *LocalHandler {
 			FixModel       string            `json:"fix_model"`
 		}{cfg.Backend, cfg.Model, cfg.Budgets, cfg.Caps, cfg.AgentEnv, source, fixBackend, fixModel})
 	})
+	mux.HandleFunc("GET /api/settings/appearance", a.getAppearance)
+	mux.HandleFunc("PUT /api/settings/appearance", a.putAppearance)
 	mux.HandleFunc("GET /api/settings/decisions", a.getDecisionSettings)
 	mux.HandleFunc("PUT /api/settings/decisions", a.putDecisionSettings)
 	// The app's agent environment replaces the config file's; an empty one

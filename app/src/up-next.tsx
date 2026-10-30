@@ -24,10 +24,13 @@ import {
   fixJob,
   fixLabel,
   isActiveJob,
+  jobHref,
   jobReasonText,
   joinAnd,
   liveFor,
+  navigate,
   request,
+  watchableFix,
   type Entry,
   type FixOnly,
   type Job,
@@ -89,13 +92,6 @@ export const GROUPS: { id: "eyes" | "merge" | "agent"; title: string; kinds: UpN
   { id: "merge", title: "Ready to merge", kinds: ["merge"] },
   { id: "agent", title: "Hand to an agent", kinds: ["fix", "update"] },
 ];
-
-/** A fix job's transcript when it has one, else the job in the list. */
-function jobHref(job: Job) {
-  return job.has_transcript
-    ? appURL(`?page=jobs&job=${encodeURIComponent(job.id)}`)
-    : appURL(`?page=jobs#job-${encodeURIComponent(job.id)}`);
-}
 
 export function upNextKey(pr: Pick<Entry["pull_request"], "repository" | "number">) {
   return `${pr.repository.toLowerCase()}#${pr.number}`;
@@ -480,6 +476,8 @@ export function useUpNext(entries: Entry[], live: LiveSession[], jobs: Job[], re
     waiting,
     fixing,
     cleared,
+    /** The fix whose transcript `t` opens for a pull request. */
+    watchable: (entry: Entry) => watchableFix(entry, jobs),
     snoozedUntil: (key: string): SnoozeEnd =>
       key in state.held ? "change" : (state.snoozed[key] ?? 0),
     snooze: (item: UpNextItem, until: SnoozeEnd) =>
@@ -766,6 +764,11 @@ export function UpNextPage({
       event.preventDefault();
       setMenu(false);
       selectedFix();
+    } else if (key === "t") {
+      const run = selected && inbox.watchable(selected.entry);
+      if (!run) return;
+      event.preventDefault();
+      navigate(jobHref(run));
     } else if (key === "u") {
       if (!toast?.undo) return;
       event.preventDefault();
@@ -1282,6 +1285,11 @@ function Panel({
       {job ? (
         <Link href={jobHref(job)} className="upnext-secondary">
           Watch the agent
+          {job.has_transcript ? (
+            <kbd aria-hidden="true" className="key-hint">
+              t
+            </kbd>
+          ) : null}
         </Link>
       ) : waiting ? (
         github
@@ -1370,7 +1378,14 @@ function Panel({
         <div className="upnext-failed" role="status">
           The last fix failed
           {item.failedFix.reason ? `: ${jobReasonText(item.failedFix.reason)}` : "."}{" "}
-          <Link href={jobHref(item.failedFix)}>See what the agent did</Link>
+          <Link href={jobHref(item.failedFix)}>
+            See what the agent did
+            {item.failedFix.has_transcript ? (
+              <kbd aria-hidden="true" className="key-hint">
+                t
+              </kbd>
+            ) : null}
+          </Link>
         </div>
       ) : null}
       <div className="upnext-actions">

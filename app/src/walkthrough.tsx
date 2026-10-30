@@ -13,11 +13,13 @@ import {
 } from "@baum/viewer/components/icons";
 import { Alert, Button, SegmentedControl } from "@baum/viewer/components/ui";
 import type { ReviewDocument, RiskScoreLevel } from "@baum/viewer/review-document";
-import { LocalRequestError, request, type Entry } from "./api";
+import { LocalRequestError, request, type ChatFocus, type Entry } from "./api";
+import { stopFocus } from "./chat";
 import { useShortcuts } from "./shortcuts";
 import {
   buildTour,
   commentedStops,
+  PROGRESS_EVENT,
   loadProgress,
   progressKey,
   reviewSubmission,
@@ -49,6 +51,7 @@ export function Walkthrough({
   close,
   patches,
   changed,
+  ask,
 }: {
   entry: Entry;
   document: ReviewDocument;
@@ -58,6 +61,9 @@ export function Walkthrough({
   close: () => void;
   patches: HunkPatchSource;
   changed: () => Promise<void>;
+  /** The Ask panel: whether it is open, toggling it, and asking about a part
+   *  of the review. Absent, the walkthrough offers no questions. */
+  ask?: { open: boolean; toggle: () => void; about: (focus: ChatFocus) => void };
 }) {
   const tour = useMemo(() => buildTour(document), [document]);
   const key = progressKey(document);
@@ -65,6 +71,38 @@ export function Walkthrough({
   useEffect(() => {
     saveProgress(key, progress);
   }, [key, progress]);
+  // The stop whose comment is being edited and its note as it was when the
+  // editing began, to keep what the Ask panel adds to it meanwhile.
+  const editingRef = useRef<string | null>(null);
+  const editBase = useRef("");
+  // The Ask panel adds an answer to the draft from outside this page.
+  useEffect(() => {
+    const changed = (event: Event) => {
+      if ((event as CustomEvent<string>).detail !== key) return;
+      const next = loadProgress(key);
+      setProgress(next);
+      const id = editingRef.current;
+      if (id === null) return;
+      // Text appended to the stop's note since the editing began joins the
+      // text being edited, and text the panel takes back (Undo) leaves it.
+      const stored = next.notes[id] ?? "";
+      const base = editBase.current;
+      if (stored === base) return;
+      if (stored.startsWith(base)) {
+        editBase.current = stored;
+        const added = stored.slice(base.length).replace(/^\s+/, "");
+        setDraft((current) =>
+          current.trim() ? `${current.replace(/\s+$/, "")}\n\n${added}` : added,
+        );
+      } else if (base.startsWith(stored)) {
+        editBase.current = stored;
+        const removed = base.slice(stored.length).trim();
+        if (removed) setDraft((current) => withoutLast(current, removed));
+      }
+    };
+    window.addEventListener(PROGRESS_EVENT, changed);
+    return () => window.removeEventListener(PROGRESS_EVENT, changed);
+  }, [key]);
   const seen = useMemo(() => new Set(progress.seen), [progress.seen]);
   const commented = (stop: Stop) => Boolean(progress.notes[stop.id]?.trim());
   const done = (stop: Stop) => seen.has(stop.id) || commented(stop);
@@ -83,6 +121,7 @@ export function Walkthrough({
   const [cur, setCur] = useState(0);
   const [skipped, setSkipped] = useState(0);
   const [editing, setEditing] = useState<string | null>(null);
+  editingRef.current = editing;
   const [draft, setDraft] = useState("");
   const [open, setOpen] = useState<Set<string>>(new Set());
   const [filter, setFilter] = useState<"all" | "unseen" | "commented">("all");
@@ -140,7 +179,8 @@ export function Walkthrough({
     });
   };
   const startComment = (stop: Stop) => {
-    setDraft(progress.notes[stop.id] ?? "");
+    editBase.current = progress.notes[stop.id] ?? "";
+    setDraft(editBase.current);
     setEditing(stop.id);
   };
 
@@ -268,6 +308,18 @@ export function Walkthrough({
                 { value: "all", label: "Everything" },
               ]}
             />
+            {ask ? (
+              <Button
+                variant="secondary"
+                size="compact"
+                aria-pressed={ask.open}
+                aria-keyshortcuts="a"
+                data-ask-button=""
+                onClick={ask.toggle}
+              >
+                Ask
+              </Button>
+            ) : null}
             <Button variant="secondary" size="compact" onClick={close}>
               Full review
             </Button>
@@ -308,6 +360,7 @@ export function Walkthrough({
                   }}
                   cancelComment={() => setEditing(null)}
                   removeComment={() => setNote(claim, "")}
+                  ask={ask ? () => ask.about(stopFocus(document, claim)) : undefined}
                 />
               ) : (
                 <WrapUp
@@ -391,6 +444,9 @@ export function Walkthrough({
                   );
                 }}
                 walk={toTour}
+                ask={
+                  ask ? (index) => ask.about(stopFocus(document, tour.stops[index]!)) : undefined
+                }
               />
             </div>
             <aside
@@ -624,6 +680,7 @@ function Claim({
   saveComment,
   cancelComment,
   removeComment,
+  ask,
 }: {
   tour: Tour;
   stop: Stop;
@@ -637,6 +694,8 @@ function Claim({
   saveComment: () => void;
   cancelComment: () => void;
   removeComment: () => void;
+  /** Asks the review's agent about this stop. */
+  ask?: () => void;
 }) {
   const chapter = tour.chapters[stop.chapter]!;
   const hasNote = Boolean(note.trim());
@@ -721,6 +780,13 @@ function Claim({
           <span className="text-xs text-(--text-secondary)">Nothing to say? Just move on.</span>
         </div>
       )}
+      {ask ? (
+        <div>
+          <Button variant="secondary" onClick={ask}>
+            Ask about this
+          </Button>
+        </div>
+      ) : null}
       {stop.anchors.length ? (
         <div className="walk-evidence">
           <h3 className={LABEL}>Evidence</h3>
@@ -900,6 +966,7 @@ function Ledger({
   setNote,
   comment,
   walk,
+  ask,
 }: {
   tour: Tour;
   document: ReviewDocument;
@@ -917,6 +984,7 @@ function Ledger({
   setNote: (stop: Stop, note: string) => void;
   comment: (index: number) => void;
   walk: (index: number) => void;
+  ask?: (index: number) => void;
 }) {
   const allOpen = visible.length > 0 && visible.every((at) => open.has(tour.stops[at]!.id));
   const counts = {
@@ -1027,9 +1095,21 @@ function Ledger({
                         </button>
                       </div>
                     </div>
-                    <Button variant="secondary" size="compact" onClick={() => comment(at)}>
-                      {isCommented ? "Edit comment" : "Comment"}
-                    </Button>
+                    <div className="flex flex-none gap-1.5">
+                      {ask ? (
+                        <Button
+                          variant="secondary"
+                          size="compact"
+                          aria-label={`Ask about ${stop.title}`}
+                          onClick={() => ask(at)}
+                        >
+                          Ask
+                        </Button>
+                      ) : null}
+                      <Button variant="secondary" size="compact" onClick={() => comment(at)}>
+                        {isCommented ? "Edit comment" : "Comment"}
+                      </Button>
+                    </div>
                   </div>
                   {isOpen ? (
                     <div className="flex flex-col gap-2.5 pr-6 pb-4 pl-15">
@@ -1296,4 +1376,14 @@ function Submit({
       </div>
     </div>
   );
+}
+
+/** The text with the last occurrence of a part taken out, along with the blank
+ *  line that joined it; the text unchanged when the part is no longer in it. */
+function withoutLast(text: string, part: string): string {
+  const at = text.lastIndexOf(part);
+  if (at < 0) return text;
+  const before = text.slice(0, at).replace(/\s+$/, "");
+  const after = text.slice(at + part.length).replace(/^\s+/, "");
+  return before && after ? `${before}\n\n${after}` : before || after;
 }

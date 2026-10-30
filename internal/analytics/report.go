@@ -167,10 +167,12 @@ type SessionRow struct {
 // BaumWork is what baum itself ran: reviews and fixes from the jobs ledger,
 // and the other writes from the actions ledger.
 type BaumWork struct {
-	Available       bool          `json:"available"`
-	Reviews         int           `json:"reviews"`
-	GroupReviews    int           `json:"group_reviews"`
-	Fixes           int           `json:"fixes"`
+	Available    bool `json:"available"`
+	Reviews      int  `json:"reviews"`
+	GroupReviews int  `json:"group_reviews"`
+	Fixes        int  `json:"fixes"`
+	// Questions counts questions asked of a review's agent (jobs.KindChat).
+	Questions       int           `json:"questions"`
 	Automatic       int           `json:"automatic"`
 	Completed       int           `json:"completed"`
 	Failed          int           `json:"failed"`
@@ -639,6 +641,8 @@ func (s *Service) baumWork(start time.Time, q Query) BaumWork {
 		switch {
 		case j.Kind == jobs.KindFix:
 			work.Fixes++
+		case j.Kind == jobs.KindChat:
+			work.Questions++
 		case j.Group != "":
 			work.GroupReviews++
 		default:

@@ -572,7 +572,7 @@ binary is built in `oss-test`. From the repository root:
 ```sh
 just desktop::check         # cargo fmt --check, clippy -D warnings, tests, updater-test
 just desktop::test          # tests only; pass cargo test arguments after it
-just desktop::sidecar       # build binaries/baum-<target triple>
+just desktop::sidecar       # build binaries/baum-<target triple>; pass a triple to cross-build
 just desktop::build         # Linux bundle (deb by default) in target/release/bundle
 just desktop::bundle        # the release's Linux deb and AppImage in target/release-bundles
 just desktop::updater-test  # updater manifest checks reject tampered releases
@@ -585,9 +585,10 @@ just desktop::icons         # regenerate icons/ from icons/source.svg
 not yours. Set `BAUM_DESKTOP_BAUM` to run a different `baum` binary than the
 bundled one.
 
-For UI work and host integration, use `just desktop::dev` on Linux in a
-Wayland or X11 session. Vite, dependencies and generated frontend code stay in
-Docker; the CLI sidecar is built in `oss-test`. The native Rust app is compiled
+For UI work and host integration, use `just desktop::dev` on macOS, or on Linux
+in a Wayland or X11 session. Vite, dependencies and generated frontend code stay in
+Docker; the CLI sidecar is built in `oss-test` for the host's target (Go
+cross-compiles it without cgo). The native Rust app is compiled
 and run on the host, with separate output in `target/host-dev`. This is an
 intentional host execution exception: a container cannot resolve the host user's
 login environment, installed agent CLIs, repository paths, credential agents or
@@ -603,9 +604,16 @@ the previous executable after the copy is replaced.
 The host needs Rust (at least the version in `Cargo.toml`), a C toolchain,
 pkg-config and the Tauri GTK/WebKit development libraries. On Debian/Ubuntu,
 install `build-essential pkg-config libwebkit2gtk-4.1-dev libgtk-3-dev
-libayatana-appindicator3-dev librsvg2-dev libssl-dev libxdo-dev`. Docker continues
-to own checks and release builds. This launcher currently requires Linux host
-networking; macOS and Windows need a different loopback bridge.
+libayatana-appindicator3-dev librsvg2-dev libssl-dev libxdo-dev`. On macOS,
+Rust and the Xcode command line tools are enough. Docker continues to own checks
+and release builds.
+
+On Linux, Vite runs with host networking (`desktop-dev-frontend`) and shares the
+host's loopback with the app and the daemon. Docker Desktop on macOS has no
+such loopback, so `desktop-dev-frontend-bridge` publishes Vite on
+`127.0.0.1:1420` and proxies to the daemon through `host.docker.internal`,
+keeping the daemon's own `Host` header, which it requires. Windows is not
+supported.
 
 Saving React components or CSS in `oss/app` or `oss/viewer` refreshes the window,
 including the setup screen. Native Rust and connecting screen changes require

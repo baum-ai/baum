@@ -20,6 +20,8 @@ import (
 	"github.com/baum-ai/baum/internal/analytics"
 	"github.com/baum-ai/baum/internal/assemble/assembletest"
 	"github.com/baum-ai/baum/internal/automatic"
+	"github.com/baum-ai/baum/internal/chat"
+	"github.com/baum-ai/baum/internal/chat/chattest"
 	"github.com/baum-ai/baum/internal/clonefind"
 	"github.com/baum-ai/baum/internal/config"
 	"github.com/baum-ai/baum/internal/daemon"
@@ -328,6 +330,13 @@ func TestLocalAppBrowserFixture(t *testing.T) {
 				}
 			}
 		}
+		// The agent's answers cite docs/guide.md, which the fixture repository has
+		// at its head: the review's dead-letter docs hunk stands for those lines.
+		for _, hunk := range doc["index"].(map[string]any)["hunks"].([]any) {
+			if h := hunk.(map[string]any); h["path"] == "docs/dead-letters.md" {
+				h["path"] = "docs/guide.md"
+			}
+		}
 		document, _ := json.Marshal(doc)
 		next := store.Version{Metadata: store.Metadata{Version: n, Head: repo.Head, GeneratedAt: time.Now().UTC().Format(time.RFC3339), Backend: "claude", Model: "claude-sonnet-4-5"}, Document: document, Attachments: []store.Attachment{{ID: id, ContentType: "image/png", Bytes: assembletest.PNG}}}
 		if err = versions.Put(context.Background(), store.Key{Repository: "acme/demo", Number: 7}, previous, next); err != nil {
@@ -477,6 +486,18 @@ func TestLocalAppBrowserFixture(t *testing.T) {
 		document, e := generatetest.Document(r.Directory, nil)
 		return agent.Result{Document: document, Model: cfg.Model, Calls: 1, Tokens: 100, Usage: agent.Usage{Input: 60, Output: 40, CacheRead: 900}}, e
 	}}
+	// Questions to the review's agent are answered at once by a scripted agent,
+	// which cites lines of docs/guide.md, a file of the review's own hunks.
+	chatAgent := &chattest.Agent{}
+	chatAgent.BackendName, chatAgent.Version = agent.BackendClaude, "fixture"
+	chatAgent.RunFunc = func(_ context.Context, r agent.Request, _ int) (agent.Result, error) {
+		result := chatAgent.Default(r)
+		result.Document = chattest.Answer("The delay is **capped** so a long outage cannot push retries out forever.", chat.Citation{Path: "docs/guide.md", StartLine: 3, EndLine: 6})
+		return result, nil
+	}
+	chatCfg := cfg
+	chatCfg.Budgets.MaxCalls, chatCfg.Budgets.MaxTokens, chatCfg.Budgets.RunTimeout = 20, 100000, config.Duration(10*time.Minute)
+	chats := &chat.Service{Registry: registry, Config: chatCfg, Root: filepath.Join(home, "review-runs"), Backends: generate.Backends{Claude: func(string) generate.CheckedBackend { return chatAgent }}}
 	index := &reviewindex.Service{Registry: registry, Discovery: disc}
 	// The real daemon serves the app: lock, credential file, control socket
 	// and app transport. Only GitHub and the model backend are synthetic.
@@ -522,9 +543,12 @@ func TestLocalAppBrowserFixture(t *testing.T) {
 			_ = events.Close()
 			return daemon.App{}, err
 		}
-		runner, err := jobs.Open(filepath.Join(home, "jobs.json"), &jobs.Local{Registry: registry, Groups: groups, Config: cfg, Client: client, FixDirectory: filepath.Join(home, "fixes"), Features: fixtureBuilder{}, Backends: generate.Backends{Claude: func(string) generate.CheckedBackend { return fixtureFixer{backend} }}}, 1, func(job jobs.Job) {
+		runner, err := jobs.Open(filepath.Join(home, "jobs.json"), &jobs.Local{Registry: registry, Groups: groups, Config: cfg, Client: client, FixDirectory: filepath.Join(home, "fixes"), Features: fixtureBuilder{}, Chat: chats, Backends: generate.Backends{Claude: func(string) generate.CheckedBackend { return fixtureFixer{backend} }}}, 1, func(job jobs.Job) {
 			_ = server.Publish("progress", map[string]any{"job": job})
 			_ = server.Publish("index", map[string]any{})
+			if event, ok := jobs.ChatEvent(job); ok {
+				_ = server.Publish("chat", event)
+			}
 			if job.Phase == "finished" {
 				scheduler.Wake()
 			}
@@ -533,6 +557,7 @@ func TestLocalAppBrowserFixture(t *testing.T) {
 			return daemon.App{}, err
 		}
 		scheduler.Queue = runner
+		runner.SetChat(chats)
 		runner.SetAutomaticGate(scheduler.Gate)
 		auth := browserAuthentication(t, appCtx, state, cfg, func() { _ = server.Publish("index", struct{}{}) }, func() func(bool) {
 			if token, _ := cfg.ExplicitGitHubTokenSource("github.com"); token != "" {
@@ -557,7 +582,7 @@ func TestLocalAppBrowserFixture(t *testing.T) {
 			}
 			return exec.CommandContext(ctx, "git", "-C", opts.Dir, "remote", "set-url", "origin", opts.URL).Run()
 		}}
-		api := uiserver.LocalAPI{Clones: finder.Handler(), GitHubRepositories: repositoryService.Handler(), GitHubAuth: auth.Handler(), Registry: registry, Config: cfg, PRs: uiserver.DiscoveryHandler(registry, disc, nil), Merge: uiserver.MergeHandler(registry, actions.RecordMerges(client), func(ctx context.Context, repo github.Repository, _ int, _ string) { _, _ = disc.Poll(ctx, repo) }, changed), Update: uiserver.UpdateHandler(registry, actions.RecordUpdates(prupdate.Service{Client: client}), func(ctx context.Context, repo github.Repository) { _, _ = disc.Poll(ctx, repo) }, changed), Index: index.Handler(), Jobs: runner.Handler(), Automatic: scheduler.Handler(), Live: transcripts.Handler(), Changed: scheduler.Wake, Diagnostics: browserDiagnostics, CurrentName: func(_ context.Context, repository string) (string, error) {
+		api := uiserver.LocalAPI{Clones: finder.Handler(), GitHubRepositories: repositoryService.Handler(), GitHubAuth: auth.Handler(), Registry: registry, Config: cfg, PRs: uiserver.DiscoveryHandler(registry, disc, nil), Merge: uiserver.MergeHandler(registry, actions.RecordMerges(client), func(ctx context.Context, repo github.Repository, _ int, _ string) { _, _ = disc.Poll(ctx, repo) }, changed), Update: uiserver.UpdateHandler(registry, actions.RecordUpdates(prupdate.Service{Client: client}), func(ctx context.Context, repo github.Repository) { _, _ = disc.Poll(ctx, repo) }, changed), Index: index.Handler(), Jobs: runner.Handler(), Chat: uiserver.ChatHandler(registry, runner), Automatic: scheduler.Handler(), Live: transcripts.Handler(), Changed: scheduler.Wake, Diagnostics: browserDiagnostics, CurrentName: func(_ context.Context, repository string) (string, error) {
 			if repository == "acme/old-renamed" {
 				return "acme/renamed", nil
 			}

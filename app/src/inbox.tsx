@@ -19,6 +19,7 @@ import {
   CommentsIcon,
   MergeIcon,
   SparkleIcon,
+  StackIcon,
   WarningIcon,
   type IconProps,
 } from "@baum/viewer/components/icons";
@@ -36,9 +37,12 @@ import {
   fixLabel,
   groupJob,
   isActiveJob,
+  jobHref,
   liveFor,
+  navigate,
   rowKey,
   sameRepository,
+  watchableFix,
   type Entry,
   type Job,
   type LiveSession,
@@ -307,6 +311,13 @@ export function Inbox({
         event.preventDefault();
         generate(entry);
         return;
+      case "transcript": {
+        const run = entry && watchableFix(entry, jobs);
+        if (!run) return;
+        event.preventDefault();
+        navigate(jobHref(run));
+        return;
+      }
     }
   });
   const toggle = (key: string, checked: boolean) =>
@@ -1000,6 +1011,17 @@ function GroupRow({
         <RiskCell risk={group.risk_score} />
         <div className="min-w-0">
           <div className="flex min-w-0 items-baseline gap-2">
+            {group.stack ? (
+              // The hosted pull request list's mark for a stack.
+              <span
+                title={`Stack of ${formatCount(group.members.length)} pull requests`}
+                className="flex flex-none items-center gap-0.5 self-center text-xs font-semibold text-(--text-secondary)"
+              >
+                <StackIcon size={14} />
+                <span className="sr-only">Stack of</span>
+                {formatCount(group.members.length)}
+              </span>
+            ) : null}
             <Link
               href={appURL(`?page=pulls&group=${encodeURIComponent(group.id)}`)}
               title={group.name}
@@ -1007,7 +1029,7 @@ function GroupRow({
             >
               {group.name}
             </Link>
-            <Badge size="compact">Group of {group.members.length}</Badge>
+            {group.stack ? null : <Badge size="compact">Group of {group.members.length}</Badge>}
           </div>
           <p title={metadata} className="inbox-meta text-xs text-(--text-tertiary)">
             {metadata}

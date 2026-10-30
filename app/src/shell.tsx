@@ -6,7 +6,8 @@ import {
   type ComponentType,
   type ReactNode,
 } from "react";
-import { LogoMark, Wordmark } from "@baum/viewer/components/editorial";
+import { Wordmark } from "@baum/viewer/components/editorial";
+import { Stumpy } from "@baum/viewer/components/stumpy";
 import type { ViewerLinkProps } from "@baum/viewer/navigation";
 import { appURL } from "./api";
 import type { Inbox } from "./inboxes";
@@ -112,7 +113,7 @@ export function Sidebar({
   return (
     <aside className="local-rail">
       <Link href={appURL()} className="local-rail-mark" title="Inbox">
-        <LogoMark size={24} />
+        <Stumpy size={28} className="flex-none" />
         <Wordmark size="sidebar" className="local-rail-label" />
       </Link>
       <nav aria-label="Main" className="local-rail-nav local-rail-main">

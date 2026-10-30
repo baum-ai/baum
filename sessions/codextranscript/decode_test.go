@@ -263,3 +263,15 @@ func TestGoalUpdateAndImageGenerationDecode(t *testing.T) {
 		t.Fatalf("image line = %+v", lines[2])
 	}
 }
+
+func TestAdditionalToolsAreKeptAsWritten(t *testing.T) {
+	payload := `{"type":"additional_tools","id":"at","role":"developer","tools":[{"name":"linear__save_comment"}]}`
+	lines, _, err := decodeText(t, sessionMeta(`"source":"cli"`)+envelope("response_item", payload))
+	if err != nil {
+		t.Fatal(err)
+	}
+	item := lines[1].ResponseItem
+	if item == nil || item.AdditionalTools == nil || string(item.AdditionalTools.Raw) != payload {
+		t.Fatalf("item = %+v", item)
+	}
+}

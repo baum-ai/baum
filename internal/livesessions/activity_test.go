@@ -115,11 +115,15 @@ func TestActivityLastMessageIsTheLatestAssistantTextCutAndMasked(t *testing.T) {
 	}
 }
 
-func TestActivityIsOmittedWithoutToolCallsOrAssistantText(t *testing.T) {
+func TestActivityIsOmittedWithoutToolCallsTextOrPrompts(t *testing.T) {
 	f := newTranscriptFixture(t)
-	write(t, f.path, `{"type":"user","timestamp":"2026-10-27T18:00:00Z","message":{"role":"user","content":"hello"}}`+"\n")
+	// Named, but nothing typed or done yet.
+	write(t, f.path, `{"type":"custom-title","customTitle":"Tidy the buttons","sessionId":"s1"}`+"\n")
 	if a := activities(t, f)["claude-code/s1"]; a != nil {
 		t.Fatalf("activity %+v", a)
+	}
+	if got := titles(t, f)["claude-code/s1"]; got != "Tidy the buttons" {
+		t.Fatalf("title %q", got)
 	}
 	w := httptest.NewRecorder()
 	f.live.Handler().ServeHTTP(w, httptest.NewRequest("GET", "/api/live-sessions", nil))
@@ -159,6 +163,45 @@ func TestCodexActivityNamesShellCommandsAndPatchedFiles(t *testing.T) {
 		}
 	}
 	if a.FilesTouched != 2 || a.LastMessage != "Added the index." {
+		t.Fatalf("activity %+v", a)
+	}
+}
+
+func TestCodexCodeModeExecNamesTheWrappedTool(t *testing.T) {
+	f := newTranscriptFixture(t)
+	const id = "019f0000-0000-7000-8000-000000000004"
+	exec := func(ts, callID, js string) string {
+		in, _ := json.Marshal(js)
+		return `{"timestamp":"` + ts + `","type":"response_item","payload":{"type":"custom_tool_call","name":"exec","input":` + string(in) + `,"call_id":"` + callID + `"}}` + "\n"
+	}
+	write(t, filepath.Join(f.home, ".codex", "sessions", "2026", "10", "20", "rollout-2026-10-20T09-00-00-"+id+".jsonl"),
+		`{"timestamp":"2026-10-20T09:00:00.000Z","type":"session_meta","payload":{"id":"`+id+`","cwd":"/work/demo"}}
+`+exec("2026-10-20T09:00:09.000Z", "c1", `text(await tools.exec_command({cmd:"go test ./...\nls",workdir:"/work/demo","max_output_tokens":2000}))`)+
+			exec("2026-10-20T09:00:10.000Z", "c2", `text(await tools.apply_patch("*** Begin Patch\n*** Update File: /work/demo/db/a.sql\n@@\n+x\n*** End Patch"))`)+
+			exec("2026-10-20T09:00:11.000Z", "c3", `text(await tools.mcp__linear__get_issue({id:"X-1"}))`)+
+			exec("2026-10-20T09:00:12.000Z", "c4", `const x = 1;`))
+	e := hookevents.New(hookevents.KindAgent, "codex", "user-prompt-submit", "/work/demo", "test")
+	e.Time = f.clock.now
+	e.Session = &hookevents.Session{ID: id, Cwd: "/work/demo"}
+	if !apply(f.tracker, e) {
+		t.Fatal("not tracked")
+	}
+	a := activities(t, f)["codex/"+id]
+	if a == nil || len(a.Steps) != 4 {
+		t.Fatalf("activity %+v", a)
+	}
+	want := []Step{
+		{"Bash", "go test ./...", "2026-10-20T09:00:09Z"},
+		{"Edit", "db/a.sql", "2026-10-20T09:00:10Z"},
+		{"linear: get_issue", "", "2026-10-20T09:00:11Z"},
+		{"exec", "", "2026-10-20T09:00:12Z"},
+	}
+	for i := range want {
+		if a.Steps[i] != want[i] {
+			t.Fatalf("step %d: %+v, want %+v", i, a.Steps[i], want[i])
+		}
+	}
+	if a.FilesTouched != 1 {
 		t.Fatalf("activity %+v", a)
 	}
 }

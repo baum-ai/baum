@@ -16,6 +16,9 @@ const (
 	// TriggerRetry re-runs an automatic job a daemon stop or restart
 	// interrupted, once.
 	TriggerRetry = "retry"
+	// TriggerStackReviewed generates a stack group's review once every
+	// member has a saved review of its current head.
+	TriggerStackReviewed = "stack_reviewed"
 )
 
 // Reasons SubmitAutomatic refuses an item for good: a person has to generate
@@ -63,7 +66,8 @@ type AutomaticRequest struct {
 	// request before the item is prepared against GitHub.
 	Repository string
 	// Head is the head that triggered the job; a different current head is
-	// ErrHeadChanged.
+	// ErrHeadChanged. A group job's head is its members' heads, as
+	// Prepared.Members encodes them.
 	Head    string
 	Trigger string
 }
@@ -79,7 +83,7 @@ func (q *Queue) SubmitAutomatic(ctx context.Context, r AutomaticRequest) (Job, e
 	// Refuse what the journal alone decides before asking GitHub.
 	if r.Repository != "" {
 		q.mu.Lock()
-		err := q.automaticConflict(r.Repository, r.PR, r.Head)
+		err := q.automaticConflict(r.Repository, r.PR, r.Group, r.Head)
 		q.mu.Unlock()
 		if err != nil {
 			return Job{}, err
@@ -89,7 +93,7 @@ func (q *Queue) SubmitAutomatic(ctx context.Context, r AutomaticRequest) (Job, e
 	if err != nil {
 		return Job{}, err
 	}
-	if p.HeadSHA != r.Head {
+	if p.head() != r.Head {
 		return Job{}, ErrHeadChanged
 	}
 	if p.Draft {
@@ -109,7 +113,7 @@ func (q *Queue) SubmitAutomatic(ctx context.Context, r AutomaticRequest) (Job, e
 			q.notify(*notification)
 		}
 	}()
-	if err := q.automaticConflict(p.Repository, p.PR, p.HeadSHA); err != nil {
+	if err := q.automaticConflict(p.Repository, p.PR, p.Group, p.head()); err != nil {
 		return Job{}, err
 	}
 	now := q.clock0()
@@ -202,7 +206,7 @@ func (q *Queue) CancelDisallowedAutomatic() []Job {
 }
 
 // automaticConflict is called with mu held.
-func (q *Queue) automaticConflict(repository string, pr int, head string) error {
+func (q *Queue) automaticConflict(repository string, pr int, group, head string) error {
 	if q.draining {
 		return ErrRestarting
 	}
@@ -212,14 +216,14 @@ func (q *Queue) automaticConflict(repository string, pr int, head string) error 
 	sameHead := 0
 	retryable := false
 	for _, j := range q.jobs {
-		if !strings.EqualFold(j.Repository, repository) || j.PR != pr {
+		if !strings.EqualFold(j.Repository, repository) || j.PR != pr || j.Group != group || j.Kind == KindChat {
 			continue
 		}
 		if j.State == "queued" || j.State == "running" {
 			return ErrBusy
 		}
 		// A fix of the head is not its review.
-		if j.HeadSHA == head && !unsettled(j) && j.Kind != KindFix {
+		if j.head() == head && !unsettled(j) && j.Kind != KindFix {
 			sameHead++
 			retryable = j.Automatic && j.State == "interrupted"
 		}
@@ -239,9 +243,22 @@ func unsettled(j Job) bool {
 	return j.Automatic && j.State == "cancelled" && (j.Reason == ReasonDraft || j.Reason == ReasonNeedsClone)
 }
 
-// headKey identifies a pull request head, case-insensitively by repository.
+// headKey identifies a pull request head, or a group's member heads,
+// case-insensitively by repository.
 func headKey(j Job) string {
+	if j.Group != "" {
+		return strings.ToLower(j.Repository) + "#group:" + j.Group + "@" + j.Members
+	}
 	return strings.ToLower(j.Repository) + "#" + strconv.Itoa(j.PR) + "@" + j.HeadSHA
+}
+
+// head is what an automatic job runs once: the pull request's head, or a
+// group's member heads.
+func (p Prepared) head() string {
+	if p.Group != "" {
+		return p.Members
+	}
+	return p.HeadSHA
 }
 
 // Refused lists automatic jobs cancelled before any model call for a reason

@@ -74,6 +74,11 @@ const (
 	// WaitTurnFinished is a session whose turn ended (a stop, or Claude
 	// Code's idle_prompt, which follows one a minute later).
 	WaitTurnFinished = "turn_finished"
+	// WaitQuiet is a session silent for IdleAfter with no tool call of its
+	// own still running: it stopped without a stop (an interrupted turn
+	// sends none) or its agent died. The list sets it (settle), since only
+	// the transcript says whether a tool call still runs.
+	WaitQuiet = "quiet"
 )
 
 // Timings and bounds. A session is dropped when it has been silent for
@@ -651,6 +656,32 @@ func (t *Tracker) Resumed(agent, id string, at time.Time) bool {
 	return t.endWait(agent, id, at, EventPrompt, "", WaitTurnFinished, "")
 }
 
+// Gone records that a session's agent no longer runs, found at at: it ended,
+// as its end event would have said had it reached the daemon. An ended
+// session is left as it is. It reports whether the session changed.
+func (t *Tracker) Gone(agent, id string, at time.Time) bool {
+	t.init()
+	now := t.now()
+	at = at.UTC()
+	if at.After(now) {
+		at = now
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	s := t.sessions[key{agent, id}]
+	if s == nil || s.ended {
+		return false
+	}
+	if at.Before(s.LastActivityAt) {
+		at = s.LastActivityAt
+	}
+	s.LastActivityAt, s.LastEvent = at, EventEnd
+	s.ended, s.endedAt, s.EndedAt = true, at, at
+	s.wait("", at, "")
+	s.State = s.state(now)
+	return true
+}
+
 // endWait ends a session's wait, if it is one of ends, at at, with kind as
 // its last event and reason as its new wait, unless the session has an event
 // newer than at.
@@ -896,6 +927,12 @@ func (t *Tracker) applyEvent(e hookevents.Event, now time.Time) {
 		// A subagent that finished says nothing of a session waiting on its
 		// user: Claude Code runs one after every stop, and a background one
 		// can finish while its session waits.
+		return
+	}
+	if kind == EventStart && e.Session.Source == "compact" && s.WaitingReason != "" {
+		// Nor does a compaction: Claude Code compacts a session that has sat
+		// waiting a while, starting it again, and no stop follows to say it
+		// still waits.
 		return
 	}
 	s.LastActivityAt, s.LastEvent = at, kind

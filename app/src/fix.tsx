@@ -1,9 +1,11 @@
 import { useState } from "react";
+import { formatCount, formatRelative } from "@baum/viewer/components/format";
 import { Alert, Button, LiveDot } from "@baum/viewer/components/ui";
 import {
   appURL,
   fixName,
   isActiveJob,
+  jobHref,
   jobReasonText,
   request,
   threadOutcomesSummary,
@@ -18,6 +20,7 @@ export const phases: Record<string, string> = {
   preparing: "Checking the pull request",
   "reading checks": "Reading the failing checks",
   "reading review comments": "Reading the review comments",
+  "reading the conversation": "Reading the conversation",
   fetching: "Fetching the branch",
   merging: "Merging the base branch",
   fixing: "The agent is fixing it",
@@ -25,6 +28,9 @@ export const phases: Record<string, string> = {
   pushing: "Pushing",
   replying: "Replying on the review threads",
   finishing: "Finishing",
+  answering: "The agent is answering",
+  "preparing a new session": "Starting a new agent session",
+  "checking citations": "Checking the answer's citations",
 };
 
 /** Where a fix the person asked for stands before its job exists: on its way
@@ -36,15 +42,80 @@ export function phaseText(job: Job) {
   return job.state === "queued" ? "Queued" : (phases[job.phase] ?? job.phase);
 }
 
-/** The link to a fix's transcript: Watch while it runs. Nothing without one. */
-export function TranscriptLink({ job }: { job: Job }) {
+/** The link to a fix's transcript: Watch while it runs. Nothing without one.
+ *  `keyHint` draws `t` on it where that key opens it. */
+export function TranscriptLink({ job, keyHint = false }: { job: Job; keyHint?: boolean }) {
   if (!job.has_transcript) return null;
   return (
-    <ViewerLink href={appURL(`?page=jobs&job=${encodeURIComponent(job.id)}`)}>
+    <ViewerLink href={jobHref(job)}>
       {isActiveJob(job) ? "Watch" : "Transcript"}
+      {keyHint ? (
+        <kbd aria-hidden="true" className="key-hint">
+          t
+        </kbd>
+      ) : null}
     </ViewerLink>
   );
 }
+
+/** How many runs the history lists before sending the rest to Jobs. */
+const RUNS_SHOWN = 5;
+
+/** A pull request's fix runs, newest first, folded to one line: when each
+ *  started, how it ended and its transcript. `earlier` says the fix notice
+ *  above already shows the latest. */
+export function FixRuns({ runs, earlier }: { runs: Job[]; earlier: boolean }) {
+  if (!runs.length) return null;
+  const count = `${formatCount(runs.length)} ${earlier ? "earlier " : ""}fix ${runs.length === 1 ? "run" : "runs"}`;
+  const older = runs.length - RUNS_SHOWN;
+  return (
+    <details className="local-fix-details local-fix-runs">
+      <summary>
+        {earlier ? count : `${count}, the last ${formatRelative(runs[0]!.created_at)}`}
+        {!earlier && runs.some((job) => job.has_transcript) ? (
+          <kbd aria-hidden="true" className="key-hint">
+            t
+          </kbd>
+        ) : null}
+      </summary>
+      <ol>
+        {runs.slice(0, RUNS_SHOWN).map((job) => (
+          <li key={job.id}>
+            <span className="local-fix-run-when">{formatRelative(job.created_at)}</span>
+            <span className="min-w-0 flex-1">
+              {fixName(job.fix ?? {})}: <RunOutcome job={job} />
+            </span>
+            <TranscriptLink job={job} />
+          </li>
+        ))}
+      </ol>
+      {older > 0 ? (
+        <ViewerLink href={appURL("?page=jobs")}>{formatCount(older)} older in Jobs</ViewerLink>
+      ) : null}
+    </details>
+  );
+}
+
+/** How a fix run ended, or what it is doing, in a few words. */
+function RunOutcome({ job }: { job: Job }) {
+  if (isActiveJob(job)) return <>{phaseText(job)}</>;
+  if (job.state === "completed" && job.commit)
+    return (
+      <>
+        pushed{" "}
+        <a href={job.commit_url} target="_blank" rel="noreferrer">
+          <code>{job.commit.slice(0, 7)}</code>
+        </a>
+      </>
+    );
+  if (job.state === "failed")
+    return <>failed{job.reason ? `: ${jobReasonText(job.reason)}` : ""}</>;
+  return <>{job.state === "completed" ? "finished without pushing" : job.state}</>;
+}
+
+/** A conversation with the review's agent a fix is made from: its ids, and the
+ *  agent's suggested change when the answer made one, for the dialog to show. */
+export type FixChat = { conversation_id: string; turn: number; suggestion?: string };
 
 /** Where a thread is: its file and line. */
 function threadPlace(thread: FixThread) {
@@ -67,7 +138,7 @@ export function FixNotice({ job, changed }: { job: Job; changed: () => Promise<v
               : `${name}: ${phases[job.phase] ?? job.phase}`}
           </p>
         </div>
-        <TranscriptLink job={job} />
+        <TranscriptLink job={job} keyHint />
         <Button
           variant="secondary"
           size="compact"
@@ -112,7 +183,7 @@ export function FixNotice({ job, changed }: { job: Job; changed: () => Promise<v
         {job.reason ? <p>{jobReasonText(job.reason)}</p> : null}
         <FixDetails job={job} />
       </div>
-      <TranscriptLink job={job} />
+      <TranscriptLink job={job} keyHint />
     </section>
   );
 }

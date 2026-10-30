@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/baum-ai/baum/agent"
+	chatpkg "github.com/baum-ai/baum/internal/chat"
 	"github.com/baum-ai/baum/internal/filelock"
 	"github.com/baum-ai/baum/internal/fix"
 	"github.com/baum-ai/baum/internal/generate"
@@ -30,8 +31,13 @@ type Item struct {
 	// the job generates the group's combined review. See
 	// internal/reviewgroups.
 	Group string `json:"group,omitempty"`
-	// Kind is KindFix for a fix, empty for a review.
+	// Kind is KindFix for a fix, KindChat for a question to a review's
+	// agent, empty for a review.
 	Kind string `json:"kind,omitempty"`
+	// FixChat, on a fix, makes the conversation of a review's agent part of
+	// what it fixes (see FixChatRef). It is `fix_chat`, not `chat`, because a
+	// job's own `chat` is the turn a chat job answers.
+	FixChat *FixChatRef `json:"fix_chat,omitempty"`
 	// Only limits a fix to one of what it fixes: FixOnlyChecks fixes the
 	// failing checks and leaves conflicts and review comments alone.
 	Only string `json:"only,omitempty"`
@@ -103,8 +109,16 @@ type FixInputs struct {
 	// threads and their comments (fix.Digest): a reply or an edit on GitHub
 	// after the fix was started stops it.
 	Threads string `json:"threads,omitempty"`
-	HeadRef string `json:"head_ref,omitempty"`
-	BaseRef string `json:"base_ref,omitempty"`
+	// Chat, ChatTurn and ChatDigest, when the fix makes the change a
+	// conversation asks for, are the conversation, the last turn it uses
+	// and the digest of those turns as the agent gets them
+	// (fix.ChatDigest): the job keeps no text, and a changed conversation
+	// stops the fix before the agent runs.
+	Chat       string `json:"chat,omitempty"`
+	ChatTurn   int    `json:"chat_turn,omitempty"`
+	ChatDigest string `json:"chat_digest,omitempty"`
+	HeadRef    string `json:"head_ref,omitempty"`
+	BaseRef    string `json:"base_ref,omitempty"`
 }
 
 // FixThread is a review thread a fix addresses, as the job shows it. Author
@@ -162,6 +176,8 @@ type Prepared struct {
 	FixThreads          []FixThread `json:"fix_threads,omitempty"`
 	FixThreadsCapped    bool        `json:"fix_threads_capped,omitempty"`
 	FixThreadsUntrusted int         `json:"fix_threads_untrusted,omitempty"`
+	// Chat is what a chat job (KindChat) answers.
+	Chat ChatInputs `json:"chat,omitzero"`
 }
 
 // sameConfirmedInputs reports whether two confirmations authorize the same
@@ -242,10 +258,16 @@ type Queue struct {
 	estimates   map[string]Estimate
 	cancels     map[string]context.CancelFunc
 	wake        chan struct{}
-	ctx         context.Context
-	cancel      context.CancelFunc
-	wg          sync.WaitGroup
-	changed     func(Job)
+	// chatWake wakes the chat lane's workers (KindChat).
+	chatWake chan struct{}
+	// chat stores and settles chat turns; nil refuses questions.
+	chat ChatService
+	// ask serialises Ask from storing a turn to journaling its job.
+	ask     sync.Mutex
+	ctx     context.Context
+	cancel  context.CancelFunc
+	wg      sync.WaitGroup
+	changed func(Job)
 	// clock, when set, stamps automatic jobs' CreatedAt; see SetClock.
 	clock func() time.Time
 	// lock keeps every other process from opening this journal.
@@ -323,7 +345,7 @@ func Open(path string, executor Executor, concurrency int, changed func(Job)) (*
 		return nil, err
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	q := &Queue{path: path, transcripts: filepath.Join(filepath.Dir(path), "transcripts"), executor: executor, estimates: map[string]Estimate{}, cancels: map[string]context.CancelFunc{}, wake: make(chan struct{}, 1), ctx: ctx, cancel: cancel, changed: changed, lock: lock}
+	q := &Queue{path: path, transcripts: filepath.Join(filepath.Dir(path), "transcripts"), executor: executor, estimates: map[string]Estimate{}, cancels: map[string]context.CancelFunc{}, wake: make(chan struct{}, 1), chatWake: make(chan struct{}, 1), ctx: ctx, cancel: cancel, changed: changed, lock: lock}
 	opened := false
 	defer func() {
 		if !opened {
@@ -362,7 +384,11 @@ func Open(path string, executor Executor, concurrency int, changed func(Job)) (*
 	}
 	for range concurrency {
 		q.wg.Add(1)
-		go q.worker()
+		go q.worker(false)
+	}
+	for range ChatWorkers {
+		q.wg.Add(1)
+		go q.worker(true)
 	}
 	q.signal()
 	opened = true
@@ -382,9 +408,11 @@ func (q *Queue) save() error {
 	return generate.WriteFileAtomic(q.path, raw)
 }
 func (q *Queue) signal() {
-	select {
-	case q.wake <- struct{}{}:
-	default:
+	for _, wake := range []chan struct{}{q.wake, q.chatWake} {
+		select {
+		case wake <- struct{}{}:
+		default:
+		}
 	}
 }
 func (q *Queue) Close() { _ = q.Shutdown(context.Background()) }
@@ -664,6 +692,9 @@ func (q *Queue) Cancel(jobID string) (Job, error) {
 	defer func() {
 		q.mu.Unlock()
 		if notification != nil {
+			// A cancelled question's turn is settled before the event goes
+			// out, outside the lock: it writes the clone's store.
+			q.settleChat(*notification)
 			q.notify(*notification)
 		}
 	}()
@@ -698,13 +729,20 @@ func (q *Queue) Cancel(jobID string) (Job, error) {
 	}
 	return Job{}, os.ErrNotExist
 }
-func (q *Queue) worker() {
+
+// worker runs queued jobs of its lane: chat jobs (KindChat) when chat is
+// set, every other job otherwise.
+func (q *Queue) worker(chat bool) {
 	defer q.wg.Done()
+	wake := q.wake
+	if chat {
+		wake = q.chatWake
+	}
 	for {
 		select {
 		case <-q.ctx.Done():
 			return
-		case <-q.wake:
+		case <-wake:
 		}
 		for {
 			q.mu.Lock()
@@ -716,7 +754,7 @@ func (q *Queue) worker() {
 			for n, j := range q.jobs {
 				// Without a gate an automatic job waits: the daemon installs it
 				// right after Open, and a journaled job must not start first.
-				if j.State == "queued" && (!j.Automatic || q.gate != nil) {
+				if j.State == "queued" && (j.Kind == KindChat) == chat && (!j.Automatic || q.gate != nil) {
 					i = n
 					break
 				}
@@ -810,7 +848,7 @@ func (q *Queue) worker() {
 				// turned draft) before any model call.
 				current.State = "cancelled"
 				current.Reason = refused.Reason
-			case err != nil && errors.Is(err, ErrNeedsClone):
+			case err != nil && (errors.Is(err, ErrNeedsClone) || errors.Is(err, chatpkg.ErrNeedsClone)):
 				// The clone was removed while the job waited: nothing ran. An
 				// automatic job is cancelled like a refused one, so its head is
 				// not used up and runs once a clone is back; a manual one fails.
@@ -845,6 +883,7 @@ func (q *Queue) worker() {
 			saveErr := q.save()
 			result := *current
 			q.mu.Unlock()
+			q.settleChat(result)
 			q.notify(result)
 			if saveErr != nil {
 				return

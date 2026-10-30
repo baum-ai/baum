@@ -6,8 +6,6 @@ cd "$root"
 export BAUM_OP_RUN=0
 compose="$root/dev-compose.sh"
 shared=$(mktemp -d /tmp/baum-desktop-dev.XXXXXX)
-# Match the private directory's owner even when Compose defaults to UID 1000.
-container_user="$(id -u):$(id -g)"
 frontend=
 cleanup() {
     [ -z "$frontend" ] || docker rm -f "$frontend" >/dev/null 2>&1 || true
@@ -16,24 +14,38 @@ cleanup() {
 trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
-if [ "$(uname -s)" != Linux ]; then
-    echo "desktop::dev currently requires Linux (the frontend uses Docker host networking)." >&2
+case "$(uname -s)" in
+Linux)
+    if [ -z "${WAYLAND_DISPLAY:-}" ] && [ -z "${DISPLAY:-}" ]; then
+        echo "desktop::dev needs a host Wayland or X11 desktop session." >&2
+        exit 1
+    fi
+    # Vite shares the host's loopback with the app and the daemon.
+    service=desktop-dev-frontend
+    # Match the private directory's owner even when Compose defaults to UID 1000.
+    container_user="$(id -u):$(id -g)"
+    ;;
+Darwin)
+    # Docker Desktop has no host loopback: Vite's port is published instead.
+    service=desktop-dev-frontend-bridge
+    # Its file sharing ignores ownership, so keep the user that owns node_modules.
+    container_user=
+    ;;
+*)
+    echo "desktop::dev requires Linux or macOS." >&2
     exit 1
-fi
+    ;;
+esac
 command -v cargo >/dev/null 2>&1 || {
     echo "Install Rust on the host to run the native desktop app; see oss/desktop/README.md." >&2
     exit 1
 }
-if [ -z "${WAYLAND_DISPLAY:-}" ] && [ -z "${DISPLAY:-}" ]; then
-    echo "desktop::dev needs a host Wayland or X11 desktop session." >&2
-    exit 1
-fi
-"$compose" build desktop-dev-frontend
+"$compose" build "$service"
 frontend="baum-desktop-vite-${shared##*.}"
-"$compose" run -d --no-deps --user "$container_user" --name "$frontend" \
+"$compose" run -d --no-deps --service-ports ${container_user:+--user "$container_user"} --name "$frontend" \
     -v "$shared:/desktop-dev" \
     -e BAUM_DESKTOP_DEV_DIR=/desktop-dev --workdir /oss/app \
-    desktop-dev-frontend sh -ec 'pnpm generate; exec pnpm exec vite'
+    "$service" sh -ec 'pnpm generate; exec pnpm exec vite'
 echo "Starting Vite; dependency installation may take a moment."
 attempt=0
 until [ -f "$shared/vite-ready" ]; do

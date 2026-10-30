@@ -1,11 +1,12 @@
 // Package prompt is the review prompt this module ships: the instructions the
 // generate-and-repair loop (agent.Generator) gives a model backend. It also
 // holds the fix instructions (Fix): fix-public-v1.md, with fix-conflicts.md
-// and fix-checks.md for what a fix is for.
+// and fix-checks.md for what a fix is for, and the instructions of a chat turn
+// (Chat): chat-public-v1.md.
 //
 // Five review files are embedded:
 //
-//	review-public-v5.md   the review instructions shared by every backend,
+//	review-public-v6.md   the review instructions shared by every backend,
 //	                      ending with the "## 10. Submitting" heading
 //	group-public-v1.md    what changes for a review group's combined
 //	                      review, inserted before that heading by
@@ -34,23 +35,23 @@ import (
 )
 
 // Version is the prompt version recorded in the document's generator block.
-// Change it with the text of review-public-v5.md.
-const Version = "review-public-v5"
+// Change it with the text of review-public-v6.md.
+const Version = "review-public-v6"
 
-//go:embed review-public-v5.md
+//go:embed review-public-v6.md
 var reviewPublic string
 
 //go:embed submit-claude.md
 var submitClaude string
 
 // GroupVersion is the prompt version of a review group's combined review.
-// Change it with the text of group-public-v1.md or review-public-v5.md.
-const GroupVersion = "group-review-public-v2"
+// Change it with the text of group-public-v1.md or review-public-v6.md.
+const GroupVersion = "group-review-public-v3"
 
 //go:embed group-public-v1.md
 var groupPublic string
 
-// submitting is the heading review-public-v5.md ends with, under which the
+// submitting is the heading review-public-v6.md ends with, under which the
 // backend's submit block goes.
 const submitting = "## 10. Submitting\n"
 

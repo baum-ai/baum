@@ -39,10 +39,12 @@ export const PAGES: {
     href: () => appURL("?page=pulls"),
     icon: PullRequestIcon,
   },
+  // The Timeline opens on human decisions, as the hosted rail's does; the
+  // address alone is every decision, so clearing the filters stays cleared.
   {
     page: "timeline",
     label: "Timeline",
-    href: () => appURL("?page=timeline"),
+    href: () => appURL("?page=timeline&who=human"),
     icon: TimelineIcon,
   },
   {

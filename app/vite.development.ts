@@ -4,8 +4,10 @@ import { createProxyServer } from "http-proxy-3";
 import type { Plugin } from "vite";
 
 /** Keep login, cookies, CSRF and event streams on the frontend's origin.
- * The desktop writes only the daemon origin, never its launch capability. */
-export function desktopDevelopment(directory: string): Plugin {
+ * The desktop writes only the daemon origin, never its launch capability.
+ * Without host networking (macOS), `daemonHost` names the address that
+ * reaches the host's loopback; requests keep the daemon's own Host. */
+export function desktopDevelopment(directory: string, daemonHost?: string): Plugin {
   function target(): string {
     const origin = readFileSync(join(directory, "daemon-origin"), "utf8");
     const url = new URL(origin);
@@ -20,7 +22,7 @@ export function desktopDevelopment(directory: string): Plugin {
       return {
         base: "/",
         server: {
-          host: "127.0.0.1",
+          host: daemonHost ? "0.0.0.0" : "127.0.0.1",
           port: 1420,
           strictPort: true,
           fs: {
@@ -30,7 +32,7 @@ export function desktopDevelopment(directory: string): Plugin {
       };
     },
     configureServer(server) {
-      const proxy = createProxyServer({ changeOrigin: true });
+      const proxy = createProxyServer();
       proxy.on("error", (_error, _request, response) => {
         // Never log the URL: API paths contain the private session namespace.
         if ("writeHead" in response && !response.headersSent) {
@@ -49,7 +51,11 @@ export function desktopDevelopment(directory: string): Plugin {
         try {
           const origin = target();
           if (request.headers.origin === "http://127.0.0.1:1420") request.headers.origin = origin;
-          proxy.web(request, response, { target: origin });
+          // The daemon rejects any Host but its own loopback address.
+          request.headers.host = new URL(origin).host;
+          const upstream = new URL(origin);
+          if (daemonHost) upstream.hostname = daemonHost;
+          proxy.web(request, response, { target: upstream.origin });
         } catch {
           response.writeHead(503);
           response.end("Waiting for the development daemon.");
