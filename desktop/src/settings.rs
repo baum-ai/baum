@@ -37,7 +37,11 @@ fn section<T: DeserializeOwned + Default>(
     name: &str,
 ) -> io::Result<T> {
     match object.get(name) {
-        Some(value) => serde_json::from_value(value.clone()).map_err(Into::into),
+        Some(value @ Value::Object(_)) => serde_json::from_value(value.clone()).map_err(Into::into),
+        Some(_) => Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "desktop settings section must be a JSON object",
+        )),
         None => Ok(T::default()),
     }
 }
@@ -123,6 +127,7 @@ mod tests {
     use serde::Deserialize;
 
     #[derive(Debug, Default, PartialEq, Serialize, Deserialize)]
+    #[serde(default)]
     struct Count {
         value: usize,
     }
@@ -186,7 +191,16 @@ mod tests {
     fn damaged_documents_and_sections_are_never_overwritten() {
         let dir = scratch("damaged");
         let path = dir.join(FILE);
-        for data in ["{", "[]", "null", r#"{"window":"bad","setup":{"value":9}}"#] {
+        for data in [
+            "{",
+            "[]",
+            "null",
+            r#"{"window":"bad","setup":{"value":9}}"#,
+            r#"{"window":[],"setup":{"value":9}}"#,
+            r#"{"window":null,"setup":{"value":9}}"#,
+            r#"{"window":true,"setup":{"value":9}}"#,
+            r#"{"window":5,"setup":{"value":9}}"#,
+        ] {
             fs::write(&path, data).unwrap();
             assert_eq!(load::<Count>(&path, "window"), Count::default());
             assert!(update::<Count, _>(&path, "window", |saved| saved.value = 3).is_err());

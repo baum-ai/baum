@@ -1021,11 +1021,13 @@ mod tests {
     #[test]
     fn a_damaged_setup_file_cannot_be_replaced() {
         let path = temp_dir("corrupt-setup").join(crate::settings::FILE);
-        let data = r#"{"setup":"bad","notifications":{"permission":"denied"}}"#;
-        fs::write(&path, data).unwrap();
-        assert!(read_from(&path).is_err());
-        assert!(update_at(&path, |saved| saved.onboarded = true).is_err());
-        assert_eq!(fs::read_to_string(&path).unwrap(), data);
+        for setup in ["[]", "null", "true", r#""bad""#] {
+            let data = format!(r#"{{"setup":{setup},"notifications":{{"permission":"denied"}}}}"#);
+            fs::write(&path, &data).unwrap();
+            assert!(read_from(&path).is_err());
+            assert!(update_at(&path, |saved| saved.onboarded = true).is_err());
+            assert_eq!(fs::read_to_string(&path).unwrap(), data);
+        }
     }
 
     /// An earlier link that cannot be removed (a cancelled password prompt)
