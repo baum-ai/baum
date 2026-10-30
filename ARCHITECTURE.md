@@ -64,7 +64,7 @@ bundle types to resolve anchors and carry history; `bundle` never imports
 | --- | --- |
 | `schema` | the canonical `baum.review/1` JSON Schema and its validator |
 | `bundle` | evidence types, source interfaces, diff index, checkout export, `REVIEW.md` loading, reference extraction, input redaction, trimming, digest |
-| `review` | document types, the strict, lenient and stored schema views, normalisation, validation with located findings, derived fields, version history, model-free refresh, output redaction, the tile catalogue |
+| `review` | document types, the strict, lenient and stored schema views, normalisation, validation with located findings, derived fields, version history, model-free refresh, a pull request's model-free facts, output redaction, the tile catalogue |
 | `agent` | the backend interface and its implementations, the prompt interface, the generate-and-repair loop, budgets |
 | `viewer` | the React components that render a document and its versions, and the standalone single-page app that `baum internal view` embeds |
 | `sessions`, `linkage` | session discovery and commit-to-session matching, used by `bundle` sources |
@@ -2318,6 +2318,39 @@ snapshot: its entries have no `clone_id` and carry `needs_clone: true`, the
 same marker as any entry whose repository has no available clone. There is no
 store to read for it, so its rows are `no_review`.
 
+### Pull request facts
+
+A pull request with no saved review still shows what is known about it
+without a model. `GET /api/facts?clone=&pr=&head=` answers its facts
+(`review.Facts`, schema `baum.facts/1`): the stats, index (hunks, checks,
+comments, reports, threads, sessions), agent reviews and unassigned hunks a
+completed document derives, filled by the same code (`review.BuildFacts`
+over `bundleIndex`, `agentReviews`, `setValidation`, `countFindings` and
+`setReviewExchange`), with no version, sections or model-written text. Its
+bundle is assembled as generation's is, through the same GitHub client,
+clone (fetching a missing pull request commit) and local session stores,
+in facts mode (`assemble.Request.Facts`): no head/ or merge-base/ tree is
+exported and no description image is downloaded.
+
+`internal/facts` builds them only when a page asks, never in the
+background, and keeps the latest per clone, repository and pull request in
+memory; they are never written to a version store, and `/api/versions` and
+`/api/document` never see them. A request about the head the page shows is
+answered from memory until the background refresh's interval
+(`Service.RefreshInterval`, one minute) has passed since the last build, so
+a page that keeps asking reads GitHub at most once per interval; a new head
+builds at once, a head GitHub does not report yet stands for the interval,
+and concurrent requests share one build that a request giving up does not
+cancel. A failed build stands as long, while facts built before for the same
+head still answer. While the host's rate limit is paused (`Service.Paused`
+of the background refresh) only facts already held for that head answer,
+else `503` with `{"code":"rate_limited","resume_at"}`; a build that is
+rate-limited extends the shared pause (`Service.Limited`). A pull request
+without a registered clone gets none (the selector is a clone ID).
+`/api/facts/sessions`, `/api/facts/sessions/{id}`, `/api/facts/patch` and
+`/api/facts/commits` serve what the version routes serve, through the same
+per-document viewer cache, for the facts last built, and never read GitHub.
+
 ### Persistent generation jobs
 
 `internal/jobs` serializes queue mutations in a private atomic JSON journal,
@@ -2602,7 +2635,12 @@ API, SSE and asset URLs relative to that path and routes with query strings on
 it. All data, auth exchange and SSE retain launch-cookie/Origin protection. Its PR host
 supplies the same `ReviewViewer` slots and URL/attachment seams as the hosted
 PR page, sourcing documents, immutable versions, patches, sessions and commits
-from registered local clones. The renderer stays in `viewer/`; the app owns
+from registered local clones. With no saved version, it passes the pull
+request's facts (see "Pull request facts") to the viewer's `facts` prop, whose
+Details and Activity tabs draw them with the document's parts
+(`FactsDetails`, `FactsActivity`), and fills the Sessions, Commits and Files
+changed slots from the facts' routes; the version menu, history and chat
+never see them. The renderer stays in `viewer/`; the app owns
 only local inbox, jobs, confirmation and settings presentation. The common
 viewer build/freshness scripts include both embedded applications.
 
@@ -2635,7 +2673,8 @@ sooner, as a settling one is. Linked worktrees are deduplicated by common git di
 saved reviews use `refresh.Refresher` and `Store.RefreshCurrent`'s exact-byte CAS.
 `Service.RefreshNow` refreshes named PRs of one clone the same way outside
 that schedule (see "Refresh on hook events"), and its reads count as the
-last read; it shares the per-host rate pause with `Sync` in both directions.
+last read; it shares the per-host rate pause with `Sync` in both directions,
+as the PR page's facts do (`Service.Paused` and `Service.Limited`).
 
 Discovery's live freshness map uses its own short mutex; cached readers never
 wait behind a network poll. Disk-only startup remains stale. Minimized current
@@ -3741,7 +3780,8 @@ Everything that knows where the daemon lives stays in Go. The shell owns the
 window, its navigation policy and the reconnect screen, the tray (job counts,
 pause of automatic generation, an icon that shows idle, running or attention),
 the window's close and quit behaviour and start at login; the daemon serves
-`app/` to it like any loopback client. Besides `ensure` and `stop`, the tray
+`app/` to it like any loopback client, including the PR page's facts before
+any review exists (see "Pull request facts"). Besides `ensure` and `stop`, the tray
 reads `GET /api/jobs`, `/api/automatic` and `/api/diagnostics` and sets
 `PUT /api/automatic` with the launch token as a bearer, over the app API the
 window uses. It also owns first-run setup
