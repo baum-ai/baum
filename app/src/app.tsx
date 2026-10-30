@@ -47,6 +47,7 @@ import {
   useShortcuts,
   VIEW_KEYS,
   type ShortcutsPlace,
+  useReadlineArrows,
 } from "./shortcuts";
 import { GoTo, type GoToItem } from "./go-to";
 import { PAGES, type Page } from "./pages";
@@ -54,7 +55,9 @@ import { LocalReview } from "./review";
 import { DecisionsRevision } from "./decisions";
 import { useDiagnosticProblems } from "./diagnostics";
 import { RepositoriesPage, SettingsPage, settingsSection, type ReviewDefaults } from "./settings";
-import { needsYou, SessionsPage, transcriptHref } from "./sessions";
+import { asksYou, SessionsPage, transcriptHref } from "./sessions";
+import { ToastProvider } from "./toast";
+import { useActionsKey } from "./context-menu";
 import { SessionTranscriptPage } from "./session-transcript";
 import { AnalyticsPage } from "./analytics";
 import { TimelinePage } from "./timeline";
@@ -67,8 +70,10 @@ import {
   request,
   reviewJob,
   fixJob,
+  fixJobs,
   fixName,
   isActiveJob,
+  navigate,
   startFix,
   filtered,
   rowKey,
@@ -106,11 +111,6 @@ const VIEWS = [
   ["no_review", "Not reviewed"],
   ["history", "Saved history"],
 ] as const;
-/** Opens one of the app's own addresses in place, as a link in it does. */
-function navigate(href: string) {
-  history.pushState(null, "", href);
-  dispatchEvent(new PopStateEvent("popstate"));
-}
 function LocalLink({ href, onClick, ...props }: ViewerLinkProps) {
   return (
     <a
@@ -161,20 +161,22 @@ export function App() {
   }, []);
   return (
     <UrlStateProvider value={url}>
-      <ViewerLinkProvider link={LocalLink}>
-        {auth === "ready" ? (
-          <Workspace url={url} />
-        ) : (
-          <main className="local-connecting">
-            <LogoMark size={40} />
-            {auth === "loading" ? (
-              <LoadingStatus block>Connecting to the local application…</LoadingStatus>
-            ) : (
-              <Alert>{authError} Open this page from the baum desktop app.</Alert>
-            )}
-          </main>
-        )}
-      </ViewerLinkProvider>
+      <ToastProvider>
+        <ViewerLinkProvider link={LocalLink}>
+          {auth === "ready" ? (
+            <Workspace url={url} />
+          ) : (
+            <main className="local-connecting">
+              <LogoMark size={40} />
+              {auth === "loading" ? (
+                <LoadingStatus block>Connecting to the local application…</LoadingStatus>
+              ) : (
+                <Alert>{authError} Open this page from the baum desktop app.</Alert>
+              )}
+            </main>
+          )}
+        </ViewerLinkProvider>
+      </ToastProvider>
     </UrlStateProvider>
   );
 }
@@ -714,6 +716,8 @@ function Workspace({ url }: { url: UrlState }) {
   useKeyHints();
   useEscapeBlurs();
   useNoTab();
+  useActionsKey();
+  useReadlineArrows();
   useCommandKeys((action) => {
     setShortcuts(false);
     if (action.kind === "go-to") {
@@ -812,7 +816,7 @@ function Workspace({ url }: { url: UrlState }) {
         }
         activeJobs={jobs.filter(isActiveJob).length}
         runningSessions={live.filter((s) => s.state === "running").length}
-        needsYou={needsYou(live).length}
+        needsYou={asksYou(live).length}
         problems={diagnostics.problems}
         Link={LocalLink}
       />
@@ -918,6 +922,7 @@ function Workspace({ url }: { url: UrlState }) {
                   requests={agentRequests}
                   Link={LocalLink}
                   prHref={sessionPR}
+                  navigate={navigate}
                 />
               </div>
             </>
@@ -1010,6 +1015,7 @@ function Workspace({ url }: { url: UrlState }) {
                 fix={cloneFor(selectedEntry) ? () => void fix(selectedEntry) : undefined}
                 fixState={fixState(selectedEntry)}
                 fixJob={fixJob(selectedEntry, jobs)}
+                fixRuns={fixJobs(selectedEntry, jobs)}
               />
             </DecisionsRevision.Provider>
           ) : page !== "pulls" ? (

@@ -278,6 +278,8 @@ func decodeResponseItem(raw json.RawMessage) (*ResponseItem, error) {
 		item.ImageGeneration = &RawPayload{Raw: cloneRaw(raw)}
 	case "compaction":
 		item.Compaction = &RawPayload{Raw: cloneRaw(raw)}
+	case "additional_tools":
+		item.AdditionalTools = &RawPayload{Raw: cloneRaw(raw)}
 	default:
 		return nil, fmt.Errorf("unknown response_item type %q", head.Type)
 	}

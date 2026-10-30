@@ -2220,6 +2220,9 @@ a.local-session-pr:hover {
 .local-needs-reason.turn_finished svg {
   color: var(--status-positive);
 }
+.local-needs-reason.quiet svg {
+  color: var(--text-tertiary);
+}
 /* A row's middle: the session's title, the line it waits on, then where. */
 .local-session-what {
   display: grid;
@@ -2280,9 +2283,9 @@ a.local-session-pr:hover {
   white-space: nowrap;
 }
 /* The Sessions page as a live feed: Needs you, Running now and Ended
-   recently, each a stack of cards. It sits on the Pull requests page's warm
-   panel, its cards in the list's sand and its controls in the panel's paper,
-   in the Inbox's palette (`--un-*`) rather than white. */
+   recently, each a list of rows as the Pull requests page draws them, on
+   its warm panel, its controls in the panel's paper, in the Inbox's palette
+   (`--un-*`) rather than white. */
 .local-frame:has(.local-feed) {
   background: var(--un-panel);
 }
@@ -2299,118 +2302,261 @@ a.local-session-pr:hover {
   --border-default: var(--un-line-strong);
   --border-subtle: var(--un-line);
   --action-secondary-hover: var(--un-hover);
-  --feed-read-bg: #e6edf5;
   --feed-read: #24405f;
-  --feed-edit-bg: #faefd6;
   --feed-edit: #6b4a12;
-  --feed-bash-bg: #e7f1e1;
   --feed-bash: #1f4d20;
-  --feed-ask: #d9932b;
   --feed-ask-ink: #a86512;
-  --feed-soft: var(--un-hover);
-  --feed-done-bg: #f0f7ec;
-  --feed-done-border: #cfe2c6;
-  --feed-done: #1f4d20;
   display: flex;
   flex-direction: column;
-  gap: 1.375rem;
+  min-width: 0;
 }
 :root[data-theme="dark"] .local-feed {
-  --feed-read-bg: #1b2a3a;
   --feed-read: #9ec1e8;
-  --feed-edit-bg: #3a2f14;
   --feed-edit: #f0c872;
-  --feed-bash-bg: #1c2e1c;
   --feed-bash: #9fd49a;
-  --feed-ask: #e0a548;
   --feed-ask-ink: #e8b866;
-  --feed-soft: rgb(255 255 255 / 6%);
-  --feed-done-bg: #14261a;
-  --feed-done-border: #28452f;
-  --feed-done: #a9dcae;
+}
+/* The Sessions page reads as the Pull requests list: the feed spans the
+   panel, each section headed as an inbox bucket (its dot in the section's
+   tone, its count beside), its sessions rows between hairlines. */
+.local-page-body:has(> .local-feed) {
+  padding: 0 0 1.5rem;
 }
 .local-feed-section {
   display: flex;
   flex-direction: column;
-  gap: 0.625rem;
+  min-width: 0;
 }
 .local-feed-section h2 {
+  margin: 0;
+  border-bottom: 1px solid var(--un-hairline);
+  font-size: var(--text-xs);
+}
+.local-feed-toggle {
   display: flex;
   align-items: center;
   gap: 0.5rem;
-  margin: 0;
-  font-size: 15px;
+  width: 100%;
+  padding: 1.1rem 1.5rem 0.55rem;
+  border: 0;
+  background: none;
+  color: var(--un-ink);
+  font: inherit;
   font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+}
+.local-feed-toggle:hover {
+  background: var(--surface-hover);
+}
+.local-feed-chevron {
+  flex: none;
+  color: var(--text-tertiary);
+  transition: transform 0.15s;
+}
+.local-feed-chevron.open {
+  transform: rotate(90deg);
+}
+@media (prefers-reduced-motion: reduce) {
+  .local-feed-chevron {
+    transition: none;
+  }
+}
+.local-feed-section-dot {
+  flex: none;
+  width: 0.375rem;
+  height: 0.375rem;
+  border-radius: 50%;
+  background: var(--text-tertiary);
+}
+.local-feed-section.needs .local-feed-section-dot {
+  background: var(--status-caution);
+}
+.local-feed-section.waiting .local-feed-section-dot {
+  background: var(--status-info);
+}
+.local-feed-section.running .local-feed-section-dot {
+  background: var(--status-positive);
+}
+/* A folded section keeps its heading's rule and nothing under it. */
+.local-feed-section:has(.local-feed-toggle[aria-expanded="false"]) h2 {
+  border-bottom-color: transparent;
 }
 .local-feed-count {
   min-width: 1.25rem;
-  padding: 0 0.45rem;
-  border-radius: 9px;
-  background: var(--surface-wash);
+  padding: 0 0.35rem;
+  border-radius: 999px;
+  background: var(--un-hairline);
   color: var(--text-secondary);
-  font-size: var(--text-xs);
-  font-weight: 500;
-  line-height: 1.25rem;
+  font-size: 11px;
+  font-weight: 400;
+  line-height: 1.1rem;
   text-align: center;
   font-variant-numeric: tabular-nums;
 }
-.local-feed-count.caution {
-  background: var(--feed-edit-bg);
-  color: var(--feed-edit);
-}
+/* One card a row. Nothing in a card widens it: long words and paths wrap,
+   one-line text (the current step, a waiting card's title and branch) is
+   cut short, and code and tables scroll inside their own boxes. Each box
+   around the cards may shrink too, so a line cut short never widens the
+   page instead. */
 .local-feed-cards {
   display: flex;
-  flex-wrap: wrap;
-  gap: 0.75rem;
+  flex-direction: column;
+  min-width: 0;
   margin: 0;
   padding: 0;
   list-style: none;
 }
-.local-feed-cards.column {
-  flex-direction: column;
-  flex-wrap: nowrap;
-}
 .local-feed-card {
   display: flex;
-  flex: 1 1 26rem;
   flex-direction: column;
-  gap: 0.75rem;
+  gap: 0.3rem;
   min-width: 0;
-  padding: 1rem 1.125rem;
-  border: 1px solid var(--un-line);
-  border-radius: 12px;
-  background: var(--un-list);
+  padding: 0.8rem 1.5rem;
+  overflow-wrap: anywhere;
+  border-bottom: 1px solid var(--un-hairline);
   color: var(--un-ink);
   animation: local-feed-rise 0.3s ease-out;
 }
-.local-feed-cards.column > .local-feed-card {
-  flex: none;
-  gap: 0.625rem;
-  padding: 0.875rem 1.125rem;
+.local-feed-card:last-child {
+  border-bottom: 0;
 }
-.local-feed-card.local-feed-ask {
-  border: 1.5px solid var(--feed-ask);
-}
-.local-feed-card.quiet {
-  border-color: var(--border-default);
-}
-.local-feed-cards.column > .local-feed-card.compact {
+.local-feed-card.compact {
   flex-direction: row;
   flex-wrap: wrap;
   align-items: center;
   gap: 0.25rem 0.875rem;
-  padding: 0.75rem 1.125rem;
 }
+/* A row's head stays one line: its title, where it works and its branch
+   give way with an ellipsis (the branch at most 18rem, whole on hover), so
+   the time keeps its place on the right and nothing widens the page. */
 .local-feed-head {
   display: flex;
-  flex-wrap: wrap;
   align-items: center;
-  gap: 0.25rem 0.625rem;
+  gap: 0.625rem;
   min-width: 0;
+}
+.local-feed-head > * {
+  min-width: 0;
+}
+.local-feed-head .local-feed-time {
+  flex: none;
+}
+.local-feed .local-session-where {
+  flex: 0 1 auto;
+  flex-wrap: nowrap;
+  overflow: hidden;
+}
+.local-feed .local-session-where > * {
+  min-width: 0;
+}
+.local-feed .local-session-repo {
+  flex: none;
+}
+.local-feed :is(.local-session-branch, .local-feed-branch) {
+  flex: 0 1 auto;
+  max-width: 18rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .local-feed-head h3 {
   margin: 0;
-  font-size: var(--text-base);
+  font-size: inherit;
+  font-weight: 500;
+}
+/* A card with a transcript opens it on a click: its link reads as the text
+   it holds, and the card answers the pointer. */
+.local-feed-card:has(.local-feed-open) {
+  cursor: pointer;
+}
+.local-feed-card:has(.local-feed-open):hover {
+  background: var(--un-list);
+}
+.local-feed-card:has(.local-feed-open) :is(input, textarea) {
+  cursor: text;
+}
+.local-feed-open {
+  min-width: 0;
+  color: inherit;
+  text-decoration: none;
+}
+/* A card led by the agent's mark opens by it: the mark sits centred on the
+   head's line. */
+.local-feed-open:has(> img) {
+  display: flex;
+  flex: none;
+  align-items: center;
+}
+/* The app's right-click menu (context-menu.tsx), drawn as Up next's snooze
+   menu: warm paper on the page, the stopping choices in the critical tone. */
+.context-menu {
+  position: fixed;
+  z-index: 50;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 200px;
+  max-width: 320px;
+  padding: 6px;
+  border: 1px solid var(--un-line-strong);
+  border-radius: 10px;
+  background: var(--surface-popup);
+  box-shadow: var(--un-shadow-menu);
+  animation: upnext-drop 0.12s ease-out;
+}
+.context-menu button {
+  padding: 7px 10px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--un-ink);
+  font: inherit;
+  font-size: 14px;
+  text-align: left;
+  cursor: pointer;
+}
+.context-menu button:is(:hover, :focus-visible) {
+  outline: none;
+  background: var(--un-menu-hover);
+}
+.context-menu button.danger {
+  color: var(--status-critical);
+}
+.context-menu button:has(kbd) {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
+.context-menu kbd {
+  color: var(--un-faint);
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+@media (prefers-reduced-motion: reduce) {
+  .context-menu {
+    animation: none;
+  }
+}
+/* A waiting card's head: the session's title, then its branch, each cut
+   short before they push the wait off the line. */
+.local-feed-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.local-feed-branch {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--un-muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.local-feed-agent {
+  color: var(--un-muted);
+  font-size: var(--text-xs);
   font-weight: 600;
 }
 .local-feed-title {
@@ -2428,27 +2574,19 @@ a.local-session-pr:hover {
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
+/* A waiting card's wait, boxed in the tone of its dot: amber while it waits
+   on the person, grey once it went quiet. */
+.local-feed-status {
+  font-weight: 500;
+}
+.local-feed-status.waiting {
+  color: var(--un-working);
+}
+.local-feed-status.quiet {
+  color: var(--un-muted);
+}
 .local-feed-ask .local-feed-time {
   color: var(--feed-ask-ink);
-}
-.local-feed-dot {
-  flex: none;
-  width: 0.5rem;
-  height: 0.5rem;
-  border-radius: 50%;
-  background: var(--status-positive);
-}
-.local-feed-dot.muted {
-  background: var(--text-tertiary);
-}
-.local-feed-dot.caution,
-.local-feed-dot.ring {
-  width: 0.625rem;
-  height: 0.625rem;
-  background: var(--feed-ask);
-}
-.local-feed-dot.ring {
-  animation: local-feed-ring 1.4s ease-out infinite;
 }
 .local-feed-where,
 .local-feed-note,
@@ -2471,38 +2609,46 @@ a.local-session-pr:hover {
   display: -webkit-box;
   overflow: hidden;
   -webkit-box-orient: vertical;
-  -webkit-line-clamp: 3;
+  -webkit-line-clamp: 2;
   padding-left: 0.625rem;
   border-left: 2px solid var(--border-subtle);
   color: var(--text-secondary);
   font-size: 13.5px;
   line-height: 1.5;
 }
-.local-feed-soft {
-  padding: 0.625rem 0.75rem;
-  border-radius: var(--radius-md);
-  background: var(--feed-soft);
-  color: var(--un-ink-soft);
-  font-size: 14px;
-  line-height: 1.55;
-}
-/* An agent's last message, rendered: its opening lines, fading out past
-   them where the transcript takes over. The fade is measured from the top,
-   so a short message is never dimmed. */
-.local-feed-message {
-  max-height: 10rem;
+/* What the user last typed, on one line above what the agent did with it. */
+.local-feed-prompt {
   overflow: hidden;
-  mask-image: linear-gradient(to bottom, #000 7.5rem, transparent 10rem);
+  margin: 0;
+  color: var(--un-ink-soft);
+  font-size: var(--text-xs);
+  line-height: 1.5;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
-.local-feed-message strong {
+.local-feed-prompt-label {
+  margin-right: 0.25rem;
+  color: var(--un-muted);
+  font-size: var(--text-xs);
+  font-weight: 600;
+}
+/* What the agent said when it finished: the opening of its message, two
+   lines at most, in the card's own ink rather than a box of its own. */
+.local-feed-soft {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  color: var(--un-muted);
+  font-size: var(--text-xs);
+  line-height: 1.5;
+}
+.local-feed-soft strong {
   color: var(--un-ink);
   font-weight: 600;
 }
-.local-feed-message code {
+:is(.local-feed-soft, .local-feed-quote) code {
   font-size: 12.5px;
-}
-.local-feed-message a {
-  color: var(--un-link);
 }
 .local-feed-note {
   color: var(--text-secondary);
@@ -2561,56 +2707,220 @@ a.local-session-pr:hover {
 .local-feed-actions .inbox-action {
   margin-left: 0;
 }
-.local-feed-card .local-feed-deny {
-  color: var(--status-critical);
-}
 .local-feed-card button:disabled {
   opacity: 0.6;
   cursor: default;
 }
+/* What a request asks, in the row's own type, then its choices: a small
+   boxed button each, numbered for its key, what it means beside it. */
 .local-feed-question {
   display: flex;
   flex-direction: column;
-  gap: 0.5rem;
+  gap: 0.375rem;
+  margin-top: 0.25rem;
 }
 .local-feed-ask-text {
-  font-size: var(--text-base);
+  color: var(--un-ink);
+  font-size: var(--text-xs);
   font-weight: 500;
+  line-height: 1.5;
 }
-.local-feed-chip {
-  align-self: flex-start;
-  padding: 0.1rem 0.45rem;
+.local-feed-ask-header {
+  color: var(--un-muted);
+  font-weight: 400;
+}
+.local-feed-choices {
+  display: flex;
+  flex-direction: column;
+  max-width: 44rem;
+  margin: 0 0 0 -0.5rem;
+  padding: 0;
+  list-style: none;
+}
+/* A choice: its key in a small box, its label, what it means after it; the
+   row takes the pointer's and the keys' sand, a chosen one the green. */
+.local-feed-choice {
+  display: flex;
+  align-items: baseline;
+  gap: 0.625rem;
+  width: 100%;
+  min-width: 0;
+  padding: 0.3rem 0.5rem;
+  border: 0;
   border-radius: var(--radius-sm);
-  background: var(--surface-wash);
-  color: var(--text-secondary);
+  background: transparent;
+  color: var(--un-ink);
+  font: inherit;
+  font-size: var(--text-xs);
+  text-align: left;
+  cursor: pointer;
+}
+.local-feed-choice:is(:hover, :focus-visible):not(:disabled) {
+  outline: none;
+  background: var(--un-hover);
+}
+.local-feed-choice:active:not(:disabled) {
+  background: var(--un-line);
+}
+.local-feed-choice:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+.local-feed-choice[aria-pressed="true"] {
+  background: var(--un-primary);
+}
+.local-feed-key {
+  display: inline-grid;
+  flex: none;
+  place-items: center;
+  align-self: center;
+  min-width: 1.125rem;
+  height: 1.125rem;
+  border: 1px solid var(--un-line-strong);
+  border-radius: 4px;
+  background: var(--un-panel);
+  color: var(--un-muted);
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  line-height: 1;
+}
+.local-feed-key:empty {
+  visibility: hidden;
+}
+.local-feed-choice[aria-pressed="true"] .local-feed-key {
+  border-color: var(--un-primary-line);
+  color: var(--un-on-primary);
+}
+.local-feed-choice-label {
+  flex: none;
+  max-width: 100%;
+  font-weight: 500;
+  overflow-wrap: anywhere;
+}
+.local-feed-choice-note {
+  min-width: 0;
+  color: var(--un-muted);
+  overflow-wrap: anywhere;
+}
+.local-feed-choice.danger .local-feed-choice-label {
+  color: var(--status-critical);
+}
+.local-feed-choice.quiet .local-feed-choice-label {
+  color: var(--un-muted);
+  font-weight: 400;
+}
+/* A session's preview under its row (Space): the row grown open, in its
+   sand and behind its bar when it has the keys, the text under the title. */
+.local-feed-peek-row {
+  padding: 0 1.5rem 0.9rem calc(1.5rem + 18px + 0.625rem);
+  border-bottom: 1px solid var(--un-hairline);
+  background: var(--un-list);
+}
+.local-feed-card:has(+ .local-feed-peek-row) {
+  border-bottom: 0;
+  background: var(--un-list);
+}
+.local-feed-card[data-focused] + .local-feed-peek-row {
+  box-shadow: inset 3px 0 0 var(--un-ink);
+}
+.local-feed-peek {
+  display: grid;
+  grid-template-columns: 8rem minmax(0, 1fr);
+  gap: 0.5rem 1rem;
+  max-height: 22rem;
+  margin: 0;
+  overflow-y: auto;
+  animation: local-feed-rise 0.15s ease-out;
+}
+.local-feed-peek dt {
+  padding-top: 0.1rem;
+  color: var(--un-muted);
   font-size: 11px;
   font-weight: 600;
 }
-.local-feed-card .local-feed-option {
-  display: inline-flex;
-  flex-direction: column;
-  align-items: flex-start;
-  height: auto;
-  text-align: left;
+.local-feed-peek dd {
+  min-width: 0;
+  margin: 0;
 }
-.local-feed-option small {
-  color: var(--text-tertiary);
-  font-size: 11px;
-  font-weight: 400;
+.local-feed-peek-asked {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  color: var(--un-muted);
+  font-size: var(--text-xs);
+  line-height: 1.55;
 }
-.local-feed-card .local-feed-option[data-on] {
-  border-color: var(--action-primary);
-  background: var(--surface-selected);
-  box-shadow: inset 0 0 0 1px var(--action-primary);
+@media (width < 48rem) {
+  .local-feed-peek {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0.25rem;
+  }
+}
+.local-feed-peek-said {
+  color: var(--un-ink-soft);
+  font-size: var(--text-xs);
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+.local-feed-peek-said :is(ul, ol) {
+  padding-left: 1.1rem;
+}
+.local-feed-peek-said strong {
+  color: var(--un-ink);
+  font-weight: 600;
+}
+.local-feed-peek-said :not(pre) > code {
+  padding: 0.05rem 0.3rem;
+  border-radius: 4px;
+  background: var(--un-hairline);
+  font-size: 12px;
+}
+.local-feed-peek-said pre {
+  padding: 0.5rem 0.75rem;
+  border-radius: 6px;
+  background: var(--un-hover);
+  font-size: 12px;
+  line-height: 1.5;
+}
+.local-feed-peek-said pre code {
+  font-size: 12px;
+}
+@media (prefers-reduced-motion: reduce) {
+  .local-feed-peek {
+    animation: none;
+  }
+}
+/* A running session's latest words, one line, its caret after them. */
+.local-feed-said {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  color: var(--un-ink-soft);
+  font-size: var(--text-xs);
+  line-height: 1.5;
+}
+.local-feed-said-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.local-feed-said .local-feed-caret {
+  flex: none;
+  width: 6px;
+  height: 12px;
+  margin-left: 4px;
+}
+.local-feed-said code {
+  font-size: 12px;
 }
 /* The current step in a mono strip, then the trail of the steps before. */
 .local-feed-step {
   overflow: hidden;
-  padding: 0.5rem 0.625rem;
-  border-radius: var(--radius-sm);
-  background: var(--feed-soft);
+  color: var(--un-ink-soft);
   font-family: var(--font-mono);
-  font-size: 13px;
+  font-size: 12px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -2635,61 +2945,81 @@ a.local-session-pr:hover {
   vertical-align: -2px;
   animation: local-feed-blink 1s infinite;
 }
-.local-feed-trail {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 0.25rem;
-}
-.local-feed-trail-label,
-.local-feed-files,
 .local-feed-sub {
   color: var(--text-secondary);
   font-size: var(--text-xs);
 }
-.local-feed-trail-label {
-  margin-right: 0.25rem;
-}
-.local-feed-files {
-  margin-left: auto;
-  font-variant-numeric: tabular-nums;
-}
-.local-feed-chip.read {
-  background: var(--feed-read-bg);
-  color: var(--feed-read);
-}
-.local-feed-chip.edit {
-  background: var(--feed-edit-bg);
-  color: var(--feed-edit);
-}
-.local-feed-chip.bash {
-  background: var(--feed-bash-bg);
-  color: var(--feed-bash);
-}
-.local-feed-trail .local-feed-chip.new {
-  animation: local-feed-chip-in 0.3s ease-out;
-}
+/* A reply, or a message for when the turn ends: one quiet field in the
+   panel's paper, its keys hinted and its Send inside it, ringed while it
+   has the keys. */
 .local-feed-compose {
   display: flex;
-  flex-wrap: wrap;
   align-items: center;
-  gap: 0.5rem;
+  gap: 0.625rem;
+  max-width: 44rem;
+  margin-top: 0.25rem;
+  padding: 0.25rem 0.25rem 0.25rem 0.75rem;
+  border: 1px solid var(--un-line-strong);
+  border-radius: var(--radius-md);
+  background: var(--un-panel);
 }
-.local-feed-compose label {
-  color: var(--text-secondary);
-  font-size: var(--text-xs);
-  font-weight: 500;
+.local-feed-compose:focus-within {
+  border-color: var(--un-focus);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--un-focus) 14%, transparent);
 }
 .local-feed-compose input {
-  flex: 1 1 12rem;
+  flex: 1;
   min-width: 0;
-  height: 2rem;
-  padding: 0 0.625rem;
-  border: 1px solid var(--border-default);
-  border-radius: var(--radius-md);
-  background: var(--surface-card);
-  color: var(--text-primary);
+  height: 1.75rem;
+  padding: 0;
+  border: 0;
+  outline: none;
+  background: transparent;
+  color: var(--un-ink);
   font: inherit;
+  font-size: var(--text-xs);
+}
+.local-feed-compose input::placeholder {
+  color: var(--un-faint);
+}
+.local-feed-send-button {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 1.75rem;
+  height: 1.75rem;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: var(--un-done);
+  box-shadow: var(--un-shadow-primary);
+  color: var(--un-on-hot);
+  cursor: pointer;
+}
+.local-feed-send-button:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--un-done) 88%, black);
+}
+.local-feed-send-button:active:not(:disabled) {
+  box-shadow: none;
+  transform: translateY(1px);
+}
+.local-feed-send-button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.local-feed-send-button[aria-busy] {
+  opacity: 0.7;
+}
+.local-feed-compose-hint {
+  flex: none;
+  color: var(--un-faint);
+  font-size: 11px;
+  white-space: nowrap;
+}
+@media (width < 40rem) {
+  .local-feed-compose-hint {
+    display: none;
+  }
 }
 .local-feed-queued {
   display: flex;
@@ -2697,9 +3027,6 @@ a.local-session-pr:hover {
   align-items: center;
   justify-content: space-between;
   gap: 0.5rem;
-  padding: 0.5rem 0.75rem;
-  border-radius: var(--radius-md);
-  background: var(--feed-soft);
   font-size: var(--text-xs);
 }
 .local-feed-queued p {
@@ -2710,21 +3037,126 @@ a.local-session-pr:hover {
 .local-feed-sub {
   font-variant-numeric: tabular-nums;
 }
-.local-feed-card.compact .local-session-open {
-  margin-left: auto;
+.local-feed .local-session-branch {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--un-muted);
 }
-.local-feed-live:empty {
-  display: none;
+.local-feed .local-sessions-empty {
+  padding: 0.8rem 1.5rem;
 }
-.local-feed-done {
+/* The app's toasts (toast.tsx), drawn as its menus: warm paper raised over
+   the page, which dark mode turns to its popup surface. What happened, what
+   it was about, and where. */
+.local-toast {
+  position: fixed;
+  z-index: 40;
+  bottom: 22px;
+  left: calc(50% + var(--rail-width) / 2);
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  width: min(26rem, calc(100vw - var(--rail-width) - 2rem));
+  padding: 12px 10px 12px 14px;
+  border: 1px solid var(--un-line-strong);
+  border-radius: 10px;
+  background: var(--surface-popup);
+  box-shadow: var(--un-shadow-menu);
+  color: var(--un-ink);
+  transform: translateX(-50%);
+  animation: local-toast-rise 0.2s ease-out;
+}
+.local-toast-icon {
+  flex: none;
+  margin-top: 1px;
+  color: var(--un-done);
+}
+.local-toast.error .local-toast-icon {
+  color: var(--un-hot);
+}
+.local-toast-body {
+  flex: 1;
+  min-width: 0;
+}
+.local-toast-body p {
   margin: 0;
-  padding: 0.875rem 1rem;
-  border: 1px solid var(--feed-done-border);
-  border-radius: var(--radius-md);
-  background: var(--feed-done-bg);
-  color: var(--feed-done);
-  font-size: var(--text-base);
-  animation: local-feed-rise 0.3s ease-out;
+}
+.local-toast-title {
+  font-size: 14px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+.local-toast-detail {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  margin-top: 2px !important;
+  color: var(--un-ink-soft);
+  font-size: 13px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+.local-toast-context {
+  margin-top: 6px !important;
+  color: var(--un-muted);
+  font-size: 12px;
+}
+.local-toast-context {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.local-toast-context img {
+  flex: none;
+}
+.local-toast-action {
+  flex: none;
+  align-self: center;
+  padding: 5px 12px;
+  border: 1px solid var(--un-line-strong);
+  border-radius: 6px;
+  background: var(--un-panel);
+  box-shadow: var(--un-shadow-button);
+  color: var(--un-ink);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.local-toast-action:hover {
+  background: var(--un-hover);
+}
+.local-toast-close {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 1.375rem;
+  height: 1.375rem;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: inherit;
+  opacity: 0.6;
+  cursor: pointer;
+}
+.local-toast-close:hover {
+  background: var(--un-hover);
+  opacity: 1;
+}
+@keyframes local-toast-rise {
+  from {
+    opacity: 0;
+    transform: translate(-50%, 8px);
+  }
+}
+@media (width < 48rem) {
+  .local-toast {
+    left: 50%;
+    width: calc(100vw - 2rem);
+  }
 }
 @keyframes local-feed-blink {
   0%,
@@ -2734,16 +3166,6 @@ a.local-session-pr:hover {
   50%,
   100% {
     opacity: 0;
-  }
-}
-@keyframes local-feed-chip-in {
-  from {
-    opacity: 0;
-    transform: scale(0.6);
-  }
-  to {
-    opacity: 1;
-    transform: scale(1);
   }
 }
 @keyframes local-feed-rise {
@@ -2756,20 +3178,10 @@ a.local-session-pr:hover {
     transform: none;
   }
 }
-@keyframes local-feed-ring {
-  from {
-    box-shadow: 0 0 0 0 color-mix(in srgb, var(--feed-ask) 45%, transparent);
-  }
-  to {
-    box-shadow: 0 0 0 10px transparent;
-  }
-}
 @media (prefers-reduced-motion: reduce) {
   .local-feed-caret,
   .local-feed-card,
-  .local-feed-done,
-  .local-feed-dot.ring,
-  .local-feed-trail .local-feed-chip.new {
+  .local-toast {
     animation: none;
   }
 }
@@ -3203,6 +3615,29 @@ span.inbox-fix svg {
   overflow-wrap: anywhere;
   color: var(--text-secondary);
 }
+/* A pull request's fix runs: one line folded, a run a line open. */
+.local-fix-runs {
+  margin-bottom: 0.75rem;
+}
+.local-fix-runs ol {
+  display: grid;
+  gap: 0.25rem;
+  margin: 0.375rem 0;
+  padding: 0;
+  list-style: none;
+  color: var(--text-secondary);
+}
+.local-fix-runs li {
+  display: flex;
+  align-items: baseline;
+  gap: 0.75rem;
+  overflow-wrap: anywhere;
+}
+.local-fix-run-when {
+  flex: none;
+  min-width: 6.5rem;
+  color: var(--text-tertiary);
+}
 /* The Codex and Cursor marks are drawn in black; on a dark page they turn
    light, as their makers draw them there. */
 :root[data-theme="dark"] img[src*="codex"],
@@ -3223,9 +3658,12 @@ span.inbox-fix svg {
 .inbox-row[data-focused] a:focus-visible {
   outline: none;
 }
-/* The same mark on a Sessions card, inside its own border. */
-.local-feed-card[data-focused] {
-  background: var(--un-hover);
+/* The same mark on a Sessions card, inside its own border: the bar and a
+   firmer border, not a fill, since the strips inside a card (its current
+   step, its message) are drawn in the sand a fill would take. */
+.local-feed-card[data-focused],
+.local-feed-card[data-focused]:hover {
+  background: var(--un-list);
   box-shadow: inset 3px 0 0 var(--un-ink);
 }
 .local-feed-card[data-focused] a:focus-visible {

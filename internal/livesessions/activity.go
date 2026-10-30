@@ -5,6 +5,7 @@ import (
 	"cmp"
 	"encoding/json"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 )
@@ -16,6 +17,7 @@ const (
 	maxSteps       = 12
 	maxTarget      = 160
 	maxLastMessage = 1200
+	maxLastPrompt  = 400
 	maxFilesKept   = 10000
 	// maxRawTarget bounds what is kept of a tool's input before it is
 	// masked and cut for serving.
@@ -33,6 +35,12 @@ type Activity struct {
 	// LastMessage is the latest assistant text, masked, its line breaks kept
 	// (block) and cut.
 	LastMessage string `json:"last_message,omitempty"`
+	// LastPrompt is the latest message the user typed, masked, on one line
+	// and cut.
+	LastPrompt string `json:"last_prompt,omitempty"`
+	// inFlight is whether a tool call has no result yet: a subagent or a
+	// long command reports nothing until it ends.
+	inFlight bool
 }
 
 // Step is one tool call: the tool as the transcript names it, normalised for
@@ -59,6 +67,56 @@ type activityScan struct {
 	// maxFilesKept of them.
 	files   map[string]struct{}
 	message string
+	// open are the ids of the tool calls with no result yet, at most
+	// maxOpen of them.
+	open map[string]struct{}
+	// prompt is the latest message the user typed.
+	prompt string
+}
+
+// maxOpen bounds the tool calls remembered as running: more than a turn's
+// parallel calls means results were missed, and they are forgotten.
+const maxOpen = 64
+
+// toolResultID finds the ids a line's tool results answer: Claude Code's
+// tool_use_id, Codex's call_id. They come before the output, so the opening
+// of a line too long to decode still has them.
+var toolResultID = regexp.MustCompile(`"(?:tool_use_id|call_id)":"([^"]{1,128})"`)
+
+func (a *activityScan) called(id string) {
+	if id == "" {
+		return
+	}
+	if a.open == nil || len(a.open) >= maxOpen {
+		a.open = map[string]struct{}{}
+	}
+	a.open[id] = struct{}{}
+}
+
+// answered closes the tool calls a result line answers.
+func (a *activityScan) answered(line []byte) {
+	for _, m := range toolResultID.FindAllSubmatch(line, -1) {
+		delete(a.open, string(m[1]))
+	}
+}
+
+// said records something the user wrote without starting a turn: an answer
+// to the agent's question, or a message sent while it works. It is the
+// latest prompt, and the tool calls running go on.
+func (a *activityScan) said(text string) {
+	if text = strings.TrimSpace(text); text != "" {
+		a.prompt = text
+	}
+}
+
+// prompted records a user line: it ends the tool calls still open, since the
+// turn they belonged to is over, answered or not, and when the user typed it
+// (not a command or a note of an interruption) it is the latest prompt.
+func (a *activityScan) prompted(text string, typed bool) {
+	clear(a.open)
+	if typed {
+		a.prompt = text
+	}
 }
 
 func (a *activityScan) addStep(s rawStep) {
@@ -90,7 +148,8 @@ func (a *activityScan) addFile(path string) {
 // activity is the scan as served for a session working in cwd, nil when
 // nothing was found.
 func (t *Transcripts) activity(a *activityScan, cwd string) *Activity {
-	out := &Activity{FilesTouched: len(a.files), LastMessage: t.Tracker.block(a.message, maxLastMessage)}
+	out := &Activity{FilesTouched: len(a.files), LastMessage: t.Tracker.block(a.message, maxLastMessage),
+		LastPrompt: t.Tracker.oneLine(a.prompt, maxLastPrompt), inFlight: len(a.open) > 0}
 	for _, s := range a.steps {
 		target := s.target
 		if s.path {
@@ -102,10 +161,26 @@ func (t *Transcripts) activity(a *activityScan, cwd string) *Activity {
 		}
 		out.Steps = append(out.Steps, step)
 	}
-	if len(out.Steps) == 0 && out.FilesTouched == 0 && out.LastMessage == "" {
+	if len(out.Steps) == 0 && out.FilesTouched == 0 && out.LastMessage == "" && out.LastPrompt == "" && !out.inFlight {
 		return nil
 	}
 	return out
+}
+
+// settle is a session as the list serves it, given its activity: one silent
+// past IdleAfter with nothing to wait for still runs while a tool call of its
+// own has no result, and otherwise went quiet (WaitQuiet), waiting from its
+// last activity.
+func settle(s Session, a *Activity) Session {
+	if s.State != StateIdle || s.WaitingReason != "" {
+		return s
+	}
+	if a != nil && a.inFlight {
+		s.State = StateRunning
+		return s
+	}
+	s.WaitingReason, s.WaitingSince = WaitQuiet, s.LastActivityAt
+	return s
 }
 
 // relativeTo is path relative to dir when it lies inside it, else as given.
@@ -167,6 +242,7 @@ func (a *activityScan) claudeActivity(line []byte) {
 	}
 	var blocks []struct {
 		Type  string          `json:"type"`
+		ID    string          `json:"id"`
 		Text  string          `json:"text"`
 		Name  string          `json:"name"`
 		Input json.RawMessage `json:"input"`
@@ -182,6 +258,7 @@ func (a *activityScan) claudeActivity(line []byte) {
 				texts = append(texts, b.Text)
 			}
 		case "tool_use":
+			a.called(b.ID)
 			var in struct {
 				FilePath     string `json:"file_path"`
 				NotebookPath string `json:"notebook_path"`
@@ -240,6 +317,7 @@ func (a *activityScan) codexActivity(line []byte) {
 		Payload   struct {
 			Type      string          `json:"type"`
 			Name      string          `json:"name"`
+			CallID    string          `json:"call_id"`
 			Role      string          `json:"role"`
 			Arguments string          `json:"arguments"`
 			Input     string          `json:"input"`
@@ -269,9 +347,17 @@ func (a *activityScan) codexActivity(line []byte) {
 			a.message = strings.Join(texts, "\n")
 		}
 	case "function_call", "custom_tool_call", "local_shell_call":
+		a.called(p.CallID)
 		name := p.Name
 		if p.Type == "local_shell_call" {
 			name = "local_shell"
+		}
+		var codeArgs string
+		if p.Type == "custom_tool_call" && name == "exec" {
+			// Codex code mode: the input is JavaScript calling tools.<name>(...).
+			if inner, rest, ok := codeModeCall(p.Input); ok {
+				name, codeArgs = inner, rest
+			}
 		}
 		step := rawStep{tool: displayTool(name), at: v.Timestamp}
 		var args struct {
@@ -280,6 +366,14 @@ func (a *activityScan) codexActivity(line []byte) {
 			Input   string          `json:"input"`
 		}
 		_ = json.Unmarshal([]byte(p.Arguments), &args)
+		if codeArgs != "" {
+			switch step.tool {
+			case "Bash":
+				args.Cmd = jsStringAfter(codeArgs, "cmd:")
+			case "Edit":
+				args.Input = jsStringAfter(codeArgs, "")
+			}
+		}
 		if len(p.Action) > 0 {
 			var action struct {
 				Command json.RawMessage `json:"command"`
@@ -292,7 +386,7 @@ func (a *activityScan) codexActivity(line []byte) {
 		case "Bash":
 			step.target = firstLine(cmp.Or(args.Cmd, shellCommand(args.Command)))
 		case "Edit":
-			files := patchFiles(cmp.Or(p.Input, args.Input))
+			files := patchFiles(cmp.Or(args.Input, p.Input))
 			for _, f := range files {
 				a.addFile(f)
 			}
@@ -302,6 +396,44 @@ func (a *activityScan) codexActivity(line []byte) {
 		}
 		a.addStep(step)
 	}
+}
+
+// codeModeCall is the first tool a Codex code-mode exec input calls, as in
+// text(await tools.exec_command({cmd:"..."})): its name and the source after
+// its opening parenthesis.
+func codeModeCall(src string) (name, rest string, ok bool) {
+	_, after, found := strings.Cut(src, "tools.")
+	if !found {
+		return "", "", false
+	}
+	end := strings.IndexFunc(after, func(r rune) bool {
+		return r != '_' && (r < '0' || r > '9') && (r < 'a' || r > 'z') && (r < 'A' || r > 'Z')
+	})
+	if end <= 0 || !strings.HasPrefix(after[end:], "(") {
+		return "", "", false
+	}
+	return after[:end], after[end+1:], true
+}
+
+// jsStringAfter is the double-quoted string literal that follows key in src
+// (the start of src when key is empty), decoded; "" when there is none.
+func jsStringAfter(src, key string) string {
+	if key != "" {
+		_, after, found := strings.Cut(src, key)
+		if !found {
+			return ""
+		}
+		src = after
+	}
+	src = strings.TrimLeft(src, " \t\n")
+	if !strings.HasPrefix(src, `"`) {
+		return ""
+	}
+	var s string
+	if err := json.NewDecoder(strings.NewReader(src)).Decode(&s); err != nil {
+		return ""
+	}
+	return s
 }
 
 // shellCommand is the command of a Codex shell call: a string, or an argv
