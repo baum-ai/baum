@@ -277,7 +277,7 @@ it("shows only what baum did in its work, and the decisions it captured", () => 
     />,
   );
   expect(trended).toMatch(/data-up="true"[^>]*>↑ 3 this week/);
-  expect(trended).toContain(">0 this week<");
+  expect(trended).toContain('>0 this week<span class="sr-only">, 0 the 7 days before</span>');
 });
 
 it("splits activity by model on asking, and draws the pull request flow, yours or the team's", async () => {

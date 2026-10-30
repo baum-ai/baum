@@ -126,11 +126,10 @@ export function ColumnChart({
           {columns.map((column, i) => {
             const total = totals[i]!;
             const parts = series.filter((s) => (column.values[s.key] ?? 0) > 0);
-            const unknown = series.every((s) => column.values[s.key] === null);
             const description = `${column.title}: ${
               parts.length
                 ? parts.map((s) => `${format(column.values[s.key]!)} ${s.label}`).join(", ")
-                : unknown
+                : series.every((s) => column.values[s.key] === null)
                   ? "—"
                   : format(0)
             }`;

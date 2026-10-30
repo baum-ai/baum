@@ -521,7 +521,7 @@ function Activity({ data }: { data: Analytics }) {
                       <th scope="row">{c.title}</th>
                       {series.map((s) => (
                         <td key={s.key} className="num">
-                          {format(c.values[s.key] ?? 0)}
+                          {c.values[s.key] === null ? "—" : format(c.values[s.key] ?? 0)}
                         </td>
                       ))}
                     </tr>
@@ -748,6 +748,7 @@ function Trend({ week, previous }: { week: number; previous: number }) {
     >
       {up ? "↑ " : ""}
       {formatCount(week)} this week
+      <span className="sr-only">, {formatCount(previous)} the 7 days before</span>
     </span>
   );
 }

@@ -381,11 +381,12 @@ func (s *Service) Report(ctx context.Context, q Query) (Report, error) {
 	report.Summary.AgentShare = report.Commits.Share
 
 	report.Baum = s.baumWork(ctx, start, time.Time{}, q)
-	// The last seven days against the seven before, whatever the window.
-	weekAgo := s.now().Add(-7 * 24 * time.Hour)
+	// The last seven local days, as the 7-day window counts them, against
+	// the seven before, whatever the window.
+	weekAgo := today.AddDate(0, 0, -6)
 	report.Baum.Weeks = &BaumWeeks{
 		This:     weekOf(s.baumWork(ctx, weekAgo, time.Time{}, q)),
-		Previous: weekOf(s.baumWork(ctx, weekAgo.Add(-7*24*time.Hour), weekAgo, q)),
+		Previous: weekOf(s.baumWork(ctx, weekAgo.AddDate(0, 0, -7), weekAgo, q)),
 	}
 	report.Delivery = s.delivery(start, q, picked)
 	report.Flow = s.flow(ctx, start, today, loc, q, picked)
@@ -581,10 +582,16 @@ func addInt(total *int64, n int64) *int64 {
 // mainModel is the name of the model that took most of a session's tokens,
 // "Unknown model" when it reported none.
 func mainModel(prices *pricing.List, e Entry) string {
-	name, most := modelName(prices, "", e.Source), int64(-1)
+	// A model's usage can be split over several groups (speed, band), so
+	// its tokens are summed first.
+	tokens := map[string]int64{}
 	for _, g := range e.Usage {
-		if tokens := g.Tokens(e.Source); tokens > most {
-			name, most = modelName(prices, g.Model, e.Source), tokens
+		tokens[modelName(prices, g.Model, e.Source)] += g.Tokens(e.Source)
+	}
+	name, most := modelName(prices, "", e.Source), int64(0)
+	for model, n := range tokens {
+		if n > most || n == most && n > 0 && model < name {
+			name, most = model, n
 		}
 	}
 	return name
