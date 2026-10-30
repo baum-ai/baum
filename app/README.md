@@ -158,13 +158,12 @@ comments** or a combination such as **Fix conflicts, CI and review comments**
 request is open, is not a fork,
 discovery says the signed-in account can push to the repository
 (`viewer_can_push`) and the repository has a local clone. The PR page puts the
-button first beside the version menu, Pull requests puts a small **Fix** in
-the row's actions, and the Inbox's card offers it as its action; `f` presses
-it on each. Any of them starts the fix at once, with no dialog and no cost
+button first beside the version menu, Pull requests offers it in the row's
+menu, and the Inbox's card offers it as its action; `f` presses it on each. Any of them starts the fix at once, with no dialog and no cost
 estimate: `fix` in `src/app.tsx` posts `POST api/jobs` with
 `{"items":[{"clone","pr","kind":"fix"}],"mode":"single"}` (`startFix`), and
-the button reads **Starting…** (in Pull requests' row actions, **Fixing…**)
-from the click (the app's `fixStarting` set) until the job arrives. The daemon checks GitHub again and runs it with the
+the button reads **Starting…** (in a Pull requests row, **Fixing…** beside
+its review) from the click (the app's `fixStarting` set) until the job arrives. The daemon checks GitHub again and runs it with the
 fix agent Settings chooses, else the review's harness and model. A fix it refuses answers `409` with
 `blocked_reason` (fork, no push access, unsupported harness, nothing to fix),
 which `request` turns into the reason in words (`jobReasonText`); the app
@@ -335,9 +334,8 @@ Jobs. The daemon keeps the 50 newest transcripts; an older run's link finds
 "No transcript to show".
 
 Merging: a pull request whose Merge state is Ready (open, not a draft) shows a
-Merge button in the PR page header and, on hover or keyboard focus, in its
-Pull requests row's actions (always drawn on touch screens and below 72rem,
-where the columns fold), and as the Inbox card's action. It opens a confirmation dialog
+Merge button in the PR page header, **Merge…** in its Pull requests row's
+menu, and the Inbox card's action. It opens a confirmation dialog
 that reads `GET /api/prs/merge-options` for the repository's allowed methods
 (merge commit, squash, rebase), preselects GitHub's default for the user and
 offers only the allowed ones. "Merge pull request" posts `POST /api/prs/merge`
@@ -401,7 +399,12 @@ Repositories, a session or job transcript), with the current page's group
 first; `?` or `Esc` closes it. Key hints drawn
 on buttons (class `key-hint`) show only while Alt, Option on a Mac, is held:
 `useKeyHints` marks the document root then and clears it on release or when
-the window loses focus. The focused row has an
+the window loses focus. Every page also shows its own keys then, in one line
+along the foot of its panel (`KeyBar` in `src/shortcuts.tsx`): the keys of its
+group in the sheet that carry a short name, those sharing one together ("j k
+move"), then ⌘. for the row menu on a list, Go to and `?`. The bar reads the
+sheet's table, so it names only keys that work. The Inbox draws it at the foot
+of its list instead. The focused row has an
 accent bar and a faint fill, distinct from hover and selection; focus moves to
 the row's own link, so screen readers follow, and the row scrolls into view.
 Each list (Pull requests, Inbox, Sessions, Jobs, Repositories) keeps its
@@ -420,9 +423,9 @@ breakdown toggles are pressed buttons in a group), and its charts' bars take
 the focus for their tooltips.
 
 Update branch and Re-run checks (`src/unblock.tsx`) are secondary buttons in the
-PR page header beside Fix and Merge…, not in Pull requests: a row's actions
-hold one action (Merge on a ready row, else Fix) beside Peek, and a third
-button would crowd the column or wrap. `canUpdateBranch` offers the first
+PR page header beside Fix and Merge…, not in Pull requests: a row's menu
+holds the one action its state asks for (Merge on a ready row, else Fix), and
+the page is where the rest of a pull request's state is read. `canUpdateBranch` offers the first
 when discovery's `behind` is true (GitHub's `BEHIND`, never for a draft or a
 conflict), the pull request is open, not a fork, and `viewer_can_push` is true;
 `canRerunChecks` offers the second when `checks` is `failing`, the pull request
@@ -497,7 +500,8 @@ branch are counted at the foot of the panel.
 Snooze offers 1 hour, this afternoon (3 PM, while that is more than an hour
 away), tomorrow morning (9 AM) and **Until it changes**, which hides the pull
 request until its head moves. A snooze selects the next pull request and shows
-a toast with **Undo**; **Bring back** under Snoozed ends one early. Keys:
+a toast with **Undo**; **Bring back**, in a snoozed row's menu under Snoozed,
+ends one early. Keys:
 `j`/`↓` and `k`/`↑` move the selection, `Enter` opens, `m` merges a Merge, `f`
 starts a Fix item's fix (where its panel offers the button), `t` opens its fix
 transcript (Watch the agent, See what the agent did, or the last run's), `s` opens Snooze
@@ -621,9 +625,11 @@ a label, with no key of its own, as Tab moves nothing in the app.
   over the last moments (no fade with reduced motion). An unknown id says "This inbox no longer
   exists" and links to Inbox.
 - **Manage** (`?page=inboxes`): the inboxes in the sidebar's order, each with
-  its colour dot, name, how many are in it now, sentence, up and down buttons
-  ("Move <name> up", disabled at the ends), a labelled badge switch and Edit; a
-  save sends the whole list in its new order. A tinted note says how many queue items
+  its colour dot, name (a link to edit it), how many are in it now ("not
+  counted in the badge" when it is left out), and sentence. Its menu holds
+  Edit…, Move up and Move down (each only where the inbox can move) and
+  **Count in the Inbox badge**, an on-or-off choice; a save sends the whole
+  list in its new order. A tinted note says how many queue items
   are in no inbox (they show only under Inbox and always count in its badge; in
   the caution tone), or that every one is in some (in the positive tone). With none, it leads to New inbox.
 
@@ -651,8 +657,9 @@ the title below 72rem. The list is drawn as the Up next design's live table,
 in the Inbox's palette (`--un-*`) on the app's type scale. The page bar says
 when the list last read the daemon ("Updated just now", then how long ago,
 with the exact time as a tooltip), with a turning mark while a refresh runs.
-A row's last cell holds its action and **Peek**, which wait for the pointer or
-keyboard focus in the wide table. Peek (or `Space` on the focused row) opens
+A row's menu (its ⋯, a right click or ⌘.) holds Peek, Merge… on a ready row
+or the fix it offers, the fix's transcript, Generate or Regenerate review,
+Select and Open on GitHub, each with its key. Peek (or `Space` on the focused row) opens
 the saved review under the row, read when first opened and again only for a
 new version: the summary (the row already shows the risk score), the first four sections in review order with their lines added
 and removed, and **Open the review**. Without a saved review it says why (no
@@ -991,9 +998,41 @@ changed.
 Analytics shows decision capture's calls, failures by reason, calls cut short
 by a stop and spend under baum's work; an unknown cost stays unknown.
 
+Every list page draws its list one way: Pull requests, the Inbox's queue, Sessions,
+Jobs, Repositories and Manage inboxes. The page lies on the panel's warm paper
+(`--un-panel`), its sections are `ListSection`s (`src/list.tsx`: a heading with a dot
+in the section's tone, its name and count, folding where the list is long), and its
+rows are `list-row`s spanning the panel between hairlines, with no boxed panels. The
+row the keyboard is on, and the Inbox's selected pull request, take the same bar and
+fill. Jobs groups its jobs under Running now and Finished, newest first in each. The
+Timeline and Analytics keep their own layouts.
+
+A row carries no buttons. Its title opens it (a pull request, a job's pull
+request, a repository's settings, an inbox's editor), and everything else it
+offers is in its menu (`MenuButton` and `useContextMenu` in
+`src/context-menu.tsx`), opened three ways: the row's ⋯ at its end, a right
+click on the row, and ⌘. (Ctrl+. elsewhere) on the focused row. The ⋯ shows
+while the row is under the pointer, holds the keys or has its menu open, and
+always on a touch screen; it keeps its place while hidden, so nothing moves.
+It is a WAI-ARIA menu button: named "Actions for <row>", `aria-haspopup="menu"`,
+`aria-expanded` while open, and Enter, Space or ↓ open the menu on its first
+choice, ↑ on its last. In the menu ↑ and ↓ move and wrap, Home and End go to
+either end, a letter goes to the next choice starting with it, Enter chooses,
+and Escape or Tab close it with the keys back on the ⋯. An on-or-off choice is
+a `menuitemcheckbox` with its tick; what stops or removes something is in the
+critical tone, set apart below a separator. A row offers only what applies to
+it now, each choice with its key where it has one. Choices that open more
+(a path form for a clone, a job's usage, a pull request's peek) open it under
+the row. Pull requests: Peek, Merge… or the fix, the fix's transcript,
+Generate review, Select, Open on GitHub. Jobs: Open pull request, Watch or
+Transcript, Show usage, Cancel job. Repositories: Settings…, Change local
+clone… or, without a clone, Choose folder… and Clone it…. Manage inboxes:
+Edit…, Move up, Move down, Count in the Inbox badge. Snoozed: Bring back.
+Sessions: the session menu below.
+
 The Sessions page (`?page=sessions`) is a live feed of the same sessions, in three
-sections drawn as the Pull requests list (bucket headings with a dot and a count, then
-rows between hairlines, no panels). Each heading folds its section, as an inbox
+sections drawn as every list (headings with a dot and a count, then rows between
+hairlines, no panels). Each heading folds its section, as an inbox
 bucket's does; Ended recently starts folded, and the fold holds while the app runs.
 The keys move only through rows on show. The `live` event updates it and the sidebar count, and times
 tick every second. The daemon keeps ended sessions for 24 hours, across restarts, and
@@ -1013,8 +1052,8 @@ confirmed in a toast: the app's own (`src/toast.tsx`; any page raises one with
 goes after six seconds or when dismissed, is read out from one live region, and can
 carry an action such as Undo; a failure shows in the critical tone.
 
-A right click on a session's card opens the app's own menu (`src/context-menu.tsx`)
-in place of the browser's: Reply when the daemon offers it (`messageable`, with its
+A session card's ⋯, or a right click on the card, opens the app's own menu
+(`src/context-menu.tsx`) in place of the browser's: Reply when the daemon offers it (`messageable`, with its
 key r), Focus session or Show window when the daemon can bring the session forward
 (see below, key f), Open transcript, Peek (Space), Open pull request when it has one, and End session when the
 daemon offers it (`endable`). ⌘. (Ctrl+. elsewhere), anywhere in the app, opens
