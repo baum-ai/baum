@@ -6,6 +6,7 @@ import {
   type ReviewDocument,
   type Section,
   sectionBadgeState,
+  sectionDetails,
   sectionsAreScored,
   sectionsInReviewOrder,
   sectionStateTone,
@@ -128,7 +129,16 @@ export function ChangesOverview({
                         </span>
                       ) : null}
                     </div>
-                    <Markdown className="text-(--text-primary)">{section.summary.text}</Markdown>
+                    {section.summary && (
+                      <Markdown className="text-(--text-primary)">{section.summary.text}</Markdown>
+                    )}
+                    {sectionDetails(section) !== "complete" && (
+                      <p className="text-base text-(--text-tertiary)">
+                        {sectionDetails(section) === "pending"
+                          ? "Writing details…"
+                          : "Details unavailable"}
+                      </p>
+                    )}
                     {section.derived.review_reason && (
                       <Markdown className="text-(--text-secondary)">
                         {section.derived.review_reason.text}

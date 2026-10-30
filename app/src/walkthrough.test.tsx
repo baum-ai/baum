@@ -61,7 +61,7 @@ it("reads a step's tour fields and falls back for steps and sections without the
   // A section without behaviour steps is one stop of its summary.
   const docs = tour.stops.find((stop) => stop.id === "sec_docs")!;
   expect(docs.title).toBe("Docs and dependency bump");
-  expect(docs.text).toBe(doc.sections.find((s) => s.id === "sec_docs")!.summary.text);
+  expect(docs.text).toBe(doc.sections.find((s) => s.id === "sec_docs")!.summary!.text);
   expect(docs.evidence).toEqual([]);
 });
 

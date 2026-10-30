@@ -214,8 +214,15 @@ export type RiskScore = {
   status: "assessed" | "lower_bound" | "not_assessed";
   score: RiskScoreLevel | null;
   reasons: { section: string; risk: string | null; text: string }[];
-  limitations: { kind: "unassessed_sections" | "omitted_source" | string; count: number }[];
+  limitations: {
+    kind: "unassessed_sections" | "incomplete_sections" | "omitted_source" | string;
+    count: number;
+  }[];
 };
+
+/** Why a section lacks its details: they are still being written (a live
+ *  draft) or could not be written (a published version keeps the outline). */
+export type SectionDetailsState = "pending" | "failed";
 
 export type Section = {
   tiles?: unknown[];
@@ -226,7 +233,11 @@ export type Section = {
   /** The stack members the section covers; only on a stack review, and each
    *  is one of its `stack.members`. */
   pull_requests?: number[];
-  summary: { text: string; anchors: Anchor[] };
+  /** Set by the host, never the model, on a section that lacks its details;
+   *  absent on a complete one. Read it with `sectionDetails`. */
+  details?: SectionDetailsState;
+  /** Absent or null only on a section that lacks its details. */
+  summary?: { text: string; anchors: Anchor[] } | null;
   attention: Attention;
   risks: Risk[];
   evidence: Evidence[];
@@ -916,6 +927,17 @@ export function riskScoreTone(score: RiskScoreLevel): Tone {
   return score <= 2 ? "positive" : reviewScoreTone(score);
 }
 
+/** Whether a section has its details, or why not. A section without a
+ *  summary, or with a state this viewer does not know, reads as failed: what
+ *  it holds is its outline. */
+export function sectionDetails(
+  section: Pick<Section, "details" | "summary">,
+): "complete" | SectionDetailsState {
+  if (section.details === "pending") return "pending";
+  if (section.details !== undefined || !section.summary) return "failed";
+  return "complete";
+}
+
 export type RiskScoreView =
   | { assessed: false; legacy: boolean; limitations: string[] }
   | {
@@ -938,9 +960,11 @@ export function riskScoreView(
   const limitations = stored.limitations.map(({ kind, count }) =>
     kind === "unassessed_sections"
       ? `${pluralize("section", count, true)} not assessed`
-      : kind === "omitted_source"
-        ? `${pluralize("changed file", count, true)} unreadable`
-        : `${humanize(kind)} (${count})`,
+      : kind === "incomplete_sections"
+        ? `${pluralize("section", count, true)} without details`
+        : kind === "omitted_source"
+          ? `${pluralize("changed file", count, true)} unreadable`
+          : `${humanize(kind)} (${count})`,
   );
   if (stored.status === "not_assessed" || stored.score === null) {
     return { assessed: false, legacy: false, limitations };

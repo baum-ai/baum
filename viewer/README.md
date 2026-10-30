@@ -131,6 +131,8 @@ left out rather than shown empty or failed:
 | `focusConversation` | puts the cursor in the conversation's text box when the reader asks to discuss the review |
 | `hunkPatches` | the hunk patch source for the section and risk panes |
 | `onVersionsShown` | called with the versions whose documents are on screen whenever that set changes, for example to record that a version was read |
+| `onRetryDetails` | a Retry beside "Details unavailable" on a section of the current version whose `details` is `failed` (below), called with the section's ID; the button reads "Retrying…" and is disabled from the click until a returned promise settles |
+| `contextPending` | the current document is a draft whose context the host is still writing: while it has no `summary.context`, the Summary's Context part says "Writing context…" in its place |
 
 CI uses the optional `review.checks_head`, falling back to `review.head` for
 older documents. Refreshing the current document can show latest-head checks
@@ -169,6 +171,16 @@ Older stacks without comparison history retain the original fallback.
 A document without a context,
 generated before it existed, shows no Context part. Stack reviews show theirs
 the same way.
+
+A section whose `details` is `pending` (a live draft whose details are still
+being written) or `failed` (they could not be written) keeps its outline.
+Its pane shows the title, badges and hunk counts as for any section, then a
+live status, "Writing details…" or "Details unavailable", its assessment's
+reasons and its hunks, then whatever it does hold, such as risks an earlier
+version recorded; a summary it holds shows above the status. The Changes
+overview gives its row the same status. `sectionDetails` reads the state: a
+section with no summary, or a state the viewer does not know, reads as
+failed. Read marks, approvals and discussion treat it as any section.
 
 Attention uses a flat callout with evidence directly below its risks. For a
 single referenced risk, its explanation replaces the overlapping attention

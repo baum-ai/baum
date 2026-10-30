@@ -20,7 +20,7 @@ function hostileDocument() {
   document.summary.text = hostile;
   document.summary.release_note = hostile;
   const retry = section(document, "sec_retry");
-  retry.summary.text = hostile;
+  retry.summary!.text = hostile;
   retry.risks[0]!.text = hostile;
   // Plain-text fields, which the page never parses.
   document.summary.title = `<img src=x onerror="window.__pwned='title'"> Title`;

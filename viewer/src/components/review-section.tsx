@@ -1,5 +1,5 @@
 import pluralize from "pluralize";
-import type { ReactNode } from "react";
+import { type ReactNode, useState } from "react";
 import { useUrlState, ViewerLink } from "../navigation";
 import { withSelection } from "../review-selection";
 
@@ -27,6 +27,7 @@ import {
   sectionFindings,
   sectionHunks,
   sectionBadgeState,
+  sectionDetails,
   sectionStateLabel,
   sectionStateTone,
   severityTone,
@@ -51,7 +52,7 @@ import {
 import { ReviewImages } from "./review-images";
 import { ReviewTiles } from "./review-tiles/review-tiles";
 import { type Column, Table } from "./table";
-import { Badge, CardHeader } from "./ui";
+import { Badge, Button, CardHeader, Spinner } from "./ui";
 
 /** A section always resolves its content and anchors against the supplied document. */
 export function ReviewSection({
@@ -63,6 +64,7 @@ export function ReviewSection({
   idPrefix = "",
   showTiles = false,
   labels,
+  onRetryDetails,
 }: {
   document: ReviewDocument;
   section: Section;
@@ -75,8 +77,12 @@ export function ReviewSection({
   showTiles?: boolean;
   /** The host's labels for the section, at the end of its badges. */
   labels?: ReactNode;
+  /** Asks the host to write again the details of a section whose details
+   *  failed. Without it the section offers no retry. */
+  onRetryDetails?: (sectionId: string) => void | Promise<unknown>;
 }) {
   const { derived } = section;
+  const details = sectionDetails(section);
   const badgeState = sectionBadgeState(derived.state, document.review);
   const files = sectionHunks(document, section.hunks);
   const findings = sectionFindings(document, section.id);
@@ -188,10 +194,21 @@ export function ReviewSection({
         }
       />
       <div className="min-h-0 flex-1 space-y-7 xl:overflow-y-auto">
-        <div className="space-y-2">
-          <Markdown className={PROSE}>{section.summary.text}</Markdown>
-          <AnchorChips document={document} anchors={withoutHunks(section.summary.anchors)} />
-        </div>
+        {section.summary && (
+          <div className="space-y-2">
+            <Markdown className={PROSE}>{section.summary.text}</Markdown>
+            <AnchorChips document={document} anchors={withoutHunks(section.summary.anchors)} />
+          </div>
+        )}
+
+        {details !== "complete" && (
+          <SectionOutline
+            document={document}
+            section={section}
+            details={details}
+            onRetry={onRetryDetails && (() => onRetryDetails(section.id))}
+          />
+        )}
 
         {showAttention && (
           <AttentionCallout
@@ -267,6 +284,89 @@ export function ReviewSection({
         )}
       </div>
     </>
+  );
+}
+
+/** What a section shows while it lacks its details: whether they are being
+ *  written or failed, then its assessment and its changed code, so a reader
+ *  can start on the code before the prose arrives. Whatever else the section
+ *  holds, such as a risk an earlier version recorded, follows as on any
+ *  section. */
+function SectionOutline({
+  document,
+  section,
+  details,
+  onRetry,
+}: {
+  document: ReviewDocument;
+  section: Section;
+  details: "pending" | "failed";
+  onRetry?: () => void | Promise<unknown>;
+}) {
+  const hunks = section.hunks.map((id) => ({ type: "hunk" as const, id }));
+  return (
+    <>
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+        {/* One live region for both states, so a draft whose details fail
+         *  says so where it said they were being written. */}
+        <p role="status" className="flex items-center gap-2 text-base text-(--text-secondary)">
+          {details === "pending" ? (
+            <>
+              <Spinner size={12} className="text-(--text-tertiary)" />
+              Writing details…
+            </>
+          ) : (
+            "Details unavailable"
+          )}
+        </p>
+        {details === "failed" && onRetry && <RetryDetails onRetry={onRetry} />}
+      </div>
+      {section.assessment && section.assessment.reasons.length > 0 && (
+        <Part label="Assessment">
+          <ul className="space-y-1.5">
+            {section.assessment.reasons.map((reason, position) => (
+              <Item key={position} className="space-y-1.5">
+                <Markdown className="text-(--text-primary)">{reason.text}</Markdown>
+                <AnchorChips document={document} anchors={withoutHunks(reason.anchors)} />
+              </Item>
+            ))}
+          </ul>
+        </Part>
+      )}
+      {hunks.length > 0 && (
+        <Part label="Changed code">
+          <HunkEvidence document={document} anchors={hunks} />
+        </Part>
+      )}
+    </>
+  );
+}
+
+/** Retry for a section whose details failed. It answers the click at once and
+ *  stays busy while the host's request runs; the section then reads as being
+ *  written, or offers the retry again. */
+function RetryDetails({ onRetry }: { onRetry: () => void | Promise<unknown> }) {
+  const [busy, setBusy] = useState(false);
+  const retry = async () => {
+    setBusy(true);
+    try {
+      await onRetry();
+    } catch {
+      // The host says why its request failed; the retry is offered again.
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <Button
+      variant="secondary"
+      size="compact"
+      className="shadow-(--shadow-raised) active:translate-y-px active:shadow-none"
+      disabled={busy}
+      onClick={() => void retry()}
+    >
+      {busy ? "Retrying…" : "Retry"}
+    </Button>
   );
 }
 

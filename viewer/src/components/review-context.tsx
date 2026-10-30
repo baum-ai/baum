@@ -8,6 +8,7 @@ import { cn, FOCUS_RING } from "./classnames";
 import { ChevronRightIcon } from "./icons";
 import { Markdown } from "./markdown";
 import { CodeChip, PROSE } from "./review-parts";
+import { Spinner } from "./ui";
 
 /** The context's parts in reading order, each with its label. */
 const PARTS: { key: keyof ReviewContext; label: string }[] = [
@@ -20,9 +21,34 @@ const PARTS: { key: keyof ReviewContext; label: string }[] = [
 /** Where the change sits in the codebase, for a reviewer new to that area.
  *  It starts folded under the overview, since a reviewer who knows the area
  *  does not need it. Nothing renders for a document generated before the
- *  context existed. */
-export function ContextPart({ document }: { document: ReviewDocument }) {
+ *  context existed. While a host is still writing a draft's context
+ *  (`pending`), the part says so in its place. */
+export function ContextPart({
+  document,
+  pending = false,
+}: {
+  document: ReviewDocument;
+  pending?: boolean;
+}) {
   const context = document.summary.context;
+  if (!context && pending) {
+    return (
+      <section aria-label="Context" className="min-w-0">
+        <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1 border-b border-(--border-subtle) pb-1.5">
+          <h3 className="text-base font-semibold tracking-[0.08em] text-(--text-primary) uppercase">
+            Context
+          </h3>
+          <span className="text-xs text-(--text-tertiary)">
+            Where this change sits in the codebase
+          </span>
+        </div>
+        <p role="status" className="mt-3 flex items-center gap-2 text-base text-(--text-secondary)">
+          <Spinner size={12} className="text-(--text-tertiary)" />
+          Writing context…
+        </p>
+      </section>
+    );
+  }
   if (!context) return null;
   const parts = PARTS.flatMap(({ key, label }) => {
     const part = context[key];

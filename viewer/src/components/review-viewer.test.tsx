@@ -778,3 +778,136 @@ describe("ReviewViewer's pane dividers", () => {
     inStep();
   });
 });
+
+/** The example with one section stripped to its outline, as a live draft
+ *  holds a section whose details are being written, or a published version
+ *  one whose details failed. */
+function withoutDetails(details: "pending" | "failed"): ReviewDocument {
+  const document = structuredClone(current);
+  const section = document.sections.find((item) => item.id === "sec_api")!;
+  section.details = details;
+  section.summary = null;
+  section.attention = null;
+  section.risks = [];
+  section.evidence = [];
+  section.blocks = [];
+  delete section.tiles;
+  return document;
+}
+
+const detailsStatus = (container: HTMLElement) =>
+  container.querySelector("#review-section p[role='status']")?.textContent;
+
+const retryButton = (container: HTMLElement) =>
+  [...container.querySelectorAll<HTMLButtonElement>("#review-section button")].find((button) =>
+    button.textContent?.startsWith("Retr"),
+  );
+
+describe("ReviewViewer with sections that lack their details", () => {
+  it("keeps read marks, approvals and the discussion for a section being written", async () => {
+    const container = await render(
+      <Host initial="pane=section&section=sec_api">
+        <ReviewViewer
+          document={withoutDetails("pending")}
+          checks={{
+            renderSection: ({ id }) => <input type="checkbox" aria-label={`Read ${id}`} />,
+            renderRisk: () => null,
+            sectionRead: () => false,
+            riskRead: () => false,
+          }}
+          renderSectionAside={(id) => <p>Approvers of {id}</p>}
+          conversation={(place) => <p>Discussing {place.viewedSectionId}</p>}
+          onRetryDetails={() => {}}
+        />
+      </Host>,
+    );
+    expect(detailsStatus(container)).toBe("Writing details…");
+    const pane = container.querySelector("#review-section")!;
+    expect(pane.getAttribute("aria-label")).toBe("Operator-only dead-letter endpoints");
+    expect(pane.querySelector('section[aria-label="Assessment"]')).not.toBeNull();
+    expect(pane.querySelector('section[aria-label="Changed code"]')).not.toBeNull();
+    // Nothing to retry while the details are being written.
+    expect(retryButton(container)).toBeUndefined();
+    expect(container.querySelector('[aria-label="Read sec_api"]')).not.toBeNull();
+    expect(container.textContent).toContain("Approvers of sec_api");
+    expect(container.textContent).toContain("Discussing sec_api");
+  });
+
+  it("offers a retry of failed details only when the host can retry them", async () => {
+    const without = await render(
+      <Host initial="pane=section&section=sec_api">
+        <ReviewViewer document={withoutDetails("failed")} />
+      </Host>,
+    );
+    expect(detailsStatus(without)).toBe("Details unavailable");
+    expect(retryButton(without)).toBeUndefined();
+    act(() => root?.unmount());
+    root = null;
+
+    let finish: (() => void) | undefined;
+    const retry = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          finish = resolve;
+        }),
+    );
+    const container = await render(
+      <Host initial="pane=section&section=sec_api">
+        <ReviewViewer document={withoutDetails("failed")} onRetryDetails={retry} />
+      </Host>,
+    );
+    act(() => retryButton(container)!.click());
+    expect(retry).toHaveBeenCalledWith("sec_api");
+    // The click is answered at once, before the host's request returns.
+    expect(retryButton(container)?.textContent).toBe("Retrying…");
+    expect(retryButton(container)?.disabled).toBe(true);
+    await act(async () => finish?.());
+    expect(retryButton(container)?.textContent).toBe("Retry");
+  });
+
+  it("offers no retry on an earlier version read alone", async () => {
+    const container = await render(
+      <Host initial="pane=section&section=sec_api&review=2">
+        <ReviewViewer
+          document={current}
+          versions={[2]}
+          loadVersion={async () => ({ status: "ready", document: withoutDetails("failed") })}
+          onRetryDetails={() => {}}
+        />
+      </Host>,
+    );
+    expect(container.textContent).toContain("Details unavailable");
+    expect(retryButton(container)).toBeUndefined();
+  });
+
+  it("says the context is being written while a draft has none", async () => {
+    const draft = withoutDetails("pending");
+    delete draft.summary.context;
+    const container = await render(
+      <Host>
+        <ReviewViewer document={draft} contextPending />
+      </Host>,
+    );
+    const context = container.querySelector('section[aria-label="Context"]');
+    expect(context?.querySelector('[role="status"]')?.textContent).toBe("Writing context…");
+    act(() => root?.unmount());
+    root = null;
+
+    // A written context shows in its place; without the prop nothing is said.
+    const written = await render(
+      <Host>
+        <ReviewViewer document={current} contextPending />
+      </Host>,
+    );
+    expect(written.textContent).not.toContain("Writing context…");
+    expect(written.querySelector('section[aria-label="Context"]')).not.toBeNull();
+    act(() => root?.unmount());
+    root = null;
+    const quiet = await render(
+      <Host>
+        <ReviewViewer document={draft} />
+      </Host>,
+    );
+    expect(quiet.querySelector('section[aria-label="Context"]')).toBeNull();
+  });
+});

@@ -979,8 +979,14 @@ through props and context:
 | header slots | no | not used | statistics, generation controls, approval state, a back link |
 | rail groups | no | Sessions and Commits, from `/api/sessions` (below) | changed files, linked sessions and commits, each listed in the rail with the host's pane |
 | version shown | no | not used | a callback with the versions on screen, for example to record that one was read |
+| details retry | no | not used | writes again the details of a current section whose `details` is `failed`; the section offers Retry only with it |
+| context pending | no | not used | says the current draft's context is still being written, so the Summary shows "Writing context…" while it has none |
 
 Optional seams default to absent, and the viewer renders the document alone.
+A section without its details (`details` `pending` or `failed`) shows its
+outline: its title, assessment and hunks under a live status, "Writing
+details…" or "Details unavailable", and read marks, approvals and discussion
+treat it as any section.
 The viewer never decides who can see a document; that is the host's job.
 
 The host preserves each hunk's rename source as optional
