@@ -34,7 +34,7 @@ func TestAppearanceSurvivesNewDaemonOrigin(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		defer response.Body.Close()
+		defer func() { _ = response.Body.Close() }()
 		if response.StatusCode != code {
 			t.Fatalf("%s %s: got %d, want %d", method, body, response.StatusCode, code)
 		}
