@@ -1133,6 +1133,7 @@ test("General preferences persist, follow system theme and control keyboard hint
   await page.emulateMedia({ colorScheme: "dark" });
   await page.goto(await launchURL());
   await openSettings(page, "General");
+  await expect(page.locator(".settings-dot").first()).toBeVisible();
   const theme = page.getByLabel("Preferred theme");
   await expect(theme).toHaveValue("system");
   await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
