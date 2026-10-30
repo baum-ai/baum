@@ -8,6 +8,7 @@ import {
   type MouseEvent,
   type ReactNode,
 } from "react";
+import { flushSync } from "react-dom";
 import { formatRelative } from "@baum/viewer/components/format";
 import { InlineMarkdown, Markdown } from "@baum/viewer/components/markdown";
 import {
@@ -824,7 +825,8 @@ function SendButton({
 }
 
 /** A reply to a session waiting at its prompt, where the daemon offers it
- *  (`messageable`), opened with r or from the card's menu: Enter sends it,
+ *  (`messageable`), opened with r, a click on its card or from the card's
+ *  menu: Enter sends it,
  *  starting the session's next turn in its own terminal (the card moves to
  *  Running now when its prompt hook arrives), and Escape closes it. */
 function Reply({
@@ -1017,8 +1019,9 @@ function SendWhenFinished({
   session: LiveSession;
   queued?: AgentMessage;
   onDone: (notice: Notice) => void;
-  /** Whether its box is open: with r or from the card's menu, as a waiting
-   *  session's Reply. A queued message shows either way. */
+  /** Whether its box is open: with r, a click on its card or from the
+   *  card's menu, as a waiting session's Reply. A queued message shows
+   *  either way. */
   replying: boolean;
   close: () => void;
 }) {
@@ -1270,7 +1273,8 @@ function SectionHead({
 /** The sessions page: what waits on the person (answerable from here), what
  *  agents are doing on this computer now, and what ended in the last day.
  *  `prHref` is where a session's pull request opens in the app, or null when
- *  it is not one the app knows. Each card opens the session's transcript. */
+ *  it is not one the app knows. A click on a card peeks at the session and
+ *  opens its reply; its link opens the transcript. */
 export function SessionsPage({
   sessions,
   requests = noAgentRequests,
@@ -1349,7 +1353,8 @@ export function SessionsPage({
     "data-row-id": sessionKey(s),
     "data-focused": rows.focused === sessionKey(s) || undefined,
   });
-  // The session peeked at under its row (Space), by its key, at most one.
+  // The session peeked at under its row (Space or a click), by its key, at
+  // most one.
   const [peeking, setPeeking] = useState<string | null>(null);
   const peek = (s: LiveSession) =>
     setPeeking((current) => (current === sessionKey(s) ? null : sessionKey(s)));
@@ -1366,10 +1371,12 @@ export function SessionsPage({
     if (replying) rows.rowLink(replying)?.focus();
     setReplying(null);
   };
-  // A waiting session takes a reply now; a working one, when it finishes.
+  // A waiting session takes a reply now; a working one, when it finishes,
+  // unless a message for then is queued already.
   const working = (s: LiveSession) => s.state === "running" && active.includes(s);
+  const takesReply = (s: LiveSession) => s.messageable || (working(s) && !queuedFor(s));
   const reply = (s: LiveSession) => {
-    if (!s.messageable && !working(s)) return false;
+    if (!takesReply(s)) return false;
     setReplying(sessionKey(s));
     return true;
   };
@@ -1432,9 +1439,8 @@ export function SessionsPage({
     event.preventDefault();
     pr.click();
   });
-  // A session's card opens its transcript: by its link, which the keys
-  // focus and follow, or by a click anywhere else on the card, unless it
-  // lands on something of its own to press or type in, or selects text.
+  // A session's card opens its transcript by its link, which the keys focus
+  // and follow.
   const open = (s: LiveSession, children: ReactNode) => (
     <Link
       href={transcriptHref(s)}
@@ -1468,17 +1474,46 @@ export function SessionsPage({
           error: true,
         }),
     );
+  // A click anywhere else on the card, unless it lands on something of its
+  // own to press or type in (its reply box included), or selects text, opens
+  // its peek and its reply where it takes one, closing another card's; a
+  // click on a card with both open closes them.
   const openCard = (event: MouseEvent) => {
     const target = event.target as HTMLElement;
-    if (target.closest("a, button, input, textarea, select, label, summary")) return;
+    if (
+      target.closest(
+        "a, button, input, textarea, select, label, summary, .local-feed-send, .local-feed-compose",
+      )
+    )
+      return;
     if (window.getSelection()?.toString()) return;
-    target.closest("[data-row-id]")?.querySelector<HTMLElement>(".local-feed-open")?.click();
+    const id = target.closest("[data-row-id]")?.getAttribute("data-row-id");
+    const s = id ? sessions.find((x) => sessionKey(x) === id) : undefined;
+    if (!s) return;
+    const key = sessionKey(s);
+    if (peeking === key && (replying === key || !takesReply(s))) {
+      setPeeking(null);
+      if (replying === key) closeReply();
+      return;
+    }
+    // The keys follow the click, and settle on its link before its box
+    // takes the focus.
+    flushSync(() => rows.setFocused(key));
+    setPeeking(key);
+    // A box open already (with r) has lost the focus to the click; it takes
+    // it back.
+    if (replying === key)
+      target
+        .closest("[data-row-id]")
+        ?.querySelector<HTMLInputElement>(".local-feed-compose input")
+        ?.focus();
+    else if (!reply(s)) setReplying(null);
   };
   // A right click on a session's card offers what can be done with it.
   const actionsFor = (s: LiveSession): MenuItem[] => {
     const items: MenuItem[] = [];
     if (s.messageable) items.push({ label: "Reply", hint: "r", onSelect: () => reply(s) });
-    else if (working(s))
+    else if (takesReply(s))
       items.push({ label: "Reply when it finishes", hint: "r", onSelect: () => reply(s) });
     if (focusable(s))
       items.push({

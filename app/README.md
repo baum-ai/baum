@@ -1015,7 +1015,7 @@ stays.
   status dot. Every card in Needs you and Running now shows the latest message the user
   typed (`activity.last_prompt`) on one line under its head, after "You". A session
   the daemon marks `messageable` (waiting at its prompt) can be replied to: r on its
-  focused card, or Reply in its right-click menu, opens a "Reply" box under it, Enter
+  focused card, a click on it, or Reply in its right-click menu, opens a "Reply" box under it, Enter
   posts to `api/live-sessions/{agent}/{id}/message` and Escape closes it. The reply
   starts its next turn in its own terminal and the card moves to Running now; a
   notice says what was sent. One marked `endable` (waiting or quiet, Claude Code
@@ -1030,8 +1030,8 @@ stays.
   the agent has said anything, the current step (the tool in its colour and its
   target), either with a blinking caret while running, still under reduced motion;
   and "N files touched" before the time;
-  without `activity` it reads "Active 2 min ago". r on its focused row, or "Reply when
-  it finishes" in its right-click menu, opens "Send when it finishes" (Enter posts a
+  without `activity` it reads "Active 2 min ago". r on its focused row, a click on it, or "Reply when
+  it finishes" in its right-click menu, opens "Send when it finishes" while no message is queued (Enter posts a
   message to `api/agent-messages`, Escape closes it); the daemon delivers it when the session's turn
   ends, one per session, and the card then shows "Queued for when it finishes" with
   Cancel.
@@ -1069,9 +1069,14 @@ those sessions in the caution tone; otherwise it counts the running ones, so a
 finished or quiet session waiting for its next word does not raise it. The desktop app notifies when a session
 starts asking for a permission or an answer (see the desktop README).
 
-A click on a session's card (anywhere but its buttons, fields and links, and not
-while selecting text) opens its transcript, as does its link (the waiting card's
-title, else the agent's name), which j/k focus and Enter or o follow. The transcript
+A click on a session's card (anywhere but its buttons, links, fields and reply
+or answer box, and not while selecting text) focuses it and opens its peek and,
+where the session takes one, its reply (a waiting session's Reply, a running
+one's message for when it finishes, unless one is queued); a click on another
+card moves both there. A click on a card showing both, or its peek where it
+takes no reply, closes them; one showing only its peek (after Space or Escape
+in the box) gains its reply. Its link (the waiting card's title, else the agent's
+name), which j/k focus and Enter or o follow, opens its transcript. The transcript
 opens at `?page=sessions&session=<agent>:<id>`
 (`src/session-transcript.tsx`), titled with the session's title (else "Claude
 Code session"), with the agent's compaction summary, when it has one, closed above

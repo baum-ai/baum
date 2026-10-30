@@ -3426,7 +3426,7 @@ replace it.
   session: when one leaves their list the page reads the session
   list from disk again, where the finished session now is (the existing
   sessions UI), so nothing is lost if the files were not complete earlier.
-  Each Sessions row opens the session's transcript
+  Each Sessions row's link opens the session's transcript
   (`?page=sessions&session=<agent>:<id>`), drawn with the viewer's
   `SessionCard`. The view reads it 500 ms after the last of a burst of `live`
   events and every 3 seconds while the session works (15 while it waits; a
