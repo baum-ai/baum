@@ -3326,15 +3326,18 @@ replace it.
     `claude://code/continue?session=local_…` (`xdg-open`, `open`), then its
     window is raised as below. These are Claude desktop's internal files and
     link: a record it no longer writes reads as no session.
-  - In tmux (`TMUX` and `TMUX_PANE` recorded), on the server of the recorded
-    socket: the client attached to the pane's session used last, else the
-    client used last at all (`list-clients`), is switched to the session, and
+  - In tmux (`TMUX`, `TMUX_PANE` and a terminal device recorded), on the server
+    of the recorded socket: the client attached to the pane's session used
+    last, else the client used last at all (`list-clients`), is switched to the session, and
     the pane's window and the pane are selected. The chain from then on is the
     client's, read now, and the terminal device is the client's: the recorded
     variables describe the terminal the tmux server started in. No client
     attached says so. A pane whose `pane_tty` is not the recorded terminal
     device is not the session's (a terminal started from a tmux pane passes
     `TMUX` on to its own shells), and the session is treated as outside tmux.
+    A lookup with an empty session or pane terminal is treated as a missing pane
+    before any client is switched. Without a recorded terminal, inherited tmux
+    variables are ignored.
   - The terminal's tab, from the first match in the chain: kitty focuses the
     window whose program is the process below kitty (`kitten @ --to
     $KITTY_LISTEN_ON focus-window --match pid:…`), only when the recorded
@@ -3367,10 +3370,13 @@ replace it.
   - `session` when the tmux pane, the tab or the conversation was selected,
     `window` when only the window was raised. `Predict`, which the list's
     `focus` is, judges the same from the record without running anything: on
-    Linux nothing outside Hyprland and X11; `session` for tmux, a Claude
-    desktop process in the chain (`claude-desktop`, `Claude`), a kitty with
-    its socket, and on macOS iTerm2 or Terminal with a terminal device;
-    `window` otherwise.
+    Linux nothing outside Hyprland and X11; `session` for tmux with a recorded
+    terminal, a Claude desktop process in the chain (`claude-desktop`, `Claude`),
+    a kitty with its socket, and on macOS iTerm2 or Terminal with a terminal device;
+    `window` otherwise. A Codex session without a terminal whose recorded chain
+    contains only `codex`, `systemd` or `launchd` has no focus action; a direct
+    focus request explains that the background process has no window. An
+    unfamiliar ancestor keeps the normal window fallback.
 - **Transcripts.** `GET /api/live-sessions/{agent}/{id}/transcript`
   (`Transcripts`, mounted beside the list by the same `LocalAPI.Live`
   provider) serves the transcript of a session the tracker lists, and only
