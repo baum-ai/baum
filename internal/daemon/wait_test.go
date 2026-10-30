@@ -80,13 +80,16 @@ func TestWaitingMethodHoldsItsConnectionAndEndsWithItsClient(t *testing.T) {
 func TestDeliveryIsToldWhetherItsAnswerWasWritten(t *testing.T) {
 	paths := testPaths(t)
 	outcomes := make(chan error, 2)
+	entered, release := make(chan struct{}), make(chan struct{})
+	give := func(_ context.Context, params json.RawMessage) (any, error) {
+		if string(params) == `"late"` {
+			close(entered)
+			<-release
+		}
+		return Delivery{Result: "given", Written: func(err error) { outcomes <- err }}, nil
+	}
 	runInProcess(t, paths, Options{Methods: map[string]Method{
-		"give": func(_ context.Context, params json.RawMessage) (any, error) {
-			if string(params) == `"late"` {
-				time.Sleep(200 * time.Millisecond)
-			}
-			return Delivery{Result: "given", Written: func(err error) { outcomes <- err }}, nil
-		},
+		"give": give,
 	}})
 	if r := rawCall(t, paths, fmt.Sprintf(`{"protocol":%d,"method":"give"}`, Protocol)); !r.OK || string(r.Result) != `"given"` {
 		t.Fatalf("give %+v", r)
@@ -94,14 +97,19 @@ func TestDeliveryIsToldWhetherItsAnswerWasWritten(t *testing.T) {
 	if err := <-outcomes; err != nil {
 		t.Fatalf("a written answer reported %v", err)
 	}
-	conn, err := net.Dial("unix", paths.Socket)
-	if err != nil {
+	// A socket write can succeed after the peer closes, depending on the
+	// OS buffer. A pipe makes the failed write deterministic on every OS.
+	conn, server := net.Pipe()
+	defer conn.Close()
+	done := make(chan struct{})
+	c := &controller{ctx: context.Background(), methods: map[string]Method{"give": give}}
+	go func() { defer close(done); c.handle(server) }()
+	if _, err := fmt.Fprintf(conn, `{"protocol":%d,"method":"give","params":"late"}`+"\n", Protocol); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = fmt.Fprintf(conn, `{"protocol":%d,"method":"give","params":"late"}`+"\n", Protocol); err != nil {
-		t.Fatal(err)
-	}
+	<-entered
 	_ = conn.Close()
+	close(release)
 	select {
 	case err := <-outcomes:
 		if err == nil {
@@ -110,6 +118,7 @@ func TestDeliveryIsToldWhetherItsAnswerWasWritten(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("Written was not called")
 	}
+	<-done
 }
 
 func TestWaitsKeepTheProtocolCheck(t *testing.T) {

@@ -330,6 +330,8 @@ func TestCodexRequestsNeedTheSettingAndTimeOut(t *testing.T) {
 
 func TestMessages(t *testing.T) {
 	s, _ := newStore(t)
+	now := time.Now()
+	s.Now = func() time.Time { return now }
 	for _, id := range []string{"s2", "s3", "unknown"} {
 		if err := s.Queue(AgentClaudeCode, id, "hi"); !errors.Is(err, ErrNotRunning) {
 			t.Fatalf("%s: %v", id, err)
@@ -367,7 +369,8 @@ func TestMessages(t *testing.T) {
 	if err := s.Queue(AgentClaudeCode, "s1", "bye"); err != nil {
 		t.Fatal(err)
 	}
-	s.Observe(hookevents.Event{Kind: hookevents.KindAgent, Agent: AgentClaudeCode, Name: "session-end", Time: time.Now(), Session: &hookevents.Session{ID: "s1"}})
+	now = now.Add(time.Second)
+	s.Observe(hookevents.Event{Kind: hookevents.KindAgent, Agent: AgentClaudeCode, Name: "session-end", Time: now, Session: &hookevents.Session{ID: "s1"}})
 	if _, ok := s.TakeMessage(AgentClaudeCode, "s1"); ok {
 		t.Fatal("an ended session kept its message")
 	}

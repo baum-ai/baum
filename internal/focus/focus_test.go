@@ -276,7 +276,8 @@ func TestKittenFromKittysBundle(t *testing.T) {
 	m.exes = map[int]string{300: "/Applications/kitty.app/Contents/MacOS/kitty"}
 	terminal.Env["KITTY_LISTEN_ON"] = "unix:/tmp/kitty-300"
 	result := m.focuser("darwin", nil).Focus(context.Background(), "codex", "s1", terminal)
-	want := []string{"/Applications/kitty.app/Contents/MacOS/kitten @ --to unix:/tmp/kitty-300 focus-window --match pid:101", "open -a /Applications/kitty.app"}
+	kitten := filepath.Join(filepath.Dir(m.exes[300]), "kitten")
+	want := []string{kitten + " @ --to unix:/tmp/kitty-300 focus-window --match pid:101", "open -a /Applications/kitty.app"}
 	if result != (Result{Precision: Session}) || !reflect.DeepEqual(m.calls, want) {
 		t.Fatalf("result = %+v, calls:\n%s", result, strings.Join(m.calls, "\n"))
 	}
