@@ -646,6 +646,13 @@ func (f fakeWrites) FailingChecks(context.Context, github.Repository, int, strin
 	return prupdate.Checks{}, nil
 }
 
+func (f fakeWrites) AllChecks(context.Context, github.Repository, int, string) (prupdate.CheckList, error) {
+	return prupdate.CheckList{}, nil
+}
+func (f fakeWrites) Conflicts(context.Context, github.Repository, int) (prupdate.ConflictFiles, error) {
+	return prupdate.ConflictFiles{}, nil
+}
+
 func TestActionsRecordOnlyWritesThatSucceeded(t *testing.T) {
 	actions := &Actions{Path: filepath.Join(t.TempDir(), "actions.json")}
 	repo := github.Repository{Host: "github.com", Owner: "acme", Name: "demo"}

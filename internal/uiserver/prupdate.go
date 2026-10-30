@@ -26,12 +26,14 @@ type PullRequestUpdater interface {
 	ResolveThread(ctx context.Context, repository github.Repository, number int, id string) error
 	FailingChecks(ctx context.Context, repository github.Repository, number int, head string) (prupdate.Checks, error)
 	RerunJob(ctx context.Context, repository github.Repository, number int, expectedHead string, job int64) error
+	AllChecks(ctx context.Context, repository github.Repository, number int, head string) (prupdate.CheckList, error)
+	Conflicts(ctx context.Context, repository github.Repository, number int) (prupdate.ConflictFiles, error)
 }
 
 // UpdateHandler serves /api/prs/update-branch(-options),
 // /api/prs/rerun-checks(-options), /api/prs/review-threads,
-// /api/prs/resolve-thread, /api/prs/failing-checks and /api/prs/rerun-job for
-// picked repositories only. refresh
+// /api/prs/resolve-thread, /api/prs/failing-checks, /api/prs/checks,
+// /api/prs/conflicts and /api/prs/rerun-job for picked repositories only. refresh
 // re-reads the repository's pull requests after a write so the inbox shows the
 // new state; its failure never turns a write into an error.
 func UpdateHandler(registry *repos.Registry, updater PullRequestUpdater, refresh func(context.Context, github.Repository), changed func()) http.Handler {
@@ -118,6 +120,14 @@ func UpdateHandler(registry *repos.Registry, updater PullRequestUpdater, refresh
 	mux.HandleFunc("GET /api/prs/failing-checks", options(func(ctx context.Context, repo github.Repository, number int, query url.Values) (any, error) {
 		return updater.FailingChecks(ctx, repo, number, query.Get("head_sha"))
 	}))
+	// checks lists every check of the head commit, whatever its state.
+	mux.HandleFunc("GET /api/prs/checks", options(func(ctx context.Context, repo github.Repository, number int, query url.Values) (any, error) {
+		return updater.AllChecks(ctx, repo, number, query.Get("head_sha"))
+	}))
+	// conflicts lists the files the pull request conflicts with in its base.
+	mux.HandleFunc("GET /api/prs/conflicts", options(func(ctx context.Context, repo github.Repository, number int, _ url.Values) (any, error) {
+		return updater.Conflicts(ctx, repo, number)
+	}))
 	mux.HandleFunc("POST /api/prs/rerun-job", func(w http.ResponseWriter, r *http.Request) {
 		r.Body = http.MaxBytesReader(w, r.Body, 4096)
 		var body struct {
@@ -189,7 +199,7 @@ func updateFailure(w http.ResponseWriter, err error) {
 	switch refusal.Code {
 	case prupdate.HeadMoved, prupdate.Conflict, prupdate.NotOpen, prupdate.UpToDate:
 		status = http.StatusConflict
-	case prupdate.Blocked, prupdate.NoRuns, prupdate.Fork:
+	case prupdate.Blocked, prupdate.NoRuns, prupdate.Fork, prupdate.NoClone:
 		status = http.StatusUnprocessableEntity
 	case prupdate.Forbidden:
 		status = http.StatusForbidden

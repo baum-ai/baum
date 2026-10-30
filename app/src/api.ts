@@ -54,6 +54,13 @@ export type PR = GitHubState & {
   author_has_write: boolean | null;
   team_membership_known: boolean;
   head_ref?: string;
+  /** The branch it merges into; absent in data from an older daemon. */
+  base_ref?: string;
+  /** Lines added and deleted and files changed across the pull request, as
+   *  GitHub counts them; absent or zero in data from an older daemon. */
+  additions?: number;
+  deletions?: number;
+  changed_files?: number;
   /** Whether the signed-in account may push to the repository, which a fix
    *  needs; null or absent when GitHub did not say. */
   viewer_can_push?: boolean | null;

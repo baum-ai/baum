@@ -307,6 +307,13 @@ func Run(ctx context.Context, o Options) (out Outcome, err error) {
 	return out, nil
 }
 
+// OpenForRemote opens the clone as openForRemote does, for a read that
+// fetches from the remote naming repository. Its error is an *Error; the
+// reason is ReasonNoRemote when no remote names the repository.
+func OpenForRemote(ctx context.Context, clone string, repository github.Repository) (*gitlocal.Repo, error) {
+	return openForRemote(ctx, clone, repository)
+}
+
 // openForRemote opens the clone with the remote whose URL, as configured or
 // as git rewrites it, names repository, origin first, as the registry files a
 // clone.

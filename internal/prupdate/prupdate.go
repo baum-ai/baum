@@ -7,6 +7,7 @@
 package prupdate
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -19,6 +20,7 @@ import (
 
 	"github.com/baum-ai/baum/internal/fix"
 	"github.com/baum-ai/baum/internal/github"
+	"github.com/baum-ai/baum/internal/gitlocal"
 )
 
 // Failure codes, stable for the app to branch on.
@@ -32,6 +34,7 @@ const (
 	NoRuns    = "no_runs"
 	Fork      = "fork"
 	NotFound  = "not_found"
+	NoClone   = "no_clone"
 	Failed    = "failed"
 )
 
@@ -52,13 +55,16 @@ const (
 )
 
 // Service reads and writes through one GitHub client. Cache, when set,
-// keeps the review threads and failing checks it read for the Inbox panel.
+// keeps the review threads and checks it read for the Inbox panel.
 // Counted, when set, hears of a pull request's unresolved threads read from
 // GitHub that no longer number discovery's count, so the inbox shows the new
 // count before discovery's next poll.
 type Service struct {
-	Client  *github.Client
-	Cache   *Cache
+	Client *github.Client
+	Cache  *Cache
+	// Clone returns the directory of an available clone of the repository,
+	// for the reads that need git; false when baum has none.
+	Clone   func(ctx context.Context, repository github.Repository) (string, bool)
 	Counted func(ctx context.Context, repository github.Repository, number, unresolved int)
 }
 
@@ -324,7 +330,8 @@ func rerunError(status int, text string) *Error {
 }
 
 // Thread is an unresolved review thread as the app lists it. Excerpt is the
-// headline of its first comment, the reviewer's text, untrusted.
+// headline of its first comment, the reviewer's text, untrusted; Messages are
+// the comments in full.
 type Thread struct {
 	ID       string `json:"id"`
 	Path     string `json:"path"`
@@ -334,8 +341,19 @@ type Thread struct {
 	Excerpt  string `json:"excerpt"`
 	Comments int    `json:"comments"`
 	URL      string `json:"url"`
+	// Messages are the comments baum read, in order, which may be fewer than
+	// Comments.
+	Messages []ThreadComment `json:"messages"`
 	// CanResolve is the signed-in account's permission to resolve it.
 	CanResolve bool `json:"can_resolve"`
+}
+
+// ThreadComment is one comment of a review thread. Body is the reviewer's
+// text, untrusted, at most maxMessage characters; the app shows it as text.
+type ThreadComment struct {
+	Author string `json:"author"`
+	Body   string `json:"body"`
+	URL    string `json:"url,omitempty"`
 }
 
 // Threads lists a pull request's unresolved review threads.
@@ -345,8 +363,11 @@ type Threads struct {
 	Capped bool `json:"capped"`
 }
 
-// maxExcerpt bounds a thread's excerpt, in characters.
-const maxExcerpt = 200
+// Bounds on a thread's text, in characters.
+const (
+	maxExcerpt = 200
+	maxMessage = 4000
+)
 
 // ReviewThreads returns the pull request's unresolved review threads, from
 // the cache while it still matches unresolved, discovery's count (negative
@@ -363,13 +384,26 @@ func (s Service) ReviewThreads(ctx context.Context, repository github.Repository
 	out := Threads{Threads: []Thread{}, Capped: list.Capped}
 	for _, t := range list.Unresolved {
 		first := t.Comments[0]
-		out.Threads = append(out.Threads, Thread{ID: t.ID, Path: t.Path, Line: t.Line, Outdated: t.Outdated, Author: first.Author, Excerpt: excerpt(first.Body), Comments: max(t.Total, len(t.Comments)), URL: t.URL, CanResolve: t.CanResolve})
+		messages := make([]ThreadComment, 0, len(t.Comments))
+		for _, c := range t.Comments {
+			messages = append(messages, ThreadComment{Author: c.Author, Body: boundedText(c.Body, maxMessage), URL: c.URL})
+		}
+		out.Threads = append(out.Threads, Thread{ID: t.ID, Path: t.Path, Line: t.Line, Outdated: t.Outdated, Author: first.Author, Excerpt: excerpt(first.Body), Comments: max(t.Total, len(t.Comments)), URL: t.URL, Messages: messages, CanResolve: t.CanResolve})
 	}
 	s.Cache.storeThreads(key, gen, out)
 	if s.Counted != nil && unresolved >= 0 && !out.Capped && len(out.Threads) != unresolved {
 		s.Counted(ctx, repository, number, len(out.Threads))
 	}
 	return out, nil
+}
+
+// boundedText is text with invalid UTF-8 dropped, at most limit characters.
+func boundedText(text string, limit int) string {
+	text = strings.ToValidUTF8(text, "")
+	if utf8.RuneCountInString(text) > limit {
+		text = strings.TrimSpace(string([]rune(text)[:limit-1])) + "…"
+	}
+	return text
 }
 
 // excerpt is a comment's headline (fix.Headline), at most maxExcerpt
@@ -516,4 +550,126 @@ func AsError(err error) *Error {
 		return refusal
 	}
 	return &Error{Failed, unreachable}
+}
+
+// CheckStatus is one check run or commit status of the head commit as the app
+// lists it, whatever its state. Name and Title come from the check itself and
+// are untrusted.
+type CheckStatus struct {
+	Name string `json:"name"`
+	// Status is queued, in_progress or completed.
+	Status string `json:"status"`
+	// Conclusion is the check run's conclusion (success, failure, neutral,
+	// cancelled, skipped, timed_out, action_required, startup_failure,
+	// stale) or the commit status's state (success, failure, error); empty
+	// until the check completes.
+	Conclusion string `json:"conclusion"`
+	Title      string `json:"title,omitempty"`
+	URL        string `json:"url,omitempty"`
+	// JobID is the GitHub Actions job behind a failing check run, which
+	// RerunJob re-runs; absent otherwise.
+	JobID int64 `json:"job_id,omitempty"`
+}
+
+// CheckList lists all of a head commit's checks, failing ones first, then
+// those still running, each group by name.
+type CheckList struct {
+	HeadSHA string        `json:"head_sha"`
+	Checks  []CheckStatus `json:"checks"`
+}
+
+// failingConclusions are the conclusions that sort a check first.
+var failingConclusions = map[string]bool{"failure": true, "timed_out": true, "startup_failure": true, "action_required": true, "error": true}
+
+// AllChecks lists every check run and commit status of head, the pull
+// request's head commit as the app saw it, or of the pull request's current
+// head when head is empty. Running checks change, so the cache keeps the list
+// only briefly.
+func (s Service) AllChecks(ctx context.Context, repository github.Repository, number int, head string) (CheckList, error) {
+	gen := s.Cache.generation()
+	if head != "" {
+		if cached, ok := s.Cache.cachedAllChecks(headKey(repository, head)); ok {
+			return cached, nil
+		}
+	}
+	reader, err := s.Client.REST(ctx, repository)
+	if err != nil {
+		return CheckList{}, &Error{Failed, unreachable}
+	}
+	if head == "" {
+		pull, err := fix.ReadPullRequest(ctx, reader, repository, number)
+		if err != nil {
+			return CheckList{}, &Error{NotOpen, "GitHub could not show this pull request as open. It may be closed."}
+		}
+		head = pull.HeadSHA
+	}
+	list, err := fix.AllChecks(ctx, reader, repository, head)
+	if err != nil {
+		return CheckList{}, &Error{Failed, "baum could not read the checks from GitHub."}
+	}
+	out := CheckList{HeadSHA: head, Checks: []CheckStatus{}}
+	for _, check := range list {
+		out.Checks = append(out.Checks, CheckStatus{Name: check.Name, Status: check.Status, Conclusion: check.Conclusion, Title: checkTitle(check), URL: check.URL, JobID: check.JobID})
+	}
+	rank := func(c CheckStatus) int {
+		switch {
+		case failingConclusions[c.Conclusion]:
+			return 0
+		case c.Status != "completed":
+			return 1
+		}
+		return 2
+	}
+	slices.SortStableFunc(out.Checks, func(a, b CheckStatus) int {
+		return cmp.Or(cmp.Compare(rank(a), rank(b)), strings.Compare(a.Name, b.Name))
+	})
+	s.Cache.storeAllChecks(headKey(repository, head), gen, out)
+	return out, nil
+}
+
+// ConflictFiles is the files a pull request's head conflicts with in its
+// base branch, as of the base commit BaseSHA; none when they merge cleanly.
+type ConflictFiles struct {
+	HeadSHA string   `json:"head_sha"`
+	BaseRef string   `json:"base_ref"`
+	BaseSHA string   `json:"base_sha"`
+	Files   []string `json:"files"`
+}
+
+// Conflicts merges the pull request's head into its base branch's current tip
+// in a local clone, without touching the clone's files, and lists the files
+// that conflict. GitHub says only that there are conflicts.
+func (s Service) Conflicts(ctx context.Context, repository github.Repository, number int) (ConflictFiles, error) {
+	read, err := s.open(ctx, repository, number)
+	if err != nil {
+		return ConflictFiles{}, err
+	}
+	noClone := &Error{NoClone, "baum has no local clone of this repository to compare the branches in."}
+	if s.Clone == nil {
+		return ConflictFiles{}, noClone
+	}
+	dir, ok := s.Clone(ctx, repository)
+	if !ok {
+		return ConflictFiles{}, noClone
+	}
+	repo, err := fix.OpenForRemote(ctx, dir, repository)
+	if err != nil {
+		if failure, ok := errors.AsType[*fix.Error](err); ok && failure.Reason == fix.ReasonNoRemote {
+			return ConflictFiles{}, noClone
+		}
+		return ConflictFiles{}, &Error{Failed, "baum could not open its local clone of this repository."}
+	}
+	defer func() { _ = repo.Close() }()
+	pull := read.pull
+	base, files, err := repo.Conflicts(ctx, "", number, pull.HeadSHA, pull.BaseRef)
+	switch {
+	case errors.Is(err, gitlocal.ErrMergeTreeUnsupported):
+		return ConflictFiles{}, &Error{Failed, "The git on this computer is too old to find merge conflicts. It needs git 2.38 or newer."}
+	case err != nil:
+		return ConflictFiles{}, &Error{Failed, "baum could not compare the branches in its local clone of this repository."}
+	}
+	if files == nil {
+		files = []string{}
+	}
+	return ConflictFiles{HeadSHA: pull.HeadSHA, BaseRef: pull.BaseRef, BaseSHA: base, Files: files}, nil
 }

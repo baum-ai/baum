@@ -1153,6 +1153,7 @@ function Workspace({ url }: { url: UrlState }) {
               changed={reload}
               refresh={refresh}
               refreshing={listBusy}
+              reviewGroups={groups}
               Link={LocalLink}
             />
           ) : (
