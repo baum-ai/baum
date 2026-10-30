@@ -96,8 +96,10 @@ test("GitHub device lifecycle, recovery and saved reviews through the real daemo
   await page.getByRole("link", { name: /Reuse the existing PR page/ }).click();
   await page.getByRole("button", { name: "Full review", exact: true }).click();
   await page.getByRole("button", { name: "Regenerate review", exact: true }).click();
-  await expect(page.getByRole("button", { name: "Regenerate review", exact: true })).toBeEnabled();
   await expect.poll(() => readFile(join(state, "github-consumed-account"), "utf8")).toBe("alice");
+  // The private read proves which credential was used; generation is covered elsewhere.
+  await page.getByRole("button", { name: "Cancel job", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Regenerate review", exact: true })).toBeEnabled();
   await openConnections();
   await mode("pending");
   await panel.getByRole("button", { name: "Reconnect", exact: true }).click();
@@ -109,8 +111,10 @@ test("GitHub device lifecycle, recovery and saved reviews through the real daemo
   await page.getByRole("link", { name: /Reuse the existing PR page/ }).click();
   await page.getByRole("button", { name: "Full review", exact: true }).click();
   await page.getByRole("button", { name: "Regenerate review", exact: true }).click();
-  await expect(page.getByRole("button", { name: "Regenerate review", exact: true })).toBeEnabled();
   await expect.poll(() => readFile(join(state, "github-consumed-account"), "utf8")).toBe("bob");
+  // The private read proves which credential was used; generation is covered elsewhere.
+  await page.getByRole("button", { name: "Cancel job", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Regenerate review", exact: true })).toBeEnabled();
   await openConnections();
   await panel.getByRole("button", { name: "Disconnect", exact: true }).click();
   await expect(panel).toContainText("Not connected");

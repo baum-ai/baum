@@ -100,12 +100,26 @@ test("makes an inbox from a template, edits it, counts it in the badge and delet
   // Delete it from the sidebar, then Undo: it comes back where it was.
   await inboxLink.hover();
   await page.getByRole("button", { name: "More for Needs my review" }).click();
+  const deleted = page.waitForResponse(
+    (response) =>
+      response.request().method() === "PUT" &&
+      response.url().endsWith("/api/inboxes") &&
+      response.request().postDataJSON().inboxes.length === 0,
+  );
   await page.getByRole("button", { name: "Delete inbox" }).click();
+  expect((await deleted).ok()).toBe(true);
   await expect(
     page.getByText("Deleted Needs my review. Its pull requests stay in Inbox."),
   ).toBeVisible();
   await expect(inboxLink).toHaveCount(0);
+  const restored = page.waitForResponse(
+    (response) =>
+      response.request().method() === "PUT" &&
+      response.url().endsWith("/api/inboxes") &&
+      response.request().postDataJSON().inboxes.length === 1,
+  );
   await page.getByRole("status").getByRole("button", { name: "Undo" }).click();
+  expect((await restored).ok()).toBe(true);
   await expect(inboxLink).toBeVisible();
   // It was saved by the daemon, not just drawn.
   await page.reload();
@@ -119,7 +133,3 @@ test("makes an inbox from a template, edits it, counts it in the badge and delet
   await expect(sidebar.getByRole("link", { name: /^Inbox/ })).toBeFocused();
   expect(errors).toEqual([]);
 });
-
-// At the most inboxes a person can have, the sidebar's pages and inboxes
-// scroll within it: Settings stays in view, and the last inbox's menu opens
-// whole, not clipped by the scrolling list.
