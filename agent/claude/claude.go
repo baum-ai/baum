@@ -100,10 +100,10 @@ func (c *Backend) run(ctx context.Context, request agent.Request, args, env []st
 	if request.WantsSession() && (c.Profile != User || fix) {
 		return result, errors.New("claude: only a User profile review or task can keep, resume or fork a session")
 	}
-	if request.MaxCalls < 1 {
+	if request.MaxCalls < 0 {
 		return result, errors.New(agent.GenerationBudgetExceededReason("model calls"))
 	}
-	if request.MaxTokens < 1 {
+	if request.MaxTokens < 0 {
 		return result, errors.New(agent.GenerationBudgetExceededReason("tokens"))
 	}
 	endpoint := cmp.Or(request.Endpoint, c.DefaultEndpoint)
@@ -497,11 +497,11 @@ func (c *Backend) run(ctx context.Context, request agent.Request, args, env []st
 			record(agent.Event{Kind: "document", Bytes: len(result.Document)})
 			completed = true
 		}
-		if result.Calls > request.MaxCalls {
+		if agent.Exceeds(result.Calls, request.MaxCalls) {
 			err = errors.New(agent.GenerationBudgetExceededReason("model calls"))
 			break
 		}
-		if result.Tokens > request.MaxTokens {
+		if agent.Exceeds(result.Tokens, request.MaxTokens) {
 			err = errors.New(agent.GenerationBudgetExceededReason("tokens"))
 			break
 		}

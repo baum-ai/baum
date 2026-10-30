@@ -14,6 +14,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/baum-ai/baum/internal/config"
 )
@@ -332,6 +333,25 @@ func TestPreferencesConcurrencyFallsBackToTheMaximum(t *testing.T) {
 		}
 	}
 }
+func TestPreferencesTimeLimitsReplaceTheFiles(t *testing.T) {
+	global := config.Default()
+	got := (Preferences{ReviewTimeLimit: 20, RunTimeLimit: 90}).Resolve(global).Budgets
+	if time.Duration(got.ReviewTimeout) != 20*time.Minute || time.Duration(got.RunTimeout) != 90*time.Minute {
+		t.Fatalf("set limits: %+v", got)
+	}
+	for _, p := range []Preferences{{}, {ReviewTimeLimit: -1, RunTimeLimit: MaxTimeLimit + 1}} {
+		if got := p.Resolve(global).Budgets; got != global.Budgets {
+			t.Errorf("%+v changed the file's budgets: %+v", p, got)
+		}
+		if err := p.Validate(); err != nil {
+			t.Errorf("%+v blocks other settings: %v", p, err)
+		}
+	}
+	if ValidateTimeLimit(0) != nil || ValidateTimeLimit(MaxTimeLimit) != nil || ValidateTimeLimit(MaxTimeLimit+1) == nil || ValidateTimeLimit(-1) == nil {
+		t.Error("ValidateTimeLimit bounds")
+	}
+}
+
 func TestPreferencesFixAgent(t *testing.T) {
 	claude, codex, cursor := config.BackendClaude, config.BackendCodex, config.BackendCursorAgent
 	for _, b := range []*config.Backend{nil, &claude, &codex} {

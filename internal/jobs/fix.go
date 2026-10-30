@@ -72,8 +72,8 @@ func (l *Local) prepareFix(ctx context.Context, item Item) (Prepared, string, er
 	if e != nil {
 		return Prepared{}, "", e
 	}
-	if cfg.Budgets.MaxTokens <= 0 || cfg.Budgets.MaxCalls <= 0 || cfg.Budgets.RunTimeout <= 0 {
-		return Prepared{}, "", errors.New("positive generation budgets required")
+	if e := cfg.Budgets.Validate(); e != nil {
+		return Prepared{}, "", e
 	}
 	list := pricing.Active()
 	p := Prepared{Item: item, Repository: c.Repository, HeadSHA: pr.HeadSHA, Backend: selected.Backend.Name(), Model: selected.Model,
@@ -279,7 +279,7 @@ func (l *Local) executeFix(ctx context.Context, p Prepared, progress func(Progre
 	out, err := fix.Run(ctx, fix.Options{ID: id(), Clone: c.Path, Repository: repository, Number: p.PR, Title: pr.Title,
 		HeadRef: p.Fix.HeadRef, HeadSHA: p.HeadSHA, BaseRef: p.Fix.BaseRef, Conflicts: p.Fix.Conflicts, Checks: p.Fix.Checks, Evidence: evidence,
 		Threads: threads, Chat: conversation, Replies: l.Client, Agent: fixer, Backend: p.Backend, Model: p.Model, MaxCalls: cfg.Budgets.MaxCalls, MaxTokens: cfg.Budgets.MaxTokens,
-		WallClock: time.Duration(cfg.Budgets.RunTimeout), Directory: l.FixDirectory, Env: cfg.AgentEnviron(), Transcript: transcript,
+		WallClock: time.Duration(cfg.Budgets.RunTimeout), Directory: l.FixDirectory, Env: cfg.AgentEnviron(), Transcript: transcript, Logger: jobLogger(ctx, l.Log, p),
 		Progress: func(phase string) { progress(Progress{Phase: phase, HasTranscript: hasTranscript}) }})
 	report := Progress{Phase: "finishing", HasTranscript: hasTranscript}
 	var cost *float64

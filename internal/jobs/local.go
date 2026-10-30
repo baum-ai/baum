@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/url"
 	"strings"
 	"time"
@@ -45,6 +46,9 @@ type Local struct {
 	ReviewRuns string
 	// Chat answers chat jobs (KindChat); nil fails them.
 	Chat *chat.Service
+	// Log receives what a job's agent reports and keeps out of the job, such
+	// as a fix agent's provider error; nil logs nothing.
+	Log *slog.Logger
 }
 
 // keepsSession reports whether a review by the named backend keeps its agent
@@ -126,8 +130,8 @@ func (l *Local) Prepare(ctx context.Context, item Item) (Prepared, string, error
 	if e != nil {
 		return Prepared{}, "", e
 	}
-	if cfg.Budgets.MaxTokens <= 0 || cfg.Budgets.MaxCalls <= 0 || cfg.Budgets.RunTimeout <= 0 || cfg.Budgets.PassTimeout <= 0 {
-		return Prepared{}, "", errors.New("positive generation budgets required")
+	if e := cfg.Budgets.Validate(); e != nil {
+		return Prepared{}, "", e
 	}
 	fingerprint, _ := json.Marshal(struct {
 		Budgets config.Budgets
@@ -317,7 +321,7 @@ func (l *Local) Execute(ctx context.Context, p Prepared, progress func(Progress)
 		key.Number = group.Members[0].Number
 	}
 	progress(Progress{Phase: "assembling"})
-	result, e := l.publish(ctx, published, versions, key, p.Backend, generate.Options{Group: group, PriceList: list, Assembler: guarded, Request: assemble.Request{Repository: repository, Number: key.Number, Limits: assemble.LimitsFrom(caps)}, Backend: backend, BackendVersion: selected.Version, Model: p.Model, Budgets: agent.Budgets{WallClock: time.Duration(cfg.Budgets.RunTimeout), MaxCalls: cfg.Budgets.MaxCalls, MaxTokens: cfg.Budgets.MaxTokens, MaxProviderAttempts: 3, MaxRepairAttempts: 2}, OnValidation: func(pass int, valid bool) {
+	result, e := l.publish(ctx, published, versions, key, p.Backend, generate.Options{Group: group, PriceList: list, Assembler: guarded, Request: assemble.Request{Repository: repository, Number: key.Number, Limits: assemble.LimitsFrom(caps)}, Backend: backend, BackendVersion: selected.Version, Model: p.Model, Budgets: agent.Budgets{WallClock: time.Duration(cfg.Budgets.ReviewTimeout), MaxCalls: cfg.Budgets.MaxCalls, MaxTokens: cfg.Budgets.MaxTokens, MaxProviderAttempts: 3, MaxRepairAttempts: 2}, OnValidation: func(pass int, valid bool) {
 		backend.repairs = pass - 1
 		if !valid {
 			backend.repairs = pass

@@ -998,7 +998,9 @@ What it runs while it is up:
   `baum internal generate` does. Some you started in the app; the others it
   starts by itself, unattended (below). Prices only report what usage would
   cost at API prices: baum shows none before a run, and no price limits,
-  refuses or decides a run. The token and call budgets bound each run.
+  refuses or decides a run. Each run's time limit bounds it: 10 minutes for
+  a review and 30 for a fix or any other agent run by default, set in
+  Settings; call and token budgets apply only when the config file sets them.
 
 Automatic generation is on by default and runs without anyone watching. It
 starts a job when a pull request in a registered repository that you authored,
@@ -1013,8 +1015,8 @@ confirmation in the app. Each automatic job is prepared exactly like a
 confirmed one (same backend, model, budgets and recheck of the head before any
 model call, which also stops it if the pull request was converted to a draft
 while it waited). A model without a known price runs automatically like any
-other. What it can use: up to the configured per-run token and call budgets
-for each new head (twice when a daemon stop or restart interrupts the first
+other. What it can use: one review run, within its time limit (and any call
+and token budgets the config file sets), for each new head (twice when a daemon stop or restart interrupts the first
 run, which is retried once; failed or cancelled runs are not retried). There
 is no daily or dollar limit: baum cannot price what a subscription bills, so
 it sets none; turn automatic generation off for a repository to stop it.

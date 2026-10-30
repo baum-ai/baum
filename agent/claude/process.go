@@ -40,7 +40,7 @@ func (c *Backend) args(request agent.Request) []string {
 	if request.Task {
 		system = taskSystemPrompt
 	}
-	args = append(args, "--system-prompt", system, "--max-turns", strconv.Itoa(request.MaxCalls),
+	args = append(maxTurns(append(args, "--system-prompt", system), request),
 		// Restricted mode drops every command-running and network tool
 		// (Bash, WebFetch, ...) regardless of --tools, confines file tools to
 		// the working directory and refuses bypassPermissions, so the
@@ -74,10 +74,19 @@ func (c *Backend) fixArgs(request agent.Request) []string {
 	if c.Model != "" {
 		args = append(args, "--model", c.Model)
 	}
-	return append(args, "--system-prompt", fixSystemPrompt, "--max-turns", strconv.Itoa(request.MaxCalls),
+	return append(maxTurns(append(args, "--system-prompt", fixSystemPrompt), request),
 		"--restricted", "--tools", "Read,Glob,Grep,Edit,Write", "--permission-mode", "acceptEdits", "--no-session-persistence",
 		"--settings", `{"permissions":{"blockReadsOutsideWorkingDirectories":true}}`,
 		"--setting-sources", "", "--strict-mcp-config", "--mcp-config", `{"mcpServers":{}}`)
+}
+
+// maxTurns adds --max-turns when the request bounds its calls; without it
+// the run's wall clock bounds the session.
+func maxTurns(args []string, request agent.Request) []string {
+	if request.MaxCalls > 0 {
+		return append(args, "--max-turns", strconv.Itoa(request.MaxCalls))
+	}
+	return args
 }
 
 // fixedEnvironment is set in every profile: no thinking, a bounded response,

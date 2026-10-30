@@ -45,7 +45,8 @@ type Endpoint struct {
 
 // Budgets bounds one run. MaxTokens counts tokens the run pays for in full
 // (input, output and cache creation); cache reads repeat the same context on
-// every call and are reported but not charged against it.
+// every call and are reported but not charged against it. A MaxCalls or
+// MaxTokens of zero is no limit: the wall clock bounds the run.
 type Budgets struct {
 	WallClock           time.Duration `json:"wall_clock"`
 	MaxCalls            int           `json:"max_calls"`
@@ -61,9 +62,10 @@ type Budgets struct {
 }
 
 type Request struct {
-	Logger              *slog.Logger
-	Directory, Prompt   string
-	Schema              []byte
+	Logger            *slog.Logger
+	Directory, Prompt string
+	Schema            []byte
+	// MaxCalls and MaxTokens bound the run; zero is no limit (Exceeds).
 	MaxCalls, MaxTokens int
 	// Endpoint replaces the backend's default provider address and key. Nil
 	// leaves the backend's own.

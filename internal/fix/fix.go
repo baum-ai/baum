@@ -104,10 +104,14 @@ type Options struct {
 	Replies ThreadWriter
 	Agent   agent.Fixer
 	// Backend and Model name the agent in the commit message.
-	Backend, Model      string
+	Backend, Model string
+	// MaxCalls and MaxTokens bound the agent when set; zero is no limit.
+	// WallClock is its time limit, defaultWallClock when unset.
 	MaxCalls, MaxTokens int
 	WallClock           time.Duration
-	Logger              *slog.Logger
+	// Logger receives how the agent ended, its error included, which the
+	// job keeps no text of; nil logs nothing.
+	Logger *slog.Logger
 	// Directory holds the fixes' temporary directories; empty is
 	// DefaultDirectory.
 	Directory string
@@ -152,8 +156,19 @@ func DefaultDirectory() (string, error) {
 // fix removes it; no fix runs that long.
 const staleAfter = 24 * time.Hour
 
+// limitText is a time limit as a person reads it: "30 minutes".
+func limitText(d time.Duration) string {
+	if d%time.Minute != 0 {
+		return d.String()
+	}
+	if d == time.Minute {
+		return "1 minute"
+	}
+	return fmt.Sprintf("%d minutes", int(d/time.Minute))
+}
+
 // defaultWallClock bounds an agent run whose Options set no WallClock.
-const defaultWallClock = 45 * time.Minute
+const defaultWallClock = 30 * time.Minute
 
 // Run makes the fix: see the package documentation. A failure is an *Error,
 // except a cancellation, which is the context's error. The checkout is
@@ -233,9 +248,20 @@ func Run(ctx context.Context, o Options) (out Outcome, err error) {
 			wall = defaultWallClock
 		}
 		runCtx, cancel := context.WithTimeout(ctx, wall)
-		result, err := o.Agent.Fix(runCtx, agent.Request{Logger: o.Logger, Directory: checkout.Dir(), Scratch: scratch, Prompt: text, MaxCalls: o.MaxCalls, MaxTokens: o.MaxTokens, Transcript: o.Transcript})
+		// The agent's steps go to the transcript, not the log.
+		started := time.Now()
+		result, err := o.Agent.Fix(runCtx, agent.Request{Directory: checkout.Dir(), Scratch: scratch, Prompt: text, MaxCalls: o.MaxCalls, MaxTokens: o.MaxTokens, Transcript: o.Transcript})
 		timedOut := runCtx.Err() != nil
 		cancel()
+		if o.Logger != nil {
+			attrs := []any{"duration", time.Since(started).Round(time.Second), "time_limit", wall, "calls", result.Calls, "tokens", result.Tokens}
+			if err != nil {
+				// A provider's own error text is logged, never kept in the job.
+				o.Logger.Warn("fix agent failed", append(attrs, "timed_out", timedOut, "error", err)...)
+			} else {
+				o.Logger.Info("fix agent finished", attrs...)
+			}
+		}
 		out.Agent = &result
 		out.Summary = string(result.Document)
 		if len(o.Threads) > 0 {
@@ -245,14 +271,22 @@ func Run(ctx context.Context, o Options) (out Outcome, err error) {
 			if ctx.Err() != nil {
 				return out, ctx.Err()
 			}
-			// A provider's own error text is logged, never kept in the job.
-			if o.Logger != nil {
-				o.Logger.Warn("fix agent failed", "error", err)
+			if timedOut {
+				return out, fail(ReasonBudget, fmt.Errorf("the agent reached its time limit (%s) before it finished; raise it in Settings", limitText(wall)))
 			}
-			if timedOut || strings.HasPrefix(err.Error(), agent.GenerationBudgetExceededReason("")) {
-				return out, fail(ReasonBudget, errors.New("the agent reached its time, call or token limit before it finished"))
+			if spent, ok := strings.CutPrefix(err.Error(), agent.GenerationBudgetExceededReason("")); ok {
+				// Only the budget's name is kept: text after it may be the
+				// provider's.
+				limit := "call or token"
+				switch {
+				case strings.HasPrefix(spent, "model calls"):
+					limit = "model call"
+				case strings.HasPrefix(spent, "tokens"):
+					limit = "token"
+				}
+				return out, fail(ReasonBudget, fmt.Errorf("the agent reached its %s limit before it finished", limit))
 			}
-			return out, fail(ReasonBackend, errors.New("the agent or its provider failed before it finished"))
+			return out, fail(ReasonBackend, errors.New("the agent or its provider failed before it finished; the baum daemon log has the error"))
 		}
 	}
 	progress("committing")

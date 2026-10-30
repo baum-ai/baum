@@ -102,12 +102,35 @@ func (d *Duration) UnmarshalText(text []byte) error {
 	return nil
 }
 
-// Budgets bound one generate run. Exceeding a budget fails the run naming it.
+// Budgets bound agent runs. Exceeding one fails the run naming it.
+// ReviewTimeout is a review's time limit and RunTimeout that of every other
+// agent run (a fix, a question to a review's agent, a feature build);
+// PassTimeout bounds each model call. MaxCalls and MaxTokens bound each run
+// when set; zero, the default, is no limit, so only the time limit ends a run.
 type Budgets struct {
-	PassTimeout Duration `toml:"pass_timeout"`
-	RunTimeout  Duration `toml:"run_timeout"`
-	MaxCalls    int      `toml:"max_calls"`
-	MaxTokens   int      `toml:"max_tokens"`
+	PassTimeout   Duration `toml:"pass_timeout"`
+	ReviewTimeout Duration `toml:"review_timeout"`
+	RunTimeout    Duration `toml:"run_timeout"`
+	MaxCalls      int      `toml:"max_calls,omitempty"`
+	MaxTokens     int      `toml:"max_tokens,omitempty"`
+}
+
+// Default time limits (Budgets).
+const (
+	DefaultReviewTimeout = 10 * time.Minute
+	DefaultRunTimeout    = 30 * time.Minute
+)
+
+// Validate requires positive time limits and call and token budgets that are
+// zero (no limit) or positive.
+func (b Budgets) Validate() error {
+	if b.PassTimeout <= 0 || b.ReviewTimeout <= 0 || b.RunTimeout <= 0 {
+		return errors.New("budgets: pass_timeout, review_timeout and run_timeout must be positive")
+	}
+	if b.MaxCalls < 0 || b.MaxTokens < 0 {
+		return errors.New("budgets: max_calls and max_tokens must be zero (no limit) or positive")
+	}
+	return nil
 }
 
 // Config is the resolved configuration. Its TOML form is the on-disk file.
@@ -226,10 +249,9 @@ func Default() Config {
 	return Config{
 		Backend: BackendAuto,
 		Budgets: Budgets{
-			PassTimeout: Duration(10 * time.Minute),
-			RunTimeout:  Duration(45 * time.Minute),
-			MaxCalls:    40,
-			MaxTokens:   2_000_000,
+			PassTimeout:   Duration(10 * time.Minute),
+			ReviewTimeout: Duration(DefaultReviewTimeout),
+			RunTimeout:    Duration(DefaultRunTimeout),
 		},
 	}
 }
@@ -330,6 +352,9 @@ func ReadFile(path string) (cfg Config, ok bool, err error) {
 	if err := ValidateAgentEnv(cfg.AgentEnv); err != nil {
 		return Config{}, false, fmt.Errorf("%s: agent_env: %w", path, err)
 	}
+	if err := cfg.Budgets.Validate(); err != nil {
+		return Config{}, false, fmt.Errorf("%s: %w", path, err)
+	}
 	if cfg.GitHubToken != "" {
 		cfg.GitHubTokenSource = SourceConfigFile
 	}
@@ -337,7 +362,7 @@ func ReadFile(path string) (cfg Config, ok bool, err error) {
 }
 
 // durationKeys are the dotted names of every Duration field in the file.
-var durationKeys = []string{"budgets.pass_timeout", "budgets.run_timeout"}
+var durationKeys = []string{"budgets.pass_timeout", "budgets.review_timeout", "budgets.run_timeout"}
 
 // checkDurationTypes rejects a Duration key written as anything but a string.
 // go-toml decodes an integer into a Duration as raw nanoseconds, so
@@ -436,7 +461,7 @@ func parseError(path string, err error) error {
 	case strings.HasPrefix(reason, "cannot decode TOML "), strings.HasSuffix(reason, "is already defined"):
 		// Type mismatches and duplicates name types and keys, not values.
 		return fmt.Errorf("%w: %s", message, reason)
-	case name == "budgets.pass_timeout" || name == "budgets.run_timeout":
+	case slices.Contains(durationKeys, name):
 		return fmt.Errorf(`%w: invalid duration; write it like "10m"`, message)
 	}
 	return fmt.Errorf("%w: invalid value", message)

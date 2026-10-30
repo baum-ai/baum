@@ -160,6 +160,56 @@ func TestLocalAPIJobConcurrency(t *testing.T) {
 	}
 }
 
+func TestLocalAPITimeLimits(t *testing.T) {
+	registry, err := repos.Open(filepath.Join(t.TempDir(), "repos.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = registry.Close() }()
+	handler := LocalAPI{Registry: registry, Config: config.Default()}.Handler()
+	defer handler.Close()
+	type limits struct {
+		Review int `json:"review_time_limit_minutes"`
+		Run    int `json:"run_time_limit_minutes"`
+	}
+	current := func() limits {
+		t.Helper()
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, httptest.NewRequest("GET", "/api/settings", nil))
+		var body limits
+		if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+			t.Fatal(rec.Body.String(), err)
+		}
+		return body
+	}
+	put := func(body string) (int, limits) {
+		t.Helper()
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, httptest.NewRequest("PUT", "/api/settings/time-limits", strings.NewReader(body)))
+		var answer limits
+		_ = json.Unmarshal(rec.Body.Bytes(), &answer)
+		return rec.Code, answer
+	}
+	if got := current(); got != (limits{10, 30}) {
+		t.Fatalf("defaults = %+v", got)
+	}
+	if code, answer := put(`{"review_time_limit_minutes":15,"run_time_limit_minutes":60}`); code != 200 || answer != (limits{15, 60}) || current() != answer {
+		t.Fatalf("PUT = %d %+v, now %+v", code, answer, current())
+	}
+	prefs, err := registry.Preferences(context.Background())
+	if err != nil || prefs.ReviewTimeLimit != 15 || prefs.RunTimeLimit != 60 {
+		t.Fatalf("stored %+v, %v", prefs, err)
+	}
+	for _, body := range []string{`{"review_time_limit_minutes":0,"run_time_limit_minutes":30}`, `{"review_time_limit_minutes":10,"run_time_limit_minutes":241}`, `{"review_time_limit_minutes":10}`, `{}`, `{"review_minutes":10,"run_time_limit_minutes":30}`} {
+		if code, _ := put(body); code != 400 {
+			t.Errorf("%s = %d", body, code)
+		}
+	}
+	if current() != (limits{15, 60}) {
+		t.Fatalf("a refused PUT changed them: %+v", current())
+	}
+}
+
 func TestLocalAPIAgentEnvironment(t *testing.T) {
 	registry, err := repos.Open(filepath.Join(t.TempDir(), "repos.sqlite"))
 	if err != nil {

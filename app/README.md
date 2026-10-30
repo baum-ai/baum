@@ -893,7 +893,13 @@ daemon note, **Jobs at once** (how many reviews, fixes and feature builds run
 in parallel, 1–4 and 4 by default, saved with `PUT
 api/settings/job-concurrency` and reported as `job_concurrency` by `GET
 api/settings`; the daemon applies it at once, and lowering it lets running jobs
-finish), in the desktop app the Command line card (inline CLI install,
+finish), **Review time limit** (10 minutes by default) and **Fix time limit**
+(how long a fix, a question to a review's agent or a feature build may run, 30
+minutes by default), each chosen from 5 to 240 minutes, saved together with
+`PUT api/settings/time-limits` as `review_time_limit_minutes` and
+`run_time_limit_minutes`, reported by `GET api/settings` and applied to runs
+that start after the change (runs have no call or token limit unless the
+config file sets one), in the desktop app the Command line card (inline CLI install,
 update and removal) and Zoom, and the environment for agents. Home paths are
 displayed with `~`. **Environment for agents** (`AgentEnvSection`) edits
 variables set for every agent baum runs and for the git commands that commit

@@ -1098,6 +1098,7 @@ export function SettingsPage({
                   }
                 />
                 <JobConcurrencyRow />
+                <TimeLimitRows />
               </div>
               {setup.desktop ? (
                 <>
@@ -1176,6 +1177,99 @@ function JobConcurrencyRow() {
         ))}
       </select>
     </SettingRow>
+  );
+}
+
+type TimeLimits = { review_time_limit_minutes: number; run_time_limit_minutes: number };
+
+/** The daemon's defaults (config.DefaultReviewTimeout, DefaultRunTimeout). */
+const DEFAULT_TIME_LIMITS: TimeLimits = {
+  review_time_limit_minutes: 10,
+  run_time_limit_minutes: 30,
+};
+
+/** The minutes offered, up to repos.MaxTimeLimit. */
+const TIME_LIMIT_CHOICES = [5, 10, 15, 20, 30, 45, 60, 90, 120, 180, 240];
+
+/** How long a review, and any other agent run, may take before it stops.
+ *  Runs have no call or token limit; a change applies to runs started after
+ *  it. */
+function TimeLimitRows() {
+  const [value, setValue] = useState<TimeLimits | null>(null);
+  const [saving, setSaving] = useState(false);
+  // The row whose change failed shows why; a failed load shows on the first.
+  const [error, setError] = useState<{ key: keyof TimeLimits; text: string } | null>(null);
+  useEffect(() => {
+    request<Partial<TimeLimits>>("api/settings").then(
+      (settings) =>
+        setValue({
+          review_time_limit_minutes:
+            settings.review_time_limit_minutes ?? DEFAULT_TIME_LIMITS.review_time_limit_minutes,
+          run_time_limit_minutes:
+            settings.run_time_limit_minutes ?? DEFAULT_TIME_LIMITS.run_time_limit_minutes,
+        }),
+      (e) => setError({ key: "review_time_limit_minutes", text: errorText(e) }),
+    );
+  }, []);
+  async function choose(key: keyof TimeLimits, minutes: number) {
+    if (!value) return;
+    const before = value;
+    setValue({ ...value, [key]: minutes });
+    setSaving(true);
+    setError(null);
+    try {
+      setValue(
+        await request<TimeLimits>("api/settings/time-limits", { ...value, [key]: minutes }, "PUT"),
+      );
+    } catch (e) {
+      setValue(before);
+      setError({ key, text: errorText(e) });
+    } finally {
+      setSaving(false);
+    }
+  }
+  const row = (key: keyof TimeLimits, id: string, label: string, detail: string) => {
+    const current = value?.[key] ?? DEFAULT_TIME_LIMITS[key];
+    const choices = TIME_LIMIT_CHOICES.includes(current)
+      ? TIME_LIMIT_CHOICES
+      : [...TIME_LIMIT_CHOICES, current].sort((a, b) => a - b);
+    return (
+      <SettingRow
+        label={label}
+        htmlFor={id}
+        detail={error?.key === key ? <Alert>{error.text}</Alert> : detail}
+      >
+        <select
+          id={id}
+          className="local-field settings-select"
+          disabled={value === null || saving}
+          value={current}
+          onChange={(e) => void choose(key, Number(e.target.value))}
+        >
+          {choices.map((minutes) => (
+            <option key={minutes} value={minutes}>
+              {minutes} min
+            </option>
+          ))}
+        </select>
+      </SettingRow>
+    );
+  };
+  return (
+    <>
+      {row(
+        "review_time_limit_minutes",
+        "review-time-limit",
+        "Review time limit",
+        "How long a review may run before it stops. Reviews have no call or token limit.",
+      )}
+      {row(
+        "run_time_limit_minutes",
+        "run-time-limit",
+        "Fix time limit",
+        "How long a fix, a question to a review's agent or a feature build may run before it stops.",
+      )}
+    </>
   );
 }
 

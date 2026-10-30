@@ -430,7 +430,7 @@ func localApplication(paths daemon.Paths, log *slog.Logger) func(context.Context
 		// Feature builds run on the feature worker made below.
 		builds := &featureBuilder{}
 		prefs, _ := registry.Preferences(ctx)
-		queue, err := jobs.Open(filepath.Join(state, "jobs.json"), &jobs.Local{Registry: registry, Groups: groups, Config: cfg, Client: github.NewFromConfig(cfg, github.Options{}), Features: builds, Chat: chats}, prefs.Concurrency(), func(job jobs.Job) {
+		queue, err := jobs.Open(filepath.Join(state, "jobs.json"), &jobs.Local{Registry: registry, Groups: groups, Config: cfg, Client: github.NewFromConfig(cfg, github.Options{}), Features: builds, Chat: chats, Log: log}, prefs.Concurrency(), func(job jobs.Job) {
 			_ = server.Publish("progress", map[string]any{"job": job})
 			if event, ok := jobs.ChatEvent(job); ok {
 				_ = server.Publish("chat", event)
@@ -454,6 +454,7 @@ func localApplication(paths daemon.Paths, log *slog.Logger) func(context.Context
 			events.Close()
 			return daemon.App{}, err
 		}
+		queue.SetLogger(log)
 		scheduler.Queue = queue
 		queue.SetAutomaticGate(scheduler.Gate)
 		queue.SetChat(chats)

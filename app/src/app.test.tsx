@@ -699,7 +699,11 @@ function stubAutomatic(
     const init = args[1] as RequestInit | undefined;
     if (init?.method === "PUT") {
       puts.push({ path, body: JSON.parse(String(init.body)) });
-      if (path.endsWith("api/settings/agent-env") || path.endsWith("api/settings/job-concurrency"))
+      if (
+        path.endsWith("api/settings/agent-env") ||
+        path.endsWith("api/settings/job-concurrency") ||
+        path.endsWith("api/settings/time-limits")
+      )
         return Promise.resolve(Response.json(puts.at(-1)!.body));
       if (path.endsWith("api/settings/decisions"))
         return Promise.resolve(Response.json({ decisions: puts.at(-1)!.body }));
@@ -992,6 +996,38 @@ it("sets how many jobs run at once and puts it back when refused", async () => {
   );
   await choose(select(), "1");
   expect(select().value).toBe("2");
+  expect(node.textContent).toContain("settings unavailable");
+});
+it("sets the time limits of reviews and fixes and puts one back when refused", async () => {
+  history.replaceState(null, "", "/s/test-ns/?page=settings&section=computer");
+  stubDiagnostics(async () => Response.json({ local: true, report: diagnosticsReport }));
+  const puts = stubAutomatic(demoClone, automaticOverview, {
+    backend: "auto",
+    model: "",
+    review_time_limit_minutes: 10,
+    run_time_limit_minutes: 25,
+  });
+  await act(async () => root.render(<App />));
+  const review = () => node.querySelector<HTMLSelectElement>("#review-time-limit")!;
+  const run = () => node.querySelector<HTMLSelectElement>("#run-time-limit")!;
+  expect(review().value).toBe("10");
+  // A limit the list does not offer, such as one from the config file, is kept.
+  expect(run().value).toBe("25");
+  expect([...run().options].map((o) => o.value)).toContain("25");
+  await choose(review(), "20");
+  expect(puts).toContainEqual({
+    path: "/s/test-ns/api/settings/time-limits",
+    body: { review_time_limit_minutes: 20, run_time_limit_minutes: 25 },
+  });
+  expect(review().value).toBe("20");
+  const accepted = vi.mocked(fetch).getMockImplementation()!;
+  vi.mocked(fetch).mockImplementation((...args) =>
+    String(args[0]).endsWith("api/settings/time-limits")
+      ? Promise.resolve(Response.json({ message: "settings unavailable" }, { status: 500 }))
+      : accepted(...args),
+  );
+  await choose(run(), "60");
+  expect(run().value).toBe("25");
   expect(node.textContent).toContain("settings unavailable");
 });
 it("sets automatic reviews per repository, with no daily cap", async () => {

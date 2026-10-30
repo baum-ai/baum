@@ -154,14 +154,15 @@ const (
 // last failure instead. Once a 200 response has started, the call is never
 // sent again: a stream that breaks fails the call.
 //
-// Every request that was sent counts as a call against maxCalls, whether or
-// not it was answered; a call without a complete usage report leaves the
-// run's usage unreported, since the model may have run and billed it.
+// Every request that was sent counts as a call against maxCalls (zero is no
+// limit), whether or not it was answered; a call without a complete usage
+// report leaves the run's usage unreported, since the model may have run and
+// billed it.
 func (b *Backend) send(ctx context.Context, endpoint agent.Endpoint, body []byte, maxCalls int, result *agent.Result, record func(agent.Event)) (*apiResponse, error) {
 	url := strings.TrimRight(endpoint.BaseURL, "/") + "/v1/messages"
 	var last *Error
 	for attempt := 0; ; attempt++ {
-		if result.Calls >= maxCalls {
+		if agent.Exceeds(result.Calls+1, maxCalls) {
 			return nil, errors.New(agent.GenerationBudgetExceededReason("model calls"))
 		}
 		callCtx, cancel := context.WithCancel(ctx)
@@ -238,7 +239,7 @@ func (b *Backend) send(ctx context.Context, endpoint agent.Endpoint, body []byte
 		if attempt == maxRetries {
 			return nil, last
 		}
-		if result.Calls >= maxCalls {
+		if agent.Exceeds(result.Calls+1, maxCalls) {
 			// No call is left to retry with: the budget, not the provider,
 			// ends the run, and the last failure says why it was spent.
 			return nil, fmt.Errorf("%s (the last call failed: %s)", agent.GenerationBudgetExceededReason("model calls"), last.Error())

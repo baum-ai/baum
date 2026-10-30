@@ -628,8 +628,8 @@ host sets the key from `ANTHROPIC_API_KEY`). The default model is
 `claude-opus-5-5` at `medium` effort; another model is sent without an effort.
 
 Every request sent is one call, charged before the next is made: a call the
-request's `MaxCalls` or `MaxTokens` cannot pay for is not sent, and
-`max_tokens` is the smaller of 32,000 and the tokens left. Usage is the API's
+request's `MaxCalls` or `MaxTokens` cannot pay for is not sent (zero is no
+limit), and `max_tokens` is the smaller of 32,000 and the tokens left. Usage is the API's
 per-call report in disjoint buckets (message_start's, updated by
 message_delta's cumulative counts), with the 1-hour share of cache writes
 (zero when unreported, since only the 5-minute TTL is requested), the speed
@@ -1616,7 +1616,7 @@ bundle's own caps, and runs `agent.Generator` with the `claude.User` or
 `codex.Local` profile, never `Isolated` or `Container` (a test guards this),
 with `cursor.Backend`, or with `anthropic.Backend` and the key from
 `ANTHROPIC_API_KEY`. The
-wall-clock budget is a `context.WithTimeout` around the loop, `pass_timeout`
+wall-clock budget (`review_timeout`) is a `context.WithTimeout` around the loop, `pass_timeout`
 bounds each backend call, and SIGINT and SIGTERM cancel the context so the
 backend's process group is killed and the run directory removed.
 
@@ -1744,8 +1744,9 @@ answer is masked with `agent.RedactTaskOutput` before it is checked further,
 stored or returned, and the log carries sizes and counts only. The question
 itself is the reviewer's own text: it is stored and served as typed, and
 masked only where it goes to an agent (the turn's prompt and a seeded
-`conversation.json`). A turn's budgets are half of a review's calls, tokens
-and wall clock, and each call is bounded by half of its `pass_timeout`
+`conversation.json`). A turn's time limit is `run_timeout`; its call and
+token budgets are half of a review's when the config file sets them, none
+otherwise; and each call is bounded by half of its `pass_timeout`
 (`generate.BoundPasses`), which fails the turn with the budget
 `pass_timeout` without a retry.
 
@@ -2332,7 +2333,20 @@ limit (`PUT api/settings/job-concurrency`, 1–4), and `Queue.SetConcurrency`
 applies it to the running queue: lowering it stops no running job, it only
 holds new ones until fewer run. A job waits while another job of one of its
 pull requests (a group's members count) runs, and later jobs may start before
-it.
+it. The daemon's log (`Queue.SetLogger`) has a line when each job starts and
+one when it ends, with its state, reason, detail, calls, tokens and duration
+and, for a failure, the executor's error, which the job itself may keep no
+text of (a provider's error, an internal one).
+
+A run's time limit is its only bound by default: `budgets.review_timeout` (10
+minutes) for a review of a pull request or a group and `budgets.run_timeout`
+(30 minutes) for every other agent run, a fix, a question to a review's agent
+or a feature build. The preferences' `review_time_limit_minutes` and
+`run_time_limit_minutes` (`PUT api/settings/time-limits`, 1–240) replace the
+config file's (`Preferences.Resolve`). `max_calls` and `max_tokens` are zero,
+no limit, unless the config file sets them; `agent.Exceeds` and the backends
+treat a zero call or token budget as none, and Claude Code gets `--max-turns`
+only with a call budget.
 `Queue.Drain` refuses new jobs and reports true only when none is queued or
 running, under the mutex `Submit` checks, so a restart never cuts a started
 job short: one started during it gets `503` with `Retry-After` and is started
@@ -2493,7 +2507,8 @@ cannot push, a backend that cannot
 fix, or nothing broken is the item's `blocked_reason` (`fork`,
 `no_push_access`, `unsupported_backend`, `nothing_to_fix`): the start answers
 `409` with it and nothing is queued, and the app says why where the person
-clicked. The budgets resolve as a review's. The harness and model are the
+clicked. The budgets resolve as a review's, with `run_timeout` as the time
+limit. The harness and model are the
 preferences' fix agent (`fix_backend` and `fix_model`, Claude Code or Codex,
 set with `PUT /api/automatic` or `baum reviews set --fix-backend`) when one
 is chosen, winning over a repository's review override
@@ -2519,6 +2534,10 @@ records `commit`, `commit_url` and the agent's masked `summary`; a failed one
 a reason (`head_changed`, `threads_changed`, `no_remote`, `git`, `backend`,
 `budget`, `no_changes`, `conflicts_remain`, `history_rewritten`,
 `workflow_changed`, `push_rejected`, `push_failed`) and a bounded detail. A
+`budget` detail names the limit the agent reached (its time limit, in
+minutes, or its call or token budget); a `backend` one points to the daemon
+log, where `fix.Options.Logger` (the job's logger) has the agent's own error,
+which the job never keeps. A
 fix of review comments alone fails with `workflow_changed` when its commit
 changes a path under `.github/workflows/` or `.github/actions/`.
 

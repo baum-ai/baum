@@ -1,8 +1,10 @@
 package fix
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -196,6 +198,67 @@ func TestFixRefusals(t *testing.T) {
 			}
 			checkCleanedUp(t, r, o)
 		})
+	}
+}
+
+// A failed agent's job detail says which limit ran out, never the provider's
+// words; the log has the provider's error.
+func TestFixAgentFailuresSayWhyAndAreLogged(t *testing.T) {
+	for _, test := range []struct {
+		name, reason, detail string
+		fix                  func(ctx context.Context, dir string) error
+	}{
+		{"time limit", ReasonBudget, "time limit (50ms)", func(ctx context.Context, _ string) error {
+			<-ctx.Done()
+			return ctx.Err()
+		}},
+		{"call limit", ReasonBudget, "model call limit", func(context.Context, string) error {
+			return errors.New(agent.GenerationBudgetExceededReason("model calls") + " (the last call failed: provider secret)")
+		}},
+		{"token limit", ReasonBudget, "token limit", func(context.Context, string) error {
+			return errors.New(agent.GenerationBudgetExceededReason("tokens"))
+		}},
+		{"provider", ReasonBackend, "daemon log", func(context.Context, string) error { return errors.New("provider secret") }},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			r := NewRepositories(t)
+			var log bytes.Buffer
+			o := options(t, r, &fakeAgent{fix: test.fix})
+			o.Checks, o.WallClock, o.Logger = true, 50*time.Millisecond, slog.New(slog.NewTextHandler(&log, nil))
+			_, err := Run(context.Background(), o)
+			if reasonOf(err) != test.reason || !strings.Contains(err.Error(), test.detail) || strings.Contains(err.Error(), "provider secret") {
+				t.Fatalf("err %v (reason %q), want %s with %q", err, reasonOf(err), test.reason, test.detail)
+			}
+			if !strings.Contains(log.String(), "fix agent failed") || !strings.Contains(log.String(), "time_limit=50ms") {
+				t.Errorf("log:\n%s", log.String())
+			}
+			if test.name == "provider" && !strings.Contains(log.String(), "provider secret") {
+				t.Errorf("the log lacks the provider's error:\n%s", log.String())
+			}
+		})
+	}
+}
+
+func TestFixWithoutCallOrTokenLimitsPassesNone(t *testing.T) {
+	r := NewRepositories(t)
+	a := &fakeAgent{fix: func(_ context.Context, dir string) error {
+		return os.WriteFile(filepath.Join(dir, "a.txt"), []byte("fixed\n"), 0o644)
+	}}
+	o := options(t, r, a)
+	o.Checks, o.MaxCalls, o.MaxTokens = true, 0, 0
+	if _, err := Run(context.Background(), o); err != nil {
+		t.Fatal(err)
+	}
+	if a.request.MaxCalls != 0 || a.request.MaxTokens != 0 {
+		t.Fatalf("request budgets: %d calls, %d tokens", a.request.MaxCalls, a.request.MaxTokens)
+	}
+}
+
+func TestLimitText(t *testing.T) {
+	for d, want := range map[time.Duration]string{time.Minute: "1 minute", 30 * time.Minute: "30 minutes", 90 * time.Second: "1m30s"} {
+		if got := limitText(d); got != want {
+			t.Errorf("%v: %q, want %q", d, got, want)
+		}
 	}
 }
 

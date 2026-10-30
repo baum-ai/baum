@@ -40,7 +40,11 @@ its HTTP handler uses.
   `decisions` object (`enabled`, `model`) configures local
   decision capture; `Settings.DecisionsEnabled` combines it with the automatic
   master switch and the repository's `decisions` (nil is on). See
-  [`decisionlog`](../decisionlog/README.md).
+  [`decisionlog`](../decisionlog/README.md). Its
+  `review_time_limit_minutes` and `run_time_limit_minutes`, when set (1 to
+  `MaxTimeLimit`, 240), replace the config file's `review_timeout` and
+  `run_timeout` in `Preferences.Resolve`; a value out of range keeps the
+  file's and does not block saving other preferences.
 
 A repository is picked exactly when it has a `picked` row. Adding a clone also
 picks its repository, and removing the clone keeps it picked with zero clones.

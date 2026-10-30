@@ -233,7 +233,39 @@ func (a LocalAPI) Handler() *LocalHandler {
 			FixBackend     string            `json:"fix_backend"`
 			FixModel       string            `json:"fix_model"`
 			JobConcurrency int               `json:"job_concurrency"`
-		}{cfg.Backend, cfg.Model, cfg.Budgets, cfg.Caps, cfg.AgentEnv, source, fixBackend, fixModel, concurrency})
+			// The time limits in force, in whole minutes.
+			ReviewTimeLimit int `json:"review_time_limit_minutes"`
+			RunTimeLimit    int `json:"run_time_limit_minutes"`
+		}{cfg.Backend, cfg.Model, cfg.Budgets, cfg.Caps, cfg.AgentEnv, source, fixBackend, fixModel, concurrency,
+			minutes(cfg.Budgets.ReviewTimeout), minutes(cfg.Budgets.RunTimeout)})
+	})
+	// The time limits apply to runs that start after the change.
+	mux.HandleFunc("PUT /api/settings/time-limits", func(w http.ResponseWriter, r *http.Request) {
+		var input struct {
+			ReviewTimeLimit int `json:"review_time_limit_minutes"`
+			RunTimeLimit    int `json:"run_time_limit_minutes"`
+		}
+		r.Body = http.MaxBytesReader(w, r.Body, 4<<10)
+		d := json.NewDecoder(r.Body)
+		d.DisallowUnknownFields()
+		if d.Decode(&input) != nil || d.Decode(new(any)) != io.EOF {
+			http.Error(w, "invalid JSON request", http.StatusBadRequest)
+			return
+		}
+		if input.ReviewTimeLimit < 1 || input.RunTimeLimit < 1 || repos.ValidateTimeLimit(input.ReviewTimeLimit) != nil || repos.ValidateTimeLimit(input.RunTimeLimit) != nil {
+			http.Error(w, fmt.Sprintf("time limits must be between 1 and %d minutes", repos.MaxTimeLimit), http.StatusBadRequest)
+			return
+		}
+		prefs, err := a.Registry.UpdatePreferences(r.Context(), func(p repos.Preferences) repos.Preferences {
+			p.ReviewTimeLimit, p.RunTimeLimit = input.ReviewTimeLimit, input.RunTimeLimit
+			return p
+		})
+		if err != nil {
+			http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+			return
+		}
+		budgets := prefs.Resolve(a.Config).Budgets
+		writeJSON(w, map[string]int{"review_time_limit_minutes": minutes(budgets.ReviewTimeout), "run_time_limit_minutes": minutes(budgets.RunTimeout)})
 	})
 	mux.HandleFunc("GET /api/settings/appearance", a.getAppearance)
 	mux.HandleFunc("PUT /api/settings/appearance", a.putAppearance)
@@ -460,6 +492,11 @@ func apiError(w http.ResponseWriter, err error) {
 		status = 404
 	}
 	http.Error(w, http.StatusText(status), status)
+}
+
+// minutes is a time limit in whole minutes, rounded up.
+func minutes(d config.Duration) int {
+	return int((time.Duration(d) + time.Minute - 1) / time.Minute)
 }
 
 // RegisteredRepository resolves a registered clone ID, without allowing a

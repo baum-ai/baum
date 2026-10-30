@@ -203,13 +203,18 @@ func (g *Generator) ReviewTask(ctx context.Context, run Run) (Task, error) {
 func (g *Generator) call(ctx context.Context, budgets Budgets, request Request, outcome *Outcome, stalls *int) (Result, error) {
 	var result Result
 	for attempt := 0; attempt < budgets.MaxProviderAttempts; attempt++ {
-		request.MaxCalls = budgets.MaxCalls - outcome.Calls
-		request.MaxTokens = budgets.MaxTokens - outcome.Tokens
-		if request.MaxCalls < 1 {
-			return result, errors.New(GenerationBudgetExceededReason("model calls"))
+		// A request gets what the run's budgets leave, or none when the run
+		// has none.
+		request.MaxCalls, request.MaxTokens = 0, 0
+		if budgets.MaxCalls > 0 {
+			if request.MaxCalls = budgets.MaxCalls - outcome.Calls; request.MaxCalls < 1 {
+				return result, errors.New(GenerationBudgetExceededReason("model calls"))
+			}
 		}
-		if request.MaxTokens < 1 {
-			return result, errors.New(GenerationBudgetExceededReason("tokens"))
+		if budgets.MaxTokens > 0 {
+			if request.MaxTokens = budgets.MaxTokens - outcome.Tokens; request.MaxTokens < 1 {
+				return result, errors.New(GenerationBudgetExceededReason("tokens"))
+			}
 		}
 		var err error
 		outcome.ProviderAttempts++
@@ -230,10 +235,10 @@ func (g *Generator) call(ctx context.Context, budgets Budgets, request Request, 
 		outcome.Accounting.Add(result, err != nil)
 		outcome.StructuredOutputRejections += result.StructuredOutputRejections
 		outcome.Diagnostics = append(outcome.Diagnostics, result.Events[:min(len(result.Events), MaxDiagnostics-len(outcome.Diagnostics))]...)
-		if outcome.Calls > budgets.MaxCalls {
+		if Exceeds(outcome.Calls, budgets.MaxCalls) {
 			return result, errors.New(GenerationBudgetExceededReason("model calls"))
 		}
-		if outcome.Tokens > budgets.MaxTokens {
+		if Exceeds(outcome.Tokens, budgets.MaxTokens) {
 			return result, errors.New(GenerationBudgetExceededReason("tokens"))
 		}
 		if ctx.Err() != nil {

@@ -47,6 +47,46 @@ func TestLoadWithoutFileUsesDefaults(t *testing.T) {
 	}
 }
 
+// By default only time limits bound a run: 10 minutes for a review, 30 for
+// any other agent run, and no call or token budget.
+func TestDefaultBudgetsAreTimeLimitsOnly(t *testing.T) {
+	b := Default().Budgets
+	if time.Duration(b.ReviewTimeout) != 10*time.Minute || time.Duration(b.RunTimeout) != 30*time.Minute || b.MaxCalls != 0 || b.MaxTokens != 0 {
+		t.Fatalf("default budgets: %+v", b)
+	}
+	if err := b.Validate(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestBudgetsAreValidated(t *testing.T) {
+	cases := map[string]string{
+		"negative calls":     "[budgets]\nmax_calls = -1\n",
+		"negative tokens":    "[budgets]\nmax_tokens = -5\n",
+		"zero review limit":  "[budgets]\nreview_timeout = \"0s\"\n",
+		"negative run limit": "[budgets]\nrun_timeout = \"-1m\"\n",
+	}
+	for name, text := range cases {
+		t.Run(name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "config.toml")
+			if err := os.WriteFile(path, []byte(text), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if _, _, err := ReadFile(path); err == nil || !strings.Contains(err.Error(), "budgets:") {
+				t.Fatalf("err = %v", err)
+			}
+		})
+	}
+	path := filepath.Join(t.TempDir(), "config.toml")
+	if err := os.WriteFile(path, []byte("[budgets]\nmax_calls = 60\nmax_tokens = 0\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, _, err := ReadFile(path)
+	if err != nil || cfg.Budgets.MaxCalls != 60 || cfg.Budgets.MaxTokens != 0 {
+		t.Fatalf("cfg %+v, err %v", cfg.Budgets, err)
+	}
+}
+
 func TestPrecedence(t *testing.T) {
 	setTempConfigHome(t)
 	path, _ := Path()
@@ -312,6 +352,8 @@ func TestDurationFieldsOnlyTakeStrings(t *testing.T) {
 		{"pass integer", "[budgets]\npass_timeout = 10\n", nil, 0, []string{"wrong type or value for budgets.pass_timeout at line 2, column", hint}},
 		{"pass float", "[budgets]\npass_timeout = 1.5\n", nil, 0, []string{"wrong type or value for budgets.pass_timeout at line 2, column", hint}},
 		{"run string", "[budgets]\nrun_timeout = \"3m\"\n", func(b Budgets) Duration { return b.RunTimeout }, 3 * time.Minute, nil},
+		{"review string", "[budgets]\nreview_timeout = \"20m\"\n", func(b Budgets) Duration { return b.ReviewTimeout }, 20 * time.Minute, nil},
+		{"review integer", "[budgets]\nreview_timeout = 10\n", nil, 0, []string{"wrong type or value for budgets.review_timeout at line 2, column", hint}},
 		{"run inline table", "[budgets]\nrun_timeout = { value = 10 }\n", nil, 0, []string{"wrong type or value for budgets.run_timeout at line 2, column", hint}},
 		{"run integer", "[budgets]\nrun_timeout = 10\n", nil, 0, []string{"wrong type or value for budgets.run_timeout at line 2, column", hint}},
 		{"inline table integer", "budgets = { run_timeout = 10 }\n", nil, 0, []string{"budgets.run_timeout at line 1, column", hint}},

@@ -54,10 +54,20 @@ const NoSessionNote = "The agent kept no session for this answer, so the next qu
 // pass_timeout.
 func PassTimeout(cfg config.Config) time.Duration { return time.Duration(cfg.Budgets.PassTimeout) / 2 }
 
-// Budgets are a turn's: half of a review's calls, tokens and wall clock.
+// Budgets are a turn's: the time limit of an agent run that is not a review
+// (run_timeout) and, when a review's calls and tokens are bounded, half of
+// each.
 func Budgets(cfg config.Config) agent.Budgets {
-	return agent.Budgets{WallClock: time.Duration(cfg.Budgets.RunTimeout) / 2, MaxCalls: max(cfg.Budgets.MaxCalls/2, 1), MaxTokens: max(cfg.Budgets.MaxTokens/2, 1),
+	return agent.Budgets{WallClock: time.Duration(cfg.Budgets.RunTimeout), MaxCalls: half(cfg.Budgets.MaxCalls), MaxTokens: half(cfg.Budgets.MaxTokens),
 		MaxProviderAttempts: 3, MaxRepairAttempts: 1}
+}
+
+// half is half of a call or token budget, at least one; zero stays no limit.
+func half(n int) int {
+	if n <= 0 {
+		return 0
+	}
+	return max(n/2, 1)
 }
 
 func (s *Service) root() (string, error) {

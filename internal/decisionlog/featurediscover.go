@@ -34,13 +34,14 @@ const StageDiscovery = "feature_discovery"
 // LatestTaxonomy names a repository's newest taxonomy.
 const LatestTaxonomy = "latest"
 
-// discoveryBudgets are a review run's budgets (the resolved configuration's
-// run timeout, calls and tokens, each unset one the default's), for priced
-// and unpriced models alike: nothing about the price bounds discovery.
+// discoveryBudgets are the resolved configuration's run timeout (an unset one
+// the default's) and its calls and tokens (zero, the default, is no limit),
+// for priced and unpriced models alike: nothing about the price bounds
+// discovery.
 func discoveryBudgets(cfg config.Config) agent.Budgets {
 	b, d := cfg.Budgets, config.Default().Budgets
-	return agent.Budgets{WallClock: time.Duration(cmp.Or(b.RunTimeout, d.RunTimeout)), MaxCalls: cmp.Or(b.MaxCalls, d.MaxCalls),
-		MaxTokens: cmp.Or(b.MaxTokens, d.MaxTokens), MaxProviderAttempts: 3, MaxRepairAttempts: 2}
+	return agent.Budgets{WallClock: time.Duration(cmp.Or(b.RunTimeout, d.RunTimeout)), MaxCalls: max(b.MaxCalls, 0),
+		MaxTokens: max(b.MaxTokens, 0), MaxProviderAttempts: 3, MaxRepairAttempts: 2}
 }
 
 // Reasons discovery was not run or gave no taxonomy, besides the backend
@@ -60,7 +61,7 @@ type DiscoverReport struct {
 	Features   int    `json:"features"`
 	Backend    string `json:"backend,omitempty"`
 	Model      string `json:"model,omitempty"`
-	// MaxTokens and MaxCalls are the run's budgets, a review run's.
+	// MaxTokens and MaxCalls are the run's budgets; zero is no limit.
 	MaxTokens int `json:"max_tokens,omitempty"`
 	MaxCalls  int `json:"max_calls,omitempty"`
 	Calls     int `json:"calls"`

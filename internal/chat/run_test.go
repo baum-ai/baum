@@ -339,12 +339,18 @@ func TestRunReportsTranscriptAndCost(t *testing.T) {
 	}
 }
 
-// Budgets are half of a review's.
+// A turn has the run time limit and, when a review's calls and tokens are
+// bounded, half of each; unbounded ones stay unbounded.
 func TestTurnBudgetsAreHalfOfAReview(t *testing.T) {
 	f := chattest.New(t, chattest.Options{})
 	budgets := chat.Budgets(f.Service.Config)
-	if budgets.MaxCalls != 10 || budgets.MaxTokens != 50000 || budgets.WallClock.Minutes() != 5 {
+	if budgets.MaxCalls != 10 || budgets.MaxTokens != 50000 || budgets.WallClock.Minutes() != 10 {
 		t.Errorf("budgets: %+v", budgets)
+	}
+	unbounded := f.Service.Config
+	unbounded.Budgets.MaxCalls, unbounded.Budgets.MaxTokens = 0, 0
+	if b := chat.Budgets(unbounded); b.MaxCalls != 0 || b.MaxTokens != 0 {
+		t.Errorf("unbounded budgets: %+v", b)
 	}
 	begun := f.Ask(t, "", "q")
 	if _, err := run(t, f, begun, chat.RunOptions{}); err != nil {

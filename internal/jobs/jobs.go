@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -283,6 +284,8 @@ type Queue struct {
 	// limit is how many jobs outside the chat lane run at once; see
 	// SetConcurrency.
 	limit int
+	// log records jobs starting and ending; see SetLogger.
+	log *slog.Logger
 }
 
 // ErrRestarting refuses a job while the daemon restarts as a newer version.
@@ -804,7 +807,9 @@ func (q *Queue) worker(chat bool) {
 			j := q.jobs[i]
 			ctx, cancel := context.WithCancel(context.WithValue(q.ctx, transcriptTargetKey{}, transcriptTarget{q.transcripts, j.ID}))
 			q.cancels[j.ID] = cancel
+			log, started := q.log, time.Now()
 			q.mu.Unlock()
+			logStarted(log, j)
 			q.signal()
 			q.notify(j)
 			inputs := j.Prepared
@@ -906,6 +911,7 @@ func (q *Queue) worker(chat bool) {
 			saveErr := q.save()
 			result := *current
 			q.mu.Unlock()
+			logFinished(log, result, started, err)
 			q.settleChat(result)
 			q.notify(result)
 			if saveErr != nil {

@@ -15,6 +15,7 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"time"
 
 	_ "modernc.org/sqlite"
 
@@ -119,7 +120,15 @@ type Preferences struct {
 	// JobConcurrency, when set, is how many jobs the daemon runs at once
 	// besides questions to a review's agent; Concurrency resolves it.
 	JobConcurrency int `json:"job_concurrency,omitempty"`
+	// ReviewTimeLimit and RunTimeLimit, in minutes, when set replace the
+	// config file's review_timeout and run_timeout (Resolve): how long a
+	// review, and any other agent run, may take.
+	ReviewTimeLimit int `json:"review_time_limit_minutes,omitempty"`
+	RunTimeLimit    int `json:"run_time_limit_minutes,omitempty"`
 }
+
+// MaxTimeLimit is the longest time limit, in minutes, the app sets.
+const MaxTimeLimit = 240
 
 // MaxJobConcurrency is the most jobs the daemon runs at once besides
 // questions to a review's agent, and the default. A person lowers it when
@@ -189,11 +198,28 @@ func (p Preferences) Validate() error {
 	return fmt.Errorf("unknown pull requests choice %q; use %s, %s, %s or leave it empty for both", p.PullRequests, PullRequestsAuthored, PullRequestsRequested, PullRequestsAll)
 }
 
-// Resolve overlays the app's backend, model and agent environment on the
-// config file's.
+// ValidateTimeLimit accepts zero (the config file's) or 1 to MaxTimeLimit
+// minutes.
+func ValidateTimeLimit(minutes int) error {
+	if minutes < 0 || minutes > MaxTimeLimit {
+		return fmt.Errorf("must be between 1 and %d minutes", MaxTimeLimit)
+	}
+	return nil
+}
+
+// Resolve overlays the app's backend, model, agent environment and time
+// limits on the config file's.
 func (p Preferences) Resolve(global config.Config) config.Config {
 	if len(p.AgentEnv) > 0 {
 		global.AgentEnv = p.AgentEnv
+	}
+	// A limit out of range (a hand edit, or a newer baum's) keeps the file's,
+	// and does not block saving other choices.
+	if ValidateTimeLimit(p.ReviewTimeLimit) == nil && p.ReviewTimeLimit > 0 {
+		global.Budgets.ReviewTimeout = config.Duration(time.Duration(p.ReviewTimeLimit) * time.Minute)
+	}
+	if ValidateTimeLimit(p.RunTimeLimit) == nil && p.RunTimeLimit > 0 {
+		global.Budgets.RunTimeout = config.Duration(time.Duration(p.RunTimeLimit) * time.Minute)
 	}
 	if p.Backend != nil {
 		global.Backend = *p.Backend
