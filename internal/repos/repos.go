@@ -448,23 +448,24 @@ func loadAliases(db *sql.DB) error {
 // of repository, or of every repository when it is "", and drops each one it
 // now answers with another repository than the recorded one does, as when a
 // new repository took the name: remotes using it then name that one. One it
-// could not check or does not show the token is kept.
-func (r *Registry) RecheckAliases(ctx context.Context, repository string, current func(context.Context, github.Repository) (string, error)) error {
+// could not check or does not show the token is kept, and returned as
+// unconfirmed: a repository the token cannot see may have taken it.
+func (r *Registry) RecheckAliases(ctx context.Context, repository string, current func(context.Context, github.Repository) (string, error)) (unconfirmed []string, err error) {
 	rows, e := r.db.QueryContext(ctx, "SELECT alias,repository FROM aliases WHERE ?1='' OR repository=lower(?1)", repository)
 	if e != nil {
-		return e
+		return nil, e
 	}
 	var aliases [][2]string
 	for rows.Next() {
 		var alias [2]string
 		if e = rows.Scan(&alias[0], &alias[1]); e != nil {
 			_ = rows.Close()
-			return e
+			return nil, e
 		}
 		aliases = append(aliases, alias)
 	}
 	if e = errors.Join(rows.Err(), rows.Close()); e != nil {
-		return e
+		return nil, e
 	}
 	for _, alias := range aliases {
 		earlier, e := github.ParseRepository(alias[0])
@@ -472,25 +473,32 @@ func (r *Registry) RecheckAliases(ctx context.Context, repository string, curren
 			continue
 		}
 		now, e := current(ctx, earlier)
-		if e != nil || strings.EqualFold(now, alias[1]) {
+		if e != nil {
+			unconfirmed = append(unconfirmed, alias[0])
+			continue
+		}
+		if strings.EqualFold(now, alias[1]) {
 			continue
 		}
 		// Renamed again since: both names still lead to the same repository.
 		if recorded, e := github.ParseRepository(alias[1]); e != nil {
 			continue
-		} else if then, e := current(ctx, recorded); e != nil || strings.EqualFold(now, then) {
+		} else if then, e := current(ctx, recorded); e != nil {
+			unconfirmed = append(unconfirmed, alias[0])
+			continue
+		} else if strings.EqualFold(now, then) {
 			continue
 		}
 		// Unless AddForwarded recorded it anew meanwhile.
 		result, e := r.db.ExecContext(ctx, "DELETE FROM aliases WHERE alias=? AND repository=?", alias[0], alias[1])
 		if e != nil {
-			return e
+			return unconfirmed, e
 		}
 		if n, _ := result.RowsAffected(); n > 0 {
 			gitlocal.RemoveRenamed(alias[0])
 		}
 	}
-	return nil
+	return unconfirmed, nil
 }
 
 // AddForwarded registers a clone for repository, as AddFor does, whose remote

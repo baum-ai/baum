@@ -6,8 +6,10 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/url"
+	"strings"
 	"time"
 
 	"github.com/baum-ai/baum/agent"
@@ -263,9 +265,15 @@ func (l *Local) executeFix(ctx context.Context, p Prepared, progress func(Progre
 		}
 	}
 	// A remote using an earlier name pushes to whatever GitHub forwards it to
-	// now: one no longer forwarded to the repository stops naming it.
-	if e := l.Registry.RecheckAliases(ctx, c.Repository, l.Client.CurrentName); e != nil {
+	// now: one no longer forwarded to the repository stops naming it, and one
+	// GitHub does not confirm, which a repository the token cannot see may
+	// have taken, is not pushed through.
+	unconfirmed, e := l.Registry.RecheckAliases(ctx, c.Repository, l.Client.CurrentName)
+	if e != nil {
 		return nil, e
+	}
+	if len(unconfirmed) > 0 {
+		return nil, &fix.Error{Reason: fix.ReasonNoRemote, Err: fmt.Errorf("GitHub did not confirm that %s still leads to %s; point the clone's remote at %s", strings.Join(unconfirmed, ", "), c.Repository, c.Repository)}
 	}
 	list := pricing.Active()
 	out, err := fix.Run(ctx, fix.Options{ID: id(), Clone: c.Path, Repository: repository, Number: p.PR, Title: pr.Title,

@@ -29,7 +29,9 @@ its HTTP handler uses.
   its repository (`RecheckAliases`): an alias GitHub now answers with
   another repository than the recorded one (a new one took the name) is
   dropped, so its remotes name that repository again; one it could not
-  check or does not show the token is kept. The remote is never rewritten.
+  check or does not show the token is kept, but a fix does not push while
+  one is: a repository the token cannot see may have taken the name. The
+  remote is never rewritten.
   `Repositories` lists them as `earlier_names`.
 - `preferences(key, value)`: the global preferences as one JSON row.
 - `preferences(key, value)`: the global preferences as one JSON row. Its

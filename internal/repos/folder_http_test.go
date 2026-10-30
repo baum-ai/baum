@@ -139,7 +139,7 @@ func TestRecheckAliasesDropsNamesNoLongerForwarded(t *testing.T) {
 		t.Fatal(err)
 	}
 	gitlocal.AddRenamed(again, current+"-was")
-	err := r.RecheckAliases(context.Background(), "", func(_ context.Context, repo github.Repository) (string, error) {
+	unconfirmed, err := r.RecheckAliases(context.Background(), "", func(_ context.Context, repo github.Repository) (string, error) {
 		switch name := repo.String(); name {
 		case again, current + "-was":
 			return renamedAgain, nil
@@ -155,6 +155,12 @@ func TestRecheckAliasesDropsNamesNoLongerForwarded(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatal(err)
+	}
+	confirmable := []string{hidden, unchecked}
+	slices.Sort(unconfirmed)
+	slices.Sort(confirmable)
+	if !slices.Equal(unconfirmed, confirmable) {
+		t.Fatalf("unconfirmed %v, want %v", unconfirmed, confirmable)
 	}
 	want := []string{hidden, kept, unchecked}
 	slices.Sort(want)

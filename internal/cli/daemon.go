@@ -594,7 +594,7 @@ func localApplication(paths daemon.Paths, concurrency int, log *slog.Logger) fun
 		// An earlier name GitHub no longer forwards stops reading as the
 		// repository it was recorded for.
 		go func() {
-			if err := registry.RecheckAliases(ctx, "", githubClient.CurrentName); err != nil {
+			if _, err := registry.RecheckAliases(ctx, "", githubClient.CurrentName); err != nil {
 				log.Warn("earlier repository names not rechecked", "error", err)
 			}
 		}()
