@@ -247,7 +247,7 @@ it("shows a pull request's facts beside the Generate review placeholder", async 
   expect(node.querySelector("#conversation-panel-details")!.textContent).toContain("Files2");
 
   // The sessions and commits are read against the facts.
-  expect(fetched).toContain("/s/test-ns/api/facts/sessions?clone=selected-clone&pr=7");
+  expect(fetched).toContain("/s/test-ns/api/facts/sessions?clone=selected-clone&pr=7&head=1111111");
   const sessions = [...node.querySelectorAll<HTMLButtonElement>("button")].find(
     (button) => button.textContent === "Sessions1",
   )!;
@@ -266,7 +266,7 @@ it("shows a pull request's facts beside the Generate review placeholder", async 
   await act(async () => file.click());
   await settle();
   expect(fetched).toContain(
-    "/s/test-ns/api/facts/patch?clone=selected-clone&pr=7&path=src%2Fconfig.ts",
+    "/s/test-ns/api/facts/patch?clone=selected-clone&pr=7&head=1111111&path=src%2Fconfig.ts",
   );
   expect(node.textContent).toContain("const parsed = parse(a);");
   // No version's routes are read for them.

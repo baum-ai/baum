@@ -20,9 +20,12 @@ export type FactsLoad =
   | { state: "unavailable" }
   | { state: "failed"; rateLimited: boolean };
 
-/** Where the facts' own routes are: the daemon reads their sessions,
- *  commits and patches against the facts it last built, never a version. */
-export const factsQuery = (clone: string, pr: number) => selector(clone, pr);
+/** Where the facts' own routes are, at the head of the facts the page
+ *  shows: the daemon reads their sessions, commits and patches against the
+ *  facts it last built, never a version, and answers 404 once those describe
+ *  another head. */
+export const factsQuery = (clone: string, pr: number, head: string) =>
+  `${selector(clone, pr)}&head=${encodeURIComponent(head)}`;
 
 /** Asks the daemon for the pull request's facts at the head the page shows,
  *  again each time `revision` changes; the daemon reads GitHub at most once
@@ -48,12 +51,7 @@ export function useFacts(
     const target = `${clone}\n${pr}\n${head}`;
     if (shown.current !== target) setLoad({ state: "loading" });
     const abort = new AbortController();
-    request<unknown>(
-      `api/facts?${factsQuery(clone, pr)}&head=${encodeURIComponent(head)}`,
-      undefined,
-      "GET",
-      abort.signal,
-    )
+    request<unknown>(`api/facts?${factsQuery(clone, pr, head)}`, undefined, "GET", abort.signal)
       .then((body) => {
         const facts = parseReviewFacts(body);
         if (!facts) throw Error("Invalid facts");

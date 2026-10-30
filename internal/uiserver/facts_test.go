@@ -32,11 +32,11 @@ func (f *fakeFacts) Facts(_ context.Context, clone repos.Clone, number int, head
 	return f.document, nil
 }
 
-func (f *fakeFacts) Cached(repos.Clone, int) []byte {
+func (f *fakeFacts) Cached(repos.Clone, int) ([]byte, string) {
 	if !f.built {
-		return nil
+		return nil, ""
 	}
-	return f.document
+	return f.document, "aaaaaaaa"
 }
 
 func factsRegistry(t *testing.T) (*repos.Registry, repos.Clone) {
@@ -102,6 +102,16 @@ func TestFactsAreServedBesideVersionsAndNeverAsOne(t *testing.T) {
 	}
 	if w := get("/api/facts/patch?" + selector + "&path=other.go"); w.Code != 404 {
 		t.Errorf("patch of a file the facts do not change: %d", w.Code)
+	}
+	// A page names the head of the facts it shows; facts of another head
+	// never answer it.
+	if w := get("/api/facts/patch?" + selector + "&head=aaaaaaaa&path=main.go"); w.Code != 200 {
+		t.Errorf("patch at the facts' head: %d %s", w.Code, w.Body.String())
+	}
+	for _, path := range []string{"/api/facts/patch?" + selector + "&head=cccccccc&path=main.go", "/api/facts/sessions?" + selector + "&head=cccccccc", "/api/facts/commits?" + selector + "&head=cccccccc", "/api/facts/sessions/s1?" + selector + "&head=cccccccc"} {
+		if w := get(path); w.Code != 404 {
+			t.Errorf("%s at a stale head: %d %s", path, w.Code, w.Body.String())
+		}
 	}
 	// They are no version: the store lists none and serves no document.
 	if w := get("/api/versions?" + selector); (w.Code != 200 || strings.TrimSpace(w.Body.String()) != "[]") && w.Code != 404 {

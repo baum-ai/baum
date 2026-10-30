@@ -114,9 +114,9 @@ type FactsSource interface {
 	// Facts answers the pull request's facts at head, the head the page
 	// shows, building them when they are due.
 	Facts(ctx context.Context, clone repos.Clone, number int, head string) ([]byte, error)
-	// Cached is the facts last built for the pull request, nil when none;
-	// it never reads GitHub.
-	Cached(clone repos.Clone, number int) []byte
+	// Cached is the facts last built for the pull request and the head they
+	// describe, nil when none; it never reads GitHub.
+	Cached(clone repos.Clone, number int) ([]byte, string)
 }
 
 const defaultDiagnosticsTimeout = 45 * time.Second

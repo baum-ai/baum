@@ -2340,9 +2340,10 @@ answered from memory until the background refresh's interval
 (`Service.RefreshInterval`, one minute) has passed since the last build, so
 a page that keeps asking reads GitHub at most once per interval; a new head
 builds at once, a head GitHub does not report yet stands for the interval,
-and concurrent requests share one build that a request giving up does not
-cancel. A failed build stands as long, while facts built before for the same
-head still answer. While the host's rate limit is paused (`Service.Paused`
+and concurrent requests for the pull request, whatever head they name, share
+one build that a request giving up does not cancel. A failed build stands for
+10 seconds, so a retry soon reads again, while facts built before for the
+same head still answer; a rate-limited one stands for the interval. While the host's rate limit is paused (`Service.Paused`
 of the background refresh) only facts already held for that head answer,
 else `503` with `{"code":"rate_limited","resume_at"}`; a build that is
 rate-limited extends the shared pause (`Service.Limited`). A pull request
@@ -2350,6 +2351,9 @@ without a registered clone gets none (the selector is a clone ID).
 `/api/facts/sessions`, `/api/facts/sessions/{id}`, `/api/facts/patch` and
 `/api/facts/commits` serve what the version routes serve, through the same
 per-document viewer cache, for the facts last built, and never read GitHub.
+They take the `head` of the facts the page shows and answer `404` when the
+facts last built describe another, so a page is never answered for facts it
+was not shown.
 
 ### Persistent generation jobs
 

@@ -106,12 +106,3 @@ func TestFactsAreTheDocumentsDerivedFields(t *testing.T) {
 		t.Errorf("review = %+v, document's sources %+v", review, doc.Review.Sources)
 	}
 }
-
-func mustDecode(t *testing.T, document []byte) map[string]any {
-	t.Helper()
-	doc, err := decodeObject(document, "fixture")
-	if err != nil {
-		t.Fatal(err)
-	}
-	return doc
-}

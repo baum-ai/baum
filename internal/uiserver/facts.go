@@ -18,7 +18,8 @@ import (
 //   - GET /api/facts/sessions, /api/facts/sessions/{id}, /api/facts/patch and
 //     /api/facts/commits answer what /api/sessions, /api/patch and
 //     /api/commits answer for a version, for the facts last built: they never
-//     read GitHub, and are 404 before the facts are.
+//     read GitHub, and are 404 before the facts are, or when an optional
+//     head= names another head than the facts describe.
 //
 // Facts are never a version: /api/versions and /api/document do not see them.
 func (a LocalAPI) factsRoutes(mux *http.ServeMux, cache *documentCache) {
@@ -67,8 +68,10 @@ func (a LocalAPI) factsRoutes(mux *http.ServeMux, cache *documentCache) {
 		if !ok {
 			return
 		}
-		document := a.Facts.Cached(c, key.Number)
-		if document == nil || len(document) > viewserver.MaxDocumentBytes {
+		// A page names the head of the facts it shows, so it is never
+		// answered for facts it was not shown.
+		document, head := a.Facts.Cached(c, key.Number)
+		if asked := r.URL.Query().Get("head"); document == nil || (asked != "" && asked != head) || len(document) > viewserver.MaxDocumentBytes {
 			http.NotFound(w, r)
 			return
 		}

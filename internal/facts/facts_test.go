@@ -60,8 +60,10 @@ func TestFactsAreCachedWithinTheWindowForTheSameHead(t *testing.T) {
 	if err != nil || string(again) != string(first) || gh.count() != 1 {
 		t.Fatalf("a request within the window read GitHub again: builds %d, %v", gh.count(), err)
 	}
-	if string(s.Cached(clone, 7)) != string(first) || s.Cached(clone, 8) != nil {
-		t.Error("Cached does not answer the facts last built")
+	cached, head := s.Cached(clone, 7)
+	none, noHead := s.Cached(clone, 8)
+	if string(cached) != string(first) || head != "aaa" || none != nil || noHead != "" {
+		t.Error("Cached does not answer the facts last built and their head")
 	}
 	// Once the window passes, a page that keeps asking reads GitHub once more.
 	c.at = c.at.Add(2 * time.Second)
@@ -83,7 +85,7 @@ func TestANewHeadRebuildsTheFactsAtOnce(t *testing.T) {
 	gh.head = "ccc"
 	c.at = c.at.Add(5 * time.Second)
 	got, err := s.Facts(context.Background(), clone, 7, "ccc")
-	if err != nil || gh.count() != 2 || string(s.Cached(clone, 7)) != string(got) {
+	if cached, head := s.Cached(clone, 7); err != nil || gh.count() != 2 || string(cached) != string(got) || head != "ccc" {
 		t.Fatalf("a new head did not rebuild: builds %d, %v", gh.count(), err)
 	}
 	// GitHub may lag discovery: the head asked about stands for the window
@@ -98,7 +100,7 @@ func TestANewHeadRebuildsTheFactsAtOnce(t *testing.T) {
 	}
 }
 
-func TestAFailedBuildStandsForTheWindow(t *testing.T) {
+func TestAFailedBuildStandsBriefly(t *testing.T) {
 	gh, c := &fakeGitHub{head: "aaa", base: "bbb"}, &clock{at: time.Date(2026, 10, 30, 12, 0, 0, 0, time.UTC)}
 	s := newService(gh, c)
 	built, err := s.Facts(context.Background(), clone, 7, "aaa")
@@ -114,8 +116,16 @@ func TestAFailedBuildStandsForTheWindow(t *testing.T) {
 	if _, err := s.Facts(context.Background(), clone, 7, "bbb"); err == nil || gh.count() != 3 {
 		t.Fatalf("a failed build for a new head answered: %v, builds %d", err, gh.count())
 	}
+	c.at = c.at.Add(9 * time.Second)
 	if _, err := s.Facts(context.Background(), clone, 7, "bbb"); err == nil || gh.count() != 3 {
-		t.Fatalf("a failure was retried within the window: %v, builds %d", err, gh.count())
+		t.Fatalf("a failure was retried within ten seconds: %v, builds %d", err, gh.count())
+	}
+	// A retry once ten seconds have passed reads again, well within the
+	// window a success stands for.
+	gh.err = nil
+	c.at = c.at.Add(2 * time.Second)
+	if _, err := s.Facts(context.Background(), clone, 7, "bbb"); err != nil || gh.count() != 4 {
+		t.Fatalf("a retry after the failure: %v, builds %d", err, gh.count())
 	}
 }
 
@@ -160,9 +170,10 @@ func TestConcurrentRequestsShareOneBuild(t *testing.T) {
 	gh, c := &fakeGitHub{head: "aaa", base: "bbb", gate: make(chan struct{})}, &clock{at: time.Date(2026, 10, 30, 12, 0, 0, 0, time.UTC)}
 	s := newService(gh, c)
 	var wg sync.WaitGroup
-	for range 3 {
+	// Whichever head each asks about: a build reads the head GitHub reports.
+	for _, head := range []string{"aaa", "", "bbb"} {
 		wg.Go(func() {
-			if _, err := s.Facts(context.Background(), clone, 7, "aaa"); err != nil {
+			if _, err := s.Facts(context.Background(), clone, 7, head); err != nil {
 				t.Error(err)
 			}
 		})
@@ -185,7 +196,10 @@ func TestConcurrentRequestsShareOneBuild(t *testing.T) {
 	}
 	close(gh.gate)
 	deadline := time.Now().Add(5 * time.Second)
-	for s.Cached(clone, 7) == nil || gh.count() != 2 {
+	for {
+		if _, head := s.Cached(clone, 7); head == "ccc" && gh.count() == 2 {
+			break
+		}
 		if time.Now().After(deadline) {
 			t.Fatal("the abandoned build did not finish")
 		}

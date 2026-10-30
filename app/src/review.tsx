@@ -344,7 +344,9 @@ export function LocalReview({
   const facts = useFacts(clone, pr.number, pr.head_sha, revision + factsRetry, wantsFacts);
   const shownFacts = !doc && facts.state === "ready" ? facts.facts : null;
   const factsHead = shownFacts?.review.head ?? "";
-  const factsSelector = factsQuery(clone, pr.number);
+  // Each read names the head of the facts shown, so a newer build of them
+  // never answers for what is on screen.
+  const factsSelector = factsQuery(clone, pr.number, factsHead);
   const [factsSessions, setFactsSessions] = useState<SessionsLoad>({ state: "loading" });
   useEffect(() => {
     if (!factsHead) return;

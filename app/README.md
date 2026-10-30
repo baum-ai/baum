@@ -88,7 +88,8 @@ head discovery shows, again at each index change; the daemon reads GitHub at
 most once per refresh interval for the same head and at once for a new one
 (see "Pull request facts" in ARCHITECTURE.md). Sessions, transcripts, commits
 and patches come from `api/facts/sessions`, `api/facts/commits` and
-`api/facts/patch`, read against the facts the page was shown. Facts are no
+`api/facts/patch`, read against the facts the page was shown (each names their
+head, and a newer build answers 404). Facts are no
 version: they are never in the version menu and there is no **Ask** or
 walkthrough for them. A rate limit or a failed read says so above the page,
 with **Retry**; a daemon that serves no facts shows the page as before. Once a
