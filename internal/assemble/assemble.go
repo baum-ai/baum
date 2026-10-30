@@ -10,7 +10,8 @@
 // without a network. Assemble also writes the checkout archive and the
 // description image archive that "baum internal generate" hands to its agent; "baum
 // bundle" discards them. The checkout export matters to the bundle itself,
-// since a file the checkout budget omits makes its hunks textless.
+// since a file the checkout budget omits makes its hunks textless. A facts
+// assembly (Request.Facts), which no model reads, exports nothing.
 package assemble
 
 import (
@@ -111,6 +112,12 @@ type Request struct {
 	// Attachments, when not nil, receives the description images as a plain
 	// tar of attachments/<id>.<ext>, as bundle.UnpackAttachments unpacks it.
 	Attachments io.Writer
+	// Facts builds the bundle a pull request's facts are read from
+	// (review.BuildFacts), which no model reads: the head/ and merge-base/
+	// trees are not exported and no description image is downloaded, so
+	// hunks keep their text whatever the checkout budget, and the bundle has
+	// no attachments. Checkout and Attachments must then be nil.
+	Facts bool
 }
 
 // Result is an assembled bundle.
@@ -185,6 +192,9 @@ func (a *Assembler) Assemble(ctx context.Context, req Request) (Result, error) {
 		}
 	}
 	limits := req.Limits
+	if req.Facts && (req.Checkout != nil || req.Attachments != nil) {
+		return Result{}, errors.New("assembling bundle: facts have no checkout or attachments archive")
+	}
 
 	evidence, err := a.GitHub.Fetch(ctx, req.Repository, req.Number, github.FetchOptions{})
 	if err != nil {
@@ -198,19 +208,24 @@ func (a *Assembler) Assemble(ctx context.Context, req Request) (Result, error) {
 	}
 
 	// Description images come first, as the hosted assembler captures them
-	// before it builds the evidence.
-	images, contents, altMasked := a.captureImages(ctx, evidence.Images, redactor, limits)
-	attachmentsTar := io.Discard
-	if req.Attachments != nil {
-		attachmentsTar = req.Attachments
-	}
-	images, err = bundle.WriteAttachments(ctx, images, attachmentsTar, func(_ context.Context, image bundle.DescriptionImage) (io.ReadCloser, error) {
-		return io.NopCloser(bytes.NewReader(contents[image.ID])), nil
-	}, func(image bundle.DescriptionImage, err error) {
-		a.warn("description image %s left out: %v", image.ID, err)
-	})
-	if err != nil {
-		return Result{}, fmt.Errorf("writing description images: %w", err)
+	// before it builds the evidence. Facts download none.
+	var images []bundle.DescriptionImage
+	altMasked := 0
+	if !req.Facts {
+		var contents map[string][]byte
+		images, contents, altMasked = a.captureImages(ctx, evidence.Images, redactor, limits)
+		attachmentsTar := io.Discard
+		if req.Attachments != nil {
+			attachmentsTar = req.Attachments
+		}
+		images, err = bundle.WriteAttachments(ctx, images, attachmentsTar, func(_ context.Context, image bundle.DescriptionImage) (io.ReadCloser, error) {
+			return io.NopCloser(bytes.NewReader(contents[image.ID])), nil
+		}, func(image bundle.DescriptionImage, err error) {
+			a.warn("description image %s left out: %v", image.ID, err)
+		})
+		if err != nil {
+			return Result{}, fmt.Errorf("writing description images: %w", err)
+		}
 	}
 
 	b := bundle.Bundle{Sources: bundle.Sources{}}
@@ -274,12 +289,16 @@ func (a *Assembler) Assemble(ctx context.Context, req Request) (Result, error) {
 	b.Previous = req.Previous
 	b.Sources["previous_version"] = b.Previous != nil
 
-	archive, finish := checkoutWriter(req.Checkout)
-	omissions, writeErr := bundle.NewCheckoutBuilder(limits.Checkout).WriteArchive(ctx, a.Git, head, mergeBase, b.Diff, archive)
-	if err := errors.Join(writeErr, finish()); err != nil {
-		return Result{}, fmt.Errorf("exporting the checkout: %w", err)
+	// No model reads facts, so nothing the checkout budget would omit loses
+	// its text there.
+	if !req.Facts {
+		archive, finish := checkoutWriter(req.Checkout)
+		omissions, writeErr := bundle.NewCheckoutBuilder(limits.Checkout).WriteArchive(ctx, a.Git, head, mergeBase, b.Diff, archive)
+		if err := errors.Join(writeErr, finish()); err != nil {
+			return Result{}, fmt.Errorf("exporting the checkout: %w", err)
+		}
+		bundle.ApplyCheckoutOmissions(&b, omissions)
 	}
-	bundle.ApplyCheckoutOmissions(&b, omissions)
 
 	// Redaction runs before the patch line cap and trimming, so a cut cannot
 	// leave part of a secret unmasked.

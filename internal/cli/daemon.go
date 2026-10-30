@@ -32,6 +32,7 @@ import (
 	"github.com/baum-ai/baum/internal/decisionlog"
 	"github.com/baum-ai/baum/internal/discovery"
 	"github.com/baum-ai/baum/internal/doctor"
+	"github.com/baum-ai/baum/internal/facts"
 	"github.com/baum-ai/baum/internal/focus"
 	"github.com/baum-ai/baum/internal/generate"
 	"github.com/baum-ai/baum/internal/github"
@@ -628,6 +629,9 @@ func localApplication(paths daemon.Paths, concurrency int, log *slog.Logger) fun
 				return (&decisionlog.API{Store: decisionStore, Registry: registry, Live: live.Sessions, Linked: linked, Log: log}).Handler()
 			}
 		}
+		// A pull request with no saved review shows its facts, read when its
+		// page asks, within the background refresh's window and rate pause.
+		pageFacts := &facts.Service{Build: facts.Local{Client: githubClient, Config: cfg}.Build, Window: worker.RefreshInterval(), Paused: worker.Paused, Limited: worker.Limited}
 		// A session that ended has its last lines written: read it soon.
 		endedSessions, unsubscribeEnded := events.Subscribe(4, func(e hookevents.Event) bool {
 			return e.Kind == hookevents.KindAgent && e.Name == "session-end"
@@ -635,7 +639,7 @@ func localApplication(paths daemon.Paths, concurrency int, log *slog.Logger) fun
 		api := uiserver.LocalAPI{GitHubAuth: githubConnection.Handler(), Registry: registry, Config: cfg, PRs: uiserver.DiscoveryHandler(registry, discover, changed), Index: index.Handler(), Jobs: queue.Handler(), Chat: uiserver.ChatHandler(registry, queue), Background: worker.Handler(), Automatic: scheduler.Handler(), Live: liveAPI, AgentRequests: requestsAPI, Clones: clones.Handler(), GitHubRepositories: pickList.Handler(), CurrentName: currentName(githubClient), PlanUsage: plans.Handler(), Analytics: insights.Handler(), Timeline: timeline, Merge: uiserver.MergeHandler(registry, actions.RecordMerges(githubClient), mergedPullRequest, changed), Review: uiserver.ReviewHandler(registry, githubClient, changed), Update: uiserver.UpdateHandler(registry, actions.RecordUpdates(prupdate.Service{Client: githubClient, Cache: panelCache, Counted: countedThreads}), refreshRepository, changed), Changed: settingsChanged,
 			Inboxes:   (&inboxes.API{Store: inboxes.Open(filepath.Join(state, "inboxes.json")), Changed: changed}).Handler(),
 			Groups:    (&reviewgroups.API{Store: groups, Registry: registry, Index: index.Build, Changed: changed}).Handler(),
-			Decisions: decisionsAPI, Log: log,
+			Decisions: decisionsAPI, Facts: pageFacts, Log: log,
 			DecisionsChanged: func() { _ = server.Publish("decisions", struct{}{}) },
 			DecisionModel: func(ctx context.Context, prefs repos.Preferences) uiserver.DecisionModel {
 				e := decisionlog.EffectiveModel(ctx, cfg, prefs, generate.Backends{}, nil)
