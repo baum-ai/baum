@@ -723,8 +723,11 @@ a scrolling strip above the section. The section is in the address, so a
 reload or Back keeps it, and the GitHub notice's **Open settings** goes
 straight to Connections. **General**, the default, offers System, Light and Dark
 themes and whether holding Alt/Option shows keyboard shortcut hints. Preferences
-persist on this device. Orange or red markers beside section names identify
-issues needing attention. Fixes needs attention when it follows reviews whose
+are read and saved through `GET`/`PUT api/settings/appearance` (`theme`,
+`key_hints`), in the daemon’s SQLite registry, so they survive daemon restarts
+and loopback port changes. Saves report failures and keep the previous choice;
+returning to a window rereads the saved preferences. Orange or red markers
+beside section names identify issues needing attention. Fixes needs attention when it follows reviews whose
 harness cannot fix. **Reviews** holds
 the global review settings, one per row: whether reviews run automatically,
 for which pull requests (authored, requested, both, or all open pull requests

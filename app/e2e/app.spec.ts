@@ -1144,6 +1144,7 @@ test("General preferences persist, follow system theme and control keyboard hint
   await page.keyboard.down("Alt");
   await expect(page.locator("html")).not.toHaveAttribute("data-key-hints");
   await page.keyboard.up("Alt");
+  await page.evaluate(() => localStorage.clear());
   await page.reload();
   await expect(theme).toHaveValue("light");
   await expect(hints).not.toBeChecked();
@@ -1153,6 +1154,15 @@ test("General preferences persist, follow system theme and control keyboard hint
   await page.keyboard.up("Alt");
   await theme.selectOption("dark");
   await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
+  await page.route("**/api/settings/appearance", async (route) => {
+    if (route.request().method() === "PUT")
+      await route.fulfill({ status: 500, body: "Could not save appearance settings" });
+    else await route.continue();
+  });
+  await theme.selectOption("light");
+  await expect(page.getByRole("alert")).toContainText("Could not save appearance settings");
+  await expect(theme).toHaveValue("dark");
+  await page.unroute("**/api/settings/appearance");
   await theme.selectOption("system");
   await page.emulateMedia({ colorScheme: "light" });
   await expect(page.locator("html")).toHaveAttribute("data-theme", "light");

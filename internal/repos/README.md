@@ -15,6 +15,8 @@ metadata only and contacts nothing.
   rewriting it.
 - `picked(identity)`: repositories picked by name, possibly without a clone.
 - `preferences(key, value)`: the global preferences as one JSON row. Its
+  `appearance` object (`theme`, `key_hints`) stores the device’s General
+  settings independently of the daemon’s loopback port. Its
   `decisions` object (`enabled`, `model`) configures local
   decision capture; `Settings.DecisionsEnabled` combines it with the automatic
   master switch and the repository's `decisions` (nil is on). See

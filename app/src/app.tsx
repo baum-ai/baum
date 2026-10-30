@@ -1,3 +1,4 @@
+import { PreferencesProvider } from "./preferences";
 import { formatCount } from "@baum/viewer/components/format";
 import { UsageDetails } from "./usage";
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -134,6 +135,14 @@ function errorText(error: unknown) {
   return error instanceof Error ? error.message : "Local request failed.";
 }
 export function App() {
+  return (
+    <PreferencesProvider>
+      <Application />
+    </PreferencesProvider>
+  );
+}
+
+function Application() {
   const [auth, setAuth] = useState<"loading" | "ready" | "failed">("loading");
   const [authError, setAuthError] = useState("");
   const url = useLocation();

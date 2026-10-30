@@ -1979,7 +1979,7 @@ function hasFolderPicker() {
 }
 
 function GeneralSection() {
-  const [preferences, update] = usePreferences();
+  const { preferences, update, ready, saving, error, refresh } = usePreferences();
   return (
     <section aria-labelledby="settings-general-heading" className="settings-section">
       <SectionHead
@@ -1987,10 +1987,19 @@ function GeneralSection() {
         title="General"
         detail="Appearance and keyboard preferences on this device."
       />
+      {error ? (
+        <Alert>
+          {error}
+          <Button variant="secondary" size="compact" onClick={refresh}>
+            Try again
+          </Button>
+        </Alert>
+      ) : null}
       <div className="local-panel settings-list">
         <SettingRow label="Preferred theme" htmlFor="preferred-theme">
           <select
             id="preferred-theme"
+            disabled={!ready || saving}
             className="local-field settings-select"
             value={preferences.theme}
             onChange={(event) => update({ theme: event.target.value as typeof preferences.theme })}
@@ -2007,11 +2016,12 @@ function GeneralSection() {
         >
           <input
             id="keyboard-hints"
+            disabled={!ready || saving}
             type="checkbox"
             role="switch"
             className="local-switch"
-            checked={preferences.keyHints}
-            onChange={(event) => update({ keyHints: event.target.checked })}
+            checked={preferences.key_hints}
+            onChange={(event) => update({ key_hints: event.target.checked })}
           />
         </SettingRow>
       </div>
