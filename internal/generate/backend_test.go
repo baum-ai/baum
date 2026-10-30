@@ -14,7 +14,9 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/baum-ai/baum/agent"
 	"github.com/baum-ai/baum/agent/anthropic"
 	"github.com/baum-ai/baum/internal/config"
 	"github.com/baum-ai/baum/internal/generate"
@@ -268,6 +270,29 @@ func TestAutoAppliesTheModelToClaudeOnly(t *testing.T) {
 	for _, want := range []string{"claude skipped: not installed", `"opus"`, "codex uses its own default model"} {
 		if !strings.Contains(skipped.String(), want) {
 			t.Errorf("skipped output lacks %q:\n%s", want, skipped.String())
+		}
+	}
+}
+
+// The wrappers a host puts around a backend (a backend_paths entry, the
+// pass timeout) keep its answer to whether stage calls may run at once.
+func TestWrappersForwardConcurrentCalls(t *testing.T) {
+	paths := map[config.Backend]string{config.BackendClaude: "/opt/claude", config.BackendCodex: "/opt/codex", config.BackendCursorAgent: "/opt/cursor-agent"}
+	for _, cfg := range []config.Config{{}, {BackendPaths: paths}} {
+		backends := generate.DefaultBackendsFor(cfg)
+		for name, want := range map[string]bool{"claude": true, "codex": true, "cursor-agent": false} {
+			var backend agent.Backend
+			switch name {
+			case "claude":
+				backend = backends.Claude("")
+			case "codex":
+				backend = backends.Codex("")
+			default:
+				backend = backends.CursorAgent("")
+			}
+			if got := generate.ConcurrentCalls(generate.BoundPasses(backend, time.Minute)); got != want {
+				t.Errorf("%s (paths %v): concurrent calls %v", name, cfg.BackendPaths != nil, got)
+			}
 		}
 	}
 }

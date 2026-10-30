@@ -289,6 +289,17 @@ func TestPreferencesChooseTheBackendAndModel(t *testing.T) {
 	}
 }
 
+// A job's tracked backend keeps the backend's answer to whether a staged
+// review's calls may run at once.
+func TestTrackedBackendForwardsConcurrentCalls(t *testing.T) {
+	backends := generate.DefaultBackendsFor(config.Config{})
+	for backend, want := range map[agent.Backend]bool{backends.Claude(""): true, backends.CursorAgent(""): false, &generatetest.Backend{}: false} {
+		if got := (&trackedBackend{Backend: backend}).ConcurrentCalls(); got != want {
+			t.Errorf("%s: %v", backend.Name(), got)
+		}
+	}
+}
+
 // A cursor-agent job is not blocked, whatever its model is called, and its
 // recorded cost stays unknown: Cursor bills it through the user's
 // subscription, so no API price describes it.
