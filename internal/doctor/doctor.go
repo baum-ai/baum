@@ -26,8 +26,8 @@ import (
 	"time"
 
 	"github.com/baum-ai/baum/agent"
+	"github.com/baum-ai/baum/internal/appdb"
 	"github.com/baum-ai/baum/internal/config"
-	"github.com/baum-ai/baum/internal/discovery"
 	"github.com/baum-ai/baum/internal/generate"
 	"github.com/baum-ai/baum/internal/github"
 	"github.com/baum-ai/baum/internal/gitlocal"
@@ -586,7 +586,7 @@ func (r *runner) locations(cfgErr error) []repos.Clone {
 	registryPath, err := repos.Path()
 	switch {
 	case err != nil:
-		r.add(Check{ID: "registry", Label: "repository registry", Status: StatusWarning, Detail: err.Error(), Fix: "set HOME or XDG_CONFIG_HOME so baum can find its config directory"})
+		r.add(Check{ID: "registry", Label: "repository registry", Status: StatusWarning, Detail: err.Error(), Fix: "set HOME or XDG_STATE_HOME so baum can find its application database"})
 	default:
 		c := Check{ID: "registry", Label: "repository registry", Path: registryPath, Status: StatusInfo}
 		if _, statErr := os.Stat(registryPath); statErr != nil {
@@ -624,7 +624,7 @@ func (r *runner) locations(cfgErr error) []repos.Clone {
 	}
 
 	r.location("jobs", "job queue", jobs.DefaultPath, "created when the baum daemon runs its first job")
-	r.location("discovery", "discovery cache", discovery.DefaultDirectory, "created when the baum daemon first looks for pull requests")
+	r.location("discovery", "discovery cache", appdb.Path, "created when the baum daemon first looks for pull requests")
 	if r.opts.Daemon != nil {
 		r.daemon()
 	}

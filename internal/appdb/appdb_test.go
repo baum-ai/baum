@@ -1,6 +1,7 @@
 package appdb_test
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"errors"
@@ -279,5 +280,117 @@ func TestInboxRevisionIsAtomicAcrossStores(t *testing.T) {
 	state, err := inboxes.Open(path).Read()
 	if err != nil || state.Revision != 1 {
 		t.Fatalf("state %v %v", state, err)
+	}
+}
+
+func TestMalformedBaselineIsRefusedWithoutChangingData(t *testing.T) {
+	for _, mutation := range []string{"PRAGMA user_version=-1", "DROP TABLE app_documents"} {
+		t.Run(mutation, func(t *testing.T) {
+			path := filepath.Join(appdbtest.TempDir(t), "app.sqlite")
+			db, err := appdb.Open(path, false)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err = db.Exec(mutation); err != nil {
+				t.Fatal(err)
+			}
+			_ = db.Close()
+			before, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, readOnly := range []bool{false, true} {
+				if opened, err := appdb.Open(path, readOnly); err == nil {
+					_ = opened.Close()
+					t.Fatalf("accepted malformed schema, readOnly=%v", readOnly)
+				}
+			}
+			after, err := os.ReadFile(path)
+			if err != nil || !bytes.Equal(before, after) {
+				t.Fatalf("changed malformed database: %v", err)
+			}
+		})
+	}
+}
+
+// Group edits and feature synchronization read before writing. Reserving the
+// writer at Begin prevents a competing document writer from making that
+// transaction's later write fail immediately with SQLITE_BUSY.
+func TestWritableTransactionsReserveBeforeReading(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(appdbtest.TempDir(t), "app.sqlite")
+	groups, err := reviewgroups.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = groups.Close() }()
+	group, err := groups.Create(ctx, "owner/repo", "Original", []int{1, 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, err := appdb.Open(path, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer first.Close()
+	second, err := appdb.Open(path, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer second.Close()
+	// A short timeout makes the competing reservation observable without sleep.
+	if _, err = second.Exec("PRAGMA busy_timeout=1"); err != nil {
+		t.Fatal(err)
+	}
+	tx, err := first.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	var name string
+	if err = tx.QueryRow("SELECT name FROM groups WHERE id=?", group.ID).Scan(&name); err != nil || name != "Original" {
+		t.Fatalf("read %s %v", name, err)
+	}
+	if other, err := second.BeginTx(ctx, nil); err == nil {
+		_ = other.Rollback()
+		t.Fatal("a read-then-write transaction did not reserve its writer")
+	} else if !strings.Contains(err.Error(), "SQLITE_BUSY") {
+		t.Fatalf("competing writer %v", err)
+	}
+	reader, err := appdb.Open(path, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ro, err := reader.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = ro.QueryRow("SELECT name FROM groups WHERE id=?", group.ID).Scan(&name); err != nil {
+		t.Fatal(err)
+	}
+	_ = ro.Rollback()
+	_ = reader.Close()
+	if _, err = tx.Exec("UPDATE groups SET name='Changed' WHERE id=?", group.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err = tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	other, err := second.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = other.Exec("INSERT INTO app_documents(bucket,key,value) VALUES('state','job','saved')"); err != nil {
+		_ = other.Rollback()
+		t.Fatal(err)
+	}
+	if err = other.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	if saved, err := groups.Get(ctx, group.ID); err != nil || saved.Name != "Changed" {
+		t.Fatalf("group %v %v", saved, err)
+	}
+	if raw, err := appdb.Read(path, "state", "job"); err != nil || string(raw) != "saved" {
+		t.Fatalf("document %s %v", raw, err)
 	}
 }

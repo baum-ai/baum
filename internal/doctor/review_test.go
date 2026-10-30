@@ -88,7 +88,7 @@ echo "1.0.0 (Claude Code)"`)
 func TestAnUnknownEnterpriseHostIsAProblem(t *testing.T) {
 	m := newMachine(t)
 	m.git()
-	registry := filepath.Join(m.config, "baum", "repos.sqlite")
+	registry := filepath.Join(os.Getenv("XDG_STATE_HOME"), "baum", "app.sqlite")
 	if err := os.MkdirAll(filepath.Dir(registry), 0o700); err != nil {
 		t.Fatal(err)
 	}

@@ -139,7 +139,9 @@ func (s *Store) Replace(revision int, inboxes []Inbox) (State, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	var next State
+	read := false
 	err := appdb.Update(s.path, "state", "inboxes", func(raw []byte) ([]byte, error) {
+		read = true
 		current, err := decode(raw)
 		if err != nil {
 			return nil, err
@@ -158,6 +160,9 @@ func (s *Store) Replace(revision int, inboxes []Inbox) (State, error) {
 		next = State{Revision: current.Revision + 1, Inboxes: clean}
 		return json.Marshal(next)
 	})
+	if err != nil && !read {
+		return State{}, &UnreadableError{err}
+	}
 	return next, err
 }
 

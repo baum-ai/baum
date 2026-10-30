@@ -99,6 +99,11 @@ func Open(path string, readOnly bool) (*sql.DB, error) {
 		mode = "ro"
 	}
 	uri := (&url.URL{Scheme: "file", Path: uriPath}).String() + "?mode=" + mode + "&_pragma=busy_timeout(10000)&_pragma=foreign_keys(1)"
+	// Read-then-write transactions must reserve the writer before reading;
+	// upgrading a deferred read lock can fail immediately despite busy_timeout.
+	if !readOnly {
+		uri += "&_txlock=immediate"
+	}
 	db, err := sql.Open("sqlite", uri)
 	if err != nil {
 		return nil, err
@@ -138,6 +143,9 @@ func initialize(db *sql.DB, readOnly bool) (err error) {
 	if version > Version {
 		return fmt.Errorf("application database schema %d is newer than supported version %d", version, Version)
 	}
+	if version < 0 {
+		return errors.New("unsupported application database baseline")
+	}
 	if id != 0 && id != applicationID {
 		return errors.New("not a baum application database")
 	}
@@ -164,6 +172,13 @@ func initialize(db *sql.DB, readOnly bool) (err error) {
 		}
 	} else if id != applicationID {
 		return errors.New("unsupported application database baseline")
+	}
+	rows, err := conn.QueryContext(ctx, "SELECT bucket,key,value FROM app_documents LIMIT 0")
+	if err != nil {
+		return err
+	}
+	if err = rows.Close(); err != nil {
+		return err
 	}
 	_, err = conn.ExecContext(ctx, "COMMIT")
 	return err

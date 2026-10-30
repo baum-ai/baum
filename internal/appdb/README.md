@@ -45,7 +45,9 @@ Unix; current-user-only DACL on Windows), as must the regular database file
 symbolic links are refused. Opening an existing file never opens and closes
 an ordinary file descriptor: on Unix that could release SQLite's process
 locks. SQLite URI paths are escaped, foreign keys are enabled, and writers
-wait up to ten seconds for each other.
+wait up to ten seconds for each other. Writable connections begin SQL
+transactions immediately, so a read-then-write operation reserves its writer
+before reading rather than failing while upgrading a read lock.
 
 OS keyring credentials, optional `config.toml`, daemon launch credentials,
 status/start/stop files, lifetime locks, hook spool and event records,

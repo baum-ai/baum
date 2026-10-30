@@ -242,3 +242,23 @@ func TestFileIsPrivate(t *testing.T) {
 		t.Fatalf("temporary files left: %v", entries)
 	}
 }
+
+func TestUnreadableDatabaseHasTheSameReadAndWriteError(t *testing.T) {
+	h := newHarness(t)
+	const corrupt = "not a SQLite database"
+	if err := os.WriteFile(h.path, []byte(corrupt), 0600); err != nil {
+		t.Fatal(err)
+	}
+	for _, request := range []struct{ method, body string }{{http.MethodGet, ""}, {http.MethodPut, `{"revision":0,"inboxes":[]}`}} {
+		code, body := h.do(request.method, request.body)
+		if code != 500 || body["code"] != CodeUnreadable {
+			t.Fatalf("%s: %d %v", request.method, code, body)
+		}
+		if strings.Contains(strings.ToLower(body["message"].(string)), "remove") {
+			t.Fatalf("unsafe repair advice: %v", body)
+		}
+	}
+	if raw, err := os.ReadFile(h.path); err != nil || string(raw) != corrupt {
+		t.Fatalf("changed corrupt database: %q %v", raw, err)
+	}
+}
