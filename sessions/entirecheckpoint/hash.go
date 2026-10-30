@@ -22,7 +22,12 @@ func VerifyContentHash(full []byte, fullPresent bool, recorded string) HashVerif
 		return verification
 	}
 	verification.Checked = true
-	verification.Actual = fmt.Sprintf("sha256:%x", sha256.Sum256(full))
+	verification.Actual = ContentHashOf(full)
 	verification.Mismatch = verification.Actual != recorded
 	return verification
+}
+
+// ContentHashOf is content_hash.txt's spelling of data's hash.
+func ContentHashOf(data []byte) string {
+	return fmt.Sprintf("sha256:%x", sha256.Sum256(data))
 }

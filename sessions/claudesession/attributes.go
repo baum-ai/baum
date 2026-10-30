@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/baum-ai/baum/sessions/traceprocessing"
+
 	"github.com/baum-ai/baum/sessions/claudetranscript"
 	"github.com/baum-ai/baum/sessions/session"
 )
@@ -99,6 +101,7 @@ func (f *fileState) attributeValue(line claudetranscript.Line, key string, value
 
 func (f *fileState) resolveAttributes() {
 	latest := map[string]json.RawMessage{}
+	last := map[string]int64{}
 	taken := map[string]map[int64]bool{}
 
 	for _, pending := range f.pending {
@@ -108,13 +111,22 @@ func (f *fileState) resolveAttributes() {
 		latest[pending.key] = pending.value
 
 		at := f.attributeTime(pending)
-		if taken[pending.key] == nil {
-			taken[pending.key] = map[int64]bool{}
+		if f.b.profile == traceprocessing.Hosted {
+			// valid_from keeps microseconds, so each key's next change moves past
+			// the microsecond of its last one.
+			if previous, ok := last[pending.key]; ok && at.UnixMicro() <= previous {
+				at = at.Add(time.Duration(previous-at.UnixMicro()+1) * time.Microsecond)
+			}
+			last[pending.key] = at.UnixMicro()
+		} else {
+			if taken[pending.key] == nil {
+				taken[pending.key] = map[int64]bool{}
+			}
+			for taken[pending.key][at.UnixMicro()] {
+				at = at.Add(time.Microsecond)
+			}
+			taken[pending.key][at.UnixMicro()] = true
 		}
-		for taken[pending.key][at.UnixMicro()] {
-			at = at.Add(time.Microsecond)
-		}
-		taken[pending.key][at.UnixMicro()] = true
 
 		row := session.SessionAttribute{
 			ID:        session.MintID("session_attribute", f.sessionID, pending.key, at.Format(time.RFC3339Nano)),

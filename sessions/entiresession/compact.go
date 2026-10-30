@@ -12,8 +12,13 @@ import (
 )
 
 func buildCompact(snapshot *entirecheckpoint.SessionSnapshot) (*session.Graph, error) {
+	return buildCompactWith(snapshot, traceprocessing.Local)
+}
+
+func buildCompactWith(snapshot *entirecheckpoint.SessionSnapshot, profile traceprocessing.MappingProfile) (*session.Graph, error) {
 	rootID := compactSessionID(snapshot)
 	state := &compactState{
+		profile:            profile,
 		snapshot:           snapshot,
 		graph:              &session.Graph{Sessions: []session.Session{{ID: rootID, Outcome: session.OutcomeUnknown}}},
 		rootID:             rootID,
@@ -37,6 +42,7 @@ func buildCompact(snapshot *entirecheckpoint.SessionSnapshot) (*session.Graph, e
 // are counted first so colliding ids can be disambiguated with the line/block
 // ordinal before any row is minted.
 type compactState struct {
+	profile            traceprocessing.MappingProfile
 	snapshot           *entirecheckpoint.SessionSnapshot
 	graph              *session.Graph
 	rootID             string
@@ -195,10 +201,15 @@ func (s *compactState) tool(record entirecheckpoint.CompactRecord, block entirec
 	if !tool.InputPresent {
 		metadata = json.RawMessage(`{"input_absent":true}`)
 	}
+	if s.profile == traceprocessing.Hosted && compactSpawnTools[s.snapshot.Metadata.Agent][tool.Name] {
+		// A compact transcript holds no subagent transcript, and cannot tell a
+		// launch stub from a report.
+		metadata = session.WithSubagentDetail(metadata, session.SubagentNone)
+	}
 	row := session.ToolUse{
 		ID: session.MintID("tool_use", s.rootID, id.value), SessionID: s.rootID,
 		UserInputID: s.activeInput.ID, ModelInvocationID: invocation.ID,
-		Name: tool.Name, Verb: compactVerb(tool.Name), Input: append(json.RawMessage(nil), tool.Input...),
+		Name: tool.Name, Verb: compactVerbWith(tool.Name, s.profile), Input: compactInput(tool.Name, tool.Input, s.profile),
 		Status: status, Metadata: metadata, Timestamp: cloneTime(record.Timestamp),
 	}
 	s.graph.ToolUses = append(s.graph.ToolUses, row)
@@ -221,6 +232,12 @@ func (s *compactState) tool(record entirecheckpoint.CompactRecord, block entirec
 	return nil
 }
 
+// compactSpawnTools are the calls that start a subagent, by Entire's agent name.
+var compactSpawnTools = map[string]map[string]bool{
+	"Claude Code": {"Agent": true, "Task": true},
+	"Codex":       {"spawn_agent": true},
+}
+
 func toolStatus(tool *entirecheckpoint.CompactToolUseBlock) (session.ToolStatus, error) {
 	if tool.Result == nil {
 		return session.StatusNoResult, nil
@@ -236,7 +253,7 @@ func toolStatus(tool *entirecheckpoint.CompactToolUseBlock) (session.ToolStatus,
 }
 
 func (s *compactState) addTouches(block entirecheckpoint.CompactBlock, use *session.ToolUse, vendorIdentity string, ref *string) {
-	touches := structuredToolTouches(block.ToolUse, use.Verb)
+	touches := structuredToolTouches(block.ToolUse, use.Verb, s.profile)
 	seen := map[string]bool{}
 	for _, touch := range touches {
 		path := touch.Path
@@ -274,8 +291,9 @@ func (s *compactState) finishSessionTimes() {
 	}
 }
 
-func compactVerb(name string) session.ToolVerb {
-	return traceprocessing.GenericToolVerb(name)
+func compactVerb(name string) session.ToolVerb { return compactVerbWith(name, traceprocessing.Local) }
+func compactVerbWith(name string, profile traceprocessing.MappingProfile) session.ToolVerb {
+	return traceprocessing.GenericToolVerbWith(name, profile)
 }
 
 type structuredTouch struct {
@@ -283,7 +301,7 @@ type structuredTouch struct {
 	Kind session.TouchKind
 }
 
-func structuredToolTouches(tool *entirecheckpoint.CompactToolUseBlock, verb session.ToolVerb) []structuredTouch {
+func structuredToolTouches(tool *entirecheckpoint.CompactToolUseBlock, verb session.ToolVerb, profile traceprocessing.MappingProfile) []structuredTouch {
 	if tool == nil {
 		return nil
 	}
@@ -300,7 +318,7 @@ func structuredToolTouches(tool *entirecheckpoint.CompactToolUseBlock, verb sess
 	}
 	if isApplyPatch(tool.Name) {
 		patch := compactPatchText(tool.Input, fields)
-		for _, path := range traceprocessing.PatchHeaderPaths(patch) {
+		for _, path := range traceprocessing.PatchHeaderPathsWith(patch, profile) {
 			touches = append(touches, structuredTouch{Path: path, Kind: session.TouchEdit})
 		}
 	}
@@ -411,4 +429,12 @@ func optionalString(value string) *string {
 		return nil
 	}
 	return &value
+}
+
+func compactInput(name string, raw json.RawMessage, profile traceprocessing.MappingProfile) json.RawMessage {
+	input := append(json.RawMessage(nil), raw...)
+	if profile == traceprocessing.Hosted {
+		return traceprocessing.NormalizeCodexExecInput(name, input)
+	}
+	return input
 }

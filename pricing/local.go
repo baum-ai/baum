@@ -1,9 +1,5 @@
 package pricing
 
-// The core pricing files and baseline in this package are copied from
-// the monorepo pricing package. Keep their rates, signature key and
-// normalization tests synchronized when updating either module.
-
 import (
 	"context"
 	"crypto/ed25519"

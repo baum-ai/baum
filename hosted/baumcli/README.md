@@ -30,8 +30,8 @@ handshake, in [`apiclient`](../apiclient).
   - for a hosted install only, the repository is onboarded: an agent settings
     file committed at `HEAD` (`.claude/settings.json`, `.codex/hooks.json`,
     `.cursor/hooks.json`) carries baum's dispatcher, as the onboarding pull
-    request and `baum setup` write it. Entire's own command, the pre-rename
-    dispatcher and settings that are not committed do not count, so a hook
+    request and `baum setup` write it. Entire's own command and settings that
+    are not committed do not count, so a hook
     configured outside the repository still falls through in a repository
     that was never onboarded. The read runs under a timeout, without fetching
     or prompting, and skips a settings file over 1 MiB;
@@ -263,8 +263,8 @@ handshake, in [`apiclient`](../apiclient).
      that ignores it, and its session-start bootstrap would put Git hooks in a
      repository that never asked for them;
   2. no other hook the agent runs for the event calls `entire hooks AGENT
-     EVENT` (the committed dispatcher, the pre-rename one and Entire's own
-     command all do, so the text is searched for that; a file over 1 MiB or
+     EVENT` (the committed dispatcher and Entire's own command both do, so the
+     text is searched for that; a file over 1 MiB or
      unreadable counts as calling it). For Claude Code that is the project's
      `.claude/settings.json` and `settings.local.json` (working directory up
      to the worktree root, and `CLAUDE_PROJECT_DIR`), `~/.claude/settings.json`

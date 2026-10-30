@@ -10,6 +10,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/baum-ai/baum/sessions/traceprocessing"
+
 	"github.com/baum-ai/baum/sessions/collector/model"
 	"github.com/baum-ai/baum/sessions/vendors"
 )
@@ -35,7 +37,11 @@ func FindSessions(projectsDir string, roots []string) ([]model.Session, model.Sc
 // before since, which are skipped before they are opened. A zero since keeps
 // every transcript.
 func FindSessionsSince(projectsDir string, roots []string, since time.Time) ([]model.Session, model.ScanReport, error) {
-	candidates, report, err := loadCandidates(projectsDir, roots, since)
+	return FindSessionsWith(projectsDir, roots, since, traceprocessing.Local)
+}
+
+func FindSessionsWith(projectsDir string, roots []string, since time.Time, profile traceprocessing.MappingProfile) ([]model.Session, model.ScanReport, error) {
+	candidates, report, err := loadCandidates(projectsDir, roots, since, profile)
 	if err != nil {
 		return nil, report, err
 	}
@@ -61,7 +67,7 @@ func FindSessionsSince(projectsDir string, roots []string, since time.Time) ([]m
 // directory's name can also be the prefix of an unrelated sibling's
 // (/repo and /repo-other). Those are listed here and ruled out by the working
 // directory the transcript records.
-func loadCandidates(projectsDir string, roots []string, since time.Time) ([]candidate, model.ScanReport, error) {
+func loadCandidates(projectsDir string, roots []string, since time.Time, profile traceprocessing.MappingProfile) ([]candidate, model.ScanReport, error) {
 	var report model.ScanReport
 	entries, err := os.ReadDir(projectsDir)
 	if err != nil {
@@ -75,7 +81,7 @@ func loadCandidates(projectsDir string, roots []string, since time.Time) ([]cand
 	for _, root := range roots {
 		encoded := EncodeProjectDir(root)
 		for _, entry := range entries {
-			if !entry.IsDir() || scanned[entry.Name()] || !encodesWithin(encoded, entry.Name()) {
+			if !entry.IsDir() || scanned[entry.Name()] || !encodesWithinProfile(encoded, entry.Name(), profile) {
 				continue
 			}
 			scanned[entry.Name()] = true
@@ -217,4 +223,11 @@ func sessionCWD(path string) (string, error) {
 // one Claude Code transcript without decoding the transcript body.
 func SessionWorkingDir(path string) (string, error) {
 	return sessionCWD(path)
+}
+
+func encodesWithinProfile(encoded, name string, profile traceprocessing.MappingProfile) bool {
+	if profile == traceprocessing.Hosted {
+		return name == encoded || strings.HasPrefix(name, encoded+"-")
+	}
+	return encodesWithin(encoded, name)
 }

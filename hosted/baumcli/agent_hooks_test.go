@@ -190,39 +190,6 @@ func TestOwnEntireAgentHooksRewritesOnlyEntireCommands(t *testing.T) {
 	}
 }
 
-// TestSetupOwnsPreRenameAgentHooks covers a checkout set up before the product
-// was renamed to baum. Its hooks must count as owned, or setup would ask Entire
-// to add the agent again and every event would run twice; and setup rewrites
-// them to the baum dispatcher.
-func TestSetupOwnsPreRenameAgentHooks(t *testing.T) {
-	root := t.TempDir()
-	legacy := strings.ReplaceAll(`sh -c 'if command -v {old} >/dev/null 2>&1 && {old} hooks agent --check cursor stop >/dev/null 2>&1; then exec {old} hooks agent cursor stop; fi; if ! command -v entire >/dev/null 2>&1; then exit 0; fi; exec entire hooks cursor stop'`, "{old}", "recount"+"able")
-	encoded, err := agenthooks.EncodeJSON(legacy)
-	if err != nil {
-		t.Fatal(err)
-	}
-	writeAgentSettings(t, root, ".cursor/hooks.json", `{"hooks":{"stop":[{"command":`+string(encoded)+`}]}}`)
-
-	if !agentHooksOwned(root, "cursor") {
-		t.Fatal("pre-rename cursor hooks were not recognised as owned")
-	}
-	changed, err := ownEntireAgentHooks(root)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if strings.Join(changed, ",") != ".cursor/hooks.json" {
-		t.Fatalf("changed = %v", changed)
-	}
-	spec, _ := lookupAgentHookSpec("cursor")
-	want, err := agenthooks.EncodeJSON(agenthooks.Dispatcher(spec, "stop"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got := readHookTestFile(t, filepath.Join(root, ".cursor", "hooks.json")); got != `{"hooks":{"stop":[{"command":`+string(want)+`}]}}` {
-		t.Errorf("rewritten hooks = %s", got)
-	}
-}
-
 func TestOwnEntireAgentHooksSkipsMissingAndInvalidFiles(t *testing.T) {
 	root := t.TempDir()
 	changed, err := ownEntireAgentHooks(root)

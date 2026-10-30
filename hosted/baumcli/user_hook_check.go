@@ -83,8 +83,8 @@ func userHooksEnabled(ctx context.Context, dir, agent, event string) error {
 }
 
 // handledElsewhere reports whether a hook the agent runs besides baum's
-// user-wide one hands this event to Entire. The committed dispatcher, the
-// pre-rename one and Entire's own command all end in `entire hooks AGENT
+// user-wide one hands this event to Entire. The committed dispatcher and
+// Entire's own command both end in `entire hooks AGENT
 // EVENT`, so the files are searched for that text:
 //
 //   - Claude Code: the project's .claude/settings.json and

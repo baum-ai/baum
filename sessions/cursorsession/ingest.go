@@ -18,6 +18,10 @@ const Vendor = "cursor"
 
 // Build maps one materialized Cursor composer tree entirely in memory.
 func Build(tree *cursortranscript.Tree) (*session.Graph, *Report, error) {
+	return BuildWith(tree, traceprocessing.Local)
+}
+
+func BuildWith(tree *cursortranscript.Tree, profile traceprocessing.MappingProfile) (*session.Graph, *Report, error) {
 	if tree == nil || tree.Composer == nil || tree.Composer.Data == nil {
 		return nil, nil, fmt.Errorf("building Cursor session: no composer data")
 	}
@@ -27,10 +31,10 @@ func Build(tree *cursortranscript.Tree) (*session.Graph, *Report, error) {
 	}
 	b.finishReport()
 	if !b.report.Bubbles.Balanced() {
-		return nil, nil, fmt.Errorf("the Cursor bubble accounting is unbalanced: %d read, %d accounted", b.report.Bubbles.Total, b.report.Bubbles.Accounted())
+		return nil, nil, fmt.Errorf("%s bubble accounting is unbalanced: %d read, %d accounted", cursorPrefix(profile), b.report.Bubbles.Total, b.report.Bubbles.Accounted())
 	}
 	if err := session.Validate(b.graph); err != nil {
-		return nil, nil, fmt.Errorf("the Cursor session graph is invalid: %w", err)
+		return nil, nil, fmt.Errorf("%s session graph is invalid: %w", cursorPrefix(profile), err)
 	}
 	return b.graph, b.report, nil
 }
@@ -316,4 +320,11 @@ func resolvedPath(workingDir, path string) string {
 		return target.String()
 	}
 	return sourcepath.Join(workingDir, target.String())
+}
+
+func cursorPrefix(profile traceprocessing.MappingProfile) string {
+	if profile == traceprocessing.Hosted {
+		return "Cursor"
+	}
+	return "the Cursor"
 }

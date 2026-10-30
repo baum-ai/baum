@@ -27,13 +27,8 @@ var embeddedDocument []byte
 
 // PublishedURL is where main's prices.json is published, with its signature
 // at PublishedURL + ".sig". It carries the full format (tiers, fast mode,
-// 1-hour cache writes). LegacyPublishedURL keeps a flattened copy for builds
-// that predate those fields and reject them as unknown.
+// 1-hour cache writes).
 const PublishedURL = "https://static.usebaum.com/pricing/v2/prices.json"
-
-// LegacyPublishedURL is the pre-tier path. Its list has the same version and
-// models as PublishedURL's but only the four base rates (see Document.Flatten).
-const LegacyPublishedURL = "https://static.usebaum.com/pricing/prices.json"
 
 // publishedKey verifies published lists. It is the release manifest key: the
 // same party that signs a release signs its price corrections.
@@ -48,15 +43,12 @@ const (
 )
 
 // FormatVersion marks the full format: a list that may carry cache_write_1h,
-// above, fast and fast_above. The flattened copy kept for older builds omits the marker,
-// so a build that reads the full format can tell the two apart even when they
-// share a version.
+// above, fast and fast_above. Published lists must carry this marker.
 const FormatVersion = 2
 
 // Document is prices.json.
 type Document struct {
-	// Format is FormatVersion in the full format and absent in the flattened
-	// copy.
+	// Format identifies the full pricing format.
 	Format int `json:"format,omitzero"`
 	// Version is a date, with a ".N" suffix for a second list on one day. It
 	// travels with every figure computed from the list.
@@ -130,20 +122,6 @@ func (e Entry) Rate() Rate {
 // Base returns the entry's standard rates.
 func (e Entry) Base() RateSet {
 	return RateSet{Input: e.Input, Output: e.Output, CacheRead: e.CacheRead, CacheWrite: e.CacheWrite, CacheWrite1h: e.CacheWrite1h}
-}
-
-// Flatten returns the document with only each entry's four base rates, for
-// builds that predate cache_write_1h, above, fast and fast_above and reject them.
-func (d Document) Flatten() Document {
-	flat := Document{Version: d.Version, Models: make(map[string]Entry, len(d.Models))}
-	for canonical, entry := range d.Models {
-		entry.CacheWrite1h = 0
-		entry.Above = Tier{}
-		entry.Fast = RateSet{}
-		entry.FastAbove = Tier{}
-		flat.Models[canonical] = entry
-	}
-	return flat
 }
 
 // A same-day list is numbered from .2: the bare date is the first, and
@@ -314,7 +292,7 @@ func NewList(document Document) *List {
 
 func (l *List) Version() string { return l.version }
 
-// Full reports whether the list was read from the full format. A flattened
+// Full reports whether the list was read from the full format. An unmarked
 // list prices correctly only for usage without tiers, fast mode or 1-hour
 // writes, so a build that reads the full format must not price with one.
 func (l *List) Full() bool { return l.full }

@@ -1,0 +1,8 @@
+{
+  "tool_use_id": "toolu_review",
+  "agent_id": "a1111111111111111",
+  "subagent_type": "general-purpose",
+  "task_description": "Review parser",
+  "started_at": "2026-10-01T10:00:05Z",
+  "completed_at": "2026-10-01T10:00:11Z"
+}

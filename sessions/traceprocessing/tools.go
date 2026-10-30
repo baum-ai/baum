@@ -46,3 +46,34 @@ func PatchHeaderPaths(patch string) []string {
 	}
 	return paths
 }
+
+func PatchHeaderPathsWith(patch string, profile MappingProfile) []string {
+	if profile != Hosted {
+		return PatchHeaderPaths(patch)
+	}
+	var paths []string
+	for rest := patch; rest != ""; {
+		var line string
+		line, rest, _ = strings.Cut(rest, "\n")
+		if !strings.HasPrefix(line, "*** ") {
+			continue
+		}
+		if match := patchFileHeader.FindStringSubmatch(strings.TrimSuffix(line, "\r")); len(match) == 2 {
+			paths = append(paths, match[1])
+		}
+	}
+	return paths
+}
+
+// GenericToolVerbWith preserves the hosted compact-tool aliases.
+func GenericToolVerbWith(name string, profile MappingProfile) session.ToolVerb {
+	if profile == Hosted {
+		switch name {
+		case "grep":
+			return session.VerbSearch
+		case "bash":
+			return session.VerbExecute
+		}
+	}
+	return GenericToolVerb(name)
+}

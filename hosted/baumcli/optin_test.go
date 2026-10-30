@@ -358,18 +358,14 @@ func TestLoggedInUserBootstrapsWithEitherBuild(t *testing.T) {
 }
 
 // Only what the repository commits makes it onboarded, even for a hosted
-// install: Entire's own hook command and the pre-rename dispatcher do not run
+// install: Entire's own hook command does not run
 // baum, and settings that are not committed may come from anywhere, such as
 // a user-wide configuration.
 func TestRepositoryIsOnboardedOnlyByCommittedDispatchers(t *testing.T) {
 	claude, _ := agenthooks.Lookup("claude-code")
-	preRename := strings.ReplaceAll(agenthooks.Dispatcher(claude, "session-start"), "baum", "recount"+"able")
 	for name, setUp := range map[string]func(t *testing.T, repo string){
 		"Entire's own command committed": func(t *testing.T, repo string) {
 			commitFile(t, repo, claude.SettingsFile, claudeSettings(t, agenthooks.EntireCommand(claude, "session-start")))
-		},
-		"pre-rename dispatcher committed": func(t *testing.T, repo string) {
-			commitFile(t, repo, claude.SettingsFile, claudeSettings(t, preRename))
 		},
 		"dispatcher not committed": func(t *testing.T, repo string) {
 			commitFile(t, repo, "README.md", "demo\n")

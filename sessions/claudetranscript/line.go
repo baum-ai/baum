@@ -4,6 +4,7 @@ package claudetranscript
 
 import (
 	"encoding/json"
+	"strings"
 	"time"
 )
 
@@ -242,17 +243,13 @@ func (b Block) ResultText() string {
 }
 
 func joinBlockText(blocks []Block) string {
-	out := ""
+	var texts []string
 	for _, b := range blocks {
-		if b.Type != "text" || b.Text == "" {
-			continue
+		if b.Type == "text" && b.Text != "" {
+			texts = append(texts, b.Text)
 		}
-		if out != "" {
-			out += "\n"
-		}
-		out += b.Text
 	}
-	return out
+	return strings.Join(texts, "\n")
 }
 
 // classifyUserContent implements the discriminant, with one correction:

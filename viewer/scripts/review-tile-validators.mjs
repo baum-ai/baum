@@ -1,6 +1,6 @@
-import { readFile } from "node:fs/promises";
 import Ajv2020 from "ajv/dist/2020.js";
 import standaloneCode from "ajv/dist/standalone/index.js";
+import { loadReviewTileSchema } from "./review-tile-schema.mjs";
 
 // Ajv's string-length helper (ajv/dist/runtime/ucs2length), which generated code
 // loads with require. A browser module cannot, so the code carries its own copy.
@@ -24,24 +24,14 @@ const ucs2length = `(function (str) {
  * ships this instead of compiling the schema in the browser, because Ajv
  * compiles with `new Function`, which a strict Content-Security-Policy blocks. */
 export async function buildReviewTileValidators() {
-  const schema = JSON.parse(
-    await readFile(new URL("../../schema/review-1.json", import.meta.url), "utf8"),
-  );
-  // Stored documents may still carry tile kinds the shared schema retired.
-  const legacy = JSON.parse(
-    await readFile(new URL("../../schema/legacy-review-tiles.json", import.meta.url), "utf8"),
-  );
-  const defs = { ...schema.$defs, ...legacy.$defs };
+  const schema = await loadReviewTileSchema();
   const ajv = new Ajv2020({
     strict: false,
     validateFormats: false,
     code: { source: true, esm: true },
   });
-  ajv.addSchema(
-    { anyOf: [{ $ref: "#/$defs/tile" }, { $ref: "#/$defs/legacyTile" }], $defs: defs },
-    "tile",
-  );
-  ajv.addSchema({ $ref: "#/$defs/anchor", $defs: defs }, "anchor");
+  ajv.addSchema(schema, "tile");
+  ajv.addSchema({ $ref: "#/$defs/anchor", $defs: schema.$defs }, "anchor");
   const code = standaloneCode(ajv, { validateTile: "tile", validateAnchor: "anchor" }).replaceAll(
     'require("ajv/dist/runtime/ucs2length").default',
     ucs2length,

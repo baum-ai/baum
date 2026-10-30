@@ -3,7 +3,9 @@ package claudetranscript
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"io/fs"
+	"path"
 	"regexp"
 	"slices"
 	"strings"
@@ -228,7 +230,35 @@ func readFile(fsys fs.FS, path, name, label, agentID string) (*File, error) {
 	}
 	defer func() { _ = handle.Close() }()
 
-	lines, torn, err := Decode(handle)
+	return decodeFile(handle, name, label, agentID)
+}
+
+// DecodeSubagent reads one subagent transcript that arrived outside a session
+// directory, under the same checks as one listed beside its parent. The caller
+// supplies the spawn link with Meta and adds the file with AddSubagent.
+func DecodeSubagent(r io.Reader, label, agentID string) (*File, error) {
+	if agentID == "" {
+		return nil, fmt.Errorf("subagent transcript %s names no agent", label)
+	}
+	return decodeFile(r, path.Base(label), label, agentID)
+}
+
+// AddSubagent records a decoded subagent on the tree, checking it against its
+// parent exactly as a listed one is.
+func (t *Tree) AddSubagent(file *File) error {
+	if file == nil || file.Main() {
+		return fmt.Errorf("adding subagent: not a subagent transcript")
+	}
+	for _, existing := range t.Subagents {
+		if existing.AgentID == file.AgentID {
+			return fmt.Errorf("session names subagent %s twice", file.AgentID)
+		}
+	}
+	return indexSubagent(t, file, file.Path)
+}
+
+func decodeFile(r io.Reader, name, label, agentID string) (*File, error) {
+	lines, torn, err := Decode(r)
 	if err != nil {
 		return nil, fmt.Errorf("reading transcript %s: %w", label, err)
 	}

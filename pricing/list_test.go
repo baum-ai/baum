@@ -263,30 +263,6 @@ func TestValidateRejectsInconsistentTiers(t *testing.T) {
 	}
 }
 
-func TestFlattenKeepsOnlyBaseRates(t *testing.T) {
-	document := Document{Version: "2026-09-28", Models: map[string]Entry{
-		"a": {Input: 1, Output: 2, CacheRead: 0.1, CacheWrite: 1.25, CacheWrite1h: 2, Fast: RateSet{Input: 2, Output: 4}, FastAbove: Tier{PromptTokens: 5, Input: 4, Output: 8}, Above: Tier{PromptTokens: 5, Input: 2, Output: 3, CacheRead: 0.2, CacheWrite: 2.5, CacheWrite1h: 4}, Source: SourceLiteLLM, LiteLLMKey: "k", Note: "n"},
-		"b": {Input: 1, Output: 2, Fast: RateSet{Input: 2, Output: 4}, Source: SourceManual},
-	}}
-	flat := document.Flatten()
-	if flat.Version != document.Version || len(flat.Models) != 2 {
-		t.Fatalf("flat = %+v", flat)
-	}
-	want := Entry{Input: 1, Output: 2, CacheRead: 0.1, CacheWrite: 1.25, Source: SourceLiteLLM, LiteLLMKey: "k", Note: "n"}
-	if flat.Models["a"] != want {
-		t.Errorf("a = %+v, want %+v", flat.Models["a"], want)
-	}
-	if flat.Models["b"] != (Entry{Input: 1, Output: 2, Source: SourceManual}) {
-		t.Errorf("b = %+v", flat.Models["b"])
-	}
-	if document.Models["a"].Above.IsZero() {
-		t.Error("Flatten modified its receiver")
-	}
-	if err := flat.Validate(); err != nil {
-		t.Errorf("flattened document invalid: %v", err)
-	}
-}
-
 func TestFormatMarkerIdentifiesTheFullFormat(t *testing.T) {
 	full, err := ParseDocument(EmbeddedDocument())
 	if err != nil {
@@ -294,20 +270,6 @@ func TestFormatMarkerIdentifiesTheFullFormat(t *testing.T) {
 	}
 	if full.Format != FormatVersion || !NewList(full).Full() || !Embedded().Full() {
 		t.Fatal("the compiled list is not marked as the full format")
-	}
-	flat := full.Flatten()
-	if flat.Format != 0 || NewList(flat).Full() {
-		t.Fatal("Flatten kept the format marker")
-	}
-	data, err := json.Marshal(flat)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if strings.Contains(string(data), `"format"`) {
-		t.Fatalf("flattened list carries a format key: %s", data)
-	}
-	if _, err := ParseDocument(data); err != nil {
-		t.Fatalf("flattened list no longer parses: %v", err)
 	}
 	full.Format = 3
 	if err := full.Validate(); err == nil {

@@ -13,10 +13,8 @@
 package entire
 
 import (
-	"archive/tar"
 	"bytes"
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -28,7 +26,6 @@ import (
 
 	"github.com/baum-ai/baum/internal/gitlocal"
 	"github.com/baum-ai/baum/sessions/entirecheckpoint"
-	"github.com/baum-ai/baum/sessions/traceprocessing"
 )
 
 const (
@@ -433,79 +430,4 @@ func runGit(ctx context.Context, env []string, repoRoot string, stdin io.Reader,
 		return nil, fmt.Errorf("git %s: %w: %s", args[0], err, strings.TrimSpace(stderr.String()))
 	}
 	return out, nil
-}
-
-// Open reads a git-archive of one checkpoint into an fs.FS. checkpointPath is
-// the checkpoint's directory in the archive, or empty when the archive's root
-// is the checkpoint, as for a ref.
-func Open(reader io.Reader, checkpointPath string) (fs.FS, error) {
-	result := map[string][]byte{}
-	tarReader := tar.NewReader(io.LimitReader(reader, maxCheckpointBytes+1))
-	prefix := ""
-	if checkpointPath != "" {
-		prefix = checkpointPath + "/"
-	}
-	var total int64
-	for {
-		header, err := tarReader.Next()
-		if errors.Is(err, io.EOF) {
-			break
-		}
-		if err != nil {
-			return nil, fmt.Errorf("reading Entire checkpoint archive: %w", err)
-		}
-		// git archive leads with a pax_global_header carrying the commit id and
-		// emits an entry per directory; neither contributes checkpoint content.
-		if header.Typeflag != tar.TypeReg {
-			continue
-		}
-		name, err := checkpointMemberName(header.Name, prefix)
-		if err != nil {
-			return nil, err
-		}
-		if len(result) >= maxCheckpointFiles || header.Size < 0 ||
-			header.Size > maxCheckpointBytes-total {
-			return nil, errors.New("the Entire checkpoint archive exceeds limits")
-		}
-		data, err := readCheckpointMember(tarReader, name, header.Size)
-		if err != nil {
-			return nil, err
-		}
-		total += header.Size
-		result[name] = data
-	}
-	if _, ok := result["metadata.json"]; !ok {
-		return nil, errors.New("the Entire checkpoint archive has no metadata.json")
-	}
-	return traceprocessing.BytesFS(result, traceprocessing.TreeFilePolicy), nil
-}
-
-func checkpointMemberName(entry, prefix string) (string, error) {
-	if !strings.HasPrefix(entry, prefix) {
-		return "", fmt.Errorf("invalid Entire checkpoint archive entry %q", entry)
-	}
-	name := strings.TrimPrefix(entry, prefix)
-	// fs.ValidPath allows "."; reject it so a directory entry cannot become a
-	// file keyed as the checkpoint root.
-	if name == "." || !fs.ValidPath(name) {
-		return "", fmt.Errorf("invalid Entire checkpoint archive path %q", entry)
-	}
-	return name, nil
-}
-
-func readCheckpointMember(r io.Reader, name string, size int64) ([]byte, error) {
-	data, err := io.ReadAll(io.LimitReader(r, size+1))
-	if err != nil {
-		if errors.Is(err, io.ErrUnexpectedEOF) {
-			return nil, fmt.Errorf("reading Entire checkpoint file %q: archive is truncated: %w", name, err)
-		}
-		return nil, fmt.Errorf("reading Entire checkpoint file %q: %w", name, err)
-	}
-	if int64(len(data)) != size {
-		return nil, fmt.Errorf(
-			"reading Entire checkpoint file %q: archive is truncated (read %d bytes, expected %d)",
-			name, len(data), size,
-		)
-	}
-	return data, nil
 }

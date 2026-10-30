@@ -8,6 +8,7 @@ import (
 
 	"github.com/baum-ai/baum/sessions/codextranscript"
 	"github.com/baum-ai/baum/sessions/session"
+	"github.com/baum-ai/baum/sessions/traceprocessing"
 )
 
 type toolEvidence struct {
@@ -24,6 +25,10 @@ type toolEvidence struct {
 	error       bool
 	ok          bool
 	errorText   string
+	// agentPath is the child a spawn started and report its final answer
+	// this call waited for (reports.go).
+	agentPath string
+	report    string
 }
 
 func callKey(threadID, callID string) string { return threadID + "\x00" + callID }
@@ -48,11 +53,20 @@ func (f *threadState) addFunctionCall(line codextranscript.Line, call *codextran
 
 func (f *threadState) addCustomCall(line codextranscript.Line, call *codextranscript.CustomToolCall) error {
 	input, _ := json.Marshal(call.Input)
+	command := call.Input
+	if f.b.profile == traceprocessing.Hosted && call.Name == traceprocessing.CodexExecName {
+		// The code-mode wrapper's input is a JavaScript program; the stored
+		// input gains the command lines it runs under "command".
+		input = traceprocessing.NormalizeCodexExecInput(call.Name, input)
+		if text := traceprocessing.CodexExecCommand(call.Input); text != "" {
+			command = text
+		}
+	}
 	if err := f.addTool(line, call.CallID, call.ID, call.Name, input, nil, call.Status); err != nil {
 		return err
 	}
 	if evidence := f.b.toolByCall[callKey(f.meta.ID, call.CallID)]; evidence != nil {
-		evidence.command = call.Input
+		evidence.command = command
 	}
 	return nil
 }

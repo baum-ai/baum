@@ -34,6 +34,14 @@ func TestIsCommitCommand(t *testing.T) {
 		{"git checkout codex/commit-filter", false},
 		{"git log --grep 'Merge commit'", false},
 		{"", false},
+		// A script that does not parse as a whole yields nothing, whatever a
+		// line of it looks like: a heredoc body or a quoted program is text,
+		// not a command, when the script's tail is cut off. (Codex programs
+		// drop each command that does not parse alone before joining them;
+		// see traceprocessing.CodexExecCommand.)
+		{"cat > RELEASE.md <<'EOF'\nTo release, run:\ngit commit -am \"release\"\nEOF\necho $(( 1 +", false},
+		{"python3 -c 'print(1)\ngit commit -m x\n' && echo $((", false},
+		{"echo 'unterminated\ngit add -A && git commit -m x", false},
 	}
 	for _, tt := range tests {
 		if got := IsCommitCommand(tt.command); got != tt.want {

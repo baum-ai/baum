@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"slices"
+
+	"github.com/baum-ai/baum/sessions/traceprocessing"
 )
 
 // CheckpointMetadata is the checkpoint-level metadata.json record. Entire has
@@ -40,6 +42,38 @@ type SessionRefs struct {
 	ContentHash       string `json:"content_hash"`
 	Prompt            string `json:"prompt"`
 	AssetsManifest    string `json:"assets_manifest"`
+}
+
+// SessionList is the checkpoint's sessions array. Decoding stops with an
+// error at entry maxSessions+1, so an oversized array of tiny entries is
+// rejected before each one is expanded into a SessionRefs.
+type SessionList []SessionRefs
+
+func (l *SessionList) UnmarshalJSON(raw []byte) error {
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	token, err := dec.Token()
+	if err != nil {
+		return err
+	}
+	if token == nil {
+		return nil
+	}
+	if delim, ok := token.(json.Delim); !ok || delim != '[' {
+		return fmt.Errorf("sessions is not a JSON array")
+	}
+	var out SessionList
+	for dec.More() {
+		if len(out) == maxSessions {
+			return fmt.Errorf("sessions lists more than %d entries", maxSessions)
+		}
+		var refs SessionRefs
+		if err := dec.Decode(&refs); err != nil {
+			return err
+		}
+		out = append(out, refs)
+	}
+	*l = out
+	return nil
 }
 
 // SessionMetadata is one wrapped session's metadata.json record.
@@ -88,6 +122,14 @@ type TokenUsage struct {
 	CacheReadTokens     int64 `json:"cache_read_tokens"`
 	OutputTokens        int64 `json:"output_tokens"`
 	APICallCount        int64 `json:"api_call_count"`
+}
+
+// Negative reports whether any count is below zero. The Entire CLI derives
+// Codex usage as a difference of cumulative counters, and a resumed Codex
+// session restarts those counters, so a checkpoint can record a negative
+// delta that no session ever consumed.
+func (u TokenUsage) Negative() bool {
+	return u.InputTokens < 0 || u.CacheCreationTokens < 0 || u.CacheReadTokens < 0 || u.OutputTokens < 0 || u.APICallCount < 0
 }
 
 type SessionMetrics struct {
@@ -178,9 +220,21 @@ var sessionMetadataKeys = keySet(
 	"investigate_topic", "commit_sha", "imported",
 )
 
-func decodeCheckpointMetadata(raw []byte) (CheckpointMetadata, error) {
+func decodeCheckpointMetadataWith(raw []byte, profile traceprocessing.MappingProfile) (CheckpointMetadata, error) {
 	var out CheckpointMetadata
-	keys, unknown, err := decodeMetadata(raw, &out, checkpointMetadataKeys)
+	var target any = &out
+	type metadataFields CheckpointMetadata
+	bounded := struct {
+		*metadataFields
+		Sessions SessionList `json:"sessions"`
+	}{metadataFields: (*metadataFields)(&out)}
+	if profile == traceprocessing.Hosted {
+		target = &bounded
+	}
+	keys, unknown, err := decodeMetadata(raw, target, checkpointMetadataKeys)
+	if profile == traceprocessing.Hosted {
+		out.Sessions = []SessionRefs(bounded.Sessions)
+	}
 	if err != nil {
 		return CheckpointMetadata{}, err
 	}

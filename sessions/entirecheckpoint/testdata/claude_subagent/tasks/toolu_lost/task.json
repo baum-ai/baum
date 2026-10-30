@@ -1,0 +1,8 @@
+{
+  "tool_use_id": "toolu_lost",
+  "agent_id": "a3333333333333333",
+  "subagent_type": "general-purpose",
+  "task_description": "Scan secrets",
+  "started_at": "2026-10-01T10:00:09Z",
+  "completed_at": "2026-10-01T10:00:12Z"
+}

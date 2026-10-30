@@ -50,6 +50,7 @@ func (f *fileState) applyResult(
 
 	use.Status = status
 	f.lastToolStatus = status
+	f.trackSubagentCall(use, evidence, row)
 	f.refineTouches(use, evidence)
 	f.noteCommit(use, evidence, text, status)
 }

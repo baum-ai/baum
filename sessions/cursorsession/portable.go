@@ -27,10 +27,15 @@ func (r *PortableReport) Balanced() bool {
 // BuildPortable maps Entire's synthesized Cursor JSONL into the shared session
 // model. It is the reduced-fidelity path; local upload uses Build instead.
 func BuildPortable(sessionID, path string, records []cursortranscript.PortableRecord, validFrom time.Time) (*session.Graph, *PortableReport, error) {
+	return BuildPortableWith(sessionID, path, records, validFrom, traceprocessing.Local)
+}
+
+func BuildPortableWith(sessionID, path string, records []cursortranscript.PortableRecord, validFrom time.Time, profile traceprocessing.MappingProfile) (*session.Graph, *PortableReport, error) {
 	b, err := newPortableBuilder(sessionID, path, validFrom)
 	if err != nil {
 		return nil, nil, err
 	}
+	b.profile = profile
 	if len(records) == 0 {
 		return nil, nil, fmt.Errorf("building Cursor portable session: transcript is empty")
 	}
@@ -43,6 +48,7 @@ func BuildPortable(sessionID, path string, records []cursortranscript.PortableRe
 }
 
 type portableBuilder struct {
+	profile            traceprocessing.MappingProfile
 	sessionID          string
 	path               string
 	rootID             string
@@ -100,7 +106,7 @@ func (b *portableBuilder) mapRecord(record cursortranscript.PortableRecord) erro
 		b.mapTurnEnd(record)
 		return nil
 	default:
-		return fmt.Errorf("the Cursor portable line %d has unknown kind %q", record.Ordinal, record.Kind)
+		return fmt.Errorf("%s portable line %d has unknown kind %q", cursorPrefix(b.profile), record.Ordinal, record.Kind)
 	}
 }
 
@@ -130,11 +136,11 @@ func (b *portableBuilder) mapUser(record cursortranscript.PortableRecord) error 
 
 func (b *portableBuilder) mapAssistant(record cursortranscript.PortableRecord) error {
 	if b.active == nil {
-		return fmt.Errorf("the Cursor portable line %d: assistant record appears before a user record", record.Ordinal)
+		return fmt.Errorf("%s portable line %d: assistant record appears before a user record", cursorPrefix(b.profile), record.Ordinal)
 	}
 	invocation := b.addInvocation(record)
 	for _, block := range record.Blocks {
-		if err := mapPortableBlock(b.graph, b.active, invocation, record, block, b.sessionID, b.path); err != nil {
+		if err := mapPortableBlock(b.graph, b.active, invocation, record, block, b.sessionID, b.path, b.profile); err != nil {
 			return err
 		}
 	}
@@ -204,6 +210,7 @@ func mapPortableBlock(
 	record cursortranscript.PortableRecord,
 	block cursortranscript.PortableBlock,
 	sessionID, path string,
+	profile traceprocessing.MappingProfile,
 ) error {
 	identity := fmt.Sprintf("%s:%s:%d:%d", sessionID, path, record.Ordinal, block.Index)
 	ref := portableSourceRef(path, record.Ordinal)
@@ -212,9 +219,9 @@ func mapPortableBlock(
 		addPortableText(graph, input, invocation, sessionID, identity, ref, block.Text)
 		return nil
 	case cursortranscript.PortableToolBlock:
-		return addPortableTool(graph, input, invocation, record, block, sessionID, identity, ref)
+		return addPortableTool(graph, input, invocation, record, block, sessionID, identity, ref, profile)
 	default:
-		return fmt.Errorf("the Cursor portable line %d block %d has unknown kind %q", record.Ordinal, block.Index, block.Kind)
+		return fmt.Errorf("%s portable line %d block %d has unknown kind %q", cursorPrefix(profile), record.Ordinal, block.Index, block.Kind)
 	}
 }
 
@@ -242,11 +249,12 @@ func addPortableTool(
 	block cursortranscript.PortableBlock,
 	sessionID, identity string,
 	ref *string,
+	profile traceprocessing.MappingProfile,
 ) error {
 	if block.Tool == nil {
-		return fmt.Errorf("the Cursor portable line %d block %d has no tool", record.Ordinal, block.Index)
+		return fmt.Errorf("%s portable line %d block %d has no tool", cursorPrefix(profile), record.Ordinal, block.Index)
 	}
-	resolved := resolvePortableTool(block.Tool.Name, block.Tool.Input)
+	resolved := resolvePortableTool(block.Tool.Name, block.Tool.Input, profile)
 	row := session.ToolUse{
 		ID: portableID("tool_use", sessionID, identity), SessionID: input.SessionID,
 		UserInputID: input.ID, ModelInvocationID: invocation.ID, Name: resolved.Name,
@@ -256,7 +264,7 @@ func addPortableTool(
 	graph.ToolUses = append(graph.ToolUses, row)
 	use := &graph.ToolUses[len(graph.ToolUses)-1]
 	addPortableVendorID(graph, use.ID, session.EntityToolUse, input.SessionID, "line.block", identity, ref)
-	addPortableTouches(graph, use, &cursortranscript.PortableToolUse{Name: resolved.Name, Input: resolved.Input}, identity, ref)
+	addPortableTouches(graph, use, &cursortranscript.PortableToolUse{Name: resolved.Name, Input: resolved.Input}, identity, ref, profile)
 	return nil
 }
 
@@ -279,12 +287,12 @@ func portableUserText(blocks []cursortranscript.PortableBlock) (string, bool) {
 	return raw[start : start+end], true
 }
 
-func portableVerb(name string) session.ToolVerb {
-	return traceprocessing.GenericToolVerb(name)
+func portableVerb(name string, profile traceprocessing.MappingProfile) session.ToolVerb {
+	return traceprocessing.GenericToolVerbWith(name, profile)
 }
 
-func addPortableTouches(graph *session.Graph, use *session.ToolUse, tool *cursortranscript.PortableToolUse, identity string, ref *string) {
-	kind, paths := portableTouchPaths(use.Verb, tool)
+func addPortableTouches(graph *session.Graph, use *session.ToolUse, tool *cursortranscript.PortableToolUse, identity string, ref *string, profile traceprocessing.MappingProfile) {
+	kind, paths := portableTouchPaths(use.Verb, tool, profile)
 	if len(paths) == 0 {
 		return
 	}
@@ -305,7 +313,7 @@ func addPortableTouches(graph *session.Graph, use *session.ToolUse, tool *cursor
 	}
 }
 
-func portableTouchPaths(verb session.ToolVerb, tool *cursortranscript.PortableToolUse) (session.TouchKind, []string) {
+func portableTouchPaths(verb session.ToolVerb, tool *cursortranscript.PortableToolUse, profile traceprocessing.MappingProfile) (session.TouchKind, []string) {
 	kind, fileTool := portableTouchKind(verb)
 	fields := map[string]json.RawMessage{}
 	_ = json.Unmarshal(tool.Input, &fields)
@@ -314,7 +322,7 @@ func portableTouchPaths(verb session.ToolVerb, tool *cursortranscript.PortableTo
 	if fileTool && tool.Name != "ListDir" {
 		paths = append(paths, portablePathFields(fields)...)
 	}
-	if patchPaths := portablePatchPaths(tool.Name, tool.Input, fields); len(patchPaths) > 0 {
+	if patchPaths := portablePatchPaths(tool.Name, tool.Input, fields, profile); len(patchPaths) > 0 {
 		return session.TouchEdit, append(paths, patchPaths...)
 	}
 	if !fileTool {
@@ -339,7 +347,7 @@ func portablePathFields(fields map[string]json.RawMessage) []string {
 	return paths
 }
 
-func portablePatchPaths(name string, input json.RawMessage, fields map[string]json.RawMessage) []string {
+func portablePatchPaths(name string, input json.RawMessage, fields map[string]json.RawMessage, profile traceprocessing.MappingProfile) []string {
 	if !strings.EqualFold(name, "applypatch") && name != "apply_patch" {
 		return nil
 	}
@@ -351,7 +359,7 @@ func portablePatchPaths(name string, input json.RawMessage, fields map[string]js
 			}
 		}
 	}
-	return traceprocessing.PatchHeaderPaths(patch)
+	return traceprocessing.PatchHeaderPathsWith(patch, profile)
 }
 
 func portableTouchKind(verb session.ToolVerb) (session.TouchKind, bool) {

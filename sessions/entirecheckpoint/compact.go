@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"io"
 	"time"
+
+	"github.com/baum-ai/baum/sessions/traceprocessing"
 )
 
 var (
@@ -102,6 +104,10 @@ type compactEnvelope struct {
 // transcript readers, a truncated final record is an error: checkpoint blobs
 // are immutable and must be complete.
 func DecodeCompact(r io.Reader) ([]CompactRecord, error) {
+	return DecodeCompactWith(r, traceprocessing.Local)
+}
+
+func DecodeCompactWith(r io.Reader, profile traceprocessing.MappingProfile) ([]CompactRecord, error) {
 	scanner := bufio.NewScanner(r)
 	scanner.Buffer(make([]byte, 64<<10), 64<<20)
 	var records []CompactRecord
@@ -110,7 +116,7 @@ func DecodeCompact(r io.Reader) ([]CompactRecord, error) {
 		if len(raw) == 0 {
 			continue
 		}
-		record, err := decodeCompactRecord(raw, ordinal)
+		record, err := decodeCompactRecord(raw, ordinal, profile)
 		if err != nil {
 			return nil, err
 		}
@@ -122,7 +128,7 @@ func DecodeCompact(r io.Reader) ([]CompactRecord, error) {
 	return records, nil
 }
 
-func decodeCompactRecord(raw []byte, ordinal int) (CompactRecord, error) {
+func decodeCompactRecord(raw []byte, ordinal int, profile traceprocessing.MappingProfile) (CompactRecord, error) {
 	if len(raw) == 0 || raw[0] != '{' {
 		return CompactRecord{}, fmt.Errorf("compact line %d is not a JSON object", ordinal)
 	}
@@ -152,7 +158,7 @@ func decodeCompactRecord(raw []byte, ordinal int) (CompactRecord, error) {
 		Raw: append(json.RawMessage(nil), raw...),
 	}
 	for index, rawBlock := range envelope.Content {
-		block, err := decodeCompactBlock(envelope.Type, rawBlock, ordinal, index)
+		block, err := decodeCompactBlock(envelope.Type, rawBlock, ordinal, index, profile)
 		if err != nil {
 			return CompactRecord{}, err
 		}
@@ -161,7 +167,7 @@ func decodeCompactRecord(raw []byte, ordinal int) (CompactRecord, error) {
 	return record, nil
 }
 
-func decodeCompactBlock(role CompactRecordType, raw json.RawMessage, ordinal, index int) (CompactBlock, error) {
+func decodeCompactBlock(role CompactRecordType, raw json.RawMessage, ordinal, index int, profile traceprocessing.MappingProfile) (CompactBlock, error) {
 	fields := map[string]json.RawMessage{}
 	if err := json.Unmarshal(raw, &fields); err != nil || fields == nil {
 		return CompactBlock{}, fmt.Errorf("%w: line %d block %d is not an object", ErrCompactBlockShape, ordinal, index)
@@ -198,6 +204,14 @@ func decodeCompactBlock(role CompactRecordType, raw json.RawMessage, ordinal, in
 		}
 	case role == CompactAssistant && kind == "tool_use":
 		tool, err := decodeCompactToolUse(fields, raw, ordinal, index)
+		if err != nil {
+			return CompactBlock{}, err
+		}
+		block.Kind = CompactToolUse
+		block.ID = tool.ID
+		block.ToolUse = tool
+	case profile == traceprocessing.Hosted && role == CompactAssistant && kind == "toolCall":
+		tool, err := decodeCompactPiToolCall(fields, raw, ordinal, index)
 		if err != nil {
 			return CompactBlock{}, err
 		}
@@ -241,6 +255,42 @@ func decodeCompactToolUse(fields map[string]json.RawMessage, raw json.RawMessage
 		}
 		result.Raw = append(json.RawMessage(nil), decoded.Result...)
 		tool.Result = &result
+	}
+	return tool, nil
+}
+
+// piToolNames mirrors the Entire CLI's own Pi compactor, which title-cases the
+// file tools so every agent's compact transcript spells them the same way.
+var piToolNames = map[string]string{"edit": "Edit", "read": "Read", "write": "Write"}
+
+// decodeCompactPiToolCall accepts Pi's native tool call item. Entire CLI
+// releases through 0.10.6 do not recognise a Pi session that opens with a
+// title record, so instead of the Pi compactor's tool_use blocks they copy the
+// native items into the compact transcript unnormalised: `arguments` in place
+// of `input`, never a result, and streaming leftovers (`intent`,
+// `partialArgs`, `streamIndex`) that say nothing about what ran.
+func decodeCompactPiToolCall(fields map[string]json.RawMessage, raw json.RawMessage, ordinal, index int) (*CompactToolUseBlock, error) {
+	var decoded struct {
+		ID        string          `json:"id"`
+		Name      string          `json:"name"`
+		Arguments json.RawMessage `json:"arguments"`
+	}
+	if err := json.Unmarshal(raw, &decoded); err != nil || decoded.Name == "" {
+		return nil, fmt.Errorf("%w: line %d block %d has invalid toolCall identity", ErrCompactBlockShape, ordinal, index)
+	}
+	name := decoded.Name
+	if normalized, ok := piToolNames[name]; ok {
+		name = normalized
+	}
+	tool := &CompactToolUseBlock{ID: decoded.ID, Name: name}
+	if _, ok := fields["arguments"]; ok {
+		if !isJSONObject(decoded.Arguments) {
+			return nil, fmt.Errorf("%w: line %d block %d toolCall arguments is not an object", ErrCompactBlockShape, ordinal, index)
+		}
+		tool.Input = append(json.RawMessage(nil), decoded.Arguments...)
+		tool.InputPresent = true
+	} else {
+		tool.Input = json.RawMessage(`{}`)
 	}
 	return tool, nil
 }

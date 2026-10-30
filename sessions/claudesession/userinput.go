@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/baum-ai/baum/sessions/traceprocessing"
+
 	"github.com/baum-ai/baum/sessions/claudetranscript"
 	"github.com/baum-ai/baum/sessions/prompttext"
 	"github.com/baum-ai/baum/sessions/session"
@@ -26,6 +28,7 @@ func (f *fileState) userLine(line claudetranscript.Line) error {
 		produced = true
 	case claudetranscript.UserText, claudetranscript.UserOther:
 		f.addInput(line, line.Message.Text())
+		f.handbackLine(line)
 		produced = true
 	}
 
@@ -42,8 +45,10 @@ func (f *fileState) userLine(line claudetranscript.Line) error {
 
 // addInput records one ask. Every user-triggered record becomes its own row.
 func (f *fileState) addInput(line claudetranscript.Line, text string) {
-	kind := classifyInput(line, text)
-	if kind == session.KindPrompt && f.mergeOrdinaryCarrier(line, text, kind) {
+	kind := classifyInputWith(line, text, f.b.profile)
+	// A queued agent message is a system input, but its later `user` row is
+	// the same input all the same.
+	if (kind == session.KindPrompt || (f.b.profile == traceprocessing.Hosted && fromAgent(line, text))) && f.mergeOrdinaryCarrier(line, text, kind) {
 		return
 	}
 
@@ -120,11 +125,13 @@ func (f *fileState) markInterrupted(line claudetranscript.Line) {
 	}
 }
 
-// classifyInput decides what kind of ask a user record is.
-func classifyInput(line claudetranscript.Line, text string) session.InputKind {
+func classifyInputWith(line claudetranscript.Line, text string, profile traceprocessing.MappingProfile) session.InputKind {
 	stripped := prompttext.Strip(text)
 
 	switch {
+	// Another agent's message is never a person's ask, whatever it quotes.
+	case profile == traceprocessing.Hosted && fromAgent(line, text):
+		return session.KindOther
 	case strings.Contains(text, "<command-name>"):
 		return session.KindSlashCommand
 	case stripped == "" && strings.Contains(text, interruptMarker):
@@ -146,13 +153,31 @@ func injected(line claudetranscript.Line, text string) bool {
 	if strings.HasPrefix(strings.TrimSpace(text), "<task-notification>") {
 		return true
 	}
+	return originKind(line.Origin) == "task-notification"
+}
+
+// fromAgent reports whether another agent sent this record: its text is an
+// agent message, or its origin names a peer.
+func fromAgent(line claudetranscript.Line, text string) bool {
+	_, _, wrapped := agentMessage(text)
+	return wrapped || peerOrigin(line.Origin)
+}
+
+// originKind is the kind a record's origin names, or "".
+func originKind(raw json.RawMessage) string {
 	var origin struct {
 		Kind string `json:"kind"`
 	}
-	if len(line.Origin) > 0 && json.Unmarshal(line.Origin, &origin) == nil {
-		return origin.Kind == "task-notification"
+	if len(raw) == 0 || json.Unmarshal(raw, &origin) != nil {
+		return ""
 	}
-	return false
+	return origin.Kind
+}
+
+// peerOrigin is whether an origin names another agent: a subagent handing
+// back or sending a message.
+func peerOrigin(raw json.RawMessage) bool {
+	return originKind(raw) == "peer"
 }
 
 // inputMetadata is the vendor's own fields under the vendor's own names.

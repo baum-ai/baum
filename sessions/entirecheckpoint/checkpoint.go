@@ -1,6 +1,5 @@
 // Package entirecheckpoint reads one Entire checkpoint tree without assigning
-// session-model meaning to its records, and the checkpoint ids commits name in
-// their Entire-Checkpoint trailers.
+// session-model meaning to its records.
 package entirecheckpoint
 
 import (
@@ -11,13 +10,23 @@ import (
 	"path"
 	"strconv"
 	"strings"
+
+	"github.com/baum-ai/baum/sessions/traceprocessing"
 )
+
+// maxSessions bounds the session entries one checkpoint may list. Each entry
+// is read and kept in memory, so the count multiplies the checkpoint's size.
+// SessionList enforces it while decoding metadata.json.
+const maxSessions = 64
 
 var ErrEscapingSessionRef = errors.New("Entire session ref escapes checkpoint root")
 
 type Checkpoint struct {
 	Metadata CheckpointMetadata `json:"metadata"`
 	Sessions []*SessionSnapshot `json:"sessions"`
+	// Tasks are the subagents kept at the checkpoint root, shared by every
+	// session in it (tasks.go).
+	Tasks []*Task `json:"tasks,omitempty"`
 }
 
 type SessionSnapshot struct {
@@ -42,11 +51,17 @@ type SessionSnapshot struct {
 // root is the checkpoint directory itself, matching tar exports and the hosted
 // resolver's checkpoint filesystem.
 func ParseCheckpoint(fsys fs.FS) (*Checkpoint, error) {
+	return ParseCheckpointWith(fsys, traceprocessing.Local)
+}
+
+// ParseCheckpointWith retains the hosted resource and duplicate-source checks,
+// task discovery and Pi compact interpretation, while local defaults stay intact.
+func ParseCheckpointWith(fsys fs.FS, profile traceprocessing.MappingProfile) (*Checkpoint, error) {
 	raw, err := fs.ReadFile(fsys, "metadata.json")
 	if err != nil {
 		return nil, fmt.Errorf("read checkpoint metadata.json: %w", err)
 	}
-	metadata, err := decodeCheckpointMetadata(raw)
+	metadata, err := decodeCheckpointMetadataWith(raw, profile)
 	if err != nil {
 		return nil, fmt.Errorf("decode checkpoint metadata.json: %w", err)
 	}
@@ -58,17 +73,61 @@ func ParseCheckpoint(fsys fs.FS) (*Checkpoint, error) {
 	}
 
 	checkpoint := &Checkpoint{Metadata: metadata}
+	seenSessionIDs := map[string]int{}
+	owners := map[string]int{}
 	for index, refs := range metadata.Sessions {
-		snapshot, err := parseSession(fsys, index, refs)
+		source := fsys
+		if profile == traceprocessing.Hosted {
+			source = claimingFS{FS: fsys, index: index, owners: owners}
+		}
+		snapshot, err := parseSession(source, index, refs, profile)
 		if err != nil {
 			return nil, fmt.Errorf("session %d: %w", index, err)
 		}
+		if id := snapshot.Metadata.SessionID; profile == traceprocessing.Hosted && id != "" {
+			if first, repeated := seenSessionIDs[id]; repeated {
+				return nil, fmt.Errorf("checkpoint %s: sessions %d and %d share session_id %q",
+					metadata.CheckpointID, first, index, id)
+			}
+			seenSessionIDs[id] = index
+		}
 		checkpoint.Sessions = append(checkpoint.Sessions, snapshot)
+	}
+	if profile == traceprocessing.Hosted {
+		if checkpoint.Tasks, err = parseTasks(fsys); err != nil {
+			return nil, err
+		}
 	}
 	return checkpoint, nil
 }
 
-func parseSession(fsys fs.FS, index int, refs SessionRefs) (*SessionSnapshot, error) {
+// claimingFS records which session entry first opened each file and fails when
+// any ref opens it again, from another entry or the same one. Refs fall back to
+// a session directory when the named file is missing, so only the files
+// actually read identify sharing.
+type claimingFS struct {
+	fs.FS
+	index  int
+	owners map[string]int
+}
+
+func (c claimingFS) Open(name string) (fs.File, error) {
+	file, err := c.FS.Open(name)
+	if err != nil {
+		return nil, err
+	}
+	if first, claimed := c.owners[name]; claimed {
+		_ = file.Close()
+		if first == c.index {
+			return nil, fmt.Errorf("session %d reads %q more than once", c.index, name)
+		}
+		return nil, fmt.Errorf("sessions %d and %d both read %q", first, c.index, name)
+	}
+	c.owners[name] = c.index
+	return file, nil
+}
+
+func parseSession(fsys fs.FS, index int, refs SessionRefs, profile traceprocessing.MappingProfile) (*SessionSnapshot, error) {
 	dir, err := sessionDir(refs, index)
 	if err != nil {
 		return nil, err
@@ -94,7 +153,7 @@ func parseSession(fsys fs.FS, index int, refs SessionRefs) (*SessionSnapshot, er
 		return nil, err
 	}
 	if snapshot.CompactPresent {
-		if snapshot.Compact, err = DecodeCompact(bytes.NewReader(snapshot.CompactRaw)); err != nil {
+		if snapshot.Compact, err = DecodeCompactWith(bytes.NewReader(snapshot.CompactRaw), profile); err != nil {
 			return nil, fmt.Errorf("decode transcript.jsonl: %w", err)
 		}
 	}

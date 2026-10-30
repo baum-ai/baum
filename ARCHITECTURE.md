@@ -1871,12 +1871,12 @@ to the pull request, read from the local session stores with `sessions` and
 document's own session metadata.
 
 What usage would cost at API prices comes from a price list at
-`https://static.usebaum.com/pricing/prices.json`. baum verifies its `.sig`
+`https://static.usebaum.com/pricing/v2/prices.json`. baum verifies its `.sig`
 with a public key embedded in the binary and falls back to a snapshot embedded
-at release when the list cannot be fetched or verified. Nothing is cached on
-disk: a fetched list replaces the embedded one for the life of the process, and
-`pricing.CurrentSource` says which is active (`embedded` or `fetched`), its
-version, when it was fetched and why the last refresh failed. Pricing is
+at release when no newer verified list is available. The daemon can persist a
+verified signed list beside its job journal and reload it on restart.
+`pricing.CurrentSource` says which is active (`embedded`, `fetched` or `cached`),
+its version, when it was fetched and why the last refresh failed. Pricing is
 best-effort and only reports, in Analytics and a run's recorded usage: no
 budget, cap, limit, confirmation, ordering or dedupe reads a price or the
 list's version.
@@ -2381,9 +2381,10 @@ pull request GitHub now reports as a draft (the queue marks its inputs
 `Interrupted` ignore it, and `Refused` lists it while it is the latest job for
 its head.
 
-`internal/pricing` ports the platform's pure pricing implementation and baseline
-into the independent OSS module; its signature, tier and normalization tests are
-retained. Keep these copied core files synchronized with the platform package.
+`pricing` owns the shared pricing implementation and compiled baseline used by
+the local product and hosted platform. Signature, tier and normalization tests
+live with that implementation; `internal/pricing` is a stateless import facade
+for local callers.
 A bounded HTTPS downloader refuses redirects, verifies the existing release
 signing key, rejects flattened lists and installs only newer full-format lists.
 An installed download is stored with its signature in the job state directory.

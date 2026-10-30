@@ -33,7 +33,13 @@ func EncodeTreePayload(tree *Tree) ([]byte, error) {
 	return append(body, '\n'), nil
 }
 
-func DecodeTreePayload(body []byte) (*Tree, error) {
+func DecodeTreePayload(body []byte) (*Tree, error) { return decodeTreePayload(body, false) }
+
+// DecodeHostedTreePayload applies the appliance's validation of untrusted upload
+// nodes before restoring raw fields. Local payload decoding retains its contract.
+func DecodeHostedTreePayload(body []byte) (*Tree, error) { return decodeTreePayload(body, true) }
+
+func decodeTreePayload(body []byte, validate bool) (*Tree, error) {
 	decoder := json.NewDecoder(bytes.NewReader(body))
 	decoder.DisallowUnknownFields()
 	var payload TreePayload
@@ -53,10 +59,44 @@ func DecodeTreePayload(body []byte) (*Tree, error) {
 	if payload.Tree == nil || payload.Tree.ComposerID() == "" {
 		return nil, fmt.Errorf("decoding Cursor tree payload: no root composer")
 	}
+	if err := validateTreeWhen(payload.Tree, validate); err != nil {
+		return nil, fmt.Errorf("decoding Cursor tree payload: %w", err)
+	}
 	if err := restoreTreeRawFields(payload.Tree, payload.RawFields); err != nil {
 		return nil, fmt.Errorf("decoding Cursor tree payload: %w", err)
 	}
 	return payload.Tree, nil
+}
+
+// validateTree rejects the nil nodes JSON null can produce, which the rest of
+// the Cursor pipeline dereferences without checks.
+func validateTree(tree *Tree) error {
+	if tree == nil {
+		return fmt.Errorf("null child tree")
+	}
+	if tree.Composer == nil || tree.Composer.Data == nil {
+		return fmt.Errorf("composer without data")
+	}
+	id := tree.Composer.Data.ComposerID
+	if id == "" {
+		return fmt.Errorf("composer without an id")
+	}
+	for _, bubble := range tree.Composer.Bubbles {
+		if bubble == nil {
+			return fmt.Errorf("composer %s has a null bubble", id)
+		}
+	}
+	for _, bubble := range tree.Composer.Unlisted {
+		if bubble == nil {
+			return fmt.Errorf("composer %s has a null unlisted bubble", id)
+		}
+	}
+	for _, child := range tree.Children {
+		if err := validateTree(child); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func treeRawFields(tree *Tree) (map[string]string, error) {
@@ -162,4 +202,11 @@ func restoreRaw(target *json.RawMessage, fields map[string]string, key string) {
 	if raw, present := fields[key]; present {
 		*target = append((*target)[:0], raw...)
 	}
+}
+
+func validateTreeWhen(tree *Tree, validate bool) error {
+	if !validate {
+		return nil
+	}
+	return validateTree(tree)
 }

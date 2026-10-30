@@ -18,6 +18,12 @@ const Vendor = "codex"
 // unsupported turns were found so the debug CLI can explain them; callers must
 // refuse persistence unless the report is balanced and UnsupportedTurns is zero.
 func Build(tree *codextranscript.Tree) (*session.Graph, *Report, error) {
+	return BuildWith(tree, traceprocessing.Local)
+}
+
+// BuildWith preserves the selected product's interpretation of agent reports
+// and executable command evidence.
+func BuildWith(tree *codextranscript.Tree, profile traceprocessing.MappingProfile) (*session.Graph, *Report, error) {
 	if tree == nil || tree.Root == nil {
 		return nil, nil, fmt.Errorf("building Codex session: no root rollout")
 	}
@@ -25,6 +31,7 @@ func Build(tree *codextranscript.Tree) (*session.Graph, *Report, error) {
 		return nil, nil, err
 	}
 	b := &builder{
+		profile:    profile,
 		tree:       tree,
 		graph:      &session.Graph{},
 		report:     &Report{},
@@ -51,6 +58,7 @@ func Build(tree *codextranscript.Tree) (*session.Graph, *Report, error) {
 }
 
 type builder struct {
+	profile    traceprocessing.MappingProfile
 	tree       *codextranscript.Tree
 	graph      *session.Graph
 	report     *Report
@@ -312,6 +320,10 @@ type threadState struct {
 	unsupportedCall map[string]bool
 	activities      []activityEvidence
 	touchByToolPath map[string]*session.FileTouch
+	// agentCalls and agentAliases find the call a child's final answer
+	// belongs to (reports.go).
+	agentCalls   map[string][]*toolEvidence
+	agentAliases map[string]string
 
 	times            traceprocessing.TimeBounds
 	workingDir       string
@@ -333,6 +345,7 @@ func newThreadState(b *builder, file *codextranscript.File, spawn *session.Spawn
 		attributeTime: map[string]time.Time{}, unsupported: map[string]bool{},
 		userMessageTurns: map[string]bool{},
 		unsupportedCall:  map[string]bool{}, touchByToolPath: map[string]*session.FileTouch{},
+		agentCalls: map[string][]*toolEvidence{}, agentAliases: map[string]string{},
 		workingDir: meta.CWD,
 	}
 	if meta.Git != nil {

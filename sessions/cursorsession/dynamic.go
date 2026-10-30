@@ -44,9 +44,9 @@ type resolvedTool struct {
 // verb. A CallDynamicTool block carrying a recognised inner tool is stored
 // under that tool with its arguments as input. Any other dynamic tool keeps the
 // wrapper name, verb and input, with the inner name in metadata.
-func resolvePortableTool(name string, input json.RawMessage) resolvedTool {
+func resolvePortableTool(name string, input json.RawMessage, profile traceprocessing.MappingProfile) resolvedTool {
 	base := map[string]any{"fallback_store": "jsonl"}
-	resolved := resolvedTool{Name: name, Input: input, Verb: portableVerb(name)}
+	resolved := resolvedTool{Name: name, Input: input, Verb: portableVerb(name, profile)}
 	if name == dynamicWrapper {
 		var call dynamicCall
 		if err := json.Unmarshal(input, &call); err == nil && call.ToolName != "" {
@@ -56,9 +56,9 @@ func resolvePortableTool(name string, input json.RawMessage) resolvedTool {
 			}
 			base["dynamic_tool"] = dynamic
 			if knownDynamicTool(call) {
-				resolved.Name = storedDynamicName(call)
+				resolved.Name = storedDynamicName(call, profile)
 				resolved.Input = dynamicArguments(call.Arguments)
-				resolved.Verb = dynamicVerb(call)
+				resolved.Verb = dynamicVerb(call, profile)
 			}
 		}
 	}
@@ -70,12 +70,12 @@ func resolvePortableTool(name string, input json.RawMessage) resolvedTool {
 // another namespace that shares a builtin's name, or the name of a subagent tool
 // the platform matches by name (Agent, Task, spawn_agent), is stored as
 // mcp__<namespace>__<tool>, so it cannot be mistaken for the builtin.
-func storedDynamicName(call dynamicCall) string {
+func storedDynamicName(call dynamicCall, profile traceprocessing.MappingProfile) string {
 	if call.Namespace == "" || call.Namespace == builtinNamespace {
 		return call.ToolName
 	}
 	if builtinDynamicTools[call.ToolName] || call.ToolName == "Agent" || call.ToolName == "spawn_agent" ||
-		traceprocessing.GenericToolVerb(call.ToolName) != session.VerbOther {
+		traceprocessing.GenericToolVerbWith(call.ToolName, profile) != session.VerbOther {
 		return "mcp__" + call.Namespace + "__" + call.ToolName
 	}
 	return call.ToolName
@@ -88,11 +88,11 @@ func knownDynamicTool(call dynamicCall) bool {
 	return builtinDynamicTools[call.ToolName] || strings.HasPrefix(call.ToolName, "browser_")
 }
 
-func dynamicVerb(call dynamicCall) session.ToolVerb {
+func dynamicVerb(call dynamicCall, profile traceprocessing.MappingProfile) session.ToolVerb {
 	if call.Namespace != "" && call.Namespace != builtinNamespace {
 		return session.VerbOther
 	}
-	return traceprocessing.GenericToolVerb(call.ToolName)
+	return traceprocessing.GenericToolVerbWith(call.ToolName, profile)
 }
 
 func dynamicArguments(raw json.RawMessage) json.RawMessage {
