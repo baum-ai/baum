@@ -629,6 +629,7 @@ test("desktop Settings has CLI and hook cards in their sections at desktop and n
               detected: true,
               installed: true,
               enabled: true,
+              version: "1.2.0",
             })),
           },
         }),
@@ -641,6 +642,7 @@ test("desktop Settings has CLI and hook cards in their sections at desktop and n
   const fits = () => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth);
   await openSettings(page, "Connections");
   await expect(hooks.getByText("Connected", { exact: true })).toHaveCount(2);
+  await expect(hooks.getByRole("button", { name: /^Update .* hooks$/ })).toHaveCount(2);
   await page.screenshot({ path: testInfo.outputPath("settings-connections.png"), fullPage: true });
   await openSettings(page, "This computer");
   await expect(cli.getByText("baum is installed at ~/.local/bin/baum.")).toBeVisible();
@@ -659,6 +661,10 @@ test("desktop Settings has CLI and hook cards in their sections at desktop and n
   await openSettings(page, "Connections");
   await expect(hooks).toBeVisible();
   expect(await fits()).toBe(true);
+  await page.screenshot({
+    path: testInfo.outputPath("settings-connections-narrow.png"),
+    fullPage: true,
+  });
 });
 
 test("picks GitHub repositories and keeps clone-less PRs usable", async ({ page }) => {
