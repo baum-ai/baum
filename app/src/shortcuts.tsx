@@ -60,7 +60,7 @@ const WALKTHROUGH_SHORTCUTS: Shortcut[] = [
   { keys: ["v"], label: "Open the full review", short: "full review" },
   { keys: ["a"], label: "Ask the review's agent a question", short: "ask" },
 ];
-/** The keys of every other list (Sessions, Jobs, Repositories), which
+/** The keys of every other list (Sessions, Jobs, Repositories, Timeline), which
  *  `listKeys` handles. */
 const LIST_SHORTCUTS: Shortcut[] = [
   { keys: ["j", "ArrowDown"], label: "Next row", short: "move" },
@@ -86,6 +86,7 @@ export type ShortcutsPlace =
   | "sessions"
   | "jobs"
   | "repositories"
+  | "timeline"
   | "settings"
   | "page"
   | "walkthrough";
@@ -550,6 +551,13 @@ const GROUPS: { place: ShortcutsPlace; title: string; rows: Shortcut[] }[] = [
       { keys: ["a"], label: "Add repositories, or finish adding", short: "add" },
       { keys: ["/"], label: "Search GitHub repositories while adding", short: "search" },
     ],
+  },
+  {
+    place: "timeline",
+    title: "Timeline",
+    rows: LIST_SHORTCUTS.map((row) =>
+      row.keys.includes("Enter") ? { ...row, label: "Open or close the feature or decision" } : row,
+    ),
   },
   { place: "settings", title: "Settings", rows: SETTINGS_SHORTCUTS },
   { place: "page", title: "A session or job transcript", rows: [back] },

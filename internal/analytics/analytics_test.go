@@ -330,6 +330,14 @@ func TestReportCountsRootSessionsOnceAndNeverPricesUnknownModels(t *testing.T) {
 	if len(report.Daily) != 7 || report.Daily[6].Date != "2026-10-27" || report.Daily[6].Agents["claude_code"].Sessions != 1 || report.Daily[6].Agents["claude_code"].ActiveSeconds != 600 {
 		t.Errorf("daily = %+v", report.Daily)
 	}
+	// The same day by model: the session counts under its one model.
+	var models int
+	for _, part := range report.Daily[6].Models {
+		models += part.Sessions
+	}
+	if models != report.Daily[6].Agents["claude_code"].Sessions+report.Daily[6].Agents["codex"].Sessions+report.Daily[6].Agents["cursor"].Sessions {
+		t.Errorf("daily models = %+v, want the agents' sessions", report.Daily[6].Models)
+	}
 	if report.Hours[10].ActiveSeconds != 1200 {
 		t.Errorf("hours = %+v", report.Hours)
 	}
@@ -492,9 +500,11 @@ func TestBaumWorkCountsJobsAndActions(t *testing.T) {
 	group.Group = "g1"
 	old := job("", "completed", "", ptr(9.0))
 	old.CreatedAt = now.AddDate(0, 0, -30)
+	lastWeek := job("", "completed", "", ptr(1.0))
+	lastWeek.CreatedAt = now.AddDate(0, 0, -10)
 	list := []jobs.Job{
 		job("", "completed", "", ptr(1.0)), job("", "failed", "budget_exceeded", nil), job("", "failed", "budget_exceeded", nil),
-		pushed, job(jobs.KindFix, "failed", "push_rejected", nil), group, old,
+		pushed, job(jobs.KindFix, "failed", "push_rejected", nil), group, old, lastWeek,
 		// A feature build is the decision log's spend, not baum's work.
 		job(jobs.KindFeatureBuild, "failed", "backend_unavailable", ptr(3.0)),
 	}
@@ -511,7 +521,7 @@ func TestBaumWorkCountsJobsAndActions(t *testing.T) {
 		t.Fatal(err)
 	}
 	b := report.Baum
-	if b.Reviews != 3 || b.GroupReviews != 1 || b.Fixes != 2 || b.Failed != 3 || b.Completed != 3 || b.FixesPushed != 1 || b.FixesFailed != 1 || b.ThreadsResolved != 2 {
+	if b.Reviews != 3 || b.GroupReviews != 1 || b.ReviewsCompleted != 2 || b.Fixes != 2 || b.Failed != 3 || b.Completed != 3 || b.FixesPushed != 1 || b.FixesFailed != 1 || b.ThreadsResolved != 2 {
 		t.Fatalf("baum = %+v", b)
 	}
 	if b.Cost.USD == nil || *b.Cost.USD != 1.75 || !b.Cost.Incomplete {
@@ -522,6 +532,11 @@ func TestBaumWorkCountsJobsAndActions(t *testing.T) {
 	}
 	if b.Merges == nil || *b.Merges != 2 || *b.CheckReruns != 1 || *b.BranchUpdates != 0 {
 		t.Errorf("actions = %v %v %v", b.Merges, b.BranchUpdates, b.CheckReruns)
+	}
+	// The trend: the last seven days against the seven before, reviews by
+	// those that completed.
+	if w := b.Weeks; w == nil || w.This.Reviews != 2 || w.Previous.Reviews != 1 || w.This.FixesPushed != 1 || *w.This.Merges != 2 || *w.Previous.Merges != 0 {
+		t.Errorf("weeks = %+v", b.Weeks)
 	}
 	// The ledger survives a restart.
 	again := &Actions{Path: actions.Path}
@@ -673,19 +688,62 @@ func TestDecisionCaptureCounts(t *testing.T) {
 		{Repository: "acme/other", Backend: "codex", State: "failed", Reason: "timeout", StartedAt: at},
 		{Repository: "acme/demo", Backend: "claude", State: "abandoned", StartedAt: at, Cost: &cost},
 	}
-	all := decisionCapture(captures, Query{})
+	all := decisionCapture(captures, time.Time{}, Query{})
 	if all.Attempts != 5 || all.Succeeded != 1 || all.Failed != 2 || all.Abandoned != 1 || all.Cost.USD == nil || *all.Cost.USD != 0.06 || !all.Cost.Incomplete ||
 		len(all.Failures) != 1 || all.Failures[0] != (ReasonCount{Reason: "timeout", Count: 2}) {
 		t.Fatalf("all %+v", all)
 	}
-	codex := decisionCapture(captures, Query{Agent: "codex"})
+	codex := decisionCapture(captures, time.Time{}, Query{Agent: "codex"})
 	if codex.Attempts != 1 || codex.Cost.USD != nil || !codex.Cost.Incomplete || len(codex.Cost.Reasons) != 1 {
 		t.Fatalf("codex %+v", codex)
 	}
-	if other := decisionCapture(captures, Query{Repository: "ACME/other"}); other.Attempts != 1 {
+	if other := decisionCapture(captures, time.Time{}, Query{Repository: "ACME/other"}); other.Attempts != 1 {
 		t.Fatalf("by repository %+v", other)
 	}
-	if none := decisionCapture(nil, Query{}); none.Attempts != 0 || none.Cost.USD != nil || none.Cost.Incomplete || none.Failures == nil {
+	if none := decisionCapture(nil, time.Time{}, Query{}); none.Attempts != 0 || none.Cost.USD != nil || none.Cost.Incomplete || none.Failures == nil {
 		t.Fatalf("none %+v", none)
+	}
+}
+
+// The flow counts each day's pull requests opened and merged, the person's
+// own apart, and names a repository the feature log has not listed.
+func TestFlowCountsOpenedAndMergedPerDay(t *testing.T) {
+	now := time.Date(2026, 10, 27, 12, 0, 0, 0, time.UTC)
+	at := func(day int, hour int) time.Time { return time.Date(2026, 10, day, hour, 0, 0, 0, time.UTC) }
+	merged := at(27, 10)
+	s := &Service{
+		Registry: fakeRegistry{picked: []repos.Repository{{Repository: "acme/demo"}, {Repository: "acme/off"}}},
+		Location: time.UTC, Now: func() time.Time { return now },
+		Login: func(context.Context) string { return "Me" },
+		Pulls: func(_ context.Context, repository string, _ time.Time) ([]decisionlog.FlowPull, bool, error) {
+			if repository != "acme/demo" {
+				return nil, false, nil
+			}
+			return []decisionlog.FlowPull{
+				{Author: "me", CreatedAt: at(26, 9), MergedAt: &merged},
+				{Author: "ada", CreatedAt: at(27, 9)},
+				{Author: "ada", Draft: true, CreatedAt: at(27, 9)},
+				// Opened before the window, merged in it.
+				{Author: "ada", CreatedAt: at(10, 9), MergedAt: &merged},
+			}, true, nil
+		},
+	}
+	report, err := s.Report(context.Background(), Query{Days: 7})
+	if err != nil {
+		t.Fatal(err)
+	}
+	f := report.Flow
+	if !f.Available || !f.Yours || len(f.Unlisted) != 1 || f.Unlisted[0] != "acme/off" || len(f.Days) != 7 {
+		t.Fatalf("flow = %+v", f)
+	}
+	monday, tuesday := f.Days[5], f.Days[6]
+	if monday.Mine.Opened != 1 || monday.Mine.OpenedMerged != 1 || monday.Team.Opened != 1 {
+		t.Errorf("monday = %+v, want my one opened, since merged", monday)
+	}
+	if tuesday.Team.Opened != 1 || tuesday.Team.Merged != 2 || tuesday.Mine.Merged != 1 || tuesday.Mine.Opened != 0 {
+		t.Errorf("tuesday = %+v, want ada's ready one opened, two merged, one mine", tuesday)
+	}
+	if len(tuesday.Mine.MergeSeconds) != 1 || tuesday.Mine.MergeSeconds[0] != 25*3600 {
+		t.Errorf("merge seconds = %v", tuesday.Mine.MergeSeconds)
 	}
 }

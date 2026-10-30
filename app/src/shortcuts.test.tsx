@@ -320,6 +320,7 @@ it("lists exactly the keys that work in the sheet", async () => {
     "Sessions",
     "Jobs",
     "Repositories",
+    "Timeline",
     "Settings",
     "A session or job transcript",
   ]);
@@ -410,6 +411,7 @@ it("lists the keys of where the sheet was opened first", async () => {
     "Sessions",
     "Jobs",
     "Repositories",
+    "Timeline",
     "Settings",
     "A session or job transcript",
   ]);

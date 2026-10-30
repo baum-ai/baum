@@ -612,6 +612,8 @@ func localApplication(paths daemon.Paths, log *slog.Logger) func(context.Context
 		var decisionsAPI func(uiserver.LinkedSessions) http.Handler
 		if decisionStore != nil {
 			insights.Captures = decisionStore.Ledger
+			insights.Pulls = decisionStore.PullFlow
+			insights.Login = func(ctx context.Context) string { return viewerLogin(ctx, registry, discover.Cached, connectionLogin) }
 			decisionsAPI = func(linked uiserver.LinkedSessions) http.Handler {
 				return (&decisionlog.API{Store: decisionStore, Registry: registry, Live: live.Sessions, Linked: linked, Log: log}).Handler()
 			}

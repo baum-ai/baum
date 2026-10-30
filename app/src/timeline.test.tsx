@@ -15,6 +15,7 @@ import {
 import { jobReasonText, type Job } from "./api";
 import { decisionSections, localDayStart } from "@baum/viewer/decision-log";
 import { pullRequestHref, TimelinePage } from "./timeline";
+import { forgetLastRows } from "./shortcuts";
 
 const Link = (props: ViewerLinkProps) => <a {...props} />;
 const me = { email: "me@example.com", name: null, login: null, avatar_url: null };
@@ -108,6 +109,7 @@ beforeEach(() => {
   // The page brings an opened row into view, which jsdom does not draw.
   Element.prototype.scrollIntoView ??= () => {};
   history.replaceState(null, "", "/s/test-ns/?page=timeline");
+  localStorage.clear();
   requests.length = 0;
   answers = {
     "api/timeline/repositories": { repositories: [{ repository: "acme/demo" }] },
@@ -177,6 +179,31 @@ async function show(initial = "page=timeline") {
   await act(async () => {});
   await act(async () => {});
 }
+
+it("moves through the features with the list keys and opens one", async () => {
+  answers["api/timeline/features"] = {
+    features: [feature, { ...feature, id: "F0", title: "Earlier work" }],
+    next_cursor: null,
+  };
+  await show();
+  const key = (k: string) =>
+    act(async () => {
+      window.dispatchEvent(
+        new KeyboardEvent("keydown", { key: k, bubbles: true, cancelable: true }),
+      );
+    });
+  const focusedFeature = () =>
+    document.activeElement?.closest<HTMLElement>("[data-feature]")?.dataset.feature;
+  await key("j");
+  expect(focusedFeature()).toBe("F1");
+  await key("j");
+  expect(focusedFeature()).toBe("F0");
+  await key("k");
+  await key("o");
+  await act(async () => {});
+  expect(current.get("feature")).toBe("F1");
+  forgetLastRows();
+});
 
 it("lists a repository's features and opens one", async () => {
   await show();
@@ -260,10 +287,7 @@ it("says how features appear before there are any", async () => {
 
 it("shows every repository at once, or those ticked, each row naming its own", async () => {
   answers["api/timeline/repositories"] = {
-    repositories: [
-      { repository: "acme/demo", has_features: true },
-      { repository: "acme/other", has_features: false },
-    ],
+    repositories: [{ repository: "acme/demo" }, { repository: "acme/other" }],
   };
   const other = {
     ...feature,
@@ -280,9 +304,6 @@ it("shows every repository at once, or those ticked, each row naming its own", a
   expect(requests.some((path) => path.includes("api/timeline/build"))).toBe(false);
   const list = node.querySelector('ol[aria-label="Features"]')!;
   expect(list.textContent).toContain("acme/other");
-  expect(
-    node.querySelector('[aria-label="Repositories without feature history"]')?.textContent,
-  ).toContain("acme/other has no feature history yet.");
   expect(node.querySelector("summary")?.textContent).toBe("All repositories");
   const box = [...node.querySelectorAll("label")]
     .find((l) => l.textContent === "acme/other")!
@@ -589,9 +610,11 @@ it("offers a quieter rebuild when the repository has features, whatever the filt
   answers["api/timeline/build"] = { building: null, has_features: true };
   answers["api/timeline/features"] = { features: [], next_cursor: null };
   await show("page=timeline&status=abandoned");
+  // In the filter bar's kebab menu, not the page bar.
   expect(
-    [...node.querySelectorAll("button")].some((b) => b.textContent === "Rebuild feature history"),
-  ).toBe(true);
+    node.querySelector('summary[aria-label="More"]')?.parentElement?.querySelector("button")
+      ?.textContent,
+  ).toBe("Rebuild feature history");
 });
 
 const button = (label: string, within: ParentNode = node) =>
@@ -708,6 +731,33 @@ it("resumes a build that stopped, and says a failed or unexplained one in its ow
   expect(node.textContent).toContain(`${lead} It failed before it finished.`);
   await render(untimed, { has_features: true, current_since: "2026-10-01T00:00:00Z" }, 8);
   expect(node.textContent).not.toContain(lead);
+});
+
+it("says nothing of a cancelled build, and lets a stopped one be closed until the next", async () => {
+  const lead = "The last feature history build stopped before it made a version.";
+  answers["api/timeline/build"] = { building: null, has_features: false, current_since: null };
+  const render = async (job: Job, revision: number) => {
+    await act(async () =>
+      root.render(<Harness initial="page=timeline" revision={revision} jobs={[job]} />),
+    );
+    await act(async () => {});
+    await act(async () => {});
+  };
+  // A running build the person cancels ends cancelled with the reason
+  // interrupted; a daemon stop leaves it interrupted, which shows.
+  await render({ ...buildJob("cancelled"), reason: "interrupted" }, 1);
+  expect(node.textContent).not.toContain(lead);
+  const failed = { ...buildJob("failed"), reason: "failed" };
+  await render(failed, 2);
+  expect(node.textContent).toContain(lead);
+  await act(async () =>
+    node.querySelector<HTMLButtonElement>('button[aria-label="Dismiss"]')!.click(),
+  );
+  expect(node.textContent).not.toContain(lead);
+  await render(failed, 3);
+  expect(node.textContent).not.toContain(lead);
+  await render({ ...failed, id: "later" }, 4);
+  expect(node.textContent).toContain(lead);
 });
 
 it("names a feature build's reasons in its own words, and others' as before", () => {

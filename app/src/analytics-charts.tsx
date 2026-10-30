@@ -1,8 +1,16 @@
 import { useId, useState, type ReactNode } from "react";
 import { seriesColor } from "@baum/viewer/series";
 
-/** A series: its identity, the fixed colour slot it wears and its label. */
-export type Series = { key: string; label: string; color: string };
+/** A series: its identity, the fixed colour slot it wears, its label and,
+ *  for a harness or a model, its logo. */
+export type Series = { key: string; label: string; color: string; icon?: string };
+
+/** A series' logo beside its label, when it has one. */
+function Icon({ series }: { series: Series }) {
+  return series.icon ? (
+    <img src={series.icon} alt="" width={12} height={12} className="analytics-key-icon" />
+  ) : null;
+}
 
 /** One column of a column chart: its axis label (or "" to leave the tick
  *  out), what its tooltip is headed with, and its value per series. */
@@ -10,7 +18,8 @@ export type Column = {
   key: string;
   tick: string;
   title: string;
-  values: Record<string, number>;
+  /** Each series' value; null where it is unknown, drawn as no bar and read as —. */
+  values: Record<string, number | null>;
 };
 
 /** The top of an axis: the smallest 1, 2 or 5 times a power of ten at or above
@@ -40,6 +49,7 @@ function Readout({ title, rows }: { title: string; rows: { series: Series; value
             style={{ background: series.color }}
           />
           <strong>{value}</strong>
+          <Icon series={series} />
           <span>{series.label}</span>
         </span>
       ))}
@@ -49,7 +59,8 @@ function Readout({ title, rows }: { title: string; rows: { series: Series; value
 
 /** The legend under a chart of two or more series: a swatch of each mark. */
 export function Legend({ series, line = false }: { series: Series[]; line?: boolean }) {
-  if (series.length < 2) return null;
+  // One series needs no key, unless it shows whose it is.
+  if (series.length < 2 && !series.some((s) => s.icon)) return null;
   return (
     <ul className="analytics-legend" aria-label="Legend">
       {series.map((s) => (
@@ -59,6 +70,7 @@ export function Legend({ series, line = false }: { series: Series[]; line?: bool
             className={line ? "analytics-key-line" : "analytics-key-box"}
             style={{ background: s.color }}
           />
+          <Icon series={s} />
           {s.label}
         </li>
       ))}
@@ -77,6 +89,7 @@ export function ColumnChart({
   format,
   unit = 1,
   height = 160,
+  grouped = false,
 }: {
   label: string;
   columns: Column[];
@@ -84,9 +97,15 @@ export function ColumnChart({
   format: (value: number) => string;
   unit?: number;
   height?: number;
+  /** Each series a bar of its own beside the others, rather than stacked. */
+  grouped?: boolean;
 }) {
   const [active, setActive] = useState<number | null>(null);
-  const totals = columns.map((c) => series.reduce((sum, s) => sum + (c.values[s.key] ?? 0), 0));
+  const totals = columns.map((c) =>
+    grouped
+      ? Math.max(0, ...series.map((s) => c.values[s.key] ?? 0))
+      : series.reduce((sum, s) => sum + (c.values[s.key] ?? 0), 0),
+  );
   const top = niceMax(Math.max(0, ...totals), unit);
   // A count's half-way tick is drawn only when it is a whole number.
   const ticks = unit > 1 || Number.isInteger(top / 2) ? [top, top / 2, 0] : [top, 0];
@@ -107,10 +126,13 @@ export function ColumnChart({
           {columns.map((column, i) => {
             const total = totals[i]!;
             const parts = series.filter((s) => (column.values[s.key] ?? 0) > 0);
+            const unknown = series.every((s) => column.values[s.key] === null);
             const description = `${column.title}: ${
               parts.length
                 ? parts.map((s) => `${format(column.values[s.key]!)} ${s.label}`).join(", ")
-                : format(0)
+                : unknown
+                  ? "—"
+                  : format(0)
             }`;
             return (
               <div
@@ -124,12 +146,24 @@ export function ColumnChart({
                 onFocus={() => setActive(i)}
                 onBlur={() => setActive(null)}
               >
-                {total > 0 ? (
+                {grouped ? (
+                  <div className="analytics-group">
+                    {series.map((s) => (
+                      <div
+                        key={s.key}
+                        style={{
+                          height: `${((column.values[s.key] ?? 0) / top) * 100}%`,
+                          background: s.color,
+                        }}
+                      />
+                    ))}
+                  </div>
+                ) : total > 0 ? (
                   <div className="analytics-stack" style={{ height: `${(total / top) * 100}%` }}>
                     {parts.map((s) => (
                       <div
                         key={s.key}
-                        style={{ flexGrow: column.values[s.key], background: s.color }}
+                        style={{ flexGrow: column.values[s.key] ?? 0, background: s.color }}
                       />
                     ))}
                   </div>
@@ -142,10 +176,13 @@ export function ColumnChart({
                   >
                     <Readout
                       title={column.title}
-                      rows={(parts.length ? parts : series.slice(0, 1)).map((s) => ({
-                        series: s,
-                        value: format(column.values[s.key] ?? 0),
-                      }))}
+                      rows={(grouped ? series : parts.length ? parts : series.slice(0, 1)).map(
+                        (s) => ({
+                          series: s,
+                          value:
+                            column.values[s.key] === null ? "—" : format(column.values[s.key] ?? 0),
+                        }),
+                      )}
                     />
                   </div>
                 ) : null}
@@ -312,5 +349,136 @@ export function Figure({
       {value}
       {children}
     </span>
+  );
+}
+
+/** One axis of a two-axis line chart: its series, how its values read, and
+ *  the top of its scale. */
+export type Axis = { series: Series; format: (value: number) => string; top: number };
+
+/** A point of the two lines: a span's tick and tooltip title, and each
+ *  line's value, null where it has none (the line breaks there). */
+export type PairPoint = { key: string; tick: string; title: string; values: (number | null)[] };
+
+/** Two lines over the same spans, each on its own axis, the first's ticks on
+ *  the left and the second's on the right. Each span is a hit target whose
+ *  tooltip gives both figures. */
+export function TwoAxisChart({
+  label,
+  axes,
+  points,
+  height = 140,
+}: {
+  label: string;
+  axes: [Axis, Axis];
+  points: PairPoint[];
+  height?: number;
+}) {
+  const [active, setActive] = useState<number | null>(null);
+  const x = (i: number) => ((i + 0.5) / points.length) * 1000;
+  const y = (value: number, axis: Axis) => 100 - Math.min(100, (value / axis.top) * 100);
+  // A line breaks over a span without a value.
+  const paths = axes.map((axis, a) => {
+    let d = "";
+    let joined = false;
+    points.forEach((p, i) => {
+      const v = p.values[a];
+      if (v == null) {
+        joined = false;
+        return;
+      }
+      d += `${joined ? "L" : "M"}${x(i)} ${y(v, axis)}`;
+      joined = true;
+    });
+    return d;
+  });
+  return (
+    <figure className="analytics-chart analytics-two-axis" aria-label={label}>
+      <div className="analytics-plot" style={{ height }}>
+        {[1, 0.5, 0].map((share) => (
+          <div
+            key={share}
+            aria-hidden="true"
+            className="analytics-grid"
+            style={{ bottom: `${share * 100}%` }}
+          >
+            <span>{axes[0].format(axes[0].top * share)}</span>
+            <span className="analytics-grid-right">{axes[1].format(axes[1].top * share)}</span>
+          </div>
+        ))}
+        <svg
+          aria-hidden="true"
+          viewBox="0 0 1000 100"
+          preserveAspectRatio="none"
+          className="analytics-lines"
+        >
+          {axes.map((axis, a) => (
+            <path
+              key={axis.series.key}
+              d={paths[a]}
+              fill="none"
+              stroke={axis.series.color}
+              strokeWidth={2}
+              strokeLinejoin="round"
+              strokeLinecap="round"
+              vectorEffect="non-scaling-stroke"
+            />
+          ))}
+        </svg>
+        {points.flatMap((p, i) =>
+          axes.map((axis, a) => {
+            const v = p.values[a];
+            return v == null ? null : (
+              <span
+                key={`${p.key}-${a}`}
+                aria-hidden="true"
+                className="analytics-dot"
+                style={{
+                  left: `${x(i) / 10}%`,
+                  bottom: `${100 - y(v, axis)}%`,
+                  background: axis.series.color,
+                }}
+              />
+            );
+          }),
+        )}
+        <div className="analytics-columns" onPointerLeave={() => setActive(null)}>
+          {points.map((p, i) => {
+            const rows = axes.map((axis, a) => ({
+              series: axis.series,
+              value: p.values[a] == null ? "—" : axis.format(p.values[a]!),
+            }));
+            return (
+              <div
+                key={p.key}
+                className="analytics-column"
+                tabIndex={0}
+                role="img"
+                aria-label={`${p.title}: ${rows.map((r) => `${r.series.label} ${r.value}`).join(", ")}`}
+                data-active={active === i || undefined}
+                onPointerEnter={() => setActive(i)}
+                onFocus={() => setActive(i)}
+                onBlur={() => setActive(null)}
+              >
+                {active === i ? (
+                  <div
+                    role="presentation"
+                    className="analytics-tip"
+                    data-side={i > points.length / 2 ? "left" : "right"}
+                  >
+                    <Readout title={p.title} rows={rows} />
+                  </div>
+                ) : null}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+      <div aria-hidden="true" className="analytics-ticks">
+        {points.map((p) => (
+          <span key={p.key}>{p.tick}</span>
+        ))}
+      </div>
+    </figure>
   );
 }

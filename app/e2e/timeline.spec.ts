@@ -54,9 +54,6 @@ for (const scheme of ["light", "dark"] as const) {
     await expect(page.locator('summary[aria-label^="Repositories:"]')).toHaveText(
       "All repositories",
     );
-    await expect(page.getByLabel("Repositories without feature history")).toContainText(
-      "acme/other has no feature history yet.",
-    );
     const features = page.getByRole("list", { name: "Features" });
     await expect(features).toContainText("Local decision log");
     await expect(features).toContainText("Keyword search over decisions");
@@ -203,10 +200,10 @@ for (const scheme of ["light", "dark"] as const) {
     // Another repository with nothing placed yet explains how features
     // appear.
     await page.getByRole("tab", { name: "Features" }).click();
-    await page
-      .getByLabel("Repositories without feature history")
-      .getByRole("button", { name: "Open acme/other" })
-      .click();
+    const other = new URL(page.url());
+    other.searchParams.delete("repo");
+    other.searchParams.set("repo", "acme/other");
+    await page.goto(other.toString());
     await expect(page).toHaveURL(/repo=acme%2Fother/);
     await expect(page.getByText("No features yet")).toBeVisible();
     await shot(page, `empty-${scheme}`);

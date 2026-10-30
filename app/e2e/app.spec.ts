@@ -916,7 +916,7 @@ test("Analytics shows what the agents did, cost and delivered", async ({ page })
   await expect(delivery).toContainText("6 h");
   await expect(delivery).toContainText("1 (50%)");
   const baum = page.getByRole("region", { name: "baum's work" });
-  await expect(baum.locator("div").filter({ hasText: /^Merges from baum/ })).toContainText("1");
+  await expect(baum.locator("div").filter({ hasText: /^Merged through baum/ })).toContainText("1");
   await expect(page.getByRole("region", { name: "Plan usage" })).toContainText(
     "5-hour: peak 100%, at its limit 1 time",
   );
@@ -1031,8 +1031,9 @@ test("captured decisions show on the PR page, in Settings and in Analytics", asy
 
   await page.getByRole("link", { name: "Analytics", exact: true }).click();
   const work = page.getByRole("region", { name: "baum's work" });
-  await expect(work.getByText("Decision capture", { exact: true })).toBeVisible({ timeout: 15000 });
-  await expect(work.getByText("Timed out")).toBeVisible();
+  await expect(work.getByText("Decision capture runs", { exact: true })).toBeVisible({
+    timeout: 15000,
+  });
   await work.scrollIntoViewIfNeeded();
   for (const scheme of ["light", "dark"] as const) {
     await page.emulateMedia({ colorScheme: scheme });

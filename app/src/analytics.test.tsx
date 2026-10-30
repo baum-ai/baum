@@ -13,6 +13,7 @@ import {
   waitText,
   windowDays,
   type Analytics,
+  modelLogo,
 } from "./analytics";
 import { niceMax } from "./analytics-charts";
 
@@ -225,7 +226,6 @@ it("draws known figures, an incomplete estimate and the limit hits", () => {
   expect(html).toContain("≥ $12.50");
   expect(html).toContain("Incomplete");
   expect(html).toContain("1 h");
-  expect(html).toContain("2 of 4 commits");
   expect(html).toContain("3 h");
   expect(html).toContain("30 min");
   expect(html).toContain("1 (33%)");
@@ -233,56 +233,108 @@ it("draws known figures, an incomplete estimate and the limit hits", () => {
   expect(html).toContain("Sessions per day by agent");
 });
 
-it("counts decision capture's calls and keeps its unknown spend unknown", () => {
-  const capture = (decisions: object) =>
+it("shows only what baum did in its work, and the decisions it captured", () => {
+  const work = (decisions?: object) =>
     renderToStaticMarkup(
       <AnalyticsReport
         data={report({ baum: { ...report().baum, decisions } as never })}
         Link={Link}
       />,
     );
-  const unknown = capture({
+  const html = work({
     attempts: 3,
-    succeeded: 1,
-    failed: 2,
-    cost: {
-      usd: null,
-      incomplete: true,
-      reasons: ["Some decision capture calls reported no usage that could be priced."],
-    },
-    failures: [{ reason: "timeout", count: 2 }],
-  });
-  expect(unknown).toContain("Decision capture");
-  expect(unknown).toContain("Capture calls");
-  expect(unknown).toContain("Timed out");
-  expect(unknown).not.toContain("$0.00");
-  expect(unknown).toContain("reported no usage that could be priced");
-  const known = capture({
-    attempts: 2,
-    succeeded: 1,
+    succeeded: 2,
     failed: 1,
-    cost: { usd: 0.04, incomplete: true, reasons: [] },
-    failures: [{ reason: "call_failed", count: 1 }],
+    cost: { usd: 0.04, incomplete: false, reasons: [] },
+    failures: [{ reason: "timeout", count: 1 }],
   });
-  expect(known).toContain("≥ $0.0400");
-  expect(known).toContain("Model call failed");
-  const cut = capture({
-    attempts: 2,
-    succeeded: 1,
-    failed: 0,
-    abandoned: 1,
-    cost: { usd: 0.01, incomplete: false, reasons: [] },
-    failures: [],
-  });
-  expect(cut).toContain("Cut short by a stop");
-  // Only captures ran: the reviews part says so instead of "ran nothing".
-  expect(cut).toContain("No reviews or fixes in this window.");
-  expect(cut).not.toContain("baum ran nothing in this window");
-  expect(known).not.toContain("Cut short by a stop");
-  // An older daemon, or none of its ledger, shows no section.
-  expect(renderToStaticMarkup(<AnalyticsReport data={report()} Link={Link} />)).not.toContain(
-    "Decision capture",
+  expect(html).toContain("Reviews generated");
+  expect(html).toContain("Merged through baum");
+  expect(html).toContain("Decision capture runs");
+  // Failures are left to Jobs.
+  expect(html).not.toContain("Failed runs");
+  expect(html).not.toContain("Timed out");
+  // An older daemon, or none of its ledger, counts no captures.
+  expect(work()).not.toContain("Decision capture runs");
+  // This week's count beside a figure, marked up when it beat the week before.
+  const week = {
+    fixes_pushed: 0,
+    threads_resolved: 0,
+    merges: null,
+    branch_updates: null,
+    check_reruns: null,
+    decisions: null,
+  };
+  const trended = renderToStaticMarkup(
+    <AnalyticsReport
+      data={report({
+        baum: {
+          ...report().baum,
+          weeks: { this: { ...week, reviews: 3 }, previous: { ...week, reviews: 1 } },
+        },
+      })}
+      Link={Link}
+    />,
   );
+  expect(trended).toMatch(/data-up="true"[^>]*>↑ 3 this week/);
+  expect(trended).toContain(">0 this week<");
+});
+
+it("splits activity by model on asking, and draws the pull request flow, yours or the team's", async () => {
+  const data = report({
+    daily: [
+      {
+        date: "2026-10-26",
+        agents: { claude_code: { sessions: 2, active_seconds: 0 } },
+        models: {
+          "claude-sonnet-4-5": { sessions: 1, active_seconds: 0 },
+          "claude-opus-4-1": { sessions: 1, active_seconds: 0 },
+        },
+      },
+    ],
+    flow: {
+      available: true,
+      yours: true,
+      unlisted: ["acme/off"],
+      days: [
+        {
+          date: "2026-10-26",
+          mine: { opened: 1, opened_merged: 1, merged: 1, merge_seconds: [7200] },
+          team: { opened: 3, opened_merged: 1, merged: 2, merge_seconds: [7200, 3600] },
+        },
+      ],
+    },
+  });
+  await act(async () => root.render(<AnalyticsReport data={data} Link={Link} />));
+  expect(
+    node.querySelector('[aria-label="Pull requests created and shipped by day"]'),
+  ).not.toBeNull();
+  // Merge rate and time to merge share one chart, a figure each on hover.
+  const merges = node.querySelector(
+    '[aria-label="Merge rate and median time to merge by day"] [role="img"]',
+  );
+  expect(merges?.getAttribute("aria-label")).toBe(
+    "Mon, Oct 26: Merge rate 100%, Median time to merge 2 h",
+  );
+  expect(node.textContent).toContain("Not counted: acme/off");
+  const created = () =>
+    node
+      .querySelector('[aria-label="Pull requests created and shipped by day"] [role="img"]')
+      ?.getAttribute("aria-label");
+  expect(created()).toContain("1 Created");
+  const team = [...node.querySelectorAll("button")].find((b) => b.textContent === "Team")!;
+  await act(async () => team.click());
+  expect(created()).toContain("3 Created");
+  expect(node.querySelector('[aria-label="Sessions per day by agent"]')).not.toBeNull();
+  const model = [...node.querySelectorAll("button")].find((b) => b.textContent === "Model")!;
+  await act(async () => model.click());
+  expect(node.querySelector('[aria-label="Sessions per day by model"]')).not.toBeNull();
+  expect(node.textContent).toContain("claude-opus-4-1");
+  // Each model wears its maker's logo in the legend.
+  expect(node.querySelectorAll(".analytics-legend img")).toHaveLength(2);
+  expect(modelLogo("gpt-5-codex")).toBe(modelLogo("o3"));
+  expect(modelLogo("gpt-5-codex")).not.toBe(modelLogo("claude-sonnet-4-5"));
+  expect(modelLogo("Unknown model")).toBeUndefined();
 });
 
 it("reads only a report", () => {
