@@ -233,3 +233,73 @@ func DocumentFor(raw []byte, edit func(map[string]any)) ([]byte, error) {
 	}
 	return json.Marshal(document)
 }
+
+// TwoSections splits the stub document into a section of the first hunk,
+// sec_changes, and one of the others, sec_rest, so one can fail while the
+// other is written. Pass it as Document's edit.
+func TwoSections(d map[string]any) {
+	section := d["sections"].([]any)[0].(map[string]any)
+	hunks := section["hunks"].([]string)
+	first, second := map[string]any{}, map[string]any{}
+	for key, value := range section {
+		first[key], second[key] = value, value
+	}
+	first["hunks"] = hunks[:1]
+	second["id"], second["title"], second["hunks"] = "sec_rest", "The rest", hunks[1:]
+	anchor := []any{map[string]any{"type": "hunk", "id": hunks[1]}}
+	second["summary"] = map[string]any{"text": "The rest of the change.", "anchors": anchor}
+	second["attention"] = nil
+	second["risks"], second["evidence"] = []any{}, []any{}
+	second["assessment"] = map[string]any{"level": 2, "factors": []any{}, "reasons": []any{map[string]any{"text": "Small.", "anchors": anchor}}}
+	d["sections"] = []any{first, second}
+}
+
+// Answer answers a request of a stage itself, or reports false to leave it
+// to StagedReplies.
+type Answer func(stage string, request agent.Request) (agent.Result, error, bool)
+
+// StagedReplies is a RunFunc that answers every stage, and a review in one
+// pass, from the two-section document (TwoSections), with the stage's
+// session when one is asked to persist, unless answer answers first.
+func StagedReplies(answer Answer) func(context.Context, agent.Request, int) (agent.Result, error) {
+	return func(_ context.Context, request agent.Request, _ int) (agent.Result, error) {
+		if answer != nil {
+			if result, err, ok := answer(Stage(request), request); ok {
+				return result, err
+			}
+		}
+		document, err := Document(request.Directory, TwoSections)
+		result := agent.Result{Document: ForStage(request, document), Model: "stub-model", Calls: 1, Tokens: 100}
+		if request.PersistSession {
+			result.SessionID = StageSessionID(request)
+		}
+		return result, err
+	}
+}
+
+// WithoutSection is an Answer whose section details never include the
+// section id, which therefore fails after its repairs.
+func WithoutSection(id string) Answer {
+	return func(stage string, request agent.Request) (agent.Result, error, bool) {
+		if stage != agent.StageDetails {
+			return agent.Result{}, nil, false
+		}
+		document, err := Document(request.Directory, TwoSections)
+		var all struct {
+			Sections []json.RawMessage `json:"sections"`
+		}
+		_ = json.Unmarshal(ForStage(request, document), &all)
+		kept := []json.RawMessage{}
+		for _, section := range all.Sections {
+			if review.SectionID(section) != id {
+				kept = append(kept, section)
+			}
+		}
+		if len(kept) == 0 {
+			// The schema needs one section: a stray one is not the section.
+			kept = append(kept, json.RawMessage(`{"id":"sec_stray"}`))
+		}
+		encoded, _ := json.Marshal(map[string]any{"sections": kept})
+		return agent.Result{Document: encoded, Model: "stub-model", Calls: 1, Tokens: 100}, err, true
+	}
+}

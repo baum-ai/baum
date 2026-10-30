@@ -10,6 +10,7 @@ import (
 	"io"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/baum-ai/baum/agent"
@@ -26,6 +27,7 @@ import (
 	"github.com/baum-ai/baum/internal/reviewgroups"
 	"github.com/baum-ai/baum/internal/reviewruns"
 	"github.com/baum-ai/baum/internal/store"
+	"github.com/baum-ai/baum/review"
 )
 
 type Local struct {
@@ -88,6 +90,8 @@ func (l *Local) Prepare(ctx context.Context, item Item) (Prepared, string, error
 	case "":
 	case KindFix:
 		return l.prepareFix(ctx, item)
+	case KindDetails:
+		return l.prepareDetails(ctx, item)
 	default:
 		return Prepared{}, "", errors.New("unknown job kind")
 	}
@@ -144,6 +148,72 @@ func (l *Local) Prepare(ctx context.Context, item Item) (Prepared, string, error
 	return p, list.Version(), nil
 }
 
+// The BlockedReasons of a retry of a version's details (KindDetails).
+const (
+	// ReasonHeadChanged: the pull request's head is no longer the one the
+	// version reviewed; regenerate it instead.
+	ReasonHeadChanged = "head_changed"
+	// ReasonVersionChanged: the version is no longer the latest.
+	ReasonVersionChanged = "version_changed"
+	// ReasonNothingToRetry: no section of the version lacks its details.
+	ReasonNothingToRetry = "nothing_to_retry"
+)
+
+// prepareDetails prepares a retry of the failed section details of the
+// latest version, item.Version: the pull request's review preparation, with
+// the backend and model that wrote the version, blocked when the pull
+// request's head moved since, the version is no longer the latest, or none
+// of its sections failed.
+func (l *Local) prepareDetails(ctx context.Context, item Item) (Prepared, string, error) {
+	if item.Group != "" || item.PR <= 0 || item.Version <= 0 {
+		return Prepared{}, "", errors.New("invalid details retry")
+	}
+	p, version, e := l.Prepare(ctx, Item{Clone: item.Clone, PR: item.PR})
+	if e != nil {
+		return Prepared{}, "", e
+	}
+	p.Item = item
+	c, e := l.clone(ctx, item.Clone)
+	if e != nil {
+		return Prepared{}, "", e
+	}
+	versions, e := store.Open(c.CommonDir, "", false)
+	if e != nil {
+		return Prepared{}, "", e
+	}
+	latest, e := versions.Latest(ctx, store.Key{Repository: p.Repository, Number: item.PR})
+	if e != nil && !errors.Is(e, store.ErrNotFound) {
+		return Prepared{}, "", e
+	}
+	failed, _ := generate.Gaps(latest.Document)
+	switch {
+	case e != nil || latest.Metadata.Version != item.Version:
+		p.BlockedReason = ReasonVersionChanged
+	case latest.Metadata.Head != p.HeadSHA:
+		p.BlockedReason = ReasonHeadChanged
+	case len(failed) == 0:
+		p.BlockedReason = ReasonNothingToRetry
+	}
+	if p.BlockedReason != "" {
+		return p, version, nil
+	}
+	// The details are written by what wrote the rest of the version.
+	cfg, e := l.resolve(ctx, c)
+	if e != nil {
+		return Prepared{}, "", e
+	}
+	backends := l.Backends
+	if backends.Claude == nil {
+		backends = generate.DefaultBackendsFor(cfg)
+	}
+	selected, e := generate.Select(ctx, config.Backend(latest.Metadata.Backend), latest.Metadata.Model, backends, io.Discard)
+	if e != nil {
+		return Prepared{}, "", e
+	}
+	p.Backend, p.Model = selected.Backend.Name(), selected.Model
+	return p, version, nil
+}
+
 // pull is what preparation reads of a pull request from GitHub.
 type pull struct {
 	Head  string
@@ -194,6 +264,11 @@ func (l *Local) confirmed(ctx context.Context, p Prepared) error {
 	current, _, e := l.Prepare(ctx, p.Item)
 	if e != nil {
 		return e
+	}
+	// A retry whose pull request moved, or whose version is no longer the
+	// latest, stands down.
+	if p.Kind == KindDetails && current.BlockedReason != "" {
+		return &BlockedError{current.BlockedReason}
 	}
 	if current.ConfigDigest != p.ConfigDigest || current.HeadSHA != p.HeadSHA || current.Members != p.Members || current.Backend != p.Backend || current.Model != p.Model || current.RequiresIsolationConfirmation != p.RequiresIsolationConfirmation {
 		if p.Kind == KindFix && current.HeadSHA != p.HeadSHA {
@@ -317,20 +392,71 @@ func (l *Local) Execute(ctx context.Context, p Prepared, progress func(Progress)
 		key.Number = group.Members[0].Number
 	}
 	progress(Progress{Phase: "assembling"})
-	result, e := l.publish(ctx, published, versions, key, p.Backend, generate.Options{Group: group, PriceList: list, Assembler: guarded, Request: assemble.Request{Repository: repository, Number: key.Number, Limits: assemble.LimitsFrom(caps)}, Backend: backend, BackendVersion: selected.Version, Model: p.Model, Budgets: agent.Budgets{WallClock: time.Duration(cfg.Budgets.RunTimeout), MaxCalls: cfg.Budgets.MaxCalls, MaxTokens: cfg.Budgets.MaxTokens, MaxProviderAttempts: 3, MaxRepairAttempts: 2}, OnValidation: func(pass int, valid bool) {
-		backend.repairs = pass - 1
-		if !valid {
-			backend.repairs = pass
-		}
-		backend.report("validating")
-	}, PassTimeout: time.Duration(cfg.Budgets.PassTimeout)}, func(r generate.Result) *float64 {
-		return list.BackendOutcomeCost(p.Backend, r.Outcome.Model, r.Outcome)
-	})
-	backend.repairs = result.Outcome.ValidationRepairs
-	backend.accounting = result.Outcome.Accounting.Clone()
-	backend.redacted = true
-	backend.report("publishing")
+	// A single pull request is written in stages, with a draft while they
+	// run; a group's combined review in one pass.
+	options := generate.Options{Group: group, Staged: group == nil, PriceList: list, Assembler: guarded, Request: assemble.Request{Repository: repository, Number: key.Number, Limits: assemble.LimitsFrom(caps)}, Backend: backend, BackendVersion: selected.Version, Model: p.Model, Budgets: agent.Budgets{WallClock: time.Duration(cfg.Budgets.RunTimeout), MaxCalls: cfg.Budgets.MaxCalls, MaxTokens: cfg.Budgets.MaxTokens, MaxProviderAttempts: 3, MaxRepairAttempts: 2},
+		OnRepairs: backend.repaired, PassTimeout: time.Duration(cfg.Budgets.PassTimeout)}
+	if group == nil {
+		options.OnDraft = backend.draft
+	}
+	var result generate.Result
+	if p.Kind == KindDetails {
+		result, e = l.completeDetails(ctx, versions, manager, key, p, options)
+	} else {
+		result, e = l.publish(ctx, published, versions, key, p.Backend, options, func(r generate.Result) *float64 {
+			return list.BackendOutcomeCost(p.Backend, r.Outcome.Model, r.Outcome)
+		})
+	}
+	backend.finish(result, e == nil && group == nil)
 	return list.BackendOutcomeCost(p.Backend, result.Outcome.Model, result.Outcome), e
+}
+
+// completeDetails writes again the failed section details of the latest
+// version, p.Version, and updates it in place (store.Store.CompleteCurrent).
+// A refresh of the version in the meantime is retried once against its new
+// bytes; a newer version, or a second conflict, stands it down with
+// ErrSuperseded.
+func (l *Local) completeDetails(ctx context.Context, versions *store.Store, manager *githubauth.Manager, key store.Key, p Prepared, o generate.Options) (generate.Result, error) {
+	latest, e := versions.Latest(ctx, key)
+	if e != nil {
+		return generate.Result{}, e
+	}
+	if latest.Metadata.Version != p.Version {
+		return generate.Result{}, ErrSuperseded
+	}
+	// The version was reconciled with the one before it, and so is its
+	// completion.
+	if p.Version > 1 {
+		earlier, e := versions.Get(ctx, key, p.Version-1)
+		if e != nil {
+			return generate.Result{}, e
+		}
+		if o.Request.Previous, e = review.PreviousVersionOf(earlier.Document, p.Version-1); e != nil {
+			return generate.Result{}, e
+		}
+	}
+	o.Continue = &latest
+	result, e := generate.Run(ctx, o)
+	if e != nil {
+		return result, e
+	}
+	write := func(previous store.Version) error {
+		if manager == nil {
+			return versions.CompleteCurrent(ctx, key, previous, result.Document)
+		}
+		return manager.WithIdentity(ctx, func() error { return versions.CompleteCurrent(ctx, key, previous, result.Document) })
+	}
+	e = write(latest)
+	if errors.Is(e, store.ErrConflict) {
+		current, readErr := versions.Latest(ctx, key)
+		if readErr != nil || current.Metadata.Version != p.Version {
+			return result, ErrSuperseded
+		}
+		if e = write(current); errors.Is(e, store.ErrConflict) {
+			return result, ErrSuperseded
+		}
+	}
+	return result, e
 }
 
 // publish generates and stores a review. A single pull request reviewed by a
@@ -346,18 +472,32 @@ func (l *Local) publish(ctx context.Context, published generate.Versions, versio
 	return result, e
 }
 
+// trackedBackend reports a job's calls, tokens, repairs, usage and drafts as
+// they happen. The stages of a staged review call it from their own
+// goroutines, so its counts are locked.
 type trackedBackend struct {
-	prices   *pricing.List
-	redacted bool
+	prices *pricing.List
 	agent.Backend
-	progress               func(Progress)
+	progress func(Progress)
+
+	mu                     sync.Mutex
+	redacted               bool
 	calls, tokens, repairs int
 	accounting             *agent.Accounting
+	phase                  string
 }
 
+// ConcurrentCalls forwards the backend's agent.ConcurrentCaller, so a staged
+// review runs its details and context at once where the backend allows it.
+func (b *trackedBackend) ConcurrentCalls() bool { return generate.ConcurrentCalls(b.Backend) }
+
 func (b *trackedBackend) Run(ctx context.Context, r agent.Request) (agent.Result, error) {
-	b.report("generating")
+	b.mu.Lock()
+	b.report("generating", nil)
+	b.mu.Unlock()
 	result, e := b.Backend.Run(ctx, r)
+	b.mu.Lock()
+	defer b.mu.Unlock()
 	b.calls += result.Calls
 	b.tokens += result.Tokens
 	next := &agent.Accounting{}
@@ -367,11 +507,62 @@ func (b *trackedBackend) Run(ctx context.Context, r agent.Request) (agent.Result
 	}
 	next.Add(result, e != nil)
 	b.accounting = next
-	b.report("validating")
+	b.report("validating", nil)
 	return result, e
 }
 
-func (b *trackedBackend) report(phase string) {
+// repaired is generate.Options.OnRepairs.
+func (b *trackedBackend) repaired(repairs int) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.repairs = repairs
+	b.report("validating", nil)
+}
+
+// draft is generate.Options.OnDraft: the draft goes with the counts so far.
+func (b *trackedBackend) draft(document []byte) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.report(b.phase, document)
+}
+
+// finish reports the run's redacted outcome, and what a staged review was
+// published without.
+func (b *trackedBackend) finish(result generate.Result, staged bool) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.repairs = result.Outcome.ValidationRepairs
+	b.accounting = result.Outcome.Accounting.Clone()
+	b.redacted = true
+	b.phase = "publishing"
+	p := Progress{Phase: b.phase, Calls: b.calls, Tokens: b.tokens, Repairs: b.repairs, Accounting: b.accounting.Clone(), CostReason: b.reason()}
+	if staged {
+		p.Gaps, p.FailedSections, p.ContextFailed = true, result.FailedSections, result.ContextFailed
+	}
+	b.progress(p)
+}
+
+// report sends the counts so far, and a draft when one is given. The
+// caller holds mu.
+func (b *trackedBackend) report(phase string, draft []byte) {
+	if phase == "" {
+		phase = "generating"
+	}
+	b.phase = phase
+	safe := b.accounting.Clone()
+	reason := b.reason()
+	if !b.redacted {
+		safe.ClearStrings()
+	}
+	b.progress(Progress{Phase: phase, Calls: b.calls, Tokens: b.tokens, Repairs: b.repairs, Accounting: safe, CostReason: reason, Draft: draft})
+}
+
+// reason is why the usage so far has no price, if it has none. The caller
+// holds mu.
+func (b *trackedBackend) reason() string {
+	if !b.redacted {
+		return "metadata_pending_redaction"
+	}
 	reason := "usage_not_reported"
 	if b.accounting != nil {
 		list := b.prices
@@ -380,12 +571,7 @@ func (b *trackedBackend) report(phase string) {
 		}
 		_, reason = list.BackendAccountingCost(b.Name(), b.accounting)
 	}
-	safe := b.accounting.Clone()
-	if !b.redacted {
-		safe.ClearStrings()
-		reason = "metadata_pending_redaction"
-	}
-	b.progress(Progress{Phase: phase, Calls: b.calls, Tokens: b.tokens, Repairs: b.repairs, Accounting: safe, CostReason: reason})
+	return reason
 }
 
 type headAssembler struct {

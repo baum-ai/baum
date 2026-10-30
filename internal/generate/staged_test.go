@@ -18,47 +18,6 @@ import (
 	"github.com/baum-ai/baum/sessions"
 )
 
-// twoSections splits the stub document into a section of the first hunk
-// and one of the others, so one can fail while the other is written.
-func twoSections(d map[string]any) {
-	section := d["sections"].([]any)[0].(map[string]any)
-	hunks := section["hunks"].([]string)
-	second := map[string]any{}
-	for key, value := range section {
-		second[key] = value
-	}
-	first := map[string]any{}
-	for key, value := range section {
-		first[key] = value
-	}
-	first["hunks"] = hunks[:1]
-	second["id"], second["title"], second["hunks"] = "sec_rest", "The rest", hunks[1:]
-	anchor := []any{map[string]any{"type": "hunk", "id": hunks[1]}}
-	second["summary"] = map[string]any{"text": "The rest of the change.", "anchors": anchor}
-	second["attention"] = nil
-	second["risks"], second["evidence"] = []any{}, []any{}
-	second["assessment"] = map[string]any{"level": 2, "factors": []any{}, "reasons": []any{map[string]any{"text": "Small.", "anchors": anchor}}}
-	d["sections"] = []any{first, second}
-}
-
-// stagedReplies answers every stage from the two-section document, except
-// what answer returns first.
-func stagedReplies(answer func(stage string, request agent.Request) (agent.Result, error, bool)) func(context.Context, agent.Request, int) (agent.Result, error) {
-	return func(_ context.Context, request agent.Request, _ int) (agent.Result, error) {
-		if answer != nil {
-			if result, err, ok := answer(generatetest.Stage(request), request); ok {
-				return result, err
-			}
-		}
-		document, err := generatetest.Document(request.Directory, twoSections)
-		result := agent.Result{Document: generatetest.ForStage(request, document), Model: "stub-model", Calls: 1, Tokens: 100}
-		if request.PersistSession {
-			result.SessionID = generatetest.StageSessionID(request)
-		}
-		return result, err
-	}
-}
-
 func stagedOptions(t *testing.T, f *fixture) generate.Options {
 	o := f.options(t)
 	o.Staged = true
@@ -87,7 +46,7 @@ func sectionStates(t *testing.T, document []byte) map[string]any {
 // published with the staged prompt's version and digest.
 func TestStagedRunPublishesWithDrafts(t *testing.T) {
 	f := newFixture(t)
-	f.backend.RunFunc = stagedReplies(nil)
+	f.backend.RunFunc = generatetest.StagedReplies(nil)
 	o := stagedOptions(t, f)
 	var mu sync.Mutex
 	var drafts [][]byte
@@ -137,28 +96,7 @@ func TestStagedRunPublishesWithDrafts(t *testing.T) {
 func TestStagedRunPublishesWithGaps(t *testing.T) {
 	t.Run("failed section", func(t *testing.T) {
 		f := newFixture(t)
-		f.backend.RunFunc = stagedReplies(func(stage string, request agent.Request) (agent.Result, error, bool) {
-			if stage != agent.StageDetails {
-				return agent.Result{}, nil, false
-			}
-			document, err := generatetest.Document(request.Directory, twoSections)
-			var all struct {
-				Sections []json.RawMessage `json:"sections"`
-			}
-			_ = json.Unmarshal(generatetest.ForStage(request, document), &all)
-			// Only sec_changes is ever written.
-			var kept []json.RawMessage
-			for _, section := range all.Sections {
-				if strings.Contains(string(section), `"sec_changes"`) {
-					kept = append(kept, section)
-				}
-			}
-			if kept == nil {
-				kept = []json.RawMessage{json.RawMessage(`{"id":"sec_nothing"}`)}
-			}
-			encoded, _ := json.Marshal(map[string]any{"sections": kept})
-			return agent.Result{Document: encoded, Model: "stub-model", Calls: 1, Tokens: 100}, err, true
-		})
+		f.backend.RunFunc = generatetest.StagedReplies(generatetest.WithoutSection("sec_rest"))
 		result, err := generate.Run(context.Background(), stagedOptions(t, f))
 		if err != nil {
 			t.Fatalf("%v\n%s", err, f.progress.String())
@@ -172,7 +110,7 @@ func TestStagedRunPublishesWithGaps(t *testing.T) {
 	})
 	t.Run("failed context", func(t *testing.T) {
 		f := newFixture(t)
-		f.backend.RunFunc = stagedReplies(func(stage string, _ agent.Request) (agent.Result, error, bool) {
+		f.backend.RunFunc = generatetest.StagedReplies(func(stage string, _ agent.Request) (agent.Result, error, bool) {
 			return agent.Result{Calls: 1}, errors.New("unavailable"), stage == agent.StageContext
 		})
 		result, err := generate.Run(context.Background(), stagedOptions(t, f))
@@ -185,7 +123,7 @@ func TestStagedRunPublishesWithGaps(t *testing.T) {
 	})
 	t.Run("failed outline", func(t *testing.T) {
 		f := newFixture(t)
-		f.backend.RunFunc = stagedReplies(func(stage string, _ agent.Request) (agent.Result, error, bool) {
+		f.backend.RunFunc = generatetest.StagedReplies(func(stage string, _ agent.Request) (agent.Result, error, bool) {
 			return agent.Result{Document: []byte(`{"schema":"baum.review/1","sections":[]}`), Model: "stub-model", Calls: 1}, nil, stage == agent.StageOutline
 		})
 		_, err := generate.Run(context.Background(), stagedOptions(t, f))
@@ -211,8 +149,8 @@ func TestStagedRunKeepsTheDetailsSession(t *testing.T) {
 	o.Staged, o.Budgets.MaxCalls = true, 16
 	files := map[string]string{}
 	var mu sync.Mutex
-	f.backend.RunFunc = stagedReplies(func(stage string, request agent.Request) (agent.Result, error, bool) {
-		document, err := generatetest.Document(request.Directory, twoSections)
+	f.backend.RunFunc = generatetest.StagedReplies(func(stage string, request agent.Request) (agent.Result, error, bool) {
+		document, err := generatetest.Document(request.Directory, generatetest.TwoSections)
 		id := generatetest.StageSessionID(request)
 		mu.Lock()
 		files[stage] = write(request.Directory, id)
@@ -238,25 +176,12 @@ func TestContinueWritesOnlyTheFailedDetails(t *testing.T) {
 	ctx := context.Background()
 	f := newFixture(t)
 	failing := true
-	f.backend.RunFunc = stagedReplies(func(stage string, request agent.Request) (agent.Result, error, bool) {
-		if stage == agent.StageDetails && failing && slices.Contains(generatetest.AskedSections(request), "sec_rest") {
-			// Leaves sec_rest out every time.
-			document, err := generatetest.Document(request.Directory, twoSections)
-			part := generatetest.ForStage(request, document)
-			var all struct {
-				Sections []json.RawMessage `json:"sections"`
-			}
-			_ = json.Unmarshal(part, &all)
-			kept := []json.RawMessage{json.RawMessage(`{"id":"sec_nothing"}`)}
-			for _, section := range all.Sections {
-				if strings.Contains(string(section), `"sec_changes"`) {
-					kept = []json.RawMessage{section}
-				}
-			}
-			encoded, _ := json.Marshal(map[string]any{"sections": kept})
-			return agent.Result{Document: encoded, Model: "stub-model", Calls: 1, Tokens: 100}, err, true
+	without := generatetest.WithoutSection("sec_rest")
+	f.backend.RunFunc = generatetest.StagedReplies(func(stage string, request agent.Request) (agent.Result, error, bool) {
+		if !failing {
+			return agent.Result{}, nil, false
 		}
-		return agent.Result{}, nil, false
+		return without(stage, request)
 	})
 	s, err := store.Open("", t.TempDir(), true)
 	if err != nil {
