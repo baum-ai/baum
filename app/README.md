@@ -867,6 +867,12 @@ tick every second. The daemon keeps ended sessions for 24 hours, across restarts
   newest first: the agent, title, how long it ran and the files it touched, when it
   ended, and Open transcript.
 
+The Codex model picker offers `gpt-6-luna` (the default), `gpt-6.1-sol`,
+`gpt-6.1-terra` and `gpt-6-astra`, following the
+[OpenAI model recommendations](https://developers.openai.com/codex/models).
+Terra requires Codex CLI 0.159.0 or later. Other model IDs can still be entered
+as custom models.
+
 The Settings page has "Answer Codex approvals from the app" (`codex_approvals`, saved
 through `PUT api/agent-requests/settings`, hidden when the daemon lacks the route):
 while on, Codex hides its own approval prompt for up to 25 seconds while it waits for an
