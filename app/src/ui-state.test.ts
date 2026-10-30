@@ -103,6 +103,10 @@ it("retries a committed append with its mutation id after response loss and anot
     .map(([, init]) => JSON.parse(String(init?.body)).mutation_id);
   expect(ids[0]).toBe(ids[1]);
   expect(ids[2]).not.toBe(ids[1]);
+  const first = ids[0].split(":");
+  const next = ids[2].split(":");
+  expect(first[0]).toBe(next[0]);
+  expect(Number(next[1])).toBe(Number(first[1]) + 1);
 });
 
 it("holds unsaved drafts after failed writes and resumes only when explicitly retried", async () => {

@@ -12,6 +12,8 @@ type Batch<T> = { id: string; changes: Change<T>[] };
  * when a committed write's response was lost. */
 export class UIState<T> {
   private base: T;
+  private client = crypto.randomUUID();
+  private sequence = 0;
   private revision = 0;
   private pending: Change<T>[] = [];
   private batch: Batch<T> | null = null;
@@ -99,7 +101,7 @@ export class UIState<T> {
     try {
       let conflicts = 0;
       while (this.pending.length) {
-        this.batch ??= { id: crypto.randomUUID(), changes: [...this.pending] };
+        this.batch ??= { id: `${this.client}:${++this.sequence}`, changes: [...this.pending] };
         const batch = this.batch;
         const value = batch.changes.reduce((current, change) => change(current), this.base);
         const response = await fetch(appURL(this.path), {

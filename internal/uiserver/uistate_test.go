@@ -34,7 +34,7 @@ func TestUIStateSurvivesNewOriginBehindSecurityBoundary(t *testing.T) {
 		return server
 	}
 	s := start()
-	body := `{"revision":0,"mutation_id":"mutation-00000001","value":{"seen":["one"],"notes":{"one":"draft"},"note":"overall"}}`
+	body := `{"revision":0,"mutation_id":"mutation-00000001:1","value":{"seen":["one"],"notes":{"one":"draft"},"note":"overall"}}`
 	route := "api/ui-state/walkthrough?key=acme%2Fdemo%237%40v1"
 	if w := request(t, s, "PUT", "/"+route, "", s.origin, "application/json", "Bearer "+s.launch, body); w.Code != 200 {
 		t.Fatalf("write %d %s", w.Code, w.Body.String())

@@ -1261,8 +1261,8 @@ The backend contract is in [`internal/uistate`](../internal/uistate/README.md).
 
 Each record has its own revision. The window shares a hydrated record across
 the walkthrough and Ask panel, queues changes while a read or save is in
-flight, and rebases semantic changes on a conflict. A stable mutation ID makes
-a retry safe even when a save committed but its response was lost. An Ask
+flight, and rebases semantic changes on a conflict. A stable client/sequence
+mutation ID makes a retry safe even when a save committed but its response was lost. An Ask
 answer appends to the current draft; Undo removes only its suffix while no
 later text follows it. Neither operation sends the draft to GitHub.
 

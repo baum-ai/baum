@@ -2084,8 +2084,8 @@ backwards.
 `GET`/`PUT /api/ui-state/walkthrough?key=…` run inside the existing local
 Host/authentication/Origin/JSON boundary. Each value is a bounded typed record.
 Writes compare that record's revision inside an immediate transaction and
-return the current value on conflict. Mutation IDs acknowledge retried writes
-without replaying an already committed append; the retry ledger is not served.
+return the current value on conflict. Client sequence high-water marks
+acknowledge retried writes without replaying an already committed append; the retry ledger is not served.
 The frontend shares a hydrated record, queues semantic changes and rebases
 conflicts without replacing unrelated fields. It never saves initial defaults
 before a successful read. Failed reads/writes keep unsaved text and offer Retry.

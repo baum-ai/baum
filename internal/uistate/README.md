@@ -34,16 +34,22 @@ value}` and return the saved record. A stale revision is 409
 so editing another review cannot stale this one. All walkthrough retention
 and revision changes commit atomically through `appdb.Update`.
 
-The last 128 mutation IDs of each retained record acknowledge write retries,
-including a response lost after commit and another window's subsequent edit.
-Acknowledgement happens before revision comparison and returns the latest
-record, without replacing it. IDs are private bookkeeping and are not in HTTP
-responses. Clients keep the same ID while retrying an unacknowledged batch.
+Each window's record client has a random identifier and increasing batch
+sequence, encoded as `mutation_id: "<client>:<sequence>"`. The store retains the
+highest committed sequence for every client while the record is retained,
+without evicting acknowledgements after keystrokes from another window.
+Retries at or below that sequence acknowledge the latest record before
+revision comparison, without replacing it. Client high-water marks are private
+bookkeeping and are not in HTTP responses. The window keeps the same client
+and sequence while retrying an unacknowledged batch.
 
 Requests are limited to 512 KiB; values to 384 KiB, with bounded collection,
 key and note sizes. Invalid keys/types/values are 400. An unreadable stored
 record or database is 500 with a fixed message; it is never overwritten with
-defaults. Callback errors and stale writes leave prior bytes untouched.
+defaults. Required fields and string/map values reject null and missing
+values. Every retained walkthrough record is validated before reading, writing or pruning;
+a corrupt sibling fails the operation and leaves original bytes untouched.
+Callback errors and stale writes leave prior bytes untouched.
 
 ## Client behavior and verification
 

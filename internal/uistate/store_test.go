@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -23,6 +24,9 @@ func store(t *testing.T) *Store {
 }
 func save(t *testing.T, s *Store, kind, key string, revision int, id, value string) Record {
 	t.Helper()
+	if !strings.Contains(id, ":") {
+		id += ":1"
+	}
 	record, err := s.Replace(kind, key, revision, id, json.RawMessage(value))
 	if err != nil {
 		t.Fatal(err)
@@ -44,7 +48,7 @@ func TestPersistenceAndRevisionAcrossInstances(t *testing.T) {
 			t.Fatalf("reopen: %+v %v", got, err)
 		}
 	}
-	_, err := reopened.Replace("walkthrough", key, 0, "mutation-00000003", json.RawMessage(draft))
+	_, err := reopened.Replace("walkthrough", key, 0, "mutation-00000003:1", json.RawMessage(draft))
 	var stale *StaleError
 	if !errors.As(err, &stale) || stale.Current.Revision != 1 {
 		t.Fatalf("stale: %v", err)
@@ -69,7 +73,7 @@ func TestConcurrentCASAndIndependentReviews(t *testing.T) {
 	outcomes := make(chan error, 2)
 	for i := range 2 {
 		wg.Go(func() {
-			_, err := (&Store{Path: s.Path}).Replace("walkthrough", key, 0, fmt.Sprintf("mutation-%08d", i), json.RawMessage(draft))
+			_, err := (&Store{Path: s.Path}).Replace("walkthrough", key, 0, fmt.Sprintf("mutation-%08d:1", i), json.RawMessage(draft))
 			outcomes <- err
 		})
 	}
@@ -93,7 +97,7 @@ func TestConcurrentCASAndIndependentReviews(t *testing.T) {
 	outcomes = make(chan error, 2)
 	for i := range 2 {
 		wg.Go(func() {
-			_, err := (&Store{Path: s.Path}).Replace("walkthrough", fmt.Sprintf("acme/demo#%d@v1", i+8), 0, fmt.Sprintf("mutation-other-%08d", i), json.RawMessage(draft))
+			_, err := (&Store{Path: s.Path}).Replace("walkthrough", fmt.Sprintf("acme/demo#%d@v1", i+8), 0, fmt.Sprintf("mutation-other-%08d:1", i), json.RawMessage(draft))
 			outcomes <- err
 		})
 	}
@@ -137,7 +141,7 @@ func TestCorruptionAndInvalidWritesLeaveStoredBytesUntouched(t *testing.T) {
 			if !errors.Is(err, ErrUnreadable) {
 				t.Fatalf("read: %v", err)
 			}
-			_, err = s.Replace("walkthrough", "acme/demo#7@v1", 0, "mutation-00000001", json.RawMessage(draft))
+			_, err = s.Replace("walkthrough", "acme/demo#7@v1", 0, "mutation-00000001:1", json.RawMessage(draft))
 			if !errors.Is(err, ErrUnreadable) {
 				t.Fatalf("write: %v", err)
 			}
@@ -149,7 +153,7 @@ func TestCorruptionAndInvalidWritesLeaveStoredBytesUntouched(t *testing.T) {
 	}
 	s := store(t)
 	save(t, s, "inbox", "", 0, "mutation-00000001", inbox)
-	if _, err := s.Replace("inbox", "", 1, "mutation-00000002", json.RawMessage(`null`)); !errors.Is(err, ErrInvalid) {
+	if _, err := s.Replace("inbox", "", 1, "mutation-00000002:1", json.RawMessage(`null`)); !errors.Is(err, ErrInvalid) {
 		t.Fatal(err)
 	}
 	if got, err := s.Read("inbox", ""); err != nil || string(got.Value) != inbox {
@@ -174,5 +178,132 @@ func TestRetentionUsesSaveOrderWhenClockRepeatsOrMovesBackwards(t *testing.T) {
 	}
 	if got, err := s.Read("walkthrough", "acme/demo#2@v1"); err != nil || got.Revision != 0 {
 		t.Fatalf("oldest saved draft retained: %+v %v", got, err)
+	}
+}
+
+func TestRetryAcknowledgementSurvivesMoreThan128InterveningWrites(t *testing.T) {
+	s := store(t)
+	key := "acme/demo#7@v1"
+	save(t, s, "walkthrough", key, 0, "first-client-uuid:1", draft)
+	last := draft
+	for sequence := 1; sequence <= 160; sequence++ {
+		last = fmt.Sprintf(`{"seen":["first"],"notes":{"first":"Keep this draft","other":"Keystroke %d"},"note":"Overall"}`, sequence)
+		save(t, s, "walkthrough", key, sequence, fmt.Sprintf("second-client-uuid:%d", sequence), last)
+	}
+	reopened := &Store{Path: s.Path}
+	got := save(t, reopened, "walkthrough", key, 0, "first-client-uuid:1", draft)
+	if got.Revision != 161 || string(got.Value) != last {
+		t.Fatalf("old committed mutation replayed: %+v", got)
+	}
+	if len(got.Clients) != 2 || got.Clients["second-client-uuid"] != 160 {
+		t.Fatalf("unexpected client high-water marks: %+v", got.Clients)
+	}
+}
+
+func TestRequiredFieldsAndNullValuesAreRefusedWithoutOverwriting(t *testing.T) {
+	invalid := map[string][]string{
+		"walkthrough": {
+			`{"seen":[],"notes":{},"note":null}`,
+			`{"seen":[],"notes":{}}`,
+			`{"seen":[],"notes":{"one":null},"note":""}`,
+			`{"seen":[null],"notes":{},"note":""}`,
+			`{"seen":null,"notes":{},"note":""}`,
+		},
+		"inbox": {
+			`{"day":null,"seen":{},"snoozed":{},"held":{}}`,
+			`{"day":"2026-10-30","seen":{},"snoozed":{"pr":null},"held":{}}`,
+			`{"day":"2026-10-30","seen":{},"snoozed":{},"held":{"pr":null}}`,
+			`{"day":"2026-10-30","seen":{"pr":null},"snoozed":{},"held":{}}`,
+			`{"day":"2026-10-30","seen":{"pr":{"kind":"review","title":null,"repository":"acme/demo","number":7}},"snoozed":{},"held":{}}`,
+			`{"day":"2026-10-30","seen":{"pr":{"kind":"review","repository":"acme/demo","number":7}},"snoozed":{},"held":{}}`,
+			`{"seen":{},"snoozed":{},"held":{}}`,
+		},
+	}
+	for kind, values := range invalid {
+		for _, value := range values {
+			t.Run(kind+value, func(t *testing.T) {
+				s := store(t)
+				key := ""
+				good := inbox
+				if kind == "walkthrough" {
+					key = "acme/demo#7@v1"
+					good = draft
+				}
+				save(t, s, kind, key, 0, "first-client-uuid:1", good)
+				before, err := appdb.Read(s.Path, "ui", kind)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if _, err = s.Replace(kind, key, 1, "second-client-uuid:1", json.RawMessage(value)); !errors.Is(err, ErrInvalid) {
+					t.Fatalf("invalid value accepted: %s %v", value, err)
+				}
+				after, err := appdb.Read(s.Path, "ui", kind)
+				if err != nil || !bytes.Equal(before, after) {
+					t.Fatalf("invalid write changed stored bytes: %v", err)
+				}
+				var corrupted []byte
+				if kind == "walkthrough" {
+					corrupted = []byte(fmt.Sprintf(`{"%s":{"revision":1,"clients":{"first-client-uuid":1},"at":1,"value":%s}}`, key, value))
+				} else {
+					corrupted = []byte(fmt.Sprintf(`{"revision":1,"clients":{"first-client-uuid":1},"value":%s}`, value))
+				}
+				if err = appdb.Write(s.Path, "ui", kind, corrupted); err != nil {
+					t.Fatal(err)
+				}
+				if _, err = s.Read(kind, key); !errors.Is(err, ErrUnreadable) {
+					t.Fatalf("corrupt value read: %v", err)
+				}
+				if _, err = s.Replace(kind, key, 1, "second-client-uuid:1", json.RawMessage(good)); !errors.Is(err, ErrUnreadable) {
+					t.Fatalf("corrupt value replaced: %v", err)
+				}
+				after, err = appdb.Read(s.Path, "ui", kind)
+				if err != nil || !bytes.Equal(corrupted, after) {
+					t.Fatalf("corrupt bytes changed: %v", err)
+				}
+			})
+		}
+	}
+}
+
+func TestCorruptSiblingPreventsReadsWritesAndRetentionPruning(t *testing.T) {
+	for _, saturated := range []bool{false, true} {
+		t.Run(fmt.Sprint(saturated), func(t *testing.T) {
+			s := store(t)
+			count := 1
+			if saturated {
+				count = KeepWalkthroughs
+			}
+			for i := range count {
+				save(t, s, "walkthrough", fmt.Sprintf("acme/demo#%d@v1", i+1), 0, fmt.Sprintf("client-%012d:1", i), draft)
+			}
+			raw, err := appdb.Read(s.Path, "ui", "walkthrough")
+			if err != nil {
+				t.Fatal(err)
+			}
+			var records map[string]json.RawMessage
+			if err = json.Unmarshal(raw, &records); err != nil {
+				t.Fatal(err)
+			}
+			// The oldest sibling is corrupt; pruning must not quietly delete it.
+			records["acme/demo#1@v1"] = json.RawMessage(`{"revision":1,"clients":{"first-client-uuid":1},"at":0,"value":{"seen":[],"notes":{},"note":null}}`)
+			raw, err = json.Marshal(records)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err = appdb.Write(s.Path, "ui", "walkthrough", raw); err != nil {
+				t.Fatal(err)
+			}
+			key := "acme/demo#999@v1"
+			if _, err = s.Read("walkthrough", key); !errors.Is(err, ErrUnreadable) {
+				t.Fatalf("corrupt sibling not detected on different-key read: %v", err)
+			}
+			if _, err = s.Replace("walkthrough", key, 0, "second-client-uuid:1", json.RawMessage(draft)); !errors.Is(err, ErrUnreadable) {
+				t.Fatalf("corrupt sibling not detected on different-key write: %v", err)
+			}
+			after, err := appdb.Read(s.Path, "ui", "walkthrough")
+			if err != nil || !bytes.Equal(raw, after) {
+				t.Fatalf("corrupt sibling was reserialized/pruned: %v", err)
+			}
+		})
 	}
 }
