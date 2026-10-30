@@ -787,3 +787,55 @@ func TestStagedReviewRefusesDecoration(t *testing.T) {
 		t.Fatalf("err %v, %d calls", err, len(backend.calls))
 	}
 }
+
+// A run given an accepted outline continues it: no outline or context call,
+// the given context kept, the sections Reuse holds complete reused, and only
+// the others written, with every call of the budgets.
+func TestStagedReviewContinuesAnOutline(t *testing.T) {
+	previousSection := func(id string, failed bool) bundle.PreviousSection {
+		var content map[string]any
+		if err := json.Unmarshal([]byte(stagedSectionDetails(id, "Saved "+id+".")), &content); err != nil {
+			t.Fatal(err)
+		}
+		hunk := map[string]string{"sec_parser": testHunk, "sec_tests": stagedTestHunk}[id]
+		content["title"], content["kind"], content["hunks"] = "Section "+id, "logical", []string{hunk}
+		if failed {
+			content["details"], content["summary"] = "failed", nil
+		}
+		encoded, err := json.Marshal(content)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return bundle.PreviousSection{ID: id, Title: "Section " + id, Kind: "logical", HunkContentHashes: []string{hunk}, Content: encoded}
+	}
+	generator, run, backend := stagedFixture(t, nil, nil)
+	run.Outline = stagedOutlineDocument()
+	run.Context = []byte(`{"area":{"text":"The parser turns source text into a syntax tree.","refs":[]}}`)
+	run.Reuse = &bundle.PreviousVersion{Version: 1, Sections: []bundle.PreviousSection{previousSection("sec_parser", false), previousSection("sec_tests", true)}}
+	run.Budgets.MaxCalls = 1
+	outcome, document, err := generator.StagedReview(context.Background(), run)
+	if err != nil || outcome.Reason != "" {
+		t.Fatalf("%+v %v", outcome.Outcome, err)
+	}
+	if len(backend.calls) != 1 || stageOf(t, backend.calls[0].Prompt) != StageDetails || !slices.Equal(askedSections(backend.calls[0].Prompt), []string{"sec_tests"}) {
+		t.Fatalf("calls %d", len(backend.calls))
+	}
+	if !slices.Equal(outcome.Details.Reused, []string{"sec_parser"}) || !slices.Equal(outcome.Details.Written, []string{"sec_tests"}) || outcome.SessionID != "session-details" {
+		t.Fatalf("details %+v, session %q", outcome.Details, outcome.SessionID)
+	}
+	sections := stagedSections(t, document)
+	if sections["sec_parser"]["summary"].(map[string]any)["text"] != "Saved sec_parser." || sections["sec_tests"]["summary"].(map[string]any)["text"] != "Writes sec_tests." {
+		t.Fatalf("sections %v", sections)
+	}
+	if stagedSummary(t, document)["context"] == nil {
+		t.Fatal("the given context was not kept")
+	}
+	completesStaged(t, run, document)
+
+	// An outline that no longer validates fails the run before any call.
+	generator, run, backend = stagedFixture(t, nil, nil)
+	run.Outline = []byte(`{"schema":"baum.review/1","sections":[]}`)
+	if _, _, err := generator.StagedReview(context.Background(), run); err == nil || len(backend.calls) != 0 {
+		t.Fatalf("err %v, calls %d", err, len(backend.calls))
+	}
+}
