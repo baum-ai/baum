@@ -143,8 +143,9 @@ func TestDecisionSettingsAndRoute(t *testing.T) {
 		!strings.Contains(body, `"effective_model":"gpt-6-luna","model_ignored":true`) {
 		t.Fatalf("put an ignored model %d %s", code, body)
 	}
+	// A save without a backend, as an older app sends, keeps the saved one.
 	if code, body := serve("GET", "/api/settings/decisions", ""); code != 200 ||
-		body != `{"decisions":{"enabled":true,"backend":"","model":"claude-haiku-5-5","effective_backend":"codex","backend_undetermined":false,"effective_model":"gpt-6-luna","model_ignored":true}}`+"\n" {
+		body != `{"decisions":{"enabled":true,"backend":"codex","model":"claude-haiku-5-5","effective_backend":"codex","backend_undetermined":false,"effective_model":"gpt-6-luna","model_ignored":true}}`+"\n" {
 		t.Fatalf("get %d %s", code, body)
 	}
 	for _, body := range []string{`{"model":"x"}`, `{"enabled":true,"other":1}`, `{"enabled":true,"backend":"cursor-agent"}`} {
@@ -153,7 +154,7 @@ func TestDecisionSettingsAndRoute(t *testing.T) {
 		}
 	}
 	// A whole replacement: on and the default model.
-	if code, _ := serve("PUT", "/api/settings/decisions", `{"enabled":true,"model":""}`); code != 200 {
+	if code, _ := serve("PUT", "/api/settings/decisions", `{"enabled":true,"backend":"","model":""}`); code != 200 {
 		t.Fatal(code)
 	}
 	prefs, _ := registry.Preferences(context.Background())

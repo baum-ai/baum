@@ -71,9 +71,9 @@ type DiscoverReport struct {
 }
 
 // Discover runs feature discovery of the repository once, from the clone in
-// dir, and stores the taxonomy it replies with. It runs on the review
-// backend and model, after listing the whole history and reading its paths
-// as a first build does.
+// dir, and stores the taxonomy it replies with. It runs on the data
+// extraction backend and model, after listing the whole history and reading
+// its paths as a first build does.
 func (w *FeatureWorker) Discover(ctx context.Context, repository, dir string) (DiscoverReport, error) {
 	r, err := w.newRun(ctx, repository, dir, FeatureOptions{Manual: true, DryRun: true})
 	if err != nil {

@@ -154,7 +154,8 @@ func decisionSettingsOf(p repos.Preferences) decisionSettings {
 }
 
 // putDecisionSettings serves PUT /api/settings/decisions, which replaces the
-// whole decision capture preferences.
+// whole decision capture preferences, except that a missing backend keeps the
+// saved one, as an app from before the extraction backend sends none.
 func (a LocalAPI) putDecisionSettings(w http.ResponseWriter, r *http.Request) {
 	var input struct {
 		Enabled *bool   `json:"enabled"`
@@ -171,12 +172,15 @@ func (a LocalAPI) putDecisionSettings(w http.ResponseWriter, r *http.Request) {
 	var invalid error
 	prefs, err := a.Registry.UpdatePreferences(r.Context(), func(p repos.Preferences) repos.Preferences {
 		next := p
-		next.Decisions = repos.DecisionPreferences{}
+		next.Decisions = repos.DecisionPreferences{Backend: p.Decisions.Backend}
 		if !*input.Enabled {
 			next.Decisions.Enabled = new(false)
 		}
-		if input.Backend != nil && *input.Backend != "" {
-			next.Decisions.Backend = new(config.Backend(*input.Backend))
+		if input.Backend != nil {
+			next.Decisions.Backend = nil
+			if *input.Backend != "" {
+				next.Decisions.Backend = new(config.Backend(*input.Backend))
+			}
 		}
 		if input.Model != nil && strings.TrimSpace(*input.Model) != "" {
 			next.Decisions.Model = new(strings.TrimSpace(*input.Model))

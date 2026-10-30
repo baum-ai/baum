@@ -673,7 +673,7 @@ while regeneration runs. A PR page uses the queue’s active job for that
 repository and PR across registered clones, showing queued/running progress
 and cancellation even before its first document exists. Duplicate generation
 controls stay disabled until that job finishes, and completion/cancellation
-updates the page through SSE. Repository settings share backend and model overrides across registered clones.
+updates the page through SSE. Repository settings (automatic reviews and decision capture) are shared across registered clones.
 GitHub discovery and the latest saved review's free evidence refresh periodically
 while the local server runs, including PR heads/states, checks, conversation,
 bot reports and local session links. Cached data loads immediately; offline,

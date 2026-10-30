@@ -200,14 +200,14 @@ func TestHTTP(t *testing.T) {
 	if got := check(p); got != `{"valid":true,"repository":"owner/repo","registered":true}` {
 		t.Fatal(got)
 	}
-	for _, body := range []string{`{"unknown":1}`, `{"daily_cap":-1}`, `{"backend":"no"}`, `{} {}`, `{"model":""}`, `{"automatic":null,"model":""}`} {
+	for _, body := range []string{`{"unknown":1}`, `{"daily_cap":-1}`, `{"backend":"no"}`, `{} {}`, `{"model":""}`} {
 		if w = request("PUT", "/api/repos/"+c.ID+"/settings", body); w.Code != 400 {
 			t.Fatal(body, w.Code)
 		}
 	}
 	// An older app still sends the daily cap baum no longer has: it is
 	// ignored, not refused.
-	if w = request("PUT", "/api/repos/"+c.ID+"/settings", `{"automatic":true,"daily_cap":0}`); w.Code != 200 {
+	if w = request("PUT", "/api/repos/"+c.ID+"/settings", `{"automatic":true,"backend":null,"model":null,"daily_cap":0}`); w.Code != 200 {
 		t.Fatal(w.Code)
 	}
 	if w = request(http.MethodGet, "/api/repos", ""); w.Code != 200 || !strings.Contains(w.Body.String(), `"automatic":true`) || strings.Contains(w.Body.String(), "daily_cap") {

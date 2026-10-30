@@ -53,7 +53,7 @@ func (r *Registry) HandlerWith(current CurrentName) http.Handler {
 			http.Error(w, "invalid JSON request", http.StatusBadRequest)
 			return false
 		}
-		d := json.NewDecoder(bytes.NewReader(withoutDailyCap(raw)))
+		d := json.NewDecoder(bytes.NewReader(withoutRetired(raw)))
 		d.DisallowUnknownFields()
 		if d.Decode(v) != nil || d.Decode(new(any)) != io.EOF {
 			http.Error(w, "invalid JSON request", http.StatusBadRequest)
@@ -259,24 +259,34 @@ func registerError(e error) string {
 	return "cannot register path: check that it is an existing git working tree with a GitHub remote"
 }
 
-// withoutDailyCap drops the daily_cap an older app still sends, in a request
-// or in its settings object: baum no longer has a spending cap, and such an
-// app is not refused for it. Anything that is not a JSON object is left for
-// the strict decoder to refuse.
-func withoutDailyCap(raw []byte) []byte {
+// retiredSettings are the repository settings an older app still sends:
+// baum no longer has a spending cap, and the harness and model are global.
+var retiredSettings = []string{"daily_cap", "backend", "model"}
+
+// withoutRetired drops the retiredSettings an older app still sends, in a
+// request or in its settings object, so such an app is not refused for them.
+// Anything that is not a JSON object is left for the strict decoder to
+// refuse.
+func withoutRetired(raw []byte) []byte {
 	var fields map[string]json.RawMessage
 	if json.Unmarshal(raw, &fields) != nil {
 		return raw
 	}
-	_, found := fields["daily_cap"]
-	delete(fields, "daily_cap")
+	found := false
 	var settings map[string]json.RawMessage
-	if json.Unmarshal(fields["settings"], &settings) == nil && settings != nil {
-		if _, ok := settings["daily_cap"]; ok {
-			delete(settings, "daily_cap")
-			fields["settings"], _ = json.Marshal(settings)
+	nested := json.Unmarshal(fields["settings"], &settings) == nil && settings != nil
+	for _, name := range retiredSettings {
+		if _, ok := fields[name]; ok {
+			delete(fields, name)
 			found = true
 		}
+		if _, ok := settings[name]; nested && ok {
+			delete(settings, name)
+			found = true
+		}
+	}
+	if nested {
+		fields["settings"], _ = json.Marshal(settings)
 	}
 	if !found {
 		return raw
