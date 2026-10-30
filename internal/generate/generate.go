@@ -220,7 +220,7 @@ func Run(ctx context.Context, o Options) (result Result, err error) {
 	if err != nil {
 		return result, err
 	}
-	defer removeTree(archives)
+	defer RemoveTree(archives)
 	keepSession := o.KeepSession && o.Group == nil
 	var runDir, sessionRoot string
 	if keepSession {
@@ -253,7 +253,7 @@ func Run(ctx context.Context, o Options) (result Result, err error) {
 		defer func() {
 			switch {
 			case !kept:
-				removeTree(runDir)
+				RemoveTree(runDir)
 				if len(sessionIDs) > 0 {
 					_ = reviewruns.RemoveSessions(sessionRoot, runDir)
 				}
@@ -272,7 +272,7 @@ func Run(ctx context.Context, o Options) (result Result, err error) {
 		result.RunDir = runDir
 		defer progress("run directory kept: %s", runDir)
 	} else if !keepSession {
-		defer removeTree(runDir)
+		defer RemoveTree(runDir)
 	}
 
 	request := o.Request
@@ -567,8 +567,9 @@ func checkoutPaths(dir string, limit int) map[string]bool {
 	return paths
 }
 
-// removeTree removes a directory whose subdirectories may be read-only.
-func removeTree(dir string) {
+// RemoveTree removes a directory whose subdirectories may be read-only, as an
+// unpacked checkout's are.
+func RemoveTree(dir string) {
 	_ = filepath.WalkDir(dir, func(path string, entry fs.DirEntry, err error) error {
 		if err == nil && entry.IsDir() {
 			_ = os.Chmod(path, 0o700)

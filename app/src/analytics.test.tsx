@@ -233,6 +233,58 @@ it("draws known figures, an incomplete estimate and the limit hits", () => {
   expect(html).toContain("Sessions per day by agent");
 });
 
+it("counts decision capture's calls and keeps its unknown spend unknown", () => {
+  const capture = (decisions: object) =>
+    renderToStaticMarkup(
+      <AnalyticsReport
+        data={report({ baum: { ...report().baum, decisions } as never })}
+        Link={Link}
+      />,
+    );
+  const unknown = capture({
+    attempts: 3,
+    succeeded: 1,
+    failed: 2,
+    cost: {
+      usd: null,
+      incomplete: true,
+      reasons: ["Some decision capture calls reported no usage that could be priced."],
+    },
+    failures: [{ reason: "timeout", count: 2 }],
+  });
+  expect(unknown).toContain("Decision capture");
+  expect(unknown).toContain("Capture calls");
+  expect(unknown).toContain("Timed out");
+  expect(unknown).not.toContain("$0.00");
+  expect(unknown).toContain("reported no usage that could be priced");
+  const known = capture({
+    attempts: 2,
+    succeeded: 1,
+    failed: 1,
+    cost: { usd: 0.04, incomplete: true, reasons: [] },
+    failures: [{ reason: "call_failed", count: 1 }],
+  });
+  expect(known).toContain("≥ $0.0400");
+  expect(known).toContain("Model call failed");
+  const cut = capture({
+    attempts: 2,
+    succeeded: 1,
+    failed: 0,
+    abandoned: 1,
+    cost: { usd: 0.01, incomplete: false, reasons: [] },
+    failures: [],
+  });
+  expect(cut).toContain("Cut short by a stop");
+  // Only captures ran: the reviews part says so instead of "ran nothing".
+  expect(cut).toContain("No reviews or fixes in this window.");
+  expect(cut).not.toContain("baum ran nothing in this window");
+  expect(known).not.toContain("Cut short by a stop");
+  // An older daemon, or none of its ledger, shows no section.
+  expect(renderToStaticMarkup(<AnalyticsReport data={report()} Link={Link} />)).not.toContain(
+    "Decision capture",
+  );
+});
+
 it("reads only a report", () => {
   expect(parseAnalytics({ available: false, code: "analytics_unavailable" })).toBeNull();
   expect(parseAnalytics(null)).toBeNull();

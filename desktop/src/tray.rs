@@ -834,10 +834,7 @@ mod tests {
                 running,
                 ..Jobs::default()
             }),
-            automatic: Some(Automatic {
-                enabled: automatic,
-                capped: Vec::new(),
-            }),
+            automatic: Some(Automatic { enabled: automatic }),
             diagnostics: Some(Vec::new()),
             waiting: None,
             plans: None,

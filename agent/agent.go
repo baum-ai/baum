@@ -164,6 +164,9 @@ type Result struct {
 	ModelSource                string
 	Usage                      Usage
 	StructuredOutputRejections int
+	// LastRejection is a bounded copy of the last rejection's detail, which
+	// describes the document's shape, not repository content.
+	LastRejection string
 	// SessionID is the session (Claude Code) or thread (Codex) id the CLI
 	// reported for this call; with Request.ForkSession, the new session's id.
 	// Empty when the CLI reported none.
@@ -223,6 +226,15 @@ func EventPath(directory, path string) string {
 		return r
 	}, path)
 	return path[:min(len(path), 256)]
+}
+
+// TitlePath is a tool's path for its transcript title: relative to the run
+// directory when it is inside it, otherwise as the agent named it.
+func TitlePath(directory, path string) string {
+	if relative := EventPath(directory, path); relative != OutsideRun {
+		return relative
+	}
+	return path
 }
 
 // within reports path relative to directory, and whether it is inside it.

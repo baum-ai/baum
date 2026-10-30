@@ -74,7 +74,7 @@ type Backend struct {
 func (*Backend) Name() string { return agent.BackendClaude }
 
 func (c *Backend) Run(ctx context.Context, request agent.Request) (agent.Result, error) {
-	return c.run(ctx, request, false)
+	return c.run(ctx, request, c.args(request), nil, false)
 }
 
 // Fix runs Claude Code with write access to the request's directory, for a
@@ -87,10 +87,10 @@ func (c *Backend) Fix(ctx context.Context, request agent.Request) (agent.Result,
 	if c.Profile != User {
 		return agent.Result{}, errors.New("claude: only the User profile runs fixes")
 	}
-	return c.run(ctx, request, true)
+	return c.run(ctx, request, c.fixArgs(request), nil, true)
 }
 
-func (c *Backend) run(ctx context.Context, request agent.Request, fix bool) (result agent.Result, err error) {
+func (c *Backend) run(ctx context.Context, request agent.Request, args, env []string, fix bool) (result agent.Result, err error) {
 	if c.Profile != User && c.Profile != Isolated {
 		return result, fmt.Errorf("claude: unknown profile %d", int(c.Profile))
 	}
@@ -145,13 +145,10 @@ func (c *Backend) run(ctx context.Context, request agent.Request, fix bool) (res
 	// --json-schema registers. Text output cannot be validated, so the
 	// instructions never ask for JSON as text: a text answer only costs a
 	// truncated response and a second call.
-	args := c.args(request)
-	if fix {
-		args = c.fixArgs(request)
-	}
 	cmd := exec.CommandContext(ctx, binary, args...)
 	cmd.Dir = request.Directory
-	cmd.Env = c.environment(request.Directory, endpoint)
+	// A later entry of the same variable wins (exec.Cmd.Env).
+	cmd.Env = append(c.environment(request.Directory, endpoint), env...)
 	cmd.Stdin = strings.NewReader(request.Prompt)
 	// Kill the process group so cancellation also stops harness subprocesses.
 	proc.Configure(cmd)
@@ -405,7 +402,7 @@ func (c *Backend) run(ctx context.Context, request agent.Request, fix bool) (res
 		for _, content := range event.Message.Content {
 			if _, seen := toolsSeen[content.ID]; content.Type == "tool_use" && !seen {
 				toolsSeen[content.ID] = content.Name
-				titles[content.ID] = toolTitle(content.Name, content.Input.FilePath, content.Input.Path, content.Input.Pattern, content.Input.Command)
+				titles[content.ID] = toolTitle(content.Name, agent.TitlePath(request.Directory, content.Input.FilePath), agent.TitlePath(request.Directory, content.Input.Path), content.Input.Pattern, content.Input.Command)
 				request.Emit(agent.TranscriptEntry{Kind: "tool", ID: content.ID, Tool: content.Name, Title: titles[content.ID], Status: "running"})
 				request.Activity.ToolStarted(content.ID, content.Name)
 				path := agent.EventPath(request.Directory, cmp.Or(content.Input.FilePath, content.Input.Path))
@@ -433,8 +430,9 @@ func (c *Backend) run(ctx context.Context, request agent.Request, fix bool) (res
 					// call was wasted, so a bounded copy goes to the private log.
 					status = "schema_rejected"
 					result.StructuredOutputRejections++
+					result.LastRejection = boundedText(toolResultText(content.Content), 512)
 					if request.Logger != nil {
-						request.Logger.Info("structured output rejected", "id", content.ToolUseID, "detail", boundedText(toolResultText(content.Content), 512))
+						request.Logger.Info("structured output rejected", "id", content.ToolUseID, "detail", result.LastRejection)
 					}
 				} else if content.IsError {
 					status = agent.ErrorStatus(string(content.Content))

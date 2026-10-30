@@ -308,21 +308,6 @@ const TranscriptBody = memo(function TranscriptBody({
    *  a Codex rollout or one named only by its first prompt. */
   title?: string;
 }) {
-  // The card's loader answers from the transcript shown, and its revision
-  // has the card load an opened turn's activity again when that changes.
-  const latest = useRef<LocalTranscript | null>(null);
-  latest.current = state.kind === "ready" ? state.transcript : null;
-  const version = state.kind === "ready" ? state.version : undefined;
-  const source = useMemo<TranscriptSource>(
-    () => ({
-      revision: version,
-      loadTurnActivity: (_run, turn) => {
-        const activity = latest.current?.activity[turn];
-        return activity ? Promise.resolve(activity) : Promise.reject(Error("No activity"));
-      },
-    }),
-    [version],
-  );
   switch (state.kind) {
     case "loading":
       return <LoadingStatus block>Reading redacted local transcript…</LoadingStatus>;
@@ -340,7 +325,52 @@ const TranscriptBody = memo(function TranscriptBody({
         </Alert>
       );
   }
-  const { transcript } = state;
+  return (
+    <TranscriptCard
+      transcript={state.transcript}
+      version={state.version}
+      summary={state.summary}
+      live={live}
+      title={title}
+    />
+  );
+});
+
+/** A session's local transcript as a review's linked session is drawn: the
+ *  agent's compaction summary when there is one, the redaction note and the
+ *  session card, open. `focusTurn` marks that turn's prompt and scrolls it
+ *  into view, for a reader sent to one moment of the session. */
+export function TranscriptCard({
+  transcript,
+  version,
+  summary,
+  live = false,
+  title,
+  focusTurn,
+}: {
+  transcript: LocalTranscript;
+  /** Changes with the transcript, so an opened turn's activity loads again. */
+  version?: string;
+  summary?: string;
+  /** The session still runs, so it has no outcome yet. */
+  live?: boolean;
+  /** The listed session's title, for a transcript that holds none. */
+  title?: string;
+  focusTurn?: number;
+}) {
+  // The card's loader answers from the transcript shown.
+  const latest = useRef<LocalTranscript>(transcript);
+  latest.current = transcript;
+  const source = useMemo<TranscriptSource>(
+    () => ({
+      revision: version,
+      loadTurnActivity: (_run, turn) => {
+        const activity = latest.current.activity[turn];
+        return activity ? Promise.resolve(activity) : Promise.reject(Error("No activity"));
+      },
+    }),
+    [version],
+  );
   // A running session's transcript has no outcome to report; the card would
   // say "unknown" where the session is simply not done.
   const session = {
@@ -351,7 +381,7 @@ const TranscriptBody = memo(function TranscriptBody({
   };
   return (
     <section aria-label="Transcript" className="local-transcript">
-      {state.summary ? (
+      {summary ? (
         <details className="local-panel local-session-summary">
           <summary>
             <span className="local-session-summary-title">Summary of the earlier conversation</span>
@@ -360,7 +390,7 @@ const TranscriptBody = memo(function TranscriptBody({
             </span>
           </summary>
           <Markdown html={false} className="local-session-summary-body">
-            {state.summary}
+            {summary}
           </Markdown>
         </details>
       ) : null}
@@ -369,8 +399,8 @@ const TranscriptBody = memo(function TranscriptBody({
         {transcript.truncated ? " Some content was omitted." : ""}
       </p>
       <div className="local-panel local-transcript-card">
-        <SessionCard defaultOpen={true} session={session} source={source} />
+        <SessionCard defaultOpen={true} session={session} source={source} focusTurn={focusTurn} />
       </div>
     </section>
   );
-});
+}

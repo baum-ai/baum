@@ -4,6 +4,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { App } from "./app";
 import type { Entry, Job, LiveSession } from "./api";
 import { snoozeOptions, snoozeText, upNext } from "./up-next";
+import { forgetLastRows } from "./shortcuts";
 
 type Overrides = Partial<Omit<Entry, "pull_request">> & {
   pull_request?: Partial<Entry["pull_request"]>;
@@ -227,6 +228,7 @@ afterEach(async () => {
   await act(async () => root.unmount());
   node.remove();
   vi.unstubAllGlobals();
+  forgetLastRows();
 });
 const render = async () => {
   await act(async () => root.unmount());
@@ -269,15 +271,21 @@ const cleared = async () => {
 
 it("groups what waits on the person and opens on the first", async () => {
   await render();
-  expect(groups()).toEqual(["Needs your eyes · 1", "Ready to merge · 2", "Hand to an agent · 1"]);
-  expect(list()).toEqual(["Change 1", "Change 3", "Change 4", "Change 2"]);
+  expect(groups()).toEqual([
+    "Needs your eyes · 1",
+    "Ready to merge · 2",
+    "Hand to an agent · 1",
+    "Waiting on checks or reviews · 1",
+  ]);
+  // The person's own pull requests that wait on others come last.
+  expect(list()).toEqual(["Change 1", "Change 3", "Change 4", "Change 2", "Change 5"]);
   expect(shown()).toBe("Change 1");
   expect(panel().textContent).toContain("sam asked for your review");
   // Open is always the default action.
   const open = panel().querySelector<HTMLAnchorElement>("a.upnext-primary")!;
   expect(open.textContent).toBe("Open↵");
   expect(open.getAttribute("href")).toBe("/s/test-ns/?clone=clone&pr=1");
-  expect(node.textContent).toContain("1 pull request of yours waits on reviewers");
+  expect(row("Change 5").textContent).toContain("#5 · Draft");
   const inbox = Array.from(node.querySelectorAll(".local-rail a")).find((a) =>
     a.textContent?.startsWith("Inbox"),
   )!;
@@ -297,10 +305,10 @@ it("moves with j and k, opens with Enter and merges with m", async () => {
   expect(row("Change 3").getAttribute("aria-current")).toBe("true");
   await press("m");
   expect(node.querySelector("dialog")).not.toBeNull();
-  // Afresh, with no dialog open.
+  // Drawn again, with no dialog open, it comes back on the same pull request.
   await render();
   await press("Enter");
-  expect(location.search).toBe("?clone=clone&pr=1");
+  expect(location.search).toBe("?clone=clone&pr=3");
 });
 
 it("snoozes, undoes and brings back, and remembers it", async () => {
@@ -311,7 +319,7 @@ it("snoozes, undoes and brings back, and remembers it", async () => {
   expect(node.querySelector('[role="status"]')!.textContent).toMatch(/^Snoozed #3 until /);
   // The pull request that takes its place is selected.
   expect(shown()).toBe("Change 4");
-  expect(list()).toEqual(["Change 1", "Change 4", "Change 2"]);
+  expect(list()).toEqual(["Change 1", "Change 4", "Change 2", "Change 5"]);
   await press("u");
   expect(shown()).toBe("Change 3");
   expect(list()).toContain("Change 3");
@@ -323,7 +331,7 @@ it("snoozes, undoes and brings back, and remembers it", async () => {
   expect(node.querySelector<HTMLElement>(".upnext-snoozed")!.hidden).toBe(true);
   // A reload keeps the snooze.
   await render();
-  expect(list()).toEqual(["Change 1", "Change 4", "Change 2"]);
+  expect(list()).toEqual(["Change 1", "Change 4", "Change 2", "Change 5"]);
   await act(async () => button("▸ Snoozed").click());
   await act(async () => button("Bring back").click());
   expect(list()).toContain("Change 3");
@@ -377,7 +385,8 @@ it("clears only what the person finished, and nothing of a repository missing fr
   );
   await render();
   expect(await cleared()).toBe("Fixed #2 Change 2");
-  expect(list()).toEqual(["Change 1", "Change 4"]);
+  // Both now wait on their checks.
+  expect(list()).toEqual(["Change 1", "Change 4", "Change 3", "Change 2", "Change 5"]);
   // GitHub could not be read: nothing of acme/demo is listed.
   entries = [];
   await render();
@@ -397,7 +406,7 @@ it("starts afresh from storage it cannot read", async () => {
   );
   await render();
   expect(shown()).toBe("Change 1");
-  expect(list()).toEqual(["Change 1", "Change 3", "Change 4", "Change 2"]);
+  expect(list()).toEqual(["Change 1", "Change 3", "Change 4", "Change 2", "Change 5"]);
 });
 
 it("merges every ready pull request after one confirmation", async () => {
@@ -430,20 +439,48 @@ it("says how to start when no repository is picked", async () => {
 
 it("does not clear a pull request whose fix is running, and offers to watch it", async () => {
   await render();
-  // Pressing Fix and confirming starts a job; the agent's row stays in its group.
+  // Pressing Fix starts a job; the agent's row stays in its group.
   jobsList = [fixJobOf()];
   await render();
-  expect(list()).toEqual(["Change 1", "Change 3", "Change 4", "Change 2"]);
+  expect(list()).toEqual(["Change 1", "Change 3", "Change 4", "Change 2", "Change 5"]);
   expect(row("Change 2").textContent).toContain("Agent fixing · The agent is fixing it");
   expect(await cleared()).toBeNull();
   await act(async () => row("Change 2").click());
   expect(panel().textContent).toContain("An agent is fixing it · The agent is fixing it.");
-  const watch = Array.from(panel().querySelectorAll("a")).find(
-    (a) => a.textContent === "Watch the agent",
+  const watch = Array.from(panel().querySelectorAll("a")).find((a) =>
+    a.textContent?.startsWith("Watch the agent"),
   )!;
   expect(watch.getAttribute("href")).toBe("/s/test-ns/?page=jobs&job=fix-1");
-  // The one other waiting pull request keeps the generic sentence.
-  expect(node.textContent).toContain("1 pull request of yours waits on reviewers");
+  expect(watch.querySelector(".key-hint")!.textContent).toBe("t");
+  // The one other waiting pull request is listed as waiting.
+  expect(row("Change 5").textContent).toContain("#5 · Draft");
+  // t opens the transcript of the selected pull request's fix.
+  await press("t");
+  expect(location.search).toBe("?page=jobs&job=fix-1");
+});
+
+it("opens a finished fix's transcript with t once the agent stopped", async () => {
+  await render();
+  jobsList = [fixJobOf({ state: "completed", commit: "abc1234" })];
+  entries = entries.map((e) => (e.pull_request.number === 2 ? mine(2, { checks: "running" }) : e));
+  await render();
+  await act(async () => row("Change 2").click());
+  await press("t");
+  expect(location.search).toBe("?page=jobs&job=fix-1");
+});
+
+it("waits on checks that run before calling a pull request ready to merge", async () => {
+  // GitHub called the head clean before its checks were queued.
+  entries = entries.map((e) =>
+    e.pull_request.number === 3 ? mine(3, { merge: "ready", checks: "running" }) : e,
+  );
+  await render();
+  expect(groups()).toEqual([
+    "Needs your eyes · 1",
+    "Ready to merge · 1",
+    "Hand to an agent · 1",
+    "Waiting on checks or reviews · 2",
+  ]);
 });
 
 it("clears a fixed pull request once its fix pushed", async () => {
@@ -459,11 +496,11 @@ it("brings back a pull request whose fix failed, with what happened", async () =
   jobsList = [fixJobOf({ state: "failed", reason: "signing" })];
   await render();
   expect(await cleared()).toBeNull();
-  expect(row("Change 2").textContent).toContain("Fix · last fix failed");
+  expect(row("Change 2").textContent).toContain("Last fix failed");
   await act(async () => row("Change 2").click());
   expect(panel().textContent).toContain("The last fix failed: Git couldn't sign a commit");
-  const see = Array.from(panel().querySelectorAll("a")).find(
-    (a) => a.textContent === "See what the agent did",
+  const see = Array.from(panel().querySelectorAll("a")).find((a) =>
+    a.textContent?.startsWith("See what the agent did"),
   )!;
   expect(see.getAttribute("href")).toBe("/s/test-ns/?page=jobs&job=fix-1");
   expect(panel().querySelector("button.upnext-secondary")!.textContent).toMatch(/^Fix/);
@@ -478,6 +515,55 @@ it("keeps a failed fix of a pull request in the queue for its panel", () => {
   expect(items[0]!.failedFix!.id).toBe("fix-1");
 });
 
+/** Lets the daemon's answers and the reload after them land. */
+const settle = () => act(async () => new Promise((resolve) => setTimeout(resolve, 0)));
+/** Whether a request asks the daemon to start a job. */
+const isStart = ([path, init]: Parameters<typeof fetch>) =>
+  init?.method === "POST" && String(path).endsWith("api/jobs");
+/** The fixes the app asked the daemon to start. */
+const fixesStarted = () => {
+  const starts = vi.mocked(fetch).mock.calls.filter(isStart);
+  return starts.map(([, init]) => JSON.parse(String(init!.body)));
+};
+
+it("starts a fix at once with its button or f, with no dialog", async () => {
+  await render();
+  // Where no fix is offered, f does nothing.
+  await press("f");
+  expect(fixesStarted()).toEqual([]);
+  await act(async () => row("Change 2").click());
+  expect(button("Fix CI").textContent).toBe("Fix CIf");
+  await press("f");
+  expect(node.querySelector("dialog")).toBeNull();
+  expect(fixesStarted()).toEqual([
+    { items: [{ clone: "clone", pr: 2, kind: "fix" }], mode: "single" },
+  ]);
+  await settle();
+  await act(async () => button("Fix CI").click());
+  expect(fixesStarted()).toHaveLength(2);
+  expect(node.querySelector("dialog")).toBeNull();
+  // The key is listed at the foot of the list.
+  expect(node.querySelector(".upnext-keys")!.textContent).toContain("f fix");
+});
+
+it("says in the panel why the daemon did not start a fix", async () => {
+  const original = vi.mocked(fetch).getMockImplementation()!;
+  vi.mocked(fetch).mockImplementation(async (...args) =>
+    isStart(args)
+      ? Response.json({ blocked_reason: "nothing_to_fix" }, { status: 409 })
+      : original(...args),
+  );
+  await render();
+  await act(async () => row("Change 2").click());
+  await press("f");
+  await settle();
+  expect(panel().querySelector('[role="alert"]')!.textContent).toBe(
+    "Couldn't start the fix: GitHub reports no merge conflict, failing check or unresolved review comment to fix on this pull request now.",
+  );
+  // The fix is offered again.
+  expect(button("Fix CI").disabled).toBe(false);
+});
+
 it("shows nothing as cleared on starting a fix", async () => {
   await render();
   jobsList = [fixJobOf({ state: "queued", phase: "" })];
@@ -485,4 +571,153 @@ it("shows nothing as cleared on starting a fix", async () => {
   expect(await cleared()).toBeNull();
   expect(row("Change 2").textContent).toContain("Agent fixing · Queued");
   expect(progress()).toBe("0 of 3");
+});
+
+it("lists the unresolved review threads and resolves one on request", async () => {
+  entries = [mine(7, { unresolved: 2 })];
+  const threads = [
+    {
+      id: "RT_1",
+      path: "src/a.go",
+      line: 12,
+      outdated: false,
+      author: "alice",
+      excerpt: "Rename this.",
+      comments: 2,
+      url: "https://github.com/acme/demo/pull/7#discussion_r1",
+      can_resolve: true,
+    },
+    {
+      id: "RT_2",
+      path: "b.go",
+      outdated: true,
+      author: "bob",
+      excerpt: "Why?",
+      comments: 1,
+      url: "https://github.com/acme/demo/pull/7#discussion_r2",
+      can_resolve: false,
+    },
+  ];
+  const original = vi.mocked(fetch).getMockImplementation()!;
+  vi.mocked(fetch).mockImplementation(async (...args) => {
+    const path = String(args[0]);
+    if (path.includes("api/prs/review-threads"))
+      return Response.json({ threads: [...threads], capped: false });
+    if (path.endsWith("api/prs/resolve-thread")) {
+      threads.splice(0, 1);
+      return Response.json({ resolved: true });
+    }
+    return original(...args);
+  });
+  await render();
+  expect(shown()).toBe("Change 7");
+  const items = () =>
+    Array.from(panel().querySelectorAll('[aria-label="Unresolved review threads"] li'));
+  expect(items().map((item) => item.textContent)).toEqual([
+    "Rename this.alice · src/a.go:12 · 2 commentsResolve",
+    "Why?bob · b.go · Outdated",
+  ]);
+  expect(items()[0]!.querySelector("a")!.getAttribute("href")).toBe(
+    "https://github.com/acme/demo/pull/7#discussion_r1",
+  );
+  await act(async () => button("Resolve").click());
+  const resolves = vi
+    .mocked(fetch)
+    .mock.calls.filter(([path]) => String(path).endsWith("api/prs/resolve-thread"))
+    .map(([, init]) => JSON.parse(String((init as RequestInit).body)));
+  expect(resolves).toEqual([{ repository: "acme/demo", pr: 7, thread: "RT_1" }]);
+  expect(items().map((item) => item.textContent)).toEqual(["Why?bob · b.go · Outdated"]);
+});
+
+it("says why resolving a review thread failed and keeps it", async () => {
+  entries = [mine(7, { unresolved: 1 })];
+  const original = vi.mocked(fetch).getMockImplementation()!;
+  vi.mocked(fetch).mockImplementation(async (...args) => {
+    const path = String(args[0]);
+    if (path.includes("api/prs/review-threads"))
+      return Response.json({
+        threads: [
+          {
+            id: "RT_1",
+            path: "a.go",
+            line: 1,
+            outdated: false,
+            author: "alice",
+            excerpt: "Rename this.",
+            comments: 1,
+            url: "u",
+            can_resolve: true,
+          },
+        ],
+        capped: false,
+      });
+    if (path.endsWith("api/prs/resolve-thread"))
+      return Response.json(
+        { code: "forbidden", message: "Your GitHub account cannot resolve this review thread." },
+        { status: 403 },
+      );
+    return original(...args);
+  });
+  await render();
+  await act(async () => button("Resolve").click());
+  const alert = panel().querySelector(".upnext-thread-error")!;
+  expect(alert.textContent).toBe("Your GitHub account cannot resolve this review thread.");
+  expect(button("Resolve").disabled).toBe(false);
+});
+
+it("lists the failing checks of the head it shows, each linking to its details", async () => {
+  entries = [mine(2, { checks: "failing" })];
+  const original = vi.mocked(fetch).getMockImplementation()!;
+  vi.mocked(fetch).mockImplementation(async (...args) =>
+    String(args[0]).includes("api/prs/failing-checks")
+      ? Response.json({
+          head_sha: "head",
+          checks: [
+            {
+              name: "test",
+              conclusion: "failure",
+              title: "2 tests failed in pkg",
+              url: "https://github.com/acme/demo/runs/21",
+              job_id: 21,
+            },
+            { name: "ci/circle", conclusion: "timed_out" },
+          ],
+        })
+      : original(...args),
+  );
+  await render();
+  expect(shown()).toBe("Change 2");
+  const items = Array.from(panel().querySelectorAll('[aria-label="Failing checks"] li'));
+  expect(items.map((item) => item.textContent)).toEqual([
+    "testFailed · 2 tests failed in pkgRetryDetails",
+    "ci/circleTimed out",
+  ]);
+  expect(items[0]!.querySelector("a")!.getAttribute("href")).toBe(
+    "https://github.com/acme/demo/runs/21",
+  );
+  // Retry re-runs that one job at once; another app's check has none.
+  await act(async () => button("Retry").click());
+  const reruns = vi
+    .mocked(fetch)
+    .mock.calls.filter(([path]) => String(path).endsWith("api/prs/rerun-job"))
+    .map(([, init]) => JSON.parse(String((init as RequestInit).body)));
+  expect(reruns).toEqual([{ repository: "acme/demo", pr: 2, head_sha: "head", job_id: 21 }]);
+  expect(panel().querySelector('[aria-label="Failing checks"] li')!.textContent).toBe(
+    "testRe-running on GitHubDetails",
+  );
+  // The row's Fix CI asks for a fix of the checks alone.
+  const row = panel().querySelector<HTMLButtonElement>("li.upnext-has-threads > button")!;
+  expect(row.textContent).toBe("Fix CI");
+  await act(async () => row.click());
+  expect(fixesStarted()).toEqual([
+    { items: [{ clone: "clone", pr: 2, kind: "fix", only: "checks" }], mode: "single" },
+  ]);
+  expect(node.querySelector("dialog")).toBeNull();
+  const asked = vi
+    .mocked(fetch)
+    .mock.calls.map(([path]) => String(path))
+    .filter((path) => path.includes("api/prs/failing-checks"));
+  expect(asked).toEqual([
+    "/s/test-ns/api/prs/failing-checks?repository=acme%2Fdemo&pr=2&head_sha=head",
+  ]);
 });

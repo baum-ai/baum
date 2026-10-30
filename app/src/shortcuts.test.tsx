@@ -4,6 +4,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { Inbox } from "./inbox";
 import {
   commandAction,
+  forgetLastRows,
   INBOX_SHORTCUTS,
   listKeys,
   moveFocus,
@@ -100,6 +101,7 @@ afterEach(async () => {
   await act(async () => root.unmount());
   node.remove();
   vi.unstubAllGlobals();
+  forgetLastRows();
 });
 
 const render = (props: Partial<Parameters<typeof Inbox>[0]> = {}) =>
@@ -313,6 +315,7 @@ it("lists exactly the keys that work in the sheet", async () => {
     "Sessions",
     "Jobs",
     "Repositories",
+    "Settings",
     "A session or job transcript",
   ]);
   // jsdom is not a Mac: Ctrl, and Alt with the arrows for back and forward.
@@ -325,13 +328,14 @@ it("lists exactly the keys that work in the sheet", async () => {
     "Ctrl+5",
     "Ctrl+6",
     "Ctrl+7",
+    "Ctrl+8",
     "Alt+←",
     "Alt+→",
     "?",
     "Alt",
     "Esc",
   ]);
-  expect(listed("Inbox")).toEqual(["j", "↓", "k", "↑", "Enter", "m", "s", "u"]);
+  expect(listed("Inbox")).toEqual(["j", "↓", "k", "↑", "Enter", "m", "f", "t", "s", "u"]);
   expect(listed("Pull requests")).toEqual([
     "j",
     "↓",
@@ -340,9 +344,11 @@ it("lists exactly the keys that work in the sheet", async () => {
     "Enter",
     "o",
     "x",
+    "Space",
     "m",
     "f",
     "g",
+    "t",
     "r",
     "Esc",
     "h",
@@ -350,7 +356,7 @@ it("lists exactly the keys that work in the sheet", async () => {
     "l",
     "→",
   ]);
-  expect(listed("A pull request or group")).toEqual(["j", "k", "m", "f", "g", "a", "u", "Esc"]);
+  expect(listed("A pull request or group")).toEqual(["j", "k", "m", "f", "g", "t", "a", "u", "Esc"]);
   expect(listed("Walkthrough")).toEqual(["→", "j", "←", "k", "c", "o", "Enter", "t", "e", "a"]);
   const list = ["j", "↓", "k", "↑", "Enter", "o", "Esc"];
   expect(listed("Sessions")).toEqual([...list, "p"]);
@@ -365,9 +371,11 @@ it("lists exactly the keys that work in the sheet", async () => {
     "Enter",
     "o",
     "x",
+    " ",
     "m",
     "f",
     "g",
+    "t",
     "r",
   ]);
 });
@@ -383,6 +391,7 @@ it("lists the keys of where the sheet was opened first", async () => {
     "Sessions",
     "Jobs",
     "Repositories",
+    "Settings",
     "A session or job transcript",
   ]);
 });
@@ -406,11 +415,11 @@ it("reads the app-wide keys with the platform's command key", () => {
     kind: "page",
     page: "inbox",
   });
-  expect(commandAction(key({ metaKey: true, key: "7", code: "Digit7" }), true)).toEqual({
+  expect(commandAction(key({ metaKey: true, key: "8", code: "Digit8" }), true)).toEqual({
     kind: "page",
     page: "settings",
   });
-  expect(commandAction(key({ ctrlKey: true, key: "8", code: "Digit8" }), false)).toBeNull();
+  expect(commandAction(key({ ctrlKey: true, key: "9", code: "Digit9" }), false)).toBeNull();
   expect(commandAction(key({ metaKey: true, key: "," }), true)).toEqual({
     kind: "page",
     page: "settings",
@@ -436,23 +445,24 @@ it("reads the app-wide keys with the platform's command key", () => {
   expect(commandAction(key({ key: "k" }), false)).toBeNull();
 });
 
+const opened = vi.fn();
+function List({ ids }: { ids: string[] }) {
+  const rows = useRowFocus<HTMLUListElement>("list", ids);
+  useShortcuts((event) => void listKeys(event, rows));
+  return (
+    <ul ref={rows.list}>
+      {ids.map((id) => (
+        <li key={id} data-row-id={id} data-focused={rows.focused === id || undefined}>
+          <a href={`#${id}`} data-row-link="" onClick={() => opened(id)}>
+            {id}
+          </a>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
 it("moves through a list's rows and opens the focused one", async () => {
-  const opened = vi.fn();
-  function List({ ids }: { ids: string[] }) {
-    const rows = useRowFocus<HTMLUListElement>(ids);
-    useShortcuts((event) => void listKeys(event, rows));
-    return (
-      <ul ref={rows.list}>
-        {ids.map((id) => (
-          <li key={id} data-row-id={id} data-focused={rows.focused === id || undefined}>
-            <a href={`#${id}`} data-row-link="" onClick={() => opened(id)}>
-              {id}
-            </a>
-          </li>
-        ))}
-      </ul>
-    );
-  }
   await act(async () => root.render(<List ids={["a", "b", "c"]} />));
   const focusedRow = () => node.querySelector<HTMLElement>("[data-focused]")?.dataset.rowId;
   await press("j");
@@ -474,6 +484,29 @@ it("moves through a list's rows and opens the focused one", async () => {
   await press("Escape", {}, document.activeElement!);
   expect(focusedRow()).toBeUndefined();
   expect(document.activeElement).toBe(document.body);
+});
+
+it("comes back to a list on the row it left from", async () => {
+  const focusedRow = () => node.querySelector<HTMLElement>("[data-focused]")?.dataset.rowId;
+  await act(async () => root.render(<List ids={["a", "b", "c"]} />));
+  await press("j");
+  await press("j", {}, document.activeElement!);
+  expect(focusedRow()).toBe("b");
+  // Opening the row draws its page in the list's place; back, the row is kept.
+  await act(async () => root.render(<p>Page</p>));
+  await act(async () => root.render(<List ids={["a", "b", "c"]} />));
+  expect(focusedRow()).toBe("b");
+  expect(document.activeElement?.textContent).toBe("b");
+  // A row opened by the pointer is kept as well.
+  await act(async () => node.querySelector<HTMLElement>('[data-row-id="c"] a')!.click());
+  await act(async () => root.render(<p>Page</p>));
+  await act(async () => root.render(<List ids={["a", "b", "c"]} />));
+  expect(focusedRow()).toBe("c");
+  // Escape gives the row up for good.
+  await press("Escape", {}, document.activeElement!);
+  await act(async () => root.render(<p>Page</p>));
+  await act(async () => root.render(<List ids={["a", "b", "c"]} />));
+  expect(focusedRow()).toBeUndefined();
 });
 
 it("moves within a list", () => {

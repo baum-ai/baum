@@ -19,9 +19,12 @@ test *args: frontend sidecar
 frontend:
     {{ heavy }} --workdir /oss/app ui-test pnpm build
 
-# Build the bundled baum binary for this platform into binaries/
-sidecar:
-    {{ heavy }} oss-test sh desktop/scripts/sidecar.sh
+# The Rust target triple of this machine, for the sidecar the host app runs
+host_target := arch() + if os() == "macos" { "-apple-darwin" } else { "-unknown-linux-gnu" }
+
+# Build the bundled baum binary into binaries/ (default: the container's platform)
+sidecar target="":
+    {{ heavy }} oss-test sh desktop/scripts/sidecar.sh {{ target }}
 
 # Build the Linux bundles into target/release/bundle (default: deb)
 build bundles="deb": frontend sidecar
@@ -46,8 +49,8 @@ updater-test:
 icons:
     BAUM_OP_RUN=0 {{ dev_compose }} run --build --rm --no-deps desktop-test sh -ec 'rsvg-convert -w 1024 -h 1024 icons/source.svg -o target/icon-source.png && cargo tauri icon target/icon-source.png -o icons && rm -rf icons/android icons/ios icons/Square*Logo.png icons/StoreLogo.png && for s in idle running attention; do rsvg-convert -w 64 -h 64 icons/tray/$s.svg -o icons/tray/$s.png; done'
 
-# Run the native desktop on the Linux host, with Vite hot reload in Docker
-dev: frontend sidecar
+# Run the native desktop on the Linux or macOS host, with Vite hot reload in Docker
+dev: frontend (sidecar host_target)
     sh {{ source_directory() }}/scripts/dev.sh
 
 # Run the app on this Wayland display, with the container's own home and daemon

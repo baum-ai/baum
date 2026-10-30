@@ -121,12 +121,12 @@ func (s *Service) ResetIdentity() {
 }
 
 // JobDone publishes the notice for a job that just finished: completed
-// reviews and failures, and a fix that pushed or failed. Cancelled,
+// reviews and failures, and a fix that pushed or failed; a feature build
+// has none. Cancelled,
 // interrupted and superseded jobs are not the user's news.
 func (s *Service) JobDone(ctx context.Context, job jobs.Job) {
 	// A review group's job names no pull request; its page shows the outcome.
-	// A question's answer shows where it was asked.
-	if job.Phase != "finished" || (job.State != "completed" && job.State != "failed") || job.Group != "" || job.Kind == jobs.KindChat {
+	if job.Phase != "finished" || (job.State != "completed" && job.State != "failed") || job.Group != "" || (job.Kind == jobs.KindFeatureBuild || job.Kind == jobs.KindChat) {
 		return
 	}
 	n := Notice{Kind: KindFinished, Repository: job.Repository, PR: job.PR, Clone: job.Clone}

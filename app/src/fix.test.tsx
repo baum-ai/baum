@@ -7,14 +7,16 @@ import {
   fixJob,
   fixLabel,
   fixName,
+  LocalRequestError,
   reviewJob,
+  startFix,
   threadOutcomesSummary,
   type Entry,
-  type Estimate,
   type Job,
 } from "./api";
-import { FixDialog, FixNotice } from "./fix";
+import { FixNotice } from "./fix";
 import { Inbox } from "./inbox";
+import { forgetLastRows } from "./shortcuts";
 
 const broken: Entry = {
   pull_request: {
@@ -57,40 +59,15 @@ const variant = (patch: Partial<Entry>, pr: Partial<Entry["pull_request"]> = {})
   ...patch,
   pull_request: { ...broken.pull_request, ...pr },
 });
-const estimate = (item: Partial<Estimate["items"][number]>): Estimate => ({
-  id: "estimate",
-  estimate_usd: 1.5,
-  price_version: "v1",
-  expires_at: "2026-10-26T12:00:00Z",
-  items: [
-    {
-      clone: "clone",
-      pr: 8,
-      kind: "fix",
-      fix: { conflicts: true, head_ref: "feature", base_ref: "main" },
-      head_sha: "head",
-      backend: "claude",
-      model: "claude-sonnet-4-5",
-      estimate_usd: 1.5,
-      max_tokens: 1000,
-      max_calls: 10,
-      requires_isolation_confirmation: false,
-      ...item,
-    },
-  ],
-});
-
-let root: Root, node: HTMLDivElement, answer: Estimate;
+let root: Root, node: HTMLDivElement;
+// What POST api/jobs answers: the queued fix, or a refusal.
+let answer: () => Response;
 const requests: { path: string; body: unknown }[] = [];
 beforeEach(() => {
   Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
   history.replaceState(null, "", "/s/test-ns/");
-  // jsdom has no modal dialogs.
-  HTMLDialogElement.prototype.showModal = function () {
-    this.open = true;
-  };
   requests.length = 0;
-  answer = estimate({});
+  answer = () => Response.json({ jobs: [{ id: "fix-job", kind: "fix" }] });
   node = document.createElement("div");
   document.body.append(node);
   root = createRoot(node);
@@ -98,9 +75,7 @@ beforeEach(() => {
     "fetch",
     vi.fn(async (path: string, init?: RequestInit) => {
       requests.push({ path, body: init?.body ? JSON.parse(String(init.body)) : undefined });
-      return path.endsWith("api/jobs/estimate")
-        ? Response.json(answer)
-        : Response.json({ jobs: [{ id: "fix-job", kind: "fix" }] });
+      return answer();
     }),
   );
 });
@@ -108,6 +83,7 @@ afterEach(async () => {
   await act(async () => root.unmount());
   node.remove();
   vi.unstubAllGlobals();
+  forgetLastRows();
 });
 
 it("offers a fix only for broken pull requests the person can push to", () => {
@@ -165,50 +141,43 @@ it("puts the fix action in the broken status cell, not on a fork", async () => {
   );
   expect(node.querySelector("button.inbox-fix")).toBeNull();
   expect(node.textContent).toContain("Fixing…");
-});
-
-it("confirms the harness, model, branch and write access before starting", async () => {
-  const close = vi.fn();
-  const started = vi.fn(async () => {});
-  await act(async () =>
-    root.render(<FixDialog entry={broken} clone="clone" close={close} started={started} />),
-  );
-  expect(requests[0]).toEqual({
-    path: "/s/test-ns/api/jobs/estimate",
-    body: { items: [{ clone: "clone", pr: 8, kind: "fix" }], mode: "single" },
-  });
-  const text = node.textContent ?? "";
-  for (const fact of [
-    "claude",
-    "claude-sonnet-4-5",
-    "feature",
-    "main",
-    "write access",
-    "never force-pushes",
-  ])
-    expect(text).toContain(fact);
-  expect(text).toContain("cannot run your tests");
-  const confirm = Array.from(node.querySelectorAll("button")).find(
-    (button) => button.textContent === "Fix conflicts",
-  )!;
-  await act(async () => confirm.click());
-  expect(requests[1]).toEqual({
-    path: "/s/test-ns/api/jobs",
-    body: { estimate_id: "estimate", confirm_estimate: true },
-  });
-  expect(started).toHaveBeenCalled();
-  expect(close).toHaveBeenCalled();
-});
-
-it("explains a fix that cannot run and offers no confirmation", async () => {
-  answer = estimate({ blocked_reason: "no_push_access" });
+  // From the click, before the daemon answers.
   await act(async () =>
     root.render(
-      <FixDialog entry={broken} clone="clone" close={() => {}} started={async () => {}} />,
+      <Inbox
+        rows={[broken]}
+        cloneFor={(entry) => entry.clone_id ?? ""}
+        selection={new Set()}
+        setSelection={() => {}}
+        Link={Link}
+        fix={fix}
+        fixStarting={() => true}
+      />,
     ),
   );
-  expect(node.textContent).toContain("can't push to this repository");
-  expect(Array.from(node.querySelectorAll("button")).map((b) => b.textContent)).toEqual(["Close"]);
+  expect(node.querySelector("button.inbox-fix")).toBeNull();
+  expect(node.textContent).toContain("Fixing…");
+});
+
+it("starts a fix at once, with no estimate or confirmation", async () => {
+  const jobs = await startFix("clone", 8);
+  expect(requests).toEqual([
+    {
+      path: "/s/test-ns/api/jobs",
+      body: { items: [{ clone: "clone", pr: 8, kind: "fix" }], mode: "single" },
+    },
+  ]);
+  expect(jobs).toEqual([{ id: "fix-job", kind: "fix" }]);
+});
+
+it("says in words why the daemon will not start a fix", async () => {
+  answer = () => Response.json({ blocked_reason: "no_push_access" }, { status: 409 });
+  const refusal = await startFix("clone", 8).catch((e: unknown) => e);
+  expect(refusal).toBeInstanceOf(LocalRequestError);
+  expect((refusal as LocalRequestError).message).toBe(
+    "Your GitHub account can't push to this repository.",
+  );
+  expect((refusal as LocalRequestError).code).toBe("no_push_access");
 });
 
 it("offers review comments only on the person's own pull request with unresolved threads", () => {
@@ -220,41 +189,6 @@ it("offers review comments only on the person's own pull request with unresolved
   expect(fixLabel(variant({ merge: "ready", unresolved: 3 }))).toBe("Fix CI and review comments");
   expect(fixName({ conflicts: true, threads: "digest" })).toBe("Fix conflicts and review comments");
   expect(fixName({ checks: true })).toBe("Fix CI");
-});
-
-it("lists the review threads and says baum replies and resolves", async () => {
-  answer = estimate({
-    fix: { threads: "digest", head_ref: "feature", base_ref: "main" },
-    fix_threads: [
-      { ref: "T1", path: "src/a.go", line: 12, author: "alice", excerpt: "Rename this." },
-      { ref: "T2", path: "src/b.go", outdated: true, author: "bob", excerpt: "Why a map?" },
-    ],
-    fix_threads_capped: true,
-    fix_threads_untrusted: 2,
-  });
-  await act(async () =>
-    root.render(
-      <FixDialog entry={broken} clone="clone" close={() => {}} started={async () => {}} />,
-    ),
-  );
-  const text = node.textContent ?? "";
-  expect(node.querySelector("h2")?.textContent).toBe("Fix review comments");
-  expect(text).toContain("An agent addresses the unresolved review comments on feature.");
-  expect(text).toContain("baum replies on each thread the agent addressed and resolves it");
-  const threads = node.querySelectorAll('[aria-label="Review threads"] li');
-  expect(Array.from(threads).map((li) => li.textContent)).toEqual([
-    "src/a.go:12alice: Rename this.",
-    "src/b.go outdatedbob: Why a map?",
-  ]);
-  expect(text).toContain("Only the first 2 unresolved threads are included.");
-  expect(text).toContain(
-    "2 threads started by accounts without access to the repository are left out.",
-  );
-  expect(
-    Array.from(node.querySelectorAll("button")).some(
-      (button) => button.textContent === "Fix review comments",
-    ),
-  ).toBe(true);
 });
 
 it("shows what became of each review thread after the push", async () => {
@@ -295,61 +229,23 @@ it("shows what became of each review thread after the push", async () => {
   expect(text).toContain("src/b.go Left open: A question for the author.");
 });
 
-it("confirms a fix made from a conversation, sending only its ids", async () => {
-  answer = estimate({
-    fix: { chat: "c1", chat_turn: 2, head_ref: "feature", base_ref: "main" },
-    fix_chat: { conversation_id: "c1", turn: 2 },
-  });
-  const started = vi.fn(async () => {});
-  await act(async () =>
-    root.render(
-      <FixDialog
-        entry={broken}
-        clone="clone"
-        chat={{ conversation_id: "c1", turn: 2, suggestion: "Lower the cap to 30s" }}
-        close={() => {}}
-        started={started}
-      />,
-    ),
-  );
-  // The daemon reads the conversation: no question, answer or suggestion goes up.
+it("starts a fix made from a conversation, sending only its ids", async () => {
+  await startFix("clone", 8, undefined, { conversation_id: "c1", turn: 2 });
   expect(requests[0]).toEqual({
-    path: "/s/test-ns/api/jobs/estimate",
+    path: "/s/test-ns/api/jobs",
     body: {
       items: [{ clone: "clone", pr: 8, kind: "fix", fix_chat: { conversation_id: "c1", turn: 2 } }],
       mode: "single",
     },
   });
-  const text = node.textContent ?? "";
-  expect(text).toContain("Uses this conversation as context");
-  expect(text).toContain("Lower the cap to 30s");
-  expect(text).toContain("makes the change the conversation asks for");
-  const confirm = Array.from(node.querySelectorAll("button")).find(
-    (button) => button.textContent === "Fix from this answer",
-  )!;
-  await act(async () => confirm.click());
-  expect(requests[1]).toEqual({
-    path: "/s/test-ns/api/jobs",
-    body: { estimate_id: "estimate", confirm_estimate: true },
-  });
-  expect(started).toHaveBeenCalled();
 });
 
-it("shows why a conversation cannot be fixed from", async () => {
-  answer = estimate({ blocked_reason: "chat_unavailable" });
-  await act(async () =>
-    root.render(
-      <FixDialog
-        entry={broken}
-        clone="clone"
-        chat={{ conversation_id: "c1", turn: 1 }}
-        close={() => {}}
-        started={async () => {}}
-      />,
-    ),
-  );
-  expect(node.textContent).toContain("Uses this conversation as context");
-  expect(node.textContent).toContain("no answer to fix from");
+it("reports why a conversation cannot be fixed from", async () => {
+  vi.stubGlobal("fetch", vi.fn(async () => new Response(
+    JSON.stringify({ blocked_reason: "chat_unavailable" }), { status: 409 },
+  )));
+  await expect(startFix("clone", 8, undefined, { conversation_id: "c1", turn: 1 }))
+    .rejects.toMatchObject({ code: "chat_unavailable" });
 });
 
 it("names a fix from a conversation and offers it whenever a fix may run", () => {

@@ -78,7 +78,7 @@ func (f *fixture) roundTrip(r *http.Request) (*http.Response, error) {
 			for _, team := range pr.RequestedTeams {
 				requests = append(requests, map[string]any{"requestedReviewer": map[string]any{"__typename": "Team", "databaseId": team.ID}})
 			}
-			nodes = append(nodes, map[string]any{"number": pr.Number, "title": pr.Title, "isDraft": pr.Draft, "author": pr.User, "headRefOid": pr.Head.SHA, "headRefName": pr.Head.Ref, "headRepository": head, "baseRepository": map[string]any{"databaseId": pr.Base.Repo.ID, "nameWithOwner": pr.Base.Repo.FullName}, "reviewRequests": map[string]any{"nodes": requests}})
+			nodes = append(nodes, map[string]any{"number": pr.Number, "title": pr.Title, "isDraft": pr.Draft, "author": pr.User, "headRefOid": pr.Head.SHA, "headRefName": pr.Head.Ref, "baseRefName": pr.Base.Ref, "headRepository": head, "baseRepository": map[string]any{"databaseId": pr.Base.Repo.ID, "nameWithOwner": pr.Base.Repo.FullName}, "reviewRequests": map[string]any{"nodes": requests}})
 		}
 		encoded, _ := json.Marshal(map[string]any{"data": map[string]any{"viewer": map[string]any{"login": "viewer"}, "rateLimit": map[string]any{"cost": 1, "remaining": 4900, "resetAt": "2033-05-18T03:33:20Z"}, "repository": map[string]any{"viewerPermission": "WRITE", "pullRequests": map[string]any{"nodes": nodes, "pageInfo": map[string]any{"hasNextPage": len(rows) == 100, "endCursor": fmt.Sprintf("page-%d", page+1)}}}}})
 		body = string(encoded)
@@ -111,10 +111,10 @@ func recordedFixture() *fixture {
 		"/user":                           `{"login":"viewer"}`,
 		"/user/teams?per_page=100&page=1": `[{"id":42}]`,
 		"/repos/acme/app/pulls?state=open&per_page=100&page=1": `[
- {"number":1,"title":"My draft","html_url":"https://github.com/acme/app/pull/1","draft":true,"user":{"login":"VIEWER"},"head":{"sha":"head1","ref":"my-draft","repo":{"id":1,"full_name":"acme/app"}},"base":{"repo":{"id":1,"full_name":"acme/app"}},"requested_reviewers":[]},
+ {"number":1,"title":"My draft","html_url":"https://github.com/acme/app/pull/1","draft":true,"user":{"login":"VIEWER"},"head":{"sha":"head1","ref":"my-draft","repo":{"id":1,"full_name":"acme/app"}},"base":{"ref":"main","repo":{"id":1,"full_name":"acme/app"}},"requested_reviewers":[]},
  {"number":2,"title":"Team request","user":{"login":"writer"},"head":{"sha":"head2","repo":{"id":2,"full_name":"fork/app"}},"base":{"repo":{"id":1,"full_name":"acme/app"}},"requested_teams":[{"id":42}]},
  {"number":3,"title":"Direct request","user":{"login":"reader"},"head":{"sha":"head3","repo":null},"base":{"repo":{"id":1,"full_name":"acme/app"}},"requested_reviewers":[{"login":"viewer"}]},
- {"number":4,"title":"Unknown permissions","user":{"login":"unknown"},"head":{"sha":"head4","repo":{"id":1,"full_name":"acme/app"}},"base":{"repo":{"id":1,"full_name":"acme/app"}}}
+ {"number":4,"title":"Unknown permissions","user":{"login":"unknown","__typename":"Bot"},"head":{"sha":"head4","repo":{"id":1,"full_name":"acme/app"}},"base":{"repo":{"id":1,"full_name":"acme/app"}}}
  ]`,
 		"/repos/acme/app/collaborators/VIEWER/permission": `{"permission":"admin"}`,
 		"/repos/acme/app/collaborators/writer/permission": `{"permission":"write"}`,
@@ -143,7 +143,7 @@ func TestFlagsAndPrivateOfflineCache(t *testing.T) {
 		t.Fatalf("snapshot %#v", snapshot)
 	}
 	prs := snapshot.PullRequests
-	if !prs[0].AuthoredByMe || !prs[0].Draft || prs[0].Fork || prs[0].HeadSHA != "head1" || prs[0].HeadRef != "my-draft" || prs[0].State != "OPEN" || prs[0].AuthorHasWrite == nil || !*prs[0].AuthorHasWrite {
+	if !prs[0].AuthoredByMe || !prs[0].Draft || prs[0].Fork || prs[0].HeadSHA != "head1" || prs[0].HeadRef != "my-draft" || prs[0].BaseRef != "main" || prs[0].State != "OPEN" || prs[0].AuthorHasWrite == nil || !*prs[0].AuthorHasWrite {
 		t.Fatalf("authored flags %#v", prs[0])
 	}
 	if !prs[1].ReviewRequestedFromMe || !prs[1].Fork || prs[1].AuthorHasWrite == nil || !*prs[1].AuthorHasWrite {
@@ -154,6 +154,13 @@ func TestFlagsAndPrivateOfflineCache(t *testing.T) {
 	}
 	if prs[3].AuthorHasWrite != nil {
 		t.Fatal("unreadable permission treated as known")
+	}
+	if !prs[3].AuthorBot || prs[0].AuthorBot || prs[1].AuthorBot || prs[2].AuthorBot {
+		t.Fatalf("author_bot = %t %t %t %t, want only the Bot author", prs[0].AuthorBot, prs[1].AuthorBot, prs[2].AuthorBot, prs[3].AuthorBot)
+	}
+	var old PullRequest
+	if err := json.Unmarshal([]byte(`{"number":1,"author":"x"}`), &old); err != nil || old.AuthorBot {
+		t.Fatalf("older snapshot decoded as %+v, %v", old, err)
 	}
 	// The viewer's own permission is the repository's, whoever wrote the PR.
 	for _, pr := range prs {
@@ -227,7 +234,7 @@ func TestConditionalBackoffAndRateLimit(t *testing.T) {
 	}
 }
 
-// A cache written before pull requests kept their head branch reads every
+// A cache written before pull requests kept their base branch reads every
 // response in full once, so a 304 cannot keep the branch unknown.
 func TestOlderCacheFormatIsReadInFullOnce(t *testing.T) {
 	f := recordedFixture()
@@ -236,7 +243,7 @@ func TestOlderCacheFormatIsReadInFullOnce(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if first.PullRequests[0].HeadRef != "my-draft" || first.PullRequests[1].HeadRef != "" {
+	if first.PullRequests[0].HeadRef != "my-draft" || first.PullRequests[0].BaseRef != "main" || first.PullRequests[1].HeadRef != "" {
 		t.Fatalf("head branches %#v", first.PullRequests)
 	}
 	path := repositoryCachePath(t, s)
@@ -246,7 +253,7 @@ func TestOlderCacheFormatIsReadInFullOnce(t *testing.T) {
 	}
 	cache.Format = 0
 	for key, response := range cache.Responses {
-		response.Body = json.RawMessage(strings.ReplaceAll(string(response.Body), `"ref":"my-draft",`, ""))
+		response.Body = json.RawMessage(strings.ReplaceAll(string(response.Body), `"ref":"main",`, ""))
 		cache.Responses[key] = response
 	}
 	if err := save(path, cache); err != nil {
@@ -256,7 +263,7 @@ func TestOlderCacheFormatIsReadInFullOnce(t *testing.T) {
 	*now = first.NextPoll
 	before := len(f.requests)
 	got, err := s.Poll(context.Background(), testRepo)
-	if err != nil || got.PullRequests[0].HeadRef != "my-draft" {
+	if err != nil || got.PullRequests[0].BaseRef != "main" {
 		t.Fatalf("upgraded poll %#v %v", got, err)
 	}
 	for _, request := range f.requests[before:] {
@@ -617,5 +624,126 @@ func TestObservationCannotMoveToAnotherAccountPartition(t *testing.T) {
 		if observation.HeadSHA == "old-private" {
 			t.Fatal("old account observation entered current cache")
 		}
+	}
+}
+
+// A merge from the app leaves the open pull requests at once and is observed
+// merged under the title discovery knew.
+func TestMergedLeavesTheOpenPullRequests(t *testing.T) {
+	s, _ := service(t, recordedFixture())
+	if _, err := s.Poll(context.Background(), testRepo); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Merged(context.Background(), testRepo, 3, "head3"); err != nil {
+		t.Fatal(err)
+	}
+	// A read that began before the merge and ends after it does not undo it.
+	if err := s.Observe(context.Background(), testRepo, Observation{Number: 3, HeadSHA: "head3", Title: "Direct request", State: "OPEN", FetchedAt: s.now().Add(-time.Second)}); err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := s.Cached(context.Background(), testRepo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, pr := range snapshot.PullRequests {
+		if pr.Number == 3 {
+			t.Fatal("merged pull request still listed open")
+		}
+	}
+	if len(snapshot.Observations) != 1 {
+		t.Fatalf("observations %+v", snapshot.Observations)
+	}
+	if o := snapshot.Observations[0]; o.Number != 3 || o.HeadSHA != "head3" || o.Title != "Direct request" || o.State != "MERGED" || !o.FetchedAt.Equal(s.now()) {
+		t.Fatalf("observation %+v", o)
+	}
+}
+
+// The app's read of a pull request's threads replaces discovery's count
+// until the next poll; a count discovery capped is left alone.
+func TestUnresolvedRecordsTheAppsCount(t *testing.T) {
+	t.Setenv("GH_HOST", "github.com")
+	client := github.New(func(context.Context, string) (string, error) { return "synthetic", nil }, github.Options{Transport: roundTrip(func(r *http.Request) (*http.Response, error) {
+		body := `[]`
+		if r.Method == http.MethodPost {
+			node := func(number int, threads string, more bool) string {
+				return fmt.Sprintf(`{"number":%d,"title":"PR","headRefOid":"head","author":{"login":"viewer"},"headRepository":{"databaseId":1,"nameWithOwner":"acme/app"},"baseRepository":{"databaseId":1,"nameWithOwner":"acme/app"},"reviewThreads":{"nodes":[%s],"pageInfo":{"hasNextPage":%t}}}`, number, threads, more)
+			}
+			two := `{"isResolved":false},{"isResolved":false}`
+			body = `{"data":{"viewer":{"login":"viewer"},"repository":{"pullRequests":{"nodes":[` + node(1, two, false) + `,` + node(2, two, true) + `],"pageInfo":{"hasNextPage":false}}}}}`
+		} else if strings.Contains(r.URL.Path, "/permission") {
+			body = `{"permission":"write"}`
+		}
+		return &http.Response{StatusCode: 200, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(body))}, nil
+	})})
+	s := New(client, t.TempDir())
+	if _, err := s.Poll(context.Background(), testRepo); err != nil {
+		t.Fatal(err)
+	}
+	for _, step := range []struct {
+		number, count int
+		moved         bool
+	}{{1, 2, false}, {1, 0, true}, {1, 0, false}, {2, 0, false}, {9, 0, false}} {
+		if moved, err := s.Unresolved(context.Background(), testRepo, step.number, step.count); err != nil || moved != step.moved {
+			t.Fatalf("pull request %d at %d: moved=%v err=%v", step.number, step.count, moved, err)
+		}
+	}
+	snapshot, err := s.Cached(context.Background(), testRepo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, pr := range snapshot.PullRequests {
+		if want := map[int]int{1: 0, 2: 2}[pr.Number]; pr.Unresolved == nil || *pr.Unresolved != want {
+			t.Fatalf("pull request %d unresolved %v, want %d", pr.Number, pr.Unresolved, want)
+		}
+	}
+}
+
+// A poll that finds a new head polls again after settleInterval, and so do up
+// to maxSettles more while GitHub has not worked out the mergeability.
+func TestNewHeadPollsAgainSoonWhileMergeabilitySettles(t *testing.T) {
+	t.Setenv("GH_HOST", "github.com")
+	head, mergeable, state := "one", "CONFLICTING", "DIRTY"
+	client := github.New(func(context.Context, string) (string, error) { return "synthetic", nil }, github.Options{Transport: roundTrip(func(r *http.Request) (*http.Response, error) {
+		body := `[]`
+		if r.Method == http.MethodPost {
+			body = fmt.Sprintf(`{"data":{"viewer":{"login":"viewer"},"repository":{"pullRequests":{"nodes":[{"number":1,"title":"PR","headRefOid":%q,"mergeable":%q,"mergeStateStatus":%q,"author":{"login":"viewer"},"headRepository":{"databaseId":1,"nameWithOwner":"acme/app"},"baseRepository":{"databaseId":1,"nameWithOwner":"acme/app"}}],"pageInfo":{"hasNextPage":false}}}}}`, head, mergeable, state)
+		} else if strings.Contains(r.URL.Path, "/permission") {
+			body = `{"permission":"write"}`
+		}
+		return &http.Response{StatusCode: 200, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(body))}, nil
+	})})
+	s := New(client, t.TempDir())
+	now := time.Date(2026, 10, 28, 15, 0, 0, 0, time.UTC)
+	s.now = func() time.Time { return now }
+	poll := func() Snapshot {
+		t.Helper()
+		snapshot, err := s.PollNow(context.Background(), testRepo)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return snapshot
+	}
+	// The first poll has no earlier head to compare with.
+	if first := poll(); first.Settling || !first.NextPoll.Equal(now.Add(30*time.Second)) {
+		t.Fatalf("first poll settling=%v next=%v", first.Settling, first.NextPoll)
+	}
+	head, mergeable, state = "two", "UNKNOWN", "UNKNOWN"
+	for i := range 1 + maxSettles {
+		if got := poll(); !got.Settling || !got.NextPoll.Equal(now.Add(settleInterval)) {
+			t.Fatalf("poll %d after the push: settling=%v next=%v", i, got.Settling, got.NextPoll.Sub(now))
+		}
+	}
+	// GitHub never worked it out: the usual backoff goes on.
+	if got := poll(); got.Settling || !got.NextPoll.After(now.Add(settleInterval)) {
+		t.Fatalf("after %d settles: settling=%v next=%v", maxSettles, got.Settling, got.NextPoll.Sub(now))
+	}
+	// Worked out after one quick poll: the next one is the usual.
+	head = "three"
+	if got := poll(); !got.Settling {
+		t.Fatal("new head did not settle")
+	}
+	mergeable, state = "MERGEABLE", "CLEAN"
+	if got := poll(); got.Settling || got.PullRequests[0].Merge == "conflict" {
+		t.Fatalf("settled poll settling=%v merge=%q", got.Settling, got.PullRequests[0].Merge)
 	}
 }

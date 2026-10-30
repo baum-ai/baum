@@ -33,13 +33,16 @@ import {
   liveFor,
   fixEligible,
   fixLabel,
+  jobHref,
+  navigate,
   type LiveSession,
   type Provenance,
 } from "./api";
-import { FixNotice, type FixChat } from "./fix";
+import { FixNotice, FixRuns, type FixState, type FixChat } from "./fix";
 import { CloneActions } from "./repositories";
 import { Notice } from "./shell";
 import { LiveSessions } from "./sessions";
+import { PullRequestDecisionsList } from "./decisions";
 import { LoadingStatus } from "./nine-dots";
 import { canMerge, MergeDialog } from "./merge";
 import { useShortcuts } from "./shortcuts";
@@ -121,8 +124,10 @@ export function LocalReview({
   live = [],
   groups = [],
   fix,
+  fixState = { starting: false, error: "" },
   fixJob,
   chats = [],
+  fixRuns = [],
 }: {
   entry: Entry;
   clone: string;
@@ -136,12 +141,14 @@ export function LocalReview({
   live?: LiveSession[];
   /** The review groups this pull request belongs to. */
   groups?: { id: string; name: string }[];
-  /** Opens the fix confirmation, of a conversation's change when given one;
-   *  absent when the pull request offers no fix. */
+  /** Starts the fix at once; absent when the pull request has no clone. */
   fix?: (chat?: FixChat) => void;
+  /** The fix asked for here: starting, or why it did not start. */
+  fixState?: FixState;
   /** The pull request's latest fix job. */
   fixJob?: Job;
-  /** The pull request's questions to the review's agent. */
+  /** Every fix job of the pull request, newest first. */
+  fixRuns?: Job[];
   chats?: Job[];
 }) {
   const pr = entry.pull_request;
@@ -184,10 +191,14 @@ export function LocalReview({
   };
   const fixLabelText = fixLabel(entry);
   const fixing = isActiveJob(fixJob);
+  const fixStarting = fixState.starting && !fixing;
   // A finished fix stays on the page while it concerns the head shown: the
   // one it started from, or the commit it pushed.
   const showFix =
     !!fixJob && (fixing || fixJob.head_sha === pr.head_sha || fixJob.commit === pr.head_sha);
+  // The runs the notice does not show stay one fold away, transcripts and all.
+  const earlierRuns = fixRuns.filter((run) => !showFix || run.id !== fixJob?.id);
+  const watchable = [fixJob, ...fixRuns].find((run) => run?.has_transcript);
   const running = liveFor(live, pr);
   // A session that ends is read from disk like any other: reload the list
   // when one leaves the live section.
@@ -244,12 +255,15 @@ export function LocalReview({
     } else if (event.key === "m" && canMerge(entry)) {
       event.preventDefault();
       setMerging(true);
-    } else if (event.key === "f" && fix && fixLabelText && !fixing) {
+    } else if (event.key === "f" && fix && fixLabelText && !fixing && !fixStarting) {
       event.preventDefault();
       fix();
     } else if (event.key === "g" && !generating && !entry.needs_clone) {
       event.preventDefault();
       generate();
+    } else if (event.key === "t" && watchable) {
+      event.preventDefault();
+      navigate(jobHref(watchable));
     }
   });
   const loadVersion = useCallback(
@@ -393,12 +407,12 @@ export function LocalReview({
                           <Button
                             variant="secondary"
                             size="compact"
-                            disabled={fixing}
+                            disabled={fixing || fixStarting}
                             onClick={() => fix()}
                             className="gap-1.5"
                           >
                             <SparkleIcon size={14} className="flex-none text-(--status-critical)" />
-                            {fixing ? "Fixing…" : fixLabelText}
+                            {fixing ? "Fixing…" : fixStarting ? "Starting…" : fixLabelText}
                           </Button>
                         ) : null}
                         {canRerunChecks(entry) ? (
@@ -534,8 +548,18 @@ export function LocalReview({
                         </ViewerLink>
                       </Notice>
                     ))}
+                    {fixState.error ? <Alert>Couldn't start the fix: {fixState.error}</Alert> : null}
                     {showFix && fixJob ? (
                       <FixNotice key={fixJob.id} job={fixJob} changed={changed} />
+                    ) : null}
+                    <FixRuns runs={earlierRuns} earlier={showFix} />
+                    {doc || failed || entry.version_count === 0 ? (
+                      <PullRequestDecisionsList
+                        repository={pr.repository}
+                        number={pr.number}
+                        live={running}
+                        revision={`${ended}:${doc?.review.version ?? 0}`}
+                      />
                     ) : null}
                     <LiveSessions sessions={running} Link={ViewerLink} />
                     {entry.needs_clone && doc ? (
@@ -623,7 +647,7 @@ export function LocalReview({
                       document={doc}
                       tour={tour}
                       fix={fix && fixEligible(entry) ? fix : undefined}
-                      fixRunning={fixing}
+                      fixRunning={fixing || fixStarting}
                       openDraft={() => {
                         setWalk("all");
                         // The overlay would cover the draft and keep it inert.

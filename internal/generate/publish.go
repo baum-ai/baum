@@ -90,7 +90,7 @@ func Publish(ctx context.Context, versions Versions, key store.Key, o Options, c
 	keptSession := result.Metadata.Session
 	dropSession := func() {
 		if keptSession != nil {
-			removeTree(keptSession.Directory)
+			RemoveTree(keptSession.Directory)
 			_ = reviewruns.RemoveSessions(filepath.Dir(keptSession.Directory), keptSession.Directory)
 			result.Metadata.Session, result.RunDir = nil, ""
 		}

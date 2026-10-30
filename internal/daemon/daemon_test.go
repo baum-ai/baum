@@ -106,8 +106,7 @@ type blockingExecutor struct {
 }
 
 func (b *blockingExecutor) Prepare(_ context.Context, item jobs.Item) (jobs.Prepared, string, error) {
-	price := 1.0
-	return jobs.Prepared{Item: item, Repository: "acme/demo", HeadSHA: "head", Backend: "claude", Model: "m", EstimateUSD: &price}, "v1", nil
+	return jobs.Prepared{Item: item, Repository: "acme/demo", HeadSHA: "head", Backend: "claude", Model: "m"}, "v1", nil
 }
 func (b *blockingExecutor) Execute(ctx context.Context, _ jobs.Prepared, _ func(jobs.Progress)) (*float64, error) {
 	b.once.Do(func() { close(b.started) })

@@ -8,6 +8,8 @@ import example from "../../schema/review-example.json" with { type: "json" };
 import { App } from "./app";
 import { LocalReview } from "./review";
 import { reviewJob, type Entry, type Job } from "./api";
+import type { FixState } from "./fix";
+import { forgetLastRows } from "./shortcuts";
 vi.mock("@baum/viewer/components/review-viewer", () => ({
   ReviewViewer: ({ document, header, placeholder, notices }: ReviewViewerProps) => (
     <div data-generation={header?.generation?.state} data-back={header?.back?.href}>
@@ -98,6 +100,7 @@ afterEach(async () => {
   await act(async () => root.unmount());
   node.remove();
   vi.unstubAllGlobals();
+  forgetLastRows();
 });
 async function render(current: Job, revision = 0, currentEntry = entry) {
   await act(async () =>
@@ -344,7 +347,7 @@ it("leads with the fix of a broken pull request and follows its job", async () =
     phase: "merging",
     ...patch,
   });
-  const show = (current?: Job) =>
+  const show = (current?: Job, fixState?: FixState) =>
     act(async () =>
       root.render(
         <UrlStateProvider value={{ search: new URLSearchParams(), update: () => {} }}>
@@ -355,6 +358,7 @@ it("leads with the fix of a broken pull request and follows its job", async () =
             changed={changed}
             generate={generate}
             fix={fix}
+            fixState={fixState}
             fixJob={current}
           />
         </UrlStateProvider>,
@@ -366,6 +370,21 @@ it("leads with the fix of a broken pull request and follows its job", async () =
   )!;
   await act(async () => button.click());
   expect(fix).toHaveBeenCalled();
+  // The fix starts at once: no dialog, and the button answers the click.
+  expect(node.querySelector("dialog")).toBeNull();
+  await show(undefined, { starting: true, error: "" });
+  expect(
+    Array.from(node.querySelectorAll("button")).find((b) => b.textContent === "Starting…")!
+      .disabled,
+  ).toBe(true);
+  // A fix the daemon refused says why on the page.
+  await show(undefined, {
+    starting: false,
+    error: "Your GitHub account can't push to this repository.",
+  });
+  expect(node.textContent).toContain(
+    "Couldn't start the fix: Your GitHub account can't push to this repository.",
+  );
   await show(fixJob("running"));
   expect(node.textContent).toContain("Fix conflicts: Merging the base branch");
   expect(
@@ -380,4 +399,66 @@ it("leads with the fix of a broken pull request and follows its job", async () =
   expect(node.textContent).toContain("Fix conflicts: pushed abcdef1 to feature");
   await show(fixJob("failed", { reason: "push_rejected" }));
   expect(node.textContent).toContain("GitHub refused the push");
+});
+it("keeps a pull request's fix runs one fold away and opens the latest transcript with t", async () => {
+  const fixRun = (id: string, state: string, patch: Partial<Job> = {}): Job => ({
+    ...job(state),
+    id,
+    kind: "fix",
+    fix: { checks: true },
+    has_transcript: true,
+    created_at: new Date(Date.now() - 2 * 3600_000).toISOString(),
+    ...patch,
+  });
+  const pushed = fixRun("fix-2", "completed", { head_sha: "old", commit: "abcdef1234567890" });
+  const failed = fixRun("fix-1", "failed", { head_sha: "older", reason: "push_rejected" });
+  const show = (fixJob: Job | undefined, fixRuns: Job[]) =>
+    act(async () =>
+      root.render(
+        <UrlStateProvider value={{ search: new URLSearchParams(), update: () => {} }}>
+          <LocalReview
+            entry={entry}
+            clone="selected-clone"
+            revision={0}
+            changed={changed}
+            generate={generate}
+            fixJob={fixJob}
+            fixRuns={fixRuns}
+          />
+        </UrlStateProvider>,
+      ),
+    );
+  const press = (key: string) =>
+    act(async () => {
+      document.body.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true }));
+    });
+  // No fix yet: nothing to show and t does nothing.
+  await show(undefined, []);
+  expect(node.querySelector(".local-fix-runs")).toBeNull();
+  await press("t");
+  expect(location.search).toBe("");
+  // The head moved on since: the notice is gone but the runs stay, folded.
+  await show(pushed, [pushed, failed]);
+  expect(node.querySelector('[aria-label="Fix"]')).toBeNull();
+  const runs = node.querySelector<HTMLDetailsElement>(".local-fix-runs")!;
+  expect(runs.open).toBe(false);
+  expect(runs.querySelector("summary")!.textContent).toBe("2 fix runs, the last 2 hours agot");
+  const lines = Array.from(runs.querySelectorAll("li")).map((li) => li.textContent);
+  expect(lines).toEqual([
+    "2 hours agoFix CI: pushed abcdef1Transcript",
+    "2 hours agoFix CI: failed: GitHub refused the push, usually because the branch moved on. Nothing was force-pushed.Transcript",
+  ]);
+  await press("t");
+  expect(location.search).toBe("?page=jobs&job=fix-2");
+  // A running fix shows in its notice, Watch with its key; the rest are earlier runs.
+  history.replaceState(null, "", "/s/test-ns/");
+  const running = fixRun("fix-3", "running", { head_sha: "head", phase: "fixing" });
+  await show(running, [running, pushed, failed]);
+  const watch = Array.from(node.querySelectorAll('[aria-label="Fix"] a')).find((a) =>
+    a.textContent?.startsWith("Watch"),
+  )!;
+  expect(watch.querySelector(".key-hint")!.textContent).toBe("t");
+  expect(node.querySelector(".local-fix-runs summary")!.textContent).toBe("2 earlier fix runs");
+  await press("t");
+  expect(location.search).toBe("?page=jobs&job=fix-3");
 });

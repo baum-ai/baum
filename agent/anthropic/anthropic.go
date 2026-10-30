@@ -415,6 +415,12 @@ type requestBody struct {
 	Stream       bool              `json:"stream"`
 	CacheControl *cacheControl     `json:"cache_control,omitempty"`
 	OutputConfig *outputConfig     `json:"output_config,omitempty"`
+	ToolChoice   *toolChoice       `json:"tool_choice,omitempty"`
+}
+
+type toolChoice struct {
+	Type                   string `json:"type"`
+	DisableParallelToolUse bool   `json:"disable_parallel_tool_use,omitempty"`
 }
 
 type contentBlock struct {

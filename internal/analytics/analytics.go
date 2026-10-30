@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/baum-ai/baum/internal/decisionlog"
 	"github.com/baum-ai/baum/internal/jobs"
 	"github.com/baum-ai/baum/internal/planusage"
 	"github.com/baum-ai/baum/internal/repos"
@@ -41,6 +42,9 @@ type Service struct {
 	Actions  *Actions
 	Plans    *planusage.History
 	Delivery *Delivery
+	// Captures reads decision capture's ledger from since on; nil without
+	// decision capture.
+	Captures func(ctx context.Context, since time.Time) ([]decisionlog.LedgerEntry, error)
 	// Location is the zone days and hours are counted in; nil is local.
 	Location *time.Location
 	Now      func() time.Time

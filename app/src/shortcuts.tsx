@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
 import { Button } from "@baum/viewer/components/ui";
 import { PAGES, type Page } from "./pages";
 
@@ -7,10 +7,15 @@ export type InboxAction =
   | "previous"
   | "open"
   | "select"
+  | "peek"
   | "merge"
   | "fix"
   | "generate"
+  | "transcript"
   | "refresh";
+
+/** The fix transcript key's label: `t` wherever a pull request is in hand. */
+const TRANSCRIPT_LABEL = "Watch the fix agent, or read its last transcript";
 
 /** The inbox's keys, the one table both the key handling and the shortcuts
  *  sheet read, so the sheet lists exactly the keys that work. */
@@ -19,9 +24,11 @@ export const INBOX_SHORTCUTS: { keys: string[]; action: InboxAction; label: stri
   { keys: ["k", "ArrowUp"], action: "previous", label: "Previous row" },
   { keys: ["Enter", "o"], action: "open", label: "Open the pull request or group" },
   { keys: ["x"], action: "select", label: "Select or deselect" },
+  { keys: [" "], action: "peek", label: "Peek at the review below the row" },
   { keys: ["m"], action: "merge", label: "Merge, where offered" },
   { keys: ["f"], action: "fix", label: "Fix, where offered" },
   { keys: ["g"], action: "generate", label: "Generate the review" },
+  { keys: ["t"], action: "transcript", label: TRANSCRIPT_LABEL },
   { keys: ["r"], action: "refresh", label: "Refresh from GitHub" },
 ];
 /** Pull requests' views (For you, Requested, Mine…), one either way. */
@@ -32,6 +39,8 @@ const UP_NEXT_SHORTCUTS = [
   { keys: ["k", "ArrowUp"], label: "Previous pull request" },
   { keys: ["Enter"], label: "Open the pull request" },
   { keys: ["m"], label: "Merge, where offered" },
+  { keys: ["f"], label: "Fix, where offered" },
+  { keys: ["t"], label: TRANSCRIPT_LABEL },
   { keys: ["s"], label: "Snooze, then 1–4 to choose until when" },
   { keys: ["u"], label: "Undo a snooze" },
 ];
@@ -53,6 +62,15 @@ const LIST_SHORTCUTS = [
   { keys: ["Enter", "o"], label: "Open the row" },
   { keys: ["Escape"], label: "Clear the row focus" },
 ];
+/** Settings' keys, which `SettingsPage` handles itself. */
+const SETTINGS_SHORTCUTS = [
+  { keys: ["j", "ArrowDown"], label: "Next section, or next control in one" },
+  { keys: ["k", "ArrowUp"], label: "Previous section, or previous control in one" },
+  { keys: ["1–5"], label: "Go to a section" },
+  { keys: ["Enter", "l", "ArrowRight"], label: "Go into the section" },
+  { keys: ["Space", "Enter"], label: "Change or press the focused control" },
+  { keys: ["Escape", "h", "ArrowLeft"], label: "Back to the sections" },
+];
 /** Where each group of keys works; the sheet lists the current one first. */
 export type ShortcutsPlace =
   | "anywhere"
@@ -62,6 +80,7 @@ export type ShortcutsPlace =
   | "sessions"
   | "jobs"
   | "repositories"
+  | "settings"
   | "page"
   | "walkthrough";
 export const MAC = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
@@ -71,6 +90,7 @@ const KEY_NAMES: Record<string, string> = {
   ArrowLeft: "←",
   ArrowRight: "→",
   Escape: "Esc",
+  " ": "Space",
 };
 /** The app's command modifier as drawn: ⌘ on a Mac, Ctrl elsewhere. */
 const COMMAND = MAC ? "⌘" : "Ctrl+";
@@ -92,7 +112,7 @@ export type CommandAction =
   | { kind: "forward" }
   | { kind: "go-to" };
 
-/** The app-wide key a keydown is, if any: ⌘1 to ⌘7 (Ctrl elsewhere) for the
+/** The app-wide key a keydown is, if any: ⌘1 to ⌘8 (Ctrl elsewhere) for the
  *  sidebar's pages, ⌘, for Settings, ⌘K for Go to, and ⌘[ and ⌘] on a Mac
  *  or Alt+← and Alt+→ elsewhere for back and forward. Digits are read by
  *  their place on the keyboard, so a layout that shifts them still works. */
@@ -192,28 +212,81 @@ export function useShortcuts(
   }, [allowSheet]);
 }
 
+/** Each list's last row, by the list's name, for as long as the app runs. */
+const lastRows = new Map<string, string>();
+/** Forgets every list's last row, as a fresh start of the app does. */
+export function forgetLastRows() {
+  lastRows.clear();
+}
+
+/** A list's selected row that outlives the list, as `useState` does not: a
+ *  list drawn again (Escape, `u` or Back from the page one of its rows
+ *  opened, or its page from the sidebar) comes back on the same row. A link
+ *  clicked in a row (`[data-row-id]` inside `list`) makes that row the one
+ *  to come back to, so a row opened by the pointer is kept as one opened by
+ *  the keyboard is. */
+export function useLastRow(name: string, list?: RefObject<HTMLElement | null>) {
+  const [id, setId] = useState(() => lastRows.get(name) ?? null);
+  const set = useCallback(
+    (next: string | null) => {
+      if (next === null) lastRows.delete(name);
+      else lastRows.set(name, next);
+      setId(next);
+    },
+    [name],
+  );
+  useEffect(() => {
+    if (!list) return;
+    const click = (event: MouseEvent) => {
+      const target = event.target instanceof Element ? event.target : null;
+      const row = target?.closest<HTMLElement>("[data-row-id]");
+      if (row?.dataset.rowId && target?.closest("a[href]") && list.current?.contains(row))
+        lastRows.set(name, row.dataset.rowId);
+    };
+    document.addEventListener("click", click, true);
+    return () => document.removeEventListener("click", click, true);
+  }, [name, list]);
+  return [id, set] as const;
+}
+
+/** Focuses a row's link and scrolls the row into view: to the middle when a
+ *  list comes back on its last row, which may be far down, and just enough
+ *  as the keys move it. */
+export function useFocusRow(
+  focused: string | null,
+  rowLink: (id: string) => HTMLElement | null | undefined,
+) {
+  const returning = useRef(focused !== null);
+  useEffect(() => {
+    if (!focused) return;
+    const target = rowLink(focused);
+    target?.focus({ preventScroll: true });
+    target
+      ?.closest("[data-row-id]")
+      ?.scrollIntoView?.({ block: returning.current ? "center" : "nearest" });
+    returning.current = false;
+  }, [focused]);
+}
+
 /** A row focus that the keyboard moves through a list's rows: each row is
  *  drawn with `data-row-id` (and `data-focused` while focused) inside
  *  `list`, and focus goes to the row's own link (`link`), so a screen reader
  *  reads the row as it moves, and the row scrolls into view. A row that
- *  left `ids` (collapsed, filtered out, gone) is no longer focused. */
+ *  left `ids` (collapsed, filtered out, gone) is no longer focused. `name`
+ *  keeps the row for when the list is drawn again (`useLastRow`). */
 export function useRowFocus<List extends HTMLElement = HTMLElement>(
+  name: string,
   ids: string[],
   link = "[data-row-link]",
 ) {
   const list = useRef<List>(null);
-  const [focusedId, setFocused] = useState<string | null>(null);
+  const [focusedId, setFocused] = useLastRow(name, list);
   const focused = focusedId !== null && ids.includes(focusedId) ? focusedId : null;
   const rowLink = (id: string) =>
     Array.from(list.current?.querySelectorAll<HTMLElement>("[data-row-id]") ?? [])
       .find((element) => element.dataset.rowId === id)
       ?.querySelector<HTMLElement>(link);
-  useEffect(() => {
-    if (!focused) return;
-    const target = rowLink(focused);
-    target?.focus({ preventScroll: true });
-    target?.closest("[data-row-id]")?.scrollIntoView?.({ block: "nearest" });
-  }, [focused]);
+  useFocusRow(focused, rowLink);
   return {
     list,
     focused,
@@ -276,6 +349,40 @@ export function useKeyHints() {
       window.removeEventListener("blur", hide);
       hide();
     };
+  }, []);
+}
+
+/** Escape gives up whatever the keyboard focused, so the page's keys act on
+ *  its selection again. It leaves alone an Escape something else used: a
+ *  dialog closing, a menu or a field clearing itself. */
+export function useEscapeBlurs() {
+  useEffect(() => {
+    const down = (event: KeyboardEvent) => {
+      // An Escape that closes a dialog hands the focus back to what opened it.
+      if (event.key !== "Escape" || event.isComposing || document.querySelector("dialog[open]"))
+        return;
+      // Page handlers may run after this one; look once the event is done.
+      setTimeout(() => {
+        if (event.defaultPrevented) return;
+        const focused = document.activeElement;
+        if (focused instanceof HTMLElement && focused !== document.body) focused.blur();
+      });
+    };
+    window.addEventListener("keydown", down);
+    return () => window.removeEventListener("keydown", down);
+  }, []);
+}
+
+/** Tab moves nothing, in pages and dialogs alike: the app's keys act on the
+ *  selection, which a focus left on some control would only confuse. Where
+ *  a place needs more than its keys, it gets its own. */
+export function useNoTab() {
+  useEffect(() => {
+    const down = (event: KeyboardEvent) => {
+      if (event.key === "Tab") event.preventDefault();
+    };
+    window.addEventListener("keydown", down, true);
+    return () => window.removeEventListener("keydown", down, true);
   }, []);
 }
 
@@ -348,6 +455,7 @@ export function ShortcutsSheet({
         { keys: ["f"], label: "Fix, where offered" },
         { keys: ["g"], label: "Generate or regenerate the review" },
         { keys: ["a"], label: "Ask the review's agent a question; Esc in the panel closes it" },
+        { keys: ["t"], label: TRANSCRIPT_LABEL },
         back,
       ],
     },
@@ -362,7 +470,7 @@ export function ShortcutsSheet({
       title: "Jobs",
       rows: [
         ...LIST_SHORTCUTS,
-        { keys: ["t"], label: "Watch the agent or read its transcript, where there is one" },
+        { keys: ["t"], label: "Watch the fix agent or read its transcript, where there is one" },
       ],
     },
     {
@@ -376,6 +484,7 @@ export function ShortcutsSheet({
         { keys: ["/"], label: "Search GitHub repositories while adding" },
       ],
     },
+    { place: "settings", title: "Settings", rows: SETTINGS_SHORTCUTS },
     { place: "page", title: "A session or job transcript", rows: [back] },
   ];
   const ordered = [

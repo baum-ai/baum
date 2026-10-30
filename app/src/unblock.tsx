@@ -109,6 +109,13 @@ function UnblockDialog<Options extends { head_sha: string }, Result>({
     : options.head_sha !== pr.head_sha
       ? "The pull request has new commits since baum last refreshed. Refresh the inbox and review them first."
       : refusal(options);
+  const confirm = useRef<HTMLButtonElement>(null);
+  const ready = Boolean(options) && !why && !busy && !outcome;
+  // Tab moves nothing, so once the write can be sent the confirm button takes
+  // the focus from Cancel: Enter confirms, Escape cancels.
+  useEffect(() => {
+    if (ready) confirm.current?.focus();
+  }, [ready]);
   const send = async () => {
     setBusy(true);
     setError("");
@@ -137,6 +144,15 @@ function UnblockDialog<Options extends { head_sha: string }, Result>({
         if (busy) event.preventDefault();
         else close();
       }}
+      // Escape cancels through onCancel. Enter confirms unless a button has
+      // the focus, which it then presses.
+      onKeyDown={(event) => {
+        if (event.ctrlKey || event.metaKey || event.altKey || event.nativeEvent.isComposing) return;
+        if (event.key !== "Enter") return;
+        if (event.target instanceof HTMLElement && event.target.closest("button")) return;
+        event.preventDefault();
+        if (ready) void send();
+      }}
       aria-labelledby={titleId}
     >
       <h2 id={titleId} className="text-lg font-semibold">
@@ -154,9 +170,13 @@ function UnblockDialog<Options extends { head_sha: string }, Result>({
       <div className="mt-4 flex justify-end gap-2">
         <Button variant="ghost" size="compact" disabled={busy} onClick={close}>
           {outcome ? "Close" : "Cancel"}
+          <kbd aria-hidden="true" className="key-hint">
+            Esc
+          </kbd>
         </Button>
         {outcome ? null : (
           <Button
+            ref={confirm}
             size="compact"
             disabled={!options || Boolean(why) || busy}
             onClick={() => void send()}
@@ -167,7 +187,12 @@ function UnblockDialog<Options extends { head_sha: string }, Result>({
                 {pending}
               </>
             ) : (
-              action
+              <>
+                {action}
+                <kbd aria-hidden="true" className="key-hint">
+                  ↵
+                </kbd>
+              </>
             )}
           </Button>
         )}
