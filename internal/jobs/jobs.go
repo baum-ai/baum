@@ -162,11 +162,11 @@ type Prepared struct {
 	HeadSHA    string `json:"head_sha"`
 	// BaseSHA is the base branch's commit when a single pull request was
 	// prepared; a details job checks its version was written against it.
-	BaseSHA string `json:"base_sha,omitempty"`
-	Backend    string `json:"backend"`
-	Model      string `json:"model"`
-	MaxTokens  int    `json:"max_tokens,omitempty"`
-	MaxCalls   int    `json:"max_calls,omitempty"`
+	BaseSHA   string `json:"base_sha,omitempty"`
+	Backend   string `json:"backend"`
+	Model     string `json:"model"`
+	MaxTokens int    `json:"max_tokens,omitempty"`
+	MaxCalls  int    `json:"max_calls,omitempty"`
 	// RequiresIsolationConfirmation and BlockedReason say what holds the item
 	// back. Nothing about its price does: there is no cost estimate, since
 	// baum cannot price what a subscription bills, and an estimate_usd an
@@ -292,9 +292,9 @@ type Queue struct {
 	jobs        []Job
 	estimates   map[string]Estimate
 	// drafts holds the latest draft of each running staged review, by job.
-	drafts map[string][]byte
-	cancels     map[string]context.CancelFunc
-	wake        chan struct{}
+	drafts  map[string][]byte
+	cancels map[string]context.CancelFunc
+	wake    chan struct{}
 	// chatWake wakes the chat lane's workers (KindChat).
 	chatWake chan struct{}
 	// chat stores and settles chat turns; nil refuses questions.
@@ -520,6 +520,7 @@ func (q *Queue) List() []Job {
 	}
 	return out
 }
+
 // Draft is the latest draft of a running staged review and the count it is
 // (Job.Draft), or false when the job has none now.
 func (q *Queue) Draft(jobID string) ([]byte, int, bool) {

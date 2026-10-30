@@ -2326,7 +2326,7 @@ The stream also carries `notice` events for the desktop app's notifications
 `review_finished`, `review_failed`, `review_automatic` (an automatic review
 finished), `review_requested`, `checks_failed`, `conflict`,
 `changes_requested`, `ready_to_merge`, `fix_pushed`, `fix_failed`,
-`session_permission` and `session_input`. The last two are an agent session
+`details_failed`, `session_permission` and `session_input`. The last two are an agent session
 that began waiting for the user's permission or answer (see "Live
 sessions"): `agent`, `session` (its id), `branch` and `message` (the
 tracker's cleaned, masked `waiting_message`) name it, `pr` is 0 when its
@@ -2336,7 +2336,8 @@ or superseded) and when a discovery snapshot shows a pull request newly
 review-requested from the user (a repository's first snapshot after the
 daemon starts is only a baseline). A fix job gives `fix_pushed` with the
 pushed commit's first seven characters in `commit`, or `fix_failed` with its
-`reason`, instead of a review notice. The four pull request kinds are
+`reason`, instead of a review notice; a details retry gives nothing when it
+completes and `details_failed` with its `reason` when it fails. The four pull request kinds are
 transitions of the user's own pull requests between two successive snapshots
 of one repository: checks became failing, the pull request became conflicting,
 the review decision became changes requested, or the merge state became

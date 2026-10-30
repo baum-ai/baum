@@ -131,7 +131,7 @@ type Options struct {
 	// prompt version and generation time. Request.Previous must be the
 	// version before it, which it was reconciled with. Nothing is kept for
 	// a chat.
-	Continue *store.Version
+	Continue  *store.Version
 	Validator *review.DocumentValidator
 	Redactor  *bundle.Redactor
 	// Progress receives one line per step; nil discards them. The document is

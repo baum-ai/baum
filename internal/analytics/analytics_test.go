@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -497,6 +498,9 @@ func TestBaumWorkCountsJobsAndActions(t *testing.T) {
 		pushed, job(jobs.KindFix, "failed", "push_rejected", nil), group, old,
 		// A feature build is the decision log's spend, not baum's work.
 		job(jobs.KindFeatureBuild, "failed", "backend_unavailable", ptr(3.0)),
+		// Retries of a version's details are not reviews, and one that
+		// stood down was not cancelled; what they spent counts.
+		job(jobs.KindDetails, "completed", "", ptr(0.1)), job(jobs.KindDetails, "cancelled", "superseded", ptr(0.05)),
 	}
 	dir := t.TempDir()
 	actions := &Actions{Path: filepath.Join(dir, "actions.json"), Now: func() time.Time { return recent }}
@@ -511,10 +515,10 @@ func TestBaumWorkCountsJobsAndActions(t *testing.T) {
 		t.Fatal(err)
 	}
 	b := report.Baum
-	if b.Reviews != 3 || b.GroupReviews != 1 || b.Fixes != 2 || b.Failed != 3 || b.Completed != 3 || b.FixesPushed != 1 || b.FixesFailed != 1 || b.ThreadsResolved != 2 {
+	if b.Reviews != 3 || b.GroupReviews != 1 || b.Fixes != 2 || b.DetailsRetries != 2 || b.Cancelled != 0 || b.Failed != 3 || b.Completed != 4 || b.FixesPushed != 1 || b.FixesFailed != 1 || b.ThreadsResolved != 2 {
 		t.Fatalf("baum = %+v", b)
 	}
-	if b.Cost.USD == nil || *b.Cost.USD != 1.75 || !b.Cost.Incomplete {
+	if b.Cost.USD == nil || math.Abs(*b.Cost.USD-1.9) > 1e-9 || !b.Cost.Incomplete {
 		t.Errorf("cost = %+v", b.Cost)
 	}
 	if len(b.Failures) != 2 || b.Failures[0].Reason != "budget_exceeded" || b.Failures[0].Count != 2 {

@@ -172,7 +172,11 @@ type BaumWork struct {
 	GroupReviews int  `json:"group_reviews"`
 	Fixes        int  `json:"fixes"`
 	// Questions counts questions asked of a review's agent (jobs.KindChat).
-	Questions       int           `json:"questions"`
+	Questions int `json:"questions"`
+	// DetailsRetries counts retries of a saved review's failed section
+	// details (jobs.KindDetails), which are not reviews; one that stood down
+	// counts nowhere else.
+	DetailsRetries  int           `json:"details_retries"`
 	Automatic       int           `json:"automatic"`
 	Completed       int           `json:"completed"`
 	Failed          int           `json:"failed"`
@@ -639,6 +643,8 @@ func (s *Service) baumWork(start time.Time, q Query) BaumWork {
 			continue
 		}
 		switch {
+		case j.Kind == jobs.KindDetails:
+			work.DetailsRetries++
 		case j.Kind == jobs.KindFix:
 			work.Fixes++
 		case j.Kind == jobs.KindChat:
@@ -659,7 +665,12 @@ func (s *Service) baumWork(start time.Time, q Query) BaumWork {
 			work.Failed++
 			failures[cmp.Or(j.Reason, "internal")]++
 		case "cancelled", "interrupted":
-			work.Cancelled++
+			// A details retry that stood down (its version changed, or the
+			// pull request moved) was not cancelled by anyone; what it spent
+			// still counts.
+			if j.Kind != jobs.KindDetails || j.State != "cancelled" {
+				work.Cancelled++
+			}
 		default:
 			work.Active++
 		}
