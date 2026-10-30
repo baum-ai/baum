@@ -1458,7 +1458,8 @@ wrapper constructs (and the lead of a message the desktop app sent,
 `prompttext.AppMessageLead`) are stripped, and not one the harness wrote under
 the human's name: Claude Code's `isMeta` lines without an origin (such as the
 line saying where a pasted image was saved) and another agent's
-`<agent-message>`, such as a subagent's report; a nested session's activity counts toward
+`<agent-message>`, such as a subagent's report, whose replies and activity
+count toward the prompt before it; a nested session's activity counts toward
 the prompt whose tool call started it; activity under any other input is the
 session's and no prompt's (`unattributed`). `session` is the hosted session
 detail's shape: each prompt carries its last text replies (`replies`, a

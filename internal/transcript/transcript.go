@@ -407,7 +407,8 @@ func Build(g *session.Graph, meta Meta, limits Limits, clean func(string) (strin
 		if message.SessionID != root.ID || strings.TrimSpace(deref(message.Text)) == "" {
 			continue
 		}
-		messages[message.UserInputID] = append(messages[message.UserInputID], message)
+		key := o.key(message.UserInputID)
+		messages[key] = append(messages[key], message)
 	}
 	calls := map[string][]session.ModelInvocation{}
 	for _, call := range g.ModelInvocations {
@@ -659,22 +660,44 @@ type ownership struct {
 	// ordered lists them by ordinal.
 	prompts map[string]bool
 	ordered []session.UserInput
+	// follows is, for an input the harness wrote under the person's name
+	// (harnessInput), the prompt before it: the agent's answer to a
+	// subagent's report is that prompt's turn going on.
+	follows map[string]string
 }
 
 func newOwnership(g *session.Graph) *ownership {
-	o := &ownership{owner: map[string]string{}, inputSession: map[string]string{}, prompts: map[string]bool{}}
+	o := &ownership{
+		owner: map[string]string{}, inputSession: map[string]string{}, prompts: map[string]bool{},
+		follows: map[string]string{},
+	}
 	root := g.Root()
+	var harness []session.UserInput
 	for _, input := range g.UserInputs {
 		o.inputSession[input.ID] = input.SessionID
-		if input.SessionID == root.ID && input.Origin == session.OriginHuman && !metaInput(input) && !agentInput(input) &&
-			(input.Kind == session.KindPrompt || input.Kind == session.KindSlashCommand) {
-			o.prompts[input.ID] = true
-			o.ordered = append(o.ordered, input)
+		if input.SessionID != root.ID || input.Origin != session.OriginHuman ||
+			(input.Kind != session.KindPrompt && input.Kind != session.KindSlashCommand) {
+			continue
+		}
+		if harnessInput(input) {
+			harness = append(harness, input)
+			continue
+		}
+		o.prompts[input.ID] = true
+		o.ordered = append(o.ordered, input)
+	}
+	byOrdinal := func(a, b session.UserInput) int {
+		return cmp.Or(cmp.Compare(a.Ordinal, b.Ordinal), strings.Compare(a.ID, b.ID))
+	}
+	slices.SortStableFunc(o.ordered, byOrdinal)
+	for _, input := range harness {
+		// The last prompt before it; one before every prompt stays the
+		// session's.
+		at, _ := slices.BinarySearchFunc(o.ordered, input, byOrdinal)
+		if at > 0 {
+			o.follows[input.ID] = o.ordered[at-1].ID
 		}
 	}
-	slices.SortStableFunc(o.ordered, func(a, b session.UserInput) int {
-		return cmp.Or(cmp.Compare(a.Ordinal, b.Ordinal), strings.Compare(a.ID, b.ID))
-	})
 	spawnInput := map[string]string{}
 	for _, use := range g.ToolUses {
 		spawnInput[use.ID] = use.UserInputID
@@ -692,6 +715,12 @@ func newOwnership(g *session.Graph) *ownership {
 		o.owner[s.ID] = spawnedBy
 	}
 	return o
+}
+
+// harnessInput is an input the harness wrote under the person's name, which
+// is no prompt (agentInput, metaInput).
+func harnessInput(input session.UserInput) bool {
+	return metaInput(input) || agentInput(input)
 }
 
 // agentInput is another agent's message delivered as an input, such as a
@@ -715,10 +744,14 @@ func metaInput(input session.UserInput) bool {
 }
 
 // key is the top-level input that owns an input: the one that started its
-// session, or the input itself in the top-level session.
+// session, the prompt a harness input follows, or the input itself in the
+// top-level session.
 func (o *ownership) key(inputID string) string {
 	if owner := o.owner[o.inputSession[inputID]]; owner != "" {
 		return owner
+	}
+	if prompt := o.follows[inputID]; prompt != "" {
+		return prompt
 	}
 	return inputID
 }
