@@ -43,7 +43,9 @@ func reconcileAuthoredHistory(document []byte, previous *bundlepkg.PreviousVersi
 		if err != nil {
 			return err
 		}
-		if err := reconcileSectionRisks(prior, current, priorVersion, priorVersion+1, len(hunks) == 0); err != nil {
+		// A section without its details says no more about its risks than
+		// a stale one does.
+		if err := reconcileSectionRisks(prior, current, priorVersion, priorVersion+1, len(hunks) == 0 || current["details"] != nil); err != nil {
 			return err
 		}
 		if !lifecycle {
@@ -243,7 +245,11 @@ func previousSections(previous *bundlepkg.PreviousVersion) ([]any, error) {
 // A stale section (no current hunks) says nothing about whether its risks
 // were addressed, so they keep the state they were last recorded with; if the
 // hunks return, a continuing risk is active under its original version.
-func reconcileSectionRisks(prior, current map[string]any, priorVersion, version int, stale bool) error {
+// Neither does a section whose details are still being written or could not
+// be written (it has a details state): the risks its details would hold are
+// unknown, so retained says to keep every previous risk as it was recorded
+// rather than read its absence as mitigation.
+func reconcileSectionRisks(prior, current map[string]any, priorVersion, version int, retained bool) error {
 	currentRisks, err := arrayField(current, "risks")
 	if err != nil {
 		return err
@@ -273,7 +279,7 @@ func reconcileSectionRisks(prior, current map[string]any, priorVersion, version 
 		wasMitigated := oldRisk["state"] == "mitigated"
 		nextRisk, found := byID[id]
 		delete(byID, id)
-		if found && !stale {
+		if found && !retained {
 			nextRisk["state"] = "active"
 			nextRisk["introduced_version"] = introduced
 			nextRisk["mitigated_version"] = nil
@@ -288,7 +294,7 @@ func reconcileSectionRisks(prior, current map[string]any, priorVersion, version 
 		case wasMitigated:
 			nextRisk["state"] = "mitigated"
 			nextRisk["mitigated_version"] = optionalPositiveInteger(oldRisk, "mitigated_version", version)
-		case stale:
+		case retained:
 			nextRisk["state"] = "active"
 			nextRisk["mitigated_version"] = nil
 		default:
