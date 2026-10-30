@@ -24,7 +24,7 @@ import codexLogo from "./desktop/codex.svg";
 import cursorLogo from "./desktop/cursor.svg";
 import { LoadingStatus } from "./nine-dots";
 import { lasted } from "./sessions";
-import { Notice, PageBar } from "./shell";
+import { Notice, PageBar, RefreshButton } from "./shell";
 import "./analytics.css";
 
 export type Cost = { usd: number | null; incomplete: boolean; reasons: string[] };
@@ -1119,6 +1119,8 @@ export function AnalyticsPage({ Link }: { Link: ComponentType<ViewerLinkProps> }
   const [error, setError] = useState("");
   const [unavailable, setUnavailable] = useState(false);
   const [attempt, setAttempt] = useState(0);
+  // A refresh asked for, until the read it starts settles.
+  const [refreshing, setRefreshing] = useState(false);
   const query = `days=${days}${repo ? `&repo=${encodeURIComponent(repo)}` : ""}${agent ? `&agent=${agent}` : ""}`;
   const shown = useRef("");
   useEffect(() => {
@@ -1143,7 +1145,10 @@ export function AnalyticsPage({ Link }: { Link: ComponentType<ViewerLinkProps> }
         if (abort.signal.aborted) return;
         setError(e instanceof Error ? e.message : "Local request failed.");
       } finally {
-        if (!abort.signal.aborted) setLoading(false);
+        if (!abort.signal.aborted) {
+          setLoading(false);
+          setRefreshing(false);
+        }
       }
     };
     void read();
@@ -1165,6 +1170,15 @@ export function AnalyticsPage({ Link }: { Link: ComponentType<ViewerLinkProps> }
       <PageBar
         title="Analytics"
         detail="What your agents did, its cost at API prices and what you delivered"
+        actions={
+          <RefreshButton
+            busy={refreshing}
+            refresh={() => {
+              setRefreshing(true);
+              setAttempt((n) => n + 1);
+            }}
+          />
+        }
       />
       <div className="local-filter-bar analytics-filters">
         <SegmentedControl

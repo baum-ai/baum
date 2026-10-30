@@ -349,6 +349,23 @@ or 403 status and shows inline in the dialog, in words; on success the daemon
 records the merge and re-reads the repository's pull requests, so the lists
 drop it at once.
 
+Refreshing a page: the Inbox, Pull requests, Timeline, Sessions, Analytics,
+Repositories, Jobs, and a pull request's or review group's page end their bar
+(the Inbox its list's head; a pull request its walkthrough's head, or the
+full review's title row through the viewer's `actions` header slot) with a circular-arrow button (`RefreshButton` in
+`src/shell.tsx`). It reads what the page shows again: the pages of pull
+requests (the Inbox, Pull requests, a pull request or group) ask GitHub at once
+for their repositories' pull requests (`api/prs/refresh`) and then read the
+daemon again, one repository at a time and one such refresh at a time (a
+repository GitHub refuses is named in an alert on that page); the others read
+their own data again. Until that settles (on
+the Inbox and Pull requests also during the first read, on the Timeline
+whenever its list is read from the top) the arrow becomes the nine-dots loader and
+further presses do nothing. `⌘R` (Ctrl+R elsewhere) presses it, in text fields
+too but not under a dialog, so a page with one is never reloaded whole; on a
+page without one the key reloads the app, as the browser does. `⇧⌘R` is left
+to the browser.
+
 Keyboard shortcuts (`src/shortcuts.tsx`, one key table that both the handling and
 the sheet read). Every page is reached from the keyboard. With the command key
 (⌘ on a Mac, Ctrl elsewhere): `1` to `8` open the sidebar's pages in its order

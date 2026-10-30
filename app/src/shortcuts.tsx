@@ -141,6 +141,45 @@ export function commandAction(
   return null;
 }
 
+/** The page refresh key as drawn and for `aria-keyshortcuts`: ⌘R on a Mac,
+ *  Ctrl+R elsewhere. */
+export const REFRESH_KEY_LABEL = `${COMMAND}R`;
+export const REFRESH_KEY_SHORTCUT = `${MAC ? "Meta" : "Control"}+R`;
+
+/** Whether a keydown is the page refresh key. With Shift it stays the
+ *  browser's own reload. */
+export function isRefreshKey(
+  event: Pick<KeyboardEvent, "key" | "code" | "ctrlKey" | "metaKey" | "altKey" | "shiftKey">,
+  mac = MAC,
+) {
+  const command = mac ? event.metaKey && !event.ctrlKey : event.ctrlKey && !event.metaKey;
+  if (!command || event.altKey || event.shiftKey) return false;
+  // By the letter, or by its place for a layout without Latin letters.
+  const key = event.key?.toLowerCase() ?? "";
+  return key === "r" || (event.code === "KeyR" && !/^[a-z]$/.test(key));
+}
+
+/** Calls `refresh` for the page refresh key instead of reloading the app,
+ *  in text fields too, but not under a dialog other than the shortcuts sheet
+ *  or Go to. */
+export function useRefreshKey(refresh: () => void) {
+  const latest = useRef(refresh);
+  useEffect(() => {
+    latest.current = refresh;
+  });
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.defaultPrevented || event.isComposing || !isRefreshKey(event)) return;
+      event.preventDefault();
+      if (document.querySelector("dialog[open]:not([data-shortcuts-sheet]):not([data-go-to])"))
+        return;
+      latest.current();
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, []);
+}
+
 /** Ctrl+N and Ctrl+P (the readline keys, Control on a Mac too) as ↓ and ↑,
  *  everywhere the arrows move: they are turned into those keys on the same
  *  element before anything else sees them, so the lists, the context menu
@@ -459,6 +498,7 @@ export function ShortcutsSheet({
       rows: [
         { keys: [`${COMMAND}K`], label: "Go to a page, pull request or session" },
         { keys: [`${COMMAND}.`], label: "Actions for the focused row, as a right click" },
+        { keys: [REFRESH_KEY_LABEL], label: "Refresh the page" },
         {
           keys: MAC ? ["⌃N", "⌃P"] : ["Ctrl+N", "Ctrl+P"],
           label: "Down, up in any list or menu, as ↓ and ↑",

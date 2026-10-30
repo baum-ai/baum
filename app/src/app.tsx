@@ -3,12 +3,7 @@ import { formatCount } from "@baum/viewer/components/format";
 import { UsageDetails } from "./usage";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { LogoMark } from "@baum/viewer/components/editorial";
-import {
-  CircleCheckIcon,
-  CircleCrossIcon,
-  CircleDashedIcon,
-  RefreshIcon,
-} from "@baum/viewer/components/icons";
+import { CircleCheckIcon, CircleCrossIcon, CircleDashedIcon } from "@baum/viewer/components/icons";
 import { Button, Alert } from "@baum/viewer/components/ui";
 import {
   UrlStateProvider,
@@ -62,7 +57,7 @@ import { useActionsKey } from "./context-menu";
 import { SessionTranscriptPage } from "./session-transcript";
 import { AnalyticsPage } from "./analytics";
 import { TimelinePage } from "./timeline";
-import { Notice, PageBar, Sidebar } from "./shell";
+import { Notice, PageBar, RefreshButton, Sidebar } from "./shell";
 import {
   agentName,
   appBase,
@@ -201,6 +196,12 @@ function Workspace({ url }: { url: UrlState }) {
     { repository: string; error?: string; next_refresh: string }[]
   >([]);
   const [loading, setLoading] = useState(true);
+  // A refresh from GitHub under way, from any page: reloads along the way
+  // do not end it, and another waits for it rather than running beside it.
+  const [refreshing, setRefreshing] = useState(false);
+  const refreshRunning = useRef(false);
+  // Why the latest refresh from GitHub failed, until the next one.
+  const [refreshError, setRefreshError] = useState("");
   const [error, setError] = useState("");
   // When the latest read of the daemon completed, for Pull requests' bar.
   const [updatedAt, setUpdatedAt] = useState<number | null>(null);
@@ -599,17 +600,34 @@ function Workspace({ url }: { url: UrlState }) {
   ];
   // A failed refresh is already in the notice above.
   const limited = rates.filter((r) => !r.error && r.rate.remaining === 0);
-  const refresh = async () => {
-    setLoading(true);
+  // Reads the repositories' pull requests from GitHub at once rather than
+  // after the polling backoff, then everything the pages show.
+  // One at a time, as GitHub prefers; a repository that fails leaves the
+  // others refreshed and is named.
+  const refreshFrom = async (repositories: string[]) => {
+    if (refreshRunning.current) return;
+    refreshRunning.current = true;
+    setRefreshing(true);
+    setRefreshError("");
+    const failed: string[] = [];
     try {
-      for (const repository of picked)
-        await request("api/prs/refresh", { repository: repository.repository });
+      for (const repository of repositories)
+        await request("api/prs/refresh", { repository }).catch((e) => {
+          failed.push(`${repository}: ${errorText(e)}`);
+        });
       await reload();
-    } catch (e) {
-      setError(errorText(e));
-      setLoading(false);
+      if (failed.length) setRefreshError(failed.join(" "));
+    } finally {
+      refreshRunning.current = false;
+      setRefreshing(false);
     }
   };
+  const refresh = () => refreshFrom(picked.map((repository) => repository.repository));
+  // A failed refresh belongs to the page it was asked for on.
+  const shownPage = `${page}:${groupId ?? ""}:${requestedNumber}`;
+  useEffect(() => setRefreshError(""), [shownPage]);
+  // Before the first read there is nothing to refresh.
+  const listBusy = refreshing || (loading && revision === 0);
   // The list's own keys live in `Inbox`, which knows its rows; these are the
   // page's: the shortcuts sheet, and the way back from a pull request or group
   // to the inbox or list it was opened from.
@@ -858,6 +876,12 @@ function Workspace({ url }: { url: UrlState }) {
           ) : null}
         </div>
         <main className="local-main">
+          {refreshError ? (
+            <Alert>
+              Couldn't refresh from GitHub: {refreshError}{" "}
+              <Button onClick={() => setRefreshError("")}>Dismiss</Button>
+            </Alert>
+          ) : null}
           {error ? (
             <Alert>
               {error} <Button onClick={() => void reload()}>Retry</Button>
@@ -925,7 +949,11 @@ function Workspace({ url }: { url: UrlState }) {
             />
           ) : page === "sessions" ? (
             <>
-              <PageBar title="Sessions" detail="Agent sessions on this computer, live" />
+              <PageBar
+                title="Sessions"
+                detail="Agent sessions on this computer, live"
+                actions={<RefreshButton refresh={reloadLive} />}
+              />
               <div className="local-page-body">
                 <SessionsPage
                   sessions={live}
@@ -944,7 +972,11 @@ function Workspace({ url }: { url: UrlState }) {
             />
           ) : page === "jobs" ? (
             <>
-              <PageBar title="Jobs" detail="Reviews and fixes run on this computer" />
+              <PageBar
+                title="Jobs"
+                detail="Reviews and fixes run on this computer"
+                actions={<RefreshButton refresh={reload} />}
+              />
               <div className="local-page-body">
                 <Jobs jobs={jobs} changed={reload} />
               </div>
@@ -975,6 +1007,7 @@ function Workspace({ url }: { url: UrlState }) {
                   cloneFor={cloneFor}
                   revision={revision}
                   changed={reload}
+                  refresh={() => refreshFrom([group.repository])}
                 />
               ) : loading ? (
                 <LoadingStatus block>Loading review group…</LoadingStatus>
@@ -987,6 +1020,12 @@ function Workspace({ url }: { url: UrlState }) {
               <PageBar
                 title={selectedEntry.pull_request.title}
                 detail={`${selectedEntry.pull_request.repository} #${selectedEntry.pull_request.number}`}
+                actions={
+                  <RefreshButton
+                    refresh={() => refreshFrom([selectedEntry.pull_request.repository])}
+                    label="Refresh from GitHub"
+                  />
+                }
               />
               <div className="local-page-body local-stack">
                 {page === "pulls" ? (
@@ -1014,6 +1053,7 @@ function Workspace({ url }: { url: UrlState }) {
                 revision={revision}
                 job={reviewJob(selectedEntry, jobs)}
                 changed={reload}
+                refresh={() => refreshFrom([selectedEntry.pull_request.repository])}
                 live={live}
                 groups={groups.filter(
                   (g) =>
@@ -1056,6 +1096,8 @@ function Workspace({ url }: { url: UrlState }) {
               fix={(entry, only) => void fix(entry, only)}
               fixState={fixState}
               changed={reload}
+              refresh={refresh}
+              refreshing={listBusy}
               Link={LocalLink}
             />
           ) : (
@@ -1064,7 +1106,7 @@ function Workspace({ url }: { url: UrlState }) {
                 title="Pull requests"
                 actions={
                   <>
-                    <UpdatedAgo at={updatedAt} busy={loading} />
+                    <UpdatedAgo at={updatedAt} busy={loading || refreshing} />
                     <button
                       type="button"
                       aria-label="Keyboard shortcuts"
@@ -1074,16 +1116,7 @@ function Workspace({ url }: { url: UrlState }) {
                     >
                       ?
                     </button>
-                    <button
-                      type="button"
-                      aria-label="Refresh from GitHub"
-                      title="Refresh from GitHub"
-                      disabled={loading}
-                      onClick={() => void refresh()}
-                      className="local-icon-button"
-                    >
-                      <RefreshIcon size={16} className={loading ? "local-spin" : undefined} />
-                    </button>
+                    <RefreshButton refresh={refresh} busy={listBusy} label="Refresh from GitHub" />
                   </>
                 }
               />
@@ -1186,7 +1219,7 @@ function Workspace({ url }: { url: UrlState }) {
                   fixStarting={(entry) => fixState(entry).starting}
                   jobs={jobs}
                   generate={(entry) => void generate([entry], "single")}
-                  refresh={loading ? undefined : () => void refresh()}
+                  refresh={listBusy ? undefined : () => void refresh()}
                   bulk={
                     <>
                       <button

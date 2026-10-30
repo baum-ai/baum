@@ -626,6 +626,9 @@ body {
 .local-icon-button:disabled {
   cursor: default;
 }
+.local-refresh[aria-busy="true"] {
+  cursor: default;
+}
 .local-page-body:empty {
   display: none;
 }
@@ -4095,6 +4098,18 @@ kbd.key-hint {
   gap: 6px;
   padding: 18px 18px 12px;
   border-bottom: 1px solid var(--un-hairline);
+}
+.upnext-list-heading {
+  display: flex;
+  align-items: center;
+}
+/* At the title row's end, its glyph on the head's padding as on a page bar. */
+.upnext-list-heading > .local-refresh,
+.upnext-list-title > .local-refresh {
+  margin: -6px -8px -6px auto;
+}
+.upnext-list-title > .inbox-edit-link + .local-refresh {
+  margin-left: 0;
 }
 .upnext-list-head h1 {
   margin: 0;

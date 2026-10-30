@@ -40,7 +40,7 @@ import {
 } from "./api";
 import { FixNotice, FixRuns, type FixState, type FixChat } from "./fix";
 import { CloneActions } from "./repositories";
-import { Notice } from "./shell";
+import { Notice, RefreshButton } from "./shell";
 import { LiveSessions } from "./sessions";
 import { PullRequestDecisionsList } from "./decisions";
 import { LoadingStatus } from "./nine-dots";
@@ -121,6 +121,7 @@ export function LocalReview({
   starting = false,
   job,
   changed,
+  refresh,
   live = [],
   groups = [],
   fix,
@@ -137,6 +138,8 @@ export function LocalReview({
   starting?: boolean;
   job?: Job;
   changed: () => Promise<void>;
+  /** Reads the pull request from GitHub again, from the head's refresh. */
+  refresh?: () => Promise<void>;
   /** Agent sessions in progress; those of this pull request are listed. */
   live?: LiveSession[];
   /** The review groups this pull request belongs to. */
@@ -154,6 +157,24 @@ export function LocalReview({
   const pr = entry.pull_request;
   const url = useUrlState();
   const back = backTo(url.search);
+  // One of the head's actions, on the walkthrough and on the full review
+  // alike. Switching between them draws another button, so the refresh
+  // under way is kept here.
+  const [refreshing, setRefreshing] = useState(false);
+  const refreshButton = refresh ? (
+    <RefreshButton
+      busy={refreshing}
+      refresh={async () => {
+        setRefreshing(true);
+        try {
+          await refresh();
+        } finally {
+          setRefreshing(false);
+        }
+      }}
+      label="Refresh from GitHub"
+    />
+  ) : undefined;
   // A pull request opens on the walkthrough's overview, the tour one step
   // in; walk=full, or a link to a place in the review (pane=…), is the full
   // review. walk=all named the list view the walkthrough once had.
@@ -382,6 +403,7 @@ export function LocalReview({
                 }}
                 toDraft={toDraft}
                 drafted={() => setToDraft(false)}
+                refresh={refreshButton}
                 actions={
                   <>
                     {fix && fixLabelText ? (
@@ -483,6 +505,7 @@ export function LocalReview({
                   },
                   back: { href: back.href, label: back.label },
                   generation: { state: generationState, rewriting: generating && Boolean(doc) },
+                  actions: refreshButton,
                   // Without a review, the button in the page's middle generates it.
                   // The GitHub state leads, so a reader sees why a fix, a re-run or an
                   // update is offered; a fix comes first of those, re-running checks

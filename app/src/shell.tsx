@@ -7,13 +7,21 @@ import {
   type ReactNode,
 } from "react";
 import { Wordmark } from "@baum/viewer/components/editorial";
+import { RefreshIcon } from "@baum/viewer/components/icons";
 import { Stumpy } from "@baum/viewer/components/stumpy";
 import type { ViewerLinkProps } from "@baum/viewer/navigation";
 import { appURL } from "./api";
 import type { Inbox } from "./inboxes";
 import { PAGES, type Page } from "./pages";
 import { PlanUsageRail } from "./plan-usage";
-import { pageKeyLabel, pageKeyShortcut } from "./shortcuts";
+import { NineDots } from "./nine-dots";
+import {
+  pageKeyLabel,
+  pageKeyShortcut,
+  REFRESH_KEY_LABEL,
+  REFRESH_KEY_SHORTCUT,
+  useRefreshKey,
+} from "./shortcuts";
 
 /** The inboxes nested under Inbox, with what changes them. Absent when the
  *  daemon is older and has none. */
@@ -328,6 +336,51 @@ export function PageBar({
       </div>
       {actions ? <div className="local-page-actions">{actions}</div> : null}
     </header>
+  );
+}
+
+/** The page's refresh, the last of its bar's actions: reads what the page
+ *  shows again, with the loader in place of the arrow until `refresh`
+ *  settles or while `busy` (a read the page started itself). The refresh key
+ *  (⌘R, Ctrl+R elsewhere) presses it, so a page with one is never reloaded
+ *  whole. */
+export function RefreshButton({
+  refresh,
+  busy = false,
+  label = "Refresh",
+}: {
+  refresh: () => Promise<unknown> | void;
+  busy?: boolean;
+  label?: string;
+}) {
+  const [pending, setPending] = useState(false);
+  const running = useRef(false);
+  const shown = busy || pending;
+  const press = async () => {
+    if (running.current || busy) return;
+    running.current = true;
+    setPending(true);
+    try {
+      await refresh();
+    } finally {
+      running.current = false;
+      setPending(false);
+    }
+  };
+  useRefreshKey(() => void press());
+  return (
+    <button
+      type="button"
+      aria-label={label}
+      title={`${label} (${REFRESH_KEY_LABEL})`}
+      aria-keyshortcuts={REFRESH_KEY_SHORTCUT}
+      aria-busy={shown || undefined}
+      aria-disabled={shown || undefined}
+      onClick={() => void press()}
+      className="local-icon-button local-refresh"
+    >
+      {shown ? <NineDots size={16} /> : <RefreshIcon size={16} />}
+    </button>
   );
 }
 

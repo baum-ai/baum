@@ -40,7 +40,7 @@ import {
   parseLiveTranscript,
   TranscriptCard,
 } from "./session-transcript";
-import { PageBar } from "./shell";
+import { PageBar, RefreshButton } from "./shell";
 import "./timeline.css";
 
 /** The Timeline: the picked repositories' features and decisions from the
@@ -135,7 +135,7 @@ type RepositoryList = {
  *  log changed (its `timeline` event) or the event stream reconnected, and
  *  the page reads everything it shows again. */
 export function TimelinePage({
-  revision,
+  revision: logRevision,
   jobs = [],
   cloneOf = () => null,
   jobsChanged = () => {},
@@ -151,8 +151,14 @@ export function TimelinePage({
   const url = useUrlState();
   const [list, setList] = useState<RepositoryList | null>(null);
   const [failed, setFailed] = useState(false);
+  const [reading, setReading] = useState(true);
+  // The page's refresh reads everything again, as a change in the log does.
+  const [refreshes, setRefreshes] = useState(0);
+  const revision = logRevision + refreshes;
+  const refresh = () => setRefreshes((n) => n + 1);
   useEffect(() => {
     const abort = new AbortController();
+    setReading(true);
     request<RepositoryList>("api/timeline/repositories", undefined, "GET", abort.signal)
       .then((body) => {
         setList(body);
@@ -160,6 +166,9 @@ export function TimelinePage({
       })
       .catch(() => {
         if (!abort.signal.aborted) setFailed(true);
+      })
+      .finally(() => {
+        if (!abort.signal.aborted) setReading(false);
       });
     return () => abort.abort();
   }, [revision]);
@@ -181,11 +190,16 @@ export function TimelinePage({
         jobs={jobs}
         cloneOf={cloneOf}
         jobsChanged={jobsChanged}
+        refresh={refresh}
       />
     );
   return (
     <>
-      <PageBar title="Timeline" detail={PAGE_DETAIL} />
+      <PageBar
+        title="Timeline"
+        detail={PAGE_DETAIL}
+        actions={<RefreshButton refresh={refresh} busy={reading} />}
+      />
       {failed && !list ? (
         <div className="local-page-body">
           <Failed>The Timeline could not be loaded.</Failed>
@@ -229,6 +243,8 @@ type Pages<T> = {
   /** The first page has been read for the current query. */
   loaded: boolean;
   coverage: Coverage | null;
+  /** The list is read from its first page; more rows don't count. */
+  reading: boolean;
   loadMore: () => void;
 };
 
@@ -249,6 +265,8 @@ function usePages<T>(
     status: "loading" | "idle" | "failed";
     loaded: boolean;
     coverage: Coverage | null;
+    /** The read under way is of more rows. */
+    more: boolean;
   };
   const [state, setState] = useState<State>({
     query,
@@ -258,6 +276,7 @@ function usePages<T>(
     status: "loading",
     loaded: false,
     coverage: null,
+    more: false,
   });
   const latest = useRef(state);
   latest.current = state;
@@ -278,7 +297,7 @@ function usePages<T>(
     more.current?.abort();
     generation.current += 1;
     const want = again ? Math.max(PAGE, base.rows.length) : PAGE;
-    setState((current) => ({ ...current, status: "loading" }));
+    setState((current) => ({ ...current, status: "loading", more: false }));
     const read = async () => {
       // As many pages as it takes, each at most MAX_PAGE rows.
       let rows: T[] = [];
@@ -299,7 +318,16 @@ function usePages<T>(
         cursor = (body.next_cursor as string | null) ?? null;
         coverage = (body.coverage as Coverage | undefined) ?? null;
       } while (cursor && rows.length < want);
-      setState({ query, revision, rows, cursor, status: "idle", loaded: true, coverage });
+      setState({
+        query,
+        revision,
+        rows,
+        cursor,
+        status: "idle",
+        loaded: true,
+        coverage,
+        more: false,
+      });
     };
     read().catch(() => {
       if (!abort.signal.aborted) setState((current) => ({ ...current, status: "failed" }));
@@ -312,7 +340,7 @@ function usePages<T>(
     const abort = new AbortController();
     more.current = abort;
     const started = generation.current;
-    setState({ ...base, status: "loading" });
+    setState({ ...base, status: "loading", more: true });
     const params = new URLSearchParams(query);
     params.set("cursor", base.cursor);
     request<Record<string, unknown>>(withQuery(path, params), undefined, "GET", abort.signal)
@@ -333,7 +361,12 @@ function usePages<T>(
           setState((current) => ({ ...current, status: "failed" }));
       });
   }, [path, query, key]);
-  return { ...state, loaded: state.loaded && state.query === query, loadMore };
+  return {
+    ...state,
+    loaded: state.loaded && state.query === query,
+    reading: state.status === "loading" && !state.more,
+    loadMore,
+  };
 }
 
 function withQuery(path: string, params: URLSearchParams): string {
@@ -382,6 +415,7 @@ function TimelineLog({
   jobs,
   cloneOf,
   jobsChanged,
+  refresh,
 }: {
   /** The repositories shown. */
   scope: string[];
@@ -392,6 +426,8 @@ function TimelineLog({
   jobs: Job[];
   cloneOf: (repository: string) => string | null;
   jobsChanged: () => void;
+  /** Reads the Timeline again, from the bar's refresh. */
+  refresh: () => void;
 }) {
   // A view of one repository has its feature build: its job and its
   // building version. A build that finishes changes the features, so the
@@ -494,16 +530,22 @@ function TimelineLog({
         title="Timeline"
         detail={PAGE_DETAIL}
         actions={
-          canRebuild ? (
-            <Button
-              variant="ghost"
-              size="compact"
-              disabled={build.starting}
-              onClick={() => void build.start()}
-            >
-              {build.starting ? "Starting…" : "Rebuild feature history"}
-            </Button>
-          ) : null
+          <>
+            {canRebuild ? (
+              <Button
+                variant="ghost"
+                size="compact"
+                disabled={build.starting}
+                onClick={() => void build.start()}
+              >
+                {build.starting ? "Starting…" : "Rebuild feature history"}
+              </Button>
+            ) : null}
+            <RefreshButton
+              refresh={refresh}
+              busy={(tab === "features" ? features : decisions).reading}
+            />
+          </>
         }
       />
       {build.error ? (

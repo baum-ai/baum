@@ -27,7 +27,7 @@ import { GitHubConnectionSection } from "./github-connection";
 import { messages as githubMessages } from "./github-auth";
 import { DiagnosticsSection } from "./diagnostics";
 import { invoke } from "./desktop/native";
-import { Notice, PageBar, PanelHeader } from "./shell";
+import { Notice, PageBar, PanelHeader, RefreshButton } from "./shell";
 import { listKeys, onBody, useRowFocus, useShortcuts } from "./shortcuts";
 import codexLogo from "./desktop/codex.svg";
 import claudeLogo from "./desktop/claude-code.svg";
@@ -1595,9 +1595,12 @@ export function RepositoriesPage({
         title="Repositories"
         detail="GitHub repositories baum follows on this computer"
         actions={
-          <Button size="compact" onClick={() => setAdding(!adding)}>
-            {adding ? "Done" : "Add repositories"}
-          </Button>
+          <>
+            <Button size="compact" onClick={() => setAdding(!adding)}>
+              {adding ? "Done" : "Add repositories"}
+            </Button>
+            <RefreshButton refresh={changed} />
+          </>
         }
       />
       <div className="local-page-body">

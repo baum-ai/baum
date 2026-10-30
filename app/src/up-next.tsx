@@ -50,6 +50,7 @@ import {
 import { LoadingStatus, NineDots } from "./nine-dots";
 import { onBody, useLastRow, useShortcuts } from "./shortcuts";
 import { FailingChecks } from "./checks";
+import { RefreshButton } from "./shell";
 import { ReviewThreads } from "./threads";
 import { canUpdateBranch, UpdateBranchDialog } from "./unblock";
 
@@ -588,6 +589,8 @@ export function UpNextPage({
   fix,
   fixState = () => ({ starting: false, error: "" }),
   changed,
+  refresh,
+  refreshing = false,
   Link,
 }: {
   inbox: UpNextState;
@@ -608,6 +611,10 @@ export function UpNextPage({
   fixState?: (entry: Entry) => FixState;
   /** Reloads the inbox after a write to GitHub. */
   changed: () => Promise<void>;
+  /** Reads the pull requests from GitHub again, from the head's refresh. */
+  refresh?: () => Promise<void>;
+  /** A read of every repository is under way, the first or a refresh. */
+  refreshing?: boolean;
   Link: ComponentType<ViewerLinkProps>;
 }) {
   const [merging, setMerging] = useState<Entry | null>(null);
@@ -794,6 +801,9 @@ export function UpNextPage({
           .filter(Boolean)
           .join(" · ");
   const total = cleared.length + queue.length;
+  const refreshButton = refresh ? (
+    <RefreshButton refresh={refresh} busy={refreshing} label="Refresh from GitHub" />
+  ) : null;
   const alsoIn = (row: Row) => rowInboxes(row, inboxes).filter((other) => other.id !== scope?.id);
   return (
     <>
@@ -806,13 +816,17 @@ export function UpNextPage({
                   <span aria-hidden="true" className="inbox-dot inbox-dot-large" />
                   <h1>{scope.name}</h1>
                   {headerAction}
+                  {refreshButton}
                 </div>
                 <p>{sentence(scope, login)}</p>
                 <p className="upnext-list-summary">{summary}</p>
               </>
             ) : (
               <>
-                <h1>Up next</h1>
+                <div className="upnext-list-heading">
+                  <h1>Up next</h1>
+                  {refreshButton}
+                </div>
                 <p>{summary}</p>
                 <div
                   className="upnext-bar"
