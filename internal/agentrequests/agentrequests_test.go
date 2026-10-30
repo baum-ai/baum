@@ -349,6 +349,7 @@ func TestMessages(t *testing.T) {
 	if err := s.Queue(AgentClaudeCode, "s1", "use the sekrit"); err != nil {
 		t.Fatal(err)
 	}
+	now = now.Add(time.Second)
 	if err := s.Queue(AgentCodex, "c1", "codex too"); err != nil {
 		t.Fatal(err)
 	}
