@@ -1109,7 +1109,7 @@ test("asks the review's agent a question and reads the lines its answer cites", 
   expect(errors).toEqual([]);
 });
 
-// An answer becomes a confirmed fix that uses the conversation, or a line of
+// An answer becomes a fix that uses the conversation, started at once, or a line of
 // the review draft that is sent only with the review.
 test("makes a fix or a review comment from an answer", async ({ page }) => {
   const errors: string[] = [];
@@ -1133,17 +1133,14 @@ test("makes a fix or a review comment from an answer", async ({ page }) => {
   await expect(panel.locator(".ask-answer")).toHaveCount(before + 1);
   const answer = panel.locator(".ask-turn").last();
   await expect(answer.getByRole("button", { name: "Add as comment", exact: true })).toBeVisible();
-  // The fixture's checks fail, yet the fix is of the answer only.
+  // The fixture's checks fail, yet the fix is of the answer only. Like every
+  // fix it starts at once, with no dialog and no estimate.
   await answer.getByRole("button", { name: "Fix this", exact: true }).click();
-  const dialog = page.getByRole("dialog", { name: "Fix from this answer" });
-  await expect(dialog).toBeVisible();
-  await expect(dialog.getByText("Uses this conversation as context")).toBeVisible();
-  await expect(dialog.getByText("Estimate")).toBeVisible();
-  await expect(dialog.getByText("makes the change the conversation asks for")).toBeVisible();
-  await expect(dialog.getByText("failing checks")).toHaveCount(0);
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  const fixNotice = page.getByRole("region", { name: "Fix", exact: true });
+  await expect(fixNotice).toBeVisible();
+  await expect(fixNotice).toContainText("Fix from this answer");
   await page.screenshot({ path: "test-results/ask-fix-from-answer.png" });
-  await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
-  await expect(dialog).toBeHidden();
   // Adding it to the draft sends nothing: the draft shows it, in the review's own panel.
   await answer.getByRole("button", { name: "Add as comment", exact: true }).click();
   await expect(answer.getByText("Added to your review draft")).toBeVisible();
