@@ -19,6 +19,18 @@
   padding-bottom: 0;
   container-type: inline-size;
 }
+/* The Ask panel's layout sits between the page and the walkthrough; it
+   passes the height on, so the walkthrough's page scrolls on its own. */
+.ask-layout:has(.walkthrough) {
+  flex: 1;
+  min-height: 0;
+}
+.ask-main:has(.walkthrough) {
+  display: flex;
+  flex-direction: column;
+  align-self: stretch;
+  min-height: 0;
+}
 .walkthrough {
   display: flex;
   flex: 1;

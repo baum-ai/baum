@@ -1054,6 +1054,8 @@ test("asks the review's agent a question and reads the lines its answer cites", 
   await page.goto(await launchURL());
   await page.getByRole("link", { name: "Pull requests", exact: true }).first().click();
   await page.getByRole("link", { name: /Reuse the existing PR page/ }).click();
+  // The pull request opens on its overview; the sections are in the full review.
+  await page.getByRole("button", { name: "Full review", exact: true }).click();
   await expect(page.getByRole("button", { name: "Ask", exact: true })).toBeVisible();
   // The key opens the panel, with the cursor in its box.
   await page.keyboard.press("a");
