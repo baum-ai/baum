@@ -1,9 +1,13 @@
 package livesessions
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
+
+	"github.com/baum-ai/baum/internal/focus"
+	"github.com/baum-ai/baum/internal/hookevents"
 )
 
 // Handler serves GET /api/live-sessions: {"sessions": [...]} with the
@@ -45,6 +49,9 @@ func (t *Transcripts) Handler() http.Handler {
 		answer, err := t.Get(r.Context(), r.PathValue("agent"), r.PathValue("id"))
 		t.WriteAnswer(w, r, answer, err)
 	})
+	if t.Focus != nil {
+		mux.HandleFunc("POST /api/live-sessions/{agent}/{id}/focus", t.focusHandler)
+	}
 	return mux
 }
 
@@ -79,6 +86,40 @@ func (t *Transcripts) WriteAnswer(w http.ResponseWriter, r *http.Request, answer
 		}
 		writeJSON(w, http.StatusOK, out)
 	}
+}
+
+// Focuser brings a session forward from where its hooks said it runs;
+// *focus.Focuser is one.
+type Focuser interface {
+	Predict(agent string, terminal *hookevents.Terminal) string
+	Focus(ctx context.Context, agent, id string, terminal *hookevents.Terminal) focus.Result
+}
+
+// focusHandler serves POST /api/live-sessions/{agent}/{id}/focus: it brings a
+// running session forward and answers {"focused":"session"|"window",
+// "message"?}, the message saying what could not be done; or, when nothing
+// was brought forward, 409 {"code":"focus_failed","message"} with why. A
+// session the tracker does not list is 404.
+func (t *Transcripts) focusHandler(w http.ResponseWriter, r *http.Request) {
+	terminal, ok := t.Tracker.Terminal(r.PathValue("agent"), r.PathValue("id"))
+	switch {
+	case !ok:
+		writeJSON(w, http.StatusNotFound, map[string]any{"code": "live_session_not_found", "message": "This session is no longer listed."})
+		return
+	case terminal == nil:
+		writeJSON(w, http.StatusConflict, map[string]any{"code": "focus_failed", "message": "Only a running session whose hooks said where it runs can be brought forward."})
+		return
+	}
+	result := t.Focus.Focus(r.Context(), r.PathValue("agent"), r.PathValue("id"), terminal)
+	if result.Precision == "" {
+		writeJSON(w, http.StatusConflict, map[string]any{"code": "focus_failed", "message": result.Message})
+		return
+	}
+	out := map[string]any{"focused": result.Precision}
+	if result.Message != "" {
+		out["message"] = result.Message
+	}
+	writeJSON(w, http.StatusOK, out)
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {

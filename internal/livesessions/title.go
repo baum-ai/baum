@@ -73,6 +73,11 @@ type Listed struct {
 	// Messageable is whether the app may send the session a message
 	// (message.go): it waits at its prompt, and baum can reach its agent.
 	Messageable bool `json:"messageable,omitempty"`
+	// Focus is how precisely the focus route can bring the session forward:
+	// "session" for its own tab, pane or conversation, "window" for the
+	// window or application it runs in. Absent when it cannot, as for a
+	// session that ended or whose hooks did not say where it runs.
+	Focus string `json:"focus,omitempty"`
 }
 
 // described is what was last read of a session.
@@ -166,6 +171,11 @@ func (t *Transcripts) listed() []Listed {
 		}
 		l := Listed{Session: settle(s, activity), Title: title, Summary: excerpt, Activity: activity}
 		l.Endable, l.Messageable = t.endable(l.Session), t.messageable(l.Session)
+		if t.Focus != nil {
+			if terminal, _ := t.Tracker.Terminal(s.Agent, s.ID); terminal != nil {
+				l.Focus = t.Focus.Predict(s.Agent, terminal)
+			}
+		}
 		out = append(out, l)
 	}
 	t.mu.Lock()

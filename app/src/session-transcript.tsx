@@ -18,7 +18,7 @@ import type { ViewerLinkProps } from "@baum/viewer/navigation";
 import { agentName, appURL, LocalRequestError, request, type LiveSession } from "./api";
 import { useNow } from "./live";
 import { LoadingStatus } from "./nine-dots";
-import { absolute, Agent, SessionState, SessionWhere } from "./sessions";
+import { absolute, Agent, FocusSession, SessionState, SessionWhere } from "./sessions";
 import { PageBar } from "./shell";
 
 /** How often an open transcript is read again without a `live` event: a
@@ -255,7 +255,7 @@ export function SessionTranscriptPage({
         detail={
           session ? `${agentName(agent)} · ${session.repository}` : "Agent session on this computer"
         }
-        actions={back}
+        actions={session ? <FocusSession session={session}>{back}</FocusSession> : back}
       />
       <div className="local-page-body">
         {session ? (

@@ -399,6 +399,10 @@ export type LiveSession = {
   /** What the agent is doing, read from its transcript; absent when nothing
    *  was found, and from a daemon older than this field. */
   activity?: Activity;
+  /** How precisely the daemon can bring the session forward: its own tab,
+   *  tmux pane or Claude desktop conversation, or only the window it runs
+   *  in. Absent when it cannot, as once the session ended. */
+  focus?: "session" | "window";
 };
 /** One tool call of a session: the tool as displayed ("Read", "Edit",
  *  "Bash", "server: tool") and what it works on, one masked line. */
@@ -412,6 +416,17 @@ export type Activity = {
   /** The latest message the user typed, one line, masked. */
   last_prompt?: string;
 };
+/** Brings a running session forward on this computer. The answer's message
+ *  says what could not be done (a tab it could not select); a failure throws
+ *  with why. */
+export function focusSession(
+  session: Pick<LiveSession, "agent" | "session_id">,
+): Promise<{ focused: "session" | "window"; message?: string }> {
+  return request(
+    `api/live-sessions/${encodeURIComponent(session.agent)}/${encodeURIComponent(session.session_id)}/focus`,
+    {},
+  );
+}
 const agentNames: Record<string, string> = {
   "claude-code": "Claude Code",
   // Analytics names agents by their session store's vendor slug.

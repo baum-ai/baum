@@ -975,7 +975,8 @@ carry an action such as Undo; a failure shows in the critical tone.
 
 A right click on a session's card opens the app's own menu (`src/context-menu.tsx`)
 in place of the browser's: Reply when the daemon offers it (`messageable`, with its
-key r), Open transcript, Peek (Space), Open pull request when it has one, and End session when the
+key r), Focus session or Show window when the daemon can bring the session forward
+(see below, key f), Open transcript, Peek (Space), Open pull request when it has one, and End session when the
 daemon offers it (`endable`). ⌘. (Ctrl+. elsewhere), anywhere in the app, opens
 the focused element's menu (`useActionsKey`), as the Menu key or Shift+F10 do; here
 it opens under the focused card. Ctrl+N and Ctrl+P (`useReadlineArrows`) move as ↓
@@ -1045,6 +1046,17 @@ The Settings page has "Answer Codex approvals from the app" (`codex_approvals`, 
 through `PUT api/agent-requests/settings`, hidden when the daemon lacks the route):
 while on, Codex hides its own approval prompt for up to 25 seconds while it waits for an
 answer from the app.
+
+A session the daemon can bring forward (its `focus`, absent once it ended) offers it
+in its right-click menu, with the key f on its focused card, and as a button before
+Back to sessions on its transcript page: "Focus session" when the daemon can select
+its own tmux pane, terminal tab or Claude desktop conversation, "Show window" when
+only the window it runs in. It posts `api/live-sessions/{agent}/{id}/focus` (see
+"Live sessions" in ARCHITECTURE.md). What could not be done (a kitty without remote
+control, a refused Automation permission) or why nothing could (the session's process
+exited, no terminal attached to its tmux server) is a notice on the Sessions page; on
+the transcript page the button reads "Focusing…" until the daemon answers, and the
+note shows on its own line after the actions, a failure as an alert.
 
 A session in Needs you or Waiting for you is not listed again under Running now; a session idle only
 because it went silent, or with a reason this app does not know, stays there. Times

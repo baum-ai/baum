@@ -372,7 +372,7 @@ it("lists exactly the keys that work in the sheet", async () => {
   ]);
   expect(listed("Walkthrough")).toEqual(["→", "j", "←", "k", "c", "o", "Enter", "t", "e", "a"]);
   const list = ["j", "↓", "k", "↑", "Enter", "o", "Esc"];
-  expect(listed("Sessions")).toEqual([...list, "p", "r", "Space", "1–9"]);
+  expect(listed("Sessions")).toEqual([...list, "p", "r", "f", "Space", "1–9"]);
   expect(listed("Jobs")).toEqual([...list, "t"]);
   expect(listed("Repositories")).toEqual([...list, "a", "/"]);
   expect(listed("A session or job transcript")).toEqual(["u", "Esc"]);

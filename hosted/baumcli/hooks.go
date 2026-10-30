@@ -152,6 +152,9 @@ func newAgentHooksCommand(stdout, stderr io.Writer) *cobra.Command {
 			if hookEvent.Session != nil && digestsToolCall(agent, event) {
 				hookEvent.Session.ToolDigest = toolDigest(input)
 			}
+			if locatesTerminal(event) {
+				hookEvent.Terminal = captureTerminal()
+			}
 			hookEvent.Exit = exitStatus(err)
 			// Only a daemon that took the event in time is asked anything
 			// more: one that is absent, busy or incompatible leaves the agent

@@ -2948,9 +2948,17 @@ endpoint.
   the `tool_digest` of the call, and a Claude Code subagent's `agent_id`
   (see "Agent requests and messages"); nothing else of it) or `git`
   (`args` without a pre-push remote URL, and `lines`, the refs or commits Git
-  wrote to the hook). `Event.Bound` cuts fields at character boundaries, then
-  trims Git lines and halves the longest fields until the escaped encoding fits
-  one control line. The daemon ignores fields it does not know and records
+  wrote to the hook). An agent's `session-start`, `user-prompt-submit` and
+  `before-submit-prompt` also carry `terminal` (`focus.Capture`): `env`, the
+  variables of `hookevents.TerminalEnv` the hook had (tmux, kitty, iTerm2 and
+  Terminal identifiers, `CLAUDE_CODE_ENTRYPOINT` and the display variables),
+  `tty`, the controlling terminal of the nearest ancestor that has one (agents
+  start hooks without one), and `processes`, the hook's ancestors, parent
+  first, as `pid`, `start` (`/proc` starttime on Linux, `kern.proc.pid` start
+  time on macOS) and `name`, at most 24 (see "Focus" under "Live sessions").
+  `Event.Bound` cuts fields at character boundaries and keeps only
+  `TerminalEnv`, then trims Git lines, drops `terminal` and halves the longest
+  fields until the escaped encoding fits one control line. The daemon ignores fields it does not know and records
   kinds it does not know, so adding a field keeps `v`; it refuses a higher `v`
   with `event_version`.
 - **Sending.** `Sender.Send` never fails a hook and returns within `Budget`
@@ -3241,7 +3249,7 @@ replace it.
   `{"sessions":[…]}`, the most recently active first, each
   `{"agent","session_id","state","started_at","last_activity_at","ended_at"?,
   "last_event","waiting_reason"?,"waiting_since"?,"waiting_message"?,
-  "repository","branch"?,"pr"?,"title"?,"summary"?,"activity"?}`: `state` is `running`, `idle` or `ended`,
+  "repository","branch"?,"pr"?,"title"?,"summary"?,"activity"?,"focus"?}`: `state` is `running`, `idle` or `ended`,
   `last_event` is `start`, `prompt`, `tool`, `wait`, `stop` or `end`, the
   waiting fields are present while the session waits (see "Waiting"; the
   message only when the agent sent one), `repository` is
@@ -3283,7 +3291,75 @@ replace it.
   (`function_call`, `custom_tool_call`, `local_shell_call`, assistant
   `message`) are read; Codex `shell`, `exec_command` and `local_shell` show
   as `Bash` and `apply_patch` as `Edit`, an MCP tool as `server: tool`; a code-mode `exec` call (JavaScript around `tools.<name>(...)`) is shown as the first tool it calls. Cursor
-  sessions have none; it is absent until something is found.
+  sessions have none; it is absent until something is found. `focus` is
+  `session` or `window`, how precisely Focus could bring a running session
+  forward, absent once it ended or when its hooks recorded no `terminal`.
+- **Focus.** `POST /api/live-sessions/{agent}/{id}/focus` (`internal/focus`,
+  served when `Transcripts.Focus` is set, as the daemon sets it) brings a
+  running session forward from the latest `terminal` its hooks recorded, which
+  stays in the tracker's entry, is never served and is not in
+  `live-sessions.json`. It answers `{"focused":"session"|"window","message"?}`,
+  the message saying what could not be done, or 409
+  `{"code":"focus_failed","message"}` when nothing was brought forward, and
+  404 for a session the tracker does not list. Each command it runs has 5 s.
+  On Linux and macOS only, and in order:
+  - The recorded ancestors still running, from the first that runs (the shells
+    that started the hook exit with it) up to the next that exited or whose id
+    another process took (a different `start`), are the session's chain; none
+    left is "The session's process has exited."
+  - A Claude Code session whose chain holds Claude desktop's process
+    (`claude-desktop`, `Claude`), found by its id among the
+    `cliSessionId` and `previousCliSessionIds` of the unarchived records in
+    `claude-code-sessions/*/*/local_*.json` under Claude desktop's
+    configuration directory (`~/.config/Claude`, `~/Library/Application
+    Support/Claude`), opens on its conversation with
+    `claude://code/continue?session=local_…` (`xdg-open`, `open`), then its
+    window is raised as below. These are Claude desktop's internal files and
+    link: a record it no longer writes reads as no session.
+  - In tmux (`TMUX` and `TMUX_PANE` recorded), on the server of the recorded
+    socket: the client attached to the pane's session used last, else the
+    client used last at all (`list-clients`), is switched to the session, and
+    the pane's window and the pane are selected. The chain from then on is the
+    client's, read now, and the terminal device is the client's: the recorded
+    variables describe the terminal the tmux server started in. No client
+    attached says so. A pane whose `pane_tty` is not the recorded terminal
+    device is not the session's (a terminal started from a tmux pane passes
+    `TMUX` on to its own shells), and the session is treated as outside tmux.
+  - The terminal's tab, from the first match in the chain: kitty focuses the
+    window whose program is the process below kitty (`kitten @ --to
+    $KITTY_LISTEN_ON focus-window --match pid:…`), only when the recorded
+    `KITTY_PID` is that kitty, so its remote control socket is known (`kitten`
+    from the `PATH`, else beside kitty's executable, as in kitty.app); without
+    it, a session outside tmux is told to turn on `allow_remote_control` and
+    `listen_on`. On macOS, iTerm2 (`iTerm2`, `iTermServer-*`) and Terminal run
+    an AppleScript (`osascript`) that selects the session or tab whose `tty`
+    is the terminal device and activates the application; a refused Automation
+    permission (-1743) says where to allow it.
+  - The window, unless the tab step activated it: on macOS the application
+    bundle holding the executable of the nearest process in one (`open -a`),
+    or iTerm2 by its bundle identifier for its `iTermServer`, which runs from
+    iTerm2's support folder (`open -b com.googlecode.iterm2`);
+    on Hyprland (`HYPRLAND_INSTANCE_SIGNATURE`) the window of the nearest
+    process in the chain that has one, the one used last (`hyprctl -j
+    clients`, then `dispatch focuswindow address:…`, which must answer `ok`),
+    after switching to its workspace (`dispatch workspace`) when no monitor
+    shows it (`hyprctl -j monitors`) and it is not a special workspace; a
+    Hyprland configured in Lua (`hyprland.lua`) evaluates `dispatch`'s
+    argument as Lua and says so, and is then given `hl.dsp.focus({ workspace
+    = … })` and `hl.dsp.focus({ window = "address:…" })`;
+    on X11 (`DISPLAY` without `WAYLAND_DISPLAY` or a `wayland` session type)
+    `xdotool search --onlyvisible --pid` and `windowactivate`, else `wmctrl
+    -lp` and `-i -a`. Other Wayland compositors give one program no way to
+    raise another's window. The display variables come from the recorded
+    `terminal` over the daemon's own, since the daemon may have started in
+    another session.
+  - `session` when the tmux pane, the tab or the conversation was selected,
+    `window` when only the window was raised. `Predict`, which the list's
+    `focus` is, judges the same from the record without running anything: on
+    Linux nothing outside Hyprland and X11; `session` for tmux, a Claude
+    desktop process in the chain (`claude-desktop`, `Claude`), a kitty with
+    its socket, and on macOS iTerm2 or Terminal with a terminal device;
+    `window` otherwise.
 - **Transcripts.** `GET /api/live-sessions/{agent}/{id}/transcript`
   (`Transcripts`, mounted beside the list by the same `LocalAPI.Live`
   provider) serves the transcript of a session the tracker lists, and only

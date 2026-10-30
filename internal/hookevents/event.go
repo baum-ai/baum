@@ -81,7 +81,48 @@ type Event struct {
 	Session *Session `json:"session,omitempty"`
 	// Git describes a Git hook run.
 	Git *Git `json:"git,omitempty"`
+	// Terminal locates where an agent session runs, so the application can
+	// bring it forward. Agent hooks send it on a session's start and on its
+	// prompts.
+	Terminal *Terminal `json:"terminal,omitempty"`
 }
+
+// Terminal is where an agent hook ran: what locates the window, tab or pane
+// its agent runs in. It names processes and terminals, never what they show.
+type Terminal struct {
+	// Env holds the variables of TerminalEnv the hook had, and only those.
+	Env map[string]string `json:"env,omitempty"`
+	// TTY is the agent's controlling terminal (/dev/pts/3, /dev/ttys004),
+	// empty when it has none.
+	TTY string `json:"tty,omitempty"`
+	// Processes are the hook's ancestors, its parent first.
+	Processes []Process `json:"processes,omitempty"`
+}
+
+// Process is one ancestor of a hook.
+type Process struct {
+	PID int `json:"pid"`
+	// Start identifies the process's start where the platform tells it, so a
+	// reused process id is not taken for it. Compare it only with a Start
+	// read on the same machine.
+	Start string `json:"start,omitempty"`
+	// Name is the process's short name (comm).
+	Name string `json:"name,omitempty"`
+}
+
+// TerminalEnv are the variables a Terminal keeps: those of the multiplexers
+// and terminals the application can address, and the display the session's
+// windows are on.
+var TerminalEnv = []string{
+	"TERM_PROGRAM", "TMUX", "TMUX_PANE",
+	"KITTY_PID", "KITTY_WINDOW_ID", "KITTY_LISTEN_ON",
+	"ITERM_SESSION_ID", "TERM_SESSION_ID", "__CFBundleIdentifier",
+	"CLAUDE_CODE_ENTRYPOINT",
+	"DISPLAY", "WAYLAND_DISPLAY", "XDG_SESSION_TYPE", "HYPRLAND_INSTANCE_SIGNATURE", "XDG_RUNTIME_DIR",
+}
+
+// maxProcesses bounds a Terminal's ancestors.
+const maxProcesses = 24
 
 // Session is the part of an agent hook's payload an event keeps: identifiers
 // and paths, for a notification the line the agent showed its user, and for
@@ -142,14 +183,32 @@ func New(kind, agent, name, dir, client string) Event {
 // Bound cuts the event to the event bounds, so a hook never builds an event
 // the daemon would refuse for its size: every field to its own bound, then,
 // while the encoding is still too large (escaping can make a field up to six
-// times longer than its bytes), the Git lines from the end and the longest
-// fields by half.
+// times longer than its bytes), the Git lines from the end, the terminal, and
+// the longest fields by half. A terminal keeps only the variables of
+// TerminalEnv.
 func (e *Event) Bound() {
 	for _, field := range e.fields() {
 		*field = cut(*field, maxField)
 	}
 	if s := e.Session; s != nil {
 		s.Message = cut(s.Message, maxMessage)
+	}
+	if t := e.Terminal; t != nil {
+		env := make(map[string]string, len(t.Env))
+		for _, name := range TerminalEnv {
+			if value, ok := t.Env[name]; ok {
+				env[name] = cut(value, maxField)
+			}
+		}
+		t.Env = env
+		if len(t.Processes) > maxProcesses {
+			t.Processes = t.Processes[:maxProcesses]
+		}
+		for i := range t.Processes {
+			t.Processes[i].Start = cut(t.Processes[i].Start, maxField)
+			t.Processes[i].Name = cut(t.Processes[i].Name, maxField)
+		}
+		t.TTY = cut(t.TTY, maxField)
 	}
 	if g := e.Git; g != nil {
 		if len(g.Args) > maxGitArgs {
@@ -168,6 +227,12 @@ func (e *Event) Bound() {
 	for e.size() > maxEventSize {
 		if e.Git != nil && len(e.Git.Lines) > 0 {
 			e.Git.Lines = e.Git.Lines[:len(e.Git.Lines)-1]
+			continue
+		}
+		// Dropping the terminal only loses the way to bring its session
+		// forward.
+		if e.Terminal != nil {
+			e.Terminal = nil
 			continue
 		}
 		var longest *string

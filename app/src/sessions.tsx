@@ -27,6 +27,7 @@ import {
   appURL,
   cancelMessage,
   endSession,
+  focusSession,
   messageSession,
   LocalRequestError,
   noAgentRequests,
@@ -189,6 +190,58 @@ export function SessionWhere({
         )
       ) : null}
     </div>
+  );
+}
+
+/** Brings a running session forward: its terminal tab, tmux pane or Claude
+ *  desktop conversation, or only the window it runs in, as the daemon said
+ *  it can (`focus`). What could not be done, or why nothing could, shows
+ *  beside it. Nothing for a session it cannot bring forward. */
+export function FocusSession({
+  session: s,
+  children,
+}: {
+  session: LiveSession;
+  /** The actions after it; its note follows them, on its own line. */
+  children?: ReactNode;
+}) {
+  const [state, setState] = useState<{ busy: boolean; note?: string; failed?: boolean }>({
+    busy: false,
+  });
+  if (!s.focus || s.state === "ended") return children;
+  const label = s.focus === "session" ? "Focus session" : "Show window";
+  const focus = async () => {
+    setState({ busy: true });
+    try {
+      const answer = await focusSession(s);
+      setState({ busy: false, note: answer.message });
+    } catch (error) {
+      setState({
+        busy: false,
+        failed: true,
+        note: error instanceof Error ? error.message : String(error),
+      });
+    }
+  };
+  return (
+    <>
+      <button
+        type="button"
+        className="inbox-action local-session-focus"
+        disabled={state.busy}
+        aria-busy={state.busy}
+        aria-label={labelFor(label, s)}
+        onClick={() => void focus()}
+      >
+        {state.busy ? "Focusing…" : label}
+      </button>
+      {children}
+      {state.note ? (
+        <span className="local-session-focus-note" role={state.failed ? "alert" : "status"}>
+          {state.note}
+        </span>
+      ) : null}
+    </>
   );
 }
 
@@ -1362,6 +1415,14 @@ export function SessionsPage({
       if (s && reply(s)) event.preventDefault();
       return;
     }
+    if (event.key === "f") {
+      const s = sessions.find((x) => sessionKey(x) === rows.focused);
+      if (s && focusable(s)) {
+        event.preventDefault();
+        focus(s);
+      }
+      return;
+    }
     if (event.key !== "p") return;
     const pr = rows
       .rowLink(rows.focused)
@@ -1384,6 +1445,29 @@ export function SessionsPage({
       {children}
     </Link>
   );
+  // A running session the daemon can bring forward is, from its menu or
+  // its key; what could not be done is told as a notice.
+  const focusable = (s: LiveSession) => Boolean(s.focus) && s.state !== "ended";
+  const focus = (s: LiveSession) =>
+    void focusSession(s).then(
+      (answer) => {
+        if (answer.message)
+          notify({
+            title: answer.focused === "session" ? "Focused the session" : "Showed the window",
+            detail: answer.message,
+            agent: s.agent,
+            session: sessionName(s),
+          });
+      },
+      (e: unknown) =>
+        notify({
+          title: "Could not bring the session forward",
+          detail: e instanceof Error ? e.message : "The request failed.",
+          agent: s.agent,
+          session: sessionName(s),
+          error: true,
+        }),
+    );
   const openCard = (event: MouseEvent) => {
     const target = event.target as HTMLElement;
     if (target.closest("a, button, input, textarea, select, label, summary")) return;
@@ -1396,6 +1480,12 @@ export function SessionsPage({
     if (s.messageable) items.push({ label: "Reply", hint: "r", onSelect: () => reply(s) });
     else if (working(s))
       items.push({ label: "Reply when it finishes", hint: "r", onSelect: () => reply(s) });
+    if (focusable(s))
+      items.push({
+        label: s.focus === "session" ? "Focus session" : "Show window",
+        hint: "f",
+        onSelect: () => focus(s),
+      });
     items.push({ label: "Open transcript", onSelect: () => navigate(transcriptHref(s)) });
     items.push({ label: "Peek", hint: "Space", onSelect: () => peek(s) });
     const pr = prHref(s);

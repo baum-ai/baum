@@ -32,6 +32,7 @@ import (
 	"github.com/baum-ai/baum/internal/decisionlog"
 	"github.com/baum-ai/baum/internal/discovery"
 	"github.com/baum-ai/baum/internal/doctor"
+	"github.com/baum-ai/baum/internal/focus"
 	"github.com/baum-ai/baum/internal/generate"
 	"github.com/baum-ai/baum/internal/github"
 	"github.com/baum-ai/baum/internal/githubrepos"
@@ -511,7 +512,7 @@ func localApplication(paths daemon.Paths, concurrency int, log *slog.Logger) fun
 			// A session that starts waiting for a permission or an answer is
 			// a notice; reading the registry for it must not hold the tracker.
 			live.Waiting = func(session livesessions.Session) { go notify.SessionWaiting(ctx, session) }
-			transcripts = &livesessions.Transcripts{Tracker: live, Render: renderer.Render, Log: log, Senders: liveSenders(), Enders: liveEnders()}
+			transcripts = &livesessions.Transcripts{Tracker: live, Render: renderer.Render, Log: log, Senders: liveSenders(), Enders: liveEnders(), Focus: &focus.Focuser{}}
 			liveAPI = transcripts.Handler()
 			// What agents wait on the app to answer, and the messages queued
 			// for running sessions, stay in memory, masked as the sessions
