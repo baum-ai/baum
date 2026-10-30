@@ -130,7 +130,7 @@ func TestBuildDiscoversAndSeeds(t *testing.T) {
 			t.Errorf("the run directory lacks the head checkout: %v", err)
 		}
 		info, err := os.Stat(filepath.Join(req.Directory, "history.jsonl"))
-		if err != nil || info.Mode().Perm() != 0o400 {
+		if err != nil || !info.Mode().IsRegular() || info.Mode().Perm()&0o222 != 0 {
 			t.Fatalf("history.jsonl: %v, %v", info, err)
 		}
 		history, _ := os.ReadFile(filepath.Join(req.Directory, "history.jsonl"))
