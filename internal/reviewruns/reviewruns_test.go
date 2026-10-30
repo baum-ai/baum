@@ -138,7 +138,10 @@ func TestCreateMakesAPrivateRunDirectory(t *testing.T) {
 }
 
 func TestRunUnderAliasedRoot(t *testing.T) {
-	root := t.TempDir()
+	root := filepath.Join(t.TempDir(), "runs")
+	if err := os.Mkdir(root, 0o700); err != nil {
+		t.Fatal(err)
+	}
 	alias := filepath.Join(t.TempDir(), "root")
 	if err := os.Symlink(root, alias); err != nil {
 		t.Fatal(err)
