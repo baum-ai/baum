@@ -504,6 +504,7 @@ export function ShortcutsSheet({
         ...LIST_SHORTCUTS,
         { keys: ["p"], label: "Open the session's pull request" },
         { keys: ["r"], label: "Reply to the session; Enter sends it" },
+        { keys: ["f"], label: "Bring the session's terminal or window forward, where offered" },
         { keys: [" "], label: "Peek at the session below its row" },
         {
           keys: ["1–9"],

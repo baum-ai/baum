@@ -2040,6 +2040,22 @@ a.local-session-pr:hover {
   margin-left: 0;
   text-decoration: none;
 }
+/* Brings a running session forward; what it could not do shows on its own
+   line after the actions. */
+.local-session-focus {
+  margin-left: 0;
+}
+.local-session-focus:disabled {
+  cursor: progress;
+}
+.local-session-focus-note {
+  flex-basis: 100%;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+.local-page-actions .local-session-focus-note {
+  max-width: 24rem;
+}
 /* Needs you: the sessions waiting on the person, above the others. */
 .local-sessions h2 {
   display: flex;

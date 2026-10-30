@@ -9,7 +9,9 @@
 // why and since when it waits on its user, with the short message a Claude
 // Code notification showed (masked like a transcript), and the repository,
 // branch and pull request the session's working directory links to. The
-// working directory itself and the transcript path stay inside the tracker
+// working directory itself, the transcript path and the terminal the hooks
+// say the session runs in (processes, terminal device and terminal
+// variables, which Focus uses to bring it forward) stay inside the tracker
 // and are never served. Reading session files from disk is unchanged and
 // remains the full history; Transcripts serves a tracked session's
 // transcript, redacted, while it runs, and its list adds each session's title,
@@ -242,6 +244,10 @@ type entry struct {
 	// when none did. Transcripts reads it only after checking it is inside the
 	// agent's own session store.
 	transcript string
+	// terminal is where the session's hooks last said it runs, at
+	// terminalAt; nil until one did. Focus reads it.
+	terminal   *hookevents.Terminal
+	terminalAt time.Time
 	// announced is the last wait handed to Waiting, or skipped.
 	announced waitKey
 	ended     bool
@@ -916,6 +922,9 @@ func (t *Tracker) applyEvent(e hookevents.Event, now time.Time) {
 	if e.Session.TranscriptPath != "" {
 		s.transcript = e.Session.TranscriptPath
 	}
+	if e.Terminal != nil && !at.Before(s.terminalAt) {
+		s.terminal, s.terminalAt = e.Terminal, at
+	}
 	if kind == EventStart && at.Before(s.StartedAt) {
 		s.StartedAt = at
 	}
@@ -1053,6 +1062,28 @@ func (t *Tracker) workdir(agent, id string) string {
 		return s.cwd
 	}
 	return ""
+}
+
+// Terminal is where the hooks of a session the application is shown last said
+// it runs; nil when none did, and for a session that ended: nothing runs to
+// bring forward.
+func (t *Tracker) Terminal(agent, id string) (*hookevents.Terminal, bool) {
+	t.init()
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	now := t.now()
+	k := key{agent, id}
+	s := t.sessions[k]
+	if s == nil || s.expired(now) {
+		return nil, false
+	}
+	if _, ok := t.view(k, now); !ok {
+		return nil, false
+	}
+	if s.ended {
+		return nil, true
+	}
+	return s.terminal, true
 }
 
 // persisted is the ended sessions' file: identifiers and times, no paths.

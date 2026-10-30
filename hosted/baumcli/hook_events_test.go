@@ -98,6 +98,32 @@ func TestAgentHookEventKeepsOnlySessionIdentifiers(t *testing.T) {
 	}
 }
 
+// A session's start and its prompts say where the agent runs, so the app can
+// bring it forward; its tool and other events do not.
+func TestAgentHookEventLocatesTheTerminalOnStartAndPrompts(t *testing.T) {
+	paths := useTestHookDaemon(t)
+	stubEntireBinary(t, "#!/bin/sh\ncat >/dev/null\n")
+	old := captureTerminal
+	captureTerminal = func() *hookevents.Terminal {
+		return &hookevents.Terminal{TTY: "/dev/pts/3", Env: map[string]string{"TMUX_PANE": "%1"}, Processes: []hookevents.Process{{PID: 7, Start: "9", Name: "claude"}}}
+	}
+	t.Cleanup(func() { captureTerminal = old })
+	for _, event := range []string{"session-start", "pre-task", "user-prompt-submit", "stop"} {
+		if _, _, err := runCLIWithInput(t, `{"session_id":"s-1","cwd":"/work"}`, "hooks", "agent", "claude-code", event); err != nil {
+			t.Fatalf("%s: %v", event, err)
+		}
+		time.Sleep(time.Millisecond)
+	}
+	events, _ := spooledHookEvents(t, paths)
+	located := map[string]bool{}
+	for _, e := range events {
+		located[e.Name] = e.Terminal != nil && e.Terminal.TTY == "/dev/pts/3" && e.Terminal.Env["TMUX_PANE"] == "%1"
+	}
+	if want := map[string]bool{"session-start": true, "pre-task": false, "user-prompt-submit": true, "stop": false}; !maps.Equal(located, want) {
+		t.Errorf("located = %v, want %v", located, want)
+	}
+}
+
 // A Claude Code notification is an event baum only records: a user-wide hook
 // keeps its type and the line it showed, cut short, runs no Entire even for a
 // hosted user, and answers the agent nothing. A committed hook, whose

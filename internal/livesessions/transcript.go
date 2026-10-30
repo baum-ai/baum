@@ -86,6 +86,9 @@ type Transcripts struct {
 	// Senders put a message from the app into a session, by agent
 	// (message.go); an agent without one cannot be messaged.
 	Senders map[string]Sender
+	// Focus brings a running session forward; nil serves no focus route and
+	// lists no session as one it can bring forward.
+	Focus Focuser
 
 	mu    sync.Mutex
 	cache map[key]*cached

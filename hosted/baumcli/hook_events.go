@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/baum-ai/baum/internal/daemon"
+	"github.com/baum-ai/baum/internal/focus"
 	"github.com/baum-ai/baum/internal/hookevents"
 )
 
@@ -240,6 +241,21 @@ func agentSession(event string, fields map[string]string) *hookevents.Session {
 		return nil
 	}
 	return session
+}
+
+// captureTerminal is a seam for tests: where an agent hook ran.
+var captureTerminal = focus.Capture
+
+// locatesTerminal reports the agent hook events that record where the agent
+// runs (Terminal): a session's start, and its prompts, so a session started
+// before the daemon recorded it, or resumed elsewhere, is located from its
+// next prompt. Tool events, the most frequent, do not.
+func locatesTerminal(event string) bool {
+	switch event {
+	case "session-start", "user-prompt-submit", "before-submit-prompt":
+		return true
+	}
+	return false
 }
 
 // gitHookEvent describes a Git hook run: its arguments, except a pre-push

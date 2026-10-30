@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
+	"maps"
 	"net"
 	"os"
 	"path/filepath"
@@ -512,6 +513,35 @@ func TestStoreRecordsOnceAcrossRestartsAndNotifiesSubscribers(t *testing.T) {
 	records, err := store.Recent(1)
 	if err != nil || len(records) != 1 || records[0].Event.ID != end.ID {
 		t.Fatalf("Recent(1) = %+v, %v", records, err)
+	}
+}
+
+// A terminal keeps only the variables it names, and a bounded number of
+// ancestors; when the event is still too large it is dropped before any
+// identifier is cut.
+func TestEventBoundsTheTerminal(t *testing.T) {
+	e := testEvent("session-start")
+	e.Terminal = &Terminal{Env: map[string]string{"TMUX_PANE": "%3", "GITHUB_TOKEN": "secret", "DISPLAY": strings.Repeat("x", 3000)}}
+	for i := range 40 {
+		e.Terminal.Processes = append(e.Terminal.Processes, Process{PID: i + 2, Start: "1", Name: "sh"})
+	}
+	e.Bound()
+	if !maps.Equal(e.Terminal.Env, map[string]string{"TMUX_PANE": "%3", "DISPLAY": strings.Repeat("x", maxField)}) {
+		t.Errorf("env = %v", e.Terminal.Env)
+	}
+	if len(e.Terminal.Processes) != maxProcesses {
+		t.Errorf("kept %d processes", len(e.Terminal.Processes))
+	}
+
+	large := testEvent("session-start")
+	large.Session.Cwd = strings.Repeat("<", maxField)
+	large.Terminal = &Terminal{Env: map[string]string{}}
+	for _, name := range TerminalEnv {
+		large.Terminal.Env[name] = strings.Repeat("<", maxField)
+	}
+	large.Bound()
+	if large.Terminal != nil || large.Session.Cwd != strings.Repeat("<", maxField) {
+		t.Errorf("terminal %v kept, cwd cut to %d", large.Terminal != nil, len(large.Session.Cwd))
 	}
 }
 

@@ -394,6 +394,82 @@ it("sends a message for when the turn finishes, and cancels a queued one", async
   expect(node.textContent).toContain("Queued for when it finishes: “from earlier”");
 });
 
+it("brings a running session forward from its menu or f, labelled by how precisely, and says what it could not do", async () => {
+  respond = (path) =>
+    path.endsWith("/s1/focus")
+      ? Response.json({ focused: "window", message: "Turn on kitty's remote control." })
+      : path.endsWith("/s2/focus")
+        ? Response.json(
+            { code: "focus_failed", message: "The session's process has exited." },
+            { status: 409 },
+          )
+        : Response.json({ ok: true });
+  await render([
+    session({ focus: "session" }),
+    session({ session_id: "s2", focus: "window" }),
+    session({ session_id: "s3" }),
+    session({ session_id: "s4", focus: "session", state: "ended", ended_at: ago(60) }),
+  ]);
+  // Never a button on a card.
+  expect(button("Focus session")).toBeUndefined();
+  const menuOf = async (id: string) => {
+    await act(async () => {
+      node.querySelector(`[data-row-id="${id}"] .local-feed-open`)!.dispatchEvent(
+        new MouseEvent("contextmenu", {
+          bubbles: true,
+          cancelable: true,
+          clientX: 9,
+          clientY: 9,
+        }),
+      );
+    });
+    return [...node.querySelectorAll<HTMLButtonElement>('[role="menu"] [role="menuitem"]')];
+  };
+  const close = () =>
+    act(async () => {
+      node
+        .querySelector('[role="menu"] button')!
+        .dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    });
+  const toast = () => node.querySelector(".local-toast");
+  // Ended recently is folded at first.
+  await click(
+    node.querySelector<HTMLButtonElement>(
+      '[aria-label="Ended recently"] button[aria-expanded="false"]',
+    )!,
+  );
+  for (const id of ["s3", "s4"]) {
+    const items = (await menuOf(`claude-code:${id}`)).map((b) => b.textContent);
+    expect(items.some((t) => /^(Focus session|Show window)/.test(t ?? ""))).toBe(false);
+    await close();
+  }
+  expect((await menuOf("claude-code:s2")).map((b) => b.textContent)).toContain("Show windowf");
+  await close();
+  const focus = (await menuOf("claude-code:s1")).find((b) => b.textContent === "Focus sessionf");
+  await click(focus);
+  expect(posts()).toEqual([
+    { path: "/s/test-ns/api/live-sessions/claude-code/s1/focus", method: "POST", body: {} },
+  ]);
+  expect(toast()!.querySelector(".local-toast-title")!.textContent).toBe("Showed the window");
+  expect(toast()!.querySelector(".local-toast-detail")!.textContent).toBe(
+    "Turn on kitty's remote control.",
+  );
+  await click(toast()!.querySelector<HTMLButtonElement>('button[aria-label="Dismiss"]')!);
+  // f on the focused card does the same.
+  await render([session({ session_id: "s2", focus: "window" })]);
+  for (const key of ["j", "f"])
+    await act(async () => {
+      window.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true }));
+    });
+  expect(posts().at(-1)!.path).toBe("/s/test-ns/api/live-sessions/claude-code/s2/focus");
+  expect(toast()!.querySelector(".local-toast-title")!.textContent).toBe(
+    "Could not bring the session forward",
+  );
+  expect(toast()!.querySelector(".local-toast-detail")!.textContent).toBe(
+    "The session's process has exited.",
+  );
+});
+
 it("lists ended sessions compactly with their length and files", async () => {
   await render([
     session({

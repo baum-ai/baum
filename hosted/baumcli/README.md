@@ -324,7 +324,13 @@ handshake, in [`apiclient`](../apiclient).
   `message`, the sentence Claude Code showed, cut to 512 bytes; no other event
   keeps them. A `post-tool-use` or `post-tool-use-failure` event keeps
   `tool_digest`. Prompts, tool input
-  and output and every other member are never kept. A Git event keeps the
+  and output and every other member are never kept. A `session-start`,
+  `user-prompt-submit` or `before-submit-prompt` event also records where the
+  agent runs, so the app can bring the session forward: the hook's ancestors
+  (process id, start time, name), the controlling terminal of the nearest one
+  that has one, and only the variables of `hookevents.TerminalEnv` (tmux,
+  kitty, iTerm2 and Terminal identifiers and the display), never the rest of
+  the environment. A Git event keeps the
   hook's arguments and the lines Git writes to `pre-push` and `post-rewrite`
   (refs and commits), but never a pre-push remote URL, which can carry
   credentials: the remote name is kept only when it differs from the URL and
