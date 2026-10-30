@@ -689,6 +689,7 @@ func localApplication(paths daemon.Paths, concurrency int, log *slog.Logger) fun
 								if !ok {
 									return
 								}
+								api.InvalidateSessions()
 								sessionIndex.Trigger()
 							}
 						}

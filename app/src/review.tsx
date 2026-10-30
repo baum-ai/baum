@@ -320,16 +320,35 @@ export function LocalReview({
     if (!viewedDocument) return;
     setSessions({ state: "loading" });
     const abort = new AbortController();
-    request<unknown>(`api/sessions?${query}`, undefined, "GET", abort.signal)
-      .then((body) => {
+    let pending = false;
+    const refresh = async () => {
+      if (pending || abort.signal.aborted) return;
+      pending = true;
+      try {
+        const body = await request<unknown>(
+          `api/sessions?${query}`,
+          undefined,
+          "GET",
+          abort.signal,
+        );
         const answer = parseSessionsAnswer(body);
         if (!abort.signal.aborted)
           setSessions(answer ? { state: "answered", answer } : { state: "request-failed" });
-      })
-      .catch(() => {
-        if (!abort.signal.aborted) setSessions({ state: "request-failed" });
-      });
-    return () => abort.abort();
+      } catch {
+        if (!abort.signal.aborted)
+          setSessions((previous) =>
+            previous.state === "answered" ? previous : { state: "request-failed" },
+          );
+      } finally {
+        pending = false;
+      }
+    };
+    void refresh();
+    const timer = window.setInterval(() => void refresh(), 30_000);
+    return () => {
+      window.clearInterval(timer);
+      abort.abort();
+    };
   }, [viewedDocument, query, ended]);
   const lists = viewedDocument ? sessionLists(sessions, viewedDocument) : null;
   const patches = useMemo(() => {

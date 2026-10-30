@@ -3753,3 +3753,13 @@ links/copies it installed; agent registries own plugin installation and
 enablement. Plugin status/install/removal use the resolved login shell PATH,
 with an inherited-PATH fallback warning if resolution fails. Command removal
 uses its saved command records; plugin removal targets only `baum@baum`. See [`desktop/README.md`](desktop/README.md).
+
+### Local linkage freshness
+
+Successful local linkage results, including empty results, expire after one
+minute. Session-end events invalidate desktop
+viewer evidence independently of document revisions. An invalidation during a
+read waits for it to finish and coalesces callers onto one fresh computation;
+its stale result is not served as current evidence. Open PR pages reread linked
+sessions every 30 seconds, with one request in flight, to pick up late transcript
+writes and checkpoint arrivals even without another lifecycle event.

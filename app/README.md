@@ -1225,3 +1225,7 @@ or locked persistence. Tests cover copy/open, background completion, reload,
 account replacement, disconnect with saved-review access, recovery and the local
 session/namespace/CSRF boundary. Waiting and narrow screenshots go to ignored
 `test-results/` for PR attachments.
+
+Linked session evidence on an open review refreshes every 30 seconds without
+reloading the review document. Polling allows late transcript/checkpoint arrivals
+to appear; a transient poll failure retains the last successful evidence.

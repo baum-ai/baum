@@ -458,3 +458,21 @@ it("rereads a session's decisions once for a burst of events", async () => {
   await act(async () => {});
   expect(reads()).toBe(before + 1);
 });
+
+it("refreshes linked evidence while the review stays open", async () => {
+  vi.useFakeTimers();
+  try {
+    await renderReview([]);
+    const reads = () =>
+      vi
+        .mocked(fetch)
+        .mock.calls.filter(([url]) => String(url).startsWith("/s/test-ns/api/sessions")).length;
+    const initial = reads();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(60_000);
+    });
+    expect(reads()).toBeGreaterThan(initial);
+  } finally {
+    vi.useRealTimers();
+  }
+});
