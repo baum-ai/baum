@@ -65,17 +65,18 @@ func TestReposCLI(t *testing.T) {
 		e := Run(args, nil, &out, &errOut)
 		return out.String(), e
 	}
-	if _, e := run("internal", "repos", "add", p, "--backend=invalid"); e == nil {
-		t.Fatal("invalid backend accepted")
+	// The harnesses and models are global: there is no repository override.
+	if _, e := run("internal", "repos", "add", p, "--model=custom"); e == nil {
+		t.Fatal("a model flag was accepted")
 	}
 	raw, e := run("internal", "repos", "list", "--json")
 	if e != nil || raw != "[]\n" {
 		t.Fatalf("invalid flags registered clone %s %v", raw, e)
 	}
-	if _, e = run("internal", "repos", "add", p, "--automatic", "--model=custom"); e != nil {
+	if _, e = run("internal", "repos", "add", p, "--automatic"); e != nil {
 		t.Fatal(e)
 	}
-	if _, e = run("internal", "repos", "add", p, "--backend=codex"); e != nil {
+	if _, e = run("internal", "repos", "add", p); e != nil {
 		t.Fatal(e)
 	}
 	raw, e = run("internal", "repos", "list", "--json")
@@ -86,15 +87,12 @@ func TestReposCLI(t *testing.T) {
 	if e = json.Unmarshal([]byte(raw), &list); e != nil {
 		t.Fatal(e)
 	}
-	if len(list) != 1 || (list[0].Settings.Automatic == nil || !*list[0].Settings.Automatic) || list[0].Settings.Model == nil {
+	if len(list) != 1 || (list[0].Settings.Automatic == nil || !*list[0].Settings.Automatic) {
 		t.Fatalf("settings lost %s", raw)
 	}
 	// There is no daily cap to set.
 	if _, e = run("internal", "repos", "add", p, "--daily-cap=1"); e == nil {
 		t.Fatal("a daily cap flag was accepted")
-	}
-	if _, e = run("internal", "repos", "add", p, "--backend=", "--model="); e != nil {
-		t.Fatal(e)
 	}
 	automatic := func() *bool {
 		t.Helper()

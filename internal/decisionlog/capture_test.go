@@ -710,7 +710,7 @@ func TestEffectiveModelResolvesAsCaptureDoes(t *testing.T) {
 	noClaude := generate.Backends{Claude: missing(agent.BackendClaude), Codex: present(agent.BackendCodex),
 		Anthropic: missing(agent.BackendAnthropic), CursorAgent: present(agent.BackendCursorAgent)}
 	sonnet, house := "claude-sonnet-5-5", "house-model"
-	auto, cursor := config.BackendAuto, config.BackendCursorAgent
+	auto, cursor, codex, claude := config.BackendAuto, config.BackendCursorAgent, config.BackendCodex, config.BackendClaude
 	for name, tc := range map[string]struct {
 		prefs repos.Preferences
 		want  Effective
@@ -722,6 +722,10 @@ func TestEffectiveModelResolvesAsCaptureDoes(t *testing.T) {
 			Effective{Backend: agent.BackendCodex, Model: house}},
 		"cursor-agent captures nothing": {repos.Preferences{Backend: &cursor, Decisions: repos.DecisionPreferences{Model: &sonnet}},
 			Effective{Backend: agent.BackendCursorAgent}},
+		"its own backend over the reviews'": {repos.Preferences{Backend: &cursor, Decisions: repos.DecisionPreferences{Backend: &codex}},
+			Effective{Backend: agent.BackendCodex, Model: "gpt-6-luna"}},
+		"its own backend with its model": {repos.Preferences{Backend: &auto, Decisions: repos.DecisionPreferences{Backend: &claude, Model: &sonnet}},
+			Effective{Backend: agent.BackendClaude, Model: sonnet}},
 	} {
 		if got := EffectiveModel(ctx, config.Config{Backend: config.BackendClaude}, tc.prefs, noClaude, pricing.Active()); got != tc.want {
 			t.Errorf("%s: %+v, want %+v", name, got, tc.want)

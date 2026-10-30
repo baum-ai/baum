@@ -45,12 +45,6 @@ func TestPickWithoutAClone(t *testing.T) {
 	if e = r.UpdateRepository(ctx, "owner/other", Settings{}); !errors.Is(e, ErrNotFound) {
 		t.Fatalf("unpicked update %v", e)
 	}
-	if e = r.UpdateRepository(ctx, "owner/repo", Settings{Model: new("")}); e == nil {
-		t.Fatal("invalid settings accepted")
-	}
-	if _, e = r.Pick(ctx, "owner/bad", &Settings{Model: new("")}); e == nil {
-		t.Fatal("invalid settings accepted")
-	}
 	if list, _ = r.Repositories(ctx); len(list) != 1 {
 		t.Fatalf("failed pick registered %v", list)
 	}
@@ -71,7 +65,7 @@ func TestPickRejectsInvalidNames(t *testing.T) {
 func TestRemoveKeepsPickedAndUnpickRemovesClones(t *testing.T) {
 	ctx := context.Background()
 	r := registry(t)
-	c, e := r.Add(ctx, clone(t, "https://github.com/owner/repo"), &Settings{Model: new("custom")})
+	c, e := r.Add(ctx, clone(t, "https://github.com/owner/repo"), &Settings{Automatic: new(false)})
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -112,7 +106,7 @@ func TestRemoveKeepsPickedAndUnpickRemovesClones(t *testing.T) {
 	}
 	// The settings survive a re-pick.
 	v, e := r.Pick(ctx, "owner/repo", nil)
-	if e != nil || v.Settings.Model == nil || *v.Settings.Model != "custom" {
+	if e != nil || v.Settings.Automatic == nil || *v.Settings.Automatic {
 		t.Fatalf("%#v %v", v, e)
 	}
 }

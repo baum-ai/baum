@@ -60,7 +60,7 @@ func (l *Local) prepareFix(ctx context.Context, item Item) (Prepared, string, er
 	if e != nil {
 		return Prepared{}, "", e
 	}
-	cfg, e := l.resolveFix(ctx, c)
+	cfg, e := l.resolveFix(ctx)
 	if e != nil {
 		return Prepared{}, "", e
 	}
@@ -184,7 +184,7 @@ func (l *Local) executeFix(ctx context.Context, p Prepared, progress func(Progre
 	if e != nil {
 		return nil, e
 	}
-	cfg, e := l.resolveFix(ctx, c)
+	cfg, e := l.resolveFix(ctx)
 	if e != nil {
 		return nil, e
 	}

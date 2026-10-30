@@ -858,7 +858,7 @@ effective harness and model. Each section sends all its choices and runs one
 save at a time; changes made while one runs are sent together afterwards, so
 an older choice never lands after a newer one. A failed save shows the error
 and puts the control back. **Fixes** chooses the agent that fixes: "Same as reviews" (the
-default, which follows a repository's own review harness too) or Claude Code
+default) or Claude Code
 or Codex with a model, sent as `fix_backend` and `fix_model` (`""` returns to
 the reviews') and reported by `GET api/settings`. A chosen fix agent applies
 in every repository. **Connections** holds the GitHub connection and, in the
@@ -887,7 +887,8 @@ an earlier name GitHub forwards to the repository, which the picker and
 Repositories rows then show (`earlier_names`); a folder of another repository
 shows the daemon's error naming that repository. Settings apply
 to the repository through `PUT api/repositories/{owner}/{name}/settings`, with
-automatic generation and harness/model overrides; there is no spending cap.
+automatic generation and decision capture only: the harnesses and models are
+global; there is no spending cap.
 Removing a repository unpicks it but leaves its files and saved
 reviews on disk. Change local clone offers the existing clone registrations and
 lets the person remove one or register another folder. Explicit unpicks are
@@ -933,16 +934,20 @@ marking those made after that review was generated "Provisional", ended sessions
 tracker still holds included; it is not drawn while no session has decisions,
 a capture state or a capture in flight. Both read again on the `decisions`
 event, which carries no data (events within 250 ms make one read), and when
-the event stream opens or resets or the automatic switch changes. Settings' **Decision capture** section holds
-the switch, the decision log model (the harness's cheap default, or another
-of its models), read with `GET api/settings/decisions` and saved with `PUT
-api/settings/decisions` (`enabled`, `model`; the whole object). Only these two answer
-with what the daemon makes of them: the harness capture resolves to, its model
-and whether the saved model is ignored (unknown, with a note that capture
-does not run, when no harness resolves); the section reads them again when
-the review harness changes. A saved model it ignores is listed as
-"<model> (not used)" with a note naming the harness, so choosing the default
-clears it. When the harness cannot be resolved the section says so, apart
+the event stream opens or resets or the automatic switch changes. Settings' **Data extraction** section, in
+Reviews, holds the switch for decision capture and the feature log, the agent
+("Same as reviews", the default, or Claude Code, Codex or the Anthropic API)
+and the model (the harness's cheap default, or another of its models; a new
+agent starts over at its default), one per row like the review settings and
+saved as they change, read with `GET api/settings/decisions` and saved with
+`PUT api/settings/decisions` (`enabled`, `backend`, `model`; the whole
+object, `""` for the reviews' agent and the default model, which is saved as
+none so it follows the agent). Only these
+two answer with what the daemon makes of them: the harness extraction
+resolves to (`effective_backend`), its model and whether the saved model is
+ignored (unknown, with a note that extraction does not run, when no harness
+resolves); the section reads them again when the review harness changes. A saved model it ignores is shown with a note naming the harness, so
+choosing the default clears it. When the harness cannot be resolved the section says so, apart
 from a check that did not answer in time. A repository's dialog turns capture off for it (`decisions: false`; on sends
 `null`). The desktop setup's review step (which shows `auto` as the harness the daemon resolved, else
 its own guess) offers the decision log model beside the harness, reset to that

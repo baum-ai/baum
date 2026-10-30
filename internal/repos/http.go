@@ -81,10 +81,6 @@ func (r *Registry) HandlerWith(current CurrentName) http.Handler {
 		if !decode(w, req, &s) {
 			return Settings{}, false
 		}
-		if e := s.Validate(); e != nil {
-			http.Error(w, e.Error(), 400)
-			return Settings{}, false
-		}
 		return s, true
 	}
 	mux.HandleFunc("GET /api/repos", func(w http.ResponseWriter, req *http.Request) {
@@ -139,12 +135,6 @@ func (r *Registry) HandlerWith(current CurrentName) http.Handler {
 		if input.Path == "" {
 			http.Error(w, "path is required", 400)
 			return
-		}
-		if input.Settings != nil {
-			if e := input.Settings.Validate(); e != nil {
-				http.Error(w, e.Error(), 400)
-				return
-			}
 		}
 		var c Clone
 		var e error
@@ -202,12 +192,6 @@ func (r *Registry) HandlerWith(current CurrentName) http.Handler {
 		}
 		if !decode(w, req, &input) {
 			return
-		}
-		if input.Settings != nil {
-			if e := input.Settings.Validate(); e != nil {
-				http.Error(w, e.Error(), 400)
-				return
-			}
 		}
 		v, e := r.Pick(req.Context(), input.Repository, input.Settings)
 		if e != nil {

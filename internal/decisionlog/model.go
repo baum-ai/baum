@@ -152,8 +152,18 @@ func (m *completerModel) Complete(ctx context.Context, req decisions.ModelReques
 	return decisions.ModelResponse{JSON: document, Model: out.Model, Usage: decisionUsage(out.Usage)}, nil
 }
 
+// extractionBackend is the backend data extraction requests: the
+// preferences' own, else the reviews' (cfg, the config file with the
+// preferences over it).
+func extractionBackend(prefs repos.Preferences, cfg config.Config) config.Backend {
+	if prefs.Decisions.Backend != nil {
+		return *prefs.Decisions.Backend
+	}
+	return cfg.Backend
+}
+
 // resolveBackend names the backend capture uses: the requested one, or for
-// auto the one reviews would use, which generate.Select picks (the first of
+// auto the one generate.Select picks (the first of
 // generate.AutoOrder that passes its check; never cursor-agent).
 func resolveBackend(ctx context.Context, requested config.Backend, backends generate.Backends) (string, error) {
 	if requested != config.BackendAuto && requested != "" {
@@ -196,8 +206,8 @@ func maxCalls(backend string) int {
 
 // Effective is the backend and model decision capture uses.
 type Effective struct {
-	// Backend is the backend reviews resolve to, empty when none passes its
-	// check.
+	// Backend is the data extraction backend, resolved as a review's for
+	// auto, empty when none passes its check.
 	Backend string `json:"backend"`
 	// Undetermined is a backend whose checks did not answer in time, apart
 	// from none being usable.
@@ -215,8 +225,8 @@ type Effective struct {
 var effectiveTimeout = 5 * time.Second
 
 // EffectiveModel resolves the backend and decision model as a capture does
-// (resolveModel), from the config file with the app's preferences over it; a
-// repository's own backend can still differ. Backends zero builds them from
+// (resolveModel), from the config file with the app's preferences over it.
+// Backends zero builds them from
 // the configuration and list nil is pricing.Active. With auto it runs the
 // backends' checks, for at most effectiveTimeout. No usable backend leaves
 // the Effective empty; checks that do not answer in time leave it empty but
@@ -231,7 +241,7 @@ func EffectiveModel(ctx context.Context, file config.Config, prefs repos.Prefere
 	}
 	ctx, cancel := context.WithTimeout(ctx, effectiveTimeout)
 	defer cancel()
-	backend, model, err := resolveModel(ctx, cfg.Backend, backends, list, prefs.Decisions.Model)
+	backend, model, err := resolveModel(ctx, extractionBackend(prefs, cfg), backends, list, prefs.Decisions.Model)
 	if err != nil {
 		return Effective{Undetermined: errors.Is(ctx.Err(), context.DeadlineExceeded)}
 	}
@@ -265,12 +275,10 @@ type caller struct {
 	redactor *bundle.Redactor
 	log      *slog.Logger
 	now      time.Time
-	// gate reads the preferences and the repository's settings before each
-	// feature stage call, and whether calls may be made; nil is on, with
-	// prefs and settings.
-	gate     func(context.Context) (repos.Preferences, repos.Settings, bool, error)
-	prefs    repos.Preferences
-	settings repos.Settings
+	// gate reads the preferences before each feature stage call, and
+	// whether calls may be made; nil is on, with prefs.
+	gate  func(context.Context) (repos.Preferences, bool, error)
+	prefs repos.Preferences
 	// build, when set, counts a first build's calls and spend.
 	build *buildSpend
 	// begun is called once an attempt is recorded as pending.
@@ -330,13 +338,13 @@ type planned struct {
 	backends       generate.Backends
 }
 
-// plan resolves the backend and model for the preferences and the
-// repository's settings, backend and model replacing them when set, and
+// plan resolves the backend and model for the preferences (extractionBackend
+// and decisionModel), backend and model replacing them when set, and
 // reserves a prompt of at most maxTokens and a reply of at most maxOutput.
 // A call it may not make returns its skip reason, with what was resolved.
-func (c caller) plan(ctx context.Context, prefs repos.Preferences, settings repos.Settings, backend, model string, maxTokens, maxOutput int64) (planned, string) {
-	cfg := settings.Resolve(prefs.Resolve(c.config))
-	requested := cfg.Backend
+func (c caller) plan(ctx context.Context, prefs repos.Preferences, backend, model string, maxTokens, maxOutput int64) (planned, string) {
+	cfg := prefs.Resolve(c.config)
+	requested := extractionBackend(prefs, cfg)
 	if backend != "" {
 		requested = config.Backend(backend)
 	}
@@ -423,9 +431,9 @@ type callResult struct {
 // write.
 func (c caller) complete(ctx context.Context, backend, model string, a Attempt, req decisions.ModelRequest) (callResult, error) {
 	// The gate is read again before every call.
-	prefs, settings, on, err := c.prefs, c.settings, true, error(nil)
+	prefs, on, err := c.prefs, true, error(nil)
 	if c.gate != nil {
-		prefs, settings, on, err = c.gate(ctx)
+		prefs, on, err = c.gate(ctx)
 	}
 	switch {
 	case err != nil:
@@ -433,7 +441,7 @@ func (c caller) complete(ctx context.Context, backend, model string, a Attempt, 
 	case !on:
 		return callResult{Skip: ReasonDisabled}, nil
 	}
-	p, skip := c.plan(ctx, prefs, settings, backend, model, decisions.MaxRequestTokens(req), req.MaxOutputTokens)
+	p, skip := c.plan(ctx, prefs, backend, model, decisions.MaxRequestTokens(req), req.MaxOutputTokens)
 	if skip != "" {
 		return callResult{Skip: skip}, nil
 	}

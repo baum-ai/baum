@@ -867,12 +867,7 @@ function Workspace({ url }: { url: UrlState }) {
             <Alert>{inboxes.error}</Alert>
           ) : null}
           {page === "repositories" ? (
-            <RepositoriesPage
-              repositories={picked}
-              automatic={automatic}
-              defaults={defaults}
-              changed={reload}
-            />
+            <RepositoriesPage repositories={picked} automatic={automatic} changed={reload} />
           ) : page === "settings" || page === "diagnostics" ? (
             <SettingsPage
               authRevision={authRevision}

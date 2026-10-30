@@ -126,8 +126,11 @@ export type ReviewSettings = {
   /** The decision capture model; empty is the harness's default. Only the
    *  desktop setup edits it here. */
   decisions_model?: string;
-  /** What the daemon reports, never saved: the harness and model capture
-   *  uses (empty when unknown), and whether it ignores `decisions_model`. */
+  /** What the daemon reports, never saved: the data extraction harness
+   *  Settings chose (empty while it follows the reviews'), the harness and
+   *  model capture uses (empty when unknown), and whether it ignores
+   *  `decisions_model`. */
+  decisions_chosen_backend?: string;
   decisions_backend?: string;
   decisions_effective_model?: string;
   decisions_model_ignored?: boolean;
@@ -148,8 +151,8 @@ export const modelPresets: Record<string, string[]> = {
  *  Cursor Agent cannot capture decisions. */
 export const decisionModelDefaults: Record<string, string> = {
   claude: "claude-haiku-5-5",
-  anthropic: "claude-haiku-5-5",
   codex: "gpt-6-luna",
+  anthropic: "claude-haiku-5-5",
 };
 
 /** Settings with an explicit model: an unset one becomes the harness's
@@ -161,7 +164,7 @@ export function withModel(settings: ReviewSettings): ReviewSettings {
     ? settings
     : { ...settings, model: modelPresets[settings.backend]?.[0] ?? "" };
   if (next.decisions_model === undefined || next.decisions_model.trim()) return next;
-  return { ...next, decisions_model: decisionModelDefaults[next.backend] ?? "" };
+  return { ...next, decisions_model: decisionModelDefaults[extractionHarness(next)] ?? "" };
 }
 
 /** Settings as they are saved: what the daemon reports is left out, and a
@@ -169,20 +172,28 @@ export function withModel(settings: ReviewSettings): ReviewSettings {
  *  so it follows the harness. */
 export function storedReviews(settings: ReviewSettings): ReviewSettings {
   const {
-    decisions_backend: _,
-    decisions_effective_model: __,
-    decisions_model_ignored: ___,
+    decisions_chosen_backend: _,
+    decisions_backend: __,
+    decisions_effective_model: ___,
+    decisions_model_ignored: ____,
     ...saved
   } = settings;
   if (saved.decisions_model === undefined) return saved;
-  return saved.decisions_model === decisionModelDefaults[saved.backend]
+  return saved.decisions_model === decisionModelDefaults[extractionHarness(settings)]
     ? { ...saved, decisions_model: "" }
     : saved;
 }
 
 /** The harness the setup shows for saved settings: "auto" has no tile, so it
- *  is the harness the daemon resolved it to, else the screen's guess. */
+ *  is the harness the daemon resolved it to (what capture resolves while it
+ *  follows the reviews), else the screen's guess. */
 export function shownHarness(settings: ReviewSettings, guess: string): string {
   if (settings.backend !== "auto") return settings.backend;
-  return settings.decisions_backend || guess;
+  return (!settings.decisions_chosen_backend && settings.decisions_backend) || guess;
+}
+
+/** The harness data extraction runs with: the one Settings chose, else the
+ *  reviews'. */
+export function extractionHarness(settings: ReviewSettings): string {
+  return settings.decisions_chosen_backend || settings.backend;
 }
