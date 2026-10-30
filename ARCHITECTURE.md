@@ -1929,9 +1929,23 @@ variables, so it may name a `GIT_` variable the allowlist drops. A fix passes
 it to `gitlocal.FixOptions.Env` for every git command in the checkout and the
 push, without the variables that would redirect git.
 
+## Local application persistence
+
+[`internal/appdb`](internal/appdb/README.md) owns the shared per-user
+`$XDG_STATE_HOME/baum/app.sqlite` (default `~/.local/state/baum/app.sqlite`).
+Repository settings, groups, decisions/features, jobs, scheduler state, inboxes,
+analytics/history and persistent discovery/pricing caches share it. Small JSON
+state documents use bucket/key rows; read-modify-write operations use SQLite
+transactions. Version 1 is the first release baseline; newer and unrecognized
+schemas are refused and pre-release files are not imported. The package README
+lists the stores and release-readiness checks. Clone review databases, OS
+credentials, optional config, runtime credentials/locks/spool/logs and actual
+agent working directories/transcripts remain independent.
+
 ## Explicit local repository registry
 
-`internal/repos` owns the private SQLite database beside `config.Path()` and
+`internal/repos` owns the repository tables in the shared private
+`app.sqlite` application database (`internal/appdb`) and
 reuses `gitlocal` and `github.RepositoryFromRemote` for offline clone discovery.
 The `clones` table keys canonical working-tree roots separately from the shared
 common git directory and normalized repository identity (host-qualified for Enterprise). The
@@ -1957,14 +1971,8 @@ and `agent_env`; a field an older baum saved and this one dropped
 (`cursor_agent_acknowledged`) is ignored on read. The harnesses and models are
 global: a repository's `backend` and `model` an older baum stored are ignored
 on read and dropped on the next write.
-`PRAGMA user_version` 1 marks the schema in which
-`null` exists: `Open` migrates an older file once, in a `BEGIN IMMEDIATE`
-transaction, turning the `automatic: false` every earlier registration stored
-into `null`, and keeping a stored `true` (only `baum internal repos add --automatic`
-could set it). `OpenReadOnly` reads an unmigrated file the same way without
-writing it. An older baum that registers a repository after the migration
-still stores `automatic: false`, which now reads as an explicit off: that
-repository stays off until changed in the app, which fails safe.
+The shared application database owns schema versioning; pre-release registry
+files are not imported. `null` follows the global preference.
 `PUT /api/repos/{id}/settings` replaces the whole object and requires the
 `automatic` field, so removing it is an explicit `null`. A `daily_cap` an
 older baum stored is ignored on read, and one an older app sends is dropped
@@ -2033,7 +2041,7 @@ Claude Code's stored OAuth token, which is never refreshed, logged or stored.
 That is the one outbound host the feature adds. Results are cached five minutes,
 with at most one read a minute. See its [README](internal/planusage/README.md).
 `planusage.History` samples the plans every 15 minutes while the daemon runs and
-keeps 90 days of changed figures in `plan-usage-history.json`, for analytics.
+keeps 90 days of changed figures in the `state/plan-usage-history` document in `app.sqlite`, for analytics.
 
 ### Local analytics
 
@@ -2041,7 +2049,7 @@ keeps 90 days of changed figures in `plan-usage-history.json`, for analytics.
 (`uiserver.LocalAPI.Analytics`) for the app's Analytics page. Its parts, all
 started in `localApplication`:
 
-- `Index` keeps per-session aggregates in `analytics-index.json` in the state
+- `Index` keeps per-session aggregates in the `cache/analytics-index` document in `app.sqlite` in the state
   directory, for sessions whose working directory is inside a registered clone
   (`sessions/collector.FindSessions` per clone with its worktrees, then
   `sessions.Map` and a reduction that keeps no text). Entries are keyed by the
@@ -2054,7 +2062,7 @@ started in `localApplication`:
   the clones' commits by their `user.email` (`gitlocal.AuthoredCommits`) against
   the sessions' created commits, Entire checkpoints and co-author trailers.
 - baum's own work comes from the jobs queue and `Actions`, a ledger in
-  `analytics-actions.json` that the merge and update handlers' writers record
+  the `state/analytics-actions` document in `app.sqlite` that the merge and update handlers' writers record
   into when GitHub accepts a write (`Actions.RecordMerges`, `RecordUpdates`).
 - `Delivery` caches one GitHub search per picked repository
   (`github.AuthoredPullRequests`) for an hour; a request starts the search and
@@ -2196,8 +2204,8 @@ retry deadlines are shared by host and credential across repositories and
 service restarts. Discovery never sleeps through an exhausted budget.
 A failed or rate-limited refresh preserves the last complete inbox as stale;
 optional non-rate team or permission failures keep their fields unknown.
-Snapshots and minimal typed response fields are atomically replaced in private
-cache files, partitioned by host/credential fingerprint/repository. The index
+Snapshots and minimal typed response fields are atomically replaced in
+`cache/discovery/<hash>` application database documents, partitioned by host/credential fingerprint/repository. The index
 consumes these snapshots; missing PRs in an open-only snapshot are never treated
 as closed. Each pull keeps its head and base branches (`head_ref`,
 `base_ref`). Old cache formats drop
@@ -2324,9 +2332,10 @@ store to read for it, so its rows are `no_review`.
 
 ### Persistent generation jobs
 
-`internal/jobs` serializes queue mutations in a private atomic JSON journal,
+`internal/jobs` serializes queue mutations in the `state/jobs` JSON document
+in the shared private `app.sqlite` application database,
 without duplicating review documents. `jobs.Open` takes an exclusive
-`internal/filelock` lock beside the journal (`jobs.json.lock`) and keeps it
+`internal/filelock` lock beside the database (`<database path>.jobs.lock.sqlite`) and keeps it
 until its workers stop, so two processes never run one queue; it waits up to
 10 s for a predecessor whose shutdown timed out and that is exiting.
 Reviews, fixes and feature builds share one lane, which runs up to
@@ -2399,7 +2408,8 @@ live with that implementation; `internal/pricing` is a stateless import facade
 for local callers.
 A bounded HTTPS downloader refuses redirects, verifies the existing release
 signing key, rejects flattened lists and installs only newer full-format lists.
-An installed download is stored with its signature in the job state directory.
+An installed download is stored with its signature in the `cache/pricing`
+application database document.
 The daemon re-verifies and installs it before opening the queue, so jobs are
 priced with the newest verified list; an unverifiable file is ignored. A job
 records the version it was prepared with as provenance only: a different
@@ -2414,7 +2424,7 @@ runs like any other. Unknown actual usage remains null.
 
 `internal/inboxes` keeps the inboxes people define, saved filters over the
 desktop app's Up next queue listed under Inbox in the sidebar, in
-`inboxes.json` in the daemon's state directory. `/api/inboxes` serves the list
+the `state/inboxes` document in the shared `app.sqlite` application database. `/api/inboxes` serves the list
 (`GET`) and replaces it (`PUT`, guarded by a revision so two windows cannot
 overwrite each other). The daemon only stores them; the app matches the rules,
 including `no_bots` against the pull request's `author_bot` from discovery.
@@ -2422,8 +2432,8 @@ including `no_bots` against the pull request's `author_bot` from discovery.
 ### Review groups
 
 `internal/reviewgroups` keeps review groups, named sets of 2 to 8 open pull
-requests of one repository reviewed together, in `groups.sqlite` in the
-daemon's state directory (beside `jobs.json`), not in a clone. Their combined
+requests of one repository reviewed together, in the shared
+`app.sqlite` application database in the state directory, not in a clone. Their combined
 reviews are versions keyed by group ID in the same file, so they never collide
 with a member's own versions in its clone's `versions.sqlite`; deleting a
 group hides it and keeps every version. `/api/groups` serves the definitions
@@ -2563,7 +2573,7 @@ messages, reasoning, tool calls and tool output, taken from the harness's own
 event stream as it is already parsed (`agent.Request.Transcript`, entries of
 `agent.TranscriptEntry`; deliberately apart from `agent.Event`, which never
 holds text). The queue gives the executor `transcripts/<job id>.jsonl` beside
-`jobs.json`, created private (0700/0600), one `{"seq":N,...}` line per entry,
+`app.sqlite`, created private (0700/0600), one `{"seq":N,...}` line per entry,
 appended and flushed as each arrives. Title and text are masked with the bundle
 redactor and cut (1 KiB, 16 KiB); the file stops at 8 MiB with a final error
 entry, and only the 50 most recently written transcripts are kept. A tool
@@ -2897,7 +2907,7 @@ it and `Queue.SubmitAutomatic` decides each job.
   member GitHub shows moved on or turned draft before discovery does is
   retried a minute later. Groups a person made are never generated
   automatically.
-- **State.** `automatic.json` in the job state directory (0700) holds each
+- **State.** The `state/automatic` document in the application database holds each
   enabled repository's PRs (recorded head, request and draft flags,
   eligibility, pending head and trigger, last head handled, retried head,
   last stopped job put back), its stack groups (member heads handled,
@@ -3460,7 +3470,7 @@ their user, and send a running session a message, through their hooks (the
 hook side is in `hosted/baumcli`, rules in its
 [README](hosted/baumcli/README.md), "User-wide hooks"). Everything is held in
 the daemon's memory; only `Settings` (`codex_approvals`, default false) is
-saved, in `agent-requests.json` in the state directory.
+saved, in the `state/agent-requests` document in `app.sqlite`.
 
 - **Unattended sessions.** A Claude Code session nobody answers in a
   terminal is never held: the hook gives no decision at once when
@@ -3565,7 +3575,7 @@ saved, in `agent-requests.json` in the state directory.
 ### Decision capture
 
 `internal/decisionlog` extracts the decisions of the tracked sessions (see
-"Live sessions") into `<state>/decisions/decisions.sqlite`, with the published
+"Live sessions") into `<state>/app.sqlite`, with the published
 prompt (`decisions-public-v1`) and the `decisions` package's renderer,
 parser and validator. Its scheduler reads `Tracker.Sessions` every 30 seconds
 and keeps no per-session timers: a session that ended, or is not running and

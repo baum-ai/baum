@@ -20,6 +20,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/baum-ai/baum/internal/appdb"
 	"github.com/baum-ai/baum/internal/github"
 )
 
@@ -173,78 +174,60 @@ func (s *Service) Epoch() uint64 {
 	return s.epoch
 }
 
-// New uses directory as a dedicated private cache directory. An empty path
-// selects $XDG_CACHE_HOME/baum/discovery (or the OS user cache directory).
+// New uses app.sqlite in directory, or the shared application database when empty.
 func New(client *github.Client, directory string) *Service {
 	return &Service{client: client, directory: directory, now: time.Now, validated: map[string]bool{}}
 }
 
-// DefaultDirectory is the cache directory used when New is given none: baum/discovery
-// under the OS user cache directory ($XDG_CACHE_HOME on Linux).
+// DefaultDirectory is the shared application database directory.
 func DefaultDirectory() (string, error) {
-	root, err := os.UserCacheDir()
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(root, "baum", "discovery"), nil
+	return appdb.Directory()
 }
 
 func (s *Service) path(identity, repository string) (string, error) {
-	directory := s.directory
-	if directory == "" {
-		var err error
-		if directory, err = DefaultDirectory(); err != nil {
-			return "", err
-		}
-	}
 	sum := sha256.Sum256([]byte(identity + "\x00" + strings.ToLower(repository)))
-	return filepath.Join(directory, hex.EncodeToString(sum[:])+".json"), nil
+	return hex.EncodeToString(sum[:]), nil
 }
 
-func load(path string) (diskCache, error) {
-	file, err := os.Open(path)
+func (s *Service) databasePath() (string, error) {
+	if s.directory == "" {
+		return appdb.Path()
+	}
+	return filepath.Join(s.directory, "app.sqlite"), nil
+}
+
+func (s *Service) load(key string) (diskCache, error) {
+	path, err := s.databasePath()
 	if err != nil {
 		return diskCache{}, err
 	}
-	defer file.Close()
-	stat, err := file.Stat()
+	raw, err := appdb.Read(path, "cache", "discovery/"+key)
 	if err != nil {
 		return diskCache{}, err
 	}
-	if stat.Size() > 32<<20 {
+	if len(raw) > 32<<20 {
 		return diskCache{}, errors.New("discovery cache too large")
 	}
 	var cache diskCache
-	if err := json.NewDecoder(file).Decode(&cache); err != nil {
+	if json.Unmarshal(raw, &cache) != nil {
 		return diskCache{}, errors.New("invalid discovery cache")
 	}
 	return cache, nil
 }
 
-func save(path string, cache diskCache) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
-		return err
-	}
-	data, err := json.Marshal(cache)
+func (s *Service) save(key string, cache diskCache) error {
+	raw, err := json.Marshal(cache)
 	if err != nil {
 		return err
 	}
-	if len(data) > 32<<20 {
+	if len(raw) > 32<<20 {
 		return errors.New("discovery cache too large")
 	}
-	file, err := os.CreateTemp(filepath.Dir(path), ".discovery-*")
+	path, err := s.databasePath()
 	if err != nil {
 		return err
 	}
-	defer func() { _ = os.Remove(file.Name()) }()
-	if _, err = file.Write(data); err != nil {
-		file.Close()
-		return err
-	}
-	if err = file.Close(); err != nil {
-		return err
-	}
-	return os.Rename(file.Name(), path)
+	return appdb.Write(path, "cache", "discovery/"+key, raw)
 }
 
 // Cached never makes a network request. Resolving the configured local token
@@ -260,7 +243,7 @@ func (s *Service) Cached(ctx context.Context, repository github.Repository) (Sna
 	if err != nil {
 		return Snapshot{}, err
 	}
-	cache, err := load(path)
+	cache, err := s.load(path)
 	if err != nil {
 		return Snapshot{}, err
 	}
@@ -435,7 +418,7 @@ func (s *Service) poll(ctx context.Context, repository github.Repository, force 
 	if err != nil {
 		return Snapshot{}, err
 	}
-	cache, loadErr := load(path)
+	cache, loadErr := s.load(path)
 	if loadErr != nil && !errors.Is(loadErr, os.ErrNotExist) {
 		return Snapshot{}, loadErr
 	}
@@ -449,7 +432,7 @@ func (s *Service) poll(ctx context.Context, repository github.Repository, force 
 		return Snapshot{}, err
 	}
 	budgetPath += ".budget"
-	budget, budgetErr := load(budgetPath)
+	budget, budgetErr := s.load(budgetPath)
 	if budgetErr != nil && !errors.Is(budgetErr, os.ErrNotExist) {
 		return Snapshot{}, budgetErr
 	}
@@ -514,10 +497,10 @@ func (s *Service) poll(ctx context.Context, repository github.Repository, force 
 	s.validated[path] = err == nil
 	snapshot.Epoch = epoch
 	p.cache.Snapshot = snapshot
-	if saveErr := save(budgetPath, diskCache{Snapshot: Snapshot{Rate: p.rate}, GraphQLRate: p.graphRate}); saveErr != nil {
+	if saveErr := s.save(budgetPath, diskCache{Snapshot: Snapshot{Rate: p.rate}, GraphQLRate: p.graphRate}); saveErr != nil {
 		return snapshot, fmt.Errorf("save discovery rate budget: %w", saveErr)
 	}
-	if saveErr := save(path, p.cache); saveErr != nil {
+	if saveErr := s.save(path, p.cache); saveErr != nil {
 		return snapshot, fmt.Errorf("save discovery cache: %w", saveErr)
 	}
 	return snapshot, err
@@ -635,7 +618,7 @@ func (s *Service) Observe(ctx context.Context, repository github.Repository, val
 	if err != nil {
 		return err
 	}
-	cache, err := load(path)
+	cache, err := s.load(path)
 	if err != nil {
 		return err
 	}
@@ -645,11 +628,11 @@ func (s *Service) Observe(ctx context.Context, repository github.Repository, val
 				return nil
 			}
 			cache.Snapshot.Observations[i] = value
-			return save(path, cache)
+			return s.save(path, cache)
 		}
 	}
 	cache.Snapshot.Observations = append(cache.Snapshot.Observations, value)
-	return save(path, cache)
+	return s.save(path, cache)
 }
 
 // Merged records that the app just merged the pull request at head: GitHub
@@ -666,7 +649,7 @@ func (s *Service) Merged(ctx context.Context, repository github.Repository, numb
 	if err != nil {
 		return err
 	}
-	cache, err := load(path)
+	cache, err := s.load(path)
 	if err != nil {
 		return err
 	}
@@ -685,11 +668,11 @@ func (s *Service) Merged(ctx context.Context, repository github.Repository, numb
 				observation.Checks = cmp.Or(observation.Checks, old.Checks)
 			}
 			cache.Snapshot.Observations[i] = observation
-			return save(path, cache)
+			return s.save(path, cache)
 		}
 	}
 	cache.Snapshot.Observations = append(cache.Snapshot.Observations, observation)
-	return save(path, cache)
+	return s.save(path, cache)
 }
 
 // Unresolved records the count of an open pull request's unresolved review
@@ -707,7 +690,7 @@ func (s *Service) Unresolved(ctx context.Context, repository github.Repository, 
 	if err != nil {
 		return false, err
 	}
-	cache, err := load(path)
+	cache, err := s.load(path)
 	if err != nil {
 		return false, err
 	}
@@ -716,7 +699,7 @@ func (s *Service) Unresolved(ctx context.Context, repository github.Repository, 
 			continue
 		}
 		cache.Snapshot.PullRequests[i].Unresolved = &count
-		return true, save(path, cache)
+		return true, s.save(path, cache)
 	}
 	return false, nil
 }

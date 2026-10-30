@@ -9,6 +9,9 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/baum-ai/baum/internal/appdb"
+	"github.com/baum-ai/baum/internal/appdb/appdbtest"
 )
 
 type harness struct {
@@ -19,7 +22,7 @@ type harness struct {
 }
 
 func newHarness(t *testing.T) *harness {
-	h := &harness{t: t, path: filepath.Join(t.TempDir(), "inboxes.json")}
+	h := &harness{t: t, path: filepath.Join(appdbtest.TempDir(t), "inboxes.json")}
 	h.handler = (&API{Store: Open(h.path), Changed: func() { h.changed++ }}).Handler()
 	return h
 }
@@ -206,7 +209,7 @@ func TestOtherMethodsAreRefused(t *testing.T) {
 func TestCorruptFileIsReportedAndKept(t *testing.T) {
 	h := newHarness(t)
 	const corrupt = `{"revision": 3, "inboxes": [`
-	if err := os.WriteFile(h.path, []byte(corrupt), 0o600); err != nil {
+	if err := appdb.Write(h.path, "state", "inboxes", []byte(corrupt)); err != nil {
 		t.Fatal(err)
 	}
 	if code, body := h.do(http.MethodGet, ""); code != 500 || body["code"] != "inboxes_unreadable" {
@@ -215,7 +218,7 @@ func TestCorruptFileIsReportedAndKept(t *testing.T) {
 	if code, body := h.put(`{"revision":0,"inboxes":[` + entry("A") + `]}`); code != 500 || body["code"] != "inboxes_unreadable" {
 		t.Fatalf("put %d %v", code, body)
 	}
-	if data, _ := os.ReadFile(h.path); string(data) != corrupt {
+	if data, _ := appdb.Read(h.path, "state", "inboxes"); string(data) != corrupt {
 		t.Fatalf("the corrupt file was touched: %q", data)
 	}
 	if h.changed != 0 {

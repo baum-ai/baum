@@ -17,7 +17,7 @@ with the reasons beside it where there are any.
 
 ## The session index
 
-`Index` keeps one entry per session file in `analytics-index.json` in the
+`Index` keeps one entry per session file in the `cache/analytics-index` document in `app.sqlite` in the
 daemon's state directory (`$XDG_STATE_HOME/baum`). It holds aggregates only:
 the agent, the clone and its repository, the top-level session's branch, its
 start and end, active seconds (in total and by hour), human prompts, tool
@@ -87,12 +87,12 @@ cached for five minutes.
 
 ## baum's work
 
-From the jobs ledger (`jobs.json`), jobs created in the window: reviews, group
+From the jobs ledger (`state/jobs` in `app.sqlite`), jobs created in the window: reviews, group
 reviews and fixes, automatic ones, their states, tokens and spend (a run with
 usage but no price makes it incomplete), failures by reason code (the app puts
 them in words), fixes that pushed or failed, and review threads a fix replied
 to and resolved. Merges, branch updates and check re-runs made from the app are
-recorded by `Actions` in `analytics-actions.json` (time, kind, repository,
+recorded by `Actions` in the `state/analytics-actions` document in `app.sqlite` (time, kind, repository,
 pull request number) when GitHub accepts them, kept 90 days; they are `null`
 when there is no ledger. The agent filter matches a job's harness.
 `decisions` counts decision capture's calls started in the window from its
@@ -120,7 +120,7 @@ text. An account change forgets every answer.
 `planusage.History` samples the plans every 15 minutes while the daemon runs
 (through the plan usage cache, so Claude's usage endpoint is asked at most
 then) and keeps changed figures, plus one an hour while unchanged, for 90 days
-in `plan-usage-history.json`. The report draws each provider window's samples
+in the `state/plan-usage-history` document in `app.sqlite`. The report draws each provider window's samples
 in the window and counts the times it reached 100%. The agent filter picks the
 provider.
 
@@ -129,3 +129,6 @@ provider.
 Tests use small Claude Code transcripts under a temporary store, a temporary
 git clone, an injected clock, a fake GitHub search and fake writes; they never
 read the real home directory.
+
+Storage uses the shared [application database](../appdb/README.md); the index
+is a disposable cache and action/plan histories are durable state.

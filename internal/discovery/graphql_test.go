@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/baum-ai/baum/internal/appdb/appdbtest"
 	"github.com/baum-ai/baum/internal/github"
 )
 
@@ -73,7 +74,7 @@ func TestGraphQLPaginationEndpointsStatesAndIndependentBudgets(t *testing.T) {
 				}
 				return &http.Response{StatusCode: 200, Header: headers, Body: io.NopCloser(strings.NewReader(body))}, nil
 			})})
-			s := New(client, t.TempDir())
+			s := New(client, appdbtest.TempDir(t))
 			s.now = func() time.Time { return now }
 			repo := github.Repository{Host: host, Owner: "acme", Name: "app"}
 			got, err := s.Poll(context.Background(), repo)

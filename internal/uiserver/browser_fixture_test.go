@@ -18,6 +18,7 @@ import (
 
 	"github.com/baum-ai/baum/agent"
 	"github.com/baum-ai/baum/internal/analytics"
+	"github.com/baum-ai/baum/internal/appdb/appdbtest"
 	"github.com/baum-ai/baum/internal/assemble/assembletest"
 	"github.com/baum-ai/baum/internal/automatic"
 	"github.com/baum-ai/baum/internal/chat"
@@ -242,7 +243,7 @@ func TestLocalAppBrowserFixture(t *testing.T) {
 	}
 	t.Setenv("GITHUB_TOKEN", "")
 	t.Setenv("GH_TOKEN", "")
-	home := t.TempDir()
+	home := appdbtest.TempDir(t)
 	if err := os.Chmod(home, 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -252,7 +253,7 @@ func TestLocalAppBrowserFixture(t *testing.T) {
 	t.Setenv("XDG_DATA_HOME", filepath.Join(home, "data"))
 	repo := assembletest.NewRepo(t, assembletest.Options{})
 	assembletest.Git(t, repo.Dir, "remote", "add", "origin", "https://github.com/acme/demo")
-	registry, err := repos.Open(filepath.Join(home, "repos.sqlite"))
+	registry, err := repos.Open(filepath.Join(home, "app.sqlite"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -270,7 +271,7 @@ func TestLocalAppBrowserFixture(t *testing.T) {
 	// the other, and plan usage samples.
 	writeAnalyticsSessions(t, home, repo.Dir)
 	commitRecently(t, other.Dir)
-	writePlanHistory(t, filepath.Join(home, "plan-usage-history.json"))
+	writePlanHistory(t, filepath.Join(home, "app.sqlite"))
 	if _, err := registry.Pick(context.Background(), "acme/missing", nil); err != nil {
 		t.Fatal(err)
 	}
@@ -533,17 +534,17 @@ func TestLocalAppBrowserFixture(t *testing.T) {
 			return daemon.App{}, err
 		}
 		decided.Changed = func() { _ = server.Publish("decisions", struct{}{}) }
-		scheduler := &automatic.Scheduler{Registry: registry, Path: filepath.Join(home, "automatic.json"), Discover: disc.Poll, Interval: 500 * time.Millisecond,
+		scheduler := &automatic.Scheduler{Registry: registry, Path: filepath.Join(home, "app.sqlite"), Discover: disc.Poll, Interval: 500 * time.Millisecond,
 			Notify: func(status automatic.Status) { _ = server.Publish("automatic", status) }}
 		// Review groups generate through the same fake backend: a group of
 		// pull requests with saved reviews (PR 7, and any the browser
 		// generates first) gets a combined review.
-		groups, err := reviewgroups.Open(filepath.Join(home, "groups.sqlite"))
+		groups, err := reviewgroups.Open(filepath.Join(home, "app.sqlite"))
 		if err != nil {
 			_ = events.Close()
 			return daemon.App{}, err
 		}
-		runner, err := jobs.Open(filepath.Join(home, "jobs.json"), &jobs.Local{Registry: registry, Groups: groups, Config: cfg, Client: client, FixDirectory: filepath.Join(home, "fixes"), Features: fixtureBuilder{}, Chat: chats, Backends: generate.Backends{Claude: func(string) generate.CheckedBackend { return fixtureFixer{backend} }}}, 1, func(job jobs.Job) {
+		runner, err := jobs.Open(filepath.Join(home, "app.sqlite"), &jobs.Local{Registry: registry, Groups: groups, Config: cfg, Client: client, FixDirectory: filepath.Join(home, "fixes"), Features: fixtureBuilder{}, Chat: chats, Backends: generate.Backends{Claude: func(string) generate.CheckedBackend { return fixtureFixer{backend} }}}, 1, func(job jobs.Job) {
 			_ = server.Publish("progress", map[string]any{"job": job})
 			_ = server.Publish("index", map[string]any{})
 			if event, ok := jobs.ChatEvent(job); ok {
@@ -566,10 +567,10 @@ func TestLocalAppBrowserFixture(t *testing.T) {
 			return scheduler.BeginIdentityChange()
 		})
 		changed := func() { scheduler.Wake(); _ = server.Publish("index", struct{}{}) }
-		actions := &analytics.Actions{Path: filepath.Join(home, "analytics-actions.json")}
-		sessionIndex := &analytics.Index{Path: filepath.Join(home, "analytics-index.json"), Clones: registry}
+		actions := &analytics.Actions{Path: filepath.Join(home, "app.sqlite")}
+		sessionIndex := &analytics.Index{Path: filepath.Join(home, "app.sqlite"), Clones: registry}
 		insights := &analytics.Service{Registry: registry, Index: sessionIndex, Jobs: runner.List, Actions: actions,
-			Plans:    &planusage.History{Path: filepath.Join(home, "plan-usage-history.json"), Service: &planusage.Service{Sources: []planusage.Source{fixedPlans{}}}},
+			Plans:    &planusage.History{Path: filepath.Join(home, "app.sqlite"), Service: &planusage.Service{Sources: []planusage.Source{fixedPlans{}}}},
 			Delivery: &analytics.Delivery{Search: client}, Captures: decided.Ledger}
 		finder := &clonefind.Service{Registry: registry, Options: clonefind.Options{Home: home}, Changed: changed}
 		repositoryService := &githubrepos.Service{Registry: registry, Lister: browserRepositoryLister{}, Home: home, Context: appCtx, Changed: changed, Clone: func(ctx context.Context, opts gitlocal.CloneOptions) error {
@@ -588,7 +589,7 @@ func TestLocalAppBrowserFixture(t *testing.T) {
 			}
 			return "", github.ErrNotFound
 		}, PlanUsage: browserPlanUsage, Analytics: insights.Handler(), Timeline: timeline.Handler(),
-			Inboxes:   (&inboxes.API{Store: inboxes.Open(filepath.Join(home, "inboxes.json"))}).Handler(),
+			Inboxes:   (&inboxes.API{Store: inboxes.Open(filepath.Join(home, "app.sqlite"))}).Handler(),
 			Groups:    (&reviewgroups.API{Store: groups, Registry: registry, Index: index.Build, Changed: func() { _ = server.Publish("index", struct{}{}) }}).Handler(),
 			Decisions: browserDecisionsAPI(decided, registry, live),
 			DecisionModel: func(ctx context.Context, prefs repos.Preferences) uiserver.DecisionModel {

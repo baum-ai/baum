@@ -24,7 +24,6 @@ import (
 	"io"
 	"log/slog"
 	"os"
-	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
@@ -33,6 +32,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"github.com/baum-ai/baum/internal/appdb"
 	"github.com/baum-ai/baum/internal/hookevents"
 	"github.com/baum-ai/baum/internal/livesessions"
 )
@@ -93,8 +93,6 @@ const (
 	// calls remembered for a request that arrives after them.
 	recentFor = 10 * time.Minute
 	maxRecent = 512
-	// SettingsFile is the name of the settings file in the state directory.
-	SettingsFile = "agent-requests.json"
 )
 
 // Errors of Answer and Queue.
@@ -243,8 +241,8 @@ type Store struct {
 	// Notify is called after the requests or messages changed. It must not
 	// block.
 	Notify func()
-	// StateDir holds SettingsFile; empty keeps the settings in memory.
-	StateDir string
+	// Database is the application database path; empty keeps settings in memory.
+	Database string
 	// CodexWait replaces DefaultCodexWait.
 	CodexWait time.Duration
 	// Interrupted, when set, is told of a Claude Code session whose main
@@ -837,12 +835,12 @@ func (s *Store) Settings() Settings {
 // Codex requests waiting, which then fall back to Codex's own prompt.
 func (s *Store) SetSettings(settings Settings) (Settings, error) {
 	s.init()
-	if s.StateDir != "" {
+	if s.Database != "" {
 		data, err := json.Marshal(settings)
 		if err != nil {
 			return Settings{}, err
 		}
-		if err := writeAtomic(filepath.Join(s.StateDir, SettingsFile), data); err != nil {
+		if err := appdb.Write(s.Database, "state", "agent-requests", data); err != nil {
 			return Settings{}, err
 		}
 	}
@@ -866,10 +864,10 @@ func (s *Store) SetSettings(settings Settings) (Settings, error) {
 }
 
 func (s *Store) loadSettings() Settings {
-	if s.StateDir == "" {
+	if s.Database == "" {
 		return Settings{}
 	}
-	data, err := os.ReadFile(filepath.Join(s.StateDir, SettingsFile))
+	data, err := appdb.Read(s.Database, "state", "agent-requests")
 	if err != nil {
 		if !errors.Is(err, os.ErrNotExist) {
 			s.logger().Warn("agent request settings not read; using the defaults", "error", err)
@@ -882,24 +880,6 @@ func (s *Store) loadSettings() Settings {
 		return Settings{}
 	}
 	return settings
-}
-
-// writeAtomic replaces path with data through a temporary file, private to
-// the user.
-func writeAtomic(path string, data []byte) error {
-	f, err := os.CreateTemp(filepath.Dir(path), ".agent-requests-*")
-	if err != nil {
-		return err
-	}
-	defer func() { _ = os.Remove(f.Name()) }()
-	if _, err := f.Write(data); err != nil {
-		_ = f.Close()
-		return err
-	}
-	if err := f.Close(); err != nil {
-		return err
-	}
-	return os.Rename(f.Name(), path)
 }
 
 // line is text an agent wrote as one line: format characters dropped,

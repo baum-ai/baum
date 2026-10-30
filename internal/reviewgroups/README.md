@@ -24,7 +24,7 @@ This package owns the group definitions, the group review versions and the
   fewer than two members.
 - Deleting a group removes it from every list. It never deletes a saved
   review: the members' own reviews stay in their clone's store and the
-  group's combined versions stay in `groups.sqlite`, unreachable.
+  group's combined versions stay in `app.sqlite`, unreachable.
 - Generating needs a registered, available clone of the repository and a
   saved review of every member (any version). The member reviews are input
   to the group run and the schema records, per member, the review version
@@ -73,12 +73,13 @@ groups in step (`Store.SyncStacks`):
 
 ## Storage
 
-`groups.sqlite` (0600) in the daemon's state directory (`jobs.Directory()`,
-beside `jobs.json`), not in a clone: a group outlives any one clone.
+The group tables share the private [`app.sqlite`](../appdb/README.md)
+application database in the state directory, not a clone: a group outlives
+any one clone.
 
 | Table | Holds |
 | --- | --- |
-| `groups(id, repository, name, members, stack, created, updated, deleted)` | definitions; `members` is a JSON array of numbers; `stack` marks a stack group (added to older stores on open); `deleted` is a soft-delete time, 0 while live |
+| `groups(id, repository, name, members, stack, created, updated, deleted)` | definitions; `members` is a JSON array of numbers; `stack` marks a stack group; `deleted` is a soft-delete time, 0 while live |
 | `versions(group_id, version, metadata, members, document)` | immutable combined reviews keyed by group ID and version; `metadata` is `store.Metadata`; `members` is the reviewed `stack.members` copied out of the document for listing |
 
 Group versions are keyed by group ID, never by `{repository, number}`, so

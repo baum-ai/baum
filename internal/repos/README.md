@@ -1,7 +1,7 @@
 # Local repository registry
 
-This package owns `repos.sqlite`, a private (0600) SQLite database beside the
-config file. It stores what the user chose to review. It reads local git
+This package owns the repository tables in the shared private (0600)
+[`app.sqlite`](../appdb/README.md) application database. It stores what the user chose to review. It reads local git
 metadata only and contacts nothing; the daemon supplies the one GitHub lookup
 its HTTP handler uses.
 
@@ -35,7 +35,6 @@ its HTTP handler uses.
   one is: a repository the token cannot see may have taken the name. The
   remote is never rewritten.
   `Repositories` lists them as `earlier_names`.
-- `preferences(key, value)`: the global preferences as one JSON row.
 - `preferences(key, value)`: the global preferences as one JSON row. Its
   `appearance` object (`theme`, `key_hints`) stores the device’s General
   settings independently of the daemon’s loopback port. Its
@@ -50,18 +49,12 @@ A repository with no clone is still registered: `RepositorySettings` and
 automatic admission treat it as such, and only `unpick` revokes that. Work
 that needs a clone waits for one: discovery lists the repository's pull
 requests, but the job API answers `needs_clone` and automatic generation
-submits nothing until a clone is registered. Clones registered
-before the `picked` table existed have no picked row (there is no migration),
-so they must be re-added with `baum internal repos add <path>`, or their
-repository picked, to count as registered.
-`Unpick` deletes the repository's clones and its picked row but keeps the
+submits nothing until a clone is registered. `Unpick` deletes the repository's clones and its picked row but keeps the
 `repositories` row, so its settings survive a re-pick. `Pick` accepts only
 github.com `owner/name`; it reads no local git and checks nothing on GitHub.
 
-`PRAGMA user_version` is 1: `Open` turns the `automatic: false` that earlier
-registrations stored into `null` (follow the global preference). `OpenReadOnly`
-reads such a file the same way without writing it, and lists no picked
-repositories when the `picked` table is missing.
+The application database owns schema versioning. Pre-release registry files
+are not imported; a new registration follows the global automatic preference.
 
 ## HTTP
 

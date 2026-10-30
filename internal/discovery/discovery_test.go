@@ -14,6 +14,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/baum-ai/baum/internal/appdb"
+	"github.com/baum-ai/baum/internal/appdb/appdbtest"
 	"github.com/baum-ai/baum/internal/github"
 )
 
@@ -127,7 +129,7 @@ var testRepo = github.Repository{Host: "github.com", Owner: "acme", Name: "app"}
 func service(t *testing.T, f *fixture) (*Service, *time.Time) {
 	t.Helper()
 	client := github.New(func(context.Context, string) (string, error) { return "synthetic", nil }, github.Options{Transport: roundTrip(f.roundTrip)})
-	s := New(client, t.TempDir())
+	s := New(client, appdbtest.TempDir(t))
 	now := time.Date(2026, 10, 15, 12, 0, 0, 0, time.UTC)
 	s.now = func() time.Time { return now }
 	return s, &now
@@ -169,10 +171,10 @@ func TestFlagsAndPrivateOfflineCache(t *testing.T) {
 		}
 	}
 	entries, err := os.ReadDir(s.directory)
-	if err != nil || len(entries) != 2 {
+	if err != nil || len(entries) != 1 {
 		t.Fatalf("cache entries %v %v", entries, err)
 	}
-	info, err := os.Stat(repositoryCachePath(t, s))
+	info, err := os.Stat(discoveryDatabase(t, s))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -247,7 +249,7 @@ func TestOlderCacheFormatIsReadInFullOnce(t *testing.T) {
 		t.Fatalf("head branches %#v", first.PullRequests)
 	}
 	path := repositoryCachePath(t, s)
-	cache, err := load(path)
+	cache, err := s.load(path)
 	if err != nil || cache.Format != cacheFormat {
 		t.Fatalf("format %d %v", cache.Format, err)
 	}
@@ -256,7 +258,7 @@ func TestOlderCacheFormatIsReadInFullOnce(t *testing.T) {
 		response.Body = json.RawMessage(strings.ReplaceAll(string(response.Body), `"ref":"main",`, ""))
 		cache.Responses[key] = response
 	}
-	if err := save(path, cache); err != nil {
+	if err := s.save(path, cache); err != nil {
 		t.Fatal(err)
 	}
 	f.conditional = true
@@ -336,7 +338,7 @@ func TestCacheStripsUnusedPrivateFieldsAndIgnoresLinkURLs(t *testing.T) {
 	if _, err := s.Poll(context.Background(), testRepo); err != nil {
 		t.Fatal(err)
 	}
-	contents, err := os.ReadFile(repositoryCachePath(t, s))
+	contents, err := appdb.Read(discoveryDatabase(t, s), "cache", "discovery/"+repositoryCachePath(t, s))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -357,7 +359,7 @@ func TestMalformedCacheAndMalformedAPI(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(path, []byte("not JSON"), 0600); err != nil {
+	if err := appdb.Write(discoveryDatabase(t, s), "cache", "discovery/"+path, []byte("not JSON")); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := s.Cached(context.Background(), testRepo); err == nil {
@@ -366,7 +368,7 @@ func TestMalformedCacheAndMalformedAPI(t *testing.T) {
 	if _, err := s.Poll(context.Background(), testRepo); err == nil {
 		t.Fatal("ignored unreadable cache")
 	}
-	if err := os.Remove(path); err != nil {
+	if err := appdb.Write(discoveryDatabase(t, s), "cache", "discovery/"+path, nil); err != nil {
 		t.Fatal(err)
 	}
 	f.pages["/repos/acme/app/pulls?state=open&per_page=100&page=1"] = `[{"number":1}]`
@@ -514,7 +516,7 @@ func TestCachedNeverWaitsForNetworkPoll(t *testing.T) {
 		}
 		return f.roundTrip(r)
 	})})
-	s := New(client, t.TempDir())
+	s := New(client, appdbtest.TempDir(t))
 	now := time.Now()
 	s.now = func() time.Time { return now }
 	if _, err := s.Poll(context.Background(), testRepo); err != nil {
@@ -577,7 +579,7 @@ func TestIdentityResetCancelsAndFencesInFlightPoll(t *testing.T) {
 		<-r.Context().Done()
 		return nil, r.Context().Err()
 	})})
-	s := New(c, t.TempDir())
+	s := New(c, appdbtest.TempDir(t))
 	done := make(chan error, 1)
 	go func() { _, err := s.Poll(context.Background(), testRepo); done <- err }()
 	select {
@@ -675,7 +677,7 @@ func TestUnresolvedRecordsTheAppsCount(t *testing.T) {
 		}
 		return &http.Response{StatusCode: 200, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(body))}, nil
 	})})
-	s := New(client, t.TempDir())
+	s := New(client, appdbtest.TempDir(t))
 	if _, err := s.Poll(context.Background(), testRepo); err != nil {
 		t.Fatal(err)
 	}
@@ -712,7 +714,7 @@ func TestNewHeadPollsAgainSoonWhileMergeabilitySettles(t *testing.T) {
 		}
 		return &http.Response{StatusCode: 200, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(body))}, nil
 	})})
-	s := New(client, t.TempDir())
+	s := New(client, appdbtest.TempDir(t))
 	now := time.Date(2026, 10, 28, 15, 0, 0, 0, time.UTC)
 	s.now = func() time.Time { return now }
 	poll := func() Snapshot {
@@ -746,4 +748,13 @@ func TestNewHeadPollsAgainSoonWhileMergeabilitySettles(t *testing.T) {
 	if got := poll(); got.Settling || got.PullRequests[0].Merge == "conflict" {
 		t.Fatalf("settled poll settling=%v merge=%q", got.Settling, got.PullRequests[0].Merge)
 	}
+}
+
+func discoveryDatabase(t *testing.T, s *Service) string {
+	t.Helper()
+	path, err := s.databasePath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return path
 }

@@ -12,6 +12,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/baum-ai/baum/internal/appdb/appdbtest"
 	"github.com/baum-ai/baum/internal/config"
 	"github.com/baum-ai/baum/internal/repos"
 	"github.com/baum-ai/baum/internal/store"
@@ -20,7 +21,7 @@ import (
 // Picking and unpicking a repository reach the registry and wake the
 // scheduler like clone changes do.
 func TestRepositoriesRoutesNotifyOnWrites(t *testing.T) {
-	registry, err := repos.Open(filepath.Join(t.TempDir(), "repos.sqlite"))
+	registry, err := repos.Open(filepath.Join(appdbtest.TempDir(t), "repos.sqlite"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -46,12 +47,12 @@ func TestRepositoriesRoutesNotifyOnWrites(t *testing.T) {
 
 func TestLocalAPISelectorsAndSecretFreeSettings(t *testing.T) {
 	ctx := context.Background()
-	registry, err := repos.Open(filepath.Join(t.TempDir(), "repos.sqlite"))
+	registry, err := repos.Open(filepath.Join(appdbtest.TempDir(t), "repos.sqlite"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer func() { _ = registry.Close() }()
-	dir := t.TempDir()
+	dir := appdbtest.TempDir(t)
 	for _, args := range [][]string{{"init"}, {"remote", "add", "origin", "https://github.com/owner/repo"}} {
 		cmd := exec.Command("git", args...)
 		cmd.Dir = dir
@@ -118,7 +119,7 @@ func TestLocalAPISelectorsAndSecretFreeSettings(t *testing.T) {
 }
 
 func TestLocalAPIJobConcurrency(t *testing.T) {
-	registry, err := repos.Open(filepath.Join(t.TempDir(), "repos.sqlite"))
+	registry, err := repos.Open(filepath.Join(appdbtest.TempDir(t), "repos.sqlite"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -161,7 +162,7 @@ func TestLocalAPIJobConcurrency(t *testing.T) {
 }
 
 func TestLocalAPIAgentEnvironment(t *testing.T) {
-	registry, err := repos.Open(filepath.Join(t.TempDir(), "repos.sqlite"))
+	registry, err := repos.Open(filepath.Join(appdbtest.TempDir(t), "repos.sqlite"))
 	if err != nil {
 		t.Fatal(err)
 	}

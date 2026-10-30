@@ -1212,7 +1212,7 @@ and the automatic job labels. The fixture also writes two Claude Code sessions i
 the demo clone under its fake home, commits of the person's in the other clone,
 plan usage samples and GitHub's answer to the delivery search, and a test opens
 Analytics and checks the figures they make, at desktop and narrow widths. The
-fixture also serves a real inbox store (`inboxes.json` in its state directory), and
+fixture also serves a real inbox store (the `state/inboxes` document in its shared `app.sqlite`), and
 `e2e/inboxes.spec.ts` makes an inbox from a template, changes a part of its
 sentence and sees the preview say what changed, switches its badge and sees the
 Inbox badge change, and deletes it from the sidebar with Undo. `e2e/inbox-screens.spec.ts`

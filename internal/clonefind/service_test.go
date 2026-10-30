@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/baum-ai/baum/internal/appdb/appdbtest"
 	"github.com/baum-ai/baum/internal/hookevents"
 	"github.com/baum-ai/baum/internal/repos"
 )
@@ -28,7 +29,7 @@ type fixture struct {
 // start runs a service over a temporary home and registry until the test ends.
 func start(t *testing.T, h string) *fixture {
 	t.Helper()
-	registry, err := repos.Open(filepath.Join(t.TempDir(), "registry.sqlite"))
+	registry, err := repos.Open(filepath.Join(appdbtest.TempDir(t), "registry.sqlite"))
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -8,13 +8,12 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
 	"time"
 
-	"github.com/baum-ai/baum/internal/generate"
+	"github.com/baum-ai/baum/internal/appdb"
 	"github.com/baum-ai/baum/internal/gitlocal"
 	"github.com/baum-ai/baum/internal/pricing"
 	"github.com/baum-ai/baum/internal/repos"
@@ -59,7 +58,7 @@ type Progress struct {
 }
 
 // Index keeps one Entry per session file recorded in a registered clone in the
-// last Retention, in a file in the daemon's state directory. A refresh reads
+// last Retention, in the application database. A refresh reads
 // only the files whose size or modification time changed since it last read
 // them, and drops the entries of files that are gone, too old, or no longer in
 // a registered clone. Requests read what it has while it works.
@@ -138,7 +137,7 @@ func (x *Index) Snapshot() ([]Entry, Progress) {
 	return out, x.progress
 }
 
-// load reads the file once; the caller holds mu. A file written for another
+// load reads the cached document once; the caller holds mu. A document for another
 // version or price list thresholds is ignored, so every session is read again.
 func (x *Index) load() {
 	if x.loaded {
@@ -147,7 +146,7 @@ func (x *Index) load() {
 	x.loaded = true
 	x.entries = map[string]Entry{}
 	x.bands = pricing.Active().PromptBands()
-	raw, err := os.ReadFile(x.Path)
+	raw, err := appdb.Read(x.Path, "cache", "analytics-index")
 	if err != nil {
 		return
 	}
@@ -167,10 +166,7 @@ func (x *Index) save() error {
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Dir(x.Path), 0o700); err != nil {
-		return err
-	}
-	return generate.WriteFileAtomic(x.Path, raw)
+	return appdb.Write(x.Path, "cache", "analytics-index", raw)
 }
 
 // found is one session file discovery returned, with the clone it is in.

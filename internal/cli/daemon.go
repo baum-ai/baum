@@ -22,6 +22,7 @@ import (
 
 	"github.com/baum-ai/baum/internal/agentrequests"
 	"github.com/baum-ai/baum/internal/analytics"
+	"github.com/baum-ai/baum/internal/appdb"
 	"github.com/baum-ai/baum/internal/automatic"
 	"github.com/baum-ai/baum/internal/background"
 	"github.com/baum-ai/baum/internal/chat"
@@ -377,19 +378,20 @@ func localApplication(paths daemon.Paths, log *slog.Logger) func(context.Context
 		discover := discovery.New(github.NewFromConfig(cfg, github.Options{}), "")
 		index := &reviewindex.Service{Registry: registry, Discovery: discover}
 		worker := &background.Service{Registry: registry, Discovery: discover, Saved: background.Saved, Refresh: background.Local{Client: github.NewFromConfig(cfg, github.Options{}), Config: cfg}.Refresh, Changed: changed}
-		state, err := jobs.Directory()
+		database, err := appdb.Path()
 		if err != nil {
 			_ = registry.Close()
 			events.Close()
 			return daemon.App{}, err
 		}
+		state := filepath.Dir(database)
 		// Jobs are priced with the newest verified list, so reinstall the
 		// downloaded one before workers start.
 		if err := pricing.LoadPersisted(state); err != nil {
 			log.Warn("stored price list not loaded", "error", err)
 		}
 		// Review groups live in the daemon's state, not in a clone.
-		groups, err := reviewgroups.Open(filepath.Join(state, "groups.sqlite"))
+		groups, err := reviewgroups.Open(database)
 		if err != nil {
 			_ = registry.Close()
 			events.Close()
@@ -398,7 +400,7 @@ func localApplication(paths daemon.Paths, log *slog.Logger) func(context.Context
 		// Automatic generation is separate from the model-free background
 		// refresh: discovery hands it snapshots, and it queues through the
 		// same runner as confirmed jobs.
-		scheduler := &automatic.Scheduler{Registry: registry, Path: filepath.Join(state, "automatic.json"), Discover: discover.PollNow, Groups: groups, Log: log,
+		scheduler := &automatic.Scheduler{Registry: registry, Path: database, Discover: discover.PollNow, Groups: groups, Log: log,
 			Hold: func() bool {
 				status, ok := daemon.Self()
 				return ok && (status.Stopping || status.RestartPending)
@@ -430,7 +432,7 @@ func localApplication(paths daemon.Paths, log *slog.Logger) func(context.Context
 		// Feature builds run on the feature worker made below.
 		builds := &featureBuilder{}
 		prefs, _ := registry.Preferences(ctx)
-		queue, err := jobs.Open(filepath.Join(state, "jobs.json"), &jobs.Local{Registry: registry, Groups: groups, Config: cfg, Client: github.NewFromConfig(cfg, github.Options{}), Features: builds, Chat: chats}, prefs.Concurrency(), func(job jobs.Job) {
+		queue, err := jobs.Open(database, &jobs.Local{Registry: registry, Groups: groups, Config: cfg, Client: github.NewFromConfig(cfg, github.Options{}), Features: builds, Chat: chats}, prefs.Concurrency(), func(job jobs.Job) {
 			_ = server.Publish("progress", map[string]any{"job": job})
 			if event, ok := jobs.ChatEvent(job); ok {
 				_ = server.Publish("chat", event)
@@ -506,7 +508,7 @@ func localApplication(paths daemon.Paths, log *slog.Logger) func(context.Context
 			// for running sessions, stay in memory, masked as the sessions
 			// are; only the Codex setting is kept, in the state directory.
 			// The app reads them with the live sessions.
-			requests = &agentrequests.Store{Sessions: live, Mask: live.Mask, StateDir: paths.State, Log: log,
+			requests = &agentrequests.Store{Sessions: live, Mask: live.Mask, Database: database, Log: log,
 				Notify: func() { _ = server.Publish("live", struct{}{}) },
 				// The store's own Notify, as the request or message goes, tells
 				// the app.
@@ -533,7 +535,7 @@ func localApplication(paths daemon.Paths, log *slog.Logger) func(context.Context
 		// The GitHub connection's login, once it exists below.
 		var connectionLogin func() string
 		if live != nil {
-			if decisionStore, err = decisionlog.Open(filepath.Join(state, "decisions", "decisions.sqlite"), decisionlog.OpenOptions{AbandonPending: true}); err != nil {
+			if decisionStore, err = decisionlog.Open(database, decisionlog.OpenOptions{AbandonPending: true}); err != nil {
 				log.Warn("decision capture is off: its store did not open", "error", err)
 			} else {
 				decisionStore.Changed = func() { _ = server.Publish("decisions", struct{}{}) }
@@ -605,9 +607,9 @@ func localApplication(paths daemon.Paths, log *slog.Logger) func(context.Context
 		// of the sessions in registered clones, the merges, branch updates
 		// and re-runs made from the app, and plan usage samples.
 		plans := planusage.NewService()
-		planHistory := &planusage.History{Path: filepath.Join(state, "plan-usage-history.json"), Service: plans}
-		actions := &analytics.Actions{Path: filepath.Join(state, "analytics-actions.json")}
-		sessionIndex := &analytics.Index{Path: filepath.Join(state, "analytics-index.json"), Clones: registry, Log: log}
+		planHistory := &planusage.History{Path: database, Service: plans}
+		actions := &analytics.Actions{Path: database}
+		sessionIndex := &analytics.Index{Path: database, Clones: registry, Log: log}
 		insights := &analytics.Service{Registry: registry, Index: sessionIndex, Jobs: queue.List, Actions: actions, Plans: planHistory, Delivery: delivery}
 		var decisionsAPI func(uiserver.LinkedSessions) http.Handler
 		if decisionStore != nil {
@@ -621,7 +623,7 @@ func localApplication(paths daemon.Paths, log *slog.Logger) func(context.Context
 			return e.Kind == hookevents.KindAgent && e.Name == "session-end"
 		})
 		api := uiserver.LocalAPI{GitHubAuth: githubConnection.Handler(), Registry: registry, Config: cfg, PRs: uiserver.DiscoveryHandler(registry, discover, changed), Index: index.Handler(), Jobs: queue.Handler(), Chat: uiserver.ChatHandler(registry, queue), Background: worker.Handler(), Automatic: scheduler.Handler(), Live: liveAPI, AgentRequests: requestsAPI, Clones: clones.Handler(), GitHubRepositories: pickList.Handler(), CurrentName: currentName(githubClient), PlanUsage: plans.Handler(), Analytics: insights.Handler(), Timeline: timeline, Merge: uiserver.MergeHandler(registry, actions.RecordMerges(githubClient), mergedPullRequest, changed), Review: uiserver.ReviewHandler(registry, githubClient, changed), Update: uiserver.UpdateHandler(registry, actions.RecordUpdates(prupdate.Service{Client: githubClient, Cache: panelCache, Counted: countedThreads}), refreshRepository, changed), Changed: settingsChanged,
-			Inboxes:   (&inboxes.API{Store: inboxes.Open(filepath.Join(state, "inboxes.json")), Changed: changed}).Handler(),
+			Inboxes:   (&inboxes.API{Store: inboxes.Open(database), Changed: changed}).Handler(),
 			Groups:    (&reviewgroups.API{Store: groups, Registry: registry, Index: index.Build, Changed: changed}).Handler(),
 			Decisions: decisionsAPI, Log: log,
 			DecisionsChanged:   func() { _ = server.Publish("decisions", struct{}{}) },
