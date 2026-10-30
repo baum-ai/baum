@@ -93,7 +93,7 @@ func newReviewsCommand() *cobra.Command {
 		settings.DecisionsBackend, settings.DecisionsEffectiveModel, settings.DecisionsModelIgnored = effective.Backend, effective.Model, effective.Ignored
 		return json.NewEncoder(cmd.OutOrStdout()).Encode(settings)
 	}}
-	set := &cobra.Command{Use: "set", Short: "Change the backend, model, automatic generation, which pull requests it covers, the fix agent or the data extraction backend and model", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
+	set := &cobra.Command{Use: "set", Short: "Change the backend, model and reasoning effort of reviews, fixes and data extraction, automatic generation or which pull requests it covers", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
 		flags := cmd.Flags()
 		var backend *config.Backend
 		if flags.Changed("backend") {
@@ -164,16 +164,14 @@ func newReviewsCommand() *cobra.Command {
 				v = strings.TrimSpace(v)
 				next.FixModel = &v
 			}
-			// An empty effort is the agent's own, saved as no choice.
 			for _, f := range []struct {
 				flag   string
 				target **string
 			}{{"effort", &next.Effort}, {"fix-effort", &next.FixEffort}, {"decisions-effort", &next.Decisions.Effort}} {
 				if flags.Changed(f.flag) {
 					v, _ := flags.GetString(f.flag)
-					*f.target = nil
-					if v = strings.ToLower(strings.TrimSpace(v)); v != "" {
-						*f.target = &v
+					if *f.target, invalid = config.ParseEffort(v); invalid != nil {
+						return p
 					}
 				}
 			}

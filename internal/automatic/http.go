@@ -83,17 +83,12 @@ func (s *Scheduler) Handler() http.Handler {
 					next.FixModel = nil
 				}
 			}
-			// An empty effort is the agent's own, saved as no choice.
-			if input.Effort != nil {
-				next.Effort = nil
-				if *input.Effort != "" {
-					next.Effort = input.Effort
+			for _, e := range []struct{ input, target **string }{{&input.Effort, &next.Effort}, {&input.FixEffort, &next.FixEffort}} {
+				if *e.input == nil {
+					continue
 				}
-			}
-			if input.FixEffort != nil {
-				next.FixEffort = nil
-				if *input.FixEffort != "" {
-					next.FixEffort = input.FixEffort
+				if *e.target, invalid = config.ParseEffort(**e.input); invalid != nil {
+					return p
 				}
 			}
 			if input.PullRequests != nil {

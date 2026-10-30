@@ -191,9 +191,8 @@ func (a LocalAPI) putDecisionSettings(w http.ResponseWriter, r *http.Request) {
 			next.Decisions.Model = new(strings.TrimSpace(*input.Model))
 		}
 		if input.Effort != nil {
-			next.Decisions.Effort = nil
-			if *input.Effort != "" {
-				next.Decisions.Effort = input.Effort
+			if next.Decisions.Effort, invalid = config.ParseEffort(*input.Effort); invalid != nil {
+				return p
 			}
 		}
 		if invalid = next.Validate(); invalid != nil {

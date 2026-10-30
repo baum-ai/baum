@@ -662,7 +662,7 @@ func TestHandlerSavesReviewChoices(t *testing.T) {
 			t.Fatalf("%s: %d", body, code)
 		}
 	}
-	if code := put(h.scheduler, `{"effort":"high","fix_backend":"codex","fix_effort":"low"}`); code != 200 {
+	if code := put(h.scheduler, `{"effort":" High ","fix_backend":"codex","fix_effort":"low"}`); code != 200 {
 		t.Fatal(code)
 	}
 	prefs, _ = h.registry.Preferences(context.Background())
