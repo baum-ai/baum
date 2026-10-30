@@ -100,7 +100,7 @@ func TestDeliveryIsToldWhetherItsAnswerWasWritten(t *testing.T) {
 	// A socket write can succeed after the peer closes, depending on the
 	// OS buffer. A pipe makes the failed write deterministic on every OS.
 	conn, server := net.Pipe()
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 	done := make(chan struct{})
 	c := &controller{ctx: context.Background(), methods: map[string]Method{"give": give}}
 	go func() { defer close(done); c.handle(server) }()
