@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -22,6 +23,7 @@ import (
 	"github.com/baum-ai/baum/internal/fix"
 	"github.com/baum-ai/baum/internal/generate"
 	"github.com/baum-ai/baum/internal/privatefs"
+	"github.com/baum-ai/baum/internal/repos"
 )
 
 type Item struct {
@@ -278,6 +280,9 @@ type Queue struct {
 	// gate, when set, answers whether an automatic job may run now (and
 	// under which daily cap); see SetAutomaticGate.
 	gate func(Job) Admission
+	// limit is how many jobs outside the chat lane run at once; see
+	// SetConcurrency.
+	limit int
 }
 
 // ErrRestarting refuses a job while the daemon restarts as a newer version.
@@ -321,7 +326,7 @@ func DefaultPath() (string, error) {
 }
 
 func Open(path string, executor Executor, concurrency int, changed func(Job)) (*Queue, error) {
-	if executor == nil || concurrency < 1 || concurrency > 16 {
+	if executor == nil || !validConcurrency(concurrency) {
 		return nil, errors.New("invalid runner configuration")
 	}
 	if path == "" {
@@ -345,7 +350,7 @@ func Open(path string, executor Executor, concurrency int, changed func(Job)) (*
 		return nil, err
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	q := &Queue{path: path, transcripts: filepath.Join(filepath.Dir(path), "transcripts"), executor: executor, estimates: map[string]Estimate{}, cancels: map[string]context.CancelFunc{}, wake: make(chan struct{}, 1), chatWake: make(chan struct{}, 1), ctx: ctx, cancel: cancel, changed: changed, lock: lock}
+	q := &Queue{path: path, transcripts: filepath.Join(filepath.Dir(path), "transcripts"), executor: executor, estimates: map[string]Estimate{}, cancels: map[string]context.CancelFunc{}, wake: make(chan struct{}, 1), chatWake: make(chan struct{}, 1), ctx: ctx, cancel: cancel, changed: changed, lock: lock, limit: concurrency}
 	opened := false
 	defer func() {
 		if !opened {
@@ -382,7 +387,8 @@ func Open(path string, executor Executor, concurrency int, changed func(Job)) (*
 		cancel()
 		return nil, e
 	}
-	for range concurrency {
+	// Every worker a limit may need runs; limit decides how many take a job.
+	for range repos.MaxJobConcurrency {
 		q.wg.Add(1)
 		go q.worker(false)
 	}
@@ -416,6 +422,20 @@ func (q *Queue) signal() {
 	}
 }
 func (q *Queue) Close() { _ = q.Shutdown(context.Background()) }
+
+// SetConcurrency changes how many jobs outside the chat lane run at once.
+// Lowering it stops none: running jobs finish, and no new one starts until
+// fewer than n run.
+func (q *Queue) SetConcurrency(n int) error {
+	if !validConcurrency(n) {
+		return fmt.Errorf("concurrency must be between 1 and %d", repos.MaxJobConcurrency)
+	}
+	q.mu.Lock()
+	q.limit = n
+	q.mu.Unlock()
+	q.signal()
+	return nil
+}
 
 // Shutdown cancels running jobs, which are recorded as interrupted, and waits
 // for the workers until ctx ends. A job whose backend has not returned by then
@@ -751,12 +771,15 @@ func (q *Queue) worker(chat bool) {
 				return
 			}
 			i := -1
-			for n, j := range q.jobs {
-				// Without a gate an automatic job waits: the daemon installs it
-				// right after Open, and a journaled job must not start first.
-				if j.State == "queued" && (j.Kind == KindChat) == chat && (!j.Automatic || q.gate != nil) {
-					i = n
-					break
+			// Outside the chat lane a worker takes a job only below limit.
+			if chat || q.running() < q.limit {
+				for n, j := range q.jobs {
+					// Without a gate an automatic job waits: the daemon installs it
+					// right after Open, and a journaled job must not start first.
+					if j.State == "queued" && (j.Kind == KindChat) == chat && (!j.Automatic || q.gate != nil) && (chat || !q.pullRunning(j)) {
+						i = n
+						break
+					}
 				}
 			}
 			if i < 0 {
@@ -886,11 +909,58 @@ func (q *Queue) worker(chat bool) {
 			q.settleChat(result)
 			q.notify(result)
 			if saveErr != nil {
+				// Another worker takes what this one's job held back.
+				q.signal()
 				return
 			}
 		}
 	}
 }
+
+func validConcurrency(n int) bool { return n >= 1 && n <= repos.MaxJobConcurrency }
+
+// pullRunning reports whether another job outside the chat lane runs for one
+// of j's pull requests, such as its fix beside its review or a group's review
+// beside a member's fix: j waits for it, so no two jobs fetch, read or push
+// one pull request's head at once. mu is held.
+func (q *Queue) pullRunning(j Job) bool {
+	pulls := j.pulls()
+	if len(pulls) == 0 {
+		return false
+	}
+	for _, r := range q.jobs {
+		if r.State == "running" && r.Kind != KindChat && r.Repository == j.Repository && slices.ContainsFunc(r.pulls(), func(n int) bool { return slices.Contains(pulls, n) }) {
+			return true
+		}
+	}
+	return false
+}
+
+// pulls are the pull requests a job reads or changes: its own, or a group's
+// members. A feature build has none.
+func (j Job) pulls() []int {
+	if j.PR != 0 {
+		return []int{j.PR}
+	}
+	members, _ := groupMembers(j.Members)
+	pulls := make([]int, len(members))
+	for i, m := range members {
+		pulls[i] = m.Number
+	}
+	return pulls
+}
+
+// running counts the jobs outside the chat lane that run; mu is held.
+func (q *Queue) running() int {
+	n := 0
+	for _, j := range q.jobs {
+		if j.State == "running" && j.Kind != KindChat {
+			n++
+		}
+	}
+	return n
+}
+
 func (q *Queue) notify(j Job) {
 	if q.changed != nil {
 		j.Accounting = j.Accounting.Clone()

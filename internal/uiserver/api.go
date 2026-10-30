@@ -4,11 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"golang.org/x/sync/singleflight"
@@ -90,6 +92,9 @@ type LocalAPI struct {
 	// capture does: its settings or a repository's. The daemon publishes the
 	// app's decisions event with it.
 	DecisionsChanged func()
+	// ConcurrencyChanged, when set, applies a new job concurrency
+	// (repos.Preferences.JobConcurrency) to the running queue.
+	ConcurrencyChanged func(int)
 	// Log receives what the API logs; nil is slog.Default.
 	Log *slog.Logger
 	// Diagnostics builds the report served at /api/diagnostics; nil serves the
@@ -204,7 +209,9 @@ func (a LocalAPI) Handler() *LocalHandler {
 			source = "file"
 		}
 		fixBackend, fixModel := "", ""
+		concurrency := repos.MaxJobConcurrency
 		if prefs, err := a.Registry.Preferences(r.Context()); err == nil {
+			concurrency = prefs.Concurrency()
 			cfg = prefs.Resolve(cfg)
 			if prefs.FixBackend != nil {
 				fixBackend = string(*prefs.FixBackend)
@@ -225,7 +232,8 @@ func (a LocalAPI) Handler() *LocalHandler {
 			AgentEnvSource string            `json:"agent_env_source"`
 			FixBackend     string            `json:"fix_backend"`
 			FixModel       string            `json:"fix_model"`
-		}{cfg.Backend, cfg.Model, cfg.Budgets, cfg.Caps, cfg.AgentEnv, source, fixBackend, fixModel})
+			JobConcurrency int               `json:"job_concurrency"`
+		}{cfg.Backend, cfg.Model, cfg.Budgets, cfg.Caps, cfg.AgentEnv, source, fixBackend, fixModel, concurrency})
 	})
 	mux.HandleFunc("GET /api/settings/appearance", a.getAppearance)
 	mux.HandleFunc("PUT /api/settings/appearance", a.putAppearance)
@@ -260,6 +268,39 @@ func (a LocalAPI) Handler() *LocalHandler {
 			return
 		}
 		writeJSON(w, map[string]map[string]string{"agent_env": prefs.Resolve(a.Config).AgentEnv})
+	})
+	// How many jobs run at once applies to the running queue at once; one
+	// change at a time, so the queue ends with the saved value.
+	var concurrencyMu sync.Mutex
+	mux.HandleFunc("PUT /api/settings/job-concurrency", func(w http.ResponseWriter, r *http.Request) {
+		var input struct {
+			JobConcurrency int `json:"job_concurrency"`
+		}
+		r.Body = http.MaxBytesReader(w, r.Body, 4<<10)
+		d := json.NewDecoder(r.Body)
+		d.DisallowUnknownFields()
+		if d.Decode(&input) != nil || d.Decode(new(any)) != io.EOF {
+			http.Error(w, "invalid JSON request", http.StatusBadRequest)
+			return
+		}
+		if input.JobConcurrency < 1 || input.JobConcurrency > repos.MaxJobConcurrency {
+			http.Error(w, fmt.Sprintf("job_concurrency must be between 1 and %d", repos.MaxJobConcurrency), http.StatusBadRequest)
+			return
+		}
+		concurrencyMu.Lock()
+		defer concurrencyMu.Unlock()
+		prefs, err := a.Registry.UpdatePreferences(r.Context(), func(p repos.Preferences) repos.Preferences {
+			p.JobConcurrency = input.JobConcurrency
+			return p
+		})
+		if err != nil {
+			http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+			return
+		}
+		if a.ConcurrencyChanged != nil {
+			a.ConcurrencyChanged(prefs.Concurrency())
+		}
+		writeJSON(w, map[string]int{"job_concurrency": prefs.Concurrency()})
 	})
 	// Runs are shared only while one is in flight; a later request runs the
 	// checks again. That is deliberate: the endpoint is local, authenticated

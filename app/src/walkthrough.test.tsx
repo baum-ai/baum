@@ -4,7 +4,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { ReviewDocument } from "@baum/viewer/review-document";
 import example from "../../schema/review-example.json" with { type: "json" };
 import type { Entry } from "./api";
-import { Walkthrough, type WalkView } from "./walkthrough";
+import { Walkthrough, type WalkMode } from "./walkthrough";
 import {
   appendToDraft,
   buildTour,
@@ -50,23 +50,25 @@ it("reads a step's tour fields and falls back for steps and sections without the
   const tour = buildTour(doc);
   const delay = tour.stops.find((stop) => stop.id === "beh_delay")!;
   expect(delay.title).toBe("Retries wait longer after each failure, up to a cap");
-  expect(delay.before).toBeTruthy();
   expect(delay.question).toBeTruthy();
   expect(delay.place).toEqual({ path: "queue/retry.go", line: 42, side: "RIGHT", start_line: 31 });
   expect(delay.where).toBe("retry.go:42");
-  expect(delay.tests).toContain("retry_test.go");
+  expect(delay.evidence.map((item) => item.id)).toEqual(["ev_retry_tests"]);
   const budget = tour.stops.find((stop) => stop.id === "beh_budget")!;
-  expect(budget.after).toBe(budget.text);
   expect(budget.question).toBeNull();
+  // A chapter carries its section's intent.
+  expect(tour.chapters[delay.chapter]!.intent).toContain("wait longer after each failure");
   // A section without behaviour steps is one stop of its summary.
   const docs = tour.stops.find((stop) => stop.id === "sec_docs")!;
   expect(docs.title).toBe("Docs and dependency bump");
-  expect(docs.after).toBe(doc.sections.find((s) => s.id === "sec_docs")!.summary.text);
+  expect(docs.text).toBe(doc.sections.find((s) => s.id === "sec_docs")!.summary.text);
+  expect(docs.evidence).toEqual([]);
 });
 
 it("takes a step's first sentence as its title", () => {
   expect(firstSentence("Retries back off. Then they stop.")).toBe("Retries back off");
   expect(firstSentence("No full stop")).toBe("No full stop");
+  expect(firstSentence("A hook waits; the daemon answers. Later.")).toBe("A hook waits");
 });
 
 it("puts placed comments on their lines and the rest in the body", () => {
@@ -103,13 +105,13 @@ it("keeps progress per review version and survives junk in storage", () => {
   expect(loadProgress(`${key}x`).seen).toEqual([]);
 });
 
-let root: Root, node: HTMLDivElement, view: WalkView, posted: unknown[], answer: Response;
+let root: Root, node: HTMLDivElement, mode: WalkMode, posted: unknown[], answer: Response;
 const changed = vi.fn(async () => {});
 beforeEach(() => {
   Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
   history.replaceState(null, "", "/s/test-ns/");
   localStorage.clear();
-  view = "tour";
+  mode = "landing";
   posted = [];
   answer = Response.json({ url: "https://github.com/acme/demo/pull/7#pullrequestreview-1" });
   node = document.createElement("div");
@@ -135,11 +137,12 @@ const render = (authored = false) =>
       <Walkthrough
         entry={entry(authored)}
         document={doc}
-        view={view}
-        setView={(next) => {
-          view = next;
+        mode={mode}
+        setMode={(next) => {
+          mode = next;
           render(authored);
         }}
+        back={{ href: "/s/test-ns/", label: "Inbox" }}
         close={() => {}}
         patches={async () => null}
         changed={changed}
@@ -162,28 +165,57 @@ const type = (field: HTMLTextAreaElement, value: string) =>
 const key = (k: string) =>
   act(() => window.dispatchEvent(new KeyboardEvent("keydown", { key: k, bubbles: true })));
 
-it("walks the stops, marks what was passed as looked at and skips it next time", () => {
+it("walks chapter by chapter and behaviour by behaviour, marking what was passed", () => {
   render();
-  expect(node.textContent).toContain("The route · riskiest first");
-  click("Start the tour");
-  expect(node.querySelector("h2.text-2xl")?.textContent).toBe(buildTour(doc).stops[0]!.title);
+  expect(node.textContent).toContain("The tour · riskiest first");
+  click("Start the review");
+  const tour = buildTour(doc);
+  const [first, second] = tour.chapters;
+  const title = () => node.querySelector("h2.walk-title")?.textContent;
+  const picked = () => node.querySelector("li[aria-current]")?.id;
+  const id = (at: number) => `walk-behaviour-${tour.stops[at]!.id}`;
+  expect(title()).toBe(first!.title);
+  expect(picked()).toBe(id(first!.stops[0]!));
+  // j moves the pick down the chapter, and past its end to the next one.
+  for (const at of first!.stops.slice(1)) {
+    key("j");
+    expect(picked()).toBe(id(at));
+  }
+  expect(loadProgress(progressKey(doc)).seen).toContain(tour.stops[first!.stops[0]!]!.id);
+  key("j");
+  expect(title()).toBe(second!.title);
+  expect(picked()).toBe(id(second!.stops[0]!));
+  // Leaving a chapter counts all of it as looked at.
+  expect(loadProgress(progressKey(doc)).seen).toEqual(
+    expect.arrayContaining(first!.stops.map((at) => tour.stops[at]!.id)),
+  );
+  // k goes back to the previous chapter's last behaviour; arrows move pages.
+  key("k");
+  expect(picked()).toBe(id(first!.stops[first!.stops.length - 1]!));
   key("ArrowRight");
-  expect(node.textContent).toContain("1 of");
+  expect(title()).toBe(second!.title);
   key("ArrowLeft");
-  // Next from the first stop jumps over the one already looked at.
-  key("ArrowRight");
-  expect(node.textContent).toContain("Skipped 1 stop you already looked at");
+  key("ArrowLeft");
+  expect(node.textContent).toContain("The tour · riskiest first");
 });
+
+// Comments on the first behaviour, then goes to the wrap-up.
+const commentAndWrapUp = (text: string) => {
+  click("Start the review");
+  key("c");
+  type(node.querySelector("textarea")!, text);
+  click("Save comment");
+  click("Send review");
+};
 
 it("sends one review with each comment on its line", async () => {
   render();
-  click("Start the tour");
+  click("Start the review");
   key("c");
   type(node.querySelector("textarea")!, "Trusts a client header");
   click("Save comment");
   expect(node.textContent).toContain("Your comment on");
-  key("e");
-  expect(view).toBe("all");
+  click("Send review");
   expect(button("Approve").getAttribute("aria-disabled")).toBe("true");
   expect(button("Request changes").getAttribute("aria-disabled")).toBe("false");
   click("Request changes");
@@ -201,17 +233,16 @@ it("sends one review with each comment on its line", async () => {
 });
 
 it("offers neither a verdict on the reader's own pull request", () => {
-  view = "all";
   render(true);
+  click("Start the review");
+  click("Send review");
   expect(button("Approve").getAttribute("aria-disabled")).toBe("true");
   expect(node.textContent).toContain("GitHub doesn’t let you approve your own pull request");
 });
 
 it("offers to fold comments into the body when GitHub can't place them", async () => {
-  view = "all";
   render();
-  act(() => exact("Comment").click());
-  type(node.querySelector("textarea[id^='walk-note-']")!, "Odd");
+  commentAndWrapUp("Odd");
   answer = Response.json(
     { code: "invalid_line", message: "Some comments are on lines outside the diff." },
     { status: 422 },
@@ -224,50 +255,26 @@ it("offers to fold comments into the body when GitHub can't place them", async (
   expect((posted[1] as { body: string }).body).toContain("Odd");
 });
 
-it("keeps the row being read in Not looked at", () => {
-  view = "all";
-  render();
-  click("Not looked at");
-  click("Details and evidence");
-  expect(button("Details and evidence").getAttribute("aria-expanded")).toBe("true");
-  expect(node.querySelector("textarea[id^='walk-note-']")).not.toBeNull();
-});
-
 it("keeps what was written while the review was being sent", async () => {
-  view = "all";
   render();
-  act(() => exact("Comment").click());
-  const note = node.querySelector<HTMLTextAreaElement>("textarea[id^='walk-note-']")!;
-  type(note, "Odd");
+  commentAndWrapUp("Odd");
   let respond!: (answer: Response) => void;
   vi.stubGlobal(
     "fetch",
     vi.fn(() => new Promise<Response>((resolve) => (respond = resolve))),
   );
   act(() => exact("Send comments").click());
-  type(note, "Odd, and the docs too");
-  type([...node.querySelectorAll("textarea")].find((field) => !field.id)!, "Thanks");
+  type(node.querySelector("textarea")!, "Thanks");
   await act(async () => respond(Response.json({ url: "https://github.com/x" })));
   expect(node.textContent).toContain("Your review is on GitHub.");
   const kept = loadProgress(progressKey(doc));
-  expect(Object.values(kept.notes)).toEqual(["Odd, and the docs too"]);
+  expect(Object.values(kept.notes)).toEqual([]);
   expect(kept.note).toBe("Thanks");
-});
-
-it("returns to the tour after sending a review", async () => {
-  view = "all";
-  render();
-  act(() => exact("Comment").click());
-  type(node.querySelector("textarea[id^='walk-note-']")!, "Odd");
-  await act(async () => exact("Send comments").click());
-  expect(node.textContent).toContain("Your review is on GitHub.");
-  act(() => exact("Guided tour").click());
-  expect(view).toBe("tour");
 });
 
 it("keeps what the Ask panel adds to a stop while its comment is being written", () => {
   render();
-  click("Start the tour");
+  click("Start the review");
   const stop = buildTour(doc).stops[0]!;
   key("c");
   type(node.querySelector("textarea")!, "My own note.");
@@ -286,7 +293,7 @@ it("keeps what the Ask panel adds to a stop while its comment is being written",
 
 it("merges text appended to a stop's stored note since the box was opened", () => {
   render();
-  click("Start the tour");
+  click("Start the review");
   const stop = buildTour(doc).stops[0]!;
   key("c");
   type(node.querySelector("textarea")!, "Earlier.");
@@ -310,7 +317,7 @@ it("merges text appended to a stop's stored note since the box was opened", () =
 
 it("takes an undone answer out of the comment being written, keeping the rest", () => {
   render();
-  click("Start the tour");
+  click("Start the review");
   const stop = buildTour(doc).stops[0]!;
   const target = { kind: "stop" as const, id: stop.id, title: stop.title };
   key("c");

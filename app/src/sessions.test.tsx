@@ -566,7 +566,7 @@ it("toggles Codex approvals in Settings, and hides the toggle without the route"
   expect(node.textContent).not.toContain("Answer Codex approvals");
 });
 
-it("opens a session's transcript on a click anywhere on its card but its controls", async () => {
+it("peeks at a session and opens its reply on a click anywhere on its card but its controls", async () => {
   await render([session({ state: "running" })]);
   const card = node.querySelector('[aria-label="Running now"] li')!;
   const link = card.querySelector<HTMLAnchorElement>("a.local-feed-open")!;
@@ -576,20 +576,129 @@ it("opens a session's transcript on a click anywhere on its card but its control
     e.preventDefault();
     opened++;
   });
+  const preview = () => node.querySelector('[role="region"][aria-label^="Preview of"]');
   await act(async () => card.querySelector<HTMLElement>(".local-feed-time")!.click());
+  expect(opened).toBe(0);
+  expect(preview()).not.toBeNull();
+  const input = card.querySelector<HTMLInputElement>("input")!;
+  expect(input.placeholder).toBe("Message for when its turn ends…");
+  expect(document.activeElement).toBe(input);
+  // Its box keeps its clicks, around the field too, and its draft.
+  await act(async () => input.click());
+  await act(async () => card.querySelector<HTMLElement>(".local-feed-compose-hint")!.click());
+  await act(async () => card.querySelector<HTMLElement>(".local-feed-compose")!.click());
+  expect(preview()).not.toBeNull();
+  expect(card.querySelector("input")).toBe(input);
+  // A second click closes both.
+  await act(async () => card.querySelector<HTMLElement>(".local-feed-time")!.click());
+  expect(preview()).toBeNull();
+  expect(card.querySelector("input")).toBeNull();
+  // Its link still opens the transcript.
+  await act(async () => link.click());
   expect(opened).toBe(1);
-  // Its box, once r opens it, keeps its clicks.
-  await act(async () => {
-    window.dispatchEvent(new KeyboardEvent("keydown", { key: "j", bubbles: true }));
-  });
-  await act(async () => {
-    window.dispatchEvent(
-      new KeyboardEvent("keydown", { key: "r", bubbles: true, cancelable: true }),
-    );
-  });
-  await act(async () => card.querySelector<HTMLElement>("input")!.click());
-  await act(async () => card.querySelector<HTMLElement>("button")!.click());
-  expect(opened).toBe(1);
+});
+
+it("opens a waiting session's Reply with its peek on a click on its card", async () => {
+  await render([
+    session({
+      state: "idle",
+      waiting_reason: "turn_finished",
+      waiting_since: ago(60),
+      messageable: true,
+    }),
+  ]);
+  const card = node.querySelector<HTMLElement>('[data-row-id="claude-code:s1"]')!;
+  await act(async () => card.querySelector<HTMLElement>(".local-feed-time")!.click());
+  expect(node.querySelector('[role="region"][aria-label^="Preview of"]')).not.toBeNull();
+  const input = card.querySelector<HTMLInputElement>("input")!;
+  expect(input.placeholder).toBe("Reply…");
+  expect(document.activeElement).toBe(input);
+});
+
+it("moves the peek and reply to another card on a click, and peeks alone where no reply goes", async () => {
+  await render([
+    session({ state: "running" }),
+    session({ session_id: "s2", state: "running" }),
+    session({
+      session_id: "s3",
+      state: "idle",
+      waiting_reason: "permission",
+      waiting_since: ago(30),
+    }),
+  ]);
+  const card = (id: string) =>
+    node.querySelector<HTMLElement>(`[data-row-id="claude-code:${id}"]`)!;
+  const clickCard = (id: string) =>
+    act(async () => card(id).querySelector<HTMLElement>(".local-feed-time")!.click());
+  const previews = () =>
+    [...node.querySelectorAll('[role="region"][aria-label^="Preview of"]')].length;
+  await clickCard("s1");
+  expect(card("s1").querySelector("input")).not.toBeNull();
+  // The keys follow the click, and the box keeps the focus.
+  await clickCard("s2");
+  expect(previews()).toBe(1);
+  expect(card("s1").querySelector("input")).toBeNull();
+  expect(card("s2").dataset.focused).toBe("true");
+  expect(document.activeElement).toBe(card("s2").querySelector("input"));
+  // A session asking in its terminal takes no reply: its peek alone opens,
+  // and the other card's box closes; a second click closes the peek.
+  await clickCard("s3");
+  expect(previews()).toBe(1);
+  expect(node.querySelector(".local-feed input")).toBeNull();
+  await clickCard("s3");
+  expect(previews()).toBe(0);
+  // A peek opened with Space gains its reply on a click, not a close: the
+  // keys are on the card clicked last, and the next row is s1.
+  const key = (k: string) =>
+    act(async () => {
+      window.dispatchEvent(
+        new KeyboardEvent("keydown", { key: k, bubbles: true, cancelable: true }),
+      );
+    });
+  expect(card("s3").dataset.focused).toBe("true");
+  await key("j");
+  await key(" ");
+  expect(card("s1").nextElementSibling?.className).toBe("local-feed-peek-row");
+  await clickCard("s1");
+  expect(previews()).toBe(1);
+  expect(card("s1").querySelector("input")).not.toBeNull();
+});
+
+it("adds the peek to a box opened with r on a click, and gives the box the focus back", async () => {
+  await render([session({ state: "running" })]);
+  const card = node.querySelector<HTMLElement>('[data-row-id="claude-code:s1"]')!;
+  for (const k of ["j", "r"])
+    await act(async () => {
+      window.dispatchEvent(
+        new KeyboardEvent("keydown", { key: k, bubbles: true, cancelable: true }),
+      );
+    });
+  const input = card.querySelector<HTMLInputElement>("input")!;
+  // The click's mousedown takes the focus off the field.
+  input.blur();
+  await act(async () => card.querySelector<HTMLElement>(".local-feed-time")!.click());
+  expect(node.querySelector('[role="region"][aria-label^="Preview of"]')).not.toBeNull();
+  expect(card.querySelector("input")).toBe(input);
+  expect(document.activeElement).toBe(input);
+});
+
+it("peeks alone on a click on a running card whose message is queued", async () => {
+  await render(
+    [session({ state: "running" })],
+    requests({
+      messages: [
+        { agent: "claude-code", session_id: "s1", text: "from earlier", queued_at: ago(3) },
+      ],
+    }),
+  );
+  const card = node.querySelector<HTMLElement>('[data-row-id="claude-code:s1"]')!;
+  const clickCard = () =>
+    act(async () => card.querySelector<HTMLElement>(".local-feed-time")!.click());
+  await clickCard();
+  expect(node.querySelector('[role="region"][aria-label^="Preview of"]')).not.toBeNull();
+  // Cancelling the queued message does not open a box nobody asked for.
+  await click(button("Cancel"));
+  expect(card.querySelector("input")).toBeNull();
 });
 
 it("lists a session that went quiet under Waiting for you, muted, with its last words", async () => {

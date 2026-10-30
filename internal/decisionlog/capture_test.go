@@ -20,6 +20,7 @@ import (
 	"github.com/baum-ai/baum/internal/generate"
 	"github.com/baum-ai/baum/internal/livesessions"
 	"github.com/baum-ai/baum/internal/pricing"
+	"github.com/baum-ai/baum/internal/privatefs"
 	"github.com/baum-ai/baum/internal/repos"
 	"github.com/baum-ai/baum/sessions"
 )
@@ -527,8 +528,8 @@ func TestDebugDirKeepsOnlyThisCapturesFiles(t *testing.T) {
 		info, err := os.Stat(filepath.Join(dir, name))
 		if (err == nil) != want {
 			t.Errorf("%s: %v", name, err)
-		} else if want && info.Mode().Perm() != 0o600 {
-			t.Errorf("%s mode = %v, want 0600", name, info.Mode().Perm())
+		} else if want && !privatefs.PrivateFile(filepath.Join(dir, name), info) {
+			t.Errorf("%s is not private: %v", name, info.Mode())
 		}
 	}
 }

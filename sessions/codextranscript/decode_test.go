@@ -177,17 +177,40 @@ func TestTokenUsageRecordDecodes(t *testing.T) {
 	}
 }
 
-func TestUnknownEventTypeIsAnError(t *testing.T) {
-	_, _, err := decodeText(t, envelope("event_msg", `{"type":"future_event"}`))
-	if err == nil || !strings.Contains(err.Error(), `unknown event_msg type "future_event"`) {
-		t.Fatalf("error = %v", err)
+func TestUnknownTypesAreKeptAsUnknown(t *testing.T) {
+	lines, _, err := decodeText(t, sessionMeta(`"source":"cli"`)+
+		envelope("event_msg", `{"type":"future_event"}`)+
+		envelope("response_item", `{"type":"future_item"}`)+
+		envelope("future_record", `{"type":"x"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !lines[1].Unknown || lines[1].EventMsg == nil || lines[1].EventMsg.Type != "future_event" {
+		t.Errorf("event line = %+v", lines[1])
+	}
+	if !lines[2].Unknown || lines[2].ResponseItem == nil || lines[2].ResponseItem.Type != "future_item" {
+		t.Errorf("item line = %+v", lines[2])
+	}
+	if !lines[3].Unknown || lines[3].Type != "future_record" {
+		t.Errorf("record line = %+v", lines[3])
+	}
+	if lines[0].Unknown {
+		t.Errorf("session_meta is unknown")
 	}
 }
 
-func TestUnknownResponseItemTypeIsAnError(t *testing.T) {
-	_, _, err := decodeText(t, envelope("response_item", `{"type":"future_item"}`))
-	if err == nil || !strings.Contains(err.Error(), `unknown response_item type "future_item"`) {
-		t.Fatalf("error = %v", err)
+func TestUntypedItemIsAnError(t *testing.T) {
+	for _, class := range []string{"response_item", "event_msg"} {
+		if _, _, err := decodeText(t, sessionMeta(`"source":"cli"`)+envelope(class, `{}`)); err == nil {
+			t.Errorf("untyped %s did not fail the rollout", class)
+		}
+	}
+}
+
+func TestMalformedKnownItemIsAnError(t *testing.T) {
+	_, _, err := decodeText(t, sessionMeta(`"source":"cli"`)+envelope("response_item", `{"type":"function_call","call_id":7}`))
+	if err == nil {
+		t.Fatal("malformed function_call did not fail the rollout")
 	}
 }
 
@@ -261,6 +284,18 @@ func TestGoalUpdateAndImageGenerationDecode(t *testing.T) {
 	}
 	if lines[2].ResponseItem == nil || lines[2].ResponseItem.ImageGeneration == nil {
 		t.Fatalf("image line = %+v", lines[2])
+	}
+}
+
+func TestConfigurationUpdateIsKeptAsWritten(t *testing.T) {
+	payload := `{"type":"configuration_update","reasoning":{"effort":"medium"}}`
+	lines, _, err := decodeText(t, sessionMeta(`"source":"cli"`)+envelope("response_item", payload))
+	if err != nil {
+		t.Fatal(err)
+	}
+	item := lines[1].ResponseItem
+	if lines[1].Unknown || item == nil || item.ConfigurationUpdate == nil || string(item.ConfigurationUpdate.Raw) != payload {
+		t.Fatalf("item = %+v", item)
 	}
 }
 

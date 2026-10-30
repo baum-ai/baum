@@ -32,6 +32,11 @@ type rawEnvelope struct {
 
 var ErrIncompleteFirstLine = errors.New("incomplete first rollout line")
 
+// errUnknownType is a record class or item type this reader does not know.
+// decodeLine keeps such a line, marked Unknown, rather than failing the
+// rollout: Codex adds types between releases.
+var errUnknownType = errors.New("unknown type")
+
 // DecodeFirst decodes only the first non-empty record.
 func DecodeFirst(r io.Reader) (Line, error) {
 	reader := bufio.NewReaderSize(r, firstLineBufferBytes)
@@ -138,7 +143,10 @@ func decodeLine(raw []byte, ordinal int) (Line, *int, error) {
 	case ClassRealtime:
 		line.Realtime = &RawPayload{Raw: cloneRaw(envelope.Payload)}
 	default:
-		return Line{}, nil, fmt.Errorf("line %d has unknown type %q", ordinal, envelope.Type)
+		err = errUnknownType
+	}
+	if errors.Is(err, errUnknownType) {
+		line.Unknown, err = true, nil
 	}
 	if err != nil {
 		return Line{}, nil, fmt.Errorf("line %d %s: %w", ordinal, envelope.Type, err)
@@ -251,6 +259,9 @@ func decodeResponseItem(raw json.RawMessage) (*ResponseItem, error) {
 	if err := json.Unmarshal(raw, &head); err != nil {
 		return nil, err
 	}
+	if head.Type == "" {
+		return nil, fmt.Errorf("payload has no type")
+	}
 	item := &ResponseItem{Type: head.Type, Raw: cloneRaw(raw)}
 	var err error
 	switch head.Type {
@@ -280,8 +291,10 @@ func decodeResponseItem(raw json.RawMessage) (*ResponseItem, error) {
 		item.Compaction = &RawPayload{Raw: cloneRaw(raw)}
 	case "additional_tools":
 		item.AdditionalTools = &RawPayload{Raw: cloneRaw(raw)}
+	case "configuration_update":
+		item.ConfigurationUpdate = &RawPayload{Raw: cloneRaw(raw)}
 	default:
-		return nil, fmt.Errorf("unknown response_item type %q", head.Type)
+		return item, errUnknownType
 	}
 	return item, err
 }
@@ -292,6 +305,9 @@ func decodeEventMsg(raw json.RawMessage) (*EventMsg, error) {
 	}
 	if err := json.Unmarshal(raw, &head); err != nil {
 		return nil, err
+	}
+	if head.Type == "" {
+		return nil, fmt.Errorf("payload has no type")
 	}
 	event := &EventMsg{Type: head.Type, Raw: cloneRaw(raw)}
 	var err error
@@ -331,7 +347,7 @@ func decodeEventMsg(raw json.RawMessage) (*EventMsg, error) {
 	case "thread_goal_updated":
 		event.ThreadGoalUpdated = &RawPayload{Raw: cloneRaw(raw)}
 	default:
-		return nil, fmt.Errorf("unknown event_msg type %q", head.Type)
+		return event, errUnknownType
 	}
 	return event, err
 }

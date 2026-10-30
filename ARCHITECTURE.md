@@ -2325,6 +2325,14 @@ without duplicating review documents. `jobs.Open` takes an exclusive
 `internal/filelock` lock beside the journal (`jobs.json.lock`) and keeps it
 until its workers stop, so two processes never run one queue; it waits up to
 10 s for a predecessor whose shutdown timed out and that is exiting.
+Reviews, fixes and feature builds share one lane, which runs up to
+`repos.MaxJobConcurrency` (4) jobs at once, oldest first; questions have their
+own lane (see the chat section). The `job_concurrency` preference lowers the
+limit (`PUT api/settings/job-concurrency`, 1–4), and `Queue.SetConcurrency`
+applies it to the running queue: lowering it stops no running job, it only
+holds new ones until fewer run. A job waits while another job of one of its
+pull requests (a group's members count) runs, and later jobs may start before
+it.
 `Queue.Drain` refuses new jobs and reports true only when none is queued or
 running, under the mutex `Submit` checks, so a restart never cuts a started
 job short: one started during it gets `503` with `Retry-After` and is started
@@ -2462,7 +2470,8 @@ reviews and shows in the same Jobs list. A fix starts alone, at once
 checks: preparation leaves `conflicts` false and reads no review threads, and
 any other `only` is refused);
 one in a batch is refused, and automatic generation never queues one. A review and a fix of one pull request
-neither supersede nor block each other, and a fix of a head does not count as
+are neither refused nor superseded by each other, though they never run at the
+same time (the queue starts no job while another of its pull request runs), and a fix of a head does not count as
 that head's review for the automatic scheduler.
 
 `jobs.Local` prepares a fix from fresh REST evidence (`internal/fix`):
@@ -3317,15 +3326,18 @@ replace it.
     `claude://code/continue?session=local_…` (`xdg-open`, `open`), then its
     window is raised as below. These are Claude desktop's internal files and
     link: a record it no longer writes reads as no session.
-  - In tmux (`TMUX` and `TMUX_PANE` recorded), on the server of the recorded
-    socket: the client attached to the pane's session used last, else the
-    client used last at all (`list-clients`), is switched to the session, and
+  - In tmux (`TMUX`, `TMUX_PANE` and a terminal device recorded), on the server
+    of the recorded socket: the client attached to the pane's session used
+    last, else the client used last at all (`list-clients`), is switched to the session, and
     the pane's window and the pane are selected. The chain from then on is the
     client's, read now, and the terminal device is the client's: the recorded
     variables describe the terminal the tmux server started in. No client
     attached says so. A pane whose `pane_tty` is not the recorded terminal
     device is not the session's (a terminal started from a tmux pane passes
     `TMUX` on to its own shells), and the session is treated as outside tmux.
+    A lookup with an empty session or pane terminal is treated as a missing pane
+    before any client is switched. Without a recorded terminal, inherited tmux
+    variables are ignored.
   - The terminal's tab, from the first match in the chain: kitty focuses the
     window whose program is the process below kitty (`kitten @ --to
     $KITTY_LISTEN_ON focus-window --match pid:…`), only when the recorded
@@ -3358,10 +3370,13 @@ replace it.
   - `session` when the tmux pane, the tab or the conversation was selected,
     `window` when only the window was raised. `Predict`, which the list's
     `focus` is, judges the same from the record without running anything: on
-    Linux nothing outside Hyprland and X11; `session` for tmux, a Claude
-    desktop process in the chain (`claude-desktop`, `Claude`), a kitty with
-    its socket, and on macOS iTerm2 or Terminal with a terminal device;
-    `window` otherwise.
+    Linux nothing outside Hyprland and X11; `session` for tmux with a recorded
+    terminal, a Claude desktop process in the chain (`claude-desktop`, `Claude`),
+    a kitty with its socket, and on macOS iTerm2 or Terminal with a terminal device;
+    `window` otherwise. A Codex session without a terminal whose recorded chain
+    contains only `codex`, `systemd` or `launchd` has no focus action; a direct
+    focus request explains that the background process has no window. An
+    unfamiliar ancestor keeps the normal window fallback.
 - **Transcripts.** `GET /api/live-sessions/{agent}/{id}/transcript`
   (`Transcripts`, mounted beside the list by the same `LocalAPI.Live`
   provider) serves the transcript of a session the tracker lists, and only
@@ -3426,7 +3441,7 @@ replace it.
   session: when one leaves their list the page reads the session
   list from disk again, where the finished session now is (the existing
   sessions UI), so nothing is lost if the files were not complete earlier.
-  Each Sessions row opens the session's transcript
+  Each Sessions row's link opens the session's transcript
   (`?page=sessions&session=<agent>:<id>`), drawn with the viewer's
   `SessionCard`. The view reads it 500 ms after the last of a burst of `live`
   events and every 3 seconds while the session works (15 while it waits; a
@@ -3681,8 +3696,7 @@ and two files:
    `stopping` appears only while it shuts down, and `restart_pending` when an
    older daemon was kept because it is running jobs and will restart as this
    version once they finish (see Lifecycle). On failure it exits non-zero
-   with the reason on stderr. `--port` and `--concurrency` apply only when it
-   starts the daemon.
+   with the reason on stderr. `--port` applies only when it starts the daemon.
 2. `<state>/credential.json`, mode 0600 (Windows: current-user DACL), holds
    `{"url":"http://127.0.0.1:PORT/#token=<43 characters>"}`, the launch URL.
    Loading it runs the bootstrap page, which exchanges the fragment for the
@@ -3709,7 +3723,8 @@ and two files:
    from native plugin registries, with executable detection and installation/
    enablement separate from the agent's hook trust decision. It installs and
    removes `baum@baum` through native CLIs with `baum hooks install --user`
-   and `uninstall --user`. Native status queries have a 10-second bound and
+   and `uninstall --user`, and `update --user` refreshes the marketplace and
+   brings an installed plugin to its latest version. Native status queries have a 10-second bound and
    actions a 90-second total budget; the desktop resolves the login shell PATH for native plugin commands and allows
    240 seconds for PATH resolution, both agents and process overhead.
 5. `baum daemon stop` stops the daemon gracefully and waits for it to exit

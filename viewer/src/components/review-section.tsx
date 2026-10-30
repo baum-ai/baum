@@ -414,7 +414,13 @@ function AttentionCallout({
 
 /** A status pill that reads as a check mark for verified claims: the spec asks
  *  that a claim with supporting test evidence carry a visible indication. */
-function EvidenceBadge({ evidence, compact = false }: { evidence: Evidence; compact?: boolean }) {
+export function EvidenceBadge({
+  evidence,
+  compact = false,
+}: {
+  evidence: Evidence;
+  compact?: boolean;
+}) {
   return (
     <Badge
       tone={evidenceTone(evidence.status)}

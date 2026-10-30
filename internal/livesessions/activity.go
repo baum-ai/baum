@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"cmp"
 	"encoding/json"
+	"path"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -184,15 +185,26 @@ func settle(s Session, a *Activity) Session {
 }
 
 // relativeTo is path relative to dir when it lies inside it, else as given.
-func relativeTo(dir, path string) string {
-	if dir == "" || !filepath.IsAbs(path) || !filepath.IsAbs(dir) {
-		return path
+func relativeTo(dir, target string) string {
+	// Transcripts can carry Unix paths even when read on Windows.
+	if path.IsAbs(dir) && path.IsAbs(target) {
+		base, file := path.Clean(dir), path.Clean(target)
+		if file == base {
+			return "."
+		}
+		if rel, ok := strings.CutPrefix(file, strings.TrimRight(base, "/")+"/"); ok {
+			return rel
+		}
+		return target
 	}
-	rel, err := filepath.Rel(dir, path)
+	if dir == "" || !filepath.IsAbs(target) || !filepath.IsAbs(dir) {
+		return target
+	}
+	rel, err := filepath.Rel(dir, target)
 	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-		return path
+		return target
 	}
-	return rel
+	return filepath.ToSlash(rel)
 }
 
 // displayTool is a tool's name as served: an MCP tool, mcp__server__tool,
