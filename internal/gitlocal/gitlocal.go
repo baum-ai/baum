@@ -470,6 +470,143 @@ func (r *Repo) ResolvePull(ctx context.Context, pr PullRequest) (Pull, error) {
 	return Pull{BaseOID: pr.BaseSHA, HeadOID: pr.HeadSHA, MergeBaseOID: mergeBase}, nil
 }
 
+// maxFetchRefspecs bounds the refspecs of one fetch.
+const maxFetchRefspecs = 100
+
+// FetchPulls fetches what the clone lacks of the pull requests' commits, as
+// ResolvePull fetches them: a missing head from refs/pull/<N>/head into
+// refs/baum/pull/<N>/head and a missing base by its id into
+// refs/baum/pull/<N>/base of the first pull request it is the base of, up to
+// 100 refspecs in one fetch. A clone with every commit makes no network call,
+// and a pull request without a valid number and ids is skipped. When a fetch
+// fails, the remote is asked for its HEAD: out of reach, the error is
+// returned at once; answering, it lacks some of the refs, and those of the
+// failed fetch are fetched one at a time so they keep out no other. A pull
+// request whose commits are still missing is left for the caller to find
+// so. A deadline or cancellation is returned at once.
+func (r *Repo) FetchPulls(ctx context.Context, remote string, prs []PullRequest) error {
+	if remote == "" {
+		remote = r.opts.Remote
+	}
+	if !validRemoteName(remote) {
+		return ErrInvalidInput
+	}
+	done, err := r.begin()
+	if err != nil {
+		return err
+	}
+	defer done()
+	var refspecs []string
+	// A base several pull requests share is fetched once.
+	bases := map[string]bool{}
+	for _, pr := range prs {
+		if pr.Number <= 0 || !validOID(pr.HeadSHA) || !validOID(pr.BaseSHA) {
+			continue
+		}
+		if !r.hasCommit(ctx, pr.HeadSHA) {
+			refspecs = append(refspecs, fmt.Sprintf("+refs/pull/%d/head:refs/baum/pull/%d/head", pr.Number, pr.Number))
+		}
+		if !bases[pr.BaseSHA] && !r.hasCommit(ctx, pr.BaseSHA) {
+			bases[pr.BaseSHA] = true
+			refspecs = append(refspecs, fmt.Sprintf("+%s:refs/baum/pull/%d/base", pr.BaseSHA, pr.Number))
+		}
+	}
+	reachable := false
+	for start := 0; start < len(refspecs); start += maxFetchRefspecs {
+		chunk := refspecs[start:min(start+maxFetchRefspecs, len(refspecs))]
+		err := r.fetch(ctx, remote, chunk)
+		if err == nil {
+			continue
+		}
+		if isContextError(err) {
+			return err
+		}
+		if !reachable {
+			if probe := r.lsRemote(ctx, remote); probe != nil {
+				// The fetch failed the same way: one sign-in message is enough.
+				if _, ok := errors.AsType[*AuthError](probe); ok {
+					return probe
+				}
+				return errors.Join(err, probe)
+			}
+			reachable = true
+		}
+		if len(chunk) == 1 {
+			continue
+		}
+		for _, refspec := range chunk {
+			if err := r.fetch(ctx, remote, []string{refspec}); err != nil && isContextError(err) {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// DefaultRef is the ref FetchBranch fetches a branch into.
+const DefaultRef = "refs/baum/default"
+
+// FetchBranch fetches branch from remote into DefaultRef and returns the
+// commit it points at.
+func (r *Repo) FetchBranch(ctx context.Context, remote, branch string) (string, error) {
+	if remote == "" {
+		remote = r.opts.Remote
+	}
+	if !validRemoteName(remote) || !validRefName(branch) {
+		return "", ErrInvalidInput
+	}
+	done, err := r.begin()
+	if err != nil {
+		return "", err
+	}
+	defer done()
+	if err := r.fetch(ctx, remote, []string{"+refs/heads/" + branch + ":" + DefaultRef}); err != nil {
+		return "", err
+	}
+	// The fetch writes the clone's refs, which the private mirror reads
+	// through its alternates by id only.
+	out, err := run(ctx, runSpec{dir: r.dir, env: userEnv(), limit: maxOIDOutputBytes, timeout: r.opts.CommandTimeout},
+		"rev-parse", "--verify", "--end-of-options", DefaultRef+"^{commit}")
+	if err != nil {
+		return "", err
+	}
+	oid := strings.TrimSpace(string(out))
+	if !validOID(oid) {
+		return "", fmt.Errorf("%w: %s", ErrObjectNotFound, DefaultRef)
+	}
+	return oid, nil
+}
+
+// lsRemote asks the remote for its HEAD with the credentials and limits a
+// fetch has, to tell a remote out of reach from refs it lacks.
+func (r *Repo) lsRemote(ctx context.Context, remote string) error {
+	env, authenticated, err := r.fetchCredentials(ctx, remote, r.fetchEnv(ctx, remote))
+	if err != nil {
+		return err
+	}
+	_, err = run(ctx, runSpec{dir: r.dir, env: env, limit: 64 << 10, timeout: r.opts.FetchTimeout,
+		config: []string{"protocol.ext.allow=never"}}, "ls-remote", remote, "HEAD")
+	if err != nil && authenticated {
+		return httpsFailure("GitHub HTTPS request failed", err)
+	}
+	if err != nil {
+		return r.authFailure(ctx, remote, err)
+	}
+	return nil
+}
+
+// httpsFailure replaces the error of an authenticated command, whose output
+// may name the credential, keeping a deadline or cancellation in it.
+func httpsFailure(what string, err error) error {
+	message := what + "; check repository access, organization SSO authorization and GitHub connection"
+	for _, cause := range []error{context.DeadlineExceeded, context.Canceled} {
+		if errors.Is(err, cause) {
+			return fmt.Errorf("%s: %w", message, cause)
+		}
+	}
+	return errors.New(message)
+}
+
 func (r *Repo) hasCommit(ctx context.Context, oid string) bool {
 	_, err := r.read(ctx, 0, "cat-file", "-e", oid+"^{commit}")
 	return err == nil
@@ -494,14 +631,17 @@ func (r *Repo) fetch(ctx context.Context, remote string, refspecs []string) erro
 			"maintenance.auto=false", "fetch.recurseSubmodules=false", "fetch.writeCommitGraph=false",
 		},
 	}, append(args, refspecs...)...)
+	if onFetch != nil {
+		onFetch(refspecs)
+	}
 	if err != nil {
 		if authenticated {
 			if ctx.Err() != nil {
 				return ctx.Err()
 			}
-			return errors.New("GitHub HTTPS fetch failed; check repository access, organization SSO authorization and GitHub connection")
+			return httpsFailure("GitHub HTTPS fetch failed", err)
 		}
-		return err
+		return r.authFailure(ctx, remote, err)
 	}
 	// A fetch into a shallow clone can add shallow commits.
 	return syncShallow(r.mirror, r.shallow)
@@ -521,6 +661,9 @@ func (r *Repo) mergeBase(ctx context.Context, base, head string) (string, error)
 	}
 	return oid, nil
 }
+
+// onFetch sees the refspecs of every fetch; tests set it.
+var onFetch func(refspecs []string)
 
 // afterMergeBase runs between Compare's first and second git command; tests
 // set it.

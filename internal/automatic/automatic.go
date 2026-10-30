@@ -3,7 +3,7 @@
 // automatic generation was enabled, into jobs on the existing queue. It has
 // no model backend and no GitHub client of its own; discovery feeds it
 // snapshots and jobs.Queue.SubmitAutomatic prepares, refuses or queues each
-// job with the same estimates and isolation as a confirmed one.
+// job with the same preparation and isolation as a confirmed one.
 package automatic
 
 import (
@@ -29,11 +29,14 @@ import (
 	"github.com/baum-ai/baum/internal/store"
 )
 
-// Notices shown for a repository; the most recent one wins.
-const (
-	NoticeDailyCap    = "daily_cap"
-	NoticeUnavailable = "unavailable"
-)
+// NoticeUnavailable is the notice of a repository whose triggered PR got no
+// job because GitHub or the clone stayed unavailable; the most recent notice
+// wins. A "daily_cap" notice an older baum saved is dropped on load.
+const NoticeUnavailable = "unavailable"
+
+// legacyNoticeDailyCap is the notice of the daily spending cap baum no longer
+// has.
+const legacyNoticeDailyCap = "daily_cap"
 
 // maxAttempts bounds retries of a head whose job could not be prepared
 // (GitHub or the clone unavailable); the next head triggers again.
@@ -48,13 +51,11 @@ type Registry interface {
 
 type Queue interface {
 	SubmitAutomatic(context.Context, jobs.AutomaticRequest) (jobs.Job, error)
-	AutomaticSpend(repository string, day time.Time) (float64, bool)
 	// Interrupted lists automatic jobs a daemon stop or restart cut short
 	// that may be retried once.
 	Interrupted() []jobs.Job
 	// Refused lists automatic jobs cancelled before any model call without
-	// using up their head (the daily cap reached at start, or the PR turned
-	// draft).
+	// using up their head (the PR turned draft, or its clone went away).
 	Refused() []jobs.Job
 	// CancelDisallowedAutomatic cancels queued automatic jobs the gate
 	// (Scheduler.Gate) now refuses.
@@ -74,11 +75,14 @@ type Scheduler struct {
 	// Reviewed returns the head of the PR's latest saved review, "" if none.
 	// Nil uses SavedHead.
 	Reviewed func(context.Context, repos.Clone, int) (string, error)
+	// Groups holds the review groups; the reviews of stack groups follow
+	// their members' (see passGroups). Nil generates no group review.
+	Groups Groups
 	// Hold reports that the daemon is stopping or waiting to restart as a
 	// newer version; nothing is submitted meanwhile, so the queue can drain.
 	Hold func() bool
-	// Notify publishes a repository's changed status (a pause or a notice)
-	// for the app and the desktop app's notifications.
+	// Notify publishes a repository's changed status (a notice) for the app
+	// and the desktop app's notifications.
 	Notify   func(Status)
 	Now      func() time.Time
 	Interval time.Duration
@@ -101,8 +105,8 @@ type Scheduler struct {
 	identityChanging atomic.Bool
 }
 
-// ResetIdentity forgets account-dependent PR baselines while preserving daily
-// spending limits, pauses, repository preferences and saved reviews.
+// ResetIdentity forgets account-dependent PR baselines while preserving
+// repository preferences and saved reviews.
 func (s *Scheduler) ResetIdentity() {
 	finish := s.BeginIdentityChange()
 	finish(true)
@@ -127,6 +131,7 @@ func (s *Scheduler) BeginIdentityChange() func(bool) {
 		for _, repository := range s.load().Repositories {
 			repository.Since = s.resetAt
 			repository.PRs = map[int]*prState{}
+			repository.Groups = map[string]*groupState{}
 			repository.AwaitingBaseline = true
 		}
 		s.observed = map[string]time.Time{}
@@ -140,12 +145,8 @@ type Status struct {
 	Repository string `json:"repository"`
 	// Enabled is effective: the repository's explicit choice, else the
 	// global preference.
-	Enabled     bool       `json:"enabled"`
-	DailyCap    *float64   `json:"daily_cap"`
-	SpentToday  float64    `json:"spent_today"`
-	SpentKnown  bool       `json:"spent_known"`
-	PausedUntil *time.Time `json:"paused_until,omitempty"`
-	// Notice is the latest reason a triggered PR got no job: NoticeDailyCap,
+	Enabled bool `json:"enabled"`
+	// Notice is the latest reason a triggered PR got no job:
 	// NoticeUnavailable or a jobs.NotAutomaticError reason.
 	Notice  string `json:"notice,omitempty"`
 	Pending int    `json:"pending"`
@@ -153,8 +154,7 @@ type Status struct {
 
 // Overview is GET /api/automatic.
 type Overview struct {
-	Enabled                 bool `json:"enabled"`
-	CursorAgentAcknowledged bool `json:"cursor_agent_acknowledged"`
+	Enabled bool `json:"enabled"`
 	// PullRequests is which pull requests get automatic reviews: both,
 	// authored, requested or all.
 	PullRequests string   `json:"pull_requests"`
@@ -167,15 +167,14 @@ type fileState struct {
 
 // repoState exists while automatic generation is enabled for a repository.
 // It starts from the first snapshot seen after enabling (the baseline), so
-// pull requests already open then are not caught up.
+// pull requests already open then are not caught up. The paused_until and
+// paused_cap of the daily cap an older baum had are ignored on load.
 type repoState struct {
-	Since       time.Time        `json:"since"`
-	PRs         map[int]*prState `json:"prs"`
-	PausedUntil time.Time        `json:"paused_until,omitzero"`
-	Notice      string           `json:"notice,omitempty"`
-	// PausedCap is the daily cap that caused the pause; raising or clearing
-	// the cap lifts it.
-	PausedCap *float64 `json:"paused_cap,omitempty"`
+	Since time.Time        `json:"since"`
+	PRs   map[int]*prState `json:"prs"`
+	// Groups are the repository's stack groups by ID.
+	Groups map[string]*groupState `json:"groups,omitempty"`
+	Notice string                 `json:"notice,omitempty"`
 	// AwaitingBaseline: enabled at Since, but no discovery snapshot fetched
 	// since then has been seen yet; older snapshots are not a baseline.
 	AwaitingBaseline bool `json:"awaiting_baseline,omitempty"`
@@ -234,7 +233,7 @@ func (s *Scheduler) Wake() {
 }
 
 // Run submits pending jobs until ctx ends: at once, whenever woken, and every
-// Interval (30 s by default) to retry refusals and lift expired pauses.
+// Interval (30 s by default) to retry refusals.
 func (s *Scheduler) Run(ctx context.Context) {
 	s.init()
 	interval := s.Interval
@@ -334,6 +333,12 @@ func (s *Scheduler) load() *fileState {
 		if r.PRs == nil {
 			r.PRs = map[int]*prState{}
 		}
+		if r.Groups == nil {
+			r.Groups = map[string]*groupState{}
+		}
+		if r.Notice == legacyNoticeDailyCap {
+			r.Notice = ""
+		}
 	}
 	return s.state
 }
@@ -368,7 +373,7 @@ func (s *Scheduler) prune(v view) bool {
 // on; its baseline is the first snapshot fetched after this. Called with mu
 // held.
 func (s *Scheduler) enable(name string) *repoState {
-	rs := &repoState{Since: s.now().UTC(), PRs: map[int]*prState{}, AwaitingBaseline: true}
+	rs := &repoState{Since: s.now().UTC(), PRs: map[int]*prState{}, Groups: map[string]*groupState{}, AwaitingBaseline: true}
 	s.state.Repositories[name] = rs
 	return rs
 }
@@ -513,7 +518,6 @@ func (s *Scheduler) Pass(ctx context.Context) {
 	s.Queue.CancelDisallowedAutomatic()
 	now := s.now()
 	var due []work
-	var notices []Status
 	interrupted := s.Queue.Interrupted()
 	refused := s.Queue.Refused()
 	s.mu.Lock()
@@ -541,12 +545,11 @@ func (s *Scheduler) Pass(ctx context.Context) {
 		pr.Pending, pr.Trigger, pr.Retried, pr.Attempts, pr.RetryAt = j.HeadSHA, jobs.TriggerRetry, j.HeadSHA, 0, time.Time{}
 		changed = true
 	}
-	// A queued job the daily cap stopped before it started did not use up
-	// its head: the head is pending again, so this pass submits it and the cap
-	// pauses the repository as it does at submission, and the head runs once
-	// the pause ends. A job stopped because its PR turned draft waits until
-	// the PR is eligible (ready for review) again. Jobs from before the
-	// repository's baseline are not caught up.
+	// A queued job stopped before it started did not use up its head: one
+	// stopped because its PR turned draft is pending again once the PR is
+	// eligible (ready for review), and one whose clone went away once a
+	// clone is back. Jobs from before the repository's baseline are not
+	// caught up.
 	for _, j := range refused {
 		rs := state.Repositories[strings.ToLower(j.Repository)]
 		if rs == nil || j.CreatedAt.Before(rs.Since) {
@@ -571,14 +574,7 @@ func (s *Scheduler) Pass(ctx context.Context) {
 	for _, name := range names {
 		rs := state.Repositories[name]
 		r := v.repos[name]
-		// A pause ends the next day, or as soon as the cap that caused it is
-		// raised or removed; a lowered cap keeps it.
-		capRaised := r.settings.DailyCap == nil || (rs.PausedCap != nil && *r.settings.DailyCap > *rs.PausedCap)
-		if !rs.PausedUntil.IsZero() && (!now.Before(rs.PausedUntil) || capRaised) {
-			rs.PausedUntil, rs.PausedCap, rs.Notice, changed = time.Time{}, nil, "", true
-			notices = append(notices, s.status(name, r, rs, now))
-		}
-		if !rs.PausedUntil.IsZero() || !r.clone.Available {
+		if !r.clone.Available {
 			continue
 		}
 		numbers := make([]int, 0, len(rs.PRs))
@@ -597,7 +593,6 @@ func (s *Scheduler) Pass(ctx context.Context) {
 		s.save()
 	}
 	s.mu.Unlock()
-	s.notify(notices)
 	paused := map[string]bool{}
 	for _, w := range due {
 		if ctx.Err() != nil || (s.Hold != nil && s.Hold()) {
@@ -614,6 +609,7 @@ func (s *Scheduler) Pass(ctx context.Context) {
 			paused[w.name] = true
 		}
 	}
+	s.passGroups(ctx, v, interrupted, refused, paused, now)
 }
 
 type outcome int
@@ -634,8 +630,7 @@ func (s *Scheduler) submit(ctx context.Context, v view, w work, now time.Time) o
 	if head, rerr := reviewed(ctx, w.repo.clone, w.number); rerr == nil && head == w.head {
 		err = jobs.ErrDuplicate
 	} else {
-		day := startOfDay(now)
-		job, err = s.Queue.SubmitAutomatic(ctx, jobs.AutomaticRequest{Item: jobs.Item{Clone: w.repo.clone.ID, PR: w.number}, Repository: w.repo.clone.Repository, Head: w.head, Trigger: w.trigger, DailyCap: w.repo.settings.DailyCap, Day: day})
+		job, err = s.Queue.SubmitAutomatic(ctx, jobs.AutomaticRequest{Item: jobs.Item{Clone: w.repo.clone.ID, PR: w.number}, Repository: w.repo.clone.Repository, Head: w.head, Trigger: w.trigger})
 	}
 	s.mu.Lock()
 	rs := s.load().Repositories[w.name]
@@ -672,14 +667,6 @@ func (s *Scheduler) submit(ctx context.Context, v view, w work, now time.Time) o
 	case errors.Is(err, jobs.ErrHeadChanged):
 		// Discovery reports the newer head, which triggers again.
 		pr.Pending, pr.Trigger = "", ""
-	case errors.Is(err, jobs.ErrDailyCap):
-		rs.PausedUntil = startOfDay(now).AddDate(0, 0, 1)
-		if limit := w.repo.settings.DailyCap; limit != nil {
-			rs.PausedCap = new(*limit)
-		}
-		notice = NoticeDailyCap
-		result = stopRepository
-		s.log().Info("automatic generation paused by the daily cap", "repository", w.name, "until", rs.PausedUntil)
 	case errors.As(err, &notAllowed):
 		// Turned off since this pass read the settings: the next pass drops
 		// the repository's state, or submits once it is back on.
@@ -700,7 +687,7 @@ func (s *Scheduler) submit(ctx context.Context, v view, w work, now time.Time) o
 	announce := notice != rs.Notice || (result == stopRepository && !quiet)
 	rs.Notice = notice
 	s.save()
-	status := s.status(w.name, w.repo, rs, now)
+	status := s.status(w.name, w.repo, rs)
 	s.mu.Unlock()
 	if announce {
 		s.notify([]Status{status})
@@ -718,16 +705,9 @@ func (s *Scheduler) notify(statuses []Status) {
 }
 
 // status is called with mu held.
-func (s *Scheduler) status(name string, r repository, rs *repoState, now time.Time) Status {
-	st := Status{Repository: name, Enabled: r.enabled, DailyCap: r.settings.DailyCap}
-	if s.Queue != nil {
-		st.SpentToday, st.SpentKnown = s.Queue.AutomaticSpend(name, startOfDay(now))
-	}
+func (s *Scheduler) status(name string, r repository, rs *repoState) Status {
+	st := Status{Repository: name, Enabled: r.enabled}
 	if rs != nil {
-		if !rs.PausedUntil.IsZero() {
-			until := rs.PausedUntil
-			st.PausedUntil = &until
-		}
 		st.Notice = rs.Notice
 		for _, pr := range rs.PRs {
 			if pr.Pending != "" {
@@ -744,8 +724,7 @@ func (s *Scheduler) Overview(ctx context.Context) (Overview, error) {
 	if err != nil {
 		return Overview{}, err
 	}
-	now := s.now()
-	o := Overview{Enabled: v.prefs.Automatic, CursorAgentAcknowledged: v.prefs.CursorAgentAcknowledged, PullRequests: cmp.Or(v.prefs.PullRequests, "both"), Repositories: []Status{}}
+	o := Overview{Enabled: v.prefs.Automatic, PullRequests: cmp.Or(v.prefs.PullRequests, "both"), Repositories: []Status{}}
 	names := make([]string, 0, len(v.repos))
 	for name := range v.repos {
 		names = append(names, name)
@@ -760,7 +739,7 @@ func (s *Scheduler) Overview(ctx context.Context) (Overview, error) {
 		if !r.enabled {
 			rs = nil
 		}
-		o.Repositories = append(o.Repositories, s.status(name, r, rs, now))
+		o.Repositories = append(o.Repositories, s.status(name, r, rs))
 	}
 	return o, nil
 }
@@ -775,12 +754,10 @@ const (
 
 // Gate reads the current settings for an automatic job, for
 // jobs.Queue.SetAutomaticGate: the queue asks it when the job is submitted
-// and again before it starts, so turning generation off (globally, for the
-// repository, or withdrawing the cursor-agent acknowledgement) stops jobs
-// that are queued but not started, and a job that would take the repository
-// past its current daily cap on the scheduler clock's day does not start. It
-// reads only the registry database and the clock, never the scheduler's state
-// or the queue: the queue's mutex is held.
+// and again before it starts, so turning generation off (globally or for the
+// repository) stops jobs that are queued but not started. It reads only the
+// registry database, never the scheduler's state or the queue: the queue's
+// mutex is held.
 func (s *Scheduler) Gate(j jobs.Job) jobs.Admission {
 	if s.identityChanging.Load() {
 		return jobs.Admission{Reason: GateOff}
@@ -807,7 +784,7 @@ func (s *Scheduler) Gate(j jobs.Job) jobs.Admission {
 	case !settings.AutomaticEnabled(prefs):
 		return jobs.Admission{Reason: GateRepositoryOff}
 	}
-	return jobs.Admission{DailyCap: settings.DailyCap, Day: startOfDay(s.now())}
+	return jobs.Admission{}
 }
 
 // SavedHead is the head of the PR's latest saved review in the clone's
@@ -825,9 +802,4 @@ func SavedHead(ctx context.Context, clone repos.Clone, number int) (string, erro
 		return "", err
 	}
 	return latest.Metadata.Head, nil
-}
-
-func startOfDay(t time.Time) time.Time {
-	y, m, d := t.Date()
-	return time.Date(y, m, d, 0, 0, 0, 0, t.Location())
 }

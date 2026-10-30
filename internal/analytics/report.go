@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/baum-ai/baum/internal/decisionlog"
 	"github.com/baum-ai/baum/internal/fix"
 	"github.com/baum-ai/baum/internal/jobs"
 	"github.com/baum-ai/baum/internal/pricing"
@@ -186,6 +187,21 @@ type BaumWork struct {
 	Merges        *int `json:"merges"`
 	BranchUpdates *int `json:"branch_updates"`
 	CheckReruns   *int `json:"check_reruns"`
+	// Decisions is decision capture's model calls, nil without its ledger.
+	Decisions *DecisionCapture `json:"decisions"`
+}
+
+// DecisionCapture counts decision capture's calls started in the window.
+type DecisionCapture struct {
+	Attempts  int `json:"attempts"`
+	Succeeded int `json:"succeeded"`
+	Failed    int `json:"failed"`
+	// Abandoned calls were cut short by the daemon stopping.
+	Abandoned int `json:"abandoned"`
+	// Cost sums the known costs of settled calls; any without one makes it
+	// incomplete, and none known leaves it unknown.
+	Cost     Cost          `json:"cost"`
+	Failures []ReasonCount `json:"failures"`
 }
 
 // ReasonCount is how many failed jobs failed for one reason (a job reason
@@ -325,6 +341,12 @@ func (s *Service) Report(ctx context.Context, q Query) (Report, error) {
 	report.Summary.AgentShare = report.Commits.Share
 
 	report.Baum = s.baumWork(start, q)
+	// An unreadable ledger leaves the figures out, as no ledger does.
+	if s.Captures != nil {
+		if captures, err := s.Captures(ctx, start); err == nil {
+			report.Baum.Decisions = decisionCapture(captures, q)
+		}
+	}
 	report.Delivery = s.delivery(start, q, picked)
 	report.PlanUsage = s.planUsage(start, q)
 	return report, nil
@@ -562,6 +584,45 @@ func groupCost(prices *pricing.List, vendor string, g Usage) Cost {
 	return cost
 }
 
+// decisionCapture counts the calls matching q; the agent filter matches the
+// backend that made them, as it matches a job's harness.
+func decisionCapture(captures []decisionlog.LedgerEntry, q Query) *DecisionCapture {
+	out := &DecisionCapture{Cost: Cost{Reasons: []string{}}, Failures: []ReasonCount{}}
+	failures := map[string]int{}
+	for _, c := range captures {
+		if q.Repository != "" && !strings.EqualFold(c.Repository, q.Repository) || q.Agent != "" && jobAgents[c.Backend] != q.Agent {
+			continue
+		}
+		out.Attempts++
+		switch c.State {
+		case decisionlog.AttemptSucceeded:
+			out.Succeeded++
+		case decisionlog.AttemptFailed:
+			out.Failed++
+			failures[cmp.Or(c.Reason, "call_failed")]++
+		case decisionlog.AttemptAbandoned:
+			out.Abandoned++
+		}
+		if c.State == decisionlog.AttemptPending {
+			continue
+		}
+		if c.Cost != nil {
+			usd := *c.Cost
+			out.Cost.add(Cost{USD: &usd})
+		} else {
+			out.Cost.Incomplete = true
+			out.Cost.reason("Some decision capture calls reported no usage that could be priced.")
+		}
+	}
+	for reason, n := range failures {
+		out.Failures = append(out.Failures, ReasonCount{Reason: reason, Count: n})
+	}
+	slices.SortFunc(out.Failures, func(a, b ReasonCount) int {
+		return cmp.Or(cmp.Compare(b.Count, a.Count), strings.Compare(a.Reason, b.Reason))
+	})
+	return out
+}
+
 // baumWork counts the jobs created in the window.
 func (s *Service) baumWork(start time.Time, q Query) BaumWork {
 	work := BaumWork{Failures: []ReasonCount{}, Cost: Cost{Reasons: []string{}}}
@@ -571,7 +632,8 @@ func (s *Service) baumWork(start time.Time, q Query) BaumWork {
 	work.Available = true
 	failures := map[string]int{}
 	for _, j := range s.Jobs() {
-		if j.CreatedAt.Before(start) || q.Repository != "" && !strings.EqualFold(j.Repository, q.Repository) || q.Agent != "" && jobAgents[j.Backend] != q.Agent {
+		// A feature build is the decision log's spend, not a review's.
+		if j.Kind == jobs.KindFeatureBuild || j.CreatedAt.Before(start) || q.Repository != "" && !strings.EqualFold(j.Repository, q.Repository) || q.Agent != "" && jobAgents[j.Backend] != q.Agent {
 			continue
 		}
 		switch {

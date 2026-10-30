@@ -3,6 +3,7 @@
 package discovery
 
 import (
+	"cmp"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -13,6 +14,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -28,10 +30,17 @@ type PullRequest struct {
 	// HeadRef is the head branch's name, which links a local session on that
 	// branch to the pull request. It is empty in a snapshot cached before it
 	// was kept, until the next poll.
-	HeadRef               string `json:"head_ref"`
-	Title                 string `json:"title"`
-	URL                   string `json:"url"`
-	Author                string `json:"author"`
+	HeadRef string `json:"head_ref"`
+	// BaseRef is the base branch's name; a pull request whose base is
+	// another open pull request's head branch is stacked on it. Empty in a
+	// snapshot cached before it was kept, until the next poll.
+	BaseRef string `json:"base_ref"`
+	Title   string `json:"title"`
+	URL     string `json:"url"`
+	Author  string `json:"author"`
+	// AuthorBot is true for a GitHub App or other bot author. Snapshots cached
+	// before it existed decode as false.
+	AuthorBot             bool   `json:"author_bot"`
 	State                 string `json:"state"`
 	Draft                 bool   `json:"draft"`
 	Fork                  bool   `json:"fork"`
@@ -55,6 +64,10 @@ type PullRequest struct {
 	Behind           bool `json:"behind"`
 	Unresolved       *int `json:"unresolved"`
 	UnresolvedCapped bool `json:"unresolved_capped"`
+	// UpdatedAt is GitHub's last update of the pull request: a push, an edit,
+	// a review or a comment. The background refresh re-reads a saved review's
+	// evidence when it is newer than the last read.
+	UpdatedAt time.Time `json:"updated_at,omitzero"`
 }
 
 // Observation contains only safe current GitHub metadata, never description
@@ -88,6 +101,9 @@ type Snapshot struct {
 	NextPoll     time.Time     `json:"next_poll"`
 	Rate         RateLimit     `json:"rate"`
 	Error        string        `json:"error,omitempty"`
+	// Settling: this poll found a new head, or GitHub still works out a
+	// mergeability since one, so NextPoll comes after settleInterval.
+	Settling bool `json:"settling,omitempty"`
 }
 
 type cachedResponse struct {
@@ -104,12 +120,24 @@ type diskCache struct {
 	Interval    time.Duration
 	// Fingerprint is the last complete poll's, which Probe compares with.
 	Fingerprint fingerprint
+	// Settling counts the quick polls since one found a new head (settle).
+	Settling int `json:",omitempty"`
 }
 
+// After a push GitHub works out in the background whether the pull request
+// still merges cleanly, and a poll right after it can read the old answer or
+// none. A poll that finds a new head, or a new pull request, so polls again
+// after settleInterval, as do up to maxSettles more while GitHub still
+// reports a mergeability it has not worked out. Then the usual backoff goes on.
+const (
+	settleInterval = 15 * time.Second
+	maxSettles     = 3
+)
+
 // cacheFormat changes when the minimal responses keep more fields: 1 added
-// the pull requests' head branch. A 304 answer reuses the stored body, which
-// would otherwise never gain the new fields.
-const cacheFormat = 1
+// the pull requests' head branch, 2 their base branch. A 304 answer reuses
+// the stored body, which would otherwise never gain the new fields.
+const cacheFormat = 2
 
 // Budget files are shared by service instances, alongside repository caches.
 // Serialize in-process polls so a newly exhausted budget is visible before the
@@ -252,6 +280,11 @@ type poll struct {
 	now       time.Time
 	unchanged bool
 	minimum   time.Duration
+	// server is the polling interval GitHub asked for, if any.
+	server time.Duration
+	// moved: a pull request has a head the last poll did not see. unknown: a
+	// non-draft one has a mergeability GitHub has not worked out yet.
+	moved, unknown bool
 	// fingerprint is the open pull requests' when all pages were read.
 	fingerprint fingerprint
 }
@@ -275,6 +308,7 @@ func (p *poll) get(ctx context.Context, path string, into any) error {
 	}
 	if seconds, err := strconv.Atoi(headers.Get("X-Poll-Interval")); err == nil && seconds > 0 {
 		p.minimum = max(p.minimum, time.Duration(seconds)*time.Second)
+		p.server = max(p.server, time.Duration(seconds)*time.Second)
 	}
 	if status == 429 || status == 403 && (headers.Get("X-RateLimit-Remaining") == "0" || headers.Get("Retry-After") != "") {
 		resume := p.now.Add(time.Minute)
@@ -319,6 +353,8 @@ func maxTime(a, b time.Time) time.Time {
 
 type actor struct {
 	Login string `json:"login"`
+	// Typename is GraphQL's __typename ("User", "Bot", ...); the REST shape has none.
+	Typename string `json:"__typename,omitempty"`
 }
 type team struct {
 	ID int64 `json:"id"`
@@ -337,6 +373,7 @@ type apiPR struct {
 		} `json:"repo"`
 	} `json:"head"`
 	Base struct {
+		Ref  string `json:"ref"`
 		Repo struct {
 			ID       int64  `json:"id"`
 			FullName string `json:"full_name"`
@@ -449,6 +486,19 @@ func (s *Service) poll(ctx context.Context, repository github.Repository, force 
 			interval = min(max(cache.Interval, 30*time.Second)*2, 15*time.Minute)
 		}
 		interval = max(interval, p.minimum)
+		switch {
+		case p.moved:
+			p.cache.Settling = 1
+		case p.unknown && p.cache.Settling > 0 && p.cache.Settling <= maxSettles:
+			p.cache.Settling++
+		default:
+			p.cache.Settling = 0
+		}
+		if p.cache.Settling > 0 {
+			// Saved as the interval, so the backoff starts again from it.
+			snapshot.Settling = true
+			interval = max(settleInterval, p.server)
+		}
 		snapshot.Observations = cache.Snapshot.Observations
 		snapshot.FetchedAt = now
 		snapshot.NextPoll = maxTime(now.Add(interval), p.ResetIfExhausted())
@@ -493,6 +543,16 @@ func (p *poll) discover(ctx context.Context, repository github.Repository) (Snap
 		return snapshot, errors.New("GitHub token has no user identity")
 	}
 	snapshot.Viewer = viewer.Login
+	if !p.cache.Snapshot.FetchedAt.IsZero() {
+		heads := map[int]string{}
+		for _, pr := range p.cache.Snapshot.PullRequests {
+			heads[pr.Number] = pr.HeadSHA
+		}
+		for _, row := range prs {
+			p.moved = p.moved || heads[row.Number] != row.HeadRefOid
+			p.unknown = p.unknown || !row.IsDraft && (row.Mergeable == "UNKNOWN" || row.MergeStateStatus == "UNKNOWN")
+		}
+	}
 	prefix := "/repos/" + url.PathEscape(repository.Owner) + "/" + url.PathEscape(repository.Name)
 
 	teams, teamErr := collect[team](ctx, p, "/user/teams")
@@ -509,7 +569,7 @@ func (p *poll) discover(ctx context.Context, repository github.Repository) (Snap
 		if pr.Number <= 0 || pr.Head.SHA == "" {
 			return snapshot, errors.New("incomplete GitHub pull request")
 		}
-		item := PullRequest{Repository: repository.String(), Number: pr.Number, Title: pr.Title, URL: "https://" + repository.Host + "/" + repository.Owner + "/" + repository.Name + "/pull/" + strconv.Itoa(pr.Number), HeadSHA: pr.Head.SHA, HeadRef: pr.Head.Ref, Author: pr.User.Login, State: "OPEN", Draft: pr.Draft, Fork: pr.Head.Repo == nil || pr.Base.Repo.ID == 0 || pr.Head.Repo.ID != pr.Base.Repo.ID || !strings.EqualFold(pr.Head.Repo.FullName, pr.Base.Repo.FullName), AuthoredByMe: strings.EqualFold(pr.User.Login, viewer.Login), TeamMembershipKnown: teamErr == nil}
+		item := PullRequest{Repository: repository.String(), Number: pr.Number, Title: pr.Title, URL: "https://" + repository.Host + "/" + repository.Owner + "/" + repository.Name + "/pull/" + strconv.Itoa(pr.Number), HeadSHA: pr.Head.SHA, HeadRef: pr.Head.Ref, BaseRef: pr.Base.Ref, Author: pr.User.Login, AuthorBot: pr.User.Typename == "Bot", State: "OPEN", Draft: pr.Draft, Fork: pr.Head.Repo == nil || pr.Base.Repo.ID == 0 || pr.Head.Repo.ID != pr.Base.Repo.ID || !strings.EqualFold(pr.Head.Repo.FullName, pr.Base.Repo.FullName), AuthoredByMe: strings.EqualFold(pr.User.Login, viewer.Login), TeamMembershipKnown: teamErr == nil}
 		for _, user := range pr.RequestedReviewers {
 			if strings.EqualFold(user.Login, viewer.Login) {
 				item.ReviewRequestedFromMe = true
@@ -551,6 +611,7 @@ func (p *poll) discover(ctx context.Context, repository github.Repository) (Snap
 		item.ViewerCanPush = canPush
 		item.Review, item.Checks, item.Merge, item.Unresolved, item.UnresolvedCapped = row.states()
 		item.Behind = row.behind()
+		item.UpdatedAt = row.UpdatedAt
 		snapshot.PullRequests = append(snapshot.PullRequests, item)
 	}
 	return snapshot, nil
@@ -558,6 +619,8 @@ func (p *poll) discover(ctx context.Context, repository github.Repository) (Snap
 
 // Observe retains fresh free metadata for open and saved historical PRs. A
 // separate service instance still treats the disk cache as stale on startup.
+// An observation older than the one kept is dropped: a read under way when
+// the app merged the pull request (Merged) does not undo it.
 func (s *Service) Observe(ctx context.Context, repository github.Repository, value Observation) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -578,12 +641,84 @@ func (s *Service) Observe(ctx context.Context, repository github.Repository, val
 	}
 	for i, old := range cache.Snapshot.Observations {
 		if old.Number == value.Number {
+			if old.FetchedAt.After(value.FetchedAt) {
+				return nil
+			}
 			cache.Snapshot.Observations[i] = value
 			return save(path, cache)
 		}
 	}
 	cache.Snapshot.Observations = append(cache.Snapshot.Observations, value)
 	return save(path, cache)
+}
+
+// Merged records that the app just merged the pull request at head: GitHub
+// accepted the merge, so it leaves the open pull requests and is observed
+// merged without another read. Its title and draft state are the cached ones.
+func (s *Service) Merged(ctx context.Context, repository github.Repository, number int, head string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	reader, err := s.client.REST(ctx, repository)
+	if err != nil {
+		return err
+	}
+	path, err := s.path(reader.CacheIdentity(), repository.String())
+	if err != nil {
+		return err
+	}
+	cache, err := load(path)
+	if err != nil {
+		return err
+	}
+	observation := Observation{Number: number, HeadSHA: head, State: "MERGED", FetchedAt: s.now()}
+	for _, pr := range cache.Snapshot.PullRequests {
+		if pr.Number == number {
+			observation.Title = pr.Title
+			observation.Checks = pr.Checks
+		}
+	}
+	cache.Snapshot.PullRequests = slices.DeleteFunc(cache.Snapshot.PullRequests, func(pr PullRequest) bool { return pr.Number == number })
+	for i, old := range cache.Snapshot.Observations {
+		if old.Number == number {
+			observation.Title = cmp.Or(observation.Title, old.Title)
+			if old.HeadSHA == head {
+				observation.Checks = cmp.Or(observation.Checks, old.Checks)
+			}
+			cache.Snapshot.Observations[i] = observation
+			return save(path, cache)
+		}
+	}
+	cache.Snapshot.Observations = append(cache.Snapshot.Observations, observation)
+	return save(path, cache)
+}
+
+// Unresolved records the count of an open pull request's unresolved review
+// threads that the app just read from GitHub, ahead of the next poll: GitHub
+// reports no update to a pull request when a thread is resolved, so a probe
+// cannot see it. It reports whether the count changed.
+func (s *Service) Unresolved(ctx context.Context, repository github.Repository, number, count int) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	reader, err := s.client.REST(ctx, repository)
+	if err != nil {
+		return false, err
+	}
+	path, err := s.path(reader.CacheIdentity(), repository.String())
+	if err != nil {
+		return false, err
+	}
+	cache, err := load(path)
+	if err != nil {
+		return false, err
+	}
+	for i, pr := range cache.Snapshot.PullRequests {
+		if pr.Number != number || pr.UnresolvedCapped || pr.Unresolved == nil || *pr.Unresolved == count {
+			continue
+		}
+		cache.Snapshot.PullRequests[i].Unresolved = &count
+		return true, save(path, cache)
+	}
+	return false, nil
 }
 
 func (s *Service) isValidated(path string) bool {

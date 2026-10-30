@@ -8,12 +8,14 @@ import {
   SessionsIcon,
   SettingsIcon,
   SparkleIcon,
+  TimelineIcon,
 } from "@baum/viewer/components/icons";
 import { appURL } from "./api";
 
 export type Page =
   | "inbox"
   | "pulls"
+  | "timeline"
   | "sessions"
   | "analytics"
   | "jobs"
@@ -21,7 +23,7 @@ export type Page =
   | "settings";
 
 /** The sidebar's pages in its order, which is also the order of their keys
- *  (⌘1 to ⌘7 on a Mac, Ctrl+1 to Ctrl+7 elsewhere) and of the Go to list.
+ *  (⌘1 to ⌘8 on a Mac, Ctrl+1 to Ctrl+8 elsewhere) and of the Go to list.
  *  Jobs and settings are looked at now and then, so they sit at the foot. */
 export const PAGES: {
   page: Page;
@@ -36,6 +38,14 @@ export const PAGES: {
     label: "Pull requests",
     href: () => appURL("?page=pulls"),
     icon: PullRequestIcon,
+  },
+  // The Timeline opens on human decisions, as the hosted rail's does; the
+  // address alone is every decision, so clearing the filters stays cleared.
+  {
+    page: "timeline",
+    label: "Timeline",
+    href: () => appURL("?page=timeline&who=human"),
+    icon: TimelineIcon,
   },
   {
     page: "sessions",

@@ -605,6 +605,17 @@ pub struct ReviewSettings {
     model: String,
     automatic: bool,
     pull_requests: String,
+    /// The decision capture model, empty for the harness's default.
+    #[serde(default)]
+    decisions_model: String,
+    /// The harness and model decision capture uses (empty when unknown),
+    /// and whether it ignores `decisions_model`; read only, never saved.
+    #[serde(default)]
+    decisions_backend: String,
+    #[serde(default)]
+    decisions_effective_model: String,
+    #[serde(default)]
+    decisions_model_ignored: bool,
 }
 
 #[tauri::command]
@@ -639,6 +650,7 @@ pub async fn save_review_settings(
             format!("--model={}", settings.model),
             format!("--automatic={}", settings.automatic),
             format!("--pull-requests={}", settings.pull_requests),
+            format!("--decisions-model={}", settings.decisions_model),
         ];
         let mut command = vec!["internal", "reviews", "set"];
         command.extend(args.iter().map(String::as_str));

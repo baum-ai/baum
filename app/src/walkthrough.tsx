@@ -128,7 +128,8 @@ export function Walkthrough({
    *  behaviour. Leaving a chapter counts all of it as looked at. */
   const open = (next: number, at?: number) => {
     next = Math.min(last, next);
-    if (chapter && next !== page) markSeen(...chapter.stops.map((index) => tour.stops[index]!));
+    if (mode === "tour" && chapter && next !== page)
+      markSeen(...chapter.stops.map((index) => tour.stops[index]!));
     if (next < 1) {
       setEditing(null);
       return setMode("landing");

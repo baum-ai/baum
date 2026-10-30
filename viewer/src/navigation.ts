@@ -49,8 +49,13 @@ export type UrlState = {
   search: URLSearchParams;
   /** Writes new search parameters as a navigation, built from the latest
    *  ones written rather than the ones this render saw, so two writes in
-   *  quick succession do not drop each other's parameters. */
-  update: (update: SearchUpdate, options?: { preventScrollReset?: boolean }) => void;
+   *  quick succession do not drop each other's parameters. `replace` asks
+   *  for the write to take the current history entry's place, where the host
+   *  can. */
+  update: (
+    update: SearchUpdate,
+    options?: { preventScrollReset?: boolean; replace?: boolean },
+  ) => void;
 };
 
 const UrlStateContext = createContext<UrlState | null>(null);

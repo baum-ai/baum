@@ -4,6 +4,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { Inbox } from "./inbox";
 import { MergeDialog, type MergeOptions } from "./merge";
 import type { Entry } from "./api";
+import { forgetLastRows } from "./shortcuts";
 
 const entry = (number: number, merge: Entry["merge"] = "ready"): Entry => ({
   pull_request: {
@@ -81,6 +82,7 @@ afterEach(async () => {
   await act(async () => root.unmount());
   node.remove();
   vi.unstubAllGlobals();
+  forgetLastRows();
 });
 const button = (text: string) =>
   Array.from(node.querySelectorAll("button")).find((b) => b.textContent?.includes(text))!;
