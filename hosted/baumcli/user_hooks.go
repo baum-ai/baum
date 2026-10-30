@@ -45,7 +45,7 @@ Without --agent, uses ` + defaults + `.`, Args: cobra.NoArgs,
 			if len(agents) == 0 && action == "update" {
 				agents = updatableUserHookAgents(cmd.Context())
 				if len(agents) == 0 {
-					return errors.New("no coding agent has baum@baum installed and enabled; run `baum hooks install --user` first")
+					return errors.New("no coding agent has baum@baum installed and enabled; install or enable it with `baum hooks install --user` first")
 				}
 			}
 			if len(agents) == 0 {

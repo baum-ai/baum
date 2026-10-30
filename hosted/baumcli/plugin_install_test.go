@@ -13,10 +13,13 @@ import (
 func stubPluginAgent(t *testing.T, dir, agent string) string {
 	t.Helper()
 	binary := "claude"
+	// Codex has no update command: it updates by adding the plugin again.
+	update := "echo 1.2.0 > '%s'"
 	empty := "[]"
 	installed := `[{"id":"baum@baum","scope":"user","version":"1.0.0","enabled":true}]`
 	if agent == "codex" {
 		binary = "codex"
+		update = "exit 2"
 		empty = `{"installed":[],"available":[]}`
 		installed = `{"installed":[{"pluginId":"baum@baum","installed":true,"enabled":true,"version":"1.0.0"}],"available":[]}`
 	}
@@ -24,7 +27,7 @@ func stubPluginAgent(t *testing.T, dir, agent string) string {
 	log := state + ".log"
 	// An update records the newer version the list then reports.
 	installed = strings.Replace(installed, "1.0.0", `'"$(if [ -s '`+state+`' ]; then cat '`+state+`'; else echo 1.0.0; fi)"'`, 1)
-	script := "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '" + log + "'\ncase \"$1 $2\" in\n'plugin marketplace') printf '%s\\n' '{\"marketplaces\":[{\"name\":\"baum\"}]}' ;;\n'plugin list') if [ -f '" + state + "' ]; then printf '%s\\n' '" + installed + "'; else printf '%s\\n' '" + empty + "'; fi ;;\n'plugin install') : > '" + state + "' ;;\n'plugin add') if [ -f '" + state + "' ]; then echo 1.2.0 > '" + state + "'; else : > '" + state + "'; fi ;;\n'plugin update') echo 1.2.0 > '" + state + "' ;;\n'plugin uninstall'|'plugin remove') rm -f '" + state + "' ;;\n*) exit 2 ;;\nesac\n"
+	script := "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '" + log + "'\ncase \"$1 $2\" in\n'plugin marketplace') printf '%s\\n' '{\"marketplaces\":[{\"name\":\"baum\"}]}' ;;\n'plugin list') if [ -f '" + state + "' ]; then printf '%s\\n' '" + installed + "'; else printf '%s\\n' '" + empty + "'; fi ;;\n'plugin install') : > '" + state + "' ;;\n'plugin add') if [ -f '" + state + "' ]; then echo 1.2.0 > '" + state + "'; else : > '" + state + "'; fi ;;\n'plugin update') " + strings.ReplaceAll(update, "%s", state) + " ;;\n'plugin uninstall'|'plugin remove') rm -f '" + state + "' ;;\n*) exit 2 ;;\nesac\n"
 	writeExecutable(t, filepath.Join(dir, binary), script)
 	return log
 }
