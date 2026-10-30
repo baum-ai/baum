@@ -57,7 +57,7 @@ const WALKTHROUGH_SHORTCUTS: Shortcut[] = [
   { keys: ["ArrowLeft"], label: "Previous chapter", short: "chapter" },
   { keys: ["o"], label: "Show the behaviour's code", short: "code" },
   { keys: ["c"], label: "Comment on the behaviour", short: "comment" },
-  { keys: ["v"], label: "Open the full review" },
+  { keys: ["v"], label: "Open the full review", short: "full review" },
   { keys: ["a"], label: "Ask the review's agent a question", short: "ask" },
 ];
 /** The keys of every other list (Sessions, Jobs, Repositories), which

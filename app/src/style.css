@@ -2476,8 +2476,8 @@ a.local-session-pr:hover {
   font-weight: 500;
 }
 /* A card with a transcript opens its peek and reply on a click, and its
-   transcript by its link: the link reads as the text it holds, and the card
-   answers the pointer. */
+   transcript by its link: the link reads as the text it holds, and only such
+   a card answers the pointer. */
 .local-feed-card:has(.local-feed-open) {
   cursor: pointer;
 }
