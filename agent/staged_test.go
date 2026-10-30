@@ -269,7 +269,7 @@ func TestStagedReviewWritesTheStages(t *testing.T) {
 func TestStagedReviewRunsDetailsAndContextConcurrently(t *testing.T) {
 	var outlineDone atomic.Bool
 	started := map[string]chan struct{}{StageDetails: make(chan struct{}), StageContext: make(chan struct{})}
-	generator, run, _ := stagedFixture(t, nil, func(stage string, request Request, n int) (Result, error, bool) {
+	generator, run, backend := stagedFixture(t, nil, func(stage string, request Request, n int) (Result, error, bool) {
 		if stage == StageOutline {
 			defer outlineDone.Store(true)
 			return Result{}, nil, false
@@ -289,8 +289,40 @@ func TestStagedReviewRunsDetailsAndContextConcurrently(t *testing.T) {
 		}
 		return Result{}, nil, false
 	})
+	generator.Backend = concurrentBackend{backend}
 	if _, _, err := generator.StagedReview(context.Background(), run); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// concurrentBackend is a stub that may run calls over one run directory at
+// once.
+type concurrentBackend struct{ *stubBackend }
+
+func (concurrentBackend) ConcurrentCalls() bool { return true }
+
+// A backend that does not say its calls may share the run directory runs
+// one stage at a time: the details, then the context.
+func TestStagedReviewRunsStagesInTurnOnOtherBackends(t *testing.T) {
+	var running atomic.Int32
+	var order []string
+	var mu sync.Mutex
+	generator, run, _ := stagedFixture(t, nil, func(stage string, request Request, n int) (Result, error, bool) {
+		if running.Add(1) > 1 {
+			t.Errorf("%s ran beside another stage", stage)
+		}
+		defer running.Add(-1)
+		mu.Lock()
+		order = append(order, stage)
+		mu.Unlock()
+		time.Sleep(20 * time.Millisecond)
+		return Result{}, nil, false
+	})
+	if _, _, err := generator.StagedReview(context.Background(), run); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(order, []string{StageOutline, StageDetails, StageContext}) {
+		t.Fatalf("order %v", order)
 	}
 }
 
@@ -636,6 +668,114 @@ func TestStagedReviewMasksSecretsInIdentifiers(t *testing.T) {
 		t.Fatal("the document keeps the secret")
 	}
 	if kept, rejected := RejectSecrets(&outcome.Outcome, document, outcome.IdentifierRedaction.MaskedClosed); !rejected || kept != nil {
+		t.Fatal("the host would keep the run")
+	}
+}
+
+// A regeneration that reuses some sections succeeds even when every section
+// sent to the model fails: the reused ones keep their details.
+func TestStagedReviewSucceedsWithOnlyReusedSections(t *testing.T) {
+	b := stagedFixtureBundle()
+	var content map[string]any
+	if err := json.Unmarshal([]byte(stagedSectionDetails("sec_parser", "Previously reviewed parser.")), &content); err != nil {
+		t.Fatal(err)
+	}
+	content["title"], content["kind"], content["hunks"] = "Section sec_parser", "logical", []string{testHunk}
+	encoded, err := json.Marshal(content)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b.Previous = &bundle.PreviousVersion{Version: 1, Sections: []bundle.PreviousSection{{ID: "sec_parser", Title: "Section sec_parser", Kind: "logical", HunkContentHashes: []string{testHunk}, Content: encoded}}}
+	generator, run, _ := stagedFixture(t, b, func(stage string, request Request, n int) (Result, error, bool) {
+		if stage != StageDetails {
+			return Result{}, nil, false
+		}
+		return Result{Calls: 1}, errors.New("unavailable"), true
+	})
+	outcome, document, err := generator.StagedReview(context.Background(), run)
+	if err != nil || outcome.Reason != "" || outcome.Details.Reason != ReasonProviderUnavailable {
+		t.Fatalf("%+v %v", outcome.Outcome, err)
+	}
+	if !slices.Equal(outcome.Details.Reused, []string{"sec_parser"}) || !slices.Equal(outcome.Details.Failed, []string{"sec_tests"}) {
+		t.Fatalf("details %+v", outcome.Details)
+	}
+	sections := stagedSections(t, document)
+	if sections["sec_tests"]["details"] != "failed" || sections["sec_parser"]["details"] != nil {
+		t.Fatalf("sections %v", sections)
+	}
+	completesStaged(t, run, document)
+}
+
+// Every stage outcome is masked as the run's is: a secret the context stage
+// wrote into its rejected reply does not survive RedactStagedOutput.
+func TestRedactStagedOutputMasksEveryStage(t *testing.T) {
+	generator, run, _ := stagedFixture(t, nil, func(stage string, request Request, n int) (Result, error, bool) {
+		if stage != StageContext {
+			return Result{}, nil, false
+		}
+		return stagedResult(`{"context":{"related":{"text":"Calls the API with `+identifierSecret+`.","refs":[]}}}`, ""), nil, true
+	})
+	outcome, document, err := generator.StagedReview(context.Background(), run)
+	if err != nil || outcome.Context.Reason != ReasonValidationRejected {
+		t.Fatalf("%v %q", err, outcome.Context.Reason)
+	}
+	if !strings.Contains(string(outcome.Context.RejectedDocument), identifierSecret) {
+		t.Fatal("the fixture's secret did not reach the stage outcome")
+	}
+	redactor, err := bundle.NewRedactor()
+	if err != nil {
+		t.Fatal(err)
+	}
+	outcome.Details.Reason = "failed with " + identifierSecret
+	redacted, _, err := RedactStagedOutput(context.Background(), generator.Validator, redactor, document, run.Bundle, nil, &outcome)
+	if err != nil || len(redacted) == 0 {
+		t.Fatal(err)
+	}
+	for name, text := range map[string]string{"rejected context": string(outcome.Context.RejectedDocument), "details reason": outcome.Details.Reason, "context findings": outcome.Context.Findings} {
+		if strings.Contains(text, identifierSecret) {
+			t.Errorf("the %s keeps the secret", name)
+		}
+	}
+	if outcome.Context.OutputMaskedSpans == 0 || outcome.Context.IdentifierRedaction == nil {
+		t.Fatalf("context outcome: %+v", outcome.Context.Outcome)
+	}
+}
+
+// The identifier pass runs on every context reply, one without a context
+// key included, before it is written as a rejected reply.
+func TestStagedReviewMasksEveryContextReply(t *testing.T) {
+	generator, run, _ := stagedFixture(t, nil, func(stage string, request Request, n int) (Result, error, bool) {
+		if stage != StageContext {
+			return Result{}, nil, false
+		}
+		return stagedResult(`{"area":{"text":"Misplaced.","refs":[]}}`, ""), nil, true
+	})
+	outcome, _, err := generator.StagedReview(context.Background(), run)
+	if err != nil || outcome.Context.Reason != ReasonValidationRejected || outcome.Context.IdentifierRedaction == nil {
+		t.Fatalf("%v %+v", err, outcome.Context.Outcome)
+	}
+	if _, err := os.Stat(filepath.Join(run.Directory, "rejected-context-1.json")); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// A secret masked in a closed value of the outline stops the later stages:
+// the host rejects the run whatever they would write.
+func TestStagedReviewStopsAfterASecretInTheOutline(t *testing.T) {
+	generator, run, backend := stagedFixture(t, nil, func(stage string, request Request, n int) (Result, error, bool) {
+		if stage != StageOutline {
+			return Result{}, nil, false
+		}
+		return stagedResult(strings.Replace(string(stagedOutlineDocument()), `"id":"sec_tests"`, `"id":"sec_`+identifierSecret+`"`, 1), ""), nil, true
+	})
+	outcome, document, err := generator.StagedReview(context.Background(), run)
+	if err != nil || len(backend.calls) != 1 || outcome.IdentifierRedaction.MaskedClosed == 0 {
+		t.Fatalf("%v, %d calls, %+v", err, len(backend.calls), outcome.IdentifierRedaction)
+	}
+	if strings.Contains(strings.ToLower(string(document)), identifierSecret) || strings.Contains(string(document), `"pending"`) {
+		t.Fatalf("document: %s", document)
+	}
+	if _, rejected := RejectSecrets(&outcome.Outcome, document, outcome.IdentifierRedaction.MaskedClosed); !rejected {
 		t.Fatal("the host would keep the run")
 	}
 }

@@ -94,15 +94,16 @@ type StageOutcome struct {
 //     findings. A section still invalid after the repairs, or not written
 //     when the stage ends early, has failed details.
 //  3. The codebase context (summary.context), at the same time as the
-//     details. A run whose context fails succeeds without one.
+//     details when the backend may run calls at once (ConcurrentCaller),
+//     else after them. A run whose context fails succeeds without one.
 //
 // The returned document is the assembled authored document with its reading
 // time (review.ReviewMinutes), prepared with review's staged contract: a host
 // completes it with CompleteStaged, as it completes Generate's document with
 // CompleteWithPrompt. It never holds pending details. The run fails, as
-// Generate does, when the outline fails, when the details stage writes no
-// section it was asked for, when ctx is done, or when the assembled
-// document is rejected. Budgets are split between the stages (see
+// Generate does, when the outline fails, when no section ends with its
+// details (none written and none reused), when ctx is done, or when the
+// assembled document is rejected. Budgets are split between the stages (see
 // stageBudgets); every call counts against its stage's share, and the shares
 // never add up to more than the run's budgets.
 func (g *Generator) StagedReview(ctx context.Context, run StagedRun) (outcome StagedOutcome, document []byte, err error) {
@@ -127,19 +128,31 @@ func (g *Generator) StagedReview(ctx context.Context, run StagedRun) (outcome St
 	// A secret masked in a closed value rejects the run whatever the later
 	// stages write (RejectSecrets), so they are not run.
 	if s.closed() == 0 {
-		var wg sync.WaitGroup
 		var detailsErr error
-		if len(toWrite) > 0 {
-			wg.Go(func() { detailsErr = s.detailsStage(ctx, toWrite, detailsBudgets) })
+		details := func() {
+			if len(toWrite) > 0 {
+				detailsErr = s.detailsStage(ctx, toWrite, detailsBudgets)
+			}
 		}
-		wg.Go(func() { s.contextStage(ctx, contextBudgets) })
-		wg.Wait()
+		// No section has its details: the run fails as a one-pass run would.
+		empty := func() bool { return len(outcome.Details.Written)+len(outcome.Details.Reused) == 0 }
+		if concurrentCalls(g.Backend) {
+			var wg sync.WaitGroup
+			wg.Go(details)
+			wg.Go(func() { s.contextStage(ctx, contextBudgets) })
+			wg.Wait()
+		} else {
+			// A backend that shares per-call state in the run directory runs
+			// one stage at a time, the details first.
+			details()
+			if ctx.Err() == nil && !empty() {
+				s.contextStage(ctx, contextBudgets)
+			}
+		}
 		if err := ctx.Err(); err != nil {
 			return outcome, nil, err
 		}
-		if len(toWrite) > 0 && len(outcome.Details.Written) == 0 {
-			// Nothing the details stage was asked for was written: the run
-			// fails as a one-pass run would.
+		if empty() {
 			if detailsErr != nil {
 				return outcome, nil, detailsErr
 			}
@@ -560,11 +573,18 @@ func (s *stagedReview) contextStage(ctx context.Context, budgets Budgets) {
 	}
 	task.Accept = func(ctx context.Context, pass TaskPass, reply []byte, outcome *Outcome) (Verdict, error) {
 		// Masked as a document's summary, so the identifier pass reads it
-		// beside its contract.
+		// beside its contract; any other reply is masked as it is, before
+		// anything (a rejected file, a repair prompt) is built from it.
 		var written struct {
 			Context json.RawMessage `json:"context"`
 		}
-		if json.Unmarshal(reply, &written) == nil && len(written.Context) > 0 {
+		if json.Unmarshal(reply, &written) != nil || len(written.Context) == 0 {
+			masked, err := s.mask(ctx, reply, outcome)
+			if err != nil {
+				return Verdict{}, err
+			}
+			reply = masked
+		} else {
 			masked, err := s.mask(ctx, []byte(`{"summary":{"context":`+string(written.Context)+`}}`), outcome)
 			if err != nil {
 				return Verdict{}, err
@@ -582,7 +602,7 @@ func (s *stagedReview) contextStage(ctx context.Context, budgets Budgets) {
 		prepared, findings := s.g.Validator.PrepareContext(s.parts.Outline, reply, s.run.Bundle, s.run.Directory)
 		s.log(ctx, StageContext, pass.Number, findings, prepared)
 		if findings != "" {
-			return Verdict{Document: reply, Findings: findings, Stop: outcome.IdentifierRedaction != nil && outcome.IdentifierRedaction.MaskedClosed > 0}, nil
+			return Verdict{Document: reply, Findings: findings, Stop: outcome.IdentifierRedaction.MaskedClosed > 0}, nil
 		}
 		accepted = prepared
 		return Verdict{Document: []byte(`{"context":` + string(prepared) + `}`)}, nil
@@ -600,6 +620,51 @@ func (s *stagedReview) contextStage(ctx context.Context, budgets Budgets) {
 	}
 	s.parts.Context = accepted
 	s.report(StagedProgress{Stage: StageContext})
+}
+
+// RedactStagedOutput is RedactOutput for a staged review: it masks the
+// document and the run's outcome as RedactOutput does, then each stage's
+// outcome the same way (its findings, its rejected part, its model and
+// usage strings, its diagnostics), and each stage's reason. A host applies
+// it, instead of RedactOutput, to every staged outcome before it stores or
+// shows any of it. closed counts the closed values masked in the document,
+// the run's and the stages' outcomes and the identifier pass, which every
+// stage shares and is counted once: a run with any must be rejected
+// (RejectSecrets). On failure every outcome's strings are dropped.
+func RedactStagedOutput(ctx context.Context, validator *review.DocumentValidator, redactor *bundle.Redactor, document []byte, b *bundle.Bundle, checkout map[string]bool, outcome *StagedOutcome) (redacted []byte, closed int, err error) {
+	stages := []*StageOutcome{&outcome.Outline, &outcome.Details, &outcome.Context}
+	defer func() {
+		if err != nil {
+			redacted, closed = nil, 0
+			for _, stage := range stages {
+				stage.Reason, stage.Findings, stage.Model, stage.RejectedDocument, stage.Diagnostics = "", "", "", nil, nil
+				stage.Accounting.ClearStrings()
+				stage.Usage.Speed = nil
+			}
+		}
+	}()
+	if redacted, closed, err = RedactOutput(ctx, validator, redactor, document, b, checkout, &outcome.Outcome); err != nil {
+		return nil, 0, err
+	}
+	reasons, err := review.NewOutputRedactor(nil, redactor, b, checkout)
+	if err != nil {
+		return nil, 0, err
+	}
+	for _, stage := range stages {
+		// The identifier pass is the run's, already counted above.
+		identifiers := stage.IdentifierRedaction
+		stage.IdentifierRedaction = nil
+		_, stageClosed, stageErr := RedactOutput(ctx, validator, redactor, nil, b, checkout, &stage.Outcome)
+		stage.IdentifierRedaction = identifiers
+		if stageErr != nil {
+			return nil, 0, stageErr
+		}
+		closed = saturatingSum(closed, stageClosed)
+		if stage.Reason, err = reasons.Text(ctx, stage.Reason); err != nil {
+			return nil, 0, err
+		}
+	}
+	return redacted, closed, nil
 }
 
 // stageReason is the reason a stage failed with an error: a provider's

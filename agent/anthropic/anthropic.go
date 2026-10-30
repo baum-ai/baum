@@ -107,6 +107,11 @@ type Backend struct {
 
 func (*Backend) Name() string { return agent.BackendAnthropic }
 
+// ConcurrentCalls reports that calls may run over one run directory at once
+// (agent.ConcurrentCaller): a call is HTTP requests and read-only tools, and
+// writes nothing.
+func (*Backend) ConcurrentCalls() bool { return true }
+
 // ErrNoKey is Check's failure for a Backend without an API key.
 var ErrNoKey = errors.New("ANTHROPIC_API_KEY is not set; export your Anthropic API key to use the anthropic backend")
 

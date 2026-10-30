@@ -951,10 +951,27 @@ labelled with its name (`Task.Label`), so its schema and rejected replies
 are `schema-outline.json`, `rejected-details-1.json` and so on, and the
 stage prompts name their own file. Every stage's prompt starts with the
 same prefix (the shared instructions, the bundle and the source excerpts),
-so a provider can cache it, followed by the stage's instructions, the
-accepted outline (for the later stages) and, on a repair, the rejected part
-and its findings; a repair resends the prefix, since a cached prefix costs
-little, and nothing the stage did not write.
+followed by the stage's instructions, the accepted outline (for the later
+stages) and, on a repair, the rejected part and its findings; a repair
+resends the prefix, which its stage's earlier call has cached, and nothing
+the stage did not write. Across stages the prefix probably does not hit the
+provider's cache: each stage's schema (the `StructuredOutput` tool, Claude
+Code's `--json-schema`, Codex's output schema) comes before the prompt in
+what the provider caches, and it differs per stage. The evaluation after
+the daemon wiring measures it; if it matters, the follow-up is one schema
+shared by the stages and a cache breakpoint after the prefix.
+
+The details and the context run at the same time only when the backend
+reports that its calls may share the run directory
+(`agent.ConcurrentCaller`): Claude Code's `User` profile (the schema goes on
+the command line), Codex's `Local` profile (a temporary schema directory per
+call) and the Anthropic API backend (HTTP and read-only tools). Claude
+Code's `Isolated` profile shares one `HOME` and config directory under the
+run directory, Codex's `Container` profile writes the output schema into the
+shared `CODEX_HOME`, and Cursor's per-workspace state is not known to be
+safe, so they run the details first and then the context, which is skipped
+when no section has its details. A host that wraps a backend must forward
+`ConcurrentCalls` for it to apply.
 
 1. **Outline**, first: the overview and each section's `id`, `title`,
    `kind`, `hunks` and `assessment`, with little or no reading of files.
@@ -972,9 +989,10 @@ little, and nothing the stage did not write.
    (`review.PreserveSectionRiskOmissions`). A section still invalid after
    `MaxRepairAttempts`, or never reached because the stage ended early (a
    spent budget, a provider failure), is published with `details: "failed"`
-   and its outline. If the stage writes none of the sections it was asked
-   for, the run fails as a one-pass run would.
-3. **Context**, at the same time as the details: `summary.context`, with
+   and its outline. If no section ends with its details (none written and
+   none reused), the run fails as a one-pass run would; a regeneration that
+   reuses some sections succeeds even if every section sent fails.
+3. **Context**, with or after the details: `summary.context`, with
    the reading the context rules ask for (`review.PrepareContext`). If it
    fails, after its repairs or with any error, the document has no context
    and the run still succeeds.
@@ -984,8 +1002,12 @@ failed ones without details, the context when written, and
 `summary.review_minutes` from `review.ReviewMinutes`, which no model
 writes), checked with `review.PrepareStaged`; it never holds `pending`. A
 host completes it with `CompleteStaged` where it completes `Generate`'s
-document with `CompleteWithPrompt`, after the same `RedactOutput` and
-`RejectSecrets`. One identifier pass masks every stage's replies, so its
+document with `CompleteWithPrompt`, after `RedactStagedOutput` (where it
+calls `RedactOutput`) and `RejectSecrets`: each stage's outcome carries its
+own findings, rejected part, model and diagnostics, and
+`RedactStagedOutput` masks them, and each stage's reason, as `RedactOutput`
+masks the run's. One identifier pass masks every reply of every stage
+before anything is built from it, so its
 counts cover the run; a secret masked in a closed value during the outline
 skips the later stages, since the host rejects the run anyway.
 

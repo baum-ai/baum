@@ -73,6 +73,13 @@ type Backend struct {
 
 func (*Backend) Name() string { return agent.BackendCodex }
 
+// ConcurrentCalls reports whether calls may run over one run directory at
+// once (agent.ConcurrentCaller): the Local profile writes each call's output
+// schema to a temporary directory of its own. The Container profile writes it
+// to CODEX_HOME under the run directory, shared by every call, so it runs
+// them one at a time.
+func (c *Backend) ConcurrentCalls() bool { return c.Profile == Local }
+
 func (c *Backend) Run(ctx context.Context, request agent.Request) (agent.Result, error) {
 	return c.run(ctx, request, false, nil)
 }

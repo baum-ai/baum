@@ -42,10 +42,13 @@ type StagedPrompts interface {
 
 // StagedPrompt is one immutable set of staged review instructions for one
 // backend. Every stage's prompt starts with the same prefix, Shared followed
-// by the input bundle and the source excerpts, so a provider can cache it
-// across the stages; the stage's own instructions (Outline, Details or
-// Context, each ending with the backend's submit text) and what it is given
-// follow. Digest identifies all four texts together.
+// by the input bundle and the source excerpts; the stage's own instructions
+// (Outline, Details or Context, each ending with the backend's submit text)
+// and what it is given follow. Within a stage, its repairs reuse the cached
+// prefix. Across stages a provider probably caches nothing, since each
+// stage's schema (a StructuredOutput tool or --json-schema) comes before the
+// prompt in what it caches; the evaluation measures it. Digest identifies
+// all four texts together.
 type StagedPrompt struct {
 	Version, Digest string
 	Shared          string
