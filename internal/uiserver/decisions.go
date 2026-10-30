@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/baum-ai/baum/internal/config"
 	"github.com/baum-ai/baum/internal/locallink"
 	"github.com/baum-ai/baum/internal/repos"
 	"github.com/baum-ai/baum/internal/store"
@@ -96,16 +97,18 @@ func (a LocalAPI) linkedSessions(cache *documentCache) LinkedSessions {
 }
 
 // decisionSettings are the app's decision capture preferences as the app
-// edits them: a switch and a model (empty is the backend's default).
+// edits them: a switch, the data extraction backend (empty follows the
+// reviews') and model (empty is the backend's default).
 type decisionSettings struct {
 	Enabled bool   `json:"enabled"`
+	Backend string `json:"backend"`
 	Model   string `json:"model"`
 }
 
 // DecisionModel is the backend and decision model capture uses
 // (decisionlog.EffectiveModel), and whether the chosen model is ignored.
 type DecisionModel struct {
-	Backend string `json:"backend"`
+	Backend string `json:"effective_backend"`
 	// Undetermined is a backend whose checks did not answer in time.
 	Undetermined bool   `json:"backend_undetermined"`
 	Model        string `json:"effective_model"`
@@ -141,6 +144,9 @@ func (a LocalAPI) getDecisionSettings(w http.ResponseWriter, r *http.Request) {
 func decisionSettingsOf(p repos.Preferences) decisionSettings {
 	d := p.Decisions
 	out := decisionSettings{Enabled: d.Enabled == nil || *d.Enabled}
+	if d.Backend != nil {
+		out.Backend = string(*d.Backend)
+	}
 	if d.Model != nil {
 		out.Model = *d.Model
 	}
@@ -148,10 +154,12 @@ func decisionSettingsOf(p repos.Preferences) decisionSettings {
 }
 
 // putDecisionSettings serves PUT /api/settings/decisions, which replaces the
-// whole decision capture preferences.
+// whole decision capture preferences, except that a missing backend keeps the
+// saved one, as an app from before the extraction backend sends none.
 func (a LocalAPI) putDecisionSettings(w http.ResponseWriter, r *http.Request) {
 	var input struct {
 		Enabled *bool   `json:"enabled"`
+		Backend *string `json:"backend"`
 		Model   *string `json:"model"`
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, 4<<10)
@@ -164,9 +172,15 @@ func (a LocalAPI) putDecisionSettings(w http.ResponseWriter, r *http.Request) {
 	var invalid error
 	prefs, err := a.Registry.UpdatePreferences(r.Context(), func(p repos.Preferences) repos.Preferences {
 		next := p
-		next.Decisions = repos.DecisionPreferences{}
+		next.Decisions = repos.DecisionPreferences{Backend: p.Decisions.Backend}
 		if !*input.Enabled {
 			next.Decisions.Enabled = new(false)
+		}
+		if input.Backend != nil {
+			next.Decisions.Backend = nil
+			if *input.Backend != "" {
+				next.Decisions.Backend = new(config.Backend(*input.Backend))
+			}
 		}
 		if input.Model != nil && strings.TrimSpace(*input.Model) != "" {
 			next.Decisions.Model = new(strings.TrimSpace(*input.Model))

@@ -497,9 +497,9 @@ func TestThreadFixStopsWhenTheThreadsChange(t *testing.T) {
 }
 
 // A fix agent chosen in the preferences runs the fix with its own harness and
-// model, over the review's backend and a repository's review override; with
-// none chosen the fix follows the reviews.
-func TestPrepareFixUsesTheFixAgentOverRepositoryReviewSettings(t *testing.T) {
+// model, over the review's backend and model; with none chosen the fix
+// follows the reviews.
+func TestPrepareFixUsesTheFixAgentOverTheReviewSettings(t *testing.T) {
 	r := newFixRepositories(t)
 	ctx := context.Background()
 	g := &fakeGitHub{headRepository: "owner/repo", push: true, head: r.head}
@@ -511,10 +511,10 @@ func TestPrepareFixUsesTheFixAgentOverRepositoryReviewSettings(t *testing.T) {
 		CursorAgent: func(string) generate.CheckedBackend { return claude },
 		Anthropic:   func(string) generate.CheckedBackend { return claude },
 	}
-	if _, e := r.registry.AddPatch(ctx, r.clone.Path, func(s repos.Settings) (repos.Settings, error) {
-		backend, model := config.BackendClaude, "repository-model"
-		s.Backend, s.Model = &backend, &model
-		return s, nil
+	if _, e := r.registry.UpdatePreferences(ctx, func(p repos.Preferences) repos.Preferences {
+		backend, model := config.BackendClaude, "review-model"
+		p.Backend, p.Model = &backend, &model
+		return p
 	}); e != nil {
 		t.Fatal(e)
 	}
@@ -526,7 +526,7 @@ func TestPrepareFixUsesTheFixAgentOverRepositoryReviewSettings(t *testing.T) {
 		}
 		return p
 	}
-	if p := prepare(); p.Backend != agent.BackendClaude || p.Model != "repository-model" {
+	if p := prepare(); p.Backend != agent.BackendClaude || p.Model != "review-model" {
 		t.Fatalf("same as reviews: %+v", p)
 	}
 	if _, e := r.registry.UpdatePreferences(ctx, func(p repos.Preferences) repos.Preferences {

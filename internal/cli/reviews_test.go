@@ -66,6 +66,22 @@ func TestReviewsCLI(t *testing.T) {
 	if got := show(); got.DecisionsModel != "" {
 		t.Fatalf("after clearing the decisions model %+v", got)
 	}
+	// Data extraction can run with its own backend, apart from the reviews'.
+	if _, e := run("set", "--decisions-backend=claude"); e != nil {
+		t.Fatal(e)
+	}
+	if got := show(); got.DecisionsChosenBackend != "claude" || got.DecisionsBackend != "claude" || got.DecisionsEffectiveModel != "claude-haiku-5-5" || got.Backend != "codex" {
+		t.Fatalf("after choosing the extraction backend %+v", got)
+	}
+	if _, e := run("set", "--decisions-backend=cursor-agent"); e == nil {
+		t.Fatal("cursor-agent accepted for data extraction")
+	}
+	if _, e := run("set", "--decisions-backend="); e != nil {
+		t.Fatal(e)
+	}
+	if got := show(); got.DecisionsChosenBackend != "" || got.DecisionsBackend != "codex" {
+		t.Fatalf("after following the reviews again %+v", got)
+	}
 	if _, e := run("set", "--pull-requests=all"); e != nil {
 		t.Fatal(e)
 	}

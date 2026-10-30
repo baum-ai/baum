@@ -297,15 +297,11 @@ test("local inbox, reused PR viewer, versions, generation and settings", async (
   await expect(settings.getByRole("combobox", { name: /Automatic reviews/ })).toHaveValue(
     "default",
   );
-  // The repository picks its model with the dropdown the desktop setup uses.
-  await settings
-    .getByRole("combobox", { name: "Model for this repository" })
-    .selectOption("Custom…");
-  await settings.getByRole("textbox", { name: "Custom model" }).fill("claude-sonnet-4-5");
+  // The harnesses and models are global: the repository has none of its own.
+  await expect(settings.getByRole("combobox", { name: /Model/ })).toHaveCount(0);
   await page.screenshot({ path: "test-results/repository-dialog.png", animations: "disabled" });
   await settings.getByRole("button", { name: "Save repository settings" }).click();
   await expect(settings).toBeHidden();
-  await expect(page.getByText(/claude-sonnet-4-5/)).toBeVisible();
   await page.screenshot({ path: "test-results/repositories.png", animations: "disabled" });
   await page.getByRole("link", { name: "Settings", exact: true }).click();
   await expect(page.getByRole("region", { name: "General" })).toBeVisible();
@@ -958,9 +954,14 @@ test("captured decisions show on the PR page, in Settings and in Analytics", asy
   await page.emulateMedia({ colorScheme: "light" });
 
   await openSettings(page, "Reviews");
-  const capture = page.getByRole("region", { name: "Decision capture", exact: true });
-  await expect(capture.getByRole("switch", { name: "Capture decisions" })).toBeChecked();
-  await expect(capture.getByRole("combobox", { name: "Decision log model" })).toBeVisible();
+  const capture = page.getByRole("region", { name: "Data extraction", exact: true });
+  await expect(
+    capture.getByRole("switch", { name: "Extract decisions and features" }),
+  ).toBeChecked();
+  await expect(capture.getByRole("combobox", { name: "Agent that extracts" })).toHaveValue("");
+  await expect(capture.getByRole("combobox", { name: "Model", exact: true })).toBeVisible();
+  await capture.scrollIntoViewIfNeeded();
+  await page.screenshot({ path: "test-results/settings-reviews-extraction.png" });
   for (const scheme of ["light", "dark"] as const) {
     await page.emulateMedia({ colorScheme: scheme });
     await capture.screenshot({ path: `test-results/decisions-settings-${scheme}.png` });

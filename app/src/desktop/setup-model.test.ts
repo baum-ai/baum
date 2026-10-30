@@ -60,4 +60,32 @@ it("shows auto as the harness the daemon resolved, else the screen's guess", () 
   expect(
     shownHarness({ ...auto, backend: "anthropic", decisions_backend: "codex" }, "claude"),
   ).toBe("anthropic");
+  // Data extraction's own harness says nothing about the reviews'.
+  expect(
+    shownHarness(
+      { ...auto, decisions_chosen_backend: "codex", decisions_backend: "codex" },
+      "claude",
+    ),
+  ).toBe("claude");
+});
+
+it("keeps the decision model of an extraction harness Settings chose", () => {
+  const own = {
+    backend: "claude",
+    model: "claude-opus-5-5",
+    automatic: true,
+    pull_requests: "both" as const,
+    decisions_chosen_backend: "codex",
+  };
+  expect(withModel({ ...own, decisions_model: "" }).decisions_model).toBe("gpt-6-luna");
+  expect(storedReviews({ ...own, decisions_model: "gpt-6-luna" })).toEqual({
+    backend: "claude",
+    model: "claude-opus-5-5",
+    automatic: true,
+    pull_requests: "both",
+    decisions_model: "",
+  });
+  expect(storedReviews({ ...own, decisions_model: "gpt-6.1-sol" }).decisions_model).toBe(
+    "gpt-6.1-sol",
+  );
 });

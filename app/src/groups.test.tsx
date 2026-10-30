@@ -81,7 +81,7 @@ const clone: Clone = {
   path: "/work/demo",
   repository: "acme/demo",
   available: true,
-  settings: { automatic: null, backend: null, model: null },
+  settings: { automatic: null },
 };
 
 let root: Root, node: HTMLDivElement;

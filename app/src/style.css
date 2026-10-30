@@ -1850,6 +1850,9 @@ dialog.local-dialog-wide {
   display: grid;
   gap: 1rem;
 }
+.settings-section + .settings-section {
+  margin-top: 2.5rem;
+}
 .settings-section-head {
   display: flex;
   flex-wrap: wrap;

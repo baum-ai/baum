@@ -1951,8 +1951,12 @@ an explicit `true`/`false`. The global preference is a master switch
 (`Settings.AutomaticEnabled`): off disables every repository, `true` included;
 on, only an explicit `false` disables one. The `preferences` table holds the
 global preferences as one JSON row: `automatic` (true until changed), the
-harness and model, `pull_requests` and `agent_env`; a field an older baum
-saved and this one dropped (`cursor_agent_acknowledged`) is ignored on read.
+review harness and model, the fix agent (`fix_backend`, `fix_model`), data
+extraction's (`decisions`: `enabled`, `backend`, `model`), `pull_requests`
+and `agent_env`; a field an older baum saved and this one dropped
+(`cursor_agent_acknowledged`) is ignored on read. The harnesses and models are
+global: a repository's `backend` and `model` an older baum stored are ignored
+on read and dropped on the next write.
 `PRAGMA user_version` 1 marks the schema in which
 `null` exists: `Open` migrates an older file once, in a `BEGIN IMMEDIATE`
 transaction, turning the `automatic: false` every earlier registration stored
@@ -2496,8 +2500,7 @@ fix, or nothing broken is the item's `blocked_reason` (`fork`,
 clicked. The budgets resolve as a review's. The harness and model are the
 preferences' fix agent (`fix_backend` and `fix_model`, Claude Code or Codex,
 set with `PUT /api/automatic` or `baum reviews set --fix-backend`) when one
-is chosen, winning over a repository's review override
-(`Preferences.ResolveFix`), and otherwise the review's. Before running, the executor prepares
+is chosen (`Preferences.ResolveFix`), and otherwise the review's. Before running, the executor prepares
 again and refuses a changed head (`head_changed`) or changed fix inputs, then
 reads the failing checks' output and the last 200 lines of up to four GitHub
 Actions job logs (`RESTReader.Tail`, which follows the signed log redirect
@@ -3579,8 +3582,9 @@ store, symbolic links resolved, the mapped root session the event's), skips
 files over 64 MiB, baum's own generation runs and prompts over 272,000
 estimated tokens, and reuses, extends or replaces the session's head
 extraction as hosted extraction does. Its structured completion goes through
-the review backend's `agent.Completer` (default models `claude-haiku-5-5` and
-`gpt-6-luna`); cursor-agent has none. A model the price list cannot price
+the data extraction backend's `agent.Completer`, the reviews' unless the
+preferences choose another (`preferences.decisions.backend`; default models
+`claude-haiku-5-5` and `gpt-6-luna`); cursor-agent has none. A model the price list cannot price
 runs, reserved at 0, and every call is recorded in a ledger that throttles a session (5
 minutes apart, 10 after a failure, 12 a day unless it ended). The reply is masked before it is parsed; decisions keep
 their IDs across extractions and are marked obsolete, never deleted, when a
@@ -3617,7 +3621,7 @@ read). A first build (`FeatureWorker.Build`) lists a repository's whole
 history once (`FeatureWorker.ListHistory`), reads its paths, seeds a new
 `building` version from a feature taxonomy (`featureseed.go`), running
 feature discovery first when there is none newer than the version
-(`featurediscover.go`: the review backend and model through
+(`featurediscover.go`: the data extraction backend and model through
 `generate.RunTask`, `discover.PublicPrompt`, a head-only checkout of
 `refs/baum/default` and `discover.HistoryDigest`), and places the history
 in the version with the batch prompt (`assign.Public.RenderBatch`), its

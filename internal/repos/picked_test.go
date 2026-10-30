@@ -45,12 +45,6 @@ func TestPickWithoutAClone(t *testing.T) {
 	if e = r.UpdateRepository(ctx, "owner/other", Settings{}); !errors.Is(e, ErrNotFound) {
 		t.Fatalf("unpicked update %v", e)
 	}
-	if e = r.UpdateRepository(ctx, "owner/repo", Settings{Model: new("")}); e == nil {
-		t.Fatal("invalid settings accepted")
-	}
-	if _, e = r.Pick(ctx, "owner/bad", &Settings{Model: new("")}); e == nil {
-		t.Fatal("invalid settings accepted")
-	}
 	if list, _ = r.Repositories(ctx); len(list) != 1 {
 		t.Fatalf("failed pick registered %v", list)
 	}
@@ -71,7 +65,7 @@ func TestPickRejectsInvalidNames(t *testing.T) {
 func TestRemoveKeepsPickedAndUnpickRemovesClones(t *testing.T) {
 	ctx := context.Background()
 	r := registry(t)
-	c, e := r.Add(ctx, clone(t, "https://github.com/owner/repo"), &Settings{Model: new("custom")})
+	c, e := r.Add(ctx, clone(t, "https://github.com/owner/repo"), &Settings{Automatic: new(false)})
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -112,7 +106,7 @@ func TestRemoveKeepsPickedAndUnpickRemovesClones(t *testing.T) {
 	}
 	// The settings survive a re-pick.
 	v, e := r.Pick(ctx, "owner/repo", nil)
-	if e != nil || v.Settings.Model == nil || *v.Settings.Model != "custom" {
+	if e != nil || v.Settings.Automatic == nil || *v.Settings.Automatic {
 		t.Fatalf("%#v %v", v, e)
 	}
 }
@@ -128,7 +122,7 @@ func TestRepositoriesHTTP(t *testing.T) {
 	if code, body := request(http.MethodGet, "/api/repositories", ""); code != 200 || body != "[]" {
 		t.Fatal(code, body)
 	}
-	for _, body := range []string{`{"repository":"a"}`, `{"repository":"a/b/c"}`, `{"repository":""}`, `{}`, `{"repository":"owner/repo","unknown":1}`, `{"repository":"owner/repo","settings":{"model":""}}`, `{"repository":"owner/repo"} {}`} {
+	for _, body := range []string{`{"repository":"a"}`, `{"repository":"a/b/c"}`, `{"repository":""}`, `{}`, `{"repository":"owner/repo","unknown":1}`, `{"repository":"owner/repo","settings":{"other":""}}`, `{"repository":"owner/repo"} {}`} {
 		if code, _ := request("POST", "/api/repositories", body); code != 400 {
 			t.Fatal(body, code)
 		}
@@ -140,14 +134,15 @@ func TestRepositoriesHTTP(t *testing.T) {
 	if code, body = request(http.MethodGet, "/api/repositories", ""); code != 200 || !strings.HasPrefix(body, `[{"repository":"owner/repo"`) || !strings.Contains(body, `"clones":[]`) {
 		t.Fatal(code, body)
 	}
-	for _, body := range []string{`{"daily_cap":null}`, `{"unknown":1,"automatic":null}`, `{"automatic":null,"model":""}`} {
+	for _, body := range []string{`{"daily_cap":null}`, `{"unknown":1,"automatic":null}`} {
 		if code, _ = request("PUT", "/api/repositories/owner/repo/settings", body); code != 400 {
 			t.Fatal(body, code)
 		}
 	}
-	// An older app still sends the daily cap baum no longer has: it is
-	// ignored, not refused.
-	if code, _ = request("PUT", "/api/repositories/owner/repo/settings", `{"automatic":false,"daily_cap":1.5}`); code != 200 {
+	// An older app still sends the daily cap baum no longer has, and the
+	// repository harness and model that are global now: they are ignored, not
+	// refused.
+	if code, _ = request("PUT", "/api/repositories/owner/repo/settings", `{"automatic":false,"daily_cap":1.5,"backend":"codex","model":"m"}`); code != 200 {
 		t.Fatal(code)
 	}
 	if s, ok, _ := r.RepositorySettings(context.Background(), "owner/repo"); !ok || s.Automatic == nil || *s.Automatic {
