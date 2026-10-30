@@ -24,7 +24,7 @@ func stubPluginAgent(t *testing.T, dir, agent string) string {
 	log := state + ".log"
 	// An update records the newer version the list then reports.
 	installed = strings.Replace(installed, "1.0.0", `'"$(if [ -s '`+state+`' ]; then cat '`+state+`'; else echo 1.0.0; fi)"'`, 1)
-	script := "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '" + log + "'\ncase \"$1 $2\" in\n'plugin marketplace') exit 0 ;;\n'plugin list') if [ -f '" + state + "' ]; then printf '%s\\n' '" + installed + "'; else printf '%s\\n' '" + empty + "'; fi ;;\n'plugin install'|'plugin add') : > '" + state + "' ;;\n'plugin update') echo 1.2.0 > '" + state + "' ;;\n'plugin uninstall'|'plugin remove') rm -f '" + state + "' ;;\n*) exit 2 ;;\nesac\n"
+	script := "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '" + log + "'\ncase \"$1 $2\" in\n'plugin marketplace') printf '%s\\n' '{\"marketplaces\":[{\"name\":\"baum\"}]}' ;;\n'plugin list') if [ -f '" + state + "' ]; then printf '%s\\n' '" + installed + "'; else printf '%s\\n' '" + empty + "'; fi ;;\n'plugin install') : > '" + state + "' ;;\n'plugin add') if [ -f '" + state + "' ]; then echo 1.2.0 > '" + state + "'; else : > '" + state + "'; fi ;;\n'plugin update') echo 1.2.0 > '" + state + "' ;;\n'plugin uninstall'|'plugin remove') rm -f '" + state + "' ;;\n*) exit 2 ;;\nesac\n"
 	writeExecutable(t, filepath.Join(dir, binary), script)
 	return log
 }
@@ -76,7 +76,7 @@ func TestHooksUpdateBringsInstalledPluginsToTheLatestVersion(t *testing.T) {
 	bin := t.TempDir()
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+systemBinaryPath)
 	log := stubPluginAgent(t, bin, "claude-code")
-	stubPluginAgent(t, bin, "codex")
+	codexLog := stubPluginAgent(t, bin, "codex")
 	if _, _, err := runCLI(t, "hooks", "update", "--user"); err == nil || !strings.Contains(err.Error(), "hooks install --user") {
 		t.Fatalf("update without a plugin=%v", err)
 	}
@@ -92,13 +92,25 @@ func TestHooksUpdateBringsInstalledPluginsToTheLatestVersion(t *testing.T) {
 	if err != nil || !strings.Contains(stdout, "already the latest version (1.2.0)") {
 		t.Fatalf("second update=%v %q", err, stdout)
 	}
-	if _, _, err := runCLI(t, "hooks", "update", "--user", "--agent", "codex"); err == nil {
-		t.Fatal("updated a Codex without the plugin")
+	if _, _, err := runCLI(t, "hooks", "update", "--user", "--agent", "codex"); err == nil || !strings.Contains(err.Error(), "not installed") {
+		t.Fatalf("updated a Codex without the plugin: %v", err)
 	}
-	calls := readHookTestFile(t, log)
-	for _, want := range []string{"plugin marketplace update baum", "plugin update baum@baum --scope user --json"} {
-		if !strings.Contains(calls, want) {
-			t.Fatalf("missing %q in %s", want, calls)
+	if _, _, err := runCLI(t, "hooks", "install", "--user", "--agent", "codex"); err != nil {
+		t.Fatal(err)
+	}
+	stdout, _, err = runCLI(t, "hooks", "update", "--user", "--agent", "codex")
+	if err != nil || !strings.Contains(stdout, "Updated baum@baum for Codex from 1.0.0 to 1.2.0") || !strings.Contains(stdout, "/hooks in Codex") {
+		t.Fatalf("codex update=%v %q", err, stdout)
+	}
+	for log, wants := range map[string][]string{
+		log:      {"plugin marketplace update baum", "plugin update baum@baum --scope user --json"},
+		codexLog: {"plugin marketplace upgrade baum", "plugin add baum@baum --json"},
+	} {
+		calls := readHookTestFile(t, log)
+		for _, want := range wants {
+			if !strings.Contains(calls, want) {
+				t.Fatalf("missing %q in %s", want, calls)
+			}
 		}
 	}
 }
