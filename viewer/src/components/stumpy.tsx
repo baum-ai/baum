@@ -1,4 +1,4 @@
-import { type ReactNode, useEffect, useId, useRef } from "react";
+import { type ReactNode, type RefObject, useEffect, useId, useRef } from "react";
 
 /** Stumpy, the log from the logo with a leaf and a face. The hosted
  *  application keeps the plain b as its mark, and there Stumpy only turns up
@@ -23,6 +23,7 @@ export function Stumpy({
   mood = "awake",
   size = 96,
   followPointer = false,
+  eyesRef,
   className,
 }: {
   mood?: StumpyMood;
@@ -30,6 +31,9 @@ export function Stumpy({
   /** The eyes glance towards the pointer. Only for `awake`, and held still
    *  for a reader who asks for reduced motion. */
   followPointer?: boolean;
+  /** Receives the `awake` eyes, for a caller that points them itself: a
+   *  `transform` of up to 4 units each way glances that way. */
+  eyesRef?: RefObject<SVGGElement | null>;
   className?: string;
 }) {
   const id = useId().replace(/[^a-zA-Z0-9_-]/g, "");
@@ -168,7 +172,12 @@ export function Stumpy({
         <ellipse cx="80" cy="149" rx="32" ry="4" fill="#2a1d15" opacity="0.18" />
         {sprout}
         {log}
-        <g ref={eyes}>
+        <g
+          ref={(group) => {
+            eyes.current = group;
+            if (eyesRef) eyesRef.current = group;
+          }}
+        >
           {eye(72.5, 83.4)}
           {eye(97.2, 83.4)}
         </g>
