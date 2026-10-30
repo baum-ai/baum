@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -79,6 +80,12 @@ type Transcripts struct {
 	// Now is the clock; nil is time.Now.
 	Now func() time.Time
 	Log *slog.Logger
+	// Enders stop a session's agent, by agent (end.go); an agent without
+	// one cannot be ended from the app.
+	Enders map[string]Ender
+	// Senders put a message from the app into a session, by agent
+	// (message.go); an agent without one cannot be messaged.
+	Senders map[string]Sender
 
 	mu    sync.Mutex
 	cache map[key]*cached
@@ -430,19 +437,47 @@ func inStore(root, path string, named func(string) bool) (string, error) {
 	return resolved, nil
 }
 
-// findRollout looks a Codex session up by its id in the store's first-line
-// index, for a session whose hooks named no path.
+// findRollout looks a Codex session up by its id, for a session whose hooks
+// named no path (one restored from StateFile): Codex names each rollout
+// after its thread, so it is the one rollout under sessions whose name ends in
+// the id and whose first line says it is that thread's root. Only names are
+// walked, not the store's other rollouts, which Codex compresses as they age
+// (.jsonl.zst, which baum does not read).
 func findRollout(codexHome, id string) (string, error) {
-	index, _, err := codex.ScanStore(codexHome)
-	if err != nil {
-		return "", unavailable("Codex's session folder could not be read.")
+	if !safeID.MatchString(id) {
+		return "", unavailable("Codex has no transcript of this session on this computer.")
 	}
-	for _, entry := range index {
-		if entry.Class == codextranscript.ThreadRoot && entry.Meta != nil && entry.Meta.ID == id {
-			return entry.Path, nil
+	var found string
+	_ = filepath.WalkDir(filepath.Join(codexHome, "sessions"), func(path string, entry fs.DirEntry, err error) error {
+		if err != nil || entry.IsDir() {
+			return nil
 		}
+		name := entry.Name()
+		if !strings.HasPrefix(name, "rollout-") || !strings.HasSuffix(name, "-"+id+".jsonl") || !rootOf(path, id) {
+			return nil
+		}
+		found = path
+		return fs.SkipAll
+	})
+	if found == "" {
+		return "", unavailable("Codex has no transcript of this session on this computer.")
 	}
-	return "", unavailable("Codex has no transcript of this session on this computer.")
+	return found, nil
+}
+
+// rootOf reports whether the rollout at path starts thread id's root.
+func rootOf(path, id string) bool {
+	f, err := os.Open(path)
+	if err != nil {
+		return false
+	}
+	defer func() { _ = f.Close() }()
+	line, err := codextranscript.DecodeFirst(f)
+	if err != nil || line.SessionMeta == nil || line.SessionMeta.ID != id {
+		return false
+	}
+	class, err := codextranscript.ClassifyThread([]codextranscript.Line{line})
+	return err == nil && class == codextranscript.ThreadRoot
 }
 
 // build reads the session's graph with the mapper discovery uses and renders

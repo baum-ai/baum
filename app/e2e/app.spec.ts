@@ -483,13 +483,18 @@ test("a running agent session shows in the inbox and on the PR page until it end
   // The Sessions page keeps it under "Ended recently" and has none running.
   await page.getByRole("link", { name: "Sessions", exact: true }).first().click();
   const ended = page.getByRole("region", { name: "Ended recently", exact: true });
-  await expect(ended.getByText("Claude Code")).toBeVisible();
+  // Folded at first, as the section is looked back at; its heading opens it.
+  await ended.getByRole("button", { name: /Ended recently/ }).click();
+  // The agent shows by its mark.
+  await expect(ended.getByRole("img", { name: "Claude Code" })).toBeVisible();
   // Its title leads the compact row.
   await expect(
     ended.getByText("Reuse the PR page in the local app", { exact: true }),
   ).toBeVisible();
   await expect(
-    page.getByRole("region", { name: "Running now", exact: true }).getByText("Claude Code"),
+    page
+      .getByRole("region", { name: "Running now", exact: true })
+      .getByRole("img", { name: "Claude Code" }),
   ).toHaveCount(0);
   await page.getByRole("link", { name: "Pull requests", exact: true }).first().click();
   await expect(row).toBeVisible();
@@ -511,6 +516,7 @@ test("a session's transcript opens from the Sessions page and grows without a re
     .getByRole("region", { name: "Running now", exact: true })
     .getByRole("link", { name: /^Open transcript/ });
   await expect(open).toBeVisible({ timeout: 10000 });
+  await page.screenshot({ path: "test-results/sessions-running.png", animations: "disabled" });
   await open.click();
   // The session has no title of its own yet, so its first prompt names it.
   await expect(
@@ -564,18 +570,22 @@ test("a session asking for a permission shows in Needs you and leaves once it wo
   await page.getByRole("link", { name: "Sessions", exact: true }).first().click();
   const running = page.getByRole("region", { name: "Running now", exact: true });
   const needs = page.getByRole("region", { name: "Needs you", exact: true });
-  await expect(running.locator('li[title="needs-e2e"]')).toBeVisible({ timeout: 10000 });
+  await expect(running.locator('li[data-row-id="claude-code:needs-e2e"]')).toBeVisible({
+    timeout: 10000,
+  });
   await expect(needs).toHaveCount(0);
   await writeFile(marker, "permission");
-  const row = needs.locator('li[title="needs-e2e"]');
+  const row = needs.locator('li[data-row-id="claude-code:needs-e2e"]');
   await expect(row).toBeVisible({ timeout: 10000 });
-  await expect(row.getByText("Asking permission")).toBeVisible();
+  // Only its terminal can answer: the row says so.
+  await expect(row.getByText("Asks permission in its terminal")).toBeVisible();
   await expect(row.getByText("Claude needs your permission to use Bash")).toBeVisible();
   // The title Claude Code gave the session leads the row.
   await expect(row.getByText("Run the migration tests")).toBeVisible();
   await expect(row.getByText(/^waiting \d+s$/)).toBeVisible();
   await expect(row.getByText("feature")).toBeVisible();
-  await expect(running.locator('li[title="needs-e2e"]')).toHaveCount(0);
+  await expect(running.locator('li[data-row-id="claude-code:needs-e2e"]')).toHaveCount(0);
+  await page.screenshot({ path: "test-results/sessions-needs.png", animations: "disabled" });
   // The sidebar counts it, in the caution tone.
   const badge = page.locator('a[href$="?page=sessions"] .local-rail-badge.caution');
   await expect(badge).toHaveText("1");
@@ -586,10 +596,12 @@ test("a session asking for a permission shows in Needs you and leaves once it wo
   // Given the permission, the agent works again: the row goes back.
   await writeFile(marker, "running");
   await expect(needs).toHaveCount(0, { timeout: 10000 });
-  await expect(running.locator('li[title="needs-e2e"]')).toBeVisible();
+  await expect(running.locator('li[data-row-id="claude-code:needs-e2e"]')).toBeVisible();
   await expect(page.locator('a[href$="?page=sessions"] .local-rail-badge.caution')).toHaveCount(0);
   await writeFile(marker, "ended");
-  await expect(running.locator('li[title="needs-e2e"]')).toHaveCount(0, { timeout: 10000 });
+  await expect(running.locator('li[data-row-id="claude-code:needs-e2e"]')).toHaveCount(0, {
+    timeout: 10000,
+  });
   expect(errors).toEqual([]);
 });
 

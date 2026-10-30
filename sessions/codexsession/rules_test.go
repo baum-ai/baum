@@ -895,3 +895,15 @@ func TestGoalUpdateAndImageGenerationAreContext(t *testing.T) {
 		t.Fatalf("records = %+v", report.Records)
 	}
 }
+
+func TestAdditionalToolsAreContext(t *testing.T) {
+	lines := basicStart()
+	lines = append(lines,
+		// Codex 0.165 writes the tools it offers beyond its own as a response item.
+		envelope("2026-08-01T12:00:04Z", "response_item", `{"type":"additional_tools","id":"at","role":"developer","tools":[{"name":"linear__save_comment"}]}`),
+	)
+	_, report := buildLines(t, lines...)
+	if report.Records.Discarded["context/additional_tools"] != 1 || !report.Records.Balanced() {
+		t.Fatalf("records = %+v", report.Records)
+	}
+}
