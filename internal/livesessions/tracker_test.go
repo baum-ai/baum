@@ -31,6 +31,17 @@ type linker struct {
 	calls int
 }
 
+type restoredLinker struct {
+	*linker
+	link  Link
+	calls int
+}
+
+func (l *restoredLinker) Relink(_ context.Context, _ Session) (Link, bool) {
+	l.calls++
+	return l.link, true
+}
+
 func (l *linker) Link(_ context.Context, cwd string) (Link, bool) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -371,6 +382,29 @@ func TestEndedSessionsSurviveARestartPastTheRecord(t *testing.T) {
 	late.Rebuild(context.Background())
 	if len(late.Sessions()) != 0 {
 		t.Fatalf("restored an expired session: %+v", late.Sessions())
+	}
+}
+
+func TestRestoredLiveSessionRelinksWithoutWorkingDirectory(t *testing.T) {
+	dir := t.TempDir()
+	c := &clock{t0}
+	before := &Tracker{Source: &source{}, Linker: newLinker(), Now: c.Now, StateDir: dir}
+	apply(before, event("s1", "session-start", c.now, "/work/demo"))
+	before.persist()
+
+	recorded := &restoredLinker{linker: newLinker(), link: Link{Repository: "acme/demo", Branch: "feature", PR: 9}}
+	after := &Tracker{Source: &source{}, Linker: recorded, Now: c.Now, StateDir: dir}
+	after.Rebuild(context.Background())
+	if got := after.Sessions(); len(got) != 1 || got[0].PR != 7 {
+		t.Fatalf("restored sessions = %+v", got)
+	}
+	c.advance(RelinkEvery)
+	after.Sweep()
+	if !after.ResolvePending(context.Background()) || recorded.calls != 1 {
+		t.Fatalf("restored session did not relink: calls = %d", recorded.calls)
+	}
+	if got := after.Sessions()[0]; got.PR != 9 {
+		t.Fatalf("relinked session = %+v", got)
 	}
 }
 
