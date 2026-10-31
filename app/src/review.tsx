@@ -333,7 +333,21 @@ export function LocalReview({
         );
         const answer = parseSessionsAnswer(body);
         if (!abort.signal.aborted)
-          setSessions(answer ? { state: "answered", answer } : { state: "request-failed" });
+          setSessions((previous) => {
+            // The resolver reports transient errors as HTTP 200. Keep the
+            // last successful linkage until a genuine answer replaces it.
+            if (
+              answer?.available === false &&
+              typeof body === "object" &&
+              body !== null &&
+              "code" in body &&
+              body.code === "error" &&
+              previous.state === "answered" &&
+              previous.answer.available
+            )
+              return previous;
+            return answer ? { state: "answered", answer } : { state: "request-failed" };
+          });
       } catch {
         if (!abort.signal.aborted)
           setSessions((previous) =>
