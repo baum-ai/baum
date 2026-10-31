@@ -20,7 +20,6 @@ export type RepositoryItem = {
   clone: string;
   earlier_names?: string[];
   private?: boolean;
-  open_pull_requests?: number;
 };
 export type FoundClones = {
   running: boolean;
@@ -100,8 +99,7 @@ export function cloneDirectory(parent: string, repository: string) {
 }
 /** Said for a repository a clone was registered for with a remote using an
  *  earlier name. */
-export const earlierNamesWarning = (names: string[], repository: string) =>
-  `GitHub forwards ${names.join(" and ")} to ${repository}; clones whose remote still uses that earlier name count as its clones.`;
+export const earlierNamesWarning = (names: string[]) => `Pointing to ${names.join(", ")}.`;
 const message = (error: unknown) => (error instanceof Error ? error.message : String(error));
 export function hasFolderPicker() {
   return Boolean((window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__);
@@ -355,6 +353,7 @@ export function RepositoryPicker({
   autoFocus?: boolean;
 }) {
   const [list, setList] = useState<RepositoryItem[]>([]);
+  const [totalCount, setTotalCount] = useState<number>();
   const [found, setFound] = useState<FoundClones | null>(null);
   const [query, setQuery] = useState("");
   const [error, setError] = useState("");
@@ -376,8 +375,8 @@ export function RepositoryPicker({
     try {
       const [listing, registry, result] = await Promise.all([
         connected
-          ? call<{ repositories: RepositoryItem[] }>("list")
-          : Promise.resolve({ repositories: [] }),
+          ? call<{ repositories: RepositoryItem[]; total_count?: number }>("list")
+          : Promise.resolve({ repositories: [], total_count: 0 }),
         call<Repository[]>("picked"),
         call<FoundClones>("found").catch(() => null),
       ]);
@@ -386,6 +385,7 @@ export function RepositoryPicker({
         throw Error("Repository listing is unavailable. Connect GitHub in Settings and try again.");
       const picked = new Set(registry.map((r) => r.repository));
       setList(listing.repositories.map((r) => ({ ...r, picked: picked.has(r.repository) })));
+      setTotalCount(listing.total_count);
       setFound(result && result.repositories ? result : null);
       pickedCallback.current?.(picked.size);
       setError("");
@@ -451,7 +451,9 @@ export function RepositoryPicker({
   // A short list keeps the step readable; search reaches the rest, and picked
   // repositories always stay visible.
   const rows = matches.filter((r, i) => i < shownRepositories || r.picked);
-  const hidden = matches.length - rows.length;
+  const hidden = needle
+    ? matches.length - rows.length
+    : Math.max(0, (totalCount ?? list.length) - rows.length);
   // Results take their own height without a search, and keep it while one
   // runs, so typing never moves the page.
   const results = useRef<HTMLDivElement>(null);
@@ -562,7 +564,7 @@ export function RepositoryPicker({
                     ) : null}
                     {row.picked && row.clone && row.earlier_names?.length ? (
                       <span className="repository-warning">
-                        {earlierNamesWarning(row.earlier_names, row.repository)}
+                        {earlierNamesWarning(row.earlier_names)}
                       </span>
                     ) : null}
                   </span>
@@ -586,7 +588,9 @@ export function RepositoryPicker({
             <p className="repository-more">
               {needle
                 ? `${hidden} more ${hidden === 1 ? "match" : "matches"}. Keep typing to narrow the list.`
-                : `${hidden} more ${hidden === 1 ? "repository" : "repositories"}. Search to find one.`}
+                : totalCount !== undefined
+                  ? `Showing ${rows.length} of ${totalCount} repositories.`
+                  : `Showing ${rows.length} repositories.`}
             </p>
           ) : null}
         </div>

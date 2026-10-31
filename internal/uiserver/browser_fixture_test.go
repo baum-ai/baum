@@ -107,8 +107,8 @@ func (d browserDiscovery) PollNow(ctx context.Context, repository github.Reposit
 // still use the production local repository service.
 type browserRepositoryLister struct{}
 
-func (browserRepositoryLister) ViewerRepositories(context.Context, string) ([]github.ViewerRepository, error) {
-	return []github.ViewerRepository{{Repository: "acme/demo", Description: "A registered local repository", OpenPullRequests: 4}, {Repository: "acme/other", Description: "Another registered clone"}, {Repository: "acme/missing", Description: "A repository waiting for its local clone"}, {Repository: "acme/clone-me", Description: "Clone a repository from setup"}, {Repository: "acme/renamed", Description: "A repository renamed on GitHub"}}, nil
+func (browserRepositoryLister) ViewerRepositories(context.Context, string) (github.ViewerRepositoryList, error) {
+	return github.ViewerRepositoryList{Repositories: []github.ViewerRepository{{Repository: "acme/demo", Description: "A registered local repository"}, {Repository: "acme/other", Description: "Another registered clone"}, {Repository: "acme/missing", Description: "A repository waiting for its local clone"}, {Repository: "acme/clone-me", Description: "Clone a repository from setup"}, {Repository: "acme/renamed", Description: "A repository renamed on GitHub"}}, TotalCount: 5}, nil
 }
 
 // browserDiagnostics is a fixed report: no machine is inspected.

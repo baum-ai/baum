@@ -11,7 +11,6 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -37,7 +36,7 @@ var errRegistry = errors.New("repository registry")
 
 // Lister reads the account's repositories from GitHub.
 type Lister interface {
-	ViewerRepositories(ctx context.Context, host string) ([]github.ViewerRepository, error)
+	ViewerRepositories(ctx context.Context, host string) (github.ViewerRepositoryList, error)
 }
 
 // Registry is the part of the repository registry the service uses.
@@ -72,7 +71,7 @@ type Service struct {
 	Now     func() time.Time
 
 	mu      sync.Mutex
-	cache   []github.ViewerRepository
+	cache   *github.ViewerRepositoryList
 	cached  time.Time
 	flight  singleflight.Group
 	clones  map[string]*cloneState
@@ -118,13 +117,12 @@ func (s *Service) Run(ctx context.Context) {
 
 // Item is one repository in the listing.
 type Item struct {
-	Repository       string     `json:"repository"`
-	Private          bool       `json:"private"`
-	Fork             bool       `json:"fork"`
-	PushedAt         *time.Time `json:"pushed_at"`
-	Description      string     `json:"description"`
-	OpenPullRequests int        `json:"open_pull_requests"`
-	Picked           bool       `json:"picked"`
+	Repository  string     `json:"repository"`
+	Private     bool       `json:"private"`
+	Fork        bool       `json:"fork"`
+	PushedAt    *time.Time `json:"pushed_at"`
+	Description string     `json:"description"`
+	Picked      bool       `json:"picked"`
 	// Clone is an available registered clone of a picked repository, or "".
 	// Clones are looked for only once a repository is picked.
 	Clone string `json:"clone"`
@@ -136,14 +134,15 @@ type Item struct {
 // Listing is the JSON of GET /api/github/repositories.
 type Listing struct {
 	FetchedAt    time.Time `json:"fetched_at"`
+	TotalCount   int       `json:"total_count"`
 	Repositories []Item    `json:"repositories"`
 }
 
-func (s *Service) viewerRepositories(refresh bool) ([]github.ViewerRepository, time.Time, error) {
+func (s *Service) viewerRepositories(refresh bool) (github.ViewerRepositoryList, time.Time, error) {
 	s.mu.Lock()
 	gen := s.gen
 	if !refresh && s.cache != nil && s.now().Sub(s.cached) < CacheTTL {
-		list, at := s.cache, s.cached
+		list, at := *s.cache, s.cached
 		s.mu.Unlock()
 		return list, at, nil
 	}
@@ -151,7 +150,7 @@ func (s *Service) viewerRepositories(refresh bool) ([]github.ViewerRepository, t
 	// Requests asking together share one call, which one client leaving does
 	// not cancel.
 	type result struct {
-		list []github.ViewerRepository
+		list github.ViewerRepositoryList
 		at   time.Time
 	}
 	v, err, _ := s.flight.Do("list-"+strconv.FormatUint(gen, 10), func() (any, error) {
@@ -161,39 +160,22 @@ func (s *Service) viewerRepositories(refresh bool) ([]github.ViewerRepository, t
 		if err != nil {
 			return nil, err
 		}
-		if list == nil {
-			list = []github.ViewerRepository{}
+		if list.Repositories == nil {
+			list.Repositories = []github.ViewerRepository{}
 		}
 		at := s.now()
 		s.mu.Lock()
 		if s.gen == gen {
-			s.cache, s.cached = list, at
+			s.cache, s.cached = &list, at
 		}
 		s.mu.Unlock()
 		return result{list, at}, nil
 	})
 	if err != nil {
-		return nil, time.Time{}, err
+		return github.ViewerRepositoryList{}, time.Time{}, err
 	}
 	r := v.(result)
 	return r.list, r.at, nil
-}
-
-// ranked orders repositories with open pull requests involving the account
-// first, most first, then by latest push.
-func ranked(list []github.ViewerRepository) []github.ViewerRepository {
-	out := append([]github.ViewerRepository(nil), list...)
-	sort.SliceStable(out, func(i, j int) bool {
-		a, b := out[i], out[j]
-		if a.OpenPullRequests != b.OpenPullRequests {
-			return a.OpenPullRequests > b.OpenPullRequests
-		}
-		if !a.PushedAt.Equal(b.PushedAt) {
-			return a.PushedAt.After(b.PushedAt)
-		}
-		return a.Repository < b.Repository
-	})
-	return out
 }
 
 func matches(name string, terms []string) bool {
@@ -205,7 +187,7 @@ func matches(name string, terms []string) bool {
 	return true
 }
 
-// Listing builds the ranked, filtered listing.
+// Listing filters the top repositories without changing GitHub's order.
 func (s *Service) Listing(ctx context.Context, query string, refresh bool) (Listing, error) {
 	list, at, err := s.viewerRepositories(refresh)
 	if err != nil {
@@ -229,13 +211,13 @@ func (s *Service) Listing(ctx context.Context, query string, refresh bool) (List
 		}
 	}
 	terms := strings.Fields(strings.ToLower(query))
-	out := Listing{FetchedAt: at, Repositories: []Item{}}
-	for _, r := range ranked(list) {
+	out := Listing{FetchedAt: at, TotalCount: list.TotalCount, Repositories: []Item{}}
+	for _, r := range list.Repositories {
 		if !matches(r.Repository, terms) {
 			continue
 		}
 		item := Item{Repository: r.Repository, Private: r.Private, Fork: r.Fork, Description: r.Description,
-			OpenPullRequests: r.OpenPullRequests, Picked: pickedSet[r.Repository]}
+			Picked: pickedSet[r.Repository]}
 		if !r.PushedAt.IsZero() {
 			pushed := r.PushedAt
 			item.PushedAt = &pushed

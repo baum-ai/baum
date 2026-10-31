@@ -186,22 +186,14 @@ export function Setup() {
     view !== null &&
     view.hooks.agents.length > 0 &&
     view.hooks.agents.every((a) => a.installed && a.enabled && !a.error);
-  const done = view
-    ? [github && pickedCount > 0, true, Boolean(command?.ok) && agentsDone][step]
-    : false;
+  const githubReady = github && pickedCount > 0;
+  const done = view ? [githubReady, true, Boolean(command?.ok) && agentsDone][step] : false;
   // A default decision model is saved as none, so it follows the harness.
   const reviewsChanged =
     reviews !== null && JSON.stringify(storedReviews(reviews)) !== savedReviews;
   // A custom model needs a name, both to leave the review step and to finish.
   const modelMissing =
     (step === reviewStep || step === last) && reviews !== null && !reviews.model.trim();
-  const started = view
-    ? [
-        github || pickedCount > 0,
-        true,
-        Boolean(command?.ok) || view.hooks.agents.some((a) => a.installed),
-      ][step]
-    : false;
   async function finish() {
     if (reviews && reviewsChanged) {
       const outcome = await invoke<Outcome>("save_review_settings", {
@@ -216,6 +208,7 @@ export function Setup() {
     await invoke<void>("finish_setup");
   }
   function navigate(next: number) {
+    if (next > 0 && !githubReady) return;
     setError("");
     setStep(next);
   }
@@ -238,7 +231,7 @@ export function Setup() {
               <button
                 type="button"
                 className="step-link"
-                disabled={busy || !view}
+                disabled={busy || !view || (index > 0 && !githubReady)}
                 onClick={() => navigate(index)}
               >
                 <span className="step-number">{index < step ? "✓" : index + 1}</span>
@@ -428,7 +421,7 @@ export function Setup() {
             {step > 0 && button("back", "← Back", () => navigate(step - 1), "quiet")}
             {button(
               "continue",
-              step === last ? "Open baum →" : started ? "Continue →" : "Skip →",
+              step === last ? "Open baum →" : "Continue →",
               () => {
                 if (!view) return;
                 if (step < last) navigate(step + 1);
@@ -436,16 +429,10 @@ export function Setup() {
               },
               "secondary",
               undefined,
-              modelMissing,
+              modelMissing || (step === 0 && !githubReady),
             )}
           </div>
-          {!done && (
-            <p id="skip-note">
-              {step === 0
-                ? "You can connect GitHub and add repositories later in Settings."
-                : "You can finish setup later from the app menu."}
-            </p>
-          )}
+          {step > 0 && !done && <p id="skip-note">You can finish setup later from the app menu.</p>}
         </footer>
       </section>
     </main>

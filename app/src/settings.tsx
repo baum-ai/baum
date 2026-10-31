@@ -2104,9 +2104,7 @@ function RepositoryRow({
           </p>
         )}
         {clone.available && repository.earlier_names?.length ? (
-          <p className="repository-warning">
-            {earlierNamesWarning(repository.earlier_names, repository.repository)}
-          </p>
+          <p className="repository-warning">{earlierNamesWarning(repository.earlier_names)}</p>
         ) : null}
         <p className="local-repo-summary">{summary.join(" · ")}</p>
       </div>

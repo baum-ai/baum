@@ -9,25 +9,29 @@ explicit token, else the saved device sign-in).
 
 ## Listing
 
-`ViewerRepositories` reads `viewer.repositories` (owner, collaborator and
-organization-member affiliations, newest push first, archived left out) up to
-300, and one search for open pull requests that involve the account
-(`is:pr is:open involves:@me archived:false`, first 100) to count them per
-repository. If only the search fails the counts are zero. Names are lowercased.
+`ViewerRepositories` reads `viewer.topRepositories(first: 20, orderBy:
+{field: PUSHED_AT, direction: DESC})` in one request. GitHub selects repositories
+the account contributed to or created; the requested order is newest push first.
+Archived repositories and duplicates are left out without fetching replacements,
+so fewer than 20 may be returned. Names are lowercased. No pull-request ranking
+search runs. The same request reads only `totalCount` from `viewer.repositories`,
+including owner, collaborator and organization-member affiliations and excluding
+archived repositories. The total counts all accessible repositories, not only the
+top 20; no additional repository details or pages are fetched for it.
 
 `GET /api/github/repositories?query=&refresh=1` answers
 
 ```json
-{"fetched_at": "2026-07-01T10:00:00Z",
+{"fetched_at": "2026-07-01T10:00:00Z", "total_count": 147,
  "repositories": [{"repository": "owner/name", "private": false, "fork": false,
-   "pushed_at": "2026-07-01T09:00:00Z", "description": "", "open_pull_requests": 2,
+   "pushed_at": "2026-07-01T09:00:00Z", "description": "",
    "picked": true, "clone": "/work/code/name"}]}
 ```
 
-Ranking: repositories with open pull requests involving the account first (most
-first), then latest push, then name. `query` keeps repositories whose
+GitHub's response order is preserved. `query` keeps repositories whose
 `owner/name` contains every whitespace-separated term, ignoring case; it filters
-the cached list and calls GitHub no further. The GitHub result is cached in
+the cached top-repository list and calls GitHub no further; repositories outside
+that list are not searched. The GitHub result is cached in
 memory for 5 minutes, dropped when the signed-in account changes, and
 `refresh=1` bypasses it; simultaneous requests for the same account share one
 call. A response started before an account change cannot refill the cache

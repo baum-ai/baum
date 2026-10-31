@@ -58,9 +58,12 @@ setup bundle. `pnpm test:desktop` exercises setup with mocked IPC; it needs a
 completed `pnpm build`. The proxy suite covers login, CSRF, event streaming and
 React/CSS hot reload for the daemon-served application.
 
-Setup and Repositories list the signed-in GitHub account's repositories, with
-search. Nothing is picked automatically: once the person picks a repository,
-the daemon looks for its local clone and the row says where it was found or
+Setup and Repositories fetch 20 of the signed-in GitHub account's top repositories
+in one request, ordered by latest push, with archived ones omitted. Search filters
+that fetched list. The footer shows how many rows are visible out of GitHub's full
+accessible, non-archived repository count, fetched alongside the top 20 without
+loading further repository details. Nothing is picked automatically: once the
+person picks a repository, the daemon looks for its local clone and the row says where it was found or
 offers to choose or clone one. A picked repository can have
 no clone: its pull requests remain in Pull requests and link by repository and PR
 number. Its page says **Needs a local clone**, with **Choose folder** and
@@ -77,6 +80,9 @@ The picker explains local discovery and, on macOS, offers **Also look in
 Documents** after an explicit click. Later automatic attachments show a notice.
 Setup uses the native `repositories` relay; app pages use namespaced local HTTP.
 The relay permits only named repository actions and never exposes credentials.
+Desktop setup requires a GitHub connection and at least one picked repository
+before continuing or opening a later step from the rail. The GitHub step has no
+skip action; CLI and agent installation remain optional.
 
 The baum daemon serves this React single-page app from its embedded assets;
 the desktop app opens it from the launch URL in the daemon's
@@ -1305,8 +1311,15 @@ diagnostics dialog and the desktop setup's first step, which share
 the daemon and, in the same click, opens the fixed
 `https://github.com/login/device` page in the browser and copies the code once
 the daemon returns it (a clipboard write given a promise, since by then the
-click no longer counts and the window has lost focus). The panel observes only safe local connection status;
-Go polls GitHub even after the window closes. Denial, expiry, network failures,
+click no longer counts and the window has lost focus). Desktop setup instead
+waits five seconds after the code is available before asking the native shell
+to open the browser, leaving time to read the code and clipboard confirmation.
+The launch does not wait for clipboard access; a failed copy offers manual
+copying. Cancelling or leaving the step cancels that pending launch.
+The panel observes only safe local connection status, every 300 ms while
+sign-in is pending and every 10 seconds once settled, with an immediate check
+when the window regains focus. Go polls GitHub at GitHub's required interval,
+even after the window closes. Denial, expiry, network failures,
 missing scopes, revoked authorization and locked credential stores have retry
 or reconnect controls. An explicit environment/config credential is shown
 separately from the saved desktop account and continues to take precedence.

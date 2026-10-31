@@ -67,7 +67,11 @@ const assert = require('node:assert/strict');
   await page.waitForSelector('#github-sign-in');
   await expect(page.locator('.wordmark svg')).toBeVisible();
   assert.equal(await page.locator('.wordmark img').count(), 0, 'Setup uses Stumpy as its mark');
-  assert.equal(await page.locator('#continue').textContent(), 'Skip →');
+  assert.equal(await page.locator('#continue').textContent(), 'Continue →');
+  await expect(page.locator('#continue')).toBeDisabled();
+  await expect(page.locator('#skip-note')).toHaveCount(0);
+  await expect(page.locator('[data-step] button').nth(1)).toBeDisabled();
+  await expect(page.locator('[data-step] button').nth(2)).toBeDisabled();
   await page.screenshot({ path: `${screenshots}/onboarding-github.png` });
   // Custom colors override default dark recipes, while artwork stays fixed.
   const originalBackground = await page.locator('body').evaluate(element => getComputedStyle(element).backgroundColor);
@@ -115,6 +119,7 @@ const assert = require('node:assert/strict');
   assert((await page.locator('#github-state').textContent()).includes('octocat'));
   assert.deepEqual(calls.filter(([c, a]) => c === 'github_connection' && a.action).map(([, a]) => a.action), ['start']);
   assert.equal(await page.locator('#continue').textContent(), 'Continue →');
+  await expect(page.locator('#continue')).toBeDisabled();
   // Repositories share the first step; a found clone is shown, not picked.
   const foundBox = page.getByRole('checkbox',{name:'Pick acme/found',exact:true});
   await expect(foundBox).toBeVisible();
@@ -124,6 +129,8 @@ const assert = require('node:assert/strict');
   await page.screenshot({ path: `${screenshots}/onboarding-repositories-empty.png` });
   assert(await page.locator('.repository-choice input').first().evaluate(element=>element.getBoundingClientRect().width<24),'Repository checkbox must stay compact under setup input styles');
   await foundBox.check();
+  await expect(page.locator('#continue')).toBeEnabled();
+  await expect(page.locator('[data-step] button').nth(1)).toBeEnabled();
   await page.getByRole('checkbox',{name:'Pick acme/clone',exact:true}).check();
   const cloneRow=page.locator('.repository-choices > li').filter({hasText:'acme/clone'});
   await cloneRow.getByRole('button',{name:'Clone it',exact:true}).click();
@@ -251,6 +258,8 @@ const assert = require('node:assert/strict');
   await page.reload();
   await page.waitForSelector('#github-sign-in');
   assert(await page.locator('#repo-panel').isHidden(), 'Repositories stay hidden while GitHub is disconnected');
+  await expect(page.locator('#continue')).toBeDisabled();
+  await expect(page.locator('[data-step] button').nth(2)).toBeDisabled();
   for (const screen of ['index.html', 'tray.html']) {
     await page.goto(`http://setup.test/${screen}`);
     await page.emulateMedia({ colorScheme: 'dark' });
@@ -261,5 +270,5 @@ const assert = require('node:assert/strict');
   }
   assert.deepEqual(errors, []);
   await browser.close();
-  console.log('Onboarding: GitHub sign-in with repositories, review settings, CLI and separate agent installs, retry, back/skip, finish and minimum window width passed.');
+  console.log('Onboarding: required GitHub sign-in and repository selection, review settings, CLI and separate agent installs, retry, back navigation, finish and minimum window width passed.');
 })().catch(error => { console.error(error); process.exit(1); });

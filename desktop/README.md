@@ -83,9 +83,11 @@ Vite writes the daemon assets to `../internal/localapp/dist` and assembles the
 native assets in `dist/`, where the connecting screen is `index.html`. Tauri embeds
 `dist/` so setup stays on its local origin with the existing native permissions;
 daemon-served pages may open the native folder picker (below) or manage
-the bundled CLI and agent hooks directly in Settings. Each step is optional and has Back
-and Continue controls; changes happen only when the user selects an install
-or add action. Displayed paths abbreviate the current home directory as
+the bundled CLI and agent hooks directly in Settings. The GitHub step requires a
+connection and at least one picked repository before Continue or the later steps
+in the rail become available. CLI and agent installation remain optional; steps
+have Back and Continue controls. Changes happen only when the user selects an
+install or add action. Displayed paths abbreviate the current home directory as
 `~`; actions still use the full path:
 
 1. Connect GitHub and pick repositories.
@@ -93,12 +95,24 @@ or add action. Displayed paths abbreviate the current home directory as
      step reaches the daemon's GitHub sign-in through the setup screen's
      `github_connection` command, which relays status, start, cancel and retry
      over the tray's loopback client; disconnecting stays in Settings. Signing
-     in opens GitHub's device page in the default browser and copies the code
-     in the same click. The daemon runs the device flow and keeps the
-     credential, so the screen never holds a token.
-   - Below it, pick GitHub repositories from the signed-in account. The list
-     shows the first eight and any picked ones; search finds the rest. Rows show
-     GitHub details only and nothing is picked on its own. Once a repository
+     in displays and copies the code, then waits five seconds before opening
+     GitHub's device page in the default browser so the code and clipboard
+     confirmation stay visible. During the delay, the browser control is disabled
+     and shows the shared loading animation beside "Opening GitHub…"; launching
+     restores the "Open GitHub" link at the same width.
+     The status distinguishes preparing sign-in, opening the browser and waiting
+     for GitHub confirmation, with the shared loader while waiting. It explains
+     that confirmation can take a few seconds and shows "Connected as…" once
+     sign-in is confirmed, while repositories load separately.
+     Cancelling or leaving the step cancels the pending browser launch.
+     The daemon runs the device flow and keeps the credential, so the screen
+     never holds a token.
+   - Below it, pick GitHub repositories from the signed-in account. One request
+     fetches 20 of GitHub's top repositories, ordered by latest push, with archived
+     ones omitted. The list shows the first eight and any picked ones; search
+     filters the fetched list. The footer shows the visible rows out of GitHub's
+     full accessible, non-archived repository total, counted in the same request.
+     Rows show GitHub details only and nothing is picked on its own. Once a repository
      is picked, baum looks for its clone in folders agents worked in and common
      code folders, with the nine-dots loader while it looks, then shows the
      clone it found or says none was found. A picked repository without a
@@ -916,5 +930,6 @@ tools installed after the app or the agent started are found.
 
 The onboarding browser regression runs against the compiled React bundle
 mounted through `ui-test`: `pnpm --dir /oss/app test:desktop` after building the app. It uses mocked native
-IPC and checks separate agent actions, retries, multiple repositories, back/skip,
+IPC and checks required GitHub sign-in and repository selection, separate agent
+actions, retries, multiple repositories, back navigation,
 completion and the minimum window width. Screenshots go to a temporary directory, or `ONBOARDING_SCREENSHOT_DIR` when set.

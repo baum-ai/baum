@@ -58,7 +58,10 @@ it("shows the first repositories and picked ones, and searches the rest", async 
   const names = Array.from({ length: 12 }, (_, i) => `many/repo-${i}`);
   const call: RepositoryCall = async (action) =>
     (action === "list"
-      ? { repositories: names.map((repository) => ({ repository, clone: "", description: "" })) }
+      ? {
+          total_count: 147,
+          repositories: names.map((repository) => ({ repository, clone: "", description: "" })),
+        }
       : action === "picked"
         ? [{ repository: "many/repo-11" }]
         : {}) as never;
@@ -67,7 +70,7 @@ it("shows the first repositories and picked ones, and searches the rest", async 
     [...node.querySelectorAll(".repository-name strong")].map((n) => n.textContent);
   expect(shown()).toEqual([...names.slice(0, 8), "many/repo-11"]);
   expect(node.querySelector(".repository-more")!.textContent).toBe(
-    "3 more repositories. Search to find one.",
+    "Showing 9 of 147 repositories.",
   );
   const search = node.querySelector<HTMLInputElement>("input[type=search]")!;
   await act(async () => {
@@ -253,7 +256,5 @@ it("warns about a picked repository whose clone uses an earlier name", async () 
         ? [{ repository: "new/repo", clones: [], settings: {} }]
         : { running: false, repositories: {}, attached: [] }) as never;
   await act(async () => root.render(<RepositoryPicker call={call} />));
-  expect(node.querySelector(".repository-warning")!.textContent).toBe(
-    "GitHub forwards old/repo to new/repo; clones whose remote still uses that earlier name count as its clones.",
-  );
+  expect(node.querySelector(".repository-warning")!.textContent).toBe("Pointing to old/repo.");
 });
