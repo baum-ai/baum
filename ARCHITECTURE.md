@@ -2276,7 +2276,7 @@ head_sha}`, repeats the checks above, re-reads the run list (the request never
 names a run) and posts `.../actions/runs/{id}/rerun-failed-jobs` for each. It
 answers `{rerun, refused}`: an error only when no run started. Errors are
 `{code, message}`: `head_moved`, `conflict`, `not_open` and `up_to_date` are
-`409`, `blocked`, `no_runs` and `fork` are `422`, `forbidden` is `403`,
+`409`, `blocked`, `no_runs`, `fork` and `no_clone` are `422`, `forbidden` is `403`,
 anything else `502`. After either write the daemon runs `Service.PollNow` and
 publishes an index change.
 
@@ -2299,8 +2299,10 @@ its headline cut to 200 characters (`excerpt`: `fix.Headline`, the first
 wholly bold line among the first four, else the first line of text, without
 HTML comments, tags, images, code blocks or Markdown markup, which the fix
 dialog's excerpts use too), the
-comment count, the first comment's `url` and `can_resolve`
-(`viewerCanResolve`). `POST /api/prs/resolve-thread` takes `{repository, pr,
+comment count, the first comment's `url`, `can_resolve`
+(`viewerCanResolve`) and `messages`: every comment read (the first 20; the
+fix addresses the first 10), each `{author, body, url}`, the body as text cut to
+4000 characters, untrusted. `POST /api/prs/resolve-thread` takes `{repository, pr,
 thread}`, reads the thread by its node id (`ThreadState`) and refuses one that
 is not on that pull request (`not_found`, `404`) or that the account cannot
 resolve (`forbidden`); a thread already resolved answers success without a
@@ -2320,6 +2322,26 @@ status's description, cut to 160 characters), `url` (`details_url`, else
 `job_id` (the GitHub Actions job behind a check run). `prupdate.Cache` keeps a
 head's list for 2 minutes, forgets it when either re-run starts a run of that
 head, and is emptied with the threads on an account change.
+
+`GET /api/prs/checks?repository=&pr=&head_sha=` lists every check of
+`head_sha` (`fix.AllChecks`: check runs of their latest attempt and commit
+statuses, at most 100). It answers `{head_sha, checks}`, each check's `name`,
+`status` (`queued`, `in_progress` or `completed`; a pending commit status is
+`in_progress`), `conclusion` (the run's conclusion or the status's state, empty
+until completed), `title`, `url` and `job_id` (only for a failing GitHub
+Actions run, so `rerun-job` accepts it). Failing checks come first, then
+those not completed, each by name. The cache keeps a head's list for 20
+seconds, and a re-run forgets it.
+
+`GET /api/prs/conflicts?repository=&pr=` answers `{head_sha, base_ref,
+base_sha, files}`: the files in which the pull request's head conflicts with
+its base branch's current tip. The daemon reads the pull request from GitHub,
+then in the repository's first available clone fetches the head (when
+missing) and the base tip into `refs/baum/pull/<N>/` and runs `git merge-tree
+--write-tree --name-only -z` in the private mirror (`gitlocal.Repo.Conflicts`),
+which touches neither the working tree nor any branch; `files` is empty when
+the merge is clean. It needs git 2.38 or newer. Without an available clone with
+a remote naming the repository it answers `no_clone` (`422`).
 
 `POST /api/prs/rerun-job` takes `{repository, pr, head_sha, job_id}`,
 re-checks that the pull request is open, its head is `head_sha` and the

@@ -21,3 +21,19 @@ func TestHeadline(t *testing.T) {
 		})
 	}
 }
+
+func TestPlainText(t *testing.T) {
+	for _, c := range []struct{ name, body, want string }{
+		{"plain", "Rename this.\nIt reads badly.", "Rename this.\nIt reads badly."},
+		{"codex badge", "**<sub><sub>![P2 Badge](https://img.shields.io/badge/P2-yellow?style=flat)</sub></sub>  Re-arm polling**\n\nIt stops after `read` fails.\n\n\nUseful? React with 👍 / 👎.\n\n<!-- codex-code-review-finding:v1 -->", "Re-arm polling\n\nIt stops after read fails.\n\nUseful? React with 👍 / 👎."},
+		{"lists", "Two things:\n- a [link](https://example.com)\n* *b*\n1. first\n2) second", "Two things:\n• a link\n• b\n1. first\n2) second"},
+		{"code block kept", "Try:\n```go\nif err != nil {\n\treturn err\n}\n```\nDone.", "Try:\nif err != nil {\n    return err\n}\nDone."},
+		{"heading and quote", "## Bug\n> quoted", "Bug\nquoted"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			if got := PlainText(c.body); got != c.want {
+				t.Fatalf("PlainText = %q, want %q", got, c.want)
+			}
+		})
+	}
+}

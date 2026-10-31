@@ -21,7 +21,7 @@ const inboxQuery = `query LocalInbox($owner: String!, $name: String!, $cursor: S
   pullRequests(states: OPEN, first: 50, after: $cursor) {
    pageInfo { hasNextPage endCursor }
    nodes {
-    number title headRefOid headRefName baseRefName isDraft updatedAt author { __typename login }
+    number title headRefOid headRefName baseRefName isDraft additions deletions changedFiles updatedAt author { __typename login }
     headRepository { databaseId nameWithOwner } baseRepository { databaseId nameWithOwner }
     reviewRequests(first: 100) { nodes { requestedReviewer { __typename ... on User { login } ... on Team { databaseId } } } pageInfo { hasNextPage } }
     reviewDecision latestOpinionatedReviews(first: 100) { nodes { state } pageInfo { hasNextPage } }
@@ -46,6 +46,9 @@ type gqlPR struct {
 	Number                                      int
 	Title, HeadRefOid, HeadRefName, BaseRefName string
 	IsDraft                                     bool
+	// Additions, Deletions and ChangedFiles size the change; they take part
+	// in the unchanged comparison like the head.
+	Additions, Deletions, ChangedFiles int
 	// UpdatedAt feeds the probe's fingerprint and the snapshot; it is left
 	// out of the unchanged comparison so the backoff is unaffected.
 	UpdatedAt      time.Time `json:",omitzero"`

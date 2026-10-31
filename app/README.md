@@ -90,29 +90,60 @@ be read show beneath them. **Start the review** opens the tour, `?…&walk=tour`
 place in the review (`pane=…`), opens the full review, whose **Walk through**
 returns to the overview.
 
-The Inbox's panel lists a fix's unresolved review threads under the row that
-counts them (`ReviewThreads` in `src/threads.tsx`), asked for with `GET
-api/prs/review-threads` and discovery's `unresolved` count when the panel shows
-the pull request and again when that count changes. The daemon answers from
-its cache while the count matches (see `prupdate.Cache`), so moving
-through the Inbox does not read GitHub each time. Each shows its first comment's
-headline (at most two lines), its author, its file and line linked to the thread on GitHub, whether
-it is outdated and how many comments it has. A thread the signed-in account
-may resolve (`can_resolve`) has a **Resolve** button that posts `api/prs/resolve-thread`
-at once, without a dialog, reads **Resolving…** meanwhile, and removes the thread
+Up next's list shows a review group or stack (`api/groups`) with a shown member
+as one row, in the section and at the place of its first member in the list
+(`withGroups` in `src/up-next.tsx`); its members leave their own rows and nest
+under it when it is opened (its chevron, `l`/`→`; `h`/`←` closes it from the
+group or a member). Each member names its kind, since it may belong to another
+section. A stack's members stay out of **Merge all**, as a stack merges from its
+base up. The group's panel shows its review's state and risk, its members'
+lines, files and review times summed, **Open the stack** (or group) as the
+default, and its members with what each waits on; picking one previews it.
+
+Under its title the panel shows the pull request's facts: its head branch and
+the base it merges into (`head_ref`, `base_ref`), its lines and files changed
+(`additions`, `deletions`, `changed_files` from discovery), baum's time to
+review (`review_minutes`) and a link to it on GitHub.
+
+The panel's rows that open to a detail (`BlockRow`) read it only once opened.
+A fix lists what blocks it under What needs fixing, opened: its unresolved
+review threads, its conflicting files and its failing checks. Any other pull
+request lists them under On GitHub, closed: its checks, its conflict and its
+unresolved threads.
+
+The unresolved review threads (`ReviewThreads` in `src/threads.tsx`) are asked
+for with `GET api/prs/review-threads` and discovery's `unresolved` count, and
+again when that count changes. The daemon answers from its cache while the
+count matches (see `prupdate.Cache`), so moving through the Inbox does not read
+GitHub each time. Each shows its first comment's headline (at most two lines),
+its author, its file and line linked to the thread on GitHub, whether it is
+outdated and how many comments it has. The headline opens the thread's
+conversation (`messages`, up to 20 comments, each body as plain text), with a
+link to the rest on GitHub. A thread the signed-in account may resolve
+(`can_resolve`) has a **Resolve** button that posts `api/prs/resolve-thread` at
+once, without a dialog, reads **Resolving…** meanwhile, and removes the thread
 from the list once GitHub confirms; a refusal is shown under the thread.
 
-Under "Checks failing" the panel lists the head's failing checks
-(`FailingChecks` in `src/checks.tsx`), asked for with `GET
-api/prs/failing-checks` and the head commit it shows (`head_sha`), again when
-that head changes. Each shows the check's name, its conclusion in words
-(`conclusionText`), its title when it has one and a **Details** link (`url`).
-A check with a `job_id` has **Retry** when discovery says the account can push
+The checks (`PullRequestChecks` in `src/checks.tsx`) are asked for with `GET
+api/prs/checks` and the head commit the panel shows (`head_sha`), again when
+that head changes and every 20 seconds while any still runs; an older daemon's
+`api/prs/failing-checks` lists only the failing ones. They are listed failing
+first, then running, then passed, then skipped or neutral, each with its state
+icon, its name, its state in words (`conclusionText`), its title when it has one
+and a **Details** link (`url`), above a count by state. A failing check with a
+`job_id` has **Retry** when discovery says the account can push
 (`viewer_can_push`): it posts `api/prs/rerun-job` at once, reads **Retrying…**,
-then shows "Re-running on GitHub"; a refusal is shown under the check. When the
-pull request offers a fix, the row has **Fix CI**, which starts at once a fix
-of the failing checks alone (`startFix(clone, pr, "checks")`, `"only":"checks"`
-on the item).
+then shows "Re-running on GitHub"; a refusal is shown under the check. When a
+fix's pull request offers one, the Checks failing row has **Fix CI**, which
+starts at once a fix of the failing checks alone (`startFix(clone, pr,
+"checks")`, `"only":"checks"` on the item).
+
+The conflicting files (`ConflictingFiles` in `src/conflicts.tsx`) are asked for
+with `GET api/prs/conflicts`. The daemon fetches the base branch's tip (and the
+head when missing) into the clone's `refs/baum/pull/<N>/` and merges them in
+memory with `git merge-tree --write-tree` (git 2.38 or newer), touching no
+working tree or branch. Without an available clone it answers `no_clone`, which
+the panel shows with a link to GitHub.
 The PR page's **Walk through** button (beside Regenerate, once a review is
 saved) opens the walkthrough (`src/walkthrough.tsx`): `?…&walk=tour` or
 `walk=all`, so a reload stays there, and **Full review** returns to the viewer.

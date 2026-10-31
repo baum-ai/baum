@@ -1,9 +1,15 @@
-import { useEffect, useState } from "react";
+import { useEffect, useId, useState } from "react";
+import { ChevronRightIcon } from "@baum/viewer/components/icons";
 import { request } from "./api";
 import { LoadingStatus } from "./nine-dots";
 
+/** A comment of a review thread. Its body is the reviewer's text, untrusted,
+ *  and shown as plain text. */
+export type ThreadComment = { author: string; body: string; url?: string };
+
 /** An unresolved review thread, as `api/prs/review-threads` lists it. The
- *  excerpt is its first comment's headline, in plain text. */
+ *  excerpt is its first comment's headline, in plain text; the messages are
+ *  its comments, absent from an older daemon. */
 export type ReviewThread = {
   id: string;
   path: string;
@@ -14,15 +20,16 @@ export type ReviewThread = {
   comments: number;
   url: string;
   can_resolve: boolean;
+  messages?: ThreadComment[];
 };
 
 type Read = { threads?: ReviewThread[]; capped?: boolean; error?: string };
 
 /** The pull request's unresolved review threads, read from GitHub when shown,
- *  each linking to GitHub and, when the signed-in account may, resolvable
- *  with one click. `unresolved` is discovery's count: the daemon answers from
- *  its cache while the count matches, and the list is asked for again when
- *  it changes. */
+ *  each linking to GitHub, opening to its whole conversation and, when the
+ *  signed-in account may, resolvable with one click. `unresolved` is
+ *  discovery's count: the daemon answers from its cache while the count
+ *  matches, and the list is asked for again when it changes. */
 export function ReviewThreads({
   repository,
   number,
@@ -98,45 +105,16 @@ export function ReviewThreads({
         <p className="upnext-block-sub">All resolved.</p>
       ) : (
         <ul aria-label="Unresolved review threads">
-          {open.map((thread) => {
-            const busy = resolving.has(thread.id);
-            return (
-              <li key={thread.id}>
-                <span className="upnext-block-text">
-                  <span className="upnext-thread-excerpt" title={thread.excerpt}>
-                    {thread.excerpt || "(No text)"}
-                  </span>
-                  <span className="upnext-block-sub">
-                    {thread.author || "Someone"} ·{" "}
-                    <a href={thread.url || url} target="_blank" rel="noreferrer">
-                      <code>
-                        {thread.path}
-                        {thread.line ? `:${thread.line}` : ""}
-                      </code>
-                    </a>
-                    {thread.outdated ? " · Outdated" : ""}
-                    {thread.comments > 1 ? ` · ${thread.comments} comments` : ""}
-                  </span>
-                  {failed[thread.id] ? (
-                    <span className="upnext-thread-error" role="alert">
-                      {failed[thread.id]}
-                    </span>
-                  ) : null}
-                </span>
-                {thread.can_resolve ? (
-                  <button
-                    type="button"
-                    className="upnext-secondary upnext-thread-resolve"
-                    disabled={busy}
-                    aria-busy={busy}
-                    onClick={() => void resolve(thread)}
-                  >
-                    {busy ? "Resolving…" : "Resolve"}
-                  </button>
-                ) : null}
-              </li>
-            );
-          })}
+          {open.map((thread) => (
+            <Thread
+              key={thread.id}
+              thread={thread}
+              url={url}
+              busy={resolving.has(thread.id)}
+              error={failed[thread.id]}
+              resolve={() => void resolve(thread)}
+            />
+          ))}
         </ul>
       )}
       {read.capped ? (
@@ -149,5 +127,94 @@ export function ReviewThreads({
         </p>
       ) : null}
     </div>
+  );
+}
+
+/** One thread: its first comment's headline, which opens to every comment
+ *  baum read of it. */
+function Thread({
+  thread,
+  url,
+  busy,
+  error,
+  resolve,
+}: {
+  thread: ReviewThread;
+  url: string;
+  busy: boolean;
+  error?: string;
+  resolve: () => void;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const id = useId();
+  const messages = thread.messages ?? [];
+  const more = thread.comments - messages.length;
+  return (
+    <li className="upnext-thread">
+      <span className="upnext-block-text">
+        {messages.length > 0 ? (
+          <button
+            type="button"
+            className="upnext-thread-toggle"
+            aria-expanded={expanded}
+            aria-controls={id}
+            onClick={() => setExpanded((open) => !open)}
+          >
+            <ChevronRightIcon size={12} className="upnext-chevron" />
+            <span className="upnext-thread-excerpt" title={thread.excerpt}>
+              {thread.excerpt || "(No text)"}
+            </span>
+          </button>
+        ) : (
+          <span className="upnext-thread-excerpt" title={thread.excerpt}>
+            {thread.excerpt || "(No text)"}
+          </span>
+        )}
+        <span className="upnext-block-sub">
+          {thread.author || "Someone"} ·{" "}
+          <a href={thread.url || url} target="_blank" rel="noreferrer">
+            <code>
+              {thread.path}
+              {thread.line ? `:${thread.line}` : ""}
+            </code>
+          </a>
+          {thread.outdated ? " · Outdated" : ""}
+          {thread.comments > 1 ? ` · ${thread.comments} comments` : ""}
+        </span>
+        {error ? (
+          <span className="upnext-thread-error" role="alert">
+            {error}
+          </span>
+        ) : null}
+        {expanded ? (
+          <ol id={id} className="upnext-thread-messages" aria-label="Conversation">
+            {messages.map((message, index) => (
+              <li key={index}>
+                <span className="upnext-thread-author">{message.author || "Someone"}</span>
+                <p className="upnext-thread-body">{message.body || "(No text)"}</p>
+              </li>
+            ))}
+            {more > 0 ? (
+              <li className="upnext-block-sub">
+                <a href={thread.url || url} target="_blank" rel="noreferrer">
+                  {more === 1 ? "1 more comment" : `${more} more comments`} on GitHub
+                </a>
+              </li>
+            ) : null}
+          </ol>
+        ) : null}
+      </span>
+      {thread.can_resolve ? (
+        <button
+          type="button"
+          className="upnext-secondary upnext-thread-resolve"
+          disabled={busy}
+          aria-busy={busy}
+          onClick={resolve}
+        >
+          {busy ? "Resolving…" : "Resolve"}
+        </button>
+      ) : null}
+    </li>
   );
 }
