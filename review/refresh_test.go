@@ -49,6 +49,16 @@ func TestSpliceSectionsKeepsRefreshedEvidence(t *testing.T) {
 	section := mustDecode(t, spliced)["sections"].([]any)[0].(map[string]any)
 	checkEqual(t, "failed", section["evidence"].([]any)[0].(map[string]any)["status"])
 	checkEqual(t, float64(1), section["derived"].(map[string]any)["evidence_summary"].(map[string]any)["failed"])
+	// The completed section can also add evidence absent from the saved
+	// section. Its check status still comes from the latest index.
+	latestDoc := mustDecode(t, latest)
+	latestSection := latestDoc["sections"].([]any)[0].(map[string]any)
+	latestSection["evidence"] = []any{}
+	latestSection["derived"].(map[string]any)["evidence_summary"] = map[string]any{}
+	spliced, err = validator.SpliceSections(encodeJSON(t, latestDoc), completed, []string{sectionID})
+	checkNoError(t, err)
+	section = mustDecode(t, spliced)["sections"].([]any)[0].(map[string]any)
+	checkEqual(t, "failed", section["evidence"].([]any)[0].(map[string]any)["status"])
 }
 
 func TestRefreshUpdatesChecksSessionsAndDerivedSummaries(t *testing.T) {

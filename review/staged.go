@@ -391,6 +391,17 @@ func (v *DocumentValidator) SpliceSections(latest, completed []byte, ids []strin
 	for _, section := range done.Sections {
 		written[section.ID] = section
 	}
+	checks := map[string]string{}
+	for _, check := range now.Index.Checks {
+		if check.Head == now.Review.Head {
+			checks[check.ID] = check.Conclusion
+		}
+	}
+	testHunks := map[string]bool{}
+	for _, hunk := range now.Index.Hunks {
+		testHunks[hunk.ID] = hunk.Role == "test"
+	}
+	sources := refreshEvidence{currentHead: now.Review.ChecksHead == now.Review.Head, checks: checks, testHunks: testHunks}
 	for _, id := range ids {
 		index := slices.IndexFunc(now.Sections, func(section documentSection) bool { return section.ID == id })
 		section, ok := written[id]
@@ -411,8 +422,22 @@ func (v *DocumentValidator) SpliceSections(latest, completed []byte, ids []strin
 			evidence := &section.Evidence[i]
 			if saved, ok := statuses[evidence.ID]; ok && saved.Kind == evidence.Kind && saved.Claim == evidence.Claim && sameAnchors(saved.Anchors, evidence.Anchors) {
 				evidence.Status, evidence.Granularity = saved.Status, saved.Granularity
-			} else if evidence.Status == "verified" || evidence.Status == "observed" {
-				evidence.Status, evidence.Granularity = "asserted", nil
+			} else {
+				checkAnchored, onlyChecksAndHunks := false, true
+				for _, anchor := range evidence.Anchors {
+					checkAnchored = checkAnchored || anchor.Type == "check"
+					onlyChecksAndHunks = onlyChecksAndHunks && (anchor.Type == "check" || anchor.Type == "hunk")
+				}
+				if checkAnchored && onlyChecksAndHunks {
+					if status := sources.status(evidence.Kind, evidence.Anchors, evidence.Status); status != "" {
+						evidence.Status = status
+					}
+				} else if evidence.Status == "verified" || evidence.Status == "observed" {
+					evidence.Status = "asserted"
+				}
+				if evidence.Status != "verified" {
+					evidence.Granularity = nil
+				}
 			}
 			if section.Derived.State != "stale" {
 				counts[evidence.Status]++
