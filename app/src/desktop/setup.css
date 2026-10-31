@@ -3,11 +3,30 @@ body {
   min-height: 100vh;
 }
 .onboarding {
+  --setup-rail-width: 310px;
   display: grid;
-  grid-template-columns: 310px minmax(0, 1fr);
+  grid-template-columns: var(--setup-rail-width) minmax(0, 1fr);
   padding: 0;
   min-height: 100vh;
   align-items: stretch;
+}
+.setup-banner {
+  position: absolute;
+  top: -52px;
+  left: 50%;
+  z-index: -1;
+  width: min(1000px, calc(100vw - var(--setup-rail-width) - 24px));
+  height: 160px;
+  transform: translateX(-50%);
+  overflow: hidden;
+  pointer-events: none;
+  mask-image: linear-gradient(to bottom, var(--text-primary) 45%, transparent);
+}
+.setup-banner img {
+  display: block;
+  width: 100%;
+  height: auto;
+  opacity: 0.9;
 }
 .setup-rail {
   display: flex;
@@ -94,6 +113,8 @@ li:not([aria-current]) > .step-link:hover:not(:disabled) {
   margin-top: 4px;
 }
 .setup-content {
+  position: relative;
+  isolation: isolate;
   width: min(100%, 720px);
   padding: 68px 48px 32px;
   text-align: left;
@@ -323,7 +344,16 @@ input {
 }
 @media (max-width: 760px) {
   .onboarding {
-    grid-template-columns: 230px minmax(0, 1fr);
+    --setup-rail-width: 230px;
+  }
+  .setup-banner {
+    top: 0;
+    width: 100%;
+    height: 72px;
+  }
+  .setup-banner img {
+    width: 760px;
+    transform: translateY(-40px);
   }
   .setup-rail {
     padding: 28px 20px;

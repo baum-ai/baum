@@ -11,6 +11,10 @@ The desktop app's own screens are React too: `setup.html` mounts
 with typed native IPC and the same Vite, TypeScript, lint and test pipeline. Setup,
 connecting and tray screens use the viewer palette that the local app uses,
 following the system's light or dark appearance.
+Setup has a decorative leaf banner just above its step label, using the
+transparent Discord artwork in both themes. Its width is capped so leaves stay
+visible on large screens, and it follows the form on tall windows. It is static,
+fades into the page and leaves the step controls in place.
 
 Desktop UI colors are defined in `../viewer/src/palette.css`. The inbox,
 walkthrough, sessions, settings and charts reuse its semantic tokens. Stumpy's

@@ -19,6 +19,7 @@ import { GitHubStep } from "./github-step";
 import { RepositoryPicker, setupRepositoryCall } from "../repositories";
 import { Stumpy } from "@baum/viewer/components/stumpy";
 import { LoadingStatus, NineDots } from "../nine-dots";
+import onboardingLeaves from "./onboarding-leaves.png";
 
 const steps = [
   [
@@ -256,6 +257,9 @@ export function Setup() {
         </ol>
       </aside>
       <section className="setup-content">
+        <div className="setup-banner" aria-hidden="true">
+          <img src={onboardingLeaves} alt="" />
+        </div>
         <header>
           <p id="step-label" className="eyebrow">
             STEP {step + 1} OF {steps.length}
