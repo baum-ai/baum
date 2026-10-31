@@ -6,19 +6,22 @@
 }
 .review-section {
   margin: 0;
-  padding: 20px 22px;
+  padding: 14px 18px;
   border: 0;
   min-width: 0;
 }
 .review-section + .review-section {
   border-top: 1px solid var(--border-subtle);
 }
+.review-section + .model-settings {
+  border-top: 0;
+}
 .review-section legend,
 .review-label {
   display: block;
   float: left;
   width: 100%;
-  margin-bottom: 10px;
+  margin-bottom: 8px;
   padding: 0;
   font-size: 12px;
   font-weight: 500;
@@ -44,9 +47,9 @@
 .harness-tile {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
   height: 100%;
-  padding: 10px 12px;
+  padding: 8px 10px;
   border: 1px solid var(--border-default);
   border-radius: 9px;
   background: var(--surface-page);
@@ -69,8 +72,30 @@
 .select select:hover {
   border-color: var(--border-strong);
 }
-.harness-option:hover .harness-tile {
+.harness-option:hover input:not(:disabled) + .harness-tile {
   border-color: var(--border-strong);
+}
+.harness-option input:disabled + .harness-tile {
+  color: var(--text-disabled);
+  cursor: not-allowed;
+}
+.harness-option input:disabled + .harness-tile small {
+  color: var(--text-disabled);
+}
+.agent-installation h2 {
+  font-size: 14px;
+  margin: 0;
+}
+.agent-install-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px 20px;
+  margin-top: 16px;
+  font-size: 13px;
+}
+.agent-install-links a {
+  color: var(--action-primary);
+  text-underline-offset: 3px;
 }
 .harness-option input:checked + .harness-tile {
   border-color: var(--action-primary);
@@ -78,6 +103,7 @@
   box-shadow: inset 0 0 0 1px var(--action-primary);
 }
 .harness-option input:focus-visible + .harness-tile,
+.agent-install-links a:focus-visible,
 .segmented input:focus-visible + span {
   outline: 2px solid var(--action-primary);
   outline-offset: 2px;
@@ -86,6 +112,42 @@
   clear: both;
   display: flex;
   gap: 8px;
+}
+.model-settings {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 12px;
+  align-items: start;
+}
+.model-settings.with-effort {
+  grid-template-columns: minmax(0, 1fr) minmax(112px, 140px);
+}
+.model-settings .review-label {
+  float: none;
+  width: auto;
+}
+.review-card .model-settings > .review-note {
+  grid-column: 1 / -1;
+  margin: 0;
+}
+.model-field,
+.effort-field {
+  min-width: 0;
+}
+.model-settings .model-row {
+  flex-direction: column;
+}
+.model-settings .select {
+  display: block;
+  flex: auto;
+  width: 100%;
+}
+.model-settings .model-row input {
+  width: 100%;
+}
+.model-settings select:disabled {
+  color: var(--text-disabled);
+  cursor: not-allowed;
 }
 .select {
   position: relative;
@@ -165,7 +227,7 @@
   transform: translateX(18px);
 }
 .scope {
-  margin: 18px 0 0;
+  margin: 12px 0 0;
   padding: 0;
   border: 0;
   min-width: 0;
@@ -182,7 +244,7 @@
 }
 .segmented span {
   display: block;
-  padding: 7px 14px;
+  padding: 6px 10px;
   border-radius: 6px;
   font-size: 13px;
   color: var(--text-secondary);
@@ -199,8 +261,9 @@
   font-weight: 500;
 }
 .review-card .review-note {
-  margin: 10px 0 0;
+  margin: 8px 0 0;
   font-size: 12px;
+  line-height: 1.5;
   color: var(--text-secondary);
 }
 .model-row input {

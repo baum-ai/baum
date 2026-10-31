@@ -85,9 +85,10 @@ native assets in `dist/`, where the connecting screen is `index.html`. Tauri emb
 daemon-served pages may open the native folder picker (below) or manage
 the bundled CLI and agent hooks directly in Settings. The GitHub step requires a
 connection and at least one picked repository before Continue or the later steps
-in the rail become available. CLI and agent installation remain optional; steps
-have Back and Continue controls. Changes happen only when the user selects an
-install or add action. Displayed paths abbreviate the current home directory as
+in the rail become available. Adding the CLI to the user's PATH and connecting
+agent hooks remain optional. The app runs its own CLI to start the daemon.
+Steps have Back and Continue controls. Changes
+happen only when the user selects an install or add action. Displayed paths abbreviate the current home directory as
 `~`; actions still use the full path:
 
 1. Connect GitHub and pick repositories.
@@ -126,14 +127,23 @@ install or add action. Displayed paths abbreviate the current home directory as
      actions to the daemon. It cannot provide arbitrary HTTP routes or see a
      GitHub token. Explicit folder attachment may file a fork under its
      upstream repository when a remote matches it.
-2. Set up reviews: the harness (automatic, Claude Code, Codex, Cursor Agent or
-   the Anthropic API), its model (the harness default, a listed model or a
-   custom one), whether reviews run automatically and, if so, for which pull
-   requests (authored, requested, both, or all open pull requests). The
+2. Select your agent: Claude Code or Codex (initially resolved from automatic
+   selection or the installed agents). Missing CLIs are marked Not installed
+   and cannot be selected; a saved missing agent falls back to an installed
+   one, preferring Claude Code. When neither is detected, official installation
+   guides and Check again replace the model controls. Continue and the final
+   step in the rail wait for an installed agent; rechecking selects one as
+   soon as it is detected. Detection errors show retry guidance.
+   A compact row pairs the review model
+   with its reasoning effort. The review
+   effort also applies to fixes that follow reviews. A model can be a preset or
+   a custom name. Choose whether reviews run automatically and, if so, for which
+   pull requests (authored, requested, both, or all open pull requests). The
    screen reads them with `baum internal reviews show` and saves changes with
    `baum internal reviews set` when the user opens baum at the end of setup.
    They are stored as app preferences in the repository registry, which the
-   daemon rereads for every job.
+   daemon rereads for every job. The native bridge forwards the review `effort`
+   CLI flag. Extraction preferences remain in Settings; setup leaves them intact.
 3. Install the CLI and connect agents.
    - Install the bundled `baum` command onto the login shell's `PATH` (below).
      The step states in one line where baum will be installed, or which other
@@ -145,12 +155,33 @@ install or add action. Displayed paths abbreviate the current home directory as
      Both use the native agent CLI to fetch the public marketplace.
      Installation and enablement do not mean the user has trusted the hooks.
 
+### Model effort choices
+
+The onboarding selectors use CLI capabilities, checked on 2026-10-31 against
+[Claude Code's model configuration](https://code.claude.com/docs/en/model-config#adjust-effort-level)
+and the Codex 0.166 model catalogue. Codex accepts the effort advertised by each
+model through [`model_reasoning_effort`](https://learn.chatgpt.com/docs/config-file/config-reference#model_reasoning_effort).
+
+| Models | Effort levels |
+| --- | --- |
+| Claude Haiku 5.5, Sonnet 5.5 and Opus 5.5 | Low, Medium, High, Extra high, Max |
+| GPT-6 Luna | Low, Medium, High, Extra high, Max |
+| GPT-6.1 Sol, GPT-6.1 Terra and GPT-6 Astra | Low, Medium, High, Extra high, Max, Ultra |
+
+Every selector also offers Default, which leaves the effort to the agent.
+Ultra enables Codex's automatic task delegation. Unknown custom models offer
+Default only. Changing a model preserves a supported effort and resets an
+unsupported one to Default. API-only levels are not offered by the CLI picker.
+
+Open baum uses the app's CLI independently of the command on the user's PATH.
+Installing that command and connecting agent hooks remain optional.
 Failed actions leave the user on the step with their output and a retry action.
 "Check again" rereads the installed state. Finishing records `desktop.json`'s
 setup section, attaches to the daemon and opens the inbox. If diagnostics find a problem,
-the inbox shows a notice linking to the fixes. Later, "Command Line and Hooks…"
-in the tray, or the menu bar on macOS, reopens the same steps, with removal controls for
-the command and each agent plugin. Settings also provides these controls inline, without reopening setup.
+the inbox shows a notice linking to the fixes. Setup points to Settings to finish
+later, with inline controls for the command and each agent plugin.
+"Command Line and Hooks…" in the window's menu bar also reopens the same steps;
+the tray menu omits it.
 
 Setup, Diagnostics and Settings offer GitHub device sign-in: copy the code and open
 GitHub in the default browser. The daemon completes sign-in independently of
@@ -307,8 +338,8 @@ The daemon outlives the app, so the app's presence is a tray icon.
   anything needing attention; each agent session asking for a permission or
   an answer (clicking one opens its transcript); "Plan usage left" with a
   line per readable plan window ("Claude Code · 5-hour: 62% left · resets in
-  3 h"); Open baum; Pause or Resume automatic reviews; Start at login; Command
-  Line and Hooks… (see "First run"); a Notifications submenu (see
+  3 h"); Open baum; Pause or Resume automatic reviews; Start at login;
+  a Notifications submenu (see
   "Notifications"); Quit; Quit and stop background reviews. Plan usage shows
   only the plans the daemon could read, and nothing when it can read neither
   Claude Code nor Codex. The menu is rebuilt whenever a "resets in" text would

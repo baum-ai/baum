@@ -82,7 +82,23 @@ Setup uses the native `repositories` relay; app pages use namespaced local HTTP.
 The relay permits only named repository actions and never exposes credentials.
 Desktop setup requires a GitHub connection and at least one picked repository
 before continuing or opening a later step from the rail. The GitHub step has no
-skip action; CLI and agent installation remain optional.
+skip action. Adding the baum CLI to the terminal and connecting agent hooks
+remain optional; the app runs its own CLI to start the daemon.
+The onboarding agent picker offers Claude Code and Codex, with a note below
+the model explaining that the agent and model can be customised per task in Settings.
+Missing agent CLIs are marked Not installed and cannot be selected. A saved
+choice is kept only if detected; otherwise setup chooses an installed agent,
+preferring Claude Code. When neither is detected, setup shows official install
+guides and Check again, and waits for an agent before advancing to the final
+step. Rechecking selects a newly installed agent without reloading setup. A
+failed detection offers a retry rather than claiming nothing is installed.
+Its compact model row includes an effort selector for reviews, using the
+model-specific CLI levels documented in
+[desktop setup](../desktop/README.md#model-effort-choices). Default leaves the
+choice to the agent; unknown custom models offer Default only. Changing a model
+clears an effort it does not support. The native setup bridge saves the review
+model and effort. Fixes that follow reviews inherit their effort. Extraction
+preferences remain in Settings and are preserved when onboarding saves.
 
 The baum daemon serves this React single-page app from its embedded assets;
 the desktop app opens it from the launch URL in the daemon's
@@ -979,7 +995,8 @@ the global review settings, one per row: whether reviews run automatically,
 for which pull requests (authored, requested, both, or all open pull requests
 in the repository), the harness and its model (a listed model or a custom
 name, saved when its field is left or Enter is pressed) and the reasoning
-effort (Default, which leaves it to the agent, Low, Medium or High; no row for
+effort (Default, which leaves it to the agent, Low, Medium or High; higher levels
+selected in onboarding remain visible; no row for
 Cursor Agent, whose models name their own). Each change is saved
 at once, with "Saved" beside the title, through `PUT api/automatic`
 (`enabled`, `backend`, `model`, `effort`, `pull_requests`), which the daemon

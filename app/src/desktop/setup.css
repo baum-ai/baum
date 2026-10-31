@@ -171,7 +171,6 @@ summary:focus-visible {
   padding-left: 12px;
 }
 .setup-footer {
-  border-top: 1px solid var(--border-default);
   margin-top: 28px;
   padding-top: 24px;
 }

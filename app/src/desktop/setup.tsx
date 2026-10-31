@@ -4,6 +4,7 @@ import { invoke } from "./native";
 import {
   describeAgent,
   describeCommand,
+  detectedHarnesses,
   displayPath,
   withModel,
   storedReviews,
@@ -27,10 +28,10 @@ const steps = [
     "Account and repositories",
   ],
   [
-    "Set up reviews",
-    "Choose what writes your reviews, which pull requests baum reviews on its own and the model that captures your sessions' decisions.",
-    "Set up reviews",
-    "Harness, models and automation",
+    "Select your agent",
+    "Choose the agent and models baum uses to review pull requests, make fixes and extract decisions from your sessions.",
+    "Select your agent",
+    "Reviews, fixes and decisions",
   ],
   [
     "Connect your agents",
@@ -62,13 +63,6 @@ const agents = [
   },
 ];
 
-/** The harness "auto" runs first: Claude Code when installed, else Codex. */
-function autoBackend(view: SetupView | null) {
-  const detected = (id: string) => view?.hooks.agents.some((a) => a.agent === id && a.detected);
-  if (detected("claude-code")) return "claude";
-  return detected("codex") ? "codex" : "claude";
-}
-
 export function Setup() {
   const [view, setView] = useState<SetupView | null>(null);
   const [step, setStep] = useState(0);
@@ -77,9 +71,6 @@ export function Setup() {
   const [pickedCount, setPickedCount] = useState(0);
   const [reviews, setReviews] = useState<ReviewSettings | null>(null);
   const [savedReviews, setSavedReviews] = useState("");
-  // The saved decision model when the daemon reports capture ignores it, and
-  // the harness shown for that report.
-  const [unusedModel, setUnusedModel] = useState<{ model: string; backend: string } | null>(null);
   const [github, setGitHub] = useState(false);
   const working = useRef(false);
   const title = useRef<HTMLHeadingElement>(null);
@@ -117,15 +108,17 @@ export function Setup() {
         // "auto" and an unset model have no choice on screen: show the harness
         // "auto" picks and that harness's default model. They differ from what
         // is saved, so opening baum saves the explicit choice.
-        const backend = shownHarness(settings, autoBackend(view));
-        setReviews(withModel({ ...settings, backend }));
-        // The daemon resolved the harness it ignores the model with.
-        if (
-          settings.decisions_model_ignored &&
-          settings.decisions_model &&
-          settings.decisions_backend
-        )
-          setUnusedModel({ model: settings.decisions_model, backend: settings.decisions_backend });
+        const detected = detectedHarnesses(view.hooks.agents);
+        const backend =
+          view.hooks.error && detected.length === 0
+            ? settings.backend
+            : shownHarness(settings, detected);
+        const draft = { ...settings, backend };
+        if (!backend || (settings.backend !== "auto" && settings.backend !== backend)) {
+          draft.model = "";
+          draft.effort = "";
+        }
+        setReviews(withModel(draft));
         setSavedReviews(JSON.stringify(storedReviews(settings)));
       })
       .catch((cause) => {
@@ -135,6 +128,16 @@ export function Setup() {
       active = false;
     };
   }, [step, reviews, view]);
+  useEffect(() => {
+    if (!view || (view.hooks.error && detectedHarnesses(view.hooks.agents).length === 0)) return;
+    setReviews((current) => {
+      if (!current) return current;
+      const backend = shownHarness(current, detectedHarnesses(view.hooks.agents));
+      return backend === current.backend
+        ? current
+        : withModel({ ...current, backend, model: "", effort: "" });
+    });
+  }, [view]);
   useEffect(() => {
     if (view) title.current?.focus();
   }, [step, Boolean(view)]);
@@ -187,14 +190,16 @@ export function Setup() {
     view.hooks.agents.length > 0 &&
     view.hooks.agents.every((a) => a.installed && a.enabled && !a.error);
   const githubReady = github && pickedCount > 0;
-  const done = view ? [githubReady, true, Boolean(command?.ok) && agentsDone][step] : false;
-  // A default decision model is saved as none, so it follows the harness.
+  const available = view ? detectedHarnesses(view.hooks.agents) : [];
+  const agentReady = reviews !== null && available.includes(reviews.backend);
+  const done = view
+    ? [githubReady, agentReady && !view.hooks.error, Boolean(command?.ok) && agentsDone][step]
+    : false;
   const reviewsChanged =
     reviews !== null && JSON.stringify(storedReviews(reviews)) !== savedReviews;
-  // A custom model needs a name, both to leave the review step and to finish.
-  const modelMissing =
-    (step === reviewStep || step === last) && reviews !== null && !reviews.model.trim();
+  const modelMissing = reviews !== null && !reviews.model.trim();
   async function finish() {
+    if (!agentReady || modelMissing) return;
     if (reviews && reviewsChanged) {
       const outcome = await invoke<Outcome>("save_review_settings", {
         settings: storedReviews(reviews),
@@ -209,6 +214,7 @@ export function Setup() {
   }
   function navigate(next: number) {
     if (next > 0 && !githubReady) return;
+    if (next > reviewStep && (!agentReady || modelMissing)) return;
     setError("");
     setStep(next);
   }
@@ -231,7 +237,12 @@ export function Setup() {
               <button
                 type="button"
                 className="step-link"
-                disabled={busy || !view || (index > 0 && !githubReady)}
+                disabled={
+                  busy ||
+                  !view ||
+                  (index > 0 && !githubReady) ||
+                  (index > reviewStep && (!agentReady || modelMissing))
+                }
                 onClick={() => navigate(index)}
               >
                 <span className="step-number">{index < step ? "✓" : index + 1}</span>
@@ -288,10 +299,8 @@ export function Setup() {
                   settings={reviews}
                   disabled={busy}
                   onChange={setReviews}
-                  decisions
-                  unusedDecisionModel={
-                    unusedModel?.backend === reviews.backend ? unusedModel.model : undefined
-                  }
+                  available={available}
+                  detectionError={view.hooks.error}
                 />
                 <PlanUsage className="setup-card" />
               </>
@@ -429,10 +438,12 @@ export function Setup() {
               },
               "secondary",
               undefined,
-              modelMissing || (step === 0 && !githubReady),
+              (step >= reviewStep && (!agentReady || modelMissing)) || (step === 0 && !githubReady),
             )}
           </div>
-          {step > 0 && !done && <p id="skip-note">You can finish setup later from the app menu.</p>}
+          {step > 0 && !done && (step !== reviewStep || agentReady) && (
+            <p id="skip-note">You can finish setup later from the settings.</p>
+          )}
         </footer>
       </section>
     </main>

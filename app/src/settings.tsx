@@ -45,6 +45,7 @@ import {
   PlusIcon,
 } from "@baum/viewer/components/icons";
 import { DecisionsDisclosure, harnesses, harnessName } from "./desktop/reviews";
+import { effortLabels } from "./model-effort";
 import {
   describeCommand,
   describeAgent,
@@ -486,12 +487,15 @@ function EffortRow({
   onChange: (next: string) => void;
 }) {
   if (backend === "cursor-agent") return null;
+  const items = efforts.some((item) => item.value === value)
+    ? efforts
+    : [...efforts, { value, label: effortLabels[value] ?? value }];
   return (
     <SettingRow
       label="Reasoning effort"
       detail="Default leaves it to the agent. Higher thinks longer and costs more."
     >
-      <SegmentedControl label={label} value={value} items={efforts} onChange={onChange} />
+      <SegmentedControl label={label} value={value} items={items} onChange={onChange} />
     </SettingRow>
   );
 }

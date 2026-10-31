@@ -1236,10 +1236,13 @@ it("saves a reasoning effort per use case", async () => {
   const puts = stubAutomatic(demoClone, automaticOverview, {
     backend: "codex",
     model: "gpt-6.1-sol",
-    effort: "",
+    effort: "max",
     decisions: { enabled: true, backend: "", model: "", effective_backend: "codex" },
   });
   await act(async () => root.render(<App />));
+  expect(node.querySelector('[aria-label="Review reasoning effort"]')!.textContent).toContain(
+    "Max",
+  );
   const pick = async (group: string, label: string) => {
     const control = node.querySelector(`[aria-label="${group}"]`)!;
     await act(async () =>

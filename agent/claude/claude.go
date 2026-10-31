@@ -56,7 +56,7 @@ type Backend struct {
 	// exec.LookPath and defaults to "claude".
 	Binary, Model string
 	Profile       Profile
-	// Effort is the --effort level (low, medium or high); empty leaves it to
+	// Effort is the --effort level; empty leaves it to
 	// Claude Code. The User profile leaves thinking to Claude Code, while the
 	// Isolated profile always runs without thinking.
 	Effort string
