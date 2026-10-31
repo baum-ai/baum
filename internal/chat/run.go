@@ -50,9 +50,12 @@ const SeededNote = "Started without the review's own context: "
 // next question starts from the saved review and the earlier turns.
 const NoSessionNote = "The agent kept no session for this answer, so the next question starts without this conversation's context."
 
-// PassTimeout bounds each agent call of a turn: half of a review's
-// pass_timeout.
-func PassTimeout(cfg config.Config) time.Duration { return time.Duration(cfg.Budgets.PassTimeout) / 2 }
+// PassTimeout lets an agent call use the turn's full time limit. A backend
+// call may contain its entire tool loop, so a shorter pass deadline would
+// defeat the run time limit chosen in Settings.
+func PassTimeout(cfg config.Config) time.Duration {
+	return max(time.Duration(cfg.Budgets.PassTimeout)/2, time.Duration(cfg.Budgets.RunTimeout))
+}
 
 // Budgets are a turn's: the time limit of an agent run that is not a review
 // (run_timeout) and, when a review's calls and tokens are bounded, half of
@@ -77,12 +80,12 @@ func (s *Service) root() (string, error) {
 	return reviewruns.DefaultRoot()
 }
 
-func (s *Service) resolve(ctx context.Context, c repos.Clone) (config.Config, error) {
+func (s *Service) resolve(ctx context.Context) (config.Config, error) {
 	prefs, err := s.Registry.Preferences(ctx)
 	if err != nil {
 		return config.Config{}, err
 	}
-	return c.Settings.Resolve(prefs.Resolve(s.Config)), nil
+	return prefs.Resolve(s.Config), nil
 }
 
 // Run answers the turn ref names. It marks the turn running, runs the agent
@@ -109,7 +112,7 @@ func (s *Service) Run(ctx context.Context, ref Ref, o RunOptions) (report Report
 	if err != nil {
 		return report, err
 	}
-	cfg, err := s.resolve(ctx, c)
+	cfg, err := s.resolve(ctx)
 	if err != nil {
 		return report, err
 	}

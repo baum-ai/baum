@@ -22,32 +22,30 @@ import {
   type DiagnosticReport,
   type DecisionSettings,
 } from "./api";
-import { RepositoryPicker, CloneActions, earlierNamesWarning } from "./repositories";
+import {
+  RepositoryPicker,
+  CloneActions,
+  earlierNamesWarning,
+  useCloneActions,
+} from "./repositories";
+import { MenuButton, useContextMenu, type MenuItem } from "./context-menu";
 import { GitHubConnectionSection } from "./github-connection";
 import { messages as githubMessages } from "./github-auth";
 import { DiagnosticsSection } from "./diagnostics";
 import { invoke } from "./desktop/native";
-import { Notice, PageBar, PanelHeader } from "./shell";
+import { Notice, PageBar, PanelHeader, RefreshButton } from "./shell";
 import { listKeys, onBody, useRowFocus, useShortcuts } from "./shortcuts";
 import codexLogo from "./desktop/codex.svg";
 import claudeLogo from "./desktop/claude-code.svg";
 import {
   TerminalIcon,
   SessionsIcon,
-  LightbulbIcon,
   CheckIcon,
   SearchIcon,
   CloseIcon,
   PlusIcon,
 } from "@baum/viewer/components/icons";
-import {
-  DecisionModelPicker,
-  DecisionsDisclosure,
-  HarnessPicker,
-  ModelPicker,
-  harnesses,
-  harnessName,
-} from "./desktop/reviews";
+import { DecisionsDisclosure, harnesses, harnessName } from "./desktop/reviews";
 import {
   describeCommand,
   describeAgent,
@@ -62,13 +60,16 @@ import {
 } from "./desktop/setup-model";
 import { LoadingStatus } from "./nine-dots";
 
-/** The harness and model reviews use when a repository does not choose its
- *  own, and the ones fixes use: an empty `fix_backend` follows the review's. */
+/** The harness and model reviews use, and the ones fixes use: an empty
+ *  `fix_backend` follows the review's. */
 export type ReviewDefaults = {
   backend: string;
   model: string;
+  /** Reasoning efforts; empty is the agent's own. */
+  effort?: string;
   fix_backend?: string;
   fix_model?: string;
+  fix_effort?: string;
 };
 
 function errorText(error: unknown) {
@@ -83,6 +84,10 @@ function shownBackend(backend: string) {
 /** Only Claude Code and Codex confine an agent with write access, so only
  *  they fix pull requests. */
 const fixHarnesses = ["claude", "codex"];
+
+/** The harnesses that can make data extraction's structured calls, those
+ *  with a default decision model; Cursor Agent cannot. */
+const extractionHarnesses = Object.keys(decisionModelDefaults);
 
 export const settingsSections = ["general", "reviews", "fixes", "connections", "computer"] as const;
 export type SettingsSection = (typeof settingsSections)[number];
@@ -297,12 +302,12 @@ function SectionHead({
   );
 }
 
-/** Saves review and fix choices as they change. Each section sends all of its
+/** Saves review, fix and data extraction choices as they change. Each section sends all of its
  *  choices, so one PUT runs at a time and a change made meanwhile replaces any
  *  other waiting one: an older choice never lands after a newer one. The app
  *  reads its state again once nothing waits, and `Saved` shows for a moment.
  *  `failures` counts failed saves, so a section puts its controls back. */
-function useAutoSave(changed: () => Promise<void>) {
+function useAutoSave(changed: () => Promise<void>, path = "api/automatic") {
   const [state, setState] = useState<"idle" | "saving" | "saved">("idle");
   const [error, setError] = useState("");
   const [failures, setFailures] = useState(0);
@@ -320,7 +325,7 @@ function useAutoSave(changed: () => Promise<void>) {
       const body = waiting.current;
       waiting.current = null;
       try {
-        await request("api/automatic", body, "PUT");
+        await request(path, body, "PUT");
         failure = "";
       } catch (e) {
         failure = errorText(e);
@@ -461,8 +466,39 @@ const scopes: { value: PullRequests; label: string }[] = [
   { value: "requested", label: "Only requested" },
 ];
 
+const efforts: { value: string; label: string }[] = [
+  { value: "", label: "Default" },
+  { value: "low", label: "Low" },
+  { value: "medium", label: "Medium" },
+  { value: "high", label: "High" },
+];
+
+/** A use case's reasoning effort: "" leaves it to the agent. Cursor Agent has
+ *  none (its models name their own), so it gets no row. */
+function EffortRow({
+  label,
+  backend,
+  value,
+  onChange,
+}: {
+  label: string;
+  backend: string;
+  value: string;
+  onChange: (next: string) => void;
+}) {
+  if (backend === "cursor-agent") return null;
+  return (
+    <SettingRow
+      label="Reasoning effort"
+      detail="Default leaves it to the agent. Higher thinks longer and costs more."
+    >
+      <SegmentedControl label={label} value={value} items={efforts} onChange={onChange} />
+    </SettingRow>
+  );
+}
+
 /** The global review settings: whether baum reviews on its own, which pull
- *  requests, and the agent and model that write reviews. */
+ *  requests, and the agent, model and effort that write reviews. */
 function ReviewsSection({
   automatic,
   defaults,
@@ -472,12 +508,15 @@ function ReviewsSection({
   defaults: ReviewDefaults;
   changed: () => Promise<void>;
 }) {
-  const saved: ReviewSettings = withModel({
-    backend: shownBackend(defaults.backend),
-    model: defaults.backend === "auto" ? "" : defaults.model,
-    automatic: automatic.enabled,
-    pull_requests: (automatic.pull_requests ?? "both") as PullRequests,
-  });
+  const saved: ReviewSettings & { effort: string } = {
+    ...withModel({
+      backend: shownBackend(defaults.backend),
+      model: defaults.backend === "auto" ? "" : defaults.model,
+      automatic: automatic.enabled,
+      pull_requests: (automatic.pull_requests ?? "both") as PullRequests,
+    }),
+    effort: defaults.effort ?? "",
+  };
   const key = JSON.stringify(saved);
   const [draft, setDraft] = useState(saved);
   const { save, error, status, failures } = useAutoSave(changed);
@@ -485,13 +524,14 @@ function ReviewsSection({
   // puts the controls back.
   // biome-ignore lint/correctness/useExhaustiveDependencies: `key` stands for `saved`
   useEffect(() => setDraft(saved), [key, failures]);
-  const change = (patch: Partial<ReviewSettings>) => {
+  const change = (patch: Partial<typeof saved>) => {
     const next = { ...draft, ...patch };
     setDraft(next);
     save({
       enabled: next.automatic,
       backend: next.backend,
       model: next.model,
+      effort: next.effort,
       pull_requests: next.pull_requests,
     });
   };
@@ -562,10 +602,15 @@ function ReviewsSection({
             onChange={(model) => change({ model })}
           />
         </SettingRow>
+        <EffortRow
+          label="Review reasoning effort"
+          backend={draft.backend}
+          value={draft.effort}
+          onChange={(effort) => change({ effort })}
+        />
       </div>
       <p className="settings-footnote">
-        Changes save as you make them and apply to the next review. A repository can choose its own
-        agent and model in Repositories.
+        Changes save as you make them and apply to the next review in every repository.
       </p>
     </section>
   );
@@ -585,6 +630,7 @@ function FixesSection({
   const saved = {
     backend: savedBackend,
     model: savedBackend ? defaults.fix_model || (modelPresets[savedBackend]?.[0] ?? "") : "",
+    effort: savedBackend ? (defaults.fix_effort ?? "") : "",
   };
   const key = JSON.stringify(saved);
   const [draft, setDraft] = useState(saved);
@@ -593,7 +639,7 @@ function FixesSection({
   useEffect(() => setDraft(saved), [key, failures]);
   const change = (next: typeof saved) => {
     setDraft(next);
-    save({ fix_backend: next.backend, fix_model: next.model });
+    save({ fix_backend: next.backend, fix_model: next.model, fix_effort: next.effort });
   };
   const reviewModel = defaults.backend === "auto" ? "" : defaults.model;
   const reviewAgent = [harnessName(review), reviewModel].filter(Boolean).join(" · ");
@@ -630,7 +676,11 @@ function FixesSection({
             options={fixHarnesses}
             same="Same as reviews"
             onChange={(backend) =>
-              change({ backend, model: backend ? (modelPresets[backend]?.[0] ?? "") : "" })
+              change({
+                backend,
+                model: backend ? (modelPresets[backend]?.[0] ?? "") : "",
+                effort: backend ? draft.effort : "",
+              })
             }
           />
         </SettingRow>
@@ -645,11 +695,19 @@ function FixesSection({
             />
           </SettingRow>
         ) : null}
+        {draft.backend ? (
+          <EffortRow
+            label="Fix reasoning effort"
+            backend={draft.backend}
+            value={draft.effort}
+            onChange={(effort) => change({ ...draft, effort })}
+          />
+        ) : null}
       </div>
       <p className="settings-footnote">
         {draft.backend
-          ? "Fixes use this agent in every repository, whatever agent the repository reviews with."
-          : "Fixes follow the review agent, including a repository's own choice."}
+          ? "Fixes use this agent in every repository."
+          : "Fixes follow the review agent."}
       </p>
     </section>
   );
@@ -1338,109 +1396,142 @@ function ZoomSection() {
   );
 }
 
-/** Decision capture: the switch and the model. */
+/** Data extraction, decision capture and the feature log: the switch, the
+ *  agent and the model, saved as they change like the review settings. */
 function DecisionSettingsSection({ defaults }: { defaults: ReviewDefaults }) {
   const [saved, setSaved] = useState<DecisionSettings | null>(null);
-  // The model is null while it is inherited and a string, "" included, once
-  // one is picked or being typed: "" is not the harness's default here.
-  const [draft, setDraft] = useState<{ enabled: boolean; model: string | null } | null>(null);
-  const [pending, setPending] = useState(false);
-  const [done, setDone] = useState(false);
-  const [error, setError] = useState("");
-  const load = (settings: DecisionSettings) => {
-    setSaved(settings);
-    setDraft({ enabled: settings.enabled, model: settings.model || null });
-  };
+  const [loadError, setLoadError] = useState("");
+  const load = () =>
+    request<{ decisions?: DecisionSettings }>("api/settings/decisions").then((settings) => {
+      if (settings.decisions) setSaved(settings.decisions);
+    });
+  // biome-ignore lint/correctness/useExhaustiveDependencies: read once; saves read again
   useEffect(() => {
-    request<{ decisions?: DecisionSettings }>("api/settings/decisions").then(
-      (settings) => {
-        if (settings.decisions) load(settings.decisions);
-      },
-      (e) => setError(errorText(e)),
-    );
+    load().catch((e: unknown) => setLoadError(errorText(e)));
   }, []);
-  if (!saved || !draft) return error ? <Alert>{error}</Alert> : null;
-  // The daemon resolves the harness capture uses, auto included.
-  const backend = saved.backend || shownBackend(defaults.backend);
-  // A blank custom name is saved as none, as a repository's model is.
-  const next = { enabled: draft.enabled, model: draft.model?.trim() ?? "" };
-  const dirty = next.enabled !== saved.enabled || next.model !== saved.model;
-  const save = async () => {
-    setPending(true);
-    setError("");
-    setDone(false);
-    try {
-      const answer = await request<{ decisions: DecisionSettings }>(
-        "api/settings/decisions",
-        next,
-        "PUT",
-      );
-      load(answer.decisions);
-      setDone(true);
-    } catch (e) {
-      setError(errorText(e));
-    } finally {
-      setPending(false);
-    }
+  const { save, error, status, failures } = useAutoSave(load, "api/settings/decisions");
+  // The agent is "" while it follows the reviews', the model "" while it is
+  // the agent's default.
+  const choice = saved && {
+    enabled: saved.enabled,
+    backend: saved.backend,
+    model: saved.model,
+    effort: saved.effort ?? "",
   };
-  const fallback = decisionModelDefaults[backend];
-  // A saved model the daemon reports capture ignores is shown as such.
-  const ignored = saved.model_ignored && saved.model ? saved.model : undefined;
+  const key = JSON.stringify(choice);
+  const [draft, setDraft] = useState(choice);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: `key` stands for `choice`
+  useEffect(() => setDraft(choice), [key, failures]);
+  if (!saved || !draft) return loadError ? <Alert>{loadError}</Alert> : null;
+  const review = shownBackend(defaults.backend);
+  // The daemon resolves the harness extraction uses, auto included.
+  const resolve = (chosen: string) =>
+    chosen || (!saved.backend && saved.effective_backend) || review;
+  const backend = resolve(draft.backend);
+  const fallback = decisionModelDefaults[backend] ?? "";
+  const change = (patch: Partial<typeof draft>) => {
+    const next = { ...draft, ...patch };
+    setDraft(next);
+    // The default is saved as none, so it follows the agent.
+    const model = next.model === decisionModelDefaults[resolve(next.backend)] ? "" : next.model;
+    save({ enabled: next.enabled, backend: next.backend, model, effort: next.effort });
+  };
+  // A saved model the daemon reports extraction ignores is shown as such.
+  const ignored =
+    saved.model_ignored && saved.model && draft.backend === saved.backend ? saved.model : "";
+  const off = !draft.enabled;
   return (
-    <section aria-labelledby="decisions-heading" className="local-panel settings-card p-0!">
-      <PanelHeader
+    <section aria-labelledby="decisions-heading" className="settings-section">
+      <SectionHead
         id="decisions-heading"
-        icon={<LightbulbIcon size={20} />}
-        title="Decision capture"
-        detail="baum records the decisions made in your agent sessions, with a small model through the review harness, and shows them beside each pull request."
-        actions={
-          <Toggle
-            checked={draft.enabled}
-            disabled={pending}
-            onChange={(enabled) => {
-              setDone(false);
-              setDraft({ ...draft, enabled });
-            }}
-          >
-            Capture decisions
-          </Toggle>
-        }
+        title="Data extraction"
+        detail="The agent that records the decisions of your agent sessions and keeps the feature log, in the background. A small model keeps this cheap."
+        status={status}
       />
-      {error ? <Alert className="mx-5 mb-4">{error}</Alert> : null}
-      <div className="review-card settings-form">
-        <DecisionModelPicker
-          id="settings-decisions-model"
-          backend={backend}
-          value={draft.model}
-          unused={ignored}
-          inherit={`Default${fallback ? ` (${fallback})` : ""}`}
-          disabled={pending || !draft.enabled}
-          onChange={(model) => {
-            setDone(false);
-            setDraft({ ...draft, model });
-          }}
-        />
-        {saved.backend === "" ? (
-          <div className="review-section">
-            <p className="review-note">
-              {saved.backend_undetermined
-                ? "The harness capture uses could not be determined: its check did not answer in time."
-                : "No harness that can capture decisions is available on this computer, so capture does not run."}
-            </p>
-          </div>
+      {error ? <Alert>{error}</Alert> : null}
+      <div className="local-panel settings-list">
+        <SettingRow
+          label="Extract decisions and features"
+          htmlFor="decisions-enabled"
+          detail="Shows the decisions beside each pull request and the features in Timeline."
+        >
+          <input
+            id="decisions-enabled"
+            type="checkbox"
+            role="switch"
+            className="local-switch"
+            checked={draft.enabled}
+            onChange={(event) => change({ enabled: event.target.checked })}
+          />
+        </SettingRow>
+        <SettingRow
+          label="Agent that extracts"
+          htmlFor="decisions-agent"
+          detail={
+            !fallback ? (
+              <span className="settings-caution">
+                Reviews use {harnessName(backend)}, which can't extract decisions and features.
+                Choose another agent.
+              </span>
+            ) : !saved.effective_backend && !draft.backend ? (
+              saved.backend_undetermined ? (
+                "The agent extraction uses could not be determined: its check did not answer in time."
+              ) : (
+                <span className="settings-caution">
+                  No agent that can extract decisions and features is available on this computer, so
+                  extraction does not run.
+                </span>
+              )
+            ) : draft.backend ? null : (
+              `Now ${harnessName(backend)}.`
+            )
+          }
+        >
+          <AgentSelect
+            id="decisions-agent"
+            value={draft.backend}
+            options={extractionHarnesses}
+            same="Same as reviews"
+            disabled={off}
+            // A new harness lists other models, so the model starts over.
+            onChange={(next) => change({ backend: next, model: "" })}
+          />
+        </SettingRow>
+        {fallback ? (
+          <SettingRow
+            label="Model"
+            htmlFor="decisions-model"
+            detail={
+              ignored && draft.model === ignored ? (
+                <span className="settings-caution">
+                  {harnessName(backend)} doesn't use {ignored}, so extraction uses {fallback}.
+                  Choose a model to replace it.
+                </span>
+              ) : null
+            }
+          >
+            <ModelField
+              key={backend}
+              id="decisions-model"
+              backend={backend}
+              value={draft.model || fallback}
+              disabled={off}
+              onChange={(model) => change({ model })}
+            />
+          </SettingRow>
         ) : null}
-        <div className="review-section">
-          <DecisionsDisclosure />
-        </div>
+        {fallback ? (
+          <EffortRow
+            label="Extraction reasoning effort"
+            backend={backend}
+            value={draft.effort}
+            onChange={(effort) => change({ effort })}
+          />
+        ) : null}
       </div>
-      <footer className="flex flex-wrap items-center justify-between gap-3 border-t border-(--border-subtle) px-5 py-3">
-        <p role="status" className="text-xs text-(--text-tertiary)">
-          {done ? "Saved." : dirty ? "You have unsaved changes." : ""}
-        </p>
-        <Button size="compact" disabled={!dirty || pending} onClick={() => void save()}>
-          {pending ? "Saving…" : "Save decision capture"}
-        </Button>
-      </footer>
+      <div className="settings-footnote">
+        <DecisionsDisclosure />
+      </div>
     </section>
   );
 }
@@ -1723,12 +1814,10 @@ function DiagnosticsDialog({
 export function RepositoriesPage({
   repositories,
   automatic,
-  defaults,
   changed,
 }: {
   repositories: Repository[];
   automatic: Automatic | null;
-  defaults: ReviewDefaults | null;
   changed: () => Promise<void>;
 }) {
   const [adding, setAdding] = useState(false);
@@ -1740,6 +1829,7 @@ export function RepositoriesPage({
     repositories.map((r) => r.repository),
   );
   const page = useRef<HTMLElement>(null);
+  const menu = useContextMenu();
   useShortcuts((event) => {
     if (listKeys(event, rows)) return;
     if (event.key === "a") {
@@ -1767,14 +1857,25 @@ export function RepositoriesPage({
         title="Repositories"
         detail="GitHub repositories baum follows on this computer"
         actions={
-          <Button size="compact" onClick={() => setAdding(!adding)}>
-            {adding ? "Done" : "Add repositories"}
-          </Button>
+          <>
+            <Button size="compact" onClick={() => setAdding(!adding)}>
+              {adding ? "Done" : "Add repositories"}
+            </Button>
+            <RefreshButton refresh={changed} />
+          </>
         }
       />
-      <div className="local-page-body">
-        {error ? <Alert>{error}</Alert> : null}
-        {adding ? <RepositoryPicker changed={changed} autoFocus /> : null}
+      <div className="local-page-body local-list-page">
+        {error ? (
+          <div className="local-list-note">
+            <Alert>{error}</Alert>
+          </div>
+        ) : null}
+        {adding ? (
+          <div className="local-list-note local-repo-adding">
+            <RepositoryPicker changed={changed} autoFocus />
+          </div>
+        ) : null}
         {repositories.length === 0 ? (
           <div className="local-empty">
             <h2>No repositories yet</h2>
@@ -1784,15 +1885,16 @@ export function RepositoriesPage({
             </p>
           </div>
         ) : null}
+        {menu.menu}
         {repositories.length > 0 ? (
-          <ul ref={rows.list} className="local-panel local-repo-list">
+          <ul ref={rows.list} className="list">
             {repositories.map((repository) => (
               <RepositoryRow
                 key={repository.repository}
+                menu={menu}
                 focused={rows.focused === repository.repository}
                 repository={repository}
                 automatic={automatic}
-                defaults={defaults}
                 changed={changed}
                 remove={() =>
                   action(() => request(`api/repositories/${repository.repository}`, {}, "DELETE"))
@@ -1818,7 +1920,6 @@ function Field({ label, children }: { label: string; children: ReactNode }) {
 function RepositorySettings({
   clone,
   automatic,
-  defaults,
   status,
   save,
   remove,
@@ -1826,14 +1927,11 @@ function RepositorySettings({
 }: {
   clone: Clone;
   automatic: Automatic | null;
-  defaults: ReviewDefaults | null;
   status?: AutomaticStatus;
   save: (settings: Clone["settings"]) => Promise<void>;
   remove?: () => Promise<void>;
   cancel?: () => void;
 }) {
-  const [backend, setBackend] = useState<string | null>(clone.settings.backend ?? null);
-  const [model, setModel] = useState<string | null>(clone.settings.model ?? null);
   const [mode, setMode] = useState(
     clone.settings.automatic === null || clone.settings.automatic === undefined
       ? "default"
@@ -1844,15 +1942,12 @@ function RepositorySettings({
   const [decisions, setDecisions] = useState(clone.settings.decisions !== false);
   const [pending, setPending] = useState(false);
   const [removing, setRemoving] = useState(false);
-  const globalBackend = shownBackend(defaults?.backend ?? "auto");
   const submit = (event: FormEvent) => {
     event.preventDefault();
 
     setPending(true);
     void save({
       automatic: mode === "default" ? null : mode === "on",
-      backend,
-      model: model?.trim() ? model.trim() : null,
       decisions: decisions ? null : false,
     }).finally(() => setPending(false));
   };
@@ -1894,28 +1989,6 @@ function RepositorySettings({
         </p>
       ) : null}
       {notice ? <Notice>{notice}</Notice> : null}
-      <div className="review-card repo-review">
-        <HarnessPicker
-          legend="Harness for this repository"
-          value={backend}
-          disabled={pending || removing}
-          inherit={{ label: "Global setting", detail: harnessName(globalBackend) }}
-          onChange={(next) => {
-            setBackend(next);
-            setModel(next === null ? null : (modelPresets[next]?.[0] ?? null));
-          }}
-        />
-        <ModelPicker
-          key={backend ?? ""}
-          id={`model-${clone.id}`}
-          label="Model for this repository"
-          backend={backend ?? globalBackend}
-          value={model}
-          disabled={pending || removing}
-          inherit={`Global setting${defaults?.model ? ` (${defaults.model})` : ""}`}
-          onChange={setModel}
-        />
-      </div>
       <Toggle checked={decisions} disabled={pending || removing} onChange={setDecisions}>
         Capture the decisions of agent sessions in this repository
       </Toggle>
@@ -1948,16 +2021,17 @@ function RepositorySettings({
  *  dialog. */
 function RepositoryRow({
   repository,
+  menu,
   focused,
   automatic,
-  defaults,
   changed,
   remove,
 }: {
   repository: Repository;
+  /** The list's menu, which the row's ⋯ and a right click open. */
+  menu: ReturnType<typeof useContextMenu>;
   focused: boolean;
   automatic: Automatic | null;
-  defaults: ReviewDefaults | null;
   changed: () => Promise<void>;
   remove: () => Promise<void>;
 }) {
@@ -1977,29 +2051,60 @@ function RepositoryRow({
   const status = automatic?.repositories.find(
     (item) => item.repository === clone.repository.toLowerCase(),
   );
-  const harness = clone.settings.backend
-    ? `${harnessName(clone.settings.backend)}${clone.settings.model ? ` · ${clone.settings.model}` : ""}`
-    : clone.settings.model
-      ? clone.settings.model
-      : "Global harness and model";
   const summary = [
     status ? (status.enabled ? "Automatic reviews on" : "Automatic reviews off") : null,
-    harness,
   ].filter(Boolean);
+  // A repository without a clone is offered one from its menu; what that
+  // starts (a path form, a running clone) shows under the row.
+  const cloneActions = useCloneActions({ repository: repository.repository, changed });
+  // The row opens its settings; the rest is in its menu.
+  const actions = (): MenuItem[] => {
+    const items: MenuItem[] = [{ label: "Settings…", hint: "↵", onSelect: () => setOpen(true) }];
+    if (clone.available)
+      items.push({
+        label: changing ? "Hide local clones" : "Change local clone…",
+        onSelect: () => setChanging(!changing),
+      });
+    else if (!cloneActions.busy && !cloneActions.running)
+      items.push(
+        { label: "Choose folder…", onSelect: cloneActions.choose },
+        { label: "Clone it…", onSelect: cloneActions.clone },
+      );
+    return items;
+  };
+  const cloneState =
+    !clone.available && (cloneActions.progress || cloneActions.form || cloneActions.errors);
   return (
     <li
       data-row-id={repository.repository}
       data-focused={focused || undefined}
-      className="local-repo-row"
+      className="list-row local-repo-row"
+      onContextMenu={(event) => menu.open(event, actions(), clone.repository)}
     >
       <div className="local-repo-main">
-        <h3>{clone.repository}</h3>
+        <h3>
+          <button
+            type="button"
+            className="local-repo-name"
+            data-row-link=""
+            aria-label={`Settings for ${clone.repository}`}
+            onClick={() => setOpen(true)}
+          >
+            {clone.repository}
+          </button>
+        </h3>
         {clone.available ? (
           <p className="truncate" title={clone.path}>
             {clone.path}
           </p>
         ) : (
-          <p className="local-repo-missing">Needs a local clone</p>
+          <p className="local-repo-missing">
+            {cloneActions.busy && cloneActions.doing === "choose"
+              ? "Choosing a folder…"
+              : cloneActions.busy && cloneActions.doing === "clone"
+                ? "Preparing the clone…"
+                : "Needs a local clone"}
+          </p>
         )}
         {clone.available && repository.earlier_names?.length ? (
           <p className="repository-warning">
@@ -2009,34 +2114,18 @@ function RepositoryRow({
         <p className="local-repo-summary">{summary.join(" · ")}</p>
       </div>
       <div className="local-repo-actions">
-        {clone.available ? (
-          <Button
-            variant="secondary"
-            size="compact"
-            aria-expanded={changing}
-            onClick={() => setChanging(!changing)}
-          >
-            {changing ? "Done" : "Change clone"}
-          </Button>
-        ) : null}
-        <Button
-          variant="secondary"
-          size="compact"
-          data-row-link=""
-          aria-label={`Settings for ${clone.repository}`}
-          onClick={() => setOpen(true)}
-        >
-          Settings
-        </Button>
+        <MenuButton label={clone.repository} items={actions} menu={menu} />
       </div>
       {cloneError ? (
         <p role="alert" className="local-repo-panel">
           {cloneError}
         </p>
       ) : null}
-      {!clone.available ? (
-        <div className="local-repo-panel">
-          <CloneActions repository={repository.repository} changed={changed} />
+      {cloneState ? (
+        <div className="local-repo-panel repository-actions">
+          {cloneActions.progress}
+          {cloneActions.form}
+          {cloneActions.errors}
         </div>
       ) : null}
       {clone.available && changing ? (
@@ -2072,13 +2161,20 @@ function RepositoryRow({
             ))}
           </ul>
           <CloneActions repository={repository.repository} changed={changed} />
+          <Button
+            variant="ghost"
+            size="compact"
+            className="justify-self-start"
+            onClick={() => setChanging(false)}
+          >
+            Done
+          </Button>
         </div>
       ) : null}
       {open ? (
         <RepositoryDialog
           clone={clone}
           automatic={automatic}
-          defaults={defaults}
           status={status}
           changed={changed}
           remove={remove}
@@ -2092,7 +2188,6 @@ function RepositoryRow({
 function RepositoryDialog({
   clone,
   automatic,
-  defaults,
   status,
   changed,
   remove,
@@ -2100,7 +2195,6 @@ function RepositoryDialog({
 }: {
   clone: Clone;
   automatic: Automatic | null;
-  defaults: ReviewDefaults | null;
   status?: AutomaticStatus;
   changed: () => Promise<void>;
   remove: () => Promise<void>;
@@ -2131,7 +2225,6 @@ function RepositoryDialog({
       <RepositorySettings
         clone={clone}
         automatic={automatic}
-        defaults={defaults}
         status={status}
         cancel={close}
         remove={() => remove().then(close)}

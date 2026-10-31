@@ -208,7 +208,7 @@ func (a LocalAPI) Handler() *LocalHandler {
 		if len(cfg.AgentEnv) > 0 {
 			source = "file"
 		}
-		fixBackend, fixModel := "", ""
+		fixBackend, fixModel, fixEffort := "", "", ""
 		concurrency := repos.MaxJobConcurrency
 		if prefs, err := a.Registry.Preferences(r.Context()); err == nil {
 			concurrency = prefs.Concurrency()
@@ -218,6 +218,9 @@ func (a LocalAPI) Handler() *LocalHandler {
 			}
 			if prefs.FixModel != nil {
 				fixModel = *prefs.FixModel
+			}
+			if prefs.FixEffort != nil {
+				fixEffort = *prefs.FixEffort
 			}
 			if len(prefs.AgentEnv) > 0 {
 				source = "app"
@@ -232,11 +235,13 @@ func (a LocalAPI) Handler() *LocalHandler {
 			AgentEnvSource string            `json:"agent_env_source"`
 			FixBackend     string            `json:"fix_backend"`
 			FixModel       string            `json:"fix_model"`
+			Effort         string            `json:"effort"`
+			FixEffort      string            `json:"fix_effort"`
 			JobConcurrency int               `json:"job_concurrency"`
 			// The time limits in force, in whole minutes.
 			ReviewTimeLimit int `json:"review_time_limit_minutes"`
 			RunTimeLimit    int `json:"run_time_limit_minutes"`
-		}{cfg.Backend, cfg.Model, cfg.Budgets, cfg.Caps, cfg.AgentEnv, source, fixBackend, fixModel, concurrency,
+		}{cfg.Backend, cfg.Model, cfg.Budgets, cfg.Caps, cfg.AgentEnv, source, fixBackend, fixModel, cfg.Effort, fixEffort, concurrency,
 			minutes(cfg.Budgets.ReviewTimeout), minutes(cfg.Budgets.RunTimeout)})
 	})
 	// The time limits apply to runs that start after the change.

@@ -35,18 +35,26 @@ var boilerplate = []*regexp.Regexp{
 	regexp.MustCompile(`\[Request interrupted by user[^\]]*\]`),
 }
 
+// AppMessageLead is how a message the baum desktop app sends to a Claude Code
+// session opens, so the agent knows its user sent it: Claude Code tells its
+// model that a message on its inbox came from another session. The person
+// typed only what follows it.
+const AppMessageLead = "Your user sent this from the baum desktop app, in place of typing it in this terminal:"
+
 // questionReply is the block Codex writes into the next prompt when someone
 // answers a question the agent asked without waiting (request_user_input):
 // a JSON list of the questions and the answers typed to them.
 var questionReply = regexp.MustCompile(`(?s)<send_user_message_question_reply>(.*?)</send_user_message_question_reply>`)
 
 // Strip removes the wrapper constructs, leaving the prose around them, and
-// writes each answer to an agent's question as the question quoted, then the
-// answer, as a reply reads.
+// the lead of a message the app sent (AppMessageLead), and writes each answer
+// to an agent's question as the question quoted, then the answer, as a reply
+// reads.
 func Strip(text string) string {
 	for _, pattern := range boilerplate {
 		text = pattern.ReplaceAllString(text, "")
 	}
+	text = strings.TrimPrefix(strings.TrimSpace(text), AppMessageLead)
 	text = questionReply.ReplaceAllStringFunc(text, formatQuestionReply)
 	return strings.TrimSpace(text)
 }

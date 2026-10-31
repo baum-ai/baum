@@ -48,9 +48,7 @@ func TestClonesAndSettings(t *testing.T) {
 	ctx := context.Background()
 	r := registry(t)
 	p := clone(t, "https://github.com/Owner/Repo.git")
-	b := config.BackendCodex
-	m := "model"
-	s := Settings{Automatic: new(true), Backend: &b, Model: &m}
+	s := Settings{Automatic: new(true)}
 	c, e := r.Add(ctx, p, &s)
 	if e != nil {
 		t.Fatal(e)
@@ -71,14 +69,6 @@ func TestClonesAndSettings(t *testing.T) {
 	again, e := r.Add(ctx, p, nil)
 	if e != nil || !explicitlyOn(again.Settings.Automatic) {
 		t.Fatalf("idempotent %#v %v", again, e)
-	}
-	global := config.Default()
-	global.Model = "global"
-	if got := s.Resolve(global); got.Backend != b || got.Model != m {
-		t.Fatal(got)
-	}
-	if got := (Settings{}).Resolve(global); got.Model != "global" {
-		t.Fatal(got)
 	}
 	git(t, p, "remote", "set-url", "origin", "https://github.com/owner/replaced")
 	list, e := r.List(ctx)
@@ -130,10 +120,6 @@ func TestRejectAndFallback(t *testing.T) {
 	enterprise, e := r.Add(ctx, clone(t, "https://git.example.com/owner/repo"), nil)
 	if e != nil || enterprise.Repository == c.Repository {
 		t.Fatalf("enterprise %#v %v", enterprise, e)
-	}
-	empty := ""
-	if _, e = r.Add(ctx, p, &Settings{Model: &empty}); e == nil {
-		t.Fatal("empty model accepted")
 	}
 }
 func TestPermissionsAndConcurrentProcesses(t *testing.T) {
@@ -215,7 +201,7 @@ func TestHTTP(t *testing.T) {
 	if got := check(p); got != `{"valid":true,"repository":"owner/repo","registered":true}` {
 		t.Fatal(got)
 	}
-	for _, body := range []string{`{"unknown":1}`, `{"daily_cap":-1}`, `{"backend":"no"}`, `{} {}`, `{"model":""}`, `{"automatic":null,"model":""}`} {
+	for _, body := range []string{`{"unknown":1}`, `{"daily_cap":-1}`, `{"backend":"no"}`, `{} {}`, `{"model":""}`} {
 		if w = request("PUT", "/api/repos/"+c.ID+"/settings", body); w.Code != 400 {
 			t.Fatal(body, w.Code)
 		}
@@ -279,8 +265,7 @@ func TestConcurrentSettingsPatches(t *testing.T) {
 				if i == 0 {
 					s.Automatic = new(true)
 				} else {
-					v := "model-b"
-					s.Model = &v
+					s.Decisions = new(false)
 				}
 				return s, nil
 			})
@@ -292,7 +277,7 @@ func TestConcurrentSettingsPatches(t *testing.T) {
 	close(start)
 	wg.Wait()
 	list, e := r.List(context.Background())
-	if e != nil || len(list) != 1 || !explicitlyOn(list[0].Settings.Automatic) || list[0].Settings.Model == nil || *list[0].Settings.Model != "model-b" {
+	if e != nil || len(list) != 1 || !explicitlyOn(list[0].Settings.Automatic) || list[0].Settings.Decisions == nil || *list[0].Settings.Decisions {
 		t.Fatalf("lost settings %#v %v", list, e)
 	}
 }
@@ -386,5 +371,56 @@ func TestPreferencesFixAgent(t *testing.T) {
 	model := " gpt-fix "
 	if got := (Preferences{FixBackend: &codex, FixModel: &model}).ResolveFix(review); got.Backend != config.BackendCodex || got.Model != "gpt-fix" {
 		t.Fatalf("fix agent: %+v", got)
+	}
+}
+
+func TestPreferencesExtractionBackend(t *testing.T) {
+	claude, codex, anthropic, cursor, auto := config.BackendClaude, config.BackendCodex, config.BackendAnthropic, config.BackendCursorAgent, config.BackendAuto
+	for _, b := range []*config.Backend{nil, &claude, &codex, &anthropic} {
+		if err := (Preferences{Decisions: DecisionPreferences{Backend: b}}).Validate(); err != nil {
+			t.Fatalf("%v rejected: %v", b, err)
+		}
+	}
+	for _, b := range []*config.Backend{&cursor, &auto} {
+		if (Preferences{Decisions: DecisionPreferences{Backend: b}}).Validate() == nil {
+			t.Fatalf("%s accepted", *b)
+		}
+	}
+}
+
+// Each use case has its own reasoning effort: reviews', fixes' with a fix
+// agent, and data extraction's.
+func TestPreferencesEfforts(t *testing.T) {
+	low, high, medium, wrong, empty := "low", "high", "medium", "max", ""
+	codex := config.BackendCodex
+	for _, p := range []Preferences{{Effort: &wrong}, {FixBackend: &codex, FixEffort: &wrong}, {Decisions: DecisionPreferences{Effort: &wrong}}, {FixEffort: &high}} {
+		if p.Validate() == nil {
+			t.Fatalf("%+v accepted", p)
+		}
+	}
+	p := Preferences{Effort: &low, FixBackend: &codex, FixEffort: &high, Decisions: DecisionPreferences{Effort: &medium}}
+	if err := p.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	if err := (Preferences{FixEffort: &empty}).Validate(); err != nil {
+		t.Fatalf("an empty fix effort without a fix agent: %v", err)
+	}
+	review := p.Resolve(config.Config{Backend: config.BackendClaude})
+	if review.Effort != "low" {
+		t.Fatalf("review %+v", review)
+	}
+	if fix := p.ResolveFix(review); fix.Effort != "high" || fix.Backend != codex {
+		t.Fatalf("fix %+v", fix)
+	}
+	if extraction := p.ResolveExtraction(review); extraction.Effort != "medium" {
+		t.Fatalf("extraction %+v", extraction)
+	}
+	// Without a fix agent the fix follows the reviews, effort included; data
+	// extraction without an effort of its own uses the harness's own.
+	if fix := (Preferences{Effort: &low}).ResolveFix(review); fix.Effort != "low" {
+		t.Fatalf("same as reviews %+v", fix)
+	}
+	if extraction := (Preferences{}).ResolveExtraction(review); extraction.Effort != "" {
+		t.Fatalf("extraction default %+v", extraction)
 	}
 }

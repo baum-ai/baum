@@ -63,8 +63,9 @@ not a failure.
    after the turns the head's prefix covered; existing decisions keep their
    IDs. Otherwise the call reads the whole transcript.
 5. A prompt estimated over 272,000 tokens is skipped (`over_token_cap`).
-6. The backend is the one reviews use (config file, app preferences, repository
-   settings), and `auto` resolves as for reviews: the first of claude, codex
+6. The backend is `preferences.decisions.backend`, the data extraction backend
+   the app chose, else the one reviews use (config file, app preferences), and
+   `auto` resolves as for reviews: the first of claude, codex
    and anthropic that passes its check, never cursor-agent; none is
    `backend_unavailable`. The model follows the resolved backend:
    `preferences.decisions.model` unless it names another provider's family,
@@ -163,15 +164,17 @@ a save, an attempt beginning or settling; the beginning is what shows
 "Capturing…", and the settling ends it when no save or skip follows); the
 daemon publishes the app's `decisions` event, which carries no data, with it,
 and also after the settings or a repository's are saved. The settings are
-`preferences.decisions`, served only by `GET` and `PUT
-/api/settings/decisions` (in `internal/uiserver`), which add
+`preferences.decisions` (`enabled`, `backend` and `model`), served only by
+`GET` and `PUT /api/settings/decisions` (in `internal/uiserver`), which add
 `EffectiveModel`: the backend and model a capture would use, resolved by the
 same helper a capture uses, `auto` included, and whether the chosen model is
 ignored (never with cursor-agent, which uses no model). Its backend checks
 get 5 seconds; no backend, or none in time (`backend_undetermined`), is
 unknown (empty) and ignores nothing. `baum internal reviews show` reports the
-same as `decisions_backend`, `decisions_effective_model` and
-`decisions_model_ignored`. A repository's own setting is `settings.decisions`,
+chosen backend and model as `decisions_chosen_backend` and `decisions_model`,
+and the effective ones as `decisions_backend`, `decisions_effective_model`
+and `decisions_model_ignored`; `baum internal reviews set --decisions-backend`
+and `--decisions-model` change them. A repository's own setting is `settings.decisions`,
 through the repository settings API. Analytics counts capture's calls in
 the ledger (`Store.Ledger`) under baum's work.
 
@@ -367,8 +370,8 @@ and splits are changes, so one that changed features is followed by another
 a week later. A pass reads the features not merged into another and active
 in the last 90 days (as placement's candidates), most recently active first.
 Its calls' replies may run to 32,768 tokens rather than hosted's 8,192:
-Claude Code's models think within the reply's bound even with thinking
-turned off, and a merge over a first build's features needs the room.
+Claude Code's models think within the reply's bound, and a merge over a
+first build's features needs the room.
 
 - **Merge.** With two features or more, one call sees each feature's text,
   digest, paths, pull requests with their summaries (the saved review's,
@@ -513,15 +516,16 @@ Discovery maps a repository into its features, as hosted discovery does
 internal features discover`, which first lists the history and reads its
 paths as a build does.
 
-- Its backend and model are a review's: `generate.Select` with the review
-  backend and model, whatever a build's own `--backend` and `--model`.
-  cursor-agent is not supported; a model with no price runs as any other.
+- Its backend and model are the other feature calls' (see "Model calls"):
+  the data extraction backend and model, whatever a build's own `--backend`
+  and `--model`. cursor-agent is not supported; a model with no price runs as
+  any other.
 - The default branch (the latest one GitHub reported for a pull request)
   is fetched into `refs/baum/default`. The run directory holds its head's
   checkout in `head/`, bounded as a review's, and `history.jsonl`
   (read-only), the history digest of the pull requests a build places:
   titles, branches and paths, no descriptions.
-- It runs through the review harness (`generate.RunTask`): the published
+- It runs as a review's agent task (`generate.RunTask`): the published
   prompt `feature-discover-public-v1`, the discovery schema and the
   taxonomy's bounds as its check, and a review run's budgets: the
   configuration's run timeout, calls and tokens (by default 45 minutes, 40

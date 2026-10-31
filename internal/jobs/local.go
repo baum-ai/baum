@@ -118,7 +118,7 @@ func (l *Local) Prepare(ctx context.Context, item Item) (Prepared, string, error
 	if e != nil {
 		return Prepared{}, "", e
 	}
-	cfg, e := l.resolve(ctx, c)
+	cfg, e := l.resolve(ctx)
 	if e != nil {
 		return Prepared{}, "", e
 	}
@@ -226,25 +226,25 @@ func (l *Local) confirmed(ctx context.Context, p Prepared) error {
 	return nil
 }
 
-// resolve layers the config file, the app's preferences and the
-// repository's settings, reading the preferences for every job so a change
-// in the app applies without restarting the daemon.
-func (l *Local) resolve(ctx context.Context, c repos.Clone) (config.Config, error) {
+// resolve layers the app's preferences over the config file, reading them
+// for every job so a change in the app applies without restarting the
+// daemon.
+func (l *Local) resolve(ctx context.Context) (config.Config, error) {
 	prefs, e := l.Registry.Preferences(ctx)
 	if e != nil {
 		return config.Config{}, e
 	}
-	return c.Settings.Resolve(prefs.Resolve(l.Config)), nil
+	return prefs.Resolve(l.Config), nil
 }
 
 // resolveFix is resolve for a fix: the preferences' fix agent, when set,
 // replaces the review's backend and model (repos.Preferences.ResolveFix).
-func (l *Local) resolveFix(ctx context.Context, c repos.Clone) (config.Config, error) {
+func (l *Local) resolveFix(ctx context.Context) (config.Config, error) {
 	prefs, e := l.Registry.Preferences(ctx)
 	if e != nil {
 		return config.Config{}, e
 	}
-	return prefs.ResolveFix(c.Settings.Resolve(prefs.Resolve(l.Config))), nil
+	return prefs.ResolveFix(prefs.Resolve(l.Config)), nil
 }
 
 func (l *Local) Execute(ctx context.Context, p Prepared, progress func(Progress)) (*float64, error) {
@@ -260,7 +260,7 @@ func (l *Local) Execute(ctx context.Context, p Prepared, progress func(Progress)
 	if e != nil {
 		return nil, e
 	}
-	cfg, e := l.resolve(ctx, c)
+	cfg, e := l.resolve(ctx)
 	if e != nil {
 		return nil, e
 	}
@@ -327,7 +327,7 @@ func (l *Local) Execute(ctx context.Context, p Prepared, progress func(Progress)
 			backend.repairs = pass
 		}
 		backend.report("validating")
-	}, PassTimeout: time.Duration(cfg.Budgets.PassTimeout)}, func(r generate.Result) *float64 {
+	}, PassTimeout: max(time.Duration(cfg.Budgets.PassTimeout), time.Duration(cfg.Budgets.ReviewTimeout))}, func(r generate.Result) *float64 {
 		return list.BackendOutcomeCost(p.Backend, r.Outcome.Model, r.Outcome)
 	})
 	backend.repairs = result.Outcome.ValidationRepairs

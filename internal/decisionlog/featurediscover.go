@@ -72,9 +72,9 @@ type DiscoverReport struct {
 }
 
 // Discover runs feature discovery of the repository once, from the clone in
-// dir, and stores the taxonomy it replies with. It runs on the review
-// backend and model, after listing the whole history and reading its paths
-// as a first build does.
+// dir, and stores the taxonomy it replies with. It runs on the data
+// extraction backend and model, after listing the whole history and reading
+// its paths as a first build does.
 func (w *FeatureWorker) Discover(ctx context.Context, repository, dir string) (DiscoverReport, error) {
 	r, err := w.newRun(ctx, repository, dir, FeatureOptions{Manual: true, DryRun: true})
 	if err != nil {
@@ -99,24 +99,20 @@ type discoveryPlan struct {
 	skip     string
 }
 
-// planDiscovery resolves the backend and model exactly as a review does
-// (generate.Select with the review backend and model; a build's backend and
-// model replace only its own calls'), with a review run's budgets.
+// planDiscovery resolves the backend and model as the other feature calls
+// do (caller.plan, the data extraction backend and model; a build's backend
+// and model replace only its own calls'), with a review run's budgets.
 func (r *featureRun) planDiscovery(ctx context.Context) discoveryPlan {
-	cfg := r.settings.Resolve(r.prefs.Resolve(r.w.Config))
-	backends := r.w.Backends
-	if backends.Claude == nil {
-		backends = generate.DefaultBackendsFor(cfg)
-	}
+	cfg := r.prefs.Resolve(r.w.Config)
 	p := discoveryPlan{cfg: cfg}
-	var err error
-	if p.selected, err = generate.Select(ctx, cfg.Backend, cfg.Model, backends, io.Discard); err != nil {
-		r.w.logger().Info("feature discovery: backend unavailable", "backend", cfg.Backend, "error", err)
-		p.skip = ReasonUnavailable
+	planned, skip := r.calls.plan(ctx, r.prefs, "", "", 1, 1)
+	if p.skip = skip; skip != "" {
 		return p
 	}
-	if p.selected.Backend.Name() == agent.BackendCursorAgent {
-		p.skip = ReasonUnsupported
+	var err error
+	if p.selected, err = generate.Select(ctx, config.Backend(planned.Backend), planned.Model, planned.backends, io.Discard); err != nil {
+		r.w.logger().Info("feature discovery: backend unavailable", "backend", planned.Backend, "error", err)
+		p.skip = ReasonUnavailable
 		return p
 	}
 	p.budgets = discoveryBudgets(cfg)

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strconv"
 
 	"github.com/baum-ai/baum/internal/focus"
 	"github.com/baum-ai/baum/internal/hookevents"
@@ -29,13 +30,18 @@ func (t *Tracker) Handler() http.Handler {
 // with its title (Listed), and GET
 // /api/live-sessions/{agent}/{id}/transcript: the transcript of a session
 // the list has, for as long as it has it. The answer is
-// {"available":true,"version","live","transcript","summary"?}, the transcript
-// as GET /api/sessions/{id} answers it and the session's latest compaction
-// summary (masked), both left out when the request names the current version
-// (?version=), so a window polling a session that did not
-// change receives a few bytes; or {"available":false,"live",
+// {"available":true,"version","live","transcript","summary"?,"images"?}, the
+// transcript as GET /api/sessions/{id} answers it, the session's latest
+// compaction summary (masked) and the media types of the images pasted with
+// each prompt, by its turn, all left out when the request names the current
+// version (?version=), so a window polling a session that did not change
+// receives a few bytes; or {"available":false,"live",
 // "code":"transcript_unavailable","message"} with why it is not served. A
 // session the tracker does not list is 404.
+//
+// GET /api/live-sessions/{agent}/{id}/transcript/images/{turn}/{n} is the
+// n-th of those images (from 0), as it was pasted: images are not masked.
+// One the transcript does not hold is 404.
 func (t *Transcripts) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/live-sessions", func(w http.ResponseWriter, _ *http.Request) {
@@ -49,10 +55,40 @@ func (t *Transcripts) Handler() http.Handler {
 		answer, err := t.Get(r.Context(), r.PathValue("agent"), r.PathValue("id"))
 		t.WriteAnswer(w, r, answer, err)
 	})
+	mux.HandleFunc("GET /api/live-sessions/{agent}/{id}/transcript/images/{turn}/{n}", t.handleImage)
 	if t.Focus != nil {
 		mux.HandleFunc("POST /api/live-sessions/{agent}/{id}/focus", t.focusHandler)
 	}
 	return mux
+}
+
+func (t *Transcripts) handleImage(w http.ResponseWriter, r *http.Request) {
+	n, err := strconv.Atoi(r.PathValue("n"))
+	if err != nil {
+		writeJSON(w, http.StatusNotFound, map[string]any{"code": "image_not_found", "message": "The transcript holds no such image."})
+		return
+	}
+	mediaType, data, err := t.Image(r.Context(), r.PathValue("agent"), r.PathValue("id"), r.PathValue("turn"), n)
+	var missing *Unavailable
+	switch {
+	case errors.Is(err, ErrNotTracked):
+		writeJSON(w, http.StatusNotFound, map[string]any{"code": "live_session_not_found", "message": "This session is no longer listed."})
+	case errors.Is(err, ErrNoImage), errors.As(err, &missing):
+		writeJSON(w, http.StatusNotFound, map[string]any{"code": "image_not_found", "message": "The transcript holds no such image."})
+	case err != nil:
+		// The request went away, or the file could not be read.
+		if r.Context().Err() == nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]any{"code": "image_unreadable", "message": "The image could not be read."})
+		}
+	default:
+		// A pasted image never changes; only this window's session can ask.
+		w.Header().Set("Cache-Control", "private, max-age=86400")
+		w.Header().Set("Content-Type", mediaType)
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		w.Header().Set("Content-Security-Policy", "default-src 'none'")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(data)
+	}
 }
 
 // WriteAnswer writes a transcript answer as the live sessions' transcript
@@ -71,14 +107,15 @@ func (t *Transcripts) WriteAnswer(w http.ResponseWriter, r *http.Request, answer
 		// The request went away.
 	default:
 		out := struct {
-			Available  bool            `json:"available"`
-			Version    string          `json:"version"`
-			Live       bool            `json:"live"`
-			Transcript json.RawMessage `json:"transcript,omitempty"`
-			Summary    string          `json:"summary,omitempty"`
-		}{Available: true, Version: answer.Version, Live: live, Transcript: answer.Body}
+			Available  bool                `json:"available"`
+			Version    string              `json:"version"`
+			Live       bool                `json:"live"`
+			Transcript json.RawMessage     `json:"transcript,omitempty"`
+			Summary    string              `json:"summary,omitempty"`
+			Images     map[string][]string `json:"images,omitempty"`
+		}{Available: true, Version: answer.Version, Live: live, Transcript: answer.Body, Images: answer.Images}
 		if r.URL.Query().Get("version") == answer.Version {
-			out.Transcript = nil
+			out.Transcript, out.Images = nil, nil
 		} else if t.Tracker != nil {
 			if _, path, ok := t.Tracker.Lookup(answer.Session.Agent, answer.Session.ID); ok {
 				_, _, out.Summary, _ = t.describe(key{answer.Session.Agent, answer.Session.ID}, path, false)

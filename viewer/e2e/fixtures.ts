@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 
 import { type Page, expect, test as base } from "@playwright/test";
 
-import type { Block, ReviewDocument } from "../src/review-document.ts";
+import type { ReviewDocument } from "../src/review-document.ts";
 
 /** The synthetic `baum.review/1` example `baum internal view --sample` serves. */
 const exampleText = readFileSync(
@@ -20,11 +20,6 @@ export function section(document: ReviewDocument, id: string) {
   return found;
 }
 
-/** A block of a kind this page does not know, as a newer generator may write. */
-export function unknownBlock(kind: string): Block {
-  return { kind, anchors: [] } as unknown as Block;
-}
-
 /** Answers `/api/document` with `document` for this page. */
 export async function serveDocument(page: Page, document: unknown, status = 200) {
   await page.route("**/api/document", (route) => route.fulfill({ status, json: document }));
@@ -33,15 +28,6 @@ export async function serveDocument(page: Page, document: unknown, status = 200)
 /** Answers `/api/sessions` for this page. */
 export async function serveSessions(page: Page, body: unknown, status = 200) {
   await page.route("**/api/sessions", (route) => route.fulfill({ status, json: body }));
-}
-
-/** A promise settled from outside, to hold a response until a test lets it go. */
-export function deferred() {
-  let release!: () => void;
-  const released = new Promise<void>((resolve) => {
-    release = resolve;
-  });
-  return { released, release };
 }
 
 export type Collected = {

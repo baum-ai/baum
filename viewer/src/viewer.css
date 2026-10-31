@@ -154,6 +154,10 @@
   --surface-card: var(--paper-0);
   --surface-sunken: var(--paper-50);
   --surface-inverse: var(--ink-900);
+  /* Behind code, inline and in blocks: a faint tint of the text, so it reads
+     the same on white, on a host's paper or sand and in the dark theme,
+     where it follows the lighter text. */
+  --code-fill: color-mix(in srgb, var(--text-primary) 5%, transparent);
   /* Anything under the pointer warms to sand: a translucent wash, so it reads
      on the page, the panel and the sunken paper alike. A bordered button
      takes the stronger --action-secondary-hover. */

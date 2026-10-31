@@ -206,9 +206,18 @@ it("shows GitHub states that ask for something, one merge status, and nothing fo
     Array.from(row.querySelectorAll<HTMLElement>(".inbox-status")).map((cell) => cell.textContent),
   );
   expect(states[0]).toEqual(["Review time: ~1 min", "Review: Approved", "Status: Ready"]);
-  // A ready pull request carries its Merge button beside Peek, in the row's
-  // actions; each key hint is drawn inside, shown only while Alt is held.
-  expect(rows[0]!.querySelector(".inbox-row-actions")!.textContent).toBe("MergemPeekspace");
+  // A ready pull request offers Merge after Peek in its row's menu, each with
+  // its key hint.
+  await act(async () =>
+    rows[0]!.querySelector<HTMLButtonElement>("button.row-menu-button")!.click(),
+  );
+  const menuItems = Array.from(
+    node.querySelectorAll<HTMLElement>('[role="menu"] [role^=menuitem]'),
+  );
+  expect(menuItems.slice(0, 2).map((item) => item.textContent)).toEqual(["PeekSpace", "Merge…m"]);
+  await act(async () =>
+    document.body.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })),
+  );
   expect(states[1]).toEqual([
     "Review time: ~240 min",
     "Review: Changes requested3 unresolved",
@@ -667,7 +676,7 @@ const demoClone = {
   path: "/work/demo",
   repository: "acme/demo",
   available: true,
-  settings: { automatic: null, backend: null, model: null },
+  settings: { automatic: null },
 };
 // An older daemon still reports the daily cap pause baum no longer has; the
 // app ignores it.
@@ -705,8 +714,10 @@ function stubAutomatic(
         path.endsWith("api/settings/time-limits")
       )
         return Promise.resolve(Response.json(puts.at(-1)!.body));
-      if (path.endsWith("api/settings/decisions"))
+      if (path.endsWith("api/settings/decisions")) {
+        (settings as { decisions?: unknown }).decisions = puts.at(-1)!.body;
         return Promise.resolve(Response.json({ decisions: puts.at(-1)!.body }));
+      }
       return Promise.resolve(Response.json(path.endsWith("api/automatic") ? overview : {}));
     }
     if (path === "/s/test-ns/api/repos") return Promise.resolve(Response.json([clone]));
@@ -750,13 +761,25 @@ it("saves each review setting as it changes", async () => {
   expect(node.querySelector("#review-all-note")).not.toBeNull();
   expect(puts.at(-1)).toEqual({
     path: "/s/test-ns/api/automatic",
-    body: { enabled: true, backend: "claude", model: "claude-haiku-5-5", pull_requests: "all" },
+    body: {
+      enabled: true,
+      backend: "claude",
+      model: "claude-haiku-5-5",
+      effort: "",
+      pull_requests: "all",
+    },
   });
   expect(section().textContent).toContain("Saved");
   await act(async () => global.click());
   expect(puts.at(-1)).toEqual({
     path: "/s/test-ns/api/automatic",
-    body: { enabled: false, backend: "claude", model: "claude-haiku-5-5", pull_requests: "all" },
+    body: {
+      enabled: false,
+      backend: "claude",
+      model: "claude-haiku-5-5",
+      effort: "",
+      pull_requests: "all",
+    },
   });
   // A new agent starts at its default model.
   await choose(node.querySelector<HTMLSelectElement>("#review-agent")!, "codex");
@@ -798,12 +821,16 @@ it("chooses a separate agent and model for fixes", async () => {
   await choose(agent, "claude");
   expect(puts.at(-1)).toEqual({
     path: "/s/test-ns/api/automatic",
-    body: { fix_backend: "claude", fix_model: "claude-haiku-5-5" },
+    body: { fix_backend: "claude", fix_model: "claude-haiku-5-5", fix_effort: "" },
   });
   await choose(node.querySelector<HTMLSelectElement>("#fix-model")!, "claude-opus-5-5");
-  expect(puts.at(-1)!.body).toEqual({ fix_backend: "claude", fix_model: "claude-opus-5-5" });
+  expect(puts.at(-1)!.body).toEqual({
+    fix_backend: "claude",
+    fix_model: "claude-opus-5-5",
+    fix_effort: "",
+  });
   await choose(agent, "");
-  expect(puts.at(-1)!.body).toEqual({ fix_backend: "", fix_model: "" });
+  expect(puts.at(-1)!.body).toEqual({ fix_backend: "", fix_model: "", fix_effort: "" });
 });
 it("saves one change at a time and only the newest of those made meanwhile", async () => {
   history.replaceState(null, "", "/s/test-ns/?page=settings&section=fixes");
@@ -828,10 +855,14 @@ it("saves one change at a time and only the newest of those made meanwhile", asy
   await choose(agent, "codex");
   // The first save is still running, so nothing else is sent yet.
   expect(puts.map((p) => p.body)).toEqual([
-    { fix_backend: "claude", fix_model: "claude-haiku-5-5" },
+    { fix_backend: "claude", fix_model: "claude-haiku-5-5", fix_effort: "" },
   ]);
   await act(async () => held.shift()!());
-  expect(puts.map((p) => p.body).at(-1)).toEqual({ fix_backend: "codex", fix_model: "gpt-6-luna" });
+  expect(puts.map((p) => p.body).at(-1)).toEqual({
+    fix_backend: "codex",
+    fix_model: "gpt-6-luna",
+    fix_effort: "",
+  });
   expect(puts).toHaveLength(2);
   expect(agent.value).toBe("codex");
   await act(async () => held.shift()!());
@@ -1052,7 +1083,7 @@ it("sets automatic reviews per repository, with no daily cap", async () => {
   );
   expect(puts).toContainEqual({
     path: "/s/test-ns/api/repositories/acme/demo/settings",
-    body: { automatic: false, backend: null, model: null, decisions: null },
+    body: { automatic: false, decisions: null },
   });
 });
 it("turns decision capture off for one repository", async () => {
@@ -1080,50 +1111,35 @@ it("shows a repository's decision capture turned off", async () => {
   const region = await openRepository();
   expect(region.querySelector<HTMLInputElement>('input[role="switch"]')!.checked).toBe(false);
 });
-it("shows a saved decision model capture ignores, and lets it be cleared", async () => {
+it("shows a saved extraction model the agent ignores, and lets it be replaced", async () => {
   history.replaceState(null, "", "/s/test-ns/?page=settings&section=reviews");
   stubDiagnostics(async () => Response.json({ local: true, report: diagnosticsReport }));
   const puts = stubAutomatic(demoClone, automaticOverview, {
     backend: "codex",
     model: "gpt-6.1-sol",
+    decisions: {
+      enabled: true,
+      backend: "",
+      model: "claude-sonnet-5-5",
+      effective_backend: "codex",
+      effective_model: "gpt-6-luna",
+      model_ignored: true,
+    },
   });
-  const stubbed = vi.mocked(fetch).getMockImplementation()!;
-  vi.mocked(fetch).mockImplementation((...args) =>
-    String(args[0]) === "/s/test-ns/api/settings/decisions" &&
-    (args[1] as RequestInit | undefined)?.method !== "PUT"
-      ? Promise.resolve(
-          Response.json({
-            decisions: {
-              enabled: true,
-              model: "claude-sonnet-5-5",
-              backend: "codex",
-              effective_model: "gpt-6-luna",
-              model_ignored: true,
-            },
-          }),
-        )
-      : stubbed(...args),
-  );
   await act(async () => root.render(<App />));
   const section = node.querySelector('[aria-labelledby="decisions-heading"]')!;
-  const model = section.querySelector<HTMLSelectElement>("#settings-decisions-model")!;
-  expect(model.selectedOptions[0]!.textContent).toBe("claude-sonnet-5-5 (not used)");
-  expect(section.textContent).toContain("Codex doesn't use claude-sonnet-5-5");
-  await act(async () => {
-    model.value = model.options[0]!.value;
-    model.dispatchEvent(new Event("change", { bubbles: true }));
-  });
-  await act(async () =>
-    [...section.querySelectorAll("button")]
-      .find((b) => b.textContent === "Save decision capture")!
-      .click(),
+  expect(section.querySelector<HTMLInputElement>('input[aria-label="Custom model"]')!.value).toBe(
+    "claude-sonnet-5-5",
   );
+  expect(section.textContent).toContain("Codex doesn't use claude-sonnet-5-5");
+  // Choosing the default saves none, so extraction follows the agent.
+  await choose(section.querySelector<HTMLSelectElement>("#decisions-model")!, "gpt-6-luna");
   expect(puts.at(-1)).toEqual({
     path: "/s/test-ns/api/settings/decisions",
-    body: { enabled: true, model: "" },
+    body: { enabled: true, backend: "", model: "", effort: "" },
   });
 });
-it("says when the harness capture uses could not be determined in time", async () => {
+it("says when the harness extraction uses could not be determined in time", async () => {
   history.replaceState(null, "", "/s/test-ns/?page=settings&section=reviews");
   stubDiagnostics(async () => Response.json({ local: true, report: diagnosticsReport }));
   stubAutomatic(demoClone, automaticOverview, {
@@ -1131,8 +1147,9 @@ it("says when the harness capture uses could not be determined in time", async (
     model: "",
     decisions: {
       enabled: true,
-      model: "",
       backend: "",
+      model: "",
+      effective_backend: "",
       backend_undetermined: true,
       effective_model: "",
       model_ignored: false,
@@ -1141,77 +1158,164 @@ it("says when the harness capture uses could not be determined in time", async (
   await act(async () => root.render(<App />));
   const section = node.querySelector('[aria-labelledby="decisions-heading"]')!;
   expect(section.textContent).toContain("could not be determined");
-  expect(section.textContent).not.toContain("No harness that can capture");
+  expect(section.textContent).not.toContain("No agent that can extract");
 });
-it("saves the decision capture switch and model", async () => {
+it("saves the data extraction switch and model as they change", async () => {
   history.replaceState(null, "", "/s/test-ns/?page=settings&section=reviews");
   stubDiagnostics(async () => Response.json({ local: true, report: diagnosticsReport }));
   const puts = stubAutomatic(demoClone, automaticOverview, {
     backend: "codex",
     model: "gpt-6.1-sol",
-    decisions: { enabled: true, model: "" },
+    decisions: { enabled: true, backend: "", model: "", effective_backend: "codex" },
   });
   await act(async () => root.render(<App />));
   const section = () => node.querySelector('[aria-labelledby="decisions-heading"]')!;
-  const save = () =>
-    [...section().querySelectorAll("button")].find(
-      (b) => b.textContent === "Save decision capture",
-    )!;
-  const model = section().querySelector<HTMLSelectElement>("#settings-decisions-model")!;
-  expect(model.selectedOptions[0]!.textContent).toBe("Default (gpt-6-luna)");
+  const model = () => section().querySelector<HTMLSelectElement>("#decisions-model")!;
+  expect(model().value).toBe("gpt-6-luna");
   expect(section().textContent).toContain("never tool output or file contents");
-  expect(save().disabled).toBe(true);
-  await act(async () => {
-    model.value = "gpt-6.1-sol";
-    model.dispatchEvent(new Event("change", { bubbles: true }));
-  });
-  await act(async () => save().click());
-  expect(puts).toContainEqual({
-    path: "/s/test-ns/api/settings/decisions",
-    body: { enabled: true, model: "gpt-6.1-sol" },
-  });
-  expect(section().textContent).toContain("Saved.");
-  await act(async () => section().querySelector<HTMLInputElement>('input[role="switch"]')!.click());
-  expect(model.disabled).toBe(true);
-  await act(async () => save().click());
+  await choose(model(), "gpt-6.1-sol");
   expect(puts.at(-1)).toEqual({
     path: "/s/test-ns/api/settings/decisions",
-    body: { enabled: false, model: "gpt-6.1-sol" },
+    body: { enabled: true, backend: "", model: "gpt-6.1-sol", effort: "" },
   });
+  await act(async () => section().querySelector<HTMLInputElement>("#decisions-enabled")!.click());
+  expect(puts.at(-1)).toEqual({
+    path: "/s/test-ns/api/settings/decisions",
+    body: { enabled: false, backend: "", model: "gpt-6.1-sol", effort: "" },
+  });
+  expect(model().disabled).toBe(true);
 });
-it("types a custom decision capture model", async () => {
+it("chooses the data extraction agent apart from the reviews'", async () => {
   history.replaceState(null, "", "/s/test-ns/?page=settings&section=reviews");
   stubDiagnostics(async () => Response.json({ local: true, report: diagnosticsReport }));
   const puts = stubAutomatic(demoClone, automaticOverview, {
     backend: "codex",
     model: "gpt-6.1-sol",
-    decisions: { enabled: true, model: "" },
+    decisions: { enabled: true, backend: "", model: "gpt-6.1-sol", effective_backend: "codex" },
   });
   await act(async () => root.render(<App />));
   const section = node.querySelector('[aria-labelledby="decisions-heading"]')!;
-  const model = section.querySelector<HTMLSelectElement>("#settings-decisions-model")!;
-  await act(async () => {
-    model.value = [...model.options].find((o) => o.textContent === "Custom…")!.value;
-    model.dispatchEvent(new Event("change", { bubbles: true }));
+  const agent = section.querySelector<HTMLSelectElement>("#decisions-agent")!;
+  expect(agent.selectedOptions[0]!.textContent).toBe("Same as reviews");
+  expect(section.textContent).toContain("Now Codex.");
+  expect([...agent.options].map((o) => o.value)).toEqual(["", "claude", "codex", "anthropic"]);
+  // A new agent starts over at its default model, which is saved as none.
+  await choose(agent, "claude");
+  expect(puts.at(-1)).toEqual({
+    path: "/s/test-ns/api/settings/decisions",
+    body: { enabled: true, backend: "claude", model: "", effort: "" },
   });
-  const custom = section.querySelector<HTMLInputElement>("#settings-decisions-model-custom");
-  expect(custom).not.toBeNull();
-  expect(model.selectedOptions[0]!.textContent).toBe("Custom…");
+  expect(section.querySelector<HTMLSelectElement>("#decisions-model")!.value).toBe(
+    "claude-haiku-5-5",
+  );
+});
+it("goes back to the reviews' agent from a chosen one", async () => {
+  history.replaceState(null, "", "/s/test-ns/?page=settings&section=reviews");
+  stubDiagnostics(async () => Response.json({ local: true, report: diagnosticsReport }));
+  const puts = stubAutomatic(demoClone, automaticOverview, {
+    backend: "codex",
+    model: "gpt-6.1-sol",
+    decisions: { enabled: true, backend: "claude", model: "", effective_backend: "claude" },
+  });
+  await act(async () => root.render(<App />));
+  const section = node.querySelector('[aria-labelledby="decisions-heading"]')!;
+  const agent = section.querySelector<HTMLSelectElement>("#decisions-agent")!;
+  expect(agent.value).toBe("claude");
+  await choose(agent, "");
+  // The empty backend is sent, not left out, so the daemon clears the saved one.
+  expect(puts.at(-1)).toEqual({
+    path: "/s/test-ns/api/settings/decisions",
+    body: { enabled: true, backend: "", model: "", effort: "" },
+  });
+  expect(agent.value).toBe("");
+});
+it("saves a reasoning effort per use case", async () => {
+  history.replaceState(null, "", "/s/test-ns/?page=settings&section=reviews");
+  stubDiagnostics(async () => Response.json({ local: true, report: diagnosticsReport }));
+  const puts = stubAutomatic(demoClone, automaticOverview, {
+    backend: "codex",
+    model: "gpt-6.1-sol",
+    effort: "",
+    decisions: { enabled: true, backend: "", model: "", effective_backend: "codex" },
+  });
+  await act(async () => root.render(<App />));
+  const pick = async (group: string, label: string) => {
+    const control = node.querySelector(`[aria-label="${group}"]`)!;
+    await act(async () =>
+      [...control.querySelectorAll("button")].find((b) => b.textContent === label)!.click(),
+    );
+  };
+  await pick("Review reasoning effort", "High");
+  expect(puts.at(-1)!.body).toMatchObject({ backend: "codex", effort: "high" });
+  await pick("Extraction reasoning effort", "Low");
+  expect(puts.at(-1)).toEqual({
+    path: "/s/test-ns/api/settings/decisions",
+    body: { enabled: true, backend: "", model: "", effort: "low" },
+  });
+  await pick("Review reasoning effort", "Default");
+  expect(puts.at(-1)!.body).toMatchObject({ effort: "" });
+  // Cursor Agent names its effort in the model, so it has no effort row.
+  await choose(node.querySelector<HTMLSelectElement>("#review-agent")!, "cursor-agent");
+  expect(node.querySelector('[aria-label="Review reasoning effort"]')).toBeNull();
+});
+it("offers a fix effort only with a fix agent of its own", async () => {
+  history.replaceState(null, "", "/s/test-ns/?page=settings&section=fixes");
+  stubDiagnostics(async () => Response.json({ local: true, report: diagnosticsReport }));
+  const puts = stubAutomatic(demoClone, automaticOverview, { backend: "claude", model: "" });
+  await act(async () => root.render(<App />));
+  expect(node.querySelector('[aria-label="Fix reasoning effort"]')).toBeNull();
+  await choose(node.querySelector<HTMLSelectElement>("#fix-agent")!, "codex");
+  const control = node.querySelector('[aria-label="Fix reasoning effort"]')!;
+  await act(async () =>
+    [...control.querySelectorAll("button")].find((b) => b.textContent === "Medium")!.click(),
+  );
+  expect(puts.at(-1)!.body).toEqual({
+    fix_backend: "codex",
+    fix_model: "gpt-6-luna",
+    fix_effort: "medium",
+  });
+  // Following the reviews again drops the fix effort with the agent.
+  await choose(node.querySelector<HTMLSelectElement>("#fix-agent")!, "");
+  expect(puts.at(-1)!.body).toEqual({ fix_backend: "", fix_model: "", fix_effort: "" });
+});
+it("says when the reviews' agent cannot extract", async () => {
+  history.replaceState(null, "", "/s/test-ns/?page=settings&section=reviews");
+  stubDiagnostics(async () => Response.json({ local: true, report: diagnosticsReport }));
+  stubAutomatic(demoClone, automaticOverview, {
+    backend: "cursor-agent",
+    model: "composer-2.5",
+    decisions: { enabled: true, backend: "", model: "", effective_backend: "cursor-agent" },
+  });
+  await act(async () => root.render(<App />));
+  const section = node.querySelector('[aria-labelledby="decisions-heading"]')!;
+  expect(section.textContent).toContain("Cursor Agent, which can't extract");
+  expect(section.querySelector("#decisions-model")).toBeNull();
+});
+it("types a custom data extraction model", async () => {
+  history.replaceState(null, "", "/s/test-ns/?page=settings&section=reviews");
+  stubDiagnostics(async () => Response.json({ local: true, report: diagnosticsReport }));
+  const puts = stubAutomatic(demoClone, automaticOverview, {
+    backend: "codex",
+    model: "gpt-6.1-sol",
+    decisions: { enabled: true, backend: "", model: "", effective_backend: "codex" },
+  });
+  await act(async () => root.render(<App />));
+  const section = node.querySelector('[aria-labelledby="decisions-heading"]')!;
+  await choose(section.querySelector<HTMLSelectElement>("#decisions-model")!, "\u0000custom");
+  const count = puts.length;
+  const custom = section.querySelector<HTMLInputElement>('input[aria-label="Custom model"]')!;
   await act(async () => {
     Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(
       custom,
       "gpt-6-custom",
     );
-    custom!.dispatchEvent(new Event("input", { bubbles: true }));
+    custom.dispatchEvent(new Event("input", { bubbles: true }));
   });
-  await act(async () =>
-    [...section.querySelectorAll("button")]
-      .find((b) => b.textContent === "Save decision capture")!
-      .click(),
-  );
+  expect(puts.length).toBe(count);
+  await act(async () => custom.dispatchEvent(new FocusEvent("focusout", { bubbles: true })));
   expect(puts.at(-1)).toEqual({
     path: "/s/test-ns/api/settings/decisions",
-    body: { enabled: true, model: "gpt-6-custom" },
+    body: { enabled: true, backend: "", model: "gpt-6-custom", effort: "" },
   });
 });
 /** Opens a repository's settings dialog and returns it. */
@@ -1244,7 +1348,7 @@ it("saves a repository's automatic choice as explicit null when automatic settin
   stubDiagnostics(async () => Response.json({ local: true, report: diagnosticsReport }));
   const puts = stubAutomatic({
     ...demoClone,
-    settings: { automatic: null, backend: null, model: null },
+    settings: { automatic: null },
   });
   const stubbed = vi.mocked(fetch).getMockImplementation()!;
   vi.mocked(fetch).mockImplementation((...args) =>
@@ -1261,7 +1365,7 @@ it("saves a repository's automatic choice as explicit null when automatic settin
   );
   expect(puts).toContainEqual({
     path: "/s/test-ns/api/repositories/acme/demo/settings",
-    body: { automatic: null, backend: null, model: null, decisions: null },
+    body: { automatic: null, decisions: null },
   });
 });
 it("shows a repository set to On as paused while the global switch is off", async () => {
@@ -1542,7 +1646,7 @@ it("opens clone-less PR deep links by repository and refreshes picked repositori
         Response.json([
           {
             repository: "acme/demo",
-            settings: { automatic: null, backend: null, model: null },
+            settings: { automatic: null },
             clones: [],
           },
         ]),

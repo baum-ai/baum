@@ -10,11 +10,11 @@ import {
   SessionTranscriptPage,
 } from "./session-transcript";
 
-// The card is the viewer's; here it shows the prompts it is given and counts
-// how often it is drawn.
+// The transcript is the viewer's; here it shows the prompts it is given and
+// counts how often it is drawn.
 const drawn = vi.hoisted(() => ({ count: 0, revisions: [] as (string | undefined)[] }));
-vi.mock("@baum/viewer/components/session-card", () => ({
-  SessionCard: ({
+vi.mock("@baum/viewer/components/transcript", () => ({
+  SessionTranscript: ({
     session,
     source,
   }: {
@@ -217,12 +217,11 @@ it("opens a running session's transcript under the session's header", async () =
   expect(head.textContent).toContain("Working");
   expect(head.querySelector(".local-session-branch")?.textContent).toBe("feature");
   expect(head.querySelector('a[href$="&pr=7"]')?.textContent).toBe("PR #7");
-  expect(head.textContent).toContain("Started 5 minutes ago");
-  expect(node.textContent).toContain("Local transcript; secrets and e-mail addresses masked.");
+  expect(head.textContent).toContain("started 5 minutes ago");
   expect(prompts()).toEqual(["Add a retry budget"]);
-  expect(node.querySelector('a[href="/s/test-ns/?page=sessions"]')?.textContent).toBe(
-    "Back to sessions",
-  );
+  expect(
+    node.querySelector('a[href="/s/test-ns/?page=sessions"]')?.getAttribute("aria-label"),
+  ).toBe("Back to sessions");
 });
 
 it("shows a new version after a live event, and draws nothing again for the same one", async () => {
@@ -273,7 +272,7 @@ it("follows the end of the transcript only while the reader is there", async () 
   const scrollTo = vi.mocked(window.scrollTo);
   const toEnd = () => scrollTo.mock.calls.filter(([o]) => (o as ScrollToOptions).top === height);
   await show(session());
-  // A running session opens at its end.
+  // A session opens at its end.
   expect(toEnd()).toHaveLength(1);
   scrolled(1200);
   // At the end, a new version keeps the reader there.

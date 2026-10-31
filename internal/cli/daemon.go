@@ -621,7 +621,21 @@ func localApplication(paths daemon.Paths, log *slog.Logger) func(context.Context
 		endedSessions, unsubscribeEnded := events.Subscribe(4, func(e hookevents.Event) bool {
 			return e.Kind == hookevents.KindAgent && e.Name == "session-end"
 		})
-		api := uiserver.LocalAPI{GitHubAuth: githubConnection.Handler(), Registry: registry, Config: cfg, PRs: uiserver.DiscoveryHandler(registry, discover, changed), Index: index.Handler(), Jobs: queue.Handler(), Chat: uiserver.ChatHandler(registry, queue), Background: worker.Handler(), Automatic: scheduler.Handler(), Live: liveAPI, AgentRequests: requestsAPI, Clones: clones.Handler(), GitHubRepositories: pickList.Handler(), CurrentName: currentName(githubClient), PlanUsage: plans.Handler(), Analytics: insights.Handler(), Timeline: timeline, Merge: uiserver.MergeHandler(registry, actions.RecordMerges(githubClient), mergedPullRequest, changed), Review: uiserver.ReviewHandler(registry, githubClient, changed), Update: uiserver.UpdateHandler(registry, actions.RecordUpdates(prupdate.Service{Client: githubClient, Cache: panelCache, Counted: countedThreads}), refreshRepository, changed), Changed: settingsChanged,
+		// The panel's git reads (conflicting files) use the first available
+		// clone of the repository.
+		availableClone := func(ctx context.Context, repo github.Repository) (string, bool) {
+			clones, err := registry.List(ctx)
+			if err != nil {
+				return "", false
+			}
+			for _, c := range clones {
+				if c.Available && strings.EqualFold(c.Repository, repo.String()) {
+					return c.Path, true
+				}
+			}
+			return "", false
+		}
+		api := uiserver.LocalAPI{GitHubAuth: githubConnection.Handler(), Registry: registry, Config: cfg, PRs: uiserver.DiscoveryHandler(registry, discover, changed), Index: index.Handler(), Jobs: queue.Handler(), Chat: uiserver.ChatHandler(registry, queue), Background: worker.Handler(), Automatic: scheduler.Handler(), Live: liveAPI, AgentRequests: requestsAPI, Clones: clones.Handler(), GitHubRepositories: pickList.Handler(), CurrentName: currentName(githubClient), PlanUsage: plans.Handler(), Analytics: insights.Handler(), Timeline: timeline, Merge: uiserver.MergeHandler(registry, actions.RecordMerges(githubClient), mergedPullRequest, changed), Review: uiserver.ReviewHandler(registry, githubClient, changed), Update: uiserver.UpdateHandler(registry, actions.RecordUpdates(prupdate.Service{Client: githubClient, Cache: panelCache, Counted: countedThreads, Clone: availableClone}), refreshRepository, changed), Changed: settingsChanged,
 			Inboxes:   (&inboxes.API{Store: inboxes.Open(filepath.Join(state, "inboxes.json")), Changed: changed}).Handler(),
 			Groups:    (&reviewgroups.API{Store: groups, Registry: registry, Index: index.Build, Changed: changed}).Handler(),
 			Decisions: decisionsAPI, Log: log,
@@ -741,11 +755,23 @@ func (h hookEvents) liveSessions(paths daemon.Paths, registry *repos.Registry, d
 	return &livesessions.Tracker{
 		Source: h.service.Store,
 		Linker: &livesessions.Resolver{Registry: registry, Discovery: discover},
-		// Ended sessions are kept for a day, longer than the record may reach.
+		// Ended sessions are kept for a day, longer than the record may reach,
+		// and a Claude Code session waiting for its user while its process runs.
 		StateDir: hookevents.RecordDir(paths),
+		Alive:    liveAlive(),
 		Notify:   func() { _ = server.Publish("live", struct{}{}) },
 		Log:      log,
 	}
+}
+
+// liveAlive is how the tracker tells a silent session's agent still runs:
+// Claude Code registers its processes (macOS and Linux). Codex's run in a
+// shared app server, so there is none for them.
+func liveAlive() func(agent, id string) bool {
+	if runtime.GOOS == "windows" {
+		return nil
+	}
+	return livesessions.ClaudeAlive{}.Alive
 }
 
 // liveSenders are how the app's messages reach a waiting session: Claude

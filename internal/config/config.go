@@ -67,6 +67,30 @@ func (b Backend) Valid() bool {
 	return false
 }
 
+// Efforts are the reasoning efforts the app offers, passed to Claude Code as
+// --effort, to Codex as model_reasoning_effort and to the Anthropic API as
+// output_config.effort; cursor-agent has none.
+var Efforts = []string{"low", "medium", "high"}
+
+// ValidEffort reports whether effort is empty (the harness's own) or one of
+// Efforts.
+func ValidEffort(effort string) bool {
+	return effort == "" || slices.Contains(Efforts, effort)
+}
+
+// ParseEffort reads a chosen effort case-insensitively: nil for an empty one,
+// which is the harness's own and no choice.
+func ParseEffort(s string) (*string, error) {
+	effort := strings.ToLower(strings.TrimSpace(s))
+	if !ValidEffort(effort) {
+		return nil, fmt.Errorf("unknown reasoning effort %q; use %s or leave it empty for the agent's own", s, strings.Join(Efforts, ", "))
+	}
+	if effort == "" {
+		return nil, nil
+	}
+	return &effort, nil
+}
+
 // ParseBackend accepts a backend name case-insensitively.
 func ParseBackend(s string) (Backend, error) {
 	b := Backend(strings.ToLower(strings.TrimSpace(s)))
@@ -135,9 +159,12 @@ func (b Budgets) Validate() error {
 
 // Config is the resolved configuration. Its TOML form is the on-disk file.
 type Config struct {
-	Backend     Backend `toml:"backend"`
-	Model       string  `toml:"model,omitempty"`
-	GitHubToken string  `toml:"github_token,omitempty"`
+	Backend Backend `toml:"backend"`
+	Model   string  `toml:"model,omitempty"`
+	// Effort is the reasoning effort the app chose (Efforts); empty leaves
+	// it to the harness. It is never read from or written to the file.
+	Effort      string `toml:"-"`
+	GitHubToken string `toml:"github_token,omitempty"`
 	// GitHubTokenSource names where GitHubToken came from: GITHUB_TOKEN,
 	// GH_TOKEN or the config file. It is empty when there is no token and is
 	// never written to the file.
