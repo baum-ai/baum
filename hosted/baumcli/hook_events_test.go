@@ -536,6 +536,53 @@ func TestUserHooksOnlyRecordForADaemonUser(t *testing.T) {
 	}
 }
 
+// The desktop app tracks live sessions from hook events alone, so for a user
+// who runs the daemon the user-wide hooks record events in a repository
+// without Entire too, logged in or not. They only record there: no Entire, no
+// bootstrap, no Git hooks. Outside a repository they still do nothing.
+func TestUserHooksRecordWithoutEntireForADaemonUser(t *testing.T) {
+	for name, token := range map[string]string{"not logged in": "", "logged in": "provisioned"} {
+		t.Run(name, func(t *testing.T) {
+			world := newHookWorld(t)
+			t.Setenv(tokenEnvVar, token)
+			paths := makeDaemonState(t)
+			spec, _ := agenthooks.Lookup("claude-code")
+			for i, event := range []string{"session-start", "stop"} {
+				cmd := exec.Command("sh", "-c", agenthooks.UserDispatcher(spec, event))
+				cmd.Dir = world.repo
+				cmd.Stdin = strings.NewReader(`{"session_id":"s-7"}`)
+				if output, err := cmd.CombinedOutput(); err != nil || len(output) != 0 {
+					t.Fatalf("%s: user-wide hook: %v, output %q", event, err, output)
+				}
+				baum, entire := world.logs(t)
+				if want := []string{"hooks agent --check --user claude-code " + event, "hooks agent --user claude-code " + event}; !slices.Equal(baum, want) {
+					t.Errorf("%s: baum calls = %q, want %q", event, baum, want)
+				}
+				if len(entire) != 0 {
+					t.Errorf("%s: Entire ran: %q", event, entire)
+				}
+				events, _ := spooledHookEvents(t, paths)
+				if len(events) != i+1 || events[i].Name != event || events[i].Session == nil || events[i].Session.ID != "s-7" {
+					t.Errorf("%s: events = %+v", event, events)
+				}
+			}
+			if _, err := os.Stat(filepath.Join(world.repo, ".git", "baum")); !os.IsNotExist(err) {
+				t.Errorf("the hook bootstrapped the clone: %v", err)
+			}
+			if _, err := os.Stat(filepath.Join(world.repo, ".git", "hooks", "commit-msg")); !os.IsNotExist(err) {
+				t.Errorf("the hook installed Git hooks: %v", err)
+			}
+			world.runUserDispatcher(t, t.TempDir(), spec, "session-start")
+			if baum, _ := world.logs(t); len(baum) != 1 {
+				t.Errorf("outside a repository: baum calls = %q, want only the check", baum)
+			}
+			if n := world.requests.Load(); n != 0 {
+				t.Errorf("%d requests reached the baum server", n)
+			}
+		})
+	}
+}
+
 // Codex's permission request runs through the shipped user-wide dispatcher
 // like any other event, records its event and prints nothing, so Codex asks
 // its user as it would without the hook.
