@@ -77,10 +77,12 @@ or upgrade the CLI.
 
 Events, matchers, timeouts, `async` and commands come from the shared `agenthooks`
 placements and dispatcher.
-All existing opt-ins apply: a Git worktree with Entire enabled, no active
-project/user/managed hook already delegating that event to Entire, and a login,
-setup marker, hosted onboarding or an existing local daemon. Hosted opt-ins
-delegate to Entire; daemon-only hooks record events locally. Hooks never
+All existing opt-ins apply: a Git worktree, no active project/user/managed
+hook already delegating that event to Entire, and a login, setup marker, hosted
+onboarding or an existing local daemon. Hosted opt-ins delegate to Entire only
+in a worktree with Entire enabled; daemon-only hooks, and every hook in a
+worktree without Entire (which runs only for a user with a local daemon), record
+events locally, so the desktop app sees live sessions without Entire. Hooks never
 contact a baum server. Installation grants neither repository access nor
 upload consent. See the exact [CLI opt-in and event rules](../hosted/baumcli/README.md#user-wide-hooks).
 

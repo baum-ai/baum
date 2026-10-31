@@ -168,10 +168,12 @@ to a baum server until you run `baum login` (or provide a `BAUM_TOKEN`).
   `~/.codex/hooks.json` for Codex. `baum setup` does the same for a hosted
   install or a logged-in user, unless `--skip-user-hooks` or `--skip-entire`,
   and its `--all` plan names those files first. The hooks run in every
-  directory an agent works in, so they run baum only in a Git repository with
-  Entire enabled where no other hook the agent runs (the repository's, yours,
-  managed policy's, `/etc/codex`'s; not plugins') already hands the event to
-  Entire, and there only under the rules above; everywhere else they do
+  directory an agent works in, so they run baum only in a Git repository
+  where no other hook the agent runs (the repository's, yours, managed
+  policy's, `/etc/codex`'s; not plugins') already hands the event to Entire,
+  and there only under the rules above. In a repository without Entire enabled
+  they run only if a baum daemon has run for you, and then only record the
+  event for it: no Entire, no Git hooks. Everywhere else they do
   nothing. They read local files only. Nothing else in the files changes; the
   previous version is kept in `~/.local/state/baum/backups/` (or under
   `$XDG_STATE_HOME`), a file baum cannot parse is left alone, and root is

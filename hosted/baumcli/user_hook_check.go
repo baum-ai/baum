@@ -48,16 +48,20 @@ func defaultClaudeManagedDir() string {
 // committed hooks would and only where nothing else already hands the event
 // to Entire:
 //
-//   - inside a Git repository whose Entire is enabled, by Entire's own rules:
-//     everywhere else the hook's only work, delegating to Entire, would do
-//     nothing, and the session-start bootstrap would install Git hooks in a
-//     repository that never asked for them;
+//   - inside a Git repository;
+//   - whose Entire is enabled, by Entire's own rules, or, failing that, for a
+//     user who runs the baum daemon: the desktop app tracks live sessions from
+//     the hook events alone, so there the hook only records the event (see
+//     userHookRunsEntire) and installs nothing in the repository;
 //   - where no other hook the agent runs for the event calls Entire (see
 //     handledElsewhere), so the event reaches Entire once, not twice;
 //   - and where the committed dispatcher's `--check` would succeed
 //     (hooksEnabled), so the opt-in rules are the same.
 //
-// The first two read a few local files and start no process, so the hook
+// Without a daemon, a repository without Entire is refused: the hook's only
+// work there, delegating to Entire, would do nothing, and the session-start
+// bootstrap would install Git hooks in a repository that never asked for
+// them. The checks read a few local files and start no process, so the hook
 // costs a repository that does not use Entire almost nothing.
 func userHooksEnabled(ctx context.Context, dir, agent, event string) error {
 	spec, _ := lookupAgentHookSpec(agent)
@@ -73,13 +77,30 @@ func userHooksEnabled(ctx context.Context, dir, agent, event string) error {
 	if !ok {
 		return errUserHookOutsideRepository
 	}
-	if !entireEnabled(root) {
+	entire := entireEnabled(root)
+	if !entire && !daemonHasRun() {
 		return errUserHookNoEntire
 	}
 	if handledElsewhere(start, root, spec, settings, event) {
 		return errUserHookHandledElsewhere
 	}
+	if !entire {
+		return nil
+	}
 	return hooksEnabled(ctx, dir)
+}
+
+// userHookRunsEntire reports whether a user-wide hook that passed its check
+// in dir may hand its event to Entire: only where the repository enabled
+// Entire. Elsewhere it passed because the user runs the daemon, so it records
+// the event and does nothing else, logged in or not.
+func userHookRunsEntire(dir string) bool {
+	start, err := filepath.Abs(dir)
+	if err != nil {
+		return false
+	}
+	root, ok := enclosingWorktree(start)
+	return ok && entireEnabled(root)
 }
 
 // handledElsewhere reports whether a hook the agent runs besides baum's
