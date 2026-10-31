@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"cmp"
 	"encoding/json"
+	"path"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -102,11 +103,19 @@ func (a *activityScan) answered(line []byte) {
 
 // said records something the user wrote without starting a turn: an answer
 // to the agent's question, or a message sent while it works. It is the
-// latest prompt, and the tool calls running go on.
+// latest prompt, and the tool calls running go on. What the harness queues
+// the same way is not the user's (harnessWrote).
 func (a *activityScan) said(text string) {
-	if text = strings.TrimSpace(text); text != "" {
+	if text = strings.TrimSpace(text); text != "" && !harnessWrote(text) {
 		a.prompt = text
 	}
+}
+
+// harnessWrote reports whether a message queued for the agent is the
+// harness's: a background task's notification, or another agent's message,
+// such as a subagent's report.
+func harnessWrote(text string) bool {
+	return strings.HasPrefix(text, "<task-notification>") || strings.HasPrefix(text, "<agent-message ")
 }
 
 // prompted records a user line: it ends the tool calls still open, since the
@@ -184,15 +193,26 @@ func settle(s Session, a *Activity) Session {
 }
 
 // relativeTo is path relative to dir when it lies inside it, else as given.
-func relativeTo(dir, path string) string {
-	if dir == "" || !filepath.IsAbs(path) || !filepath.IsAbs(dir) {
-		return path
+func relativeTo(dir, target string) string {
+	// Transcripts can carry Unix paths even when read on Windows.
+	if path.IsAbs(dir) && path.IsAbs(target) {
+		base, file := path.Clean(dir), path.Clean(target)
+		if file == base {
+			return "."
+		}
+		if rel, ok := strings.CutPrefix(file, strings.TrimRight(base, "/")+"/"); ok {
+			return rel
+		}
+		return target
 	}
-	rel, err := filepath.Rel(dir, path)
+	if dir == "" || !filepath.IsAbs(target) || !filepath.IsAbs(dir) {
+		return target
+	}
+	rel, err := filepath.Rel(dir, target)
 	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-		return path
+		return target
 	}
-	return rel
+	return filepath.ToSlash(rel)
 }
 
 // displayTool is a tool's name as served: an MCP tool, mcp__server__tool,

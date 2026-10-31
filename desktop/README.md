@@ -219,7 +219,10 @@ replaced, so Remove still puts that back. (A `setup.json` of the first
 release, with a single `command`, is read as a one-item list.)
 Hooks are removed with the bundled `baum hooks uninstall --user`, which
 removes only the native `baum@baum` plugin and leaves the marketplace and
-other plugins.
+other plugins. Settings' Update runs the bundled `baum hooks update --user
+--agent AGENT`, which refreshes the marketplace and brings the installed
+plugin to its latest version, so new hooks arrive without removing and
+connecting the agent again.
 
 ### Restarts into the app's baum
 
@@ -512,8 +515,8 @@ doing anything (`src/zoom.rs`).
   for the zoom shortcuts. Every change they make runs in the
   Rust side and only when the user requests it in setup or Settings;
   replacing a different baum also requires the confirmed path. Daemon pages
-  share `setup_state`, the four CLI and hook install/removal commands and
-  `choose_repository`. GitHub connection, repository registration, review
+  share `setup_state`, the four CLI and hook install/removal commands,
+  `update_hooks` and `choose_repository`. GitHub connection, repository registration, review
   settings and finishing setup remain restricted to the bundled setup screen.
 - The opener plugin is used only from Rust, to open links in the browser. Its
   click script (`open_js_links_on_click`) is off: it would call the plugin from

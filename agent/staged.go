@@ -186,7 +186,8 @@ func (g *Generator) StagedReview(ctx context.Context, run StagedRun) (outcome St
 // (the rest), or gives it all to the context stage when no section needs
 // writing. The outline stage has a quarter of the run's budgets, at least
 // one call and token; what it does not spend goes to the later stages. The
-// attempt, repair, stall and tool budgets are per call or per stage, as in a
+// An exhausted call or token budget stays zero, so the outline cannot make a
+// provider call. The attempt, repair, stall and tool budgets are per call or per stage, as in a
 // one-pass run, and the run's wall clock (applied by the host to the
 // context) covers every stage.
 func stageBudgets(run Budgets, calls, tokens int, details bool) (Budgets, Budgets) {
@@ -210,7 +211,12 @@ func stageBudgets(run Budgets, calls, tokens int, details bool) (Budgets, Budget
 
 // outlineBudgets is the outline stage's share of a run's budgets.
 func outlineBudgets(run Budgets) Budgets {
-	run.MaxCalls, run.MaxTokens = max(run.MaxCalls/4, 1), max(run.MaxTokens/4, 1)
+	if run.MaxCalls > 0 {
+		run.MaxCalls = max(run.MaxCalls/4, 1)
+	}
+	if run.MaxTokens > 0 {
+		run.MaxTokens = max(run.MaxTokens/4, 1)
+	}
 	return run
 }
 
@@ -460,7 +466,7 @@ func (s *stagedReview) detailsStage(ctx context.Context, ids []string, budgets B
 			}
 			fmt.Fprintf(&text, "\nSection %s\nRejected details:\n%s\nThe validator found:\n%s\n", id, details, findings[id])
 		}
-		text.WriteString(fmt.Sprintf(s.repairEnding, pass.Number-1, pass.Repairs))
+		fmt.Fprintf(&text, s.repairEnding, pass.Number-1, pass.Repairs)
 		return text.String(), nil
 	}
 	task.Accept = func(ctx context.Context, pass TaskPass, reply []byte, outcome *Outcome) (Verdict, error) {

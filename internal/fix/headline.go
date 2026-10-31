@@ -59,3 +59,53 @@ func inline(line string) string {
 	line = closeMark.ReplaceAllString(line, "$1$2")
 	return strings.Join(strings.Fields(plain(line)), " ")
 }
+
+// PlainText is a review comment's body as plain text to show whole: HTML
+// comments, tags and images are left out, emphasis and code marks dropped, a
+// link keeps its text, a list item keeps a bullet or its number, and
+// paragraphs stay apart by one blank line. A code block keeps its lines as
+// written, without its fences.
+func PlainText(body string) string {
+	body = htmlComment.ReplaceAllString(body, "")
+	body = mdImage.ReplaceAllString(body, "")
+	body = htmlTag.ReplaceAllString(body, "")
+	var out []string
+	fenced, gap := false, false
+	add := func(line string) {
+		if gap && len(out) > 0 {
+			out = append(out, "")
+		}
+		gap = false
+		out = append(out, line)
+	}
+	for line := range strings.Lines(body) {
+		line = strings.TrimRight(line, "\r\n")
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "```") || strings.HasPrefix(trimmed, "~~~") {
+			fenced = !fenced
+			continue
+		}
+		if fenced {
+			add(strings.TrimRight(plain(strings.ReplaceAll(line, "\t", "    ")), " "))
+			continue
+		}
+		if trimmed == "" {
+			gap = true
+			continue
+		}
+		bullet := ""
+		if m := listItem.FindStringSubmatch(trimmed); m != nil {
+			bullet = "• "
+			if m[1] != "" {
+				bullet = m[1] + " "
+			}
+		}
+		if text := inline(lineMarker.ReplaceAllString(trimmed, "")); text != "" {
+			add(bullet + text)
+		}
+	}
+	return strings.Join(out, "\n")
+}
+
+// listItem is a list item's marker, with an ordered item's number.
+var listItem = regexp.MustCompile(`^(?:[-*+]|(\d+[.)]))\s+`)

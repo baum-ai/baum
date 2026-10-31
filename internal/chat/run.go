@@ -67,12 +67,12 @@ func (s *Service) root() (string, error) {
 	return reviewruns.DefaultRoot()
 }
 
-func (s *Service) resolve(ctx context.Context, c repos.Clone) (config.Config, error) {
+func (s *Service) resolve(ctx context.Context) (config.Config, error) {
 	prefs, err := s.Registry.Preferences(ctx)
 	if err != nil {
 		return config.Config{}, err
 	}
-	return c.Settings.Resolve(prefs.Resolve(s.Config)), nil
+	return prefs.Resolve(s.Config), nil
 }
 
 // Run answers the turn ref names. It marks the turn running, runs the agent
@@ -99,7 +99,7 @@ func (s *Service) Run(ctx context.Context, ref Ref, o RunOptions) (report Report
 	if err != nil {
 		return report, err
 	}
-	cfg, err := s.resolve(ctx, c)
+	cfg, err := s.resolve(ctx)
 	if err != nil {
 		return report, err
 	}

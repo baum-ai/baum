@@ -101,7 +101,7 @@ func TestLegacyAutomaticFalseFollowsTheDefault(t *testing.T) {
 		t.Fatal(e)
 	}
 	for _, row := range []struct{ path, identity, settings string }{
-		{legacyPath, "owner/legacy", `{"automatic":false,"daily_cap":3}`},
+		{legacyPath, "owner/legacy", `{"automatic":false,"daily_cap":3,"backend":"codex","model":"retired"}`},
 		{explicitPath, "owner/explicit", `{"automatic":true}`},
 	} {
 		c, e := inspect(ctx, row.path)
@@ -126,7 +126,7 @@ func TestLegacyAutomaticFalseFollowsTheDefault(t *testing.T) {
 		for _, c := range list {
 			switch c.Repository {
 			case "owner/legacy":
-				// The legacy daily cap is ignored.
+				// The legacy daily cap, backend and model are ignored.
 				if c.Settings.Automatic != nil {
 					t.Fatalf("legacy row %#v", c.Settings)
 				}

@@ -12,6 +12,7 @@
     "allow-uninstall-command",
     "allow-install-hooks",
     "allow-uninstall-hooks",
+    "allow-update-hooks",
     "allow-zoom-state",
     "allow-set-zoom",
     "allow-step-zoom"

@@ -1,3 +1,5 @@
+//go:build unix
+
 package codex
 
 import (
@@ -34,10 +36,21 @@ printf '%s\n' '{"type":"turn.completed","usage":{"input_tokens":100,"cached_inpu
 	}
 	arguments, _ := os.ReadFile(filepath.Join(out, "arguments.txt"))
 	for _, flag := range []string{"exec\n", "--ephemeral\n", "--ignore-user-config\n", "--disable\nhooks\n", "--disable\nshell_tool\n", "--disable\nunified_exec\n",
-		"--sandbox\nread-only\n", "--output-schema\n", "-c\nmodel_reasoning_effort=\"low\"\n", "--model\ngpt-6-luna\n"} {
+		"--sandbox\nread-only\n", "--output-schema\n", "--model\ngpt-6-luna\n"} {
 		if !bytes.Contains(arguments, []byte(flag)) {
 			t.Fatalf("missing %q in %s", flag, arguments)
 		}
+	}
+	// Without an Effort the reasoning effort is Codex's own.
+	if bytes.Contains(arguments, []byte("model_reasoning_effort")) {
+		t.Fatalf("an effort was passed without one chosen: %s", arguments)
+	}
+	backend.Effort = "medium"
+	if _, err := backend.Complete(context.Background(), agent.CompleteRequest{System: "Extract decisions.", User: "## Turn 1", Schema: []byte(`{"type":"object"}`)}); err != nil {
+		t.Fatal(err)
+	}
+	if arguments, _ = os.ReadFile(filepath.Join(out, "arguments.txt")); !bytes.Contains(arguments, []byte("-c\nmodel_reasoning_effort=\"medium\"\n")) {
+		t.Fatalf("the chosen effort is missing: %s", arguments)
 	}
 	if instructions, _ := os.ReadFile(filepath.Join(out, "instructions.txt")); string(instructions) != "Extract decisions." {
 		t.Fatalf("instructions = %q", instructions)

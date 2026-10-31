@@ -170,6 +170,43 @@ func (c *Client) Install(ctx context.Context, agent string) (Status, error) {
 	if _, err := c.command(ctx, agent, args...); err != nil {
 		return Status{}, err
 	}
+	return c.verifyInstalled(ctx, agent)
+}
+
+// Update refreshes baum's marketplace and brings the installed plugin to its
+// latest version. Installing again does not: both agents keep the installed
+// version. It returns the version before the update and the status after.
+func (c *Client) Update(ctx context.Context, agent string) (string, Status, error) {
+	ctx, cancel := context.WithTimeout(ctx, ActionTimeout)
+	defer cancel()
+	before, err := c.Status(ctx, agent)
+	if err != nil {
+		return "", before, err
+	}
+	if !before.Installed {
+		return "", before, fmt.Errorf("%s is not installed in %s; install it first", Plugin, Binary(agent))
+	}
+	if !before.Enabled {
+		return "", before, fmt.Errorf("%s is disabled in %s; enable it before updating", Plugin, Binary(agent))
+	}
+	refresh := []string{"plugin", "marketplace", "upgrade", marketplaceName}
+	// Codex has no update command: adding the plugin again installs the
+	// refreshed marketplace's version.
+	update := []string{"plugin", "add", Plugin, "--json"}
+	if agent == "claude-code" {
+		refresh = []string{"plugin", "marketplace", "update", marketplaceName}
+		update = []string{"plugin", "update", Plugin, "--scope", "user", "--json"}
+	}
+	for _, args := range [][]string{refresh, update} {
+		if _, err := c.command(ctx, agent, args...); err != nil {
+			return before.Version, Status{}, err
+		}
+	}
+	status, err := c.verifyInstalled(ctx, agent)
+	return before.Version, status, err
+}
+
+func (c *Client) verifyInstalled(ctx context.Context, agent string) (Status, error) {
 	status, err := c.Status(ctx, agent)
 	if err != nil {
 		return status, err
