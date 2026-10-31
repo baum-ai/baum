@@ -23,6 +23,8 @@ const assert = require('node:assert/strict');
   await page.exposeFunction('nativeInvoke', async (command, args) => {
     calls.push([command, args]);
     if (command === 'setup_state') return state;
+    if (command === 'connection') return { phase: 'connecting' };
+    if (command === 'tray_panel') return null;
     if (command === 'github_connection') {
       if (args.action === 'start') github = { ...disconnected, state: 'pending', pending: { id: 'attempt', user_code: 'ABCD-EFGH', verification_uri: 'https://github.com/login/device', expires_at: '2030-01-01T12:00:00Z', interval: 1 } };
       return github;
@@ -63,8 +65,47 @@ const assert = require('node:assert/strict');
   await page.waitForSelector('#panels');
   assert.equal(await page.locator('#step-label').textContent(), 'STEP 1 OF 3');
   await page.waitForSelector('#github-sign-in');
+  await expect(page.locator('.wordmark svg')).toBeVisible();
+  assert.equal(await page.locator('.wordmark img').count(), 0, 'Setup uses Stumpy as its mark');
   assert.equal(await page.locator('#continue').textContent(), 'Skip →');
   await page.screenshot({ path: `${screenshots}/onboarding-github.png` });
+  // Custom colors override default dark recipes, while artwork stays fixed.
+  const originalBackground = await page.locator('body').evaluate(element => getComputedStyle(element).backgroundColor);
+  const stumpyColor = await page.locator('.wordmark stop').first().getAttribute('stop-color');
+  await page.route('http://setup.test/theme-verification.css', route => route.fulfill({ contentType: 'text/css', body: `@layer baum-theme {
+    :root[data-color-theme="verification"] {
+      --brand-green-600: #345678;
+      --surface-canvas: #203040;
+      --nav-selected: #304050;
+    }
+    :root[data-color-theme="verification"][data-theme="dark"] {
+      --surface-page: #102030;
+      --surface-card: var(--surface-page);
+    }
+  }` }));
+  const customTheme = await page.addStyleTag({ url: 'http://setup.test/theme-verification.css' });
+  await page.evaluate(() => { document.documentElement.dataset.colorTheme = 'verification'; });
+  await expect.poll(() => page.locator('#github-sign-in').evaluate(element => getComputedStyle(element).backgroundColor)).toBe('rgb(52, 86, 120)');
+  await page.emulateMedia({ colorScheme: 'dark' });
+  await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
+  assert.equal(await page.locator('body').evaluate(element => getComputedStyle(element).backgroundColor), 'rgb(16, 32, 48)');
+  assert.equal(await page.locator('.setup-rail').evaluate(element => getComputedStyle(element).backgroundColor), 'rgb(32, 48, 64)');
+  assert.equal(await page.locator('.setup-card').first().evaluate(element => getComputedStyle(element).backgroundColor), 'rgb(16, 32, 48)');
+  assert.equal(await page.locator('[aria-current="step"]').evaluate(element => getComputedStyle(element).backgroundColor), 'rgb(48, 64, 80)');
+  assert.equal(await page.locator('.wordmark stop').first().getAttribute('stop-color'), stumpyColor);
+  await expect(page.locator('html')).toHaveAttribute('data-color-theme', 'verification');
+  await customTheme.evaluate(element => element.remove());
+  await page.evaluate(() => { delete document.documentElement.dataset.colorTheme; });
+  await page.emulateMedia({ colorScheme: 'light' });
+  await expect(page.locator('html')).toHaveAttribute('data-theme', 'light');
+  assert.equal(await page.locator('body').evaluate(element => getComputedStyle(element).backgroundColor), originalBackground);
+  await page.emulateMedia({ colorScheme: 'dark' });
+  await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
+  assert.equal(await page.locator('html').evaluate(element => getComputedStyle(element).colorScheme), 'dark');
+  assert.notEqual(await page.locator('body').evaluate(element => getComputedStyle(element).backgroundColor), 'rgb(255, 255, 255)');
+  await page.screenshot({ path: `${screenshots}/onboarding-github-dark.png` });
+  await page.emulateMedia({ colorScheme: 'light' });
+  await expect(page.locator('html')).toHaveAttribute('data-theme', 'light');
   assert(await page.locator('#repo-panel').isHidden(), 'Repositories wait for GitHub');
   await page.locator('#github-sign-in').click();
   await expect(page.getByLabel('GitHub sign-in code')).toHaveText('ABCD-EFGH');
@@ -117,6 +158,16 @@ const assert = require('node:assert/strict');
   await expect(page.locator('#review-panel')).toContainText('never tool output or file contents');
   assert.equal(await page.locator('#continue').textContent(), 'Continue →');
   await page.screenshot({ path: `${screenshots}/onboarding-reviews.png`, fullPage: true });
+  await page.emulateMedia({ colorScheme: 'dark' });
+  await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
+  assert.notEqual(
+    await page.locator('.harness-tile').first().evaluate(element => getComputedStyle(element).backgroundColor),
+    await page.locator('.harness-tile').nth(1).evaluate(element => getComputedStyle(element).backgroundColor),
+    'The selected harness tile must be distinct in dark mode',
+  );
+  await page.screenshot({ path: `${screenshots}/onboarding-reviews-dark.png`, fullPage: true });
+  await page.emulateMedia({ colorScheme: 'light' });
+  await expect(page.locator('html')).toHaveAttribute('data-theme', 'light');
   await page.locator('#decisions-model').selectOption('claude-sonnet-5-5');
   await page.locator('.harness-option:has(input[value=cursor-agent])').click();
   assert.equal(await page.locator('#review-model').inputValue(), 'composer-2.5');
@@ -148,11 +199,16 @@ const assert = require('node:assert/strict');
   assert.equal(await page.locator('#step-label').textContent(), 'STEP 3 OF 3');
   assert((await page.locator('#command-state').textContent()).includes('~/.local/bin/baum'));
   await page.screenshot({ path: `${screenshots}/onboarding-agents.png` });
+  await page.emulateMedia({ colorScheme: 'dark' });
+  await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
+  await page.screenshot({ path: `${screenshots}/onboarding-agents-dark.png` });
+  await page.emulateMedia({ colorScheme: 'light' });
+  await expect(page.locator('html')).toHaveAttribute('data-theme', 'light');
   assert.equal(await page.locator('#codex-install').textContent(), 'Connect');
   assert.equal(await page.locator('#claude-code-install').getAttribute('aria-label'), 'Connect Claude Code');
   assert(await page.locator('#refresh').isVisible(), 'An unfinished step should offer to recheck');
   assert.equal(await page.locator('#continue').textContent(), 'Open baum →');
-  assert(await page.locator('.agent-logo').evaluateAll(images => images.every(image => image.complete && image.naturalWidth > 0)), 'Bundled icons must load under the native CSP');
+  assert(await page.locator('.agent-logo').evaluateAll(images => images.every(image => image.tagName.toLowerCase() === 'svg')), 'Vendor icons use palette-aware SVG marks');
   await page.locator('#command-install').click();
   assert.deepEqual(await page.evaluate(() => [...document.querySelectorAll('button.loading')].map(b => b.id)), ['command-install']);
   assert(await page.locator('#log').isHidden(), 'Working should not show the log');
@@ -195,6 +251,14 @@ const assert = require('node:assert/strict');
   await page.reload();
   await page.waitForSelector('#github-sign-in');
   assert(await page.locator('#repo-panel').isHidden(), 'Repositories stay hidden while GitHub is disconnected');
+  for (const screen of ['index.html', 'tray.html']) {
+    await page.goto(`http://setup.test/${screen}`);
+    await page.emulateMedia({ colorScheme: 'dark' });
+    await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
+    assert.notEqual(await page.locator('body').evaluate(element => getComputedStyle(element).backgroundColor), 'rgb(255, 255, 255)');
+    await page.emulateMedia({ colorScheme: 'light' });
+    await expect(page.locator('html')).toHaveAttribute('data-theme', 'light');
+  }
   assert.deepEqual(errors, []);
   await browser.close();
   console.log('Onboarding: GitHub sign-in with repositories, review settings, CLI and separate agent installs, retry, back/skip, finish and minimum window width passed.');

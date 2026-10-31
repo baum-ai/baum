@@ -1,11 +1,3 @@
-:root {
-  color-scheme: light;
-  --bg: #fff8ea;
-  --fg: #2a1d15;
-  --muted: #6b4a33;
-  --accent: #2e7d3e;
-  --panel: #f2dcad;
-}
 body {
   height: auto;
   min-height: 100vh;
@@ -21,23 +13,23 @@ body {
   display: flex;
   flex-direction: column;
   padding: 36px 30px 24px;
-  background: #f2dcad;
-  border-right: 1px solid #ddbf8e;
+  background: var(--surface-canvas);
+  border-right: 1px solid var(--border-default);
 }
 .wordmark {
   display: flex;
   align-items: center;
-  gap: 8px;
-  font-family: var(--font-heading);
-  font-size: 30px;
-  font-weight: 800;
-  letter-spacing: -1px;
+  gap: 12px;
+  font-family: var(--font-text);
+  font-size: 28px;
+  font-weight: 400;
+  letter-spacing: -0.02em;
 }
 .eyebrow {
   font-size: 10px;
   font-weight: 500;
   letter-spacing: 1.7px;
-  color: var(--accent);
+  color: var(--action-primary);
   margin-bottom: 16px;
 }
 .step-list {
@@ -50,7 +42,7 @@ body {
 .step-list li {
   border: 1px solid transparent;
   border-radius: 10px;
-  color: var(--muted);
+  color: var(--text-secondary);
 }
 .step-link {
   display: flex;
@@ -69,36 +61,36 @@ body {
   background: transparent;
 }
 li:not([aria-current]) > .step-link:hover:not(:disabled) {
-  background: #f8e6c0;
+  background: var(--nav-hover);
 }
 [aria-current="step"] > .step-link {
   cursor: default;
 }
 .step-list li[aria-current="step"] {
-  background: #fff8ea;
-  border-color: #ddbf8e;
-  color: var(--fg);
-  box-shadow: 0 3px 8px #2a1d1506;
+  background: var(--nav-selected);
+  border-color: var(--border-default);
+  color: var(--text-primary);
+  box-shadow: 0 3px 8px color-mix(in srgb, var(--text-primary) 2%, transparent);
 }
 .step-number {
   display: grid;
   place-items: center;
   flex: 0 0 28px;
   height: 28px;
-  border: 1px solid #c9a97e;
+  border: 1px solid var(--border-strong);
   border-radius: 50%;
   font-size: 12px;
 }
 [aria-current="step"] .step-number,
 .complete .step-number {
-  color: #fff8ea;
-  background: var(--accent);
-  border-color: var(--accent);
+  color: var(--surface-page);
+  background: var(--action-primary);
+  border-color: var(--action-primary);
 }
 .step-list small {
   display: block;
   font-size: 12px;
-  color: var(--muted);
+  color: var(--text-secondary);
   margin-top: 4px;
 }
 .setup-content {
@@ -120,11 +112,11 @@ li:not([aria-current]) > .step-link:hover:not(:disabled) {
   margin-bottom: 28px;
 }
 .setup-card {
-  border: 1px solid #ddbf8e;
+  border: 1px solid var(--border-default);
   border-radius: 14px;
   padding: 26px;
-  background: #fdfaf4;
-  box-shadow: 0 8px 24px #2a1d1505;
+  background: var(--surface-card);
+  box-shadow: 0 8px 24px color-mix(in srgb, var(--text-primary) 2%, transparent);
 }
 .setup-card h2 {
   display: flex;
@@ -149,18 +141,18 @@ button {
   transition: background 0.15s;
 }
 button:hover {
-  background: #256632;
+  background: var(--action-primary-hover);
 }
 button.secondary {
-  box-shadow: inset 0 0 0 1px #c9a97e;
-  color: var(--fg);
+  box-shadow: inset 0 0 0 1px var(--border-strong);
+  color: var(--text-primary);
 }
 button.secondary:hover,
 button.quiet:hover {
-  background: #f2dcad;
+  background: var(--surface-sunken);
 }
 button.quiet {
-  color: var(--muted);
+  color: var(--text-secondary);
   background: transparent;
 }
 /* A row's own action, quieter than the step's buttons. */
@@ -171,15 +163,15 @@ button.compact {
 button:focus-visible,
 input:focus-visible,
 summary:focus-visible {
-  outline: 2px solid var(--accent);
+  outline: 2px solid var(--action-primary);
   outline-offset: 4px;
 }
 .callout {
-  border-left: 2px solid #c9a97e;
+  border-left: 2px solid var(--border-strong);
   padding-left: 12px;
 }
 .setup-footer {
-  border-top: 1px solid #ddbf8e;
+  border-top: 1px solid var(--border-default);
   margin-top: 28px;
   padding-top: 24px;
 }
@@ -211,23 +203,23 @@ summary:focus-visible {
   gap: 14px;
   width: 100%;
   padding: 18px 20px;
-  border: 1.5px dashed #c9a97e;
+  border: 1.5px dashed var(--border-strong);
   border-radius: 10px;
-  background: #fff8ea;
-  color: var(--fg);
+  background: var(--surface-page);
+  color: var(--text-primary);
   text-align: left;
   font-size: 15px;
 }
 .repo-pick:hover:not(:disabled) {
-  background: #f9ebcd;
-  border-color: var(--accent);
+  background: var(--surface-hover);
+  border-color: var(--action-primary);
 }
 .repo-pick small {
   display: block;
   margin-top: 3px;
   font-size: 12px;
   font-weight: 400;
-  color: var(--muted);
+  color: var(--text-secondary);
 }
 .repo-pick.loading::before {
   order: 1;
@@ -238,8 +230,8 @@ summary:focus-visible {
   height: 36px;
   padding: 8px;
   border-radius: 8px;
-  background: #e7efdf;
-  fill: var(--accent);
+  background: var(--status-positive-bg);
+  fill: var(--action-primary);
 }
 .path-row {
   display: flex;
@@ -249,26 +241,26 @@ summary:focus-visible {
 input {
   min-width: 0;
   width: 100%;
-  border: 1px solid #ddbf8e;
+  border: 1px solid var(--border-default);
   border-radius: 7px;
   padding: 10px 12px;
   font: inherit;
   font-size: 13px;
-  background: #fff8ea;
-  color: var(--fg);
+  background: var(--surface-page);
+  color: var(--text-primary);
 }
 #repo-list {
   list-style: none;
   margin: 16px 0 0;
   padding: 0;
-  border-top: 1px solid #ead3a8;
+  border-top: 1px solid var(--border-subtle);
 }
 #repo-list li {
   display: flex;
   align-items: center;
   gap: 12px;
   padding: 12px 0;
-  border-bottom: 1px solid #ead3a8;
+  border-bottom: 1px solid var(--border-subtle);
 }
 #repo-list li:last-child {
   border-bottom: 0;
@@ -278,7 +270,7 @@ input {
   flex: none;
   width: 20px;
   height: 20px;
-  fill: #c9a97e;
+  fill: var(--border-strong);
 }
 #repo-list div {
   flex: 1;
@@ -292,7 +284,7 @@ input {
 #repo-list span {
   display: block;
   font-size: 12px;
-  color: var(--muted);
+  color: var(--text-secondary);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -301,7 +293,7 @@ input {
   flex: none;
   font-style: normal;
   font-size: 12px;
-  color: var(--accent);
+  color: var(--action-primary);
 }
 .setup-section {
   font-size: 18px;
@@ -320,7 +312,7 @@ input {
   margin: 14px 2px 0;
   font-size: 12px;
   line-height: 1.6;
-  color: var(--muted);
+  color: var(--text-secondary);
 }
 #log {
   font-size: 12px;
@@ -328,7 +320,7 @@ input {
   max-height: 180px;
 }
 #log.failed {
-  box-shadow: inset 3px 0 0 #b3412e;
+  box-shadow: inset 3px 0 0 var(--status-critical);
 }
 @media (max-width: 760px) {
   .onboarding {
@@ -365,7 +357,7 @@ input {
   padding: 20px 0;
 }
 .agent-row + .agent-row {
-  border-top: 1px solid #ead3a8;
+  border-top: 1px solid var(--border-subtle);
 }
 .agent-logo,
 .row-icon {
@@ -373,14 +365,15 @@ input {
   width: 44px;
   height: 44px;
   padding: 10px;
-  border: 1px solid #ead3a8;
+  border: 1px solid var(--border-subtle);
   border-radius: 10px;
-  background: #fff;
+  background: var(--surface-card);
 }
 .row-icon {
   display: grid;
   place-items: center;
-  color: var(--fg);
+  color: var(--text-primary);
+  background: var(--surface-card);
 }
 .row-icon svg {
   width: 22px;
@@ -407,14 +400,14 @@ input {
   margin: 0;
 }
 .agent-info p.ok {
-  color: var(--accent);
+  color: var(--action-primary);
 }
 .agent-info p.ok::before {
   content: "✓ ";
 }
 .setup-card .agent-hint {
   font-size: 12px;
-  color: var(--muted);
+  color: var(--text-secondary);
   opacity: 0.8;
   margin-top: 4px;
 }
@@ -427,7 +420,7 @@ button:disabled {
   cursor: progress;
 }
 .github-code-step {
-  border-top: 1px solid #ead3a8;
+  border-top: 1px solid var(--border-subtle);
   padding: 20px 0;
 }
 .github-code {
@@ -437,9 +430,9 @@ button:disabled {
   justify-content: space-between;
   gap: 12px;
   padding: 14px 16px;
-  border: 1px solid #ddbf8e;
+  border: 1px solid var(--border-default);
   border-radius: 10px;
-  background: #fff;
+  background: var(--surface-card);
 }
 .github-code span {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
@@ -458,17 +451,17 @@ button:disabled {
   padding: 11px 16px;
   font-size: 14px;
   font-weight: 500;
-  color: var(--bg);
-  background: var(--accent);
+  color: var(--surface-page);
+  background: var(--action-primary);
   text-decoration: none;
 }
 .github-code-step a.button:hover {
-  background: #256632;
+  background: var(--action-primary-hover);
 }
 .setup-card .github-note {
   margin: 10px 0 0;
   font-size: 12px;
-  color: var(--muted);
+  color: var(--text-secondary);
 }
 .github-problem {
   display: flex;
@@ -479,7 +472,7 @@ button:disabled {
   margin-bottom: 20px;
   padding: 10px 12px;
   border-radius: 8px;
-  background: #f8e3dc;
-  color: #8a2c1a;
+  background: var(--status-critical-bg);
+  color: var(--status-critical);
   font-size: 14px;
 }

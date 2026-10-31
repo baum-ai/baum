@@ -43,12 +43,19 @@ A second launch focuses the existing window instead of opening another one.
 
 ## First run: the baum command and the hooks
 
-First run uses a three-step setup in the landing page's sand, espresso and green
+First run uses a three-step setup with the local app's shared light and dark
 palette, set like every screen of the app in its bundled type: Instrument
 Sans for text and Manrope for headings, both under the SIL Open Font License
 (`../viewer/src/fonts/`). Studio Feixen, the website's font, is licensed for the
 web only and is never bundled in the app. The screen is a typed React entry in
 `../app/src/desktop/`, built alongside the local application by its Vite build.
+Its rail uses the app sidebar's canvas and Stumpy mark. UI colors come from
+`../viewer/src/palette.css`; Stumpy's fixed colors live with the illustration in
+`../viewer/src/components/stumpy-artwork.ts`. Native SVG icon templates reuse
+both sources, resolved by `scripts/prepare-icons.mjs` before rasterization.
+Setup, connecting and tray screens follow the system's appearance, including
+changes while they are open; the app's saved theme preference applies to its
+daemon-served pages.
 Vite writes the daemon assets to `../internal/localapp/dist` and assembles the
 native assets in `dist/`, where the connecting screen is `index.html`. Tauri embeds
 `dist/` so setup stays on its local origin with the existing native permissions;
@@ -581,7 +588,7 @@ just desktop::bundle        # the release's Linux deb and AppImage in target/rel
 just desktop::updater-test  # updater manifest checks reject tampered releases
 just desktop::run           # run the app on this Wayland session's display
 just desktop::dev           # native host app, with Vite hot reload in Docker
-just desktop::icons         # regenerate icons/ from icons/source.svg
+just desktop::icons         # resolve palette tokens and regenerate native icons
 ```
 
 `run` starts the container's own daemon in the container's home directory,

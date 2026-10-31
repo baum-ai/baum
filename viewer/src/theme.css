@@ -1,0 +1,5 @@
+/* Theme overrides win regardless of the default selectors' specificity.
+   Unlayered host styles can still override both layers intentionally. */
+@layer baum-palette, baum-theme;
+@import "./palette.css" layer(baum-palette);
+@import "./themes/custom.css" layer(baum-theme);

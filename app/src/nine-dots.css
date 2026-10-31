@@ -1,19 +1,11 @@
 /* The nine-dots loader (nine-dots.tsx). Every rule for it is here: pages
    use NineDots or LoadingStatus and never restyle them. */
 .nine-dots {
-  --nine-dots-rest: #7a4a26;
-  --nine-dots-active: #3e9b4f;
+  --nine-dots-rest: var(--text-tertiary);
+  --nine-dots-active: var(--status-positive);
   flex: none;
   display: inline-block;
   vertical-align: middle;
-}
-:root[data-theme="dark"] .nine-dots {
-  --nine-dots-rest: #c98b4e;
-}
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme]) .nine-dots {
-    --nine-dots-rest: #c98b4e;
-  }
 }
 .nine-dots.nine-dots-text {
   --nine-dots-rest: color-mix(in srgb, currentColor 35%, transparent);

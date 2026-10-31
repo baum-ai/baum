@@ -1,3 +1,4 @@
+import { BrandMark } from "@baum/viewer/components/brand-logo";
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { invoke } from "./native";
 import {
@@ -15,9 +16,7 @@ import { ReviewSettingsForm } from "./reviews";
 import { PlanUsage } from "../plan-usage";
 import { GitHubStep } from "./github-step";
 import { RepositoryPicker, setupRepositoryCall } from "../repositories";
-import logo from "./logo.svg";
-import codexLogo from "./codex.svg";
-import claudeLogo from "./claude-code.svg";
+import { Stumpy } from "@baum/viewer/components/stumpy";
 import { LoadingStatus, NineDots } from "../nine-dots";
 
 const steps = [
@@ -46,7 +45,7 @@ const agents = [
   {
     id: "codex",
     name: "Codex",
-    logo: codexLogo,
+    brand: "openai" as const,
     about: "Reports Codex sessions to baum.",
     hint: (
       <>
@@ -57,7 +56,7 @@ const agents = [
   {
     id: "claude-code",
     name: "Claude Code",
-    logo: claudeLogo,
+    brand: "claude" as const,
     about: "Reports Claude Code sessions to baum.",
     hint: <>Approve the hooks in Claude Code.</>,
   },
@@ -225,7 +224,7 @@ export function Setup() {
     <main className="onboarding">
       <aside className="setup-rail">
         <div className="wordmark">
-          <img src={logo} alt="" width="40" height="40" />
+          <Stumpy size={44} />
           baum
         </div>
         <ol className="step-list" aria-label="Setup progress">
@@ -367,13 +366,7 @@ export function Setup() {
                   const verb = agent?.installed ? "Enable" : "Connect";
                   return (
                     <li className="agent-row" key={definition.id}>
-                      <img
-                        className="agent-logo"
-                        src={definition.logo}
-                        alt=""
-                        width="24"
-                        height="24"
-                      />
+                      <BrandMark brand={definition.brand} size={44} className="agent-logo" />
                       <div className="agent-info">
                         <h2>{definition.name}</h2>
                         <p id={`${definition.id}-state`} className={connected ? "ok" : undefined}>

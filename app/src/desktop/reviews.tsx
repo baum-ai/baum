@@ -1,3 +1,4 @@
+import { BrandMark } from "@baum/viewer/components/brand-logo";
 import { useId, useState } from "react";
 import {
   decisionModelDefaults,
@@ -6,16 +7,18 @@ import {
   type PullRequests,
   type ReviewSettings,
 } from "./setup-model";
-import codexLogo from "./codex.svg";
-import claudeLogo from "./claude-code.svg";
-import cursorLogo from "./cursor.svg";
 import "./review-form.css";
 
 export const harnesses = [
-  { id: "claude", name: "Claude Code", detail: "Your Claude plan", logo: claudeLogo },
-  { id: "codex", name: "Codex", detail: "Your ChatGPT plan", logo: codexLogo },
-  { id: "cursor-agent", name: "Cursor Agent", detail: "Your Cursor plan", logo: cursorLogo },
-  { id: "anthropic", name: "Anthropic API", detail: "Pay per use", logo: claudeLogo },
+  { id: "claude", name: "Claude Code", detail: "Your Claude plan", brand: "claude" as const },
+  { id: "codex", name: "Codex", detail: "Your ChatGPT plan", brand: "openai" as const },
+  {
+    id: "cursor-agent",
+    name: "Cursor Agent",
+    detail: "Your Cursor plan",
+    brand: "cursor" as const,
+  },
+  { id: "anthropic", name: "Anthropic API", detail: "Pay per use", brand: "claude" as const },
 ];
 const scopes: { id: PullRequests; label: string }[] = [
   { id: "all", label: "All" },
@@ -44,7 +47,7 @@ export function HarnessPicker({
 }) {
   const name = useId();
   const options = [
-    ...(inherit ? [{ id: INHERIT, name: inherit.label, detail: inherit.detail, logo: null }] : []),
+    ...(inherit ? [{ id: INHERIT, name: inherit.label, detail: inherit.detail, brand: null }] : []),
     ...harnesses,
   ];
   return (
@@ -62,8 +65,8 @@ export function HarnessPicker({
               onChange={() => onChange(harness.id === INHERIT ? null : harness.id)}
             />
             <span className="harness-tile">
-              {harness.logo ? (
-                <img src={harness.logo} alt="" width="20" height="20" />
+              {harness.brand ? (
+                <BrandMark brand={harness.brand} size={20} />
               ) : (
                 <span className="harness-inherit" aria-hidden="true" />
               )}

@@ -1,3 +1,4 @@
+import { BrandMark } from "@baum/viewer/components/brand-logo";
 import { usePreferences } from "./preferences";
 import {
   useEffect,
@@ -35,8 +36,6 @@ import { DiagnosticsSection } from "./diagnostics";
 import { invoke } from "./desktop/native";
 import { Notice, PageBar, PanelHeader, RefreshButton } from "./shell";
 import { listKeys, onBody, useRowFocus, useShortcuts } from "./shortcuts";
-import codexLogo from "./desktop/codex.svg";
-import claudeLogo from "./desktop/claude-code.svg";
 import {
   TerminalIcon,
   SessionsIcon,
@@ -796,11 +795,9 @@ function AgentHooksPanel({ setup }: { setup: DesktopSetup }) {
             className="flex flex-wrap items-center justify-between gap-4 border-t border-(--border-subtle) px-5 py-4"
           >
             <div className="flex min-w-0 flex-[1_1_16rem] items-start gap-3">
-              <img
-                src={agent.agent === "codex" ? codexLogo : claudeLogo}
-                alt=""
-                width="24"
-                height="24"
+              <BrandMark
+                brand={agent.agent === "codex" ? "openai" : "claude"}
+                size={24}
                 className="mt-0.5 shrink-0"
               />
               <div className="min-w-0 space-y-1">

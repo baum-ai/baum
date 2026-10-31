@@ -156,9 +156,9 @@ it("shows a permission request with its input rows and posts Allow once, Always 
     "Bash(just platform::test:*) in this project",
   );
   expect(toast()!.querySelector(".local-toast-context")!.textContent).toBe("Tidy the buttons");
-  expect(toast()!.querySelector(".local-toast-context img")!.getAttribute("alt")).toBe(
-    "Claude Code",
-  );
+  expect(
+    toast()!.querySelector(".local-toast-context [role=img]")!.getAttribute("aria-label"),
+  ).toBe("Claude Code");
 
   await render([waiting], requests({ requests: [permission({ id: "r2" })] }));
   await click(button("Deny"));
@@ -272,7 +272,7 @@ it("shows a finished turn without a reply box and a terminal-only wait with a no
   const asking = node.querySelector('[aria-label="Needs you"] li')!;
   // The agent by its mark and the session by its title: no "finished its
   // turn" heading.
-  expect(finished!.querySelector("img")!.getAttribute("alt")).toBe("Claude Code");
+  expect(finished!.querySelector("[role=img]")!.getAttribute("aria-label")).toBe("Claude Code");
   expect(finished!.querySelector("h3")!.textContent).toBe("Tidy the buttons");
   expect(finished!.querySelector(".local-feed-branch")!.textContent).toBe("feature");
   expect(finished!.textContent).not.toContain("finished its turn");

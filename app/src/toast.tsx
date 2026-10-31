@@ -1,4 +1,6 @@
 import { CircleCheckIcon, CloseIcon, WarningIcon } from "@baum/viewer/components/icons";
+import { BrandMark } from "@baum/viewer/components/brand-logo";
+import type { Brand } from "@baum/viewer/brands";
 import {
   createContext,
   useCallback,
@@ -16,9 +18,8 @@ export type Toast = {
   title: string;
   detail?: string;
   context?: string;
-  /** The context's icon (an image URL) and its name for assistive
-   *  technology. */
-  icon?: { src: string; alt: string };
+  /** The context's vendor mark and its name for assistive technology. */
+  icon?: { brand: Brand; alt: string };
   error?: boolean;
   action?: { label: string; run: () => void };
 };
@@ -65,7 +66,9 @@ function ToastView({ toast, close }: { toast: Toast; close: () => void }) {
         {toast.context ? (
           <p className="local-toast-context">
             {toast.icon ? (
-              <img src={toast.icon.src} alt={toast.icon.alt} width="14" height="14" />
+              <span role="img" aria-label={toast.icon.alt}>
+                <BrandMark brand={toast.icon.brand} size={14} />
+              </span>
             ) : null}
             {toast.context}
           </p>

@@ -8,8 +8,39 @@ app and `../viewer` hot reload without rebuilding Go or Rust. See
 
 The desktop app's own screens are React too: `setup.html` mounts
 `src/desktop/setup.tsx` and `connecting.html` mounts `src/desktop/connecting.tsx`,
-with typed native IPC and the same Vite, TypeScript, lint and test pipeline. The
-multi-page production build emits every entry and assembles `../desktop/dist`
+with typed native IPC and the same Vite, TypeScript, lint and test pipeline. Setup,
+connecting and tray screens use the viewer palette that the local app uses,
+following the system's light or dark appearance.
+
+Desktop UI colors are defined in `../viewer/src/palette.css`. The inbox,
+walkthrough, sessions, settings and charts reuse its semantic tokens. Stumpy's
+fixed illustration colors live with the component in
+`../viewer/src/components/stumpy-artwork.ts`; the log mark and native icon
+generator reuse them. Fixed vendor logo colors live in
+`../viewer/src/components/brand-artwork.ts`. `pnpm lint` rejects color literals
+and Tailwind color utilities outside the UI palette,
+`../viewer/src/themes/*.css` and those two artwork modules.
+The default UI palette has sixteen explicit base colors shared by light and dark mode;
+its neutral ramps, status backgrounds and interaction shades are derived mixes.
+Custom colors go in `../viewer/src/themes/custom.css`, loaded by every desktop
+screen after the default palette in a higher-priority cascade layer. Override
+bases to recalculate shades, or any semantic token to replace a derived color.
+Put overrides on `:root`, with optional `:root[data-theme="dark"]` exceptions;
+components consume those values without redefining them. See
+[custom color themes](../viewer/README.md#custom-color-themes) for examples and
+named theme selection separate from the light/dark appearance preference.
+
+`pnpm lint:palette` runs the color rule by itself; `pnpm lint` and `pnpm check`
+include it, so the normal CI app check enforces it. It scans app sources, shared
+viewer components, bundled HTML, native sources/configuration and SVG icon
+templates. Hex colors, RGB/HSL and other literal color functions, named CSS
+colors, and Tailwind's fixed color utilities are rejected with file and line
+numbers. Palette variables, `currentColor`, `transparent` and derived mixes of
+palette variables are allowed. Only palette/theme definition files and the two
+specific artwork modules may define literal colors; tests and generated files
+are excluded. Inbox filter color names are persisted palette keys, not CSS colors.
+
+The multi-page production build emits every entry and assembles `../desktop/dist`
 for Tauri, where the connecting screen becomes `index.html`, the page the
 window opens on; it is taken out of the daemon's copy. Every loading state uses
 one component, `NineDots` or `LoadingStatus` in `src/nine-dots.tsx`, whose look
@@ -157,8 +188,7 @@ the first semicolon; a section without steps is one behaviour, its summary. A
 chapter carries its section's summary, its `intent` block (what the pull request
 and its sessions say the change is for), its risk reason and its open risks. A behaviour's code is the viewer's
 `HunkEvidence` for the step's hunk anchors, reading omitted excerpts through the
-page's patch source. The walkthrough is drawn as the inbox is, with the Up next
-design's `--un-*` colours (`src/walkthrough.css`). It is one guided tour, a
+page's patch source. The walkthrough and inbox use the shared palette (`src/walkthrough.css`). It is one guided tour, a
 page per chapter, in the overview's column: a row of steps under the header
 leads back to the overview, names each chapter (shortened to fit, with a dot per
 behaviour: looked at, commented or not yet) and ends at the wrap-up. A
@@ -503,9 +533,7 @@ repository's pull requests.
 
 The Inbox (the app's root, `src/up-next.tsx`) is a split view: a list of
 what waits on the person, grouped by what they do about it, beside the panel
-of the selected pull request. The page follows the Up next design's own
-colours and sizes rather than the app's tokens and type scale (`--un-*` in
-`src/style.css`, mapped onto the app's dark tokens in dark mode); its list and
+of the selected pull request. The page uses the shared palette in both themes; its list and
 panel scroll on their own, and below 760px the list stacks above the panel.
 `upNext` places each open pull request in at most one kind, from discovery's
 flags only: **Review** (their review is requested), **Clone** (a requested
@@ -710,7 +738,7 @@ review decisions, head checks, merge state and the first 100 review threads;
 when more threads exist the unresolved count shows a lower bound (`N+`). The
 columns follow the hosted Focus view's labels, icons and tones and fold under
 the title below 72rem. The list is drawn as the Up next design's live table,
-in the Inbox's palette (`--un-*`) on the app's type scale. The page bar says
+with the shared palette on the app's type scale. The page bar says
 when the list last read the daemon ("Updated just now", then how long ago,
 with the exact time as a tooltip), with a turning mark while a refresh runs.
 A row's menu (its ⋯, a right click or ⌘.) holds Peek, Merge… on a ready row
@@ -1056,7 +1084,7 @@ by a stop and spend under baum's work; an unknown cost stays unknown.
 
 Every list page draws its list one way: Pull requests, the Inbox's queue, Sessions,
 Jobs, Repositories and Manage inboxes. The page lies on the panel's warm paper
-(`--un-panel`), its sections are `ListSection`s (`src/list.tsx`: a heading with a dot
+(`--surface-card`), its sections are `ListSection`s (`src/list.tsx`: a heading with a dot
 in the section's tone, its name and count, folding where the list is long), and its
 rows are `list-row`s spanning the panel between hairlines, with no boxed panels. The
 row the keyboard is on, and the Inbox's selected pull request, take the same bar and

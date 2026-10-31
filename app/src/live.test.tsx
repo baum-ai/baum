@@ -227,12 +227,12 @@ it("shows running and recently ended sessions on the Sessions page, updated by t
   expect(running.querySelectorAll("li")).toHaveLength(2);
   // The agent by its mark alone.
   expect(running.textContent).not.toContain("Claude Code");
-  expect(running.querySelector('img[alt="Claude Code"]')).not.toBeNull();
+  expect(running.querySelector('[role="img"][aria-label="Claude Code"]')).not.toBeNull();
   expect(running.querySelector(".local-session-repo")!.textContent).toBe("acme/demo");
   expect(running.querySelector(".local-session-branch")!.textContent).toBe("feature");
   expect(running.textContent).toMatch(/4m 59s|5m 0\ds/);
   expect(running.textContent).toContain("Active 20 seconds ago");
-  expect(running.querySelector('img[alt="Codex"]')).not.toBeNull();
+  expect(running.querySelector('[role="img"][aria-label="Codex"]')).not.toBeNull();
   expect(running.textContent).toContain("Quiet for");
   expect(running.querySelector('a[href$="&pr=7"]')?.textContent).toBe("PR #7");
   expect(running.querySelector("li:nth-child(2) a.local-session-pr")).toBeNull();
@@ -326,7 +326,7 @@ it("puts the sessions waiting on the person in Needs you, longest wait first, an
     expect(finished.getAttribute("data-row-id")).toBe("claude-code:finished");
     expect(needs.querySelector("h2")!.textContent).toBe("Needs you 2");
     expect(waitingForYou.querySelector("h2")!.textContent).toBe("Waiting for you 1");
-    expect(rows[0]!.querySelector("img")!.getAttribute("alt")).toBe("Codex");
+    expect(rows[0]!.querySelector('[role="img"]')!.getAttribute("aria-label")).toBe("Codex");
     expect(rows[0]!.textContent).toContain("waiting 4m 00s");
     expect(rows[0]!.textContent).toContain("Asks permission in its terminal");
     expect(rows[0]!.querySelector(".local-feed-mono")!.textContent).toBe("wip");

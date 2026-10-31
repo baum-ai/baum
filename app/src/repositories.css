@@ -4,19 +4,14 @@
   gap: 1rem;
   min-width: 0;
 }
-.repository-picker {
-  --repo-border: var(--border-subtle, #ddbf8e);
-  --repo-muted: var(--text-secondary, #6b4a33);
-  --repo-panel: var(--surface-card, #fff8ea);
-  --repo-action: var(--action-primary, #2e7d3e);
-}
+
 .repository-picker p,
 .repository-actions p {
   margin: 0;
 }
 .repository-clone,
 .repository-description {
-  color: var(--repo-muted, var(--text-secondary, #6b4a33));
+  color: var(--text-secondary);
   font-size: var(--text-xs, 0.875rem);
   overflow-wrap: anywhere;
 }
@@ -31,9 +26,9 @@
   min-width: 0;
   box-sizing: border-box;
   padding: 0.65rem 0.8rem;
-  border: 1px solid var(--repo-border, var(--border-subtle, #ddbf8e));
+  border: 1px solid var(--border-subtle);
   border-radius: 0.4rem;
-  background: var(--repo-panel, var(--surface-card, #fff8ea));
+  background: var(--surface-card);
   color: inherit;
   font: inherit;
 }
@@ -44,7 +39,7 @@
   max-height: 38.5rem;
   overflow-y: auto;
   overscroll-behavior: contain;
-  border: 1px solid var(--repo-border);
+  border: 1px solid var(--border-subtle);
   border-radius: 0.6rem;
 }
 .repository-results .loading-status,
@@ -55,7 +50,7 @@
   margin: 0;
   display: grid;
   place-items: center;
-  color: var(--repo-muted);
+  color: var(--text-secondary);
 }
 .repository-choices {
   margin: 0;
@@ -69,13 +64,13 @@
   display: grid;
   gap: 0.6rem;
   padding: 0.7rem 0.9rem;
-  border-bottom: 1px solid var(--repo-border);
+  border-bottom: 1px solid var(--border-subtle);
 }
 .repository-choices > li:hover {
-  background: color-mix(in srgb, var(--surface-hover, #f2dcad) 40%, transparent);
+  background: color-mix(in srgb, var(--surface-hover) 40%, transparent);
 }
 .repository-choices > li.picked {
-  background: color-mix(in srgb, var(--repo-action) 7%, transparent);
+  background: color-mix(in srgb, var(--action-primary) 7%, transparent);
 }
 .repository-picker .repository-choice {
   display: flex;
@@ -106,10 +101,10 @@
 .repository-choice small {
   flex: none;
   padding: 0 0.4rem;
-  border: 1px solid var(--repo-border);
+  border: 1px solid var(--border-subtle);
   border-radius: 999px;
   font-size: 0.75rem;
-  color: var(--repo-muted);
+  color: var(--text-secondary);
 }
 .repository-text .repository-description,
 .repository-text .repository-clone {
@@ -118,7 +113,7 @@
   text-overflow: ellipsis;
 }
 .repository-clone.found {
-  color: var(--repo-action);
+  color: var(--action-primary);
 }
 .repository-clone.found::before {
   content: "✓ ";
@@ -135,7 +130,7 @@
   font-size: var(--text-xs, 0.875rem);
 }
 .repository-inline-status {
-  color: var(--repo-muted);
+  color: var(--text-secondary);
   font-style: italic;
 }
 .repository-picker .repository-inline button {
@@ -143,7 +138,7 @@
   border: 0;
   border-radius: 0;
   background: none;
-  color: var(--repo-action);
+  color: var(--action-primary);
   font-size: inherit;
   font-weight: 500;
   text-decoration: underline;
@@ -158,7 +153,7 @@
 .repository-picker .repository-more {
   margin: 0;
   padding: 0.7rem 1rem;
-  color: var(--repo-muted);
+  color: var(--text-secondary);
   font-size: var(--text-xs, 0.875rem);
   text-align: center;
 }
@@ -172,7 +167,7 @@
 .repository-actions button {
   font: inherit;
   font-size: var(--text-xs, 0.875rem);
-  border: 1px solid var(--repo-border, var(--border-subtle, #ddbf8e));
+  border: 1px solid var(--border-subtle);
   border-radius: 0.4rem;
   background: transparent;
   color: inherit;
@@ -181,7 +176,7 @@
 }
 .repository-picker button:hover,
 .repository-actions button:hover {
-  background: var(--surface-hover, #f2dcad);
+  background: var(--surface-hover);
 }
 .repository-picker button:disabled,
 .repository-actions button:disabled {
@@ -192,7 +187,7 @@
 .repository-actions button:focus-visible,
 .repository-picker input:focus-visible,
 .repository-actions input:focus-visible {
-  outline: 2px solid var(--repo-action, var(--action-primary, #2e7d3e));
+  outline: 2px solid var(--action-primary);
   outline-offset: 2px;
 }
 .repository-actions form {
@@ -201,7 +196,7 @@
 }
 .repository-actions [role="alert"],
 .repository-picker [role="alert"] {
-  color: var(--status-critical, #a03120);
+  color: var(--status-critical);
   overflow-wrap: anywhere;
 }
 
@@ -231,9 +226,9 @@
   height: 1.125rem;
   margin: 0.15rem 0 0;
   padding: 0;
-  border: 1.5px solid color-mix(in srgb, var(--repo-muted) 45%, transparent);
+  border: 1.5px solid color-mix(in srgb, var(--text-secondary) 45%, transparent);
   border-radius: 0.3rem;
-  background: var(--surface-card, #fff);
+  background: var(--surface-card);
   cursor: pointer;
   transition:
     background-color 120ms ease,
@@ -245,24 +240,24 @@
   width: 0.3rem;
   height: 0.6rem;
   margin-top: -0.12rem;
-  border: solid #fff;
+  border: solid var(--text-inverse);
   border-width: 0 2px 2px 0;
   transform: rotate(45deg) scale(0);
   transition: transform 120ms ease;
 }
 .repository-picker .repository-choice:hover input[type="checkbox"]:not(:disabled) {
-  border-color: var(--repo-action);
+  border-color: var(--action-primary);
 }
 .repository-picker .repository-choice input[type="checkbox"]:checked {
-  border-color: var(--repo-action);
-  background: var(--repo-action);
+  border-color: var(--action-primary);
+  background: var(--action-primary);
 }
 .repository-picker .repository-choice input[type="checkbox"]:checked::after {
   transform: rotate(45deg) scale(1);
 }
 .repository-picker .repository-choice input[type="checkbox"]:focus-visible {
   outline: none;
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--repo-action) 22%, transparent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--action-primary) 22%, transparent);
 }
 .repository-picker .repository-choice input[type="checkbox"]:disabled {
   cursor: default;
@@ -281,28 +276,28 @@
   height: 1rem;
   transform: translateY(-50%);
   fill: none;
-  stroke: var(--repo-muted);
+  stroke: var(--text-secondary);
   stroke-width: 2;
   stroke-linecap: round;
   pointer-events: none;
 }
 .repository-picker .repository-search-field input {
   padding-left: 2.4rem;
-  border-color: color-mix(in srgb, var(--repo-border) 70%, transparent);
+  border-color: color-mix(in srgb, var(--border-subtle) 70%, transparent);
   border-radius: 0.6rem;
-  background: var(--surface-card, #fff);
-  box-shadow: 0 1px 2px rgba(42, 29, 21, 0.04);
+  background: var(--surface-card);
+  box-shadow: var(--shadow-raised);
   transition:
     border-color 120ms ease,
     box-shadow 120ms ease;
 }
 .repository-picker .repository-search-field input::placeholder {
-  color: color-mix(in srgb, var(--repo-muted) 70%, transparent);
+  color: color-mix(in srgb, var(--text-secondary) 70%, transparent);
 }
 .repository-picker .repository-search-field input:focus-visible {
   outline: none;
-  border-color: var(--repo-action);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--repo-action) 18%, transparent);
+  border-color: var(--action-primary);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--action-primary) 18%, transparent);
 }
 .repository-search-field input::-webkit-search-cancel-button {
   appearance: none;
@@ -335,7 +330,7 @@
   stroke-linejoin: round;
 }
 .repository-warning {
-  color: var(--status-caution, #9a5b00);
+  color: var(--status-caution);
   font-size: var(--text-xs, 0.875rem);
   overflow-wrap: anywhere;
 }
