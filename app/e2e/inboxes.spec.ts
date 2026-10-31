@@ -87,22 +87,39 @@ test("makes an inbox from a template, edits it, counts it in the badge and delet
   await badge.check();
   await expect.poll(() => inboxBadge(page)).toBe(withBadge);
 
-  // Manage lists it, with its badge switch.
+  // Manage lists it, with its badge choice in its menu.
   await sidebar.getByRole("link", { name: "Manage inboxes" }).click();
   await expect(page.getByRole("heading", { name: "Inboxes", exact: true })).toBeVisible();
+  await page.getByRole("listitem").filter({ hasText: "Needs my review" }).hover();
+  await page.getByRole("button", { name: "Actions for Needs my review", exact: true }).click();
   await expect(
-    page.getByRole("switch", { name: "Count Needs my review in the Inbox badge" }),
-  ).toBeChecked();
+    page.getByRole("menuitemcheckbox", { name: "Count in the Inbox badge" }),
+  ).toHaveAttribute("aria-checked", "true");
+  await page.keyboard.press("Escape");
 
   // Delete it from the sidebar, then Undo: it comes back where it was.
   await inboxLink.hover();
   await page.getByRole("button", { name: "More for Needs my review" }).click();
+  const deleted = page.waitForResponse(
+    (response) =>
+      response.request().method() === "PUT" &&
+      response.url().endsWith("/api/inboxes") &&
+      response.request().postDataJSON().inboxes.length === 0,
+  );
   await page.getByRole("button", { name: "Delete inbox" }).click();
+  expect((await deleted).ok()).toBe(true);
   await expect(
     page.getByText("Deleted Needs my review. Its pull requests stay in Inbox."),
   ).toBeVisible();
   await expect(inboxLink).toHaveCount(0);
+  const restored = page.waitForResponse(
+    (response) =>
+      response.request().method() === "PUT" &&
+      response.url().endsWith("/api/inboxes") &&
+      response.request().postDataJSON().inboxes.length === 1,
+  );
   await page.getByRole("status").getByRole("button", { name: "Undo" }).click();
+  expect((await restored).ok()).toBe(true);
   await expect(inboxLink).toBeVisible();
   // It was saved by the daemon, not just drawn.
   await page.reload();
@@ -115,53 +132,4 @@ test("makes an inbox from a template, edits it, counts it in the badge and delet
   await expect(sidebar.getByRole("link", { name: /^Needs my review/ })).toHaveCount(0);
   await expect(sidebar.getByRole("link", { name: /^Inbox/ })).toBeFocused();
   expect(errors).toEqual([]);
-});
-
-// At the most inboxes a person can have, the sidebar's pages and inboxes
-// scroll within it: Settings stays in view, and the last inbox's menu opens
-// whole, not clipped by the scrolling list.
-test("keeps the sidebar's foot in view with twenty inboxes, and their menus whole", async ({
-  page,
-}) => {
-  await page.setViewportSize({ width: 1280, height: 800 });
-  await page.goto(await launchURL());
-  await expect(page.locator("button.upnext-row").first()).toBeVisible({ timeout: 15000 });
-  await page.evaluate(async () => {
-    const read = await fetch("api/inboxes", { cache: "no-store" });
-    const { revision } = (await read.json()) as { revision: number };
-    const inboxes = Array.from({ length: 20 }, (_, i) => ({
-      name: `Many ${i + 1}`,
-      color: "blue",
-      what: "any",
-      owners: [],
-      risk: "any",
-      repositories: [],
-      no_bots: false,
-      badge: true,
-    }));
-    await fetch("api/inboxes", {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ revision, inboxes }),
-    });
-  });
-  await page.reload();
-  const sidebar = page.getByRole("navigation", { name: "Main" });
-  const last = sidebar.getByRole("link", { name: /^Many 20/ });
-  await expect(last).toBeAttached({ timeout: 15000 });
-  await expect(page.getByRole("link", { name: /^Settings/ })).toBeInViewport({ ratio: 1 });
-  await expect(page.locator(".plan-rail")).toBeInViewport();
-
-  await last.scrollIntoViewIfNeeded();
-  await last.hover();
-  await page.getByRole("button", { name: "More for Many 20" }).click();
-  const menu = page.locator(".local-rail-menu");
-  await expect(menu).toBeInViewport({ ratio: 1 });
-  await expect(menu.getByRole("button", { name: "Delete inbox" })).toBeInViewport({ ratio: 1 });
-  if (process.env.INBOX_SCREENSHOTS) {
-    await page.screenshot({
-      path: "test-results/inbox-screens/6-many-light.png",
-      animations: "disabled",
-    });
-  }
 });

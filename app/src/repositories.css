@@ -208,9 +208,6 @@
 .local-page-body:has(.repository-picker) {
   grid-template-columns: minmax(0, 1fr);
 }
-.local-repo-list {
-  min-width: 0;
-}
 .local-repo-row > details {
   width: 100%;
   min-width: 0;

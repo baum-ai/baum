@@ -1,14 +1,9 @@
 import { PreferencesProvider } from "./preferences";
 import { formatCount } from "@baum/viewer/components/format";
 import { UsageDetails } from "./usage";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type MouseEvent, type ReactNode } from "react";
 import { LogoMark } from "@baum/viewer/components/editorial";
-import {
-  CircleCheckIcon,
-  CircleCrossIcon,
-  CircleDashedIcon,
-  RefreshIcon,
-} from "@baum/viewer/components/icons";
+import { CircleCheckIcon, CircleCrossIcon, CircleDashedIcon } from "@baum/viewer/components/icons";
 import { Button, Alert } from "@baum/viewer/components/ui";
 import {
   UrlStateProvider,
@@ -19,6 +14,7 @@ import {
 import { CloneActions, type FoundClones } from "./repositories";
 import { GroupMissing, GroupPage, NameDialog } from "./group";
 import { Inbox, UpdatedAgo } from "./inbox";
+import { ListSection } from "./list";
 import {
   EditInboxPage,
   editInboxHref,
@@ -38,6 +34,7 @@ import {
 import { UpNextPage, useUpNext } from "./up-next";
 import {
   onBody,
+  KeyBar,
   ShortcutsSheet,
   listKeys,
   useCommandKeys,
@@ -58,11 +55,18 @@ import { useDiagnosticProblems } from "./diagnostics";
 import { RepositoriesPage, SettingsPage, settingsSection, type ReviewDefaults } from "./settings";
 import { asksYou, SessionsPage, transcriptHref } from "./sessions";
 import { ToastProvider } from "./toast";
-import { useActionsKey } from "./context-menu";
+import { MenuButton, useActionsKey, useContextMenu, type MenuItem } from "./context-menu";
 import { SessionTranscriptPage } from "./session-transcript";
 import { AnalyticsPage } from "./analytics";
 import { TimelinePage } from "./timeline";
-import { Notice, PageBar, Sidebar } from "./shell";
+import {
+  Notice,
+  PageBar,
+  PageRefreshProvider,
+  RefreshButton,
+  Sidebar,
+  usePageRefresh,
+} from "./shell";
 import {
   agentName,
   appBase,
@@ -75,6 +79,7 @@ import {
   chatJobs,
   fixJobs,
   isActiveJob,
+  jobHref,
   navigate,
   startFix,
   filtered,
@@ -100,7 +105,7 @@ import {
   type LiveSession,
 } from "./api";
 import { LoadingStatus } from "./nine-dots";
-import { FixDetails, TranscriptLink, type FixChat } from "./fix";
+import { FixDetails, type FixChat } from "./fix";
 import { JobPage } from "./job-transcript";
 import { useLocation } from "./location";
 
@@ -201,6 +206,14 @@ function Workspace({ url }: { url: UrlState }) {
     { repository: string; error?: string; next_refresh: string }[]
   >([]);
   const [loading, setLoading] = useState(true);
+  // Refreshes from GitHub asked for, from any page: reloads along the way
+  // do not end them, and each waits for the one before it.
+  const [refreshing, setRefreshing] = useState(0);
+  const refreshQueue = useRef(Promise.resolve());
+  // Why the latest refresh from GitHub failed, on the page it was asked on.
+  const [refreshError, setRefreshError] = useState("");
+  const shownPageRef = useRef("");
+  const lastRefresh = useRef(0);
   const [error, setError] = useState("");
   // When the latest read of the daemon completed, for Pull requests' bar.
   const [updatedAt, setUpdatedAt] = useState<number | null>(null);
@@ -599,17 +612,60 @@ function Workspace({ url }: { url: UrlState }) {
   ];
   // A failed refresh is already in the notice above.
   const limited = rates.filter((r) => !r.error && r.rate.remaining === 0);
-  const refresh = async () => {
-    setLoading(true);
-    try {
-      for (const repository of picked)
-        await request("api/prs/refresh", { repository: repository.repository });
-      await reload();
-    } catch (e) {
-      setError(errorText(e));
-      setLoading(false);
-    }
+  // Reads the repositories' pull requests from GitHub at once rather than
+  // after the polling backoff, then everything the pages show.
+  // One at a time, as GitHub prefers; a repository that fails leaves the
+  // others refreshed and is named.
+  // A repository is named by its local clone where there is one, which
+  // the daemon knows even when the repository is not picked.
+  const refreshFrom = (targets: { repository: string; clone?: string }[]) => {
+    const askedOn = shownPageRef.current;
+    const sequence = ++lastRefresh.current;
+    setRefreshing((n) => n + 1);
+    const run = refreshQueue.current.then(async () => {
+      const failed: string[] = [];
+      try {
+        for (const { repository, clone } of targets)
+          await request("api/prs/refresh", clone ? { clone } : { repository }).catch((e) => {
+            failed.push(`${repository}: ${errorText(e)}`);
+          });
+        await reload();
+        // Only the latest refresh speaks, on the page it was asked on.
+        if (sequence === lastRefresh.current && shownPageRef.current === askedOn)
+          setRefreshError(failed.join(" "));
+      } finally {
+        setRefreshing((n) => n - 1);
+      }
+    });
+    // One that fails does not hold up the next.
+    refreshQueue.current = run.catch(() => {});
+    return run;
   };
+  // The picked repositories, and those known only by a registered clone.
+  const refresh = () =>
+    refreshFrom([
+      ...picked.map(({ repository }) => ({ repository })),
+      ...clones
+        .filter(
+          (c, i) =>
+            !picked.some((p) => sameRepository(p.repository, c.repository)) &&
+            clones.findIndex((other) => sameRepository(other.repository, c.repository)) === i,
+        )
+        .map((c) => ({ repository: c.repository, clone: c.id })),
+    ]);
+  // A failed refresh belongs to the page it was asked for on.
+  const shownPage = [
+    page,
+    url.search.get("inbox"),
+    groupId,
+    requestedClone ?? requestedRepository,
+    requestedNumber,
+  ].join(":");
+  shownPageRef.current = shownPage;
+  useEffect(() => setRefreshError(""), [shownPage]);
+  const pageRefresh = usePageRefresh(shownPage);
+  // Before the first read there is nothing to refresh.
+  const listBusy = refreshing > 0 || (loading && revision === 0);
   // The list's own keys live in `Inbox`, which knows its rows; these are the
   // page's: the shortcuts sheet, and the way back from a pull request or group
   // to the inbox or list it was opened from.
@@ -621,7 +677,7 @@ function Workspace({ url }: { url: UrlState }) {
   // The shortcuts sheet lists the keys of where it was opened first.
   const shortcutsPlace: ShortcutsPlace = onList
     ? "pulls"
-    : selectedEntry && url.search.get("walk")
+    : selectedEntry && url.search.get("walk") && url.search.get("walk") !== "full"
       ? "walkthrough"
       : (page === "inbox" || page === "pulls") && (groupId || selectedEntry)
         ? "review"
@@ -735,6 +791,8 @@ function Workspace({ url }: { url: UrlState }) {
       return;
     }
     setGoingTo(false);
+    // A page without a refresh button leaves the key to the browser.
+    if (action.kind === "refresh") return pageRefresh.press();
     if (action.kind === "back") history.back();
     else if (action.kind === "forward") history.forward();
     else navigate(PAGES.find((item) => item.page === action.page)!.href());
@@ -793,7 +851,7 @@ function Workspace({ url }: { url: UrlState }) {
     },
     { allowSheet: true },
   );
-  return (
+  const shell = (
     <div className="local-shell">
       <Sidebar
         page={railPage}
@@ -858,6 +916,12 @@ function Workspace({ url }: { url: UrlState }) {
           ) : null}
         </div>
         <main className="local-main">
+          {refreshError ? (
+            <Alert>
+              Couldn't refresh from GitHub: {refreshError}{" "}
+              <Button onClick={() => setRefreshError("")}>Dismiss</Button>
+            </Alert>
+          ) : null}
           {error ? (
             <Alert>
               {error} <Button onClick={() => void reload()}>Retry</Button>
@@ -901,6 +965,9 @@ function Workspace({ url }: { url: UrlState }) {
               agent={openAgent}
               id={openID}
               session={live.find((s) => s.agent === openAgent && s.session_id === openID) ?? null}
+              queued={agentRequests.messages.find(
+                (m) => m.agent === openAgent && m.session_id === openID,
+              )}
               tick={liveTick}
               prHref={sessionPR}
               Link={LocalLink}
@@ -920,8 +987,12 @@ function Workspace({ url }: { url: UrlState }) {
             />
           ) : page === "sessions" ? (
             <>
-              <PageBar title="Sessions" detail="Agent sessions on this computer, live" />
-              <div className="local-page-body">
+              <PageBar
+                title="Sessions"
+                detail="Agent sessions on this computer, live"
+                actions={<RefreshButton refresh={reloadLive} />}
+              />
+              <div className="local-page-body local-list-page">
                 <SessionsPage
                   sessions={live}
                   requests={agentRequests}
@@ -939,8 +1010,12 @@ function Workspace({ url }: { url: UrlState }) {
             />
           ) : page === "jobs" ? (
             <>
-              <PageBar title="Jobs" detail="Reviews and fixes run on this computer" />
-              <div className="local-page-body">
+              <PageBar
+                title="Jobs"
+                detail="Reviews and fixes run on this computer"
+                actions={<RefreshButton refresh={reload} />}
+              />
+              <div className="local-page-body local-list-page">
                 <Jobs jobs={jobs} changed={reload} />
               </div>
             </>
@@ -970,6 +1045,15 @@ function Workspace({ url }: { url: UrlState }) {
                   cloneFor={cloneFor}
                   revision={revision}
                   changed={reload}
+                  refresh={() =>
+                    refreshFrom([
+                      {
+                        repository: group.repository,
+                        clone: clones.find((c) => sameRepository(c.repository, group.repository))
+                          ?.id,
+                      },
+                    ])
+                  }
                 />
               ) : loading ? (
                 <LoadingStatus block>Loading review group…</LoadingStatus>
@@ -982,6 +1066,14 @@ function Workspace({ url }: { url: UrlState }) {
               <PageBar
                 title={selectedEntry.pull_request.title}
                 detail={`${selectedEntry.pull_request.repository} #${selectedEntry.pull_request.number}`}
+                actions={
+                  <RefreshButton
+                    refresh={() =>
+                      refreshFrom([{ repository: selectedEntry.pull_request.repository }])
+                    }
+                    label="Refresh from GitHub"
+                  />
+                }
               />
               <div className="local-page-body local-stack">
                 {page === "pulls" ? (
@@ -1009,6 +1101,14 @@ function Workspace({ url }: { url: UrlState }) {
                 revision={revision}
                 job={reviewJob(selectedEntry, jobs)}
                 changed={reload}
+                refresh={() =>
+                  refreshFrom([
+                    {
+                      repository: selectedEntry.pull_request.repository,
+                      clone: cloneFor(selectedEntry) || undefined,
+                    },
+                  ])
+                }
                 live={live}
                 groups={groups.filter(
                   (g) =>
@@ -1051,6 +1151,9 @@ function Workspace({ url }: { url: UrlState }) {
               fix={(entry, only) => void fix(entry, only)}
               fixState={fixState}
               changed={reload}
+              refresh={refresh}
+              refreshing={listBusy}
+              reviewGroups={groups}
               Link={LocalLink}
             />
           ) : (
@@ -1059,7 +1162,7 @@ function Workspace({ url }: { url: UrlState }) {
                 title="Pull requests"
                 actions={
                   <>
-                    <UpdatedAgo at={updatedAt} busy={loading} />
+                    <UpdatedAgo at={updatedAt} busy={loading || refreshing > 0} />
                     <button
                       type="button"
                       aria-label="Keyboard shortcuts"
@@ -1069,16 +1172,7 @@ function Workspace({ url }: { url: UrlState }) {
                     >
                       ?
                     </button>
-                    <button
-                      type="button"
-                      aria-label="Refresh from GitHub"
-                      title="Refresh from GitHub"
-                      disabled={loading}
-                      onClick={() => void refresh()}
-                      className="local-icon-button"
-                    >
-                      <RefreshIcon size={16} className={loading ? "local-spin" : undefined} />
-                    </button>
+                    <RefreshButton refresh={refresh} busy={listBusy} label="Refresh from GitHub" />
                   </>
                 }
               />
@@ -1181,7 +1275,7 @@ function Workspace({ url }: { url: UrlState }) {
                   fixStarting={(entry) => fixState(entry).starting}
                   jobs={jobs}
                   generate={(entry) => void generate([entry], "single")}
-                  refresh={loading ? undefined : () => void refresh()}
+                  refresh={() => void pageRefresh.press()}
                   bulk={
                     <>
                       <button
@@ -1281,9 +1375,11 @@ function Workspace({ url }: { url: UrlState }) {
             />
           ) : null}
         </main>
+        <KeyBar place={shortcutsPlace} className="local-key-bar" />
       </div>
     </div>
   );
+  return <PageRefreshProvider value={pageRefresh}>{shell}</PageRefreshProvider>;
 }
 /** The one confirmation generation still asks for: an agent runs with code
  *  from a fork, or from an author without known write access. */
@@ -1325,24 +1421,84 @@ function ForkConfirmation({
     </dialog>
   );
 }
-/** The jobs, newest first. The keyboard moves through them as through any
- *  list; Enter opens the job's pull request or group and `t` its transcript. */
+/** The jobs, newest first: those running or waiting to, then those that
+ *  finished. The keyboard moves through them as through any list; Enter
+ *  opens the job's pull request or group and `t` its transcript. */
 function Jobs({ jobs, changed }: { jobs: Job[]; changed: () => Promise<void> }) {
   const [error, setError] = useState("");
+  const [folded, setFolded] = useState<ReadonlySet<string>>(new Set());
   const newest = jobs.slice().reverse();
-  const rows = useRowFocus<HTMLUListElement>(
+  const sections = [
+    {
+      id: "active",
+      title: "Running now",
+      tone: "positive" as const,
+      jobs: newest.filter(isActiveJob),
+    },
+    {
+      id: "finished",
+      title: "Finished",
+      tone: "quiet" as const,
+      jobs: newest.filter((job) => !isActiveJob(job)),
+    },
+  ].filter((section) => section.jobs.length > 0);
+  const rows = useRowFocus<HTMLElement>(
     "jobs",
-    newest.map((job) => job.id),
+    sections.flatMap((section) =>
+      folded.has(section.id) ? [] : section.jobs.map((job) => job.id),
+    ),
   );
+  // The jobs being cancelled, and those whose usage shows under them.
+  const [cancelling, setCancelling] = useState<ReadonlySet<string>>(new Set());
+  const [usage, setUsage] = useState<ReadonlySet<string>>(new Set());
+  const flip = (set: ReadonlySet<string>, id: string) => {
+    const next = new Set(set);
+    if (!next.delete(id)) next.add(id);
+    return next;
+  };
+  const cancel = (job: Job) => {
+    setCancelling((previous) => new Set(previous).add(job.id));
+    void request(`api/jobs/${encodeURIComponent(job.id)}/cancel`, {})
+      .then(changed)
+      .catch((e) => setError(errorText(e)))
+      .finally(() => setCancelling((previous) => flip(previous, job.id)));
+  };
+  // A job's actions, behind its ⋯ and a right click on it.
+  const menu = useContextMenu();
+  const actionsFor = (job: Job): MenuItem[] => {
+    const items: MenuItem[] = [];
+    const href = jobTarget(job);
+    if (href)
+      items.push({
+        label: job.group ? "Open review group" : "Open pull request",
+        hint: "↵",
+        onSelect: () => navigate(href),
+      });
+    if (job.has_transcript)
+      items.push({
+        label: isActiveJob(job) ? "Watch" : "Transcript",
+        hint: "t",
+        onSelect: () => navigate(jobHref(job)),
+      });
+    items.push({
+      label: usage.has(job.id) ? "Hide usage" : "Show usage",
+      onSelect: () => setUsage((previous) => flip(previous, job.id)),
+    });
+    if (isActiveJob(job) && !cancelling.has(job.id))
+      items.push({ label: "Cancel job", danger: true, onSelect: () => cancel(job) });
+    return items;
+  };
+  const jobMenu = (event: MouseEvent) => {
+    const id = (event.target as HTMLElement).closest("[data-row-id]")?.getAttribute("data-row-id");
+    const job = jobs.find((each) => each.id === id);
+    if (job) menu.open(event, actionsFor(job), jobLabel(job));
+  };
   useShortcuts((event) => {
     if (listKeys(event, rows) || event.key !== "t" || !rows.focused) return;
-    const transcript = rows
-      .rowLink(rows.focused)
-      ?.closest("[data-row-id]")
-      ?.querySelector<HTMLElement>(".local-job-actions a");
-    if (!transcript) return;
+    const job = jobs.find((each) => each.id === rows.focused);
+    if (!job?.has_transcript) return;
     event.preventDefault();
-    transcript.click();
+    navigate(jobHref(job));
   });
   // A link from a review opens the job that generated it.
   useEffect(() => {
@@ -1352,28 +1508,53 @@ function Jobs({ jobs, changed }: { jobs: Job[]; changed: () => Promise<void> }) 
       });
   }, []);
   return (
-    <section aria-label="Generation jobs" className="local-jobs">
-      {error ? <Alert>{error}</Alert> : null}
+    <section
+      ref={rows.list}
+      aria-label="Generation jobs"
+      className="local-jobs"
+      onContextMenu={jobMenu}
+    >
+      {menu.menu}
+      {error ? (
+        <div className="local-list-note">
+          <Alert>{error}</Alert>
+        </div>
+      ) : null}
       {jobs.length === 0 ? (
         <div className="local-empty">
           <h2>No jobs yet</h2>
           <p>Reviews and fixes you start, or that run automatically, show here.</p>
         </div>
       ) : (
-        <ul ref={rows.list} className="local-panel local-job-list">
-          {newest.map((job) => (
-            <JobRow
-              key={job.id}
-              job={job}
-              focused={rows.focused === job.id}
-              cancel={() =>
-                request(`api/jobs/${encodeURIComponent(job.id)}/cancel`, {})
-                  .then(changed)
-                  .catch((e) => setError(errorText(e)))
-              }
-            />
-          ))}
-        </ul>
+        sections.map((section) => (
+          <ListSection
+            key={section.id}
+            title={section.title}
+            tone={section.tone}
+            count={section.jobs.length}
+            collapsed={folded.has(section.id)}
+            toggle={() =>
+              setFolded((previous) => {
+                const next = new Set(previous);
+                if (!next.delete(section.id)) next.add(section.id);
+                return next;
+              })
+            }
+          >
+            {section.jobs.map((job) => (
+              <JobRow
+                key={job.id}
+                job={job}
+                focused={rows.focused === job.id}
+                cancelling={cancelling.has(job.id)}
+                usage={usage.has(job.id)}
+                actions={
+                  <MenuButton label={jobLabel(job)} items={() => actionsFor(job)} menu={menu} />
+                }
+              />
+            ))}
+          </ListSection>
+        ))
       )}
     </section>
   );
@@ -1401,18 +1582,39 @@ function JobState({ job }: { job: Job }) {
     </span>
   );
 }
+/** Where a job's row opens: its pull request or review group. A feature
+ *  build has neither. */
+function jobTarget(job: Job) {
+  if (job.kind === "feature_build") return null;
+  return appURL(
+    job.group
+      ? `?group=${encodeURIComponent(job.group)}`
+      : `?${job.clone ? `clone=${encodeURIComponent(job.clone)}` : `repository=${encodeURIComponent(job.repository)}`}&pr=${job.pr}`,
+  );
+}
+/** How a job is named to assistive technology and in its menu. */
+function jobLabel(job: Job) {
+  if (job.kind === "feature_build") return `Feature build of ${job.repository}`;
+  if (job.group) return `Review group ${job.group_name || job.group}`;
+  return `${jobName(job)} of ${job.repository} #${job.pr}`;
+}
 function JobRow({
   job,
   focused,
-  cancel,
+  cancelling,
+  usage,
+  actions,
 }: {
   job: Job;
   focused: boolean;
-  cancel: () => Promise<void>;
+  cancelling: boolean;
+  /** Whether its usage shows under it. */
+  usage: boolean;
+  /** The row's ⋯ button. */
+  actions: ReactNode;
 }) {
-  const [cancelling, setCancelling] = useState(false);
   const started = automaticLabel(job);
-  const active = job.state === "queued" || job.state === "running";
+  const href = jobTarget(job);
   const calls = `${formatCount(job.calls)} ${job.calls === 1 ? "call" : "calls"}${
     job.repairs ? ` · ${formatCount(job.repairs)} ${job.repairs === 1 ? "repair" : "repairs"}` : ""
   }`;
@@ -1421,24 +1623,16 @@ function JobRow({
       id={`job-${job.id}`}
       data-row-id={job.id}
       data-focused={focused || undefined}
-      className="local-job-row"
+      className="list-row local-job-row"
     >
       <JobState job={job} />
       <div className="min-w-0">
-        {job.kind === "feature_build" ? (
+        {!href ? (
           <span className="local-job-title">
             Feature build <span>· {job.repository}</span>
           </span>
         ) : (
-          <LocalLink
-            data-row-link=""
-            href={appURL(
-              job.group
-                ? `?group=${encodeURIComponent(job.group)}`
-                : `?${job.clone ? `clone=${encodeURIComponent(job.clone)}` : `repository=${encodeURIComponent(job.repository)}`}&pr=${job.pr}`,
-            )}
-            className="local-job-title"
-          >
+          <LocalLink data-row-link="" href={href} className="local-job-title">
             {job.group ? (
               <>
                 Review group: {job.group_name || job.group} <span>{job.repository}</span>
@@ -1473,35 +1667,26 @@ function JobRow({
             {jobReasonText(job.reason, job.kind)}
           </p>
         ) : null}
+        {cancelling ? (
+          <p role="status" className="local-job-meta">
+            Cancelling…
+          </p>
+        ) : null}
         {job.kind === "fix" ? <FixDetails job={job} /> : null}
       </div>
       <span className="local-job-figure">{calls}</span>
       <span className="local-job-figure">{formatCount(job.tokens)} tokens</span>
-      <div className="local-job-actions">
-        <TranscriptLink job={job} />
-        {active ? (
-          <Button
-            variant="secondary"
-            size="compact"
-            disabled={cancelling}
-            onClick={() => {
-              setCancelling(true);
-              void cancel().finally(() => setCancelling(false));
-            }}
-          >
-            {cancelling ? "Cancelling…" : "Cancel job"}
-          </Button>
-        ) : null}
-      </div>
-      <details className="local-job-usage">
-        <summary>Usage</summary>
-        <UsageDetails
-          accounting={job.accounting}
-          charged={job.tokens}
-          amount={job.actual_cost_usd}
-          reason={job.cost_reason}
-        />
-      </details>
+      <div className="local-job-actions">{actions}</div>
+      {usage ? (
+        <div className="local-job-usage">
+          <UsageDetails
+            accounting={job.accounting}
+            charged={job.tokens}
+            amount={job.actual_cost_usd}
+            reason={job.cost_reason}
+          />
+        </div>
+      ) : null}
     </li>
   );
 }

@@ -62,6 +62,7 @@ export function SessionCard({
   source,
   formatCost,
   renderAvatar,
+  layout,
   modelLabel = modelId,
   restrictedNote = "This session's prompts, metadata, usage, and activity are not shown here.",
 }: {
@@ -209,7 +210,7 @@ export function SessionCard({
       ) : null}
 
       {open ? (
-        <div className="px-5 py-4">
+        <div className={layout === "log" ? "px-5 pt-3 pb-1" : "px-5 py-4"}>
           {/* Nothing of this session's own figures is on the card until they
               arrive: zeroes would read as measurements. */}
           {typeof detail === "string" && full.prompts.length === 0 ? (
@@ -219,7 +220,7 @@ export function SessionCard({
             </p>
           ) : (
             <>
-              <SessionTotals session={full} formatCost={formatCost} />
+              <SessionTotals session={full} formatCost={formatCost} compact={layout === "log"} />
               {full.has_inner_trace ? (
                 // A report's prompts show at once; their replies follow
                 // with the session.
@@ -239,6 +240,7 @@ export function SessionCard({
                   formatCost={formatCost}
                   modelLabel={modelLabel}
                   renderAvatar={renderAvatar}
+                  layout={layout}
                 />
               ) : (
                 <Empty title="Inner trace not captured" className="py-8">
@@ -257,13 +259,20 @@ export function SessionCard({
 function SessionTotals({
   session,
   formatCost,
+  compact = false,
 }: {
   session: TranscriptSession;
   formatCost: TranscriptHostProps["formatCost"];
+  compact?: boolean;
 }) {
   const totals = session.totals;
   return (
-    <div className="@container mb-5 space-y-3 border-b border-(--border-subtle) pb-4">
+    <div
+      className={cn(
+        "@container space-y-3 border-b border-(--border-subtle)",
+        compact ? "pb-3" : "mb-5 pb-4",
+      )}
+    >
       <dl className="grid grid-cols-2 gap-x-6 gap-y-3 text-base @lg:grid-cols-4">
         <Stat
           label={formatCost ? "Tokens · Cost" : "Tokens"}

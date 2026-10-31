@@ -343,7 +343,7 @@ type planned struct {
 // reserves a prompt of at most maxTokens and a reply of at most maxOutput.
 // A call it may not make returns its skip reason, with what was resolved.
 func (c caller) plan(ctx context.Context, prefs repos.Preferences, backend, model string, maxTokens, maxOutput int64) (planned, string) {
-	cfg := prefs.Resolve(c.config)
+	cfg := prefs.ResolveExtraction(prefs.Resolve(c.config))
 	requested := extractionBackend(prefs, cfg)
 	if backend != "" {
 		requested = config.Backend(backend)
