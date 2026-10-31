@@ -1,6 +1,7 @@
 import { useId, useState } from "react";
 import {
   decisionModelDefaults,
+  extractionHarness,
   modelPresets,
   type PullRequests,
   type ReviewSettings,
@@ -234,6 +235,10 @@ export function ReviewSettingsForm({
   unusedDecisionModel?: string;
 }) {
   const update = (patch: Partial<ReviewSettings>) => onChange({ ...settings, ...patch });
+  // The decision model belongs to the extraction harness, which only follows
+  // this one while Settings chose none of its own.
+  const extraction = extractionHarness(settings);
+  const follows = !settings.decisions_chosen_backend;
   return (
     <div id="review-panel" className={`${className} review-card`}>
       <HarnessPicker
@@ -244,7 +249,9 @@ export function ReviewSettingsForm({
             backend: backend ?? "",
             model: modelPresets[backend ?? ""]?.[0] ?? "",
             // A new harness has other models: start from its cheap default.
-            ...(decisions ? { decisions_model: decisionModelDefaults[backend ?? ""] ?? "" } : {}),
+            ...(decisions && follows
+              ? { decisions_model: decisionModelDefaults[backend ?? ""] ?? "" }
+              : {}),
           })
         }
       />
@@ -309,7 +316,7 @@ export function ReviewSettingsForm({
         <>
           <DecisionModelPicker
             id="decisions-model"
-            backend={settings.backend}
+            backend={extraction}
             value={settings.decisions_model ?? ""}
             disabled={disabled}
             unused={unusedDecisionModel}

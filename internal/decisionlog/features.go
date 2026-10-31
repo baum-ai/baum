@@ -189,22 +189,22 @@ func (w *FeatureWorker) RunOnce(ctx context.Context) {
 // enabled reads the gate again for the repository during a long sync; a
 // worker without a registry (the command line's) has none.
 func (w *FeatureWorker) enabled(ctx context.Context, repository string) bool {
-	_, _, on, err := w.gate(ctx, repository)
+	_, on, err := w.gate(ctx, repository)
 	return err == nil && on
 }
 
-// gate reads the preferences and the repository's settings, and whether
-// its decisions are captured; with no registry, the defaults and on.
-func (w *FeatureWorker) gate(ctx context.Context, repository string) (repos.Preferences, repos.Settings, bool, error) {
+// gate reads the preferences, and whether the repository's decisions are
+// captured; with no registry, the defaults and on.
+func (w *FeatureWorker) gate(ctx context.Context, repository string) (repos.Preferences, bool, error) {
 	if w.Registry == nil {
-		return repos.DefaultPreferences(), repos.Settings{}, true, nil
+		return repos.DefaultPreferences(), true, nil
 	}
 	prefs, err := w.Registry.Preferences(ctx)
 	if err != nil {
-		return prefs, repos.Settings{}, false, err
+		return prefs, false, err
 	}
 	settings, picked, err := w.Registry.RepositorySettings(ctx, repository)
-	return prefs, settings, err == nil && picked && settings.DecisionsEnabled(prefs), err
+	return prefs, err == nil && picked && settings.DecisionsEnabled(prefs), err
 }
 
 // SyncReport says what Sync did.
@@ -571,13 +571,12 @@ type FeatureOptions struct {
 
 // featureRun is one repository's run of placement or the text stage.
 type featureRun struct {
-	// mu guards prefs and settings, reviewsMu the review summaries read so
+	// mu guards prefs, reviewsMu the review summaries read so
 	// far: the text stage writes features concurrently.
 	mu, reviewsMu   sync.Mutex
 	w               *FeatureWorker
 	repository, dir string
 	prefs           repos.Preferences
-	settings        repos.Settings
 	opts            FeatureOptions
 	calls           caller
 	version         int64
@@ -589,7 +588,7 @@ type featureRun struct {
 	exclude map[string]bool
 }
 
-// newRun reads the preferences and the repository's settings and its
+// newRun reads the preferences and the repository's gate and its
 // feature version, made unless the run is dry.
 func (w *FeatureWorker) newRun(ctx context.Context, repository, dir string, o FeatureOptions) (*featureRun, error) {
 	w.init()
@@ -617,26 +616,26 @@ func (w *FeatureWorker) newRun(ctx context.Context, repository, dir string, o Fe
 	return r, err
 }
 
-// refresh reads the preferences and the repository's settings again, so a
+// refresh reads the preferences and the repository's gate again, so a
 // gate changed during a run applies to its next item. It reports
 // whether the repository's decisions are still captured; a manual run
 // ignores the gate.
 func (r *featureRun) refresh(ctx context.Context) (bool, error) {
-	_, _, on, err := r.reread(ctx)
+	_, on, err := r.reread(ctx)
 	return on, err
 }
 
-// reread is refresh returning the preferences and settings it read, which
-// a concurrent call's gate uses rather than another call's.
-func (r *featureRun) reread(ctx context.Context) (repos.Preferences, repos.Settings, bool, error) {
-	prefs, settings, on, err := r.w.gate(ctx, r.repository)
+// reread is refresh returning the preferences it read, which a concurrent
+// call's gate uses rather than another call's.
+func (r *featureRun) reread(ctx context.Context) (repos.Preferences, bool, error) {
+	prefs, on, err := r.w.gate(ctx, r.repository)
 	if err != nil {
-		return prefs, settings, false, err
+		return prefs, false, err
 	}
 	r.mu.Lock()
-	r.prefs, r.settings = prefs, settings
+	r.prefs = prefs
 	r.mu.Unlock()
-	return prefs, settings, r.opts.Manual || on, nil
+	return prefs, r.opts.Manual || on, nil
 }
 
 // activation is when placement was turned on for the repository, recorded

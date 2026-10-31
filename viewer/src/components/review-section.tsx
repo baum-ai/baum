@@ -708,7 +708,7 @@ function BlockView({
         content.kind === "code" ? (content as Extract<Block, { kind: "code" }>).caption : undefined;
       return (
         <Part label={label}>
-          <pre className="overflow-x-auto rounded-(--radius-md) bg-(--surface-sunken) p-3 font-mono text-base leading-[1.5] text-(--text-primary)">
+          <pre className="overflow-x-auto rounded-(--radius-md) bg-(--code-fill) p-3 font-mono text-base leading-[1.5] text-(--text-primary)">
             <code>{content.content}</code>
           </pre>
           {caption && <p className="mt-1.5 text-base text-(--text-tertiary)">{caption}</p>}

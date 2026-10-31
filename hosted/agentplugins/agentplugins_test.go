@@ -169,3 +169,60 @@ func TestNativeErrorsCancellationAndUnverifiedInstall(t *testing.T) {
 		t.Fatal("claimed an unverified install")
 	}
 }
+
+func TestUpdateRefreshesMarketplaceThenPlugin(t *testing.T) {
+	for _, agent := range Agents() {
+		t.Run(agent, func(t *testing.T) {
+			version := "1.0.0"
+			var calls [][]string
+			client := &Client{run: func(ctx context.Context, _ string, args ...string) ([]byte, error) {
+				if _, ok := ctx.Deadline(); !ok {
+					t.Fatal("native command has no timeout")
+				}
+				if args[1] == "marketplace" && args[2] == "list" {
+					return []byte(codexMarketplaces), nil
+				}
+				if args[1] == "list" {
+					installed := claudeInstalled
+					if agent == "codex" {
+						installed = codexInstalled
+					}
+					return []byte(strings.Replace(installed, "1.0.0", version, 1)), nil
+				}
+				calls = append(calls, append([]string(nil), args...))
+				if args[1] == "update" || args[1] == "add" {
+					version = "1.2.0"
+				}
+				return []byte(`{}`), nil
+			}}
+			before, status, err := client.Update(context.Background(), agent)
+			if err != nil || before != "1.0.0" || status != (Status{true, true, "1.2.0"}) {
+				t.Fatalf("update=%q %+v %v", before, status, err)
+			}
+			want := [][]string{{"plugin", "marketplace", "upgrade", "baum"}, {"plugin", "add", Plugin, "--json"}}
+			if agent == "claude-code" {
+				want = [][]string{{"plugin", "marketplace", "update", "baum"}, {"plugin", "update", Plugin, "--scope", "user", "--json"}}
+			}
+			if !reflect.DeepEqual(calls, want) {
+				t.Fatalf("calls=%v", calls)
+			}
+		})
+	}
+}
+
+func TestUpdateLeavesAMissingOrDisabledPluginAlone(t *testing.T) {
+	for list, want := range map[string]string{
+		`[]`: "not installed",
+		strings.Replace(claudeInstalled, `"enabled":true`, `"enabled":false`, 1): "disabled",
+	} {
+		client := &Client{run: func(_ context.Context, _ string, args ...string) ([]byte, error) {
+			if args[1] != "list" {
+				t.Fatalf("mutation %v", args)
+			}
+			return []byte(list), nil
+		}}
+		if _, _, err := client.Update(context.Background(), "claude-code"); err == nil || !strings.Contains(err.Error(), want) {
+			t.Fatalf("error=%v want %q", err, want)
+		}
+	}
+}

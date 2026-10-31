@@ -258,7 +258,7 @@ func TestLocalPrepareUsesBackendPathsWithoutFallingBackToPATH(t *testing.T) {
 }
 
 // The app's backend and model replace the config file's for every job, read
-// when the job is prepared; a repository's own model still wins.
+// when the job is prepared.
 func TestPreferencesChooseTheBackendAndModel(t *testing.T) {
 	ctx := context.Background()
 	registry, clone := registeredClone(t)
@@ -275,16 +275,6 @@ func TestPreferencesChooseTheBackendAndModel(t *testing.T) {
 	}
 	p, _, e := local.Prepare(ctx, Item{Clone: clone.ID, PR: 1})
 	if e != nil || p.Backend != agent.BackendCursorAgent || p.Model != "app-model" {
-		t.Fatalf("prepared = %+v, %v", p, e)
-	}
-	if _, e = registry.AddPatch(ctx, clone.Path, func(s repos.Settings) (repos.Settings, error) {
-		repository := "repository-model"
-		s.Model = &repository
-		return s, nil
-	}); e != nil {
-		t.Fatal(e)
-	}
-	if p, _, e = local.Prepare(ctx, Item{Clone: clone.ID, PR: 1}); e != nil || p.Model != "repository-model" {
 		t.Fatalf("prepared = %+v, %v", p, e)
 	}
 }

@@ -16,6 +16,8 @@ import (
 	"testing"
 
 	"github.com/baum-ai/baum/agent/anthropic"
+	"github.com/baum-ai/baum/agent/claude"
+	"github.com/baum-ai/baum/agent/codex"
 	"github.com/baum-ai/baum/internal/config"
 	"github.com/baum-ai/baum/internal/generate"
 	"github.com/baum-ai/baum/internal/generate/generatetest"
@@ -317,4 +319,18 @@ func TestBackendPathsReplaceThePATHLookup(t *testing.T) {
 			t.Fatalf("err = %v", err)
 		}
 	})
+}
+
+// The chosen reasoning effort reaches every harness that takes one.
+func TestDefaultBackendsCarryTheEffort(t *testing.T) {
+	backends := generate.DefaultBackendsFor(config.Config{Effort: "high"})
+	if c := backends.Claude("m").(*claude.Backend); c.Effort != "high" {
+		t.Errorf("claude effort %q", c.Effort)
+	}
+	if c := backends.Codex("m").(*codex.Backend); c.Effort != "high" {
+		t.Errorf("codex effort %q", c.Effort)
+	}
+	if a := backends.Anthropic("m").(*anthropic.Backend); a.Effort != "high" {
+		t.Errorf("anthropic effort %q", a.Effort)
+	}
 }

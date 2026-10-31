@@ -61,6 +61,9 @@ type Backend struct {
 	// exec.LookPath and defaults to "codex".
 	Binary, Model string
 	Profile       Profile
+	// Effort is the model_reasoning_effort (low, medium or high); empty
+	// leaves it to Codex.
+	Effort string
 	// Env are the user's agent variables (agent.WithUserEnv), for the Local
 	// profile only.
 	Env []string
@@ -187,6 +190,9 @@ func (c *Backend) run(ctx context.Context, request agent.Request, fix bool, extr
 		"--skip-git-repo-check")
 	args = append(args, fixConfig...)
 	args = append(args, extra...)
+	if c.Effort != "" {
+		args = append(args, "-c", "model_reasoning_effort="+strconv.Quote(c.Effort))
+	}
 	// An empty Model leaves the flag out so Codex uses its configured default.
 	if c.Model != "" {
 		args = append(args, "--model", c.Model)
