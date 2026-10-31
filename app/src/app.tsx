@@ -677,7 +677,7 @@ function Workspace({ url }: { url: UrlState }) {
   // The shortcuts sheet lists the keys of where it was opened first.
   const shortcutsPlace: ShortcutsPlace = onList
     ? "pulls"
-    : selectedEntry && url.search.get("walk")
+    : selectedEntry && url.search.get("walk") && url.search.get("walk") !== "full"
       ? "walkthrough"
       : (page === "inbox" || page === "pulls") && (groupId || selectedEntry)
         ? "review"

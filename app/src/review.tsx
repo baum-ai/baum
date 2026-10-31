@@ -161,21 +161,17 @@ export function LocalReview({
   const refreshButton = refresh ? (
     <RefreshButton refresh={refresh} label="Refresh from GitHub" />
   ) : undefined;
-  // A pull request opens on the walkthrough's overview, the tour one step
-  // in; walk=full, or a link to a place in the review (pane=…), is the full
-  // review. walk=all named the list view the walkthrough once had.
+  // A pull request opens on the full review; walk=landing is the
+  // walkthrough's overview and walk=tour the tour one step in. walk=all named
+  // the list view the walkthrough once had, and walk=full the full review when
+  // the overview was the default.
   const walk = url.search.get("walk");
   const walkMode: WalkMode | null =
-    walk === "full" || (!walk && url.search.has("pane"))
-      ? null
-      : walk === "tour" || walk === "all"
-        ? "tour"
-        : "landing";
+    walk === "tour" || walk === "all" ? "tour" : walk === "landing" ? "landing" : null;
   const setWalk = (mode: WalkMode | null) =>
     url.update((current) => {
-      if (mode === "tour") current.set("walk", "tour");
-      else if (mode === "landing") current.delete("walk");
-      else current.set("walk", "full");
+      if (mode) current.set("walk", mode);
+      else current.delete("walk");
       current.delete("pane");
       return current;
     });

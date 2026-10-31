@@ -76,8 +76,9 @@ submitting a review from the walkthrough, a fix the person starts (with its
 replies on the review threads it addressed), and resolving a review thread the
 person chose are the app's only GitHub writes (see below).
 
-A pull request with a saved review opens on the walkthrough's overview
-(`src/walkthrough.tsx`): what matters about it on one page, with no list beside
+A pull request opens on the full review. Once a review is saved, its **Walk
+through** opens the walkthrough's overview (`src/walkthrough.tsx`,
+`?…&walk=landing`): what matters about it on one page, with no list beside
 it. It shows only what says something: the GitHub states that ask for something
 (as the inbox draws them, plus failing checks behind a conflict), unresolved
 threads, lines and files changed, the review time, the summary, the review's
@@ -86,9 +87,8 @@ their lines. Its actions are **Start the review**, the page's own fix, merge,
 update and re-run (and regenerate when the review is outdated), **Full review**
 (v) and GitHub; agents on the branch, a regeneration and a review that could not
 be read show beneath them. **Start the review** opens the tour, `?…&walk=tour`
-(or the retired `walk=all`), so a reload stays there. `walk=full`, or a link to a
-place in the review (`pane=…`), opens the full review, whose **Walk through**
-returns to the overview.
+(or the retired `walk=all`), so a reload stays there. **Full review** (v)
+clears `walk`; the retired `walk=full` also opens the full review.
 
 Up next's list shows a review group or stack (`api/groups`) with a shown member
 as one row, in the section and at the place of its first member in the list
@@ -145,8 +145,9 @@ memory with `git merge-tree --write-tree` (git 2.38 or newer), touching no
 working tree or branch. Without an available clone it answers `no_clone`, which
 the panel shows with a link to GitHub.
 The PR page's **Walk through** button (beside Regenerate, once a review is
-saved) opens the walkthrough (`src/walkthrough.tsx`): `?…&walk=tour` or
-`walk=all`, so a reload stays there, and **Full review** returns to the viewer.
+saved) opens the walkthrough's overview (`src/walkthrough.tsx`): `?…&walk=landing`,
+or `walk=tour` (`walk=all`) in the tour, so a reload stays there, and **Full
+review** returns to the viewer.
 `buildTour` (`src/walkthrough-model.ts`) turns the document into chapters, the
 logical sections with hunks in `sectionsInReviewOrder` (mechanical and obsolete
 sections are left out), and behaviours, one per behaviour step: its `title` (schema revision 2026-10-27.1), its
