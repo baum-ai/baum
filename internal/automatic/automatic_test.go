@@ -657,6 +657,26 @@ func TestHandlerSavesReviewChoices(t *testing.T) {
 	if o, _ := h.scheduler.Overview(context.Background()); o.PullRequests != "both" {
 		t.Fatalf("%+v", o)
 	}
+	// The reviews' and fixes' reasoning efforts; empty is the agent's own.
+	for _, body := range []string{`{"effort":"max"}`, `{"fix_effort":"high"}`} {
+		if code := put(h.scheduler, body); code != 400 {
+			t.Fatalf("%s: %d", body, code)
+		}
+	}
+	if code := put(h.scheduler, `{"effort":" High ","fix_backend":"codex","fix_effort":"low"}`); code != 200 {
+		t.Fatal(code)
+	}
+	prefs, _ = h.registry.Preferences(context.Background())
+	if prefs.Effort == nil || *prefs.Effort != "high" || prefs.FixEffort == nil || *prefs.FixEffort != "low" {
+		t.Fatalf("%+v", prefs)
+	}
+	if code := put(h.scheduler, `{"effort":"","fix_backend":""}`); code != 200 {
+		t.Fatal(code)
+	}
+	prefs, _ = h.registry.Preferences(context.Background())
+	if prefs.Effort != nil || prefs.FixEffort != nil || prefs.FixBackend != nil {
+		t.Fatalf("after clearing %+v", prefs)
+	}
 }
 
 // Drafts get no automatic review; marking one ready for review is a trigger

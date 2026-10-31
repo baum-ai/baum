@@ -69,6 +69,7 @@ export function Walkthrough({
   changed,
   actions,
   notices,
+  refresh,
   ask,
   toDraft = false,
   drafted,
@@ -87,6 +88,8 @@ export function Walkthrough({
   actions?: ReactNode;
   /** What is happening on it now, such as agents on its branch. */
   notices?: ReactNode;
+  /** The page's refresh button, at the head's end. */
+  refresh?: ReactNode;
   /** The Ask panel: whether it is open, toggling it, and asking about a part
    *  of the review. Absent, the walkthrough offers no questions. */
   ask?: { open: boolean; toggle: () => void; about: (focus: ChatFocus) => void };
@@ -315,6 +318,7 @@ export function Walkthrough({
             back={back}
             actions={actions}
             notices={notices}
+            refresh={refresh}
             ask={ask}
           />
         </div>
@@ -348,6 +352,7 @@ export function Walkthrough({
               Full review
               <kbd aria-hidden>v</kbd>
             </button>
+            {refresh}
           </div>
           <ChapterSteps tour={tour} page={page} done={done} commented={commented} open={open} />
         </div>
@@ -579,6 +584,7 @@ function Landing({
   back,
   actions,
   notices,
+  refresh,
   ask,
 }: {
   entry: Entry;
@@ -590,6 +596,7 @@ function Landing({
   back: { href: string; label: string };
   actions?: ReactNode;
   notices?: ReactNode;
+  refresh?: ReactNode;
   ask?: { open: boolean; toggle: () => void };
 }) {
   const pr = entry.pull_request;
@@ -620,6 +627,7 @@ function Landing({
           {pr.draft ? " · Draft" : ""}
         </span>
         {tour.minutes ? <span className="walk-minutes">≈ {tour.minutes} min to review</span> : null}
+        {refresh}
       </div>
       <h1 id="walk-landing-title" className="walk-title">
         {pr.title}

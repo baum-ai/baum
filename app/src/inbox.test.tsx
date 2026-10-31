@@ -126,6 +126,15 @@ function List({ rows, initial = [] }: { rows: Entry[]; initial?: string[] }) {
     />
   );
 }
+// Opens a row's ⋯ menu and picks one choice from it.
+const choose = async (row: string, label: string) => {
+  await act(async () => button(`Actions for ${row}`)!.click());
+  const item = Array.from(
+    node.querySelectorAll<HTMLElement>('[role="menu"] [role^=menuitem]'),
+  ).find((choice) => choice.querySelector(".context-menu-label")?.textContent === label);
+  expect(item).toBeDefined();
+  await act(async () => item!.click());
+};
 const button = (label: string) =>
   Array.from(node.querySelectorAll("button")).find(
     (b) => b.getAttribute("aria-label") === label || b.textContent === label,
@@ -138,7 +147,7 @@ const press = (key: string) =>
 it("peeks at the saved review under its row and closes it again", async () => {
   await act(async () => root.render(<List rows={[entry(1)]} />));
   expect(node.querySelector(".inbox-peek-panel")).toBeNull();
-  await act(async () => button("Peek at acme/demo #1")!.click());
+  await choose("acme/demo #1", "Peek");
   const panel = node.querySelector(".inbox-peek-panel")!;
   expect(requests.some((path) => path.includes("api/document"))).toBe(true);
   expect(panel.textContent).toContain("Retries failed jobs with backoff.");
@@ -149,11 +158,11 @@ it("peeks at the saved review under its row and closes it again", async () => {
     "Role from request+34 −5",
   ]);
   expect(panel.querySelector("a")?.textContent).toBe("Open the review");
-  expect(button("Peek at acme/demo #1")!.getAttribute("aria-expanded")).toBe("true");
-  await act(async () => button("Peek at acme/demo #1")!.click());
+  // The menu now offers to close it.
+  await choose("acme/demo #1", "Close peek");
   expect(node.querySelector(".inbox-peek-panel")).toBeNull();
   // Opened again, it shows the review already read, without reading it again.
-  await act(async () => button("Peek at acme/demo #1")!.click());
+  await choose("acme/demo #1", "Peek");
   expect(node.querySelector(".inbox-peek-panel")?.textContent).toContain(
     "Retries failed jobs with backoff.",
   );
@@ -211,7 +220,7 @@ it("opens the focused row's latest fix transcript with t", async () => {
 it("says why there is no review to peek at", async () => {
   const unsaved = { ...entry(3), version_count: 0, needs_clone: true, clone_id: undefined };
   await act(async () => root.render(<List rows={[unsaved]} />));
-  await act(async () => button("Peek at acme/demo #3")!.click());
+  await choose("acme/demo #3", "Peek");
   expect(node.querySelector(".inbox-peek-panel")?.textContent).toContain(
     "baum needs a local clone of acme/demo",
   );

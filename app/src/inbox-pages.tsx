@@ -18,6 +18,7 @@ import {
   type Inbox,
   type InboxColor,
 } from "./inboxes";
+import { MenuButton, useContextMenu, type MenuItem } from "./context-menu";
 import { PageBar } from "./shell";
 import { SettingRow } from "./settings";
 import { GROUPS, InboxTag, type UpNextItem } from "./up-next";
@@ -534,13 +535,39 @@ function EditInbox({
 
 /** `?page=inboxes`: every inbox in the sidebar's order, to reorder, switch in
  *  or out of the badge, and open. */
-export function ManageInboxesPage({ inboxes, items, login, saves, save, Link }: InboxPageProps) {
+export function ManageInboxesPage({
+  inboxes,
+  items,
+  login,
+  saves,
+  save,
+  go,
+  Link,
+}: InboxPageProps) {
   const saved = useSavedMark(saves);
   const move = (index: number, by: -1 | 1) => {
     const next = inboxes.slice();
     const [one] = next.splice(index, 1);
     next.splice(index + by, 0, one!);
     save(next);
+  };
+  // Each inbox's actions, behind its ⋯ and a right click on it; its name
+  // opens it to edit.
+  const menu = useContextMenu();
+  const actions = (inbox: Inbox, index: number): MenuItem[] => {
+    const choices: MenuItem[] = [
+      { label: "Edit…", hint: "↵", onSelect: () => go(editInboxHref(inbox.id)) },
+    ];
+    if (index > 0) choices.push({ label: "Move up", onSelect: () => move(index, -1) });
+    if (index < inboxes.length - 1)
+      choices.push({ label: "Move down", onSelect: () => move(index, 1) });
+    choices.push({
+      label: "Count in the Inbox badge",
+      checked: inbox.badge,
+      onSelect: () =>
+        save(inboxes.map((one) => (one.id === inbox.id ? { ...one, badge: !one.badge } : one))),
+    });
+    return choices;
   };
   const uncovered = items.filter((item) => inboxesOf(item, inboxes).length === 0).length;
   const newLink = (
@@ -559,7 +586,7 @@ export function ManageInboxesPage({ inboxes, items, login, saves, save, Link }: 
           </>
         }
       />
-      <div className="local-page-body inbox-page">
+      <div className="local-page-body local-list-page">
         {inboxes.length === 0 ? (
           <div className="local-empty">
             <h2>No inboxes yet</h2>
@@ -571,74 +598,42 @@ export function ManageInboxesPage({ inboxes, items, login, saves, save, Link }: 
           </div>
         ) : (
           <>
-            <p className="inbox-lede">
+            <p className="local-list-note inbox-lede">
               Inbox shows everything. These sit under it in the sidebar, in this order. A pull
               request can be in several.
             </p>
-            <ul className="inbox-manage local-panel">
+            {menu.menu}
+            <ul className="list inbox-manage">
               {inboxes.map((inbox, index) => (
-                <li key={inbox.id} className={`inbox-manage-row inbox-${inbox.color}`}>
-                  <div className="inbox-move">
-                    <button
-                      type="button"
-                      className="inbox-btn inbox-btn-small"
-                      aria-label={`Move ${inbox.name} up`}
-                      disabled={index === 0}
-                      onClick={() => move(index, -1)}
-                    >
-                      <span aria-hidden="true">▲</span>
-                    </button>
-                    <button
-                      type="button"
-                      className="inbox-btn inbox-btn-small"
-                      aria-label={`Move ${inbox.name} down`}
-                      disabled={index === inboxes.length - 1}
-                      onClick={() => move(index, 1)}
-                    >
-                      <span aria-hidden="true">▼</span>
-                    </button>
-                  </div>
+                <li
+                  key={inbox.id}
+                  className={`list-row inbox-manage-row inbox-${inbox.color}`}
+                  onContextMenu={(event) => menu.open(event, actions(inbox, index), inbox.name)}
+                >
                   <span aria-hidden="true" className="inbox-dot inbox-dot-large" />
                   <div className="inbox-manage-text">
                     <span className="inbox-manage-name">
-                      <strong>{inbox.name}</strong>
-                      <span>{countOf(inbox, items)} now</span>
+                      <Link href={editInboxHref(inbox.id)} aria-label={`Edit ${inbox.name}`}>
+                        <strong>{inbox.name}</strong>
+                      </Link>
+                      <span>
+                        {countOf(inbox, items)} now
+                        {inbox.badge ? "" : " · not counted in the badge"}
+                      </span>
                     </span>
                     <span className="settings-row-detail">{sentence(inbox, login)}</span>
                   </div>
-                  <label className="inbox-manage-badge">
-                    <span className="sr-only">Count {inbox.name} in the Inbox badge</span>
-                    <input
-                      type="checkbox"
-                      role="switch"
-                      className="local-switch"
-                      title="Count in the Inbox badge"
-                      checked={inbox.badge}
-                      onChange={(event) =>
-                        save(
-                          inboxes.map((one) =>
-                            one.id === inbox.id ? { ...one, badge: event.target.checked } : one,
-                          ),
-                        )
-                      }
-                    />
-                  </label>
-                  <Link
-                    href={editInboxHref(inbox.id)}
-                    className="inbox-btn"
-                    aria-label={`Edit ${inbox.name}`}
-                  >
-                    Edit
-                  </Link>
+                  <MenuButton label={inbox.name} items={() => actions(inbox, index)} menu={menu} />
                 </li>
               ))}
             </ul>
-            <p className="inbox-badge-label">Badge</p>
-            <p className={`inbox-coverage ${uncovered > 0 ? "caution" : "ok"}`}>
-              {uncovered > 0
-                ? `${uncovered} ${plural(uncovered, "pull request isn’t", "pull requests aren’t")} in any inbox right now. ${plural(uncovered, "It shows", "They show")} only under Inbox and always ${plural(uncovered, "counts", "count")} in its badge.`
-                : "Every open pull request is in at least one inbox."}
-            </p>
+            <div className="local-list-note">
+              <p className={`inbox-coverage ${uncovered > 0 ? "caution" : "ok"}`}>
+                {uncovered > 0
+                  ? `${uncovered} ${plural(uncovered, "pull request isn’t", "pull requests aren’t")} in any inbox right now. ${plural(uncovered, "It shows", "They show")} only under Inbox and always ${plural(uncovered, "counts", "count")} in its badge.`
+                  : "Every open pull request is in at least one inbox."}
+              </p>
+            </div>
           </>
         )}
       </div>

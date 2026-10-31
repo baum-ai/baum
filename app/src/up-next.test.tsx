@@ -240,8 +240,13 @@ const panel = () => node.querySelector("article.upnext-panel")!;
 const shown = () => panel().querySelector("h2")!.textContent;
 const list = () =>
   Array.from(node.querySelectorAll(".upnext-row-title")).map((title) => title.textContent);
+// A heading's name and count, as "Ready to merge · 2".
 const groups = () =>
-  Array.from(node.querySelectorAll(".upnext-group-head h2")).map((h) => h.textContent);
+  Array.from(node.querySelectorAll(".upnext-list-body .list-heading")).map((h: Element) =>
+    Array.from(h.querySelectorAll(".list-heading-label > span:not([aria-hidden])"))
+      .map((part) => part.textContent)
+      .join(" · "),
+  );
 const button = (name: string) =>
   Array.from(node.querySelectorAll("button")).find((b) => b.textContent?.startsWith(name))!;
 const row = (title: string) =>
@@ -328,13 +333,18 @@ it("snoozes, undoes and brings back, and remembers it", async () => {
   await act(async () => snoozeFor("Tomorrow morning").click());
   expect(shown()).toBe("Change 4");
   // Snoozed pull requests start folded away.
-  expect(groups()).toContain("▸ Snoozed · 1");
+  expect(groups()).toContain("Snoozed · 1");
   expect(node.querySelector<HTMLElement>(".upnext-snoozed")!.hidden).toBe(true);
   // A reload keeps the snooze.
   await render();
   expect(list()).toEqual(["Change 1", "Change 4", "Change 2", "Change 5"]);
-  await act(async () => button("▸ Snoozed").click());
-  await act(async () => button("Bring back").click());
+  await act(async () => button("Snoozed").click());
+  await act(async () =>
+    node.querySelector<HTMLButtonElement>('button[aria-label="Actions for acme/demo #3"]')!.click(),
+  );
+  const choices = Array.from(node.querySelectorAll<HTMLElement>('[role="menu"] [role^=menuitem]'));
+  expect(choices.map((item) => item.textContent)).toEqual(["Bring back"]);
+  await act(async () => choices[0]!.click());
   expect(list()).toContain("Change 3");
   expect(shown()).toBe("Change 3");
 });
@@ -663,34 +673,41 @@ it("says why resolving a review thread failed and keeps it", async () => {
   expect(button("Resolve").disabled).toBe(false);
 });
 
-it("lists the failing checks of the head it shows, each linking to its details", async () => {
+it("lists every check of the head it shows, failing first, each linking to its details", async () => {
   entries = [mine(2, { checks: "failing" })];
   const original = vi.mocked(fetch).getMockImplementation()!;
   vi.mocked(fetch).mockImplementation(async (...args) =>
-    String(args[0]).includes("api/prs/failing-checks")
+    String(args[0]).includes("api/prs/checks")
       ? Response.json({
           head_sha: "head",
           checks: [
+            { name: "lint", status: "completed", conclusion: "success" },
+            { name: "build", status: "in_progress", conclusion: "" },
+            { name: "ci/circle", status: "completed", conclusion: "timed_out" },
             {
               name: "test",
+              status: "completed",
               conclusion: "failure",
               title: "2 tests failed in pkg",
               url: "https://github.com/acme/demo/runs/21",
               job_id: 21,
             },
-            { name: "ci/circle", conclusion: "timed_out" },
           ],
         })
       : original(...args),
   );
   await render();
   expect(shown()).toBe("Change 2");
-  const items = Array.from(panel().querySelectorAll('[aria-label="Failing checks"] li'));
-  expect(items.map((item) => item.textContent)).toEqual([
-    "testFailed · 2 tests failed in pkgRetryDetails",
+  // A fix's failing checks start open.
+  const items = () => Array.from(panel().querySelectorAll('[aria-label="Checks"] li'));
+  expect(items().map((item) => item.textContent)).toEqual([
     "ci/circleTimed out",
+    "testFailed · 2 tests failed in pkgRetryDetails",
+    "buildRunning",
+    "lintPassed",
   ]);
-  expect(items[0]!.querySelector("a")!.getAttribute("href")).toBe(
+  expect(panel().textContent).toContain("2 failing, 1 running and 1 passed.");
+  expect(items()[1]!.querySelector("a")!.getAttribute("href")).toBe(
     "https://github.com/acme/demo/runs/21",
   );
   // Retry re-runs that one job at once; another app's check has none.
@@ -700,13 +717,13 @@ it("lists the failing checks of the head it shows, each linking to its details",
     .mock.calls.filter(([path]) => String(path).endsWith("api/prs/rerun-job"))
     .map(([, init]) => JSON.parse(String((init as RequestInit).body)));
   expect(reruns).toEqual([{ repository: "acme/demo", pr: 2, head_sha: "head", job_id: 21 }]);
-  expect(panel().querySelector('[aria-label="Failing checks"] li')!.textContent).toBe(
-    "testRe-running on GitHubDetails",
-  );
+  expect(items()[1]!.textContent).toBe("testRe-running on GitHubDetails");
   // The row's Fix CI asks for a fix of the checks alone.
-  const row = panel().querySelector<HTMLButtonElement>("li.upnext-has-threads > button")!;
-  expect(row.textContent).toBe("Fix CI");
-  await act(async () => row.click());
+  const fixCI = panel().querySelector<HTMLButtonElement>(
+    "li.upnext-has-threads > button.upnext-thread-resolve",
+  )!;
+  expect(fixCI.textContent).toBe("Fix CI");
+  await act(async () => fixCI.click());
   expect(fixesStarted()).toEqual([
     { items: [{ clone: "clone", pr: 2, kind: "fix", only: "checks" }], mode: "single" },
   ]);
@@ -714,8 +731,215 @@ it("lists the failing checks of the head it shows, each linking to its details",
   const asked = vi
     .mocked(fetch)
     .mock.calls.map(([path]) => String(path))
-    .filter((path) => path.includes("api/prs/failing-checks"));
-  expect(asked).toEqual([
-    "/s/test-ns/api/prs/failing-checks?repository=acme%2Fdemo&pr=2&head_sha=head",
+    .filter((path) => path.includes("api/prs/checks"));
+  expect(asked).toEqual(["/s/test-ns/api/prs/checks?repository=acme%2Fdemo&pr=2&head_sha=head"]);
+  // The row folds its checks away.
+  await act(async () => button("Checks failing").click());
+  expect(items()).toEqual([]);
+});
+
+it("keeps reading running checks after a read fails", async () => {
+  entries = [mine(2, { checks: "failing" })];
+  let reads = 0;
+  const original = vi.mocked(fetch).getMockImplementation()!;
+  vi.mocked(fetch).mockImplementation(async (...args) => {
+    if (!String(args[0]).includes("api/prs/checks")) return original(...args);
+    reads++;
+    if (reads === 2) return Response.json({ code: "failed", message: "offline" }, { status: 502 });
+    const done = reads > 2;
+    return Response.json({
+      head_sha: "head",
+      checks: [
+        { name: "test", status: "completed", conclusion: "failure" },
+        {
+          name: "build",
+          status: done ? "completed" : "in_progress",
+          conclusion: done ? "success" : "",
+        },
+      ],
+    });
+  });
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  try {
+    await render();
+    expect(reads).toBe(1);
+    await act(async () => vi.advanceTimersByTime(20_000));
+    expect(reads).toBe(2);
+    await act(async () => vi.advanceTimersByTime(20_000));
+    expect(reads).toBe(3);
+    expect(
+      Array.from(panel().querySelectorAll('[aria-label="Checks"] li')).map((li) => li.textContent),
+    ).toEqual(["testFailed", "buildPassed"]);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("reads only the failing checks from an older daemon", async () => {
+  entries = [mine(2, { checks: "failing" })];
+  const original = vi.mocked(fetch).getMockImplementation()!;
+  vi.mocked(fetch).mockImplementation(async (...args) =>
+    String(args[0]).includes("api/prs/checks")
+      ? new Response("404 page not found", { status: 404 })
+      : String(args[0]).includes("api/prs/failing-checks")
+        ? Response.json({ head_sha: "head", checks: [{ name: "test", conclusion: "failure" }] })
+        : original(...args),
+  );
+  await render();
+  expect(
+    Array.from(panel().querySelectorAll('[aria-label="Checks"] li')).map((li) => li.textContent),
+  ).toEqual(["testFailed"]);
+});
+
+it("shows where a pull request merges, its size and time to review, and opens its checks on asking", async () => {
+  entries = [
+    requested(1, {
+      review_minutes: 12,
+      checks: "passing",
+      pull_request: {
+        head_ref: "feature/x",
+        base_ref: "main",
+        additions: 1200,
+        deletions: 34,
+        changed_files: 9,
+      },
+    }),
+  ];
+  await render();
+  const facts = Array.from(panel().querySelectorAll(".upnext-facts > div")).map((fact) =>
+    Array.from(fact.children)
+      .map((part) => part.textContent)
+      .join(": "),
+  );
+  expect(facts).toEqual([
+    "Branch: feature/x→main",
+    "Size: +1,200 −34 · 9 files",
+    "Time to review: ~12 min",
+    "GitHub: acme/demo#1 ↗",
   ]);
+  expect(panel().querySelector(".upnext-facts a")!.getAttribute("href")).toBe(
+    "https://github.com/acme/demo/pull/1",
+  );
+  // A review's checks are folded, and read only once opened.
+  const checksAsked = () =>
+    vi.mocked(fetch).mock.calls.filter(([path]) => String(path).includes("api/prs/checks"));
+  expect(button("Checks passing").getAttribute("aria-expanded")).toBe("false");
+  expect(checksAsked()).toEqual([]);
+  await act(async () => button("Checks passing").click());
+  expect(checksAsked()).toHaveLength(1);
+});
+
+it("lists the files that conflict with the base", async () => {
+  entries = [mine(2, { merge: "conflict" })];
+  const original = vi.mocked(fetch).getMockImplementation()!;
+  vi.mocked(fetch).mockImplementation(async (...args) =>
+    String(args[0]).includes("api/prs/conflicts")
+      ? Response.json({
+          head_sha: "head",
+          base_ref: "main",
+          base_sha: "base",
+          files: ["go.sum", "internal/app/app.go"],
+        })
+      : original(...args),
+  );
+  await render();
+  expect(
+    Array.from(panel().querySelectorAll('[aria-label="Conflicting files"] li')).map(
+      (li) => li.textContent,
+    ),
+  ).toEqual(["go.sum", "internal/app/app.go"]);
+});
+
+it("opens an unresolved thread to its whole conversation", async () => {
+  entries = [mine(2, { unresolved: 1 })];
+  const original = vi.mocked(fetch).getMockImplementation()!;
+  vi.mocked(fetch).mockImplementation(async (...args) =>
+    String(args[0]).includes("api/prs/review-threads")
+      ? Response.json({
+          capped: false,
+          threads: [
+            {
+              id: "t1",
+              path: "a.go",
+              line: 3,
+              outdated: false,
+              author: "sam",
+              excerpt: "Why not a map?",
+              comments: 3,
+              url: "https://github.com/acme/demo/pull/2#r1",
+              can_resolve: true,
+              messages: [
+                { author: "sam", body: "Why not a map?\n\nIt would be O(1)." },
+                { author: "me", body: "Order matters here." },
+              ],
+            },
+          ],
+        })
+      : original(...args),
+  );
+  await render();
+  const toggle = button("Why not a map?");
+  expect(toggle.getAttribute("aria-expanded")).toBe("false");
+  await act(async () => toggle.click());
+  expect(
+    Array.from(panel().querySelectorAll('[aria-label="Conversation"] li')).map(
+      (li) => li.textContent,
+    ),
+  ).toEqual([
+    "samWhy not a map?\n\nIt would be O(1).",
+    "meOrder matters here.",
+    "1 more comment on GitHub",
+  ]);
+});
+
+it("lists a review group as one row that opens to its members", async () => {
+  entries = [ready(3), mine(2, { checks: "failing" }), requested(1), ready(4)];
+  const original = vi.mocked(fetch).getMockImplementation()!;
+  vi.mocked(fetch).mockImplementation(async (...args) =>
+    String(args[0]).endsWith("api/groups")
+      ? Response.json({
+          groups: [
+            {
+              id: "g1",
+              repository: "acme/demo",
+              name: "Payments stack",
+              members: [2, 3],
+              stack: true,
+              created_at: "",
+              updated_at: "",
+              version_count: 0,
+              latest: null,
+              risk_score: null,
+              reviewed: [],
+              outdated: false,
+            },
+          ],
+        })
+      : original(...args),
+  );
+  await render();
+  // The group sits where its first member in the list would be, under Ready
+  // to merge, and its members leave their own rows.
+  expect(groups()).toEqual(["Needs your eyes · 1", "Ready to merge · 3"]);
+  expect(list()).toEqual(["Change 1", "Payments stack", "Change 4"]);
+  await press("j");
+  expect(shown()).toBe("Payments stack");
+  expect(panel().textContent).toContain("There is no group review yet");
+  expect(
+    Array.from(panel().querySelectorAll('[aria-label="Pull requests"] li')).map(
+      (li) => li.textContent,
+    ),
+  ).toEqual([
+    "#2 Change 2Fix · Checks are failing. An agent can fix it while you do something else.",
+    "#3 Change 3Merge",
+  ]);
+  // A stack's members stay out of Merge all.
+  expect(node.textContent).not.toContain("Merge all");
+  await press("l");
+  expect(list()).toEqual(["Change 1", "Payments stack", "Change 2", "Change 3", "Change 4"]);
+  await press("j");
+  expect(shown()).toBe("Change 2");
+  await press("h");
+  expect(shown()).toBe("Payments stack");
+  expect(list()).toEqual(["Change 1", "Payments stack", "Change 4"]);
 });

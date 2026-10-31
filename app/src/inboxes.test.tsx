@@ -262,9 +262,9 @@ it("shows only an inbox's own queue under its name and sentence", async () => {
   // Done today, its bar and the person's pull requests waiting on others are the Inbox's.
   expect(node.querySelector('[role="progressbar"]')).toBeNull();
   expect(node.querySelector('[aria-label="Done today"]')).toBeNull();
-  expect(
-    Array.from(node.querySelectorAll(".upnext-group-head h2")).map((h) => h.textContent),
-  ).toEqual(["Ready to merge · 2"]);
+  const heading = node.querySelector(".upnext-list-body .list-heading-label")!;
+  expect(node.querySelectorAll(".upnext-list-body .list-heading")).toHaveLength(1);
+  expect(heading.textContent).toBe("Ready to merge 2");
   expect(subLink("Merges").getAttribute("aria-current")).toBe("page");
   // Change 3 is also in Acme.
   expect(node.querySelector(".upnext-panel")!.textContent).toContain("Change 3");
@@ -491,7 +491,7 @@ it("leaves a snoozed pull request out of an inbox's count and queue, and lists i
   expect(titles()).toEqual(["Change 4"]);
   const snoozed = node.querySelector('section[aria-label="Snoozed"]')!;
   expect(snoozed.textContent).toContain("#3 Change 3");
-  expect(snoozed.textContent).toContain("Bring back");
+  expect(snoozed.querySelector('button[aria-label="Actions for acme/demo #3"]')).not.toBeNull();
   // Not in Reviews' own list.
   await render("?inbox=Reviews");
   expect(node.querySelector('section[aria-label="Snoozed"]')).toBeNull();
@@ -505,9 +505,12 @@ it("shows Snoozed with Bring back in an inbox whose queue is empty", async () =>
     "Everything here is handled except 2 snoozed pull requests",
   );
   const snoozed = node.querySelector('section[aria-label="Snoozed"]')!;
-  expect(snoozed.textContent).toContain("Snoozed · 2");
-  expect(snoozed.querySelectorAll("button.upnext-small")).toHaveLength(2);
-  await click(snoozed.querySelector("button.upnext-small"));
+  expect(snoozed.querySelector(".list-heading")!.textContent).toBe("Snoozed 2");
+  expect(snoozed.querySelectorAll("button.row-menu-button")).toHaveLength(2);
+  await click(snoozed.querySelector("button.row-menu-button"));
+  const choices = Array.from(node.querySelectorAll<HTMLElement>('[role="menu"] [role^=menuitem]'));
+  expect(choices.map((item) => item.textContent)).toEqual(["Bring back"]);
+  await click(choices[0]);
   expect(titles()).toHaveLength(1);
 });
 

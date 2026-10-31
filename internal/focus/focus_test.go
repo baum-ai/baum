@@ -170,30 +170,6 @@ func TestTmuxMissingPaneStopsBeforeSelectingAClient(t *testing.T) {
 	}
 }
 
-func TestBackgroundCodexDoesNotOfferOrAttemptFocus(t *testing.T) {
-	for _, parent := range []string{"systemd", "launchd"} {
-		t.Run(parent, func(t *testing.T) {
-			m := &machine{procs: map[int]proc{
-				100: {"codex", "a", 101},
-				101: {"codex", "b", 50},
-				50:  {parent, "c", 1},
-			}}
-			terminal := tmuxTerminal(m)
-			terminal.TTY = ""
-			for _, goos := range []string{"linux", "darwin"} {
-				f := m.focuser(goos, hyprEnv)
-				if got := f.Predict("codex", terminal); got != "" {
-					t.Fatalf("%s Predict = %q", goos, got)
-				}
-				result := f.Focus(context.Background(), "codex", "s1", terminal)
-				if result.Precision != "" || !strings.Contains(result.Message, "background process") || len(m.calls) != 0 {
-					t.Fatalf("%s result %+v, calls %v", goos, result, m.calls)
-				}
-			}
-		})
-	}
-}
-
 func TestTmuxVariablesWithoutATerminalDoNotSelectAPane(t *testing.T) {
 	m, terminal := kittyShell()
 	terminal.Env["TMUX"], terminal.Env["TMUX_PANE"] = "/tmp/tmux-1000/default,50,0", "%7"

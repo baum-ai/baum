@@ -83,6 +83,22 @@ func TestReviewsCLI(t *testing.T) {
 	if got := show(); got.DecisionsChosenBackend != "" || got.DecisionsBackend != "codex" {
 		t.Fatalf("after following the reviews again %+v", got)
 	}
+	// Each use case's reasoning effort; empty is the agent's own.
+	if _, e := run("set", "--effort=high", "--decisions-effort=low"); e != nil {
+		t.Fatal(e)
+	}
+	if got := show(); got.Effort != "high" || got.DecisionsEffort != "low" || got.FixEffort != "" {
+		t.Fatalf("after choosing efforts %+v", got)
+	}
+	if _, e := run("set", "--effort=max"); e == nil {
+		t.Fatal("an unknown effort was accepted")
+	}
+	if _, e := run("set", "--effort=", "--decisions-effort="); e != nil {
+		t.Fatal(e)
+	}
+	if got := show(); got.Effort != "" || got.DecisionsEffort != "" {
+		t.Fatalf("after clearing efforts %+v", got)
+	}
 	if _, e := run("set", "--pull-requests=all"); e != nil {
 		t.Fatal(e)
 	}

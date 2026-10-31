@@ -283,7 +283,8 @@ it("shows a finished turn without a reply box and a terminal-only wait with a no
   expect(said.querySelector("strong")!.textContent).toBe("Done.");
   expect(finished!.textContent).not.toContain("in its terminal");
   expect(finished!.querySelector("input, textarea")).toBeNull();
-  expect(finished!.querySelectorAll("button")).toHaveLength(0);
+  // Only the ⋯ menu button; no reply box or answer buttons.
+  expect(finished!.querySelectorAll("button:not(.row-menu-button)")).toHaveLength(0);
   expect(finished!.querySelector("a.local-feed-open")!.getAttribute("aria-label")).toContain(
     "Tidy the buttons",
   );
@@ -316,13 +317,11 @@ it("shows a running session's current step and files touched, and a quiet one", 
   expect(busy!.querySelector(".local-feed-prompt")!.textContent).toBe("You Run the session tests");
   expect(busy!.querySelector(".local-feed-tool")!.textContent).toBe("Bash");
   expect(busy!.querySelector(".local-feed-target")!.textContent).toContain("pnpm test sessions");
-  expect(busy!.querySelector(".local-feed-caret")).not.toBeNull();
   // Only the current step: no trail of the earlier ones.
   expect(busy!.textContent).not.toContain("Trail");
   expect(busy!.textContent).not.toContain("Read");
   expect(busy!.querySelector(".local-feed-time")!.textContent).toBe("3 files touched · 7m 00s");
   expect(quiet!.textContent).toContain("Quiet for 12 min");
-  expect(quiet!.querySelector(".local-feed-caret")).toBeNull();
   expect(bare!.textContent).toContain("Active 2 minutes ago");
 
   // Once the agent has said something, its words show in place of the step.
@@ -337,7 +336,6 @@ it("shows a running session's current step and files touched, and a quiet one", 
   const said = node.querySelector('[aria-label="Running now"] .local-feed-said')!;
   expect(said.textContent!.trim()).toBe("Running the session tests.");
   expect(said.querySelector("strong")!.textContent).toBe("session");
-  expect(said.querySelector(".local-feed-caret")).not.toBeNull();
   expect(node.querySelector('[aria-label="Running now"] .local-feed-step')).toBeNull();
   expect(bare!.querySelector(".local-feed-step")).toBeNull();
 });

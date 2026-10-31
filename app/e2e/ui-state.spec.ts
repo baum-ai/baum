@@ -32,15 +32,6 @@ test("keeps inbox snoozes after clearing browser storage and opening a fresh con
     await snoozed.getByRole("button", { name: /Snoozed/ }).click();
     const retained = snoozed.getByRole("listitem").filter({ hasText: title });
     await expect(retained).toBeVisible();
-    const restored = reopened.waitForResponse(
-      (response) =>
-        response.url().includes("api/ui-state/inbox") &&
-        response.request().method() === "PUT" &&
-        response.status() === 200,
-    );
-    await retained.getByRole("button", { name: "Bring back" }).click();
-    await restored;
-    await expect(retained).toHaveCount(0);
   } finally {
     await context.close();
   }

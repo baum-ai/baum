@@ -20,8 +20,8 @@ const completeMaxTurns = 1
 
 // Complete runs `codex exec` once for a single structured reply
 // (agent.Completer): ephemeral, without the user's config, rules or hooks, in
-// its read-only sandbox, with the shell and other tools turned off, low
-// reasoning effort, the request's system prompt as the model instructions and
+// its read-only sandbox, with the shell and other tools turned off, the
+// Backend's reasoning effort (Codex's own when empty), the request's system prompt as the model instructions and
 // the request's schema as the output schema, in an empty temporary directory.
 // The prompt goes on stdin and starts with sessions.GenerationRunMarker. Only
 // the Local profile completes.
@@ -47,7 +47,7 @@ func (c *Backend) Complete(ctx context.Context, request agent.CompleteRequest) (
 		return agent.Completion{}, err
 	}
 	extra := []string{"--disable", "shell_tool", "--disable", "unified_exec",
-		"-c", "model_instructions_file=" + string(path), "-c", `model_reasoning_effort="low"`}
+		"-c", "model_instructions_file=" + string(path)}
 	run := agent.Request{Directory: work, Prompt: sessions.GenerationRunMarker + "\n" + request.User, Schema: request.Schema,
 		MaxCalls: completeMaxTurns, MaxTokens: 1 << 30}
 	result, err := c.run(ctx, run, false, extra)

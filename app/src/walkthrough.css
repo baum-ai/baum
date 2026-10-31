@@ -339,6 +339,13 @@
   font-size: 13.5px;
   white-space: nowrap;
 }
+/* The refresh ends the line, after the estimate when there is one. */
+.walk-meta > .local-refresh {
+  margin: -6px -8px -6px auto;
+}
+.walk-minutes + .local-refresh {
+  margin-left: 0;
+}
 .walk-state {
   display: inline-flex;
   align-items: center;

@@ -40,7 +40,7 @@ import {
   parseLiveTranscript,
   TranscriptCard,
 } from "./session-transcript";
-import { PageBar } from "./shell";
+import { PageBar, RefreshButton, useReread } from "./shell";
 import "./timeline.css";
 
 /** The Timeline: the picked repositories' features and decisions from the
@@ -131,11 +131,21 @@ type RepositoryList = {
   turned_off?: string[];
 };
 
+/** Whether the repository list leads to the log rather than a page saying
+ *  why there is none. */
+function showsLog(list: RepositoryList) {
+  return (
+    (list.repositories?.length ?? 0) > 0 &&
+    list.available !== false &&
+    list.decisions_enabled !== false
+  );
+}
+
 /** The Timeline page. `revision` changes when the daemon says the decision
  *  log changed (its `timeline` event) or the event stream reconnected, and
  *  the page reads everything it shows again. */
 export function TimelinePage({
-  revision,
+  revision: logRevision,
   jobs = [],
   cloneOf = () => null,
   jobsChanged = () => {},
@@ -151,15 +161,31 @@ export function TimelinePage({
   const url = useUrlState();
   const [list, setList] = useState<RepositoryList | null>(null);
   const [failed, setFailed] = useState(false);
+  // The page's refresh reads everything again, as a change in the log does.
+  // It settles once the repositories are read and, where they lead to the
+  // log, the log's list too: by the refresh count each was read at.
+  const reread = useReread();
+  const revision = logRevision + reread.count;
+  const reads = useRef({ list: -1, log: -1, withLog: false });
+  const settle = () => {
+    const { list, log, withLog } = reads.current;
+    if (list >= 0 && (!withLog || log >= list)) reread.settled(list);
+  };
   useEffect(() => {
     const abort = new AbortController();
+    const count = reread.count;
     request<RepositoryList>("api/timeline/repositories", undefined, "GET", abort.signal)
       .then((body) => {
         setList(body);
         setFailed(false);
+        reads.current = { ...reads.current, list: count, withLog: showsLog(body) };
+        settle();
       })
       .catch(() => {
-        if (!abort.signal.aborted) setFailed(true);
+        if (abort.signal.aborted) return;
+        setFailed(true);
+        reads.current = { ...reads.current, list: count, withLog: false };
+        settle();
       });
     return () => abort.abort();
   }, [revision]);
@@ -170,7 +196,7 @@ export function TimelinePage({
     .map((each) => each.repository)
     .filter((name) => asked.includes(name.toLowerCase()));
   const scope = selected.length > 0 ? selected : served.map((each) => each.repository);
-  if (scope.length > 0 && list?.available !== false && list?.decisions_enabled !== false)
+  if (list && showsLog(list))
     return (
       <TimelineLog
         key={scope.join("\n")}
@@ -181,11 +207,20 @@ export function TimelinePage({
         jobs={jobs}
         cloneOf={cloneOf}
         jobsChanged={jobsChanged}
+        refresh={reread.again}
+        settled={() => {
+          reads.current.log = Math.max(reads.current.log, reread.count);
+          settle();
+        }}
       />
     );
   return (
     <>
-      <PageBar title="Timeline" detail={PAGE_DETAIL} />
+      <PageBar
+        title="Timeline"
+        detail={PAGE_DETAIL}
+        actions={<RefreshButton refresh={reread.again} />}
+      />
       {failed && !list ? (
         <div className="local-page-body">
           <Failed>The Timeline could not be loaded.</Failed>
@@ -233,13 +268,15 @@ type Pages<T> = {
 };
 
 /** A paged list of `path` under `query`, read again when either or the
- *  revision changes; older rows load by button. */
+ *  revision changes; older rows load by button. `settled` hears each read
+ *  from the first page end. */
 function usePages<T>(
   path: string,
   query: string,
   key: "features" | "decisions",
   revision: number,
   active: boolean,
+  settled: () => void,
 ): Pages<T> {
   type State = {
     query: string;
@@ -300,9 +337,12 @@ function usePages<T>(
         coverage = (body.coverage as Coverage | undefined) ?? null;
       } while (cursor && rows.length < want);
       setState({ query, revision, rows, cursor, status: "idle", loaded: true, coverage });
+      settled();
     };
     read().catch(() => {
-      if (!abort.signal.aborted) setState((current) => ({ ...current, status: "failed" }));
+      if (abort.signal.aborted) return;
+      setState((current) => ({ ...current, status: "failed" }));
+      settled();
     });
     return () => abort.abort();
   }, [path, query, key, revision, active]);
@@ -382,6 +422,8 @@ function TimelineLog({
   jobs,
   cloneOf,
   jobsChanged,
+  refresh,
+  settled,
 }: {
   /** The repositories shown. */
   scope: string[];
@@ -392,6 +434,9 @@ function TimelineLog({
   jobs: Job[];
   cloneOf: (repository: string) => string | null;
   jobsChanged: () => void;
+  /** Reads the Timeline again, from the bar's refresh, until `settled`. */
+  refresh: () => Promise<void>;
+  settled: () => void;
 }) {
   // A view of one repository has its feature build: its job and its
   // building version. A build that finishes changes the features, so the
@@ -433,6 +478,7 @@ function TimelineLog({
     "features",
     revision,
     tab === "features",
+    settled,
   );
   const decisions = usePages<DecisionSummary>(
     "api/timeline/decisions",
@@ -440,6 +486,7 @@ function TimelineLog({
     "decisions",
     revision,
     tab === "all",
+    settled,
   );
   // The people the person filter offers: those with decisions on All
   // decisions, those among the features' people on Features.
@@ -494,16 +541,19 @@ function TimelineLog({
         title="Timeline"
         detail={PAGE_DETAIL}
         actions={
-          canRebuild ? (
-            <Button
-              variant="ghost"
-              size="compact"
-              disabled={build.starting}
-              onClick={() => void build.start()}
-            >
-              {build.starting ? "Starting…" : "Rebuild feature history"}
-            </Button>
-          ) : null
+          <>
+            {canRebuild ? (
+              <Button
+                variant="ghost"
+                size="compact"
+                disabled={build.starting}
+                onClick={() => void build.start()}
+              >
+                {build.starting ? "Starting…" : "Rebuild feature history"}
+              </Button>
+            ) : null}
+            <RefreshButton refresh={refresh} />
+          </>
         }
       />
       {build.error ? (

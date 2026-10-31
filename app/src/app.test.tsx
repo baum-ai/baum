@@ -207,9 +207,18 @@ it("shows GitHub states that ask for something, one merge status, and nothing fo
     Array.from(row.querySelectorAll<HTMLElement>(".inbox-status")).map((cell) => cell.textContent),
   );
   expect(states[0]).toEqual(["Review time: ~1 min", "Review: Approved", "Status: Ready"]);
-  // A ready pull request carries its Merge button beside Peek, in the row's
-  // actions; each key hint is drawn inside, shown only while Alt is held.
-  expect(rows[0]!.querySelector(".inbox-row-actions")!.textContent).toBe("MergemPeekspace");
+  // A ready pull request offers Merge after Peek in its row's menu, each with
+  // its key hint.
+  await act(async () =>
+    rows[0]!.querySelector<HTMLButtonElement>("button.row-menu-button")!.click(),
+  );
+  const menuItems = Array.from(
+    node.querySelectorAll<HTMLElement>('[role="menu"] [role^=menuitem]'),
+  );
+  expect(menuItems.slice(0, 2).map((item) => item.textContent)).toEqual(["PeekSpace", "Merge…m"]);
+  await act(async () =>
+    document.body.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })),
+  );
   expect(states[1]).toEqual([
     "Review time: ~240 min",
     "Review: Changes requested3 unresolved",
@@ -749,13 +758,25 @@ it("saves each review setting as it changes", async () => {
   expect(node.querySelector("#review-all-note")).not.toBeNull();
   expect(puts.at(-1)).toEqual({
     path: "/s/test-ns/api/automatic",
-    body: { enabled: true, backend: "claude", model: "claude-haiku-5-5", pull_requests: "all" },
+    body: {
+      enabled: true,
+      backend: "claude",
+      model: "claude-haiku-5-5",
+      effort: "",
+      pull_requests: "all",
+    },
   });
   expect(section().textContent).toContain("Saved");
   await act(async () => global.click());
   expect(puts.at(-1)).toEqual({
     path: "/s/test-ns/api/automatic",
-    body: { enabled: false, backend: "claude", model: "claude-haiku-5-5", pull_requests: "all" },
+    body: {
+      enabled: false,
+      backend: "claude",
+      model: "claude-haiku-5-5",
+      effort: "",
+      pull_requests: "all",
+    },
   });
   // A new agent starts at its default model.
   await choose(node.querySelector<HTMLSelectElement>("#review-agent")!, "codex");
@@ -797,12 +818,16 @@ it("chooses a separate agent and model for fixes", async () => {
   await choose(agent, "claude");
   expect(puts.at(-1)).toEqual({
     path: "/s/test-ns/api/automatic",
-    body: { fix_backend: "claude", fix_model: "claude-haiku-5-5" },
+    body: { fix_backend: "claude", fix_model: "claude-haiku-5-5", fix_effort: "" },
   });
   await choose(node.querySelector<HTMLSelectElement>("#fix-model")!, "claude-opus-5-5");
-  expect(puts.at(-1)!.body).toEqual({ fix_backend: "claude", fix_model: "claude-opus-5-5" });
+  expect(puts.at(-1)!.body).toEqual({
+    fix_backend: "claude",
+    fix_model: "claude-opus-5-5",
+    fix_effort: "",
+  });
   await choose(agent, "");
-  expect(puts.at(-1)!.body).toEqual({ fix_backend: "", fix_model: "" });
+  expect(puts.at(-1)!.body).toEqual({ fix_backend: "", fix_model: "", fix_effort: "" });
 });
 it("saves one change at a time and only the newest of those made meanwhile", async () => {
   history.replaceState(null, "", "/s/test-ns/?page=settings&section=fixes");
@@ -827,10 +852,14 @@ it("saves one change at a time and only the newest of those made meanwhile", asy
   await choose(agent, "codex");
   // The first save is still running, so nothing else is sent yet.
   expect(puts.map((p) => p.body)).toEqual([
-    { fix_backend: "claude", fix_model: "claude-haiku-5-5" },
+    { fix_backend: "claude", fix_model: "claude-haiku-5-5", fix_effort: "" },
   ]);
   await act(async () => held.shift()!());
-  expect(puts.map((p) => p.body).at(-1)).toEqual({ fix_backend: "codex", fix_model: "gpt-6-luna" });
+  expect(puts.map((p) => p.body).at(-1)).toEqual({
+    fix_backend: "codex",
+    fix_model: "gpt-6-luna",
+    fix_effort: "",
+  });
   expect(puts).toHaveLength(2);
   expect(agent.value).toBe("codex");
   await act(async () => held.shift()!());
@@ -1072,7 +1101,7 @@ it("shows a saved extraction model the agent ignores, and lets it be replaced", 
   await choose(section.querySelector<HTMLSelectElement>("#decisions-model")!, "gpt-6-luna");
   expect(puts.at(-1)).toEqual({
     path: "/s/test-ns/api/settings/decisions",
-    body: { enabled: true, backend: "", model: "" },
+    body: { enabled: true, backend: "", model: "", effort: "" },
   });
 });
 it("says when the harness extraction uses could not be determined in time", async () => {
@@ -1112,12 +1141,12 @@ it("saves the data extraction switch and model as they change", async () => {
   await choose(model(), "gpt-6.1-sol");
   expect(puts.at(-1)).toEqual({
     path: "/s/test-ns/api/settings/decisions",
-    body: { enabled: true, backend: "", model: "gpt-6.1-sol" },
+    body: { enabled: true, backend: "", model: "gpt-6.1-sol", effort: "" },
   });
   await act(async () => section().querySelector<HTMLInputElement>("#decisions-enabled")!.click());
   expect(puts.at(-1)).toEqual({
     path: "/s/test-ns/api/settings/decisions",
-    body: { enabled: false, backend: "", model: "gpt-6.1-sol" },
+    body: { enabled: false, backend: "", model: "gpt-6.1-sol", effort: "" },
   });
   expect(model().disabled).toBe(true);
 });
@@ -1139,7 +1168,7 @@ it("chooses the data extraction agent apart from the reviews'", async () => {
   await choose(agent, "claude");
   expect(puts.at(-1)).toEqual({
     path: "/s/test-ns/api/settings/decisions",
-    body: { enabled: true, backend: "claude", model: "" },
+    body: { enabled: true, backend: "claude", model: "", effort: "" },
   });
   expect(section.querySelector<HTMLSelectElement>("#decisions-model")!.value).toBe(
     "claude-haiku-5-5",
@@ -1161,9 +1190,58 @@ it("goes back to the reviews' agent from a chosen one", async () => {
   // The empty backend is sent, not left out, so the daemon clears the saved one.
   expect(puts.at(-1)).toEqual({
     path: "/s/test-ns/api/settings/decisions",
-    body: { enabled: true, backend: "", model: "" },
+    body: { enabled: true, backend: "", model: "", effort: "" },
   });
   expect(agent.value).toBe("");
+});
+it("saves a reasoning effort per use case", async () => {
+  history.replaceState(null, "", "/s/test-ns/?page=settings&section=reviews");
+  stubDiagnostics(async () => Response.json({ local: true, report: diagnosticsReport }));
+  const puts = stubAutomatic(demoClone, automaticOverview, {
+    backend: "codex",
+    model: "gpt-6.1-sol",
+    effort: "",
+    decisions: { enabled: true, backend: "", model: "", effective_backend: "codex" },
+  });
+  await act(async () => root.render(<App />));
+  const pick = async (group: string, label: string) => {
+    const control = node.querySelector(`[aria-label="${group}"]`)!;
+    await act(async () =>
+      [...control.querySelectorAll("button")].find((b) => b.textContent === label)!.click(),
+    );
+  };
+  await pick("Review reasoning effort", "High");
+  expect(puts.at(-1)!.body).toMatchObject({ backend: "codex", effort: "high" });
+  await pick("Extraction reasoning effort", "Low");
+  expect(puts.at(-1)).toEqual({
+    path: "/s/test-ns/api/settings/decisions",
+    body: { enabled: true, backend: "", model: "", effort: "low" },
+  });
+  await pick("Review reasoning effort", "Default");
+  expect(puts.at(-1)!.body).toMatchObject({ effort: "" });
+  // Cursor Agent names its effort in the model, so it has no effort row.
+  await choose(node.querySelector<HTMLSelectElement>("#review-agent")!, "cursor-agent");
+  expect(node.querySelector('[aria-label="Review reasoning effort"]')).toBeNull();
+});
+it("offers a fix effort only with a fix agent of its own", async () => {
+  history.replaceState(null, "", "/s/test-ns/?page=settings&section=fixes");
+  stubDiagnostics(async () => Response.json({ local: true, report: diagnosticsReport }));
+  const puts = stubAutomatic(demoClone, automaticOverview, { backend: "claude", model: "" });
+  await act(async () => root.render(<App />));
+  expect(node.querySelector('[aria-label="Fix reasoning effort"]')).toBeNull();
+  await choose(node.querySelector<HTMLSelectElement>("#fix-agent")!, "codex");
+  const control = node.querySelector('[aria-label="Fix reasoning effort"]')!;
+  await act(async () =>
+    [...control.querySelectorAll("button")].find((b) => b.textContent === "Medium")!.click(),
+  );
+  expect(puts.at(-1)!.body).toEqual({
+    fix_backend: "codex",
+    fix_model: "gpt-6-luna",
+    fix_effort: "medium",
+  });
+  // Following the reviews again drops the fix effort with the agent.
+  await choose(node.querySelector<HTMLSelectElement>("#fix-agent")!, "");
+  expect(puts.at(-1)!.body).toEqual({ fix_backend: "", fix_model: "", fix_effort: "" });
 });
 it("says when the reviews' agent cannot extract", async () => {
   history.replaceState(null, "", "/s/test-ns/?page=settings&section=reviews");
@@ -1202,7 +1280,7 @@ it("types a custom data extraction model", async () => {
   await act(async () => custom.dispatchEvent(new FocusEvent("focusout", { bubbles: true })));
   expect(puts.at(-1)).toEqual({
     path: "/s/test-ns/api/settings/decisions",
-    body: { enabled: true, backend: "", model: "gpt-6-custom" },
+    body: { enabled: true, backend: "", model: "gpt-6-custom", effort: "" },
   });
 });
 /** Opens a repository's settings dialog and returns it. */
