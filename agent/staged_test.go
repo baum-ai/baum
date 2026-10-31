@@ -634,6 +634,27 @@ func TestStageBudgets(t *testing.T) {
 	}
 }
 
+func TestStagedReviewDoesNotRaiseExhaustedOutlineBudgets(t *testing.T) {
+	for _, field := range []string{"calls", "tokens"} {
+		t.Run(field, func(t *testing.T) {
+			generator, run, backend := stagedFixture(t, nil, nil)
+			if field == "calls" {
+				run.Budgets.MaxCalls = 0
+			} else {
+				run.Budgets.MaxTokens = 0
+			}
+			_, _, err := generator.StagedReview(context.Background(), run)
+			want := GenerationBudgetExceededReason("model calls")
+			if field == "tokens" {
+				want = GenerationBudgetExceededReason("tokens")
+			}
+			if err == nil || err.Error() != want || len(backend.calls) != 0 {
+				t.Fatalf("err = %v, calls = %d", err, len(backend.calls))
+			}
+		})
+	}
+}
+
 // A run without enough calls for the context still writes the review.
 func TestStagedReviewWithoutBudgetForTheContext(t *testing.T) {
 	generator, run, backend := stagedFixture(t, nil, nil)

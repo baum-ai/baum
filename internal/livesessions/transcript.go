@@ -106,6 +106,10 @@ type cached struct {
 	version string
 	body    []byte
 	err     error
+	// images, source and vendor are what Answer says of them.
+	images map[string]promptImages
+	source string
+	vendor vendors.Slug
 	// found is the rollout a lookup by id found, so the store is scanned
 	// once per session.
 	found string
@@ -121,6 +125,23 @@ type Answer struct {
 	Version string
 	// Body is the rendered transcript.
 	Body []byte
+	// Images are the media types of the images pasted with each prompt, by
+	// its turn, in order; nil when none were.
+	Images map[string][]string
+
+	// images says where each prompt's images are in source, the transcript
+	// file of vendor's they are read from (Image).
+	images map[string]promptImages
+	source string
+	vendor vendors.Slug
+}
+
+// answer is the cached transcript as served.
+func (c *cached) answer(session Session) Answer {
+	return Answer{
+		Session: session, Version: c.version, Body: c.body,
+		Images: imageTypesByTurn(c.images), images: c.images, source: c.source, vendor: c.vendor,
+	}
 }
 
 func (t *Transcripts) now() time.Time {
@@ -187,7 +208,7 @@ func (t *Transcripts) serve(ctx context.Context, session Session, path string, u
 	}
 	now := t.now()
 	if (c.body != nil || c.err != nil) && now.Sub(c.checked) < every {
-		return Answer{Session: session, Version: c.version, Body: c.body}, c.err
+		return c.answer(session), c.err
 	}
 	c.checked = now
 	src, err := t.locate(agent, id, path, c)
@@ -201,9 +222,9 @@ func (t *Transcripts) serve(ctx context.Context, session Session, path string, u
 		return Answer{Session: session}, c.err
 	}
 	if version == c.version && c.body != nil {
-		return Answer{Session: session, Version: c.version, Body: c.body}, nil
+		return c.answer(session), nil
 	}
-	body, err := t.build(ctx, src, transcript.Meta{ID: id, Vendor: string(src.Vendor), Branch: session.Branch})
+	body, images, err := t.build(ctx, src, transcript.Meta{ID: id, Vendor: string(src.Vendor), Branch: session.Branch})
 	switch {
 	case ctx.Err() != nil:
 		// Looked at again by the next request.
@@ -213,7 +234,7 @@ func (t *Transcripts) serve(ctx context.Context, session Session, path string, u
 		// A file caught mid-write keeps the last good transcript; the next
 		// change is read again.
 		t.logger().Warn("live session transcript not rebuilt", "agent", agent, "error", err)
-		return Answer{Session: session, Version: c.version, Body: c.body}, nil
+		return c.answer(session), nil
 	case err != nil:
 		var missing *Unavailable
 		if !errors.As(err, &missing) {
@@ -224,7 +245,8 @@ func (t *Transcripts) serve(ctx context.Context, session Session, path string, u
 		return Answer{Session: session}, c.err
 	}
 	c.version, c.body, c.err = version, body, nil
-	return Answer{Session: session, Version: version, Body: body}, nil
+	c.images, c.source, c.vendor = images, src.main, src.Vendor
+	return c.answer(session), nil
 }
 
 // entry is the session's cache entry, made when there is none. The sessions
@@ -361,7 +383,13 @@ func Locate(home, cursorStore, agent, id, path string) (Location, error) {
 	case AgentClaudeCode:
 		root := filepath.Join(home, ".claude", "projects")
 		if path == "" {
-			return Location{}, unavailable("Claude Code did not say where this session's transcript is.")
+			// A session read back from StateFile keeps no path; its
+			// transcript is found by its id.
+			found, ok := claudeTranscriptByID(root, id)
+			if !ok {
+				return Location{}, unavailable("Claude Code did not say where this session's transcript is.")
+			}
+			path = found
 		}
 		main, err := inStore(root, path, func(name string) bool { return strings.HasSuffix(name, ".jsonl") })
 		if err != nil {
@@ -484,13 +512,22 @@ func rootOf(path, id string) bool {
 }
 
 // build reads the session's graph with the mapper discovery uses and renders
-// it.
-func (t *Transcripts) build(ctx context.Context, src Location, meta transcript.Meta) ([]byte, error) {
+// it, and finds the images pasted with its prompts. Images that cannot be
+// read leave the transcript without them.
+func (t *Transcripts) build(ctx context.Context, src Location, meta transcript.Meta) ([]byte, map[string]promptImages, error) {
 	graph, err := src.Graph()
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	return t.Render(ctx, graph, meta)
+	body, err := t.Render(ctx, graph, meta)
+	if err != nil {
+		return nil, nil, err
+	}
+	images, err := findImages(src, graph)
+	if err != nil {
+		t.logger().Warn("live session images not read", "agent", meta.Vendor, "error", err)
+	}
+	return body, images, nil
 }
 
 // Graph reads the session's graph with the mapper discovery uses.

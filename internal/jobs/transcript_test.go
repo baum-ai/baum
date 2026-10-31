@@ -53,8 +53,8 @@ func TestTranscriptMasksAndCuts(t *testing.T) {
 		t.Errorf("title of %d bytes", len(title))
 	}
 	info, _ := os.Stat(filepath.Join(dir, "job.jsonl"))
-	if info.Mode().Perm() != 0o600 {
-		t.Errorf("mode %v", info.Mode())
+	if !privatefs.PrivateFile(filepath.Join(dir, "job.jsonl"), info) {
+		t.Errorf("transcript is not private: %v", info.Mode())
 	}
 }
 
@@ -132,6 +132,7 @@ func TestHTTPTranscript(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	defer w.Close()
 	for i := range transcriptPage + 2 {
 		w.Add(context.Background(), agent.TranscriptEntry{Kind: "message", Text: fmt.Sprint("step ", i+1)})
 	}

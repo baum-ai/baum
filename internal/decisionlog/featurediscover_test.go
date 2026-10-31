@@ -18,8 +18,9 @@ import (
 	"github.com/baum-ai/baum/internal/locallink/linktest"
 )
 
-// discoveryModel is the review model discovery runs with in these tests.
-const discoveryModel = "claude-opus-5-5"
+// discoveryModel is the data extraction model discovery runs with in these
+// tests: claude's default, not the review model.
+const discoveryModel = "claude-haiku-5-5"
 
 // discoveryClone is a clone of acme/widgets whose origin leads to a local
 // repository with src/search/a.go and README.md on main.
@@ -47,14 +48,14 @@ func discoveryClone(t *testing.T) string {
 const discoveryReply = `{"features":[{"title":"Widget search","description":"Find widgets.","paths":["src/search/"],"examples":[1]},` +
 	`{"title":"Billing","description":"Pay for widgets.","paths":["billing/"],"examples":[]}]}`
 
-// discoveryFixture is a fixture whose review model is priced, with three
+// discoveryFixture is a fixture whose extraction model is priced, with three
 // merged pull requests (two under src/search, one in docs) and a clone, and
 // a batch reply that joins a pull request under src/search to the seed
 // "Widget search" when it is offered, and starts a feature otherwise.
 func discoveryFixture(t *testing.T) (*featureFixture, string) {
 	f := newFeatureFixture(t)
 	f.clock.now = t0.Add(400 * 24 * time.Hour)
-	f.worker.Config.Model = discoveryModel
+	f.worker.Config.Model = "claude-opus-5-5"
 	f.pull(1, "Search box", f.clock.now.Add(-300*24*time.Hour), "h1", []string{"src/search/a.go"}, "a private description")
 	f.pull(2, "Search ranking", f.clock.now.Add(-2*24*time.Hour), "h2", []string{"src/search/b.go"})
 	f.pull(3, "Docs", f.clock.now.Add(-24*time.Hour), "h3", []string{"docs/x.md"})
@@ -114,7 +115,8 @@ func (f *featureFixture) count(query string, args ...any) int {
 	return n
 }
 
-// A first build runs discovery through the review harness over a run
+// A first build runs discovery with the data extraction backend and model
+// through the review harness over a run
 // directory of the default branch's head and the history digest, within the
 // discovery budgets, stores the taxonomy and seeds the version from it. The
 // seeds stay out of the ranking and are offered by path in the seeded batch
@@ -130,7 +132,7 @@ func TestBuildDiscoversAndSeeds(t *testing.T) {
 			t.Errorf("the run directory lacks the head checkout: %v", err)
 		}
 		info, err := os.Stat(filepath.Join(req.Directory, "history.jsonl"))
-		if err != nil || info.Mode().Perm() != 0o400 {
+		if err != nil || !info.Mode().IsRegular() || info.Mode().Perm()&0o222 != 0 {
 			t.Fatalf("history.jsonl: %v, %v", info, err)
 		}
 		history, _ := os.ReadFile(filepath.Join(req.Directory, "history.jsonl"))
@@ -156,7 +158,8 @@ func TestBuildDiscoversAndSeeds(t *testing.T) {
 		t.Fatalf("the task ran with %d tokens and %d calls, want a review run's %+v", task.MaxTokens, task.MaxCalls, want)
 	}
 	if !report.Current || report.Discovery == nil || report.Discovery.TaxonomyID == 0 || report.Taxonomy != report.Discovery.TaxonomyID ||
-		report.Seeds != 2 || report.SeedsJoined != 1 || report.SeedsDeleted != 1 || report.Features != 2 || report.Unseeded != "" {
+		report.Seeds != 2 || report.SeedsJoined != 1 || report.SeedsDeleted != 1 || report.Features != 2 || report.Unseeded != "" ||
+		report.Discovery.Model != discoveryModel {
 		t.Fatalf("report = %+v, discovery %+v", report, report.Discovery)
 	}
 	if f.count(`SELECT COUNT(*) FROM capture_attempt WHERE stage=? AND state=? AND cost_usd > 0`, StageDiscovery, AttemptSucceeded) != 1 ||

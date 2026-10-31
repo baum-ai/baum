@@ -3,10 +3,12 @@ package reviewruns
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 	"time"
 
 	"github.com/baum-ai/baum/agent"
+	"github.com/baum-ai/baum/internal/privatefs"
 	"github.com/baum-ai/baum/internal/store"
 )
 
@@ -117,10 +119,45 @@ func TestCreateMakesAPrivateRunDirectory(t *testing.T) {
 		t.Fatal(err)
 	}
 	info, err := os.Stat(dir)
-	if err != nil || info.Mode().Perm() != 0o700 || !candidate(root, dir) {
+	if err != nil || !info.IsDir() || !candidate(root, dir) {
 		t.Fatalf("%v %v candidate=%v", info, err, candidate(root, dir))
 	}
-	if info, err = os.Stat(root); err != nil || info.Mode().Perm() != 0o700 {
-		t.Errorf("root: %v %v", info, err)
+	for _, parent := range []string{root, dir} {
+		if info, err := os.Stat(parent); err != nil || (runtime.GOOS != "windows" && info.Mode().Perm() != 0o700) {
+			t.Fatalf("directory is not private: %v %v", info, err)
+		}
+		path := filepath.Join(parent, "privacy-test")
+		if err := os.WriteFile(path, nil, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		info, err := os.Stat(path)
+		if err != nil || !privatefs.PrivateFile(path, info) {
+			t.Errorf("%s did not keep its file private: %v %v", parent, info, err)
+		}
+	}
+}
+
+func TestRunUnderAliasedRoot(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "runs")
+	if err := os.Mkdir(root, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	alias := filepath.Join(t.TempDir(), "root")
+	if err := os.Symlink(root, alias); err != nil {
+		t.Fatal(err)
+	}
+	created, err := Create(alias)
+	if err != nil || !candidate(root, created) {
+		t.Fatalf("Create through alias: %s %v", created, err)
+	}
+	dir := makeRun(t, alias, agent.RunDirPrefix+"alias")
+	if !candidate(root, dir) || !Use(root, dir, time.Now()) {
+		t.Fatal("a run under an aliased parent was rejected")
+	}
+	if err := Remove(root, dir); err != nil {
+		t.Fatal(err)
+	}
+	if exists(dir) {
+		t.Fatal("the run under an aliased parent stayed")
 	}
 }

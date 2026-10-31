@@ -44,7 +44,11 @@ func (f *fakeExecutor) Prepare(_ context.Context, item Item) (Prepared, string, 
 	if version == "" {
 		version = "2026-10-01"
 	}
-	return Prepared{ConfigDigest: f.digest, PriceVersion: version, Item: item, Repository: "org/repo", HeadSHA: f.head, Backend: backend, Model: "claude-sonnet-4-5", RequiresIsolationConfirmation: f.restricted}, version, nil
+	p := Prepared{ConfigDigest: f.digest, PriceVersion: version, Item: item, Repository: "org/repo", HeadSHA: f.head, Backend: backend, Model: "claude-sonnet-4-5", RequiresIsolationConfirmation: f.restricted}
+	if item.Group != "" {
+		p.Members = "1@first,2@first"
+	}
+	return p, version, nil
 }
 func (f *fakeExecutor) Execute(ctx context.Context, p Prepared, progress func(Progress)) (*float64, error) {
 	f.started <- p
@@ -144,6 +148,104 @@ func TestQueuedReplacementBatchEstimateAndNoParallelPR(t *testing.T) {
 	case <-f.started:
 		t.Fatal("concurrency limit exceeded")
 	default:
+	}
+}
+func TestConcurrencyLimitsRunningJobsAndChangesLive(t *testing.T) {
+	f := &fakeExecutor{head: "first", started: make(chan Prepared, 10), release: make(chan struct{})}
+	q, err := Open(filepath.Join(privateDir(t), "jobs.json"), f, 2, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(q.Close)
+	started := func(want int) {
+		t.Helper()
+		for range want {
+			select {
+			case <-f.started:
+			case <-time.After(3 * time.Second):
+				t.Fatal("job did not start")
+			}
+		}
+		select {
+		case p := <-f.started:
+			t.Fatalf("job started beyond the limit: %+v", p.Item)
+		case <-time.After(50 * time.Millisecond):
+		}
+	}
+	batch := estimate(t, q, "batch", Item{Clone: "clone", PR: 1}, Item{Clone: "clone", PR: 2}, Item{Clone: "clone", PR: 3}, Item{Clone: "clone", PR: 4})
+	if _, err := q.Submit(context.Background(), batch.ID, true, false); err != nil {
+		t.Fatal(err)
+	}
+	started(2)
+	if err := q.SetConcurrency(3); err != nil {
+		t.Fatal(err)
+	}
+	started(1)
+	// Lowering the limit stops nothing; the last job waits until one runs.
+	if err := q.SetConcurrency(1); err != nil {
+		t.Fatal(err)
+	}
+	f.release <- struct{}{}
+	f.release <- struct{}{}
+	started(0)
+	f.release <- struct{}{}
+	started(1)
+	for _, n := range []int{0, 5} {
+		if q.SetConcurrency(n) == nil {
+			t.Errorf("concurrency %d accepted", n)
+		}
+	}
+}
+func TestJobWaitsWhileAnotherOfItsPullRequestRuns(t *testing.T) {
+	f := &fakeExecutor{head: "first", started: make(chan Prepared, 10), release: make(chan struct{})}
+	q, err := Open(filepath.Join(privateDir(t), "jobs.json"), f, 4, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(q.Close)
+	submit := func(item Item) {
+		t.Helper()
+		if _, err := q.Submit(context.Background(), estimate(t, q, "single", item).ID, true, false); err != nil {
+			t.Fatal(err)
+		}
+	}
+	next := func() Item {
+		t.Helper()
+		select {
+		case p := <-f.started:
+			return p.Item
+		case <-time.After(3 * time.Second):
+			t.Fatal("job did not start")
+		}
+		return Item{}
+	}
+	submit(Item{Clone: "clone", PR: 1})
+	submit(Item{Clone: "clone", PR: 1, Kind: KindFix})
+	submit(Item{Clone: "clone", PR: 2})
+	// The fix of pull request 1 waits for its review; pull request 2 does not.
+	if a, b := next(), next(); a.PR+b.PR != 3 || a.Kind != "" || b.Kind != "" {
+		t.Fatalf("started %+v and %+v", a, b)
+	}
+	select {
+	case p := <-f.started:
+		t.Fatalf("started beside its pull request's review: %+v", p.Item)
+	case <-time.After(50 * time.Millisecond):
+	}
+	f.release <- struct{}{}
+	f.release <- struct{}{}
+	if fix := next(); fix.PR != 1 || fix.Kind != KindFix {
+		t.Fatalf("started %+v", fix)
+	}
+	// A group's review waits for a fix of a member.
+	submit(Item{Clone: "clone", Group: "stack"})
+	select {
+	case p := <-f.started:
+		t.Fatalf("group started beside a member's fix: %+v", p.Item)
+	case <-time.After(50 * time.Millisecond):
+	}
+	f.release <- struct{}{}
+	if group := next(); group.Group != "stack" {
+		t.Fatalf("started %+v", group)
 	}
 }
 func TestSameHeadWithChangedInputsSupersedesQueuedJob(t *testing.T) {

@@ -85,6 +85,23 @@ function HighlightedCodeBlock({
   );
 }
 
+/** A fenced block's code, coloured when its fence names a language the
+ *  highlighter knows and it is within the limits. */
+function codeBlock(className: string | undefined, children: ReactNode) {
+  // Only a fence's own `language-*` class names a language.
+  const info = /(?:^|\s)language-(\S+)/.exec(className ?? "")?.[1];
+  const lang = languageForFence(info);
+  const code = textOf(children);
+  // Over the limits it never schedules highlighting.
+  const highlight =
+    lang && code !== null && withinHighlightLimits(code.split("\n").length, code.length);
+  return highlight ? (
+    <HighlightedCodeBlock code={code} lang={lang} className={className} />
+  ) : (
+    <code className={className}>{children}</code>
+  );
+}
+
 const COMPONENTS: Components = {
   a: ({ href, children }) => (
     <a href={href} target="_blank" rel="noreferrer" className="text-(--text-link) underline">
@@ -107,7 +124,7 @@ const COMPONENTS: Components = {
   h2: ({ children }) => <p className="font-semibold">{children}</p>,
   h3: ({ children }) => <p className="font-medium">{children}</p>,
   pre: ({ children }) => (
-    <pre className="overflow-x-auto rounded-(--radius-sm) bg-(--surface-sunken) p-2 text-base">
+    <pre className="overflow-x-auto rounded-(--radius-sm) bg-(--code-fill) p-2 text-base">
       {children}
     </pre>
   ),
@@ -118,23 +135,9 @@ const COMPONENTS: Components = {
   // its language class (if any) and leaves the box styling to `pre` above;
   // only a genuinely inline span gets its own pill.
   code: ({ className, children }) => {
-    const text = String(children);
-    if (text.includes("\n")) {
-      // Only a fence's own `language-*` class names a language.
-      const info = /(?:^|\s)language-(\S+)/.exec(className ?? "")?.[1];
-      const lang = languageForFence(info);
-      const code = textOf(children);
-      // Over the limits it never schedules highlighting.
-      const highlight =
-        lang && code !== null && withinHighlightLimits(code.split("\n").length, code.length);
-      return highlight ? (
-        <HighlightedCodeBlock code={code} lang={lang} className={className} />
-      ) : (
-        <code className={className}>{children}</code>
-      );
-    }
+    if (String(children).includes("\n")) return codeBlock(className, children);
     return (
-      <code className="rounded-(--radius-sm) bg-(--surface-sunken) px-1 py-0.5 text-base">
+      <code className="rounded-(--radius-sm) bg-(--code-fill) px-1 py-0.5 text-base">
         {children}
       </code>
     );
@@ -175,11 +178,84 @@ const COMPONENTS: Components = {
   ),
 };
 
+/** Long text read on its own, such as an agent's reply in a transcript:
+ *  headings set apart in the heading font with more room above them than
+ *  below, code spans on a fainter fill, quieter list markers, and lists
+ *  spaced by depth. */
+const READING_COMPONENTS: Components = {
+  ...COMPONENTS,
+  // A reply's title, over the sections a level down: heavier, and ruled off.
+  h1: ({ children }) => (
+    <h3 className="mt-6 border-b border-(--border-subtle) pb-2 font-(family-name:--font-heading) text-lg font-extrabold text-(--text-primary) first:mt-0">
+      {children}
+    </h3>
+  ),
+  h2: ({ children }) => (
+    <h3 className="mt-6 font-(family-name:--font-heading) text-lg font-bold text-(--text-primary) first:mt-0">
+      {children}
+    </h3>
+  ),
+  h3: ({ children }) => (
+    <h4 className="mt-5 text-base font-semibold text-(--text-primary) first:mt-0">{children}</h4>
+  ),
+  h4: ({ children }) => (
+    <h5 className="mt-4 text-base font-semibold text-(--text-primary) first:mt-0">{children}</h5>
+  ),
+  ul: ({ children }) => (
+    <ul className="list-disc space-y-1.5 pl-5 marker:text-(--text-tertiary) [&_ol]:mt-1 [&_ol]:space-y-1 [&_ul]:mt-1 [&_ul]:space-y-1">
+      {children}
+    </ul>
+  ),
+  ol: ({ children }) => (
+    <ol className="list-decimal space-y-1.5 pl-5 marker:text-(--text-tertiary) [&_ol]:mt-1 [&_ol]:space-y-1 [&_ul]:mt-1 [&_ul]:space-y-1">
+      {children}
+    </ol>
+  ),
+  // Cells start at the top, the header on a faint fill. A path in a cell
+  // breaks after its slashes (pathBreaks), so its column stays narrow
+  // without splitting a name.
+  table: ({ children }) => (
+    <div className="relative overflow-x-auto">
+      <table className="w-full border-collapse text-base [overflow-wrap:normal]">{children}</table>
+    </div>
+  ),
+  th: ({ children }) => (
+    <th className="border border-(--border-subtle) bg-(--code-fill) px-3 py-2 text-left align-bottom font-semibold">
+      {children}
+    </th>
+  ),
+  td: ({ children }) => (
+    <td className="min-w-32 border border-(--border-subtle) px-3 py-2 align-top">{children}</td>
+  ),
+  code: ({ className, children }) => {
+    if (String(children).includes("\n")) return codeBlock(className, children);
+    return (
+      <code className="rounded-(--radius-xs) bg-(--code-fill) px-1 py-px font-mono text-base text-(--text-primary)">
+        {pathBreaks(children)}
+      </code>
+    );
+  },
+};
+
+/** A code span's text with a break allowed after each slash, so a long path
+ *  wraps between its folders rather than overflowing or splitting a name. */
+function pathBreaks(children: ReactNode): ReactNode {
+  const text = textOf(children);
+  if (text === null || !text.includes("/")) return children;
+  return text.split(/(?<=\/)/).map((part, index) => (
+    <Fragment key={index}>
+      {index > 0 ? <wbr /> : null}
+      {part}
+    </Fragment>
+  ));
+}
+
 export function Markdown({
   children,
   className,
   title,
   html = true,
+  reading = false,
 }: {
   children: string;
   className?: string;
@@ -188,9 +264,11 @@ export function Markdown({
    *  text that talks about markup rather than containing it, such as an
    *  agent's reply naming `<Button>`: the tag then reads as written. */
   html?: boolean;
+  /** Long text read on its own (READING_COMPONENTS). */
+  reading?: boolean;
 }) {
   return (
-    <div className={cn("space-y-2", className)} title={title}>
+    <div className={cn(reading ? "space-y-3" : "space-y-2", className)} title={title}>
       {/* GitHub renders every line break in a comment body, not only ones
        *  followed by a blank line or two trailing spaces the way strict
        *  CommonMark does. Without `remark-breaks`, an ordinarily-typed
@@ -198,7 +276,7 @@ export function Markdown({
       <ReactMarkdown
         remarkPlugins={[remarkGfm, remarkBreaks]}
         rehypePlugins={html ? REHYPE_PLUGINS : undefined}
-        components={COMPONENTS}
+        components={reading ? READING_COMPONENTS : COMPONENTS}
       >
         {children}
       </ReactMarkdown>
@@ -217,7 +295,7 @@ const INLINE_COMPONENTS: Components = {
   a: ({ children }) => <>{children}</>,
   br: () => " ",
   code: ({ children }) => (
-    <code className="rounded-(--radius-sm) bg-(--surface-sunken) px-1 py-0.5">{children}</code>
+    <code className="rounded-(--radius-sm) bg-(--code-fill) px-1 py-0.5">{children}</code>
   ),
 };
 

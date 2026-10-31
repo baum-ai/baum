@@ -51,16 +51,16 @@ func DefaultBackendsFor(cfg config.Config) Backends {
 	env := cfg.AgentEnviron()
 	return Backends{
 		Claude: func(model string) CheckedBackend {
-			return withExplicitPath(&claude.Backend{Binary: claudePath, Model: model, Profile: claude.User, Env: env}, config.BackendClaude, claudePath)
+			return withExplicitPath(&claude.Backend{Binary: claudePath, Model: model, Profile: claude.User, Effort: cfg.Effort, Env: env}, config.BackendClaude, claudePath)
 		},
 		Codex: func(model string) CheckedBackend {
-			return withExplicitPath(&codex.Backend{Binary: codexPath, Model: model, Profile: codex.Local, Env: env}, config.BackendCodex, codexPath)
+			return withExplicitPath(&codex.Backend{Binary: codexPath, Model: model, Profile: codex.Local, Effort: cfg.Effort, Env: env}, config.BackendCodex, codexPath)
 		},
 		CursorAgent: func(model string) CheckedBackend {
 			return withExplicitPath(&cursor.Backend{Binary: cursorPath, Model: model, Env: env}, config.BackendCursorAgent, cursorPath)
 		},
 		Anthropic: func(model string) CheckedBackend {
-			return &anthropic.Backend{APIKey: cfg.AnthropicAPIKey, Model: model}
+			return &anthropic.Backend{APIKey: cfg.AnthropicAPIKey, Model: model, Effort: cfg.Effort}
 		},
 	}
 }

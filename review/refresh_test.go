@@ -38,6 +38,19 @@ func refreshFixture(t *testing.T) (*DocumentValidator, *bundlepkg.Bundle, []byte
 	return validator, bundle, published
 }
 
+func TestSpliceSectionsKeepsRefreshedEvidence(t *testing.T) {
+	validator, bundle, completed := refreshFixture(t)
+	bundle.Checks[0].Conclusion = "failure"
+	latest, err := validator.Refresh(completed, bundle, time.Now())
+	checkNoError(t, err)
+	sectionID := mustDecode(t, completed)["sections"].([]any)[0].(map[string]any)["id"].(string)
+	spliced, err := validator.SpliceSections(latest, completed, []string{sectionID})
+	checkNoError(t, err)
+	section := mustDecode(t, spliced)["sections"].([]any)[0].(map[string]any)
+	checkEqual(t, "failed", section["evidence"].([]any)[0].(map[string]any)["status"])
+	checkEqual(t, float64(1), section["derived"].(map[string]any)["evidence_summary"].(map[string]any)["failed"])
+}
+
 func TestRefreshUpdatesChecksSessionsAndDerivedSummaries(t *testing.T) {
 	for _, tc := range []struct{ conclusion, status string }{{"success", "verified"}, {"failure", "failed"}, {"pending", "pending"}, {"neutral", "skipped"}, {"error", "failed"}} {
 		t.Run(tc.conclusion, func(t *testing.T) {

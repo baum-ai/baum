@@ -117,6 +117,49 @@ func TestLocalAPISelectorsAndSecretFreeSettings(t *testing.T) {
 	}
 }
 
+func TestLocalAPIJobConcurrency(t *testing.T) {
+	registry, err := repos.Open(filepath.Join(t.TempDir(), "repos.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = registry.Close() }()
+	applied := 0
+	handler := LocalAPI{Registry: registry, Config: config.Default(), ConcurrencyChanged: func(n int) { applied = n }}.Handler()
+	defer handler.Close()
+	current := func() int {
+		t.Helper()
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, httptest.NewRequest("GET", "/api/settings", nil))
+		var body struct {
+			JobConcurrency int `json:"job_concurrency"`
+		}
+		if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+			t.Fatal(rec.Body.String(), err)
+		}
+		return body.JobConcurrency
+	}
+	put := func(body string) int {
+		t.Helper()
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, httptest.NewRequest("PUT", "/api/settings/job-concurrency", strings.NewReader(body)))
+		return rec.Code
+	}
+	if n := current(); n != repos.MaxJobConcurrency {
+		t.Fatalf("default = %d", n)
+	}
+	if code := put(`{"job_concurrency":2}`); code != 200 || applied != 2 || current() != 2 {
+		t.Fatalf("PUT = %d, applied %d, now %d", code, applied, current())
+	}
+	for _, body := range []string{`{"job_concurrency":0}`, `{"job_concurrency":5}`, `{}`, `{"concurrency":2}`} {
+		if code := put(body); code != 400 {
+			t.Errorf("%s = %d", body, code)
+		}
+	}
+	if applied != 2 || current() != 2 {
+		t.Fatalf("a refused PUT changed it: applied %d, now %d", applied, current())
+	}
+}
+
 func TestLocalAPIAgentEnvironment(t *testing.T) {
 	registry, err := repos.Open(filepath.Join(t.TempDir(), "repos.sqlite"))
 	if err != nil {

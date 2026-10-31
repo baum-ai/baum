@@ -1,6 +1,7 @@
 package review
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"math"
@@ -396,11 +397,48 @@ func (v *DocumentValidator) SpliceSections(latest, completed []byte, ids []strin
 		if index < 0 || !ok {
 			return nil, fmt.Errorf("section %s is not in both documents", id)
 		}
+		// A refresh may have changed checks or other evidence while details were
+		// being written. Keep its assessment for evidence already in the saved
+		// section; newly written evidence cannot claim a verified result from
+		// the older snapshot.
+		current := now.Sections[index]
+		statuses := make(map[string]documentEvidence, len(current.Evidence))
+		for _, evidence := range current.Evidence {
+			statuses[evidence.ID] = evidence
+		}
+		counts := map[string]int{}
+		for i := range section.Evidence {
+			evidence := &section.Evidence[i]
+			if saved, ok := statuses[evidence.ID]; ok && saved.Kind == evidence.Kind && saved.Claim == evidence.Claim && sameAnchors(saved.Anchors, evidence.Anchors) {
+				evidence.Status, evidence.Granularity = saved.Status, saved.Granularity
+			} else if evidence.Status == "verified" || evidence.Status == "observed" {
+				evidence.Status, evidence.Granularity = "asserted", nil
+			}
+			if section.Derived.State != "stale" {
+				counts[evidence.Status]++
+			}
+		}
+		section.Derived.EvidenceSummary = counts
+		section.Derived.Reviewers = current.Derived.Reviewers
 		now.Sections[index] = section
 	}
 	now.Summary.RiskScore, now.Summary.ReviewMinutes, now.Stats.RiskLOC = done.Summary.RiskScore, done.Summary.ReviewMinutes, done.Stats.RiskLOC
 	countFindings(now)
 	return v.encodeFullDocument(now)
+}
+
+func sameAnchors(a, b []documentAnchor) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		left, _ := json.Marshal(a[i])
+		right, _ := json.Marshal(b[i])
+		if !bytes.Equal(left, right) {
+			return false
+		}
+	}
+	return true
 }
 
 // StoredOutline returns the outline and the context of a stored document

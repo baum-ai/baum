@@ -45,7 +45,7 @@ import {
 } from "./api";
 import { FixNotice, FixRuns, type FixState, type FixChat } from "./fix";
 import { CloneActions } from "./repositories";
-import { Notice } from "./shell";
+import { Notice, RefreshButton } from "./shell";
 import { LiveSessions } from "./sessions";
 import { PullRequestDecisionsList } from "./decisions";
 import { LoadingStatus } from "./nine-dots";
@@ -132,6 +132,7 @@ export function LocalReview({
   job,
   detailsJob,
   changed,
+  refresh,
   live = [],
   groups = [],
   fix,
@@ -150,6 +151,8 @@ export function LocalReview({
   /** The latest retry of this review's failed section details. */
   detailsJob?: Job;
   changed: () => Promise<void>;
+  /** Reads the pull request from GitHub again, from the head's refresh. */
+  refresh?: () => Promise<void>;
   /** Agent sessions in progress; those of this pull request are listed. */
   live?: LiveSession[];
   /** The review groups this pull request belongs to. */
@@ -167,21 +170,21 @@ export function LocalReview({
   const pr = entry.pull_request;
   const url = useUrlState();
   const back = backTo(url.search);
-  // A pull request opens on the walkthrough's overview, the tour one step
-  // in; walk=full, or a link to a place in the review (pane=…), is the full
-  // review. walk=all named the list view the walkthrough once had.
+  // One of the head's actions, on the walkthrough and on the full review alike.
+  const refreshButton = refresh ? (
+    <RefreshButton refresh={refresh} label="Refresh from GitHub" />
+  ) : undefined;
+  // A pull request opens on the full review; walk=landing is the
+  // walkthrough's overview and walk=tour the tour one step in. walk=all named
+  // the list view the walkthrough once had, and walk=full the full review when
+  // the overview was the default.
   const walk = url.search.get("walk");
   const walkMode: WalkMode | null =
-    walk === "full" || (!walk && url.search.has("pane"))
-      ? null
-      : walk === "tour" || walk === "all"
-        ? "tour"
-        : "landing";
+    walk === "tour" || walk === "all" ? "tour" : walk === "landing" ? "landing" : null;
   const setWalk = (mode: WalkMode | null) =>
     url.update((current) => {
-      if (mode === "tour") current.set("walk", "tour");
-      else if (mode === "landing") current.delete("walk");
-      else current.set("walk", "full");
+      if (mode) current.set("walk", mode);
+      else current.delete("walk");
       current.delete("pane");
       return current;
     });
@@ -370,27 +373,42 @@ export function LocalReview({
   // Why the last retry did not write the details, said until it is dismissed.
   const [headChanged, setHeadChanged] = useState(false);
   const [retryError, setRetryError] = useState("");
+  const [confirmingIsolation, setConfirmingIsolation] = useState(false);
+  const [retryStarting, setRetryStarting] = useState(false);
+  const isolationDialog = useRef<HTMLDialogElement>(null);
+  useEffect(() => {
+    if (confirmingIsolation) isolationDialog.current?.showModal();
+  }, [confirmingIsolation]);
   const [watchedDetails, setWatchedDetails] = useState("");
   useEffect(() => {
     if (detailsJob && isActiveJob(detailsJob)) setWatchedDetails(detailsJob.id);
   }, [detailsJob?.id, detailsJob?.state]);
-  const retryDetails = async () => {
+  const retryDetails = async (confirmIsolation = false) => {
     if (!doc) return;
     setHeadChanged(false);
     setRetryError("");
+    setRetryStarting(true);
     try {
       await request("api/jobs", {
         items: [{ clone, pr: pr.number, kind: "details", version: doc.review.version }],
         mode: "single",
+        ...(confirmIsolation ? { confirm_isolation: true } : {}),
       });
+      setConfirmingIsolation(false);
       await changed();
     } catch (e) {
+      if (e instanceof LocalRequestError && e.code === "isolation_required") {
+        setConfirmingIsolation(true);
+        return;
+      }
       if (
         e instanceof LocalRequestError &&
         (e.code === "head_changed" || e.code === "base_changed")
       )
         setHeadChanged(true);
       else setRetryError(e instanceof Error ? e.message : "The details could not be retried.");
+    } finally {
+      setRetryStarting(false);
     }
   };
   // What the saved review lacks: sections' details and the context. A review
@@ -496,6 +514,8 @@ export function LocalReview({
   const facts = useFacts(clone, pr.number, pr.head_sha, revision + factsRetry, wantsFacts);
   const shownFacts = !doc && facts.state === "ready" ? facts.facts : null;
   const factsHead = shownFacts?.review.head ?? "";
+  const factsBase = shownFacts?.review.base ?? "";
+  const factsMergeBase = shownFacts?.review.merge_base ?? "";
   // Each read names the head of the facts shown, so a newer build of them
   // never answers for what is on screen.
   const factsSelector = factsQuery(clone, pr.number, factsHead);
@@ -515,11 +535,11 @@ export function LocalReview({
       });
     return () => abort.abort();
   }, [factsHead, factsSelector, ended]);
-  // The facts' patches, kept per head: a new head is new patches.
+  // A new comparison base changes patches even when the head stays the same.
   const factsPatches = useMemo(() => {
     const cache = new Map<string, Promise<string | null>>();
     return (path: string) => {
-      const key = `${factsHead}:${path}`;
+      const key = `${factsHead}:${factsBase}:${factsMergeBase}:${path}`;
       let pending = cache.get(key);
       if (!pending) {
         pending = request<{ patch: string | null }>(
@@ -534,7 +554,7 @@ export function LocalReview({
       }
       return pending;
     };
-  }, [factsSelector, factsHead]);
+  }, [factsSelector, factsHead, factsBase, factsMergeBase]);
   const factsMode = !doc && wantsFacts && facts.state !== "unavailable";
   const lists = viewedDocument
     ? sessionLists(sessions, viewedDocument)
@@ -595,6 +615,7 @@ export function LocalReview({
                 }}
                 toDraft={toDraft}
                 drafted={() => setToDraft(false)}
+                refresh={refreshButton}
                 actions={
                   <>
                     {fix && fixLabelText ? (
@@ -694,7 +715,7 @@ export function LocalReview({
                 contextPending={contextPending}
                 onRetryDetails={
                   doc && !showingDraft && !generating && failedSections.length > 0
-                    ? retryDetails
+                    ? () => retryDetails()
                     : undefined
                 }
                 steps={steps}
@@ -709,6 +730,7 @@ export function LocalReview({
                   },
                   back: { href: back.href, label: back.label },
                   generation: { state: generationState, rewriting: generating && Boolean(doc) },
+                  actions: refreshButton,
                   // Without a review, the button in the page's middle generates it.
                   // The GitHub state leads, so a reader sees why a fix, a re-run or an
                   // update is offered; a fix comes first of those, re-running checks
@@ -1028,6 +1050,30 @@ export function LocalReview({
         ) : null}
         {updating ? (
           <UpdateBranchDialog entry={entry} close={() => setUpdating(false)} updated={changed} />
+        ) : null}
+        {confirmingIsolation ? (
+          <dialog
+            ref={isolationDialog}
+            onCancel={() => setConfirmingIsolation(false)}
+            aria-labelledby="retry-isolation-title"
+          >
+            <h2 id="retry-isolation-title" className="text-lg font-semibold">
+              Review code from outside your team?
+            </h2>
+            <p className="my-3">
+              This pull request comes from a fork or from an author without write access. Retrying
+              its details runs your agent on its code. Only continue if you trust it, or if your
+              agent runs in an isolated environment.
+            </p>
+            <div className="flex justify-end gap-2">
+              <Button variant="ghost" size="compact" onClick={() => setConfirmingIsolation(false)}>
+                Cancel
+              </Button>
+              <Button size="compact" disabled={retryStarting} onClick={() => retryDetails(true)}>
+                {retryStarting ? "Starting…" : "Retry anyway"}
+              </Button>
+            </div>
+          </dialog>
         ) : null}
       </AttachmentUrlProvider>
     </ReviewBoundary>

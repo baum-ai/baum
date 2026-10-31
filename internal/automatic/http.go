@@ -33,6 +33,8 @@ func (s *Scheduler) Handler() http.Handler {
 			Model        *string `json:"model"`
 			FixBackend   *string `json:"fix_backend"`
 			FixModel     *string `json:"fix_model"`
+			Effort       *string `json:"effort"`
+			FixEffort    *string `json:"fix_effort"`
 			PullRequests *string `json:"pull_requests"`
 		}
 		r.Body = http.MaxBytesReader(w, r.Body, 4<<10)
@@ -63,7 +65,7 @@ func (s *Scheduler) Handler() http.Handler {
 			if input.FixBackend != nil {
 				if strings.TrimSpace(*input.FixBackend) == "" {
 					// Back to the same agent as reviews.
-					next.FixBackend, next.FixModel = nil, nil
+					next.FixBackend, next.FixModel, next.FixEffort = nil, nil, nil
 				} else {
 					backend, err := config.ParseBackend(*input.FixBackend)
 					if err != nil {
@@ -79,6 +81,14 @@ func (s *Scheduler) Handler() http.Handler {
 				// Following reviews again sends an empty model, which is no choice.
 				if model == "" && next.FixBackend == nil {
 					next.FixModel = nil
+				}
+			}
+			for _, e := range []struct{ input, target **string }{{&input.Effort, &next.Effort}, {&input.FixEffort, &next.FixEffort}} {
+				if *e.input == nil {
+					continue
+				}
+				if *e.target, invalid = config.ParseEffort(**e.input); invalid != nil {
+					return p
 				}
 			}
 			if input.PullRequests != nil {
