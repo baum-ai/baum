@@ -39,6 +39,7 @@ func (c *Backend) Complete(ctx context.Context, request agent.CompleteRequest) (
 	if c.Model != "" {
 		args = append(args, "--model", c.Model)
 	}
+	args = append(args, c.effortArgs()...)
 	args = append(args, "--system-prompt", request.System+"\n\n"+submitPrompt, "--max-turns", strconv.Itoa(CompleteMaxTurns),
 		"--restricted", "--tools", "", "--json-schema", string(request.Schema), "--no-session-persistence",
 		"--setting-sources", "", "--strict-mcp-config", "--mcp-config", `{"mcpServers":{}}`)

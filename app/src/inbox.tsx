@@ -6,6 +6,7 @@ import {
   type ComponentType,
   type ReactNode,
   type Dispatch,
+  type MouseEvent,
   type SetStateAction,
 } from "react";
 import { cn, FOCUS_RING } from "@baum/viewer/components/classnames";
@@ -48,6 +49,8 @@ import {
   type LiveSession,
   type ReviewGroup,
 } from "./api";
+import { MenuButton, useContextMenu, type MenuItem } from "./context-menu";
+import { ListSection, type ListTone } from "./list";
 import { LiveBadge, useNow } from "./live";
 import { LoadingStatus, NineDots } from "./nine-dots";
 import { canMerge, MergeDialog } from "./merge";
@@ -62,7 +65,7 @@ type Group = {
   id: string;
   heading: string;
   hint: string;
-  tone: string;
+  tone: ListTone;
   /** The loose rows: pull requests not shown under a review group. */
   rows: Entry[];
   groups: GroupEntry[];
@@ -77,7 +80,7 @@ export function inboxGroups(rows: Entry[], reviewGroups: ReviewGroup[] = []): Gr
       id: "requested",
       heading: "Review requested",
       hint: "asking for your review",
-      tone: "text-(--status-caution)",
+      tone: "caution",
       rows: [],
       groups: [],
     },
@@ -85,7 +88,7 @@ export function inboxGroups(rows: Entry[], reviewGroups: ReviewGroup[] = []): Gr
       id: "changes",
       heading: "Needs changes",
       hint: "yours, with changes requested, failing checks or a conflict",
-      tone: "text-(--status-critical)",
+      tone: "critical",
       rows: [],
       groups: [],
     },
@@ -93,7 +96,7 @@ export function inboxGroups(rows: Entry[], reviewGroups: ReviewGroup[] = []): Gr
       id: "ready",
       heading: "Ready to merge",
       hint: "yours, and GitHub would merge it now",
-      tone: "text-(--status-positive)",
+      tone: "positive",
       rows: [],
       groups: [],
     },
@@ -101,7 +104,7 @@ export function inboxGroups(rows: Entry[], reviewGroups: ReviewGroup[] = []): Gr
       id: "mine",
       heading: "Your pull requests",
       hint: "drafts and those waiting on reviews or checks",
-      tone: "text-(--status-info)",
+      tone: "info",
       rows: [],
       groups: [],
     },
@@ -109,7 +112,7 @@ export function inboxGroups(rows: Entry[], reviewGroups: ReviewGroup[] = []): Gr
       id: "other",
       heading: "Other pull requests",
       hint: "across your registered repositories",
-      tone: "text-(--text-tertiary)",
+      tone: "quiet",
       rows: [],
       groups: [],
     },
@@ -117,7 +120,7 @@ export function inboxGroups(rows: Entry[], reviewGroups: ReviewGroup[] = []): Gr
       id: "history",
       heading: "Saved history",
       hint: "reviews retained outside the open inbox",
-      tone: "text-(--text-tertiary)",
+      tone: "quiet",
       rows: [],
       groups: [],
     },
@@ -336,6 +339,49 @@ export function Inbox({
     });
   const selected = rows.filter((row) => selection.has(rowKey(row)));
   const mergeable = selected.filter(canMerge);
+  // A row's actions, behind its ⋯ and a right click on it: what its keys do,
+  // with the key beside each.
+  const menu = useContextMenu();
+  const actionsFor = (entry: Entry): MenuItem[] => {
+    const key = rowKey(entry);
+    const pr = entry.pull_request;
+    const clone = cloneFor(entry);
+    const items: MenuItem[] = [
+      { label: peeked.has(key) ? "Close peek" : "Peek", hint: "Space", onSelect: () => peek(key) },
+    ];
+    const label = fixLabel(entry);
+    if (canMerge(entry))
+      items.push({ label: "Merge…", hint: "m", onSelect: () => setMerging(entry) });
+    else if (label && fix && clone && !fixing(entry))
+      items.push({ label, hint: "f", onSelect: () => fix(entry) });
+    const run = watchableFix(entry, jobs);
+    if (run)
+      items.push({
+        label: isActiveJob(run) ? "Watch the fix" : "Fix transcript",
+        hint: "t",
+        onSelect: () => navigate(jobHref(run)),
+      });
+    if (generate && clone && entry.status !== "generating")
+      items.push({
+        label: entry.version_count > 0 ? "Regenerate review" : "Generate review",
+        hint: "g",
+        onSelect: () => generate(entry),
+      });
+    if (!entry.needs_clone)
+      items.push({
+        label: selection.has(key) ? "Deselect" : "Select",
+        hint: "x",
+        onSelect: () => toggle(key, !selection.has(key)),
+      });
+    if (pr.url) items.push({ label: "Open on GitHub", onSelect: () => openExternal(pr.url) });
+    return items;
+  };
+  const rowMenu = (event: MouseEvent) => {
+    const id = (event.target as HTMLElement).closest("[data-row-id]")?.getAttribute("data-row-id");
+    const entry = items.find((item) => item.id === id)?.entry;
+    if (entry) menu.open(event, actionsFor(entry), rowName(entry));
+  };
+  const fixing = (entry: Entry) => isActiveJob(fixJob(entry, jobs)) || !!fixStarting?.(entry);
   const renderRow = (entry: Entry, nested: boolean) => (
     <InboxRow
       key={rowKey(entry)}
@@ -348,11 +394,9 @@ export function Inbox({
       Link={Link}
       live={liveFor(live, entry.pull_request)}
       nested={nested}
-      merge={canMerge(entry) ? () => setMerging(entry) : undefined}
-      fix={fix && cloneFor(entry) ? () => fix(entry) : undefined}
-      fixing={isActiveJob(fixJob(entry, jobs)) || !!fixStarting?.(entry)}
+      fixing={fixing(entry)}
       peeked={peeked.has(rowKey(entry))}
-      peek={() => peek(rowKey(entry))}
+      actions={<MenuButton label={rowName(entry)} items={() => actionsFor(entry)} menu={menu} />}
       savedReviews={savedReviews}
       changed={changedRows.has(rowKey(entry))}
       generate={generate && cloneFor(entry) ? () => generate(entry) : undefined}
@@ -363,7 +407,9 @@ export function Inbox({
       ref={section}
       aria-label="Pull request inbox"
       className={cn("local-inbox", selection.size > 0 && "selecting")}
+      onContextMenu={rowMenu}
     >
+      {menu.menu}
       {selection.size > 0 ? (
         <div role="toolbar" aria-label="Selected pull requests" className="inbox-selection-bar">
           <span className="inbox-selection-count">{formatCount(selection.size)} selected</span>
@@ -388,7 +434,7 @@ export function Inbox({
           </button>
         </div>
       ) : null}
-      <div className="inbox-columns inbox-columns-head">
+      <div className="inbox-columns inbox-columns-head list-columns-head">
         <input
           type="checkbox"
           aria-label="Select all visible pull requests"
@@ -415,12 +461,14 @@ export function Inbox({
         <span className="sr-only">Actions</span>
       </div>
       {groups.map((group) => (
-        <Bucket
+        <ListSection
           key={group.id}
-          group={group}
+          title={group.heading}
+          hint={group.hint}
+          tone={group.tone}
           count={group.rows.length + group.groups.length}
           collapsed={collapsed.has(group.id)}
-          onToggle={() =>
+          toggle={() =>
             setCollapsed((previous) => {
               const next = new Set(previous);
               if (next.has(group.id)) next.delete(group.id);
@@ -450,7 +498,7 @@ export function Inbox({
             </GroupRow>
           ))}
           {group.rows.map((entry) => renderRow(entry, false))}
-        </Bucket>
+        </ListSection>
       ))}
       {merging ? (
         <MergeDialog
@@ -522,57 +570,6 @@ export function UpdatedAgo({ at, busy }: { at: number | null; busy: boolean }) {
         ? "Updating…"
         : `Updated ${now - at < 10_000 ? "just now" : formatRelative(new Date(at).toISOString(), now)}`}
     </span>
-  );
-}
-function Bucket({
-  group,
-  count,
-  collapsed,
-  onToggle,
-  children,
-}: {
-  group: Group;
-  count: number;
-  collapsed: boolean;
-  onToggle: () => void;
-  children: ReactNode;
-}) {
-  const id = useId();
-  return (
-    <section aria-label={group.heading}>
-      <h2 className="border-b border-(--border-subtle)">
-        <button
-          type="button"
-          aria-expanded={!collapsed}
-          aria-controls={id}
-          onClick={onToggle}
-          className={cn(
-            "inbox-bucket flex w-full cursor-pointer items-center gap-2 text-left text-xs font-semibold text-(--text-primary) hover:bg-(--surface-hover)",
-            FOCUS_RING,
-          )}
-        >
-          <ChevronRightIcon
-            size={12}
-            className={cn(
-              "flex-none text-(--text-tertiary) transition-transform motion-reduce:transition-none",
-              !collapsed && "rotate-90",
-            )}
-          />
-          <span
-            aria-hidden
-            className={cn("size-1.5 flex-none rounded-full bg-current", group.tone)}
-          />
-          <span>{group.heading}</span>
-          <span className="inbox-bucket-count">{formatCount(count)}</span>
-          <span className="hidden min-w-0 truncate font-normal text-(--text-tertiary) sm:inline">
-            · {group.hint}
-          </span>
-        </button>
-      </h2>
-      <ul id={id} hidden={collapsed}>
-        {children}
-      </ul>
-    </section>
   );
 }
 /** The baum review's state, only when it asks for something: a review being
@@ -684,51 +681,6 @@ function StatusCell({
     </span>
   );
 }
-/** Opens the merge confirmation; shown on the row being pointed at or
- *  focused, and always on a touch screen. */
-function MergeAction({ entry, merge }: { entry: Entry; merge: () => void }) {
-  const pr = entry.pull_request;
-  return (
-    <button
-      type="button"
-      className={cn("inbox-action inbox-merge", FOCUS_RING)}
-      aria-label={`Merge ${pr.repository} #${pr.number}`}
-      onClick={merge}
-    >
-      Merge
-      <kbd aria-hidden="true" className="key-hint">
-        m
-      </kbd>
-    </button>
-  );
-}
-
-/** The small fix action in a broken pull request's row. */
-function FixAction({ label, fix, fixing }: { label: string; fix?: () => void; fixing: boolean }) {
-  if (fixing)
-    return (
-      <span className="inbox-action inbox-fix">
-        <SparkleIcon size={12} className="flex-none" />
-        Fixing…
-      </span>
-    );
-  if (!fix) return null;
-  return (
-    <button
-      type="button"
-      className={cn("inbox-action inbox-fix", FOCUS_RING)}
-      aria-label={label}
-      title={label}
-      onClick={fix}
-    >
-      <SparkleIcon size={12} className="flex-none" />
-      Fix
-      <kbd aria-hidden="true" className="key-hint">
-        f
-      </kbd>
-    </button>
-  );
-}
 function StatusColumns({ entry }: { entry: Entry }) {
   const unresolved = entry.unresolved;
   const status = mergeStatus(entry);
@@ -784,49 +736,15 @@ function StatusColumns({ entry }: { entry: Entry }) {
     </div>
   );
 }
-/** The row's actions: the one thing to do about its state (merge a ready
- *  pull request, or fix a broken one) and Peek. */
-function RowActions({
-  entry,
-  merge,
-  fix,
-  fixing,
-  peeked,
-  peek,
-  peekId,
-}: {
-  entry: Entry;
-  merge?: () => void;
-  fix?: () => void;
-  fixing: boolean;
-  peeked: boolean;
-  peek: () => void;
-  peekId: string;
-}) {
-  const label = fixLabel(entry);
-  const pr = entry.pull_request;
-  return (
-    <span className="inbox-row-actions">
-      {merge ? (
-        <MergeAction entry={entry} merge={merge} />
-      ) : label ? (
-        <FixAction label={label} fix={fix} fixing={fixing} />
-      ) : null}
-      <button
-        type="button"
-        className={cn("inbox-action inbox-peek", FOCUS_RING)}
-        aria-label={`Peek at ${pr.repository} #${pr.number}`}
-        aria-expanded={peeked}
-        aria-controls={peekId}
-        onClick={peek}
-      >
-        {peeked ? "Close" : "Peek"}
-        <kbd aria-hidden="true" className="key-hint">
-          space
-        </kbd>
-      </button>
-    </span>
-  );
+/** How a row is named to assistive technology and in its menu. */
+const rowName = (entry: Entry) => `${entry.pull_request.repository} #${entry.pull_request.number}`;
+/** Opens a page outside the app, as a link to it would. */
+function openExternal(url: string) {
+  Object.assign(document.createElement("a"), {
+    href: url,
+    target: "_blank",
+    rel: "noreferrer",
+  }).click();
 }
 const PEEK_SECTIONS = 4;
 /** A look at the saved review under its row: the summary and the first
@@ -988,7 +906,7 @@ function GroupRow({
   return (
     <li>
       <div
-        className="inbox-columns inbox-row inbox-group-row"
+        className="inbox-columns inbox-row list-row inbox-group-row"
         data-row-id={`group:${group.id}`}
         data-focused={focused || undefined}
       >
@@ -1062,11 +980,9 @@ function InboxRow({
   Link,
   live,
   nested = false,
-  merge,
-  fix,
   fixing,
   peeked,
-  peek,
+  actions,
   savedReviews,
   changed,
   generate,
@@ -1082,11 +998,11 @@ function InboxRow({
   live: LiveSession[];
   /** Shown under its review group's row. */
   nested?: boolean;
-  merge?: () => void;
-  fix?: () => void;
+  /** An agent is fixing it, or its fix is on its way. */
   fixing: boolean;
   peeked: boolean;
-  peek: () => void;
+  /** The row's ⋯ button. */
+  actions: ReactNode;
   savedReviews: SavedReviews;
   /** Its state changed in the latest read. */
   changed: boolean;
@@ -1104,7 +1020,7 @@ function InboxRow({
       data-focused={focused || undefined}
       data-changed={changed || undefined}
       className={cn(
-        "inbox-columns inbox-row",
+        "inbox-columns inbox-row list-row",
         nested && "inbox-nested",
         selected && "bg-(--surface-selected)",
       )}
@@ -1136,19 +1052,17 @@ function InboxRow({
             agents working on its branch. */}
         <div className="inbox-activities">
           <ReviewActivity entry={entry} />
+          {fixing ? (
+            <span className="inbox-activity text-(--text-secondary)">
+              <SparkleIcon size={12} className="flex-none" />
+              Fixing…
+            </span>
+          ) : null}
           <LiveBadge sessions={live} />
         </div>
       </div>
       <StatusColumns entry={entry} />
-      <RowActions
-        entry={entry}
-        merge={merge}
-        fix={fix}
-        fixing={fixing}
-        peeked={peeked}
-        peek={peek}
-        peekId={peekId}
-      />
+      <span className="inbox-row-actions">{actions}</span>
       {peeked ? (
         <RowPeek
           id={peekId}

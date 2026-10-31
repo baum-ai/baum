@@ -115,7 +115,7 @@ left out rather than shown empty or failed:
 | `versions`, `loadVersion` | the version menu: read an earlier version alone, or compare it with the current one. The loader should cache, as section panes reuse it for their "Since v1" links |
 | `history` | the host's own `useHistoryView` result, for a host whose requests follow the version being read; otherwise the viewer keeps its own |
 | `versionsFailed` | a retry for a version list that could not be loaded |
-| `header` | the head's live pull request facts (title, state, repository, branches, size, link), a back link, an approval state, a statistics line and the generation state; each falls back to what the document recorded. The head also states the document's `summary.review_minutes` as "~N min to review" beside the repository, and nothing when it is absent or null or the head has a `heading`. The change-kind tag sits beside the full page title, before its state and approval badges. `titleAside` adds a status beside the full page title. `heading` titles a review of something other than one pull request, such as a stack's: the document's own pull request number, link and state are then not shown |
+| `header` | the head's live pull request facts (title, state, repository, branches, size, link), a back link, an approval state, a statistics line and the generation state; each falls back to what the document recorded. The head also states the document's `summary.review_minutes` as "~N min to review" beside the repository, and nothing when it is absent or null or the head has a `heading`. The change-kind tag sits beside the full page title, before its state and approval badges. `titleAside` adds a status beside the full page title, and `actions` the host's page actions, such as a refresh, at the end of the title row. `heading` titles a review of something other than one pull request, such as a stack's: the document's own pull request number, link and state are then not shown |
 | `placeholder`, `asidePlaceholder`, `fallbackSections` | what the pane, the Details and Activity tabs and the rail show while a host has no document |
 | `checks` | read marks or approvals beside each section and risk on the current version, whether each row counts as read (the rail's progress), and notices above and below the rail's rows |
 | `renderSectionAside` | a strip at the top of a section's pane on the current version, such as who approved it |
@@ -286,7 +286,19 @@ helpers the card uses) and what the host adds:
 - `renderAvatar`, the picture beside a person's prompt;
 - `modelLabel`, which names models (the id by default), and
   `restrictedNote`, the host's reason a restricted session shows only that
-  it is restricted (a neutral one by default).
+  it is restricted (a neutral one by default);
+- `layout`, `chat` (the default, as above) or `log`: a compact log read from
+  the left in one column. Each prompt sits under a rule in the host's
+  `--action-primary`, its number and time above it; the agent is named once
+  a turn, its messages before its last reply fold under "N progress updates",
+  and the reply is set as long text (`Markdown`'s `reading`). Notes are small
+  print, and runs of tool calls start folded. The desktop app's transcript
+  page uses it.
+
+A prompt can carry `images`, each a `src` the host serves and an `alt`: they
+show under its text as thumbnails that open full size in a dialog. Agent
+messages are marked `data-agent-text` (`progress` for the folded ones), for a
+host's keys that move a message at a time.
 
 Leaving one out turns its feature off: no "Agent activity" without
 `loadTurnActivity`, no subagent conversation without `loadSubagentActivity`,
@@ -528,7 +540,13 @@ the highlighter adds no path for contributor markup.
 
 `Markdown` parses raw HTML into sanitized elements, as GitHub renders a
 comment. With `html={false}` it skips that step and raw HTML prints as the
-text it is, for prose that names tags rather than containing them.
+text it is, for prose that names tags rather than containing them. With
+`reading` it sets long text read on its own: headings in the heading font with
+more room above than below (a top-level one ruled off), body-size code spans
+that break after their slashes, grey list markers, lists spaced by depth, and
+tables with their cells at the top and a header on a fill. Code everywhere
+sits on `--code-fill`, a faint tint of the text that reads the same on any
+surface and in the dark theme.
 
 ## Schema and tile types
 
@@ -689,21 +707,18 @@ and no hosted API. A spec changes what one page sees with `page.route`
 (`serveDocument` and `serveSessions` in `e2e/fixtures.ts`), so specs stay
 parallel.
 
-| Spec | What it covers |
-| --- | --- |
-| `document.spec.ts` | the sample loads from the page's own origin with no console errors or foreign requests; a document read from a file; no file picker or upload; a failed load with Retry; a body that is not a `baum.review/1` document; a document that fails to render; the head's review time estimate, present, null and absent; the Summary's context, collapsed, expanded and absent |
-| `navigation.spec.ts` | the rail, the summary's jump links, the Changes and Risks overviews, deep links to a section or risk and Back, a stale link falling back to the summary, the phone bar and sheet |
-| `section.spec.ts` | a section's blocks (intent, behavior, decisions, table, code, diagram; entities drawn as nothing); hunk excerpts stored, read from `/api/patch` when left out, with no patch, and retried after a failure; the unsupported block fallback; tiles hidden until `?tiles=1`, then drawn, and an unsupported tile kind; description images drawing nothing without an attachment source |
-| `checks.spec.ts` | the Activity tab's checks (failing, blocking, green, an earlier head's checks ignored), verified, missing and pending evidence, the risk score and change size |
-| `sessions.spec.ts` | the Sessions and Commits groups with and without `/api/sessions` (document fallback with the server's reason, request failure, loading), a linked session's transcript and its failure and Retry, the Activity tab |
-| `theme.spec.ts` | light and dark follow the system, change while open, keep text readable, and colour highlighted code in each |
-| `untrusted.spec.ts` | hostile Markdown and HTML (`<script>`, `javascript:` links, `onerror`, `onclick`, `<iframe>`, `<form>`, `<svg>`) renders as inert text and runs nothing; plain-text fields and code excerpts show markup as written |
+The browser suite keeps the standalone host's integration seams: loading the
+built sample under its security policy, load/retry recovery, URL navigation with
+Back/Forward, the mobile rail, lazily fetched clone patches and transcripts, and
+hostile Markdown/HTML and diff text rendered safely. Component and unit tests
+cover block rendering, checks, context links, fallback states, themes and the
+selection/version decision matrices. Add a browser test only when the failure
+needs browser behavior or crosses a host seam; avoid rendering and copy checks
+already covered below that boundary.
 
 Fixtures are synthetic: the schema's example, `e2e/local-sessions.ts` for the
-local session answers, and documents the specs edit from the example. The app
-has no file picker, upload or drag and drop (see Standalone app), and draws no
-description images, as it supplies no `AttachmentUrlProvider`; the specs assert
-both. The hosted app's integration with the viewer stays covered by `ui/e2e`.
+local session answers, and documents the specs edit from the example. The
+hosted app's integration with the viewer stays covered by `ui/e2e`.
 
 Attachment resolvers may receive the rendered document as a second argument,
 so a host whose captures are version-scoped can serve each comparison pane’s

@@ -489,7 +489,8 @@ refuse a forced choice while thinking); claude runs `claude -p` with no tools
 but StructuredOutput, no settings, MCP servers or session persistence, and at
 most two turns so a reply the harness rejects is retried once; codex
 runs `codex exec --ephemeral --ignore-user-config` read-only with its shell
-tools disabled, low reasoning effort and the system prompt as its model
+tools disabled, the chosen reasoning effort (Codex's own when none) and the
+system prompt as its model
 instructions, in one turn, which a call to one of its remaining tools would
 extend by a request. Both CLIs run in an empty temporary directory with the prompt on
 stdin after `sessions.GenerationRunMarker`.
@@ -626,6 +627,18 @@ that ends without one is nudged twice before the run fails. The key and base
 URL come from the request's `Endpoint`, else the `Backend`'s own (the local
 host sets the key from `ANTHROPIC_API_KEY`). The default model is
 `claude-opus-5-5` at `medium` effort; another model is sent without an effort.
+A chosen effort (`Backend.Effort`) replaces both.
+
+The local app's reasoning effort is one of the preferences, per use case
+(`effort` for reviews, which chat follows, `fix_effort` with a fix agent of
+its own, and `decisions.effort` for data extraction): Default (empty) or
+`low`, `medium` or `high` (`config.Efforts`). It reaches the backends through
+`config.Config.Effort` and `generate.DefaultBackendsFor`: Claude Code as
+`--effort`, Codex as `-c model_reasoning_effort` and the Anthropic API as
+`output_config.effort`; cursor-agent has none. Default leaves it to the
+harness: local Claude Code runs (the User profile) think as Claude Code
+decides, while the Isolated profile of hosted and evaluation runs always sets
+`MAX_THINKING_TOKENS=0` and `CLAUDE_CODE_DISABLE_THINKING=1`.
 
 Every request sent is one call, charged before the next is made: a call the
 request's `MaxCalls` or `MaxTokens` cannot pay for is not sent, and
@@ -1441,7 +1454,12 @@ hold up another, and a build that fails is tried again on the next request.
 session card and conversation (`oss/viewer/src/transcript.ts`, in the hosted
 API's field names), with the hosted service's rules: a prompt is a top-level
 input of kind prompt or slash command from a human with text left once
-wrapper constructs are stripped; a nested session's activity counts toward
+wrapper constructs (and the lead of a message the desktop app sent,
+`prompttext.AppMessageLead`) are stripped, and not one the harness wrote under
+the human's name: Claude Code's `isMeta` lines without an origin (such as the
+line saying where a pasted image was saved) and another agent's
+`<agent-message>`, such as a subagent's report, whose replies and activity
+count toward the prompt before it; a nested session's activity counts toward
 the prompt whose tool call started it; activity under any other input is the
 session's and no prompt's (`unattributed`). `session` is the hosted session
 detail's shape: each prompt carries its last text replies (`replies`, a
@@ -2266,7 +2284,7 @@ head_sha}`, repeats the checks above, re-reads the run list (the request never
 names a run) and posts `.../actions/runs/{id}/rerun-failed-jobs` for each. It
 answers `{rerun, refused}`: an error only when no run started. Errors are
 `{code, message}`: `head_moved`, `conflict`, `not_open` and `up_to_date` are
-`409`, `blocked`, `no_runs` and `fork` are `422`, `forbidden` is `403`,
+`409`, `blocked`, `no_runs`, `fork` and `no_clone` are `422`, `forbidden` is `403`,
 anything else `502`. After either write the daemon runs `Service.PollNow` and
 publishes an index change.
 
@@ -2289,8 +2307,10 @@ its headline cut to 200 characters (`excerpt`: `fix.Headline`, the first
 wholly bold line among the first four, else the first line of text, without
 HTML comments, tags, images, code blocks or Markdown markup, which the fix
 dialog's excerpts use too), the
-comment count, the first comment's `url` and `can_resolve`
-(`viewerCanResolve`). `POST /api/prs/resolve-thread` takes `{repository, pr,
+comment count, the first comment's `url`, `can_resolve`
+(`viewerCanResolve`) and `messages`: every comment read (the first 20; the
+fix addresses the first 10), each `{author, body, url}`, the body as text cut to
+4000 characters, untrusted. `POST /api/prs/resolve-thread` takes `{repository, pr,
 thread}`, reads the thread by its node id (`ThreadState`) and refuses one that
 is not on that pull request (`not_found`, `404`) or that the account cannot
 resolve (`forbidden`); a thread already resolved answers success without a
@@ -2310,6 +2330,26 @@ status's description, cut to 160 characters), `url` (`details_url`, else
 `job_id` (the GitHub Actions job behind a check run). `prupdate.Cache` keeps a
 head's list for 2 minutes, forgets it when either re-run starts a run of that
 head, and is emptied with the threads on an account change.
+
+`GET /api/prs/checks?repository=&pr=&head_sha=` lists every check of
+`head_sha` (`fix.AllChecks`: check runs of their latest attempt and commit
+statuses, at most 100). It answers `{head_sha, checks}`, each check's `name`,
+`status` (`queued`, `in_progress` or `completed`; a pending commit status is
+`in_progress`), `conclusion` (the run's conclusion or the status's state, empty
+until completed), `title`, `url` and `job_id` (only for a failing GitHub
+Actions run, so `rerun-job` accepts it). Failing checks come first, then
+those not completed, each by name. The cache keeps a head's list for 20
+seconds, and a re-run forgets it.
+
+`GET /api/prs/conflicts?repository=&pr=` answers `{head_sha, base_ref,
+base_sha, files}`: the files in which the pull request's head conflicts with
+its base branch's current tip. The daemon reads the pull request from GitHub,
+then in the repository's first available clone fetches the head (when
+missing) and the base tip into `refs/baum/pull/<N>/` and runs `git merge-tree
+--write-tree --name-only -z` in the private mirror (`gitlocal.Repo.Conflicts`),
+which touches neither the working tree nor any branch; `files` is empty when
+the merge is clean. It needs git 2.38 or newer. Without an available clone with
+a remote naming the repository it answers `no_clone` (`422`).
 
 `POST /api/prs/rerun-job` takes `{repository, pr, head_sha, job_id}`,
 re-checks that the pull request is open, its head is `head_sha` and the
@@ -3212,7 +3252,10 @@ replace it.
   wrote to it: a prompt, a message the app sent (which Claude Code records as
   a peer's meta line), an answer to its question (`toolUseResult.answers`) or
   a message sent while it worked (a `queued_command` attachment, read from the
-  start of a line an image makes too long). Neither route runs on Windows.
+  start of a line an image makes too long), but not what the harness queues
+  the same way: a background task's `<task-notification>` or another agent's
+  `<agent-message>`, such as a subagent's report. Neither route runs on
+  Windows.
   A notification's `message` becomes
   `waiting_message`: format characters dropped, control characters and runs of
   spaces made one space, masked as transcripts are (`transcript.Renderer.Mask`,
@@ -3229,7 +3272,11 @@ replace it.
   resumed session: `started_at` restarts), and an event older than the end is
   ignored. A late-delivered older event never moves `last_activity_at` back,
   but an older start can move `started_at` earlier. A session silent for
-  `DropAfter` (2 hours) is dropped, an ended one `EndedFor` (24 hours) after
+  `DropAfter` (2 hours) is dropped, unless `Tracker.Alive` confirms its agent
+  still runs (a Claude Code session's process, as `FindClaude` finds it; no
+  other agent registers one), which `Sweep` asks again each time, so one
+  waiting hours for its user stays and one whose agent exited without its end
+  event goes within a minute. An ended one goes `EndedFor` (24 hours) after
   its end, so the Sessions page can list what ended recently. At most
   `MaxSessions` (200) are held: a new one evicts an ended session (the one
   that ended longest ago), else the least recently active, so a running session
@@ -3240,9 +3287,15 @@ replace it.
   record's directory when they change, and a rebuild loads them first and then
   applies the record's events over them; a rebuild also takes all events of a
   session that ended within `EndedFor`, not only those of the last two hours.
+  The file's `open` holds the sessions that had not ended, likewise without a
+  path: a rebuild restores one only when it was silent for `DropAfter`, which
+  the record's events then no longer reach, and `Alive` confirms its agent
+  still runs.
   An ended session waits for nothing, so the file holds no waiting fields,
   and files written before them load unchanged; a running session's wait is
-  rebuilt from the record's events, its message included.
+  rebuilt from the record's events, its message included. `last_prompt_at`
+  is the latest prompt event, which the Sessions page orders running sessions
+  by.
 - **Linkage.** Not a second linkage: `Resolver` uses what session linkage and
   discovery already have. The directory's repository is found with
   `gitlocal.Open` (so a subdirectory or a linked worktree is its clone), whose
@@ -3386,10 +3439,16 @@ replace it.
     Linux nothing outside Hyprland and X11; `session` for tmux with a recorded
     terminal, a Claude desktop process in the chain (`claude-desktop`, `Claude`),
     a kitty with its socket, and on macOS iTerm2 or Terminal with a terminal device;
-    `window` otherwise. A Codex session without a terminal whose recorded chain
-    contains only `codex`, `systemd` or `launchd` has no focus action; a direct
-    focus request explains that the background process has no window. An
-    unfamiliar ancestor keeps the normal window fallback.
+    `window` otherwise. Codex hooks whose chain contains only `codex`, `systemd`
+    or `launchd` and no terminal can belong to a shared app server with separate
+    TUI clients. They offer session focus. Focus matches the thread ID in terminal
+    titles (`tui.terminal_title` including `thread-id`): first Codex tmux panes
+    on the recorded server (`list-panes`), then kitty's tabs through its recorded
+    remote-control socket, iTerm2/Terminal tabs on macOS, or Hyprland/X11 window
+    titles. A failed tmux lookup falls through to native terminals, since its
+    variables may be inherited. A shortened ID needs at least 24 characters and
+    an ellipsis. Missing or ambiguous matches select nothing and explain why.
+    This selects an existing TUI; it never resumes a second conversation.
 - **Transcripts.** `GET /api/live-sessions/{agent}/{id}/transcript`
   (`Transcripts`, mounted beside the list by the same `LocalAPI.Live`
   provider) serves the transcript of a session the tracker lists, and only
@@ -3406,9 +3465,9 @@ replace it.
   session): the `rollout-*-<id>.jsonl` under `~/.codex/sessions` whose first
   line names that thread as a root. Only names are walked, so the rollouts
   Codex compresses as they age (`.jsonl.zst`, which a store scan rejects) do
-  not stop it; a Claude Code one
-  has no such lookup and is unavailable, as after a restart has only the
-  saved ended sessions. A Cursor session is read from Cursor's own database
+  not stop it; a Claude Code one is found by its id in the project folders
+  under `~/.claude/projects` (`<folder>/<id>.jsonl`), as a session read back
+  from `live-sessions.json` has no path. A Cursor session is read from Cursor's own database
   (`cursortranscript.DefaultStorePath`, a regular file) by its conversation
   id, since Cursor keeps no transcript file baum reads. The files are mapped
   with `sessions.Map`, as discovery maps them (a Codex root rollout without
@@ -3423,9 +3482,10 @@ replace it.
   dropped first, and a session the tracker no longer lists is dropped at the
   next request. A rebuild that fails (a line caught mid-write) keeps the last
   good transcript. The answer is `{"available":true,"version","live",
-  "transcript"}`, `version` a hash of the files' paths, sizes and times and
-  `transcript` the body `GET /api/sessions/{id}` answers, omitted when the
-  request's `?version=` is the current one; or `{"available":false,"live",
+  "transcript","images"?}`, `version` a hash of the files' paths, sizes and
+  times, `transcript` the body `GET /api/sessions/{id}` answers and `images`
+  the media types of the images pasted with each prompt, by its turn, both
+  omitted when the request's `?version=` is the current one; or `{"available":false,"live",
   "code":"transcript_unavailable","message"}` with why, in a sentence the app
   shows. The Timeline's `GET /api/timeline/sessions/{agent}:{id}/transcript`
   answers the same way for a captured session of a repository it serves,
@@ -3434,6 +3494,17 @@ replace it.
   store rules; `live` is false once the tracker does not list it. Its cache
   entries are kept until the least recently asked for makes room, not dropped
   with the tracker's list.
+- **Pasted images.** `GET /api/live-sessions/{agent}/{id}/transcript/images/
+  {turn}/{n}` serves the n-th image (from 0) pasted with a prompt of a session
+  the tracker lists, as it was pasted: images are not masked. Only PNG, JPEG,
+  GIF and WebP are served, with `nosniff` and a `default-src 'none'` policy;
+  anything else is 404. Each rebuild finds them in the session's own
+  transcript file (`findImages`): a Claude Code prompt's record holds them as
+  `image` blocks, found by the record's uuid the graph's vendor ids give the
+  prompt; a Codex prompt's record names only where the image was saved, so its
+  images are read from the user `response_item` of the turn the prompt opened
+  (`internal_chat_message_metadata_passthrough.turn_id`), as data URLs. A
+  request reads the file again for the one image it asks for.
 - **Stream.** The tracker publishes a `live` event with no data (like `index`,
   a notification the app answers by reading the endpoint) when what the app
   sees changes, at most once a second, and on a `reset` the app rereads like

@@ -90,6 +90,27 @@ func (c ClaudeExit) End(_ context.Context, id string) error {
 	return terminate(p.PID)
 }
 
+// ClaudeAlive is a Tracker's Alive: whether the process of a Claude Code
+// session still runs under home's ~/.claude (empty is the user's home), as
+// FindClaude confirms it. Other agents register no process, so theirs are
+// never confirmed.
+type ClaudeAlive struct {
+	Home string
+}
+
+// Alive is a Tracker's Alive.
+func (c ClaudeAlive) Alive(agent, id string) bool {
+	if agent != AgentClaudeCode {
+		return false
+	}
+	home, err := orHome(c.Home)
+	if err != nil {
+		return false
+	}
+	_, err = FindClaude(home, id)
+	return err == nil
+}
+
 func orHome(home string) (string, error) {
 	if home != "" {
 		return home, nil

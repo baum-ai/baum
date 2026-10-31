@@ -56,6 +56,10 @@ type Backend struct {
 	// exec.LookPath and defaults to "claude".
 	Binary, Model string
 	Profile       Profile
+	// Effort is the --effort level (low, medium or high); empty leaves it to
+	// Claude Code. The User profile leaves thinking to Claude Code, while the
+	// Isolated profile always runs without thinking.
+	Effort string
 	// DefaultEndpoint is a provider key and base URL used when the request has
 	// no Endpoint of its own. The hosted review agent never sets it: its runs
 	// bring a model proxy endpoint. Local prompt evaluation sets it because it

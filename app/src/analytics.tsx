@@ -24,7 +24,7 @@ import codexLogo from "./desktop/codex.svg";
 import cursorLogo from "./desktop/cursor.svg";
 import { LoadingStatus } from "./nine-dots";
 import { lasted } from "./sessions";
-import { Notice, PageBar } from "./shell";
+import { Notice, PageBar, RefreshButton, useReread } from "./shell";
 import "./analytics.css";
 
 export type Cost = { usd: number | null; incomplete: boolean; reasons: string[] };
@@ -1119,10 +1119,12 @@ export function AnalyticsPage({ Link }: { Link: ComponentType<ViewerLinkProps> }
   const [error, setError] = useState("");
   const [unavailable, setUnavailable] = useState(false);
   const [attempt, setAttempt] = useState(0);
+  const reread = useReread();
   const query = `days=${days}${repo ? `&repo=${encodeURIComponent(repo)}` : ""}${agent ? `&agent=${agent}` : ""}`;
   const shown = useRef("");
   useEffect(() => {
     const abort = new AbortController();
+    const count = reread.count;
     let timer: ReturnType<typeof setTimeout> | undefined;
     const read = async () => {
       setLoading(true);
@@ -1143,7 +1145,10 @@ export function AnalyticsPage({ Link }: { Link: ComponentType<ViewerLinkProps> }
         if (abort.signal.aborted) return;
         setError(e instanceof Error ? e.message : "Local request failed.");
       } finally {
-        if (!abort.signal.aborted) setLoading(false);
+        if (!abort.signal.aborted) {
+          setLoading(false);
+          reread.settled(count);
+        }
       }
     };
     void read();
@@ -1151,7 +1156,7 @@ export function AnalyticsPage({ Link }: { Link: ComponentType<ViewerLinkProps> }
       abort.abort();
       clearTimeout(timer);
     };
-  }, [query, attempt]);
+  }, [query, attempt, reread.count]);
   const set = (key: string, value: string) =>
     url.update((current) => {
       if (value) current.set(key, value);
@@ -1165,6 +1170,7 @@ export function AnalyticsPage({ Link }: { Link: ComponentType<ViewerLinkProps> }
       <PageBar
         title="Analytics"
         detail="What your agents did, its cost at API prices and what you delivered"
+        actions={<RefreshButton refresh={reread.again} />}
       />
       <div className="local-filter-bar analytics-filters">
         <SegmentedControl

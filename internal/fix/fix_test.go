@@ -228,6 +228,23 @@ func TestFixRefusesARemoteThatPushesElsewhere(t *testing.T) {
 	checkCleanedUp(t, r, o)
 }
 
+// A read that only fetches takes the same remote: where it pushes does not
+// matter.
+func TestOpenForFetchIgnoresWhereARemotePushes(t *testing.T) {
+	r := NewRepositories(t)
+	gitIn(t, r.Clone, "config", "--add", "remote.origin.pushurl", "https://github.com/someone/fork.git")
+	o := options(t, r, &fakeAgent{})
+	repo, err := OpenForFetch(context.Background(), r.Clone, o.Repository)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = repo.Close()
+	other, _ := github.ParseRepository("someone/other")
+	if _, err := OpenForFetch(context.Background(), r.Clone, other); reasonOf(err) != ReasonNoRemote {
+		t.Fatalf("err %v (reason %q), want %s", err, reasonOf(err), ReasonNoRemote)
+	}
+}
+
 func TestFixRefusesAMovedHead(t *testing.T) {
 	r := NewRepositories(t)
 	o := options(t, r, &fakeAgent{fix: func(context.Context, string) error { t.Error("the agent ran"); return nil }})

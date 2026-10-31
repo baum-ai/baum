@@ -126,7 +126,7 @@ func TestDecisionSettingsAndRoute(t *testing.T) {
 		t.Fatalf("a read published %d changes", changes)
 	}
 	if code, body := serve("PUT", "/api/settings/decisions", `{"enabled":false,"backend":"codex","model":" gpt-6-luna "}`); code != 200 ||
-		body != `{"decisions":{"enabled":false,"backend":"codex","model":"gpt-6-luna","effective_backend":"codex","backend_undetermined":false,"effective_model":"gpt-6-luna","model_ignored":false}}`+"\n" {
+		body != `{"decisions":{"enabled":false,"backend":"codex","model":"gpt-6-luna","effort":"","effective_backend":"codex","backend_undetermined":false,"effective_model":"gpt-6-luna","model_ignored":false}}`+"\n" {
 		t.Fatalf("put %d %q", code, body)
 	}
 	if got := settings(); got.Enabled || got.Backend != "codex" || got.Model != "gpt-6-luna" {
@@ -146,7 +146,7 @@ func TestDecisionSettingsAndRoute(t *testing.T) {
 	}
 	// A save without a backend, as an older app sends, keeps the saved one.
 	if code, body := serve("GET", "/api/settings/decisions", ""); code != 200 ||
-		body != `{"decisions":{"enabled":true,"backend":"codex","model":"claude-haiku-5-5","effective_backend":"codex","backend_undetermined":false,"effective_model":"gpt-6-luna","model_ignored":true}}`+"\n" {
+		body != `{"decisions":{"enabled":true,"backend":"codex","model":"claude-haiku-5-5","effort":"","effective_backend":"codex","backend_undetermined":false,"effective_model":"gpt-6-luna","model_ignored":true}}`+"\n" {
 		t.Fatalf("get %d %s", code, body)
 	}
 	for _, body := range []string{`{"model":"x"}`, `{"enabled":true,"other":1}`, `{"enabled":true,"backend":"cursor-agent"}`} {
@@ -163,6 +163,22 @@ func TestDecisionSettingsAndRoute(t *testing.T) {
 	prefs, _ := registry.Preferences(context.Background())
 	if prefs.Decisions != (repos.DecisionPreferences{}) {
 		t.Fatalf("stored %+v", prefs.Decisions)
+	}
+	// Data extraction's reasoning effort, empty for the agent's own.
+	if code, _ := serve("PUT", "/api/settings/decisions", `{"enabled":true,"effort":"max"}`); code != http.StatusBadRequest {
+		t.Fatalf("an unknown effort answered %d", code)
+	}
+	if code, _ := serve("PUT", "/api/settings/decisions", `{"enabled":true,"effort":"medium"}`); code != 200 {
+		t.Fatal(code)
+	}
+	if got := settings(); got.Effort != "medium" {
+		t.Fatalf("after choosing an effort %+v", got)
+	}
+	if code, _ := serve("PUT", "/api/settings/decisions", `{"enabled":true,"effort":""}`); code != 200 {
+		t.Fatal(code)
+	}
+	if got := settings(); got.Effort != "" {
+		t.Fatalf("after clearing the effort %+v", got)
 	}
 	if got := settings(); got.Backend != "" {
 		t.Fatalf("after following the reviews again %+v", got)

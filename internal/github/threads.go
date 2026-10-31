@@ -14,9 +14,13 @@ import (
 // and resolves one the person chose (internal/prupdate). These are, with
 // merging, the client's writes to GitHub, made once each and never retried.
 
-// MaxThreadComments is how many comments of a thread a fix reads: the first
-// ones, which state what the reviewer asked.
+// MaxThreadComments is how many comments of a thread a fix addresses: the
+// first ones, which state what the reviewer asked.
 const MaxThreadComments = 10
+
+// ReadThreadComments is how many comments of a thread the client reads, for
+// the app to show a thread whole; a fix uses the first MaxThreadComments.
+const ReadThreadComments = 20
 
 // threadPages bounds how many pages of 50 threads a fix reads.
 const threadPages = 4
@@ -29,7 +33,7 @@ const fixThreadsQuery = `query FixReviewThreads($owner: String!, $name: String!,
     pageInfo { hasNextPage endCursor }
     nodes {
      id path line originalLine isResolved isOutdated viewerCanReply viewerCanResolve
-     comments(first: 10) { totalCount nodes { state authorAssociation body url author { __typename login } } }
+     comments(first: 20) { totalCount nodes { state authorAssociation body url author { __typename login } } }
     }
    }
   }
@@ -59,6 +63,8 @@ type ThreadComment struct {
 	Association string
 	Bot         bool
 	Body        string
+	// URL is the comment on GitHub; it is not part of what a fix digests.
+	URL string `json:"-"`
 }
 
 // ReviewThread is an unresolved review thread as a fix reads it.
@@ -74,7 +80,7 @@ type ReviewThread struct {
 	CanReply, CanResolve bool
 	// URL is the thread's first submitted comment on GitHub.
 	URL string
-	// Comments are the first MaxThreadComments submitted comments; Total
+	// Comments are the first ReadThreadComments submitted comments; Total
 	// counts them all.
 	Comments []ThreadComment
 	Total    int
@@ -188,7 +194,7 @@ func (c *Client) UnresolvedThreads(ctx context.Context, repository Repository, n
 				if thread.URL == "" {
 					thread.URL = comment.URL
 				}
-				entry := ThreadComment{Association: comment.AuthorAssociation, Body: comment.Body}
+				entry := ThreadComment{Association: comment.AuthorAssociation, Body: comment.Body, URL: comment.URL}
 				if comment.Author != nil {
 					entry.Author, entry.Bot = comment.Author.Login, comment.Author.Typename == "Bot"
 				}
