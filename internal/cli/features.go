@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -14,6 +13,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/baum-ai/baum/features/discover"
+	"github.com/baum-ai/baum/internal/appdb"
 	"github.com/baum-ai/baum/internal/config"
 	"github.com/baum-ai/baum/internal/decisionlog"
 	"github.com/baum-ai/baum/internal/github"
@@ -211,11 +211,11 @@ func runFeatures(cmd *cobra.Command, repository, clone string, days int, calls b
 			return err
 		}
 	}
-	state, err := jobs.Directory()
+	state, err := appdb.Path()
 	if err != nil {
 		return err
 	}
-	store, err := decisionlog.Open(filepath.Join(state, "decisions", "decisions.sqlite"), decisionlog.OpenOptions{})
+	store, err := decisionlog.Open(state, decisionlog.OpenOptions{})
 	if err != nil {
 		return err
 	}

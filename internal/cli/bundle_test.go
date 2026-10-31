@@ -63,6 +63,7 @@ func bundleEnv(t *testing.T) (assembletest.Repo, *fakeGitHub, []string) {
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, "config"))
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	t.Setenv("GITHUB_TOKEN", "")
 	t.Setenv("GH_TOKEN", "")
 	t.Chdir(repo.Dir)

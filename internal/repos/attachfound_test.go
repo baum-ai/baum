@@ -5,6 +5,8 @@ import (
 	"errors"
 	"os"
 	"testing"
+
+	"github.com/baum-ai/baum/internal/appdb/appdbtest"
 )
 
 func TestAttachFoundNeverMovesARegisteredClone(t *testing.T) {
@@ -23,7 +25,7 @@ func TestAttachFoundNeverMovesARegisteredClone(t *testing.T) {
 		t.Fatalf("error = %v", e)
 	}
 	// A linked worktree of the registered repository directory is refused too.
-	work := t.TempDir() + "/linked"
+	work := appdbtest.TempDir(t) + "/linked"
 	git(t, fork, "-c", "user.name=T", "-c", "user.email=t@example.com", "commit", "-q", "--allow-empty", "-m", "init")
 	git(t, fork, "worktree", "add", "-q", "-b", "w", work)
 	if _, e = r.AttachFound(ctx, work, "acme/app"); !errors.Is(e, ErrClonedElsewhere) {

@@ -9,16 +9,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net/url"
-	"os"
 	"path/filepath"
 	"slices"
 	"sort"
 	"strings"
 	"time"
 
-	_ "modernc.org/sqlite"
-
+	"github.com/baum-ai/baum/internal/appdb"
 	"github.com/baum-ai/baum/internal/config"
 	"github.com/baum-ai/baum/internal/github"
 	"github.com/baum-ai/baum/internal/gitlocal"
@@ -288,63 +285,21 @@ type Registry struct {
 	db *sql.DB
 	// noSchema marks a read-only registry whose file has no tables yet.
 	noSchema bool
-	// legacy marks a read-only registry not yet migrated to schemaVersion,
-	// whose stored automatic=false only ever meant the old default.
-	legacy bool
-	// noPicked marks a read-only registry without the picked table.
 	noPicked bool
 	// noPreferences marks a read-only registry without saved preferences.
 	noPreferences bool
 }
 
-// schemaVersion is the registry's PRAGMA user_version. Version 1 makes a null
-// automatic setting follow the global preference; before it, registration
-// stored automatic=false for every repository.
-const schemaVersion = 1
+func Path() (string, error) { return appdb.Path() }
 
-func Path() (string, error) {
-	p, e := config.Path()
-	return filepath.Join(filepath.Dir(p), "repos.sqlite"), e
-}
-
-// Open creates a private registry beside config.toml. SQLite serializes writers
-// across processes. The rollback journal inherits the private database mode.
+// Open opens repository tables in the shared application database.
 func Open(path string) (*Registry, error) {
-	if path == "" {
-		var e error
-		path, e = Path()
-		if e != nil {
-			return nil, e
-		}
-	}
-	if e := os.MkdirAll(filepath.Dir(path), 0700); e != nil {
-		return nil, e
-	}
-	f, e := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0600)
+	db, e := appdb.Open(path, false)
 	if e != nil {
 		return nil, e
 	}
-	e = f.Chmod(0600)
-	ce := f.Close()
-	if e != nil {
-		return nil, e
-	}
-	if ce != nil {
-		return nil, ce
-	}
-	uri, e := databaseURI(path)
-	if e != nil {
-		return nil, e
-	}
-	db, e := sql.Open("sqlite", uri+"?_pragma=busy_timeout(10000)&_pragma=foreign_keys(1)")
-	if e != nil {
-		return nil, e
-	}
-	db.SetMaxOpenConns(1)
 	_, e = db.Exec(`CREATE TABLE IF NOT EXISTS repositories(identity TEXT PRIMARY KEY,settings TEXT NOT NULL); CREATE TABLE IF NOT EXISTS clones(id TEXT PRIMARY KEY,path TEXT NOT NULL UNIQUE,common_dir TEXT NOT NULL,repository TEXT NOT NULL REFERENCES repositories(identity)); CREATE TABLE IF NOT EXISTS preferences(key TEXT PRIMARY KEY,value TEXT NOT NULL); CREATE TABLE IF NOT EXISTS picked(identity TEXT PRIMARY KEY REFERENCES repositories(identity) ON DELETE CASCADE); CREATE TABLE IF NOT EXISTS aliases(alias TEXT PRIMARY KEY,repository TEXT NOT NULL);`)
-	if e == nil {
-		e = migrate(context.Background(), db)
-	}
+
 	if e == nil {
 		e = loadAliases(db)
 	}
@@ -355,112 +310,16 @@ func Open(path string) (*Registry, error) {
 	return &Registry{db: db}, nil
 }
 
-// migrate brings the registry to schemaVersion in one immediate write
-// transaction, so concurrent processes migrate it exactly once. Before
-// version 1 the app had no automatic control and registration stored
-// automatic=false for every repository, so a stored false becomes "follow the
-// global preference"; a stored true was an explicit choice and stays.
-func migrate(ctx context.Context, db *sql.DB) (err error) {
-	conn, err := db.Conn(ctx)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = conn.Close() }()
-	if _, err = conn.ExecContext(ctx, "BEGIN IMMEDIATE"); err != nil {
-		return err
-	}
-	defer func() {
-		if err != nil {
-			_, _ = conn.ExecContext(ctx, "ROLLBACK")
-		}
-	}()
-	var version int
-	if err = conn.QueryRowContext(ctx, "PRAGMA user_version").Scan(&version); err != nil {
-		return err
-	}
-	if version < schemaVersion {
-		if err = migrateAutomatic(ctx, conn); err != nil {
-			return err
-		}
-		if _, err = conn.ExecContext(ctx, fmt.Sprintf("PRAGMA user_version=%d", schemaVersion)); err != nil {
-			return err
-		}
-	}
-	_, err = conn.ExecContext(ctx, "COMMIT")
-	return err
-}
-
-func migrateAutomatic(ctx context.Context, conn *sql.Conn) error {
-	rows, err := conn.QueryContext(ctx, "SELECT identity,settings FROM repositories")
-	if err != nil {
-		return err
-	}
-	updates := map[string]string{}
-	for rows.Next() {
-		var identity, raw string
-		var s Settings
-		if err = rows.Scan(&identity, &raw); err == nil {
-			err = json.Unmarshal([]byte(raw), &s)
-		}
-		if err != nil {
-			_ = rows.Close()
-			return err
-		}
-		if s.Automatic != nil && !*s.Automatic {
-			s.Automatic = nil
-			updates[identity] = mustJSON(s)
-		}
-	}
-	err = rows.Err()
-	_ = rows.Close()
-	if err != nil {
-		return err
-	}
-	for identity, settings := range updates {
-		if _, err = conn.ExecContext(ctx, "UPDATE repositories SET settings=? WHERE identity=?", settings, identity); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func databaseURI(path string) (string, error) {
-	absolute, e := filepath.Abs(path)
-	if e != nil {
-		return "", e
-	}
-	uriPath := filepath.ToSlash(absolute)
-	if !strings.HasPrefix(uriPath, "/") {
-		uriPath = "/" + uriPath
-	}
-	return (&url.URL{Scheme: "file", Path: uriPath}).String(), nil
-}
-
 // OpenReadOnly opens an existing registry only to list it. Unlike Open it
 // creates no directory, file or table and changes no file mode, and SQLite
 // opens the file read-only, so it writes no journal. A missing file is an error
 // wrapping fs.ErrNotExist; a file without tables lists no clones.
 func OpenReadOnly(path string) (*Registry, error) {
-	if path == "" {
-		var e error
-		path, e = Path()
-		if e != nil {
-			return nil, e
-		}
-	}
-	if _, e := os.Stat(path); e != nil {
-		return nil, e
-	}
-	uri, e := databaseURI(path)
+	db, e := appdb.Open(path, true)
 	if e != nil {
 		return nil, e
 	}
-	db, e := sql.Open("sqlite", uri+"?mode=ro&_pragma=busy_timeout(10000)")
-	if e != nil {
-		return nil, e
-	}
-	db.SetMaxOpenConns(1)
-	var tables, preferences, picked, version int
+	var tables, preferences, picked int
 	if e = db.QueryRow(`SELECT count(*) FROM sqlite_master WHERE type='table' AND name IN ('clones','repositories')`).Scan(&tables); e != nil {
 		_ = db.Close()
 		return nil, e
@@ -473,13 +332,9 @@ func OpenReadOnly(path string) (*Registry, error) {
 		_ = db.Close()
 		return nil, e
 	}
-	if e = db.QueryRow(`PRAGMA user_version`).Scan(&version); e != nil {
-		_ = db.Close()
-		return nil, e
-	}
 	// A registry from before aliases has none to load.
 	_ = loadAliases(db)
-	return &Registry{db: db, noSchema: tables < 2, noPreferences: preferences == 0, legacy: version < schemaVersion, noPicked: picked == 0}, nil
+	return &Registry{db: db, noSchema: tables < 2, noPreferences: preferences == 0, noPicked: picked == 0}, nil
 }
 
 func (r *Registry) Close() error { return r.db.Close() }
@@ -907,9 +762,6 @@ func (r *Registry) cloneRows(ctx context.Context, repository string) ([]Clone, e
 			_ = rows.Close()
 			return nil, e
 		}
-		if r.legacy && c.Settings.Automatic != nil && !*c.Settings.Automatic {
-			c.Settings.Automatic = nil
-		}
 		result = append(result, c)
 	}
 	e = rows.Err()
@@ -964,9 +816,6 @@ func (r *Registry) RepositorySettings(ctx context.Context, repository string) (S
 	}
 	if e == nil {
 		e = json.Unmarshal([]byte(raw), &s)
-	}
-	if e == nil && r.legacy && s.Automatic != nil && !*s.Automatic {
-		s.Automatic = nil
 	}
 	return s, e == nil, e
 }
@@ -1140,9 +989,6 @@ func (r *Registry) repositories(ctx context.Context, only string) ([]Repository,
 		if e != nil {
 			_ = rows.Close()
 			return nil, e
-		}
-		if r.legacy && v.Settings.Automatic != nil && !*v.Settings.Automatic {
-			v.Settings.Automatic = nil
 		}
 		v.Clones = []Clone{}
 		v.EarlierNames = gitlocal.EarlierNames(v.Repository)

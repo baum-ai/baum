@@ -1,3 +1,4 @@
+import { uiState } from "./ui-state";
 import {
   RISK_SCORE_MEANING,
   hunkLine,
@@ -252,60 +253,20 @@ export type Progress = {
 
 export const EMPTY_PROGRESS: Progress = { seen: [], notes: {}, note: "" };
 
-const STORAGE_KEY = "baum.walkthrough";
-const KEPT = 40;
-
 export function progressKey(document: ReviewDocument): string {
   return `${document.review.repository.toLowerCase()}#${document.review.pull_request}@v${document.review.version}`;
 }
 
-type Stored = Record<string, Progress & { at: number }>;
-
-function readAll(): Stored {
-  try {
-    const stored = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? "null");
-    return stored && typeof stored === "object" && !Array.isArray(stored) ? stored : {};
-  } catch {
-    return {};
-  }
+export function progressState(key: string) {
+  return uiState<Progress>(`api/ui-state/walkthrough?key=${encodeURIComponent(key)}`, () => ({
+    seen: [],
+    notes: {},
+    note: "",
+  }));
 }
-
-/** The reader's progress on a review version, rebuilt field by field so
- *  whatever else storage holds, the page works. */
 export function loadProgress(key: string): Progress {
-  const stored = readAll()[key];
-  if (!stored || typeof stored !== "object") return EMPTY_PROGRESS;
-  const notes =
-    stored.notes && typeof stored.notes === "object" && !Array.isArray(stored.notes)
-      ? Object.fromEntries(
-          Object.entries(stored.notes).filter(([, note]) => typeof note === "string"),
-        )
-      : {};
-  return {
-    seen: Array.isArray(stored.seen) ? stored.seen.filter((id) => typeof id === "string") : [],
-    notes,
-    note: typeof stored.note === "string" ? stored.note : "",
-  };
+  return progressState(key).get().value;
 }
-
-/** Saves progress, keeping the most recent reviews' only. */
-export function saveProgress(key: string, progress: Progress, now = Date.now()) {
-  const all = readAll();
-  all[key] = { ...progress, at: now };
-  const kept = Object.entries(all)
-    .sort(([, a], [, b]) => (b?.at ?? 0) - (a?.at ?? 0))
-    .slice(0, KEPT);
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(Object.fromEntries(kept)));
-  } catch {
-    /* Storage full or unavailable: the page keeps working for this visit. */
-  }
-}
-
-/** Sent on `window` when something other than the walkthrough changed a
- *  review version's draft, with that version's progress key as `detail`. An
- *  open walkthrough reads its progress again. */
-export const PROGRESS_EVENT = "baum:walkthrough-progress";
 
 /** Where an answer lands in the draft: a stop's own comment, or the review's
  *  overall comment. */
@@ -338,48 +299,41 @@ export function answerComment(answer: {
     .join("\n\n");
 }
 
-function notify(key: string) {
-  try {
-    window.dispatchEvent(new CustomEvent(PROGRESS_EVENT, { detail: key }));
-  } catch {
-    /* No window: nothing is listening. */
-  }
-}
-
 /** Appends comment to the draft of the review version `key` at target, after
  *  what is there, and returns what was appended so it can be taken back. It
  *  only writes the draft: nothing is sent to GitHub. */
 export function appendToDraft(key: string, target: DraftTarget, comment: string): string {
-  const progress = loadProgress(key);
+  const state = progressState(key);
+  const progress = state.get().value;
   const existing = target.kind === "stop" ? (progress.notes[target.id] ?? "") : progress.note;
   const added = (text(existing) ? "\n\n" : "") + comment;
-  const next = text(existing) ? existing.replace(/\s+$/, "") + added : comment;
-  saveProgress(
-    key,
-    target.kind === "stop"
-      ? { ...progress, notes: { ...progress.notes, [target.id]: next } }
-      : { ...progress, note: next },
-  );
-  notify(key);
+  state.update((current) => {
+    const before = target.kind === "stop" ? (current.notes[target.id] ?? "") : current.note;
+    const next = text(before) ? `${before.replace(/\s+$/, "")}\n\n${comment}` : comment;
+    return target.kind === "stop"
+      ? { ...current, notes: { ...current.notes, [target.id]: next } }
+      : { ...current, note: next };
+  });
   return added;
 }
 
-/** Takes back what appendToDraft appended, while it is still at the end of
- *  the draft; a draft edited since keeps its text. Returns whether it did. */
+/** Undo only the appended suffix; any later text is left untouched. */
 export function removeFromDraft(key: string, target: DraftTarget, added: string): boolean {
-  const progress = loadProgress(key);
-  const current = target.kind === "stop" ? (progress.notes[target.id] ?? "") : progress.note;
-  const trimmed = current.replace(/\s+$/, "");
-  const tail = added.replace(/\s+$/, "");
-  if (!trimmed.endsWith(tail)) return false;
-  const rest = trimmed.slice(0, trimmed.length - tail.length).replace(/\s+$/, "");
-  if (target.kind === "stop") {
-    const notes = { ...progress.notes };
+  const state = progressState(key);
+  const remove = (current: Progress) => {
+    const note = target.kind === "stop" ? (current.notes[target.id] ?? "") : current.note;
+    const trimmed = note.replace(/\s+$/, "");
+    const tail = added.replace(/\s+$/, "");
+    if (!trimmed.endsWith(tail)) return current;
+    const rest = trimmed.slice(0, trimmed.length - tail.length).replace(/\s+$/, "");
+    if (target.kind !== "stop") return { ...current, note: rest };
+    const notes = { ...current.notes };
     if (rest) notes[target.id] = rest;
     else delete notes[target.id];
-    saveProgress(key, { ...progress, notes });
-  } else saveProgress(key, { ...progress, note: rest });
-  notify(key);
+    return { ...current, notes };
+  };
+  if (remove(state.get().value) === state.get().value) return false;
+  state.update(remove);
   return true;
 }
 

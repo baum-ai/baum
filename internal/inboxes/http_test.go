@@ -9,6 +9,9 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/baum-ai/baum/internal/appdb"
+	"github.com/baum-ai/baum/internal/appdb/appdbtest"
 )
 
 type harness struct {
@@ -19,7 +22,7 @@ type harness struct {
 }
 
 func newHarness(t *testing.T) *harness {
-	h := &harness{t: t, path: filepath.Join(t.TempDir(), "inboxes.json")}
+	h := &harness{t: t, path: filepath.Join(appdbtest.TempDir(t), "inboxes.json")}
 	h.handler = (&API{Store: Open(h.path), Changed: func() { h.changed++ }}).Handler()
 	return h
 }
@@ -206,7 +209,7 @@ func TestOtherMethodsAreRefused(t *testing.T) {
 func TestCorruptFileIsReportedAndKept(t *testing.T) {
 	h := newHarness(t)
 	const corrupt = `{"revision": 3, "inboxes": [`
-	if err := os.WriteFile(h.path, []byte(corrupt), 0o600); err != nil {
+	if err := appdb.Write(h.path, "state", "inboxes", []byte(corrupt)); err != nil {
 		t.Fatal(err)
 	}
 	if code, body := h.do(http.MethodGet, ""); code != 500 || body["code"] != "inboxes_unreadable" {
@@ -215,7 +218,7 @@ func TestCorruptFileIsReportedAndKept(t *testing.T) {
 	if code, body := h.put(`{"revision":0,"inboxes":[` + entry("A") + `]}`); code != 500 || body["code"] != "inboxes_unreadable" {
 		t.Fatalf("put %d %v", code, body)
 	}
-	if data, _ := os.ReadFile(h.path); string(data) != corrupt {
+	if data, _ := appdb.Read(h.path, "state", "inboxes"); string(data) != corrupt {
 		t.Fatalf("the corrupt file was touched: %q", data)
 	}
 	if h.changed != 0 {
@@ -237,5 +240,25 @@ func TestFileIsPrivate(t *testing.T) {
 	entries, _ := os.ReadDir(filepath.Dir(h.path))
 	if len(entries) != 1 {
 		t.Fatalf("temporary files left: %v", entries)
+	}
+}
+
+func TestUnreadableDatabaseHasTheSameReadAndWriteError(t *testing.T) {
+	h := newHarness(t)
+	const corrupt = "not a SQLite database"
+	if err := os.WriteFile(h.path, []byte(corrupt), 0600); err != nil {
+		t.Fatal(err)
+	}
+	for _, request := range []struct{ method, body string }{{http.MethodGet, ""}, {http.MethodPut, `{"revision":0,"inboxes":[]}`}} {
+		code, body := h.do(request.method, request.body)
+		if code != 500 || body["code"] != CodeUnreadable {
+			t.Fatalf("%s: %d %v", request.method, code, body)
+		}
+		if strings.Contains(strings.ToLower(body["message"].(string)), "remove") {
+			t.Fatalf("unsafe repair advice: %v", body)
+		}
+	}
+	if raw, err := os.ReadFile(h.path); err != nil || string(raw) != corrupt {
+		t.Fatalf("changed corrupt database: %q %v", raw, err)
 	}
 }

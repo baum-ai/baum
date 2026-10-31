@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/baum-ai/baum/agent"
+	"github.com/baum-ai/baum/internal/appdb"
 	chatpkg "github.com/baum-ai/baum/internal/chat"
 	"github.com/baum-ai/baum/internal/filelock"
 	"github.com/baum-ai/baum/internal/fix"
@@ -304,28 +305,15 @@ func id() string {
 	return hex.EncodeToString(b[:])
 }
 
-// Directory is the persistent state directory holding the default journal:
+// Directory is the persistent application state directory:
 // $XDG_STATE_HOME/baum, or ~/.local/state/baum.
 func Directory() (string, error) {
-	root := os.Getenv("XDG_STATE_HOME")
-	if !filepath.IsAbs(root) {
-		home, e := os.UserHomeDir()
-		if e != nil {
-			return "", e
-		}
-		root = filepath.Join(home, ".local", "state")
-	}
-	return filepath.Join(root, "baum"), nil
+	return appdb.Directory()
 }
 
-// DefaultPath is the queue file Open uses for an empty path: jobs.json in
-// Directory.
+// DefaultPath is the shared application database holding the queue document.
 func DefaultPath() (string, error) {
-	dir, e := Directory()
-	if e != nil {
-		return "", e
-	}
-	return filepath.Join(dir, "jobs.json"), nil
+	return appdb.Path()
 }
 
 func Open(path string, executor Executor, concurrency int, changed func(Job)) (*Queue, error) {
@@ -345,7 +333,7 @@ func Open(path string, executor Executor, concurrency int, changed func(Job)) (*
 	}
 	// One process owns a journal: two queues on one file would run confirmed
 	// jobs twice and overwrite each other's records.
-	lock, err := filelock.Wait(context.Background(), path+".lock", lockWait)
+	lock, err := filelock.Wait(context.Background(), filepath.Clean(path)+".jobs.lock.sqlite", lockWait)
 	if errors.Is(err, filelock.ErrLocked) {
 		return nil, errors.New("another baum process is running this job queue")
 	}
@@ -360,7 +348,7 @@ func Open(path string, executor Executor, concurrency int, changed func(Job)) (*
 			_ = lock.Release()
 		}
 	}()
-	raw, e := os.ReadFile(path)
+	raw, e := appdb.Read(path, "state", "jobs")
 	if e == nil {
 		if len(raw) > 32<<20 {
 			cancel()
@@ -411,10 +399,7 @@ func (q *Queue) save() error {
 	if e != nil {
 		return e
 	}
-	if e = os.MkdirAll(filepath.Dir(q.path), 0700); e != nil {
-		return e
-	}
-	return generate.WriteFileAtomic(q.path, raw)
+	return appdb.Write(q.path, "state", "jobs", raw)
 }
 func (q *Queue) signal() {
 	for _, wake := range []chan struct{}{q.wake, q.chatWake} {

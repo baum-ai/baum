@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/baum-ai/baum/internal/appdb/appdbtest"
 	"github.com/baum-ai/baum/internal/config"
 	"github.com/baum-ai/baum/internal/doctor"
 	"github.com/baum-ai/baum/internal/repos"
@@ -21,7 +22,7 @@ import (
 
 func diagnosticsServer(t *testing.T, api LocalAPI) *Server {
 	t.Helper()
-	registry, err := repos.Open(filepath.Join(t.TempDir(), "repos.sqlite"))
+	registry, err := repos.Open(filepath.Join(appdbtest.TempDir(t), "repos.sqlite"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -190,7 +191,7 @@ func TestDiagnosticsResponseHasNoPlantedSecrets(t *testing.T) {
 		t.Skip("the fake gh is a shell script")
 	}
 	const token, key = "ghp_PLANTEDFAKETOKEN0000000000000000", "sk-ant-PLANTEDFAKEKEY00000000000"
-	home, bin := t.TempDir(), t.TempDir()
+	home, bin := appdbtest.TempDir(t), appdbtest.TempDir(t)
 	script := "#!/bin/sh\ncase \"$1\" in\n--version) echo 'gh version 2.50.0 (2026-01-01)';;\nauth) echo " + token + ";;\nesac\n"
 	if err := os.WriteFile(filepath.Join(bin, "gh"), []byte(script), 0o755); err != nil {
 		t.Fatal(err)
@@ -200,7 +201,7 @@ func TestDiagnosticsResponseHasNoPlantedSecrets(t *testing.T) {
 	t.Setenv("XDG_STATE_HOME", filepath.Join(home, "state"))
 	t.Setenv("XDG_DATA_HOME", filepath.Join(home, "data"))
 	t.Setenv("XDG_RUNTIME_DIR", "")
-	t.Setenv("GH_CONFIG_DIR", t.TempDir())
+	t.Setenv("GH_CONFIG_DIR", appdbtest.TempDir(t))
 	t.Setenv("PATH", bin)
 	for _, name := range []string{"GH_PATH", "GITHUB_TOKEN", "GH_TOKEN", "GH_ENTERPRISE_TOKEN", "GITHUB_ENTERPRISE_TOKEN"} {
 		t.Setenv(name, "")

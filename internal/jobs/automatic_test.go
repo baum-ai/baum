@@ -5,13 +5,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
 	"path/filepath"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/baum-ai/baum/agent"
+	"github.com/baum-ai/baum/internal/appdb"
 )
 
 // autoExecutor prepares per-PR heads and lets a test choose what a person
@@ -375,7 +375,7 @@ func TestAutomaticJournaledJobWaitsForTheGate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = os.WriteFile(path, raw, 0600); err != nil {
+	if err = appdb.Write(path, "state", "jobs", raw); err != nil {
 		t.Fatal(err)
 	}
 	f := &autoExecutor{started: make(chan Prepared, 10), release: make(chan struct{})}
@@ -511,7 +511,7 @@ func TestAutomaticJobWithoutACloneFailsNeedsClone(t *testing.T) {
 func TestAutomaticJobCancelledForTheOldDailyCapLoads(t *testing.T) {
 	path := filepath.Join(privateDir(t), "jobs.json")
 	old := `[{"id":"old","clone":"clone","pr":1,"repository":"org/repo","head_sha":"a1","backend":"claude","model":"m","estimate_usd":2,"automatic":true,"trigger":"new_head","state":"cancelled","phase":"finished","reason":"daily_cap","calls":0,"tokens":0,"repairs":0,"actual_cost_usd":null,"created_at":"2026-10-20T10:00:00Z","updated_at":"2026-10-20T10:00:00Z"}]`
-	if err := os.WriteFile(path, []byte(old), 0o600); err != nil {
+	if err := appdb.Write(path, "state", "jobs", []byte(old)); err != nil {
 		t.Fatal(err)
 	}
 	f := &autoExecutor{heads: map[int]string{1: "a1"}, backend: "claude", started: make(chan Prepared, 10), release: make(chan struct{})}

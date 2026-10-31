@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"path/filepath"
 	"testing"
+
+	"github.com/baum-ai/baum/internal/appdb/appdbtest"
 )
 
 func TestPickReturnsOnlyItsOwnClones(t *testing.T) {
@@ -25,7 +27,7 @@ func TestPickReturnsOnlyItsOwnClones(t *testing.T) {
 
 func TestOpenReadOnlyPickedTable(t *testing.T) {
 	ctx := context.Background()
-	path := filepath.Join(t.TempDir(), "repos.sqlite")
+	path := filepath.Join(appdbtest.TempDir(t), "repos.sqlite")
 	w, e := Open(path)
 	if e != nil {
 		t.Fatal(e)

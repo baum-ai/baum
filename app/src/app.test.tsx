@@ -1,3 +1,4 @@
+import { mockStateFetch } from "./ui-state-test-helper";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { beforeEach, afterEach, expect, it, vi } from "vitest";
@@ -68,7 +69,7 @@ beforeEach(() => {
   );
   vi.stubGlobal(
     "fetch",
-    vi.fn(async (path: string) => {
+    mockStateFetch(async (path: string) => {
       // As on the server, the session authorizes nothing outside its namespace.
       if (fail || !path.startsWith("/s/test-ns/"))
         return new Response("unauthorized", { status: 401 });

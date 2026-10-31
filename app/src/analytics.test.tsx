@@ -1,3 +1,4 @@
+import { mockStateFetch } from "./ui-state-test-helper";
 import { act, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { renderToStaticMarkup } from "react-dom/server";
@@ -305,7 +306,7 @@ beforeEach(() => {
   root = createRoot(node);
   vi.stubGlobal(
     "fetch",
-    vi.fn(async (path: string) => {
+    mockStateFetch(async (path: string) => {
       requests.push(path);
       return Response.json(report({ delivery: { ...report().delivery, status: "ready" } }));
     }),

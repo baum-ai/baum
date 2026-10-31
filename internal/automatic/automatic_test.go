@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/baum-ai/baum/agent"
+	"github.com/baum-ai/baum/internal/appdb"
 	"github.com/baum-ai/baum/internal/discovery"
 	"github.com/baum-ai/baum/internal/github"
 	"github.com/baum-ai/baum/internal/jobs"
@@ -894,7 +895,7 @@ func TestAnOldDailyCapPauseIsIgnored(t *testing.T) {
 	h := newHarness(t)
 	h.observe(pr{number: 1, head: "a1", authored: true})
 	h.observe(pr{number: 1, head: "a2", authored: true})
-	raw, err := os.ReadFile(h.scheduler.Path)
+	raw, err := appdb.Read(h.scheduler.Path, "state", "automatic")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -908,7 +909,7 @@ func TestAnOldDailyCapPauseIsIgnored(t *testing.T) {
 	if raw, err = json.Marshal(state); err != nil {
 		t.Fatal(err)
 	}
-	if err = os.WriteFile(h.scheduler.Path, raw, 0o600); err != nil {
+	if err = appdb.Write(h.scheduler.Path, "state", "automatic", raw); err != nil {
 		t.Fatal(err)
 	}
 	h.restart()

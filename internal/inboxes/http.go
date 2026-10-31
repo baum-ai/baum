@@ -63,7 +63,7 @@ func fail(w http.ResponseWriter, err error) {
 			State
 		}{CodeStale, stale.Error(), true, stale.Current})
 	case errors.As(err, &unreadable):
-		failure(w, http.StatusInternalServerError, CodeUnreadable, "The inbox file cannot be read and was left untouched. Fix or remove it to continue.")
+		failure(w, http.StatusInternalServerError, CodeUnreadable, "The stored inbox state cannot be read and was left untouched.")
 	default:
 		failure(w, http.StatusInternalServerError, "internal", "The inboxes could not be saved.")
 	}

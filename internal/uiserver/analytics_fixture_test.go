@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/baum-ai/baum/internal/appdb"
 	"github.com/baum-ai/baum/internal/planusage"
 	"github.com/baum-ai/baum/sessions/collector/claudecode"
 )
@@ -88,7 +89,7 @@ func writePlanHistory(t *testing.T, path string) {
 		samples = append(samples, planusage.Sample{At: now.Add(time.Duration(i-3) * 6 * time.Hour), Provider: "claude", Window: "weekly", UsedPercent: used})
 	}
 	raw, _ := json.Marshal(samples)
-	if err := os.WriteFile(path, raw, 0o600); err != nil {
+	if err := appdb.Write(path, "state", "plan-usage-history", raw); err != nil {
 		t.Fatal(err)
 	}
 }

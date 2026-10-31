@@ -1,3 +1,4 @@
+import { mockStateFetch } from "./ui-state-test-helper";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
@@ -116,7 +117,7 @@ beforeEach(() => {
   );
   vi.stubGlobal(
     "fetch",
-    vi.fn(async (input: string, init?: RequestInit) => {
+    mockStateFetch(async (input: string, init?: RequestInit) => {
       const path = String(input).replace("/s/test-ns/", "");
       const method = init?.method ?? "GET";
       const body = init?.body ? JSON.parse(String(init.body)) : undefined;

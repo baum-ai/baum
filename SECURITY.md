@@ -105,8 +105,9 @@ verified, baum uses a copy embedded at release. The hosted service commands
 are described [below](#hosted-service-commands). Tokens are read from the
 environment, `gh auth token` or the 0600 config file and are never written
 anywhere else. Local inbox discovery also reads GitHub's REST API using that
-same token and derived host, without redirects or extra scopes. Its private
-0600 cache contains minimal inbox metadata and ETags, partitioned by a credential
+same token and derived host, without redirects or extra scopes. Its private application database
+contains minimal inbox metadata and ETags in `cache/discovery/<hash>` documents,
+partitioned by a credential
 fingerprint and repository. Tokens, PR bodies and signed image URLs are never
 put in that cache. Cached and offline results are marked stale; unreadable
 author write permissions remain unknown, rather than granting automatic work.
@@ -841,9 +842,28 @@ daemon's authenticated Host/Origin boundary.
 For the Analytics page the daemon also reads the plans every 15 minutes while
 it runs, through the same cache, so Claude's endpoint is asked at most that
 often even with no window open. It keeps only the snapshot time, provider,
-window name, percent used and reset time, in `plan-usage-history.json` in its
+window name, percent used and reset time, in the `state/plan-usage-history` document in `app.sqlite` in its
 state directory (`$XDG_STATE_HOME/baum`, default `~/.local/state/baum`), for 90
 days.
+
+### Local application database
+
+Durable repository settings, review groups, decisions/features, jobs, inboxes,
+analytics/history and persistent caches share `$XDG_STATE_HOME/baum/app.sqlite`
+(default `~/.local/state/baum/app.sqlite`). The containing directory and file
+are private to the current user (0700/0600 on Unix; a current-user-only DACL on
+Windows). SQLite journals inherit that protection. Small state/cache records
+are JSON documents in database rows, rather than separate files. The schema
+baseline is identified and versioned; newer and unrecognized databases are
+refused without being replaced. Pre-release storage is not imported.
+
+Per-clone review versions, attachments and chats remain in the clone's
+`versions.sqlite`. OS credential storage, optional configuration, daemon
+launch credentials, locks, hook spool/event records, live-session recovery
+snapshots, logs, fix transcripts and agent work directories remain separate
+so startup and failure recovery can work independently of the database.
+See the [database storage map and release checks](internal/appdb/README.md).
+
 
 ### Analytics
 
@@ -854,7 +874,7 @@ computer, plus one GitHub search per picked repository:
   stores (`~/.claude/projects`, `~/.codex/sessions`, Cursor's `state.vscdb`),
   the same files the PR page reads, but only sessions whose working directory is
   inside a registered clone and that were written in the last 90 days. It keeps
-  aggregates only, in `analytics-index.json` in its state directory (owner-only, 0600): per
+  aggregates only, in the `cache/analytics-index` document in its private application database: per
   session file, its path, size and modification time (to
   read only what changed), the agent, session id, clone and repository, the
   top-level branch, start and end, active seconds by hour, counts of human
@@ -868,12 +888,12 @@ computer, plus one GitHub search per picked repository:
   repository the PR page uses; nothing is fetched. They are held in memory for
   five minutes and not stored.
 - **Fix transcripts.** What a fix's agent said and ran, with its tool output,
-  in `transcripts/` beside `jobs.json` (private files, secrets masked, bounded,
+  in `transcripts/` beside `app.sqlite` (private files, secrets masked, bounded,
   the 50 latest fixes). It stays on your machine.
-- **baum's own work.** The jobs list (`jobs.json`) and a small ledger,
-  `analytics-actions.json`, of the merges, branch updates and check re-runs you
-  made from the app (time, kind, repository and pull request number), kept 90
-  days.
+- **baum's own work.** The jobs document (`state/jobs` in `app.sqlite`) and a
+  small ledger (`state/analytics-actions` in that database) of the merges,
+  branch updates and check re-runs you made from the app (time, kind,
+  repository and pull request number), kept 90 days.
 - **Delivery.** For each picked repository, one GraphQL search of GitHub with
   your GitHub token for the pull requests you opened in the last 90 days
   (`repo:owner/name is:pr author:@me`): number, state, draft, created and
@@ -1289,8 +1309,7 @@ Origin and Host checks as every application route. How it works:
   session's end drops one queued before it.
 - Pending requests and messages are held in the daemon's memory only: never
   written to disk, logged or sent to a baum server, and gone when the daemon
-  stops. Only the Codex setting is saved, in `agent-requests.json` in the
-  daemon's state directory.
+  stops. Only the Codex setting is saved, in the `state/agent-requests` document in `app.sqlite`.
 
 Document selectors must name a registered clone. Linked transcripts use the
 same redaction and linked-session allowlist as `baum internal view`; file patches are
@@ -1400,8 +1419,13 @@ installs its bundled `baum` as your `baum` command, because agent hooks run
   runs, since its own files vanish when it quits.
 - On Windows it keeps a copy of its `baum.exe` alone in a directory of its
   data directory and adds that directory to the front of your user `PATH`.
-- It records what it created in `setup.json` in its configuration directory.
-  Removing the command deletes only that link, and only while it still points
+- It records what it created in the `setup` section of `desktop.json` in its
+  configuration directory. Notification preferences, zoom and update state
+  use other sections of the same file. Native writes preserve unrelated
+  sections under one process-wide lock and replace the file atomically
+  (mode 0600 on Unix). Corrupt JSON or a malformed target section is never
+  overwritten; command install/removal refuses unreadable setup records
+  before changing a link. Removing the command deletes only that link, and only while it still points
   at the app's baum, and puts back a baum it replaced; on Windows it removes
   the `PATH` entry. Since you (and your programs) can edit that file, the app
   asks for the password to remove a link only when the record has the shape

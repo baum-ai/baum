@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/baum-ai/baum/agent"
+	"github.com/baum-ai/baum/internal/appdb/appdbtest"
 	"github.com/baum-ai/baum/internal/config"
 	"github.com/baum-ai/baum/internal/generate"
 	"github.com/baum-ai/baum/internal/generate/generatetest"
@@ -41,7 +42,7 @@ func registeredClone(t *testing.T) (*repos.Registry, repos.Clone) {
 			t.Fatal(string(out), e)
 		}
 	}
-	registry, e := repos.Open(filepath.Join(t.TempDir(), "repos.sqlite"))
+	registry, e := repos.Open(filepath.Join(appdbtest.TempDir(t), "repos.sqlite"))
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -218,7 +219,7 @@ func TestLocalPrepareUsesBackendPathsWithoutFallingBackToPATH(t *testing.T) {
 			t.Fatal(string(out), e)
 		}
 	}
-	registry, e := repos.Open(filepath.Join(t.TempDir(), "repos.sqlite"))
+	registry, e := repos.Open(filepath.Join(appdbtest.TempDir(t), "repos.sqlite"))
 	if e != nil {
 		t.Fatal(e)
 	}

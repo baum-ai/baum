@@ -9,12 +9,13 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/baum-ai/baum/internal/appdb/appdbtest"
 	"github.com/baum-ai/baum/internal/store"
 )
 
 func openStore(t *testing.T) *Store {
 	t.Helper()
-	s, err := Open(filepath.Join(t.TempDir(), "state", "groups.sqlite"))
+	s, err := Open(filepath.Join(appdbtest.TempDir(t), "state", "groups.sqlite"))
 	if err != nil {
 		t.Fatal(err)
 	}

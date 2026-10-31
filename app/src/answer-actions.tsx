@@ -1,3 +1,4 @@
+import { SavedStateNotice, useUIState } from "./ui-state";
 import { useState } from "react";
 import type { ReviewDocument } from "@baum/viewer/review-document";
 import { Button } from "@baum/viewer/components/ui";
@@ -8,6 +9,7 @@ import {
   appendToDraft,
   draftTarget,
   progressKey,
+  progressState,
   removeFromDraft,
   type DraftTarget,
   type Tour,
@@ -45,6 +47,7 @@ export function AnswerActions({
   const [undone, setUndone] = useState<"removed" | "edited" | null>(null);
   const suggestion = answer.suggests_fix?.summary;
   const key = progressKey(document);
+  const saved = useUIState(progressState(key));
   const add = () => {
     const target = draftTarget(tour, turn.focus);
     setAdded({ target, text: appendToDraft(key, target, answerComment(answer)) });
@@ -58,6 +61,7 @@ export function AnswerActions({
   };
   return (
     <div className="ask-actions" role="group" aria-label="Use this answer">
+      <SavedStateNotice state={saved} label="review draft" />
       {suggestion ? (
         <p className="ask-suggestion">
           <strong>Suggested change:</strong> {suggestion}
@@ -75,7 +79,7 @@ export function AnswerActions({
             Fix this
           </Button>
         ) : null}
-        <Button variant="secondary" size="compact" onClick={add}>
+        <Button variant="secondary" size="compact" disabled={!saved.ready} onClick={add}>
           Add as comment
         </Button>
       </div>

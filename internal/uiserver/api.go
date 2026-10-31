@@ -64,6 +64,8 @@ type LocalAPI struct {
 	// Inboxes serves /api/inboxes: the saved filters listed under Inbox in
 	// the app. Without it the route reports the capability unavailable.
 	Inboxes http.Handler
+	// UIState keeps inbox bookkeeping and review drafts across browser origins.
+	UIState http.Handler
 	// GitHubRepositories serves the account's repositories for picking
 	// (/api/github/repositories) and cloning one
 	// (/api/repositories/{owner}/{name}/clone and clone-target).
@@ -181,6 +183,7 @@ func (a LocalAPI) Handler() *LocalHandler {
 	mux.Handle("/api/groups", provider(a.Groups, "groups_unavailable"))
 	mux.Handle("/api/groups/", provider(a.Groups, "groups_unavailable"))
 	mux.Handle("/api/inboxes", provider(a.Inboxes, "inboxes_unavailable"))
+	mux.Handle("/api/ui-state/", provider(a.UIState, "ui_state_unavailable"))
 	mux.Handle("/api/clones/found", provider(a.Clones, "clones_unavailable"))
 	mux.Handle("/api/clones/found/", provider(a.Clones, "clones_unavailable"))
 	repositories := provider(a.GitHubRepositories, "github_repositories_unavailable")

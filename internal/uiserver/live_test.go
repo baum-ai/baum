@@ -6,11 +6,12 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/baum-ai/baum/internal/appdb/appdbtest"
 	"github.com/baum-ai/baum/internal/repos"
 )
 
 func TestLiveSessionsRouteIsAuthenticatedAndOptional(t *testing.T) {
-	registry, err := repos.Open(filepath.Join(t.TempDir(), "repos.sqlite"))
+	registry, err := repos.Open(filepath.Join(appdbtest.TempDir(t), "repos.sqlite"))
 	if err != nil {
 		t.Fatal(err)
 	}

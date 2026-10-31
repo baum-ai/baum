@@ -1,3 +1,4 @@
+import { mockStateFetch } from "./ui-state-test-helper";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
@@ -197,7 +198,7 @@ beforeEach(() => {
   );
   vi.stubGlobal(
     "fetch",
-    vi.fn(async (path: string) =>
+    mockStateFetch(async (path: string) =>
       Response.json(
         path.includes("api/index")
           ? { entries, problems: [] }
@@ -403,20 +404,17 @@ it("clears only what the person finished, and nothing of a repository missing fr
   expect(await cleared()).toBe("Fixed #2 Change 2");
 });
 
-it("starts afresh from storage it cannot read", async () => {
-  const now = new Date();
-  localStorage.setItem(
-    "baum.inbox.v1",
-    JSON.stringify({
-      day: `${now.getFullYear()}-${now.getMonth() + 1}-${now.getDate()}`,
-      seen: [],
-      snoozed: null,
-      held: { "acme/demo#3": 5 },
-    }),
+it("keeps the queue usable and reports an unreadable saved record", async () => {
+  const original = vi.mocked(fetch).getMockImplementation()!;
+  vi.mocked(fetch).mockImplementation(async (path, init) =>
+    String(path).includes("api/ui-state/")
+      ? Response.json({ message: "unreadable" }, { status: 500 })
+      : original(path, init),
   );
   await render();
   expect(shown()).toBe("Change 1");
-  expect(list()).toEqual(["Change 1", "Change 3", "Change 4", "Change 2", "Change 5"]);
+  expect(node.textContent).toContain("Could not read your saved state.");
+  expect(node.textContent).toContain("Retry saving inbox state");
 });
 
 it("merges every ready pull request after one confirmation", async () => {

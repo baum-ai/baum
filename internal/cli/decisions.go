@@ -10,9 +10,9 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/baum-ai/baum/internal/appdb"
 	"github.com/baum-ai/baum/internal/config"
 	"github.com/baum-ai/baum/internal/decisionlog"
-	"github.com/baum-ai/baum/internal/jobs"
 	"github.com/baum-ai/baum/internal/livesessions"
 	"github.com/baum-ai/baum/internal/repos"
 	"github.com/baum-ai/baum/internal/transcript"
@@ -70,11 +70,11 @@ func runDecisionCapture(ctx context.Context, cmd *cobra.Command, target decision
 			return err
 		}
 	}
-	state, err := jobs.Directory()
+	state, err := appdb.Path()
 	if err != nil {
 		return err
 	}
-	store, err := decisionlog.Open(filepath.Join(state, "decisions", "decisions.sqlite"), decisionlog.OpenOptions{ReadOnly: options.DryRun})
+	store, err := decisionlog.Open(state, decisionlog.OpenOptions{ReadOnly: options.DryRun})
 	if err != nil {
 		return err
 	}

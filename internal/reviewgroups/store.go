@@ -11,17 +11,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net/url"
-	"os"
-	"path/filepath"
 	"slices"
 	"strings"
 	"time"
 	"unicode"
 	"unicode/utf8"
 
-	_ "modernc.org/sqlite"
-
+	"github.com/baum-ai/baum/internal/appdb"
 	"github.com/baum-ai/baum/internal/store"
 )
 
@@ -95,50 +91,17 @@ type Summary struct {
 	Reviewed  []ReviewedMember `json:"reviewed"`
 }
 
-// Store is groups.sqlite: the definitions and their versions.
+// Store keeps group definitions and versions in the application database.
 type Store struct{ db *sql.DB }
 
 // Open creates or opens a private store at path.
 func Open(path string) (*Store, error) {
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return nil, err
-	}
-	file, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o600)
+	db, err := appdb.Open(path, false)
 	if err != nil {
 		return nil, err
 	}
-	err = file.Chmod(0o600)
-	if closeErr := file.Close(); err == nil {
-		err = closeErr
-	}
-	if err != nil {
-		return nil, err
-	}
-	absolute, err := filepath.Abs(path)
-	if err != nil {
-		return nil, err
-	}
-	uriPath := filepath.ToSlash(absolute)
-	if !strings.HasPrefix(uriPath, "/") {
-		uriPath = "/" + uriPath
-	}
-	db, err := sql.Open("sqlite", (&url.URL{Scheme: "file", Path: uriPath}).String()+"?_pragma=busy_timeout(10000)")
-	if err != nil {
-		return nil, err
-	}
-	db.SetMaxOpenConns(1)
-	if _, err = db.Exec(`CREATE TABLE IF NOT EXISTS groups(id TEXT PRIMARY KEY, repository TEXT NOT NULL, name TEXT NOT NULL, members TEXT NOT NULL, created INTEGER NOT NULL, updated INTEGER NOT NULL, deleted INTEGER NOT NULL DEFAULT 0);
+	if _, err = db.Exec(`CREATE TABLE IF NOT EXISTS groups(id TEXT PRIMARY KEY, repository TEXT NOT NULL, name TEXT NOT NULL, members TEXT NOT NULL, created INTEGER NOT NULL, updated INTEGER NOT NULL, deleted INTEGER NOT NULL DEFAULT 0, stack INTEGER NOT NULL DEFAULT 0);
 CREATE TABLE IF NOT EXISTS versions(group_id TEXT NOT NULL, version INTEGER NOT NULL, metadata BLOB NOT NULL, summary BLOB NOT NULL, document BLOB NOT NULL, PRIMARY KEY(group_id, version));`); err != nil {
-		_ = db.Close()
-		return nil, err
-	}
-	// A store from before stack groups gains the column.
-	var stackColumn int
-	err = db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('groups') WHERE name='stack'`).Scan(&stackColumn)
-	if err == nil && stackColumn == 0 {
-		_, err = db.Exec(`ALTER TABLE groups ADD COLUMN stack INTEGER NOT NULL DEFAULT 0`)
-	}
-	if err != nil {
 		_ = db.Close()
 		return nil, err
 	}

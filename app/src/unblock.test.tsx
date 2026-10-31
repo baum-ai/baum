@@ -1,3 +1,4 @@
+import { mockStateFetch } from "./ui-state-test-helper";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
@@ -90,7 +91,7 @@ beforeEach(() => {
   });
   vi.stubGlobal(
     "fetch",
-    vi.fn(async (path: string, init?: RequestInit) => {
+    mockStateFetch(async (path: string, init?: RequestInit) => {
       if (init?.method === "GET") return Response.json(optionsAnswer);
       posts.push({ path: String(path), body: JSON.parse(String(init?.body)) });
       return writeAnswer;

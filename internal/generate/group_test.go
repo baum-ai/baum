@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/baum-ai/baum/agent"
+	"github.com/baum-ai/baum/internal/appdb/appdbtest"
 	"github.com/baum-ai/baum/internal/assemble"
 	"github.com/baum-ai/baum/internal/assemble/assembletest"
 	"github.com/baum-ai/baum/internal/generate"
@@ -145,7 +146,7 @@ func TestGroupRunReviewsEveryMemberAsOneDocument(t *testing.T) {
 		})
 		return agent.Result{Document: document, Model: "stub-model", Calls: 1, Tokens: 100}, err
 	}
-	groups, err := reviewgroups.Open(filepath.Join(t.TempDir(), "groups.sqlite"))
+	groups, err := reviewgroups.Open(filepath.Join(appdbtest.TempDir(t), "groups.sqlite"))
 	if err != nil {
 		t.Fatal(err)
 	}

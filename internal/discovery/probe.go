@@ -64,7 +64,7 @@ func (s *Service) Probe(ctx context.Context, repositories []github.Repository) (
 		if err != nil {
 			return nil, err
 		}
-		cache, err := load(path)
+		cache, err := s.load(path)
 		if err != nil {
 			continue
 		}
@@ -78,7 +78,7 @@ func (s *Service) Probe(ctx context.Context, repositories []github.Repository) (
 		return nil, err
 	}
 	budgetPath += ".budget"
-	budget, err := load(budgetPath)
+	budget, err := s.load(budgetPath)
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return nil, err
 	}
@@ -132,7 +132,7 @@ func (s *Service) Probe(ctx context.Context, repositories []github.Repository) (
 	if s.Epoch() != epoch || ctx.Err() != nil {
 		return nil, github.ErrIdentityChanged
 	}
-	if err := save(budgetPath, diskCache{Snapshot: Snapshot{Rate: p.rate}, GraphQLRate: p.graphRate}); err != nil {
+	if err := s.save(budgetPath, diskCache{Snapshot: Snapshot{Rate: p.rate}, GraphQLRate: p.graphRate}); err != nil {
 		return nil, fmt.Errorf("save discovery rate budget: %w", err)
 	}
 	if probeErr != nil {

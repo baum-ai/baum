@@ -1,3 +1,4 @@
+import { mockStateFetch } from "./ui-state-test-helper";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
@@ -75,7 +76,7 @@ it("gathers consecutive tool calls into one run, broken only by what the agent s
 it("shows a run's latest tool call and folds the earlier ones", async () => {
   vi.stubGlobal(
     "fetch",
-    vi.fn(async () =>
+    mockStateFetch(async () =>
       Response.json({
         entries: [
           entry(1, { text: "Some **bold** words." }),

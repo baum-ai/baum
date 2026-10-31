@@ -2,11 +2,13 @@ package planusage
 
 import (
 	"context"
-	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/baum-ai/baum/internal/appdb"
+	"github.com/baum-ai/baum/internal/appdb/appdbtest"
 )
 
 // scripted answers each read with the next figure, taken now.
@@ -28,7 +30,7 @@ func (s *scripted) Read(context.Context) Plan {
 func TestHistoryStoresChangesPersistsAndPrunes(t *testing.T) {
 	now := clock
 	source := &scripted{now: &now, figures: []float64{10, 10, 40, 100}, resets: clock.Add(5 * time.Hour)}
-	path := filepath.Join(t.TempDir(), "plan-usage.json")
+	path := filepath.Join(appdbtest.TempDir(t), "plan-usage.json")
 	tick := func(h *History, d time.Duration) {
 		t.Helper()
 		now = now.Add(d)
@@ -49,7 +51,7 @@ func TestHistoryStoresChangesPersistsAndPrunes(t *testing.T) {
 	if got := h.Since(time.Time{}); len(got) != 4 {
 		t.Fatalf("keep-alive sample missing: %+v", got)
 	}
-	raw, err := os.ReadFile(path)
+	raw, err := appdb.Read(path, "state", "plan-usage-history")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -71,7 +73,7 @@ func TestHistoryStoresChangesPersistsAndPrunes(t *testing.T) {
 func TestHistoryIgnoresAReadingNoNewerThanTheLast(t *testing.T) {
 	now := clock
 	source := &scripted{now: &now, figures: []float64{10, 30}, resets: clock}
-	h := &History{Path: filepath.Join(t.TempDir(), "p.json"), Now: func() time.Time { return now }, Service: &Service{Sources: []Source{source}, Now: func() time.Time { return now }}}
+	h := &History{Path: filepath.Join(appdbtest.TempDir(t), "p.json"), Now: func() time.Time { return now }, Service: &Service{Sources: []Source{source}, Now: func() time.Time { return now }}}
 	_ = h.Sample(context.Background())
 	// The Codex snapshot did not move: the same time is not a new reading.
 	h.Service.loaded = time.Time{}

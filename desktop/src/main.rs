@@ -19,6 +19,7 @@ mod navigation;
 mod notifications;
 mod onboarding;
 mod panel;
+mod settings;
 mod status;
 mod tray;
 mod updater;

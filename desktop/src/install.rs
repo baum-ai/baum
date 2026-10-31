@@ -22,7 +22,7 @@
 //! root owns it and that no one else can write it, so swapping a directory
 //! between the app's check and the prompt cannot redirect it; and it refuses
 //! paths that are not shaped like what the app installs, so a tampered
-//! `setup.json` cannot point root at anything else.
+//! A setup record in `desktop.json` cannot point root at anything else.
 
 use std::fs;
 use std::io;
