@@ -38,7 +38,12 @@ import {
   type TranscriptTurn,
 } from "../transcript";
 import { HarnessName, ModelName } from "./brand-logo";
-import { AgentAvatar, AgentText, ChatSurface, PromptBubble, SystemNote } from "./chat";
+import { AgentAvatar, AgentByline, AgentText, ChatSurface, PromptBubble, SystemNote } from "./chat";
+import {
+  type ConversationLayout,
+  ConversationLayoutContext,
+  useLogLayout,
+} from "./conversation-layout";
 import { cn, FOCUS_RING } from "./classnames";
 import { CARD_LABEL } from "./editorial";
 import {
@@ -60,13 +65,15 @@ export type RepliesState = "ready" | "loading" | "failed";
 
 /** What a host adds to a transcript: its loaders (`source`), how it writes a
  *  cost (`formatCost`, none and no cost is shown), how it names a model
- *  (`modelLabel`, the model id by default), and the picture beside a person's
- *  prompt (`renderAvatar`, none and no picture or its column). */
+ *  (`modelLabel`, the model id by default), the picture beside a person's
+ *  prompt (`renderAvatar`, none and no picture or its column), and how the
+ *  conversation is laid out (`layout`, a chat by default). */
 export type TranscriptHostProps = {
   source?: TranscriptSource;
   formatCost?: CostFormat;
   modelLabel?: (model: string) => string;
   renderAvatar?: (author: string) => ReactNode;
+  layout?: ConversationLayout;
 };
 
 /** What a subagent card, however deep, needs of the session it is in: the
@@ -111,6 +118,7 @@ export function SessionTranscript({
   formatCost,
   modelLabel,
   renderAvatar,
+  layout = "chat",
 }: {
   session: TranscriptSession;
   replies: RepliesState;
@@ -140,45 +148,49 @@ export function SessionTranscript({
 
   const state = session.replies_included ? "ready" : replies;
   const days = mounted ? dayBreaks(session.prompts.map((prompt) => prompt.started_at)) : [];
+  const log = layout === "log";
   return (
-    <SubagentHostContext.Provider value={host}>
-      <ChatSurface plain>
-        {/* Said once for the session rather than once a turn, in a region that
+    <ConversationLayoutContext.Provider value={layout}>
+      <SubagentHostContext.Provider value={host}>
+        <ChatSurface plain>
+          {/* Said once for the session rather than once a turn, in a region that
           stays mounted so a screen reader hears it change. */}
-        <div aria-live="polite" className="flex flex-col">
-          {state === "loading" ? (
-            <SystemNote className="mb-3">
-              <Spinner />
-              Loading the agent's replies…
-            </SystemNote>
-          ) : state === "failed" ? (
-            <SystemNote className="mb-3">
-              The agent's replies could not be loaded. Each prompt's agent activity still has them.
+          <div aria-live="polite" className="flex flex-col">
+            {state === "loading" ? (
+              <SystemNote className="mb-3">
+                <Spinner />
+                Loading the agent's replies…
+              </SystemNote>
+            ) : state === "failed" ? (
+              <SystemNote className="mb-3">
+                The agent's replies could not be loaded. Each prompt's agent activity still has
+                them.
+              </SystemNote>
+            ) : null}
+          </div>
+          <ol className={cn("flex flex-col", log ? "divide-y divide-(--border-subtle)" : "gap-5")}>
+            {session.prompts.map((prompt, index) => (
+              <Turn
+                key={prompt.turn_id}
+                prompt={prompt}
+                session={session}
+                replies={state}
+                day={days[index] ?? null}
+                focused={focusTurn === prompt.ordinal}
+                source={source}
+                formatCost={formatCost}
+                renderAvatar={renderAvatar}
+              />
+            ))}
+          </ol>
+          {session.prompts_truncated ? (
+            <SystemNote className="mt-3">
+              This session has more prompts than are shown here.
             </SystemNote>
           ) : null}
-        </div>
-        <ol className="flex flex-col gap-5">
-          {session.prompts.map((prompt, index) => (
-            <Turn
-              key={prompt.turn_id}
-              prompt={prompt}
-              session={session}
-              replies={state}
-              day={days[index] ?? null}
-              focused={focusTurn === prompt.ordinal}
-              source={source}
-              formatCost={formatCost}
-              renderAvatar={renderAvatar}
-            />
-          ))}
-        </ol>
-        {session.prompts_truncated ? (
-          <SystemNote className="mt-3">
-            This session has more prompts than are shown here.
-          </SystemNote>
-        ) : null}
-      </ChatSurface>
-    </SubagentHostContext.Provider>
+        </ChatSurface>
+      </SubagentHostContext.Provider>
+    </ConversationLayoutContext.Provider>
   );
 }
 
@@ -261,14 +273,15 @@ function Turn({
     setActivityOpen((value) => !value);
   };
   const sessionLevelTokens = session.tokens > 0 && !session.cost_per_prompt;
+  const log = useLogLayout();
 
   return (
     <li
       ref={row}
       aria-current={focused ? "step" : undefined}
-      className="flex flex-col gap-2 rounded-xl"
+      className={cn("flex flex-col", log ? "gap-3 py-6 first:pt-2" : "gap-2 rounded-xl")}
     >
-      {day ? <SystemNote className="mb-1">{day}</SystemNote> : null}
+      {day ? <SystemNote className={log ? "font-medium" : "mb-1"}>{day}</SystemNote> : null}
       <HumanMessage
         prompt={prompt}
         runId={session.run_id}
@@ -301,7 +314,10 @@ function Turn({
           <div
             role="region"
             aria-label={`Agent activity for prompt ${prompt.ordinal}`}
-            className="flex min-w-0 flex-col gap-2 border-l-2 border-(--border-subtle) pl-3"
+            className={cn(
+              "flex min-w-0 flex-col gap-2 border-l-2 border-(--border-subtle) pl-3",
+              log && "ml-1",
+            )}
           >
             <ActivityTimeline
               vendor={session.source}
@@ -349,6 +365,7 @@ function HumanMessage({
   return (
     <PromptBubble
       text={text}
+      images={prompt.images}
       author={author}
       avatar={renderAvatar ? (author ? renderAvatar(author) : null) : undefined}
       length={prompt.text_length}
@@ -368,8 +385,13 @@ function HumanMessage({
 
 /** The agent's side of a turn: its bubbles, notes and the turn's footer. */
 function AgentSide({ children }: { children: ReactNode }) {
+  const log = useLogLayout();
   return (
-    <div data-message="agent" className="flex min-w-0 flex-col gap-1.5">
+    // A log lines the agent's text up with the prompt's.
+    <div
+      data-message="agent"
+      className={cn("flex min-w-0 flex-col", log ? "gap-2 pl-4" : "gap-1.5")}
+    >
       {children}
     </div>
   );
@@ -391,10 +413,38 @@ function AgentReplies({
   /** Absent when the host has no activity to open. */
   openActivity?: () => void;
 }) {
+  const log = useLogLayout();
   // The transcript says once that the replies are loading or missing.
   if (state !== "ready") return null;
   const omitted = pluralize("earlier reply", prompt.replies_omitted, true);
-  return (
+  const reply = (index: number, named: boolean, progress: boolean) => {
+    const shown = prompt.replies[index];
+    if (!shown) return null;
+    const text = fullReplyText(shown, activity);
+    const stillPreview = shown.truncated && text === shown.text;
+    return (
+      <AgentText
+        key={`${shown.timestamp ?? "undated"}-${index}`}
+        vendor={named ? vendor : undefined}
+        progress={progress}
+        text={text}
+        length={shown.text_length}
+        truncated={stillPreview}
+        onExpand={shown.truncated ? loadActivity : undefined}
+        caption={join([
+          shown.model,
+          shown.timestamp && formatTime(shown.timestamp),
+          // The activity carries a turn's first messages, and a long
+          // turn's last replies can fall outside them.
+          stillPreview &&
+            typeof activity === "object" &&
+            activity !== null &&
+            "the rest is beyond what the activity holds",
+        ])}
+      />
+    );
+  };
+  const notes = (
     <>
       {prompt.replies_omitted > 0 ? (
         openActivity ? (
@@ -402,7 +452,10 @@ function AgentReplies({
             type="button"
             onClick={openActivity}
             className={cn(
-              "cursor-pointer self-center rounded-full border border-(--border-subtle) bg-(--surface-card) px-3 py-1 text-xs text-(--text-link) hover:underline",
+              "cursor-pointer rounded-full text-xs text-(--text-link) hover:underline",
+              log
+                ? "self-start"
+                : "self-center border border-(--border-subtle) bg-(--surface-card) px-3 py-1",
               FOCUS_RING,
             )}
           >
@@ -415,30 +468,49 @@ function AgentReplies({
       {prompt.replies.length === 0 && prompt.replies_omitted === 0 ? (
         <SystemNote>No text reply was recorded.</SystemNote>
       ) : null}
-      {prompt.replies.map((reply, index) => {
-        const text = fullReplyText(reply, activity);
-        const stillPreview = reply.truncated && text === reply.text;
-        return (
-          <AgentText
-            key={`${reply.timestamp ?? "undated"}-${index}`}
-            vendor={index === 0 ? vendor : undefined}
-            text={text}
-            length={reply.text_length}
-            truncated={stillPreview}
-            onExpand={reply.truncated ? loadActivity : undefined}
-            caption={join([
-              reply.model,
-              reply.timestamp && formatTime(reply.timestamp),
-              // The activity carries a turn's first messages, and a long
-              // turn's last replies can fall outside them.
-              stillPreview &&
-                typeof activity === "object" &&
-                activity !== null &&
-                "the rest is beyond what the activity holds",
-            ])}
-          />
-        );
-      })}
+    </>
+  );
+  if (!log)
+    return (
+      <>
+        {notes}
+        {prompt.replies.map((_, index) => reply(index, index === 0, false))}
+      </>
+    );
+  // A log names the agent once, above everything it said, and sets what came
+  // before its last reply apart as what it said on the way there.
+  const first = prompt.replies[0];
+  const last = prompt.replies.length - 1;
+  return (
+    <>
+      <AgentByline
+        vendor={vendor}
+        caption={first ? join([first.model, first.timestamp && formatTime(first.timestamp)]) : null}
+      />
+      {notes}
+      {last > 0 ? (
+        // Folded until asked for: the reply is what the turn came to.
+        <details className="group flex flex-col">
+          <summary
+            className={cn(
+              "flex w-fit cursor-pointer list-none items-center gap-1 rounded-(--radius-xs) text-xs font-medium text-(--text-secondary) hover:text-(--text-primary) [&::-webkit-details-marker]:hidden",
+              FOCUS_RING,
+            )}
+          >
+            <ChevronDownIcon
+              size={12}
+              className="flex-none -rotate-90 transition-transform group-open:rotate-0"
+            />
+            {pluralize("progress update", last, true)}
+          </summary>
+          <div className="mt-1.5 flex flex-col gap-1.5">
+            {prompt.replies.slice(0, last).map((_, index) => reply(index, false, true))}
+          </div>
+        </details>
+      ) : null}
+      {last >= 0 ? (
+        <div className={cn(last > 0 && "mt-1.5")}>{reply(last, false, false)}</div>
+      ) : null}
     </>
   );
 }
@@ -472,8 +544,14 @@ function TurnFooter({
     costIsFloor,
     formatCost,
   );
+  const log = useLogLayout();
   return (
-    <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1 pl-9 text-xs text-(--text-tertiary)">
+    <div
+      className={cn(
+        "flex flex-wrap items-baseline gap-x-3 gap-y-1 text-xs text-(--text-tertiary)",
+        log ? "pt-1" : "pl-9",
+      )}
+    >
       {onToggleActivity ? (
         <button
           type="button"
@@ -631,6 +709,7 @@ function FollowupTurn({
   vendor: string;
 }) {
   const kind = followupLabel(input);
+  const log = useLogLayout();
   const empty =
     activity.messages.length === 0 &&
     activity.tool_calls.length === 0 &&
@@ -640,7 +719,10 @@ function FollowupTurn({
       <details className="group flex flex-col">
         <summary
           className={cn(
-            "mx-auto flex w-fit max-w-full cursor-pointer list-none items-center gap-1.5 rounded-full border border-dashed border-(--border-strong) bg-(--surface-card) px-3 py-1 text-xs text-(--text-secondary) hover:text-(--text-primary) [&::-webkit-details-marker]:hidden",
+            "flex w-fit max-w-full cursor-pointer list-none items-center gap-1.5 rounded-full text-xs text-(--text-secondary) hover:text-(--text-primary) [&::-webkit-details-marker]:hidden",
+            log
+              ? ""
+              : "mx-auto border border-dashed border-(--border-strong) bg-(--surface-card) px-3 py-1",
             FOCUS_RING,
           )}
         >
@@ -656,7 +738,12 @@ function FollowupTurn({
             ])}
           </span>
         </summary>
-        <div className="mx-auto mt-1.5 w-full max-w-[92%] rounded-xl border border-(--border-subtle) bg-(--surface-card) px-3 py-2">
+        <div
+          className={cn(
+            "mt-1.5 w-full rounded-xl border border-(--border-subtle) bg-(--surface-card) px-3 py-2",
+            log ? "" : "mx-auto max-w-[92%]",
+          )}
+        >
           <p className="max-h-80 overflow-auto text-xs whitespace-pre-wrap text-(--text-secondary) [overflow-wrap:anywhere]">
             {input.text}
           </p>
@@ -682,7 +769,7 @@ function FollowupTurn({
 }
 
 const CALL_TEXT =
-  "mt-1 max-h-56 overflow-auto rounded-md bg-(--surface-sunken) p-2 text-xs whitespace-pre-wrap text-(--text-secondary) [overflow-wrap:anywhere]";
+  "mt-1 max-h-56 overflow-auto rounded-md bg-(--code-fill) p-2 text-xs whitespace-pre-wrap text-(--text-secondary) [overflow-wrap:anywhere]";
 
 /** A run of tool calls between two messages, folded to one line naming what
  *  kinds of call they were. A call's output shows when the host has it. */
@@ -692,11 +779,13 @@ function ToolRun({ calls }: { calls: TranscriptToolCall[] }) {
   const kinds = [...verbs]
     .map(([verb, count]) => `${verb.replaceAll("_", " ")}${count > 1 ? ` ×${count}` : ""}`)
     .join(", ");
+  const log = useLogLayout();
   return (
-    <details open className="group flex flex-col">
+    <details open={!log} className="group flex flex-col">
       <summary
         className={cn(
-          "flex w-fit max-w-full cursor-pointer list-none items-center gap-1.5 rounded-full border border-(--border-subtle) bg-(--surface-card) px-3 py-1 text-xs text-(--text-secondary) hover:text-(--text-primary) [&::-webkit-details-marker]:hidden",
+          "flex w-fit max-w-full cursor-pointer list-none items-center gap-1.5 rounded-full text-xs text-(--text-secondary) hover:text-(--text-primary) [&::-webkit-details-marker]:hidden",
+          !log && "border border-(--border-subtle) bg-(--surface-card) px-3 py-1",
           FOCUS_RING,
         )}
       >
@@ -763,6 +852,7 @@ function SubagentCard({ subagent }: { subagent: TranscriptSubagent }) {
   const duration = durationSeconds(subagent.started_at, subagent.ended_at);
   const failed = subagent.status === "error";
   const status = spawnStatusLabel(subagent.status);
+  const log = useLogLayout();
   // Open, the conversation ends in the response itself; it is said once there
   // when the conversation holds all of it.
   const responseShown =
@@ -772,7 +862,7 @@ function SubagentCard({ subagent }: { subagent: TranscriptSubagent }) {
     <Card
       size="flush"
       className={cn(
-        "ml-9 border-l-2",
+        log ? "border-l-2" : "ml-9 border-l-2",
         failed ? "border-l-(--status-critical)" : "border-l-(--border-strong)",
       )}
       data-subagent={subagent.session_id || subagent.tool_call_id}

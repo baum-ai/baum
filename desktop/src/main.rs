@@ -314,6 +314,7 @@ fn main() {
             onboarding::uninstall_command,
             onboarding::install_hooks,
             onboarding::uninstall_hooks,
+            onboarding::update_hooks,
             onboarding::choose_repository,
             onboarding::add_repository,
             onboarding::review_settings,
@@ -413,7 +414,7 @@ mod tests {
     fn pages_have_only_their_declared_capabilities() {
         let expected = serde_json::json!({
             "connecting-screen": ["allow-connection", "allow-reconnect", "allow-step-zoom"],
-            "daemon-pages": ["allow-choose-repository", "allow-setup-state", "allow-install-command", "allow-uninstall-command", "allow-install-hooks", "allow-uninstall-hooks", "allow-zoom-state", "allow-set-zoom", "allow-step-zoom"],
+            "daemon-pages": ["allow-choose-repository", "allow-setup-state", "allow-install-command", "allow-uninstall-command", "allow-install-hooks", "allow-uninstall-hooks", "allow-update-hooks", "allow-zoom-state", "allow-set-zoom", "allow-step-zoom"],
             "setup-screen": [
                 "allow-setup-state",
                 "allow-install-command",

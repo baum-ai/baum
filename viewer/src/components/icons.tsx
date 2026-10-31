@@ -83,6 +83,15 @@ export function MenuIcon(props: IconProps) {
   );
 }
 
+/** More: three dots in a row, for a menu of what can be done with a thing. */
+export function MoreIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M3.5 8h.01M8 8h.01M12.5 8h.01" strokeWidth={2.5} />
+    </Icon>
+  );
+}
+
 export function CloseIcon(props: IconProps) {
   return (
     <Icon {...props}>

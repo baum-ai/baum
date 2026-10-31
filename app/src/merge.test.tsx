@@ -142,10 +142,20 @@ it("offers Merge on ready rows only and opens the dialog from the row", async ()
       />,
     ),
   );
-  const merges = Array.from(node.querySelectorAll("button")).filter((b) =>
-    b.getAttribute("aria-label")?.startsWith("Merge "),
-  );
-  expect(merges.map((b) => b.getAttribute("aria-label"))).toEqual(["Merge acme/demo #1"]);
-  await act(async () => merges[0]!.click());
+  const choices = () =>
+    Array.from(node.querySelectorAll<HTMLElement>('[role="menu"] [role^=menuitem]')).filter(
+      (item) => item.querySelector(".context-menu-label")?.textContent === "Merge…",
+    );
+  const openActions = (name: string) =>
+    act(async () =>
+      node.querySelector<HTMLButtonElement>(`button[aria-label="Actions for ${name}"]`)!.click(),
+    );
+  for (const name of ["acme/demo #2", "acme/demo #3"]) {
+    await openActions(name);
+    expect(choices()).toHaveLength(0);
+  }
+  await openActions("acme/demo #1");
+  expect(choices()).toHaveLength(1);
+  await act(async () => choices()[0]!.click());
   expect(node.querySelector("dialog")?.textContent).toContain("Merge pull request #1?");
 });

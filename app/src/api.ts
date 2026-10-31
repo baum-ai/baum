@@ -8,8 +8,6 @@ export type Clone = {
   settings: {
     /** null follows the global automatic generation preference. */
     automatic: boolean | null;
-    backend: string | null;
-    model: string | null;
     /** Decision capture for this repository: false turns it off, null and
      *  true follow the global switches. Absent from an older daemon. */
     decisions?: boolean | null;
@@ -56,6 +54,13 @@ export type PR = GitHubState & {
   author_has_write: boolean | null;
   team_membership_known: boolean;
   head_ref?: string;
+  /** The branch it merges into; absent in data from an older daemon. */
+  base_ref?: string;
+  /** Lines added and deleted and files changed across the pull request, as
+   *  GitHub counts them; absent or zero in data from an older daemon. */
+  additions?: number;
+  deletions?: number;
+  changed_files?: number;
   /** Whether the signed-in account may push to the repository, which a fix
    *  needs; null or absent when GitHub did not say. */
   viewer_can_push?: boolean | null;
@@ -373,6 +378,8 @@ export type LiveSession = {
   state: "running" | "idle" | "ended";
   started_at: string;
   last_activity_at: string;
+  /** When the user last prompted it, absent before a prompt the daemon saw. */
+  last_prompt_at?: string;
   /** When an ended session ended; absent otherwise. */
   ended_at?: string;
   /** The normalised kind of the latest hook event. */
@@ -640,13 +647,18 @@ export type PullRequestDecisions = {
   sessions: (SessionDecisions & { title?: string; live: boolean })[];
   review_generated_at: string | null;
 };
-/** The global decision capture settings, from `api/settings`. */
+/** The global data extraction settings (decision capture and the feature
+ *  log), from `api/settings/decisions`. An empty `backend` follows the
+ *  reviews' harness; an empty `model` is the harness's default. */
 export type DecisionSettings = {
   enabled: boolean;
+  backend: string;
   model: string;
-  /** What the daemon makes of them (`api/settings/decisions` only): the
-   *  harness capture resolves to, its model, and whether `model` is ignored. */
-  backend?: string;
+  /** The reasoning effort; empty or absent is the agent's own. */
+  effort?: string;
+  /** What the daemon makes of them: the harness extraction resolves to, its
+   *  model, and whether `model` is ignored. */
+  effective_backend?: string;
   /** The harness's checks did not answer in time, so it is unknown. */
   backend_undetermined?: boolean;
   effective_model?: string;

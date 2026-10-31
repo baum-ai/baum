@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -36,6 +37,8 @@ type fakeGitHub struct {
 	// check runs.
 	runs   []string
 	checks []string
+	// statuses are the commit statuses.
+	statuses []string
 	// rerunStatus answers a re-run by run ID, 201 when absent.
 	rerunStatus map[int]int
 	rerunBody   map[int]string
@@ -109,7 +112,7 @@ func (f *fakeGitHub) client() *github.Client {
 		case strings.HasSuffix(path, "/check-runs"):
 			return answer(200, `{"check_runs":[`+strings.Join(f.checks, ",")+`]}`)
 		case strings.HasSuffix(path, "/status"):
-			return answer(200, `{"statuses":[]}`)
+			return answer(200, `{"statuses":[`+strings.Join(f.statuses, ",")+`]}`)
 		}
 		return answer(404, `{"message":"Not Found"}`)
 	})})
@@ -259,8 +262,15 @@ func TestReviewThreadsListsTheUnresolvedOnes(t *testing.T) {
 		t.Fatalf("threads %+v", got)
 	}
 	first, second := got.Threads[0], got.Threads[1]
-	if first != (Thread{ID: "RT_1", Path: "a.go", Line: 12, Author: "alice", Excerpt: "Rename this.", Comments: 3, URL: "https://github.com/acme/app/pull/7#discussion_r1", CanResolve: true}) {
-		t.Fatalf("first %+v", first)
+	wantFirst := Thread{ID: "RT_1", Path: "a.go", Line: 12, Author: "alice", Excerpt: "Rename this.", Comments: 3, URL: "https://github.com/acme/app/pull/7#discussion_r1", CanResolve: true, Messages: []ThreadComment{
+		{Author: "alice", Body: "Rename this.\nIt reads badly.", URL: "https://github.com/acme/app/pull/7#discussion_r1"},
+		{Author: "me", Body: "ok", URL: "https://github.com/acme/app/pull/7#discussion_r2"},
+	}}
+	if !reflect.DeepEqual(first, wantFirst) {
+		t.Fatalf("first %+v, want %+v", first, wantFirst)
+	}
+	if body := second.Messages[0].Body; body != strings.Repeat("é", 250) {
+		t.Fatalf("second message %d characters", len([]rune(body)))
 	}
 	if second.ID != "RT_3" || second.Line != 7 || !second.Outdated || second.CanResolve || second.Author != "" || second.Excerpt != strings.Repeat("é", 199)+"…" {
 		t.Fatalf("second %+v", second)
@@ -460,6 +470,92 @@ func TestFailingChecks(t *testing.T) {
 	if _, err := s.FailingChecks(ctx, repo, 7, "abc"); err != nil || reads() != before+2 {
 		t.Fatalf("expired checks kept: %d reads, %v", reads()-before, err)
 	}
+}
+
+// A comment longer than the bound is cut with an ellipsis.
+func TestReviewThreadMessagesAreBounded(t *testing.T) {
+	long := strings.Repeat("x", 5000)
+	fake := fakeGitHub{graphql: func(string, map[string]any) string {
+		return `{"data":{"repository":{"pullRequest":{"headRefOid":"abc","reviewThreads":{"pageInfo":{"hasNextPage":false},"nodes":[
+			{"id":"RT_1","path":"a.go","line":1,"isResolved":false,"comments":{"totalCount":1,"nodes":[{"state":"SUBMITTED","body":"` + long + `","author":{"__typename":"User","login":"alice"}}]}}]}}}}}`
+	}}
+	got, err := Service{Client: fake.client()}.ReviewThreads(context.Background(), repo, 7, -1)
+	if err != nil || len(got.Threads) != 1 {
+		t.Fatalf("threads %+v, %v", got, err)
+	}
+	if body := got.Threads[0].Messages[0].Body; body != strings.Repeat("x", maxMessage-1)+"…" {
+		t.Fatalf("message of %d characters", len([]rune(body)))
+	}
+}
+
+func TestAllChecks(t *testing.T) {
+	fake := fakeGitHub{head: "abc", checks: []string{
+		`{"id":21,"name":"test","status":"completed","conclusion":"failure","html_url":"https://github.com/acme/app/runs/21","app":{"slug":"github-actions"},"output":{"title":"2 tests failed"}}`,
+		`{"id":22,"name":"lint","status":"completed","conclusion":"success","app":{"slug":"github-actions"},"output":{}}`,
+		`{"id":23,"name":"build","status":"in_progress","conclusion":null,"app":{"slug":"github-actions"},"output":{}}`,
+		`{"id":24,"name":"deploy","status":"waiting","conclusion":null,"app":{"slug":"github-actions"},"output":{}}`,
+		`{"id":25,"name":"ci/circle","status":"completed","conclusion":"timed_out","app":{"slug":"circleci"},"output":{}}`,
+		`{"id":26,"name":"docs","status":"completed","conclusion":"skipped","app":{"slug":"github-actions"},"output":{}}`,
+	}, statuses: []string{
+		`{"context":"ci/travis","state":"pending","description":"Waiting","target_url":"https://travis.example/1"}`,
+		`{"context":"ci/jenkins","state":"error","description":"Crashed"}`,
+		`{"context":"ci/ok","state":"success"}`,
+	}}
+	now := time.Date(2026, 10, 28, 12, 0, 0, 0, time.UTC)
+	s := Service{Client: fake.client(), Cache: &Cache{Now: func() time.Time { return now }}}
+	ctx := context.Background()
+	got, err := s.AllChecks(ctx, repo, 7, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := CheckList{HeadSHA: "abc", Checks: []CheckStatus{
+		{Name: "ci/circle", Status: "completed", Conclusion: "timed_out"},
+		{Name: "ci/jenkins", Status: "completed", Conclusion: "error", Title: "Crashed"},
+		{Name: "test", Status: "completed", Conclusion: "failure", Title: "2 tests failed", URL: "https://github.com/acme/app/runs/21", JobID: 21},
+		{Name: "build", Status: "in_progress"},
+		{Name: "ci/travis", Status: "in_progress", Title: "Waiting", URL: "https://travis.example/1"},
+		{Name: "deploy", Status: "queued"},
+		{Name: "ci/ok", Status: "completed", Conclusion: "success"},
+		{Name: "docs", Status: "completed", Conclusion: "skipped"},
+		{Name: "lint", Status: "completed", Conclusion: "success"},
+	}}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("checks %+v, want %+v", got, want)
+	}
+	reads := func() int {
+		n := 0
+		for _, path := range fake.gets {
+			if strings.HasSuffix(path, "/check-runs") {
+				n++
+			}
+		}
+		return n
+	}
+	if _, err := s.AllChecks(ctx, repo, 7, "abc"); err != nil || reads() != 1 {
+		t.Fatalf("cached checks read again: %d reads, %v", reads(), err)
+	}
+	now = now.Add(DefaultAllChecksTTL)
+	if _, err := s.AllChecks(ctx, repo, 7, "abc"); err != nil || reads() != 2 {
+		t.Fatalf("expired checks kept: %d reads, %v", reads(), err)
+	}
+	// A re-run drops the list, as it does the failing checks.
+	fake.canPush = true
+	if err := s.RerunJob(ctx, repo, 7, "abc", 21); err != nil {
+		t.Fatal(err)
+	}
+	before := reads()
+	if _, err := s.AllChecks(ctx, repo, 7, "abc"); err != nil || reads() != before+1 {
+		t.Fatalf("checks kept after a re-run: %d reads, %v", reads()-before, err)
+	}
+}
+
+func TestConflictsNeedsAClone(t *testing.T) {
+	fake := fakeGitHub{head: "abc"}
+	_, err := Service{Client: fake.client()}.Conflicts(context.Background(), repo, 7)
+	code(t, err, NoClone)
+	none := Service{Client: fake.client(), Clone: func(context.Context, github.Repository) (string, bool) { return "", false }}
+	_, err = none.Conflicts(context.Background(), repo, 7)
+	code(t, err, NoClone)
 }
 
 func TestRerunJob(t *testing.T) {

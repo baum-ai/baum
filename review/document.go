@@ -683,9 +683,22 @@ func (v *DocumentValidator) Prepare(document []byte, bundle *bundlepkg.Bundle, d
 	if err != nil {
 		return encoded, err.Error()
 	}
+	reconciledValue, err := decodeObject(reconciled, "reconciled review")
+	if err != nil {
+		return encoded, err.Error()
+	}
 	findings := derived
-	if semantic := v.Validate(reconciled, bundle); semantic != "" {
-		findings = append(findings, semantic)
+	// The authored candidate passed v.resolved above. Reconciliation also
+	// carries trusted previous sections, which may have failed details and a
+	// null summary; those are valid stored sections, not model-authored ones.
+	attachments := make(map[string]bool, len(bundle.Attachments))
+	for _, attachment := range bundle.Attachments {
+		attachments[attachment.ID] = true
+	}
+	if semantic, err := ruleFindings(reconciledValue, restored.Stack, restored.Sections, bundle, attachments); err != nil {
+		findings = append(findings, err.Error())
+	} else {
+		findings = append(findings, semantic...)
 	}
 	findings = append(findings, validateTileSources(restored.Sections, bundle, directory)...)
 	return encoded, strings.Join(findings, "\n")

@@ -54,7 +54,14 @@ export type TranscriptPrompt = {
   replies: TranscriptReply[];
   /** Earlier text replies of this prompt left out of `replies`. */
   replies_omitted: number;
+  /** The images pasted with the prompt, where the host serves them; absent
+   *  when it serves none. */
+  images?: TranscriptImage[];
 };
+
+/** An image a person pasted with a prompt: where it is served, and what it
+ *  is called for someone who cannot see it. */
+export type TranscriptImage = { src: string; alt: string };
 
 export type TranscriptSession = {
   run_id: string;

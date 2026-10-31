@@ -34,7 +34,7 @@ import {
 import { PullRequestState } from "./inbox";
 import { CloneActions } from "./repositories";
 import { CancelJob, GenerationOutcome, ReviewJob } from "./review";
-import { Notice, PageBar } from "./shell";
+import { Notice, PageBar, RefreshButton } from "./shell";
 import { useShortcuts } from "./shortcuts";
 import { LoadingStatus } from "./nine-dots";
 
@@ -186,6 +186,7 @@ export function GroupPage({
   cloneFor,
   revision,
   changed,
+  refresh,
 }: {
   group: ReviewGroup;
   /** The inbox's entries, with generating ones marked. */
@@ -195,6 +196,8 @@ export function GroupPage({
   cloneFor: (entry: Entry) => string;
   revision: number;
   changed: () => Promise<void>;
+  /** Reads the group's repository from GitHub again, from the head's refresh. */
+  refresh?: () => Promise<void>;
 }) {
   const url = useUrlState();
   const back = backTo(url.search);
@@ -461,6 +464,9 @@ export function GroupPage({
           back: { href: back.href, label: back.label },
           generation: { state: generationState, rewriting: generating && Boolean(doc) },
           beside: doc ? regenerate : null,
+          actions: refresh ? (
+            <RefreshButton refresh={refresh} label="Refresh from GitHub" />
+          ) : undefined,
         }}
         placeholder={
           !clone ? (

@@ -78,6 +78,7 @@ func newHooksCommand(stdout, stderr io.Writer) *cobra.Command {
 	cmd.AddCommand(newBootstrapHooksCommand(stdout, stderr))
 	cmd.AddCommand(newInstallUserHooksCommand(stdout, stderr))
 	cmd.AddCommand(newUninstallUserHooksCommand(stdout, stderr))
+	cmd.AddCommand(newUpdateUserHooksCommand(stdout, stderr))
 	cmd.AddCommand(newUserHooksStatusCommand(stdout))
 	return cmd
 }

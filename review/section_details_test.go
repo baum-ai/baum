@@ -131,6 +131,25 @@ func TestAnObsoleteSectionNeverWaitsForDetails(t *testing.T) {
 	}
 }
 
+func TestCompleteCarriesAnObsoleteSectionWithFailedDetails(t *testing.T) {
+	validator, bundle, published := refreshFixture(t)
+	previous := mustDecode(t, published)["sections"].([]any)[0].(map[string]any)
+	withoutDetails(previous, sectionDetailsFailed, true)
+	content, err := json.Marshal(previous)
+	checkNoError(t, err)
+	bundle.Previous = &bundlepkg.PreviousVersion{Version: 1, Sections: []bundlepkg.PreviousSection{{ID: previous["id"].(string), Content: content}}}
+	candidate := historyCandidate(t, []any{historySection("new", testHunk)})
+	completed, findings := validator.CompleteWithPrompt(candidate, bundle, t.TempDir(), "model", "prompt", time.Now())
+	checkEqual(t, "", findings)
+	sections := mustDecode(t, completed)["sections"].([]any)
+	checkEqual(t, previous["id"], sections[0].(map[string]any)["id"])
+	checkEqual(t, sectionDetailsFailed, sections[0].(map[string]any)["details"])
+	checkEqual(t, nil, sections[0].(map[string]any)["summary"])
+	if findings := validator.ValidateStored(completed, bundle); len(findings) > 0 {
+		t.Fatalf("completed document rejected: %v", findings)
+	}
+}
+
 // Only a live draft holds pending details: before a version is published or
 // saved every pending section becomes failed, and nothing else changes.
 func TestFailPendingDetails(t *testing.T) {

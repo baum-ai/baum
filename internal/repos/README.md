@@ -9,8 +9,10 @@ its HTTP handler uses.
 
 - `repositories(identity, settings)`: settings shared by every clone of a
   repository. `identity` is the lowercase `owner/name` on github.com and
-  `host/owner/name` elsewhere. `settings` is JSON (`automatic`, `backend`,
-  `model`, `decisions`); a `daily_cap` an older baum stored is ignored.
+  `host/owner/name` elsewhere. `settings` is JSON (`automatic`, `decisions`); a `daily_cap`, `backend` or
+  `model` an older baum stored is ignored and dropped on the next write, and
+  dropped from a request an older app sends: the harnesses and models are
+  global preferences.
 - `clones(id, path, common_dir, repository)`: registered working trees. A list
   reprobes each path and reports a changed or missing one unavailable without
   rewriting it.

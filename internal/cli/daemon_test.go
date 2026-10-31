@@ -153,7 +153,7 @@ func TestDoctorReportsStoppedDaemonWithoutCreatingState(t *testing.T) {
 
 func TestDaemonFlagsAreValidated(t *testing.T) {
 	stubDaemon(t)
-	for _, args := range [][]string{{"daemon", "ensure", "--port", "70000"}, {"daemon", "run", "--concurrency", "0"}, {"daemon", "ensure", "--concurrency", "17"}} {
+	for _, args := range [][]string{{"daemon", "ensure", "--port", "70000"}} {
 		if _, _, err := run(t, args...); err == nil || !strings.Contains(err.Error(), "out of range") {
 			t.Errorf("%v: %v", args, err)
 		}

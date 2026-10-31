@@ -339,6 +339,8 @@ pub struct AgentHooks {
     #[serde(default)]
     enabled: bool,
     #[serde(default)]
+    version: Option<String>,
+    #[serde(default)]
     error: Option<String>,
 }
 
@@ -515,6 +517,13 @@ pub async fn install_hooks(app: AppHandle, agent: Option<String>) -> Result<Outc
     change_hooks(app, "install", agent).await
 }
 
+/// Runs the bundled `baum hooks update --user`, which brings an installed
+/// plugin to the marketplace's latest version.
+#[tauri::command]
+pub async fn update_hooks(app: AppHandle, agent: Option<String>) -> Result<Outcome, String> {
+    change_hooks(app, "update", agent).await
+}
+
 /// Runs the bundled `baum hooks uninstall --user`.
 #[tauri::command]
 pub async fn uninstall_hooks(app: AppHandle, agent: Option<String>) -> Result<Outcome, String> {
@@ -608,6 +617,10 @@ pub struct ReviewSettings {
     /// The decision capture model, empty for the harness's default.
     #[serde(default)]
     decisions_model: String,
+    /// The data extraction harness Settings chose, empty while it follows
+    /// the reviews'; read only, never saved.
+    #[serde(default)]
+    decisions_chosen_backend: String,
     /// The harness and model decision capture uses (empty when unknown),
     /// and whether it ignores `decisions_model`; read only, never saved.
     #[serde(default)]

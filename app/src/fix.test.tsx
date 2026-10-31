@@ -54,6 +54,14 @@ const broken: Entry = {
   unresolved_capped: false,
   review_minutes: null,
 };
+const openActions = async (node: HTMLElement, name: string) =>
+  act(async () =>
+    node.querySelector<HTMLButtonElement>(`button[aria-label="Actions for ${name}"]`)!.click(),
+  );
+const choices = (node: HTMLElement) =>
+  Array.from(node.querySelectorAll<HTMLElement>('[role="menu"] [role^=menuitem]')).map(
+    (item) => item.querySelector(".context-menu-label")!.textContent,
+  );
 const variant = (patch: Partial<Entry>, pr: Partial<Entry["pull_request"]> = {}): Entry => ({
   ...broken,
   ...patch,
@@ -121,11 +129,19 @@ it("puts the fix action in the broken status cell, not on a fork", async () => {
       />,
     ),
   );
-  const buttons = node.querySelectorAll<HTMLButtonElement>("button.inbox-fix");
-  expect(buttons).toHaveLength(1);
-  expect(buttons[0]!.getAttribute("aria-label")).toBe("Fix conflicts and CI");
-  await act(async () => buttons[0]!.click());
+  await openActions(node, "acme/demo #8");
+  expect(choices(node)).toContain("Fix conflicts and CI");
+  await act(async () =>
+    Array.from(node.querySelectorAll<HTMLElement>('[role="menu"] [role^=menuitem]'))
+      .find((item) => item.textContent?.startsWith("Fix conflicts and CI"))!
+      .click(),
+  );
   expect(fix).toHaveBeenCalledWith(broken);
+  await openActions(node, "acme/demo #9");
+  expect(choices(node)).not.toContain("Fix conflicts and CI");
+  await act(async () =>
+    document.body.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })),
+  );
   await act(async () =>
     root.render(
       <Inbox
@@ -139,8 +155,9 @@ it("puts the fix action in the broken status cell, not on a fork", async () => {
       />,
     ),
   );
-  expect(node.querySelector("button.inbox-fix")).toBeNull();
-  expect(node.textContent).toContain("Fixing…");
+  await openActions(node, "acme/demo #8");
+  expect(choices(node).some((label) => label?.startsWith("Fix"))).toBe(false);
+  expect(node.querySelector(".inbox-activities")!.textContent).toContain("Fixing…");
   // From the click, before the daemon answers.
   await act(async () =>
     root.render(
@@ -155,8 +172,9 @@ it("puts the fix action in the broken status cell, not on a fork", async () => {
       />,
     ),
   );
-  expect(node.querySelector("button.inbox-fix")).toBeNull();
-  expect(node.textContent).toContain("Fixing…");
+  await openActions(node, "acme/demo #8");
+  expect(choices(node).some((label) => label?.startsWith("Fix"))).toBe(false);
+  expect(node.querySelector(".inbox-activities")!.textContent).toContain("Fixing…");
 });
 
 it("starts a fix at once, with no estimate or confirmation", async () => {
