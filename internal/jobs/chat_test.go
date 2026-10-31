@@ -5,12 +5,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
 	"path/filepath"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/baum-ai/baum/internal/appdb"
 	"github.com/baum-ai/baum/internal/assemble/assembletest"
 	"github.com/baum-ai/baum/internal/chat"
 	"github.com/baum-ai/baum/internal/chat/chattest"
@@ -263,7 +263,7 @@ func TestRestartLeavesARunningQuestionInterrupted(t *testing.T) {
 	dir := privateDir(t)
 	path := filepath.Join(dir, "jobs.json")
 	raw, _ := json.Marshal([]Job{{ID: "running", State: "running", Prepared: Prepared{Item: Item{Clone: "clone", PR: 7, Kind: KindChat}, Chat: ChatInputs{Conversation: "c1", Turn: 1, Version: 1}}}})
-	if err := os.WriteFile(path, raw, 0o600); err != nil {
+	if err := appdb.Write(path, "state", "jobs", raw); err != nil {
 		t.Fatal(err)
 	}
 	q, err := Open(path, &fakeExecutor{started: make(chan Prepared, 1), release: make(chan struct{})}, 1, nil)

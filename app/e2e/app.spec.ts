@@ -209,7 +209,10 @@ test("merges a ready pull request from the inbox after choosing a method", async
   await rm(join(process.env.BAUM_APP_STATE_DIR ?? "", "merged-7"), { force: true });
 });
 
-test("walks through a review, comments on a behaviour and submits the review", async ({ page }) => {
+test("walks through a review, comments on a behaviour and submits the review", async ({
+  page,
+  browser,
+}) => {
   const errors: string[] = [];
   page.on("pageerror", (e) => errors.push(e.message));
   // A render failure is caught by the page's boundary and only logged.
@@ -241,6 +244,24 @@ test("walks through a review, comments on a behaviour and submits the review", a
   await page.keyboard.type("Trusts a client-supplied header");
   await walk.getByRole("button", { name: "Save comment", exact: true }).click();
   await expect(walk.getByText("1 comment", { exact: true })).toBeVisible();
+  // Drafts are stored by the daemon and survive another browser context.
+  await expect(walk.getByText("Saving review draft…", { exact: true })).toHaveCount(0);
+  const retainedURL = page.url();
+  await page.evaluate(() => localStorage.clear());
+  const freshContext = await browser.newContext();
+  try {
+    const freshPage = await freshContext.newPage();
+    await freshPage.goto(await launchURL());
+    await expect(freshPage.getByRole("heading", { name: "Up next", exact: true })).toBeVisible();
+    await freshPage.goto(retainedURL);
+    await expect(
+      freshPage
+        .getByRole("region", { name: "Walkthrough" })
+        .getByText("1 comment", { exact: true }),
+    ).toBeVisible();
+  } finally {
+    await freshContext.close();
+  }
   // A reload keeps the walkthrough, what was looked at and the comment.
   await page.reload();
   await expect(walk.getByText("1 comment", { exact: true })).toBeVisible();

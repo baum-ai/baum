@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/baum-ai/baum/internal/appdb/appdbtest"
 	"github.com/baum-ai/baum/internal/github"
 	"github.com/baum-ai/baum/internal/gitlocal"
 )
@@ -56,7 +57,7 @@ func TestFolderHTTPRegistersARemoteUsingAnEarlierName(t *testing.T) {
 	ctx := context.Background()
 	// Earlier names are process-wide: each run uses its own.
 	old, current := uniqueName("folder-old"), uniqueName("folder-new")
-	dir := t.TempDir()
+	dir := appdbtest.TempDir(t)
 	r, err := Open(filepath.Join(dir, "registry.sqlite"))
 	if err != nil {
 		t.Fatal(err)
@@ -96,7 +97,7 @@ func TestFolderHTTPRegistersARemoteUsingAnEarlierName(t *testing.T) {
 }
 
 func TestOpenLoadsRecordedEarlierNames(t *testing.T) {
-	file := filepath.Join(t.TempDir(), "registry.sqlite")
+	file := filepath.Join(appdbtest.TempDir(t), "registry.sqlite")
 	r, err := Open(file)
 	if err != nil {
 		t.Fatal(err)
@@ -196,7 +197,7 @@ func TestFolderHTTPRefusesAnotherRepository(t *testing.T) {
 	if list, _ := r.Repositories(context.Background()); len(list) != 0 {
 		t.Fatalf("a refused folder registered %+v", list)
 	}
-	status, answer = postFolder(t, r.Handler(), t.TempDir(), "owner/repo")
+	status, answer = postFolder(t, r.Handler(), appdbtest.TempDir(t), "owner/repo")
 	if status != 400 || answer["message"] != "This folder does not exist or is not a git working tree." {
 		t.Fatalf("%d %v", status, answer)
 	}

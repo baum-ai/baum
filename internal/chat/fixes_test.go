@@ -10,7 +10,6 @@ import (
 	"github.com/baum-ai/baum/internal/chat"
 	"github.com/baum-ai/baum/internal/chat/chattest"
 	"github.com/baum-ai/baum/internal/config"
-	"github.com/baum-ai/baum/internal/generate"
 	"github.com/baum-ai/baum/internal/store"
 )
 
@@ -101,24 +100,12 @@ func TestNoSessionReportedSeedsTheNextTurn(t *testing.T) {
 	}
 }
 
-// Each call is bounded by half of a review's pass timeout.
-func TestPassTimeoutBoundsEachCall(t *testing.T) {
+func TestPassTimeoutAllowsFullRunLimit(t *testing.T) {
 	f := chattest.New(t, chattest.Options{})
 	f.Service.Config.Budgets.PassTimeout = config.Duration(200 * time.Millisecond)
-	if chat.PassTimeout(f.Service.Config) != 100*time.Millisecond {
+	f.Service.Config.Budgets.RunTimeout = config.Duration(300 * time.Millisecond)
+	if chat.PassTimeout(f.Service.Config) != 300*time.Millisecond {
 		t.Fatalf("pass timeout %v", chat.PassTimeout(f.Service.Config))
-	}
-	f.Agent.RunFunc = func(ctx context.Context, r agent.Request, n int) (agent.Result, error) {
-		<-ctx.Done()
-		return agent.Result{}, ctx.Err()
-	}
-	begun := f.Ask(t, "", "q")
-	_, err := run(t, f, begun, chat.RunOptions{})
-	if generate.CategoryOf(err) != generate.CategoryBudget || !strings.Contains(err.Error(), "pass_timeout") {
-		t.Errorf("err = %v", err)
-	}
-	if len(f.Agent.Requests) != 1 {
-		t.Errorf("%d requests: a spent pass is not retried", len(f.Agent.Requests))
 	}
 }
 

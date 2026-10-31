@@ -1,3 +1,4 @@
+import { mockStateFetch } from "./ui-state-test-helper";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { beforeEach, afterEach, expect, it, vi } from "vitest";
@@ -181,7 +182,7 @@ it("maps needs_clone conflicts from generation and other requests", async () => 
   history.replaceState(null, "", "/s/test-ns/");
   vi.stubGlobal(
     "fetch",
-    vi.fn(async () => Response.json({ needs_clone: true }, { status: 409 })),
+    mockStateFetch(async () => Response.json({ needs_clone: true }, { status: 409 })),
   );
   expect(await generateReviews([{ clone: "gone", pr: 1 }], "single")).toBe("needs_clone");
   await expect(request("api/jobs", { items: [] })).rejects.toEqual(

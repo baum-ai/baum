@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/baum-ai/baum/internal/appdb/appdbtest"
 	"github.com/baum-ai/baum/internal/github"
 )
 
@@ -47,7 +48,7 @@ func TestProbeComparesWithTheLastCompletePoll(t *testing.T) {
 		}
 		return &http.Response{StatusCode: 200, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(body))}, nil
 	})})
-	s := New(client, t.TempDir())
+	s := New(client, appdbtest.TempDir(t))
 	s.now = func() time.Time { return now }
 	app := github.Repository{Host: "github.com", Owner: "acme", Name: "app"}
 	unpolled := github.Repository{Host: "github.com", Owner: "acme", Name: "unpolled"}

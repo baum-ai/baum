@@ -1,8 +1,9 @@
 # Local decision capture
 
 The daemon extracts the decisions of the coding-agent sessions running on this
-machine and keeps them in `<state>/decisions/decisions.sqlite`, a private
-(directory 0700, file 0600) SQLite database. Extraction uses the published
+machine and keeps them in the shared private
+[`<state>/app.sqlite`](../appdb/README.md) application database
+(directory 0700, file 0600). Extraction uses the published
 prompt (`decisions.NewPublicExtractor`, `decisions-public-v1`) and the
 `decisions` package's renderer, parser and citation validator, so a local
 extraction follows the same rules as a hosted one.

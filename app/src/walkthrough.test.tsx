@@ -1,3 +1,5 @@
+import { forgetUIState } from "./ui-state";
+import { mockStateFetch } from "./ui-state-test-helper";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
@@ -11,9 +13,9 @@ import {
   firstSentence,
   loadProgress,
   progressKey,
+  progressState,
   removeFromDraft,
   reviewSubmission,
-  saveProgress,
 } from "./walkthrough-model";
 
 const doc = example as unknown as ReviewDocument;
@@ -96,18 +98,17 @@ it("puts placed comments on their lines and the rest in the body", () => {
   expect(folded.body).toContain("`retry.go:42`");
 });
 
-it("keeps progress per review version and survives junk in storage", () => {
-  localStorage.setItem("baum.walkthrough", "not json");
+it("keeps progress per review version without browser storage", () => {
   const key = progressKey(doc);
   expect(loadProgress(key)).toEqual({ seen: [], notes: {}, note: "" });
-  saveProgress(key, { seen: ["beh_delay"], notes: { beh_delay: "x" }, note: "" });
+  progressState(key).update(() => ({ seen: ["beh_delay"], notes: { beh_delay: "x" }, note: "" }));
   expect(loadProgress(key).seen).toEqual(["beh_delay"]);
   expect(loadProgress(`${key}x`).seen).toEqual([]);
 });
 
 let root: Root, node: HTMLDivElement, mode: WalkMode, posted: unknown[], answer: Response;
 const changed = vi.fn(async () => {});
-beforeEach(() => {
+beforeEach(async () => {
   Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
   history.replaceState(null, "", "/s/test-ns/");
   localStorage.clear();
@@ -119,11 +120,12 @@ beforeEach(() => {
   root = createRoot(node);
   vi.stubGlobal(
     "fetch",
-    vi.fn(async (_path: string, init?: RequestInit) => {
+    mockStateFetch(async (_path: string, init?: RequestInit) => {
       posted.push(JSON.parse(String(init?.body)));
       return answer;
     }),
   );
+  await progressState(progressKey(doc)).load();
 });
 afterEach(() => {
   act(() => root.unmount());
@@ -333,4 +335,36 @@ it("takes an undone answer out of the comment being written, keeping the rest", 
   expect(node.querySelector("textarea")!.value).toBe("My own note.\n\nAnd more.");
   click("Save comment");
   expect(loadProgress(progressKey(doc)).notes[stop.id]).toBe("My own note.\n\nAnd more.");
+});
+
+it("waits for saved drafts before enabling comment, submission or keyboard actions", async () => {
+  forgetUIState();
+  const stop = buildTour(doc).stops[0]!;
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  vi.mocked(fetch).mockImplementation(async () => {
+    await gate;
+    return Response.json({
+      revision: 1,
+      value: { seen: [], notes: { [stop.id]: "Existing draft" }, note: "Existing overall comment" },
+    });
+  });
+  render();
+  expect(node.textContent).toContain("Loading saved review draft");
+  expect(button("Start the review")).toBeUndefined();
+  expect(node.querySelector("textarea")).toBeNull();
+  key("j");
+  key("c");
+  expect(mode).toBe("landing");
+  expect(vi.mocked(fetch).mock.calls.some(([, init]) => init?.method === "PUT")).toBe(false);
+  await act(async () => {
+    release();
+    await gate;
+  });
+  expect(loadProgress(progressKey(doc)).notes[stop.id]).toBe("Existing draft");
+  expect(loadProgress(progressKey(doc)).note).toBe("Existing overall comment");
+  click("Continue the review");
+  expect(node.textContent).toContain("1 comment");
 });

@@ -3,14 +3,12 @@ package analytics
 import (
 	"context"
 	"encoding/json"
-	"os"
-	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
 	"time"
 
-	"github.com/baum-ai/baum/internal/generate"
+	"github.com/baum-ai/baum/internal/appdb"
 	"github.com/baum-ai/baum/internal/github"
 	"github.com/baum-ai/baum/internal/prupdate"
 )
@@ -32,7 +30,7 @@ type Action struct {
 
 // Actions is the small ledger of merges, branch updates and check re-runs
 // made from the app, which the jobs list does not hold. It keeps Retention of
-// them in one file in the daemon's state directory.
+// them in the application database.
 type Actions struct {
 	Path string
 	Now  func() time.Time
@@ -54,19 +52,28 @@ func (a *Actions) now() time.Time {
 func (a *Actions) Record(kind, repository string, pr int) error {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	a.load()
-	now := a.now().UTC()
-	cutoff := now.Add(-Retention)
-	a.actions = slices.DeleteFunc(a.actions, func(x Action) bool { return x.At.Before(cutoff) })
-	a.actions = append(a.actions, Action{At: now, Kind: kind, Repository: strings.ToLower(repository), PR: pr})
-	raw, err := json.Marshal(a.actions)
-	if err != nil {
-		return err
+	var updated []Action
+	err := appdb.Update(a.Path, "state", "analytics-actions", func(raw []byte) ([]byte, error) {
+		var actions []Action
+		if raw != nil {
+			if err := json.Unmarshal(raw, &actions); err != nil {
+				return nil, err
+			}
+		}
+		now := a.now().UTC()
+		actions = slices.DeleteFunc(actions, func(x Action) bool { return x.At.Before(now.Add(-Retention)) })
+		actions = append(actions, Action{At: now, Kind: kind, Repository: strings.ToLower(repository), PR: pr})
+		encoded, err := json.Marshal(actions)
+		if err == nil {
+			updated = actions
+		}
+		return encoded, err
+	})
+	if err == nil {
+		a.actions = updated
+		a.loaded = true
 	}
-	if err := os.MkdirAll(filepath.Dir(a.Path), 0o700); err != nil {
-		return err
-	}
-	return generate.WriteFileAtomic(a.Path, raw)
+	return err
 }
 
 // Since lists the writes recorded at or after t.
@@ -88,7 +95,7 @@ func (a *Actions) load() {
 		return
 	}
 	a.loaded = true
-	if raw, err := os.ReadFile(a.Path); err == nil {
+	if raw, err := appdb.Read(a.Path, "state", "analytics-actions"); err == nil {
 		_ = json.Unmarshal(raw, &a.actions)
 	}
 }

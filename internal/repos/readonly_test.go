@@ -10,6 +10,8 @@ import (
 	"runtime"
 	"slices"
 	"testing"
+
+	"github.com/baum-ai/baum/internal/appdb/appdbtest"
 )
 
 func directoryNames(t *testing.T, dir string) []string {
@@ -26,7 +28,7 @@ func directoryNames(t *testing.T, dir string) []string {
 }
 
 func TestOpenReadOnlyLeavesAnEmptyFileAlone(t *testing.T) {
-	dir := t.TempDir()
+	dir := appdbtest.TempDir(t)
 	path := filepath.Join(dir, "repos.sqlite")
 	if err := os.WriteFile(path, nil, 0o640); err != nil {
 		t.Fatal(err)
@@ -34,14 +36,9 @@ func TestOpenReadOnlyLeavesAnEmptyFileAlone(t *testing.T) {
 	before, _ := os.Stat(path)
 	names := directoryNames(t, dir)
 
-	r, err := OpenReadOnly(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	clones, err := r.List(context.Background())
-	_ = r.Close()
-	if err != nil || len(clones) != 0 {
-		t.Fatalf("clones = %v, err = %v", clones, err)
+	if r, err := OpenReadOnly(path); err == nil {
+		_ = r.Close()
+		t.Fatal("opened an unsupported empty database")
 	}
 	after, _ := os.Stat(path)
 	if after.Size() != 0 || after.Size() != before.Size() || (runtime.GOOS != "windows" && after.Mode() != before.Mode()) || !after.ModTime().Equal(before.ModTime()) {
@@ -54,7 +51,7 @@ func TestOpenReadOnlyLeavesAnEmptyFileAlone(t *testing.T) {
 
 func TestOpenReadOnlyListsWithoutWriting(t *testing.T) {
 	ctx := context.Background()
-	dir := t.TempDir()
+	dir := appdbtest.TempDir(t)
 	path := filepath.Join(dir, "repos.sqlite")
 	writable, err := Open(path)
 	if err != nil {
@@ -93,7 +90,7 @@ func TestOpenReadOnlyListsWithoutWriting(t *testing.T) {
 }
 
 func TestOpenReadOnlyDoesNotCreateAMissingRegistry(t *testing.T) {
-	dir := t.TempDir()
+	dir := appdbtest.TempDir(t)
 	_, err := OpenReadOnly(filepath.Join(dir, "sub", "repos.sqlite"))
 	if !errors.Is(err, fs.ErrNotExist) {
 		t.Fatalf("err = %v, want not exist", err)
@@ -104,7 +101,7 @@ func TestOpenReadOnlyDoesNotCreateAMissingRegistry(t *testing.T) {
 }
 
 func TestOpenReadOnlyReportsAFileThatIsNotADatabase(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "repos.sqlite")
+	path := filepath.Join(appdbtest.TempDir(t), "repos.sqlite")
 	if err := os.WriteFile(path, bytes.Repeat([]byte("not a database "), 100), 0o600); err != nil {
 		t.Fatal(err)
 	}

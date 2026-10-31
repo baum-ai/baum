@@ -13,6 +13,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/baum-ai/baum/internal/appdb"
+	"github.com/baum-ai/baum/internal/appdb/appdbtest"
 	"github.com/baum-ai/baum/internal/decisionlog"
 	"github.com/baum-ai/baum/internal/fix"
 	"github.com/baum-ai/baum/internal/github"
@@ -75,7 +77,7 @@ func newFixture(t *testing.T) fixture {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not installed")
 	}
-	base := t.TempDir()
+	base := appdbtest.TempDir(t)
 	repo := filepath.Join(base, "work", "demo")
 	if err := os.MkdirAll(repo, 0o755); err != nil {
 		t.Fatal(err)
@@ -143,7 +145,7 @@ func TestIndexCountsASessionByTheHostedRules(t *testing.T) {
 	if len(e.Usage) != 1 || e.Usage[0].Calls != 3 || e.Usage[0].Input != 300 || e.Usage[0].CacheRead != 3000 || e.TokensUnknown {
 		t.Errorf("usage = %+v (unknown %v)", e.Usage, e.TokensUnknown)
 	}
-	raw, err := os.ReadFile(f.index.Path)
+	raw, err := appdb.Read(f.index.Path, "cache", "analytics-index")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -498,7 +500,7 @@ func TestBaumWorkCountsJobsAndActions(t *testing.T) {
 		// A feature build is the decision log's spend, not baum's work.
 		job(jobs.KindFeatureBuild, "failed", "backend_unavailable", ptr(3.0)),
 	}
-	dir := t.TempDir()
+	dir := appdbtest.TempDir(t)
 	actions := &Actions{Path: filepath.Join(dir, "actions.json"), Now: func() time.Time { return recent }}
 	for _, kind := range []string{ActionMerge, ActionMerge, ActionRerunChecks} {
 		if err := actions.Record(kind, "Acme/Demo", 7); err != nil {
@@ -536,7 +538,7 @@ func TestBaumWorkCountsJobsAndActions(t *testing.T) {
 
 func TestPlanUsageSeriesCountLimitHits(t *testing.T) {
 	now := time.Date(2026, 10, 27, 12, 0, 0, 0, time.UTC)
-	path := filepath.Join(t.TempDir(), "plans.json")
+	path := filepath.Join(appdbtest.TempDir(t), "plans.json")
 	samples := []planusage.Sample{
 		{At: now.Add(-5 * time.Hour), Provider: "claude", Window: "5-hour", UsedPercent: 50},
 		{At: now.Add(-4 * time.Hour), Provider: "claude", Window: "5-hour", UsedPercent: 100},
@@ -546,7 +548,7 @@ func TestPlanUsageSeriesCountLimitHits(t *testing.T) {
 		{At: now.Add(-time.Hour), Provider: "codex", Window: "weekly", UsedPercent: 40},
 	}
 	raw, _ := json.Marshal(samples)
-	if err := os.WriteFile(path, raw, 0o600); err != nil {
+	if err := appdb.Write(path, "state", "plan-usage-history", raw); err != nil {
 		t.Fatal(err)
 	}
 	s := &Service{Registry: fakeRegistry{}, Plans: &planusage.History{Path: path, Now: func() time.Time { return now }}, Location: time.UTC, Now: func() time.Time { return now }}
@@ -654,7 +656,7 @@ func (f fakeWrites) Conflicts(context.Context, github.Repository, int) (prupdate
 }
 
 func TestActionsRecordOnlyWritesThatSucceeded(t *testing.T) {
-	actions := &Actions{Path: filepath.Join(t.TempDir(), "actions.json")}
+	actions := &Actions{Path: filepath.Join(appdbtest.TempDir(t), "actions.json")}
 	repo := github.Repository{Host: "github.com", Owner: "acme", Name: "demo"}
 	ctx := context.Background()
 	for _, w := range []fakeWrites{{}, {fail: true}} {

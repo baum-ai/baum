@@ -1,3 +1,4 @@
+import { uiState, useUIState } from "./ui-state";
 import {
   Fragment,
   useEffect,
@@ -290,7 +291,6 @@ type Stored = {
   /** Snoozes until the pull request changes: the head it had then. */
   held: Record<string, string>;
 };
-const STORAGE_KEY = "baum.inbox.v1";
 
 /** A snooze's end: a time, or the pull request's next push. */
 export type SnoozeEnd = number | "change";
@@ -311,34 +311,6 @@ function fresh(
 
 function stillSnoozed(snoozed: Record<string, number>, now: number) {
   return Object.fromEntries(Object.entries(snoozed).filter(([, until]) => until > now));
-}
-
-function load(now: number): Stored {
-  try {
-    const stored = JSON.parse(
-      localStorage.getItem(STORAGE_KEY) ?? "null",
-    ) as Partial<Stored> | null;
-    const record = (value: unknown) =>
-      value && typeof value === "object" && !Array.isArray(value) ? value : {};
-    if (stored && typeof stored === "object") {
-      // Rebuilt field by field: whatever else the storage holds, the page works.
-      const snoozed = stillSnoozed(record(stored.snoozed) as Record<string, number>, now);
-      const held = Object.fromEntries(
-        Object.entries(record(stored.held)).filter(([, head]) => typeof head === "string"),
-      ) as Record<string, string>;
-      return stored.day === dayOf(now)
-        ? {
-            day: stored.day,
-            seen: record(stored.seen) as Record<string, Seen>,
-            snoozed,
-            held,
-          }
-        : fresh(dayOf(now), snoozed, held);
-    }
-  } catch {
-    // Storage may be unavailable or hold something else; start empty.
-  }
-  return fresh(dayOf(now));
 }
 
 /** The snoozes offered at `now`: an hour, this afternoon while 3 PM is more
@@ -383,7 +355,10 @@ export type UpNextState = ReturnType<typeof useUpNext>;
  *  cleared, since its pull requests may only be absent for now. */
 export function useUpNext(entries: Entry[], live: LiveSession[], jobs: Job[], ready: boolean) {
   const now = useNow(30_000);
-  const [stored, setStored] = useState(() => load(Date.now()));
+  const persistence = useUIState(
+    uiState<Stored>("api/ui-state/inbox", () => fresh(dayOf(Date.now()))),
+  );
+  const stored = persistence.value;
   const day = dayOf(now);
   const state =
     stored.day === day ? stored : fresh(day, stillSnoozed(stored.snoozed, now), stored.held);
@@ -394,18 +369,13 @@ export function useUpNext(entries: Entry[], live: LiveSession[], jobs: Job[], re
   const snoozed = items.filter(snoozedNow);
   const queue = items.filter((item) => !snoozedNow(item));
   const update = (change: (state: Stored) => Stored) =>
-    setStored((previous) => {
+    persistence.update((previous) => {
       const time = Date.now();
       const base =
         previous.day === dayOf(time)
           ? previous
           : fresh(dayOf(time), stillSnoozed(previous.snoozed, time), previous.held);
       const next = change(base);
-      try {
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
-      } catch {
-        // Not remembered across reloads, but the page still works.
-      }
       return next;
     });
   // Record what is in the queue and when something leaves it. A pull request
@@ -428,7 +398,7 @@ export function useUpNext(entries: Entry[], live: LiveSession[], jobs: Job[], re
     ...[...listed].map((repository) => `listed:${repository}`),
   ].join("\n");
   useEffect(() => {
-    if (!ready) return;
+    if (!ready || !persistence.ready) return;
     const keys = new Set(items.map((item) => item.key));
     const heads = new Map(items.map((item) => [item.key, item.entry.pull_request.head_sha]));
     // A fix counts once it pushed: not while it runs, nor after it failed.
@@ -480,12 +450,13 @@ export function useUpNext(entries: Entry[], live: LiveSession[], jobs: Job[], re
       return { ...previous, seen, held };
     });
     // `signature` stands for `items`.
-  }, [ready, signature, day]);
+  }, [ready, signature, day, persistence.ready]);
   const cleared = Object.entries(state.seen)
     .filter(([, seen]) => seen.cleared != null)
     .sort(([, a], [, b]) => (b.cleared ?? 0) - (a.cleared ?? 0))
     .map(([key, seen]) => ({ key, ...seen }));
   return {
+    persistence,
     now,
     queue,
     snoozed,

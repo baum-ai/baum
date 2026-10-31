@@ -23,6 +23,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/baum-ai/baum/internal/appdb"
 	"github.com/baum-ai/baum/internal/jobs"
 	"github.com/baum-ai/baum/internal/privatefs"
 	"github.com/baum-ai/baum/internal/uiserver"
@@ -58,7 +59,7 @@ func TestDaemonHelper(t *testing.T) {
 				return App{}, nil
 			}
 			executor := &blockingExecutor{started: make(chan struct{}), release: filepath.Join(paths.State, "release")}
-			queue, err := jobs.Open(filepath.Join(paths.State, "jobs.json"), executor, 1, nil)
+			queue, err := jobs.Open(filepath.Join(paths.State, "app.sqlite"), executor, 1, nil)
 			if err != nil {
 				return App{}, err
 			}
@@ -570,7 +571,7 @@ func TestStopRecordsRunningJobInterrupted(t *testing.T) {
 	if _, err := c.Ensure(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	raw, err := os.ReadFile(filepath.Join(h.paths.State, "jobs.json"))
+	raw, err := appdb.Read(filepath.Join(h.paths.State, "app.sqlite"), "state", "jobs")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -581,7 +582,7 @@ func TestStopRecordsRunningJobInterrupted(t *testing.T) {
 	if stopped, err := c.Stop(context.Background()); err != nil || !stopped {
 		t.Fatal(stopped, err)
 	}
-	if raw, err = os.ReadFile(filepath.Join(h.paths.State, "jobs.json")); err != nil {
+	if raw, err = appdb.Read(filepath.Join(h.paths.State, "app.sqlite"), "state", "jobs"); err != nil {
 		t.Fatal(err)
 	}
 	if err = json.Unmarshal(raw, &journal); err != nil || journal[0].State != "interrupted" || journal[0].Reason != "interrupted" {
@@ -1004,7 +1005,7 @@ func TestUpgradeWaitsUntilJobsFinish(t *testing.T) {
 	if current.PID == old.PID {
 		t.Fatal("same process")
 	}
-	raw, err := os.ReadFile(filepath.Join(h.paths.State, "jobs.json"))
+	raw, err := appdb.Read(filepath.Join(h.paths.State, "app.sqlite"), "state", "jobs")
 	if err != nil {
 		t.Fatal(err)
 	}

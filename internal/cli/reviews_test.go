@@ -11,6 +11,7 @@ import (
 func TestReviewsCLI(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", home)
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	t.Setenv("BAUM_BACKEND", "")
 	t.Setenv("BAUM_MODEL", "")
 	if e := os.MkdirAll(filepath.Join(home, "baum"), 0o700); e != nil {

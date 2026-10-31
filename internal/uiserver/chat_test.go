@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/baum-ai/baum/agent"
+	"github.com/baum-ai/baum/internal/appdb/appdbtest"
 	"github.com/baum-ai/baum/internal/chat"
 	"github.com/baum-ai/baum/internal/chat/chattest"
 	"github.com/baum-ai/baum/internal/jobs"
@@ -27,7 +28,7 @@ type chatAPI struct {
 func newChatAPI(t *testing.T, o chattest.Options) chatAPI {
 	t.Helper()
 	f := chattest.New(t, o)
-	state := t.TempDir()
+	state := appdbtest.TempDir(t)
 	if err := os.Chmod(state, 0o700); err != nil {
 		t.Fatal(err)
 	}

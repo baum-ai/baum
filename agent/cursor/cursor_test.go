@@ -372,7 +372,7 @@ func TestRunBudgets(t *testing.T) {
 	})
 	t.Run("nothing left", func(t *testing.T) {
 		req := request(t.TempDir())
-		req.MaxCalls = 0
+		req.MaxCalls = -1
 		if _, err := (&Backend{}).Run(context.Background(), req); err == nil || err.Error() != agent.GenerationBudgetExceededReason("model calls") {
 			t.Fatalf("err = %v", err)
 		}

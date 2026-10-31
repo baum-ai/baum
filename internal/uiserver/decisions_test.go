@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/baum-ai/baum/internal/appdb/appdbtest"
 	"github.com/baum-ai/baum/internal/config"
 	"github.com/baum-ai/baum/internal/locallink"
 	"github.com/baum-ai/baum/internal/repos"
@@ -20,12 +21,12 @@ import (
 
 func decisionsRegistry(t *testing.T) (*repos.Registry, repos.Clone) {
 	t.Helper()
-	registry, err := repos.Open(filepath.Join(t.TempDir(), "repos.sqlite"))
+	registry, err := repos.Open(filepath.Join(appdbtest.TempDir(t), "repos.sqlite"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = registry.Close() })
-	dir := t.TempDir()
+	dir := appdbtest.TempDir(t)
 	for _, args := range [][]string{{"init"}, {"remote", "add", "origin", "https://github.com/owner/repo"}} {
 		cmd := exec.Command("git", args...)
 		cmd.Dir = dir
