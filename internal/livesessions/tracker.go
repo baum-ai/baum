@@ -819,7 +819,7 @@ func (t *Tracker) ResolvePending(ctx context.Context) bool {
 	for _, r := range todo {
 		var link Link
 		var ok bool
-		if r.ended && r.snapshot.Repository != "" {
+		if (r.ended || r.cwd == "") && r.snapshot.Repository != "" {
 			if resolver, supported := t.Linker.(RecordedLinker); supported {
 				link, ok = resolver.Relink(ctx, r.snapshot)
 			} else {
@@ -1068,7 +1068,7 @@ func (t *Tracker) Sweep() bool {
 		}
 		_, recorded := t.Linker.(RecordedLinker)
 		if t.sessions[k] == s && !s.unlinked && !t.pending[k] && now.Sub(s.linkedAt) >= RelinkEvery &&
-			((!s.ended && s.cwd != "" && (recorded || s.stale || s.PR == 0)) || (s.ended && recorded && s.Repository != "")) {
+			((!s.ended && ((s.cwd != "" && (recorded || s.stale || s.PR == 0)) || (s.cwd == "" && recorded && s.Repository != ""))) || (s.ended && recorded && s.Repository != "")) {
 			t.queue(k)
 		}
 	}
