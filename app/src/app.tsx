@@ -1170,7 +1170,7 @@ function Workspace({ url }: { url: UrlState }) {
           ) : (
             <>
               <PageBar
-                title="Hot reload works"
+                title="Pull requests"
                 actions={
                   <>
                     <UpdatedAgo at={updatedAt} busy={loading || refreshing > 0} />
