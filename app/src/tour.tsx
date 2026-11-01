@@ -122,7 +122,12 @@ const STOPS: Stop[] = [
   },
   {
     title: "Sessions",
-    body: "Every agent session on this computer, linked to its commits and pull requests.",
+    body: (
+      <>
+        Every agent session on this computer. <B>Focus session</B> jumps straight back into a
+        running one.
+      </>
+    ),
     target: ".local-main",
     at: href("sessions"),
   },
