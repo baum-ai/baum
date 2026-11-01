@@ -57,7 +57,11 @@ groups in step (`Store.SyncStacks`):
   sync) and plans a member discovery no longer lists from that. Its state
   comes from discovery's observations: merged keeps it, closed without
   merging drops it (`stacks.KeepClosedUnmerged`), and one with no
-  observation yet is kept as landed until its state is known. The group goes
+  observation yet (or a stale open one) is kept as landed until its state is
+  known, so a member closed without merging may read Merged until the next
+  poll after its closed state is observed. A stack group saved before `chain`
+  existed has no saved branches, so a member that merges before its first
+  sync leaves it. The group goes
   on while one member is open, even if only one; automatic generation needs
   two open members.
 - A stack without a group gets one (`stack` true), named after its bottom

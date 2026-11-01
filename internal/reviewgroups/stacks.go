@@ -123,7 +123,7 @@ func (s *Store) SyncStacks(ctx context.Context, repository string, prs []discove
 			// the last sync saved. Closed without merging is the state the
 			// stacks package decides on; any other (merged, or not known
 			// yet) keeps its place.
-			if _, open := candidates[number]; !open && (entry.HeadRef != "" || entry.BaseRef != "") {
+			if _, open := candidates[number]; !open && !claimed[number] && (entry.HeadRef != "" || entry.BaseRef != "") {
 				candidates[number] = stacks.Candidate{Number: number, Merged: observed[number] != "CLOSED", BaseRef: entry.BaseRef, HeadRef: entry.HeadRef, Author: entry.Author}
 			}
 		}

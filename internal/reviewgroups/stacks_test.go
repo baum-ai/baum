@@ -206,3 +206,24 @@ func TestOpenAddsTheChainColumnToAnOlderDatabase(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestSyncStacksDoesNotKeepAPullRequestThePersonGroupedAsLanded(t *testing.T) {
+	ctx := context.Background()
+	s := openStore(t)
+	if _, err := s.SyncStacks(ctx, "acme/demo", []discovery.PullRequest{open(1, "a", "main"), open(2, "b", "a"), open(3, "c", "b")}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Create(ctx, "acme/demo", "Mine", []int{3, 9}); err != nil {
+		t.Fatal(err)
+	}
+	// #3 is open and in the person's group: it leaves the stack group, not as merged.
+	if _, err := s.SyncStacks(ctx, "acme/demo", []discovery.PullRequest{open(1, "a", "main"), open(2, "b", "a"), open(3, "c", "b")}, nil); err != nil {
+		t.Fatal(err)
+	}
+	list, _ := s.List(ctx)
+	for _, g := range list {
+		if g.Stack && (slices.Contains(g.Landed, 3) || slices.Contains(g.Members, 3)) {
+			t.Fatalf("stack group %+v kept #3", g)
+		}
+	}
+}
