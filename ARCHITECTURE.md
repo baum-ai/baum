@@ -3582,6 +3582,14 @@ socket serves, and runs it beside background refresh, one worker in all.
 
 ### Live sessions
 
+Codex's `PermissionRequest` runs before automatic review. The hook reads the
+latest rollout `turn_context` matching the payload's `turn_id`; when its
+`approvals_reviewer` is `auto_review`, the local event carries `auto_review`
+and the hook does not ask the app for a decision. The tracker ignores that
+permission event as a wait, so it sends no attention notification. Unknown
+context retains manual approval behavior. The read searches backwards through
+at most 64 MiB with bounded memory and skips oversized transcript lines.
+
 `internal/livesessions` tracks the agent sessions running on this machine
 from the agent hook events in the record, and serves them to the app. It adds
 to reading session files from disk (see "Session transcripts"), which stays
