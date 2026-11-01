@@ -42,9 +42,8 @@ parents, and dissolves a group where a hosted stack ends.
   (`NULL` for the root). A pull request is a current member (`left_at IS
   NULL`) of at most one stack; leaving keeps the row, and joining again clears
   `left_at` and restarts `joined_at`.
-- A merged member stays in its original position, with its parent, while
-  any member is open: membership is never recomputed from the open pull
-  requests alone. When the bottom pull
+- A merged member stays in its original position, with its parent:
+  membership is never recomputed from the open pull requests alone. When the bottom pull
   request merges and GitHub retargets the next one to the bottom's base, the
   next one keeps its merged parent and stays in the stack. If several
   descendants are automatically retargeted to the merged ancestor's base,
@@ -55,7 +54,8 @@ parents, and dissolves a group where a hosted stack ends.
   link to it (the stack may split there). This is one decision, the constant
   `KeepClosedUnmerged` (false) in `plan.go`; set it to true to keep closed
   members like merged ones. A closed pull request that reopens joins again
-  by its branches.
+  by its branches while its stack is still loaded (not ended). Stacks stored
+  before this rule keep closed members until their next recompute.
 - Any other retarget of an open member loses its parent: without a merged
   ancestor explaining the new base, after the parent was closed without
   merging, or onto a branch other than the merged ancestor's base. If that
@@ -69,6 +69,7 @@ parents, and dissolves a group where a hosted stack ends.
     leaves it and forms a new stack if at least two of its pull requests are
     open;
   - a stack left with fewer than two members ends with every member left.
-- `ended_at` is set when no current member is open (all merged, or the open
-  ones closed and dropped) and cleared when one reopens. Such a stack keeps its merged members, so its page stays
-  readable.
+- `ended_at` is set when no current member is open and cleared when one
+  reopens. A stack whose members all merged keeps them, so its page stays
+  readable. If the open ones were closed and dropped and fewer than two merged
+  members remain, the stack ends with every member left.
