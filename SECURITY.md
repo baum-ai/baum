@@ -227,7 +227,12 @@ It never prints a token or an API key, or a prefix, length or hash of one. For a
 GitHub token it prints only where it was found (an environment variable's name,
 the config file, `hosts.yml` or the keyring), and for `ANTHROPIC_API_KEY` only
 whether it is set. It does print paths, tool versions and the `PATH` entries,
-so look at a report before pasting it into a public issue.
+so look at a report before pasting it into a public issue. The desktop app's
+"Report a problem" shows a shorter summary in the issue form: home directories
+become `~`, secret-shaped values, e-mail addresses and @mentions are masked,
+the configuration's load error and the per-repository store checks (which name
+your clones) are left out, and each line is clipped. It still lists tool
+versions and paths, which you review in the form before submitting.
 
 ## What `baum internal view` shows
 

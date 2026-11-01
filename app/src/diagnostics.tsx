@@ -68,6 +68,7 @@ export function DiagnosticsSection({
   onReport?: (report: DiagnosticReport | null) => void;
 } = {}) {
   const [report, setReport] = useState<DiagnosticReport | null | undefined>();
+  const [issueUrl, setIssueUrl] = useState("");
   const [error, setError] = useState("");
   const [running, setRunning] = useState(true);
   const sequence = useRef(0);
@@ -84,6 +85,7 @@ export function DiagnosticsSection({
       const body = await request<Diagnostics>("api/diagnostics");
       if (mine === sequence.current) {
         setReport(body.report);
+        setIssueUrl(body.report_issue_url ?? "");
         reported.current?.(body.report);
       }
     } catch (e) {
@@ -110,12 +112,24 @@ export function DiagnosticsSection({
         <h2 id="diagnostics-heading" className="text-lg">
           Diagnostics
         </h2>
-        <Button variant="secondary" disabled={running} onClick={() => void run()}>
-          {running ? "Checking…" : "Check again"}
-        </Button>
+        <div className="flex flex-wrap gap-2">
+          {issueUrl ? (
+            <Button
+              variant="secondary"
+              onClick={() => window.open(issueUrl, "_blank", "noopener,noreferrer")}
+            >
+              Report a problem
+            </Button>
+          ) : null}
+          <Button variant="secondary" disabled={running} onClick={() => void run()}>
+            {running ? "Checking…" : "Check again"}
+          </Button>
+        </div>
       </div>
       <p className="text-xs">
-        Which tools and credentials baum found on this machine, never their values.
+        Which tools and credentials baum found on this machine, never their values. “Report a
+        problem” opens a new GitHub issue in your browser with a redacted summary of this report;
+        you review it there, and nothing is sent until you submit it.
       </p>
       {error ? (
         <Alert>

@@ -387,6 +387,8 @@ export type Diagnostics = {
   discovery: boolean;
   index: boolean;
   report: DiagnosticReport | null;
+  /** A new GitHub issue with the version, OS and a redacted summary filled in. */
+  report_issue_url?: string;
 };
 /** Why a session waits on its user: it asks to run a tool, it asked a
  *  question, its turn ended, or it went quiet (silent for 10 minutes with no

@@ -1,6 +1,7 @@
 package uiserver
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -8,6 +9,8 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"os"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -109,6 +112,9 @@ type LocalAPI struct {
 	// DiagnosticsTimeout bounds one shared run; zero means
 	// defaultDiagnosticsTimeout.
 	DiagnosticsTimeout time.Duration
+	// Version is this baum's version, named in the "Report a problem" link
+	// that /api/diagnostics returns.
+	Version string
 
 	// diagnosticsWaiting is a test hook, called once a request is waiting on
 	// the shared run.
@@ -394,6 +400,14 @@ func (a LocalAPI) Handler() *LocalHandler {
 					return
 				}
 				body["report"] = res.Val
+				if report, ok := res.Val.(doctor.Report); ok {
+					home, _ := os.UserHomeDir()
+					body["report_issue_url"] = doctor.IssueURL(report, doctor.IssueInfo{
+						Version: cmp.Or(a.Version, "unknown"),
+						OS:      runtime.GOOS + "/" + runtime.GOARCH,
+						Home:    home,
+					})
+				}
 			}
 		}
 		writeJSON(w, body)

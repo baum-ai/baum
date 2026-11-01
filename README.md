@@ -107,6 +107,18 @@ The desktop app bundles its own `baum`; [desktop/README.md](desktop/README.md)
 describes how it installs the `baum` command and how that relates to one you
 installed yourself.
 
+## Reporting problems
+
+baum sends no telemetry or crash reports, so an issue is how we hear about a
+problem. [Open one on GitHub](https://github.com/baum-ai/baum/issues/new/choose)
+(bug report or feature request). In the desktop app, **Report a problem**
+(Help menu, tray menu, and Diagnostics) opens the bug report in your browser
+with the version, OS and a redacted Diagnostics summary filled in; you review
+it there and nothing is sent until you submit it. From the command line, paste
+`baum internal doctor --offline` after checking it for private paths. Report
+security vulnerabilities privately as described in [SECURITY.md](SECURITY.md),
+never in a public issue.
+
 ## License
 
 [MIT](LICENSE). The licences of the third-party software in the binaries and

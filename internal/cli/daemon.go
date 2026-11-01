@@ -655,7 +655,7 @@ func localApplication(paths daemon.Paths, log *slog.Logger) func(context.Context
 				e := decisionlog.EffectiveModel(ctx, cfg, prefs, generate.Backends{}, nil)
 				return uiserver.DecisionModel{Backend: e.Backend, Undetermined: e.Undetermined, Model: e.Model, Ignored: e.Ignored}
 			},
-			Diagnostics: uiDiagnostics}.Handler()
+			Diagnostics: uiDiagnostics, Version: version()}.Handler()
 		return daemon.App{
 			API:     api,
 			Assets:  localapp.Handler(),
