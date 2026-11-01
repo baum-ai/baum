@@ -4472,8 +4472,21 @@ kbd.key-hint {
 }
 .upnext-risk p {
   margin: 0;
+}
+.upnext-risk-copy > strong {
+  display: block;
+  margin-bottom: 4px;
+}
+.upnext-prose {
+  min-width: 0;
+  overflow-wrap: anywhere;
   font-size: var(--text-base);
   line-height: 1.5;
+}
+.upnext-panel .upnext-prose code,
+.upnext-panel .upnext-risk-copy > strong code,
+.upnext-panel .upnext-block-text code {
+  font-size: inherit;
 }
 .upnext-block {
   display: flex;
@@ -4490,12 +4503,12 @@ kbd.key-hint {
   font-size: var(--text-base);
   line-height: 1.5;
 }
-.upnext-block ul {
+.upnext-block > ul {
   margin: 0;
   padding: 0;
   list-style: none;
 }
-.upnext-block li {
+.upnext-block > ul > li {
   display: flex;
   align-items: flex-start;
   gap: 10px;
@@ -4675,11 +4688,31 @@ kbd.key-hint {
   margin: 0;
   color: var(--text-primary);
 }
+.upnext-pr-facts {
+  align-items: center;
+  gap: 10px 20px;
+  font-size: var(--text-base);
+}
+.upnext-pr-facts > div {
+  flex-direction: row;
+  align-items: center;
+}
+.upnext-pr-facts > .upnext-branch-fact {
+  flex-basis: 100%;
+}
+.upnext-pr-facts dd,
+.upnext-fact-aside {
+  color: var(--text-secondary);
+}
 .upnext-branches {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
   min-width: 0;
+  color: var(--text-tertiary);
+}
+.upnext-branches > :is(svg, span) {
+  flex: none;
   color: var(--text-tertiary);
 }
 .upnext-panel code {
@@ -4687,6 +4720,7 @@ kbd.key-hint {
   font-size: var(--text-xs);
 }
 .upnext-branches code {
+  min-width: 0;
   overflow: hidden;
   max-width: 260px;
   padding: 1px 6px;
@@ -4695,6 +4729,23 @@ kbd.key-hint {
   color: var(--text-primary);
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.upnext-branches code:last-of-type {
+  flex-shrink: 0;
+  max-width: 40%;
+}
+.upnext-page .upnext-github {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 4px;
+  color: var(--text-tertiary);
+}
+.upnext-page .upnext-github:hover {
+  color: var(--text-primary);
 }
 /* A review group's row and its members nested under it. */
 .upnext-group-line {
@@ -5309,7 +5360,6 @@ kbd.key-hint {
 }
 .ask-empty,
 .ask-note,
-.ask-cost,
 .ask-hint,
 .ask-cite-note,
 .ask-question-about {

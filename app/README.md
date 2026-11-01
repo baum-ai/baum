@@ -196,6 +196,11 @@ Under its title the panel shows the pull request's facts: its head branch and
 the base it merges into (`head_ref`, `base_ref`), its lines and files changed
 (`additions`, `deletions`, `changed_files` from discovery), baum's time to
 review (`review_minutes`) and a link to it on GitHub.
+The branches and a GitHub icon linking to the pull request sit on their own
+line above a compact row of counts and the review estimate, with field labels
+kept for screen readers.
+The panel's review summary and risk explanation render Markdown, including
+code, emphasis, links and lists; section titles use inline Markdown.
 
 The panel's rows that open to a detail (`BlockRow`) read it only once opened.
 A fix lists what blocks it under What needs fixing, opened: its unresolved
@@ -418,7 +423,7 @@ A queued or running turn shows its question, its status and the agent's live
 transcript (`useJobTranscript` and `EntryView` of `src/job-transcript.tsx`, tool
 calls collapsed) with **Cancel** (`POST api/jobs/{id}/cancel`). An answered turn
 draws `answer_markdown` with the viewer's `Markdown` component (raw HTML stays
-text), the cost when there is one, and the citations as `path:start–end`
+text) and the citations as `path:start–end`
 buttons. A citation inside one of the review's hunks opens that hunk's cited
 lines with `HunkEvidence` (an omitted excerpt is read through the page's patch
 source, `api/patch`); one outside the review's changes shows its path and lines
@@ -426,7 +431,7 @@ with a link to the file at the review's head on GitHub, because the daemon
 serves no file text other than patches. A turn that failed, was cancelled or was
 interrupted says why in words (`turnReasonText`: `validation`, `budget`,
 `backend`, `input`, `internal`, `needs_clone`, `unsupported_backend`,
-`cancelled`, `interrupted`), with its cost. Each answer has a
+`cancelled`, `interrupted`). The chat does not display costs. Each answer has a
 `data-answer-actions` slot (`AskPanel`'s `answerActions` prop) for the actions
 that follow an answer: `AnswerActions` (`src/answer-actions.tsx`), drawn only
 under answers of the newest review version. **Fix this** (boxed, emphasised
@@ -1122,6 +1127,9 @@ never a path; a session's transcript comes only when the Sessions page opens it
 (below). When a session ends the panel goes and the page reads its sessions
 from disk again, where the full session is. A daemon without the record serves
 none.
+The PR page keeps its linked sessions and commits visible during background
+refreshes, so their rows and an open transcript do not blink back to a loader.
+Switching pull requests or review versions loads the corresponding list.
 
 Decision capture (`GET api/decisions`, see the daemon's
 [decision capture README](../internal/decisionlog/README.md)) adds

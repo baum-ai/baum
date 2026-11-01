@@ -12,7 +12,14 @@ import {
   type SetStateAction,
 } from "react";
 import { formatCount } from "@baum/viewer/components/format";
-import { ChevronDownIcon, ChevronRightIcon, StackIcon } from "@baum/viewer/components/icons";
+import {
+  BranchIcon,
+  ChevronDownIcon,
+  ChevronRightIcon,
+  GitHubIcon,
+  StackIcon,
+} from "@baum/viewer/components/icons";
+import { InlineMarkdown, Markdown } from "@baum/viewer/components/markdown";
 import { Lines } from "@baum/viewer/components/review-parts";
 import { Alert, Button, LiveDot } from "@baum/viewer/components/ui";
 import type { ViewerLinkProps } from "@baum/viewer/navigation";
@@ -1691,17 +1698,27 @@ function Panel({
             </span>
           </div>
           {reason ? (
-            <p>
-              {reasonTitle ? <strong>{reasonTitle}. </strong> : null}
-              {reason.text}
-            </p>
+            <div className="upnext-risk-copy">
+              {reasonTitle ? (
+                <strong>
+                  <InlineMarkdown>{reasonTitle}</InlineMarkdown>
+                </strong>
+              ) : null}
+              <Markdown html={false} className="upnext-prose">
+                {reason.text}
+              </Markdown>
+            </div>
           ) : null}
         </div>
       ) : null}
       {blocks(row, doc).map((block) => (
         <section key={block.title} className="upnext-block" aria-label={block.title}>
           <h3 className="upnext-label">{block.title}</h3>
-          {block.lead ? <p className="upnext-lead">{block.lead}</p> : null}
+          {block.lead ? (
+            <Markdown html={false} className="upnext-lead upnext-prose">
+              {block.lead}
+            </Markdown>
+          ) : null}
           <ul>
             {block.rows.map((line) => (
               <BlockRow
@@ -1733,46 +1750,51 @@ function Facts({ entry }: { entry: Entry }) {
   const files = pr.changed_files ?? 0;
   const sized = (pr.additions ?? 0) + (pr.deletions ?? 0) + files > 0;
   return (
-    <dl className="upnext-facts">
-      {pr.head_ref || pr.base_ref ? (
-        <div>
-          <dt>Branch</dt>
-          <dd className="upnext-branches">
-            <code title={pr.head_ref}>{pr.head_ref || "?"}</code>
-            <span aria-label="into">→</span>
-            <code title={pr.base_ref}>{pr.base_ref || "?"}</code>
-          </dd>
-        </div>
-      ) : null}
+    <dl className="upnext-facts upnext-pr-facts">
+      <div className="upnext-branch-fact">
+        <dt className="sr-only">{pr.head_ref || pr.base_ref ? "Branch" : "GitHub"}</dt>
+        <dd className="upnext-branches">
+          {pr.head_ref || pr.base_ref ? (
+            <>
+              <BranchIcon size={14} />
+              <code title={pr.head_ref}>{pr.head_ref || "?"}</code>
+              <span aria-label="into">→</span>
+              <code title={pr.base_ref}>{pr.base_ref || "?"}</code>
+            </>
+          ) : null}
+          <a
+            className="upnext-github"
+            href={pr.url}
+            target="_blank"
+            rel="noreferrer"
+            aria-label={`Open ${pr.repository}#${pr.number} on GitHub`}
+            title={`Open ${pr.repository}#${pr.number} on GitHub`}
+          >
+            <GitHubIcon />
+          </a>
+        </dd>
+      </div>
       {sized ? (
         <div>
-          <dt>Size</dt>
+          <dt className="sr-only">Size</dt>
           <dd>
             <Lines
               additions={pr.additions ?? 0}
               deletions={pr.deletions ?? 0}
               format={formatCount}
             />
-            {files ? ` · ${plural(files, "file")}` : ""}
+            {files ? <span className="upnext-fact-aside"> · {plural(files, "file")}</span> : null}
           </dd>
         </div>
       ) : null}
       {entry.review_minutes != null ? (
         <div>
-          <dt>Time to review</dt>
+          <dt className="sr-only">Time to review</dt>
           <dd title="baum's estimate of the time to read the change">
-            {minutesText(entry.review_minutes)}
+            {minutesText(entry.review_minutes)} review
           </dd>
         </div>
       ) : null}
-      <div>
-        <dt>GitHub</dt>
-        <dd>
-          <a href={pr.url} target="_blank" rel="noreferrer">
-            {pr.repository}#{pr.number} ↗
-          </a>
-        </dd>
-      </div>
     </dl>
   );
 }
@@ -1796,7 +1818,7 @@ function BlockRow({
   const pr = entry.pull_request;
   const text = (
     <span className="upnext-block-text">
-      <span>{line.main}</span>
+      {line.lines ? <InlineMarkdown>{line.main}</InlineMarkdown> : <span>{line.main}</span>}
       {line.sub ? <span className="upnext-block-sub">{line.sub}</span> : null}
     </span>
   );
