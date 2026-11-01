@@ -726,10 +726,15 @@ export type Snapshot = { entries: Entry[]; problems: { clone_id: string; reason:
 /** The server serves the app only under its session namespace,
  * `/s/<namespace>/`: the first two segments of the page's path. The session
  * cookie is scoped to that path and nothing outside it accepts the cookie, so
- * every API, event stream and in-app URL is built from this base. */
+ * every API, event stream and in-app URL is built from this base. The tour's
+ * sample project is served under `sample/` within it, which the base keeps. */
 export function appBase(pathname = location.pathname): string {
-  return /^\/s\/[^/]+\//.exec(pathname)?.[0] ?? "/";
+  return /^\/s\/[^/]+\/(sample\/)?/.exec(pathname)?.[0] ?? "/";
 }
+/** Whether the app is showing the tour's sample project. */
+export const inSample = (pathname = location.pathname) => appBase(pathname).endsWith("/sample/");
+/** The base of the person's own data, outside the sample project. */
+export const ownBase = () => appBase().replace(/sample\/$/, "");
 /** A URL under the namespace; `path` is relative to it, as `api/repos` or
  * `?page=jobs`. The app routes with query strings on the base itself. */
 export function appURL(path = ""): string {
@@ -868,15 +873,12 @@ export async function generateReviews(
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ items, mode, confirm_isolation: confirmIsolation }),
   });
+  const body = await answered(response);
   if (response.status === 409) {
-    const body = await response.json().catch(() => null);
     if (body?.isolation_required) return "isolation";
     if (body?.needs_clone) return "needs_clone";
   }
-  if (!response.ok)
-    throw Error(
-      `Local request failed (${response.status}): ${(await response.text()).slice(0, 240)}`,
-    );
+  if (!response.ok) throw refused(response, body);
   return "queued";
 }
 /** Queues the review of a group. Besides the answers of `generateReviews`,
@@ -896,17 +898,32 @@ export async function generateGroup(
       confirm_isolation: confirmIsolation,
     }),
   });
+  const body = await answered(response);
   if (response.status === 409) {
-    const body = await response.json().catch(() => null);
     if (body?.isolation_required) return "isolation";
     if (body?.needs_clone) return "needs_clone";
     if (Array.isArray(body?.members_need_reviews)) return { missing: body.members_need_reviews };
   }
-  if (!response.ok)
-    throw Error(
-      `Local request failed (${response.status}): ${(await response.text()).slice(0, 240)}`,
-    );
+  if (!response.ok) throw refused(response, body);
   return "queued";
+}
+/** A failed queueing's JSON answer, read once, or null for any other. */
+async function answered(response: Response): Promise<Record<string, unknown> | null> {
+  if (response.ok) return null;
+  const text = await response.text();
+  try {
+    return { ...JSON.parse(text), text };
+  } catch {
+    return { text };
+  }
+}
+/** The error of a failed queueing: the daemon's words when it gave them. */
+function refused(response: Response, body: Record<string, unknown> | null) {
+  return Error(
+    typeof body?.message === "string"
+      ? body.message
+      : `Local request failed (${response.status}): ${String(body?.text ?? "").slice(0, 240)}`,
+  );
 }
 export function selector(clone: string, pr: number, version?: number) {
   return new URLSearchParams({

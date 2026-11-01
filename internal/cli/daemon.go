@@ -54,6 +54,7 @@ import (
 	"github.com/baum-ai/baum/internal/reviewgroups"
 	"github.com/baum-ai/baum/internal/reviewindex"
 	"github.com/baum-ai/baum/internal/reviewruns"
+	"github.com/baum-ai/baum/internal/sampleapp"
 	"github.com/baum-ai/baum/internal/shellenv"
 	"github.com/baum-ai/baum/internal/transcript"
 	"github.com/baum-ai/baum/internal/uiserver"
@@ -679,9 +680,12 @@ func localApplication(paths daemon.Paths, log *slog.Logger) func(context.Context
 				return agentplugins.New().CodexTrust(ctx, dirs)
 			},
 			Diagnostics: uiDiagnostics}.Handler()
+		// The tour's sample project, written when first asked for.
+		sample := &sampleapp.Workspace{Dir: filepath.Join(state, "sample"), Own: api}
 		return daemon.App{
 			API:     api,
 			Assets:  localapp.Handler(),
+			Sample:  sample,
 			Methods: methods,
 			Waits:   waits,
 			Run: func(ctx context.Context) {
@@ -749,6 +753,7 @@ func localApplication(paths daemon.Paths, log *slog.Logger) func(context.Context
 			Drain:    queue.Drain,
 			Resume:   queue.Resume,
 			Close: func() {
+				sample.Close()
 				api.Close()
 				groupsAPI.Close()
 				unsubscribe()

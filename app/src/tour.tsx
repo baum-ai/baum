@@ -2,7 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "re
 import { CloseIcon } from "@baum/viewer/components/icons";
 import { Stumpy } from "@baum/viewer/components/stumpy";
 import { Button } from "@baum/viewer/components/ui";
-import { appURL, navigate } from "./api";
+import { appURL, inSample, navigate, ownBase } from "./api";
 import { PRIMARY, SECONDARY, SMALL } from "./action-classes";
 import { PAGES } from "./pages";
 import { COMMAND } from "./shortcuts";
@@ -12,18 +12,34 @@ import "./tour.css";
 /** Whether the tour is open: once on this computer's first launch, kept by
  *  the daemon since the app's address can change, and again whenever Go to
  *  asks for it (`?tour=1`). Closing it clears that request, so asking again
- *  opens it. */
-export function useTour(asked: boolean) {
+ *  opens it.
+ *
+ *  It runs on the person's own pull requests when they have any, and else in
+ *  the sample project, which it leaves again when it closes. */
+export function useTour(asked: boolean, pullRequests: boolean | undefined) {
   const saved = useUIState(uiState("api/ui-state/tour", () => ({ seen: false })));
   const firstRun = saved.ready && !saved.error && !saved.value.seen;
   const [open, setOpen] = useState(false);
+  const [leaving, setLeaving] = useState(false);
+  const askedFirst = useRef(asked);
   useEffect(() => {
-    if (firstRun || asked) setOpen(true);
-  }, [firstRun, asked]);
+    // The sample is only for the tour: a reload of it without one goes home.
+    if (inSample() && !askedFirst.current) location.replace(ownBase());
+  }, []);
+  useEffect(() => {
+    if ((!firstRun && !asked) || (!inSample() && pullRequests === undefined)) return;
+    if (inSample() || pullRequests) setOpen(true);
+    else location.replace(`${ownBase()}sample/?tour=1`);
+  }, [firstRun, asked, pullRequests]);
+  // Leaving the sample reloads the page, so the tour's state is saved first.
+  useEffect(() => {
+    if (leaving && saved.value.seen && !saved.saving) location.assign(ownBase());
+  }, [leaving, saved.value.seen, saved.saving]);
   const close = () => {
     if (!saved.value.seen) saved.update(() => ({ seen: true }));
     setOpen(false);
-    if (asked) navigate(appURL());
+    if (inSample()) setLeaving(true);
+    else if (asked) navigate(appURL());
   };
   return { open, close };
 }
@@ -48,7 +64,9 @@ type Stop = {
 const STOPS: Stop[] = [
   {
     title: "Welcome to baum",
-    body: "A quick look around. Most of your day is the Inbox and a pull request.",
+    body: inSample()
+      ? "A quick look around, in a sample project until you have pull requests of your own."
+      : "A quick look around. Most of your day is the Inbox and a pull request.",
     at: href("inbox"),
   },
   {

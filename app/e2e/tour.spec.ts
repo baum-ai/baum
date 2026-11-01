@@ -18,10 +18,56 @@ const tourState = (page: Page, value?: { seen: boolean }) =>
     });
   }, value);
 
-test("the tour walks the Inbox, a pull request and the other pages", async ({ page }) => {
-  test.slow();
+/** Walks the tour from start, its address, to Done, checking each stop; at a
+ *  stop of `act`'s, `act` runs first. Pictures are named after `name`. */
+async function walk(
+  page: Page,
+  start: string,
+  name: string,
+  act?: Record<string, () => Promise<void>>,
+) {
+  await page.goto(start);
+  await expect(page.getByRole("dialog", { name: "Welcome to baum" })).toBeVisible({
+    timeout: 15000,
+  });
+  const titles: string[] = [];
+  for (let stop = 1; ; stop++) {
+    const tour = page.locator(".tour-card");
+    titles.push((await tour.locator("h2").textContent()) ?? "");
+    await expect(tour).toBeInViewport();
+    // Every stop but the first and last points at what it talks about.
+    if (stop > 1 && titles.at(-1) !== "That's the tour")
+      await expect(page.locator(".tour-spot"), titles.at(-1)).toBeVisible();
+    if (pictures && name) {
+      await page.waitForTimeout(400);
+      await page.screenshot({
+        path: `test-results/tour-screens/${name}-${String(stop).padStart(2, "0")}.png`,
+      });
+    }
+    await act?.[titles.at(-1)!]?.();
+    const next = tour.getByRole("button", { name: /^(Start|Next|Done)$/ });
+    if ((await next.textContent()) === "Done") {
+      await next.click();
+      break;
+    }
+    await next.click();
+    if (titles.at(-1) === "Open a pull request") await expect(page).toHaveURL(/[?&]pr=\d+/);
+  }
+  await expect(page.locator(".tour-card")).toHaveCount(0);
+  expect(titles).toContain("Start with the summary");
+  expect(titles.at(-1)).toBe("That's the tour");
+}
+
+/** The address of the app's own data, under its namespace. */
+async function home(page: Page) {
   await page.goto(await launchURL());
   await expect(page.locator("button.upnext-row").first()).toBeVisible({ timeout: 15000 });
+  return new URL(page.url()).pathname.replace(/sample\/$/, "");
+}
+
+test("the tour walks the Inbox, a pull request and the other pages", async ({ page }) => {
+  test.slow();
+  const base = await home(page);
   // Wide, and narrow enough that the review's sections become a sheet.
   const passes = [
     { scheme: "light", width: 1280 },
@@ -31,43 +77,47 @@ test("the tour walks the Inbox, a pull request and the other pages", async ({ pa
   for (const { scheme, width } of passes) {
     await page.emulateMedia({ colorScheme: scheme });
     await page.setViewportSize({ width, height: 900 });
-    const start = new URL(page.url());
-    start.search = "?tour=1";
-    await page.goto(start.href);
-    const card = page.getByRole("dialog", { name: "Welcome to baum" });
-    await expect(card).toBeVisible();
-    const titles: string[] = [];
-    for (let stop = 1; ; stop++) {
-      const tour = page.locator(".tour-card");
-      titles.push((await tour.locator("h2").textContent()) ?? "");
-      await expect(tour).toBeInViewport();
-      // Every stop but the first and last points at what it talks about.
-      if (stop > 1 && titles.at(-1) !== "That's the tour")
-        await expect(page.locator(".tour-spot"), titles.at(-1)).toBeVisible();
-      if (pictures && width === 1280) {
-        await page.waitForTimeout(400);
-        await page.screenshot({
-          path: `test-results/tour-screens/${String(stop).padStart(2, "0")}-${scheme}.png`,
-        });
-      }
-      if (titles.at(-1) === "Use the keys") {
-        // The keys it teaches reach the page.
+    await walk(page, `${base}?tour=1`, width === 1280 ? `own-${scheme}` : "", {
+      // The keys it teaches reach the page.
+      "Use the keys": async () => {
         await page.keyboard.press("?");
         await expect(page.locator("dialog[data-shortcuts-sheet]")).toBeVisible();
         await page.keyboard.press("Escape");
-        await expect(tour).toBeVisible();
-      }
-      const next = tour.getByRole("button", { name: /^(Start|Next|Done)$/ });
-      if ((await next.textContent()) === "Done") {
-        await next.click();
-        break;
-      }
-      await next.click();
-      if (titles.at(-1) === "Open a pull request") await expect(page).toHaveURL(/[?&]pr=\d+/);
-    }
-    await expect(page.locator(".tour-card")).toHaveCount(0);
-    expect(titles).toContain("Start with the summary");
-    expect(titles.at(-1)).toBe("That's the tour");
+        await expect(page.locator(".tour-card")).toBeVisible();
+      },
+    });
+  }
+});
+
+test("with no pull requests of its own, the tour shows the sample project", async ({ page }) => {
+  test.slow();
+  const base = await home(page);
+  for (const scheme of pictures ? (["light", "dark"] as const) : (["light"] as const)) {
+    await page.emulateMedia({ colorScheme: scheme });
+    await walk(page, `${base}sample/?tour=1`, `sample-${scheme}`, {
+      "Your Inbox": async () => {
+        await expect(page.locator(".upnext-list")).toContainText("Add tags to notes");
+      },
+      // What would change something says it cannot, and nothing changes;
+      // the pictures leave it out, as its notice stays on the pages after.
+      ...(pictures
+        ? {}
+        : {
+            "Act on it": async () => {
+              await page.getByRole("button", { name: "Regenerate review" }).click();
+              await expect(page.locator(".local-toast")).toContainText("Not in the sample project");
+            },
+          }),
+      // Nor do its pull requests open on GitHub, where they do not exist.
+      "That's the tour": async () => {
+        await page.locator(".upnext-panel").getByText("Open on GitHub").click();
+        await expect(page.locator(".local-toast")).toContainText("Not in the sample project");
+        expect(page.context().pages()).toHaveLength(1);
+      },
+    });
+    // Closing the tour leaves the sample for the app's own data.
+    await expect(page).toHaveURL((url) => url.pathname === base);
+    await expect(page.locator("button.upnext-row").first()).toBeVisible();
   }
 });
 
