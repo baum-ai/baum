@@ -131,7 +131,7 @@ func (l *Local) Prepare(ctx context.Context, item Item) (Prepared, string, error
 	if backends.Claude == nil {
 		backends = generate.DefaultBackendsFor(cfg)
 	}
-	selected, e := generate.Select(ctx, cfg.Backend, cfg.Model, backends, io.Discard)
+	selected, e := generate.SelectDesktop(ctx, cfg.Backend, cfg.Model, backends, io.Discard)
 	if e != nil {
 		return Prepared{}, "", e
 	}
@@ -216,7 +216,7 @@ func (l *Local) prepareDetails(ctx context.Context, item Item) (Prepared, string
 	if backends.Claude == nil {
 		backends = generate.DefaultBackendsFor(cfg)
 	}
-	selected, e := generate.Select(ctx, config.Backend(latest.Metadata.Backend), latest.Metadata.Model, backends, io.Discard)
+	selected, e := generate.SelectDesktop(ctx, config.Backend(latest.Metadata.Backend), latest.Metadata.Model, backends, io.Discard)
 	if e != nil {
 		return Prepared{}, "", e
 	}
@@ -378,7 +378,7 @@ func (l *Local) Execute(ctx context.Context, p Prepared, progress func(Progress)
 	if backends.Claude == nil {
 		backends = generate.DefaultBackendsFor(cfg)
 	}
-	selected, e := generate.Select(ctx, config.Backend(p.Backend), p.Model, backends, io.Discard)
+	selected, e := generate.SelectDesktop(ctx, config.Backend(p.Backend), p.Model, backends, io.Discard)
 	if e != nil {
 		return nil, e
 	}

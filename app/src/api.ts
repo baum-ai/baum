@@ -695,7 +695,7 @@ const skipReasons: Record<string, string> = {
   over_token_cap: "The session is too long for one capture.",
   extraction_failed: "Capture failed three times; it tries again when the session changes.",
   backend_unsupported:
-    "Cursor Agent can't capture decisions. Choose Claude Code, Codex or the Anthropic API for reviews to capture them.",
+    "Cursor Agent can't capture decisions. Choose Claude Code or Codex for reviews to capture them.",
   backend_unavailable: "No harness that can capture decisions is available on this computer.",
 };
 /** Why a session's decisions were not captured, in words. */

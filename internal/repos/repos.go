@@ -168,14 +168,17 @@ func (p Preferences) Validate() error {
 	if p.Backend != nil && !p.Backend.Valid() {
 		return errors.New("invalid backend")
 	}
+	if p.Backend != nil && !p.Backend.Desktop() {
+		return errors.New("reviews run with auto, Claude Code or Codex only")
+	}
 	if p.Model != nil && len(*p.Model) > 256 {
 		return errors.New("model must be at most 256 bytes")
 	}
 	if m := p.Decisions.Model; m != nil && len(*m) > 256 {
 		return errors.New("decisions model must be at most 256 bytes")
 	}
-	if b := p.Decisions.Backend; b != nil && *b != config.BackendClaude && *b != config.BackendCodex && *b != config.BackendAnthropic {
-		return errors.New("data extraction runs with Claude Code, Codex or the Anthropic API only")
+	if b := p.Decisions.Backend; b != nil && *b != config.BackendClaude && *b != config.BackendCodex {
+		return errors.New("data extraction runs with Claude Code or Codex only")
 	}
 	if p.FixBackend != nil && *p.FixBackend != config.BackendClaude && *p.FixBackend != config.BackendCodex {
 		return errors.New("fixes run with Claude Code or Codex only")

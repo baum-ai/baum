@@ -120,12 +120,11 @@ func TestReviewsCLI(t *testing.T) {
 	if got := show(); got.Model != "" || got.PullRequests != "both" || got.Backend != "codex" {
 		t.Fatalf("after clearing the model %+v", got)
 	}
-	// cursor-agent is chosen like any other harness: nothing to acknowledge.
-	if _, e := run("set", "--backend=cursor-agent", "--model=composer-2.5"); e != nil {
-		t.Fatal(e)
-	}
-	if got := show(); got.Backend != "cursor-agent" || got.Model != "composer-2.5" {
-		t.Fatalf("after choosing cursor-agent %+v", got)
+	// The desktop app offers Claude Code and Codex only.
+	for _, backend := range []string{"cursor-agent", "anthropic"} {
+		if _, e := run("set", "--backend="+backend); e == nil {
+			t.Fatalf("%s accepted", backend)
+		}
 	}
 	if _, e := run("set", "--backend=codex"); e != nil {
 		t.Fatal(e)

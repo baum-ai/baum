@@ -1199,7 +1199,7 @@ it("chooses the data extraction agent apart from the reviews'", async () => {
   const agent = section.querySelector<HTMLSelectElement>("#decisions-agent")!;
   expect(agent.selectedOptions[0]!.textContent).toBe("Same as reviews");
   expect(section.textContent).toContain("Now Codex.");
-  expect([...agent.options].map((o) => o.value)).toEqual(["", "claude", "codex", "anthropic"]);
+  expect([...agent.options].map((o) => o.value)).toEqual(["", "claude", "codex"]);
   // A new agent starts over at its default model, which is saved as none.
   await choose(agent, "claude");
   expect(puts.at(-1)).toEqual({
@@ -1258,9 +1258,10 @@ it("saves a reasoning effort per use case", async () => {
   });
   await pick("Review reasoning effort", "Default");
   expect(puts.at(-1)!.body).toMatchObject({ effort: "" });
-  // Cursor Agent names its effort in the model, so it has no effort row.
-  await choose(node.querySelector<HTMLSelectElement>("#review-agent")!, "cursor-agent");
-  expect(node.querySelector('[aria-label="Review reasoning effort"]')).toBeNull();
+  // Only Claude Code and Codex can be chosen for reviews.
+  expect(
+    [...node.querySelector<HTMLSelectElement>("#review-agent")!.options].map((o) => o.value),
+  ).toEqual(["claude", "codex"]);
 });
 it("offers a fix effort only with a fix agent of its own", async () => {
   history.replaceState(null, "", "/s/test-ns/?page=settings&section=fixes");
@@ -1571,6 +1572,34 @@ it("manages CLI and hooks inline in desktop Settings", async () => {
     await click("Install baum CLI");
     expect(invoke).toHaveBeenCalledWith("install_command", {});
     expect(location.search).toBe("?page=settings&section=computer");
+  } finally {
+    Reflect.deleteProperty(window, "__TAURI_INTERNALS__");
+  }
+});
+
+it("says in desktop Settings when neither Claude Code nor Codex is installed", async () => {
+  history.replaceState(null, "", "/s/test-ns/?page=settings&section=reviews");
+  stubDiagnostics(async () => Response.json({ local: true, report: diagnosticsReport }));
+  stubAutomatic(demoClone, automaticOverview, { backend: "auto", model: "" });
+  const invoke = vi.fn(async () => ({
+    first_run: false,
+    command: {
+      installed: false,
+      target: "/app/baum",
+      plan: { link: "/home/user/bin/baum", on_path: true, admin: false },
+    },
+    hooks: { agents: [] },
+  }));
+  Object.defineProperty(window, "__TAURI_INTERNALS__", { configurable: true, value: { invoke } });
+  try {
+    await act(async () => root.render(<App />));
+    const section = node.querySelector('[aria-labelledby="settings-reviews-heading"]')!;
+    expect(section.parentElement!.textContent).toContain(
+      "Neither Claude Code nor Codex is installed on this computer",
+    );
+    expect(
+      [...section.querySelector<HTMLSelectElement>("#review-agent")!.options].map((o) => o.value),
+    ).toEqual(["claude", "codex"]);
   } finally {
     Reflect.deleteProperty(window, "__TAURI_INTERNALS__");
   }

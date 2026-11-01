@@ -630,19 +630,20 @@ func TestHandlerUpdatesPreferences(t *testing.T) {
 }
 
 // The settings page chooses the backend, model and pull requests; a bad
-// value changes nothing, and cursor-agent is chosen like any other harness.
+// value changes nothing, and so does cursor-agent or anthropic: the desktop
+// app offers Claude Code and Codex only.
 func TestHandlerSavesReviewChoices(t *testing.T) {
 	h := newHarness(t)
-	for _, body := range []string{`{"backend":"nope"}`, `{"pull_requests":"everyone"}`} {
+	for _, body := range []string{`{"backend":"nope"}`, `{"backend":"cursor-agent"}`, `{"backend":"anthropic"}`, `{"pull_requests":"everyone"}`} {
 		if code := put(h.scheduler, body); code != 400 {
 			t.Fatalf("%s: %d", body, code)
 		}
 	}
-	if code := put(h.scheduler, `{"backend":"cursor-agent","model":"composer-2.5","pull_requests":"requested"}`); code != 200 {
+	if code := put(h.scheduler, `{"backend":"codex","model":"gpt-6-luna","pull_requests":"requested"}`); code != 200 {
 		t.Fatal(code)
 	}
 	prefs, _ := h.registry.Preferences(context.Background())
-	if prefs.Backend == nil || *prefs.Backend != "cursor-agent" || prefs.Model == nil || *prefs.Model != "composer-2.5" || prefs.PullRequests != repos.PullRequestsRequested {
+	if prefs.Backend == nil || *prefs.Backend != "codex" || prefs.Model == nil || *prefs.Model != "gpt-6-luna" || prefs.PullRequests != repos.PullRequestsRequested {
 		t.Fatalf("%+v", prefs)
 	}
 	if code := put(h.scheduler, `{"pull_requests":"all"}`); code != 200 {

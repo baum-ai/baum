@@ -7,7 +7,9 @@ run `baum internal generate`, the following is sent to the **model provider you
 configure** (the `claude`, `codex` or `cursor-agent` CLI, each of which talks
 to its own provider under your own account, Cursor to the model it routes the
 run to, or the Anthropic API, which the `anthropic` backend calls with your
-`ANTHROPIC_API_KEY`):
+`ANTHROPIC_API_KEY`). The desktop app and its daemon use only Claude Code and
+Codex: they never run the `cursor-agent` or `anthropic` backend, and `auto`
+never falls back to the Anthropic API there:
 
 - the files of the repository at the pull request head and merge base,
   which the review agent may read as they are, unredacted;
@@ -434,6 +436,9 @@ container. A test fails if any code under `oss/internal` or `oss/cmd` names it.
 
 ### The cursor-agent backend
 
+This backend is reachable only from the `baum internal generate` command line.
+The desktop app and its daemon refuse a job whose backend is `cursor-agent`.
+
 **baum cannot make the Cursor Agent CLI reliably read-only.** It uses every
 restriction the CLI offers, and stops a run that strays, but several of
 Cursor's own features stay on and its read-only mode is enforced by Cursor,
@@ -511,6 +516,10 @@ What remains for `cursor-agent`:
 
 ### The anthropic backend
 
+This backend is reachable only from the `baum internal generate` command line.
+The desktop app and its daemon refuse a job whose backend is `anthropic`, and
+`auto` there never falls back to it, so the app spends nothing on an API key.
+
 The `anthropic` backend (`agent/anthropic`) runs no agent process. baum itself
 calls the Anthropic Messages API (`https://api.anthropic.com/v1/messages`) and
 runs the model's tool calls in-process:
@@ -564,7 +573,7 @@ the head is still the one it started from, and it still has a merge conflict
 same unresolved review threads with the same comments (a digest of them is
 taken when you start it, so a comment added or edited afterwards stops the
 fix before the agent runs). A registered local clone is required. Only the `claude` and `codex` backends fix; `cursor-agent` and
-`anthropic` are refused.
+`anthropic` are refused (and the desktop app runs neither at all).
 
 The checkout is a linked worktree of your registered clone, detached at the
 head the fix started from, under `fixes/<id>/` in your user cache directory

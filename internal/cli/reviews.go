@@ -215,16 +215,18 @@ func newReviewsCommand() *cobra.Command {
 	set.Flags().String("decisions-effort", "", "reasoning effort for data extraction: "+efforts+" (empty uses the agent's own)")
 	set.Flags().Bool("automatic", true, "generate reviews automatically (--automatic=false turns it off)")
 	set.Flags().String("pull-requests", "", "which pull requests get automatic reviews: authored, requested, both or all")
-	set.Flags().String("decisions-backend", "", "backend for data extraction, the decisions of agent sessions and the feature log: claude, codex or anthropic (empty follows reviews again)")
+	set.Flags().String("decisions-backend", "", "backend for data extraction, the decisions of agent sessions and the feature log: claude or codex (empty follows reviews again)")
 	set.Flags().String("decisions-model", "", "model for data extraction (empty uses the backend's default)")
 	root.AddCommand(show, set)
 	return root
 }
 
 func backendNames() []string {
-	names := make([]string, len(config.Backends))
-	for i, b := range config.Backends {
-		names[i] = string(b)
+	var names []string
+	for _, b := range config.Backends {
+		if b.Desktop() {
+			names = append(names, string(b))
+		}
 	}
 	return names
 }

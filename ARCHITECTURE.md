@@ -1840,7 +1840,8 @@ format and the protocol constants have one definition on both sides.
 The hidden `--one-pass` flag writes the review in one call with the one-pass
 public prompt instead, as before staged reviews, for evaluations that compare
 the two; the daemon never uses it. Every backend (claude, codex, cursor-agent
-and anthropic) runs either way.
+and anthropic) runs either way from the command line; the daemon runs only claude
+and codex.
 
 `baum internal generate` is `internal/generate` (the pipeline) and
 `internal/cli/generate.go`. The CLI opens `internal/store`, loads the latest
@@ -1850,7 +1851,12 @@ run, it selects and checks the backend before assembling (`claude.Backend.Check`
 `codex.Backend.Check`, `cursor.Backend.Check`, `anthropic.Backend.Check`, which
 only needs the key; `auto` tries `generate.AutoOrder`: claude, then codex, then
 anthropic, and never cursor-agent, which runs only when named because it cannot
-be held to read-only as reliably), assembles with `Request.Checkout` and `Attachments`
+be held to read-only as reliably). The daemon, its chat, fix and decision calls
+use `generate.SelectDesktop` instead: only `auto`, `claude` and `codex` run, `auto`
+tries `generate.DesktopAutoOrder` (claude, then codex) and never reaches
+anthropic, and a job whose backend is `cursor-agent` or `anthropic` fails with
+`generate.ErrBackendNotOffered` rather than switching backends; the daemon's
+Diagnostics report (`doctor.Options.Desktop`) checks only claude and codex), assembles with `Request.Checkout` and `Attachments`
 written to temporary files outside the run directory, creates the run
 directory with `os.MkdirTemp("", agent.RunDirPrefix+"*")` and unpacks both
 archives into it with `bundle.UnpackCheckout` and `UnpackAttachments` under the

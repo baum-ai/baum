@@ -13,11 +13,7 @@ export const effortLabels: Record<string, string> = {
 /** CLI capabilities, rather than API-only reasoning settings. See the model
  *  and effort references in the desktop README. */
 export function modelEfforts(backend: string, model: string): readonly string[] {
-  if (
-    (backend === "claude" || backend === "anthropic") &&
-    /^claude-(haiku|sonnet|opus)-5-5(?:$|-)/.test(model)
-  )
-    return standard;
+  if (backend === "claude" && /^claude-(haiku|sonnet|opus)-5-5(?:$|-)/.test(model)) return standard;
   if (backend === "codex") {
     if (model === "gpt-6-luna") return standard;
     if (["gpt-6.1-sol", "gpt-6.1-terra", "gpt-6-astra"].includes(model)) return delegated;

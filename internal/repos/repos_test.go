@@ -386,12 +386,12 @@ func TestPreferencesFixAgent(t *testing.T) {
 
 func TestPreferencesExtractionBackend(t *testing.T) {
 	claude, codex, anthropic, cursor, auto := config.BackendClaude, config.BackendCodex, config.BackendAnthropic, config.BackendCursorAgent, config.BackendAuto
-	for _, b := range []*config.Backend{nil, &claude, &codex, &anthropic} {
+	for _, b := range []*config.Backend{nil, &claude, &codex} {
 		if err := (Preferences{Decisions: DecisionPreferences{Backend: b}}).Validate(); err != nil {
 			t.Fatalf("%v rejected: %v", b, err)
 		}
 	}
-	for _, b := range []*config.Backend{&cursor, &auto} {
+	for _, b := range []*config.Backend{&anthropic, &cursor, &auto} {
 		if (Preferences{Decisions: DecisionPreferences{Backend: b}}).Validate() == nil {
 			t.Fatalf("%s accepted", *b)
 		}

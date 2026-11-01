@@ -66,13 +66,15 @@ not a failure.
 5. A prompt estimated over 272,000 tokens is skipped (`over_token_cap`).
 6. The backend is `preferences.decisions.backend`, the data extraction backend
    the app chose, else the one reviews use (config file, app preferences), and
-   `auto` resolves as for reviews: the first of claude, codex
-   and anthropic that passes its check, never cursor-agent; none is
-   `backend_unavailable`. The model follows the resolved backend:
-   `preferences.decisions.model` unless it names another provider's family,
-   else `claude-haiku-5-5` for claude and anthropic and `gpt-6-luna` for codex.
-   cursor-agent cannot make a single structured call (`backend_unsupported`); a
-   backend that does not pass its check is `backend_unavailable`.
+   `auto` resolves as for reviews in the desktop app (`generate.SelectDesktop`):
+   the first of claude and codex that passes its check, never the Anthropic API
+   or cursor-agent; none is `backend_unavailable`. A requested backend other than
+   auto, claude or codex is refused and is `backend_unavailable` too. The model
+   follows the resolved backend: `preferences.decisions.model` unless it names
+   another provider's family, else `claude-haiku-5-5` for claude and
+   `gpt-6-luna` for codex. A backend that does not pass its check is
+   `backend_unavailable`. `backend_unsupported` is a reason older versions
+   recorded for cursor-agent.
 7. The cost is reserved before the call: the prompt's byte bound and 16,384
    output tokens at the model's list price. Claude Code caches the prompt, so
    claude's call is reserved at the cache-write rate when that is higher. It
@@ -169,7 +171,7 @@ and also after the settings or a repository's are saved. The settings are
 `GET` and `PUT /api/settings/decisions` (in `internal/uiserver`), which add
 `EffectiveModel`: the backend and model a capture would use, resolved by the
 same helper a capture uses, `auto` included, and whether the chosen model is
-ignored (never with cursor-agent, which uses no model). Its backend checks
+ignored. Its backend checks
 get 5 seconds; no backend, or none in time (`backend_undetermined`), is
 unknown (empty) and ignores nothing. `baum internal reviews show` reports the
 chosen backend and model as `decisions_chosen_backend` and `decisions_model`,
