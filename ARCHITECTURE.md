@@ -1426,17 +1426,14 @@ inside the clone and the session store overrides, and does this:
    checkpoint under `<id[:2]>/<id[2:]>/`. A ULID can only come from the refs.
    A 12-hex id in both stores (a clone migrated with `entire migrate`) is read
    from its ref, which wins; the session paths in a ref's metadata carry no
-   shard prefix, and the parser reads them either way. Such a commit is linked to those sessions
-   with `method` `entire_checkpoint` and confidence 1, as the hosted
-   `entireEdges` writes them, and then goes through step 7 with those sessions
-   already linked and the files they edited already explained. The
-   checkpoint is read whatever `Sessions.Sources` asks for. Every linked
-   session is listed: when loading did not return it (it was last written
-   outside the window, or only Entire holds it), it is mapped from that
-   checkpoint. A session that already came from a home-directory store under
-   the same id is listed once, from that store, since its transcript is the
-   fuller record. Trailers with no valid id, checkpoints the clone does not
-   hold, or ones whose sessions cannot be mapped leave the commit to the
+   shard prefix, and the parser reads them either way. A commit's
+   `checkpoint_sessions` records the union of candidate session IDs. Checkpoint
+   membership is not contribution evidence and never creates a confidence-1
+   link. The checkpoint is read whatever `Sessions.Sources` asks for. Missing
+   local transcripts are mapped from it when possible; membership survives an
+   unreadable transcript. A native session under the same ID is preferred.
+   Trailers with no valid ID or missing checkpoints leave candidate discovery
+   to the other stores and matching to the independent
    heuristics. A checkpoint in neither store is named in one warning line for the run, with the command
    that fetches the git-refs store (`git fetch <remote>
    '+refs/entire/checkpoints/*:refs/entire/checkpoints/*'`) and, when one of
@@ -1449,20 +1446,17 @@ inside the clone and the session store overrides, and does this:
    clone never downloaded) gets a "cannot be read" line of its own and no
    fetch hint. An id in both stores is dated for the `SessionWindow` by the
    branch, since a migrated ref's commit dates from the migration.
-7. Matches each commit the way the hosted resolver does, with the default
-   config and `steps.Default`. As its `matchRemaining` does,
-   `linkage.MatchCommit` runs over the sessions not yet linked, and runs
-   again, without the ones it linked, while the files the linked sessions
-   edited do not cover every file the commit changed, until nothing more
-   matches or the files-overlap link cap (three) is reached, a tie that would
-   pass the cap being cut to it. Then, as its `dropSupersededGuesses` does,
-   once the commit has a link at or above `linkage.ReviewConfidence` (0.7) the
-   links below it are dropped. So two sessions that each edited part of a
-   commit are both linked, and a weak guess beside a confident link is not.
-   Only matched edges are kept: the hosted resolver's unmatched edge, its
-   reasons and a trailer-only attribution name no session. A session that arrives more
-   than once under one id is matched once, as its best reading: one with a
-   transcript, then the newest.
+7. Matches sessions using the shared evidence steps, with local policy:
+   checkpoint association never bypasses validation. Every session recording
+   successful creation of the commit is linked by `commit_ref`, regardless of
+   checkpoint membership. Remaining sessions must explain changed files and
+   pass the normal timing and agent filters. Sharing the starting parent SHA
+   is insufficient and the local resolver omits `start_commit`. Exact file-score
+   ties remain unresolved instead of crediting every concurrent session or
+   choosing one by ID. Matching continues until paths are explained, nothing
+   matches, or the file-link cap (three) is reached. Once a link is at or above
+   `linkage.ReviewConfidence` (0.7), weaker links are dropped. A session arriving
+   more than once is matched once from its fullest, then newest, reading.
 
 The result is redacted with the engine and the row summary that `baum internal sessions`
 uses (`locallink.RowOf`), and carries no transcript, prompt, file path, e-mail
@@ -1502,11 +1496,13 @@ address or session store path; a linked session's transcript is its own route
 `sessions` holds only sessions with at least one matched commit, ordered by when
 their transcript or checkpoint was last modified, oldest first; `commits` holds every commit of the pull request, oldest first, with `links`
 empty for a commit no session matched. `links` are ordered by confidence;
-`method` is `entire_checkpoint`, `commit_ref`, `start_commit` or `files_overlap`, and `source` is
+`method` is `commit_ref` (creation evidence) or `files_overlap` (inferred contribution), and `source` is
 the store (`claude_code`, `codex`, `cursor` or `entire`), which differs from
 `vendor` for a session an Entire checkpoint recorded. A pull request none of
 whose commits match still answers `available` with `"sessions": []`. A subject
-or author is at most 200 characters.
+or author is at most 200 characters. A commit may also carry
+`checkpoint_sessions`, the IDs associated with its checkpoints. Those IDs
+alone never add a linked session or make its transcript available.
 
 Unavailable:
 
@@ -1548,7 +1544,7 @@ to 7 of "Local session linkage" do. Loading leaves out baum's own generation
 runs, for `baum internal view` too: a session whose top-level session has a prompt
 starting with `sessions.GenerationRunMarker` is neither linked nor allowed to
 take a link from another session, and is dropped from an Entire checkpoint's
-ground truth. Each session linked to at least one commit becomes one bundle
+candidate associations. Each session linked to at least one commit becomes one bundle
 session:
 
 - `id` is the vendor's session id, the one `/api/sessions` lists, and
