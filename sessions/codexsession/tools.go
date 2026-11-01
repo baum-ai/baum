@@ -54,7 +54,7 @@ func (f *threadState) addFunctionCall(line codextranscript.Line, call *codextran
 func (f *threadState) addCustomCall(line codextranscript.Line, call *codextranscript.CustomToolCall) error {
 	input, _ := json.Marshal(call.Input)
 	command := call.Input
-	if f.b.profile == traceprocessing.Hosted && call.Name == traceprocessing.CodexExecName {
+	if call.Name == traceprocessing.CodexExecName {
 		// The code-mode wrapper's input is a JavaScript program; the stored
 		// input gains the command lines it runs under "command".
 		input = traceprocessing.NormalizeCodexExecInput(call.Name, input)

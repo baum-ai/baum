@@ -805,7 +805,7 @@ and fails for any other backend. A host may supply another implementation; the
 hosted service does, with its private prompts. `StaticPrompts` is a fixed
 implementation for tests and simple hosts. The prompt is per backend because
 each backend submits its result differently. `GroupPrompts` is the local
-review group's prompt (`group-review-public-v3`): the same text with
+review group's prompt (`group-review-public-v4`): the same text with
 `group-public-v1.md` inserted before the Submitting heading, which says how a
 group's bundle, per-member checkout and `members.json` differ and what a
 combined review covers (see "Review groups").
@@ -825,7 +825,9 @@ heading under which the backend's submit block goes, as for `Prompts`.
 A host can also pass `Run.Decorate`, which the loop applies to every document
 the model returns before masking and validation, to fill what the host
 decides and the model never writes: a review group's `stack` and each
-section's `pull_requests`.
+section's `pull_requests`. `Run.ModelSchema` adjusts the model schema a run
+offers: a review group's asks for `stack` with only its `title`, the group's
+name.
 
 The loop owns the rest of what a run sends:
 
@@ -1426,17 +1428,14 @@ inside the clone and the session store overrides, and does this:
    checkpoint under `<id[:2]>/<id[2:]>/`. A ULID can only come from the refs.
    A 12-hex id in both stores (a clone migrated with `entire migrate`) is read
    from its ref, which wins; the session paths in a ref's metadata carry no
-   shard prefix, and the parser reads them either way. Such a commit is linked to those sessions
-   with `method` `entire_checkpoint` and confidence 1, as the hosted
-   `entireEdges` writes them, and then goes through step 7 with those sessions
-   already linked and the files they edited already explained. The
-   checkpoint is read whatever `Sessions.Sources` asks for. Every linked
-   session is listed: when loading did not return it (it was last written
-   outside the window, or only Entire holds it), it is mapped from that
-   checkpoint. A session that already came from a home-directory store under
-   the same id is listed once, from that store, since its transcript is the
-   fuller record. Trailers with no valid id, checkpoints the clone does not
-   hold, or ones whose sessions cannot be mapped leave the commit to the
+   shard prefix, and the parser reads them either way. A commit's
+   `checkpoint_sessions` records the union of candidate session IDs. Checkpoint
+   membership is not contribution evidence and never creates a confidence-1
+   link. The checkpoint is read whatever `Sessions.Sources` asks for. Missing
+   local transcripts are mapped from it when possible; membership survives an
+   unreadable transcript. A native session under the same ID is preferred.
+   Trailers with no valid ID or missing checkpoints leave candidate discovery
+   to the other stores and matching to the independent
    heuristics. A checkpoint in neither store is named in one warning line for the run, with the command
    that fetches the git-refs store (`git fetch <remote>
    '+refs/entire/checkpoints/*:refs/entire/checkpoints/*'`) and, when one of
@@ -1449,20 +1448,17 @@ inside the clone and the session store overrides, and does this:
    clone never downloaded) gets a "cannot be read" line of its own and no
    fetch hint. An id in both stores is dated for the `SessionWindow` by the
    branch, since a migrated ref's commit dates from the migration.
-7. Matches each commit the way the hosted resolver does, with the default
-   config and `steps.Default`. As its `matchRemaining` does,
-   `linkage.MatchCommit` runs over the sessions not yet linked, and runs
-   again, without the ones it linked, while the files the linked sessions
-   edited do not cover every file the commit changed, until nothing more
-   matches or the files-overlap link cap (three) is reached, a tie that would
-   pass the cap being cut to it. Then, as its `dropSupersededGuesses` does,
-   once the commit has a link at or above `linkage.ReviewConfidence` (0.7) the
-   links below it are dropped. So two sessions that each edited part of a
-   commit are both linked, and a weak guess beside a confident link is not.
-   Only matched edges are kept: the hosted resolver's unmatched edge, its
-   reasons and a trailer-only attribution name no session. A session that arrives more
-   than once under one id is matched once, as its best reading: one with a
-   transcript, then the newest.
+7. Matches sessions using the shared evidence steps, with local policy:
+   checkpoint association never bypasses validation. Every session recording
+   successful creation of the commit is linked by `commit_ref`, regardless of
+   checkpoint membership. Remaining sessions must explain changed files and
+   pass the normal timing and agent filters. Sharing the starting parent SHA
+   is insufficient and the local resolver omits `start_commit`. Exact file-score
+   ties remain unresolved instead of crediting every concurrent session or
+   choosing one by ID. Matching continues until paths are explained, nothing
+   matches, or the file-link cap (three) is reached. Once a link is at or above
+   `linkage.ReviewConfidence` (0.7), weaker links are dropped. A session arriving
+   more than once is matched once from its fullest, then newest, reading.
 
 The result is redacted with the engine and the row summary that `baum internal sessions`
 uses (`locallink.RowOf`), and carries no transcript, prompt, file path, e-mail
@@ -1502,11 +1498,13 @@ address or session store path; a linked session's transcript is its own route
 `sessions` holds only sessions with at least one matched commit, ordered by when
 their transcript or checkpoint was last modified, oldest first; `commits` holds every commit of the pull request, oldest first, with `links`
 empty for a commit no session matched. `links` are ordered by confidence;
-`method` is `entire_checkpoint`, `commit_ref`, `start_commit` or `files_overlap`, and `source` is
+`method` is `commit_ref` (creation evidence) or `files_overlap` (inferred contribution), and `source` is
 the store (`claude_code`, `codex`, `cursor` or `entire`), which differs from
 `vendor` for a session an Entire checkpoint recorded. A pull request none of
 whose commits match still answers `available` with `"sessions": []`. A subject
-or author is at most 200 characters.
+or author is at most 200 characters. A commit may also carry
+`checkpoint_sessions`, the IDs associated with its checkpoints. Those IDs
+alone never add a linked session or make its transcript available.
 
 Unavailable:
 
@@ -1548,7 +1546,7 @@ to 7 of "Local session linkage" do. Loading leaves out baum's own generation
 runs, for `baum internal view` too: a session whose top-level session has a prompt
 starting with `sessions.GenerationRunMarker` is neither linked nor allowed to
 take a link from another session, and is dropped from an Entire checkpoint's
-ground truth. Each session linked to at least one commit becomes one bundle
+candidate associations. Each session linked to at least one commit becomes one bundle
 session:
 
 - `id` is the vendor's session id, the one `/api/sessions` lists, and
@@ -1674,8 +1672,11 @@ wrapper constructs (and the lead of a message the desktop app sent,
 the human's name: Claude Code's `isMeta` lines without an origin (such as the
 line saying where a pasted image was saved) and another agent's
 `<agent-message>`, such as a subagent's report, whose replies and activity
-count toward the prompt before it; a nested session's activity counts toward
-the prompt whose tool call started it; activity under any other input is the
+count toward the prompt before it. A system input, such as a subagent's report
+Claude Code marks `promptSource: "system"` or a task notification, likewise
+hands its replies and activity to the prompt before it, since the agent's
+answer to it is that prompt's turn going on; a nested session's activity counts
+toward the prompt whose tool call started it; activity under any other input is the
 session's and no prompt's (`unattributed`). `session` is the hosted session
 detail's shape: each prompt carries its last text replies (`replies`, a
 preview of each, with `replies_omitted` counting the earlier ones) and
@@ -1840,7 +1841,8 @@ format and the protocol constants have one definition on both sides.
 The hidden `--one-pass` flag writes the review in one call with the one-pass
 public prompt instead, as before staged reviews, for evaluations that compare
 the two; the daemon never uses it. Every backend (claude, codex, cursor-agent
-and anthropic) runs either way.
+and anthropic) runs either way from the command line; the daemon runs only claude
+and codex.
 
 `baum internal generate` is `internal/generate` (the pipeline) and
 `internal/cli/generate.go`. The CLI opens `internal/store`, loads the latest
@@ -1850,7 +1852,12 @@ run, it selects and checks the backend before assembling (`claude.Backend.Check`
 `codex.Backend.Check`, `cursor.Backend.Check`, `anthropic.Backend.Check`, which
 only needs the key; `auto` tries `generate.AutoOrder`: claude, then codex, then
 anthropic, and never cursor-agent, which runs only when named because it cannot
-be held to read-only as reliably), assembles with `Request.Checkout` and `Attachments`
+be held to read-only as reliably). The daemon, its chat, fix and decision calls
+use `generate.SelectDesktop` instead: only `auto`, `claude` and `codex` run, `auto`
+tries `generate.DesktopAutoOrder` (claude, then codex) and never reaches
+anthropic, and a job whose backend is `cursor-agent` or `anthropic` fails with
+`generate.ErrBackendNotOffered` rather than switching backends; the daemon's
+Diagnostics report (`doctor.Options.Desktop`) checks only claude and codex), assembles with `Request.Checkout` and `Attachments`
 written to temporary files outside the run directory, creates the run
 directory with `os.MkdirTemp("", agent.RunDirPrefix+"*")` and unpacks both
 archives into it with `bundle.UnpackCheckout` and `UnpackAttachments` under the
@@ -2875,9 +2882,10 @@ snapshot `localApplication` passes the repository's open pull requests to
 (`stacks.Plan`: pull requests by one author, each based on another's head
 branch, as chains or trees; see `stacks/README.md`) over the live stack groups
 and creates, updates or dissolves stack groups (`stack` true) of 2 to 8
-members. Pull requests in a person's group, or in a stack group the person
-deleted, take no part, and a person's rename or member change makes a stack
-group theirs.
+members. A new stack group is named after its bottom pull request's title
+until its first review names it (below). Pull requests in a person's group,
+or in a stack group the person deleted, take no part, and a person's rename
+or member change makes a stack group theirs.
 
 A job item names `{clone, group}` with `pr` 0, so pull request scheduling and
 notices, keyed by pull request, never match a group job; the queue's busy and
@@ -2911,11 +2919,16 @@ group's name and a body listing the members, every hunk once in member order,
 the union of the other evidence, one `FileComparison` per member, refitted to
 the caps), unpacks each checkout at `members/<number>/` with no top-level
 `head/`, writes `members.json` (each member's saved review in brief) and runs
-the group prompt. Its decorator sets `stack` (the group's name and each
-member's number, head and saved review version) and each section's
-`pull_requests` from the members whose hunks it lists, so the stored document
-is stack-shaped like a hosted stack review, with `review.pull_request` the
-lowest member. The group page reads patches from the member whose comparison
+the group prompt. The model names the group in `stack.title`. Its decorator
+sets `stack` (a title and each member's number, head and saved review
+version) and each section's `pull_requests` from the members whose hunks it
+lists, so the stored document is stack-shaped like a hosted stack review, with
+`review.pull_request` the lowest member. The title is the model's name, on
+one line and cut to 80 characters, for a stack group
+(`generate.Group.GeneratedName`), and the group's name otherwise or when the
+model wrote none. Storing the version renames a stack group to its title, in
+the same transaction and only while the group is still a stack group, so a
+person's rename is never written over. The group page reads patches from the member whose comparison
 changes the file and whose patch holds the cited hunk's range; it lists no
 linked sessions or commits.
 
@@ -3574,6 +3587,14 @@ socket serves, and runs it beside background refresh, one worker in all.
   pending refreshes, which the periodic refresh covers.
 
 ### Live sessions
+
+Codex's `PermissionRequest` runs before automatic review. The hook reads the
+latest rollout `turn_context` matching the payload's `turn_id`; when its
+`approvals_reviewer` is `auto_review`, the local event carries `auto_review`
+and the hook does not ask the app for a decision. The tracker ignores that
+permission event as a wait, so it sends no attention notification. Unknown
+context retains manual approval behavior. The read searches backwards through
+at most 64 MiB with bounded memory and skips oversized transcript lines.
 
 `internal/livesessions` tracks the agent sessions running on this machine
 from the agent hook events in the record, and serves them to the app. It adds
@@ -4296,3 +4317,24 @@ readable before the daemon connects. Agent registries own plugin installation
 and enablement. Plugin status/install/removal use the resolved login shell PATH,
 with an inherited-PATH fallback warning if resolution fails. Command removal
 uses its saved command records; plugin removal targets only `baum@baum`. See [`desktop/README.md`](desktop/README.md).
+
+### Local linkage freshness
+
+Successful local linkage results, including empty results, expire after one
+minute. Session-end events invalidate desktop
+viewer evidence independently of document revisions. An invalidation during a
+read waits for it to finish and coalesces callers onto one fresh computation;
+its stale result is not served as current evidence. Open PR pages reread linked
+sessions every 30 seconds, with one request in flight, to pick up late transcript
+writes and checkpoint arrivals even without another lifecycle event.
+
+### Recorded live work
+
+Live links retain the observed branch, upstream and HEAD plus the selection
+method and status. Multiple matching PRs remain ambiguous. Existing links are
+rechecked every sweep, including quiet sessions whose PR has closed. Ended
+sessions reconcile from saved observations only, so a later branch switch or
+removed worktree cannot rewrite their historical work. Replay without a saved
+observation recovers clone identity only and reports `unknown_history`.
+Active and ended observations survive restarts; notification message text and
+local paths are not persisted. Stale or unavailable discovery is explicit.

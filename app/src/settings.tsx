@@ -3,7 +3,6 @@ import { usePreferences } from "./preferences";
 import { PlanUsageSettings } from "./plan-usage-settings";
 import {
   useEffect,
-  useLayoutEffect,
   useRef,
   useState,
   type FocusEvent,
@@ -57,11 +56,13 @@ import {
   type SetupView,
   type Outcome,
   decisionModelDefaults,
+  detectedHarnesses,
   modelPresets,
   withModel,
   type PullRequests,
   type ReviewSettings,
 } from "./desktop/setup-model";
+import { useModal } from "./modal";
 import { LoadingStatus } from "./nine-dots";
 
 /** The harness and model reviews use, and the ones fixes use: an empty
@@ -90,7 +91,7 @@ function shownBackend(backend: string) {
 const fixHarnesses = ["claude", "codex"];
 
 /** The harnesses that can make data extraction's structured calls, those
- *  with a default decision model; Cursor Agent cannot. */
+ *  with a default decision model. */
 const extractionHarnesses = Object.keys(decisionModelDefaults);
 
 export const settingsSections = ["general", "reviews", "fixes", "connections", "computer"] as const;
@@ -380,6 +381,9 @@ function AgentSelect({
   disabled?: boolean;
   onChange: (next: string) => void;
 }) {
+  // A saved harness the app no longer offers, such as a retired backend from
+  // the config file, shows as chosen so choosing any offered one is a change.
+  const unavailable = value !== "" && !options.includes(value) ? value : null;
   return (
     <select
       id={id}
@@ -389,6 +393,11 @@ function AgentSelect({
       onChange={(event) => onChange(event.target.value)}
     >
       {same !== undefined ? <option value="">{same}</option> : null}
+      {unavailable !== null ? (
+        <option value={unavailable} disabled>
+          {harnessName(unavailable)} (no longer offered)
+        </option>
+      ) : null}
       {options.map((option) => (
         <option key={option} value={option}>
           {harnessName(option)}
@@ -477,20 +486,16 @@ const efforts: { value: string; label: string }[] = [
   { value: "high", label: "High" },
 ];
 
-/** A use case's reasoning effort: "" leaves it to the agent. Cursor Agent has
- *  none (its models name their own), so it gets no row. */
+/** A use case's reasoning effort: "" leaves it to the agent. */
 function EffortRow({
   label,
-  backend,
   value,
   onChange,
 }: {
   label: string;
-  backend: string;
   value: string;
   onChange: (next: string) => void;
 }) {
-  if (backend === "cursor-agent") return null;
   const items = efforts.some((item) => item.value === value)
     ? efforts
     : [...efforts, { value, label: effortLabels[value] ?? value }];
@@ -510,10 +515,13 @@ function ReviewsSection({
   automatic,
   defaults,
   changed,
+  available,
 }: {
   automatic: Automatic;
   defaults: ReviewDefaults;
   changed: () => Promise<void>;
+  /** The agents found on this computer; undefined when the app cannot tell. */
+  available?: readonly string[];
 }) {
   const saved: ReviewSettings & { effort: string } = {
     ...withModel({
@@ -552,6 +560,12 @@ function ReviewsSection({
         status={status}
       />
       {error ? <Alert>{error}</Alert> : null}
+      {available?.length === 0 ? (
+        <p role="status" className="settings-caution">
+          Neither Claude Code nor Codex is installed on this computer, so baum can't write reviews.
+          Install one and open it in your terminal to sign in; baum doesn't switch to another agent.
+        </p>
+      ) : null}
       <div className="local-panel settings-list">
         <SettingRow
           label="Review pull requests automatically"
@@ -611,7 +625,6 @@ function ReviewsSection({
         </SettingRow>
         <EffortRow
           label="Review reasoning effort"
-          backend={draft.backend}
           value={draft.effort}
           onChange={(effort) => change({ effort })}
         />
@@ -705,7 +718,6 @@ function FixesSection({
         {draft.backend ? (
           <EffortRow
             label="Fix reasoning effort"
-            backend={draft.backend}
             value={draft.effort}
             onChange={(effort) => change({ ...draft, effort })}
           />
@@ -1101,7 +1113,16 @@ export function SettingsPage({
           ) : section === "reviews" ? (
             automatic && defaults ? (
               <>
-                <ReviewsSection automatic={automatic} defaults={defaults} changed={changed} />
+                <ReviewsSection
+                  automatic={automatic}
+                  defaults={defaults}
+                  changed={changed}
+                  available={
+                    setup.desktop && setup.view && !setup.view.hooks.error
+                      ? detectedHarnesses(setup.view.hooks.agents)
+                      : undefined
+                  }
+                />
                 {/* A new review harness changes what capture resolves to. */}
                 <DecisionSettingsSection key={defaults.backend} defaults={defaults} />
               </>
@@ -1199,6 +1220,7 @@ function JobConcurrencyRow() {
     );
   }, []);
   async function choose(next: number) {
+    if (saving) return;
     const before = value;
     setValue(next);
     setSaving(true);
@@ -1232,7 +1254,7 @@ function JobConcurrencyRow() {
       <select
         id="job-concurrency"
         className="local-field settings-select"
-        disabled={value === null || saving}
+        disabled={value === null}
         value={value ?? MAX_JOB_CONCURRENCY}
         onChange={(e) => void choose(Number(e.target.value))}
       >
@@ -1278,7 +1300,7 @@ function TimeLimitRows() {
     );
   }, []);
   async function choose(key: keyof TimeLimits, minutes: number) {
-    if (!value) return;
+    if (!value || saving) return;
     const before = value;
     setValue({ ...value, [key]: minutes });
     setSaving(true);
@@ -1308,7 +1330,7 @@ function TimeLimitRows() {
         <select
           id={id}
           className="local-field settings-select"
-          disabled={value === null || saving}
+          disabled={value === null}
           value={current}
           onChange={(e) => void choose(key, Number(e.target.value))}
         >
@@ -1531,7 +1553,6 @@ function DecisionSettingsSection({ defaults }: { defaults: ReviewDefaults }) {
         {fallback ? (
           <EffortRow
             label="Extraction reasoning effort"
-            backend={backend}
             value={draft.effort}
             onChange={(effort) => change({ effort })}
           />
@@ -1705,6 +1726,9 @@ function AgentEnvSection() {
         )
       ) : (
         <div className="settings-env">
+          {rows.length === 0 ? (
+            <p className="text-xs text-(--text-tertiary)">No variables set.</p>
+          ) : null}
           {rows.map((row) => (
             <div key={row.id} className="settings-env-row">
               <input
@@ -1793,10 +1817,7 @@ function DiagnosticsDialog({
   authRevision: number;
   authChanged: () => void;
 }) {
-  const dialog = useRef<HTMLDialogElement>(null);
-  useLayoutEffect(() => {
-    dialog.current?.showModal();
-  }, []);
+  const dialog = useModal();
   return (
     <dialog
       ref={dialog}
@@ -1821,11 +1842,14 @@ function DiagnosticsDialog({
 
 export function RepositoriesPage({
   repositories,
+  loading = false,
   automatic,
   github,
   changed,
 }: {
   repositories: Repository[];
+  /** Whether the first read of the repositories is still running. */
+  loading?: boolean;
   automatic: Automatic | null;
   github?: GitHubConnection | null;
   /** Reads everything again; a refresh pressed again restarts the read. */
@@ -1898,7 +1922,9 @@ export function RepositoriesPage({
             <RepositoryPicker changed={changed} autoFocus showOrganizations={false} />
           </div>
         ) : null}
-        {repositories.length === 0 ? (
+        {repositories.length === 0 && loading ? (
+          <LoadingStatus block>Loading repositories…</LoadingStatus>
+        ) : repositories.length === 0 ? (
           <div className="local-empty">
             <h2>No repositories yet</h2>
             <p>
@@ -2228,11 +2254,8 @@ function RepositoryDialog({
   remove: () => Promise<void>;
   close: () => void;
 }) {
-  const dialog = useRef<HTMLDialogElement>(null);
+  const dialog = useModal();
   const [error, setError] = useState("");
-  useLayoutEffect(() => {
-    dialog.current?.showModal();
-  }, []);
   return (
     <dialog
       ref={dialog}
@@ -2277,7 +2300,7 @@ function hasFolderPicker() {
 }
 
 function GeneralSection() {
-  const { preferences, update, ready, saving, error, refresh } = usePreferences();
+  const { preferences, update, ready, error, refresh } = usePreferences();
   return (
     <section aria-labelledby="settings-general-heading" className="settings-section">
       <SectionHead
@@ -2297,7 +2320,7 @@ function GeneralSection() {
         <SettingRow label="Preferred theme" htmlFor="preferred-theme">
           <select
             id="preferred-theme"
-            disabled={!ready || saving}
+            disabled={!ready}
             className="local-field settings-select"
             value={preferences.theme}
             onChange={(event) => update({ theme: event.target.value as typeof preferences.theme })}
@@ -2314,7 +2337,7 @@ function GeneralSection() {
         >
           <input
             id="keyboard-hints"
-            disabled={!ready || saving}
+            disabled={!ready}
             type="checkbox"
             role="switch"
             className="local-switch"

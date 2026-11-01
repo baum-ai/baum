@@ -249,6 +249,15 @@ handshake, in [`apiclient`](../apiclient).
   Codex hook's definition is unchanged, so its trust stands. With no daemon,
   one that did not take the event in time, an incompatible one or any error,
   the hook prints nothing and never starts a daemon to wait for.
+- A Codex permission hook checks the latest `turn_context` in the rollout
+  named by the payload, matching its `turn_id`. With
+  `approvals_reviewer = "auto_review"`, it marks the local event `auto_review`
+  and never asks the app for a decision: automatic review has not yet run,
+  so this is not a wait for the person and raises no desktop notification.
+  Session overrides take precedence over the user's config. The read searches
+  backwards through at most 64 MiB with bounded memory; absent, unreadable or
+  unrecognized context keeps the usual manual-approval behavior. Hook
+  definitions and their trust are unchanged.
 - `post-tool-use` and `post-tool-use-failure` events of Claude Code and
   Codex carry `tool_digest`, the SHA-256 of the tool's name and canonical
   input (`agentrequests.Digest`), read from the whole payload, so the daemon

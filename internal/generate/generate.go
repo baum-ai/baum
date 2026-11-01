@@ -388,6 +388,9 @@ func Run(ctx context.Context, o Options) (result Result, err error) {
 	run := agent.Run{
 		Bundle: &b, EncodedBundle: assembled.JSON, Directory: runDir, TileKinds: o.TileKinds, Budgets: o.Budgets, Decorate: decorate, PersistSession: keepSession,
 	}
+	if o.Group != nil {
+		run.ModelSchema = groupModelSchema
+	}
 	// What the loop returned is masked on every path, as the hosted worker
 	// does, before any of it is shown, written or put in an error.
 	redactCtx := context.WithoutCancel(ctx)

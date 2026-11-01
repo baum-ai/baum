@@ -7,13 +7,6 @@ import "./review-form.css";
 export const harnesses = [
   { id: "claude", name: "Claude Code", detail: "Your Claude plan", brand: "claude" as const },
   { id: "codex", name: "Codex", detail: "Your ChatGPT plan", brand: "openai" as const },
-  {
-    id: "cursor-agent",
-    name: "Cursor Agent",
-    detail: "Your Cursor plan",
-    brand: "cursor" as const,
-  },
-  { id: "anthropic", name: "Anthropic API", detail: "Pay per use", brand: "claude" as const },
 ];
 const scopes: { id: PullRequests; label: string }[] = [
   { id: "all", label: "All" },
@@ -23,7 +16,13 @@ const scopes: { id: PullRequests; label: string }[] = [
 ];
 const CUSTOM = "\u0000custom";
 const INHERIT = "\u0000inherit";
-export const harnessName = (id: string) => harnesses.find((h) => h.id === id)?.name ?? id;
+/** Backends the app no longer offers; a job or config file may still name one. */
+const retiredNames: Record<string, string> = {
+  "cursor-agent": "Cursor Agent",
+  anthropic: "Anthropic API",
+};
+export const harnessName = (id: string) =>
+  harnesses.find((h) => h.id === id)?.name ?? retiredNames[id] ?? id;
 
 /** The harness tiles. With `inherit`, a first tile leaves the choice to the
  *  level above, and `value` is null while it is picked. */
@@ -47,7 +46,7 @@ export function HarnessPicker({
   const name = useId();
   const options = [
     ...(inherit ? [{ id: INHERIT, name: inherit.label, detail: inherit.detail, brand: null }] : []),
-    ...harnesses.filter((harness) => harness.id === "claude" || harness.id === "codex"),
+    ...harnesses,
   ];
   return (
     <fieldset className="review-section">

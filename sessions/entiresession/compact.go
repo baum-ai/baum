@@ -433,8 +433,5 @@ func optionalString(value string) *string {
 
 func compactInput(name string, raw json.RawMessage, profile traceprocessing.MappingProfile) json.RawMessage {
 	input := append(json.RawMessage(nil), raw...)
-	if profile == traceprocessing.Hosted {
-		return traceprocessing.NormalizeCodexExecInput(name, input)
-	}
-	return input
+	return traceprocessing.NormalizeCodexExecInput(name, input)
 }

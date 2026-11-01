@@ -162,6 +162,143 @@ it("keeps API, event and navigation URLs under the session namespace", async () 
   expect(location.pathname).toBe("/s/test-ns/");
   expect(location.search).toBe("?page=pulls&filter=mine");
 });
+it("says it is loading, not empty, until the first read of jobs and repositories finishes", async () => {
+  const original = vi.mocked(fetch).getMockImplementation()!;
+  let release: () => void = () => {};
+  let gate = Promise.resolve();
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (path: string, init?: RequestInit) => {
+      if (path.endsWith("api/jobs")) await gate;
+      return original(path, init);
+    }),
+  );
+  for (const [page, loading, empty] of [
+    ["jobs", "Loading jobs…", "No jobs yet"],
+    ["repositories", "Loading repositories…", "No repositories yet"],
+  ]) {
+    gate = new Promise<void>((resolve) => (release = resolve));
+    history.replaceState(null, "", `/s/test-ns/?page=${page}`);
+    await act(async () => root.render(<App />));
+    expect(node.textContent).toContain(loading);
+    expect(node.textContent).not.toContain(empty);
+    await act(async () => release());
+    expect(node.textContent).toContain(empty);
+    expect(node.textContent).not.toContain(loading);
+    await act(async () => root.unmount());
+    root = createRoot(node);
+  }
+});
+/** Makes the daemon refuse the reads whose path ends as one of `paths`, until
+ *  `heal` is called. */
+function refuse(...paths: string[]) {
+  const original = vi.mocked(fetch).getMockImplementation()!;
+  let broken = true;
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (path: string, init?: RequestInit) =>
+      broken && paths.some((p) => path.includes(p))
+        ? Response.json({ message: "The daemon is not answering." }, { status: 500 })
+        : original(path, init),
+    ),
+  );
+  return () => {
+    broken = false;
+  };
+}
+const retryButtons = () =>
+  [...node.querySelectorAll("button")].filter((b) => b.textContent === "Retry");
+
+it.each([
+  ["jobs", "Couldn't load jobs", ["No jobs yet", "Loading jobs"]],
+  ["repositories", "Couldn't load repositories", ["No repositories yet", "Loading repositories"]],
+  ["inbox", "Couldn't load your inbox", ["Loading your inbox", "Inbox zero", "Nothing is waiting"]],
+  ["pulls", "Couldn't load pull requests", ["No pull requests here", "Loading local inbox"]],
+])(
+  "says the %s page could not be read, once, instead of looking empty or loading",
+  async (page, title, misleading) => {
+    const heal = refuse("api/jobs");
+    history.replaceState(null, "", `/s/test-ns/?page=${page}`);
+    await act(async () => root.render(<App />));
+    expect(node.textContent).toContain(title);
+    expect(node.textContent).toContain("The daemon is not answering.");
+    for (const text of misleading) expect(node.textContent).not.toContain(text);
+    // One way to try again: the page's, not the banner's as well.
+    expect(retryButtons()).toHaveLength(1);
+    heal();
+    await act(async () => retryButtons()[0]!.click());
+    expect(node.textContent).not.toContain(title);
+    expect(node.textContent).not.toContain("The daemon is not answering.");
+  },
+);
+
+it("does not call a review group missing when the groups could not be read", async () => {
+  const heal = refuse("api/groups");
+  history.replaceState(null, "", "/s/test-ns/?page=pulls&group=g1");
+  await act(async () => root.render(<App />));
+  expect(node.textContent).toContain("Couldn't load the review group");
+  expect(node.textContent).not.toContain("does not exist any more");
+  expect(retryButtons()).toHaveLength(1);
+  heal();
+  await act(async () => retryButtons()[0]!.click());
+  expect(node.textContent).toContain("does not exist any more");
+});
+
+it("says the sessions could not be read instead of listing none", async () => {
+  const heal = refuse("api/live-sessions");
+  history.replaceState(null, "", "/s/test-ns/?page=sessions");
+  await act(async () => root.render(<App />));
+  expect(node.textContent).toContain("Couldn't load sessions");
+  expect(retryButtons()).toHaveLength(1);
+  heal();
+  await act(async () => retryButtons()[0]!.click());
+  expect(node.textContent).not.toContain("Couldn't load sessions");
+});
+
+it("keeps the sessions and says so when a later read of them fails", async () => {
+  const listeners = new Map<string, () => void>();
+  vi.stubGlobal(
+    "EventSource",
+    class {
+      addEventListener(name: string, listener: () => void) {
+        listeners.set(name, listener);
+      }
+      close() {}
+    },
+  );
+  history.replaceState(null, "", "/s/test-ns/?page=sessions");
+  await act(async () => root.render(<App />));
+  expect(node.textContent).not.toContain("Couldn't");
+  const heal = refuse("api/live-sessions");
+  await act(async () => listeners.get("live")!());
+  expect(node.textContent).toContain("Couldn't read the sessions again");
+  expect(node.textContent).not.toContain("Couldn't load sessions");
+  heal();
+  await act(async () => retryButtons()[0]!.click());
+  expect(node.textContent).not.toContain("Couldn't read the sessions again");
+});
+
+it("keeps what a page read when a later read fails", async () => {
+  const listeners = new Map<string, () => void>();
+  vi.stubGlobal(
+    "EventSource",
+    class {
+      addEventListener(name: string, listener: () => void) {
+        listeners.set(name, listener);
+      }
+      close() {}
+    },
+  );
+  entries = [entry(1)];
+  history.replaceState(null, "", "/s/test-ns/?page=pulls&filter=all");
+  await act(async () => root.render(<App />));
+  expect(node.textContent).toContain("Change 1");
+  refuse("api/jobs");
+  await act(async () => listeners.get("index")!());
+  expect(node.textContent).toContain("Change 1");
+  expect(node.textContent).toContain("The daemon is not answering.");
+  expect(node.textContent).not.toContain("Couldn't load");
+});
 it("shows actionable launch authorization failure", async () => {
   fail = true;
   await act(async () => root.render(<App />));
@@ -611,7 +748,7 @@ it("shows diagnostics loading, then re-runs on Check again and disables it meanw
   let resolve: (r: Response) => void = () => {};
   const calls = stubDiagnostics(() => new Promise<Response>((r) => (resolve = r)));
   await act(async () => root.render(<App />));
-  expect(node.textContent).toContain("Checking this machine…");
+  expect(node.textContent).toContain("Checking this computer…");
   const button = () =>
     [
       ...node.querySelectorAll<HTMLButtonElement>("[aria-labelledby=diagnostics-heading] button"),
@@ -1199,7 +1336,7 @@ it("chooses the data extraction agent apart from the reviews'", async () => {
   const agent = section.querySelector<HTMLSelectElement>("#decisions-agent")!;
   expect(agent.selectedOptions[0]!.textContent).toBe("Same as reviews");
   expect(section.textContent).toContain("Now Codex.");
-  expect([...agent.options].map((o) => o.value)).toEqual(["", "claude", "codex", "anthropic"]);
+  expect([...agent.options].map((o) => o.value)).toEqual(["", "claude", "codex"]);
   // A new agent starts over at its default model, which is saved as none.
   await choose(agent, "claude");
   expect(puts.at(-1)).toEqual({
@@ -1258,9 +1395,10 @@ it("saves a reasoning effort per use case", async () => {
   });
   await pick("Review reasoning effort", "Default");
   expect(puts.at(-1)!.body).toMatchObject({ effort: "" });
-  // Cursor Agent names its effort in the model, so it has no effort row.
-  await choose(node.querySelector<HTMLSelectElement>("#review-agent")!, "cursor-agent");
-  expect(node.querySelector('[aria-label="Review reasoning effort"]')).toBeNull();
+  // Only Claude Code and Codex can be chosen for reviews.
+  expect(
+    [...node.querySelector<HTMLSelectElement>("#review-agent")!.options].map((o) => o.value),
+  ).toEqual(["claude", "codex"]);
 });
 it("offers a fix effort only with a fix agent of its own", async () => {
   history.replaceState(null, "", "/s/test-ns/?page=settings&section=fixes");
@@ -1571,6 +1709,34 @@ it("manages CLI and hooks inline in desktop Settings", async () => {
     await click("Install baum CLI");
     expect(invoke).toHaveBeenCalledWith("install_command", {});
     expect(location.search).toBe("?page=settings&section=computer");
+  } finally {
+    Reflect.deleteProperty(window, "__TAURI_INTERNALS__");
+  }
+});
+
+it("says in desktop Settings when neither Claude Code nor Codex is installed", async () => {
+  history.replaceState(null, "", "/s/test-ns/?page=settings&section=reviews");
+  stubDiagnostics(async () => Response.json({ local: true, report: diagnosticsReport }));
+  stubAutomatic(demoClone, automaticOverview, { backend: "auto", model: "" });
+  const invoke = vi.fn(async () => ({
+    first_run: false,
+    command: {
+      installed: false,
+      target: "/app/baum",
+      plan: { link: "/home/user/bin/baum", on_path: true, admin: false },
+    },
+    hooks: { agents: [] },
+  }));
+  Object.defineProperty(window, "__TAURI_INTERNALS__", { configurable: true, value: { invoke } });
+  try {
+    await act(async () => root.render(<App />));
+    const section = node.querySelector('[aria-labelledby="settings-reviews-heading"]')!;
+    expect(section.parentElement!.textContent).toContain(
+      "Neither Claude Code nor Codex is installed on this computer",
+    );
+    expect(
+      [...section.querySelector<HTMLSelectElement>("#review-agent")!.options].map((o) => o.value),
+    ).toEqual(["claude", "codex"]);
   } finally {
     Reflect.deleteProperty(window, "__TAURI_INTERNALS__");
   }

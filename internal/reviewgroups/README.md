@@ -64,8 +64,10 @@ groups in step (`Store.SyncStacks`):
   while one member is open, even if only one; automatic generation needs two
   open members.
 - A stack without a group gets one (`stack` true), named after its bottom
-  pull request's title as "Review together" names a group after the first.
-  The app shows a stack group, and its automatically generated review, as it
+  pull request's title as "Review together" names a group after the first,
+  until its review names it: a stack group's name is baum's, so every
+  stored version of its review renames it to the name the model wrote for
+  the group (see Generation). The app shows a stack group, and its automatically generated review, as it
   shows a group a person made and generated, marked as a stack: the hosted
   list's stack icon and count on its row, and "Stack" instead of "Review
   group" on its page. A stack that gained or lost members (a parent merged,
@@ -136,12 +138,19 @@ started from.
    whose details are pending or failed has "Details for this section are
    unavailable." in place of its summary.
 4. Runs the agent loop with the public group prompt
-   (`agent/prompt` `GroupPrompts`, version `group-review-public-v3`).
-   Before validation the host fills what the model never writes: the
-   document's `stack` (`title` = group name, `members` = number, head SHA and
-   member review version) and each section's `pull_requests`, the members
-   whose hunks the section lists. A previous group version's sections keep
-   only the members still in the group.
+   (`agent/prompt` `GroupPrompts`, version `group-review-public-v4`).
+   The model names the group: its schema asks for `stack` with only a
+   `title` (`agent.Run.ModelSchema`). Before validation the host fills the
+   rest of `stack` (`members` = number, head SHA and member review version)
+   and each section's `pull_requests`, the members whose hunks the section
+   lists. The `title` is the model's name, on one line and cut to 80
+   characters, for a stack group, and the group's name for a group the
+   person made or took over, or when the model wrote none. A previous group
+   version's sections keep only the members still in the group.
+5. `Store.Put` stores the version and, in the same transaction, renames a
+   group that is still a stack group to the document's `stack.title` when
+   the name rules accept it. A person's rename made the group theirs
+   (`stack` false) and is never written over.
 
 The stored document is a stack-shaped `baum.review/1`: `review.pull_request`
 is the lowest member's number, as a hosted stack review holds its root

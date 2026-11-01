@@ -14,6 +14,7 @@ import {
 } from "./api";
 import { phaseText } from "./fix";
 import { LoadingStatus } from "./nine-dots";
+import { ReadFailed } from "./page-state";
 import { PageBar } from "./shell";
 import { useFollowScroll } from "./session-transcript";
 import { SMALL } from "./action-classes";
@@ -59,7 +60,7 @@ export type TranscriptState =
 
 /** The transcript read from the start, then again at once while the daemon
  *  has more, otherwise every second until it is done. Stops when unmounted. */
-export function useJobTranscript(id: string): TranscriptState {
+export function useJobTranscript(id: string, attempt = 0): TranscriptState {
   const [state, setState] = useState<TranscriptState>({ kind: "loading" });
   useEffect(() => {
     let stopped = false;
@@ -104,7 +105,7 @@ export function useJobTranscript(id: string): TranscriptState {
       controller.abort();
       clearTimeout(timer);
     };
-  }, [id]);
+  }, [id, attempt]);
   return state;
 }
 
@@ -276,7 +277,8 @@ function JobHeader({ job }: { job: Job }) {
 
 /** A fix agent's transcript, following the end while the reader is there. */
 export function JobTranscript({ job }: { job: Job }) {
-  const state = useJobTranscript(job.id);
+  const [attempt, setAttempt] = useState(0);
+  const state = useJobTranscript(job.id, attempt);
   const entries = state.kind === "ready" || state.kind === "failed" ? state.entries : [];
   const last = entries[entries.length - 1];
   useFollowScroll(
@@ -295,6 +297,12 @@ export function JobTranscript({ job }: { job: Job }) {
           <h2>No transcript to show</h2>
           <p>The agent left no transcript for this job.</p>
         </section>
+      ) : state.kind === "failed" && state.entries.length === 0 ? (
+        <ReadFailed
+          what="the agent's transcript"
+          message={state.message}
+          retry={() => setAttempt((n) => n + 1)}
+        />
       ) : (
         <section aria-label="Transcript" className="local-transcript">
           {state.kind === "failed" ? <Alert>{state.message}</Alert> : null}

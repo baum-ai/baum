@@ -164,12 +164,15 @@ func extractionBackend(prefs repos.Preferences, cfg config.Config) config.Backen
 
 // resolveBackend names the backend capture uses: the requested one, or for
 // auto the one generate.Select picks (the first of
-// generate.AutoOrder that passes its check; never cursor-agent).
+// generate.DesktopAutoOrder that passes its check).
 func resolveBackend(ctx context.Context, requested config.Backend, backends generate.Backends) (string, error) {
 	if requested != config.BackendAuto && requested != "" {
+		if !requested.Desktop() {
+			return "", generate.NotOfferedError(requested)
+		}
 		return string(requested), nil
 	}
-	selected, err := generate.Select(ctx, config.BackendAuto, "", backends, io.Discard)
+	selected, err := generate.SelectDesktop(ctx, config.BackendAuto, "", backends, io.Discard)
 	if err != nil {
 		return "", err
 	}
@@ -212,8 +215,7 @@ type Effective struct {
 	// Undetermined is a backend whose checks did not answer in time, apart
 	// from none being usable.
 	Undetermined bool `json:"backend_undetermined"`
-	// Model is the decision model; empty without a backend and with
-	// cursor-agent, which cannot capture.
+	// Model is the decision model; empty without a backend.
 	Model string `json:"effective_model"`
 	// Ignored is a chosen model (preferences.decisions.model) that capture
 	// does not use with Backend.
@@ -245,21 +247,16 @@ func EffectiveModel(ctx context.Context, file config.Config, prefs repos.Prefere
 	if err != nil {
 		return Effective{Undetermined: errors.Is(ctx.Err(), context.DeadlineExceeded)}
 	}
-	// cursor-agent uses no model at all, so it ignores none in particular.
 	chosen := prefs.Decisions.Model
 	return Effective{Backend: backend, Model: model, Ignored: chosen != nil && *chosen != "" && model != "" && *chosen != model}
 }
 
 // resolveModel names the backend capture uses (resolveBackend) and its
-// decision model (decisionModel); cursor-agent, which cannot capture, has
-// none.
+// decision model (decisionModel).
 func resolveModel(ctx context.Context, requested config.Backend, backends generate.Backends, list *pricing.List, chosen *string) (string, string, error) {
 	backend, err := resolveBackend(ctx, requested, backends)
 	if err != nil {
 		return "", "", err
-	}
-	if backend == agent.BackendCursorAgent {
-		return backend, "", nil
 	}
 	return backend, decisionModel(list, backend, chosen), nil
 }
@@ -355,13 +352,13 @@ func (c caller) plan(ctx context.Context, prefs repos.Preferences, backend, mode
 	var err error
 	if p.Backend, p.Model, err = resolveModel(ctx, requested, p.backends, c.prices, prefs.Decisions.Model); err != nil {
 		c.log.Info("decision log backend unavailable", "backend", requested, "error", err)
+		if errors.Is(err, generate.ErrBackendNotOffered) {
+			return p, ReasonUnsupported
+		}
 		return p, ReasonUnavailable
 	}
 	if model != "" {
 		p.Model = model
-	}
-	if p.Backend == agent.BackendCursorAgent {
-		return p, ReasonUnsupported
 	}
 	// Prices only report: a model the list does not price runs, reserved at 0.
 	p.Reserved, _ = reserveFor(c.prices, p.Backend, p.Model, maxTokens, maxOutput)
@@ -372,9 +369,12 @@ func (c caller) plan(ctx context.Context, prefs repos.Preferences, backend, mode
 // pending with its reservation. A backend that no longer passes its check,
 // or cannot complete, is a skip and records nothing.
 func (c caller) begin(ctx context.Context, p planned, a Attempt) (*completerModel, int64, string, error) {
-	selected, err := generate.Select(ctx, config.Backend(p.Backend), p.Model, p.backends, io.Discard)
+	selected, err := generate.SelectDesktop(ctx, config.Backend(p.Backend), p.Model, p.backends, io.Discard)
 	if err != nil {
 		c.log.Info("decision log backend unavailable", "backend", p.Backend, "error", err)
+		if errors.Is(err, generate.ErrBackendNotOffered) {
+			return nil, 0, ReasonUnsupported, nil
+		}
 		return nil, 0, ReasonUnavailable, nil
 	}
 	completer, ok := selected.Backend.(agent.Completer)

@@ -48,7 +48,11 @@ The multi-page production build emits every entry and assembles `../desktop/dist
 for Tauri, where the connecting screen becomes `index.html`, the page the
 window opens on; it is taken out of the daemon's copy. Every loading state uses
 one component, `NineDots` or `LoadingStatus` in `src/nine-dots.tsx`, whose look
-lives only in `src/nine-dots.css`. Every screen uses baum's bundled type from the
+lives only in `src/nine-dots.css`. A page that reads something says which of four things it is
+(`src/page-state.tsx`): waiting for its first read, that read failed (`Couldn't load jobs`,
+with the daemon's message and one Retry, never an empty page or an endless wait), empty, or its
+content. A failed later read keeps the content shown and says so in a banner. Native dialogs
+open through `useModal` (`src/modal.ts`), which gives the focus back to what opened them. Every screen uses baum's bundled type from the
 viewer (`../viewer/src/fonts/fonts.css`), Instrument Sans for text and Manrope for
 headings, through its `--font-text` and `--font-heading` tokens. Both fonts are
 under the SIL Open Font License, listed in the third-party notices. Fonts and
@@ -1104,7 +1108,7 @@ did for the person (reviews that completed, fixes pushed, threads resolved, merg
 branch updates and check re-runs from the app, decision capture runs that succeeded), its
 failures left to Jobs. A figure that is unknown is "—" with its reason as a tooltip and to
 screen readers, never 0; a floor reads "≥". Charts are HTML and inline SVG in the
-viewer's `--data-*` slots, agents in a fixed order (Claude Code, Codex, Cursor),
+viewer's `--data-*` slots, agents in a fixed order (Claude Code, Codex, then any other recorded, such as earlier Cursor sessions, in a muted colour; the agent filter offers Claude Code and Codex only),
 with tooltips on hover and focus. The page reads again every two seconds while
 the daemon is still indexing or searching GitHub, then every five minutes. An
 older daemon without the capability gets a note to update baum.
@@ -1136,8 +1140,10 @@ for which pull requests (authored, requested, both, or all open pull requests
 in the repository), the harness and its model (a listed model or a custom
 name, saved when its field is left or Enter is pressed) and the reasoning
 effort (Default, which leaves it to the agent, Low, Medium or High; higher levels
-selected in onboarding remain visible; no row for
-Cursor Agent, whose models name their own). Each change is saved
+selected in onboarding remain visible). The harness is Claude Code or Codex
+only: the daemon refuses `cursor-agent` and `anthropic` (400 when saving, a
+failed job for one already in `config.toml`), and when neither is installed
+the section says so. Each change is saved
 at once, with "Saved" beside the title, through `PUT api/automatic`
 (`enabled`, `backend`, `model`, `effort`, `pull_requests`), which the daemon
 keeps as app preferences over the config file; `GET api/settings` reports the
@@ -1557,6 +1563,19 @@ clipboard access, reload/background completion, saved-account replacement and
 use by generation, disconnect, and access to saved reviews. Denial, expiry,
 network/scope/persistence failures and the endpoint namespace/CSRF matrix stay
 in component and Go handler tests.
+
+Linked session evidence on an open review refreshes every 30 seconds without
+reloading the review document. Polling allows late transcript/checkpoint arrivals
+to appear; a transient poll failure retains the last successful evidence.
+
+Live-session linkage reports `link_status` and `link_method`, with recorded
+branch/upstream/HEAD evidence. Ambiguous matches have no selected PR. Recently
+ended sessions can acquire a PR after ending, using their saved Git observation
+rather than the current checkout. Active observations are also saved without
+notification message text or local paths for restart recovery.
+
+A session retains up to 32 timestamped Git work observations across branch
+changes; these are context associations, not asserted code contributions.
 
 ## Durable reading state
 

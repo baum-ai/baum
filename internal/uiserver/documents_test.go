@@ -120,3 +120,24 @@ func TestDocumentCacheBoundsConcurrentLocalReadsAcrossDocuments(t *testing.T) {
 		t.Fatal("unbounded concurrent reads", got)
 	}
 }
+
+func TestDocumentEvidenceInvalidatesWithoutChangingDocument(t *testing.T) {
+	cache := newDocumentCache()
+	defer cache.close()
+	var calls atomic.Int64
+	cache.resolve = func(context.Context, locallink.Request) (locallink.Result, error) {
+		calls.Add(1)
+		return locallink.Result{Available: true}, nil
+	}
+	server, release, err := cache.get(repos.Clone{ID: "one", Repository: "owner/repo"}, []byte(`{"review":{"repository":"owner/repo","head":"aaaaaaaa","base":"bbbbbbbb"}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer release()
+	server.LinkedSessions(context.Background())
+	cache.invalidateSessions()
+	server.LinkedSessions(context.Background())
+	if calls.Load() != 2 {
+		t.Fatalf("calls = %d", calls.Load())
+	}
+}

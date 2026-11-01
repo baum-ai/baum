@@ -174,17 +174,13 @@ const claudeModels = ["claude-haiku-5-5", "claude-sonnet-5-5", "claude-opus-5-5"
  *  a custom model. */
 export const modelPresets: Record<string, string[]> = {
   claude: claudeModels,
-  anthropic: claudeModels,
   codex: ["gpt-6-luna", "gpt-6.1-sol", "gpt-6.1-terra", "gpt-6-astra"],
-  "cursor-agent": ["composer-2.5", "composer-2.5-fast", "grok-4.7-medium", "grok-4.7-high"],
 };
 
-/** The cheap model decision capture uses per harness when none is chosen;
- *  Cursor Agent cannot capture decisions. */
+/** The cheap model decision capture uses per harness when none is chosen. */
 export const decisionModelDefaults: Record<string, string> = {
   claude: "claude-haiku-5-5",
   codex: "gpt-6-luna",
-  anthropic: "claude-haiku-5-5",
 };
 
 /** Settings with an explicit model: an unset one becomes the harness's

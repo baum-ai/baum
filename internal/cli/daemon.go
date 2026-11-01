@@ -728,6 +728,7 @@ func localApplication(paths daemon.Paths, log *slog.Logger) func(context.Context
 								if !ok {
 									return
 								}
+								api.InvalidateSessions()
 								sessionIndex.Trigger()
 							}
 						}
@@ -902,9 +903,12 @@ func (h hookEvents) Close() {
 }
 
 // uiDiagnostics is the report the daemon serves. It never fetches the price
-// list: the page shows what the startup refresh produced.
+// list: the page shows what the startup refresh produced. It reports for the
+// desktop app, which runs jobs with Claude Code and Codex only.
 func uiDiagnostics(ctx context.Context) doctor.Report {
-	return doctor.Run(ctx, doctorOptions(false))
+	options := doctorOptions(false)
+	options.Desktop = true
+	return doctor.Run(ctx, options)
 }
 
 // daemonReport describes the daemon for "baum internal doctor" without starting it.

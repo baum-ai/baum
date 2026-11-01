@@ -42,8 +42,10 @@ const SourceConfigFile = "config file"
 const GitHubHost = "github.com"
 
 // Backend names a model backend. Auto picks one at run time: claude, then
-// codex, each when installed and passing its checks, then anthropic when
-// ANTHROPIC_API_KEY is set. cursor-agent runs only when named.
+// codex, each when installed and passing its checks, then, in the command
+// line only, anthropic when ANTHROPIC_API_KEY is set. cursor-agent runs only
+// when named. The desktop app and its daemon run auto, claude and codex only
+// (Backend.Desktop).
 type Backend string
 
 const (
@@ -65,6 +67,13 @@ func (b Backend) Valid() bool {
 		}
 	}
 	return false
+}
+
+// Desktop reports whether the desktop app and its daemon run jobs with b:
+// auto, claude and codex. cursor-agent and anthropic remain backends of the
+// command line only.
+func (b Backend) Desktop() bool {
+	return b == BackendAuto || b == "" || b == BackendClaude || b == BackendCodex
 }
 
 // Efforts are the reasoning efforts the app offers, passed to Claude Code as
