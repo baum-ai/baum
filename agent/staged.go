@@ -227,9 +227,9 @@ func (g *Generator) StagedReview(ctx context.Context, run StagedRun) (outcome St
 // between the details stage (two thirds, at least one) and the context stage
 // (the rest), or gives it all to the context stage when no section needs
 // writing. The outline stage has a quarter of the run's budgets, at least
-// one call and token; what it does not spend goes to the later stages. The
-// An exhausted call or token budget stays zero, so the outline cannot make a
-// provider call. The attempt, repair, stall and tool budgets are per call or per stage, as in a
+// one call and token; what it does not spend goes to the later stages. An
+// exhausted (negative) call or token budget stays negative, so the outline
+// cannot make a provider call. The attempt, repair, stall and tool budgets are per call or per stage, as in a
 // one-pass run, and the run's wall clock (applied by the host to the
 // context) covers every stage.
 func stageBudgets(run Budgets, calls, tokens int, details bool) (Budgets, Budgets) {

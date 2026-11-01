@@ -638,10 +638,11 @@ func TestStagedReviewDoesNotRaiseExhaustedOutlineBudgets(t *testing.T) {
 	for _, field := range []string{"calls", "tokens"} {
 		t.Run(field, func(t *testing.T) {
 			generator, run, backend := stagedFixture(t, nil, nil)
+			// A negative budget is one already spent; zero would be no limit.
 			if field == "calls" {
-				run.Budgets.MaxCalls = 0
+				run.Budgets.MaxCalls = -1
 			} else {
-				run.Budgets.MaxTokens = 0
+				run.Budgets.MaxTokens = -1
 			}
 			_, _, err := generator.StagedReview(context.Background(), run)
 			want := GenerationBudgetExceededReason("model calls")
