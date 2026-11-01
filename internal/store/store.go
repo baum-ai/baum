@@ -3,6 +3,8 @@
 // the previous version under the same write lock so concurrent generations
 // cannot fork history. A refresh replaces the latest document only while its
 // exact bytes are unchanged, so concurrent refreshes cannot lose each other.
+// Triggers keep the index projection of each latest document in the summaries
+// table current in the writer's own transaction; see Snapshot.
 package store
 
 import (
@@ -102,25 +104,12 @@ func Open(commonDir, override string, write bool) (*Store, error) {
 	if override != "" {
 		return openRoot(override, write)
 	}
-	common, err := filepath.Abs(commonDir)
+	roots, err := Roots(commonDir)
 	if err != nil {
 		return nil, err
 	}
-	if resolved, err := filepath.EvalSymlinks(common); err == nil {
-		common = resolved
-	}
-	local := filepath.Join(common, "baum", "reviews")
-	data := os.Getenv("XDG_DATA_HOME")
-	if data == "" || !filepath.IsAbs(data) {
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return nil, err
-		}
-		data = filepath.Join(home, ".local", "share")
-	}
-	sum := sha256.Sum256([]byte(common))
-	fallback := filepath.Join(data, "baum", "reviews", hex.EncodeToString(sum[:]))
-	for _, root := range []string{local, fallback} {
+	local, fallback := roots[0], roots[1]
+	for _, root := range roots {
 		if _, err := os.Stat(filepath.Join(root, "versions.sqlite")); err == nil {
 			return openRoot(root, write)
 		} else if !errors.Is(err, os.ErrNotExist) {
@@ -139,6 +128,29 @@ func Open(commonDir, override string, write bool) (*Store, error) {
 	}
 	return openRoot(fallback, true)
 }
+
+// Roots are the roots Open chooses between for a clone's common directory,
+// in its order: the clone-local one, then the per-user data fallback.
+func Roots(commonDir string) ([]string, error) {
+	common, err := filepath.Abs(commonDir)
+	if err != nil {
+		return nil, err
+	}
+	if resolved, err := filepath.EvalSymlinks(common); err == nil {
+		common = resolved
+	}
+	data := os.Getenv("XDG_DATA_HOME")
+	if data == "" || !filepath.IsAbs(data) {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return nil, err
+		}
+		data = filepath.Join(home, ".local", "share")
+	}
+	sum := sha256.Sum256([]byte(common))
+	return []string{filepath.Join(common, "baum", "reviews"), filepath.Join(data, "baum", "reviews", hex.EncodeToString(sum[:]))}, nil
+}
+
 func openRoot(root string, write bool) (*Store, error) {
 	root, err := filepath.Abs(root)
 	if err != nil {
@@ -165,6 +177,9 @@ func openRoot(root string, write bool) (*Store, error) {
 	}
 	defer db.Close()
 	_, err = db.Exec(`CREATE TABLE IF NOT EXISTS versions (repository TEXT NOT NULL, pr INTEGER NOT NULL, version INTEGER NOT NULL, metadata BLOB NOT NULL, document BLOB NOT NULL, PRIMARY KEY(repository,pr,version)); CREATE TABLE IF NOT EXISTS runs (id INTEGER PRIMARY KEY AUTOINCREMENT, repository TEXT NOT NULL, pr INTEGER NOT NULL, state TEXT NOT NULL, reason TEXT NOT NULL, started INTEGER NOT NULL, expires INTEGER NOT NULL, finished INTEGER NOT NULL); CREATE INDEX IF NOT EXISTS runs_by_pr ON runs(repository,pr,id);`)
+	if err == nil {
+		err = setupSummaries(context.Background(), db)
+	}
 	if err == nil {
 		_, err = db.Exec(chatSchema)
 	}
@@ -367,7 +382,12 @@ func (s *Store) replaceCurrent(ctx context.Context, k Key, previous Version, doc
 		return err
 	}
 	defer db.Close()
-	result, err := db.ExecContext(ctx, `UPDATE versions SET document=? WHERE repository=? AND pr=? AND version=? AND document=? AND version=(SELECT MAX(version) FROM versions WHERE repository=? AND pr=?)`, document, k.repository(), k.Number, previous.Metadata.Version, []byte(previous.Document), k.repository(), k.Number)
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	result, err := tx.ExecContext(ctx, `UPDATE versions SET document=? WHERE repository=? AND pr=? AND version=? AND document=? AND version=(SELECT MAX(version) FROM versions WHERE repository=? AND pr=?)`, document, k.repository(), k.Number, previous.Metadata.Version, []byte(previous.Document), k.repository(), k.Number)
 	if err != nil {
 		return err
 	}
@@ -378,5 +398,5 @@ func (s *Store) replaceCurrent(ctx context.Context, k Key, previous Version, doc
 	if n != 1 {
 		return fmt.Errorf("%w; %s again using the latest document", ErrConflict, again)
 	}
-	return nil
+	return tx.Commit()
 }

@@ -2427,11 +2427,89 @@ version's document. Existing stores without the table remain readable.
 `internal/reviewindex` rebuilds an in-memory projection of discovery and registered
 version stores. `store.Snapshot` reads latest metadata, count and small document
 summaries in one transaction, plus separate latest-started run records. It does
-not move document bodies or maintain a second database. CLI generation publishes
+not move document bodies or maintain a second database. The document summaries
+(title, PR state, risk score, review minutes) are a projection of each pull
+request's latest document, kept in the `summaries` table of the same
+`versions.sqlite`, keyed by repository and PR with the version and byte length
+of the document it was computed from. SQLite triggers on `versions` (insert,
+update of `document`, delete) upsert it from the same SQL extraction as the
+fallback, in the transaction of whichever writer changed the latest document:
+`Put`, `RefreshCurrent`, `CompleteCurrent` and an older baum binary alike. A
+failing or conflicting write rolls the projection back with the document. A
+document SQLite cannot parse (nested deeper than its limit) drops the row
+instead of failing the write, and `Snapshot` then extracts as it always did.
+Trigger names carry a hash of their SQL: a write-open that does not find
+exactly the current ones replaces them, empties the table and re-projects it in
+one transaction, so a changed extraction never leaves rows computed by an older
+one. Every write-open projects each latest document without a current row; the check is a read-only query that
+parses no document and writes only when something is stale, so existing stores
+are backfilled on their first write-open and later opens are cheap. `Snapshot`
+uses a row only while its version is the latest and its length equals
+`length(document)` (read from the record header, not the body). Any other row,
+or a missing table (an old store, or a read-only open before any write-open
+by this version), falls back per row to extracting from the document. A
+read-only open never writes. When every row is current, Snapshot parses no
+document body. CLI generation publishes
 lease-based run status independently of immutable successful version history;
 expired leases are read as interrupted without mutating stores during indexing.
 Once `Store.Put` commits a version, generation succeeds: failing to record the
 run's outcome afterwards is only a warning, and the lease later expires.
+
+`Service.Build` is uncached: each call probes every clone with git, reads the
+discovery cache and opens every store. The daemon reads it through one
+`reviewindex.Cache`, shared by `GET /api/index` (all views; `view=waiting`
+is the cached snapshot's count, and the `history` filter works on a per-request
+copy), notices and review groups. Concurrent readers share one build, which
+runs under the daemon's context, so a reader that gives up does not fail the
+others; a failed build is not kept. A generation counter invalidates: every
+in-process change that publishes an `index` event (the daemon's `changed`,
+which settings, registry, clone, job, discovery, merge, review, update, inbox,
+group and GitHub-account changes all go through) calls `Invalidate` first, so
+a client reading after the event gets a new build, and a build that started
+before an invalidation still answers its waiting readers but is not kept.
+Discovery, which only the daemon runs, invalidates through
+`discovery.Service.Updated` after each cache write and each change to its live
+freshness, without an event of its own: the watcher below publishes if the
+index moved. A panicking build is an error for its readers and is not kept. A
+kept snapshot expires at the earliest instant at which building again could
+differ with nothing written: a `generating` run's lease end (it then reads as
+interrupted), a fresh discovery snapshot's next poll, or an applied
+observation turning stale two minutes after it was fetched; and at the latest
+after `reviewindex.MaxAge` (30 seconds), for what nothing models (below).
+Nothing is persisted: a restarted daemon builds on first read.
+
+`uiserver.Server.WatchIndex` catches changes made outside the daemon (a CLI
+`baum internal generate`, another process editing the registry) and those that
+come with time. Every 2 seconds it computes `reviewindex.Fingerprint`, which
+runs no git and opens no store: the registry's picked repositories and clone
+rows as stored (`Registry.RepositoryRows`, one query on the registry's
+connection), the GitHub account revision (`githubauth.Manager.Revision`), and
+for each clone the size, modification time and mode of `versions.sqlite` under
+both roots `store.Open` chooses between and of its git `config`, plus whether
+its working tree and `.git` exist; a missing file is part of the digest. Only
+when the fingerprint moved (it then invalidates), the cached snapshot expired,
+or another reader replaced it does the watcher read the index, and it publishes
+`index` only when the snapshot's JSON hash differs from the last one it
+published. The first read publishes.
+
+The fingerprint reads registry rows rather than `app.sqlite`'s file times or
+`PRAGMA data_version`: most daemon stores (jobs, chat, UI state, analytics,
+automatic generation, decisions) open their own connections, and
+`appdb.Read`/`Write` a new one per call, so both signals move on every job
+progress save, which is no input to the index. A store's SQLite header change
+counter is not read either: closing any descriptor of a SQLite file drops the
+POSIX locks this process's own connections hold on it, and the daemon reads and
+writes stores itself. The databases use the rollback journal, so a commit
+changes the main file's modification time; two commits within one timestamp
+step of a check, at the same size, look alike until `MaxAge`. What nothing
+models is also bounded by `MaxAge`: a clone made unavailable by a change the
+stats miss, and a GitHub credential replaced outside baum. Connecting and
+disconnecting go through the daemon, which invalidates; another process can
+only rotate the same account's token, which keeps its discovery partition.
+Detecting an outside keyring edit at once would take a credential read per
+tick, which is a process (`baum internal github-credential`) running the
+native keyring, the cost the cache removes: before it, every build ran one per
+picked repository.
 
 ### Local pull request discovery
 
