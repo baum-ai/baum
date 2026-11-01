@@ -21,6 +21,7 @@ import { phaseText } from "./fix";
 import { LoadingStatus } from "./nine-dots";
 import { PageBar } from "./shell";
 import { useFollowScroll } from "./session-transcript";
+import { SMALL } from "./action-classes";
 
 /** One line of a fix agent's transcript, from `api/jobs/{id}/transcript`.
  *  Entries are append-only; a tool's later entry with the same `id` updates
@@ -348,7 +349,7 @@ export function JobPage({
         title={job ? jobName(job) : "Job"}
         detail={job ? `${job.repository} #${job.pr}` : "Agent run on this computer"}
         actions={
-          <Link href={appURL("?page=jobs")} className="inbox-action">
+          <Link href={appURL("?page=jobs")} className={SMALL}>
             Back to jobs
           </Link>
         }

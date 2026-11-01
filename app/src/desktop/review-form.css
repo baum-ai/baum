@@ -1,30 +1,31 @@
-/* The review settings form, shared by the desktop setup's last step and the
-   app's settings: harness tiles, the model dropdown, the automatic switch and
-   which pull requests it covers. Colours are the brand's own, so it reads the
-   same on both screens. */
+/* The review settings form is shared by desktop setup and app settings. Both
+   use the viewer palette, so controls follow each screen's theme. */
 .review-card,
 .setup-card.review-card {
   padding: 0;
 }
 .review-section {
   margin: 0;
-  padding: 20px 22px;
+  padding: 14px 18px;
   border: 0;
   min-width: 0;
 }
 .review-section + .review-section {
-  border-top: 1px solid #ead3a8;
+  border-top: 1px solid var(--border-subtle);
+}
+.review-section + .model-settings {
+  border-top: 0;
 }
 .review-section legend,
 .review-label {
   display: block;
   float: left;
   width: 100%;
-  margin-bottom: 10px;
+  margin-bottom: 8px;
   padding: 0;
   font-size: 12px;
   font-weight: 500;
-  color: #6b4a33;
+  color: var(--text-secondary);
 }
 .harness-grid {
   clear: both;
@@ -46,12 +47,12 @@
 .harness-tile {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
   height: 100%;
-  padding: 10px 12px;
-  border: 1px solid #ddbf8e;
-  border-radius: 9px;
-  background: #fff8ea;
+  padding: 8px 10px;
+  border: 1px solid var(--border-default);
+  border-radius: 8px;
+  background: var(--surface-page);
   font-size: 13px;
   font-weight: 500;
   cursor: pointer;
@@ -61,33 +62,97 @@
   margin-top: 2px;
   font-size: 11px;
   font-weight: 400;
-  color: #6b4a33;
+  color: var(--text-secondary);
 }
-.harness-tile img {
+.harness-tile svg {
   flex: none;
   width: 20px;
   height: 20px;
 }
 .select select:hover {
-  border-color: #c9a97e;
+  border-color: var(--border-strong);
 }
-.harness-option:hover .harness-tile {
-  border-color: #c9a97e;
+.harness-option:hover input:not(:disabled) + .harness-tile {
+  border-color: var(--border-strong);
+}
+.harness-option input:disabled + .harness-tile {
+  color: var(--text-disabled);
+  cursor: not-allowed;
+}
+.harness-option input:disabled + .harness-tile small {
+  color: var(--text-disabled);
+}
+.agent-installation h2 {
+  font-size: 14px;
+  margin: 0;
+}
+.agent-install-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px 20px;
+  margin-top: 16px;
+  font-size: 13px;
+}
+.agent-install-links a {
+  color: var(--action-primary);
+  text-underline-offset: 3px;
 }
 .harness-option input:checked + .harness-tile {
-  border-color: #2e7d3e;
-  background: #eef4e8;
-  box-shadow: inset 0 0 0 1px #2e7d3e;
+  border-color: var(--action-primary);
+  background: var(--surface-selected);
+  box-shadow: inset 0 0 0 1px var(--action-primary);
 }
 .harness-option input:focus-visible + .harness-tile,
-.segmented input:focus-visible + span {
-  outline: 2px solid #2e7d3e;
+.segmented input:focus-visible + span,
+.select select:focus-visible,
+.model-row input:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+.agent-install-links a:focus-visible {
+  outline: 2px solid var(--action-primary);
   outline-offset: 2px;
 }
 .model-row {
   clear: both;
   display: flex;
   gap: 8px;
+}
+.model-settings {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 12px;
+  align-items: start;
+}
+.model-settings.with-effort {
+  grid-template-columns: minmax(0, 1fr) minmax(112px, 140px);
+}
+.model-settings .review-label {
+  float: none;
+  width: auto;
+}
+.review-card .model-settings > .review-note {
+  grid-column: 1 / -1;
+  margin: 0;
+}
+.model-field,
+.effort-field {
+  min-width: 0;
+}
+.model-settings .model-row {
+  flex-direction: column;
+}
+.model-settings .select {
+  display: block;
+  flex: auto;
+  width: 100%;
+}
+.model-settings .model-row input {
+  width: 100%;
+}
+.model-settings select:disabled {
+  color: var(--text-disabled);
+  cursor: not-allowed;
 }
 .select {
   position: relative;
@@ -102,8 +167,8 @@
   right: 14px;
   width: 6px;
   height: 6px;
-  border-right: 1.5px solid #6b4a33;
-  border-bottom: 1.5px solid #6b4a33;
+  border-right: 1.5px solid var(--text-secondary);
+  border-bottom: 1.5px solid var(--text-secondary);
   transform: translateY(-70%) rotate(45deg);
   pointer-events: none;
 }
@@ -111,14 +176,14 @@
   appearance: none;
   width: 100%;
   min-width: 0;
-  border: 1px solid #ddbf8e;
-  border-radius: 7px;
+  border: 1px solid var(--border-default);
+  border-radius: 8px;
   padding: 10px 36px 10px 12px;
   cursor: pointer;
   font: inherit;
   font-size: 13px;
-  background: #fff8ea;
-  color: #2a1d15;
+  background: var(--surface-page);
+  color: var(--text-primary);
 }
 .switch-row {
   display: flex;
@@ -134,7 +199,7 @@
   margin-top: 3px;
   font-size: 12px;
   font-weight: 400;
-  color: #6b4a33;
+  color: var(--text-secondary);
 }
 .switch-row input[role="switch"] {
   appearance: none;
@@ -145,7 +210,7 @@
   padding: 0;
   border: 0;
   border-radius: 11px;
-  background: #c9a97e;
+  background: var(--border-strong);
   cursor: pointer;
   transition: background 0.15s;
 }
@@ -157,17 +222,17 @@
   width: 16px;
   height: 16px;
   border-radius: 50%;
-  background: #fff8ea;
+  background: var(--surface-page);
   transition: transform 0.15s;
 }
 .switch-row input[role="switch"]:checked {
-  background: #2e7d3e;
+  background: var(--action-primary);
 }
 .switch-row input[role="switch"]:checked::after {
   transform: translateX(18px);
 }
 .scope {
-  margin: 18px 0 0;
+  margin: 12px 0 0;
   padding: 0;
   border: 0;
   min-width: 0;
@@ -176,51 +241,54 @@
   clear: both;
   display: inline-flex;
   flex-wrap: wrap;
+  gap: 2px;
   max-width: 100%;
   padding: 3px;
-  border: 1px solid #ddbf8e;
-  border-radius: 9px;
-  background: #fff8ea;
+  border: 0;
+  border-radius: 8px;
+  background: var(--surface-sunken);
 }
 .segmented span {
-  display: block;
-  padding: 7px 14px;
+  display: flex;
+  align-items: center;
+  height: 28px;
+  padding: 0 10px;
   border-radius: 6px;
   font-size: 13px;
-  color: #6b4a33;
+  color: var(--text-secondary);
   cursor: pointer;
 }
 .segmented label:hover input:not(:checked) + span {
-  color: #2a1d15;
+  color: var(--text-primary);
 }
-/* The chosen option reads like a chosen harness tile: light green, green ring. */
 .segmented input:checked + span {
-  background: #eef4e8;
-  box-shadow: inset 0 0 0 1px #2e7d3e;
-  color: #2a1d15;
+  background: var(--surface-card);
+  box-shadow: var(--shadow-raised);
+  color: var(--text-primary);
   font-weight: 500;
 }
 .review-card .review-note {
-  margin: 10px 0 0;
+  margin: 8px 0 0;
   font-size: 12px;
-  color: #6b4a33;
+  line-height: 1.5;
+  color: var(--text-secondary);
 }
 .model-row input {
   min-width: 0;
   flex: 1;
-  border: 1px solid #ddbf8e;
-  border-radius: 7px;
+  border: 1px solid var(--border-default);
+  border-radius: 8px;
   padding: 10px 12px;
   font: inherit;
   font-size: 13px;
-  background: #fff8ea;
-  color: #2a1d15;
+  background: var(--surface-page);
+  color: var(--text-primary);
 }
 /* The tile that leaves the choice to the level above. */
 .harness-inherit {
   flex: none;
   width: 20px;
   height: 20px;
-  border: 1.5px dashed #c9a97e;
+  border: 1.5px dashed var(--border-strong);
   border-radius: 50%;
 }

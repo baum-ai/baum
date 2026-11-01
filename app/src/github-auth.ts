@@ -32,14 +32,20 @@ export const daemonGitHubAuth: GitHubAuthCall = (action) =>
 
 /** The daemon performs OAuth polling even while no page shows it. This hook
  * only observes its safe status, never GitHub's token endpoint. */
-export function useGitHubConnection(call: GitHubAuthCall, onChanged?: () => void) {
+export function useGitHubConnection(
+  call: GitHubAuthCall,
+  onChanged?: () => void,
+  browserDelay = 0,
+) {
   const [connection, setConnection] = useState<GitHubConnection>();
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [working, setWorking] = useState<GitHubAuthAction | null>(null);
   const [checking, setChecking] = useState(false);
   const [copied, setCopied] = useState("");
+  const [browserAttempt, setBrowserAttempt] = useState<string>();
   const sequence = useRef(0);
+  const actionSequence = useRef(0);
   const alive = useRef(false);
   const mutating = useRef(false);
   const previous = useRef<string | undefined>(undefined);
@@ -92,7 +98,7 @@ export function useGitHubConnection(call: GitHubAuthCall, onChanged?: () => void
     const timer = setInterval(
       () => void read(),
       // Until the first answer, the daemon may still be starting.
-      !connection || connection.pending || connection.state === "loading" ? 1500 : 10000,
+      connection?.pending ? 300 : !connection || connection.state === "loading" ? 1500 : 10000,
     );
     const focus = () => void read();
     addEventListener("focus", focus);
@@ -101,12 +107,24 @@ export function useGitHubConnection(call: GitHubAuthCall, onChanged?: () => void
       removeEventListener("focus", focus);
     };
   }, [connection === undefined, connection?.pending?.id, connection?.state, read]);
+  useEffect(() => {
+    if (!browserAttempt || connection?.pending?.id !== browserAttempt) return;
+    const timer = setTimeout(() => {
+      setBrowserAttempt(undefined);
+      // The desktop shell intercepts this navigation and opens the browser.
+      // Unlike window.open, it does not require an active click.
+      location.assign(DEVICE_URL);
+    }, browserDelay);
+    return () => clearTimeout(timer);
+  }, [browserAttempt, connection?.pending?.id, browserDelay]);
   const action = async (name: GitHubAuthAction) => {
     mutating.current = true;
+    actionSequence.current++;
     const mine = ++sequence.current;
     setBusy(true);
     setWorking(name);
     setCopied("");
+    setBrowserAttempt(undefined);
     try {
       const body = await transport.current(name);
       if (alive.current && mine === sequence.current) {
@@ -126,25 +144,42 @@ export function useGitHubConnection(call: GitHubAuthCall, onChanged?: () => void
       }
     }
   };
-  // Opens GitHub and copies the code the daemon is about to return, both
-  // inside the click: once the request returns, the click no longer counts
-  // and the app window has lost focus to the browser, so a plain copy or open
-  // then would be refused. The clipboard accepts a promise for the text.
+  // Start the clipboard write inside the click, using a promise for the code.
+  // Desktop setup delays opening GitHub so the code and copy result stay visible;
+  // browser pages open inside the click to avoid popup blocking.
   const signIn = () => {
-    open(DEVICE_URL, "_blank", "noreferrer");
+    if (!browserDelay) open(DEVICE_URL, "_blank", "noreferrer");
     const started = action("start");
-    if (typeof ClipboardItem === "undefined" || !navigator.clipboard?.write) return;
-    const code = started.then((body) => {
-      if (!body?.pending) throw Error("no sign-in code");
-      return body.pending.user_code;
-    });
-    code.catch(() => {});
-    navigator.clipboard
-      .write([new ClipboardItem({ "text/plain": code })])
-      .then(() => {
-        if (alive.current) setCopied("Code copied. Paste it on GitHub.");
-      })
-      .catch(() => {});
+    const mine = actionSequence.current;
+    if (browserDelay)
+      void started.then((body) => {
+        if (alive.current && mine === actionSequence.current && body?.pending)
+          setBrowserAttempt(body.pending.id);
+      });
+    const copyFailed = () => {
+      if (alive.current && mine === actionSequence.current)
+        setCopied("Could not copy. Select and copy the code above.");
+    };
+    try {
+      if (typeof ClipboardItem === "undefined" || !navigator.clipboard?.write) {
+        if (browserDelay) copyFailed();
+        return;
+      }
+      const code = started.then((body) => {
+        if (!body?.pending) throw Error("no sign-in code");
+        return body.pending.user_code;
+      });
+      code.catch(() => {});
+      void navigator.clipboard
+        .write([new ClipboardItem({ "text/plain": code })])
+        .then(() => {
+          if (alive.current && mine === actionSequence.current)
+            setCopied("Code copied. Paste it on GitHub.");
+        })
+        .catch(copyFailed);
+    } catch {
+      copyFailed();
+    }
   };
   const pending = connection?.pending;
   const copy = async () => {
@@ -163,6 +198,7 @@ export function useGitHubConnection(call: GitHubAuthCall, onChanged?: () => void
     working,
     checking,
     copied,
+    openingBrowser: Boolean(browserAttempt && pending?.id === browserAttempt),
     recheck,
     action,
     signIn,

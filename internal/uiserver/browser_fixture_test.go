@@ -107,8 +107,28 @@ func (d browserDiscovery) PollNow(ctx context.Context, repository github.Reposit
 // still use the production local repository service.
 type browserRepositoryLister struct{}
 
-func (browserRepositoryLister) ViewerRepositories(context.Context, string) ([]github.ViewerRepository, error) {
-	return []github.ViewerRepository{{Repository: "acme/demo", Description: "A registered local repository", OpenPullRequests: 4}, {Repository: "acme/other", Description: "Another registered clone"}, {Repository: "acme/missing", Description: "A repository waiting for its local clone"}, {Repository: "acme/clone-me", Description: "Clone a repository from setup"}, {Repository: "acme/renamed", Description: "A repository renamed on GitHub"}}, nil
+func (browserRepositoryLister) ViewerRepositories(_ context.Context, _ string, _ int, cursor *string) (github.ViewerRepositoryList, error) {
+	if cursor != nil {
+		return github.ViewerRepositoryList{Repositories: []github.ViewerRepository{{Repository: "acme/top-extra", Description: "A prefetched top repository"}}, TotalCount: 7}, nil
+	}
+	next := "after-first"
+	return github.ViewerRepositoryList{Repositories: []github.ViewerRepository{{Repository: "acme/demo", Description: "A registered local repository"}, {Repository: "acme/other", Description: "Another registered clone"}, {Repository: "acme/missing", Description: "A repository waiting for its local clone"}, {Repository: "acme/clone-me", Description: "Clone a repository from setup"}, {Repository: "acme/renamed", Description: "A repository renamed on GitHub"}}, TotalCount: 7, NextCursor: &next}, nil
+}
+
+func (browserRepositoryLister) SearchRepositories(ctx context.Context, _, _ string, _ github.SearchScope, _ *string) (github.ViewerRepositoryList, error) {
+	// Cached top matches must be usable before the browser releases GitHub search.
+	ticker := time.NewTicker(20 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		if _, err := os.Stat(filepath.Join(os.Getenv("BAUM_APP_STATE_DIR"), "repository-search-release")); err == nil {
+			return github.ViewerRepositoryList{Repositories: []github.ViewerRepository{{Repository: "acme/search-only", Description: "A GitHub search result outside the top list"}}, TotalCount: 1}, nil
+		}
+		select {
+		case <-ctx.Done():
+			return github.ViewerRepositoryList{}, ctx.Err()
+		case <-ticker.C:
+		}
+	}
 }
 
 // browserDiagnostics is a fixed report: no machine is inspected.

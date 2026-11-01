@@ -97,6 +97,7 @@
     "./use-review-version": "./src/use-review-version.ts",
     "./use-section-history": "./src/use-section-history.ts",
     "./viewer.css": "./src/viewer.css",
+    "./theme.css": "./src/theme.css",
     "./local-sessions": "./app/local-sessions.ts",
     "./local-transcript": "./app/local-transcript.ts"
   },

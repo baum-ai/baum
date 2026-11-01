@@ -1,3 +1,5 @@
+import type { Brand } from "@baum/viewer/brands";
+import { BrandMark } from "@baum/viewer/components/brand-logo";
 import { useEffect, useRef, useState, type ComponentType, type ReactNode } from "react";
 import {
   formatCompact,
@@ -21,9 +23,6 @@ import {
   type Column,
   type Series,
 } from "./analytics-charts";
-import claudeLogo from "./desktop/claude-code.svg";
-import codexLogo from "./desktop/codex.svg";
-import cursorLogo from "./desktop/cursor.svg";
 import { LoadingStatus } from "./nine-dots";
 import { lasted } from "./sessions";
 import { Notice, PageBar, RefreshButton, useReread } from "./shell";
@@ -194,10 +193,10 @@ export type Analytics = {
 
 /** The agents in their fixed colour order: a filter never repaints one. */
 export const AGENTS = ["claude_code", "codex", "cursor"] as const;
-const agentLogos: Record<string, string> = {
-  claude_code: claudeLogo,
-  codex: codexLogo,
-  cursor: cursorLogo,
+const agentLogos: Partial<Record<string, Brand>> = {
+  claude_code: "claude",
+  codex: "openai",
+  cursor: "cursor",
 };
 const agentColor = (agent: string) => {
   const i = AGENTS.indexOf(agent as (typeof AGENTS)[number]);
@@ -279,7 +278,7 @@ function Agent({ agent }: { agent: string }) {
   const logo = agentLogos[agent];
   return (
     <span className="analytics-agent">
-      {logo ? <img src={logo} alt="" width="16" height="16" /> : null}
+      {logo ? <BrandMark brand={logo} size={16} /> : null}
       {agentName(agent)}
     </span>
   );

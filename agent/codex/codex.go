@@ -61,7 +61,7 @@ type Backend struct {
 	// exec.LookPath and defaults to "codex".
 	Binary, Model string
 	Profile       Profile
-	// Effort is the model_reasoning_effort (low, medium or high); empty
+	// Effort is the model_reasoning_effort; empty
 	// leaves it to Codex.
 	Effort string
 	// Env are the user's agent variables (agent.WithUserEnv), for the Local

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Button, Alert } from "@baum/viewer/components/ui";
+import { Alert, Badge, type BadgeTone, Button } from "@baum/viewer/components/ui";
 import { request, type DiagnosticCheck, type DiagnosticReport, type Diagnostics } from "./api";
 import { LoadingStatus } from "./nine-dots";
 
@@ -9,11 +9,11 @@ const statusText: Record<DiagnosticCheck["status"], string> = {
   problem: "Problem",
   info: "Info",
 };
-const statusTone: Record<DiagnosticCheck["status"], string> = {
-  ok: "bg-(--status-positive-bg) text-(--status-positive)",
-  warning: "bg-(--status-caution-bg) text-(--status-caution)",
-  problem: "bg-(--status-critical-bg) text-(--status-critical)",
-  info: "bg-(--status-neutral-bg) text-(--status-neutral)",
+const statusTone: Record<DiagnosticCheck["status"], BadgeTone> = {
+  ok: "positive",
+  warning: "caution",
+  problem: "critical",
+  info: "neutral",
 };
 const order = { problem: 0, warning: 1, ok: 2, info: 3 } as const;
 
@@ -142,11 +142,7 @@ export function DiagnosticsSection({
               >
                 <div className="flex flex-wrap items-center gap-2">
                   <h3 className="text-base font-medium">{check.label}</h3>
-                  <span
-                    className={`rounded-(--radius-sm) px-2 py-0.5 text-xs font-medium ${statusTone[check.status]}`}
-                  >
-                    {statusText[check.status]}
-                  </span>
+                  <Badge tone={statusTone[check.status]}>{statusText[check.status]}</Badge>
                 </div>
                 <p className="m-0 break-words">{check.detail}</p>
                 {check.path || check.version || check.source ? (
