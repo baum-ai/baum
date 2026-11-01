@@ -254,7 +254,7 @@ func TestCredentialStoreCanRecoverWithoutNewAuthorization(t *testing.T) {
 }
 
 func TestStatusNamesOrganizationsTheSignInCannotReach(t *testing.T) {
-	a, _, s, _ := connectionFixture(t, &connectionStore{credential: githubauth.Credential{AccessToken: "saved", Login: "alice", ID: 1}}, func(*http.Request) (string, error) { return connectionGrant, nil })
+	a, _, s, changes := connectionFixture(t, &connectionStore{credential: githubauth.Credential{AccessToken: "saved", Login: "alice", ID: 1}}, func(*http.Request) (string, error) { return connectionGrant, nil })
 	var mu sync.Mutex
 	hidden := []string{"locked-co"}
 	var refreshed []bool
@@ -268,6 +268,12 @@ func TestStatusNamesOrganizationsTheSignInCannotReach(t *testing.T) {
 	deadline := time.Now().Add(5 * time.Second)
 	for a.snapshot().OrganizationAccess == nil && time.Now().Before(deadline) {
 		time.Sleep(5 * time.Millisecond)
+	}
+	for changes.Load() == 0 && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	if changes.Load() == 0 {
+		t.Error("the app was not told the background organization check found something")
 	}
 	got := a.snapshot().OrganizationAccess
 	if got == nil || got.Hidden[0] != "locked-co" || got.ApprovalURL != githubauth.ApprovalURL {

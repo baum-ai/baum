@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"slices"
 	"sync"
 	"time"
 
@@ -139,16 +140,31 @@ func (a *GitHubAuthentication) refreshOrganizations() {
 	go func() {
 		access, err := a.Organizations(a.ctx, false)
 		a.mu.Lock()
-		defer a.mu.Unlock()
 		a.orgsFetching = false
 		// An answer for the previous account is dropped.
 		if a.manager.Revision() != revision {
 			a.orgsAt = time.Time{}
+			a.mu.Unlock()
 			return
 		}
+		before := a.status.OrganizationAccess
 		a.orgsAt = time.Now()
 		a.setOrganizations(access, err)
+		differs := !sameOrganizations(before, a.status.OrganizationAccess)
+		a.mu.Unlock()
+		// The app reads the status on events, not on a timer: tell it when
+		// the answer arrives after its first read.
+		if differs && a.changed != nil {
+			a.changed()
+		}
 	}()
+}
+
+func sameOrganizations(a, b *githubauth.OrganizationAccess) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	return slices.Equal(a.Hidden, b.Hidden)
 }
 
 // setOrganizations keeps the earlier answer when GitHub could not be asked.

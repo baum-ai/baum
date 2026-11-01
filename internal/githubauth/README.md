@@ -112,7 +112,7 @@ environment or config tokens, since a fine-grained token lists no organizations
 and would make every membership look hidden. `ApprovalURL` is baum's page in
 the member's GitHub settings (`/settings/connections/applications/<client_id>`),
 where a member requests approval. Not verified against a real restricted
-organization; see the repro steps in ENG-1664. A `403` with `X-GitHub-SSO` on
+organization yet. A `403` with `X-GitHub-SSO` on
 any request, including the first `/user` check at sign-in, is `ErrSSO`.
 The status carries it as `organization_access` (`{"hidden": [...],
 "approval_url": ""}`, absent when nothing is hidden), refreshed in the
