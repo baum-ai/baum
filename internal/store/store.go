@@ -102,25 +102,12 @@ func Open(commonDir, override string, write bool) (*Store, error) {
 	if override != "" {
 		return openRoot(override, write)
 	}
-	common, err := filepath.Abs(commonDir)
+	roots, err := Roots(commonDir)
 	if err != nil {
 		return nil, err
 	}
-	if resolved, err := filepath.EvalSymlinks(common); err == nil {
-		common = resolved
-	}
-	local := filepath.Join(common, "baum", "reviews")
-	data := os.Getenv("XDG_DATA_HOME")
-	if data == "" || !filepath.IsAbs(data) {
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return nil, err
-		}
-		data = filepath.Join(home, ".local", "share")
-	}
-	sum := sha256.Sum256([]byte(common))
-	fallback := filepath.Join(data, "baum", "reviews", hex.EncodeToString(sum[:]))
-	for _, root := range []string{local, fallback} {
+	local, fallback := roots[0], roots[1]
+	for _, root := range roots {
 		if _, err := os.Stat(filepath.Join(root, "versions.sqlite")); err == nil {
 			return openRoot(root, write)
 		} else if !errors.Is(err, os.ErrNotExist) {
@@ -139,6 +126,29 @@ func Open(commonDir, override string, write bool) (*Store, error) {
 	}
 	return openRoot(fallback, true)
 }
+
+// Roots are the roots Open chooses between for a clone's common directory,
+// in its order: the clone-local one, then the per-user data fallback.
+func Roots(commonDir string) ([]string, error) {
+	common, err := filepath.Abs(commonDir)
+	if err != nil {
+		return nil, err
+	}
+	if resolved, err := filepath.EvalSymlinks(common); err == nil {
+		common = resolved
+	}
+	data := os.Getenv("XDG_DATA_HOME")
+	if data == "" || !filepath.IsAbs(data) {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return nil, err
+		}
+		data = filepath.Join(home, ".local", "share")
+	}
+	sum := sha256.Sum256([]byte(common))
+	return []string{filepath.Join(common, "baum", "reviews"), filepath.Join(data, "baum", "reviews", hex.EncodeToString(sum[:]))}, nil
+}
+
 func openRoot(root string, write bool) (*Store, error) {
 	root, err := filepath.Abs(root)
 	if err != nil {

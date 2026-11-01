@@ -2426,6 +2426,41 @@ expired leases are read as interrupted without mutating stores during indexing.
 Once `Store.Put` commits a version, generation succeeds: failing to record the
 run's outcome afterwards is only a warning, and the lease later expires.
 
+`Service.Build` is uncached: each call probes every clone with git, reads the
+discovery cache and opens every store. The daemon reads it through one
+`reviewindex.Cache`, shared by `GET /api/index` (all views; `view=waiting`
+is the cached snapshot's count, and the `history` filter works on a per-request
+copy), notices and review groups. Concurrent readers share one build, which
+runs under the daemon's context, so a reader that gives up does not fail the
+others; a failed build is not kept. A generation counter invalidates: every
+in-process change that publishes an `index` event (the daemon's `changed`,
+which settings, registry, clone, job, discovery, merge, review, update, inbox,
+group and GitHub-account changes all go through) calls `Invalidate` first, so
+a client reading after the event gets a new build, and a build that started
+before an invalidation still answers its waiting readers but is not kept. A
+kept snapshot expires at the earliest instant at which building again could
+differ with nothing written: a `generating` run's lease end (it then reads as
+interrupted), a fresh discovery snapshot's next poll, or an applied
+observation turning stale two minutes after it was fetched; and at the latest
+after `reviewindex.MaxAge` (30 seconds), for what nothing models, such as a
+clone made unavailable by a change outside the files below. Nothing is
+persisted: a restarted daemon builds on first read.
+
+`uiserver.Server.WatchIndex` catches changes made outside the daemon (a CLI
+`baum internal generate`, another process writing `app.sqlite` or a store) and
+those that come with time. Every 2 seconds it computes
+`reviewindex.Fingerprint`, which opens no database and runs no git: the size,
+modification time and mode of `app.sqlite` and `app.sqlite-wal`, of each
+registered clone's `versions.sqlite` and `versions.sqlite-wal` under both
+roots `store.Open` chooses between (the clones from `Registry.CloneRows`), and
+of the clone's git `config`, plus whether its working tree and `.git` exist; a
+missing file is part of the digest. Only when the fingerprint moved (it then
+invalidates), the cached snapshot expired, or another reader replaced it does
+the watcher read the index, and it publishes `index` only when the snapshot's
+JSON hash differs from the last one it published. The first read publishes.
+The daemon's own `app.sqlite` writes, such as a discovery poll's, also move
+the fingerprint and cost one rebuild.
+
 ### Local pull request discovery
 
 `internal/discovery` reads the viewer and open pull requests through one GraphQL

@@ -376,9 +376,14 @@ func localApplication(paths daemon.Paths, log *slog.Logger) func(context.Context
 			events.Close()
 			return daemon.App{}, err
 		}
-		changed := func() { _ = server.Publish("index", struct{}{}) }
 		discover := discovery.New(github.NewFromConfig(cfg, github.Options{}), "")
-		index := &reviewindex.Service{Registry: registry, Discovery: discover}
+		// Every reader shares one cached index. A change made here invalidates
+		// it before the event, so a client reading again sees the change.
+		index := reviewindex.NewCache(ctx, &reviewindex.Service{Registry: registry, Discovery: discover})
+		changed := func() {
+			index.Invalidate()
+			_ = server.Publish("index", struct{}{})
+		}
 		worker := &background.Service{Registry: registry, Discovery: discover, Saved: background.Saved, Refresh: background.Local{Client: github.NewFromConfig(cfg, github.Options{}), Config: cfg}.Refresh, Changed: changed}
 		database, err := appdb.Path()
 		if err != nil {
@@ -411,7 +416,7 @@ func localApplication(paths daemon.Paths, log *slog.Logger) func(context.Context
 		}
 		// Notices are what the desktop app turns into notifications; they
 		// carry the pull request's title and risk score, read when they happen.
-		notify := &notices.Service{Registry: registry, Index: index.Build, Publish: func(n notices.Notice) { _ = server.Publish("notice", n) }}
+		notify := &notices.Service{Registry: registry, Index: index.Snapshot, Publish: func(n notices.Notice) { _ = server.Publish("notice", n) }}
 		var identityMu sync.RWMutex
 		worker.Discovered = func(ctx context.Context, snapshot discovery.Snapshot) {
 			identityMu.RLock()
@@ -647,7 +652,7 @@ func localApplication(paths daemon.Paths, log *slog.Logger) func(context.Context
 		api := uiserver.LocalAPI{GitHubAuth: githubConnection.Handler(), Registry: registry, Config: cfg, PRs: uiserver.DiscoveryHandler(registry, discover, changed), Index: index.Handler(), Jobs: queue.Handler(), Chat: uiserver.ChatHandler(registry, queue), Background: worker.Handler(), Automatic: scheduler.Handler(), Live: liveAPI, AgentRequests: requestsAPI, Clones: clones.Handler(), GitHubRepositories: pickList.Handler(), CurrentName: currentName(githubClient), PlanUsage: plans.Handler(), Analytics: insights.Handler(), Timeline: timeline, Merge: uiserver.MergeHandler(registry, actions.RecordMerges(githubClient), mergedPullRequest, changed), Review: uiserver.ReviewHandler(registry, githubClient, changed), Update: uiserver.UpdateHandler(registry, actions.RecordUpdates(prupdate.Service{Client: githubClient, Cache: panelCache, Counted: countedThreads, Clone: availableClone}), refreshRepository, changed), Changed: settingsChanged,
 			UIState:   (&uistate.Store{Path: database}).Handler(),
 			Inboxes:   (&inboxes.API{Store: inboxes.Open(database), Changed: changed}).Handler(),
-			Groups:    (&reviewgroups.API{Store: groups, Registry: registry, Index: index.Build, Changed: changed}).Handler(),
+			Groups:    (&reviewgroups.API{Store: groups, Registry: registry, Index: index.Snapshot, Changed: changed}).Handler(),
 			Decisions: decisionsAPI, Facts: pageFacts, Log: log,
 			DecisionsChanged:   func() { _ = server.Publish("decisions", struct{}{}) },
 			ConcurrencyChanged: func(n int) { _ = queue.SetConcurrency(n) },
@@ -709,7 +714,15 @@ func localApplication(paths daemon.Paths, log *slog.Logger) func(context.Context
 					})
 				}
 				wg.Go(func() {
-					server.WatchIndex(ctx, 0, func(ctx context.Context) (any, error) { return index.Build(ctx) })
+					server.WatchIndex(ctx, 0, uiserver.IndexWatch{
+						Fingerprint: reviewindex.Fingerprint(database, registry.CloneRows),
+						Invalidate:  index.Invalidate,
+						Fresh:       index.Fresh,
+						Snapshot: func(ctx context.Context) (any, uint64, error) {
+							snapshot, version, err := index.Current(ctx)
+							return snapshot, version, err
+						},
+					})
 				})
 				wg.Wait()
 			},

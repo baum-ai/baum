@@ -142,3 +142,63 @@ func BenchmarkBuildGitProbe(b *testing.B) {
 		})
 	}
 }
+
+// BenchmarkCachedBuild reads the corpus through a Cache with nothing
+// changing: after the warm-up build every read is served from the cache, so
+// builds/op, the builds per read, stays 0.
+func BenchmarkCachedBuild(b *testing.B) {
+	for _, n := range []int{1, 4} {
+		b.Run(fmt.Sprintf("clones=%d", n), func(b *testing.B) {
+			service, _ := benchService(b, n)
+			ctx := context.Background()
+			cache := NewCache(ctx, service)
+			if _, err := cache.Snapshot(ctx); err != nil {
+				b.Fatal(err)
+			}
+			warm := cache.buildCount()
+			reads := 0
+			b.ReportAllocs()
+			b.ResetTimer()
+			for b.Loop() {
+				if _, err := cache.Snapshot(ctx); err != nil {
+					b.Fatal(err)
+				}
+				reads++
+			}
+			b.ReportMetric(float64(cache.buildCount()-warm)/float64(reads), "builds/op")
+		})
+	}
+}
+
+// BenchmarkFingerprint measures the watcher's per-tick check over n clones,
+// each with a store.
+func BenchmarkFingerprint(b *testing.B) {
+	for _, n := range []int{1, 4} {
+		b.Run(fmt.Sprintf("clones=%d", n), func(b *testing.B) {
+			dir := b.TempDir()
+			b.Setenv("XDG_DATA_HOME", filepath.Join(dir, "data"))
+			app := filepath.Join(dir, "app.sqlite")
+			if err := os.WriteFile(app, nil, 0o600); err != nil {
+				b.Fatal(err)
+			}
+			clones := make([]repos.Clone, n)
+			for i := range clones {
+				path := filepath.Join(dir, fmt.Sprint(i))
+				common := filepath.Join(path, ".git")
+				if err := os.MkdirAll(filepath.Join(common, "baum", "reviews"), 0o700); err != nil {
+					b.Fatal(err)
+				}
+				if err := os.WriteFile(filepath.Join(common, "baum", "reviews", "versions.sqlite"), nil, 0o600); err != nil {
+					b.Fatal(err)
+				}
+				clones[i] = repos.Clone{ID: fmt.Sprint(i), Path: path, CommonDir: common}
+			}
+			fingerprint := Fingerprint(app, func(context.Context) ([]repos.Clone, error) { return clones, nil })
+			ctx := context.Background()
+			b.ReportAllocs()
+			for b.Loop() {
+				fingerprint(ctx)
+			}
+		})
+	}
+}
