@@ -42,7 +42,9 @@ parents, and dissolves a group where a hosted stack ends.
   (`NULL` for the root). A pull request is a current member (`left_at IS
   NULL`) of at most one stack; leaving keeps the row, and joining again clears
   `left_at` and restarts `joined_at`.
-- A merged or closed member stays, with its parent. When the bottom pull
+- A merged member stays in its original position, with its parent, while
+  any member is open: membership is never recomputed from the open pull
+  requests alone. When the bottom pull
   request merges and GitHub retargets the next one to the bottom's base, the
   next one keeps its merged parent and stays in the stack. If several
   descendants are automatically retargeted to the merged ancestor's base,
@@ -61,6 +63,6 @@ parents, and dissolves a group where a hosted stack ends.
     leaves it and forms a new stack if at least two of its pull requests are
     open;
   - a stack left with fewer than two members ends with every member left.
-- `ended_at` is set when every current member is merged or closed and cleared
-  when one reopens. Such a stack keeps its members, so its page stays
+- `ended_at` is set when no current member is open (all merged, or the open
+  ones closed and dropped) and cleared when one reopens. Such a stack keeps its merged members, so its page stays
   readable.

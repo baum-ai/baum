@@ -7,6 +7,16 @@ import (
 	"time"
 )
 
+// KeepClosedUnmerged is the one decision on a member closed without merging.
+// False: it is abandoned and drops out of its stack (it leaves, and a child
+// based on its branch loses its parent link). True: it stays like a merged
+// member. A merged member always stays, in its original position.
+const KeepClosedUnmerged = false
+
+// stays reports whether a pull request that is no longer open may remain a
+// member of a stack it is already in.
+func stays(pull Candidate) bool { return pull.Merged || KeepClosedUnmerged }
+
 // Candidate is a pull request a recompute considers: one that is open, or a
 // current member of a stack the recompute can change.
 type Candidate struct {
@@ -74,13 +84,15 @@ func Plan(candidates []Candidate, stored []StoredStack) Changes {
 	}
 
 	// Forks never take part, and a merged or closed pull request takes part
-	// only while it is a current member: a stack never forms around one.
+	// only while it is a current member: a stack never forms around one. A
+	// closed pull request that is not merged takes part only if
+	// KeepClosedUnmerged says so.
 	pulls := map[int]Candidate{}
 	for _, pull := range candidates {
 		if pull.CrossRepository {
 			continue
 		}
-		if _, member := storedStack[pull.Number]; !pull.Open && !member {
+		if _, member := storedStack[pull.Number]; !pull.Open && !(member && stays(pull)) {
 			continue
 		}
 		pulls[pull.Number] = pull
