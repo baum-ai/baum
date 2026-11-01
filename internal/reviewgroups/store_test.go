@@ -216,3 +216,27 @@ func TestMembersFileKeepsCurrentSectionsAndActiveRisks(t *testing.T) {
 		t.Fatal("an unreadable review was accepted")
 	}
 }
+
+// A member section that lacks its details reaches the group run with a note
+// in place of its summary, never an empty one, with the risks it holds.
+func TestMembersFileNotesSectionsWithoutDetails(t *testing.T) {
+	document := []byte(`{"review":{"head":"h"},"summary":{"title":"Notes","text":"Keeps notes."},
+"sections":[{"title":"Failed","kind":"logical","details":"failed","summary":null,"risks":[{"tier":"high","category":"security","text":"Carried","state":"active"}]},
+{"title":"Writing","kind":"logical","details":"pending"},
+{"title":"Done","kind":"logical","summary":{"text":"Adds notes."},"risks":[]}]}`)
+	raw, err := MembersFile([]MemberReview{{Number: 7, Head: "h", Version: 1, Document: document}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var file []memberContext
+	if err := json.Unmarshal(raw, &file); err != nil {
+		t.Fatal(err)
+	}
+	sections := file[0].Sections
+	if len(sections) != 3 || sections[0].Summary != missingDetailsNote || sections[1].Summary != missingDetailsNote || sections[2].Summary != "Adds notes." {
+		t.Fatalf("sections %+v", sections)
+	}
+	if len(sections[0].Risks) != 1 || sections[0].Risks[0].Text != "Carried" {
+		t.Fatalf("a failed section lost its risks: %+v", sections[0])
+	}
+}

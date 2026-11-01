@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 
 	"github.com/google/jsonschema-go/jsonschema"
 )
@@ -16,7 +17,7 @@ import (
 type Task struct {
 	// Directory is the run directory: the checkout and the task's input
 	// files. RunTask adds schema.json and the rejected-N.json files of the
-	// repairs, and the backend runs there.
+	// repairs (named by Label when set), and the backend runs there.
 	Directory string
 	Prompt    string
 	// Schema is the JSON Schema of the reply, given to the backend as the
@@ -40,7 +41,32 @@ type Task struct {
 	// PersistSession keeps the backend's session of every call, so the
 	// Outcome's SessionID can be resumed later (Request.PersistSession).
 	PersistSession bool
+	// Label, when set, names the task's files in the run directory
+	// (TaskSchemaFile), so that tasks running in one directory at once do not
+	// overwrite each other's: lowercase letters, digits and dashes. Empty
+	// keeps schema.json and rejected-N.json.
+	Label string
 }
+
+// TaskSchemaFile is the name of the file RunTask writes a task's schema to
+// in the run directory: schema.json, or schema-<label>.json for a labelled
+// task. Its rejected replies go to rejected-N.json, or
+// rejected-<label>-N.json.
+func TaskSchemaFile(label string) string {
+	if label == "" {
+		return "schema.json"
+	}
+	return "schema-" + label + ".json"
+}
+
+func taskRejectedFile(label string, pass int) string {
+	if label == "" {
+		return fmt.Sprintf("rejected-%d.json", pass)
+	}
+	return fmt.Sprintf("rejected-%s-%d.json", label, pass)
+}
+
+var taskLabel = regexp.MustCompile(`^[a-z0-9]+(-[a-z0-9]+)*$`)
 
 // Framing is how a backend frames a task's prompt.
 type Framing int
@@ -99,7 +125,10 @@ func (g *Generator) RunTask(ctx context.Context, task Task) (outcome Outcome, do
 			return Verdict{Document: document, Findings: taskFindings(resolved, task.Check, document)}, nil
 		}
 	}
-	if err := os.WriteFile(filepath.Join(task.Directory, "schema.json"), task.Schema, 0400); err != nil {
+	if task.Label != "" && !taskLabel.MatchString(task.Label) {
+		return outcome, nil, fmt.Errorf("task label %q: use lowercase letters, digits and dashes", task.Label)
+	}
+	if err := os.WriteFile(filepath.Join(task.Directory, TaskSchemaFile(task.Label)), task.Schema, 0400); err != nil {
 		return outcome, nil, err
 	}
 	logger := g.Logger
@@ -151,7 +180,7 @@ func (g *Generator) RunTask(ctx context.Context, task Task) (outcome Outcome, do
 			break
 		}
 		outcome.ValidationRepairs++
-		if err := os.WriteFile(filepath.Join(task.Directory, fmt.Sprintf("rejected-%d.json", pass.Number)), document, 0400); err != nil {
+		if err := os.WriteFile(filepath.Join(task.Directory, taskRejectedFile(task.Label, pass.Number)), document, 0400); err != nil {
 			return outcome, nil, err
 		}
 		pass.Rejected, pass.Findings = document, outcome.Findings

@@ -382,6 +382,52 @@ FROM pull_request p WHERE repository=?1 AND EXISTS
 		repository, since.UnixMilli())
 }
 
+// FlowPull is one pull request for Analytics' pull request flow: who opened
+// it, when, and when it merged.
+type FlowPull struct {
+	Author    string
+	Draft     bool
+	CreatedAt time.Time
+	MergedAt  *time.Time
+}
+
+// PullFlow lists the repository's pull requests not opened by a bot that
+// were opened or merged at or after since, and whether the feature log has
+// listed the repository yet: one it never listed has none to give. The
+// repository is named as the feature log stores it, so the primary key finds
+// its rows.
+func (s *Store) PullFlow(ctx context.Context, repository string, since time.Time) ([]FlowPull, bool, error) {
+	var listed bool
+	err := s.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM pull_sync WHERE repository=? AND cursor_updated_at IS NOT NULL)`,
+		repository).Scan(&listed)
+	if err != nil || !listed {
+		return nil, listed, err
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT author, draft, created_at, merged_at FROM pull_request
+WHERE repository=?1 AND bot=0 AND (created_at >= ?2 OR merged_at >= ?2) ORDER BY created_at`,
+		repository, since.UnixMilli())
+	if err != nil {
+		return nil, true, err
+	}
+	defer func() { _ = rows.Close() }()
+	var out []FlowPull
+	for rows.Next() {
+		var p FlowPull
+		var created int64
+		var merged sql.NullInt64
+		if err := rows.Scan(&p.Author, &p.Draft, &created, &merged); err != nil {
+			return nil, true, err
+		}
+		p.CreatedAt = time.UnixMilli(created)
+		if merged.Valid {
+			at := time.UnixMilli(merged.Int64)
+			p.MergedAt = &at
+		}
+		out = append(out, p)
+	}
+	return out, true, rows.Err()
+}
+
 func (s *Store) pulls(ctx context.Context, query string, args ...any) ([]StoredPull, error) {
 	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {

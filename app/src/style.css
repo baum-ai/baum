@@ -5,31 +5,15 @@
 /* The application frame, after the hosted app: one white
    panel laid on sand beside the sidebar, with rounded controls inside. */
 :root {
-  --surface-canvas: #f1e9da;
-  /* Dialogs and menus float on the panel in warm paper, so they are not one
-     more white sheet. */
-  --surface-popup: var(--paper-50);
-  --panel-border: #e3d9c8;
   --panel-radius: 14px;
-  --panel-shadow: 0 1px 2px rgba(42, 29, 21, 0.04), 0 6px 24px rgba(42, 29, 21, 0.04);
   --radius-xs: 4px;
   --radius-sm: 6px;
   --radius-md: 8px;
   --radius-lg: 12px;
   --rail-width: 244px;
-  /* The sidebar's hover and selection, which Settings' section list shares. */
-  --nav-hover: #e8decb;
-  --nav-selected: #e5dac5;
-}
-/* Dark mode follows the hosted app's: a near-black panel on the brand's
-   forest, so the forest is the only colour around the work. */
-:root[data-theme="dark"] {
-  --surface-canvas: var(--brand-forest);
-  --surface-popup: var(--surface-card);
-  --panel-border: #262626;
-  --panel-shadow: 0 0 0 1px rgba(255, 255, 255, 0.02);
-  --nav-hover: #16241c;
-  --nav-selected: #1d2e24;
+  /* Buttons stand slightly off the panel, so they read as pressable beside
+     status pills and tags (see actionClassName). */
+  --action-shadow: var(--shadow-raised);
 }
 body {
   margin: 0;
@@ -56,11 +40,6 @@ body {
 
 /* The sidebar, in the hosted chrome's sand and espresso. */
 .local-rail {
-  --text-primary: #1f1a15;
-  --text-secondary: #3d342b;
-  --text-tertiary: #6e655b;
-  --surface-hover: var(--nav-hover);
-  --surface-selected: var(--nav-selected);
   position: sticky;
   z-index: 5;
   top: 0;
@@ -77,11 +56,6 @@ body {
    green, as in the hosted chrome. */
 :root[data-theme="dark"] .local-rail {
   color-scheme: dark;
-  --text-primary: #ededed;
-  --text-secondary: #cfcfcf;
-  --text-tertiary: #9c9c9c;
-  --surface-hover: var(--nav-hover);
-  --surface-selected: var(--nav-selected);
 }
 .local-rail-mark {
   display: flex;
@@ -122,12 +96,12 @@ body {
     color 0.15s;
 }
 .local-rail-link:hover {
-  background: var(--surface-hover);
+  background: var(--nav-hover);
   color: var(--text-primary);
   text-decoration: none;
 }
 .local-rail-link[aria-current="page"] {
-  background: var(--surface-selected);
+  background: var(--nav-selected);
   color: var(--text-primary);
   font-weight: 500;
 }
@@ -135,10 +109,10 @@ body {
   flex: none;
 }
 .local-rail-link[aria-current="page"] .local-rail-glyph {
-  color: #2e6b40;
+  color: var(--status-positive);
 }
 :root[data-theme="dark"] .local-rail-link[aria-current="page"] .local-rail-glyph {
-  color: #8ed07a;
+  color: var(--status-positive);
 }
 .local-rail-label {
   min-width: 0;
@@ -152,8 +126,8 @@ body {
   min-width: 1.25rem;
   padding: 0 0.35rem;
   border-radius: 999px;
-  background: #2e6b40;
-  color: #fff;
+  background: var(--status-positive);
+  color: var(--text-inverse);
   font-size: var(--text-xs);
   line-height: 1.25rem;
   text-align: center;
@@ -167,7 +141,7 @@ body {
   background: var(--status-caution);
 }
 :root[data-theme="dark"] .local-rail-badge.caution {
-  color: #1f1a15;
+  color: var(--text-inverse);
 }
 /* The inboxes nested under Inbox: a chevron folds them, each row is a link
    with a dot and a count, and a menu beside it holds what changes the inbox. */
@@ -195,16 +169,18 @@ body {
 .local-rail-fold {
   width: 1.75rem;
   height: 2.25rem;
-  font-size: var(--text-xs);
+}
+/* The chevron turns, not the button, so the hover fill stays put. */
+.local-rail-fold svg {
   transition: transform 0.15s;
 }
-.local-rail-fold[aria-expanded="false"] {
+.local-rail-fold[aria-expanded="false"] svg {
   transform: rotate(-90deg);
 }
 .local-rail-fold:hover,
 .local-rail-more:hover,
 .local-rail-more[aria-expanded="true"] {
-  background: var(--surface-hover);
+  background: var(--nav-hover);
   color: var(--text-primary);
 }
 .local-rail-more:active {
@@ -216,7 +192,7 @@ body {
   gap: 1px;
   margin: 0.125rem 0 0.375rem 1.125rem;
   padding-left: 0.5rem;
-  border-left: 1px solid var(--surface-selected);
+  border-left: 1px solid var(--nav-selected);
 }
 .local-rail-inbox {
   position: relative;
@@ -235,16 +211,16 @@ body {
   padding: 0 0.5rem;
   border-radius: var(--radius-md);
   color: var(--text-secondary);
-  font-size: var(--text-sm);
+  font-size: var(--text-base);
   text-decoration: none;
 }
 .local-rail-sub:hover {
-  background: var(--surface-hover);
+  background: var(--nav-hover);
   color: var(--text-primary);
   text-decoration: none;
 }
 .local-rail-sub[aria-current="page"] {
-  background: var(--surface-selected);
+  background: var(--nav-selected);
   color: var(--text-primary);
   font-weight: 500;
 }
@@ -302,27 +278,21 @@ body {
   flex-direction: column;
   gap: 2px;
   padding: 6px;
-  border: 1px solid var(--un-line-strong);
-  border-radius: 10px;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-lg);
   background: var(--surface-popup);
-  box-shadow: var(--un-shadow-menu);
+  box-shadow: var(--shadow-overlay);
   animation: upnext-drop 0.15s ease-out;
 }
 .local-rail-menu button {
-  padding: 8px 10px;
+  padding: 7px 10px;
   border: 0;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   background: transparent;
   color: var(--text-primary);
-  font-size: 14px;
+  font-size: var(--text-base);
   text-align: left;
   cursor: pointer;
-}
-.local-rail-menu button:hover {
-  background: var(--un-menu-hover);
-}
-.local-rail-menu button:active {
-  background: var(--un-line);
 }
 .local-rail-foot {
   display: flex;
@@ -347,8 +317,8 @@ body {
   align-items: baseline;
   justify-content: space-between;
   gap: 0.5rem;
-  font-size: 0.6875rem;
-  font-weight: 600;
+  font-size: var(--text-xs);
+  font-weight: 500;
   letter-spacing: 0.08em;
   text-transform: uppercase;
   color: var(--text-tertiary);
@@ -369,7 +339,7 @@ body {
 }
 .plan-rail-tier {
   margin-left: 0.4rem;
-  font-size: 0.6875rem;
+  font-size: var(--text-xs);
   font-weight: 400;
   color: var(--text-tertiary);
 }
@@ -383,7 +353,7 @@ body {
   flex-wrap: wrap;
   justify-content: space-between;
   column-gap: 0.5rem;
-  font-size: 0.6875rem;
+  font-size: var(--text-xs);
   color: var(--text-secondary);
 }
 .plan-rail-left {
@@ -465,9 +435,9 @@ body {
   min-width: 0;
   margin: 0.5rem 0.5rem 0.5rem 0;
   background: var(--surface-card);
-  border: 1px solid var(--panel-border);
+  border: 1px solid var(--border-default);
   border-radius: var(--panel-radius);
-  box-shadow: var(--panel-shadow);
+  box-shadow: var(--shadow-raised);
   overflow: clip;
 }
 .local-notices:not(:empty) {
@@ -588,13 +558,13 @@ body {
   border-radius: 999px;
   background: var(--surface-wash);
   color: var(--text-tertiary);
-  font-size: 11px;
+  font-size: var(--text-xs);
   line-height: 1.1rem;
   text-align: center;
   font-variant-numeric: tabular-nums;
 }
 .local-tab[aria-pressed="true"] .local-tab-count {
-  background: #e8decb;
+  background: var(--nav-hover);
   color: var(--text-secondary);
 }
 :root[data-theme="dark"] .local-tab[aria-pressed="true"] .local-tab-count {
@@ -622,7 +592,7 @@ body {
   cursor: pointer;
 }
 .local-repo-filter select:hover {
-  background-color: var(--surface-wash);
+  background-color: var(--surface-hover);
   color: var(--text-primary);
 }
 .local-icon-button {
@@ -637,11 +607,30 @@ body {
   cursor: pointer;
 }
 .local-icon-button:hover:not(:disabled) {
-  background: var(--surface-wash);
+  background: var(--surface-hover);
   color: var(--text-primary);
 }
 .local-icon-button:disabled {
   cursor: default;
+}
+/* A glyph-only control, wherever it sits: the shared focus ring, and a press
+   that shows before anything answers. */
+:is(
+  .local-icon-button,
+  .row-menu-button,
+  .local-rail-more,
+  .local-rail-fold,
+  .local-toast-close,
+  .upnext-group-toggle,
+  .local-tab
+):focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+:is(.local-icon-button, .row-menu-button, .local-toast-close, .upnext-group-toggle):not(
+  :disabled
+):active {
+  background: var(--surface-pressed);
 }
 .local-refresh[aria-busy="true"] {
   cursor: default;
@@ -661,10 +650,10 @@ body {
    between hairlines. Text around a list (`local-list-note`) keeps the
    page's gutter. */
 .local-frame:has(.local-list-page, .inbox-page) {
-  background: var(--un-panel);
+  background: var(--surface-card);
 }
 .local-frame:has(.local-list-page, .inbox-page) .local-page-bar {
-  border-bottom-color: var(--un-line);
+  border-bottom-color: var(--border-subtle);
 }
 .local-page-body.local-list-page {
   gap: 0;
@@ -689,7 +678,7 @@ body {
   display: flex;
   align-items: center;
   margin: 0;
-  border-bottom: 1px solid var(--un-hairline);
+  border-bottom: 1px solid var(--border-subtle);
   font-size: var(--text-xs);
   font-weight: 600;
 }
@@ -702,7 +691,7 @@ body {
   padding: 1.1rem 1.5rem 0.55rem;
   border: 0;
   background: none;
-  color: var(--un-ink);
+  color: var(--text-primary);
   font: inherit;
   font-weight: 600;
   text-align: left;
@@ -741,9 +730,9 @@ button.list-heading-label:hover {
   min-width: 1.25rem;
   padding: 0 0.35rem;
   border-radius: 999px;
-  background: var(--un-hairline);
+  background: var(--border-subtle);
   color: var(--text-secondary);
-  font-size: 11px;
+  font-size: var(--text-xs);
   font-weight: 400;
   line-height: 1.1rem;
   text-align: center;
@@ -766,30 +755,30 @@ button.list-heading-label:hover {
 /* A list's column names, above its rows. */
 .list-columns-head {
   padding: 0.6rem 1.5rem;
-  border-bottom: 1px solid var(--un-line);
-  color: var(--un-muted);
+  border-bottom: 1px solid var(--border-subtle);
+  color: var(--text-tertiary);
   font-size: var(--text-xs);
 }
 .list-row {
   min-width: 0;
   padding: 0.8rem 1.5rem;
-  border-bottom: 1px solid var(--un-hairline);
+  border-bottom: 1px solid var(--border-subtle);
 }
 .list-row:last-child {
   border-bottom: 0;
 }
 .list-row:hover {
-  background: var(--un-list);
+  background: var(--surface-hover);
 }
 /* The row the keyboard is on: an accent bar and a faint fill, distinct from
    the sand under the pointer. The bar marks the row, so its link drops the
    focus ring it would draw on top. */
 .list-row[data-focused] {
-  background: var(--un-list);
-  box-shadow: inset 3px 0 0 var(--un-ink);
+  background: var(--surface-sunken);
+  box-shadow: inset 3px 0 0 var(--text-primary);
 }
 .list-row[data-focused]:hover {
-  background: var(--un-hover);
+  background: var(--surface-hover);
 }
 .list-row[data-focused] a:focus-visible {
   outline: none;
@@ -798,6 +787,11 @@ button.list-heading-label:hover {
   padding: 3rem 1rem;
   text-align: center;
   color: var(--text-secondary);
+}
+/* An empty page's way forward stands clear of the sentence above it. */
+:is(.local-empty, .local-review-empty, .upnext-zero)
+  > :is(a, button, div):last-child:not(:first-child, p) {
+  margin-top: 1rem;
 }
 .local-empty h2 {
   margin: 0 0 0.25rem;
@@ -875,6 +869,21 @@ button.list-heading-label:hover {
   cursor: pointer;
   transition: background-color 0.15s;
 }
+/* A switch with its name beside it, outside a settings row. */
+.local-switch-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+.local-switch-label .local-switch {
+  margin: 0;
+}
+.local-switch-label:has(:disabled) {
+  color: var(--text-disabled);
+  cursor: not-allowed;
+}
 .local-switch::after {
   content: "";
   position: absolute;
@@ -883,8 +892,8 @@ button.list-heading-label:hover {
   width: calc(1.25rem - 4px);
   height: calc(1.25rem - 4px);
   border-radius: 50%;
-  background: #fff;
-  box-shadow: 0 1px 2px rgba(42, 29, 21, 0.2);
+  background: var(--control-thumb);
+  box-shadow: var(--shadow-raised);
   transition:
     transform 0.15s,
     background-color 0.15s;
@@ -897,10 +906,19 @@ button.list-heading-label:hover {
   transform: translateX(1rem);
 }
 .local-switch:disabled {
-  opacity: 0.6;
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.local-switch:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
 }
 .local-page-actions button:disabled {
-  opacity: 0.45;
+  opacity: 0.5;
+}
+.local-field:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
 }
 .local-field {
   border: 1px solid var(--border-default);
@@ -930,15 +948,15 @@ select.local-field {
   cursor: pointer;
 }
 /* Pull requests: the hosted Focus rows with local evidence columns, drawn
-   as the Up next design's live table, in the Inbox's palette (`--un-*`).
+   as the Up next design's live table, in the shared palette.
    The page's tabs key the panel, so loading and empty views match it. */
 .local-frame:has(.local-tabs) {
-  background: var(--un-panel);
+  background: var(--surface-card);
 }
 .local-inbox {
   min-width: 0;
-  background: var(--un-panel);
-  border-bottom: 1px solid var(--un-line);
+  background: var(--surface-card);
+  border-bottom: 1px solid var(--border-subtle);
 }
 .inbox-columns {
   display: grid;
@@ -961,7 +979,7 @@ select.local-field {
 }
 @keyframes inbox-flash {
   from {
-    background: var(--un-primary);
+    background: var(--status-positive-bg);
   }
 }
 @media (prefers-reduced-motion: reduce) {
@@ -1013,7 +1031,7 @@ select.local-field {
   border-radius: 999px;
   background: var(--status-caution-bg);
   color: var(--status-caution);
-  font-size: 11px;
+  font-size: var(--text-xs);
   line-height: 1.1rem;
 }
 .inbox-cell-label {
@@ -1032,29 +1050,6 @@ select.local-field {
    more status pill; Fix's agent mark takes the broken state's colour. Merge stays out
    of the way until the row is pointed at or focused; a touch screen has no
    pointer, so it stays drawn there. */
-.inbox-action {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.3rem;
-  height: 1.625rem;
-  padding: 0 0.6rem;
-  border: 1px solid var(--border-default);
-  border-radius: var(--radius-md);
-  background: var(--surface-card);
-  box-shadow: 0 1px 1px rgb(0 0 0 / 6%);
-  color: var(--text-primary);
-  font-size: 12px;
-  font-weight: 500;
-  white-space: nowrap;
-  cursor: pointer;
-}
-.inbox-action:hover {
-  background: var(--action-secondary-hover);
-}
-.inbox-action:active {
-  box-shadow: none;
-  transform: translateY(1px);
-}
 /* The row's ⋯ sits at its end: in its own column in the wide table, and in
    the row's top right corner once the columns fold under the title, which
    leaves it room. */
@@ -1078,9 +1073,9 @@ select.local-field {
   grid-column: 3 / -1;
   container-type: inline-size;
   margin: 0.35rem 0 0.25rem;
-  border: 1px solid var(--un-line);
-  border-radius: 10px;
-  background: var(--un-card);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  background: var(--surface-card);
   animation: upnext-rise 0.2s ease-out;
 }
 @media (prefers-reduced-motion: reduce) {
@@ -1094,9 +1089,9 @@ select.local-field {
 }
 .inbox-peek-panel h3 {
   margin: 0;
-  color: var(--un-muted);
-  font-size: 11px;
-  font-weight: 600;
+  color: var(--text-tertiary);
+  font-size: var(--text-xs);
+  font-weight: 500;
   letter-spacing: 0.08em;
   text-transform: uppercase;
 }
@@ -1110,7 +1105,7 @@ select.local-field {
 .inbox-peek-summary > p {
   max-width: 68ch;
   margin: 0;
-  color: var(--un-ink);
+  color: var(--text-primary);
   font-size: var(--text-xs);
   line-height: 1.6;
 }
@@ -1120,14 +1115,14 @@ select.local-field {
   gap: 0.5rem;
   min-width: 0;
   padding: 1rem 1.25rem 1.125rem;
-  border-left: 1px solid var(--un-hairline);
+  border-left: 1px solid var(--border-subtle);
 }
 @container (max-width: 40rem) {
   .inbox-peek-body {
     grid-template-columns: minmax(0, 1fr);
   }
   .inbox-peek-changes {
-    border-top: 1px solid var(--un-hairline);
+    border-top: 1px solid var(--border-subtle);
     border-left: 0;
   }
 }
@@ -1144,8 +1139,8 @@ select.local-field {
   align-items: baseline;
   column-gap: 0.75rem;
   padding: 0.375rem 0;
-  border-bottom: 1px solid var(--un-hairline);
-  color: var(--un-ink);
+  border-bottom: 1px solid var(--border-subtle);
+  color: var(--text-primary);
   font-size: var(--text-xs);
   line-height: 1.4;
 }
@@ -1160,11 +1155,11 @@ select.local-field {
   line-clamp: 2;
 }
 .inbox-peek-changes li > span:last-child {
-  font-size: 11px;
+  font-size: var(--text-xs);
 }
 .inbox-peek-more {
   margin: 0;
-  color: var(--un-muted);
+  color: var(--text-tertiary);
   font-size: var(--text-xs);
 }
 .inbox-peek-actions {
@@ -1189,8 +1184,8 @@ select.local-field {
   align-items: center;
   gap: 0.625rem;
   padding: 0.5rem 1.5rem;
-  background: var(--un-toast-bg);
-  color: var(--un-toast-ink);
+  background: var(--surface-inverse);
+  color: var(--text-inverse);
   font-size: var(--text-xs);
   animation: upnext-rise 0.2s ease-out;
 }
@@ -1200,32 +1195,34 @@ select.local-field {
 .inbox-bulk {
   height: 1.75rem;
   padding: 0 0.625rem;
-  border: 1px solid var(--un-toast-line);
-  border-radius: 5px;
-  background: var(--un-toast-button);
-  color: var(--un-toast-ink);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  background: var(--surface-inverse-hover);
+  color: var(--text-inverse);
   font: inherit;
-  font-weight: 600;
+  font-size: var(--text-xs);
+  font-weight: 500;
+  white-space: nowrap;
   cursor: pointer;
 }
 .inbox-bulk:hover:not(:disabled) {
-  border-color: var(--un-toast-ink);
+  border-color: var(--text-inverse);
 }
 .inbox-bulk:active:not(:disabled) {
   transform: translateY(1px);
 }
 .inbox-bulk:disabled {
   cursor: default;
-  opacity: 0.45;
+  opacity: 0.5;
 }
 .inbox-bulk:focus-visible {
-  outline: 2px solid var(--un-toast-ink);
+  outline: 2px solid var(--text-inverse);
   outline-offset: 2px;
 }
 .inbox-bulk-merge {
-  border-color: var(--un-done);
-  background: var(--un-done);
-  color: var(--un-on-hot);
+  border-color: var(--status-positive);
+  background: var(--status-positive);
+  color: var(--text-inverse);
 }
 .inbox-bulk-clear {
   margin-left: auto;
@@ -1246,12 +1243,6 @@ select.local-field {
   height: 0.5rem;
   border-radius: 50%;
   background: var(--status-positive);
-}
-.inbox-updated-mark.busy {
-  border: 1.5px solid var(--text-tertiary);
-  border-right-color: transparent;
-  background: none;
-  animation: local-spin 0.9s linear infinite;
 }
 .merge-methods {
   display: grid;
@@ -1355,19 +1346,16 @@ dialog {
   margin: auto;
   background: var(--surface-popup);
   color: var(--text-primary);
-  border: 1px solid var(--panel-border);
+  border: 1px solid var(--border-default);
   border-radius: var(--radius-lg);
-  box-shadow: 0 12px 40px rgba(42, 29, 21, 0.18);
+  box-shadow: var(--shadow-overlay);
   padding: 1.5rem;
   max-width: calc(100vw - 2rem);
   width: 36rem;
 }
-/* On the paper, a menu row warms as any hovered row does. */
-:root:not([data-theme="dark"]) .upnext-menu {
-  --un-menu-hover: var(--surface-hover);
-}
+
 dialog::backdrop {
-  background: rgba(42, 29, 21, 0.35);
+  background: var(--surface-scrim);
 }
 @media (width >= 64rem) {
   html:has([data-review-page]) {
@@ -1384,7 +1372,7 @@ dialog::backdrop {
   padding: 0 0.35rem;
   border-radius: 999px;
   background: var(--status-critical);
-  color: #fff;
+  color: var(--text-inverse);
   font-size: var(--text-xs);
   line-height: 1.25rem;
   text-align: center;
@@ -1416,8 +1404,8 @@ dialog.local-dialog-wide {
   margin: 0;
   padding: 0.5rem 0.75rem;
   border-radius: var(--radius-md);
-  background: #f8efdc;
-  color: #6b4a1f;
+  background: var(--status-caution-bg);
+  color: var(--status-caution);
   font-size: var(--text-xs);
   display: flex;
   flex-wrap: wrap;
@@ -1435,8 +1423,8 @@ dialog.local-dialog-wide {
   text-underline-offset: 2px;
 }
 :root[data-theme="dark"] .local-notice {
-  background: #2a2214;
-  color: #e9cf9a;
+  background: var(--status-caution-bg);
+  color: var(--status-caution);
 }
 .local-notice-action a {
   font-weight: 600;
@@ -1464,7 +1452,7 @@ dialog.local-dialog-wide {
 /* The picker opens above the list, ruled off from it. */
 .local-repo-adding {
   padding-bottom: 1.25rem;
-  border-bottom: 1px solid var(--un-line);
+  border-bottom: 1px solid var(--border-subtle);
 }
 .local-repo-row h3 {
   margin: 0;
@@ -1508,23 +1496,6 @@ dialog.local-dialog-wide {
 .local-repo-panel {
   grid-column: 1 / -1;
   margin: 0;
-}
-/* Outside the picker, clone actions are the app's secondary buttons, the
-   same size as the row's Settings beside them. */
-.local-repo-panel .repository-buttons > button,
-.local-review-empty .repository-buttons > button {
-  height: 2rem;
-  padding: 0 0.875rem;
-  border-color: var(--border-default);
-  border-radius: var(--radius-md);
-  background: var(--surface-card);
-  color: var(--text-primary);
-  font-size: var(--text-base);
-  font-weight: 500;
-}
-.local-repo-panel .repository-buttons > button:hover:not(:disabled),
-.local-review-empty .repository-buttons > button:hover:not(:disabled) {
-  background: var(--action-secondary-hover);
 }
 .local-repo-clones {
   display: grid;
@@ -1599,19 +1570,6 @@ dialog.local-dialog-wide {
 .local-job-state.stopped,
 .local-job-state.waiting {
   color: var(--text-tertiary);
-}
-.local-spin {
-  animation: local-spin 1.4s linear infinite;
-}
-@keyframes local-spin {
-  to {
-    transform: rotate(360deg);
-  }
-}
-@media (prefers-reduced-motion: reduce) {
-  .local-spin {
-    animation: none;
-  }
 }
 .local-job-title {
   overflow-wrap: anywhere;
@@ -1697,25 +1655,25 @@ dialog.local-dialog-wide {
   color: var(--text-tertiary);
 }
 .local-add-hint.ok {
-  color: #24562f;
+  color: var(--status-positive);
 }
 /* The review's place before there is one: generating, failed or empty. */
 .local-review-empty {
   display: grid;
   justify-items: center;
-  gap: 0.75rem;
-  padding: 3.5rem 1.5rem;
+  gap: 0.25rem;
+  padding: 3rem 1rem;
   text-align: center;
+  color: var(--text-secondary);
 }
 .local-review-empty h2 {
   margin: 0;
   font-size: var(--text-base);
   font-weight: 600;
+  color: var(--text-primary);
 }
 .local-review-empty > p {
-  margin: -0.25rem 0 0;
-  font-size: var(--text-xs);
-  color: var(--text-tertiary);
+  margin: 0;
 }
 .local-outcome {
   display: grid;
@@ -1815,7 +1773,7 @@ dialog.local-dialog-wide {
   padding-left: 0.75rem;
   padding-right: 0.75rem;
   border-radius: var(--radius-md);
-  background: var(--surface-selected, #f5ecdb);
+  background: var(--surface-selected);
 }
 
 /* Settings is drawn as Up next is: the sections in a sand list down the
@@ -1827,7 +1785,7 @@ dialog.local-dialog-wide {
 }
 .local-frame:has(.settings-page) {
   min-height: 0;
-  background: var(--un-panel);
+  background: var(--surface-card);
 }
 .local-main:has(.settings-page) {
   display: flex;
@@ -1841,10 +1799,10 @@ dialog.local-dialog-wide {
   flex: 1;
   flex-direction: column;
   min-height: 0;
-  color: var(--un-ink);
+  color: var(--text-primary);
 }
 .settings-page .local-page-bar {
-  border-bottom-color: var(--un-line);
+  border-bottom-color: var(--border-subtle);
 }
 .settings-layout {
   flex: 1;
@@ -1860,8 +1818,8 @@ dialog.local-dialog-wide {
   min-height: 0;
   padding: 10px 8px;
   overflow: auto;
-  border-right: 1px solid var(--un-line);
-  background: var(--un-list);
+  border-right: 1px solid var(--border-subtle);
+  background: var(--surface-sunken);
 }
 .settings-nav-item {
   display: flex;
@@ -1872,15 +1830,15 @@ dialog.local-dialog-wide {
   width: 100%;
   padding: 9px 10px;
   border: 0;
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   background: transparent;
-  color: var(--un-ink);
+  color: var(--text-primary);
   text-align: left;
   font: inherit;
   cursor: pointer;
 }
 .settings-nav-item:hover {
-  background: var(--nav-hover);
+  background: var(--surface-hover);
 }
 .settings-nav-item:active {
   transform: translateY(1px);
@@ -1898,15 +1856,15 @@ dialog.local-dialog-wide {
   min-width: 0;
 }
 .settings-nav-label {
-  font-size: 14px;
+  font-size: var(--text-base);
 }
 .settings-nav-item[aria-current="page"] .settings-nav-label {
   font-weight: 500;
 }
 .settings-nav-sub {
   overflow: hidden;
-  font-size: 12px;
-  color: var(--un-muted);
+  font-size: var(--text-xs);
+  color: var(--text-tertiary);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -1926,22 +1884,12 @@ dialog.local-dialog-wide {
 .settings-dot[data-tone="critical"] {
   background: var(--status-critical);
 }
-/* A section's controls are drawn in the panel's warm paper rather than
-   white: fields, buttons and the segmented control's chosen tile, on a sand
-   track. The keys step through them, so each shows where the focus is, in a
-   warm grey rather than the app's green ring. */
+/* Settings use the theme's shared control, surface and focus tokens. */
 .settings-content {
-  --surface-card: var(--un-panel);
-  --border-default: var(--un-line);
-  --action-secondary-hover: var(--nav-hover);
-  --focus-ring: 0 0 0 2px var(--un-list), 0 0 0 4px var(--border-strong);
   min-width: 0;
   min-height: 0;
   padding: 30px 40px 80px;
   overflow: auto;
-}
-:root:not([data-theme="dark"]) .settings-content {
-  --surface-sunken: var(--nav-hover);
 }
 .settings-content > * {
   max-width: 780px;
@@ -1953,8 +1901,8 @@ dialog.local-dialog-wide {
 /* Panels take the section list's sand rather than white, which is harsh
    beside the warm panel they sit on. */
 .settings-content .local-panel {
-  border-color: var(--un-line);
-  background: var(--un-list);
+  border-color: var(--border-subtle);
+  background: var(--surface-sunken);
 }
 .settings-section {
   display: grid;
@@ -1977,7 +1925,7 @@ dialog.local-dialog-wide {
 }
 .settings-section-head p {
   margin: 0.25rem 0 0;
-  color: var(--un-ink-soft);
+  color: var(--text-secondary);
 }
 .settings-saved {
   margin: 0;
@@ -1997,7 +1945,7 @@ dialog.local-dialog-wide {
   padding: 0.875rem 1.25rem;
 }
 .settings-row + .settings-row {
-  border-top: 1px solid var(--un-hairline);
+  border-top: 1px solid var(--border-subtle);
 }
 .settings-row-text {
   display: grid;
@@ -2011,7 +1959,7 @@ dialog.local-dialog-wide {
 }
 .settings-row-detail {
   font-size: var(--text-xs);
-  color: var(--un-ink-soft);
+  color: var(--text-secondary);
 }
 .settings-row-control {
   display: flex;
@@ -2032,7 +1980,7 @@ dialog.local-dialog-wide {
 .settings-footnote {
   margin: 0;
   font-size: var(--text-xs);
-  color: var(--un-muted);
+  color: var(--text-tertiary);
 }
 @media (max-width: 760px) {
   .settings-layout {
@@ -2043,7 +1991,7 @@ dialog.local-dialog-wide {
     flex-direction: row;
     overflow-x: auto;
     border-right: 0;
-    border-bottom: 1px solid var(--un-line);
+    border-bottom: 1px solid var(--border-subtle);
   }
   .settings-content {
     padding: 20px 16px 48px;
@@ -2118,7 +2066,7 @@ dialog.local-dialog-wide {
   background: var(--surface-wash);
   color: var(--text-secondary);
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: var(--text-xs);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -2164,7 +2112,7 @@ a.local-session-pr:hover {
 .local-session-focus-note {
   flex-basis: 100%;
   color: var(--text-secondary);
-  font-size: 12px;
+  font-size: var(--text-xs);
 }
 .local-page-actions .local-session-focus-note {
   max-width: 24rem;
@@ -2329,7 +2277,7 @@ a.local-session-pr:hover {
 /* Needs you is the one section asking something of the reader: its edge and
    count take the caution colour the sidebar badge uses. */
 .local-needs {
-  border-color: color-mix(in srgb, var(--status-caution) 45%, var(--panel-border));
+  border-color: color-mix(in srgb, var(--status-caution) 45%, var(--border-default));
 }
 .local-needs .local-sessions-count {
   background: var(--status-caution-bg);
@@ -2405,33 +2353,13 @@ a.local-session-pr:hover {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-/* The Sessions page as a live feed: Needs you, Running now and Ended
-   recently, each a list (`ListSection`), its controls in the panel's paper,
-   in the Inbox's palette (`--un-*`) rather than white. */
+/* The live session feed shares the app palette. */
 .local-feed {
-  --text-primary: var(--un-ink);
-  --text-secondary: var(--un-ink-soft);
-  --text-tertiary: var(--un-muted);
-  --surface-card: var(--un-panel);
-  --surface-sunken: var(--un-hairline);
-  --surface-wash: var(--un-hairline);
-  --border-default: var(--un-line-strong);
-  --border-subtle: var(--un-line);
-  --action-secondary-hover: var(--un-hover);
-  --feed-read: #24405f;
-  --feed-edit: #6b4a12;
-  --feed-bash: #1f4d20;
-  --feed-ask-ink: #a86512;
   display: flex;
   flex-direction: column;
   min-width: 0;
 }
-:root[data-theme="dark"] .local-feed {
-  --feed-read: #9ec1e8;
-  --feed-edit: #f0c872;
-  --feed-bash: #9fd49a;
-  --feed-ask-ink: #e8b866;
-}
+
 .local-feed-section {
   display: flex;
   flex-direction: column;
@@ -2451,7 +2379,7 @@ a.local-session-pr:hover {
   flex-direction: column;
   gap: 0.3rem;
   overflow-wrap: anywhere;
-  color: var(--un-ink);
+  color: var(--text-primary);
   animation: local-feed-rise 0.3s ease-out;
 }
 .local-feed-card.compact {
@@ -2533,34 +2461,40 @@ a.local-session-pr:hover {
   min-width: 200px;
   max-width: 320px;
   padding: 6px;
-  border: 1px solid var(--un-line-strong);
-  border-radius: 10px;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-lg);
   background: var(--surface-popup);
-  box-shadow: var(--un-shadow-menu);
+  box-shadow: var(--shadow-overlay);
   animation: upnext-drop 0.12s ease-out;
 }
 .context-menu button {
   padding: 7px 10px;
   border: 0;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   background: transparent;
-  color: var(--un-ink);
+  color: var(--text-primary);
   font: inherit;
-  font-size: 14px;
+  font-size: var(--text-base);
   text-align: left;
   cursor: pointer;
 }
-.context-menu button:is(:hover, :focus-visible) {
+/* Every menu's items answer the pointer, the keyboard and a press alike. */
+:is(.context-menu, .local-rail-menu, .upnext-menu)
+  button:not(:disabled):is(:hover, :focus-visible) {
   outline: none;
-  background: var(--un-menu-hover);
+  background: var(--surface-hover);
+}
+:is(.context-menu, .local-rail-menu, .upnext-menu) button:not(:disabled):active {
+  background: var(--surface-pressed);
+  transform: none;
 }
 .context-menu button.danger {
   color: var(--status-critical);
 }
 .context-menu kbd {
-  color: var(--un-faint);
+  color: var(--text-disabled);
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: var(--text-xs);
 }
 .context-menu button {
   display: flex;
@@ -2579,13 +2513,13 @@ a.local-session-pr:hover {
   display: inline-flex;
   flex: none;
   width: 14px;
-  color: var(--un-ink);
+  color: var(--text-primary);
 }
 /* What stops or removes something sits apart, below the rest. */
 .context-menu-separator {
   height: 1px;
   margin: 4px 2px;
-  background: var(--un-line);
+  background: var(--border-subtle);
 }
 /* A row's ⋯: the list's one way to the row's actions, beside a right click
    and ⌘. on the row. A quiet square at the row's end, shown while the row is
@@ -2607,12 +2541,12 @@ a.local-session-pr:hover {
 }
 .row-menu-button:hover,
 .row-menu-button[aria-expanded="true"] {
-  background: var(--un-hover);
+  background: var(--surface-hover);
   color: var(--text-primary);
 }
 .row-menu-button:focus-visible {
-  outline: 2px solid var(--un-focus);
-  outline-offset: 1px;
+  outline: none;
+  box-shadow: var(--focus-ring);
 }
 @media (hover: hover) {
   .row-menu-button {
@@ -2642,12 +2576,12 @@ a.local-session-pr:hover {
 .local-feed-branch {
   min-width: 0;
   overflow: hidden;
-  color: var(--un-muted);
+  color: var(--text-tertiary);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 .local-feed-agent {
-  color: var(--un-muted);
+  color: var(--text-tertiary);
   font-size: var(--text-xs);
   font-weight: 600;
 }
@@ -2672,13 +2606,13 @@ a.local-session-pr:hover {
   font-weight: 500;
 }
 .local-feed-status.waiting {
-  color: var(--un-working);
+  color: var(--status-caution);
 }
 .local-feed-status.quiet {
-  color: var(--un-muted);
+  color: var(--text-tertiary);
 }
 .local-feed-ask .local-feed-time {
-  color: var(--feed-ask-ink);
+  color: var(--status-caution);
 }
 .local-feed-where,
 .local-feed-note,
@@ -2689,13 +2623,13 @@ a.local-session-pr:hover {
   margin: 0;
 }
 .local-feed-where {
-  color: var(--un-muted);
-  font-size: 14px;
+  color: var(--text-tertiary);
+  font-size: var(--text-base);
   line-height: 1.5;
 }
 .local-feed-mono {
   font-family: var(--font-mono);
-  font-size: 12.5px;
+  font-size: var(--text-xs);
 }
 .local-feed-quote {
   display: -webkit-box;
@@ -2705,14 +2639,14 @@ a.local-session-pr:hover {
   padding-left: 0.625rem;
   border-left: 2px solid var(--border-subtle);
   color: var(--text-secondary);
-  font-size: 13.5px;
+  font-size: var(--text-xs);
   line-height: 1.5;
 }
 /* What the user last typed, on one line above what the agent did with it. */
 .local-feed-prompt {
   overflow: hidden;
   margin: 0;
-  color: var(--un-ink-soft);
+  color: var(--text-secondary);
   font-size: var(--text-xs);
   line-height: 1.5;
   text-overflow: ellipsis;
@@ -2720,7 +2654,7 @@ a.local-session-pr:hover {
 }
 .local-feed-prompt-label {
   margin-right: 0.25rem;
-  color: var(--un-muted);
+  color: var(--text-tertiary);
   font-size: var(--text-xs);
   font-weight: 600;
 }
@@ -2731,16 +2665,16 @@ a.local-session-pr:hover {
   overflow: hidden;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;
-  color: var(--un-muted);
+  color: var(--text-tertiary);
   font-size: var(--text-xs);
   line-height: 1.5;
 }
 .local-feed-soft strong {
-  color: var(--un-ink);
+  color: var(--text-primary);
   font-weight: 600;
 }
 :is(.local-feed-soft, .local-feed-quote) code {
-  font-size: 12.5px;
+  font-size: var(--text-xs);
 }
 .local-feed-note {
   color: var(--text-secondary);
@@ -2761,10 +2695,10 @@ a.local-session-pr:hover {
   padding: 0.625rem 0.75rem;
   overflow: auto;
   border-radius: var(--radius-md);
-  background: #1f1a15;
-  color: #f1e9da;
+  background: var(--text-primary);
+  color: var(--text-inverse);
   font-family: var(--font-mono);
-  font-size: 13px;
+  font-size: var(--text-xs);
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
@@ -2776,11 +2710,12 @@ a.local-session-pr:hover {
 }
 :root[data-theme="dark"] .local-feed-code {
   border: 1px solid var(--border-default);
-  background: #0c0c0c;
+  background: var(--surface-sunken);
+  color: var(--text-primary);
 }
 .local-feed-code.command::before {
   content: "$ ";
-  color: #a89c8b;
+  color: var(--text-tertiary);
 }
 .local-feed-row {
   color: var(--text-secondary);
@@ -2796,11 +2731,8 @@ a.local-session-pr:hover {
   align-items: center;
   gap: 0.5rem;
 }
-.local-feed-actions .inbox-action {
-  margin-left: 0;
-}
 .local-feed-card button:disabled {
-  opacity: 0.6;
+  opacity: 0.5;
   cursor: default;
 }
 /* What a request asks, in the row's own type, then its choices: a small
@@ -2812,13 +2744,13 @@ a.local-session-pr:hover {
   margin-top: 0.25rem;
 }
 .local-feed-ask-text {
-  color: var(--un-ink);
+  color: var(--text-primary);
   font-size: var(--text-xs);
   font-weight: 500;
   line-height: 1.5;
 }
 .local-feed-ask-header {
-  color: var(--un-muted);
+  color: var(--text-tertiary);
   font-weight: 400;
 }
 .local-feed-choices {
@@ -2841,7 +2773,7 @@ a.local-session-pr:hover {
   border: 0;
   border-radius: var(--radius-sm);
   background: transparent;
-  color: var(--un-ink);
+  color: var(--text-primary);
   font: inherit;
   font-size: var(--text-xs);
   text-align: left;
@@ -2849,17 +2781,17 @@ a.local-session-pr:hover {
 }
 .local-feed-choice:is(:hover, :focus-visible):not(:disabled) {
   outline: none;
-  background: var(--un-hover);
+  background: var(--surface-hover);
 }
 .local-feed-choice:active:not(:disabled) {
-  background: var(--un-line);
+  background: var(--border-subtle);
 }
 .local-feed-choice:disabled {
-  opacity: 0.55;
+  opacity: 0.5;
   cursor: default;
 }
 .local-feed-choice[aria-pressed="true"] {
-  background: var(--un-primary);
+  background: var(--status-positive-bg);
 }
 .local-feed-key {
   display: inline-grid;
@@ -2868,20 +2800,20 @@ a.local-session-pr:hover {
   align-self: center;
   min-width: 1.125rem;
   height: 1.125rem;
-  border: 1px solid var(--un-line-strong);
-  border-radius: 4px;
-  background: var(--un-panel);
-  color: var(--un-muted);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-xs);
+  background: var(--surface-card);
+  color: var(--text-tertiary);
   font-family: var(--font-mono);
-  font-size: 10.5px;
+  font-size: var(--text-xs);
   line-height: 1;
 }
 .local-feed-key:empty {
   visibility: hidden;
 }
 .local-feed-choice[aria-pressed="true"] .local-feed-key {
-  border-color: var(--un-primary-line);
-  color: var(--un-on-primary);
+  border-color: var(--status-positive-border);
+  color: var(--status-positive);
 }
 .local-feed-choice-label {
   flex: none;
@@ -2891,29 +2823,29 @@ a.local-session-pr:hover {
 }
 .local-feed-choice-note {
   min-width: 0;
-  color: var(--un-muted);
+  color: var(--text-tertiary);
   overflow-wrap: anywhere;
 }
 .local-feed-choice.danger .local-feed-choice-label {
   color: var(--status-critical);
 }
 .local-feed-choice.quiet .local-feed-choice-label {
-  color: var(--un-muted);
+  color: var(--text-tertiary);
   font-weight: 400;
 }
 /* A session's preview under its row (Space): the row grown open, in its
    sand and behind its bar when it has the keys, the text under the title. */
 .local-feed-peek-row {
   padding: 0 1.5rem 0.9rem calc(1.5rem + 18px + 0.625rem);
-  border-bottom: 1px solid var(--un-hairline);
-  background: var(--un-list);
+  border-bottom: 1px solid var(--border-subtle);
+  background: var(--surface-sunken);
 }
 .local-feed-card:has(+ .local-feed-peek-row) {
   border-bottom: 0;
-  background: var(--un-list);
+  background: var(--surface-sunken);
 }
 .local-feed-card[data-focused] + .local-feed-peek-row {
-  box-shadow: inset 3px 0 0 var(--un-ink);
+  box-shadow: inset 3px 0 0 var(--text-primary);
 }
 .local-feed-peek {
   display: grid;
@@ -2926,8 +2858,8 @@ a.local-session-pr:hover {
 }
 .local-feed-peek dt {
   padding-top: 0.1rem;
-  color: var(--un-muted);
-  font-size: 11px;
+  color: var(--text-tertiary);
+  font-size: var(--text-xs);
   font-weight: 600;
 }
 .local-feed-peek dd {
@@ -2939,7 +2871,7 @@ a.local-session-pr:hover {
   overflow: hidden;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;
-  color: var(--un-muted);
+  color: var(--text-tertiary);
   font-size: var(--text-xs);
   line-height: 1.55;
 }
@@ -2991,7 +2923,7 @@ a.local-session-pr:hover {
   }
 }
 .local-feed-peek-said {
-  color: var(--un-ink-soft);
+  color: var(--text-secondary);
   font-size: var(--text-xs);
   line-height: 1.6;
   overflow-wrap: anywhere;
@@ -3000,24 +2932,24 @@ a.local-session-pr:hover {
   padding-left: 1.1rem;
 }
 .local-feed-peek-said strong {
-  color: var(--un-ink);
+  color: var(--text-primary);
   font-weight: 600;
 }
 .local-feed-peek-said :not(pre) > code {
   padding: 0.05rem 0.3rem;
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
   background: var(--code-fill);
-  font-size: 12px;
+  font-size: var(--text-xs);
 }
 .local-feed-peek-said pre {
   padding: 0.5rem 0.75rem;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   background: var(--code-fill);
-  font-size: 12px;
+  font-size: var(--text-xs);
   line-height: 1.5;
 }
 .local-feed-peek-said pre code {
-  font-size: 12px;
+  font-size: var(--text-xs);
 }
 @media (prefers-reduced-motion: reduce) {
   .local-feed-peek {
@@ -3029,7 +2961,7 @@ a.local-session-pr:hover {
   display: flex;
   align-items: center;
   min-width: 0;
-  color: var(--un-ink-soft);
+  color: var(--text-secondary);
   font-size: var(--text-xs);
   line-height: 1.5;
 }
@@ -3040,14 +2972,14 @@ a.local-session-pr:hover {
   white-space: nowrap;
 }
 .local-feed-said code {
-  font-size: 12px;
+  font-size: var(--text-xs);
 }
 /* The current step in a mono strip, then the trail of the steps before. */
 .local-feed-step {
   overflow: hidden;
-  color: var(--un-ink-soft);
+  color: var(--text-secondary);
   font-family: var(--font-mono);
-  font-size: 12px;
+  font-size: var(--text-xs);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -3055,13 +2987,13 @@ a.local-session-pr:hover {
   font-weight: 600;
 }
 .local-feed-tool.read {
-  color: var(--feed-read);
+  color: var(--syntax-token-function);
 }
 .local-feed-tool.edit {
-  color: var(--feed-edit);
+  color: var(--status-caution);
 }
 .local-feed-tool.bash {
-  color: var(--feed-bash);
+  color: var(--status-positive);
 }
 .local-feed-sub {
   color: var(--text-secondary);
@@ -3077,14 +3009,14 @@ a.local-session-pr:hover {
   max-width: 44rem;
   margin-top: 0.25rem;
   padding: 0.25rem 0.25rem 0.25rem 0.75rem;
-  border: 1px solid var(--un-line-strong);
+  border: 1px solid var(--border-default);
   border-radius: var(--radius-md);
-  background: var(--un-panel);
+  background: var(--surface-card);
 }
 /* Ringed in the sand of secondary things, not the green of the Send in it. */
 .local-feed-compose:focus-within {
-  border-color: var(--un-mark);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--un-mark) 28%, transparent);
+  border-color: var(--text-disabled);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--text-disabled) 28%, transparent);
 }
 .local-feed-compose input {
   flex: 1;
@@ -3094,12 +3026,12 @@ a.local-session-pr:hover {
   border: 0;
   outline: none;
   background: transparent;
-  color: var(--un-ink);
+  color: var(--text-primary);
   font: inherit;
   font-size: var(--text-xs);
 }
 .local-feed-compose input::placeholder {
-  color: var(--un-faint);
+  color: var(--text-disabled);
 }
 .local-feed-send-button {
   display: grid;
@@ -3110,20 +3042,20 @@ a.local-session-pr:hover {
   padding: 0;
   border: 0;
   border-radius: var(--radius-sm);
-  background: var(--un-done);
-  box-shadow: var(--un-shadow-primary);
-  color: var(--un-on-hot);
+  background: var(--action-primary);
+  box-shadow: var(--shadow-raised);
+  color: var(--text-inverse);
   cursor: pointer;
 }
 .local-feed-send-button:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--un-done) 88%, black);
+  background: var(--action-primary-hover);
 }
 .local-feed-send-button:active:not(:disabled) {
   box-shadow: none;
   transform: translateY(1px);
 }
 .local-feed-send-button:disabled {
-  opacity: 0.4;
+  opacity: 0.5;
   cursor: default;
 }
 .local-feed-send-button[aria-busy] {
@@ -3131,8 +3063,8 @@ a.local-session-pr:hover {
 }
 .local-feed-compose-hint {
   flex: none;
-  color: var(--un-faint);
-  font-size: 11px;
+  color: var(--text-disabled);
+  font-size: var(--text-xs);
   white-space: nowrap;
 }
 @media (width < 40rem) {
@@ -3160,7 +3092,7 @@ a.local-session-pr:hover {
   padding: 0;
   border: 0;
   background: none;
-  color: var(--un-muted);
+  color: var(--text-tertiary);
 }
 .local-feed .local-sessions-empty {
   padding: 0.8rem 1.5rem;
@@ -3178,21 +3110,21 @@ a.local-session-pr:hover {
   gap: 10px;
   width: min(26rem, calc(100vw - var(--rail-width) - 2rem));
   padding: 12px 10px 12px 14px;
-  border: 1px solid var(--un-line-strong);
-  border-radius: 10px;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-lg);
   background: var(--surface-popup);
-  box-shadow: var(--un-shadow-menu);
-  color: var(--un-ink);
+  box-shadow: var(--shadow-overlay);
+  color: var(--text-primary);
   transform: translateX(-50%);
   animation: local-toast-rise 0.2s ease-out;
 }
 .local-toast-icon {
   flex: none;
   margin-top: 1px;
-  color: var(--un-done);
+  color: var(--status-positive);
 }
 .local-toast.error .local-toast-icon {
-  color: var(--un-hot);
+  color: var(--status-critical);
 }
 .local-toast-body {
   flex: 1;
@@ -3202,7 +3134,7 @@ a.local-session-pr:hover {
   margin: 0;
 }
 .local-toast-title {
-  font-size: 14px;
+  font-size: var(--text-base);
   font-weight: 600;
   overflow-wrap: anywhere;
 }
@@ -3212,15 +3144,15 @@ a.local-session-pr:hover {
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;
   margin-top: 2px !important;
-  color: var(--un-ink-soft);
-  font-size: 13px;
+  color: var(--text-secondary);
+  font-size: var(--text-xs);
   line-height: 1.45;
   overflow-wrap: anywhere;
 }
 .local-toast-context {
   margin-top: 6px !important;
-  color: var(--un-muted);
-  font-size: 12px;
+  color: var(--text-tertiary);
+  font-size: var(--text-xs);
 }
 .local-toast-context {
   display: flex;
@@ -3228,24 +3160,12 @@ a.local-session-pr:hover {
   gap: 6px;
   min-width: 0;
 }
-.local-toast-context img {
+.local-toast-context svg {
   flex: none;
 }
 .local-toast-action {
   flex: none;
   align-self: center;
-  padding: 5px 12px;
-  border: 1px solid var(--un-line-strong);
-  border-radius: 6px;
-  background: var(--un-panel);
-  box-shadow: var(--un-shadow-button);
-  color: var(--un-ink);
-  font-size: 13px;
-  font-weight: 600;
-  cursor: pointer;
-}
-.local-toast-action:hover {
-  background: var(--un-hover);
 }
 .local-toast-close {
   display: grid;
@@ -3262,7 +3182,7 @@ a.local-session-pr:hover {
   cursor: pointer;
 }
 .local-toast-close:hover {
-  background: var(--un-hover);
+  background: var(--surface-hover);
   opacity: 1;
 }
 @keyframes local-toast-rise {
@@ -3294,29 +3214,16 @@ a.local-session-pr:hover {
   }
 }
 
-/* A session's transcript, on the Sessions page's paper: its panels drawn in
-   the inbox's palette (`--un-*`) on the paper itself, not white. */
+/* A session transcript uses the same surfaces as the session list. */
 .local-frame:has(.local-session-page) {
-  background: var(--un-panel);
+  background: var(--surface-card);
 }
 .local-frame:has(.local-session-page) .local-page-bar {
-  border-bottom-color: var(--un-line);
+  border-bottom-color: var(--border-subtle);
 }
-.local-session-page,
-.local-session-top {
-  --text-primary: var(--un-ink);
-  --text-secondary: var(--un-ink-soft);
-  --text-tertiary: var(--un-muted);
-  --surface-card: var(--un-panel);
-  --surface-sunken: var(--un-hairline);
-  --surface-wash: var(--un-hairline);
-  --border-default: var(--un-line-strong);
-  --border-strong: var(--un-line-strong);
-  --border-subtle: var(--un-line);
-  --action-secondary-hover: var(--un-hover);
-}
+
 .local-session-page .local-panel {
-  border-color: var(--un-line);
+  border-color: var(--border-subtle);
 }
 /* The page reads as a document: one column held to a reading measure, under
    the bar and the session, which stay at the top of the panel. */
@@ -3324,8 +3231,8 @@ a.local-session-pr:hover {
   position: sticky;
   z-index: 3;
   top: 0;
-  background: var(--un-panel);
-  border-bottom: 1px solid var(--un-line);
+  background: var(--surface-card);
+  border-bottom: 1px solid var(--border-subtle);
 }
 .local-session-top .local-page-bar {
   border-bottom: 0;
@@ -3354,7 +3261,7 @@ dialog.local-message-reader {
   max-height: none;
   padding: 0;
   overflow: hidden;
-  background: var(--un-panel);
+  background: var(--surface-card);
 }
 dialog.local-message-reader[open] {
   display: flex;
@@ -3364,7 +3271,7 @@ dialog.local-message-reader[open] {
   display: flex;
   justify-content: flex-end;
   padding: 0.75rem 1rem;
-  border-bottom: 1px solid var(--un-line);
+  border-bottom: 1px solid var(--border-subtle);
 }
 .local-message-reader-body {
   flex: 1;
@@ -3385,8 +3292,8 @@ dialog.local-message-reader[open] {
   z-index: 3;
   bottom: 0;
   padding: 0.75rem 1.5rem;
-  background: var(--un-panel);
-  border-top: 1px solid var(--un-line);
+  background: var(--surface-card);
+  border-top: 1px solid var(--border-subtle);
 }
 .local-reply-bar .local-feed-send {
   max-width: 42rem;
@@ -3487,11 +3394,11 @@ dialog.local-message-reader[open] {
    it. The agent's prose keeps a readable measure, its tool calls quiet beside
    it. */
 .local-frame:has(.local-job-page) {
-  background: var(--un-list);
+  background: var(--surface-sunken);
 }
 .local-job-page .local-panel {
-  border-color: var(--un-line);
-  background: var(--un-panel);
+  border-color: var(--border-subtle);
+  background: var(--surface-card);
 }
 .local-job-head {
   display: grid;
@@ -3506,7 +3413,7 @@ dialog.local-message-reader[open] {
   display: flex;
   align-items: center;
   gap: 0.5rem;
-  color: var(--un-ink);
+  color: var(--text-primary);
   font-weight: 600;
 }
 .local-job-phase a {
@@ -3514,19 +3421,19 @@ dialog.local-message-reader[open] {
 }
 .local-job-pushed {
   flex: none;
-  color: var(--un-done);
+  color: var(--status-positive);
 }
 .local-job-detail,
 .local-job-tool pre {
   max-height: 16rem;
   overflow: auto;
   padding: 0.5rem 0.75rem;
-  border: 1px solid var(--un-hairline);
+  border: 1px solid var(--border-subtle);
   border-radius: var(--radius-sm);
-  background: var(--un-list);
-  color: var(--un-ink-soft);
+  background: var(--surface-sunken);
+  color: var(--text-secondary);
   font-family: var(--font-mono, ui-monospace, monospace);
-  font-size: 12px;
+  font-size: var(--text-xs);
   line-height: 1.5;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
@@ -3535,28 +3442,28 @@ dialog.local-message-reader[open] {
 .local-job-summary,
 .local-job-message {
   max-width: 72ch;
-  color: var(--un-ink-soft);
-  font-size: 15px;
+  color: var(--text-secondary);
+  font-size: var(--text-base);
   line-height: 1.6;
   overflow-wrap: anywhere;
 }
 .local-job-summary {
   padding-top: 0.625rem;
-  border-top: 1px solid var(--un-hairline);
+  border-top: 1px solid var(--border-subtle);
 }
 .local-job-message {
-  color: var(--un-ink);
+  color: var(--text-primary);
 }
 .local-job-summary strong,
 .local-job-message strong {
-  color: var(--un-ink);
+  color: var(--text-primary);
   font-weight: 600;
 }
 /* Inline code reads as a word in the sentence, not a button. */
 .local-job-page :not(pre) > code {
   padding: 0.05em 0.3em;
   border-radius: var(--radius-xs);
-  background: var(--un-hairline);
+  background: var(--border-subtle);
   font-size: 0.84em;
 }
 .local-job-transcript {
@@ -3568,7 +3475,7 @@ dialog.local-message-reader[open] {
 }
 .local-job-reasoning {
   max-width: 72ch;
-  color: var(--un-muted);
+  color: var(--text-tertiary);
   font-size: var(--text-xs);
 }
 .local-job-reasoning summary {
@@ -3583,27 +3490,27 @@ dialog.local-message-reader[open] {
   align-items: center;
   gap: 0.5rem;
   min-width: 0;
-  color: var(--un-muted);
+  color: var(--text-tertiary);
   cursor: pointer;
   font-size: var(--text-xs);
   line-height: 1.5rem;
 }
 .local-job-tool summary:hover {
-  color: var(--un-ink);
+  color: var(--text-primary);
 }
 .local-job-tool summary svg {
   flex: none;
 }
 .local-job-tool summary strong {
   flex: none;
-  color: var(--un-ink-soft);
+  color: var(--text-secondary);
   font-weight: 600;
 }
 .local-job-tool-title {
   min-width: 0;
   overflow: hidden;
   font-family: var(--font-mono, ui-monospace, monospace);
-  font-size: 12px;
+  font-size: var(--text-xs);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -3611,7 +3518,7 @@ dialog.local-message-reader[open] {
   margin: 0.25rem 0 0.5rem 1.375rem;
 }
 .local-job-page .local-tool-done {
-  color: var(--un-faint);
+  color: var(--text-disabled);
 }
 /* A run of tool calls, set off by a rule: the latest, with the earlier ones
    folded above it. */
@@ -3619,14 +3526,14 @@ dialog.local-message-reader[open] {
   display: grid;
   gap: 0.125rem;
   padding-left: 0.75rem;
-  border-left: 2px solid var(--un-line);
+  border-left: 2px solid var(--border-subtle);
 }
 .local-job-tools-earlier > summary {
   display: flex;
   align-items: center;
   gap: 0.5rem;
   width: fit-content;
-  color: var(--un-faint);
+  color: var(--text-disabled);
   cursor: pointer;
   font-size: var(--text-xs);
   line-height: 1.5rem;
@@ -3636,7 +3543,7 @@ dialog.local-message-reader[open] {
   display: none;
 }
 .local-job-tools-earlier > summary:hover {
-  color: var(--un-ink);
+  color: var(--text-primary);
 }
 .local-job-tools-chevron {
   transition: transform 120ms ease;
@@ -3653,7 +3560,7 @@ dialog.local-message-reader[open] {
 }
 .local-job-tool-empty {
   margin: 0 0 0.25rem 1.375rem;
-  color: var(--un-faint);
+  color: var(--text-disabled);
   font-size: var(--text-xs);
 }
 .local-tool-done {
@@ -3744,7 +3651,7 @@ dialog.local-message-reader[open] {
   border-radius: 999px;
   background: var(--surface-wash);
   color: var(--text-secondary);
-  font-size: 11px;
+  font-size: var(--text-xs);
   font-weight: 500;
   line-height: 1.1rem;
   text-align: center;
@@ -3888,17 +3795,11 @@ dialog form {
   min-width: 6.5rem;
   color: var(--text-tertiary);
 }
-/* The Codex and Cursor marks are drawn in black; on a dark page they turn
-   light, as their makers draw them there. */
-:root[data-theme="dark"] img[src*="codex"],
-:root[data-theme="dark"] img[src*="cursor"] {
-  filter: invert(1);
-}
 /* A Sessions card keeps its fill under the pointer while the keyboard is on
    it, since the strips inside a card (its current step, its message) are
    drawn in the sand the pointer's fill would take. */
 .local-feed-card[data-focused]:hover {
-  background: var(--un-list);
+  background: var(--surface-hover);
 }
 /* Each section's key, at the end of its sidebar link. Folded to its glyph,
    the link's tooltip names the key instead. */
@@ -3982,8 +3883,8 @@ dialog.go-to {
   margin: 1.125rem 0 0;
   color: var(--text-tertiary);
   font-size: var(--text-xs);
-  font-weight: 600;
-  letter-spacing: 0.06em;
+  font-weight: 500;
+  letter-spacing: 0.08em;
   text-transform: uppercase;
 }
 /* One grid for every row, so the descriptions share a column right after
@@ -4015,20 +3916,12 @@ dialog.go-to {
   display: flex;
   flex-wrap: wrap;
   gap: 0.375rem 0.875rem;
-  border-top: 1px solid var(--un-line);
-  color: var(--un-muted);
+  border-top: 1px solid var(--border-subtle);
+  color: var(--text-tertiary);
   font-size: var(--text-xs);
 }
 .key-bar kbd {
   margin-right: 0.125rem;
-  padding: 1px 5px;
-  border: 1px solid currentColor;
-  border-radius: 4px;
-  font-family: var(--font-mono, ui-monospace, monospace);
-  font-size: 10.5px;
-  font-weight: 500;
-  line-height: 1.2;
-  opacity: 0.75;
 }
 .key-bar kbd + kbd {
   margin-left: 0.125rem;
@@ -4039,157 +3932,33 @@ dialog.go-to {
   z-index: 5;
   margin-top: auto;
   padding: 0.625rem 1.5rem;
-  background: color-mix(in srgb, var(--un-panel) 94%, transparent);
+  background: color-mix(in srgb, var(--surface-card) 94%, transparent);
   backdrop-filter: blur(6px);
 }
 /* Keyboard hints show only while Alt, Option on a Mac, is held. */
 :root:not([data-key-hints]) .key-hint {
   display: none;
 }
-kbd.key-hint {
-  margin-left: 6px;
+/* One key, wherever a key is shown outside a menu: inside a button, in a
+   page's key bar, in the shortcuts sheet and the walkthrough. A menu lists its
+   keys as plain grey text instead, as a desktop menu does. */
+:is(kbd.key-hint, .key-bar kbd, .shortcuts-sheet kbd, .walkthrough kbd, .upnext-page kbd) {
   padding: 1px 5px;
   border: 1px solid currentColor;
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
+  background: none;
   font-family: var(--font-mono, ui-monospace, monospace);
-  font-size: 10.5px;
+  font-size: var(--text-xs);
   font-weight: 500;
   line-height: 1.2;
   opacity: 0.6;
 }
+kbd.key-hint {
+  margin-left: 6px;
+}
 .shortcuts-sheet kbd {
   min-width: 1.5rem;
-  padding: 0.05rem 0.4rem;
-  border: 1px solid var(--border-default);
-  border-bottom-width: 2px;
-  border-radius: var(--radius-md);
-  background: var(--surface-wash);
-  font-family: inherit;
-  font-size: var(--text-xs);
   text-align: center;
-}
-/* The inbox: the queue grouped by what the person does, beside the selected
-   pull request's panel. Its colours and sizes are the Up next design's own,
-   not the app's tokens and type scale; in dark mode each colour falls back
-   onto the app's dark tokens, since the design has no dark variant. */
-:root {
-  --un-panel: #fffcf6;
-  --un-list: #fbf6ec;
-  --un-card: #fff;
-  --un-ink: #1f1a15;
-  --un-ink-soft: #3d342b;
-  --un-muted: #6e655b;
-  --un-faint: #8a7f72;
-  --un-line: #e3d9c8;
-  --un-line-strong: #d9ccb4;
-  --un-hairline: #efe6d6;
-  --un-hover: #f3ebdc;
-  --un-menu-hover: #f6efe2;
-  --un-mark: #b9ad99;
-  --un-done: #4c8b34;
-  --un-link: #2e6b2f;
-  --un-link-hover: #1f4d20;
-  --un-focus: #2e7d3e;
-  --un-primary: #e7f1e1;
-  --un-primary-line: #b9d4ad;
-  --un-on-primary: #1f4d20;
-  --un-working: #a86512;
-  --un-working-bg: #faefd6;
-  --un-working-line: #efd9a6;
-  --un-working-ink: #4a3510;
-  --un-hot: #b3261e;
-  --un-on-hot: #fff;
-  --un-risk-mid: #b7791f;
-  --un-score4-bg: #fbe7e2;
-  --un-score4: #8a2416;
-  --un-review-bg: #faefd6;
-  --un-review: #6b4a12;
-  --un-fix-bg: #fbeeea;
-  --un-fix: #7a2a1c;
-  --un-merge-bg: #e7f1e1;
-  --un-merge: #1f4d20;
-  --un-update-bg: #e6edf5;
-  --un-update: #24405f;
-  --un-clone-bg: #efe6d6;
-  --un-clone: #3d342b;
-  --un-toast-bg: #1f1a15;
-  --un-toast-ink: #fffcf6;
-  --un-toast-button: #2d2620;
-  --un-toast-line: #5a5048;
-  --un-shadow-selected: 0 1px 3px rgb(42 29 21 / 12%);
-  --un-shadow-button: 0 2px 0 rgb(42 29 21 / 6%);
-  --un-shadow-primary: 0 1px 0 rgb(31 77 32 / 10%);
-  --un-shadow-menu: 0 12px 30px rgb(42 29 21 / 16%);
-  --un-shadow-toast: 0 10px 28px rgb(0 0 0 / 25%);
-}
-:root[data-theme="dark"] {
-  --un-panel: var(--surface-card);
-  --un-list: var(--surface-aside);
-  --un-card: var(--paper-100);
-  --un-ink: var(--text-primary);
-  --un-ink-soft: var(--text-secondary);
-  --un-muted: var(--text-tertiary);
-  --un-faint: var(--text-tertiary);
-  --un-line: var(--border-subtle);
-  --un-line-strong: var(--border-default);
-  --un-hairline: var(--border-subtle);
-  --un-hover: var(--surface-hover);
-  --un-menu-hover: var(--surface-hover);
-  --un-mark: var(--border-default);
-  --un-done: var(--status-positive);
-  --un-link: var(--text-link);
-  --un-link-hover: var(--text-link-hover);
-  --un-focus: var(--accent-600);
-  --un-primary: var(--status-positive-bg);
-  --un-primary-line: color-mix(in srgb, var(--status-positive) 40%, transparent);
-  --un-on-primary: var(--status-positive);
-  --un-working: var(--status-caution);
-  --un-working-bg: var(--status-caution-bg);
-  --un-working-line: color-mix(in srgb, var(--status-caution) 40%, transparent);
-  --un-working-ink: var(--text-primary);
-  --un-hot: var(--status-critical);
-  --un-on-hot: var(--text-inverse);
-  --un-risk-mid: var(--status-caution);
-  --un-score4-bg: var(--status-critical-bg);
-  --un-score4: var(--status-critical);
-  --un-review-bg: var(--status-caution-bg);
-  --un-review: var(--status-caution);
-  --un-fix-bg: var(--status-critical-bg);
-  --un-fix: var(--status-critical);
-  --un-merge-bg: var(--status-positive-bg);
-  --un-merge: var(--status-positive);
-  --un-update-bg: var(--status-info-bg);
-  --un-update: var(--status-info);
-  --un-clone-bg: var(--status-neutral-bg);
-  --un-clone: var(--status-neutral);
-  --un-toast-bg: var(--text-primary);
-  --un-toast-ink: var(--surface-card);
-  --un-toast-button: color-mix(in srgb, var(--surface-card) 15%, var(--text-primary));
-  --un-toast-line: color-mix(in srgb, var(--surface-card) 35%, var(--text-primary));
-  --un-shadow-selected: 0 1px 3px rgb(0 0 0 / 40%);
-  --un-shadow-button: 0 2px 0 rgb(0 0 0 / 30%);
-  --un-shadow-primary: 0 1px 0 rgb(0 0 0 / 30%);
-  --un-shadow-menu: 0 12px 30px rgb(0 0 0 / 40%);
-  --un-shadow-toast: 0 10px 28px rgb(0 0 0 / 50%);
-}
-/* The six colours an inbox can have, for its dot beside the sidebar's sand
-   and for the text of its tag on a tint of itself; each is at least 4.5:1 on
-   the paper and, in dark mode, on the forest. */
-:root {
-  --inbox-blue: #2f5f8a;
-  --inbox-green: #2a6f38;
-  --inbox-red: #b3261e;
-  --inbox-amber: #96570e;
-  --inbox-purple: #7a4fa0;
-  --inbox-grey: #6e655b;
-}
-:root[data-theme="dark"] {
-  --inbox-blue: #7fb0dd;
-  --inbox-green: #8ed07a;
-  --inbox-red: #f28b82;
-  --inbox-amber: #e5b25d;
-  --inbox-purple: #bb9de0;
-  --inbox-grey: #a8a8a8;
 }
 .inbox-blue {
   --inbox: var(--inbox-blue);
@@ -4226,10 +3995,10 @@ kbd.key-hint {
   overflow: hidden;
   padding: 0 6px;
   border: 1px solid color-mix(in srgb, var(--inbox) 35%, transparent);
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
   background: color-mix(in srgb, var(--inbox) 10%, transparent);
   color: var(--inbox);
-  font-size: 11.5px;
+  font-size: var(--text-xs);
   font-weight: 600;
   line-height: 1.5;
   text-overflow: ellipsis;
@@ -4259,7 +4028,7 @@ kbd.key-hint {
 }
 .local-frame:has(.upnext-page) {
   min-height: 0;
-  background: var(--un-panel);
+  background: var(--surface-card);
 }
 .local-main:has(.upnext-page) {
   display: flex;
@@ -4274,41 +4043,39 @@ kbd.key-hint {
   display: flex;
   flex: 1;
   min-height: 0;
-  color: var(--un-ink);
+  color: var(--text-primary);
   font-family: var(--font-sans);
 }
-.upnext-page a {
-  color: var(--un-link);
+/* The page's resets sit in the base layer, under Tailwind's utilities, so a
+   shared Button or ActionLink keeps its own ink, type and focus ring. */
+@layer base {
+  .upnext-page a {
+    color: var(--text-link);
+  }
+  .upnext-page a:hover {
+    color: var(--text-link-hover);
+  }
+  .upnext-page button {
+    color: inherit;
+    font: inherit;
+    cursor: pointer;
+  }
+  .upnext-page :is(button, a):focus-visible {
+    outline: 2px solid var(--border-focus);
+    outline-offset: 2px;
+  }
 }
-.upnext-page a:hover {
-  color: var(--un-link-hover);
-}
-.upnext-page button {
-  color: inherit;
-  font: inherit;
-  cursor: pointer;
-}
-.upnext-page :is(button, .upnext-primary, .upnext-secondary):active {
+.upnext-page button:not(:disabled):active {
   transform: translateY(1px);
-}
-.upnext-page :is(button, a):focus-visible {
-  outline: 2px solid var(--un-focus);
-  outline-offset: 2px;
 }
 .upnext-page kbd {
   margin-left: 6px;
-  padding: 1px 5px;
-  border: 1px solid currentColor;
-  border-radius: 4px;
-  font-family: var(--font-mono, ui-monospace, monospace);
-  font-size: 10.5px;
-  opacity: 0.6;
 }
 .upnext-label {
   margin: 0;
-  color: var(--un-muted);
-  font-size: 12px;
-  font-weight: 600;
+  color: var(--text-tertiary);
+  font-size: var(--text-xs);
+  font-weight: 500;
   letter-spacing: 0.08em;
   text-transform: uppercase;
 }
@@ -4319,14 +4086,14 @@ kbd.key-hint {
   flex: 0 0 360px;
   flex-direction: column;
   min-width: 0;
-  border-right: 1px solid var(--un-line);
+  border-right: 1px solid var(--border-subtle);
 }
 .upnext-list-head {
   display: flex;
   flex-direction: column;
   gap: 6px;
   padding: 18px 1.5rem 12px;
-  border-bottom: 1px solid var(--un-line);
+  border-bottom: 1px solid var(--border-subtle);
 }
 .upnext-list-heading {
   display: flex;
@@ -4342,30 +4109,30 @@ kbd.key-hint {
 }
 .upnext-list-head h1 {
   margin: 0;
-  font-size: 18px;
+  font-size: var(--text-lg);
   font-weight: 600;
 }
 .upnext-list-head p {
   margin: 0;
-  color: var(--un-ink-soft);
-  font-size: 13.5px;
+  color: var(--text-secondary);
+  font-size: var(--text-xs);
   line-height: 1.4;
 }
 .upnext-list-head .upnext-list-summary {
-  color: var(--un-muted);
-  font-size: 12.5px;
+  color: var(--text-tertiary);
+  font-size: var(--text-xs);
 }
 .upnext-bar {
   height: 5px;
   margin-top: 4px;
   overflow: hidden;
   border-radius: 3px;
-  background: var(--un-hairline);
+  background: var(--border-subtle);
 }
 .upnext-bar div {
   height: 100%;
   border-radius: 3px;
-  background: var(--un-done);
+  background: var(--status-positive);
   transition: width 0.4s;
 }
 /* The queue is drawn as every list: its groups headed as sections, its
@@ -4382,16 +4149,6 @@ kbd.key-hint {
 }
 .upnext-item {
   padding: 0;
-}
-.upnext-page .upnext-batch {
-  padding: 4px 9px;
-  border: 1px solid var(--un-done);
-  border-radius: 6px;
-  background: var(--un-done);
-  box-shadow: var(--un-shadow-button);
-  color: var(--un-on-hot);
-  font-size: 12px;
-  font-weight: 600;
 }
 .upnext-row {
   display: flex;
@@ -4414,7 +4171,7 @@ kbd.key-hint {
   box-sizing: border-box;
   align-items: center;
   justify-content: center;
-  border: 1.5px solid var(--un-mark);
+  border: 1.5px solid var(--text-disabled);
   border-radius: 50%;
 }
 .upnext-mark-working {
@@ -4434,35 +4191,35 @@ kbd.key-hint {
   white-space: nowrap;
 }
 .upnext-row-title {
-  font-size: 14px;
+  font-size: var(--text-base);
   font-weight: 500;
 }
 .upnext-row[aria-current] .upnext-row-title {
   font-weight: 600;
 }
 .upnext-row-sub {
-  color: var(--un-muted);
-  font-size: 12px;
+  color: var(--text-tertiary);
+  font-size: var(--text-xs);
 }
 .upnext-row-working {
-  color: var(--un-working);
+  color: var(--status-caution);
 }
 .upnext-row-failed {
-  color: var(--un-fix);
+  color: var(--status-critical);
 }
 .upnext-hot {
   width: 7px;
   height: 7px;
   flex: none;
   border-radius: 50%;
-  background: var(--un-hot);
+  background: var(--status-critical);
 }
 .upnext-snoozed li {
   display: flex;
   align-items: center;
   gap: 8px;
-  color: var(--un-ink-soft);
-  font-size: 13px;
+  color: var(--text-secondary);
+  font-size: var(--text-xs);
 }
 .upnext-snoozed-title {
   flex: 1;
@@ -4473,33 +4230,33 @@ kbd.key-hint {
 }
 .upnext-snoozed-until {
   flex: none;
-  color: var(--un-muted);
+  color: var(--text-tertiary);
 }
 .upnext-page .upnext-small {
   flex: none;
   padding: 3px 9px;
-  border: 1px solid var(--un-line);
-  border-radius: 6px;
-  background: var(--un-panel);
-  box-shadow: var(--un-shadow-button);
-  color: var(--un-ink-soft);
-  font-size: 12px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--surface-card);
+  box-shadow: var(--shadow-raised);
+  color: var(--text-secondary);
+  font-size: var(--text-xs);
   font-weight: 500;
   line-height: 1.3;
 }
 .upnext-page .upnext-small:hover {
-  border-color: var(--un-line-strong);
-  background: var(--un-hover);
-  color: var(--un-ink);
+  border-color: var(--border-default);
+  background: var(--surface-hover);
+  color: var(--text-primary);
 }
 .upnext-done li {
   display: flex;
   gap: 8px;
-  color: var(--un-muted);
-  font-size: 13px;
+  color: var(--text-tertiary);
+  font-size: var(--text-xs);
 }
 .upnext-done-check {
-  color: var(--un-done);
+  color: var(--status-positive);
 }
 .upnext-done-text {
   overflow: hidden;
@@ -4541,15 +4298,6 @@ kbd.key-hint {
     transform: translateY(-4px);
   }
 }
-@keyframes upnext-pulse {
-  0%,
-  100% {
-    opacity: 0.4;
-  }
-  50% {
-    opacity: 1;
-  }
-}
 .upnext-panel-meta {
   display: flex;
   flex-wrap: wrap;
@@ -4557,43 +4305,43 @@ kbd.key-hint {
   gap: 10px;
 }
 .upnext-panel-where {
-  color: var(--un-muted);
-  font-size: 13.5px;
+  color: var(--text-tertiary);
+  font-size: var(--text-xs);
 }
 .upnext-chip {
   flex: none;
   padding: 2px 8px;
-  border-radius: 4px;
-  font-size: 12px;
-  font-weight: 600;
+  border-radius: 999px;
+  font-size: var(--text-xs);
+  white-space: nowrap;
 }
 .upnext-chip-review {
-  background: var(--un-review-bg);
-  color: var(--un-review);
+  background: var(--status-caution-bg);
+  color: var(--status-caution);
 }
 .upnext-chip-fix {
-  background: var(--un-fix-bg);
-  color: var(--un-fix);
+  background: var(--status-critical-bg);
+  color: var(--status-critical);
 }
 .upnext-chip-merge {
-  background: var(--un-merge-bg);
-  color: var(--un-merge);
+  background: var(--status-positive-bg);
+  color: var(--status-positive);
 }
 .upnext-chip-update {
-  background: var(--un-update-bg);
-  color: var(--un-update);
+  background: var(--status-info-bg);
+  color: var(--status-info);
 }
 .upnext-chip-waiting {
   background: var(--surface-wash);
-  color: var(--un-muted);
+  color: var(--text-tertiary);
 }
 .upnext-chip-clone {
-  background: var(--un-clone-bg);
-  color: var(--un-clone);
+  background: var(--status-neutral-bg);
+  color: var(--status-neutral);
 }
 .upnext-title {
   margin: 0;
-  font-size: 28px;
+  font-size: var(--text-2xl);
   font-weight: 600;
   line-height: 1.2;
   letter-spacing: -0.015em;
@@ -4605,8 +4353,8 @@ kbd.key-hint {
 }
 .upnext-why {
   margin: 0;
-  color: var(--un-ink-soft);
-  font-size: 16px;
+  color: var(--text-secondary);
+  font-size: var(--text-base);
   line-height: 1.6;
 }
 .upnext-working,
@@ -4615,65 +4363,32 @@ kbd.key-hint {
   align-items: center;
   gap: 10px;
   padding: 12px 14px;
-  border-radius: 10px;
-  font-size: 14px;
+  border-radius: var(--radius-lg);
+  font-size: var(--text-base);
   animation: upnext-drop 0.15s ease-out;
 }
 .upnext-working {
-  border: 1px solid var(--un-working-line);
-  background: var(--un-working-bg);
-  color: var(--un-working-ink);
+  border: 1px solid var(--status-caution-border);
+  background: var(--status-caution-bg);
+  color: var(--status-caution);
 }
 .upnext-working > span:first-of-type {
   flex: 1;
 }
 .upnext-working-aside {
-  color: var(--un-muted);
-  font-size: 12.5px;
+  color: var(--text-tertiary);
+  font-size: var(--text-xs);
 }
 .upnext-failed {
   display: block;
-  border: 1px solid var(--un-line);
-  background: var(--un-fix-bg);
-  color: var(--un-ink);
+  border: 1px solid var(--border-subtle);
+  background: var(--status-critical-bg);
+  color: var(--text-primary);
 }
 .upnext-actions {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
-}
-.upnext-page :is(.upnext-primary, .upnext-secondary) {
-  display: inline-flex;
-  align-items: center;
-  padding: 8px 14px;
-  border-radius: 6px;
-  font-size: 14px;
-  line-height: 1.3;
-  text-decoration: none;
-}
-.upnext-page .upnext-primary {
-  border: 1px solid var(--un-primary-line);
-  background: var(--un-primary);
-  box-shadow: var(--un-shadow-primary);
-  color: var(--un-on-primary);
-  font-weight: 600;
-}
-.upnext-page .upnext-secondary {
-  border: 1px solid var(--un-line);
-  background: var(--un-card);
-  box-shadow: var(--un-shadow-button);
-  color: var(--un-ink);
-  font-weight: 500;
-}
-/* Their hover beats the page's link hover, so a link keeps its button's ink. */
-.upnext-page .upnext-primary:hover {
-  border-color: var(--un-on-primary);
-  color: var(--un-on-primary);
-}
-.upnext-page .upnext-secondary:hover {
-  border-color: var(--un-line-strong);
-  background: var(--un-list);
-  color: var(--un-ink);
 }
 .upnext-snooze {
   position: relative;
@@ -4688,46 +4403,43 @@ kbd.key-hint {
   gap: 2px;
   width: 260px;
   padding: 6px;
-  border: 1px solid var(--un-line-strong);
-  border-radius: 10px;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-lg);
   background: var(--surface-popup);
-  box-shadow: var(--un-shadow-menu);
+  box-shadow: var(--shadow-overlay);
   animation: upnext-drop 0.15s ease-out;
 }
 .upnext-menu button {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 8px 10px;
+  padding: 7px 10px;
   border: 0;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   background: transparent;
-  font-size: 14px;
+  font-size: var(--text-base);
   text-align: left;
 }
-.upnext-menu button:hover {
-  background: var(--un-menu-hover);
-}
 .upnext-menu-key {
-  color: var(--un-faint);
+  color: var(--text-disabled);
   font-family: var(--font-mono, ui-monospace, monospace);
-  font-size: 11px;
+  font-size: var(--text-xs);
 }
 .upnext-menu-label {
   flex: 1;
 }
 .upnext-menu-when {
-  color: var(--un-muted);
-  font-size: 12.5px;
+  color: var(--text-tertiary);
+  font-size: var(--text-xs);
 }
 .upnext-risk {
   display: flex;
   flex-direction: column;
   gap: 8px;
   padding: 14px 16px;
-  border: 1px solid var(--un-line);
-  border-radius: 12px;
-  background: var(--un-card);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  background: var(--surface-card);
 }
 .upnext-risk-head {
   display: flex;
@@ -4743,25 +4455,38 @@ kbd.key-hint {
   width: 14px;
   height: 7px;
   border-radius: 2px;
-  background: var(--un-line);
+  background: var(--border-subtle);
 }
 .upnext-risk-blocks .upnext-risk-on {
-  background: var(--un-muted);
+  background: var(--text-tertiary);
 }
 .upnext-risk-blocks :is(.upnext-risk-3, .upnext-risk-4) {
-  background: var(--un-risk-mid);
+  background: var(--status-caution);
 }
 .upnext-risk-blocks .upnext-risk-5 {
-  background: var(--un-hot);
+  background: var(--status-critical);
 }
 .upnext-risk-text {
-  font-size: 13.5px;
+  font-size: var(--text-xs);
   font-weight: 600;
 }
 .upnext-risk p {
   margin: 0;
-  font-size: 14.5px;
+}
+.upnext-risk-copy > strong {
+  display: block;
+  margin-bottom: 4px;
+}
+.upnext-prose {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-size: var(--text-base);
   line-height: 1.5;
+}
+.upnext-panel .upnext-prose code,
+.upnext-panel .upnext-risk-copy > strong code,
+.upnext-panel .upnext-block-text code {
+  font-size: inherit;
 }
 .upnext-block {
   display: flex;
@@ -4774,22 +4499,22 @@ kbd.key-hint {
 .upnext-lead {
   margin: 0;
   padding-bottom: 6px;
-  color: var(--un-ink-soft);
-  font-size: 14.5px;
+  color: var(--text-secondary);
+  font-size: var(--text-base);
   line-height: 1.5;
 }
-.upnext-block ul {
+.upnext-block > ul {
   margin: 0;
   padding: 0;
   list-style: none;
 }
-.upnext-block li {
+.upnext-block > ul > li {
   display: flex;
   align-items: flex-start;
   gap: 10px;
   padding: 9px 0;
-  border-top: 1px solid var(--un-hairline);
-  font-size: 14px;
+  border-top: 1px solid var(--border-subtle);
+  font-size: var(--text-base);
 }
 .upnext-block-text {
   display: flex;
@@ -4800,14 +4525,14 @@ kbd.key-hint {
   line-height: 1.4;
 }
 .upnext-block-sub {
-  color: var(--un-muted);
-  font-size: 13px;
+  color: var(--text-tertiary);
+  font-size: var(--text-xs);
   line-height: 1.45;
 }
 .upnext-block-right {
   flex: none;
-  color: var(--un-ink-soft);
-  font-size: 13px;
+  color: var(--text-secondary);
+  font-size: var(--text-xs);
   font-variant-numeric: tabular-nums;
 }
 .upnext-block li.upnext-has-threads {
@@ -4820,7 +4545,7 @@ kbd.key-hint {
 .upnext-block .upnext-threads ul {
   margin-top: 4px;
   padding-left: 12px;
-  border-left: 2px solid var(--un-hairline);
+  border-left: 2px solid var(--border-subtle);
 }
 .upnext-block .upnext-threads li {
   align-items: center;
@@ -4839,17 +4564,15 @@ kbd.key-hint {
 }
 .upnext-threads code {
   font-family: var(--font-mono, ui-monospace, monospace);
-  font-size: 12px;
+  font-size: var(--text-xs);
   overflow-wrap: anywhere;
 }
 .upnext-thread-error {
-  color: var(--un-hot);
-  font-size: 13px;
+  color: var(--status-critical);
+  font-size: var(--text-xs);
 }
 .upnext-page .upnext-thread-resolve {
   flex: none;
-  padding: 5px 10px;
-  font-size: 13px;
 }
 .upnext-check-actions {
   display: flex;
@@ -4858,13 +4581,12 @@ kbd.key-hint {
 }
 .upnext-page .upnext-thread-resolve:disabled {
   cursor: progress;
-  opacity: 0.7;
 }
 /* A row that opens to its detail: the checks, the conflicting files, the
    threads, or a thread's conversation. */
 .upnext-chevron {
   flex: none;
-  color: var(--un-muted);
+  color: var(--text-tertiary);
   transition: transform 0.15s ease-out;
 }
 [aria-expanded="true"] > .upnext-chevron {
@@ -4916,7 +4638,7 @@ kbd.key-hint {
   color: var(--status-positive);
 }
 .upnext-check-other {
-  color: var(--un-muted);
+  color: var(--text-tertiary);
 }
 .upnext-conflict-file {
   overflow-wrap: anywhere;
@@ -4924,7 +4646,7 @@ kbd.key-hint {
 .upnext-block .upnext-thread-messages {
   margin: 6px 0 2px;
   padding: 0 0 0 12px;
-  border-left: 2px solid var(--un-hairline);
+  border-left: 2px solid var(--border-subtle);
   list-style: none;
 }
 .upnext-block .upnext-thread-messages li {
@@ -4933,13 +4655,13 @@ kbd.key-hint {
   border-top: 0;
 }
 .upnext-thread-author {
-  font-size: 13px;
+  font-size: var(--text-xs);
   font-weight: 600;
 }
 .upnext-thread-body {
   margin: 2px 0 0;
-  color: var(--un-ink-soft);
-  font-size: 13.5px;
+  color: var(--text-secondary);
+  font-size: var(--text-xs);
   line-height: 1.5;
   overflow-wrap: anywhere;
   white-space: pre-wrap;
@@ -4950,7 +4672,7 @@ kbd.key-hint {
   flex-wrap: wrap;
   gap: 8px 24px;
   margin: 0;
-  font-size: 13.5px;
+  font-size: var(--text-xs);
 }
 .upnext-facts > div {
   display: flex;
@@ -4959,33 +4681,71 @@ kbd.key-hint {
   min-width: 0;
 }
 .upnext-facts dt {
-  color: var(--un-muted);
-  font-size: 12px;
+  color: var(--text-tertiary);
+  font-size: var(--text-xs);
 }
 .upnext-facts dd {
   margin: 0;
-  color: var(--un-ink);
+  color: var(--text-primary);
+}
+.upnext-pr-facts {
+  align-items: center;
+  gap: 10px 20px;
+  font-size: var(--text-base);
+}
+.upnext-pr-facts > div {
+  flex-direction: row;
+  align-items: center;
+}
+.upnext-pr-facts > .upnext-branch-fact {
+  flex-basis: 100%;
+}
+.upnext-pr-facts dd,
+.upnext-fact-aside {
+  color: var(--text-secondary);
 }
 .upnext-branches {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
   min-width: 0;
-  color: var(--un-muted);
+  color: var(--text-tertiary);
+}
+.upnext-branches > :is(svg, span) {
+  flex: none;
+  color: var(--text-tertiary);
 }
 .upnext-panel code {
   font-family: var(--font-mono, ui-monospace, monospace);
-  font-size: 12px;
+  font-size: var(--text-xs);
 }
 .upnext-branches code {
+  min-width: 0;
   overflow: hidden;
   max-width: 260px;
   padding: 1px 6px;
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
   background: var(--surface-wash);
-  color: var(--un-ink);
+  color: var(--text-primary);
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.upnext-branches code:last-of-type {
+  flex-shrink: 0;
+  max-width: 40%;
+}
+.upnext-page .upnext-github {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 4px;
+  color: var(--text-tertiary);
+}
+.upnext-page .upnext-github:hover {
+  color: var(--text-primary);
 }
 /* A review group's row and its members nested under it. */
 .upnext-group-line {
@@ -5002,7 +4762,7 @@ kbd.key-hint {
   margin-left: calc(1.5rem - 3px);
   padding: 0;
   border: 0;
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
   background: transparent;
 }
 .upnext-page .upnext-group-toggle:hover {
@@ -5021,14 +4781,14 @@ kbd.key-hint {
 .upnext-stack-icon {
   display: inline;
   margin-right: 5px;
-  color: var(--un-muted);
+  color: var(--text-tertiary);
   vertical-align: -2px;
 }
 .upnext-block-more {
   margin: 0;
   padding-top: 6px;
-  color: var(--un-muted);
-  font-size: 13px;
+  color: var(--text-tertiary);
+  font-size: var(--text-xs);
 }
 .upnext-badge {
   display: flex;
@@ -5038,48 +4798,43 @@ kbd.key-hint {
   align-items: center;
   justify-content: center;
   margin-top: 1px;
-  border-radius: 4px;
-  background: var(--un-clone-bg);
-  color: var(--un-clone);
-  font-size: 11.5px;
+  border-radius: var(--radius-xs);
+  background: var(--status-neutral-bg);
+  color: var(--status-neutral);
+  font-size: var(--text-xs);
   font-weight: 700;
 }
 .upnext-badge-done {
-  background: var(--un-merge-bg);
-  color: var(--un-merge);
+  background: var(--status-positive-bg);
+  color: var(--status-positive);
 }
 .upnext-badge-3 {
-  background: var(--un-review-bg);
-  color: var(--un-review);
+  background: var(--status-caution-bg);
+  color: var(--status-caution);
 }
 .upnext-badge-4 {
-  background: var(--un-score4-bg);
-  color: var(--un-score4);
+  background: var(--status-critical-bg);
+  color: var(--status-critical);
 }
 .upnext-badge-5 {
-  background: var(--un-hot);
-  color: var(--un-on-hot);
+  background: var(--status-critical);
+  color: var(--text-inverse);
 }
 .upnext-agents {
   display: flex;
   align-items: center;
   gap: 8px;
   margin: 0;
-  color: var(--un-ink-soft);
-  font-size: 13.5px;
-}
-.upnext-pulse {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: var(--un-done);
-  animation: upnext-pulse 1.4s ease-in-out infinite;
+  color: var(--text-secondary);
+  font-size: var(--text-xs);
 }
 .upnext-zero {
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  padding: 70px 48px;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 3rem 1rem;
+  text-align: center;
   animation: upnext-rise 0.3s ease-out;
 }
 .upnext-zero h2,
@@ -5087,12 +4842,12 @@ kbd.key-hint {
   margin: 0;
 }
 .upnext-zero h2 {
-  font-size: 32px;
+  font-size: var(--text-base);
   font-weight: 600;
 }
 .upnext-zero p {
-  color: var(--un-ink-soft);
-  font-size: 15px;
+  color: var(--text-secondary);
+  font-size: var(--text-base);
 }
 .upnext-toast {
   position: absolute;
@@ -5102,27 +4857,19 @@ kbd.key-hint {
   display: flex;
   align-items: center;
   gap: 14px;
-  padding: 10px 12px 10px 16px;
-  border-radius: 10px;
-  background: var(--un-toast-bg);
-  box-shadow: var(--un-shadow-toast);
-  color: var(--un-toast-ink);
-  font-size: 14px;
+  padding: 10px 10px 10px 14px;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-lg);
+  background: var(--surface-popup);
+  box-shadow: var(--shadow-overlay);
+  color: var(--text-primary);
+  font-size: var(--text-base);
   white-space: nowrap;
   transform: translateX(-50%);
   animation: upnext-rise 0.2s ease-out;
 }
-.upnext-page .upnext-toast button,
-.inbox-toast button {
-  padding: 5px 12px;
-  border: 1px solid var(--un-toast-line);
-  border-radius: 6px;
-  background: var(--un-toast-button);
-  color: var(--un-toast-ink);
-  font-size: 13px;
-  font-weight: 600;
-}
-/* Deleting an inbox from the sidebar toasts on any page, so it floats over
+/* The undo toasts look like the app's other toasts (toast.tsx); deleting an
+   inbox from the sidebar toasts on any page, so it floats over
    the window rather than over the Up next page. */
 .inbox-toast {
   position: fixed;
@@ -5137,7 +4884,7 @@ kbd.key-hint {
   .upnext-list {
     flex: none;
     border-right: 0;
-    border-bottom: 1px solid var(--un-line);
+    border-bottom: 1px solid var(--border-subtle);
   }
   .upnext-list-body,
   .upnext-detail {
@@ -5178,8 +4925,7 @@ kbd.key-hint {
   .upnext-working,
   .upnext-failed,
   .upnext-menu,
-  .upnext-toast,
-  .upnext-pulse {
+  .upnext-toast {
     animation: none;
   }
   .upnext-bar div {
@@ -5229,7 +4975,7 @@ kbd.key-hint {
   padding: 1px 5px;
   border: 1px solid var(--border-default);
   border-bottom-width: 2px;
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
   background: var(--surface-card);
   font-family: var(--font-mono, ui-monospace, monospace);
   font-size: var(--text-xs);
@@ -5275,7 +5021,7 @@ kbd.key-hint {
   border-radius: var(--radius-sm, 8px);
   background: var(--surface-card);
   text-align: left;
-  box-shadow: 0 1px 0 rgb(42 29 21 / 8%);
+  box-shadow: var(--shadow-raised);
   cursor: pointer;
 }
 .walk-route:hover,
@@ -5293,14 +5039,14 @@ kbd.key-hint {
   flex: none;
   width: 30px;
   height: 30px;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   background: var(--surface-wash);
   font-weight: 600;
 }
 .walk-risk {
   flex: none;
   padding: 3px 8px;
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
   background: var(--surface-wash);
   font-size: var(--text-xs);
   font-weight: 600;
@@ -5330,19 +5076,6 @@ kbd.key-hint {
 }
 .walk-event[aria-checked="true"] .walk-event-dot {
   border: 4px solid var(--text-primary);
-}
-.walk-link {
-  padding: 0;
-  border: 0;
-  background: transparent;
-  color: var(--text-link);
-  font-weight: 600;
-  text-decoration: underline;
-  text-underline-offset: 2px;
-  cursor: pointer;
-}
-.walk-link:hover {
-  color: var(--text-link-hover);
 }
 .walk-link.muted {
   color: var(--text-secondary);
@@ -5377,11 +5110,11 @@ kbd.key-hint {
 }
 .walk-badge {
   padding: 2px 8px;
-  border-radius: 4px;
+  border-radius: 999px;
   background: var(--status-positive-bg);
   color: var(--status-positive);
   font-size: var(--text-xs);
-  font-weight: 600;
+  white-space: nowrap;
 }
 .walk-badge.commented {
   background: var(--status-caution-bg);
@@ -5391,17 +5124,12 @@ kbd.key-hint {
   min-height: 72px;
   padding: 0.5rem 0.625rem;
   border: 1px solid var(--border-default);
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   background: var(--surface-card);
   color: var(--text-primary);
   font: inherit;
   font-size: var(--text-base);
   resize: vertical;
-}
-.walk-evidence {
-  display: flex;
-  flex-direction: column;
-  gap: 0.5rem;
 }
 .walk-chapter-stop {
   display: flex;
@@ -5410,7 +5138,7 @@ kbd.key-hint {
   width: 100%;
   padding: 0.4375rem 0.5rem;
   border: 0;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   background: transparent;
   text-align: left;
   cursor: pointer;
@@ -5440,18 +5168,12 @@ kbd.key-hint {
   border-color: var(--status-caution);
   background: var(--status-caution);
 }
-.walk-chip {
-  padding: 2px 6px;
-  border-radius: 4px;
-  background: var(--surface-wash);
-  font-size: var(--text-xs);
-}
 .walk-filter {
   padding: 0.375rem 0.75rem;
   border: 1px solid var(--border-default);
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   background: var(--surface-card);
-  box-shadow: 0 1px 0 rgb(42 29 21 / 6%);
+  box-shadow: var(--shadow-raised);
   cursor: pointer;
 }
 .walk-filter:hover {
@@ -5503,7 +5225,7 @@ kbd.key-hint {
 .walk-note {
   padding: 0.375rem 0.625rem;
   border: 1px solid color-mix(in srgb, var(--status-caution) 30%, transparent);
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   background: var(--status-caution-bg);
 }
 /* The Ask panel: questions to the agent that wrote the review (chat.tsx). It
@@ -5533,7 +5255,7 @@ kbd.key-hint {
   position: fixed;
   inset: 0;
   z-index: calc(var(--z-sheet, 40) - 1);
-  background: rgba(42, 29, 21, 0.35);
+  background: var(--surface-scrim);
 }
 @media (width >= 72rem) {
   .ask-backdrop {
@@ -5638,7 +5360,6 @@ kbd.key-hint {
 }
 .ask-empty,
 .ask-note,
-.ask-cost,
 .ask-hint,
 .ask-cite-note,
 .ask-question-about {
@@ -5690,52 +5411,16 @@ kbd.key-hint {
 /* The inbox pages: New inbox, an inbox's edit page and Manage inboxes. They
    are settings-like pages in the app's own tokens; each inbox's colour is its
    `--inbox`. */
-.inbox-btn {
-  display: inline-flex;
-  flex: none;
-  align-items: center;
-  justify-content: center;
-  height: 2rem;
-  padding: 0 0.85rem;
-  border: 1px solid var(--border-default);
-  border-radius: var(--radius-md);
-  background: var(--surface-card);
-  box-shadow: 0 1px 1px rgb(0 0 0 / 8%);
-  color: var(--text-primary);
-  font: inherit;
-  font-size: var(--text-sm);
-  font-weight: 500;
-  text-decoration: none;
-  white-space: nowrap;
-  cursor: pointer;
-}
-.inbox-btn:hover {
-  background: var(--action-secondary-hover);
-  color: var(--text-primary);
-  text-decoration: none;
-}
-.inbox-btn:active {
-  box-shadow: none;
-  transform: translateY(1px);
-}
-.inbox-btn:focus-visible,
 .inbox-chip:focus-visible,
 .inbox-part:focus-visible,
 .inbox-template:focus-visible,
 .inbox-swatch:focus-visible,
 .inbox-disclosure:focus-visible {
-  outline: 2px solid var(--border-focus);
-  outline-offset: 2px;
-}
-.inbox-btn:disabled {
-  opacity: 0.45;
-  box-shadow: none;
-  cursor: default;
+  outline: none;
+  box-shadow: var(--focus-ring);
 }
 .inbox-edit-link {
-  height: 1.625rem;
   margin-left: auto;
-  font-size: 12px;
 }
 .inbox-page {
   max-width: 64rem;
@@ -5745,7 +5430,7 @@ kbd.key-hint {
 .inbox-back {
   justify-self: start;
   color: var(--text-secondary);
-  font-size: var(--text-sm);
+  font-size: var(--text-base);
 }
 .inbox-limit {
   margin: 0;
@@ -5753,7 +5438,7 @@ kbd.key-hint {
   border-radius: var(--radius-md);
   background: var(--surface-wash);
   color: var(--text-primary);
-  font-size: var(--text-sm);
+  font-size: var(--text-base);
 }
 .inbox-templates {
   display: grid;
@@ -5796,7 +5481,7 @@ kbd.key-hint {
   align-items: center;
   gap: 0.25rem 0.5rem;
   margin: 0;
-  font-size: var(--text-sm, 0.875rem);
+  font-size: var(--text-xs);
 }
 .local-fix-chat {
   margin: 0.75rem 0 0;
@@ -5861,7 +5546,7 @@ kbd.key-hint {
   min-height: 4.5rem;
   padding: 0.5rem 0.625rem;
   border: 1px solid var(--border-default);
-  border-radius: var(--radius-sm, 6px);
+  border-radius: var(--radius-md);
   background: var(--surface-card);
   color: var(--text-primary);
   font: inherit;
@@ -5888,7 +5573,7 @@ kbd.key-hint {
   border: 1px solid var(--border-default);
   border-radius: var(--radius-lg);
   background: var(--surface-card);
-  box-shadow: 0 1px 1px rgb(0 0 0 / 8%);
+  box-shadow: var(--shadow-raised);
   color: var(--text-primary);
   font: inherit;
   text-align: left;
@@ -5924,7 +5609,7 @@ kbd.key-hint {
 }
 .inbox-template-sentence {
   color: var(--text-secondary);
-  font-size: var(--text-sm);
+  font-size: var(--text-base);
   line-height: 1.4;
 }
 .inbox-edit {
@@ -5960,7 +5645,7 @@ kbd.key-hint {
   border-radius: var(--radius-lg) var(--radius-lg) 0 0;
   background: var(--surface-wash);
   color: var(--status-positive);
-  font-size: var(--text-sm);
+  font-size: var(--text-base);
 }
 .inbox-name-row {
   display: flex;
@@ -5989,9 +5674,9 @@ kbd.key-hint {
   height: 1.375rem;
   padding: 0;
   border: 0;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   background: var(--inbox);
-  box-shadow: 0 1px 0 rgb(0 0 0 / 20%);
+  box-shadow: var(--shadow-raised);
   cursor: pointer;
 }
 .inbox-swatch[aria-checked="true"] {
@@ -6001,13 +5686,13 @@ kbd.key-hint {
 }
 .inbox-sentence {
   margin: 0;
-  font-size: 1.05rem;
+  font-size: var(--text-base);
   line-height: 2;
 }
 .inbox-part {
   padding: 0 0.1rem;
   border: 0;
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
   background: transparent;
   color: var(--text-primary);
   font: inherit;
@@ -6037,10 +5722,10 @@ kbd.key-hint {
   border: 1px solid var(--border-default);
   border-radius: var(--radius-md);
   background: var(--surface-card);
-  box-shadow: 0 1px 1px rgb(0 0 0 / 8%);
+  box-shadow: var(--shadow-raised);
   color: var(--text-primary);
   font: inherit;
-  font-size: var(--text-sm);
+  font-size: var(--text-base);
   font-weight: 500;
   cursor: pointer;
 }
@@ -6067,7 +5752,7 @@ kbd.key-hint {
   background: none;
   color: var(--text-secondary);
   font: inherit;
-  font-size: var(--text-sm);
+  font-size: var(--text-base);
   cursor: pointer;
 }
 .inbox-disclosure::after {
@@ -6086,7 +5771,7 @@ kbd.key-hint {
 .inbox-fine-title {
   margin: 0;
   padding: 0;
-  font-size: var(--text-sm);
+  font-size: var(--text-base);
   font-weight: 600;
 }
 .inbox-fine-title span {
@@ -6105,7 +5790,7 @@ kbd.key-hint {
   display: flex;
   align-items: center;
   gap: 0.5rem;
-  font-size: var(--text-sm);
+  font-size: var(--text-base);
   cursor: pointer;
 }
 .inbox-check-note {
@@ -6135,11 +5820,11 @@ kbd.key-hint {
   gap: 0.75rem;
 }
 .inbox-preview-head h2 {
-  font-size: var(--text-sm);
+  font-size: var(--text-base);
   color: var(--text-secondary);
 }
 .inbox-preview-count {
-  font-size: 1.75rem;
+  font-size: var(--text-3xl);
   font-weight: 600;
   font-variant-numeric: tabular-nums;
 }
@@ -6200,7 +5885,7 @@ kbd.key-hint {
 }
 .inbox-preview-title {
   overflow: hidden;
-  font-size: var(--text-sm);
+  font-size: var(--text-base);
   font-weight: 500;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -6252,7 +5937,7 @@ kbd.key-hint {
   padding: 0.6rem 0.85rem;
   border: 1px solid transparent;
   border-radius: var(--radius-md);
-  font-size: var(--text-sm);
+  font-size: var(--text-base);
 }
 .inbox-coverage.caution {
   border-color: color-mix(in srgb, var(--status-caution) 35%, transparent);
@@ -6272,7 +5957,7 @@ kbd.key-hint {
   flex: none;
   justify-content: center;
   width: 8px;
-  font-size: var(--text-sm);
+  font-size: var(--text-base);
   line-height: 1;
 }
 @media (max-width: 900px) {

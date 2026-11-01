@@ -34,12 +34,16 @@ export type SummaryDestination = "changes" | "risks" | "files" | "sessions" | "t
 export function ReviewSummary({
   document,
   onSelectSection,
+  contextPending = false,
 }: {
   document: ReviewDocument;
   onSelectSection: (id: string) => void;
   /** Opens one of the review's other panes. The "view all" links and the
    *  other jump links go through it; without it they are not drawn. */
   onNavigate?: (destination: SummaryDestination) => void;
+  /** The host is still writing the context of this draft: a document without
+   *  one says so in the Context part rather than leaving it out. */
+  contextPending?: boolean;
 }) {
   const { summary } = document;
   const intent = summaryIntent(document);
@@ -88,7 +92,7 @@ export function ReviewSummary({
             )}
           </div>
 
-          <ContextPart document={document} />
+          <ContextPart document={document} pending={contextPending} />
 
           {intent.length > 0 && (
             <Part label="Intent and instructions">

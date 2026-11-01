@@ -70,6 +70,38 @@ func TestRunTaskRepairsSchemaAndCheckRejections(t *testing.T) {
 	}
 }
 
+// A labelled task names its files by its label, so tasks sharing a run
+// directory keep their own; an unlabelled one keeps schema.json.
+func TestRunTaskLabelsItsFiles(t *testing.T) {
+	dir := t.TempDir()
+	replies := []string{`{"features":"one"}`, `{"features":["search"]}`}
+	backend := &stubBackend{run: func(_ context.Context, _ Request, n int) (Result, error) {
+		return Result{Document: []byte(replies[n%2]), Calls: 1, Tokens: 10}, nil
+	}}
+	g := Generator{Backend: backend}
+	for _, label := range []string{"first", "second-2"} {
+		if _, _, err := g.RunTask(context.Background(), Task{Label: label, Directory: dir, Prompt: "p", Schema: []byte(taskSchema), Budgets: taskBudgets()}); err != nil {
+			t.Fatal(err)
+		}
+		for _, name := range []string{TaskSchemaFile(label), "rejected-" + label + "-1.json"} {
+			if _, err := os.Stat(filepath.Join(dir, name)); err != nil {
+				t.Fatalf("%s: %v", label, err)
+			}
+		}
+	}
+	if TaskSchemaFile("first") != "schema-first.json" || TaskSchemaFile("") != "schema.json" {
+		t.Fatal("schema file names")
+	}
+	if _, err := os.Stat(filepath.Join(dir, "schema.json")); !os.IsNotExist(err) {
+		t.Fatalf("a labelled task wrote schema.json: %v", err)
+	}
+	for _, label := range []string{"../up", "Upper", "a/b", "-x"} {
+		if _, _, err := g.RunTask(context.Background(), Task{Label: label, Directory: dir, Prompt: "p", Schema: []byte(taskSchema), Budgets: taskBudgets()}); err == nil {
+			t.Errorf("label %q accepted", label)
+		}
+	}
+}
+
 func TestRunTaskKeepsTheLastRejectedReply(t *testing.T) {
 	backend := &stubBackend{run: func(context.Context, Request, int) (Result, error) {
 		return Result{Document: []byte(`{"features":[]} trailing`), Calls: 1, Tokens: 10}, nil

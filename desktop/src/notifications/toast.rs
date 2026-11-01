@@ -202,7 +202,9 @@ pub fn from_event(name: &str, data: &str) -> Option<Toast> {
 fn from_notice(n: Notice) -> Option<Toast> {
     let kind = match n.kind.as_str() {
         "review_finished" => Kind::Finished,
-        "review_failed" => Kind::Failed,
+        // A retry of a review's failed section details is a review failure
+        // in the settings, with its own words.
+        "review_failed" | "details_failed" => Kind::Failed,
         "review_requested" => Kind::Requested,
         "review_automatic" => Kind::Automatic,
         "checks_failed" => Kind::ChecksFailed,
@@ -232,6 +234,7 @@ fn from_notice(n: Notice) -> Option<Toast> {
     let headline = match kind {
         Kind::Finished => "Review finished",
         Kind::Automatic => "Review generated automatically",
+        Kind::Failed if n.kind == "details_failed" => "Couldn't write the missing section details",
         Kind::Failed => "Review failed",
         Kind::Requested => "Review requested from you",
         Kind::ChecksFailed => "Checks failing",
@@ -437,6 +440,20 @@ mod tests {
         assert_eq!(t.kind, Kind::Failed);
         assert_eq!(t.title, "Review failed: provider timeout");
         assert_eq!(toast("review_failed", "").title, "Review failed");
+    }
+
+    #[test]
+    fn a_failed_details_retry_says_what_failed() {
+        let t = toast("details_failed", r#","reason":"budget""#);
+        assert_eq!(t.kind, Kind::Failed);
+        assert_eq!(
+            t.title,
+            "Couldn't write the missing section details: budget"
+        );
+        assert_eq!(
+            toast("details_failed", "").title,
+            "Couldn't write the missing section details"
+        );
     }
 
     #[test]

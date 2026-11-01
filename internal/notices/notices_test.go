@@ -91,6 +91,24 @@ func TestJobDoneIgnoresOtherStatesAndUnscoredReviews(t *testing.T) {
 	}
 }
 
+// A retry of a review's details is not a review: one that completes says
+// nothing, one that fails says so in its own notice.
+func TestJobDoneOfADetailsRetry(t *testing.T) {
+	s, got := service(entry("T", `{"status":"complete","score":5}`))
+	done := job("completed", "", false)
+	done.Kind = jobs.KindDetails
+	s.JobDone(context.Background(), done)
+	if len(*got) != 0 {
+		t.Fatalf("a completed retry published %+v", *got)
+	}
+	failed := job("failed", "budget", false)
+	failed.Kind = jobs.KindDetails
+	s.JobDone(context.Background(), failed)
+	if len(*got) != 1 || (*got)[0] != (Notice{Kind: KindDetailsFailed, Reason: "budget", Repository: "Acme/Widgets", PR: 7, Clone: "c1", Title: "T"}) {
+		t.Fatalf("%+v", *got)
+	}
+}
+
 func TestJobDoneWithoutIndexStillNames(t *testing.T) {
 	s, got := service()
 	s.JobDone(context.Background(), job("completed", "", false))

@@ -27,6 +27,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/baum-ai/baum/agent"
@@ -115,14 +116,39 @@ type Options struct {
 	// TileKinds is the tile allow-list; empty offers no tiles.
 	TileKinds []string
 	// Prompts defaults to this module's public prompt.
-	Prompts   agent.Prompts
+	Prompts agent.Prompts
+	// Staged writes a single pull request's review in stages
+	// (agent.Generator.StagedReview) instead of in one pass: the outline,
+	// then the sections' details and the context. A section whose details
+	// fail is published without them and a context that fails is left out;
+	// only a failed outline (or no section with details) fails the run. A
+	// review group is always written in one pass.
+	Staged bool
+	// StagedPrompts defaults to this module's public staged prompt.
+	StagedPrompts agent.StagedPrompts
+	// OnDraft, for a staged run, receives the review so far each time a
+	// stage result lands, masked and completed as the published document is
+	// (CompleteStaged) but with the sections still being written pending.
+	// It is never a version. Calls come one at a time, from a goroutine of
+	// the run, and the last one returns before Run does.
+	OnDraft func(document []byte)
+	// Continue, for a staged run, is the saved version to complete instead
+	// of writing a new one: the latest version, some of whose sections
+	// failed. Only the details of those sections are written again
+	// (agent.StagedRun.Outline), against the version's head, base and merge
+	// base, and the result is the same version with its metadata, model,
+	// prompt version and generation time. Request.Previous must be the
+	// version before it, which it was reconciled with. Nothing is kept for
+	// a chat.
+	Continue  *store.Version
 	Validator *review.DocumentValidator
 	Redactor  *bundle.Redactor
 	// Progress receives one line per step; nil discards them. The document is
 	// never written to it.
 	Progress io.Writer
-	// OnValidation receives fixed validation milestones, without model text.
-	OnValidation func(pass int, valid bool)
+	// OnRepairs receives the validation repairs made so far after each
+	// validation, over every stage of a staged run, without model text.
+	OnRepairs func(repairs int)
 	// KeepRunDir keeps the run directory and reports its path on Progress.
 	KeepRunDir bool
 	// KeepSession persists the backend's session and keeps the run directory,
@@ -160,6 +186,10 @@ type Result struct {
 	RunDir string
 	// Elapsed is the wall time of the run.
 	Elapsed time.Duration
+	// FailedSections, for a staged run, are the sections the document holds
+	// without their details, and ContextFailed says it has no context.
+	FailedSections []string
+	ContextFailed  bool
 }
 
 // Run executes the pipeline. The run directory is removed on every path
@@ -201,6 +231,15 @@ func Run(ctx context.Context, o Options) (result Result, err error) {
 		}
 	}
 	prompts = markedPrompts{prompts}
+	staged := o.Staged && o.Group == nil
+	stagedPrompts := o.StagedPrompts
+	if stagedPrompts == nil {
+		stagedPrompts = prompt.StagedPrompts{}
+	}
+	stagedPrompts = markedStagedPrompts{stagedPrompts}
+	if o.Continue != nil && !staged {
+		return result, errors.New("only a staged run of a pull request continues a saved version")
+	}
 	now := o.Now
 	if now == nil {
 		now = time.Now
@@ -220,9 +259,20 @@ func Run(ctx context.Context, o Options) (result Result, err error) {
 		return err
 	}
 
-	prompted, err := prompts.Instructions(ctx, o.Backend.Name())
-	if err != nil {
-		return result, fail(CategoryBackend, err)
+	// The version and digest recorded are those of the prompt the run sends.
+	var promptVersion, promptDigest string
+	if staged {
+		instructions, err := stagedPrompts.StagedInstructions(ctx, o.Backend.Name())
+		if err != nil {
+			return result, fail(CategoryBackend, err)
+		}
+		promptVersion, promptDigest = instructions.Version, instructions.Digest
+	} else {
+		instructions, err := prompts.Instructions(ctx, o.Backend.Name())
+		if err != nil {
+			return result, fail(CategoryBackend, err)
+		}
+		promptVersion, promptDigest = instructions.Version, instructions.Digest
 	}
 
 	archives, err := os.MkdirTemp("", "baum-generate-*")
@@ -230,7 +280,8 @@ func Run(ctx context.Context, o Options) (result Result, err error) {
 		return result, err
 	}
 	defer RemoveTree(archives)
-	keepSession := o.KeepSession && o.Group == nil
+	// A continued version keeps the session it was written with.
+	keepSession := o.KeepSession && o.Group == nil && o.Continue == nil
 	var runDir, sessionRoot string
 	if keepSession {
 		sessionRoot = o.SessionRoot
@@ -306,6 +357,12 @@ func Run(ctx context.Context, o Options) (result Result, err error) {
 	limits := request.Limits
 	// A path the checkout holds may stay in the returned document as it is.
 	checkout := checkoutPaths(runDir, limits.Checkout.MaxTotalFiles)
+	var continued agent.StagedRun
+	if o.Continue != nil {
+		if continued, err = continuing(*o.Continue, assembled); err != nil {
+			return result, fail(CategoryInput, err)
+		}
+	}
 
 	label := o.Backend.Name()
 	if o.BackendVersion != "" {
@@ -326,16 +383,55 @@ func Run(ctx context.Context, o Options) (result Result, err error) {
 	}
 	generator := agent.Generator{
 		Backend: backend, Prompts: prompts, Validator: validator, Redactor: redactor,
-		Logger: slog.New(progressHandler{w: o.Progress, validated: o.OnValidation}),
+		Logger: slog.New(&progressHandler{w: o.Progress, repairs: o.OnRepairs, stages: map[string]int{}}),
 	}
-	outcome, document, genErr := generator.Generate(runCtx, agent.Run{
+	run := agent.Run{
 		Bundle: &b, EncodedBundle: assembled.JSON, Directory: runDir, TileKinds: o.TileKinds, Budgets: o.Budgets, Decorate: decorate, PersistSession: keepSession,
-	})
-	sessionIDs = outcome.Sessions
+	}
 	// What the loop returned is masked on every path, as the hosted worker
 	// does, before any of it is shown, written or put in an error.
 	redactCtx := context.WithoutCancel(ctx)
-	document, closed, redactErr := agent.RedactOutput(redactCtx, validator, redactor, document, &b, checkout, &outcome)
+	var outcome agent.Outcome
+	var document []byte
+	var genErr, redactErr error
+	closed := 0
+	if staged {
+		continued.Run, continued.Prompts = run, stagedPrompts
+		draftModel := o.Model
+		if o.Continue != nil {
+			draftModel = o.Continue.Metadata.Model
+		}
+		if draftModel == "" {
+			draftModel = o.Backend.Name()
+		}
+		var stopDrafts func()
+		if o.OnDraft != nil {
+			continued.Progress, stopDrafts = drafts(runCtx, o.OnDraft, func(draft []byte) []byte {
+				var scratch agent.Outcome
+				masked, closed, err := agent.RedactOutput(redactCtx, validator, redactor, draft, &b, checkout, &scratch)
+				if err != nil || closed > 0 {
+					return nil
+				}
+				completed, findings := validator.CompleteStaged(masked, &b, runDir, draftModel, promptVersion, now())
+				if findings != "" {
+					return nil
+				}
+				return completed
+			})
+		}
+		var stages agent.StagedOutcome
+		stages, document, genErr = generator.StagedReview(runCtx, continued)
+		if stopDrafts != nil {
+			stopDrafts()
+		}
+		sessionIDs = stages.Sessions
+		document, closed, redactErr = agent.RedactStagedOutput(redactCtx, validator, redactor, document, &b, checkout, &stages)
+		outcome = stages.Outcome
+	} else {
+		outcome, document, genErr = generator.Generate(runCtx, run)
+		sessionIDs = outcome.Sessions
+		document, closed, redactErr = agent.RedactOutput(redactCtx, validator, redactor, document, &b, checkout, &outcome)
+	}
 	if redactErr == nil {
 		document, _ = agent.RejectSecrets(&outcome, document, closed)
 	}
@@ -361,7 +457,23 @@ func Run(ctx context.Context, o Options) (result Result, err error) {
 	if err := ctx.Err(); err != nil {
 		return result, interrupted(err)
 	}
-	completed, findings := validator.CompleteWithPrompt(document, &b, runDir, outcome.Model, prompted.Version, now())
+	model, version, generatedAt := outcome.Model, promptVersion, now()
+	if o.Continue != nil {
+		// The version stays the one saved: its model, prompt and time.
+		saved := o.Continue.Metadata
+		model, version = saved.Model, saved.PromptVersion
+		if generatedAt, err = time.Parse(time.RFC3339Nano, saved.GeneratedAt); err != nil {
+			return result, fail(CategoryInput, fmt.Errorf("version %d has no generation time: %w", saved.Version, err))
+		}
+	}
+	var completed []byte
+	var findings string
+	if staged {
+		// The stages settled: nothing will write a section still pending.
+		completed, findings = validator.CompleteStaged(review.FailPendingDetails(document), &b, runDir, model, version, generatedAt)
+	} else {
+		completed, findings = validator.CompleteWithPrompt(document, &b, runDir, model, version, generatedAt)
+	}
 	if findings != "" {
 		outcome.Reason, outcome.Findings = agent.ReasonValidationRejected, findings
 		result.Outcome = outcome
@@ -394,8 +506,24 @@ func Run(ctx context.Context, o Options) (result Result, err error) {
 	}
 	result.Metadata = store.Metadata{Accounting: outcome.Accounting, Version: stored.Review.Version, Head: assembled.Head, Base: assembled.Base, MergeBase: assembled.MergeBase, BundleDigest: b.Digest,
 		Backend: o.Backend.Name(), BackendVersion: o.BackendVersion, Model: stored.Review.Generator.Model, Schema: stored.Schema,
-		SchemaRevision: stored.Review.Generator.SchemaRevision, PromptVersion: stored.Review.Generator.PromptVersion, PromptDigest: prompted.Digest,
+		SchemaRevision: stored.Review.Generator.SchemaRevision, PromptVersion: stored.Review.Generator.PromptVersion, PromptDigest: promptDigest,
 		Policy: stored.Review.Generator.ReviewMD, GeneratedAt: stored.Review.GeneratedAt, Elapsed: time.Since(started), Calls: outcome.Calls, Tokens: outcome.Tokens}
+	if o.Continue != nil {
+		// The version keeps the provenance of the run that wrote it.
+		if stored.Review.Version != o.Continue.Metadata.Version || stored.Review.GeneratedAt != o.Continue.Metadata.GeneratedAt {
+			return result, fail(CategoryInternal, fmt.Errorf("the continued document is not version %d", o.Continue.Metadata.Version))
+		}
+		result.Metadata = o.Continue.Metadata
+	}
+	if staged {
+		result.FailedSections, result.ContextFailed = Gaps(completed)
+		if len(result.FailedSections) > 0 {
+			progress("%d section(s) without their details", len(result.FailedSections))
+		}
+		if result.ContextFailed {
+			progress("the review has no codebase context")
+		}
+	}
 	if keepSession && outcome.SessionID != "" {
 		result.Metadata.Session = &store.ReviewSession{Backend: o.Backend.Name(), ID: outcome.SessionID, Directory: runDir}
 		result.RunDir = runDir
@@ -556,6 +684,17 @@ func (p passBounded) Run(ctx context.Context, request agent.Request) (agent.Resu
 	return result, err
 }
 
+// ConcurrentCalls forwards the bounded backend's agent.ConcurrentCaller.
+func (p passBounded) ConcurrentCalls() bool { return ConcurrentCalls(p.Backend) }
+
+// ConcurrentCalls reports whether backend may run several calls over one run
+// directory at once (agent.ConcurrentCaller). A host's wrapper of a backend
+// forwards it, or a staged review runs its stages in turn.
+func ConcurrentCalls(backend agent.Backend) bool {
+	caller, ok := backend.(agent.ConcurrentCaller)
+	return ok && caller.ConcurrentCalls()
+}
+
 // checkoutPaths lists the repository paths of the regular files of the
 // unpacked head and merge-base trees.
 func checkoutPaths(dir string, limit int) map[string]bool {
@@ -617,45 +756,71 @@ func WriteFileAtomic(path string, data []byte) (err error) {
 
 // progressHandler prints the loop's milestones as lines for a person. It
 // prints counts and fixed words only: never a finding, a model's text or a
-// path, so what it writes needs no masking.
+// path, so what it writes needs no masking. The stages of a staged run log
+// from their own goroutines, so it is used by pointer and locks.
 type progressHandler struct {
-	w         io.Writer
-	validated func(int, bool)
+	w       io.Writer
+	repairs func(int)
+	mu      sync.Mutex
+	// stages holds the repairs of each stage so far, "" for a run in one
+	// pass.
+	stages map[string]int
 }
 
-func (h progressHandler) Enabled(context.Context, slog.Level) bool {
-	return h.w != nil || h.validated != nil
+func (h *progressHandler) Enabled(context.Context, slog.Level) bool {
+	return h.w != nil || h.repairs != nil
 }
 
-func (h progressHandler) Handle(_ context.Context, record slog.Record) error {
-	if h.w == nil {
-		h.w = io.Discard
+func (h *progressHandler) Handle(_ context.Context, record slog.Record) error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	w := h.w
+	if w == nil {
+		w = io.Discard
 	}
 	attrs := map[string]slog.Value{}
 	record.Attrs(func(a slog.Attr) bool { attrs[a.Key] = a.Value; return true })
 	switch record.Message {
-	case "review document validated":
-		pass := attrs["pass"].Int64()
-		if h.validated != nil {
-			h.validated(int(pass), attrs["valid"].Bool())
+	case "review document validated", "review stage validated":
+		pass, valid := attrs["pass"].Int64(), attrs["valid"].Bool()
+		// A valid pass follows its repairs; an invalid one asks for another.
+		stage, repairs := "", int(pass)
+		if v, ok := attrs["stage"]; ok {
+			stage = v.String()
 		}
-		if attrs["valid"].Bool() {
-			_, _ = fmt.Fprintf(h.w, "pass %d: the document is valid\n", pass)
+		if valid {
+			repairs--
+		}
+		h.stages[stage] = repairs
+		if h.repairs != nil {
+			total := 0
+			for _, n := range h.stages {
+				total += n
+			}
+			h.repairs(total)
+		}
+		label := fmt.Sprintf("pass %d", pass)
+		what := "the document"
+		if stage != "" {
+			label, what = fmt.Sprintf("%s, pass %d", stage, pass), "the "+stage
+		}
+		if valid {
+			_, _ = fmt.Fprintf(w, "%s: %s is valid\n", label, what)
 		} else {
-			_, _ = fmt.Fprintf(h.w, "pass %d: the validator found problems\n", pass)
+			_, _ = fmt.Fprintf(w, "%s: the validator found problems\n", label)
 		}
 	case "review agent failed":
 		status := "error"
 		if v, ok := attrs["status"]; ok && v.String() != "" {
 			status = v.String()
 		}
-		_, _ = fmt.Fprintf(h.w, "attempt %d failed (%s)\n", attrs["provider_attempt"].Int64(), status)
+		_, _ = fmt.Fprintf(w, "attempt %d failed (%s)\n", attrs["provider_attempt"].Int64(), status)
 	}
 	return nil
 }
 
-func (h progressHandler) WithAttrs([]slog.Attr) slog.Handler { return h }
-func (h progressHandler) WithGroup(string) slog.Handler      { return h }
+func (h *progressHandler) WithAttrs([]slog.Attr) slog.Handler { return h }
+func (h *progressHandler) WithGroup(string) slog.Handler      { return h }
 
 // diagnostics is the file --diagnostics writes: how the run ended and the
 // redacted outcome. An early failure has an empty outcome.

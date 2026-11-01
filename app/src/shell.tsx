@@ -12,7 +12,7 @@ import {
   type RefObject,
 } from "react";
 import { Wordmark } from "@baum/viewer/components/editorial";
-import { RefreshIcon } from "@baum/viewer/components/icons";
+import { ChevronDownIcon, RefreshIcon } from "@baum/viewer/components/icons";
 import { Stumpy } from "@baum/viewer/components/stumpy";
 import type { ViewerLinkProps } from "@baum/viewer/navigation";
 import { appURL } from "./api";
@@ -149,7 +149,7 @@ export function Sidebar({
                     }
                   }}
                 >
-                  ▾
+                  <ChevronDownIcon size={14} />
                 </button>
               </div>
               <div id="local-rail-inboxes" hidden={fold}>

@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 
@@ -94,14 +95,45 @@ func TestGenerateWritesOnlyTheDocumentToStdout(t *testing.T) {
 	if strings.Contains(stderr, `"schema"`) {
 		t.Error("the document was written to stderr")
 	}
-	if len(stub.Requests) != 1 {
-		t.Errorf("backend ran %d times", len(stub.Requests))
+	// The review is written in stages: the outline, the details, the context.
+	var stages []string
+	for _, request := range stub.Requests {
+		stages = append(stages, generatetest.Stage(request))
+	}
+	if !slices.Equal(stages, []string{agent.StageOutline, agent.StageDetails, agent.StageContext}) {
+		t.Errorf("backend ran the stages %v", stages)
+	}
+	if decoded["review"].(map[string]any)["generator"].(map[string]any)["prompt_version"] != "review-staged-public-v1" {
+		t.Errorf("generator %v", decoded["review"].(map[string]any)["generator"])
 	}
 	entries, _ := os.ReadDir(os.TempDir())
 	for _, entry := range entries {
 		if strings.HasPrefix(entry.Name(), agent.RunDirPrefix) || strings.HasPrefix(entry.Name(), "baum-generate-") {
 			t.Errorf("left behind: %s", entry.Name())
 		}
+	}
+}
+
+// --one-pass writes the review in one call with the one-pass prompt, as
+// before staged reviews, for an evaluation that compares the two.
+func TestGenerateOnePass(t *testing.T) {
+	stub, stores := generateEnv(t)
+	stdout, stderr, err := run(t, append([]string{"internal", "generate", "--pr", "7", "--one-pass"}, stores...)...)
+	if err != nil {
+		t.Fatalf("generate: %v\n%s", err, stderr)
+	}
+	var document struct {
+		Review struct {
+			Generator struct {
+				PromptVersion string `json:"prompt_version"`
+			} `json:"generator"`
+		} `json:"review"`
+	}
+	if err := json.Unmarshal([]byte(stdout), &document); err != nil {
+		t.Fatal(err)
+	}
+	if len(stub.Requests) != 1 || generatetest.Stage(stub.Requests[0]) != "" || document.Review.Generator.PromptVersion != "review-public-v6" {
+		t.Fatalf("%d request(s), prompt %q", len(stub.Requests), document.Review.Generator.PromptVersion)
 	}
 }
 
@@ -256,9 +288,11 @@ func TestGenerationStoresHistoryAndFeedsPreviousToTheNextRun(t *testing.T) {
 		if err := json.Unmarshal(raw, &b); err != nil {
 			return agent.Result{}, err
 		}
-		inputs = append(inputs, b)
+		if generatetest.Stage(req) == agent.StageOutline {
+			inputs = append(inputs, b)
+		}
 		doc, err := generatetest.Document(req.Directory, nil)
-		return agent.Result{Document: doc, Model: "stub-model", Calls: 1, Tokens: 100}, err
+		return agent.Result{Document: generatetest.ForStage(req, doc), Model: "stub-model", Calls: 1, Tokens: 100}, err
 	}
 	first, stderr, err := run(t, args...)
 	if err != nil {
@@ -317,7 +351,7 @@ func TestGenerationStoresHistoryAndFeedsPreviousToTheNextRun(t *testing.T) {
 		t.Fatalf("versions %+v %v", metadata, err)
 	}
 	m := metadata[0]
-	if m.Head == "" || m.Base == "" || m.MergeBase == "" || len(m.BundleDigest) != 64 || m.Backend != "claude" || m.BackendVersion != "9.9.9" || m.Model != "stub-model" || m.Schema != "baum.review/1" || m.SchemaRevision == "" || m.PromptVersion == "" || len(m.PromptDigest) != 64 || m.GeneratedAt == "" || m.Calls != 1 || m.Tokens != 100 {
+	if m.Head == "" || m.Base == "" || m.MergeBase == "" || len(m.BundleDigest) != 64 || m.Backend != "claude" || m.BackendVersion != "9.9.9" || m.Model != "stub-model" || m.Schema != "baum.review/1" || m.SchemaRevision == "" || m.PromptVersion == "" || len(m.PromptDigest) != 64 || m.GeneratedAt == "" || m.Calls < 2 || m.Tokens != 100*m.Calls {
 		t.Fatalf("incomplete metadata: %+v", m)
 	}
 	for _, version := range []string{"1", "2"} {

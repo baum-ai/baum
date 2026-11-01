@@ -15,7 +15,11 @@ import { SparkleIcon, WarningIcon } from "@baum/viewer/components/icons";
 import { useHistoryView } from "@baum/viewer/use-review-version";
 import { AttachmentUrlProvider } from "@baum/viewer/host";
 import { ViewerLink, useUrlState } from "@baum/viewer/navigation";
-import type { ReviewDocument, ReviewVersionState } from "@baum/viewer/review-document";
+import {
+  sectionDetails,
+  type ReviewDocument,
+  type ReviewVersionState,
+} from "@baum/viewer/review-document";
 import { parseSessionsAnswer, sessionLists, type SessionsLoad } from "@baum/viewer/local-sessions";
 import { parseTranscript, type LocalTranscript } from "@baum/viewer/local-transcript";
 import {
@@ -30,6 +34,7 @@ import {
   isActiveJob,
   automaticLabel,
   jobReasonText,
+  LocalRequestError,
   liveFor,
   fixEligible,
   fixLabel,
@@ -52,7 +57,18 @@ import { Walkthrough, type WalkMode } from "./walkthrough";
 import { buildTour } from "./walkthrough-model";
 import { AnswerActions } from "./answer-actions";
 import { AskPanel, sectionFocus } from "./chat";
-function Transcript({ id, query }: { id: string; query: string }) {
+import { factsFilesSlot, factsQuery, useFacts } from "./facts";
+import { SECONDARY } from "./action-classes";
+function Transcript({
+  id,
+  query,
+  route = "api/sessions",
+}: {
+  id: string;
+  query: string;
+  /** Where the pull request's sessions are read: a version's, or its facts'. */
+  route?: string;
+}) {
   const [load, setLoad] = useState<LocalTranscript | null>(null);
   const [error, setError] = useState(false);
   const [retry, setRetry] = useState(0);
@@ -60,12 +76,7 @@ function Transcript({ id, query }: { id: string; query: string }) {
     const abort = new AbortController();
     setLoad(null);
     setError(false);
-    request<unknown>(
-      `api/sessions/${encodeURIComponent(id)}?${query}`,
-      undefined,
-      "GET",
-      abort.signal,
-    )
+    request<unknown>(`${route}/${encodeURIComponent(id)}?${query}`, undefined, "GET", abort.signal)
       .then((body) => {
         const parsed = parseTranscript(body);
         if (!parsed) throw Error("Invalid transcript");
@@ -75,7 +86,7 @@ function Transcript({ id, query }: { id: string; query: string }) {
         if (!abort.signal.aborted) setError(true);
       });
     return () => abort.abort();
-  }, [id, query, retry]);
+  }, [id, query, route, retry]);
   if (error)
     return (
       <Alert>
@@ -120,6 +131,7 @@ export function LocalReview({
   generate,
   starting = false,
   job,
+  detailsJob,
   changed,
   refresh,
   live = [],
@@ -137,6 +149,8 @@ export function LocalReview({
   /** The review was asked for and the daemon has not answered yet. */
   starting?: boolean;
   job?: Job;
+  /** The latest retry of this review's failed section details. */
+  detailsJob?: Job;
   changed: () => Promise<void>;
   /** Reads the pull request from GitHub again, from the head's refresh. */
   refresh?: () => Promise<void>;
@@ -246,21 +260,25 @@ export function LocalReview({
   const [provenance, setProvenance] = useState<Provenance[]>([]);
   const [versions, setVersions] = useState<number[]>([]);
   const [historyFailed, setHistoryFailed] = useState(false);
-  const [sessions, setSessions] = useState<SessionsLoad>({ state: "loading" });
+  const [sessions, setSessions] = useState<{
+    query: string;
+    version: number;
+    load: SessionsLoad;
+  } | null>(null);
   // The page's keys: j and k step through the review as the navigator does,
   // and the header's actions have the list's keys.
   const steps = useRef<ReviewSteps>(null);
   useShortcuts((event) => {
     // a opens the Ask panel, or puts the cursor in its box when open; it
     // works in the walkthrough too.
-    if (event.key === "a" && doc) {
+    if (event.key === "a" && doc && !showingDraft) {
       event.preventDefault();
       if (askOpen) window.document.getElementById("ask-question")?.focus();
       else setAsk(true);
       return;
     }
     // The tour has keys of its own; the overview leaves the page's to it.
-    if (walkMode === "tour" && doc) return;
+    if (walkMode === "tour" && doc && !showingDraft) return;
     const step =
       event.key === "j" ? steps.current?.next : event.key === "k" ? steps.current?.previous : null;
     if (step) {
@@ -300,6 +318,166 @@ export function LocalReview({
     : doc;
   const query = selector(clone, pr.number, viewedVersion);
   const latestQuery = selector(clone, pr.number);
+  // While the daemon writes a review in stages it holds a draft of it. It is
+  // never a version: nothing is saved, listed or asked about until published.
+  const draftCount = isActiveJob(job) ? (job?.draft ?? 0) : 0;
+  const [draft, setDraft] = useState<ReviewDocument | null>(null);
+  const [viewDraft, setViewDraft] = useState(false);
+  useEffect(() => {
+    if (!job || draftCount === 0) {
+      setDraft(null);
+      setViewDraft(false);
+      return;
+    }
+    const abort = new AbortController();
+    request<{ document?: ReviewDocument }>(
+      `api/jobs/${encodeURIComponent(job.id)}/draft`,
+      undefined,
+      "GET",
+      abort.signal,
+    )
+      .then((body) => {
+        if (!abort.signal.aborted && Array.isArray(body.document?.sections))
+          setDraft(body.document);
+      })
+      .catch(() => {
+        /* The draft is gone, or the next one is on its way. */
+      });
+    return () => abort.abort();
+  }, [job?.id, draftCount]);
+  // A page without a review shows the draft as soon as there is one; one with
+  // a saved version keeps it until the reader asks for the draft.
+  const showingDraft = draft !== null && (viewDraft || (!doc && entry.version_count === 0));
+  // The failed sections of the latest saved version, which a retry writes
+  // again; they read as being written while that job runs.
+  const failedSections = useMemo(
+    () =>
+      doc?.sections
+        .filter((s) => s.derived?.state !== "stale" && sectionDetails(s) === "failed")
+        .map((s) => s.id) ?? [],
+    [doc],
+  );
+  const retrying =
+    isActiveJob(detailsJob) &&
+    (detailsJob?.version === undefined || detailsJob.version === doc?.review.version);
+  const shownDocument = useMemo(
+    () =>
+      showingDraft
+        ? draft
+        : retrying && doc && failedSections.length > 0
+          ? {
+              ...doc,
+              sections: doc.sections.map((s) =>
+                failedSections.includes(s.id) ? { ...s, details: "pending" as const } : s,
+              ),
+            }
+          : doc,
+    [showingDraft, draft, retrying, doc, failedSections],
+  );
+  const contextPending = showingDraft && isActiveJob(job) && !draft?.summary.context;
+  // Why the last retry did not write the details, said until it is dismissed.
+  const [headChanged, setHeadChanged] = useState(false);
+  const [retryError, setRetryError] = useState("");
+  const [confirmingIsolation, setConfirmingIsolation] = useState(false);
+  const [retryStarting, setRetryStarting] = useState(false);
+  const isolationDialog = useRef<HTMLDialogElement>(null);
+  useEffect(() => {
+    if (confirmingIsolation) isolationDialog.current?.showModal();
+  }, [confirmingIsolation]);
+  const [watchedDetails, setWatchedDetails] = useState("");
+  useEffect(() => {
+    if (detailsJob && isActiveJob(detailsJob)) setWatchedDetails(detailsJob.id);
+  }, [detailsJob?.id, detailsJob?.state]);
+  const retryDetails = async (confirmIsolation = false) => {
+    if (!doc) return;
+    setHeadChanged(false);
+    setRetryError("");
+    setRetryStarting(true);
+    try {
+      await request("api/jobs", {
+        items: [{ clone, pr: pr.number, kind: "details", version: doc.review.version }],
+        mode: "single",
+        ...(confirmIsolation ? { confirm_isolation: true } : {}),
+      });
+      setConfirmingIsolation(false);
+      await changed();
+    } catch (e) {
+      if (e instanceof LocalRequestError && e.code === "isolation_required") {
+        setConfirmingIsolation(true);
+        return;
+      }
+      if (
+        e instanceof LocalRequestError &&
+        (e.code === "head_changed" || e.code === "base_changed")
+      )
+        setHeadChanged(true);
+      else setRetryError(e instanceof Error ? e.message : "The details could not be retried.");
+    } finally {
+      setRetryStarting(false);
+    }
+  };
+  // What the saved review lacks: sections' details and the context. A review
+  // from before contexts existed lacks one without having failed to write it,
+  // so only the job that published the review says that.
+  const missing = failedSections.length;
+  const contextMissing =
+    Boolean(doc) &&
+    !doc?.summary.context &&
+    job?.context_failed === true &&
+    job.state === "completed";
+  const gaps =
+    !doc || showingDraft || viewedVersion || (!missing && !contextMissing) ? null : (
+      <Notice>
+        {retrying
+          ? "Writing the details that couldn't be written."
+          : [
+              missing
+                ? `${missing === 1 ? "1 section" : `${missing} sections`} couldn't be written.`
+                : "",
+              contextMissing ? "The codebase context couldn't be written." : "",
+            ]
+              .filter(Boolean)
+              .join(" ")}
+      </Notice>
+    );
+  const retryNotices = (
+    <>
+      {headChanged ? (
+        <Alert>
+          This pull request changed since this review (new commits on it or on its base), so its
+          details can't be retried. Regenerate the review instead.{" "}
+          <Button variant="secondary" size="compact" disabled={generating} onClick={generate}>
+            Regenerate
+          </Button>
+        </Alert>
+      ) : null}
+      {retryError ? <Alert>{retryError}</Alert> : null}
+      {detailsJob &&
+      detailsJob.id === watchedDetails &&
+      !isActiveJob(detailsJob) &&
+      detailsJob.state !== "completed" ? (
+        <div className="local-job-outcome">
+          <GenerationOutcome job={detailsJob} compact />
+          <Button variant="secondary" size="compact" onClick={() => setWatchedDetails("")}>
+            Dismiss
+          </Button>
+        </div>
+      ) : null}
+    </>
+  );
+  const viewDraftButton =
+    doc && isActiveJob(job) ? (
+      <Button
+        variant="secondary"
+        size="compact"
+        aria-pressed={showingDraft}
+        disabled={!draft}
+        onClick={() => setViewDraft((on) => !on)}
+      >
+        View draft
+      </Button>
+    ) : null;
+  const sessionsVersion = viewedDocument?.review.version;
   useEffect(() => {
     const abort = new AbortController();
     setFailed(false);
@@ -320,21 +498,88 @@ export function LocalReview({
     return () => abort.abort();
   }, [clone, pr.number, latestQuery, revision, retry]);
   useEffect(() => {
-    if (!viewedDocument) return;
-    setSessions({ state: "loading" });
+    if (sessionsVersion == null) return;
     const abort = new AbortController();
     request<unknown>(`api/sessions?${query}`, undefined, "GET", abort.signal)
       .then((body) => {
         const answer = parseSessionsAnswer(body);
         if (!abort.signal.aborted)
-          setSessions(answer ? { state: "answered", answer } : { state: "request-failed" });
+          setSessions({
+            query,
+            version: sessionsVersion,
+            load: answer ? { state: "answered", answer } : { state: "request-failed" },
+          });
       })
       .catch(() => {
-        if (!abort.signal.aborted) setSessions({ state: "request-failed" });
+        if (!abort.signal.aborted)
+          setSessions({ query, version: sessionsVersion, load: { state: "request-failed" } });
       });
     return () => abort.abort();
-  }, [viewedDocument, query, ended]);
-  const lists = viewedDocument ? sessionLists(sessions, viewedDocument) : null;
+  }, [sessionsVersion, query, revision, retry, ended]);
+  // Without a saved version the page shows the pull request's facts: no
+  // model's text, only what GitHub, the clone and the sessions on this
+  // machine say. They are never a version: not listed, read or asked about.
+  const wantsFacts = entry.version_count === 0 && !entry.needs_clone && Boolean(clone);
+  const [factsRetry, setFactsRetry] = useState(0);
+  const facts = useFacts(clone, pr.number, pr.head_sha, revision + factsRetry, wantsFacts);
+  const shownFacts = !doc && facts.state === "ready" ? facts.facts : null;
+  const factsHead = shownFacts?.review.head ?? "";
+  const factsBase = shownFacts?.review.base ?? "";
+  const factsMergeBase = shownFacts?.review.merge_base ?? "";
+  // Each read names the head of the facts shown, so a newer build of them
+  // never answers for what is on screen.
+  const factsSelector = factsQuery(clone, pr.number, factsHead);
+  const [factsSessions, setFactsSessions] = useState<SessionsLoad>({ state: "loading" });
+  useEffect(() => {
+    if (!factsHead) return;
+    setFactsSessions({ state: "loading" });
+    const abort = new AbortController();
+    request<unknown>(`api/facts/sessions?${factsSelector}`, undefined, "GET", abort.signal)
+      .then((body) => {
+        const answer = parseSessionsAnswer(body);
+        if (!abort.signal.aborted)
+          setFactsSessions(answer ? { state: "answered", answer } : { state: "request-failed" });
+      })
+      .catch(() => {
+        if (!abort.signal.aborted) setFactsSessions({ state: "request-failed" });
+      });
+    return () => abort.abort();
+  }, [factsHead, factsSelector, ended]);
+  // A new comparison base changes patches even when the head stays the same.
+  const factsPatches = useMemo(() => {
+    const cache = new Map<string, Promise<string | null>>();
+    return (path: string) => {
+      const key = `${factsHead}:${factsBase}:${factsMergeBase}:${path}`;
+      let pending = cache.get(key);
+      if (!pending) {
+        pending = request<{ patch: string | null }>(
+          `api/facts/patch?${factsSelector}&path=${encodeURIComponent(path)}`,
+        )
+          .then((body) => body.patch)
+          .catch(() => {
+            cache.delete(key);
+            return null;
+          });
+        cache.set(key, pending);
+      }
+      return pending;
+    };
+  }, [factsSelector, factsHead, factsBase, factsMergeBase]);
+  const factsMode = !doc && wantsFacts && facts.state !== "unavailable";
+  const lists = viewedDocument
+    ? sessionLists(
+        sessions?.query === query && sessions.version === sessionsVersion
+          ? sessions.load
+          : { state: "loading" },
+        viewedDocument,
+      )
+    : !factsMode
+      ? null
+      : shownFacts
+        ? sessionLists(factsSessions, shownFacts)
+        : facts.state === "failed"
+          ? { sessions: { status: "failed" as const }, commits: null }
+          : { sessions: { status: "loading" as const }, commits: { status: "loading" as const } };
   const patches = useMemo(() => {
     const cache = new Map<string, Promise<string | null>>();
     return (path: string, version: number) => {
@@ -366,7 +611,7 @@ export function LocalReview({
       <AttachmentUrlProvider resolve={attachments}>
         <div className="ask-layout">
           <div className="ask-main" inert={narrow && askOpen ? true : undefined}>
-            {walkMode && doc ? (
+            {walkMode && doc && !showingDraft ? (
               // A new version starts afresh, with that version's own progress.
               <Walkthrough
                 key={doc.review.version}
@@ -391,7 +636,7 @@ export function LocalReview({
                     {fix && fixLabelText ? (
                       <button
                         type="button"
-                        className="walk-secondary"
+                        className={SECONDARY}
                         disabled={fixing || fixStarting}
                         onClick={() => fix()}
                       >
@@ -400,36 +645,29 @@ export function LocalReview({
                       </button>
                     ) : null}
                     {canMerge(entry) ? (
-                      <button
-                        type="button"
-                        className="walk-secondary"
-                        onClick={() => setMerging(true)}
-                      >
+                      <button type="button" className={SECONDARY} onClick={() => setMerging(true)}>
                         Merge…
                       </button>
                     ) : null}
                     {canUpdateBranch(entry) ? (
-                      <button
-                        type="button"
-                        className="walk-secondary"
-                        onClick={() => setUpdating(true)}
-                      >
+                      <button type="button" className={SECONDARY} onClick={() => setUpdating(true)}>
                         Update branch
                       </button>
                     ) : null}
                     {canRerunChecks(entry) ? (
                       <button
                         type="button"
-                        className="walk-secondary"
+                        className={SECONDARY}
                         onClick={() => setRerunning(true)}
                       >
                         Re-run checks
                       </button>
                     ) : null}
+                    {viewDraftButton}
                     {entry.status === "outdated" || generating ? (
                       <button
                         type="button"
-                        className="walk-secondary"
+                        className={SECONDARY}
                         disabled={generating || entry.needs_clone}
                         onClick={generate}
                       >
@@ -453,6 +691,8 @@ export function LocalReview({
                       revision={`${ended}:${doc.review.version}`}
                     />
                     <LiveSessions sessions={running} Link={ViewerLink} />
+                    {gaps}
+                    {retryNotices}
                     {failed ? (
                       <Alert>
                         The latest review could not be read. This saved version remains available.{" "}
@@ -470,11 +710,21 @@ export function LocalReview({
               />
             ) : (
               <ReviewViewer
-                document={doc}
-                history={history}
-                versions={versions.filter((v) => v !== doc?.review.version)}
-                loadVersion={loadVersion}
-                versionsFailed={historyFailed ? { retry: () => setRetry((n) => n + 1) } : undefined}
+                document={shownDocument}
+                history={showingDraft ? undefined : history}
+                versions={showingDraft ? [] : versions.filter((v) => v !== doc?.review.version)}
+                loadVersion={showingDraft ? undefined : loadVersion}
+                versionsFailed={
+                  historyFailed && !showingDraft
+                    ? { retry: () => setRetry((n) => n + 1) }
+                    : undefined
+                }
+                contextPending={contextPending}
+                onRetryDetails={
+                  doc && !showingDraft && !generating && failedSections.length > 0
+                    ? () => retryDetails()
+                    : undefined
+                }
                 steps={steps}
                 foldSidePane={askOpen && tight}
                 header={{
@@ -549,7 +799,8 @@ export function LocalReview({
                               : "Regenerate review"}
                           </Button>
                         ) : null}
-                        {doc ? (
+                        {viewDraftButton}
+                        {doc && !showingDraft ? (
                           <Button
                             variant="secondary"
                             size="compact"
@@ -561,7 +812,7 @@ export function LocalReview({
                             Ask
                           </Button>
                         ) : null}
-                        {doc ? (
+                        {doc && !showingDraft ? (
                           <Button
                             variant="secondary"
                             size="compact"
@@ -664,13 +915,27 @@ export function LocalReview({
                       />
                     ) : null}
                     <LiveSessions sessions={running} Link={ViewerLink} />
+                    {factsMode && facts.state === "failed" ? (
+                      <Alert>
+                        {facts.rateLimited
+                          ? "GitHub's rate limit is reached, so this pull request's checks, sessions and files load once it resets."
+                          : "This pull request's checks, sessions and files couldn't be read."}{" "}
+                        <Button onClick={() => setFactsRetry((n) => n + 1)}>Retry</Button>
+                      </Alert>
+                    ) : null}
                     {entry.needs_clone && doc ? (
                       <Notice>
                         Needs a local clone. This saved review remains available.
                         <CloneActions repository={pr.repository} changed={changed} />
                       </Notice>
                     ) : null}
-                    {job && isActiveJob(job) && doc ? (
+                    {showingDraft ? (
+                      <Notice>
+                        Draft — the review is still being written. Sections fill in as they're
+                        written.
+                      </Notice>
+                    ) : null}
+                    {job && isActiveJob(job) && (doc || showingDraft) ? (
                       <ReviewJob key={job.id} job={job} changed={changed} />
                     ) : job && doc && job.state !== "completed" ? (
                       <div className="local-job-outcome">
@@ -683,25 +948,46 @@ export function LocalReview({
                         <Button onClick={() => setRetry((n) => n + 1)}>Retry review</Button>
                       </Alert>
                     ) : null}
-                    {generating && doc ? (
+                    {generating && doc && !showingDraft ? (
                       <Notice>
                         A new review is being generated. This saved version remains available while
                         it runs.
                       </Notice>
                     ) : null}
+                    {gaps}
+                    {retryNotices}
                   </>
                 }
                 sessions={
-                  lists
+                  lists && !(showingDraft && doc)
                     ? sessionsSlot(lists.sessions, {
-                        renderSession: (session) => <Transcript id={session.id} query={query} />,
+                        renderSession: (session) =>
+                          viewedDocument ? (
+                            <Transcript id={session.id} query={query} />
+                          ) : (
+                            <Transcript
+                              id={session.id}
+                              query={factsSelector}
+                              route="api/facts/sessions"
+                            />
+                          ),
                       })
                     : undefined
                 }
-                commits={lists?.commits ? commitsSlot(lists.commits) : undefined}
-                hunkPatches={patches}
+                commits={
+                  lists?.commits && !(showingDraft && doc) ? commitsSlot(lists.commits) : undefined
+                }
+                facts={shownFacts}
+                files={
+                  factsMode
+                    ? factsFilesSlot(facts, () => setFactsRetry((n) => n + 1), factsPatches, pr.url)
+                    : undefined
+                }
+                hunkPatches={
+                  showingDraft ? (doc ? undefined : (path: string) => factsPatches(path)) : patches
+                }
                 renderSectionAside={
-                  doc
+                  doc && !showingDraft
                     ? (id) => (
                         <div className="ask-aside">
                           <Button
@@ -721,7 +1007,7 @@ export function LocalReview({
               />
             )}
           </div>
-          {askOpen && doc ? (
+          {askOpen && doc && !showingDraft ? (
             <>
               <div className="ask-backdrop" aria-hidden onClick={closeAsk} />
               <AskPanel
@@ -771,6 +1057,30 @@ export function LocalReview({
         ) : null}
         {updating ? (
           <UpdateBranchDialog entry={entry} close={() => setUpdating(false)} updated={changed} />
+        ) : null}
+        {confirmingIsolation ? (
+          <dialog
+            ref={isolationDialog}
+            onCancel={() => setConfirmingIsolation(false)}
+            aria-labelledby="retry-isolation-title"
+          >
+            <h2 id="retry-isolation-title" className="text-lg font-semibold">
+              Review code from outside your team?
+            </h2>
+            <p className="my-3">
+              This pull request comes from a fork or from an author without write access. Retrying
+              its details runs your agent on its code. Only continue if you trust it, or if your
+              agent runs in an isolated environment.
+            </p>
+            <div className="flex justify-end gap-2">
+              <Button variant="ghost" size="compact" onClick={() => setConfirmingIsolation(false)}>
+                Cancel
+              </Button>
+              <Button size="compact" disabled={retryStarting} onClick={() => retryDetails(true)}>
+                {retryStarting ? "Starting…" : "Retry anyway"}
+              </Button>
+            </div>
+          </dialog>
         ) : null}
       </AttachmentUrlProvider>
     </ReviewBoundary>
@@ -837,13 +1147,18 @@ function GeneratedBy({
  *  happened in a sentence, and the generator's own words behind a toggle. */
 export function GenerationOutcome({ job, compact = false }: { job: Job; compact?: boolean }) {
   const failed = job.state === "failed";
-  const title = failed
-    ? compact
-      ? "The latest regeneration failed"
-      : "The review couldn't be generated"
-    : job.state === "interrupted"
-      ? "Review generation was interrupted"
-      : "Review generation was cancelled";
+  const details = job.kind === "details";
+  const title = details
+    ? failed
+      ? "The details couldn't be written"
+      : "Writing the details was stopped"
+    : failed
+      ? compact
+        ? "The latest regeneration failed"
+        : "The review couldn't be generated"
+      : job.state === "interrupted"
+        ? "Review generation was interrupted"
+        : "Review generation was cancelled";
   const started = automaticLabel(job);
   return (
     <section aria-label="Review generation" className="local-outcome">
@@ -852,7 +1167,7 @@ export function GenerationOutcome({ job, compact = false }: { job: Job; compact?
       </span>
       <div className="min-w-0">
         <h2 role="status">{title}</h2>
-        {job.reason ? <p>{jobReasonText(job.reason)}</p> : null}
+        {job.reason ? <p>{jobReasonText(job.reason, job.kind)}</p> : null}
         {started ? <p className="local-outcome-meta">{started}</p> : null}
         {job.detail ? (
           <details>

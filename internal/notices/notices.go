@@ -47,6 +47,10 @@ const (
 	// A fix job's outcome: pushed (with its short commit) or failed.
 	KindFixPushed = "fix_pushed"
 	KindFixFailed = "fix_failed"
+	// KindDetailsFailed is a retry of a review's failed section details
+	// (jobs.KindDetails) that failed. One that completes is not news: the
+	// review was already there.
+	KindDetailsFailed = "details_failed"
 	// An agent session began waiting for the user: to allow a tool, or to
 	// answer it. A finished turn is not news.
 	KindSessionPermission = "session_permission"
@@ -121,8 +125,8 @@ func (s *Service) ResetIdentity() {
 }
 
 // JobDone publishes the notice for a job that just finished: completed
-// reviews and failures, and a fix that pushed or failed; a feature build
-// has none. Cancelled,
+// reviews and failures, a fix that pushed or failed, and a details retry
+// that failed; a feature build has none. Cancelled,
 // interrupted and superseded jobs are not the user's news.
 func (s *Service) JobDone(ctx context.Context, job jobs.Job) {
 	// A review group's job names no pull request; its page shows the outcome.
@@ -130,6 +134,15 @@ func (s *Service) JobDone(ctx context.Context, job jobs.Job) {
 		return
 	}
 	n := Notice{Kind: KindFinished, Repository: job.Repository, PR: job.PR, Clone: job.Clone}
+	if job.Kind == jobs.KindDetails {
+		if job.State != "failed" {
+			return
+		}
+		n.Kind, n.Reason = KindDetailsFailed, reasonOf(job.Reason)
+		n.Title = s.title(ctx, job)
+		s.Publish(n)
+		return
+	}
 	if job.Kind == jobs.KindFix {
 		n.Kind = KindFixFailed
 		if job.State == "failed" {
@@ -140,13 +153,7 @@ func (s *Service) JobDone(ctx context.Context, job jobs.Job) {
 			// A fix that completed without a commit has nothing to report.
 			return
 		}
-		if s.Index != nil {
-			if snapshot, err := s.Index(ctx); err == nil {
-				if entry, ok := find(snapshot, job); ok {
-					n.Title = clip(entry.PullRequest.Title)
-				}
-			}
-		}
+		n.Title = s.title(ctx, job)
 		s.Publish(n)
 		return
 	}
@@ -168,6 +175,19 @@ func (s *Service) JobDone(ctx context.Context, job jobs.Job) {
 		}
 	}
 	s.Publish(n)
+}
+
+// title is the job's pull request's title from the review index, "" when
+// it is not there.
+func (s *Service) title(ctx context.Context, job jobs.Job) string {
+	if s.Index != nil {
+		if snapshot, err := s.Index(ctx); err == nil {
+			if entry, ok := find(snapshot, job); ok {
+				return clip(entry.PullRequest.Title)
+			}
+		}
+	}
+	return ""
 }
 
 // Observe publishes a notice for each pull request a successful discovery

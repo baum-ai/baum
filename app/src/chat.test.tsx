@@ -185,7 +185,7 @@ it("renders an answer as markdown, never raw HTML, with its citations and their 
   expect(node.textContent).toContain("<b>raw html</b>");
   const cites = Array.from(node.querySelectorAll(".ask-cite")).map((c) => c.textContent);
   expect(cites).toEqual(["queue/retry.go:31–42", "docs/else where.md:3"]);
-  expect(node.textContent).toContain("Cost $0.0123");
+  expect(node.textContent).not.toContain("Cost $");
   // The slot under the answer is there for the next step's actions.
   expect(node.querySelector("[data-answer-actions]")).not.toBeNull();
   // A citation in one of the review's hunks opens that hunk's lines.
@@ -266,7 +266,7 @@ it("says in words why a question was not answered", async () => {
   expect(text).toContain("You cancelled this question");
   expect(text).toContain("because baum stopped or restarted");
   expect(text).toContain("The agent kept no session.");
-  expect(text).toContain("Cost $0.5000");
+  expect(text).not.toContain("Cost $");
   expect(turnReasonText(turn({ state: "failed", reason: "unsupported_backend" }))).toContain(
     "Claude Code or Codex",
   );

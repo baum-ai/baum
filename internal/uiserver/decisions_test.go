@@ -165,7 +165,7 @@ func TestDecisionSettingsAndRoute(t *testing.T) {
 		t.Fatalf("stored %+v", prefs.Decisions)
 	}
 	// Data extraction's reasoning effort, empty for the agent's own.
-	if code, _ := serve("PUT", "/api/settings/decisions", `{"enabled":true,"effort":"max"}`); code != http.StatusBadRequest {
+	if code, _ := serve("PUT", "/api/settings/decisions", `{"enabled":true,"effort":"extreme"}`); code != http.StatusBadRequest {
 		t.Fatalf("an unknown effort answered %d", code)
 	}
 	if code, _ := serve("PUT", "/api/settings/decisions", `{"enabled":true,"effort":"medium"}`); code != 200 {

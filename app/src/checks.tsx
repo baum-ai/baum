@@ -3,6 +3,8 @@ import { formatCount } from "@baum/viewer/components/format";
 import { CircleCheckIcon, CircleCrossIcon, CircleDashedIcon } from "@baum/viewer/components/icons";
 import { LocalRequestError, joinAnd, request } from "./api";
 import { LoadingStatus } from "./nine-dots";
+import { SMALL } from "./action-classes";
+import { cn } from "@baum/viewer/components/classnames";
 
 /** A check of the head commit, as `api/prs/checks` lists it. Name and title
  *  come from the check itself. */
@@ -223,7 +225,7 @@ export function PullRequestChecks({
                 {canRetry && job != null && state === "failing" && !done ? (
                   <button
                     type="button"
-                    className="upnext-secondary upnext-thread-resolve"
+                    className={cn("upnext-secondary upnext-thread-resolve", SMALL)}
                     disabled={busy}
                     aria-busy={busy}
                     onClick={() => void retry(job)}
@@ -236,7 +238,7 @@ export function PullRequestChecks({
                     href={check.url}
                     target="_blank"
                     rel="noreferrer"
-                    className="upnext-secondary upnext-thread-resolve"
+                    className={cn("upnext-secondary upnext-thread-resolve", SMALL)}
                   >
                     Details
                   </a>

@@ -211,7 +211,18 @@ type sectionContent struct {
 	// Assessment is absent on mechanical sections and on sections written
 	// before assessments existed.
 	Assessment *sectionAssessment `json:"assessment,omitempty"`
+	// Details is set by the host, never the model, on a section whose details
+	// are still being written (sectionDetailsPending) or could not be written
+	// (sectionDetailsFailed): it keeps its outline, and its summary may be
+	// null. It is absent on a complete section.
+	Details string `json:"details,omitempty"`
 }
+
+// The states of a section that lacks its details.
+const (
+	sectionDetailsPending = "pending"
+	sectionDetailsFailed  = "failed"
+)
 
 type sectionAssessment struct {
 	Level   int                       `json:"level"`
