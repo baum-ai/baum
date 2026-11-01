@@ -252,7 +252,11 @@ export function LocalReview({
   const [provenance, setProvenance] = useState<Provenance[]>([]);
   const [versions, setVersions] = useState<number[]>([]);
   const [historyFailed, setHistoryFailed] = useState(false);
-  const [sessions, setSessions] = useState<{ query: string; load: SessionsLoad } | null>(null);
+  const [sessions, setSessions] = useState<{
+    query: string;
+    version: number;
+    load: SessionsLoad;
+  } | null>(null);
   // The page's keys: j and k step through the review as the navigator does,
   // and the header's actions have the list's keys.
   const steps = useRef<ReviewSteps>(null);
@@ -335,11 +339,12 @@ export function LocalReview({
         if (!abort.signal.aborted)
           setSessions({
             query,
+            version: sessionsVersion,
             load: answer ? { state: "answered", answer } : { state: "request-failed" },
           });
       })
       .catch(() => {
-        if (!abort.signal.aborted) setSessions({ query, load: { state: "request-failed" } });
+        if (!abort.signal.aborted) setSessions({ query, version: sessionsVersion, load: { state: "request-failed" } });
       });
     return () => abort.abort();
   }, [sessionsVersion, query, revision, retry, ended]);
@@ -394,7 +399,12 @@ export function LocalReview({
   }, [factsSelector, factsHead, factsBase, factsMergeBase]);
   const factsMode = !doc && wantsFacts && facts.state !== "unavailable";
   const lists = viewedDocument
-    ? sessionLists(sessions?.query === query ? sessions.load : { state: "loading" }, viewedDocument)
+    ? sessionLists(
+        sessions?.query === query && sessions.version === sessionsVersion
+          ? sessions.load
+          : { state: "loading" },
+        viewedDocument,
+      )
     : !factsMode
       ? null
       : shownFacts
