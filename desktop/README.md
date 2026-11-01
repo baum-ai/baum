@@ -507,6 +507,11 @@ daemon publishes one when a session begins waiting for a permission or an
 answer, once per wait, never for a turn that just finished (see "Live
 sessions" in ARCHITECTURE.md).
 
+Codex requests delegated to its automatic reviewer do not raise a permission
+notification or mark the session as waiting. Its hook runs before review,
+so baum checks the active turn's reviewer in the rollout, including session
+overrides, before treating it as a request for the person.
+
 The pull request notifications read like "Checks failing · acme/demo #12",
 with the pull request's title as the text. They are about the user's own pull
 requests and fire when the state changes between two daemon polls, never for a

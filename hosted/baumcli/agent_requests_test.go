@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"net"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -163,6 +164,33 @@ func TestPermissionRequestPrintsTheAppsDecision(t *testing.T) {
 				t.Fatalf("events = %+v", events)
 			}
 		})
+	}
+}
+
+func TestCodexAutoReviewDoesNotAskTheApp(t *testing.T) {
+	paths := useTestHookDaemon(t)
+	withoutEntire(t)
+	t.Chdir(t.TempDir())
+	fake := startFakeAppDaemon(t, paths)
+	fake.decision = agentrequests.Decision{Behavior: "allow"}
+	path := filepath.Join(t.TempDir(), "rollout.jsonl")
+	if err := os.WriteFile(path, []byte(`{"type":"turn_context","payload":{"turn_id":"t","approvals_reviewer":"auto_review"}}`+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(codexBashRequest), &payload); err != nil {
+		t.Fatal(err)
+	}
+	payload["transcript_path"] = path
+	data, _ := json.Marshal(payload)
+	stdout, _, err := runCLIWithInput(t, string(data), "hooks", "agent", "--user", "codex", "permission-request")
+	if err != nil || stdout != "" {
+		t.Fatalf("output = %q, error = %v", stdout, err)
+	}
+	fake.mu.Lock()
+	defer fake.mu.Unlock()
+	if len(fake.asks) != 0 || len(fake.events) != 1 || !fake.events[0].Session.AutoReview {
+		t.Fatalf("asks = %+v, events = %+v", fake.asks, fake.events)
 	}
 }
 
