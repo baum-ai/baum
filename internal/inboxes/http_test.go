@@ -125,6 +125,14 @@ func TestPullRequestCriteriaRoundTrip(t *testing.T) {
 	}
 }
 
+func TestEnterpriseRepositoriesKeepTheirHost(t *testing.T) {
+	h := newHarness(t)
+	code, body := h.put(`{"revision":0,"inboxes":[` + strings.Replace(entry("GHE"), `"repositories":[]`, `"repositories":["ghe.example.com/acme/app","ghe.example.com:8443/acme/web"]`, 1) + `]}`)
+	if code != 200 || len(list(body)[0]["repositories"].([]any)) != 2 {
+		t.Fatalf("%d %v", code, body)
+	}
+}
+
 func TestInboxesSavedBeforeCriteriaReadEmptyLists(t *testing.T) {
 	h := newHarness(t)
 	old := `{"revision":1,"inboxes":[{"id":"0123456789abcdef0123456789abcdef","name":"Old","color":"blue","what":"any","owners":[],"risk":"any","repositories":[],"no_bots":false,"badge":true}]}`
@@ -210,6 +218,7 @@ func TestValidation(t *testing.T) {
 		"owner hyphen":    {`[` + with(`"owners":[]`, `"owners":["-a"]`) + `]`, "invalid_inbox"},
 		"repo shape":      {`[` + with(`"repositories":[]`, `"repositories":["baum"]`) + `]`, "invalid_inbox"},
 		"repo dots":       {`[` + with(`"repositories":[]`, `"repositories":["a/.."]`) + `]`, "invalid_inbox"},
+		"repo host shape": {`[` + with(`"repositories":[]`, `"repositories":["bad host/acme/app"]`) + `]`, "invalid_inbox"},
 		"too many owners": {`[` + with(`"owners":[]`, owners) + `]`, "invalid_inbox"},
 		"too many repos":  {`[` + with(`"repositories":[]`, repos) + `]`, "invalid_inbox"},
 		"involvement":     {`[` + with(`"owners":[]`, `"owners":[],"involvement":["mentioned"]`) + `]`, "invalid_inbox"},

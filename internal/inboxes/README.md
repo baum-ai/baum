@@ -17,7 +17,7 @@ later step.
 | `what` | `any`, `review`, `merge`, `agent`, `mine` |
 | `owners` | GitHub owner logins (organization or user), at most 50; empty means any |
 | `risk` | `any`, `3`, `4` (strings) |
-| `repositories` | `owner/name`, at most 50; empty means every repository that matches |
+| `repositories` | `owner/name` (or `host/owner/name`), at most 50; empty means every repository that matches |
 | `involvement` | any of `assigned`, `requested`, `authored`; empty means any |
 | `no_drafts` | leave out draft pull requests |
 | `review` | any of `approved`, `changes_requested`, `none` (no decision yet); empty means any |
@@ -34,10 +34,10 @@ they existed read them as empty and `no_drafts` as false.
 
 `owners` through `merge` are `Criteria`, which the app's quick filters share
 (the `ui/filters` document of [`uistate`](../uistate/README.md), validated by
-`Criteria.Clean`). A list's values combine with or and the parts with and.
-Owners and repositories form one tree: an owner alone is all of its
-repositories, an owner with some of its repositories listed is only those,
-and a listed repository whose owner is not listed is included as well.
+`Criteria.Clean`). A list's values combine with or and the parts with and, so
+with both owners and repositories listed a pull request's repository must be
+in both. A GitHub Enterprise repository is `host/owner/name`; its owner is the
+segment before the name.
 
 ## Storage
 

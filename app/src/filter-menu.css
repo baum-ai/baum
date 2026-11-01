@@ -258,12 +258,12 @@
   gap: 0.3rem;
   margin-top: 0.35rem;
 }
-.upnext-filter-error {
+.filter-menu-error {
   margin: 0;
   color: var(--status-critical);
   font-size: var(--text-xs);
 }
-.upnext-filter-error button {
+.filter-menu-error button {
   padding: 0;
   border: 0;
   background: none;

@@ -464,14 +464,16 @@ function Workspace({ url }: { url: UrlState }) {
   // A link from before the filter menu names one repository: it becomes the
   // page's filter.
   const linkedRepo = url.search.get("repo");
+  // It waits for the saved filters, so it replaces only their repositories.
   useEffect(() => {
-    if (!linkedRepo) return;
+    if (!linkedRepo || !pullsFilter.ready) return;
+    setSelection(new Set());
     pullsFilter.set({ ...pullsFilter.criteria, owners: [], repositories: [linkedRepo] });
     url.update((current) => {
       current.delete("repo");
       return current;
     });
-  }, [linkedRepo]);
+  }, [linkedRepo, pullsFilter.ready]);
   const indexedEntries = snapshot.entries.map((entry) =>
     isActiveJob(reviewJob(entry, jobs)) || starting.has(rowKey(entry))
       ? { ...entry, status: "generating" }
@@ -1392,6 +1394,8 @@ function Workspace({ url }: { url: UrlState }) {
                   }}
                   entries={filtered(indexedEntries, filter, "")}
                   repositories={repositories}
+                  error={pullsFilter.error}
+                  retry={() => void pullsFilter.retry()}
                 />
               </div>
               <div className="local-page-body">

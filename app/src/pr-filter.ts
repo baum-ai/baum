@@ -10,9 +10,8 @@ export type Risk = "any" | "3" | "4";
 /** What narrows a list of pull requests, as the daemon stores it for saved
  *  inboxes and for each page's quick filter (see its `internal/inboxes`
  *  README). Every list is empty for any; a list's values combine with or, and
- *  the parts with and. Owners and repositories form one tree: an owner alone
- *  is all of its repositories, an owner with some of its repositories named
- *  is only those, and a repository named without its owner is in as well. */
+ *  the parts with and, so with both owners and repositories named a pull
+ *  request's repository must be in both. */
 export type Criteria = {
   owners: string[];
   risk: Risk;
@@ -87,18 +86,46 @@ const INVOLVED: Record<Involvement, (pr: Entry["pull_request"]) => boolean> = {
   authored: (pr) => pr.authored_by_me,
 };
 
-const ownerOf = (repository: string) => repository.split("/")[0]?.toLowerCase() ?? "";
+/** The owner of `owner/name`, or of `host/owner/name` on GitHub Enterprise. */
+export function ownerOf(repository: string): string {
+  const parts = repository.split("/");
+  return parts.length >= 2 ? (parts[parts.length - 2] ?? "") : "";
+}
+const same = (a: string, b: string) => a.toLowerCase() === b.toLowerCase();
 
-/** Whether the repository is in the criteria's tree of owners and repositories. */
+/** Whether the repository is in the criteria's owners and repositories. */
 export function inWhere(criteria: Criteria, repository: string): boolean {
-  if (criteria.owners.length === 0 && criteria.repositories.length === 0) return true;
-  const name = repository.toLowerCase();
-  const owner = ownerOf(name);
-  if (criteria.repositories.some((r) => r.toLowerCase() === name)) return true;
-  return (
-    criteria.owners.some((o) => o.toLowerCase() === owner) &&
-    !criteria.repositories.some((r) => ownerOf(r) === owner)
+  if (criteria.owners.length > 0 && !criteria.owners.some((o) => same(o, ownerOf(repository))))
+    return false;
+  return !(
+    criteria.repositories.length > 0 && !criteria.repositories.some((r) => same(r, repository))
   );
+}
+
+/** The daemon's limits on a list of owners or repositories. */
+export const MAX_NAMED = 50;
+
+/** The owners and repositories that hold exactly `picked` out of `known`:
+ *  owners alone while every owner touched is picked whole, so its later
+ *  repositories come in too; else the picked repositories by name. Null when
+ *  that needs more than the daemon keeps. */
+export function whereFor(
+  picked: string[],
+  known: string[],
+): Pick<Criteria, "owners" | "repositories"> | null {
+  const all = [...known, ...picked.filter((one) => !known.some((k) => same(k, one)))];
+  if (picked.length === 0 || all.every((one) => picked.some((p) => same(p, one))))
+    return { owners: [], repositories: [] };
+  const owners: string[] = [];
+  for (const one of picked)
+    if (!owners.some((o) => same(o, ownerOf(one)))) owners.push(ownerOf(one));
+  const whole = owners.every((owner) =>
+    all.filter((one) => same(ownerOf(one), owner)).every((one) => picked.some((p) => same(p, one))),
+  );
+  if (whole) return owners.length > MAX_NAMED ? null : { owners, repositories: [] };
+  return owners.length > MAX_NAMED || picked.length > MAX_NAMED
+    ? null
+    : { owners, repositories: picked };
 }
 
 export function matchesCriteria(criteria: Criteria, entry: Entry): boolean {
@@ -125,39 +152,46 @@ export type Chip = { key: string; label: string; without: Criteria };
 const label = <T extends string>(options: [T, string][], key: T) =>
   options.find(([one]) => one === key)?.[1] ?? key;
 
-/** One chip per part in force, each with the criteria it leaves when removed:
- *  an owner only while it stands for all of its repositories. Removing the
- *  last repository of an owner also removes the owner. */
-export function chips(criteria: Criteria): Chip[] {
+/** One chip per part in force, each with the criteria it leaves when removed.
+ *  An owner whose `known` repositories are all named is one chip; removing a
+ *  repository that was its owner's last takes the owner out too. */
+export function chips(criteria: Criteria, known: string[] = []): Chip[] {
   const out: Chip[] = [];
-  const named = (owner: string) =>
-    criteria.repositories.some((r) => ownerOf(r) === owner.toLowerCase());
-  for (const owner of criteria.owners.filter((one) => !named(one)))
+  const named = (owner: string) => criteria.repositories.filter((r) => same(ownerOf(r), owner));
+  const whole = (owner: string) => {
+    const own = known.filter((one) => same(ownerOf(one), owner));
+    return (
+      criteria.repositories.length === 0 ||
+      (own.length > 0 && own.every((one) => named(owner).some((r) => same(r, one))))
+    );
+  };
+  const wholeOwners = criteria.owners.filter(whole);
+  for (const owner of wholeOwners)
     out.push({
       key: `owner:${owner}`,
       label: owner,
       without: {
         ...criteria,
         owners: criteria.owners.filter((one) => one !== owner),
-        repositories: criteria.repositories,
+        repositories: criteria.repositories.filter((r) => !same(ownerOf(r), owner)),
       },
     });
-  for (const repository of criteria.repositories)
+  for (const repository of criteria.repositories) {
+    if (wholeOwners.some((owner) => same(owner, ownerOf(repository)))) continue;
+    const repositories = criteria.repositories.filter((one) => one !== repository);
+    const owner = ownerOf(repository);
     out.push({
       key: `repository:${repository}`,
       label: repository,
-      without: (() => {
-        const repositories = criteria.repositories.filter((one) => one !== repository);
-        const owner = ownerOf(repository);
-        return {
-          ...criteria,
-          owners: repositories.some((r) => ownerOf(r) === owner)
-            ? criteria.owners
-            : criteria.owners.filter((one) => one.toLowerCase() !== owner),
-          repositories,
-        };
-      })(),
+      without: {
+        ...criteria,
+        owners: repositories.some((r) => same(ownerOf(r), owner))
+          ? criteria.owners
+          : criteria.owners.filter((one) => !same(one, owner)),
+        repositories,
+      },
     });
+  }
   const lists = [
     ["involvement", INVOLVEMENT],
     ["review", REVIEWS],
@@ -205,6 +239,8 @@ export function usePageFilter(page: FilterPage) {
     saving: saved.saving,
     set(next: Criteria) {
       if (JSON.stringify(next) === JSON.stringify(criteria)) return;
+      // The daemon refuses a longer list, and every later save with it.
+      if (next.owners.length > MAX_NAMED || next.repositories.length > MAX_NAMED) return;
       saved.update((value) => {
         // Changed pages move to the end, so the oldest are dropped first.
         const { [page]: _, ...rest } = value.pages ?? {};

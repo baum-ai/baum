@@ -6,7 +6,9 @@ import {
   inWhere,
   matchesCriteria,
   NO_CRITERIA,
+  ownerOf,
   parseCriteria,
+  whereFor,
   type Criteria,
 } from "./pr-filter";
 
@@ -30,19 +32,33 @@ const entry = (pr: Partial<Entry["pull_request"]> = {}, state: Partial<Entry> = 
     },
   }) as Entry;
 
-it("treats owners and repositories as one tree", () => {
+it("needs a repository to be in both the owners and the repositories named", () => {
   const where = (c: Partial<Criteria>, repository: string) => inWhere(criteria(c), repository);
   expect(where({}, "acme/demo")).toBe(true);
-  // An owner alone is all of its repositories.
   expect(where({ owners: ["ACME"] }, "acme/demo")).toBe(true);
   expect(where({ owners: ["acme"] }, "other/demo")).toBe(false);
-  // An owner with some of its repositories named is only those.
   expect(where({ owners: ["acme"], repositories: ["acme/web"] }, "acme/demo")).toBe(false);
   expect(where({ owners: ["acme"], repositories: ["acme/web"] }, "acme/web")).toBe(true);
-  // Another owner's repository named is in as well, and leaves the owner whole.
-  expect(where({ owners: ["acme"], repositories: ["other/x"] }, "other/x")).toBe(true);
-  expect(where({ owners: ["acme"], repositories: ["other/x"] }, "acme/demo")).toBe(true);
-  expect(where({ repositories: ["other/x"] }, "acme/demo")).toBe(false);
+  // A saved inbox naming another owner's repository keeps matching nothing there.
+  expect(where({ owners: ["acme"], repositories: ["other/x"] }, "other/x")).toBe(false);
+  // GitHub Enterprise names carry their host.
+  expect(where({ owners: ["acme"] }, "ghe.example.com/acme/app")).toBe(true);
+  expect(ownerOf("ghe.example.com/acme/app")).toBe("acme");
+});
+
+it("names owners while each is picked whole, else the repositories", () => {
+  const known = ["acme/a", "acme/b", "other/x", "other/y"];
+  expect(whereFor([], known)).toEqual({ owners: [], repositories: [] });
+  expect(whereFor(known, known)).toEqual({ owners: [], repositories: [] });
+  expect(whereFor(["acme/a", "acme/b"], known)).toEqual({ owners: ["acme"], repositories: [] });
+  // A whole owner beside one repository of another: both by name.
+  expect(whereFor(["acme/a", "acme/b", "other/x"], known)).toEqual({
+    owners: ["acme", "other"],
+    repositories: ["acme/a", "acme/b", "other/x"],
+  });
+  const many = Array.from({ length: 52 }, (_, i) => `acme/r${i}`);
+  expect(whereFor(many.slice(1), [...many, "other/x"])).toBeNull();
+  expect(whereFor(many, [...many, "other/x"])).toEqual({ owners: ["acme"], repositories: [] });
 });
 
 it("matches involvement with or, and every other part with and", () => {
@@ -98,26 +114,28 @@ it("matches drafts, review, checks, merge state and risk", () => {
 });
 
 it("names each part in force as a chip that removes it", () => {
+  const known = ["acme/web", "other/x", "other/y"];
   const all = criteria({
     owners: ["acme", "other"],
-    repositories: ["acme/web"],
+    repositories: ["acme/web", "other/x"],
     involvement: ["assigned"],
     no_drafts: true,
     risk: "4",
   });
-  const list = chips(all);
-  // acme stands for its named repository, so only other is a chip of its own.
+  const list = chips(all, known);
+  // Every repository of acme is named, so acme is one chip; other is not whole.
   expect(list.map((chip) => chip.label)).toEqual([
-    "other",
-    "acme/web",
+    "acme",
+    "other/x",
     "Assigned to me",
     "No drafts",
     "Risk 4 or 5",
   ]);
+  expect(list[0]!.without).toMatchObject({ owners: ["other"], repositories: ["other/x"] });
   // Removing an owner's last named repository removes the owner too.
-  expect(list[1]!.without.owners).toEqual(["other"]);
-  expect(list[1]!.without.repositories).toEqual([]);
+  expect(list[1]!.without).toMatchObject({ owners: ["acme"], repositories: ["acme/web"] });
   expect(list[2]!.without.involvement).toEqual([]);
+  expect(chips(criteria({ owners: ["acme"] })).map((chip) => chip.label)).toEqual(["acme"]);
   expect(chips(NO_CRITERIA)).toEqual([]);
 });
 

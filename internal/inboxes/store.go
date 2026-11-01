@@ -33,7 +33,8 @@ var (
 	merges      = []string{"ready", "conflict"}
 
 	ownerPattern      = regexp.MustCompile(`^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$`)
-	repositoryPattern = regexp.MustCompile(`^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?/[A-Za-z0-9._-]{1,100}$`)
+	// A GitHub Enterprise repository carries its host: host/owner/name.
+	repositoryPattern = regexp.MustCompile(`^(?:[A-Za-z0-9](?:[A-Za-z0-9.-]{0,251}[A-Za-z0-9])?(?::[0-9]{1,5})?/)?[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?/[A-Za-z0-9._-]{1,100}$`)
 	// idPattern is the shape of newID.
 	idPattern = regexp.MustCompile(`^[0-9a-f]{32}$`)
 )

@@ -1033,15 +1033,9 @@ export function UpNextPage({
         onChange={quick.set}
         entries={unfiltered}
         onSave={!scope && saveAsInbox ? () => saveAsInbox(quick.criteria) : undefined}
+        error={quick.error}
+        retry={() => void quick.retry()}
       />
-      {quick.error ? (
-        <p role="alert" className="upnext-filter-error">
-          {quick.error}{" "}
-          <button type="button" onClick={() => void quick.retry()}>
-            Retry
-          </button>
-        </p>
-      ) : null}
     </div>
   );
   return (

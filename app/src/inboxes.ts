@@ -1,7 +1,7 @@
 import { useRef, useState } from "react";
 import { LocalRequestError, request, type Entry } from "./api";
 import type { UpNextKind } from "./up-next";
-import { matchesCriteria, NO_CRITERIA, parseCriteria, type Criteria } from "./pr-filter";
+import { matchesCriteria, NO_CRITERIA, ownerOf, parseCriteria, type Criteria } from "./pr-filter";
 
 export const INBOX_COLORS = ["blue", "green", "red", "amber", "purple", "grey"] as const;
 export type InboxColor = (typeof INBOX_COLORS)[number];
@@ -209,12 +209,12 @@ export function freeName(name: string, inboxes: Inbox[]): string {
   return candidate;
 }
 
-/** The owners of `repositories` ("owner/name"), without the person's own
+/** The owners of `repositories` ("owner/name" or "host/owner/name"), without the person's own
  *  login, in alphabetical order, spelled as first met. */
 export function ownersOf(repositories: string[], login?: string): string[] {
   const seen = new Map<string, string>();
   for (const repository of repositories) {
-    const owner = repository.split("/")[0] ?? "";
+    const owner = ownerOf(repository);
     const key = owner.toLowerCase();
     if (owner && key !== login?.toLowerCase() && !seen.has(key)) seen.set(key, owner);
   }

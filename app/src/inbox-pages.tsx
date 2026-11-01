@@ -1,4 +1,4 @@
-import { CHECKS, INVOLVEMENT, MERGES, REVIEWS, toggled } from "./pr-filter";
+import { CHECKS, INVOLVEMENT, MERGES, ownerOf, REVIEWS, toggled } from "./pr-filter";
 import { useEffect, useId, useRef, useState, type ComponentType, type ReactNode } from "react";
 import type { ViewerLinkProps } from "@baum/viewer/navigation";
 import { appURL } from "./api";
@@ -301,7 +301,7 @@ function EditInbox({
   const ownRepositories = repositories.filter(
     (r) =>
       inbox.owners.length === 0 ||
-      inbox.owners.some((o) => o.toLowerCase() === r.split("/")[0]?.toLowerCase()),
+      inbox.owners.some((o) => o.toLowerCase() === ownerOf(r).toLowerCase()),
   );
   const repositoryChips = Array.from(new Set([...ownRepositories, ...inbox.repositories])).sort(
     (a, b) => a.localeCompare(b),

@@ -755,8 +755,8 @@ Update items and the pull requests a fix agent is working on now; or the
 person's own), owners (the repository's owner, ignoring case; none means any),
 risk (3 or more, or 4 or more, from the baum review's score; a pull request with
 no score yet never matches a risk filter, and "at least N" counts as N),
-repositories (an owner with some of its repositories picked is only those;
-none means all of the owners'), involvement (assigned to the person, asking
+repositories (none means any; with owners too, a repository must be in
+both), involvement (assigned to the person, asking
 for their review or created by them), GitHub's review decision, checks and
 merge state (ready or conflicting), whether drafts and whether bots are left
 out. Each of those lists matches any of its values, and none picked means any.
@@ -816,15 +816,20 @@ and in Pull requests at the end of the views. The Filter button, with the
 number of parts in force, opens a menu (Esc or a click elsewhere closes it):
 organizations with their repositories nested under them (ticking an
 organization is all of its repositories; clearing one of them keeps the
-others; a search box shows once there are more than four organizations),
+others; nothing ticked is all of them; a search box shows once there are more
+than four organizations),
 then Involvement (Assigned to me, Review requested, Created by me), Review
 (Approved, Changes requested, No decision yet), Checks (passing, failing,
 running), State (Ready to merge, Has a conflict, Hide drafts) and Risk (any,
 3 or more, 4 or 5). Each option counts the pull requests the page would show
 with it alone in its section, and the foot says how many of the page's are
-shown, with **Clear all**. Beside the button a chip names each part in force
-(an organization only while it stands for all of its repositories) with a ×
-that removes it, then **Clear all**. With nothing matching, the queue's panel
+shown, with **Clear all**. Organizations picked whole are saved as owners, so their
+later repositories come in too; once an organization is picked only in part,
+the picked repositories are saved by name, at most 50 (past that the menu
+says to pick whole organizations instead and changes nothing). Beside the
+button a chip names each part in force (an organization while all of its
+repositories are in) with a × that removes it, then **Clear all**, and a
+failed save says so with **Retry**. With nothing matching, the queue's panel
 says "Nothing matches the filter", how many it hides, and **Clear the filter**.
 Each page keeps its own filter (`inbox`, `inbox:<id>` or `pulls`) in the
 daemon's `ui/filters` document (see the [uistate README](../internal/uistate/README.md)),
@@ -940,8 +945,9 @@ Everyone else's open pull requests are under Others, so Other pull requests
 appears only there; Requested, Mine, Not reviewed and Saved history are the
 other views, and a view with nothing in it is dimmed. The quick filter (see
 below) sits at the end of the views and narrows every view and its count; a
-link with `repo=` from before it opened becomes that page's filter on that
-repository, and the address drops `repo=`.
+link with `repo=` from before it, once the saved filters are read, replaces
+the page filter's organizations and repositories with that repository, and the
+address drops `repo=`.
 Collapsing keeps selections, and Select all selects only currently expanded
 visible rows. Requested, authored, outdated, no-review, repository and
 saved-history filters do not discard cached reviews. Unknown team membership

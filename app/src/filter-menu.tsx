@@ -6,19 +6,19 @@ import type { Entry } from "./api";
 import {
   CHECKS,
   chips,
+  inWhere,
   INVOLVEMENT,
   matchesCriteria,
   MERGES,
   NO_CRITERIA,
+  ownerOf,
   REVIEWS,
   RISKS,
   toggled,
+  whereFor,
   type Criteria,
 } from "./pr-filter";
 import "./filter-menu.css";
-
-const ownerOf = (repository: string) => repository.split("/")[0] ?? "";
-const same = (a: string, b: string) => a.toLowerCase() === b.toLowerCase();
 
 /** The repositories to offer, grouped by owner, both in alphabetical order. */
 function tree(repositories: string[]): [string, string[]][] {
@@ -38,41 +38,6 @@ function tree(repositories: string[]): [string, string[]][] {
     ]);
 }
 
-/** The repository part of `criteria` after ticking or clearing an owner:
- *  ticked it is all of the owner's repositories, cleared none of them. */
-function toggleOwner(criteria: Criteria, owner: string, on: boolean): Criteria {
-  return {
-    ...criteria,
-    owners: on
-      ? [...criteria.owners.filter((one) => !same(one, owner)), owner]
-      : criteria.owners.filter((one) => !same(one, owner)),
-    repositories: criteria.repositories.filter((one) => !same(ownerOf(one), owner)),
-  };
-}
-
-/** Ticking or clearing one repository. Clearing one of an owner ticked whole
- *  keeps its other repositories; clearing an owner's last one clears it. */
-function toggleRepository(
-  criteria: Criteria,
-  repository: string,
-  siblings: string[],
-  on: boolean,
-): Criteria {
-  const owner = ownerOf(repository);
-  const own = criteria.repositories.filter((one) => same(ownerOf(one), owner));
-  const whole = own.length === 0 && criteria.owners.some((one) => same(one, owner));
-  const others = criteria.repositories.filter((one) => !same(ownerOf(one), owner));
-  const kept = on
-    ? [...own, repository]
-    : (whole ? siblings : own).filter((one) => !same(one, repository));
-  return {
-    ...criteria,
-    owners:
-      kept.length === 0 ? criteria.owners.filter((one) => !same(one, owner)) : criteria.owners,
-    repositories: [...others, ...kept],
-  };
-}
-
 /** The filter icon and its menu, with a chip for each part in force beside
  *  it. `entries` are the page's pull requests before the filter, which the
  *  counts and the repositories offered come from. */
@@ -82,6 +47,8 @@ export function FilterMenu({
   entries,
   repositories = [],
   onSave,
+  error,
+  retry,
   align = "start",
 }: {
   criteria: Criteria;
@@ -91,14 +58,27 @@ export function FilterMenu({
   repositories?: string[];
   /** Offers "Save as inbox…" when given. */
   onSave?: () => void;
+  /** Why the filter could not be saved, with a way to try again. */
+  error?: string;
+  retry?: () => void;
   /** Which edge of the button the menu lines up with. */
   align?: "start" | "end";
 }) {
   const { detailsProps, close, open } = useDisclosure();
   const [search, setSearch] = useState("");
   const ids = useId();
-  const active = chips(criteria);
+  const [tooMany, setTooMany] = useState(false);
   const owners = tree([...repositories, ...entries.map((e) => e.pull_request.repository)]);
+  const known = owners.flatMap(([, names]) => names);
+  const active = chips(criteria, known);
+  // What is ticked: nothing while every repository is in.
+  const narrowed = criteria.owners.length > 0 || criteria.repositories.length > 0;
+  const picked = narrowed ? known.filter((one) => inWhere(criteria, one)) : [];
+  const pick = (next: string[]) => {
+    const where = whereFor(next, known);
+    setTooMany(!where);
+    if (where) onChange({ ...criteria, ...where });
+  };
   const count = (next: Criteria) => entries.filter((e) => matchesCriteria(next, e)).length;
   const query = search.trim().toLowerCase();
   const shown = owners
@@ -168,9 +148,9 @@ export function FilterMenu({
               ) : null}
               <div className="filter-menu-tree">
                 {shown.map(([owner, names]) => {
-                  const own = criteria.repositories.filter((one) => same(ownerOf(one), owner));
-                  const whole = own.length === 0 && criteria.owners.some((one) => same(one, owner));
                   const all = owners.find(([one]) => one === owner)?.[1] ?? [];
+                  const on = all.filter((one) => picked.includes(one));
+                  const whole = on.length === all.length;
                   return (
                     <div key={owner} role="group" aria-labelledby={`${ids}-${owner}`}>
                       <label className="filter-menu-option filter-menu-owner">
@@ -178,10 +158,14 @@ export function FilterMenu({
                           type="checkbox"
                           checked={whole}
                           ref={(box) => {
-                            if (box) box.indeterminate = own.length > 0;
+                            if (box) box.indeterminate = on.length > 0 && !whole;
                           }}
                           onChange={() =>
-                            onChange(toggleOwner(criteria, owner, !whole && !own.length))
+                            pick(
+                              whole
+                                ? picked.filter((one) => !all.includes(one))
+                                : [...picked.filter((one) => !all.includes(one)), ...all],
+                            )
                           }
                         />
                         <span id={`${ids}-${owner}`}>{owner}</span>
@@ -190,15 +174,19 @@ export function FilterMenu({
                         </span>
                       </label>
                       {names.map((name) => {
-                        const on = whole || own.some((one) => same(one, name));
+                        const ticked = picked.includes(name);
                         return (
                           <label key={name} className="filter-menu-option filter-menu-repository">
                             <input
                               type="checkbox"
-                              checked={on}
-                              onChange={() => onChange(toggleRepository(criteria, name, all, !on))}
+                              checked={ticked}
+                              onChange={() =>
+                                pick(
+                                  ticked ? picked.filter((one) => one !== name) : [...picked, name],
+                                )
+                              }
                             />
-                            <span>{name.slice(owner.length + 1)}</span>
+                            <span>{name.split("/").pop()}</span>
                             <span className="filter-menu-count">
                               {formatCount(
                                 count({
@@ -220,6 +208,11 @@ export function FilterMenu({
                   </p>
                 ) : null}
               </div>
+              {tooMany ? (
+                <p className="filter-menu-empty" role="status">
+                  Pick at most 50 repositories one by one, or whole organizations.
+                </p>
+              ) : null}
             </fieldset>
             <div className="filter-menu-columns">
               {section("involvement", "Involvement", INVOLVEMENT)}
@@ -321,6 +314,16 @@ export function FilterMenu({
             </button>
           </li>
         </ul>
+      ) : null}
+      {error ? (
+        <p role="alert" className="filter-menu-error">
+          {error}{" "}
+          {retry ? (
+            <button type="button" onClick={retry}>
+              Retry
+            </button>
+          ) : null}
+        </p>
       ) : null}
     </div>
   );
