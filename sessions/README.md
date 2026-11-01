@@ -29,7 +29,7 @@ independent `Survey` option, including the local mapping path's `Survey: false`.
 | --- | --- | --- |
 | Claude agent messages | Existing local input classification and tool results | Agent messages are system inputs; waiting calls receive child reports and detail metadata |
 | Claude attributes | Avoid duplicate timestamps per key | Advance every change past the preceding timestamp per key |
-| Codex | Existing tool inputs, results and commit evidence | Normalize code-mode shell commands, attach child reports and detail metadata |
+| Codex | Normalize code-mode shell commands, preserve local result and report interpretation | Normalize code-mode shell commands, attach child reports and detail metadata |
 | Cursor | Existing payload decoder and error wording | Validate uploaded tree nodes and retain hosted error wording |
 | Portable and compact tools | Existing tool aliases and patch-line limits | Lowercase `grep`/`bash` aliases and patch scanning past long lines |
 | Entire reader | Existing checkpoint parsing | Bound session entries, reject repeated sources, discover tasks and read Pi `toolCall` blocks |
@@ -37,6 +37,11 @@ independent `Survey` option, including the local mapping path's `Survey: false`.
 | Reports | Existing local fields | Include hosted task and rejected-usage accounting, even when zero |
 | Collection | Local Git environment, Windows path folding and modification-time filtering | Repository-service snapshots and case-sensitive Claude project-directory matching |
 | Archives | Existing local errors and byte filesystem | Preserve hosted sentinel errors and directory discovery for task transcripts |
+
+Both profiles preserve Codex code-mode programs and extract static shell commands
+from them, including compact Entire transcripts. This supplies independent
+commit-creation evidence locally. Programs without static shell commands remain
+unchanged. The local analytics index rebuilds after this evidence change.
 
 These differences preserve current product contracts. They are not upgrade
 paths, and neither profile changes the local application's database.
