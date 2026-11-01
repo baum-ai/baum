@@ -64,6 +64,8 @@ type LocalAPI struct {
 	// Inboxes serves /api/inboxes: the saved filters listed under Inbox in
 	// the app. Without it the route reports the capability unavailable.
 	Inboxes http.Handler
+	// UIState keeps inbox bookkeeping and review drafts across browser origins.
+	UIState http.Handler
 	// GitHubRepositories serves the account's repositories for picking
 	// (/api/github/repositories) and cloning one
 	// (/api/repositories/{owner}/{name}/clone and clone-target).
@@ -196,6 +198,7 @@ func (a LocalAPI) Handler() *LocalHandler {
 	mux.Handle("/api/groups", provider(a.Groups, "groups_unavailable"))
 	mux.Handle("/api/groups/", provider(a.Groups, "groups_unavailable"))
 	mux.Handle("/api/inboxes", provider(a.Inboxes, "inboxes_unavailable"))
+	mux.Handle("/api/ui-state/", provider(a.UIState, "ui_state_unavailable"))
 	mux.Handle("/api/clones/found", provider(a.Clones, "clones_unavailable"))
 	mux.Handle("/api/clones/found/", provider(a.Clones, "clones_unavailable"))
 	repositories := provider(a.GitHubRepositories, "github_repositories_unavailable")
@@ -253,7 +256,39 @@ func (a LocalAPI) Handler() *LocalHandler {
 			Effort         string            `json:"effort"`
 			FixEffort      string            `json:"fix_effort"`
 			JobConcurrency int               `json:"job_concurrency"`
-		}{cfg.Backend, cfg.Model, cfg.Budgets, cfg.Caps, cfg.AgentEnv, source, fixBackend, fixModel, cfg.Effort, fixEffort, concurrency})
+			// The time limits in force, in whole minutes.
+			ReviewTimeLimit int `json:"review_time_limit_minutes"`
+			RunTimeLimit    int `json:"run_time_limit_minutes"`
+		}{cfg.Backend, cfg.Model, cfg.Budgets, cfg.Caps, cfg.AgentEnv, source, fixBackend, fixModel, cfg.Effort, fixEffort, concurrency,
+			minutes(cfg.Budgets.ReviewTimeout), minutes(cfg.Budgets.RunTimeout)})
+	})
+	// The time limits apply to runs that start after the change.
+	mux.HandleFunc("PUT /api/settings/time-limits", func(w http.ResponseWriter, r *http.Request) {
+		var input struct {
+			ReviewTimeLimit int `json:"review_time_limit_minutes"`
+			RunTimeLimit    int `json:"run_time_limit_minutes"`
+		}
+		r.Body = http.MaxBytesReader(w, r.Body, 4<<10)
+		d := json.NewDecoder(r.Body)
+		d.DisallowUnknownFields()
+		if d.Decode(&input) != nil || d.Decode(new(any)) != io.EOF {
+			http.Error(w, "invalid JSON request", http.StatusBadRequest)
+			return
+		}
+		if input.ReviewTimeLimit < 1 || input.RunTimeLimit < 1 || repos.ValidateTimeLimit(input.ReviewTimeLimit) != nil || repos.ValidateTimeLimit(input.RunTimeLimit) != nil {
+			http.Error(w, fmt.Sprintf("time limits must be between 1 and %d minutes", repos.MaxTimeLimit), http.StatusBadRequest)
+			return
+		}
+		prefs, err := a.Registry.UpdatePreferences(r.Context(), func(p repos.Preferences) repos.Preferences {
+			p.ReviewTimeLimit, p.RunTimeLimit = input.ReviewTimeLimit, input.RunTimeLimit
+			return p
+		})
+		if err != nil {
+			http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+			return
+		}
+		budgets := prefs.Resolve(a.Config).Budgets
+		writeJSON(w, map[string]int{"review_time_limit_minutes": minutes(budgets.ReviewTimeout), "run_time_limit_minutes": minutes(budgets.RunTimeout)})
 	})
 	mux.HandleFunc("GET /api/settings/appearance", a.getAppearance)
 	mux.HandleFunc("PUT /api/settings/appearance", a.putAppearance)
@@ -481,6 +516,11 @@ func apiError(w http.ResponseWriter, err error) {
 		status = 404
 	}
 	http.Error(w, http.StatusText(status), status)
+}
+
+// minutes is a time limit in whole minutes, rounded up.
+func minutes(d config.Duration) int {
+	return int((time.Duration(d) + time.Minute - 1) / time.Minute)
 }
 
 // RegisteredRepository resolves a registered clone ID, without allowing a

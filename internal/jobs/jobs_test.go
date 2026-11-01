@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/baum-ai/baum/agent"
+	"github.com/baum-ai/baum/internal/appdb"
 )
 
 type fakeExecutor struct {
@@ -28,6 +29,8 @@ type fakeExecutor struct {
 	release          chan struct{}
 	// prepareErr, when set, fails Prepare.
 	prepareErr error
+	// awaiting are the members a group finds without a saved review.
+	awaiting []int
 }
 
 func (f *fakeExecutor) Prepare(_ context.Context, item Item) (Prepared, string, error) {
@@ -47,6 +50,9 @@ func (f *fakeExecutor) Prepare(_ context.Context, item Item) (Prepared, string, 
 	p := Prepared{ConfigDigest: f.digest, PriceVersion: version, Item: item, Repository: "org/repo", HeadSHA: f.head, Backend: backend, Model: "claude-sonnet-4-5", RequiresIsolationConfirmation: f.restricted}
 	if item.Group != "" {
 		p.Members = "1@first,2@first"
+		if item.AwaitMembers {
+			p.Awaiting = f.awaiting
+		}
 	}
 	return p, version, nil
 }
@@ -383,7 +389,7 @@ func TestUnpricedBackendRuns(t *testing.T) {
 func TestRestartInterruptsRunningAndKeepsHistory(t *testing.T) {
 	path := filepath.Join(privateDir(t), "jobs.json")
 	raw, _ := json.Marshal([]Job{{ID: "old", State: "running", Phase: "generating"}, {ID: "completed", State: "completed"}})
-	if e := os.WriteFile(path, raw, 0600); e != nil {
+	if e := appdb.Write(path, "state", "jobs", raw); e != nil {
 		t.Fatal(e)
 	}
 	f := &fakeExecutor{}
@@ -396,7 +402,7 @@ func TestRestartInterruptsRunningAndKeepsHistory(t *testing.T) {
 	if jobs[0].State != "interrupted" || jobs[0].Reason != "interrupted" || jobs[1].State != "completed" {
 		t.Fatal(jobs)
 	}
-	raw, e = os.ReadFile(path)
+	raw, e = appdb.Read(path, "state", "jobs")
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -416,7 +422,7 @@ func TestShutdownRecordsRunningJobInterrupted(t *testing.T) {
 	if err = q.Shutdown(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	raw, err := os.ReadFile(q.path)
+	raw, err := appdb.Read(q.path, "state", "jobs")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -625,7 +631,7 @@ func TestQueuedMutationsNotifyAfterPersistenceOutsideMutex(t *testing.T) {
 	notifications := make(chan Job, 10)
 	q.changed = func(job Job) {
 		_ = q.List()
-		raw, e := os.ReadFile(q.path)
+		raw, e := appdb.Read(q.path, "state", "jobs")
 		if e != nil {
 			t.Error(e)
 		}
@@ -692,7 +698,7 @@ func TestUsageProgressIsDurableAndDetached(t *testing.T) {
 	if q.List()[0].Accounting.Usage.Input != 6 {
 		t.Fatal("List leaked mutable accounting")
 	}
-	raw, err := os.ReadFile(q.path)
+	raw, err := appdb.Read(q.path, "state", "jobs")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -719,4 +725,21 @@ func TestUsageProgressIsDurableAndDetached(t *testing.T) {
 	if reopened.List()[0].Accounting.Usage.Input != 6 {
 		t.Fatal("lost usage after restart")
 	}
+}
+
+func TestSeparateDatabasePathsHaveIndependentQueueLocks(t *testing.T) {
+	dir := privateDir(t)
+	executor := func() *fakeExecutor {
+		return &fakeExecutor{head: "head", started: make(chan Prepared, 1), release: make(chan struct{})}
+	}
+	first, err := Open(filepath.Join(dir, "first.sqlite"), executor(), 1, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer first.Close()
+	second, err := Open(filepath.Join(dir, "second.sqlite"), executor(), 1, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer second.Close()
 }

@@ -1,10 +1,11 @@
+import { SavedStateNotice } from "./ui-state";
 import { PreferencesProvider } from "./preferences";
 import { formatCount } from "@baum/viewer/components/format";
 import { UsageDetails } from "./usage";
 import { useCallback, useEffect, useRef, useState, type MouseEvent, type ReactNode } from "react";
 import { LogoMark } from "@baum/viewer/components/editorial";
 import { CircleCheckIcon, CircleCrossIcon, CircleDashedIcon } from "@baum/viewer/components/icons";
-import { Button, Alert } from "@baum/viewer/components/ui";
+import { Alert, Button, LiveDot } from "@baum/viewer/components/ui";
 import {
   UrlStateProvider,
   ViewerLinkProvider,
@@ -109,6 +110,8 @@ import { LoadingStatus } from "./nine-dots";
 import { FixDetails, type FixChat } from "./fix";
 import { JobPage } from "./job-transcript";
 import { useLocation } from "./location";
+import { SMALL } from "./action-classes";
+import { cn } from "@baum/viewer/components/classnames";
 
 /** Pull requests' views, in the order of their tabs and of `h` and `l`. */
 const VIEWS = [
@@ -688,6 +691,7 @@ function Workspace({ url }: { url: UrlState }) {
               page === "sessions" ||
               page === "jobs" ||
               page === "repositories" ||
+              page === "timeline" ||
               page === "settings"
             ? page
             : "anywhere";
@@ -917,6 +921,7 @@ function Workspace({ url }: { url: UrlState }) {
           ) : null}
         </div>
         <main className="local-main">
+          <SavedStateNotice state={inbox.persistence} label="inbox state" />
           {refreshError ? (
             <Alert>
               Couldn't refresh from GitHub: {refreshError}{" "}
@@ -1139,7 +1144,7 @@ function Workspace({ url }: { url: UrlState }) {
                 selectedInbox ? (
                   <LocalLink
                     href={editInboxHref(selectedInbox.id)}
-                    className="inbox-btn inbox-edit-link"
+                    className={cn("inbox-edit-link", SMALL)}
                   >
                     Edit
                   </LocalLink>
@@ -1330,6 +1335,7 @@ function Workspace({ url }: { url: UrlState }) {
               <span>{inboxToast.text}</span>
               <button
                 type="button"
+                className={SMALL}
                 onClick={() => {
                   inboxToast.undo();
                   setInboxToast(null);
@@ -1579,7 +1585,7 @@ function JobState({ job }: { job: Job }) {
         : CircleDashedIcon;
   return (
     <span className={`local-job-state ${state.tone}`}>
-      <Icon size={14} className={state.tone === "running" ? "local-spin" : undefined} />
+      {state.tone === "running" ? <LiveDot /> : <Icon size={14} />}
       {state.label}
     </span>
   );

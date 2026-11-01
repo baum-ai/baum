@@ -1,3 +1,4 @@
+import { BrandMark } from "@baum/viewer/components/brand-logo";
 import { usePreferences } from "./preferences";
 import {
   useEffect,
@@ -8,7 +9,7 @@ import {
   type FormEvent,
   type ReactNode,
 } from "react";
-import { Alert, Button, SegmentedControl, Toggle } from "@baum/viewer/components/ui";
+import { Alert, Button, SegmentedControl } from "@baum/viewer/components/ui";
 import {
   automaticNotice,
   parseAgentRequests,
@@ -35,8 +36,6 @@ import { DiagnosticsSection } from "./diagnostics";
 import { invoke } from "./desktop/native";
 import { Notice, PageBar, PanelHeader, RefreshButton } from "./shell";
 import { listKeys, onBody, useRowFocus, useShortcuts } from "./shortcuts";
-import codexLogo from "./desktop/codex.svg";
-import claudeLogo from "./desktop/claude-code.svg";
 import {
   TerminalIcon,
   SessionsIcon,
@@ -46,6 +45,7 @@ import {
   PlusIcon,
 } from "@baum/viewer/components/icons";
 import { DecisionsDisclosure, harnesses, harnessName } from "./desktop/reviews";
+import { effortLabels } from "./model-effort";
 import {
   describeCommand,
   describeAgent,
@@ -487,12 +487,15 @@ function EffortRow({
   onChange: (next: string) => void;
 }) {
   if (backend === "cursor-agent") return null;
+  const items = efforts.some((item) => item.value === value)
+    ? efforts
+    : [...efforts, { value, label: effortLabels[value] ?? value }];
   return (
     <SettingRow
       label="Reasoning effort"
       detail="Default leaves it to the agent. Higher thinks longer and costs more."
     >
-      <SegmentedControl label={label} value={value} items={efforts} onChange={onChange} />
+      <SegmentedControl label={label} value={value} items={items} onChange={onChange} />
     </SettingRow>
   );
 }
@@ -796,11 +799,9 @@ function AgentHooksPanel({ setup }: { setup: DesktopSetup }) {
             className="flex flex-wrap items-center justify-between gap-4 border-t border-(--border-subtle) px-5 py-4"
           >
             <div className="flex min-w-0 flex-[1_1_16rem] items-start gap-3">
-              <img
-                src={agent.agent === "codex" ? codexLogo : claudeLogo}
-                alt=""
-                width="24"
-                height="24"
+              <BrandMark
+                brand={agent.agent === "codex" ? "openai" : "claude"}
+                size={24}
                 className="mt-0.5 shrink-0"
               />
               <div className="min-w-0 space-y-1">
@@ -1156,6 +1157,7 @@ export function SettingsPage({
                   }
                 />
                 <JobConcurrencyRow />
+                <TimeLimitRows />
               </div>
               {setup.desktop ? (
                 <>
@@ -1234,6 +1236,99 @@ function JobConcurrencyRow() {
         ))}
       </select>
     </SettingRow>
+  );
+}
+
+type TimeLimits = { review_time_limit_minutes: number; run_time_limit_minutes: number };
+
+/** The daemon's defaults (config.DefaultReviewTimeout, DefaultRunTimeout). */
+const DEFAULT_TIME_LIMITS: TimeLimits = {
+  review_time_limit_minutes: 10,
+  run_time_limit_minutes: 30,
+};
+
+/** The minutes offered, up to repos.MaxTimeLimit. */
+const TIME_LIMIT_CHOICES = [5, 10, 15, 20, 30, 45, 60, 90, 120, 180, 240];
+
+/** How long a review, and any other agent run, may take before it stops.
+ *  Runs have no call or token limit; a change applies to runs started after
+ *  it. */
+function TimeLimitRows() {
+  const [value, setValue] = useState<TimeLimits | null>(null);
+  const [saving, setSaving] = useState(false);
+  // The row whose change failed shows why; a failed load shows on the first.
+  const [error, setError] = useState<{ key: keyof TimeLimits; text: string } | null>(null);
+  useEffect(() => {
+    request<Partial<TimeLimits>>("api/settings").then(
+      (settings) =>
+        setValue({
+          review_time_limit_minutes:
+            settings.review_time_limit_minutes ?? DEFAULT_TIME_LIMITS.review_time_limit_minutes,
+          run_time_limit_minutes:
+            settings.run_time_limit_minutes ?? DEFAULT_TIME_LIMITS.run_time_limit_minutes,
+        }),
+      (e) => setError({ key: "review_time_limit_minutes", text: errorText(e) }),
+    );
+  }, []);
+  async function choose(key: keyof TimeLimits, minutes: number) {
+    if (!value) return;
+    const before = value;
+    setValue({ ...value, [key]: minutes });
+    setSaving(true);
+    setError(null);
+    try {
+      setValue(
+        await request<TimeLimits>("api/settings/time-limits", { ...value, [key]: minutes }, "PUT"),
+      );
+    } catch (e) {
+      setValue(before);
+      setError({ key, text: errorText(e) });
+    } finally {
+      setSaving(false);
+    }
+  }
+  const row = (key: keyof TimeLimits, id: string, label: string, detail: string) => {
+    const current = value?.[key] ?? DEFAULT_TIME_LIMITS[key];
+    const choices = TIME_LIMIT_CHOICES.includes(current)
+      ? TIME_LIMIT_CHOICES
+      : [...TIME_LIMIT_CHOICES, current].sort((a, b) => a - b);
+    return (
+      <SettingRow
+        label={label}
+        htmlFor={id}
+        detail={error?.key === key ? <Alert>{error.text}</Alert> : detail}
+      >
+        <select
+          id={id}
+          className="local-field settings-select"
+          disabled={value === null || saving}
+          value={current}
+          onChange={(e) => void choose(key, Number(e.target.value))}
+        >
+          {choices.map((minutes) => (
+            <option key={minutes} value={minutes}>
+              {minutes} min
+            </option>
+          ))}
+        </select>
+      </SettingRow>
+    );
+  };
+  return (
+    <>
+      {row(
+        "review_time_limit_minutes",
+        "review-time-limit",
+        "Review time limit",
+        "How long a review may run before it stops. Reviews have no call or token limit.",
+      )}
+      {row(
+        "run_time_limit_minutes",
+        "run-time-limit",
+        "Fix time limit",
+        "How long a fix, a question to a review's agent or a feature build may run before it stops.",
+      )}
+    </>
   );
 }
 
@@ -1895,9 +1990,17 @@ function RepositorySettings({
         </p>
       ) : null}
       {notice ? <Notice>{notice}</Notice> : null}
-      <Toggle checked={decisions} disabled={pending || removing} onChange={setDecisions}>
+      <label className="local-switch-label">
+        <input
+          type="checkbox"
+          role="switch"
+          className="local-switch"
+          checked={decisions}
+          disabled={pending || removing}
+          onChange={(event) => setDecisions(event.target.checked)}
+        />
         Capture the decisions of agent sessions in this repository
-      </Toggle>
+      </label>
       <div className="local-dialog-actions">
         {remove ? (
           <Button
@@ -2013,9 +2116,7 @@ function RepositoryRow({
           </p>
         )}
         {clone.available && repository.earlier_names?.length ? (
-          <p className="repository-warning">
-            {earlierNamesWarning(repository.earlier_names, repository.repository)}
-          </p>
+          <p className="repository-warning">{earlierNamesWarning(repository.earlier_names)}</p>
         ) : null}
         <p className="local-repo-summary">{summary.join(" · ")}</p>
       </div>

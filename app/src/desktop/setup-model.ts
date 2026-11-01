@@ -1,3 +1,5 @@
+import { supportedEffort } from "../model-effort";
+
 export type Found = { path: string; resolved: string; version: string };
 export type CommandStatus = {
   installed: boolean;
@@ -122,11 +124,12 @@ export type PullRequests = "all" | "both" | "authored" | "requested";
 export type ReviewSettings = {
   backend: string;
   model: string;
+  effort?: string;
   automatic: boolean;
   pull_requests: PullRequests;
-  /** The decision capture model; empty is the harness's default. Only the
-   *  desktop setup edits it here. */
+  /** Saved extraction preferences, read only during setup. */
   decisions_model?: string;
+  decisions_effort?: string;
   /** What the daemon reports, never saved: the data extraction harness
    *  Settings chose (empty while it follows the reviews'), the harness and
    *  model capture uses (empty when unknown), and whether it ignores
@@ -161,36 +164,65 @@ export const decisionModelDefaults: Record<string, string> = {
  *  capture model, when the settings carry one, is filled the same way; a
  *  chosen one is kept, even one the harness ignores, which is shown so. */
 export function withModel(settings: ReviewSettings): ReviewSettings {
-  const next = settings.model.trim()
-    ? settings
-    : { ...settings, model: modelPresets[settings.backend]?.[0] ?? "" };
-  if (next.decisions_model === undefined || next.decisions_model.trim()) return next;
-  return { ...next, decisions_model: decisionModelDefaults[extractionHarness(next)] ?? "" };
+  const next = {
+    ...settings,
+    model: settings.model.trim() ? settings.model : (modelPresets[settings.backend]?.[0] ?? ""),
+  };
+  const extraction = extractionHarness(next);
+  const defaultDecisionModel = decisionModelDefaults[extraction] ?? "";
+  if (next.decisions_model !== undefined && !next.decisions_model.trim())
+    next.decisions_model = defaultDecisionModel;
+  return withEfforts(
+    next,
+    settings.decisions_model_ignored ? settings.decisions_effective_model : undefined,
+  );
 }
 
-/** Settings as they are saved: what the daemon reports is left out, and a
- *  decision capture model that is the harness's default is stored as none,
- *  so it follows the harness. */
+/** Keep an effort only when the chosen model supports it. An ignored saved
+ *  decision model uses the daemon's effective model instead. */
+export function withEfforts(
+  settings: ReviewSettings,
+  effectiveDecisionModel?: string,
+): ReviewSettings {
+  const next = { ...settings };
+  if (next.effort !== undefined)
+    next.effort = supportedEffort(next.backend, next.model, next.effort);
+  if (next.decisions_effort !== undefined) {
+    const extraction = extractionHarness(next);
+    const decisionModel =
+      effectiveDecisionModel || next.decisions_model || decisionModelDefaults[extraction] || "";
+    next.decisions_effort = supportedEffort(extraction, decisionModel, next.decisions_effort);
+  }
+  return next;
+}
+
+/** Setup saves only its review controls; extraction preferences stay in Settings. */
 export function storedReviews(settings: ReviewSettings): ReviewSettings {
-  const {
-    decisions_chosen_backend: _,
-    decisions_backend: __,
-    decisions_effective_model: ___,
-    decisions_model_ignored: ____,
-    ...saved
-  } = settings;
-  if (saved.decisions_model === undefined) return saved;
-  return saved.decisions_model === decisionModelDefaults[extractionHarness(settings)]
-    ? { ...saved, decisions_model: "" }
-    : saved;
+  return {
+    backend: settings.backend,
+    model: settings.model,
+    ...(settings.effort !== undefined ? { effort: settings.effort } : {}),
+    automatic: settings.automatic,
+    pull_requests: settings.pull_requests,
+  };
 }
 
-/** The harness the setup shows for saved settings: "auto" has no tile, so it
- *  is the harness the daemon resolved it to (what capture resolves while it
- *  follows the reviews), else the screen's guess. */
-export function shownHarness(settings: ReviewSettings, guess: string): string {
-  if (settings.backend !== "auto") return settings.backend;
-  return (!settings.decisions_chosen_backend && settings.decisions_backend) || guess;
+/** Agent CLIs found on the login shell's PATH, in default preference order. */
+export function detectedHarnesses(agents: readonly Agent[]): string[] {
+  return ["claude", "codex"].filter((backend) =>
+    agents.some(
+      (agent) => agent.agent === (backend === "claude" ? "claude-code" : backend) && agent.detected,
+    ),
+  );
+}
+
+/** Keep a saved choice only while its CLI is installed. Never select a missing agent. */
+export function shownHarness(settings: ReviewSettings, available: readonly string[]): string {
+  const backend =
+    settings.backend === "auto"
+      ? (!settings.decisions_chosen_backend && settings.decisions_backend) || ""
+      : settings.backend;
+  return available.includes(backend) ? backend : (available[0] ?? "");
 }
 
 /** The harness data extraction runs with: the one Settings chose, else the

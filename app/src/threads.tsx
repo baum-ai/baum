@@ -2,6 +2,8 @@ import { useEffect, useId, useState } from "react";
 import { ChevronRightIcon } from "@baum/viewer/components/icons";
 import { request } from "./api";
 import { LoadingStatus } from "./nine-dots";
+import { SMALL } from "./action-classes";
+import { cn } from "@baum/viewer/components/classnames";
 
 /** A comment of a review thread. Its body is the reviewer's text, untrusted,
  *  and shown as plain text. */
@@ -207,7 +209,7 @@ function Thread({
       {thread.can_resolve ? (
         <button
           type="button"
-          className="upnext-secondary upnext-thread-resolve"
+          className={cn("upnext-secondary upnext-thread-resolve", SMALL)}
           disabled={busy}
           aria-busy={busy}
           onClick={resolve}

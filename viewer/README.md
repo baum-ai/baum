@@ -38,9 +38,24 @@ add its sources so the utilities its components use are generated:
 @source "<path to this package>/src";
 ```
 
-`viewer.css` defines the type scale, the colour ramps and semantic tokens
-with their dark variants (applied under `:root[data-theme="dark"]`), the
-categorical series, and the pane and skeleton animations. The sans-serif
+`viewer.css` defines the type scale and animations. It imports
+`src/theme.css`, which loads the default palette from `src/palette.css` and
+custom theme overrides. Dark variants apply under `:root[data-theme="dark"]`.
+Nineteen explicit base colors are shared by the two default modes:
+eight core UI colors, eight chart hues and three warm dashboard hues. Neutral ramps,
+status tints, interaction states, syntax colors and dark variants derive from
+those bases with `color-mix()`. Semantic token names describe their role;
+they are not additional independently chosen colors.
+Desktop screens import `theme.css` directly, without
+Tailwind's `@theme` rules. Stumpy is self-contained: its fixed artwork colors
+live in `src/components/stumpy-artwork.ts`, shared with the log mark and native
+icon generator. They do not depend on the UI palette or change with the theme.
+Fixed vendor logo colors live in `src/components/brand-artwork.ts` and do not
+participate in custom themes. Monochrome logos inherit the surrounding text
+color. The local app's palette check permits color definitions only in the
+default palette, `src/themes/*.css` and those two artwork modules. Other
+components use theme tokens.
+The sans-serif
 family comes from `--viewer-font-sans`; set it on `:root` to restyle the
 viewer. Without it the viewer uses baum's bundled type, declared once in
 `src/fonts/fonts.css`: Instrument Sans for text (`--font-text`, with a real
@@ -50,6 +65,74 @@ weight, Latin and Latin Extended, as woff2 with their SIL Open Font Licenses
 own screens all use it. The host's bundler resolves the files from
 `viewer.css`, and a browser downloads them only when a page renders in them,
 so a host that sets the variable never fetches them.
+
+### Custom color themes
+
+Edit `src/themes/custom.css` to customize the desktop app. It is loaded by the
+main app, setup, connecting and tray screens. Outside this repository, import
+`@baum/viewer/theme.css` for the same theme entry point without Tailwind.
+
+There are two levels of customization. Set a base color to recalculate its
+dependent shades, or set any derived token to replace just that result:
+
+```css
+/* In src/themes/custom.css; this file is already in the baum-theme layer. */
+:root {
+  --brand-green-600: #2574a9;
+  --brand-sand-100: #dbe8f4;
+
+  /* Direct exceptions to the default recipes. */
+  --surface-selected: color-mix(in srgb, var(--brand-green-600) 12%, var(--surface-page));
+  --border-focus: var(--brand-green-600);
+}
+
+:root[data-theme="dark"] {
+  --surface-page: #14202a;
+  --surface-card: var(--surface-page);
+  --text-secondary: #bdd0dd;
+}
+```
+
+`theme.css` orders the layers as `baum-palette`, then `baum-theme`. A custom
+declaration therefore wins over the defaults even when the default selector is
+more specific, such as the dark-mode selector. No `!important` is needed.
+Unlayered host styles intentionally take precedence over both layers. Keep
+component CSS from redeclaring palette tokens locally; consume the appropriate
+role, such as `--nav-hover`, instead.
+
+Put overrides on the document root. CSS variables resolve where they are
+defined: changing only a base on a child element does not recalculate recipes
+inherited from the root. Seed overrides affect every recipe using that seed;
+direct role overrides affect that role and aliases depending on it. For example,
+`--surface-page` and `--surface-card` are independent roles, so set both when
+they should share a custom fill. Changing `--paper-0` changes both defaults.
+
+Common roles are `--surface-page`, `--surface-card`, `--surface-canvas`,
+`--surface-popup`, `--text-primary`, `--text-secondary`, `--border-default`,
+`--border-focus`, `--action-primary`, `--action-primary-hover`, `--nav-hover`,
+`--nav-selected`, `--status-positive`, `--status-caution` and `--status-critical`.
+The full default file is the reference for derived roles and base dependencies.
+
+| Base tokens | What they control |
+| --- | --- |
+| `--color-ink`, `--color-paper`, `--color-shadow` | Neutral ramps, surfaces and shadows |
+| `--brand-forest`, `--brand-sand-100` | Canvas, navigation, links and selection tints |
+| `--brand-green-600`, `--color-critical` | Action green and status hues |
+| `--color-blue`, `--series-1` … `--series-8` | Syntax, chart and categorical hues |
+| `--series-caramel`, `--series-sage`, `--series-espresso` | The local Analytics charts' warm series |
+
+Dark mode uses different mixing recipes, so a seed can affect the two modes
+differently. Use mode-specific role overrides when the default recipe is not
+suitable for a custom theme.
+
+For multiple named themes, scope declarations to
+`:root[data-color-theme="ocean"]` and mode-specific exceptions to
+`:root[data-color-theme="ocean"][data-theme="dark"]`. Select the theme with
+`document.documentElement.dataset.colorTheme = "ocean"`. `data-theme` remains
+the light/dark mode managed by appearance preferences; it does not overwrite
+the separate theme identity. This CSS interface does not add a theme picker or
+persist custom theme selection. Stumpy, native artwork and vendor identities retain their fixed
+colors independently of the UI theme.
 
 ## Host seams
 
@@ -527,11 +610,10 @@ up to it renders plain.
   only the grammars a page shows are fetched. The engine is shiki's JavaScript
   regex engine (no WebAssembly). The synchronous exports of `highlight.ts` do
   not load it.
-- **Colours** are CSS variables, `--syntax-*` in `viewer.css`, with light and
-  dark values at least 4.5:1 on the card and on the added and removed row
-  tints (the lowest is 4.5:1, for comments, constants and changed text in the
-  light theme on the removed-row tint). A host restyles the code by overriding
-  them.
+- **Colours** are CSS variables, `--syntax-*` in `src/palette.css`, derived from
+  the shared hue families for each theme. A host restyles the code by overriding
+  them. Changes to the bases or mixing recipes require contrast review on the
+  card and on added and removed row tints.
 - **Fallbacks.** Diffs over 3,000 lines or 200,000 characters
   (`MAX_HIGHLIGHT_LINES`, `MAX_HIGHLIGHT_CHARS`), unknown languages and any
   failure to load or run the highlighter render plain.

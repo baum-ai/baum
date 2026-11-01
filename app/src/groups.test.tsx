@@ -1,3 +1,4 @@
+import { mockStateFetch } from "./ui-state-test-helper";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
@@ -116,7 +117,7 @@ beforeEach(() => {
   );
   vi.stubGlobal(
     "fetch",
-    vi.fn(async (input: string, init?: RequestInit) => {
+    mockStateFetch(async (input: string, init?: RequestInit) => {
       const path = String(input).replace("/s/test-ns/", "");
       const method = init?.method ?? "GET";
       const body = init?.body ? JSON.parse(String(init.body)) : undefined;
@@ -356,38 +357,6 @@ it("shows a group's members and manages them", async () => {
   await type(node.querySelector<HTMLInputElement>("dialog input")!, "Login work");
   await press("Rename", node.querySelector("dialog")!);
   expect(posted().at(-1)).toMatchObject({ method: "PATCH", body: { name: "Login work" } });
-});
-
-it("offers to generate the reviews a group review builds on", async () => {
-  entries = [entry(7), entry(8)];
-  groups = [group([7, 8, 9], { version_count: 1 })];
-  jobAnswer = () => Response.json({ members_need_reviews: [8, 9] }, { status: 409 });
-  history.replaceState(null, "", "/s/test-ns/?group=g1");
-  await act(async () => root.render(<App />));
-  await press("Regenerate");
-  expect(posted().at(-1)).toEqual({
-    path: "api/jobs",
-    method: "POST",
-    body: { items: [{ clone: "clone", group: "g1" }], mode: "single", confirm_isolation: false },
-  });
-  expect(node.textContent).toContain(
-    "A group review builds on each member's own review. #8 and #9 have no review yet.",
-  );
-  jobAnswer = () => Response.json({ jobs: [] });
-  await press("Generate their reviews");
-  expect(posted().at(-1)).toEqual({
-    path: "api/jobs",
-    method: "POST",
-    body: {
-      items: [
-        { clone: "clone", pr: 8 },
-        { clone: "clone", pr: 9 },
-      ],
-      mode: "batch",
-      confirm_isolation: false,
-    },
-  });
-  expect(node.textContent).not.toContain("have no review yet");
 });
 
 it("says so when the group does not exist, and links groups on a pull request page", async () => {

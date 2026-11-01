@@ -61,7 +61,7 @@ type Backend struct {
 	// exec.LookPath and defaults to "codex".
 	Binary, Model string
 	Profile       Profile
-	// Effort is the model_reasoning_effort (low, medium or high); empty
+	// Effort is the model_reasoning_effort; empty
 	// leaves it to Codex.
 	Effort string
 	// Env are the user's agent variables (agent.WithUserEnv), for the Local
@@ -119,10 +119,10 @@ func (c *Backend) run(ctx context.Context, request agent.Request, fix bool, extr
 	if request.WantsSession() && (c.Profile != Local || fix) {
 		return result, errors.New("codex: only a Local profile review or task can keep, resume or fork a session")
 	}
-	if request.MaxCalls < 1 {
+	if request.MaxCalls < 0 {
 		return result, errors.New(agent.GenerationBudgetExceededReason("model calls"))
 	}
-	if request.MaxTokens < 1 {
+	if request.MaxTokens < 0 {
 		return result, errors.New(agent.GenerationBudgetExceededReason("tokens"))
 	}
 	endpoint := request.Endpoint
@@ -403,10 +403,10 @@ func (c *Backend) run(ctx context.Context, request agent.Request, fix bool, extr
 			logInfo(request, "codex turn failed", "turn", result.Calls, "duration", since(turnStarted), "status", status)
 			err = agent.ProviderFailure("codex", status, refused)
 		}
-		if err == nil && result.Calls > request.MaxCalls {
+		if err == nil && agent.Exceeds(result.Calls, request.MaxCalls) {
 			err = errors.New(agent.GenerationBudgetExceededReason("model calls"))
 		}
-		if err != nil || result.Tokens > request.MaxTokens {
+		if err != nil || agent.Exceeds(result.Tokens, request.MaxTokens) {
 			if err == nil {
 				err = errors.New(agent.GenerationBudgetExceededReason("tokens"))
 			}

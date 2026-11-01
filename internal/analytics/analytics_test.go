@@ -3,6 +3,7 @@ package analytics
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math"
 	"net/http"
@@ -10,10 +11,13 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/baum-ai/baum/internal/appdb"
+	"github.com/baum-ai/baum/internal/appdb/appdbtest"
 	"github.com/baum-ai/baum/internal/decisionlog"
 	"github.com/baum-ai/baum/internal/fix"
 	"github.com/baum-ai/baum/internal/github"
@@ -76,7 +80,7 @@ func newFixture(t *testing.T) fixture {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not installed")
 	}
-	base := t.TempDir()
+	base := appdbtest.TempDir(t)
 	repo := filepath.Join(base, "work", "demo")
 	if err := os.MkdirAll(repo, 0o755); err != nil {
 		t.Fatal(err)
@@ -144,7 +148,7 @@ func TestIndexCountsASessionByTheHostedRules(t *testing.T) {
 	if len(e.Usage) != 1 || e.Usage[0].Calls != 3 || e.Usage[0].Input != 300 || e.Usage[0].CacheRead != 3000 || e.TokensUnknown {
 		t.Errorf("usage = %+v (unknown %v)", e.Usage, e.TokensUnknown)
 	}
-	raw, err := os.ReadFile(f.index.Path)
+	raw, err := appdb.Read(f.index.Path, "cache", "analytics-index")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -331,6 +335,14 @@ func TestReportCountsRootSessionsOnceAndNeverPricesUnknownModels(t *testing.T) {
 	if len(report.Daily) != 7 || report.Daily[6].Date != "2026-10-27" || report.Daily[6].Agents["claude_code"].Sessions != 1 || report.Daily[6].Agents["claude_code"].ActiveSeconds != 600 {
 		t.Errorf("daily = %+v", report.Daily)
 	}
+	// The same day by model: the session counts under its one model.
+	var models int
+	for _, part := range report.Daily[6].Models {
+		models += part.Sessions
+	}
+	if models != report.Daily[6].Agents["claude_code"].Sessions+report.Daily[6].Agents["codex"].Sessions+report.Daily[6].Agents["cursor"].Sessions {
+		t.Errorf("daily models = %+v, want the agents' sessions", report.Daily[6].Models)
+	}
 	if report.Hours[10].ActiveSeconds != 1200 {
 		t.Errorf("hours = %+v", report.Hours)
 	}
@@ -493,29 +505,46 @@ func TestBaumWorkCountsJobsAndActions(t *testing.T) {
 	group.Group = "g1"
 	old := job("", "completed", "", ptr(9.0))
 	old.CreatedAt = now.AddDate(0, 0, -30)
+	lastWeek := job("", "completed", "", ptr(1.0))
+	lastWeek.CreatedAt = now.AddDate(0, 0, -10)
 	list := []jobs.Job{
 		job("", "completed", "", ptr(1.0)), job("", "failed", "budget_exceeded", nil), job("", "failed", "budget_exceeded", nil),
-		pushed, job(jobs.KindFix, "failed", "push_rejected", nil), group, old,
+		pushed, job(jobs.KindFix, "failed", "push_rejected", nil), group, old, lastWeek,
 		// A feature build is the decision log's spend, not baum's work.
 		job(jobs.KindFeatureBuild, "failed", "backend_unavailable", ptr(3.0)),
 		// Retries of a version's details are not reviews, and one that
 		// stood down was not cancelled; what they spent counts.
 		job(jobs.KindDetails, "completed", "", ptr(0.1)), job(jobs.KindDetails, "cancelled", "superseded", ptr(0.05)),
 	}
-	dir := t.TempDir()
+	dir := appdbtest.TempDir(t)
 	actions := &Actions{Path: filepath.Join(dir, "actions.json"), Now: func() time.Time { return recent }}
 	for _, kind := range []string{ActionMerge, ActionMerge, ActionRerunChecks} {
 		if err := actions.Record(kind, "Acme/Demo", 7); err != nil {
 			t.Fatal(err)
 		}
 	}
-	s := &Service{Registry: fakeRegistry{picked: []repos.Repository{{Repository: "acme/demo"}}}, Jobs: func() []jobs.Job { return list }, Actions: actions, Location: time.UTC, Now: func() time.Time { return now }}
+	// A capture from the week before counts in its trend, not the window.
+	captures := []decisionlog.LedgerEntry{{State: decisionlog.AttemptSucceeded, StartedAt: recent}, {State: decisionlog.AttemptSucceeded, StartedAt: now.AddDate(0, 0, -10)}}
+	jobReads, captureReads := 0, 0
+	s := &Service{Registry: fakeRegistry{picked: []repos.Repository{{Repository: "acme/demo"}}}, Actions: actions, Location: time.UTC, Now: func() time.Time { return now },
+		Jobs: func() []jobs.Job { jobReads++; return list },
+		Captures: func(_ context.Context, since time.Time) ([]decisionlog.LedgerEntry, error) {
+			captureReads++
+			return slices.DeleteFunc(slices.Clone(captures), func(c decisionlog.LedgerEntry) bool { return c.StartedAt.Before(since) }), nil
+		}}
 	report, err := s.Report(context.Background(), Query{Days: 7})
 	if err != nil {
 		t.Fatal(err)
 	}
+	// The window and both trend weeks share one read of each ledger.
+	if jobReads != 1 || captureReads != 1 {
+		t.Errorf("reads: jobs %d, captures %d, want one each", jobReads, captureReads)
+	}
 	b := report.Baum
-	if b.Reviews != 3 || b.GroupReviews != 1 || b.Fixes != 2 || b.DetailsRetries != 2 || b.Cancelled != 0 || b.Failed != 3 || b.Completed != 4 || b.FixesPushed != 1 || b.FixesFailed != 1 || b.ThreadsResolved != 2 {
+	if b.Decisions == nil || b.Decisions.Succeeded != 1 {
+		t.Errorf("decisions = %+v, want the window's one", b.Decisions)
+	}
+	if b.Reviews != 3 || b.GroupReviews != 1 || b.ReviewsCompleted != 2 || b.Fixes != 2 || b.DetailsRetries != 2 || b.Cancelled != 0 || b.Failed != 3 || b.Completed != 4 || b.FixesPushed != 1 || b.FixesFailed != 1 || b.ThreadsResolved != 2 {
 		t.Fatalf("baum = %+v", b)
 	}
 	if b.Cost.USD == nil || math.Abs(*b.Cost.USD-1.9) > 1e-9 || !b.Cost.Incomplete {
@@ -526,6 +555,11 @@ func TestBaumWorkCountsJobsAndActions(t *testing.T) {
 	}
 	if b.Merges == nil || *b.Merges != 2 || *b.CheckReruns != 1 || *b.BranchUpdates != 0 {
 		t.Errorf("actions = %v %v %v", b.Merges, b.BranchUpdates, b.CheckReruns)
+	}
+	// The trend: the last seven days against the seven before, reviews by
+	// those that completed.
+	if w := b.Weeks; w == nil || w.This.Reviews != 2 || w.Previous.Reviews != 1 || w.This.FixesPushed != 1 || *w.This.Merges != 2 || *w.Previous.Merges != 0 {
+		t.Errorf("weeks = %+v", b.Weeks)
 	}
 	// The ledger survives a restart.
 	again := &Actions{Path: actions.Path}
@@ -540,7 +574,7 @@ func TestBaumWorkCountsJobsAndActions(t *testing.T) {
 
 func TestPlanUsageSeriesCountLimitHits(t *testing.T) {
 	now := time.Date(2026, 10, 27, 12, 0, 0, 0, time.UTC)
-	path := filepath.Join(t.TempDir(), "plans.json")
+	path := filepath.Join(appdbtest.TempDir(t), "plans.json")
 	samples := []planusage.Sample{
 		{At: now.Add(-5 * time.Hour), Provider: "claude", Window: "5-hour", UsedPercent: 50},
 		{At: now.Add(-4 * time.Hour), Provider: "claude", Window: "5-hour", UsedPercent: 100},
@@ -550,7 +584,7 @@ func TestPlanUsageSeriesCountLimitHits(t *testing.T) {
 		{At: now.Add(-time.Hour), Provider: "codex", Window: "weekly", UsedPercent: 40},
 	}
 	raw, _ := json.Marshal(samples)
-	if err := os.WriteFile(path, raw, 0o600); err != nil {
+	if err := appdb.Write(path, "state", "plan-usage-history", raw); err != nil {
 		t.Fatal(err)
 	}
 	s := &Service{Registry: fakeRegistry{}, Plans: &planusage.History{Path: path, Now: func() time.Time { return now }}, Location: time.UTC, Now: func() time.Time { return now }}
@@ -658,7 +692,7 @@ func (f fakeWrites) Conflicts(context.Context, github.Repository, int) (prupdate
 }
 
 func TestActionsRecordOnlyWritesThatSucceeded(t *testing.T) {
-	actions := &Actions{Path: filepath.Join(t.TempDir(), "actions.json")}
+	actions := &Actions{Path: filepath.Join(appdbtest.TempDir(t), "actions.json")}
 	repo := github.Repository{Host: "github.com", Owner: "acme", Name: "demo"}
 	ctx := context.Background()
 	for _, w := range []fakeWrites{{}, {fail: true}} {
@@ -684,19 +718,77 @@ func TestDecisionCaptureCounts(t *testing.T) {
 		{Repository: "acme/other", Backend: "codex", State: "failed", Reason: "timeout", StartedAt: at},
 		{Repository: "acme/demo", Backend: "claude", State: "abandoned", StartedAt: at, Cost: &cost},
 	}
-	all := decisionCapture(captures, Query{})
+	all := decisionCapture(captures, time.Time{}, time.Time{}, Query{})
 	if all.Attempts != 5 || all.Succeeded != 1 || all.Failed != 2 || all.Abandoned != 1 || all.Cost.USD == nil || *all.Cost.USD != 0.06 || !all.Cost.Incomplete ||
 		len(all.Failures) != 1 || all.Failures[0] != (ReasonCount{Reason: "timeout", Count: 2}) {
 		t.Fatalf("all %+v", all)
 	}
-	codex := decisionCapture(captures, Query{Agent: "codex"})
+	codex := decisionCapture(captures, time.Time{}, time.Time{}, Query{Agent: "codex"})
 	if codex.Attempts != 1 || codex.Cost.USD != nil || !codex.Cost.Incomplete || len(codex.Cost.Reasons) != 1 {
 		t.Fatalf("codex %+v", codex)
 	}
-	if other := decisionCapture(captures, Query{Repository: "ACME/other"}); other.Attempts != 1 {
+	if other := decisionCapture(captures, time.Time{}, time.Time{}, Query{Repository: "ACME/other"}); other.Attempts != 1 {
 		t.Fatalf("by repository %+v", other)
 	}
-	if none := decisionCapture(nil, Query{}); none.Attempts != 0 || none.Cost.USD != nil || none.Cost.Incomplete || none.Failures == nil {
+	if none := decisionCapture(nil, time.Time{}, time.Time{}, Query{}); none.Attempts != 0 || none.Cost.USD != nil || none.Cost.Incomplete || none.Failures == nil {
 		t.Fatalf("none %+v", none)
+	}
+}
+
+// The flow counts each day's pull requests opened and merged, the person's
+// own apart, and names a repository the feature log has not listed or no
+// longer reads, whose kept rows would be stale.
+func TestFlowCountsOpenedAndMergedPerDay(t *testing.T) {
+	now := time.Date(2026, 10, 27, 12, 0, 0, 0, time.UTC)
+	at := func(day int, hour int) time.Time { return time.Date(2026, 10, day, hour, 0, 0, 0, time.UTC) }
+	merged := at(27, 10)
+	clone := []repos.Clone{{Available: true}}
+	s := &Service{
+		Registry: fakeRegistry{picked: []repos.Repository{
+			{Repository: "acme/demo", Clones: clone},
+			{Repository: "acme/off", Clones: clone},
+			{Repository: "acme/turned-off", Clones: clone, Settings: repos.Settings{Decisions: ptr(false)}},
+			{Repository: "acme/no-clone"},
+			{Repository: "Acme/Broken", Clones: clone},
+		}},
+		Location: time.UTC, Now: func() time.Time { return now },
+		Login: func(context.Context) string { return "Me" },
+		Pulls: func(_ context.Context, repository string, _ time.Time) ([]decisionlog.FlowPull, bool, error) {
+			switch repository {
+			case "Acme/Broken":
+				return nil, true, errors.New("database is locked")
+			case "acme/off":
+				return nil, false, nil
+			case "acme/demo":
+			default:
+				// Listed once, but no longer read: never asked.
+				return []decisionlog.FlowPull{{Author: "ada", CreatedAt: at(27, 9)}}, true, nil
+			}
+			return []decisionlog.FlowPull{
+				{Author: "me", CreatedAt: at(26, 9), MergedAt: &merged},
+				{Author: "ada", CreatedAt: at(27, 9)},
+				{Author: "ada", Draft: true, CreatedAt: at(27, 9)},
+				// Opened before the window, merged in it.
+				{Author: "ada", CreatedAt: at(10, 9), MergedAt: &merged},
+			}, true, nil
+		},
+	}
+	report, err := s.Report(context.Background(), Query{Days: 7})
+	if err != nil {
+		t.Fatal(err)
+	}
+	f := report.Flow
+	if !f.Available || !f.Yours || !slices.Equal(f.Unlisted, []string{"acme/off", "acme/turned-off", "acme/no-clone"}) || !slices.Equal(f.Unread, []string{"acme/broken"}) || len(f.Days) != 7 {
+		t.Fatalf("flow = %+v", f)
+	}
+	monday, tuesday := f.Days[5], f.Days[6]
+	if monday.Mine.Opened != 1 || monday.Mine.OpenedMerged != 1 || monday.Team.Opened != 1 {
+		t.Errorf("monday = %+v, want my one opened, since merged", monday)
+	}
+	if tuesday.Team.Opened != 1 || tuesday.Team.Merged != 2 || tuesday.Mine.Merged != 1 || tuesday.Mine.Opened != 0 {
+		t.Errorf("tuesday = %+v, want ada's ready one opened, two merged, one mine", tuesday)
+	}
+	if len(tuesday.Mine.MergeSeconds) != 1 || tuesday.Mine.MergeSeconds[0] != 25*3600 {
+		t.Errorf("merge seconds = %v", tuesday.Mine.MergeSeconds)
 	}
 }

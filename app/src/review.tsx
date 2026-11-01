@@ -58,6 +58,7 @@ import { buildTour } from "./walkthrough-model";
 import { AnswerActions } from "./answer-actions";
 import { AskPanel, sectionFocus } from "./chat";
 import { factsFilesSlot, factsQuery, useFacts } from "./facts";
+import { SECONDARY } from "./action-classes";
 function Transcript({
   id,
   query,
@@ -259,7 +260,11 @@ export function LocalReview({
   const [provenance, setProvenance] = useState<Provenance[]>([]);
   const [versions, setVersions] = useState<number[]>([]);
   const [historyFailed, setHistoryFailed] = useState(false);
-  const [sessions, setSessions] = useState<SessionsLoad>({ state: "loading" });
+  const [sessions, setSessions] = useState<{
+    query: string;
+    version: number;
+    load: SessionsLoad;
+  } | null>(null);
   // The page's keys: j and k step through the review as the navigator does,
   // and the header's actions have the list's keys.
   const steps = useRef<ReviewSteps>(null);
@@ -472,6 +477,7 @@ export function LocalReview({
         View draft
       </Button>
     ) : null;
+  const sessionsVersion = viewedDocument?.review.version;
   useEffect(() => {
     const abort = new AbortController();
     setFailed(false);
@@ -492,20 +498,24 @@ export function LocalReview({
     return () => abort.abort();
   }, [clone, pr.number, latestQuery, revision, retry]);
   useEffect(() => {
-    if (!viewedDocument) return;
-    setSessions({ state: "loading" });
+    if (sessionsVersion == null) return;
     const abort = new AbortController();
     request<unknown>(`api/sessions?${query}`, undefined, "GET", abort.signal)
       .then((body) => {
         const answer = parseSessionsAnswer(body);
         if (!abort.signal.aborted)
-          setSessions(answer ? { state: "answered", answer } : { state: "request-failed" });
+          setSessions({
+            query,
+            version: sessionsVersion,
+            load: answer ? { state: "answered", answer } : { state: "request-failed" },
+          });
       })
       .catch(() => {
-        if (!abort.signal.aborted) setSessions({ state: "request-failed" });
+        if (!abort.signal.aborted)
+          setSessions({ query, version: sessionsVersion, load: { state: "request-failed" } });
       });
     return () => abort.abort();
-  }, [viewedDocument, query, ended]);
+  }, [sessionsVersion, query, revision, retry, ended]);
   // Without a saved version the page shows the pull request's facts: no
   // model's text, only what GitHub, the clone and the sessions on this
   // machine say. They are never a version: not listed, read or asked about.
@@ -557,7 +567,12 @@ export function LocalReview({
   }, [factsSelector, factsHead, factsBase, factsMergeBase]);
   const factsMode = !doc && wantsFacts && facts.state !== "unavailable";
   const lists = viewedDocument
-    ? sessionLists(sessions, viewedDocument)
+    ? sessionLists(
+        sessions?.query === query && sessions.version === sessionsVersion
+          ? sessions.load
+          : { state: "loading" },
+        viewedDocument,
+      )
     : !factsMode
       ? null
       : shownFacts
@@ -621,7 +636,7 @@ export function LocalReview({
                     {fix && fixLabelText ? (
                       <button
                         type="button"
-                        className="walk-secondary"
+                        className={SECONDARY}
                         disabled={fixing || fixStarting}
                         onClick={() => fix()}
                       >
@@ -630,27 +645,19 @@ export function LocalReview({
                       </button>
                     ) : null}
                     {canMerge(entry) ? (
-                      <button
-                        type="button"
-                        className="walk-secondary"
-                        onClick={() => setMerging(true)}
-                      >
+                      <button type="button" className={SECONDARY} onClick={() => setMerging(true)}>
                         Merge…
                       </button>
                     ) : null}
                     {canUpdateBranch(entry) ? (
-                      <button
-                        type="button"
-                        className="walk-secondary"
-                        onClick={() => setUpdating(true)}
-                      >
+                      <button type="button" className={SECONDARY} onClick={() => setUpdating(true)}>
                         Update branch
                       </button>
                     ) : null}
                     {canRerunChecks(entry) ? (
                       <button
                         type="button"
-                        className="walk-secondary"
+                        className={SECONDARY}
                         onClick={() => setRerunning(true)}
                       >
                         Re-run checks
@@ -660,7 +667,7 @@ export function LocalReview({
                     {entry.status === "outdated" || generating ? (
                       <button
                         type="button"
-                        className="walk-secondary"
+                        className={SECONDARY}
                         disabled={generating || entry.needs_clone}
                         onClick={generate}
                       >

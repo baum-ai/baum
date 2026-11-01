@@ -1,6 +1,8 @@
+import { mockStateFetch } from "./ui-state-test-helper";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import example from "../../schema/review-example.json" with { type: "json" };
 import { App } from "./app";
 import type { Entry, Job, LiveSession } from "./api";
 import { snoozeOptions, snoozeText, upNext } from "./up-next";
@@ -197,7 +199,7 @@ beforeEach(() => {
   );
   vi.stubGlobal(
     "fetch",
-    vi.fn(async (path: string) =>
+    mockStateFetch(async (path: string) =>
       Response.json(
         path.includes("api/index")
           ? { entries, problems: [] }
@@ -403,20 +405,17 @@ it("clears only what the person finished, and nothing of a repository missing fr
   expect(await cleared()).toBe("Fixed #2 Change 2");
 });
 
-it("starts afresh from storage it cannot read", async () => {
-  const now = new Date();
-  localStorage.setItem(
-    "baum.inbox.v1",
-    JSON.stringify({
-      day: `${now.getFullYear()}-${now.getMonth() + 1}-${now.getDate()}`,
-      seen: [],
-      snoozed: null,
-      held: { "acme/demo#3": 5 },
-    }),
+it("keeps the queue usable and reports an unreadable saved record", async () => {
+  const original = vi.mocked(fetch).getMockImplementation()!;
+  vi.mocked(fetch).mockImplementation(async (path, init) =>
+    String(path).includes("api/ui-state/")
+      ? Response.json({ message: "unreadable" }, { status: 500 })
+      : original(path, init),
   );
   await render();
   expect(shown()).toBe("Change 1");
-  expect(list()).toEqual(["Change 1", "Change 3", "Change 4", "Change 2", "Change 5"]);
+  expect(node.textContent).toContain("Could not read your saved state.");
+  expect(node.textContent).toContain("Retry saving inbox state");
 });
 
 it("merges every ready pull request after one confirmation", async () => {
@@ -816,11 +815,13 @@ it("shows where a pull request merges, its size and time to review, and opens it
   expect(facts).toEqual([
     "Branch: feature/x→main",
     "Size: +1,200 −34 · 9 files",
-    "Time to review: ~12 min",
-    "GitHub: acme/demo#1 ↗",
+    "Time to review: ~12 min review",
   ]);
-  expect(panel().querySelector(".upnext-facts a")!.getAttribute("href")).toBe(
+  expect(panel().querySelector(".upnext-branches a")!.getAttribute("href")).toBe(
     "https://github.com/acme/demo/pull/1",
+  );
+  expect(panel().querySelector(".upnext-branches a")!.getAttribute("aria-label")).toBe(
+    "Open acme/demo#1 on GitHub",
   );
   // A review's checks are folded, and read only once opened.
   const checksAsked = () =>
@@ -829,6 +830,29 @@ it("shows where a pull request merges, its size and time to review, and opens it
   expect(checksAsked()).toEqual([]);
   await act(async () => button("Checks passing").click());
   expect(checksAsked()).toHaveLength(1);
+});
+
+it("formats Markdown in the review summary, risk explanation and section titles", async () => {
+  const doc = structuredClone(example);
+  doc.summary.text =
+    "Uses `topRepositories` with **required** setup.\n\n- Pick a repository\n- [Read the guide](https://example.com/guide)";
+  const reason = doc.summary.risk_score.reasons[0]!;
+  reason.text = "Only `20` repositories appear; *search* is limited.";
+  doc.sections.find((section) => section.id === reason.section)!.title = "Require `repository`";
+  entries = [fixture()[2]!];
+  const original = vi.mocked(fetch).getMockImplementation()!;
+  vi.mocked(fetch).mockImplementation(async (...args) =>
+    String(args[0]).includes("api/document") ? Response.json(doc) : original(...args),
+  );
+  await render();
+  const summary = panel().querySelector(".upnext-lead")!;
+  expect(summary.querySelector("code")!.textContent).toBe("topRepositories");
+  expect(summary.querySelector("strong")!.textContent).toBe("required");
+  expect(summary.querySelectorAll("ul > li")).toHaveLength(2);
+  expect(summary.querySelector("a")!.getAttribute("href")).toBe("https://example.com/guide");
+  expect(panel().querySelector(".upnext-risk .upnext-prose code")!.textContent).toBe("20");
+  expect(panel().querySelector(".upnext-risk em")!.textContent).toBe("search");
+  expect(panel().querySelector(".upnext-block-text code")!.textContent).toBe("repository");
 });
 
 it("lists the files that conflict with the base", async () => {

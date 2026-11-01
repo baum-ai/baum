@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/url"
 	"slices"
 	"strings"
@@ -48,6 +49,9 @@ type Local struct {
 	ReviewRuns string
 	// Chat answers chat jobs (KindChat); nil fails them.
 	Chat *chat.Service
+	// Log receives what a job's agent reports and keeps out of the job, such
+	// as a fix agent's provider error; nil logs nothing.
+	Log *slog.Logger
 }
 
 // keepsSession reports whether a review by the named backend keeps its agent
@@ -113,7 +117,7 @@ func (l *Local) Prepare(ctx context.Context, item Item) (Prepared, string, error
 	if item.Group == "" {
 		pr, e = readPull(ctx, reader, repository, item.PR)
 	} else {
-		group, e = l.prepareGroup(ctx, c, reader, repository, item.Group)
+		group, e = l.prepareGroup(ctx, c, reader, repository, item.Group, item.AwaitMembers)
 		pr = group.pull
 	}
 	if e != nil {
@@ -131,8 +135,8 @@ func (l *Local) Prepare(ctx context.Context, item Item) (Prepared, string, error
 	if e != nil {
 		return Prepared{}, "", e
 	}
-	if cfg.Budgets.MaxTokens <= 0 || cfg.Budgets.MaxCalls <= 0 || cfg.Budgets.RunTimeout <= 0 || cfg.Budgets.PassTimeout <= 0 {
-		return Prepared{}, "", errors.New("positive generation budgets required")
+	if e := cfg.Budgets.Validate(); e != nil {
+		return Prepared{}, "", e
 	}
 	fingerprint, _ := json.Marshal(struct {
 		Budgets config.Budgets
@@ -145,7 +149,7 @@ func (l *Local) Prepare(ctx context.Context, item Item) (Prepared, string, error
 	}{cfg.Budgets, cfg.Caps, selected.Version, reader.CacheIdentity()})
 	digest := sha256.Sum256(fingerprint)
 	list := pricing.Active()
-	p := Prepared{MaxTokens: cfg.Budgets.MaxTokens, MaxCalls: cfg.Budgets.MaxCalls, ConfigDigest: hex.EncodeToString(digest[:]), PriceVersion: list.Version(), Item: item, Repository: c.Repository, HeadSHA: pr.Head, BaseSHA: pr.Base, Backend: selected.Backend.Name(), Model: selected.Model, RequiresIsolationConfirmation: pr.Untrusted, Draft: pr.Draft, GroupName: group.name, Members: group.members}
+	p := Prepared{MaxTokens: cfg.Budgets.MaxTokens, MaxCalls: cfg.Budgets.MaxCalls, ConfigDigest: hex.EncodeToString(digest[:]), PriceVersion: list.Version(), Item: item, Repository: c.Repository, HeadSHA: pr.Head, BaseSHA: pr.Base, Backend: selected.Backend.Name(), Model: selected.Model, RequiresIsolationConfirmation: pr.Untrusted, Draft: pr.Draft, GroupName: group.name, Members: group.members, Awaiting: group.awaiting}
 	return p, list.Version(), nil
 }
 
@@ -402,8 +406,8 @@ func (l *Local) Execute(ctx context.Context, p Prepared, progress func(Progress)
 	progress(Progress{Phase: "assembling"})
 	// A single pull request is written in stages, with a draft while they
 	// run; a group's combined review in one pass.
-	options := generate.Options{Group: group, Staged: group == nil, PriceList: list, Assembler: guarded, Request: assemble.Request{Repository: repository, Number: key.Number, Limits: assemble.LimitsFrom(caps)}, Backend: backend, BackendVersion: selected.Version, Model: p.Model, Budgets: agent.Budgets{WallClock: time.Duration(cfg.Budgets.RunTimeout), MaxCalls: cfg.Budgets.MaxCalls, MaxTokens: cfg.Budgets.MaxTokens, MaxProviderAttempts: 3, MaxRepairAttempts: 2},
-		OnRepairs: backend.repaired, PassTimeout: time.Duration(cfg.Budgets.PassTimeout)}
+	options := generate.Options{Group: group, Staged: group == nil, PriceList: list, Assembler: guarded, Request: assemble.Request{Repository: repository, Number: key.Number, Limits: assemble.LimitsFrom(caps)}, Backend: backend, BackendVersion: selected.Version, Model: p.Model, Budgets: agent.Budgets{WallClock: time.Duration(cfg.Budgets.ReviewTimeout), MaxCalls: cfg.Budgets.MaxCalls, MaxTokens: cfg.Budgets.MaxTokens, MaxProviderAttempts: 3, MaxRepairAttempts: 2},
+		OnRepairs: backend.repaired, PassTimeout: max(time.Duration(cfg.Budgets.PassTimeout), time.Duration(cfg.Budgets.ReviewTimeout))}
 	if group == nil {
 		options.OnDraft = backend.draft
 	}

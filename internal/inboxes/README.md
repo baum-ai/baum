@@ -27,17 +27,18 @@ given is kept.
 
 ## Storage
 
-`inboxes.json` (0600, written through a temporary file and a rename) in the
-daemon's state directory, beside `groups.sqlite`:
+The `state/inboxes` document in the shared private
+[`app.sqlite`](../appdb/README.md) application database:
 
 ```json
 {"revision": 3, "inboxes": [{"id": "...", "name": "Platform", "color": "blue", "what": "any", "owners": ["baum-ai"], "risk": "any", "repositories": ["baum-ai/baum"], "no_bots": false, "badge": true}]}
 ```
 
-A missing file reads as revision 0 with no inboxes. A file that does not parse
-is **never overwritten**: `GET` answers 500 `inboxes_unreadable` and so does
-`PUT`, so nothing is lost silently; fix or remove the file to continue. Writes
-are serialized.
+A missing document reads as revision 0 with no inboxes. A document that does
+not parse is **never overwritten**: `GET` and `PUT` answer 500
+`inboxes_unreadable`. Fix or remove the document to continue. Writes compare
+the revision and replace the document in one immediate SQLite transaction,
+including across independent store instances.
 
 ## API
 

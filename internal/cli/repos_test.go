@@ -13,6 +13,7 @@ import (
 
 func TestReposCLIPickAndUnpick(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	run := func(args ...string) (string, error) {
 		var out, errOut bytes.Buffer
 		e := Run(append([]string{"internal", "repos"}, args...), nil, &out, &errOut)
@@ -52,6 +53,7 @@ func TestReposCLIPickAndUnpick(t *testing.T) {
 
 func TestReposCLI(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	p := t.TempDir()
 	for _, args := range [][]string{{"init"}, {"remote", "add", "origin", "https://github.com/owner/repo"}} {
 		cmd := exec.Command("git", args...)

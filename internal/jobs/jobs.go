@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -18,6 +19,7 @@ import (
 	"time"
 
 	"github.com/baum-ai/baum/agent"
+	"github.com/baum-ai/baum/internal/appdb"
 	chatpkg "github.com/baum-ai/baum/internal/chat"
 	"github.com/baum-ai/baum/internal/filelock"
 	"github.com/baum-ai/baum/internal/fix"
@@ -46,6 +48,10 @@ type Item struct {
 	// Version, on a details job (KindDetails), is the saved version whose
 	// failed sections it writes again.
 	Version int `json:"version,omitempty"`
+	// AwaitMembers, set by Generate on a group the person asked for, lets
+	// preparation accept members without a saved review: their reviews are
+	// queued ahead of the group's (Prepared.Awaiting).
+	AwaitMembers bool `json:"-"`
 }
 
 // KindDetails is the Item.Kind of a retry of a saved version's failed
@@ -183,6 +189,9 @@ type Prepared struct {
 	// confirmation covers like a pull request's head.
 	GroupName string `json:"group_name,omitempty"`
 	Members   string `json:"members,omitempty"`
+	// Awaiting are the members a group job found without a saved review
+	// (only with Item.AwaitMembers): their reviews were queued ahead of it.
+	Awaiting []int `json:"awaiting,omitempty"`
 	// RefuseDraft is set by the queue, never stored, on the inputs of an
 	// automatic job it executes: the executor refuses the run with
 	// NotAutomaticError{ReasonDraft} if GitHub now reports a draft.
@@ -323,6 +332,8 @@ type Queue struct {
 	// limit is how many jobs outside the chat lane run at once; see
 	// SetConcurrency.
 	limit int
+	// log records jobs starting and ending; see SetLogger.
+	log *slog.Logger
 }
 
 // ErrRestarting refuses a job while the daemon restarts as a newer version.
@@ -341,28 +352,15 @@ func id() string {
 	return hex.EncodeToString(b[:])
 }
 
-// Directory is the persistent state directory holding the default journal:
+// Directory is the persistent application state directory:
 // $XDG_STATE_HOME/baum, or ~/.local/state/baum.
 func Directory() (string, error) {
-	root := os.Getenv("XDG_STATE_HOME")
-	if !filepath.IsAbs(root) {
-		home, e := os.UserHomeDir()
-		if e != nil {
-			return "", e
-		}
-		root = filepath.Join(home, ".local", "state")
-	}
-	return filepath.Join(root, "baum"), nil
+	return appdb.Directory()
 }
 
-// DefaultPath is the queue file Open uses for an empty path: jobs.json in
-// Directory.
+// DefaultPath is the shared application database holding the queue document.
 func DefaultPath() (string, error) {
-	dir, e := Directory()
-	if e != nil {
-		return "", e
-	}
-	return filepath.Join(dir, "jobs.json"), nil
+	return appdb.Path()
 }
 
 func Open(path string, executor Executor, concurrency int, changed func(Job)) (*Queue, error) {
@@ -382,7 +380,7 @@ func Open(path string, executor Executor, concurrency int, changed func(Job)) (*
 	}
 	// One process owns a journal: two queues on one file would run confirmed
 	// jobs twice and overwrite each other's records.
-	lock, err := filelock.Wait(context.Background(), path+".lock", lockWait)
+	lock, err := filelock.Wait(context.Background(), filepath.Clean(path)+".jobs.lock.sqlite", lockWait)
 	if errors.Is(err, filelock.ErrLocked) {
 		return nil, errors.New("another baum process is running this job queue")
 	}
@@ -397,7 +395,7 @@ func Open(path string, executor Executor, concurrency int, changed func(Job)) (*
 			_ = lock.Release()
 		}
 	}()
-	raw, e := os.ReadFile(path)
+	raw, e := appdb.Read(path, "state", "jobs")
 	if e == nil {
 		if len(raw) > 32<<20 {
 			cancel()
@@ -450,10 +448,7 @@ func (q *Queue) save() error {
 	if e != nil {
 		return e
 	}
-	if e = os.MkdirAll(filepath.Dir(q.path), 0700); e != nil {
-		return e
-	}
-	return generate.WriteFileAtomic(q.path, raw)
+	return appdb.Write(q.path, "state", "jobs", raw)
 }
 func (q *Queue) signal() {
 	for _, wake := range []chan struct{}{q.wake, q.chatWake} {
@@ -655,7 +650,16 @@ var ErrIsolationRequired = errors.New("isolation confirmation required")
 // needs their confirmation (isolation) first. Nothing about the price stops a
 // run. A single item the daemon will not run is a BlockedError with its
 // reason.
+//
+// A group's review builds on each member's own: members without a saved
+// review have theirs queued ahead of the group's job. The queue starts jobs
+// in order and never runs two that share a pull request, so the group's job
+// starts after them, whatever the person does meanwhile.
 func (q *Queue) Generate(ctx context.Context, items []Item, mode string, isolation bool) ([]Job, error) {
+	if mode == "single" && len(items) == 1 && items[0].Group != "" && items[0].Kind == "" {
+		items = []Item{items[0]}
+		items[0].AwaitMembers = true
+	}
 	e, err := q.estimate(ctx, items, mode, isolation)
 	if err != nil {
 		return nil, err
@@ -670,7 +674,49 @@ func (q *Queue) Generate(ctx context.Context, items []Item, mode string, isolati
 		q.forget(e.ID)
 		return nil, &BlockedError{e.Items[0].BlockedReason}
 	}
+	if group := e.Items[0]; len(group.Awaiting) > 0 {
+		// The group's isolation covers its members: confirmed for it, it is
+		// confirmed for their reviews.
+		if err := q.reviewMembers(ctx, group, isolation); err != nil {
+			q.forget(e.ID)
+			return nil, err
+		}
+	}
 	return q.SubmitConfirmed(ctx, e.ID, Confirmation{Estimate: true, Isolation: isolation})
+}
+
+// reviewMembers queues the reviews a group job awaits, except those of
+// members already queued or running.
+func (q *Queue) reviewMembers(ctx context.Context, group Prepared, isolation bool) error {
+	q.mu.Lock()
+	items := []Item{}
+	for _, number := range group.Awaiting {
+		if !q.reviewPending(group.Clone, number) {
+			items = append(items, Item{Clone: group.Clone, PR: number})
+		}
+	}
+	q.mu.Unlock()
+	if len(items) == 0 {
+		return nil
+	}
+	e, err := q.estimate(ctx, items, "batch", isolation)
+	if err != nil {
+		return err
+	}
+	_, err = q.SubmitConfirmed(ctx, e.ID, Confirmation{Estimate: true, Isolation: isolation})
+	return err
+}
+
+// reviewPending reports whether a pull request's own review is queued or
+// running in a clone. Only one in the group's clone counts: each clone has
+// its own review store, which the group's review reads. mu is held.
+func (q *Queue) reviewPending(clone string, number int) bool {
+	for _, j := range q.jobs {
+		if j.Kind == "" && j.Group == "" && j.PR == number && j.Clone == clone && (j.State == "queued" || j.State == "running") {
+			return true
+		}
+	}
+	return false
 }
 
 // forget drops an estimate nothing will submit.
@@ -907,7 +953,9 @@ func (q *Queue) worker(chat bool) {
 			j := q.jobs[i]
 			ctx, cancel := context.WithCancel(context.WithValue(q.ctx, transcriptTargetKey{}, transcriptTarget{q.transcripts, j.ID}))
 			q.cancels[j.ID] = cancel
+			log, started := q.log, time.Now()
 			q.mu.Unlock()
+			logStarted(log, j)
 			q.signal()
 			q.notify(j)
 			inputs := j.Prepared
@@ -968,7 +1016,14 @@ func (q *Queue) worker(chat bool) {
 			var fixErr *fix.Error
 			var stopped *StoppedError
 			var blocked *BlockedError
+			var members *MembersNeedReviewsError
 			switch {
+			case err != nil && errors.As(err, &members):
+				// A member's own review failed or was cancelled while the
+				// group waited for it.
+				current.State = "failed"
+				current.Reason = ReasonMembersNeedReviews
+				current.Detail = members.Error()
 			case err != nil && errors.Is(err, ErrSuperseded):
 				current.State = "cancelled"
 				current.Reason = "superseded"
@@ -1034,6 +1089,7 @@ func (q *Queue) worker(chat bool) {
 			saveErr := q.save()
 			result := *current
 			q.mu.Unlock()
+			logFinished(log, result, started, err)
 			q.settleChat(result)
 			q.notify(result)
 			if saveErr != nil {

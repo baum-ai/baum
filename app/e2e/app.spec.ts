@@ -75,6 +75,61 @@ test("daemon bootstrap keeps credentials private and opens saved review versions
   ).toEqual([]);
 });
 
+test("Add repositories searches beyond suggestions and picks the result", async ({ page }) => {
+  const release = join(process.env.BAUM_APP_STATE_DIR ?? "", "repository-search-release");
+  await rm(release, { force: true });
+  try {
+    await page.goto(await launchURL());
+    await page.getByRole("link", { name: "Repositories", exact: true }).click();
+    await page.getByRole("button", { name: "Add repositories", exact: true }).click();
+    const picker = page.getByRole("region", { name: "Choose GitHub repositories" });
+    await expect(
+      picker.getByRole("checkbox", { name: "Pick acme/demo", exact: true }),
+    ).toBeVisible();
+    const initialOrder = [
+      "acme/demo",
+      "acme/other",
+      "acme/missing",
+      "acme/clone-me",
+      "acme/renamed",
+    ];
+    expect((await picker.locator(".repository-name strong").allTextContents()).slice(0, 5)).toEqual(
+      initialOrder,
+    );
+    const result = picker.getByRole("checkbox", { name: "Pick acme/search-only", exact: true });
+    await expect(result).toHaveCount(0);
+    await picker.getByRole("searchbox").fill("acme");
+    const cached = picker.getByRole("checkbox", { name: "Pick acme/top-extra", exact: true });
+    await expect(cached).toBeVisible();
+    await expect(
+      picker.getByText("Searching your GitHub repositories…", { exact: true }),
+    ).toBeVisible();
+    await cached.check();
+    await expect(
+      picker.getByText("Searching your GitHub repositories…", { exact: true }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("button", { name: "Settings for acme/top-extra", exact: true }),
+    ).toBeVisible();
+    await writeFile(release, "");
+    await expect(result).toBeVisible();
+    await result.check();
+    await picker.getByRole("searchbox").fill("");
+    await expect(result).toBeChecked();
+    expect((await picker.locator(".repository-name strong").allTextContents()).slice(0, 5)).toEqual(
+      initialOrder,
+    );
+    // Leave the shared fixture registry as it was for the remaining stories.
+    await cached.uncheck();
+    await result.uncheck();
+    await expect(
+      page.getByRole("button", { name: "Settings for acme/search-only", exact: true }),
+    ).toHaveCount(0);
+  } finally {
+    await writeFile(release, "");
+  }
+});
+
 test("automatic review of a new head, shown as started automatically", async ({ page }) => {
   const errors: string[] = [];
   page.on("pageerror", (e) => errors.push(e.message));
@@ -209,7 +264,10 @@ test("merges a ready pull request from the inbox after choosing a method", async
   await rm(join(process.env.BAUM_APP_STATE_DIR ?? "", "merged-7"), { force: true });
 });
 
-test("walks through a review, comments on a behaviour and submits the review", async ({ page }) => {
+test("walks through a review, comments on a behaviour and submits the review", async ({
+  page,
+  browser,
+}) => {
   const errors: string[] = [];
   page.on("pageerror", (e) => errors.push(e.message));
   // A render failure is caught by the page's boundary and only logged.
@@ -241,6 +299,24 @@ test("walks through a review, comments on a behaviour and submits the review", a
   await page.keyboard.type("Trusts a client-supplied header");
   await walk.getByRole("button", { name: "Save comment", exact: true }).click();
   await expect(walk.getByText("1 comment", { exact: true })).toBeVisible();
+  // Drafts are stored by the daemon and survive another browser context.
+  await expect(walk.getByText("Saving review draft…", { exact: true })).toHaveCount(0);
+  const retainedURL = page.url();
+  await page.evaluate(() => localStorage.clear());
+  const freshContext = await browser.newContext();
+  try {
+    const freshPage = await freshContext.newPage();
+    await freshPage.goto(await launchURL());
+    await expect(freshPage.getByRole("heading", { name: "Up next", exact: true })).toBeVisible();
+    await freshPage.goto(retainedURL);
+    await expect(
+      freshPage
+        .getByRole("region", { name: "Walkthrough" })
+        .getByText("1 comment", { exact: true }),
+    ).toBeVisible();
+  } finally {
+    await freshContext.close();
+  }
   // A reload keeps the walkthrough, what was looked at and the comment.
   await page.reload();
   await expect(walk.getByText("1 comment", { exact: true })).toBeVisible();

@@ -1,3 +1,4 @@
+import { uiState, useUIState } from "./ui-state";
 import {
   Fragment,
   useEffect,
@@ -11,9 +12,16 @@ import {
   type SetStateAction,
 } from "react";
 import { formatCount } from "@baum/viewer/components/format";
-import { ChevronRightIcon, StackIcon } from "@baum/viewer/components/icons";
+import {
+  BranchIcon,
+  ChevronDownIcon,
+  ChevronRightIcon,
+  GitHubIcon,
+  StackIcon,
+} from "@baum/viewer/components/icons";
+import { InlineMarkdown, Markdown } from "@baum/viewer/components/markdown";
 import { Lines } from "@baum/viewer/components/review-parts";
-import { Alert, Button } from "@baum/viewer/components/ui";
+import { Alert, Button, LiveDot } from "@baum/viewer/components/ui";
 import type { ViewerLinkProps } from "@baum/viewer/navigation";
 import {
   RISK_SCORE_MEANING,
@@ -61,6 +69,8 @@ import { ConflictingFiles } from "./conflicts";
 import { RefreshButton } from "./shell";
 import { ReviewThreads } from "./threads";
 import { canUpdateBranch, UpdateBranchDialog } from "./unblock";
+import { PRIMARY, SECONDARY, SMALL, SMALL_PRIMARY } from "./action-classes";
+import { cn } from "@baum/viewer/components/classnames";
 
 /** What the person does next about a pull request: read a review they were
  *  asked for, unblock their own, merge it, bring it up to date with its base,
@@ -290,7 +300,6 @@ type Stored = {
   /** Snoozes until the pull request changes: the head it had then. */
   held: Record<string, string>;
 };
-const STORAGE_KEY = "baum.inbox.v1";
 
 /** A snooze's end: a time, or the pull request's next push. */
 export type SnoozeEnd = number | "change";
@@ -311,34 +320,6 @@ function fresh(
 
 function stillSnoozed(snoozed: Record<string, number>, now: number) {
   return Object.fromEntries(Object.entries(snoozed).filter(([, until]) => until > now));
-}
-
-function load(now: number): Stored {
-  try {
-    const stored = JSON.parse(
-      localStorage.getItem(STORAGE_KEY) ?? "null",
-    ) as Partial<Stored> | null;
-    const record = (value: unknown) =>
-      value && typeof value === "object" && !Array.isArray(value) ? value : {};
-    if (stored && typeof stored === "object") {
-      // Rebuilt field by field: whatever else the storage holds, the page works.
-      const snoozed = stillSnoozed(record(stored.snoozed) as Record<string, number>, now);
-      const held = Object.fromEntries(
-        Object.entries(record(stored.held)).filter(([, head]) => typeof head === "string"),
-      ) as Record<string, string>;
-      return stored.day === dayOf(now)
-        ? {
-            day: stored.day,
-            seen: record(stored.seen) as Record<string, Seen>,
-            snoozed,
-            held,
-          }
-        : fresh(dayOf(now), snoozed, held);
-    }
-  } catch {
-    // Storage may be unavailable or hold something else; start empty.
-  }
-  return fresh(dayOf(now));
 }
 
 /** The snoozes offered at `now`: an hour, this afternoon while 3 PM is more
@@ -383,7 +364,10 @@ export type UpNextState = ReturnType<typeof useUpNext>;
  *  cleared, since its pull requests may only be absent for now. */
 export function useUpNext(entries: Entry[], live: LiveSession[], jobs: Job[], ready: boolean) {
   const now = useNow(30_000);
-  const [stored, setStored] = useState(() => load(Date.now()));
+  const persistence = useUIState(
+    uiState<Stored>("api/ui-state/inbox", () => fresh(dayOf(Date.now()))),
+  );
+  const stored = persistence.value;
   const day = dayOf(now);
   const state =
     stored.day === day ? stored : fresh(day, stillSnoozed(stored.snoozed, now), stored.held);
@@ -394,18 +378,13 @@ export function useUpNext(entries: Entry[], live: LiveSession[], jobs: Job[], re
   const snoozed = items.filter(snoozedNow);
   const queue = items.filter((item) => !snoozedNow(item));
   const update = (change: (state: Stored) => Stored) =>
-    setStored((previous) => {
+    persistence.update((previous) => {
       const time = Date.now();
       const base =
         previous.day === dayOf(time)
           ? previous
           : fresh(dayOf(time), stillSnoozed(previous.snoozed, time), previous.held);
       const next = change(base);
-      try {
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
-      } catch {
-        // Not remembered across reloads, but the page still works.
-      }
       return next;
     });
   // Record what is in the queue and when something leaves it. A pull request
@@ -428,7 +407,7 @@ export function useUpNext(entries: Entry[], live: LiveSession[], jobs: Job[], re
     ...[...listed].map((repository) => `listed:${repository}`),
   ].join("\n");
   useEffect(() => {
-    if (!ready) return;
+    if (!ready || !persistence.ready) return;
     const keys = new Set(items.map((item) => item.key));
     const heads = new Map(items.map((item) => [item.key, item.entry.pull_request.head_sha]));
     // A fix counts once it pushed: not while it runs, nor after it failed.
@@ -480,12 +459,13 @@ export function useUpNext(entries: Entry[], live: LiveSession[], jobs: Job[], re
       return { ...previous, seen, held };
     });
     // `signature` stands for `items`.
-  }, [ready, signature, day]);
+  }, [ready, signature, day, persistence.ready]);
   const cleared = Object.entries(state.seen)
     .filter(([, seen]) => seen.cleared != null)
     .sort(([, a], [, b]) => (b.cleared ?? 0) - (a.cleared ?? 0))
     .map(([key, seen]) => ({ key, ...seen }));
   return {
+    persistence,
     now,
     queue,
     snoozed,
@@ -1004,7 +984,7 @@ export function UpNextPage({
                     ready.length > 1 ? (
                       <button
                         type="button"
-                        className="upnext-batch"
+                        className={cn("upnext-batch", SMALL_PRIMARY)}
                         onClick={() => setMergingAll(ready)}
                       >
                         Merge all {formatCount(ready.length)}
@@ -1146,7 +1126,7 @@ export function UpNextPage({
           <div role="status" className="upnext-toast">
             <span>{toast.text}</span>
             {toast.undo ? (
-              <button type="button" onClick={undo}>
+              <button type="button" className={SMALL} onClick={undo}>
                 Undo
                 <kbd aria-hidden="true" className="key-hint">
                   u
@@ -1546,7 +1526,7 @@ function Panel({
     ? `${pr.author ?? "Someone"} asked for your review`
     : "Yours";
   const github = (
-    <a href={pr.url} target="_blank" rel="noreferrer" className="upnext-secondary">
+    <a href={pr.url} target="_blank" rel="noreferrer" className={cn("upnext-secondary", SECONDARY)}>
       Open on GitHub
     </a>
   );
@@ -1555,14 +1535,14 @@ function Panel({
   // at once.
   const actions = (
     <>
-      <Link href={href} className="upnext-primary">
+      <Link href={href} className={cn("upnext-primary", PRIMARY)}>
         Open
         <kbd aria-hidden="true" className="key-hint">
           ↵
         </kbd>
       </Link>
       {job ? (
-        <Link href={jobHref(job)} className="upnext-secondary">
+        <Link href={jobHref(job)} className={cn("upnext-secondary", SECONDARY)}>
           Watch the agent
           {job.has_transcript ? (
             <kbd aria-hidden="true" className="key-hint">
@@ -1573,20 +1553,20 @@ function Panel({
       ) : waiting ? (
         github
       ) : kind === "merge" ? (
-        <button type="button" className="upnext-secondary" onClick={merge}>
+        <button type="button" className={cn("upnext-secondary", SECONDARY)} onClick={merge}>
           Merge
           <kbd aria-hidden="true" className="key-hint">
             m
           </kbd>
         </button>
       ) : kind === "update" ? (
-        <button type="button" className="upnext-secondary" onClick={update}>
+        <button type="button" className={cn("upnext-secondary", SECONDARY)} onClick={update}>
           Update the branch
         </button>
       ) : kind === "fix" && fix ? (
         <button
           type="button"
-          className="upnext-secondary"
+          className={cn("upnext-secondary", SECONDARY)}
           disabled={fixState.starting}
           onClick={fix}
         >
@@ -1669,12 +1649,13 @@ function Panel({
           <div className="upnext-snooze" ref={menuRef}>
             <button
               type="button"
-              className="upnext-secondary"
+              className={cn("upnext-secondary", SECONDARY)}
               aria-haspopup="menu"
               aria-expanded={menu}
               onClick={() => setMenu((open) => !open)}
             >
-              Snooze ▾
+              Snooze
+              <ChevronDownIcon size={14} className="text-(--text-tertiary)" />
               <kbd aria-hidden="true" className="key-hint">
                 s
               </kbd>
@@ -1717,17 +1698,27 @@ function Panel({
             </span>
           </div>
           {reason ? (
-            <p>
-              {reasonTitle ? <strong>{reasonTitle}. </strong> : null}
-              {reason.text}
-            </p>
+            <div className="upnext-risk-copy">
+              {reasonTitle ? (
+                <strong>
+                  <InlineMarkdown>{reasonTitle}</InlineMarkdown>
+                </strong>
+              ) : null}
+              <Markdown html={false} className="upnext-prose">
+                {reason.text}
+              </Markdown>
+            </div>
           ) : null}
         </div>
       ) : null}
       {blocks(row, doc).map((block) => (
         <section key={block.title} className="upnext-block" aria-label={block.title}>
           <h3 className="upnext-label">{block.title}</h3>
-          {block.lead ? <p className="upnext-lead">{block.lead}</p> : null}
+          {block.lead ? (
+            <Markdown html={false} className="upnext-lead upnext-prose">
+              {block.lead}
+            </Markdown>
+          ) : null}
           <ul>
             {block.rows.map((line) => (
               <BlockRow
@@ -1744,7 +1735,7 @@ function Panel({
       ))}
       {item && item.working > 0 ? (
         <p className="upnext-agents">
-          <span className="upnext-pulse" aria-hidden="true" />
+          <LiveDot className="text-(--status-positive)" />
           {plural(item.working, "agent session")} working on its branch right now
         </p>
       ) : null}
@@ -1759,46 +1750,51 @@ function Facts({ entry }: { entry: Entry }) {
   const files = pr.changed_files ?? 0;
   const sized = (pr.additions ?? 0) + (pr.deletions ?? 0) + files > 0;
   return (
-    <dl className="upnext-facts">
-      {pr.head_ref || pr.base_ref ? (
-        <div>
-          <dt>Branch</dt>
-          <dd className="upnext-branches">
-            <code title={pr.head_ref}>{pr.head_ref || "?"}</code>
-            <span aria-label="into">→</span>
-            <code title={pr.base_ref}>{pr.base_ref || "?"}</code>
-          </dd>
-        </div>
-      ) : null}
+    <dl className="upnext-facts upnext-pr-facts">
+      <div className="upnext-branch-fact">
+        <dt className="sr-only">{pr.head_ref || pr.base_ref ? "Branch" : "GitHub"}</dt>
+        <dd className="upnext-branches">
+          {pr.head_ref || pr.base_ref ? (
+            <>
+              <BranchIcon size={14} />
+              <code title={pr.head_ref}>{pr.head_ref || "?"}</code>
+              <span aria-label="into">→</span>
+              <code title={pr.base_ref}>{pr.base_ref || "?"}</code>
+            </>
+          ) : null}
+          <a
+            className="upnext-github"
+            href={pr.url}
+            target="_blank"
+            rel="noreferrer"
+            aria-label={`Open ${pr.repository}#${pr.number} on GitHub`}
+            title={`Open ${pr.repository}#${pr.number} on GitHub`}
+          >
+            <GitHubIcon />
+          </a>
+        </dd>
+      </div>
       {sized ? (
         <div>
-          <dt>Size</dt>
+          <dt className="sr-only">Size</dt>
           <dd>
             <Lines
               additions={pr.additions ?? 0}
               deletions={pr.deletions ?? 0}
               format={formatCount}
             />
-            {files ? ` · ${plural(files, "file")}` : ""}
+            {files ? <span className="upnext-fact-aside"> · {plural(files, "file")}</span> : null}
           </dd>
         </div>
       ) : null}
       {entry.review_minutes != null ? (
         <div>
-          <dt>Time to review</dt>
+          <dt className="sr-only">Time to review</dt>
           <dd title="baum's estimate of the time to read the change">
-            {minutesText(entry.review_minutes)}
+            {minutesText(entry.review_minutes)} review
           </dd>
         </div>
       ) : null}
-      <div>
-        <dt>GitHub</dt>
-        <dd>
-          <a href={pr.url} target="_blank" rel="noreferrer">
-            {pr.repository}#{pr.number} ↗
-          </a>
-        </dd>
-      </div>
     </dl>
   );
 }
@@ -1822,7 +1818,7 @@ function BlockRow({
   const pr = entry.pull_request;
   const text = (
     <span className="upnext-block-text">
-      <span>{line.main}</span>
+      {line.lines ? <InlineMarkdown>{line.main}</InlineMarkdown> : <span>{line.main}</span>}
       {line.sub ? <span className="upnext-block-sub">{line.sub}</span> : null}
     </span>
   );
@@ -1858,7 +1854,7 @@ function BlockRow({
       {fixChecks ? (
         <button
           type="button"
-          className="upnext-secondary upnext-thread-resolve"
+          className={cn("upnext-secondary upnext-thread-resolve", SMALL)}
           disabled={fixState.starting}
           onClick={fixChecks}
         >
@@ -1967,7 +1963,7 @@ function GroupPanel({
         ) : null}
       </dl>
       <div className="upnext-actions">
-        <Link href={href} className="upnext-primary">
+        <Link href={href} className={cn("upnext-primary", PRIMARY)}>
           Open the {group.stack ? "stack" : "group"}
           <kbd aria-hidden="true" className="key-hint">
             ↵

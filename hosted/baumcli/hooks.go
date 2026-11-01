@@ -129,7 +129,9 @@ func newAgentHooksCommand(stdout, stderr io.Writer) *cobra.Command {
 			}
 			// An event Entire has no hook for is only recorded, hosted or
 			// not, so it is not asked.
-			recordOnly := userWide && agenthooks.RecordOnly(agent, event)
+			// A user-wide hook in a repository without Entire ran only
+			// because the user runs the daemon, so it too only records.
+			recordOnly := userWide && (agenthooks.RecordOnly(agent, event) || !userHookRunsEntire("."))
 			hosted := !recordOnly && hookRunsHosted(cmd.Context(), ".")
 			// A stop's output may carry the message the user queued in the
 			// app, so Entire's is held until the hook knows.

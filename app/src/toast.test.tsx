@@ -43,7 +43,7 @@ it("shows one toast at a time, in a live region, gone after a few seconds", asyn
       title: "Answered “Not yet”",
       detail: "Push it and open a PR?",
       context: "Session page background colors",
-      icon: { src: "/claude.svg", alt: "Claude Code" },
+      icon: { brand: "claude", alt: "Claude Code" },
     }),
   );
   expect(toast()!.querySelector(".local-toast-title")!.textContent).toBe("Answered “Not yet”");

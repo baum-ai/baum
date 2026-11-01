@@ -45,6 +45,11 @@ type Service struct {
 	// Captures reads decision capture's ledger from since on; nil without
 	// decision capture.
 	Captures func(ctx context.Context, since time.Time) ([]decisionlog.LedgerEntry, error)
+	// Pulls reads the feature log's pull requests of a repository opened or
+	// merged from since on, and whether it listed the repository; nil
+	// without the decision store. Login is the person's GitHub login.
+	Pulls func(ctx context.Context, repository string, since time.Time) ([]decisionlog.FlowPull, bool, error)
+	Login func(ctx context.Context) string
 	// Location is the zone days and hours are counted in; nil is local.
 	Location *time.Location
 	Now      func() time.Time

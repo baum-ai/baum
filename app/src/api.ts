@@ -269,6 +269,8 @@ const jobReasons: Record<string, string> = {
   // A job an older baum stopped for its daily spending cap, which is gone.
   daily_cap: "It stopped before it started.",
   draft: "The pull request became a draft.",
+  members_need_reviews:
+    "A pull request's own review failed or was cancelled, and the group review builds on it. Generate it again to retry.",
   fork: "The pull request's branch is in a fork, which baum never pushes to.",
   no_push_access: "Your GitHub account can't push to this repository.",
   nothing_to_fix:

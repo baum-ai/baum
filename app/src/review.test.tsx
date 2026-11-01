@@ -1,3 +1,4 @@
+import { mockStateFetch } from "./ui-state-test-helper";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
@@ -11,11 +12,30 @@ import { reviewJob, type Entry, type Job } from "./api";
 import type { FixState } from "./fix";
 import { forgetLastRows } from "./shortcuts";
 vi.mock("@baum/viewer/components/review-viewer", () => ({
-  ReviewViewer: ({ document, header, placeholder, notices }: ReviewViewerProps) => (
-    <div data-generation={header?.generation?.state} data-back={header?.back?.href}>
+  ReviewViewer: ({
+    document,
+    header,
+    placeholder,
+    notices,
+    sessions,
+    commits,
+  }: ReviewViewerProps) => (
+    <div
+      data-generation={header?.generation?.state}
+      data-back={header?.back?.href}
+      data-sessions={sessions?.state.status}
+      data-commits={commits?.state.status}
+    >
       {header?.beside}
       {notices}
       {document ? <p>{document.summary.text}</p> : placeholder}
+      {sessions?.state.status === "ready"
+        ? sessions.state.items.map((item) => (
+            <span key={item.id} data-session-id={item.id}>
+              {item.label}
+            </span>
+          ))
+        : null}
     </div>
   ),
 }));
@@ -80,7 +100,7 @@ beforeEach(() => {
   root = createRoot(node);
   vi.stubGlobal(
     "fetch",
-    vi.fn(async (path: string) =>
+    mockStateFetch(async (path: string) =>
       path.includes("/cancel")
         ? new Response(cancelFails ? "failed" : "{}", {
             status: cancelFails ? 500 : 200,
@@ -198,6 +218,46 @@ it("keeps saved content and offers retry when the completed review cannot be rea
   });
   expect(node.textContent).toContain("Retried version");
   expect(node.textContent).not.toContain("The latest review could not be read");
+});
+it("keeps linked sessions visible during refresh and isolates a different pull request", async () => {
+  documentValue = structuredClone(example) as unknown as ReviewDocument;
+  const pending: ((response: Response) => void)[] = [];
+  const original = vi.mocked(fetch).getMockImplementation()!;
+  vi.mocked(fetch).mockImplementation((...args) =>
+    String(args[0]).startsWith("/s/test-ns/api/sessions?")
+      ? new Promise<Response>((resolve) => pending.push(resolve))
+      : original(...args),
+  );
+  const answer = (id: string, title: string) =>
+    Response.json({
+      available: true,
+      sessions: [{ id, title, vendor: "claude_code" }],
+      commits: [],
+    });
+  await render(job("completed"), 0, { ...entry, version_count: 1 });
+  expect(node.querySelector('[data-sessions="loading"]')).not.toBeNull();
+  await act(async () => pending.shift()!(answer("s1", "Original session")));
+  const session = node.querySelector('[data-session-id="s1"]');
+  expect(session).not.toBeNull();
+  await render(job("completed"), 1, { ...entry, version_count: 1 });
+  expect(node.querySelector('[data-sessions="ready"]')).not.toBeNull();
+  expect(node.querySelector('[data-commits="ready"]')).not.toBeNull();
+  expect(node.querySelector('[data-session-id="s1"]')).toBe(session);
+  await act(async () => pending.shift()!(answer("s1", "Updated session")));
+  expect(session!.textContent).toBe("Updated session");
+  await render(job("completed"), 2, { ...entry, version_count: 1 });
+  await render(job("completed"), 3, {
+    ...entry,
+    version_count: 1,
+    pull_request: { ...entry.pull_request, number: 8 },
+  });
+  expect(node.querySelector('[data-sessions="loading"]')).not.toBeNull();
+  expect(node.querySelector('[data-session-id="s1"]')).toBeNull();
+  await act(async () => pending.shift()!(answer("s1", "Stale response")));
+  expect(node.querySelector('[data-sessions="loading"]')).not.toBeNull();
+  await act(async () => pending.shift()!(answer("s2", "Other pull request")));
+  expect(node.querySelector('[data-session-id="s2"]')!.textContent).toBe("Other pull request");
+  expect(node.textContent).not.toContain("Stale response");
 });
 it.each(["cancelled", "failed", "interrupted"])(
   "terminal %s ends pending UI even while the index still says generating",

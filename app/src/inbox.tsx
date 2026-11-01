@@ -56,6 +56,7 @@ import { LoadingStatus, NineDots } from "./nine-dots";
 import { canMerge, MergeDialog } from "./merge";
 import { inboxAction, moveFocus, onBody, useFocusRow, useLastRow, useShortcuts } from "./shortcuts";
 import { MergeReadyDialog, useSavedReview, type SavedReviews } from "./up-next";
+import { SMALL } from "./action-classes";
 
 /** One row the keyboard can reach: a pull request or a review group. */
 type Item = { id: string; entry?: Entry; group?: ReviewGroup };
@@ -565,7 +566,11 @@ export function UpdatedAgo({ at, busy }: { at: number | null; busy: boolean }) {
   if (at == null && !busy) return null;
   return (
     <span className="inbox-updated" title={at == null ? undefined : new Date(at).toLocaleString()}>
-      <span aria-hidden="true" className={cn("inbox-updated-mark", busy && "busy")} />
+      {busy ? (
+        <NineDots size={12} tone="text" />
+      ) : (
+        <span aria-hidden="true" className="inbox-updated-mark" />
+      )}
       {busy || at == null
         ? "Updating…"
         : `Updated ${now - at < 10_000 ? "just now" : formatRelative(new Date(at).toISOString(), now)}`}
@@ -816,11 +821,11 @@ function RowPeek({
             </>
           ) : null}
           <div className="inbox-peek-actions">
-            <Link href={href} className={cn("inbox-action inbox-peek-open", FOCUS_RING)}>
+            <Link href={href} className={cn("inbox-peek-open", SMALL)}>
               {doc ? "Open the review" : "Open the pull request"}
             </Link>
             {!doc && generate && entry.status !== "generating" && !entry.needs_clone ? (
-              <button type="button" className={cn("inbox-action", FOCUS_RING)} onClick={generate}>
+              <button type="button" className={SMALL} onClick={generate}>
                 Generate the review
               </button>
             ) : null}
