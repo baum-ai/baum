@@ -14,7 +14,7 @@ import {
 import { formatCount } from "@baum/viewer/components/format";
 import { ChevronDownIcon, ChevronRightIcon, StackIcon } from "@baum/viewer/components/icons";
 import { Lines } from "@baum/viewer/components/review-parts";
-import { Alert, Button } from "@baum/viewer/components/ui";
+import { Alert, Button, LiveDot } from "@baum/viewer/components/ui";
 import type { ViewerLinkProps } from "@baum/viewer/navigation";
 import {
   RISK_SCORE_MEANING,
@@ -1718,7 +1718,7 @@ function Panel({
       ))}
       {item && item.working > 0 ? (
         <p className="upnext-agents">
-          <span className="upnext-pulse" aria-hidden="true" />
+          <LiveDot className="text-(--status-positive)" />
           {plural(item.working, "agent session")} working on its branch right now
         </p>
       ) : null}

@@ -566,7 +566,11 @@ export function UpdatedAgo({ at, busy }: { at: number | null; busy: boolean }) {
   if (at == null && !busy) return null;
   return (
     <span className="inbox-updated" title={at == null ? undefined : new Date(at).toLocaleString()}>
-      <span aria-hidden="true" className={cn("inbox-updated-mark", busy && "busy")} />
+      {busy ? (
+        <NineDots size={12} tone="text" />
+      ) : (
+        <span aria-hidden="true" className="inbox-updated-mark" />
+      )}
       {busy || at == null
         ? "Updating…"
         : `Updated ${now - at < 10_000 ? "just now" : formatRelative(new Date(at).toISOString(), now)}`}
