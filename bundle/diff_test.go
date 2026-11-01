@@ -303,8 +303,8 @@ func TestUnreadableRenameStaysBinary(t *testing.T) {
 }
 
 func TestDiffURLIsStableForPath(t *testing.T) {
-	url1 := diffURL("internal/foo.go", 42)
-	url2 := diffURL("internal/foo.go", 42)
+	url1 := HunkDiffURL("internal/foo.go", 42)
+	url2 := HunkDiffURL("internal/foo.go", 42)
 	if url1 != url2 {
 		t.Fatalf("diffURL must be deterministic: %q vs %q", url1, url2)
 	}

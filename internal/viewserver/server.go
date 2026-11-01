@@ -34,6 +34,7 @@ import (
 	"github.com/baum-ai/baum/internal/locallink"
 	"github.com/baum-ai/baum/internal/transcript"
 	"github.com/baum-ai/baum/internal/viewer"
+	"github.com/baum-ai/baum/review"
 )
 
 // MaxDocumentBytes is the largest document the server accepts, at start-up and
@@ -192,7 +193,7 @@ func New(opts Options) (*Server, error) {
 	} else if !isJSON(document) {
 		return nil, errors.New("viewserver: the document is not valid JSON")
 	}
-	s.document = document
+	s.document = WithHunkURLs(document)
 	s.review = parseReview(document)
 	s.paths = hunkPaths(document)
 	s.patches = &patchCache{jobs: map[string]*patchJob{}}
@@ -434,10 +435,23 @@ func contentType(name string) string {
 	return "application/octet-stream"
 }
 
+// WithHunkURLs is the document as it is served: each indexed hunk without a
+// github_url, as a locally stored document holds none, gets the one its
+// generation would have recorded (review.DeriveHunkURLs). A document whose
+// index cannot be read that way is served as given.
+func WithHunkURLs(document []byte) []byte {
+	derived, err := review.DeriveHunkURLs(document)
+	if err != nil {
+		return document
+	}
+	return derived
+}
+
 // setDocument swaps the served bytes and tells every open event stream.
 func (s *Server) setDocument(document []byte) {
 	review := parseReview(document)
 	paths := hunkPaths(document)
+	document = WithHunkURLs(document)
 	s.mu.Lock()
 	s.document = document
 	s.review = review

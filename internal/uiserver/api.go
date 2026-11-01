@@ -445,7 +445,7 @@ func (a LocalAPI) Handler() *LocalHandler {
 		}
 		if r.URL.Path == "/api/document" {
 			w.Header().Set("Content-Type", "application/json")
-			_, _ = w.Write(version.Document)
+			_, _ = w.Write(viewserver.WithHunkURLs(version.Document))
 			return
 		}
 		viewer, release, err := cache.get(c, version.Document)

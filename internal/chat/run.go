@@ -18,6 +18,7 @@ import (
 	"github.com/baum-ai/baum/internal/config"
 	"github.com/baum-ai/baum/internal/generate"
 	"github.com/baum-ai/baum/internal/gitlocal"
+	"github.com/baum-ai/baum/internal/locallink"
 	"github.com/baum-ai/baum/internal/pricing"
 	"github.com/baum-ai/baum/internal/repos"
 	"github.com/baum-ai/baum/internal/reviewruns"
@@ -448,7 +449,14 @@ func (s *Service) seed(ctx context.Context, root string, c repos.Clone, cfg conf
 	if err := bundle.UnpackHeadCheckout(ctx, archive.Name(), dir, limits); err != nil {
 		return "", fmt.Errorf("unpacking the checkout: %w", err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, "review.json"), version.Document, 0o400); err != nil {
+	// The agent reads the review without the clone's history, so the hunks'
+	// patch text the store does not keep is read back into it, within the
+	// bytes a generation bundle holds.
+	document, err := locallink.EmbedPatches(ctx, c.Path, version.Document, int64(assemble.LimitsFrom(caps).Caps.MaxBytes))
+	if err != nil {
+		return "", err
+	}
+	if err := os.WriteFile(filepath.Join(dir, "review.json"), document, 0o400); err != nil {
 		return "", err
 	}
 	transcript, err := seedConversation(ctx, redactor, earlier)

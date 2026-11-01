@@ -13,6 +13,8 @@ import (
 	"github.com/baum-ai/baum/internal/generate"
 	"github.com/baum-ai/baum/internal/generate/generatetest"
 	"github.com/baum-ai/baum/internal/store"
+	"github.com/baum-ai/baum/internal/viewserver"
+	"github.com/baum-ai/baum/review"
 )
 
 // Live facts refresh independently while a generation runs, and the
@@ -149,8 +151,9 @@ func TestPublishSucceedsWhenRecordingOutcomeFailsAfterPut(t *testing.T) {
 		t.Fatal("published document not returned")
 	}
 	latest, e := s.Latest(context.Background(), key)
-	if e != nil || !bytes.Equal(latest.Document, result.Document) {
-		t.Fatal("returned document is not the stored version", e)
+	stripped, _, stripErr := review.StripHunkEvidence(result.Document)
+	if e != nil || stripErr != nil || !bytes.Equal(latest.Document, stripped) {
+		t.Fatal("returned document is not the stored version", e, stripErr)
 	}
 	if !strings.Contains(f.progress.String(), "warning: record generation outcome: database is locked") {
 		t.Fatalf("missing warning: %q", f.progress.String())
@@ -192,4 +195,107 @@ func TestPublishSucceedsWhenKeepingCommitsFails(t *testing.T) {
 	if !strings.Contains(f.progress.String(), "warning: keep the version's commits in the clone: cannot lock ref") {
 		t.Fatalf("missing warning: %q", f.progress.String())
 	}
+}
+
+// A locally saved document keeps no hunk evidence: the patch text and GitHub
+// fragment of each indexed hunk are left out, and everything else is kept as
+// generated. Serving it derives the same fragments generation recorded.
+func TestPublishStoresTheDocumentWithoutHunkEvidence(t *testing.T) {
+	ctx := context.Background()
+	f := newFixture(t)
+	s, err := store.Open("", t.TempDir(), true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	key := store.Key{Repository: assembletest.Repository.String(), Number: assembletest.Number}
+	result, err := generate.Publish(ctx, s, key, f.options(t), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	latest, err := s.Latest(ctx, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	generated, stored := decodeHunks(t, result.Document), decodeHunks(t, latest.Document)
+	diffs := 0
+	for _, hunk := range generated.hunks {
+		if hunk["github_url"] == nil {
+			t.Fatalf("generated hunk without github_url: %s", hunk["id"])
+		}
+		if hunk["diff"] != nil {
+			diffs++
+		}
+	}
+	if len(generated.hunks) == 0 || diffs == 0 {
+		t.Fatalf("fixture has %d hunks, %d with a diff; want both", len(generated.hunks), diffs)
+	}
+	if len(stored.hunks) != len(generated.hunks) {
+		t.Fatalf("stored %d hunks, generated %d", len(stored.hunks), len(generated.hunks))
+	}
+	for i, hunk := range stored.hunks {
+		if hunk["diff"] != nil || hunk["github_url"] != nil {
+			t.Fatalf("stored hunk %s keeps evidence", hunk["id"])
+		}
+		for _, k := range []string{"id", "path", "change", "role", "new_range", "additions", "deletions"} {
+			if hunk[k] == nil {
+				t.Fatalf("stored hunk lost %s", k)
+			}
+		}
+		want := map[string]json.RawMessage{}
+		for k, v := range generated.hunks[i] {
+			if k != "diff" && k != "github_url" {
+				want[k] = v
+			}
+		}
+		got, _ := json.Marshal(hunk)
+		expected, _ := json.Marshal(want)
+		if !bytes.Equal(got, expected) {
+			t.Fatalf("stored hunk %d = %s, want %s", i, got, expected)
+		}
+	}
+	// Sections (their tiles and hunk assignments), stats, unassigned hunks
+	// and the rest of the index are kept byte for byte.
+	for _, pair := range [][2]map[string]json.RawMessage{{stored.rest, generated.rest}, {stored.index, generated.index}} {
+		if len(pair[0]) != len(pair[1]) {
+			t.Fatalf("stored %d members, generated %d", len(pair[0]), len(pair[1]))
+		}
+		for k, v := range pair[1] {
+			if !bytes.Equal(pair[0][k], v) {
+				t.Fatalf("stored %s changed", k)
+			}
+		}
+	}
+	if !bytes.Contains(stored.rest["sections"], []byte(`"hunks"`)) {
+		t.Fatal("fixture sections assign no hunks")
+	}
+	served := decodeHunks(t, viewserver.WithHunkURLs(latest.Document))
+	for i, hunk := range served.hunks {
+		if want := generated.hunks[i]["github_url"]; !bytes.Equal(hunk["github_url"], want) {
+			t.Fatalf("served github_url %s, generated %s", hunk["github_url"], want)
+		}
+	}
+}
+
+// hunkDocument is a document split into its index.hunks, the rest of its
+// index and the rest of the document.
+type hunkDocument struct {
+	rest, index map[string]json.RawMessage
+	hunks       []map[string]json.RawMessage
+}
+
+func decodeHunks(t *testing.T, raw []byte) hunkDocument {
+	t.Helper()
+	var d hunkDocument
+	if err := json.Unmarshal(raw, &d.rest); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(d.rest["index"], &d.index); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(d.index["hunks"], &d.hunks); err != nil {
+		t.Fatal(err)
+	}
+	delete(d.rest, "index")
+	delete(d.index, "hunks")
+	return d
 }

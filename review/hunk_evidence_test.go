@@ -1,0 +1,123 @@
+package review
+
+import (
+	"context"
+	"errors"
+	"strings"
+	"testing"
+
+	"github.com/baum-ai/baum/bundle"
+)
+
+const evidenceDocument = `{"schema":"baum.review/1","index":{"file_comparisons":[],"hunks":[` +
+	`{"id":"h_000000000001","path":"a.go","change":"modified","role":"code","new_range":[3,3],"additions":1,"deletions":0,"github_url":"diff-aR3","diff":{"header":"@@ -3,2 +3,3 @@","lines":[]}},` +
+	`{"id":"h_000000000002","path":"b.go","change":"removed","role":"code","new_range":[0,0],"additions":0,"deletions":1}` +
+	`],"checks":[]},"sections":[{"hunks":["h_000000000001"]}]}`
+
+func TestStripHunkEvidenceKeepsEverythingElse(t *testing.T) {
+	stripped, changed, err := StripHunkEvidence([]byte(evidenceDocument))
+	if err != nil || !changed {
+		t.Fatalf("changed %v, %v", changed, err)
+	}
+	want := `{"schema":"baum.review/1","index":{"file_comparisons":[],"hunks":[` +
+		`{"id":"h_000000000001","path":"a.go","change":"modified","role":"code","new_range":[3,3],"additions":1,"deletions":0},` +
+		`{"id":"h_000000000002","path":"b.go","change":"removed","role":"code","new_range":[0,0],"additions":0,"deletions":1}` +
+		`],"checks":[]},"sections":[{"hunks":["h_000000000001"]}]}`
+	if string(stripped) != want {
+		t.Fatalf("stripped\n%s\nwant\n%s", stripped, want)
+	}
+	again, changed, err := StripHunkEvidence(stripped)
+	if err != nil || changed || &again[0] != &stripped[0] {
+		t.Fatalf("a stripped document changed again: %v %v", changed, err)
+	}
+	for _, document := range []string{`{"schema":"baum.review/1"}`, `{"index":null}`, `{"index":{"checks":[]}}`} {
+		if out, changed, err := StripHunkEvidence([]byte(document)); err != nil || changed || string(out) != document {
+			t.Errorf("%s: %s %v %v", document, out, changed, err)
+		}
+	}
+	if _, _, err := StripHunkEvidence([]byte(`[]`)); err == nil {
+		t.Error("a document that is not an object was stripped")
+	}
+}
+
+// The derived github_url is the one the bundle records for the hunk; a hunk
+// that has one keeps it.
+func TestDeriveHunkURLsIsTheBundlesFragment(t *testing.T) {
+	stripped, _, err := StripHunkEvidence([]byte(evidenceDocument))
+	if err != nil {
+		t.Fatal(err)
+	}
+	derived, err := DeriveHunkURLs(stripped)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		`"deletions":0,"github_url":"` + bundle.HunkDiffURL("a.go", 3) + `"}`,
+		`"deletions":1,"github_url":"` + bundle.HunkDiffURL("b.go", 0) + `"}`,
+	} {
+		if !strings.Contains(string(derived), want) {
+			t.Errorf("derived %s\nlacks %s", derived, want)
+		}
+	}
+	original := []byte(strings.Replace(evidenceDocument, `"deletions":1}`, `"deletions":1,"github_url":"kept"}`, 1))
+	if out, err := DeriveHunkURLs(original); err != nil || &out[0] != &original[0] {
+		t.Fatalf("a document with every fragment changed: %s %v", out, err)
+	}
+}
+
+func TestEmbedHunkPatchesFindsEachHunkInItsFilesPatch(t *testing.T) {
+	stripped, _, err := StripHunkEvidence([]byte(evidenceDocument))
+	if err != nil {
+		t.Fatal(err)
+	}
+	patches := map[string]string{
+		"a.go": "@@ -1,2 +1,2 @@ func a\n-x\n+y\n z\n@@ -3,2 +3,3 @@ func b\n c\n+d\n e\n",
+		"b.go": "@@ -1 +0,0 @@\n-gone\n\\ No newline at end of file\n",
+	}
+	var asked []string
+	source := func(_ context.Context, path string) (string, bool, error) {
+		asked = append(asked, path)
+		patch, ok := patches[path]
+		return patch, ok, nil
+	}
+	out, err := EmbedHunkPatches(context.Background(), stripped, source, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		`"github_url":"` + bundle.HunkDiffURL("a.go", 3) + `","diff":{"header":"@@ -3,2 +3,3 @@ func b","lines":[{"kind":"context","text":"c","old_line":3,"new_line":3},{"kind":"add","text":"d","new_line":4},{"kind":"context","text":"e","old_line":4,"new_line":5}]}}`,
+		`"github_url":"` + bundle.HunkDiffURL("b.go", 0) + `","diff":{"header":"@@ -1 +0,0 @@","lines":[{"kind":"remove","text":"gone","old_line":1}]}}`,
+	} {
+		if !strings.Contains(string(out), want) {
+			t.Errorf("embedded %s\nlacks %s", out, want)
+		}
+	}
+	if strings.Join(asked, ",") != "a.go,b.go" {
+		t.Errorf("asked for %v", asked)
+	}
+
+	// A stored diff is kept as it is; a hunk whose counts differ from its
+	// patch's, or whose file has no patch, gets none; past the byte budget
+	// nothing more is read.
+	kept, err := EmbedHunkPatches(context.Background(), []byte(evidenceDocument), source, 0)
+	if err != nil || !strings.Contains(string(kept), `"github_url":"diff-aR3","diff":{"header":"@@ -3,2 +3,3 @@","lines":[]}`) {
+		t.Fatalf("stored diff replaced: %s %v", kept, err)
+	}
+	patches["a.go"] = "@@ -3,2 +3,3 @@\n c\n+d\n+e\n"
+	delete(patches, "b.go")
+	out, err = EmbedHunkPatches(context.Background(), stripped, source, 0)
+	if err != nil || strings.Contains(string(out), `"diff"`) {
+		t.Fatalf("a different hunk was embedded: %s %v", out, err)
+	}
+	asked = nil
+	patches["a.go"] = "@@ -3,2 +3,3 @@ func b\n c\n+d\n e\n"
+	patches["b.go"] = "@@ -1 +0,0 @@\n-gone\n"
+	out, err = EmbedHunkPatches(context.Background(), stripped, source, int64(len(patches["a.go"])))
+	if err != nil || strings.Count(string(out), `"diff"`) != 1 || strings.Join(asked, ",") != "a.go" {
+		t.Fatalf("budget: asked %v for %s %v", asked, out, err)
+	}
+	failed := errors.New("git failed")
+	if _, err := EmbedHunkPatches(context.Background(), stripped, func(context.Context, string) (string, bool, error) { return "", false, failed }, 0); !errors.Is(err, failed) {
+		t.Fatalf("error %v", err)
+	}
+}

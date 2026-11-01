@@ -1253,7 +1253,7 @@ anything. The server has six API routes and an asset fallback:
 
 | Route | Serves |
 | --- | --- |
-| `GET /api/document` | the document's bytes exactly as read, `no-store` |
+| `GET /api/document` | the document's bytes exactly as read, except that a hunk without a `github_url` gets the derived one (see "Hunk evidence in saved documents"), `no-store` |
 | `GET /api/events` | a Server-Sent Events stream, always valid, so the app stays connected; pings keep it open and, with `--watch`, a `document` event follows each change |
 | `GET /api/health` | `{"status":"ok"}` |
 | `GET /api/sessions` | the sessions on this machine linked to the document's pull request, as below; `no-store` |
@@ -1276,10 +1276,67 @@ editor's save by rename is followed. A change that is not valid JSON or is too
 large is warned about and ignored, and the previous document keeps being
 served. Findings print again on each accepted change.
 
+### Hunk evidence in saved documents
+
+A document saved to the local store carries no hunk evidence: `store.Put`
+removes every `index.hunks[].diff` and `index.hunks[].github_url`
+(`review.StripHunkEvidence`), which together were about 70% of a saved
+document's bytes. Everything else is kept byte for byte, in its order: each
+hunk's `id`, `path`, `old_path`, `change`, `role`, `new_range`, `additions`
+and `deletions`, the sections' hunk assignments and tiles (a tile's code is
+the model's, not a hunk's `diff`), `unassigned_hunks` and the stats. Both
+fields are optional in `review-1.json`, so the schema is unchanged.
+
+- Every writer of the store goes through it: `generate.Publish` (the CLI and
+  the daemon's generation jobs), `RefreshCurrent` (the CLI's and the
+  background refresh, which keep the stored `index.hunks` as they are) and
+  `CompleteCurrent` (a details retry, which splices sections into the stored
+  bytes). A replacement of a document stored without evidence is stored
+  without it whatever it carries. A version stored with evidence, before
+  this, is never rewritten: it is read, served and refreshed with its
+  `diff` and `github_url` as stored, and the app shows its inline excerpts.
+- What `Publish` returns, and so what `baum internal generate` prints or
+  writes with `-o`, keeps the evidence as generated: that file is read
+  without the store.
+- `github_url` is derived where a document is served: `viewserver`
+  (`baum internal view`, and each version the daemon's app serves through
+  it) and the app's `GET /api/document` give each hunk without one
+  `bundle.HunkDiffURL(path, new_range[0])` (`review.DeriveHunkURLs`), the
+  value generation records: GitHub's fragment shape
+  `diff-<sha256(path)>R<first new line>`. A hunk that has one keeps it, so an
+  older document is served unchanged. The viewer never used the value as a
+  link (it is not an absolute URL), and builds the same fragment on the pull
+  request's files page itself. One difference: generation hashes the path as
+  git gave it, before redaction, so for a path the redactor masked the
+  derived fragment hashes the masked path, as the viewer's own link does.
+- A document read without the clone gets its patches back. The one such
+  reader is a seeded chat session (see "Chat with the review agent"), whose
+  `review.json` is `locallink.EmbedPatches` of the stored version: each hunk
+  without a `diff` gets the hunk of its file's patch with the same new range
+  and the same counts of added and removed lines, read from the clone by the
+  document's own repository, head, base and merge base and masked as
+  "Local patches" describes (`review.EmbedHunkPatches`), until the patch text
+  read reaches the generation bundle's byte cap (`max_bytes`); a file the
+  clone cannot provide (missing commits, no remote, binary, over 1 MiB) or a
+  failed read leaves its hunks without a `diff`, and only the context ending
+  fails the turn. Every hunk also gets its derived `github_url`.
+- Nothing else hands a stored document on. The other readers use only
+  fields the store keeps: refresh, `PreviousVersionOf` and `StoredOutline`
+  (ranges, sections), group reviews (`reviewgroups.MembersFile`: summaries,
+  sections and risks), the decision log and feature log (summary text), the
+  index projection (summary fields) and validation. No command exports a
+  stored document, and nothing uploads one: the hosted service generates and
+  stores its own documents (its generation reads its own hunks' `diff`), and
+  no hosted path accepts a locally generated document. Group documents live
+  in the daemon's group store, not this one, and keep their evidence; their
+  patches are not retained (see "Retained review commits"). Staged drafts are
+  held in memory while a job runs and never stored.
+
 ### Local patches
 
-Most hunks a document cites carry no inline `diff`, which the generation budget
-leaves out. The app fills them in from `GET /api/patch?path=<path>`, answered by
+Most hunks a document cites carry no inline `diff`: the generation budget
+leaves most out, and the local store keeps none (see "Hunk evidence in saved
+documents"). The app fills them in from `GET /api/patch?path=<path>`, answered by
 `locallink.Patch` over the same clone and remote matching as the sessions
 (`gitlocal.Open`, any remote naming the document's repository, no fetch).
 
@@ -2073,7 +2130,9 @@ directory is gone, the turn seeds a new run directory under the review-runs
 root (`reviewruns.Create`): the checkout of the review's head commit exported
 from the registered clone (`head/` only, within the review's checkout limits;
 a clone that lacks the commit fails the turn with `needs_clone`), the stored,
-already-masked review as `review.json`, and the earlier answered turns as
+already-masked review as `review.json`, with its hunks' masked patch text read
+back from the clone (`locallink.EmbedPatches`, see "Hunk evidence in saved
+documents"), and the earlier answered turns as
 `conversation.json` (question, masked here, and `answer_markdown`, oldest
 first, the newest that fit in 64 KiB), and starts a new persisted session there. The
 conversation is then marked `seeded` and the turn's `note` says it started
@@ -2184,6 +2243,8 @@ read-only, keyed by the canonical common-directory digest; `--store` overrides
 the root. Existing local or fallback history wins over creating another store,
 and a read-only existing store fails writes without hiding its history.
 Repository names, including GitHub host, and pull request numbers key rows.
+Documents are stored without their hunks' `diff` and `github_url` (see "Hunk
+evidence in saved documents").
 
 `Latest`, `Versions`, `Get` and `Put` expose the local history.
 `RefreshCurrent` updates only the latest document with one SQLite statement

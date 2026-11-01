@@ -5,6 +5,10 @@
 // exact bytes are unchanged, so concurrent refreshes cannot lose each other.
 // Triggers keep the index projection of each latest document in the summaries
 // table current in the writer's own transaction; see Snapshot.
+//
+// A stored document holds no hunk evidence: Put removes every indexed hunk's
+// patch text and GitHub fragment (review.StripHunkEvidence), which the clone
+// and the hunk's path and range give back when the document is read.
 package store
 
 import (
@@ -25,6 +29,7 @@ import (
 	_ "modernc.org/sqlite"
 
 	"github.com/baum-ai/baum/agent"
+	"github.com/baum-ai/baum/review"
 )
 
 var ErrNotFound = errors.New("no stored review version; run baum internal generate first")
@@ -319,7 +324,9 @@ func (s *Store) Commits(ctx context.Context) ([]Commits, error) {
 }
 
 // Put appends v only while previous is still the latest version; the zero
-// Version means no history. A refresh of previous during generation replaces
+// Version means no history. The document is stored without hunk evidence
+// (review.StripHunkEvidence), so the stored bytes differ from v.Document when
+// it carries any. A refresh of previous during generation replaces
 // only its live facts in place, so it does not reject the generated version:
 // the next refresh brings the new version's live facts up to date.
 // A failed or cancelled transaction leaves every published version untouched.
@@ -344,6 +351,10 @@ func (s *Store) Put(ctx context.Context, k Key, previous Version, v Version) err
 	if err := validateAttachments(v); err != nil {
 		return err
 	}
+	document, _, err := review.StripHunkEvidence(v.Document)
+	if err != nil {
+		return err
+	}
 	metadata, err := json.Marshal(v.Metadata)
 	if err != nil {
 		return err
@@ -360,7 +371,7 @@ func (s *Store) Put(ctx context.Context, k Key, previous Version, v Version) err
 		return err
 	}
 	defer func() { _ = tx.Rollback() }()
-	result, err := tx.ExecContext(ctx, `INSERT INTO versions(repository,pr,version,metadata,document) SELECT ?,?,?,?,? WHERE COALESCE((SELECT MAX(version) FROM versions WHERE repository=? AND pr=?),0)=?`, k.repository(), k.Number, v.Metadata.Version, metadata, []byte(v.Document), k.repository(), k.Number, expected)
+	result, err := tx.ExecContext(ctx, `INSERT INTO versions(repository,pr,version,metadata,document) SELECT ?,?,?,?,? WHERE COALESCE((SELECT MAX(version) FROM versions WHERE repository=? AND pr=?),0)=?`, k.repository(), k.Number, v.Metadata.Version, metadata, document, k.repository(), k.Number, expected)
 	if err != nil {
 		return err
 	}
@@ -378,6 +389,9 @@ func (s *Store) Put(ctx context.Context, k Key, previous Version, v Version) err
 }
 
 // RefreshCurrent replaces only the latest document, preserving its metadata.
+// A document stored without hunk evidence is replaced without it; one stored
+// with it, before Put removed it, is replaced as given, so no write takes the
+// evidence away from a version saved with it.
 // Both the version and exact previous bytes fence concurrent generation and
 // refresh. A running generation does not block it: live facts refresh
 // independently, and the generated version still publishes over it.
@@ -419,6 +433,13 @@ func (s *Store) replaceCurrent(ctx context.Context, k Key, previous Version, doc
 	}
 	if before != after || !strings.EqualFold(after.Review.Repository, k.documentRepository()) || after.Review.PullRequest != k.Number || after.Review.Version != previous.Metadata.Version {
 		return fmt.Errorf("%s changed generation identity", what)
+	}
+	if _, carried, err := review.StripHunkEvidence(previous.Document); err != nil {
+		return err
+	} else if !carried {
+		if document, _, err = review.StripHunkEvidence(document); err != nil {
+			return err
+		}
 	}
 	db, err := s.database(true)
 	if err != nil {
