@@ -328,9 +328,13 @@ func Run(ctx context.Context, o Options) (result Result, err error) {
 		Backend: backend, Prompts: prompts, Validator: validator, Redactor: redactor,
 		Logger: slog.New(progressHandler{w: o.Progress, validated: o.OnValidation}),
 	}
-	outcome, document, genErr := generator.Generate(runCtx, agent.Run{
+	run := agent.Run{
 		Bundle: &b, EncodedBundle: assembled.JSON, Directory: runDir, TileKinds: o.TileKinds, Budgets: o.Budgets, Decorate: decorate, PersistSession: keepSession,
-	})
+	}
+	if o.Group != nil {
+		run.ModelSchema = groupModelSchema
+	}
+	outcome, document, genErr := generator.Generate(runCtx, run)
 	sessionIDs = outcome.Sessions
 	// What the loop returned is masked on every path, as the hosted worker
 	// does, before any of it is shown, written or put in an error.

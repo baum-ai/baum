@@ -46,7 +46,7 @@ var submitClaude string
 
 // GroupVersion is the prompt version of a review group's combined review.
 // Change it with the text of group-public-v1.md or review-public-v6.md.
-const GroupVersion = "group-review-public-v3"
+const GroupVersion = "group-review-public-v4"
 
 //go:embed group-public-v1.md
 var groupPublic string

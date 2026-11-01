@@ -66,6 +66,11 @@ type Run struct {
 	// validated. It must not fail: a document it cannot read is returned
 	// as it came, for the validator to report.
 	Decorate func([]byte) []byte
+	// ModelSchema, when set, adjusts the model schema the run offers, such
+	// as a group review's, which asks the model to name the group. What it
+	// asks for must still prepare into a document the validator accepts,
+	// with Decorate's help.
+	ModelSchema func([]byte) ([]byte, error)
 	// PersistSession keeps the backend's session of every call, so the
 	// Outcome's SessionID can be resumed later (Request.PersistSession).
 	PersistSession bool
@@ -125,6 +130,11 @@ func (g *Generator) ReviewTask(ctx context.Context, run Run) (Task, error) {
 	schema, err := g.Validator.ModelSchema(run.TileKinds)
 	if err != nil {
 		return Task{}, err
+	}
+	if run.ModelSchema != nil {
+		if schema, err = run.ModelSchema(schema); err != nil {
+			return Task{}, fmt.Errorf("model schema: %w", err)
+		}
 	}
 	if err := os.WriteFile(filepath.Join(run.Directory, "bundle.json"), run.EncodedBundle, 0400); err != nil {
 		return Task{}, err

@@ -728,7 +728,7 @@ and fails for any other backend. A host may supply another implementation; the
 hosted service does, with its private prompts. `StaticPrompts` is a fixed
 implementation for tests and simple hosts. The prompt is per backend because
 each backend submits its result differently. `GroupPrompts` is the local
-review group's prompt (`group-review-public-v3`): the same text with
+review group's prompt (`group-review-public-v4`): the same text with
 `group-public-v1.md` inserted before the Submitting heading, which says how a
 group's bundle, per-member checkout and `members.json` differ and what a
 combined review covers (see "Review groups").
@@ -736,7 +736,9 @@ combined review covers (see "Review groups").
 A host can also pass `Run.Decorate`, which the loop applies to every document
 the model returns before masking and validation, to fill what the host
 decides and the model never writes: a review group's `stack` and each
-section's `pull_requests`.
+section's `pull_requests`. `Run.ModelSchema` adjusts the model schema a run
+offers: a review group's asks for `stack` with only its `title`, the group's
+name.
 
 The loop owns the rest of what a run sends:
 
@@ -2533,9 +2535,10 @@ snapshot `localApplication` passes the repository's open pull requests to
 (`stacks.Plan`: pull requests by one author, each based on another's head
 branch, as chains or trees; see `stacks/README.md`) over the live stack groups
 and creates, updates or dissolves stack groups (`stack` true) of 2 to 8
-members. Pull requests in a person's group, or in a stack group the person
-deleted, take no part, and a person's rename or member change makes a stack
-group theirs.
+members. A new stack group is named after its bottom pull request's title
+until its first review names it (below). Pull requests in a person's group,
+or in a stack group the person deleted, take no part, and a person's rename
+or member change makes a stack group theirs.
 
 A job item names `{clone, group}` with `pr` 0, so pull request scheduling and
 notices, keyed by pull request, never match a group job; the queue's busy and
@@ -2569,11 +2572,16 @@ group's name and a body listing the members, every hunk once in member order,
 the union of the other evidence, one `FileComparison` per member, refitted to
 the caps), unpacks each checkout at `members/<number>/` with no top-level
 `head/`, writes `members.json` (each member's saved review in brief) and runs
-the group prompt. Its decorator sets `stack` (the group's name and each
-member's number, head and saved review version) and each section's
-`pull_requests` from the members whose hunks it lists, so the stored document
-is stack-shaped like a hosted stack review, with `review.pull_request` the
-lowest member. The group page reads patches from the member whose comparison
+the group prompt. The model names the group in `stack.title`. Its decorator
+sets `stack` (a title and each member's number, head and saved review
+version) and each section's `pull_requests` from the members whose hunks it
+lists, so the stored document is stack-shaped like a hosted stack review, with
+`review.pull_request` the lowest member. The title is the model's name, on
+one line and cut to 80 characters, for a stack group
+(`generate.Group.GeneratedName`), and the group's name otherwise or when the
+model wrote none. Storing the version renames a stack group to its title, in
+the same transaction and only while the group is still a stack group, so a
+person's rename is never written over. The group page reads patches from the member whose comparison
 changes the file and whose patch holds the cited hunk's range; it lists no
 linked sessions or commits.
 
