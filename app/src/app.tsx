@@ -214,6 +214,7 @@ function Workspace({ url }: { url: UrlState }) {
   // do not end them, and each waits for the one before it.
   const [refreshing, setRefreshing] = useState(0);
   const refreshQueue = useRef(Promise.resolve());
+  const refreshesRunning = useRef(new Set<AbortController>());
   // Why the latest refresh from GitHub failed, on the page it was asked on.
   const [refreshError, setRefreshError] = useState("");
   const [error, setError] = useState("");
@@ -629,32 +630,44 @@ function Workspace({ url }: { url: UrlState }) {
   // others refreshed and is named.
   // A repository is named by its local clone where there is one, which
   // the daemon knows even when the repository is not picked.
-  // A press that starts one again goes ahead of the queue, which a refresh
-  // that never answers may hold.
+  // A press that starts one again drops every refresh under way, on any page,
+  // since one that never answers holds the queue and the lists' loader.
   const refreshFrom = (targets: { repository: string; clone?: string }[], press: RefreshRun) => {
+    if (press.restart) for (const other of refreshesRunning.current) other.abort();
+    const abort = new AbortController();
+    press.signal.addEventListener("abort", () => abort.abort(), { once: true });
+    const { signal } = abort;
+    const dropped = new Promise<void>((resolve) =>
+      signal.addEventListener("abort", () => resolve(), { once: true }),
+    );
+    refreshesRunning.current.add(abort);
     setRefreshing((n) => n + 1);
-    const work = async () => {
+    const before = refreshQueue.current;
+    const run = (async () => {
       const failed: string[] = [];
       try {
+        if (!press.restart) await Promise.race([before, dropped]);
         for (const { repository, clone } of targets) {
-          if (press.signal.aborted) return;
+          if (signal.aborted) return;
           await request(
             "api/prs/refresh",
             clone ? { clone } : { repository },
             "POST",
-            press.signal,
+            signal,
           ).catch((e) => {
-            if (!press.signal.aborted) failed.push(`${repository}: ${errorText(e)}`);
+            if (!signal.aborted) failed.push(`${repository}: ${errorText(e)}`);
           });
         }
+        // The press that dropped this one reads the daemon again itself.
+        if (signal.aborted) return;
         await reload({ restart: press.restart });
         // Only the page's latest refresh speaks, while the page is shown.
         if (press.current()) setRefreshError(failed.join(" "));
       } finally {
+        refreshesRunning.current.delete(abort);
         setRefreshing((n) => n - 1);
       }
-    };
-    const run = press.restart ? work() : refreshQueue.current.then(work);
+    })();
     // One that fails does not hold up the next.
     refreshQueue.current = run.catch(() => {});
     return run;
@@ -1038,7 +1051,7 @@ function Workspace({ url }: { url: UrlState }) {
               <PageBar
                 title="Jobs"
                 detail="Reviews and fixes run on this computer"
-                actions={<RefreshButton refresh={reload} />}
+                actions={<RefreshButton refresh={(run) => reload({ restart: run.restart })} />}
               />
               <div className="local-page-body local-list-page">
                 <Jobs jobs={jobs} changed={reload} />

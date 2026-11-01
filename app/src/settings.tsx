@@ -1863,7 +1863,7 @@ export function RepositoriesPage({
             <Button size="compact" onClick={() => setAdding(!adding)}>
               {adding ? "Done" : "Add repositories"}
             </Button>
-            <RefreshButton refresh={changed} />
+            <RefreshButton refresh={(run) => changed({ restart: run.restart })} />
           </>
         }
       />

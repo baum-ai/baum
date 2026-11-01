@@ -34,6 +34,8 @@ async function hold(page: Page, path: string) {
   });
   return {
     count: () => held.length,
+    /** Answers the next requests, leaving those held unanswered. */
+    stop: () => page.unroute(pattern),
     release: async () => {
       await page.unroute(pattern);
       // One the app dropped is already aborted.
@@ -120,6 +122,24 @@ test("pressing a refresh under way starts it again", async ({ page }) => {
   await expect(button).not.toHaveAttribute("aria-busy", "true");
 });
 
+test("a refresh pressed again drops one that never answers on another page", async ({ page }) => {
+  const pressRefresh = await probeRefreshKey(page);
+  await open(page, "?page=pulls");
+  const refresh = await hold(page, "api/prs/refresh");
+  await page.getByRole("button", { name: "Refresh from GitHub" }).click();
+  await expect.poll(refresh.count).toBe(1);
+  await page
+    .getByRole("link", { name: /^Inbox/ })
+    .first()
+    .click();
+  const inboxRefresh = page.getByRole("button", { name: "Refresh from GitHub" }).first();
+  // The Inbox shows the refresh from GitHub under way, which never answers.
+  await expect(inboxRefresh).toHaveAttribute("aria-busy", "true");
+  await refresh.stop();
+  await pressRefresh();
+  await expect(inboxRefresh).not.toHaveAttribute("aria-busy", "true");
+});
+
 test("a page's refresh still shows running after visiting another page", async ({ page }) => {
   await open(page, "?page=sessions");
   const sessionsRefresh = page.getByRole("button", { name: "Refresh", exact: true });
@@ -149,11 +169,12 @@ test("the refresh key reads the open repository picker from GitHub again", async
       new URL(request.url()).pathname.endsWith("/api/github/repositories") &&
       new URL(request.url()).searchParams.get("refresh") === "1",
   );
-  const registry = page.waitForRequest((request) =>
-    new URL(request.url()).pathname.endsWith("/api/repositories"),
+  // Only the page behind the picker reads the index.
+  const behind = page.waitForRequest((request) =>
+    new URL(request.url()).pathname.endsWith("/api/index"),
   );
   await pressRefresh();
   await asked;
-  await registry;
+  await behind;
   await expect(picker.getByRole("checkbox", { name: "Pick acme/demo", exact: true })).toBeVisible();
 });

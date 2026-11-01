@@ -358,9 +358,9 @@ type PageRefresh = {
   /** Makes a refresh the page's until the cleanup it returns runs; of
    *  several, the one registered last. */
   register: (button: RefObject<Refresh>) => () => void;
-  /** Refreshes the page with `button`, else the page's registered one, else
-   *  the app's own; a press while one is under way starts it again. */
-  press: (button?: RefObject<Refresh>) => void;
+  /** Refreshes the page with its latest registered refresh, else the app's
+   *  own; a press while one is under way starts it again. */
+  press: () => void;
   /** A refresh of this page is under way. */
   pending: boolean;
 };
@@ -389,8 +389,8 @@ export function usePageRefresh(
       buttons.current = buttons.current.filter((each) => each !== ref);
     };
   }, []);
-  const press = useCallback((pressed?: RefObject<Refresh>) => {
-    const page = (pressed ?? buttons.current.at(-1))?.current;
+  const press = useCallback(() => {
+    const page = buttons.current.at(-1)?.current;
     const at = shown.current;
     const before = running.current.get(at);
     before?.abort();
@@ -420,8 +420,9 @@ export function usePageRefresh(
 
 /** Makes `refresh` the page's while the caller is drawn, for the refresh key
  *  on a page that does not show the button, as one still loading; a refresh
- *  registered later, such as a button drawn after, takes over until it goes.
- *  Gives what pressing it takes and whether a refresh of the page is under way. */
+ *  registered later, such as a button drawn after or an open picker's, takes
+ *  over until it goes, for the button too. Gives what presses the page's
+ *  refresh and whether one is under way. */
 export function usePageRefreshAction(
   refresh: ((run: RefreshRun) => Promise<unknown>) | undefined,
   busy = false,
@@ -434,7 +435,7 @@ export function usePageRefreshAction(
   const register = page?.register;
   const registered = Boolean(refresh);
   useEffect(() => (registered ? register?.(self) : undefined), [register, registered]);
-  return { press: () => page?.press(self), pending: Boolean(page?.pending) };
+  return { press: () => page?.press(), pending: Boolean(page?.pending) };
 }
 
 /** A refresh for a page whose reads an effect makes: `again` changes `count`,
