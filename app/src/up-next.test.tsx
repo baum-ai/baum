@@ -384,6 +384,27 @@ it("counts what left the queue as cleared today", async () => {
   expect(node.textContent).toContain("All 4 handled. Nothing needs you right now.");
 });
 
+it("links what was done today to its page, or to GitHub once the app no longer lists it", async () => {
+  await render();
+  // Merged: a saved review keeps it listed, as history.
+  entries = entries.map((e) =>
+    e.pull_request.number === 3
+      ? mine(3, { historical: true, pull_request: { state: "MERGED" } })
+      : e,
+  );
+  await render();
+  expect(await cleared()).toBe("Merged #3 Change 3");
+  const done = () => node.querySelector<HTMLAnchorElement>("a.upnext-done-text")!;
+  expect(done().getAttribute("href")).toBe("/s/test-ns/?clone=clone&pr=3");
+  expect(done().getAttribute("target")).toBeNull();
+  // Without a saved review it leaves the list; GitHub still has it.
+  entries = entries.filter((e) => e.pull_request.number !== 3);
+  await render();
+  expect(await cleared()).toBe("Merged #3 Change 3");
+  expect(done().getAttribute("href")).toBe("https://github.com/acme/demo/pull/3");
+  expect(done().getAttribute("target")).toBe("_blank");
+});
+
 it("clears only what the person finished, and nothing of a repository missing from the read", async () => {
   await render();
   entries = entries.map((e) =>
