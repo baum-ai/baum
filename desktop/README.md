@@ -164,7 +164,12 @@ happen only when the user selects an install or add action. Displayed paths abbr
      --agent codex`. The screen explains reviewing trust with `/hooks`. The
      Claude Code plugin is installed separately with `--agent claude-code`.
      Both use the native agent CLI to fetch the public marketplace.
-     Installation and enablement do not mean the user has trusted the hooks.
+     Codex status additionally checks its effective hook inventory. Connected
+     requires every baum hook to be present, enabled and trusted; untrusted or
+     modified definitions show Needs approval in Codex. Missing, disabled and
+     unavailable checks are distinct. Returning from Codex or Check again
+     refreshes approval, without granting it. The person can finish setup with
+     an unfinished connection; the app keeps a warning beside Settings.
 
 ### Model effort choices
 
@@ -206,8 +211,9 @@ first `baum` on it (the one hooks run) with its version. On Unix, the login
 shell’s PATH comes first and inherited PATH directories are appended without
 duplicates, preserving tools available to the process that launched the app.
 `baum hooks status --user --json` reads each agent's native plugin registry, reporting
-plugin ID, installation and enablement separately. Disabled plugins offer an
-Enable action; trust must be reviewed in the agent. Each native action has a
+plugin ID, installation and enablement separately, plus Codex's hook trust
+state. The native bridge preserves this state for onboarding and Settings.
+Disabled plugins offer an Enable action; approval still belongs to Codex. Each native action has a
 90-second bound and status queries have 10 seconds. The desktop gives both
 agents, login PATH resolution and process overhead a 240-second total budget.
 Status, install and removal run with the resolved login shell PATH so agents

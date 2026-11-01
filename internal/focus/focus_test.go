@@ -59,7 +59,8 @@ func (m *machine) focuser(goos string, env map[string]string) *Focuser {
 			}
 			return "", errors.New("not found")
 		},
-		ClaudeDir: "/nonexistent",
+		ClaudeDir:           "/nonexistent",
+		ConfigureCodexTitle: func() (bool, error) { return false, nil },
 	}
 }
 

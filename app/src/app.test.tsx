@@ -1740,3 +1740,47 @@ it("adds a history entry for an address write, and replaces it when asked", () =
   expect(url!.search.get("feature")).toBe("F2");
   act(() => probe.unmount());
 });
+
+it("warns beside Settings until Codex hooks are trusted and rechecks on focus", async () => {
+  const original = vi.mocked(fetch).getMockImplementation()!;
+  let state = "untrusted";
+  let unavailable = false;
+  vi.stubGlobal(
+    "fetch",
+    vi.fn((path: string) =>
+      path.endsWith("/api/agent-hooks/codex")
+        ? Promise.resolve(
+            unavailable ? new Response("offline", { status: 503 }) : Response.json({ state }),
+          )
+        : original(path),
+    ),
+  );
+  await act(async () => root.render(<App />));
+  const settings = () =>
+    node.querySelector<HTMLAnchorElement>('.local-rail a[href*="page=settings"]')!;
+  expect(settings().querySelector(".local-rail-badge")?.textContent).toBe("!");
+  expect(settings().getAttribute("title")).toContain("Codex hooks need approval");
+  await act(async () => settings().click());
+  expect(node.querySelector(".settings-content")?.textContent).toContain("Open /hooks in Codex");
+  unavailable = true;
+  await act(async () => window.dispatchEvent(new Event("focus")));
+  expect(settings().querySelector(".local-rail-badge")).not.toBeNull();
+  unavailable = false;
+  state = "trusted";
+  await act(async () => window.dispatchEvent(new Event("focus")));
+  expect(settings().querySelector(".local-rail-badge")).toBeNull();
+  expect(node.querySelector(".settings-content")?.textContent).not.toContain(
+    "Codex hooks need approval",
+  );
+  state = "unknown";
+  await act(async () => window.dispatchEvent(new Event("focus")));
+  expect(settings().querySelector(".local-rail-badge")).not.toBeNull();
+  expect(node.querySelector(".settings-content")?.textContent).toContain(
+    "Could not verify Codex hook approval",
+  );
+  state = "hooks_disabled";
+  await act(async () => window.dispatchEvent(new Event("focus")));
+  expect(node.querySelector(".settings-content")?.textContent).toContain(
+    "codex features enable hooks",
+  );
+});

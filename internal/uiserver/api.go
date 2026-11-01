@@ -15,6 +15,7 @@ import (
 
 	"golang.org/x/sync/singleflight"
 
+	"github.com/baum-ai/baum/hosted/agentplugins"
 	"github.com/baum-ai/baum/internal/config"
 	"github.com/baum-ai/baum/internal/doctor"
 	"github.com/baum-ai/baum/internal/repos"
@@ -106,6 +107,8 @@ type LocalAPI struct {
 	// Diagnostics builds the report served at /api/diagnostics; nil serves the
 	// capability fields with a null report. It must honour its context.
 	Diagnostics func(context.Context) doctor.Report
+	// HookTrust checks Codex session reporting without running a conversation.
+	HookTrust func(context.Context) agentplugins.HookTrust
 	// DiagnosticsTimeout bounds one shared run; zero means
 	// defaultDiagnosticsTimeout.
 	DiagnosticsTimeout time.Duration
@@ -366,6 +369,24 @@ func (a LocalAPI) Handler() *LocalHandler {
 	// Runs are shared only while one is in flight; a later request runs the
 	// checks again. That is deliberate: the endpoint is local, authenticated
 	// and user-triggered, so there is no cache.
+	var hookTrust singleflight.Group
+	mux.HandleFunc("GET /api/agent-hooks/codex", func(w http.ResponseWriter, r *http.Request) {
+		if a.HookTrust == nil {
+			writeJSON(w, map[string]bool{"available": false})
+			return
+		}
+		result := hookTrust.DoChan("codex", func() (any, error) {
+			ctx, cancel := context.WithTimeout(context.Background(), 2*agentplugins.StatusTimeout)
+			defer cancel()
+			return a.HookTrust(ctx), nil
+		})
+		select {
+		case <-r.Context().Done():
+			return
+		case res := <-result:
+			writeJSON(w, res.Val)
+		}
+	})
 	var diagnostics singleflight.Group
 	mux.HandleFunc("GET /api/diagnostics", func(w http.ResponseWriter, r *http.Request) {
 		body := map[string]any{"local": true, "generation_runner": a.Jobs != nil, "discovery": a.PRs != nil, "index": a.Index != nil, "report": nil}

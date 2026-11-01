@@ -3876,6 +3876,12 @@ replace it.
     titles. A failed tmux lookup falls through to native terminals, since its
     variables may be inherited. A shortened ID needs at least 24 characters and
     an ellipsis. Missing or ambiguous matches select nothing and explain why.
+    Connecting or updating Codex through baum also puts `thread-id` last in
+    its user terminal title via `internal/codexconfig`, preserving other
+    title items. When no terminal matches, Focus repairs an older user's
+    title setting and asks them to restart the TUI and resume the conversation.
+    Configuration errors leave the file unchanged; ambiguous matches and
+    terminal API failures do not change settings.
     This selects an existing TUI; it never resumes a second conversation.
 - **Transcripts.** `GET /api/live-sessions/{agent}/{id}/transcript`
   (`Transcripts`, mounted beside the list by the same `LocalAPI.Live`

@@ -1372,8 +1372,12 @@ note shows on its own line after the actions, a failure as an alert.
 
 Inherited tmux variables without a recorded terminal do not identify a session's
 pane. Codex's shared app server runs hooks separately from its terminal clients;
-baum locates those clients by the thread ID in their terminal titles. Include
-`thread-id` in Codex's `tui.terminal_title` setting. A unique matching tmux pane,
+baum locates those clients by the thread ID in their terminal titles.
+Connecting or updating Codex through baum automatically puts `thread-id` last
+in `tui.terminal_title`, preserving the user's other title items. If an older
+connection lacks it, Focus repairs the setting and asks the user to restart
+the Codex terminal session and resume their conversation. No manual config
+edit is needed. A unique matching tmux pane,
 kitty tab (with remote control), iTerm2 session, Terminal tab, Hyprland window or
 X11 window can then be selected. Shortened thread IDs need at least 24 characters;
 missing or ambiguous titles produce a notice without selecting another session.
@@ -1543,3 +1547,19 @@ later text follows it. Neither operation sends the draft to GitHub.
 Sidebar folding and viewer panel/tab layout remain presentation preferences
 in browser storage. Durable inbox records and review drafts do not use or
 import legacy localStorage values.
+
+
+Codex hook readiness is separate from plugin installation. Onboarding and
+Settings show Connected only after Codex reports all baum hook definitions
+enabled and trusted. Untrusted or changed hooks show Needs approval in Codex
+with `/hooks` instructions; disabled, missing and unverified hooks have
+distinct states. Setup may still be finished with an unfinished connection.
+
+The bottom Settings link has a caution badge and an accessible description
+while Codex session reporting needs attention. Opening Settings shows the
+reason and Check again. The app reads `GET api/agent-hooks/codex` once on load,
+on window focus, after native Settings actions and every minute while visible.
+The warning clears after a successful ready result; a failed request retains
+the previous warning. Older daemons without this endpoint show no new global
+badge. Onboarding rechecks on focus or Check again. Checking never trusts a
+hook, restarts Codex or starts a conversation.
