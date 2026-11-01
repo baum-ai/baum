@@ -332,6 +332,27 @@ const renderWithTabStops = () =>
     ),
   );
 
+it("makes the row Tab lands on the focused one, but not a row the pointer focused", async () => {
+  await renderWithTabStops();
+  const links = () => Array.from(node.querySelectorAll<HTMLElement>(".inbox-pr-title"));
+  // The pointer focusing a row's link selects nothing, as before.
+  await act(async () => {
+    window.dispatchEvent(new Event("pointerdown"));
+    links()[0]!.focus();
+  });
+  expect(focused()).toBeNull();
+  (document.activeElement as HTMLElement).blur();
+  await press("Tab");
+  await act(async () => links()[0]!.focus());
+  expect(focusedTitle()).toBe(links()[0]!.textContent);
+  // The row's keys act on it, and j goes on to the next.
+  await press("x", {}, document.activeElement!);
+  expect(handlers.setSelection).toHaveBeenCalled();
+  const first = focusedTitle();
+  await press("j", {}, document.activeElement!);
+  expect(focusedTitle()).not.toBe(first);
+});
+
 it("takes Escape from a button Tab reached back to the focused row, keeping it", async () => {
   await renderWithTabStops();
   await press("j");

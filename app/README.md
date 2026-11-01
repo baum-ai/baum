@@ -562,8 +562,8 @@ Tab (`useTabStops`) reaches every control without leaving the keys' model
 behind. On a page it moves by place: the sidebar is one stop, on the current
 page, where `↑` and `↓` move through its links, and so is each Analytics
 chart, whose bars they move through; all of a page's list rows are one stop,
-landing on the focused or selected row (else the first), so `j`, `k` and
-`Enter` go on from there, and a row's other controls stay with its keys (`x`,
+landing on the focused or selected row (else the first, which becomes the
+focused row), so `j`, `k`, `Enter` and the row's keys go on from there, and a row's other controls stay with its keys (`x`,
 ⌘. for its ⋯) except a form opened in it, such as a repository's clone form in
 Settings, whose controls are stops; every other control (a page bar's, a
 detail pane's, a section heading's) is a stop of its own. Shift+Tab goes back,

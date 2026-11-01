@@ -92,6 +92,22 @@ test("Tab on Pull requests lands on the focused row; Escape from a control retur
   await expect(inbox.locator("[data-row-id][data-focused] .inbox-pr-title")).not.toHaveText(title);
 });
 
+test("Tab into a list with no row focused focuses its first row", async ({ page }) => {
+  await page.goto(await launchURL());
+  await page.getByRole("link", { name: "Pull requests", exact: true }).first().click();
+  const inbox = page.getByRole("region", { name: "Pull request inbox" });
+  await expect(inbox.locator("[data-row-id]").first()).toBeVisible();
+  await expect(inbox.locator("[data-row-id][data-focused]")).toHaveCount(0);
+  await tabTo(page, "row");
+  const row = inbox.locator("[data-row-id][data-focused]");
+  await expect(row).toHaveCount(1);
+  await expect(row.locator(".inbox-pr-title")).toBeFocused();
+  const first = (await row.locator(".inbox-pr-title").textContent())!;
+  // j goes on to the next row rather than choosing the first again.
+  await page.keyboard.press("j");
+  await expect(inbox.locator("[data-row-id][data-focused] .inbox-pr-title")).not.toHaveText(first);
+});
+
 test("Tab on Settings reaches its controls past the sidebar", async ({ page }) => {
   await page.goto(await launchURL());
   await page.getByRole("link", { name: "Settings", exact: true }).click();

@@ -302,7 +302,8 @@ export function forgetLastRows() {
  *  opened, or its page from the sidebar) comes back on the same row. A link
  *  clicked in a row (`[data-row-id]` inside `list`) makes that row the one
  *  to come back to, so a row opened by the pointer is kept as one opened by
- *  the keyboard is. */
+ *  the keyboard is. Tab landing on a row's link (`useTabStops`) makes that
+ *  row the selected one, so the row's keys act where the focus is. */
 export function useLastRow(name: string, list?: RefObject<HTMLElement | null>) {
   const [id, setId] = useState(() => lastRows.get(name) ?? null);
   const set = useCallback(
@@ -321,9 +322,19 @@ export function useLastRow(name: string, list?: RefObject<HTMLElement | null>) {
       if (row?.dataset.rowId && target?.closest("a[href]") && list.current?.contains(row))
         lastRows.set(name, row.dataset.rowId);
     };
+    const focusin = (event: FocusEvent) => {
+      if (!tabbed || !(event.target instanceof Element)) return;
+      const row = event.target.closest<HTMLElement>("[data-row-id]");
+      if (row?.dataset.rowId && event.target.matches(ROW_LINK) && list.current?.contains(row))
+        set(row.dataset.rowId);
+    };
     document.addEventListener("click", click, true);
-    return () => document.removeEventListener("click", click, true);
-  }, [name, list]);
+    document.addEventListener("focusin", focusin);
+    return () => {
+      document.removeEventListener("click", click, true);
+      document.removeEventListener("focusin", focusin);
+    };
+  }, [name, list, set]);
   return [id, set] as const;
 }
 
