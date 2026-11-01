@@ -149,6 +149,25 @@ submitting a review from the walkthrough, a fix the person starts (with its
 replies on the review threads it addressed), and resolving a review thread the
 person chose are the app's only GitHub writes (see below).
 
+A pull request with no saved review still shows its facts (`useFacts` and
+`factsFilesSlot` in `src/facts.tsx`): what GitHub, the clone and the sessions
+on this machine say about it, with nothing a model wrote. Beside the page's
+own state (**Generate review**, queued, generating, failed or **Needs a local
+clone**, which gets no facts), the Details tab shows its author, agents and
+change size, the Activity tab its CI checks, review tools' findings and
+linked sessions, and the rail its Sessions, Commits and Files changed, each
+file's patch read when it is opened. The page asks `GET api/facts` with the
+head discovery shows, again at each index change; the daemon reads GitHub at
+most once per refresh interval for the same head and at once for a new one
+(see "Pull request facts" in ARCHITECTURE.md). Sessions, transcripts, commits
+and patches come from `api/facts/sessions`, `api/facts/commits` and
+`api/facts/patch`, read against the facts the page was shown (each names their
+head, and a newer build answers 404). Facts are no
+version: they are never in the version menu and there is no **Ask** or
+walkthrough for them. A rate limit or a failed read says so above the page,
+with **Retry**; a daemon that serves no facts shows the page as before. Once a
+review is saved the page shows it instead, as before.
+
 A pull request opens on the full review. Once a review is saved, its **Walk
 through** opens the walkthrough's overview (`src/walkthrough.tsx`,
 `?…&walk=landing`): what matters about it on one page, with no list beside

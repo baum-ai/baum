@@ -846,50 +846,17 @@ func (v *DocumentValidator) CompleteWithPrompt(document []byte, b *bundlepkg.Bun
 	for i := range doc.Sections {
 		normalizeEvidence(doc.Sections[i].Evidence, b, directory)
 	}
-	index := documentIndex{FileComparisons: b.FileComparisons, Hunks: []documentHunk{}, Checks: []documentCheck{}, Reports: []documentReport{}, Comments: []documentComment{}, Threads: threadIndex(b), Sessions: []documentSession{}, PRs: json.RawMessage("[]")}
+	index, checkCounts, vendors, models := bundleIndex(b)
 	hunks := map[string]bundlepkg.Hunk{}
 	hunksByPath := map[string][]string{}
-	files := map[string]bool{}
-	additions, deletions := 0, 0
 	for _, h := range b.Diff {
 		hunks[h.ID] = h
 		hunksByPath[h.Path] = append(hunksByPath[h.Path], h.ID)
-		files[h.Path] = true
-		additions += h.Additions
-		deletions += h.Deletions
-		item := documentHunk{ID: h.ID, Path: h.Path, OldPath: h.OldPath, Change: h.Change, Role: h.Role, NewRange: []int{h.StartLine, h.LineCount}, Additions: h.Additions, Deletions: h.Deletions, Diff: indexedHunkDiff(h)}
-		if h.DiffURL != "" {
-			item.GitHubURL = &h.DiffURL
-		}
-		index.Hunks = append(index.Hunks, item)
 	}
-	checks, checkCounts := checkIndex(b, b.PullRequest.HeadSHA)
-	index.Checks = checks
-	for _, a := range b.Attachments {
-		index.Attachments = append(index.Attachments, documentAttachment{ID: a.ID, Alt: a.Alt, Heading: a.Heading, Position: a.Position, ContentType: a.ContentType, Width: a.Width, Height: a.Height, SourceURL: a.SourceURL})
-	}
-	for _, c := range b.Conversation {
-		if c.CreatedAt == nil {
-			continue
-		}
-		kind := c.Kind
-		if kind == "comment" {
-			kind = "issue"
-		}
-		index.Comments = append(index.Comments, documentComment{ID: jsonString(c.ID), Kind: kind, Author: c.AuthorLogin, Bot: c.Bot, CreatedAt: c.CreatedAt.UTC().Format(time.RFC3339Nano)})
-		if c.BotReport {
-			index.Reports = append(index.Reports, documentReport{ID: c.ID, Tool: c.BotTool, Marker: "baum", Comment: jsonString(c.ID), Summary: c.Body})
-		}
-	}
-	sessions, vendors, models := sessionIndex(b)
-	index.Sessions = sessions
+	files, additions, deletions := diffTotals(b)
 	summary := &doc.Summary
 	summary.Title = b.PullRequest.Title
-	association := b.PullRequest.AuthorAssociation
-	if association == "" {
-		association = "NONE"
-	}
-	summary.Author = documentAuthor{Login: b.PullRequest.AuthorLogin, Association: association, Bot: b.PullRequest.AuthorBot}
+	summary.Author = bundleAuthor(b)
 	authorship := &summary.Authorship
 	authorship.ObservedSessions, authorship.ObservedVendors, authorship.ObservedModels = len(b.Sessions), sortedKeys(vendors), sortedKeys(models)
 	notes := append([]string{}, b.Truncated...)
@@ -906,23 +873,11 @@ func (v *DocumentValidator) CompleteWithPrompt(document []byte, b *bundlepkg.Bun
 	if previous > 0 {
 		previousVersion = &previous
 	}
-	state := b.PullRequest.State
-	if b.PullRequest.MergedSHA != "" {
-		state = "merged"
-	} else if b.PullRequest.Draft {
-		state = "draft"
-	}
-	var merged, reviewMD *string
+	state, merged := bundlePRState(b)
+	var reviewMD *string
 	reviewMDChanged := b.ReviewConfig != nil && b.ReviewConfig.ChangedInPullRequest
-	if b.PullRequest.MergedSHA != "" {
-		merged = &b.PullRequest.MergedSHA
-	}
 	if b.ReviewConfig != nil && b.ReviewConfig.Present {
 		reviewMD = &b.ReviewConfig.Digest
-	}
-	specLinks := false
-	for _, r := range b.References {
-		specLinks = specLinks || r.Kind == "spec" || r.Kind == "spec_assertion"
 	}
 	doc.Review = documentReview{
 		Repository: b.Repository, PullRequest: b.PullRequest.Number, PRState: state,
@@ -931,7 +886,7 @@ func (v *DocumentValidator) CompleteWithPrompt(document []byte, b *bundlepkg.Bun
 		GenerationState: "current", GeneratedAt: now.UTC().Format(time.RFC3339Nano), EvidenceRefreshedAt: now.UTC().Format(time.RFC3339Nano),
 		Relations: doc.Relations,
 		Generator: documentReviewGenerator{Model: model, ReviewMD: reviewMD, ReviewMDChanged: reviewMDChanged, Truncated: notes, SchemaRevision: v.Revision, PromptVersion: promptVersion},
-		Sources:   documentReviewSources{Diff: b.Sources["diff"], Sessions: len(b.Sessions), Checks: len(b.Checks), ReviewThreads: b.Sources["review_threads"], SpecLinks: specLinks, ReviewMD: reviewMD != nil},
+		Sources:   bundleSources(b),
 	}
 	tiers := []string{"mechanical", "unrated", "low", "medium", "high", "critical"}
 	rank := func(tier string) int { return slices.Index(tiers, tier) }
@@ -1076,7 +1031,7 @@ func (v *DocumentValidator) CompleteWithPrompt(document []byte, b *bundlepkg.Bun
 		}
 		riskLOC[tier] += lines
 	}
-	doc.Stats = documentStats{Sections: len(doc.Sections), Files: len(files), Hunks: len(b.Diff), Additions: additions, Deletions: deletions, RoleLOC: roleLOC, RiskLOC: riskLOC, Checks: checkCounts}
+	doc.Stats = documentStats{Sections: len(doc.Sections), Files: files, Hunks: len(b.Diff), Additions: additions, Deletions: deletions, RoleLOC: roleLOC, RiskLOC: riskLOC, Checks: checkCounts}
 	summary.RiskScore = riskScore(doc.Sections, b.Diff)
 	doc.Index, doc.AgentReviews, doc.UnassignedHunks = index, agentReviews(b, doc.Sections, doc.Review.Head), unassigned
 	setValidation(&doc.reviewDocument, b)
@@ -1089,6 +1044,82 @@ func (v *DocumentValidator) CompleteWithPrompt(document []byte, b *bundlepkg.Bun
 		return nil, err.Error()
 	}
 	return encoded, ""
+}
+
+// bundleIndex indexes the bundle's evidence as a document carries it, with
+// the counts of the head's checks and the vendors and models of its sessions.
+func bundleIndex(b *bundlepkg.Bundle) (documentIndex, documentStatsChecks, map[string]bool, map[string]bool) {
+	index := documentIndex{FileComparisons: b.FileComparisons, Hunks: []documentHunk{}, Checks: []documentCheck{}, Reports: []documentReport{}, Comments: []documentComment{}, Threads: threadIndex(b), Sessions: []documentSession{}, PRs: json.RawMessage("[]")}
+	for _, h := range b.Diff {
+		item := documentHunk{ID: h.ID, Path: h.Path, OldPath: h.OldPath, Change: h.Change, Role: h.Role, NewRange: []int{h.StartLine, h.LineCount}, Additions: h.Additions, Deletions: h.Deletions, Diff: indexedHunkDiff(h)}
+		if h.DiffURL != "" {
+			item.GitHubURL = &h.DiffURL
+		}
+		index.Hunks = append(index.Hunks, item)
+	}
+	checks, checkCounts := checkIndex(b, b.PullRequest.HeadSHA)
+	index.Checks = checks
+	for _, a := range b.Attachments {
+		index.Attachments = append(index.Attachments, documentAttachment{ID: a.ID, Alt: a.Alt, Heading: a.Heading, Position: a.Position, ContentType: a.ContentType, Width: a.Width, Height: a.Height, SourceURL: a.SourceURL})
+	}
+	for _, c := range b.Conversation {
+		if c.CreatedAt == nil {
+			continue
+		}
+		kind := c.Kind
+		if kind == "comment" {
+			kind = "issue"
+		}
+		index.Comments = append(index.Comments, documentComment{ID: jsonString(c.ID), Kind: kind, Author: c.AuthorLogin, Bot: c.Bot, CreatedAt: c.CreatedAt.UTC().Format(time.RFC3339Nano)})
+		if c.BotReport {
+			index.Reports = append(index.Reports, documentReport{ID: c.ID, Tool: c.BotTool, Marker: "baum", Comment: jsonString(c.ID), Summary: c.Body})
+		}
+	}
+	sessions, vendors, models := sessionIndex(b)
+	index.Sessions = sessions
+	return index, checkCounts, vendors, models
+}
+
+// diffTotals counts the files the diff changes and its added and deleted lines.
+func diffTotals(b *bundlepkg.Bundle) (files, additions, deletions int) {
+	paths := map[string]bool{}
+	for _, h := range b.Diff {
+		paths[h.Path] = true
+		additions += h.Additions
+		deletions += h.Deletions
+	}
+	return len(paths), additions, deletions
+}
+
+func bundleAuthor(b *bundlepkg.Bundle) documentAuthor {
+	association := b.PullRequest.AuthorAssociation
+	if association == "" {
+		association = "NONE"
+	}
+	return documentAuthor{Login: b.PullRequest.AuthorLogin, Association: association, Bot: b.PullRequest.AuthorBot}
+}
+
+// bundlePRState is the pull request's state in the document's vocabulary,
+// and its merge commit once merged.
+func bundlePRState(b *bundlepkg.Bundle) (string, *string) {
+	switch {
+	case b.PullRequest.MergedSHA != "":
+		return "merged", &b.PullRequest.MergedSHA
+	case b.PullRequest.Draft:
+		return "draft", nil
+	}
+	return b.PullRequest.State, nil
+}
+
+// bundleSources are the document's sources as the bundle supplies them;
+// agent reviews and session validation are counted once derived.
+func bundleSources(b *bundlepkg.Bundle) documentReviewSources {
+	specLinks := false
+	for _, r := range b.References {
+		specLinks = specLinks || r.Kind == "spec" || r.Kind == "spec_assertion"
+	}
+	reviewMD := b.ReviewConfig != nil && b.ReviewConfig.Present
+	return documentReviewSources{Diff: b.Sources["diff"], Sessions: len(b.Sessions), Checks: len(b.Checks), ReviewThreads: b.Sources["review_threads"], SpecLinks: specLinks, ReviewMD: reviewMD}
 }
 
 // indexedHunkDiff turns the authoritative, redacted bundle patch into the

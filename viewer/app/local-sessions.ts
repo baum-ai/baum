@@ -3,6 +3,10 @@ import type { CommitListState, CommitView } from "../src/components/commit-list"
 import type { SessionListState, SessionView } from "../src/components/session-list";
 import type { ReviewDocument } from "../src/review-document";
 
+/** What recorded the sessions to fall back on: a review, or a pull
+ *  request's facts. */
+type SessionSource = { index: Pick<ReviewDocument["index"], "sessions"> };
+
 /** What `baum internal view` knows about this pull request's sessions and commits on
  *  the user's machine: the answer of `GET /api/sessions`, checked. */
 
@@ -193,8 +197,8 @@ function localCommitViews(sessions: LocalSession[], commits: LocalCommit[]): Com
   }));
 }
 
-/** The sessions the review document itself recorded, as the pane lists them. */
-function documentSessionViews(document: ReviewDocument): SessionView[] | null {
+/** The sessions the review document (or the facts) recorded, as the pane lists them. */
+function documentSessionViews(document: SessionSource): SessionView[] | null {
   const recorded = document.index?.sessions;
   if (!Array.isArray(recorded)) return null;
   return recorded
@@ -217,7 +221,7 @@ function documentSessionViews(document: ReviewDocument): SessionView[] | null {
  *  in the review to show instead is the only failure. */
 export function sessionLists(
   load: SessionsLoad,
-  document: ReviewDocument,
+  document: SessionSource,
 ): { sessions: SessionListState; commits: CommitListState | null } {
   if (load.state === "loading") {
     return { sessions: { status: "loading" }, commits: { status: "loading" } };

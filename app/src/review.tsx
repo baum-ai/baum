@@ -52,8 +52,18 @@ import { Walkthrough, type WalkMode } from "./walkthrough";
 import { buildTour } from "./walkthrough-model";
 import { AnswerActions } from "./answer-actions";
 import { AskPanel, sectionFocus } from "./chat";
+import { factsFilesSlot, factsQuery, useFacts } from "./facts";
 import { SECONDARY } from "./action-classes";
-function Transcript({ id, query }: { id: string; query: string }) {
+function Transcript({
+  id,
+  query,
+  route = "api/sessions",
+}: {
+  id: string;
+  query: string;
+  /** Where the pull request's sessions are read: a version's, or its facts'. */
+  route?: string;
+}) {
   const [load, setLoad] = useState<LocalTranscript | null>(null);
   const [error, setError] = useState(false);
   const [retry, setRetry] = useState(0);
@@ -61,12 +71,7 @@ function Transcript({ id, query }: { id: string; query: string }) {
     const abort = new AbortController();
     setLoad(null);
     setError(false);
-    request<unknown>(
-      `api/sessions/${encodeURIComponent(id)}?${query}`,
-      undefined,
-      "GET",
-      abort.signal,
-    )
+    request<unknown>(`${route}/${encodeURIComponent(id)}?${query}`, undefined, "GET", abort.signal)
       .then((body) => {
         const parsed = parseTranscript(body);
         if (!parsed) throw Error("Invalid transcript");
@@ -76,7 +81,7 @@ function Transcript({ id, query }: { id: string; query: string }) {
         if (!abort.signal.aborted) setError(true);
       });
     return () => abort.abort();
-  }, [id, query, retry]);
+  }, [id, query, route, retry]);
   if (error)
     return (
       <Alert>
@@ -335,7 +340,65 @@ export function LocalReview({
       });
     return () => abort.abort();
   }, [viewedDocument, query, ended]);
-  const lists = viewedDocument ? sessionLists(sessions, viewedDocument) : null;
+  // Without a saved version the page shows the pull request's facts: no
+  // model's text, only what GitHub, the clone and the sessions on this
+  // machine say. They are never a version: not listed, read or asked about.
+  const wantsFacts = entry.version_count === 0 && !entry.needs_clone && Boolean(clone);
+  const [factsRetry, setFactsRetry] = useState(0);
+  const facts = useFacts(clone, pr.number, pr.head_sha, revision + factsRetry, wantsFacts);
+  const shownFacts = !doc && facts.state === "ready" ? facts.facts : null;
+  const factsHead = shownFacts?.review.head ?? "";
+  const factsBase = shownFacts?.review.base ?? "";
+  const factsMergeBase = shownFacts?.review.merge_base ?? "";
+  // Each read names the head of the facts shown, so a newer build of them
+  // never answers for what is on screen.
+  const factsSelector = factsQuery(clone, pr.number, factsHead);
+  const [factsSessions, setFactsSessions] = useState<SessionsLoad>({ state: "loading" });
+  useEffect(() => {
+    if (!factsHead) return;
+    setFactsSessions({ state: "loading" });
+    const abort = new AbortController();
+    request<unknown>(`api/facts/sessions?${factsSelector}`, undefined, "GET", abort.signal)
+      .then((body) => {
+        const answer = parseSessionsAnswer(body);
+        if (!abort.signal.aborted)
+          setFactsSessions(answer ? { state: "answered", answer } : { state: "request-failed" });
+      })
+      .catch(() => {
+        if (!abort.signal.aborted) setFactsSessions({ state: "request-failed" });
+      });
+    return () => abort.abort();
+  }, [factsHead, factsSelector, ended]);
+  // A new comparison base changes patches even when the head stays the same.
+  const factsPatches = useMemo(() => {
+    const cache = new Map<string, Promise<string | null>>();
+    return (path: string) => {
+      const key = `${factsHead}:${factsBase}:${factsMergeBase}:${path}`;
+      let pending = cache.get(key);
+      if (!pending) {
+        pending = request<{ patch: string | null }>(
+          `api/facts/patch?${factsSelector}&path=${encodeURIComponent(path)}`,
+        )
+          .then((body) => body.patch)
+          .catch(() => {
+            cache.delete(key);
+            return null;
+          });
+        cache.set(key, pending);
+      }
+      return pending;
+    };
+  }, [factsSelector, factsHead, factsBase, factsMergeBase]);
+  const factsMode = !doc && wantsFacts && facts.state !== "unavailable";
+  const lists = viewedDocument
+    ? sessionLists(sessions, viewedDocument)
+    : !factsMode
+      ? null
+      : shownFacts
+        ? sessionLists(factsSessions, shownFacts)
+        : facts.state === "failed"
+          ? { sessions: { status: "failed" as const }, commits: null }
+          : { sessions: { status: "loading" as const }, commits: { status: "loading" as const } };
   const patches = useMemo(() => {
     const cache = new Map<string, Promise<string | null>>();
     return (path: string, version: number) => {
@@ -657,6 +720,14 @@ export function LocalReview({
                       />
                     ) : null}
                     <LiveSessions sessions={running} Link={ViewerLink} />
+                    {factsMode && facts.state === "failed" ? (
+                      <Alert>
+                        {facts.rateLimited
+                          ? "GitHub's rate limit is reached, so this pull request's checks, sessions and files load once it resets."
+                          : "This pull request's checks, sessions and files couldn't be read."}{" "}
+                        <Button onClick={() => setFactsRetry((n) => n + 1)}>Retry</Button>
+                      </Alert>
+                    ) : null}
                     {entry.needs_clone && doc ? (
                       <Notice>
                         Needs a local clone. This saved review remains available.
@@ -687,11 +758,26 @@ export function LocalReview({
                 sessions={
                   lists
                     ? sessionsSlot(lists.sessions, {
-                        renderSession: (session) => <Transcript id={session.id} query={query} />,
+                        renderSession: (session) =>
+                          viewedDocument ? (
+                            <Transcript id={session.id} query={query} />
+                          ) : (
+                            <Transcript
+                              id={session.id}
+                              query={factsSelector}
+                              route="api/facts/sessions"
+                            />
+                          ),
                       })
                     : undefined
                 }
                 commits={lists?.commits ? commitsSlot(lists.commits) : undefined}
+                facts={shownFacts}
+                files={
+                  factsMode
+                    ? factsFilesSlot(facts, () => setFactsRetry((n) => n + 1), factsPatches, pr.url)
+                    : undefined
+                }
                 hunkPatches={patches}
                 renderSectionAside={
                   doc
