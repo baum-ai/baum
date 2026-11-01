@@ -34,3 +34,6 @@ node_modules/
 /app/playwright-report/
 /app/test-results/
 /app/e2e/fixture
+
+# Local benchmark corpus copies (scripts/bench-index-corpus.sh); private data
+/.bench/
