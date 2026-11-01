@@ -232,13 +232,19 @@ export function Tour({ close }: { close: () => void }) {
           if (["Escape", "Enter", " "].includes(event.key)) event.stopPropagation();
         }}
       >
-        <div className="tour-corner">
-          <Stumpy size={36} />
-          <Button variant="ghost" size="compact" aria-label="Close the tour" onClick={close}>
-            <CloseIcon size={14} />
-          </Button>
+        <Button
+          variant="ghost"
+          size="compact"
+          aria-label="Close the tour"
+          onClick={close}
+          className="tour-close"
+        >
+          <CloseIcon size={14} />
+        </Button>
+        <div className="tour-head">
+          <Stumpy size={28} />
+          <h2 id="tour-title">{stop.title}</h2>
         </div>
-        <h2 id="tour-title">{stop.title}</h2>
         <p>{stop.body}</p>
         <div className="tour-foot">
           <span className="tour-count">

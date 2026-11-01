@@ -28,16 +28,25 @@
   box-shadow: var(--shadow-overlay);
   color: var(--text-primary);
 }
-.tour-corner {
+/* In dark mode the popup surface matches the page's cards; a raised surface
+   and stronger edge keep the card apart from the dimmed page. */
+:root[data-theme="dark"] .tour-card {
+  border-color: var(--border-strong);
+  background: var(--paper-200);
+}
+.tour-close {
   position: absolute;
   top: 8px;
   right: 8px;
+}
+.tour-head {
   display: flex;
   align-items: center;
-  gap: 2px;
+  gap: 8px;
+  margin: 0 32px 6px 0;
 }
 .tour-card h2 {
-  margin: 0 80px 6px 0;
+  margin: 0;
   font-size: var(--text-base);
   font-weight: 600;
 }
