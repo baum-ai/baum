@@ -156,5 +156,5 @@ func (l *Local) groupRequest(ctx context.Context, p Prepared, versions *store.St
 	if err != nil {
 		return nil, err
 	}
-	return &generate.Group{Name: group.Name, Members: members, MemberReviews: file}, nil
+	return &generate.Group{Name: group.Name, GeneratedName: group.Stack, Members: members, MemberReviews: file}, nil
 }

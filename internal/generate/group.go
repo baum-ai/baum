@@ -8,7 +8,10 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
+	"strings"
+	"unicode"
 
 	"github.com/baum-ai/baum/bundle"
 	"github.com/baum-ai/baum/internal/assemble"
@@ -20,8 +23,13 @@ import (
 // request's: Request names the repository and the limits, and its Number is
 // ignored. See internal/reviewgroups.
 type Group struct {
-	// Name is the group's name, the document's stack title.
+	// Name is the group's name, the document's stack title unless
+	// GeneratedName.
 	Name string
+	// GeneratedName gives the document's stack title the name the model
+	// writes for the group, when it wrote a usable one: a stack group's,
+	// whose name is baum's. A group the person named keeps Name.
+	GeneratedName bool
 	// Members are the group's pull requests in group order.
 	Members []GroupMember
 	// MemberReviews is written to the run directory as members.json, the
@@ -126,8 +134,50 @@ func assembleGroup(ctx context.Context, o Options, archives, runDir string, fail
 	for i, member := range group.Members {
 		stack.Members = append(stack.Members, stackMember{Number: member.Number, HeadSHA: members[i].Result.Head, ReviewVersion: member.ReviewVersion})
 	}
-	return merged.Result, groupDecorator(stack, merged.HunkMembers), nil
+	return merged.Result, groupDecorator(stack, group.GeneratedName, merged.HunkMembers), nil
 }
+
+// groupModelSchema is the model schema of a group review: the model always
+// writes the stack, with a name for the group as its title. Its members stay
+// allowed, as a repair pass shows the model the decorated document, and the
+// host replaces them.
+func groupModelSchema(schema []byte) ([]byte, error) {
+	var root map[string]any
+	if err := json.Unmarshal(schema, &root); err != nil {
+		return nil, err
+	}
+	properties, _ := root["properties"].(map[string]any)
+	stack, _ := properties["stack"].(map[string]any)
+	inner, _ := stack["properties"].(map[string]any)
+	title, _ := inner["title"].(map[string]any)
+	if title == nil {
+		return nil, errors.New("the model schema offers no stack title")
+	}
+	title["description"] = "A name for the group of pull requests: what they do together, in a few words, as a pull request title reads. Not a member's title unless it names the whole group."
+	stack["type"] = "object"
+	stack["required"] = []any{"title"}
+	stack["description"] = "The group. Write its title; baum fills its members."
+	required, _ := root["required"].([]any)
+	if !slices.Contains(required, any("stack")) {
+		root["required"] = append(required, "stack")
+	}
+	return json.Marshal(root)
+}
+
+// generatedName is the stack title the model wrote, on one line and cut to a
+// title's length; empty when it wrote none.
+func generatedName(doc map[string]any) string {
+	stack, _ := doc["stack"].(map[string]any)
+	title, _ := stack["title"].(string)
+	title = strings.Join(strings.FieldsFunc(title, func(r rune) bool { return unicode.IsSpace(r) || unicode.IsControl(r) }), " ")
+	if runes := []rune(title); len(runes) > maxStackTitle {
+		title = strings.TrimSpace(string(runes[:maxStackTitle]))
+	}
+	return title
+}
+
+// maxStackTitle is the schema's bound on a stack title.
+const maxStackTitle = 80
 
 type documentStack struct {
 	Title   string        `json:"title"`
@@ -141,10 +191,11 @@ type stackMember struct {
 }
 
 // groupDecorator returns the agent.Run decorator of a group review: it sets
-// the document's stack and gives each section the members whose hunks it
-// lists, in member order, replacing whatever the model wrote there; a
-// section listing no member's hunk names none.
-func groupDecorator(stack documentStack, hunkMembers map[string][]int) func([]byte) []byte {
+// the document's stack, titled with the name the model wrote when generated
+// and it wrote one, and gives each section the members whose hunks it lists,
+// in member order, replacing whatever the model wrote there; a section
+// listing no member's hunk names none.
+func groupDecorator(stack documentStack, generated bool, hunkMembers map[string][]int) func([]byte) []byte {
 	return func(document []byte) []byte {
 		decoder := json.NewDecoder(bytes.NewReader(document))
 		decoder.UseNumber()
@@ -152,7 +203,11 @@ func groupDecorator(stack documentStack, hunkMembers map[string][]int) func([]by
 		if decoder.Decode(&doc) != nil || doc == nil {
 			return document
 		}
-		doc["stack"] = stack
+		titled := stack
+		if name := generatedName(doc); generated && name != "" {
+			titled.Title = name
+		}
+		doc["stack"] = titled
 		sections, _ := doc["sections"].([]any)
 		for _, raw := range sections {
 			section, ok := raw.(map[string]any)
