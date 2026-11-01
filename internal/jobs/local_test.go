@@ -229,7 +229,7 @@ func TestLocalPrepareUsesBackendPathsWithoutFallingBackToPATH(t *testing.T) {
 		t.Fatal(e)
 	}
 	bin := t.TempDir()
-	if e := os.WriteFile(filepath.Join(bin, "claude"), []byte("#!/bin/sh\necho \"2.1.7 (Claude Code)\"\n"), 0o755); e != nil {
+	if e := os.WriteFile(filepath.Join(bin, "claude"), []byte("#!/bin/sh\necho \"2.1.296 (Claude Code)\"\n"), 0o755); e != nil {
 		t.Fatal(e)
 	}
 	gitPath, e := exec.LookPath("git")

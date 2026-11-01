@@ -196,9 +196,9 @@ func TestDefaultBackendsWithBinariesOnPath(t *testing.T) {
 		}
 	})
 	t.Run("claude found", func(t *testing.T) {
-		fakeBinary(t, "claude", `echo "2.1.7 (Claude Code)"`)
+		fakeBinary(t, "claude", `echo "2.1.296 (Claude Code)"`)
 		selected, err := generate.Select(context.Background(), config.BackendAuto, "", generate.DefaultBackends(), nil)
-		if err != nil || selected.Backend.Name() != "claude" || selected.Version != "2.1.7" {
+		if err != nil || selected.Backend.Name() != "claude" || selected.Version != "2.1.296" {
 			t.Fatalf("%v %v", selected, err)
 		}
 	})
@@ -313,7 +313,7 @@ func TestBackendPathsReplaceThePATHLookup(t *testing.T) {
 		}
 	})
 	t.Run("missing explicit path does not fall back to PATH", func(t *testing.T) {
-		fakeBinary(t, "claude", `echo "2.1.7 (Claude Code)"`)
+		fakeBinary(t, "claude", `echo "2.1.296 (Claude Code)"`)
 		missing := filepath.Join(t.TempDir(), "missing-claude")
 		cfg := config.Config{BackendPaths: map[config.Backend]string{config.BackendClaude: missing}}
 		var skipped strings.Builder
