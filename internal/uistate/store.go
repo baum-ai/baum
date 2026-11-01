@@ -43,7 +43,7 @@ type Store struct {
 }
 
 func valid(kind, key string) bool {
-	return kind == "inbox" && key == "" || kind == "walkthrough" && len(key) <= 300 && reviewKey.MatchString(key)
+	return (kind == "inbox" || kind == "tour") && key == "" || kind == "walkthrough" && len(key) <= 300 && reviewKey.MatchString(key)
 }
 func empty() Record { return Record{Value: json.RawMessage("null")} }
 func decode(raw []byte, kind, key string) (Record, error) {
@@ -132,7 +132,7 @@ func (s *Store) Replace(kind, key string, revision int, mutation string, value j
 		}
 		clients[client] = sequence
 		next = Record{Revision: revision + 1, Value: value, Clients: clients}
-		if kind == "inbox" {
+		if kind != "walkthrough" {
 			return json.Marshal(next)
 		}
 		records := map[string]retained{}
@@ -234,6 +234,13 @@ func validate(kind string, raw []byte) error {
 			if id == "" || len(id) > 256 || note == nil || len(*note) > 64<<10 {
 				return ErrInvalid
 			}
+		}
+	case "tour":
+		var value struct {
+			Seen *bool `json:"seen"`
+		}
+		if json.Unmarshal(raw, &value) != nil || value.Seen == nil {
+			return ErrInvalid
 		}
 	default:
 		return ErrInvalid

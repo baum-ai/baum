@@ -646,13 +646,18 @@ func TestLocalAppBrowserFixture(t *testing.T) {
 			}
 			return exec.CommandContext(ctx, "git", "-C", opts.Dir, "remote", "set-url", "origin", opts.URL).Run()
 		}}
+		// The first-run tour would cover the pages under test; tour.spec.ts asks for it.
+		uiState := &uistate.Store{Path: filepath.Join(home, "app.sqlite")}
+		if _, err := uiState.Replace("tour", "", 0, "browser-fixture:1", json.RawMessage(`{"seen":true}`)); err != nil {
+			return daemon.App{}, err
+		}
 		api := uiserver.LocalAPI{Clones: finder.Handler(), GitHubRepositories: repositoryService.Handler(), GitHubAuth: auth.Handler(), Registry: registry, Config: cfg, PRs: uiserver.DiscoveryHandler(registry, disc, nil), Merge: uiserver.MergeHandler(registry, actions.RecordMerges(client), func(ctx context.Context, repo github.Repository, _ int, _ string) { _, _ = disc.Poll(ctx, repo) }, changed), Update: uiserver.UpdateHandler(registry, actions.RecordUpdates(prupdate.Service{Client: client}), func(ctx context.Context, repo github.Repository) { _, _ = disc.Poll(ctx, repo) }, changed), Index: index.Handler(), Jobs: runner.Handler(), Chat: uiserver.ChatHandler(registry, runner), Automatic: scheduler.Handler(), Live: transcripts.Handler(), Changed: scheduler.Wake, Diagnostics: browserDiagnostics, CurrentName: func(_ context.Context, repository string) (string, error) {
 			if repository == "acme/old-renamed" {
 				return "acme/renamed", nil
 			}
 			return "", github.ErrNotFound
 		}, PlanUsage: browserPlanUsage, Analytics: insights.Handler(), Timeline: timeline.Handler(),
-			UIState:   (&uistate.Store{Path: filepath.Join(home, "app.sqlite")}).Handler(),
+			UIState:   uiState.Handler(),
 			Inboxes:   (&inboxes.API{Store: inboxes.Open(filepath.Join(home, "app.sqlite"))}).Handler(),
 			Groups:    (&reviewgroups.API{Store: groups, Registry: registry, Index: index.Build, Changed: func() { _ = server.Publish("index", struct{}{}) }}).Handler(),
 			Decisions: browserDecisionsAPI(decided, registry, live),

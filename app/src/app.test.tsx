@@ -4,7 +4,6 @@ import { createRoot, type Root } from "react-dom/client";
 import { beforeEach, afterEach, expect, it, vi } from "vitest";
 import { inboxGroups } from "./inbox";
 import { App } from "./app";
-import { TOUR_KEY } from "./tour";
 import { useLocation } from "./location";
 import { appBase, cost, filtered, type Entry, type Clone } from "./api";
 import { forgetLastRows } from "./shortcuts";
@@ -52,7 +51,6 @@ beforeEach(() => {
   // Every open pull request; the default Inbox view has its own test.
   history.replaceState(null, "", "/s/test-ns/?page=pulls&filter=all");
   localStorage.clear();
-  localStorage.setItem(TOUR_KEY, "done");
   fail = false;
   entries = [];
   node = document.createElement("div");

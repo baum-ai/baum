@@ -4,16 +4,26 @@ import { appURL, navigate } from "./api";
 import { PRIMARY, SECONDARY, SMALL } from "./action-classes";
 import { PAGES } from "./pages";
 import { COMMAND } from "./shortcuts";
+import { uiState, useUIState } from "./ui-state";
 import "./tour.css";
 
-/** Whether this computer has seen the tour, finished or skipped. */
-export const TOUR_KEY = "baum.tour.v1";
-export function tourSeen() {
-  try {
-    return localStorage.getItem(TOUR_KEY) !== null;
-  } catch {
-    return true;
-  }
+/** Whether the tour is open: once on this computer's first launch, kept by
+ *  the daemon since the app's address can change, and again whenever Go to
+ *  asks for it (`?tour=1`). Closing it clears that request, so asking again
+ *  opens it. */
+export function useTour(asked: boolean) {
+  const saved = useUIState(uiState("api/ui-state/tour", () => ({ seen: false })));
+  const firstRun = saved.ready && !saved.error && !saved.value.seen;
+  const [open, setOpen] = useState(false);
+  useEffect(() => {
+    if (firstRun || asked) setOpen(true);
+  }, [firstRun, asked]);
+  const close = () => {
+    if (!saved.value.seen) saved.update(() => ({ seen: true }));
+    setOpen(false);
+    if (asked) navigate(appURL());
+  };
+  return { open, close };
 }
 
 /** A button named in the copy, drawn as the button it names. */
@@ -154,14 +164,6 @@ export function Tour({ close }: { close: () => void }) {
   const stop = STOPS[index]!;
   const last = index === STOPS.length - 1;
 
-  const finish = () => {
-    try {
-      localStorage.setItem(TOUR_KEY, "done");
-    } catch {
-      // Shown again next time.
-    }
-    close();
-  };
   const go = (to: number) => {
     const target = STOPS[to]!;
     const where = target.at === "review" ? review.current : target.at;
@@ -218,9 +220,11 @@ export function Tour({ close }: { close: () => void }) {
         aria-labelledby="tour-title"
         className="tour-card"
         style={position}
+        // Enter and Space press the tour's buttons and Escape closes it; every
+        // other key reaches the page, so the keys it teaches work.
         onKeyDown={(event) => {
-          if (event.key === "Escape") finish();
-          event.stopPropagation();
+          if (event.key === "Escape") close();
+          if (["Escape", "Enter", " "].includes(event.key)) event.stopPropagation();
         }}
       >
         <Stumpy size={36} className="tour-stumpy" />
@@ -235,7 +239,7 @@ export function Tour({ close }: { close: () => void }) {
               Back
             </button>
           ) : (
-            <button type="button" className={SECONDARY} onClick={finish}>
+            <button type="button" className={SECONDARY} onClick={close}>
               Skip
             </button>
           )}
@@ -243,7 +247,7 @@ export function Tour({ close }: { close: () => void }) {
             ref={next}
             type="button"
             className={PRIMARY}
-            onClick={() => (last ? finish() : go(index + 1))}
+            onClick={() => (last ? close() : go(index + 1))}
           >
             {index === 0 ? "Start" : last ? "Done" : "Next"}
           </button>
