@@ -355,10 +355,17 @@ func TestLocalAppBrowserFixture(t *testing.T) {
 			}
 		}
 		// The agent's answers cite docs/guide.md, which the fixture repository has
-		// at its head: the review's dead-letter docs hunk stands for those lines.
+		// at its head. Match the real renamed hunk so its omitted excerpt can
+		// be reconstructed from Git rather than the example's synthetic text.
 		for _, hunk := range doc["index"].(map[string]any)["hunks"].([]any) {
 			if h := hunk.(map[string]any); h["path"] == "docs/dead-letters.md" {
 				h["path"] = "docs/guide.md"
+				h["old_path"] = "docs/old-guide.md"
+				h["change"] = "renamed"
+				h["new_range"] = []int{3, 7}
+				h["additions"], h["deletions"] = 1, 1
+				delete(h, "diff")
+				delete(h, "github_url")
 			}
 		}
 		document, _ := json.Marshal(doc)

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -148,5 +149,60 @@ func TestEmbedHunkPatchesReadsDuplicateKeysAndNullDiffs(t *testing.T) {
 	}
 	if err := json.Unmarshal(out, &decoded); err != nil || decoded.Index.Hunks[0].Diff == nil {
 		t.Fatalf("encoding/json reads no diff: %s %v", out, err)
+	}
+}
+
+func TestHunkFromFilePatchLargeHunks(t *testing.T) {
+	const count = 30000
+	for _, kind := range []string{"add", "remove"} {
+		t.Run(kind, func(t *testing.T) {
+			start, newCount, added, removed := 1, count, count, 0
+			header, marker := fmt.Sprintf("@@ -0,0 +1,%d @@", count), "+"
+			if kind == "remove" {
+				start, newCount, added, removed = 0, 0, 0, count
+				header, marker = fmt.Sprintf("@@ -1,%d +0,0 @@", count), "-"
+			}
+			// Include a preceding hunk and no final newline to exercise both
+			// boundaries without copying the large hunk's accumulated text.
+			patch := "@@ -9 +9 @@\n-before\n+after\n" + header + "\n" +
+				strings.Repeat(marker+"line\n", count-1) + marker + "last"
+			diff, err := hunkFromFilePatch(context.Background(), patch, start, newCount, added, removed)
+			if err != nil || diff == nil {
+				t.Fatalf("missing large hunk: %v", err)
+			}
+			if diff.Header != header || len(diff.Lines) != count || diff.Lines[0].Kind != kind || diff.Lines[count-1].Text != "last" {
+				t.Fatalf("wrong hunk: header %q, %d lines", diff.Header, len(diff.Lines))
+			}
+		})
+	}
+}
+
+func TestEmbedHunkPatchesCancelledAfterRead(t *testing.T) {
+	document := []byte(`{"index":{"hunks":[{"path":"a.go","new_range":[1,1],"additions":1,"deletions":0}]}}`)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	_, err := EmbedHunkPatches(ctx, document, func(context.Context, string) (string, bool, error) {
+		cancel()
+		return "@@ -0,0 +1 @@\n+line\n", true, nil
+	}, 0)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("error %v, want cancellation after reading the patch", err)
+	}
+}
+
+func BenchmarkHunkFromFilePatch(b *testing.B) {
+	for _, count := range []int{16384, 65536} {
+		b.Run(fmt.Sprint(count), func(b *testing.B) {
+			patch := fmt.Sprintf("@@ -0,0 +1,%d @@\n", count) + strings.Repeat("+line\n", count)
+			b.SetBytes(int64(len(patch)))
+			b.ReportAllocs()
+			b.ResetTimer()
+			for b.Loop() {
+				diff, err := hunkFromFilePatch(context.Background(), patch, 1, count, count, 0)
+				if err != nil || diff == nil {
+					b.Fatalf("missing hunk: %v", err)
+				}
+			}
+		})
 	}
 }

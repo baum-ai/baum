@@ -106,7 +106,10 @@ func EmbedHunkPatches(ctx context.Context, document []byte, patch FilePatch, max
 		if !r.ok {
 			return changed, nil
 		}
-		diff := hunkFromFilePatch(r.text, h.NewRange[0], h.NewRange[1], h.Additions, h.Deletions)
+		diff, err := hunkFromFilePatch(ctx, r.text, h.NewRange[0], h.NewRange[1], h.Additions, h.Deletions)
+		if err != nil {
+			return changed, err
+		}
 		if diff == nil {
 			return changed, nil
 		}
@@ -165,27 +168,41 @@ func patchableHunk(hunk jsonObject) (patchable, bool) {
 // hunkFromFilePatch is the hunk of a file's patch whose header names the
 // new range start,count and that adds and removes the given numbers of
 // lines, as a document's diff; nil when no hunk of the patch is that one.
-func hunkFromFilePatch(patch string, start, count, additions, deletions int) *tileHunk {
-	var hunks []string
+func hunkFromFilePatch(ctx context.Context, patch string, start, count, additions, deletions int) (*tileHunk, error) {
+	var boundaries []int
+	offset := 0
 	for line := range strings.SplitAfterSeq(patch, "\n") {
-		if strings.HasPrefix(line, "@@ ") {
-			hunks = append(hunks, line)
-		} else if len(hunks) > 0 {
-			hunks[len(hunks)-1] += line
+		if err := ctx.Err(); err != nil {
+			return nil, err
 		}
+		if strings.HasPrefix(line, "@@ ") {
+			boundaries = append(boundaries, offset)
+		}
+		offset += len(line)
 	}
-	for _, text := range hunks {
+	boundaries = append(boundaries, len(patch))
+	for i := 0; i+1 < len(boundaries); i++ {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		text := patch[boundaries[i]:boundaries[i+1]]
 		header, _, _ := strings.Cut(text, "\n")
 		_, _, next, newCount, ok := tileHunkRange(header)
 		if !ok || next != start || newCount != count {
 			continue
 		}
 		diff := indexedHunkDiff(bundlepkg.Hunk{Patch: text})
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		if diff == nil {
-			return nil
+			return nil, nil
 		}
 		added, removed := 0, 0
 		for _, line := range diff.Lines {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
 			switch line.Kind {
 			case "add":
 				added++
@@ -194,11 +211,11 @@ func hunkFromFilePatch(patch string, start, count, additions, deletions int) *ti
 			}
 		}
 		if added != additions || removed != deletions {
-			return nil
+			return nil, nil
 		}
-		return diff
+		return diff, nil
 	}
-	return nil
+	return nil, nil
 }
 
 // editIndexHunks calls edit with each object of index.hunks and encodes the
