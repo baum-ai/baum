@@ -108,11 +108,22 @@ happen only when the user selects an install or add action. Displayed paths abbr
      Cancelling or leaving the step cancels the pending browser launch.
      The daemon runs the device flow and keeps the credential, so the screen
      never holds a token.
-   - Below it, pick GitHub repositories from the signed-in account. One request
-     fetches 20 of GitHub's top repositories, ordered by latest push, with archived
-     ones omitted. The list shows the first eight and any picked ones; search
-     filters the fetched list. The footer shows the visible rows out of GitHub's
-     full accessible, non-archived repository total, counted in the same request.
+   - Below it, pick GitHub repositories from the signed-in account. The first
+     request fetches eight top repositories, then a background request fetches up
+     to one hundred more using the returned `topRepositories` cursor. The list
+     shows the first eight and any picked ones; archived repositories are omitted.
+     Setup and the app's Add repositories share the picker. Cached top matches
+     appear immediately while typing. GitHub repository search runs separately
+     after a 250 ms debounce, with results cached per query for five minutes.
+     An empty search preserves GitHub's top repository order. Search results
+     sort by exact name or owner/name match first, then top status, then
+     latest push. A pending or failed search leaves cached matches pickable, so
+     the person can continue setup immediately; failures offer a retry. The picker
+     refreshes every 300 ms while background requests are pending. The footer
+     says how many more repositories or matches there are and offers Show
+     more, which adds twenty rows of the same list (asking GitHub for its next
+     page once the loaded rows run out); the list then keeps its height and
+     scrolls.
      Rows show GitHub details only and nothing is picked on its own. Once a repository
      is picked, baum looks for its clone in folders agents worked in and common
      code folders, with the nine-dots loader while it looks, then shows the

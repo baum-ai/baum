@@ -260,12 +260,16 @@ handshake, in [`apiclient`](../apiclient).
   message whose answer the daemon could not write is queued again.
 - `--check --user` succeeds only when all of these hold, in this order:
   1. the working directory is inside a Git worktree (found by its `.git`,
-     without starting git) whose Entire is enabled as Entire reads it: a
-     `.entire/settings.json` or `settings.local.json` enables it unless an
-     `enabled` key says otherwise, the local key wins, and invalid JSON
-     disables it. Elsewhere the hook would only hand an event to an Entire
-     that ignores it, and its session-start bootstrap would put Git hooks in a
-     repository that never asked for them;
+     without starting git) whose Entire is enabled as Entire reads it, or a
+     baum daemon ever ran for the user: a `.entire/settings.json` or
+     `settings.local.json` enables Entire unless an `enabled` key says
+     otherwise, the local key wins, and invalid JSON disables it. Without
+     Entire and without a daemon the hook would only hand an event to an
+     Entire that ignores it, and its session-start bootstrap would put Git
+     hooks in a repository that never asked for them. Without Entire but with
+     a daemon the hook passes (after rule 2) and only records the event, even
+     for a logged-in user: no Entire, no bootstrap. The desktop app's live
+     sessions need only those events;
   2. no other hook the agent runs for the event calls `entire hooks AGENT
      EVENT` (the committed dispatcher and Entire's own command both do, so the
      text is searched for that; a file over 1 MiB or

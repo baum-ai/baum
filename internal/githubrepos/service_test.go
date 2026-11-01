@@ -25,15 +25,42 @@ import (
 )
 
 type fakeLister struct {
-	list  []github.ViewerRepository
-	total int
-	err   error
-	calls atomic.Int32
+	list        []github.ViewerRepository
+	total       int
+	err         error
+	calls       atomic.Int32
+	searchCalls atomic.Int32
+	more        []github.ViewerRepository
+	allList     []github.ViewerRepository
+	next        *string
+	scope       github.SearchScope
+	mu          sync.Mutex
+	searched    github.SearchScope
 }
 
-func (f *fakeLister) ViewerRepositories(context.Context, string) (github.ViewerRepositoryList, error) {
+func (f *fakeLister) ViewerRepositories(_ context.Context, _ string, _ int, cursor *string) (github.ViewerRepositoryList, error) {
 	f.calls.Add(1)
-	return github.ViewerRepositoryList{Repositories: f.list, TotalCount: f.total}, f.err
+	if cursor != nil {
+		return github.ViewerRepositoryList{Repositories: f.more, TotalCount: f.total}, f.err
+	}
+	return github.ViewerRepositoryList{Repositories: f.list, TotalCount: f.total, NextCursor: f.next, Scope: f.scope}, f.err
+}
+func (f *fakeLister) SearchRepositories(_ context.Context, _, query string, scope github.SearchScope, _ *string) (github.ViewerRepositoryList, error) {
+	f.searchCalls.Add(1)
+	f.mu.Lock()
+	f.searched = scope
+	f.mu.Unlock()
+	source := f.allList
+	if source == nil {
+		source = f.list
+	}
+	out := []github.ViewerRepository{}
+	for _, r := range source {
+		if matches(r.Repository, strings.Fields(query)) {
+			out = append(out, r)
+		}
+	}
+	return github.ViewerRepositoryList{Repositories: out, TotalCount: len(out)}, f.err
 }
 
 var pushed = time.Date(2026, 7, 1, 12, 0, 0, 0, time.UTC)
@@ -131,7 +158,7 @@ func names(l Listing) []string {
 	return out
 }
 
-func TestListingPreservesGitHubOrderFiltersAndAnnotates(t *testing.T) {
+func TestListingPreservesTopOrderFiltersAndAnnotates(t *testing.T) {
 	h := newHarness(t)
 	if _, err := h.registry.Pick(context.Background(), "acme/quiet", nil); err != nil {
 		t.Fatal(err)
@@ -170,7 +197,7 @@ func TestListingPreservesGitHubOrderFiltersAndAnnotates(t *testing.T) {
 		t.Errorf("no match = %+v, want an empty array", empty.Repositories)
 	}
 	if h.lister.calls.Load() != 1 {
-		t.Errorf("GitHub was called %d times; filtering must not call it", h.lister.calls.Load())
+		t.Errorf("GitHub was called %d times; top suggestions should be cached independently of search", h.lister.calls.Load())
 	}
 }
 
@@ -534,13 +561,17 @@ type changingLister struct {
 	release chan struct{}
 }
 
-func (l *changingLister) ViewerRepositories(context.Context, string) (github.ViewerRepositoryList, error) {
+func (l *changingLister) ViewerRepositories(context.Context, string, int, *string) (github.ViewerRepositoryList, error) {
 	if l.calls.Add(1) == 1 {
 		close(l.started)
 		<-l.release
 		return github.ViewerRepositoryList{Repositories: []github.ViewerRepository{{Repository: "old/private"}}, TotalCount: 500}, nil
 	}
 	return github.ViewerRepositoryList{Repositories: []github.ViewerRepository{{Repository: "new/private"}}, TotalCount: 100}, nil
+}
+
+func (l *changingLister) SearchRepositories(ctx context.Context, host, _ string, _ github.SearchScope, _ *string) (github.ViewerRepositoryList, error) {
+	return l.ViewerRepositories(ctx, host, 8, nil)
 }
 
 func TestAccountChangeDoesNotCacheAnOldInFlightListing(t *testing.T) {

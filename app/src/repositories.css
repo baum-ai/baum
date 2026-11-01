@@ -42,7 +42,7 @@
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-lg);
 }
-.repository-results .loading-status,
+.repository-results .loading-block,
 .repository-empty {
   min-height: 100%;
 }
@@ -133,7 +133,8 @@
   color: var(--text-secondary);
   font-style: italic;
 }
-.repository-picker .repository-inline button {
+.repository-picker .repository-inline button,
+.repository-picker .repository-show-more {
   height: auto;
   padding: 0;
   border: 0;
@@ -147,11 +148,15 @@
   text-decoration-color: transparent;
   text-underline-offset: 0.2em;
 }
-.repository-picker .repository-inline button:hover:not(:disabled) {
+.repository-picker .repository-inline button:hover:not(:disabled),
+.repository-picker .repository-show-more:hover {
   background: none;
   text-decoration-color: currentColor;
 }
 
+.repository-picker .repository-more .loading-status {
+  justify-content: center;
+}
 .repository-picker .repository-more {
   margin: 0;
   padding: 0.7rem 1rem;

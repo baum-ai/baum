@@ -62,12 +62,28 @@ setup bundle. `pnpm test:desktop` exercises setup with mocked IPC; it needs a
 completed `pnpm build`. The proxy suite covers login, CSRF, event streaming and
 React/CSS hot reload for the daemon-served application.
 
-Setup and Repositories fetch 20 of the signed-in GitHub account's top repositories
-in one request, ordered by latest push, with archived ones omitted. Search filters
-that fetched list. The footer shows how many rows are visible out of GitHub's full
-accessible, non-archived repository count, fetched alongside the top 20 without
-loading further repository details. Nothing is picked automatically: once the
-person picks a repository, the daemon looks for its local clone and the row says where it was found or
+Setup and the app's Add repositories use the same repository picker and daemon
+search. They first fetch eight top repositories, matching the visible rows, then
+fetch up to one hundred more from `topRepositories` in the background using the
+returned cursor. Archived repositories and duplicates are omitted. Cached top
+matches appear immediately as the person types, before the 250 ms debounce.
+The daemon makes a separate GitHub repository-search request, fetching up to
+one hundred results and caching each normalized query for five minutes. It never
+scans all accessible repositories. An empty search preserves GitHub's top
+repository order. Search results merge with cached top matches and sort
+by exact repository name or owner/name match, then top status, then latest push.
+While a request is pending, the picker refreshes every 300 ms; matching rows can
+be picked and onboarding continued immediately. Failed searches preserve cached
+matches and offer Try again. Older responses cannot replace newer results.
+The footer says how many more rows the list has ("12 more matches") and offers
+Show more, which adds twenty rows of the same list or search. When the loaded
+rows run out it asks the daemon for GitHub's next page (`more-list`), and while
+GitHub has more pages the count includes rows not loaded yet: the full
+accessible, non-archived total without a search, or every match of a search.
+Once more rows show, the results keep their eight-row height and scroll, so
+the page never moves. Nothing is picked
+automatically: once the person picks a repository, the daemon looks for its local
+clone and the row says where it was found or
 offers to choose or clone one. A picked repository can have
 no clone: its pull requests remain in Pull requests and link by repository and PR
 number. Its page says **Needs a local clone**, with **Choose folder** and
