@@ -117,7 +117,9 @@ started from.
 3. Unpacks each member's checkout at `members/<number>/head/` and
    `members/<number>/merge-base/` in the run directory, and writes
    `members.json`: each member's number, title, reviewed head and a compact
-   projection of its saved review (summary, sections and risks).
+   projection of its saved review (summary, sections and risks). A section
+   whose details are pending or failed has "Details for this section are
+   unavailable." in place of its summary.
 4. Runs the agent loop with the public group prompt
    (`agent/prompt` `GroupPrompts`, version `group-review-public-v3`).
    Before validation the host fills what the model never writes: the

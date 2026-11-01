@@ -250,6 +250,12 @@ export type ReviewViewerProps<F extends ReviewFile = ReviewFile> = {
   /** Folds the side pane to its strip while true, whatever the reader chose,
    *  for a host that shares the width with a pane of its own. */
   foldSidePane?: boolean;
+  /** Asks the host to write again the details of a section of the current
+   *  version whose details failed; the section then offers a Retry. */
+  onRetryDetails?: (sectionId: string) => void | Promise<unknown>;
+  /** The current document is a draft whose context the host is still
+   *  writing: while it has none, the Summary says so in its place. */
+  contextPending?: boolean;
 };
 
 /** The places either side of the one being read, in reading order. */
@@ -377,6 +383,8 @@ function ReviewWorkspace<F extends ReviewFile>({
   onVersionsShown,
   steps: stepsRef,
   foldSidePane = false,
+  onRetryDetails,
+  contextPending = false,
 }: ReviewViewerProps<F> & { view: HistoryView }) {
   const [requested, setSelection] = useReviewSelection();
   // A place whose group the host has not supplied reads as the Summary. The
@@ -1640,6 +1648,7 @@ function ReviewWorkspace<F extends ReviewFile>({
           document={snapshot}
           onSelectSection={selectSection}
           onNavigate={historical ? undefined : navigateFromSummary}
+          contextPending={!historical && contextPending}
         />
       );
     }
@@ -1662,6 +1671,7 @@ function ReviewWorkspace<F extends ReviewFile>({
           idPrefix={historical ? `history-v${snapshot.review.version}-` : ""}
           showTiles={showTiles}
           labels={renderSectionLabels?.(section, snapshot)}
+          onRetryDetails={historical ? undefined : onRetryDetails}
         />
       </HunkPatchProvider>
     );

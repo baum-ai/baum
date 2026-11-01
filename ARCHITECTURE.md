@@ -287,6 +287,28 @@ backoff, `sources` and the mapping onto the bundle.
 
 The stored contract stays strict; leniency exists only in derived views.
 
+A section's `details` state exists only in the stored schema. A host sets it
+on a section that lacks its details: `pending` while they are still being
+written (a live draft shown while a job runs) and `failed` when they could
+not be written after repairs (a published version keeps the outline). Such a
+section keeps its outline (`id`, `title`, `kind`, `hunks`, `assessment`,
+`derived`); its `summary` may be absent or null, its `attention` null and its
+`evidence`, `blocks` and tiles empty, and its risks are those the previous
+version recorded for it. Without the state a section still needs its summary.
+The model never writes the state: the strict authored contract and every
+schema derived from it for a model (`ModelSchema`, Codex's strict schema)
+leave it out and require an object summary, exactly as before the state
+existed, so an authored section that carries it is a validation finding.
+`pending` belongs to a live draft only: a host never publishes or saves a
+version with it, and turns any section still pending into `failed` first
+(`review.FailPendingDetails`). A section the next version drops keeps
+`failed` and turns `pending` into `failed`, since nothing will write its
+details; the viewer shows an obsolete section without details as
+"Details unavailable", with no retry. After a rollback to a release without
+the state, a desktop daemon fails stored validation and refresh of a local
+document that carries `details` or the `incomplete_sections` limitation;
+the hosted service never stores either, so a hosted rollback is unaffected.
+
 ### Validation and derivation
 
 - Validation reports every finding in one pass, each located to the item it
@@ -301,7 +323,10 @@ The stored contract stays strict; leniency exists only in derived views.
   tiers, the index, agent reviews, the review exchange, each section's
   `review_score` and the document's `risk_score`. `risk_score` is the highest
   current section score, never an average, with floors set by active high and
-  critical risks.
+  critical risks. A current section without its details (`pending` or
+  `failed`) is scored by its assessment and the risks it holds, and makes
+  the document's score a lower bound with an `incomplete_sections`
+  limitation, since the risks its details would add are unknown.
 - A count the tool cannot establish is null, never zero.
 - `summary.context` (how the change fits into the codebase: a required
   `area` and optional `reached_by`, `contracts` and `related` parts, each
@@ -329,7 +354,12 @@ Given the previous version, `review` keeps sections stable:
 - each section's state (`new`, `changed`, `unchanged`, `stale`) is derived by
   comparing its hunk IDs with the previous version;
 - a risk the model omits becomes `mitigated`, and a risk that returns keeps
-  its `introduced_version`. A repair cannot drop a risk.
+  its `introduced_version`. A repair cannot drop a risk;
+- a section without its details (`pending` or `failed`) says nothing about
+  whether its risks were addressed, so, as in a stale section, the previous
+  version's risks are carried as they were recorded: an active one stays
+  active under its `introduced_version` and a mitigated one keeps its
+  `mitigated_version`.
 
 ### Stored documents
 
@@ -971,8 +1001,14 @@ through props and context:
 | header slots | no | not used | statistics, generation controls, approval state, a back link |
 | rail groups | no | Sessions and Commits, from `/api/sessions` (below) | changed files, linked sessions and commits, each listed in the rail with the host's pane |
 | version shown | no | not used | a callback with the versions on screen, for example to record that one was read |
+| details retry | no | not used | writes again the details of a current section whose `details` is `failed`; the section offers Retry only with it |
+| context pending | no | not used | says the current draft's context is still being written, so the Summary shows "Writing context…" while it has none |
 
 Optional seams default to absent, and the viewer renders the document alone.
+A section without its details (`details` `pending` or `failed`) shows its
+outline: its title, assessment and hunks under a live status, "Writing
+details…" or "Details unavailable", and read marks, approvals and discussion
+treat it as any section.
 The viewer never decides who can see a document; that is the host's job.
 
 The host preserves each hunk's rename source as optional

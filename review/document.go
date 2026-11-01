@@ -117,6 +117,7 @@ func newDocumentValidator() (*DocumentValidator, error) {
 		}
 	}
 	defs["section"].(map[string]any)["allOf"] = authoredRules
+	omitSectionDetails(defs["section"].(map[string]any))
 	risks := defs["section"].(map[string]any)["properties"].(map[string]any)["risks"].(map[string]any)["items"].(map[string]any)
 	omitProperties(risks, "state", "introduced_version", "mitigated_version")
 	delete(risks, "allOf")
@@ -297,6 +298,27 @@ func requireAuthoredContext(summary map[string]any) {
 	if required, _ := summary["required"].([]any); !containsString(stringSlice(required), "context") {
 		summary["required"] = append(required, "context")
 	}
+}
+
+// omitSectionDetails removes a section's details state from the authored
+// contract. The host records it on a section whose details are still being
+// written or could not be written, which then may lack its summary; the model
+// writes every section whole, so an authored section has no details and always
+// an object summary, exactly as before the state existed.
+func omitSectionDetails(section map[string]any) {
+	omitProperties(section, "details")
+	section["properties"].(map[string]any)["summary"].(map[string]any)["type"] = "object"
+	required := section["required"].([]any)
+	section["required"] = slices.Insert(required, slices.Index(required, any("hunks"))+1, any("summary"))
+	var rules []any
+	for _, rule := range section["allOf"].([]any) {
+		condition, _ := rule.(map[string]any)["if"].(map[string]any)
+		without, _ := condition["not"].(map[string]any)
+		if !containsString(stringSlice(without["required"]), "details") {
+			rules = append(rules, rule)
+		}
+	}
+	section["allOf"] = rules
 }
 
 func omitProperties(schema map[string]any, keys ...string) {
@@ -661,9 +683,22 @@ func (v *DocumentValidator) Prepare(document []byte, bundle *bundlepkg.Bundle, d
 	if err != nil {
 		return encoded, err.Error()
 	}
+	reconciledValue, err := decodeObject(reconciled, "reconciled review")
+	if err != nil {
+		return encoded, err.Error()
+	}
 	findings := derived
-	if semantic := v.Validate(reconciled, bundle); semantic != "" {
-		findings = append(findings, semantic)
+	// The authored candidate passed v.resolved above. Reconciliation also
+	// carries trusted previous sections, which may have failed details and a
+	// null summary; those are valid stored sections, not model-authored ones.
+	attachments := make(map[string]bool, len(bundle.Attachments))
+	for _, attachment := range bundle.Attachments {
+		attachments[attachment.ID] = true
+	}
+	if semantic, err := ruleFindings(reconciledValue, restored.Stack, restored.Sections, bundle, attachments); err != nil {
+		findings = append(findings, err.Error())
+	} else {
+		findings = append(findings, semantic...)
 	}
 	findings = append(findings, validateTileSources(restored.Sections, bundle, directory)...)
 	return encoded, strings.Join(findings, "\n")

@@ -1,6 +1,7 @@
 package review
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -43,7 +44,9 @@ func reconcileAuthoredHistory(document []byte, previous *bundlepkg.PreviousVersi
 		if err != nil {
 			return err
 		}
-		if err := reconcileSectionRisks(prior, current, priorVersion, priorVersion+1, len(hunks) == 0); err != nil {
+		// A section without its details says no more about its risks than
+		// a stale one does.
+		if err := reconcileSectionRisks(prior, current, priorVersion, priorVersion+1, len(hunks) == 0 || current["details"] != nil); err != nil {
 			return err
 		}
 		if !lifecycle {
@@ -68,6 +71,7 @@ func reconcileAuthoredHistory(document []byte, previous *bundlepkg.PreviousVersi
 			current = cloneObject(prior)
 			current["hunks"] = []any{}
 			dropUnlistedImages(current, attachments)
+			failPendingDetails(current)
 		}
 		if err := appendSection(prior, current); err != nil {
 			return nil, err
@@ -199,6 +203,7 @@ func RestoreOmittedPreviousSections(document []byte, previous *bundlepkg.Previou
 			current = cloneObject(prior)
 			current["hunks"] = []any{}
 			dropUnlistedImages(current, attachments)
+			failPendingDetails(current)
 			risks, _ := current["risks"].([]any)
 			for _, value := range risks {
 				if risk, ok := value.(map[string]any); ok {
@@ -224,6 +229,49 @@ func RestoreOmittedPreviousSections(document []byte, previous *bundlepkg.Previou
 	return json.Marshal(next)
 }
 
+// failPendingDetails marks a section whose details were still being written
+// as failed: nothing will write them now, so a carried or published section
+// never waits for details. A failed one stays failed; its summary may be null.
+func failPendingDetails(section map[string]any) {
+	if section["details"] == sectionDetailsPending {
+		section["details"] = sectionDetailsFailed
+	}
+}
+
+// FailPendingDetails returns the document with every section whose details
+// are still being written (pending) marked as failed. Only a live draft
+// holds pending details: a host applies this before it publishes or saves a
+// version. The document is returned unchanged when no section is pending or
+// it cannot be read as an object with sections.
+func FailPendingDetails(document []byte) []byte {
+	if !bytes.Contains(document, []byte(`"`+sectionDetailsPending+`"`)) {
+		return document
+	}
+	// Numbers stay as written, so nothing but the states changes meaning.
+	decoder := json.NewDecoder(bytes.NewReader(document))
+	decoder.UseNumber()
+	var root map[string]any
+	if decoder.Decode(&root) != nil {
+		return document
+	}
+	sections, _ := root["sections"].([]any)
+	changed := false
+	for _, value := range sections {
+		if section, ok := value.(map[string]any); ok && section["details"] == sectionDetailsPending {
+			section["details"] = sectionDetailsFailed
+			changed = true
+		}
+	}
+	if !changed {
+		return document
+	}
+	encoded, err := json.Marshal(root)
+	if err != nil {
+		return document
+	}
+	return encoded
+}
+
 func previousSections(previous *bundlepkg.PreviousVersion) ([]any, error) {
 	sections := []any{}
 	if previous == nil {
@@ -243,7 +291,11 @@ func previousSections(previous *bundlepkg.PreviousVersion) ([]any, error) {
 // A stale section (no current hunks) says nothing about whether its risks
 // were addressed, so they keep the state they were last recorded with; if the
 // hunks return, a continuing risk is active under its original version.
-func reconcileSectionRisks(prior, current map[string]any, priorVersion, version int, stale bool) error {
+// Neither does a section whose details are still being written or could not
+// be written (it has a details state): the risks its details would hold are
+// unknown, so retained says to keep every previous risk as it was recorded
+// rather than read its absence as mitigation.
+func reconcileSectionRisks(prior, current map[string]any, priorVersion, version int, retained bool) error {
 	currentRisks, err := arrayField(current, "risks")
 	if err != nil {
 		return err
@@ -273,7 +325,7 @@ func reconcileSectionRisks(prior, current map[string]any, priorVersion, version 
 		wasMitigated := oldRisk["state"] == "mitigated"
 		nextRisk, found := byID[id]
 		delete(byID, id)
-		if found && !stale {
+		if found && !retained {
 			nextRisk["state"] = "active"
 			nextRisk["introduced_version"] = introduced
 			nextRisk["mitigated_version"] = nil
@@ -288,7 +340,7 @@ func reconcileSectionRisks(prior, current map[string]any, priorVersion, version 
 		case wasMitigated:
 			nextRisk["state"] = "mitigated"
 			nextRisk["mitigated_version"] = optionalPositiveInteger(oldRisk, "mitigated_version", version)
-		case stale:
+		case retained:
 			nextRisk["state"] = "active"
 			nextRisk["mitigated_version"] = nil
 		default:
