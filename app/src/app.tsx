@@ -463,7 +463,8 @@ function Workspace({ url }: { url: UrlState }) {
   const pullsFilter = usePageFilter("pulls");
   // A link from before the filter menu names one repository: it becomes the
   // page's filter.
-  const linkedRepo = url.search.get("repo");
+  // Analytics and Timeline keep their own `repo=`.
+  const linkedRepo = url.search.get("page") === "pulls" ? url.search.get("repo") : null;
   // It waits for the saved filters, so it replaces only their repositories.
   useEffect(() => {
     if (!linkedRepo || !pullsFilter.ready) return;
@@ -1337,6 +1338,7 @@ function Workspace({ url }: { url: UrlState }) {
               refresh={refresh}
               refreshing={listBusy}
               reviewGroups={groups}
+              repositories={repositories}
               saveAsInbox={saveAsInbox}
               entries={indexedEntries}
               Link={LocalLink}

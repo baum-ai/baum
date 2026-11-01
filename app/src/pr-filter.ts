@@ -104,6 +104,23 @@ export function inWhere(criteria: Criteria, repository: string): boolean {
 
 /** The daemon's limits on a list of owners or repositories. */
 export const MAX_NAMED = 50;
+// The shapes the daemon accepts (`internal/inboxes`).
+const OWNER = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$/;
+const REPOSITORY =
+  /^(?:[A-Za-z0-9](?:[A-Za-z0-9.-]{0,251}[A-Za-z0-9])?(?::[0-9]{1,5})?\/)?[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?\/[A-Za-z0-9._-]{1,100}$/;
+
+/** Whether the daemon would keep these owners and repositories. A value it
+ *  refuses would stay pending and fail every later save of the filters. */
+export function savable(criteria: Pick<Criteria, "owners" | "repositories">): boolean {
+  return (
+    criteria.owners.length <= MAX_NAMED &&
+    criteria.repositories.length <= MAX_NAMED &&
+    criteria.owners.every((one) => OWNER.test(one)) &&
+    criteria.repositories.every(
+      (one) => REPOSITORY.test(one) && !one.endsWith("/.") && !one.endsWith("/.."),
+    )
+  );
+}
 
 /** The owners and repositories that hold exactly `picked` out of `known`:
  *  owners alone while every owner touched is picked whole, so its later
@@ -239,8 +256,7 @@ export function usePageFilter(page: FilterPage) {
     saving: saved.saving,
     set(next: Criteria) {
       if (JSON.stringify(next) === JSON.stringify(criteria)) return;
-      // The daemon refuses a longer list, and every later save with it.
-      if (next.owners.length > MAX_NAMED || next.repositories.length > MAX_NAMED) return;
+      if (!savable(next)) return;
       saved.update((value) => {
         // Changed pages move to the end, so the oldest are dropped first.
         const { [page]: _, ...rest } = value.pages ?? {};

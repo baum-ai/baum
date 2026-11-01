@@ -720,6 +720,7 @@ export function UpNextPage({
   refreshing = false,
   reviewGroups = [],
   entries = [],
+  repositories = [],
   saveAsInbox,
   Link,
 }: {
@@ -750,6 +751,8 @@ export function UpNextPage({
   refresh?: (run: RefreshRun) => Promise<unknown>;
   /** A read of every repository is under way, the first or a refresh. */
   refreshing?: boolean;
+  /** The picked repositories, offered by the filter with or without a pull request. */
+  repositories?: string[];
   /** Makes a new inbox of the quick filter; offered in the Inbox (all). */
   saveAsInbox?: (criteria: Criteria) => void;
   Link: ComponentType<ViewerLinkProps>;
@@ -1032,6 +1035,7 @@ export function UpNextPage({
         criteria={quick.criteria}
         onChange={quick.set}
         entries={unfiltered}
+        repositories={repositories}
         onSave={!scope && saveAsInbox ? () => saveAsInbox(quick.criteria) : undefined}
         error={quick.error}
         retry={() => void quick.retry()}

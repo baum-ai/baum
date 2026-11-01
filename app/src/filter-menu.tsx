@@ -68,7 +68,13 @@ export function FilterMenu({
   const [search, setSearch] = useState("");
   const ids = useId();
   const [tooMany, setTooMany] = useState(false);
-  const owners = tree([...repositories, ...entries.map((e) => e.pull_request.repository)]);
+  // The repositories the filter names are offered too, so what is ticked is
+  // always what applies.
+  const owners = tree([
+    ...repositories,
+    ...entries.map((e) => e.pull_request.repository),
+    ...criteria.repositories,
+  ]);
   const known = owners.flatMap(([, names]) => names);
   const active = chips(criteria, known);
   // What is ticked: nothing while every repository is in.

@@ -874,3 +874,12 @@ it("filters Pull requests, and a link naming a repository becomes its filter", a
   await click(node.querySelector('button[aria-label="Remove other/thing"]'));
   expect(node.textContent).toContain("Change 1");
 });
+
+it("leaves another page's repo= alone, and a repository the daemon would refuse unsaved", async () => {
+  await render("?page=analytics&repo=acme/demo");
+  expect(search().get("repo")).toBe("acme/demo");
+  expect(savedUIState("api/ui-state/filters")).toBeNull();
+  await render("?page=pulls&filter=all&repo=foo");
+  expect(search().get("repo")).toBeNull();
+  expect(savedUIState("api/ui-state/filters")).toBeNull();
+});

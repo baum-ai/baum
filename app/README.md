@@ -814,7 +814,9 @@ without changing a saved inbox (`src/filter-menu.tsx`, matched by
 Inbox it sits below the progress bar, in an inbox's queue below its summary,
 and in Pull requests at the end of the views. The Filter button, with the
 number of parts in force, opens a menu (Esc or a click elsewhere closes it):
-organizations with their repositories nested under them (ticking an
+organizations with their repositories nested under them (the picked
+repositories, those of the page's pull requests and any the filter names; an
+Enterprise repository's organization is its owner, whatever the host; ticking an
 organization is all of its repositories; clearing one of them keeps the
 others; nothing ticked is all of them; a search box shows once there are more
 than four organizations),
@@ -945,7 +947,8 @@ Everyone else's open pull requests are under Others, so Other pull requests
 appears only there; Requested, Mine, Not reviewed and Saved history are the
 other views, and a view with nothing in it is dimmed. The quick filter (see
 below) sits at the end of the views and narrows every view and its count; a
-link with `repo=` from before it, once the saved filters are read, replaces
+link to Pull requests with `repo=` from before it (Analytics and Timeline keep
+their own `repo=`), once the saved filters are read, replaces
 the page filter's organizations and repositories with that repository, and the
 address drops `repo=`.
 Collapsing keeps selections, and Select all selects only currently expanded

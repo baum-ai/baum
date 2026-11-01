@@ -8,6 +8,7 @@ import {
   NO_CRITERIA,
   ownerOf,
   parseCriteria,
+  savable,
   whereFor,
   type Criteria,
 } from "./pr-filter";
@@ -137,6 +138,17 @@ it("names each part in force as a chip that removes it", () => {
   expect(list[2]!.without.involvement).toEqual([]);
   expect(chips(criteria({ owners: ["acme"] })).map((chip) => chip.label)).toEqual(["acme"]);
   expect(chips(NO_CRITERIA)).toEqual([]);
+});
+
+it("keeps from the daemon what it would refuse", () => {
+  expect(savable(criteria({ owners: ["acme"], repositories: ["ghe.example.com/acme/app"] }))).toBe(
+    true,
+  );
+  expect(savable(criteria({ repositories: ["foo"] }))).toBe(false);
+  expect(savable(criteria({ owners: ["bad owner"] }))).toBe(false);
+  expect(savable(criteria({ repositories: ["acme/.."] }))).toBe(false);
+  const many = Array.from({ length: 51 }, (_, i) => `acme/r${i}`);
+  expect(savable(criteria({ repositories: many }))).toBe(false);
 });
 
 it("reads saved criteria defensively", () => {
