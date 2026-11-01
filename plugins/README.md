@@ -26,8 +26,14 @@ Update in Settings does per agent. Restart running agent sessions to use new
 hooks, and review trust again where the agent asks (Codex: `/hooks`). No baum sign-in
 is required; installation fetches the public GitHub marketplace but calls no baum server. An old/missing
 agent CLI or failed command gives an error with upgrade/manual instructions.
-baum never edits hook settings directly, keeps no migration markers and
-performs no settings migration or backward-compatibility cleanup.
+baum never edits hook settings directly. Installing or updating Codex through
+baum also configures its terminal title to include the thread ID needed for
+Focus, keeping other title items. Restart running Codex terminal sessions to
+load that preference. Focus repairs older connections when needed and explains
+how to restart and resume the session. The preference follows `CODEX_HOME`
+(default `~/.codex`); removal leaves it in place. See
+[Codex focus configuration](../internal/codexconfig/README.md). No migration
+markers or hook-settings migration are used.
 
 Setup uses the same installer once per invocation for a hosted install or
 logged-in user, unless `--skip-user-hooks` or `--skip-entire` is set. The

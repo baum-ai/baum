@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -172,5 +174,44 @@ func TestSharedCodexAppleAutomationRefused(t *testing.T) {
 	result := m.focuser("darwin", nil).Focus(context.Background(), "codex", codexThread, terminal)
 	if result.Precision != "" || !strings.Contains(result.Message, "Automation") {
 		t.Fatalf("result %+v", result)
+	}
+}
+
+func TestSharedCodexFocusRepairsExistingSetup(t *testing.T) {
+	t.Setenv("CODEX_HOME", t.TempDir())
+	m, terminal := sharedCodexMachine()
+	terminal.Env = nil
+	m.answers["hyprctl -j clients"] = answer{out: "[]"}
+	f := m.focuser("linux", hyprEnv)
+	f.ConfigureCodexTitle = nil
+	result := f.Focus(context.Background(), "codex", codexThread, terminal)
+	if result.Precision != "" || !strings.Contains(result.Message, "Configured Codex terminal focus") || !strings.Contains(result.Message, "Restart") {
+		t.Fatalf("repair=%+v", result)
+	}
+	data, err := os.ReadFile(filepath.Join(os.Getenv("CODEX_HOME"), "config.toml"))
+	if err != nil || !strings.Contains(string(data), "thread-id") {
+		t.Fatalf("config=%s err=%v", data, err)
+	}
+	result = f.Focus(context.Background(), "codex", codexThread, terminal)
+	if result.Message != codexTitleHint {
+		t.Fatalf("unchanged setup=%+v", result)
+	}
+	// After the terminal restarts with the title, Focus selects that session.
+	m.answers["hyprctl -j clients"] = answer{out: `[{"address":"0xthread","title":"` + codexThread + `"}]`}
+	result = f.Focus(context.Background(), "codex", codexThread, terminal)
+	if result.Precision != Session {
+		t.Fatalf("after restart=%+v", result)
+	}
+}
+
+func TestSharedCodexFocusReportsConfigurationFailure(t *testing.T) {
+	m, terminal := sharedCodexMachine()
+	terminal.Env = nil
+	m.answers["hyprctl -j clients"] = answer{out: "[]"}
+	f := m.focuser("linux", hyprEnv)
+	f.ConfigureCodexTitle = func() (bool, error) { return false, errors.New("read-only config") }
+	result := f.Focus(context.Background(), "codex", codexThread, terminal)
+	if !strings.Contains(result.Message, "read-only config") || !strings.Contains(result.Message, "Reconnect Codex") {
+		t.Fatalf("result=%+v", result)
 	}
 }

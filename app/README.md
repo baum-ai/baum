@@ -1343,8 +1343,12 @@ note shows on its own line after the actions, a failure as an alert.
 
 Inherited tmux variables without a recorded terminal do not identify a session's
 pane. Codex's shared app server runs hooks separately from its terminal clients;
-baum locates those clients by the thread ID in their terminal titles. Include
-`thread-id` in Codex's `tui.terminal_title` setting. A unique matching tmux pane,
+baum locates those clients by the thread ID in their terminal titles.
+Connecting or updating Codex through baum automatically puts `thread-id` last
+in `tui.terminal_title`, preserving the user's other title items. If an older
+connection lacks it, Focus repairs the setting and asks the user to restart
+the Codex terminal session and resume their conversation. No manual config
+edit is needed. A unique matching tmux pane,
 kitty tab (with remote control), iTerm2 session, Terminal tab, Hyprland window or
 X11 window can then be selected. Shortened thread IDs need at least 24 characters;
 missing or ambiguous titles produce a notice without selecting another session.

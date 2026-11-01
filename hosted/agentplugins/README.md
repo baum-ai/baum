@@ -31,4 +31,8 @@ plugin that is not installed or disabled, and reports the version before and
 after. Removal leaves that marketplace
 and other plugins alone. Neither installation nor removal touches repository
 hooks, signs in to baum, or asserts that the agent trusted the hooks.
-See [plugin usage](../../plugins/README.md) for trust and network behavior.
+The shared baum CLI installer also configures Codex's terminal title for
+Focus after a successful install or update. This is a terminal preference,
+separate from plugin installation and hook trust. See
+[Codex focus configuration](../../internal/codexconfig/README.md) and
+[plugin usage](../../plugins/README.md) for trust and network behavior.

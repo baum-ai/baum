@@ -172,6 +172,11 @@ handshake, in [`apiclient`](../apiclient).
   without it, or with it disabled, is an error. No raw hook settings are edited and no
   migration markers or compatibility cleanup are maintained. Installation
   downloads from GitHub; it needs no baum sign-in and calls no baum server.
+- Codex plugin installation and updates also prepare its terminal title for
+  Focus, preserving other title items and reporting when running terminal
+  sessions need restarting. Existing connections are repaired when Focus
+  cannot locate their terminal. See
+  [Codex focus configuration](../../internal/codexconfig/README.md).
 - [`agentplugins`](../agentplugins/README.md) owns the native commands. Claude
   uses user-scope plugin install/list/uninstall; Codex uses plugin add/list/
   remove. Successful commands are verified with native list JSON. A missing

@@ -12,6 +12,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/baum-ai/baum/hosted/agentplugins"
+	"github.com/baum-ai/baum/internal/codexconfig"
 )
 
 func newInstallUserHooksCommand(stdout, stderr io.Writer) *cobra.Command {
@@ -158,6 +159,17 @@ func changeUserHooks(ctx context.Context, agents []string, action string, stdout
 			failures = append(failures, fmt.Errorf("%s: %w", name, err))
 			_, _ = fmt.Fprintf(stderr, "error: %s plugin: %v\n", name, err)
 			continue
+		}
+		if agent == "codex" && action != "uninstall" {
+			changed, err := codexconfig.EnsureTerminalTitle()
+			if err != nil {
+				failures = append(failures, fmt.Errorf("Codex plugin is installed, but terminal focus setup failed: %w", err))
+				_, _ = fmt.Fprintf(stderr, "error: Codex terminal focus setup: %v\n", err)
+				continue
+			}
+			if changed {
+				_, _ = fmt.Fprintln(stdout, "Configured Codex terminal focus. Restart running Codex terminal sessions, then try Focus again.")
+			}
 		}
 		switch {
 		case action == "install":
