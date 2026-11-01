@@ -70,14 +70,23 @@ type Group struct {
 	// in step with it (SyncStacks); a person's rename or member change makes
 	// it theirs.
 	Stack bool `json:"stack"`
-	// Landed are the members of a stack group that merged, ascending. They
-	// stay in the stack (shown as merged) but are not Members: a review
-	// never reads them. Empty for a group a person made.
-	Landed    []int     `json:"landed"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	// Landed are the members of a stack group that are no longer open,
+	// ascending, with what became of them. They stay in the stack, in
+	// place, but are not Members: a review never reads them. Empty for a
+	// group a person made.
+	Landed    []LandedMember `json:"landed"`
+	CreatedAt time.Time      `json:"created_at"`
+	UpdatedAt time.Time      `json:"updated_at"`
 	// chain is a stack group's saved placements (see SyncStacks).
 	chain []chainEntry
+}
+
+// LandedMember is a stack group member that is no longer open. State is
+// StateMerged, StateClosed or StateUnknown (not open any more, but discovery
+// has not yet seen whether it merged).
+type LandedMember struct {
+	Number int    `json:"number"`
+	State  string `json:"state"`
 }
 
 // ReviewedMember is a member as a group review version covered it: the
@@ -183,7 +192,7 @@ func (s *Store) Create(ctx context.Context, repository, name string, members []i
 		return Group{}, err
 	}
 	now := time.Now().UTC().Truncate(time.Millisecond)
-	g := Group{ID: newID(), Repository: repository, Name: name, Members: members, Landed: []int{}, CreatedAt: now, UpdatedAt: now}
+	g := Group{ID: newID(), Repository: repository, Name: name, Members: members, Landed: []LandedMember{}, CreatedAt: now, UpdatedAt: now}
 	encoded, _ := json.Marshal(members)
 	if _, err := s.db.ExecContext(ctx, `INSERT INTO groups(id,repository,name,members,created,updated) VALUES(?,?,?,?,?,?)`, g.ID, g.Repository, g.Name, string(encoded), now.UnixMilli(), now.UnixMilli()); err != nil {
 		return Group{}, err
@@ -203,16 +212,16 @@ func scanGroup(row interface{ Scan(...any) error }) (Group, error) {
 	if err := json.Unmarshal([]byte(members), &g.Members); err != nil {
 		return Group{}, err
 	}
-	g.Landed = []int{}
+	g.Landed = []LandedMember{}
 	if err := json.Unmarshal([]byte(chain), &g.chain); err != nil {
 		return Group{}, err
 	}
 	for _, entry := range g.chain {
-		if g.Stack && entry.Landed {
-			g.Landed = append(g.Landed, entry.Number)
+		if g.Stack && entry.State != "" {
+			g.Landed = append(g.Landed, LandedMember{Number: entry.Number, State: entry.State})
 		}
 	}
-	slices.Sort(g.Landed)
+	slices.SortFunc(g.Landed, func(a, b LandedMember) int { return a.Number - b.Number })
 	g.CreatedAt, g.UpdatedAt = time.UnixMilli(created).UTC(), time.UnixMilli(updated).UTC()
 	return g, nil
 }
@@ -273,7 +282,7 @@ func (s *Store) Update(ctx context.Context, id string, name *string, members []i
 	if name == nil && members == nil {
 		return g, nil
 	}
-	g.Stack, g.Landed = false, []int{}
+	g.Stack, g.Landed = false, []LandedMember{}
 	g.UpdatedAt = time.Now().UTC().Truncate(time.Millisecond)
 	encoded, _ := json.Marshal(g.Members)
 	if _, err := tx.ExecContext(ctx, `UPDATE groups SET name=?, members=?, stack=0, chain='[]', updated=? WHERE id=?`, g.Name, string(encoded), g.UpdatedAt.UnixMilli(), id); err != nil {

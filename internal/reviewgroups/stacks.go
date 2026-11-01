@@ -30,14 +30,15 @@ func stackName(pr discovery.PullRequest) string {
 // chainEntry is one member of a stack group as the last sync saw it: its
 // place in the stack (Parent, nil for the root) and the branches and author
 // the detection rules read, kept because a merged member leaves the open pull
-// requests that discovery lists. Landed marks a member that merged.
+// requests that discovery lists. State is empty for an open member, else
+// what discovery last knew of it (the State constants).
 type chainEntry struct {
 	Number  int    `json:"n"`
 	Parent  *int   `json:"p,omitempty"`
 	BaseRef string `json:"b,omitempty"`
 	HeadRef string `json:"h,omitempty"`
 	Author  string `json:"a,omitempty"`
-	Landed  bool   `json:"l,omitempty"`
+	State   string `json:"s,omitempty"`
 }
 
 // SyncStacks keeps repository's stack groups in step with the stacks among
@@ -49,11 +50,11 @@ type chainEntry struct {
 //     new stack group;
 //   - a stack group whose stack gained or lost members gets the stack's
 //     members;
-//   - a member that merged stays in the group in its place, as Landed, and
-//     is no longer a Member; one that closed without merging drops out
-//     (stacks.KeepClosedUnmerged). A member discovery no longer lists and has
-//     no observation of is kept as landed until its state is known;
-//   - a stack group whose stack is gone (every member merged or closed,
+//   - a member that merged or closed stays in the group in its place, as
+//     Landed with its state, and is no longer a Member. A member discovery
+//     no longer lists and has no observation of is kept as StateUnknown until
+//     its state is known;
+//   - a stack group whose stack is gone (no open member left,
 //     unstacked, or grown past MaxMembers open pull requests) is dissolved:
 //     removed from every list, its versions kept.
 //
@@ -120,11 +121,11 @@ func (s *Store) SyncStacks(ctx context.Context, repository string, prs []discove
 			entry := entries[number]
 			stored[i].Members = append(stored[i].Members, stacks.Placement{Number: number, Parent: entry.Parent})
 			// A member that is no longer open is a candidate only from what
-			// the last sync saved. Closed without merging is the state the
-			// stacks package decides on; any other (merged, or not known
-			// yet) keeps its place.
+			// the last sync saved. Closed keeps its place like merged does;
+			// a state not known yet is planned as merged, whose retarget
+			// rule keeps a chain a merge retargeted.
 			if _, open := candidates[number]; !open && !claimed[number] && (entry.HeadRef != "" || entry.BaseRef != "") {
-				candidates[number] = stacks.Candidate{Number: number, Merged: observed[number] != "CLOSED", BaseRef: entry.BaseRef, HeadRef: entry.HeadRef, Author: entry.Author}
+				candidates[number] = stacks.Candidate{Number: number, Merged: landedState(observed[number], entry.State) != StateClosed, BaseRef: entry.BaseRef, HeadRef: entry.HeadRef, Author: entry.Author}
 			}
 		}
 	}
@@ -177,9 +178,14 @@ func (s *Store) SyncStacks(ctx context.Context, repository string, prs []discove
 		list := make([]chainEntry, 0, len(entries))
 		for number, entry := range entries {
 			if refreshed, ok := candidates[number]; ok {
-				entry.BaseRef, entry.HeadRef, entry.Author, entry.Landed = refreshed.BaseRef, refreshed.HeadRef, refreshed.Author, !refreshed.Open
+				entry.BaseRef, entry.HeadRef, entry.Author = refreshed.BaseRef, refreshed.HeadRef, refreshed.Author
+				previous := entry.State
+				entry.State = ""
+				if !refreshed.Open {
+					entry.State = landedState(observed[number], previous)
+				}
 			}
-			if !entry.Landed {
+			if entry.State == "" {
 				members = append(members, number)
 			}
 			list = append(list, entry)
@@ -207,9 +213,32 @@ func (s *Store) SyncStacks(ctx context.Context, repository string, prs []discove
 	return changed, tx.Commit()
 }
 
+// The states of a member that is no longer open (chainEntry.State).
+const (
+	StateMerged  = "merged"
+	StateClosed  = "closed"
+	StateUnknown = "unknown"
+)
+
+// landedState is a no-longer-open member's state from discovery's observation
+// (MERGED, CLOSED, or OPEN/none when it has not seen the change yet), keeping
+// the previously known merged or closed state.
+func landedState(observed, previous string) string {
+	switch observed {
+	case "MERGED":
+		return StateMerged
+	case "CLOSED":
+		return StateClosed
+	}
+	if previous == StateMerged || previous == StateClosed {
+		return previous
+	}
+	return StateUnknown
+}
+
 func entryOf(number int, parent *int, candidates map[int]stacks.Candidate) chainEntry {
 	c := candidates[number]
-	return chainEntry{Number: number, Parent: parent, BaseRef: c.BaseRef, HeadRef: c.HeadRef, Author: c.Author, Landed: !c.Open}
+	return chainEntry{Number: number, Parent: parent, BaseRef: c.BaseRef, HeadRef: c.HeadRef, Author: c.Author, State: ""}
 }
 
 func sortedEntries(entries []chainEntry) []chainEntry {

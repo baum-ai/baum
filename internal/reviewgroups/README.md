@@ -49,21 +49,20 @@ groups in step (`Store.SyncStacks`):
   chain or a tree; forks take no part. The open pull requests are planned over
   the live stack groups, which keeps a group's identity when its stack
   changes. A stack of more than eight open pull requests gets no group.
-- A member that **merged stays in its stack group**, in its place, as
-  `landed`: it is no longer in `members`, so no review, automatic job or
-  outdated check reads it, and the group page lists it first, marked
-  Merged. Discovery lists only open pull requests, so the group keeps each
-  member's parent, branches and author (`groups.chain`, written by every
-  sync) and plans a member discovery no longer lists from that. Its state
-  comes from discovery's observations: merged keeps it, closed without
-  merging drops it (`stacks.KeepClosedUnmerged`), and one with no
-  observation yet (or a stale open one) is kept as landed until its state is
-  known, so a member closed without merging may read Merged until the next
-  poll after its closed state is observed. A stack group saved before `chain`
-  existed has no saved branches, so a member that merges before its first
-  sync leaves it. The group goes
-  on while one member is open, even if only one; automatic generation needs
-  two open members.
+- A member that **merged or closed stays in its stack group**, in its place,
+  in `landed` with its state (`merged`, `closed` or `unknown`): it is no
+  longer in `members`, so no review, automatic job or outdated check reads
+  it, and the group page lists these first, marked Merged, Closed or No
+  longer open. Discovery lists only open pull requests, so the group keeps
+  each member's parent, branches and author (`groups.chain`, written by every
+  sync) and plans a member discovery no longer lists from that. The state
+  comes from discovery's observations and is kept once known. A member
+  with no observation yet (or a stale open one) is `unknown` until the next
+  poll after its merged or closed state is observed, a brief window, and a
+  stack group saved before `chain` existed has no saved branches, so a
+  member that merges before its first sync leaves it. The group goes on
+  while one member is open, even if only one; automatic generation needs two
+  open members.
 - A stack without a group gets one (`stack` true), named after its bottom
   pull request's title as "Review together" names a group after the first.
   The app shows a stack group, and its automatically generated review, as it

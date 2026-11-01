@@ -54,6 +54,13 @@ function numberList(numbers: number[]) {
     : (named[0] ?? "");
 }
 
+/** What a stack group says of a member that is no longer open. */
+const landedLabel: Record<string, string> = {
+  merged: "Merged",
+  closed: "Closed",
+  unknown: "No longer open",
+};
+
 /** What a group review waits for while its members' reviews run. */
 function waitingText(numbers: number[]) {
   return `A group review builds on each pull request's own review. ${numberList(numbers)} ${
@@ -221,8 +228,9 @@ export function GroupPage({
         same.find((e) => e.pull_request.number === number),
     };
   });
-  const landed = (group.landed ?? []).map((number) => ({
+  const landed = (group.landed ?? []).map(({ number, state }) => ({
     number,
+    state,
     entry: entries.find(
       (e) =>
         sameRepository(e.pull_request.repository, group.repository) &&
@@ -560,8 +568,8 @@ export function GroupPage({
                 ) : null}
               </header>
               <ul className="local-group-members">
-                {landed.map(({ number, entry }) => (
-                  <li key={`merged-${number}`} className="local-group-member" data-landed="true">
+                {landed.map(({ number, state, entry }) => (
+                  <li key={`merged-${number}`} className="local-group-member" data-landed={state}>
                     <span className="local-group-number">#{number}</span>
                     <div className="local-group-member-title">
                       {entry ? (
@@ -570,7 +578,7 @@ export function GroupPage({
                         <span className="text-(--text-tertiary)">Not in the inbox</span>
                       )}
                       <span className="local-group-member-state">
-                        <span>Merged</span>
+                        <span>{landedLabel[state] ?? "No longer open"}</span>
                       </span>
                     </div>
                   </li>
