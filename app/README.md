@@ -1055,7 +1055,7 @@ did for the person (reviews that completed, fixes pushed, threads resolved, merg
 branch updates and check re-runs from the app, decision capture runs that succeeded), its
 failures left to Jobs. A figure that is unknown is "—" with its reason as a tooltip and to
 screen readers, never 0; a floor reads "≥". Charts are HTML and inline SVG in the
-viewer's `--data-*` slots, agents in a fixed order (Claude Code, Codex, Cursor),
+viewer's `--data-*` slots, agents in a fixed order (Claude Code, Codex, then any other recorded, such as earlier Cursor sessions, in a muted colour; the agent filter offers Claude Code and Codex only),
 with tooltips on hover and focus. The page reads again every two seconds while
 the daemon is still indexing or searching GitHub, then every five minutes. An
 older daemon without the capability gets a note to update baum.

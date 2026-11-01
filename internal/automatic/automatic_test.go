@@ -1149,3 +1149,29 @@ func TestPutSetsAndClearsTheFixAgent(t *testing.T) {
 		t.Fatalf("cleared: %+v", p)
 	}
 }
+
+// The notice of the cursor-agent acknowledgement, which an older baum saved
+// and nothing produces now, is dropped on load.
+func TestAnOldCursorAgentNoticeIsDropped(t *testing.T) {
+	h := newHarness(t)
+	h.observe(pr{number: 1, head: "a1", authored: true})
+	raw, err := appdb.Read(h.scheduler.Path, "state", "automatic")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var state map[string]map[string]map[string]any
+	if err = json.Unmarshal(raw, &state); err != nil {
+		t.Fatal(err)
+	}
+	state["repositories"]["org/repo"]["notice"] = "cursor_agent_acknowledgement_required"
+	if raw, err = json.Marshal(state); err != nil {
+		t.Fatal(err)
+	}
+	if err = appdb.Write(h.scheduler.Path, "state", "automatic", raw); err != nil {
+		t.Fatal(err)
+	}
+	h.restart()
+	if o, err := h.scheduler.Overview(context.Background()); err != nil || len(o.Repositories) != 1 || o.Repositories[0].Notice != "" {
+		t.Fatalf("overview %+v %v", o, err)
+	}
+}

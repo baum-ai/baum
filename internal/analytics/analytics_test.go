@@ -353,7 +353,7 @@ func TestReportCountsRootSessionsOnceAndNeverPricesUnknownModels(t *testing.T) {
 		t.Errorf("indexing = %+v", report.Indexing)
 	}
 	// Only the agents seen are offered.
-	if strings.Join(report.Options.Agents, ",") != "claude_code,codex,cursor" || strings.Join(report.Options.Repositories, ",") != "acme/demo" {
+	if strings.Join(report.Options.Agents, ",") != "claude_code,codex" || strings.Join(report.Options.Repositories, ",") != "acme/demo" {
 		t.Errorf("options = %+v", report.Options)
 	}
 	filtered, err := s.Report(context.Background(), Query{Days: 7, Agent: "codex"})

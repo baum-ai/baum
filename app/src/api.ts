@@ -353,7 +353,6 @@ export function automaticNotice(status: AutomaticStatus): string | null {
     case "":
     // An older daemon refused or paused these for the price; nothing does
     // now, so a notice it left behind says nothing.
-    case "cursor_agent_acknowledgement_required":
     case "unknown_model_price":
     case "daily_cap":
       return null;
