@@ -26,9 +26,9 @@ func organizationServer(t *testing.T, memberships, reachable string, calls *int)
 			if r.URL.Query().Get("state") != "active" {
 				t.Error("pending invitations must not count")
 			}
-			fmt.Fprint(w, memberships)
+			_, _ = fmt.Fprint(w, memberships)
 		case "/user/orgs":
-			fmt.Fprint(w, reachable)
+			_, _ = fmt.Fprint(w, reachable)
 		default:
 			t.Error("unexpected URL " + r.URL.Path)
 		}
@@ -108,14 +108,14 @@ func TestOrganizationsReadsEveryPage(t *testing.T) {
 	}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/user/orgs" {
-			fmt.Fprint(w, `[]`)
+			_, _ = fmt.Fprint(w, `[]`)
 			return
 		}
 		page := r.URL.Query().Get("page")
 		if page == "1" {
-			fmt.Fprint(w, "["+strings.Join(all[:100], ",")+"]")
+			_, _ = fmt.Fprint(w, "["+strings.Join(all[:100], ",")+"]")
 		} else {
-			fmt.Fprint(w, "["+strings.Join(all[100:], ",")+"]")
+			_, _ = fmt.Fprint(w, "["+strings.Join(all[100:], ",")+"]")
 		}
 	}))
 	t.Cleanup(srv.Close)
@@ -131,9 +131,9 @@ func TestFirstSignInInSSOEnforcingAccountReportsSSO(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/login/device/code":
-			fmt.Fprint(w, `{"device_code":"d","user_code":"ABCD-EFGH","verification_uri":"https://github.com/login/device","expires_in":900,"interval":5}`)
+			_, _ = fmt.Fprint(w, `{"device_code":"d","user_code":"ABCD-EFGH","verification_uri":"https://github.com/login/device","expires_in":900,"interval":5}`)
 		case "/login/oauth/access_token":
-			fmt.Fprint(w, `{"access_token":"tok","token_type":"bearer"}`)
+			_, _ = fmt.Fprint(w, `{"access_token":"tok","token_type":"bearer"}`)
 		case "/user":
 			w.Header().Set("X-GitHub-SSO", "required; url=https://github.com/orgs/acme/sso?authorization_request=x")
 			http.Error(w, `{"message":"Resource protected by organization SAML enforcement."}`, http.StatusForbidden)
