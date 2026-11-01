@@ -87,7 +87,7 @@ body {
   font-weight: 400;
   text-align: left;
 }
-.step-link:hover {
+.step-link:hover:not(:disabled) {
   background: transparent;
 }
 li:not([aria-current]) > .step-link:hover:not(:disabled) {
@@ -579,6 +579,7 @@ button:disabled.loading {
   color: var(--text-secondary);
 }
 .github-problem {
+  overflow-wrap: anywhere;
   display: flex;
   flex-wrap: wrap;
   align-items: center;
@@ -590,4 +591,7 @@ button:disabled.loading {
   background: var(--status-critical-bg);
   color: var(--status-critical);
   font-size: var(--text-base);
+}
+#hooks-error {
+  overflow-wrap: anywhere;
 }
