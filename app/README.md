@@ -949,8 +949,8 @@ other views, and a view with nothing in it is dimmed. The quick filter (see
 below) sits at the end of the views and narrows every view and its count; a
 link to Pull requests with `repo=` from before it (Analytics and Timeline keep
 their own `repo=`), once the saved filters are read, replaces
-the page filter's organizations and repositories with that repository, and the
-address drops `repo=`.
+the page filter's organizations and repositories with that repository (a value
+the daemon would refuse is dropped instead), and the address drops `repo=`.
 Collapsing keeps selections, and Select all selects only currently expanded
 visible rows. Requested, authored, outdated, no-review, repository and
 saved-history filters do not discard cached reviews. Unknown team membership
