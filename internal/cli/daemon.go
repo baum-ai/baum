@@ -383,7 +383,7 @@ func localApplication(paths daemon.Paths, log *slog.Logger) func(context.Context
 		index := reviewindex.NewCache(ctx, &reviewindex.Service{Registry: registry, Discovery: discover})
 		discover.Updated = index.Invalidate
 		changed := indexChanged(index, server.Publish)
-		worker := &background.Service{Registry: registry, Discovery: discover, Saved: background.Saved, Refresh: background.Local{Client: github.NewFromConfig(cfg, github.Options{}), Config: cfg}.Refresh, Changed: changed}
+		worker := &background.Service{Registry: registry, Discovery: discover, Saved: background.Saved, Refresh: background.Local{Client: github.NewFromConfig(cfg, github.Options{}), Config: cfg}.Refresh, Retain: background.Retention{Log: log}.Retain, Changed: changed}
 		database, err := appdb.Path()
 		if err != nil {
 			_ = registry.Close()

@@ -275,6 +275,49 @@ func (s *Store) Versions(ctx context.Context, k Key) ([]Metadata, error) {
 	return out, rows.Err()
 }
 
+// Commits are the commits a stored version recorded.
+type Commits struct {
+	Key       Key
+	Version   int
+	Head      string
+	Base      string
+	MergeBase string
+}
+
+// Commits lists the recorded commits of every stored version of every pull
+// request, without reading documents. A root with no database is ErrNotFound.
+func (s *Store) Commits(ctx context.Context) ([]Commits, error) {
+	db, err := s.database(false)
+	if err != nil {
+		return nil, err
+	}
+	defer db.Close()
+	rows, err := db.QueryContext(ctx, `SELECT repository,pr,version,metadata FROM versions ORDER BY repository,pr,version`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Commits
+	for rows.Next() {
+		var c Commits
+		var raw []byte
+		if err := rows.Scan(&c.Key.Repository, &c.Key.Number, &c.Version, &raw); err != nil {
+			return nil, err
+		}
+		var m struct {
+			Head      string `json:"head"`
+			Base      string `json:"base"`
+			MergeBase string `json:"merge_base"`
+		}
+		if err := json.Unmarshal(raw, &m); err != nil {
+			return nil, err
+		}
+		c.Head, c.Base, c.MergeBase = m.Head, m.Base, m.MergeBase
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+
 // Put appends v only while previous is still the latest version; the zero
 // Version means no history. A refresh of previous during generation replaces
 // only its live facts in place, so it does not reject the generated version:

@@ -156,3 +156,40 @@ func TestPublishSucceedsWhenRecordingOutcomeFailsAfterPut(t *testing.T) {
 		t.Fatalf("missing warning: %q", f.progress.String())
 	}
 }
+
+// Keeping the version's commits runs after the version is stored, outside
+// its transaction: a failure there is a warning, never a failed publish.
+func TestPublishSucceedsWhenKeepingCommitsFails(t *testing.T) {
+	f := newFixture(t)
+	s, e := store.Open("", t.TempDir(), true)
+	if e != nil {
+		t.Fatal(e)
+	}
+	key := store.Key{Repository: assembletest.Repository.String(), Number: assembletest.Number}
+	options := f.options(t)
+	var stored store.Metadata
+	options.Stored = func(_ context.Context, k store.Key, m store.Metadata) error {
+		if k != key {
+			t.Errorf("stored key = %+v", k)
+		}
+		latest, err := s.Latest(context.Background(), key)
+		if err != nil || latest.Metadata.Version != m.Version {
+			t.Errorf("Stored ran before the version was stored: %+v %v", latest.Metadata, err)
+		}
+		stored = m
+		return errors.New("cannot lock ref")
+	}
+	result, e := generate.Publish(context.Background(), s, key, options, nil)
+	if e != nil {
+		t.Fatalf("published version reported as failed: %v", e)
+	}
+	if stored.Version != 1 || stored.Head == "" || stored.Head != result.Metadata.Head {
+		t.Fatalf("Stored got %+v, published %+v", stored, result.Metadata)
+	}
+	if latest, e := s.Latest(context.Background(), key); e != nil || latest.Metadata.Version != 1 {
+		t.Fatal("version not kept", e)
+	}
+	if !strings.Contains(f.progress.String(), "warning: keep the version's commits in the clone: cannot lock ref") {
+		t.Fatalf("missing warning: %q", f.progress.String())
+	}
+}

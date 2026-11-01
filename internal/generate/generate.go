@@ -152,6 +152,9 @@ type Options struct {
 	// SessionRoot is the directory kept runs are made in; empty is
 	// reviewruns.DefaultRoot.
 	SessionRoot string
+	// Stored, for Publish, runs once the version is stored, with its metadata.
+	// The version is already published: an error is a warning on Progress.
+	Stored func(ctx context.Context, key store.Key, m store.Metadata) error
 	// BundleOut, when not empty, receives the exact bundle the model was given.
 	BundleOut string
 	// DiagnosticsOut, when not empty, receives the run's redacted outcome as

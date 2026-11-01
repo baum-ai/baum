@@ -27,6 +27,7 @@ import (
 	"github.com/baum-ai/baum/internal/pricing"
 	"github.com/baum-ai/baum/internal/repos"
 	"github.com/baum-ai/baum/internal/reviewgroups"
+	"github.com/baum-ai/baum/internal/reviewrefs"
 	"github.com/baum-ai/baum/internal/reviewruns"
 	"github.com/baum-ai/baum/internal/store"
 	"github.com/baum-ai/baum/review"
@@ -410,6 +411,17 @@ func (l *Local) Execute(ctx context.Context, p Prepared, progress func(Progress)
 		OnRepairs: backend.repaired, PassTimeout: max(time.Duration(cfg.Budgets.PassTimeout), time.Duration(cfg.Budgets.ReviewTimeout))}
 	if group == nil {
 		options.OnDraft = backend.draft
+		options.Stored = func(ctx context.Context, key store.Key, m store.Metadata) error {
+			// The version is stored: its refs are written even when the job
+			// is cancelled now.
+			keep, cancel := context.WithTimeout(context.WithoutCancel(ctx), time.Minute)
+			defer cancel()
+			e := reviewrefs.Keep(keep, clone, versions, key, m)
+			if e != nil && l.Log != nil {
+				l.Log.Warn("keeping the version's commits in the clone", "repository", key.Repository, "pr", key.Number, "version", m.Version, "error", e)
+			}
+			return e
+		}
 	}
 	var result generate.Result
 	if p.Kind == KindDetails {

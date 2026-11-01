@@ -1373,6 +1373,67 @@ leaves out. The app fills them in from `GET /api/patch?path=<path>`, answered by
   server over one `Patcher`, reads a file once for versions with the same
   commits; it keeps the changed-file lists of the last eight ranges.
 
+### Retained review commits
+
+A saved version's lazy patches are read from its head, base and merge base by
+id, so those commits must stay in the clone after a force push, a deleted
+branch or the latest head moving `refs/baum/pull/<N>/` on, and a `git gc`
+(the user's or automatic) would otherwise prune them. `internal/reviewrefs`
+keeps them reachable with refs that live exactly as long as their versions:
+
+- Layout, in the clone's common git directory (shared by its linked
+  worktrees): `refs/baum/reviews/<repository>/<pr>/<version>/<role>`.
+  `<repository>` is the store key's lowercased repository (`owner/name`, or
+  `host/owner/name` for Enterprise) as one component, every byte but `a-z`,
+  `0-9`, `-` and `_` written `%XX` (`acme%2Fwidgets`), so one clone holding
+  the reviews of several repositories never mixes them; `<role>` is `head`,
+  `base` or `merge-base`, one ref per commit the metadata records
+  (`gitlocal.RetainPrefix`, `gitlocal.ParseRetainRef`). Nothing outside
+  `refs/baum/reviews/` is created, moved or deleted, and only names that
+  layout writes exactly are ever deleted; `refs/baum/pull/`, `refs/baum/fix/`
+  and `refs/baum/default` keep their meaning.
+- Git runs as for the private repository's reads (no caller `GIT_`
+  variable, no system or global configuration, an empty home, no replace
+  refs, `GIT_NO_LAZY_FETCH=1`) with `GIT_DIR` the clone's common directory,
+  whose own configuration git still reads, and with `core.hooksPath` the
+  private repository's empty hooks directory (so no `reference-transaction`
+  hook runs), `core.logAllRefUpdates=false` (no reflog), `core.fsmonitor`,
+  `gc.auto` and `maintenance.auto` off. Writes are one `git update-ref
+  --stdin` transaction with old-value checks: `create` for a new ref,
+  `update <new> <old>` to move one, `delete <old>`. Commits are looked up with
+  `cat-file --batch-check` in the private repository; a commit the clone
+  lacks (pruned already, a partial clone) is skipped, never fetched, and the
+  lazy path keeps falling back to the GitHub link for it.
+- Written on publish: once `generate.Publish` has stored a version
+  (`Options.Stored`), `reviewrefs.Keep` writes that version's refs, from
+  `baum internal generate` and from the daemon's generation jobs (a single
+  pull request; a group's combined review lives in the daemon's state, and
+  a details retry rewrites a version in place with the same commits). It
+  runs outside the store's transaction: a failure is a warning on the
+  command's progress or a daemon log line, and never fails or undoes the
+  version. A version saved to an explicit `--store` outside the clone's own
+  store roots (`store.Roots`) gets no refs, since nothing would delete them
+  with it.
+- Reconciled by the daemon: the background worker (see "Free background
+  synchronization") calls `reviewrefs.Reconcile` for each available clone of
+  a picked repository, once per common git directory, on its first pass,
+  then once a day, an hour after a failure, and on the next pass while a
+  bound left work; a 30-second pass otherwise runs no git for it. A pass
+  lists the retained refs, then reads every version's commits from each of
+  the clone's own store roots (`store.Store.Commits`, metadata only), creates
+  the refs versions saved before this existed (or whose write failed) lack,
+  for commits the clone holds, and deletes the refs of versions no store
+  holds (a store reset or removed, the clone pointed at another store root).
+  It checks at most 3000 commits and writes and deletes at most 600 refs
+  each (`reviewrefs.DefaultLimits`). Listing the refs before reading the
+  stores means a version published meanwhile, whose refs are written only
+  after it is stored, never loses them.
+- Failures delete nothing: a store that exists but cannot be read fails the
+  pass before any ref changes, and when no store root holds a database at all
+  nothing is deleted, since a missing store cannot be told from one that
+  moved. A clone that is unavailable or cannot be opened is skipped with a log
+  line; nothing reaches the app.
+
 ### Local session linkage
 
 `internal/locallink` links the sessions on this machine to a pull request's
@@ -3224,6 +3285,8 @@ first after the reset, so a small renewed budget still reaches every pull
 request. `Run` passes every 30 seconds, or sooner when a repository is due
 sooner, as a settling one is. Linked worktrees are deduplicated by common git directory. No-review PRs fetch only a header and checks;
 saved reviews use `refresh.Refresher` and `Store.RefreshCurrent`'s exact-byte CAS.
+After a pass, `Service.Retain` reconciles the retained review refs of each
+due common git directory (see "Retained review commits").
 `Service.RefreshNow` refreshes named PRs of one clone the same way outside
 that schedule (see "Refresh on hook events"), and its reads count as the
 last read; it shares the per-host rate pause with `Sync` in both directions,
