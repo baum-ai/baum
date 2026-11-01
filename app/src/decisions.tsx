@@ -77,11 +77,6 @@ export function captureState(s: SessionDecisions, now: number): string {
   return [state, off].filter(Boolean).join(" · ");
 }
 
-const who: Record<string, string> = {
-  human: "You decided",
-  agent: "Agent decided",
-  agent_proposed_human_approved: "Agent proposed, you approved",
-};
 const label = (value: string) =>
   value ? value[0]!.toUpperCase() + value.slice(1).replaceAll("_", " ") : value;
 
@@ -249,7 +244,7 @@ export function usePullRequestDecisions(
     sessions,
     total: sessions.reduce((n, s) => n + s.decisions.length, 0),
     provisional: sessions.reduce((n, s) => n + s.decisions.filter((d) => d.provisional).length, 0),
-    reviewGeneratedAt: answer?.review_generated_at,
+    reviewGeneratedAt: answer?.review_generated_at ?? undefined,
   };
 }
 
@@ -279,9 +274,7 @@ export function useGroupDecisions(
       ),
     ).then((results) => {
       if (abort.signal.aborted) return;
-      const reads = results.flatMap((r) =>
-        r.status === "fulfilled" && r.value ? [r.value] : [],
-      );
+      const reads = results.flatMap((r) => (r.status === "fulfilled" && r.value ? [r.value] : []));
       // Every read failing keeps what is shown.
       if (reads.length > 0) setAnswer({ key, reads });
     });
@@ -366,43 +359,39 @@ export function PullRequestDecisionsPane({
         </p>
       ) : null}
       <ol className="local-decisions-sessions">
-      {sessions.map((s) => {
-        const title =
-          s.title ||
-          live.find((l) => l.agent === s.agent && l.session_id === s.session_id)?.title ||
-          s.session_id;
-        return (
-          <Item key={`${s.agent}:${s.session_id}`} className="local-decisions-session">
-            <h3>
-              <span>{agentName(s.agent)}</span>
-              <span className="local-decisions-session-title">{title}</span>
-              {s.live ? (
-                <Badge tone="info" size="compact">
-                  In progress
-                </Badge>
-              ) : null}
-            </h3>
-            <p className="local-decisions-state">{captureState(s, now)}</p>
-            {decisionGroups(s.decisions).map((group) => (
-              <section
-                key={group.key}
-                className="local-decisions-group"
-                aria-label={group.title}
-              >
-                <h4>
-                  {group.title}
-                  <span className="local-decisions-group-count">{group.decisions.length}</span>
-                </h4>
-                <ul className="local-decisions-list">
-                  {group.decisions.map((d) => (
-                    <DecisionRow key={d.decision_id} decision={d} />
-                  ))}
-                </ul>
-              </section>
-            ))}
-          </Item>
-        );
-      })}
+        {sessions.map((s) => {
+          const title =
+            s.title ||
+            live.find((l) => l.agent === s.agent && l.session_id === s.session_id)?.title ||
+            s.session_id;
+          return (
+            <Item key={`${s.agent}:${s.session_id}`} className="local-decisions-session">
+              <h3>
+                <span>{agentName(s.agent)}</span>
+                <span className="local-decisions-session-title">{title}</span>
+                {s.live ? (
+                  <Badge tone="info" size="compact">
+                    In progress
+                  </Badge>
+                ) : null}
+              </h3>
+              <p className="local-decisions-state">{captureState(s, now)}</p>
+              {decisionGroups(s.decisions).map((group) => (
+                <section key={group.key} className="local-decisions-group" aria-label={group.title}>
+                  <h4>
+                    {group.title}
+                    <span className="local-decisions-group-count">{group.decisions.length}</span>
+                  </h4>
+                  <ul className="local-decisions-list">
+                    {group.decisions.map((d) => (
+                      <DecisionRow key={d.decision_id} decision={d} />
+                    ))}
+                  </ul>
+                </section>
+              ))}
+            </Item>
+          );
+        })}
       </ol>
     </div>
   );

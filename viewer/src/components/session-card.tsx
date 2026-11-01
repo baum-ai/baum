@@ -126,83 +126,83 @@ export function SessionCard({
   return (
     <section className="flex min-w-0 flex-col" data-session-id={session.run_id}>
       {headless ? null : (
-      <button
-        type="button"
-        aria-expanded={open}
-        onClick={toggle}
-        className={cn(
-          "flex w-full cursor-pointer items-center gap-3 rounded-t-(--radius-lg) px-5 py-3.5 text-left transition-colors duration-150 hover:bg-(--surface-hover)",
-          (open || Boolean(meta)) && "border-b border-(--border-subtle)",
-          FOCUS_RING,
-        )}
-      >
-        <ChevronDownIcon
+        <button
+          type="button"
+          aria-expanded={open}
+          onClick={toggle}
           className={cn(
-            "flex-none text-(--text-tertiary) transition-transform",
-            !open && "-rotate-90",
+            "flex w-full cursor-pointer items-center gap-3 rounded-t-(--radius-lg) px-5 py-3.5 text-left transition-colors duration-150 hover:bg-(--surface-hover)",
+            (open || Boolean(meta)) && "border-b border-(--border-subtle)",
+            FOCUS_RING,
           )}
-        />
-        <span className="sr-only">Session: </span>
-        <span className="flex min-w-0 flex-1 flex-col gap-0.5">
-          <span className="truncate text-base font-medium text-(--text-primary)">
-            {session.title || "Coding session"}
-          </span>
-          <span className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-(--text-tertiary)">
-            <HarnessName vendor={session.source} size={12} />
-            {full.models.length > 0 ? (
-              <span
-                className="text-(--text-secondary)"
-                title={full.models.map(modelLabel).join(", ")}
-              >
-                {full.models.map(modelLabel).join(" · ")}
+        >
+          <ChevronDownIcon
+            className={cn(
+              "flex-none text-(--text-tertiary) transition-transform",
+              !open && "-rotate-90",
+            )}
+          />
+          <span className="sr-only">Session: </span>
+          <span className="flex min-w-0 flex-1 flex-col gap-0.5">
+            <span className="truncate text-base font-medium text-(--text-primary)">
+              {session.title || "Coding session"}
+            </span>
+            <span className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-(--text-tertiary)">
+              <HarnessName vendor={session.source} size={12} />
+              {full.models.length > 0 ? (
+                <span
+                  className="text-(--text-secondary)"
+                  title={full.models.map(modelLabel).join(", ")}
+                >
+                  {full.models.map(modelLabel).join(" · ")}
+                </span>
+              ) : null}
+              {session.git_branch ? (
+                <Badge
+                  size="compact"
+                  title={`Branch: ${session.git_branch}`}
+                  className="min-w-0 max-w-60 gap-1"
+                >
+                  <BranchIcon size={12} className="flex-none" />
+                  <span className="truncate">{session.git_branch}</span>
+                </Badge>
+              ) : null}
+              <span>
+                {session.started_at ? `${formatDate(session.started_at)} · ` : ""}
+                {formatDuration(duration)} · {pluralize("prompt", session.turn_count, true)}
               </span>
-            ) : null}
-            {session.git_branch ? (
+              {session.user_email ? <span>{session.user_email}</span> : null}
+            </span>
+          </span>
+          <span className="flex flex-none items-center gap-2">
+            {!session.has_inner_trace ? (
               <Badge
                 size="compact"
-                title={`Branch: ${session.git_branch}`}
-                className="min-w-0 max-w-60 gap-1"
+                title="Only this session's outcome and usage were recorded, not an inner trace"
               >
-                <BranchIcon size={12} className="flex-none" />
-                <span className="truncate">{session.git_branch}</span>
+                No inner trace
               </Badge>
             ) : null}
-            <span>
-              {session.started_at ? `${formatDate(session.started_at)} · ` : ""}
-              {formatDuration(duration)} · {pluralize("prompt", session.turn_count, true)}
-            </span>
-            {session.user_email ? <span>{session.user_email}</span> : null}
-          </span>
-        </span>
-        <span className="flex flex-none items-center gap-2">
-          {!session.has_inner_trace ? (
-            <Badge
-              size="compact"
-              title="Only this session's outcome and usage were recorded, not an inner trace"
-            >
-              No inner trace
-            </Badge>
-          ) : null}
-          {session.confidence > 0 && session.confidence < 0.7 ? (
-            <Badge size="compact" tone="caution">
-              {formatShare(session.confidence)} confident
-            </Badge>
-          ) : null}
-          {/* How many commits this session was matched to. The outcome it
+            {session.confidence > 0 && session.confidence < 0.7 ? (
+              <Badge size="compact" tone="caution">
+                {formatShare(session.confidence)} confident
+              </Badge>
+            ) : null}
+            {/* How many commits this session was matched to. The outcome it
               replaces said "committed" and no more, which a non-zero count
               already says; with nothing matched the outcome is the only thing
               left that distinguishes an abandoned session from a linked one. */}
-          {session.commit_count > 0 ? (
-            <Badge size="compact" tone="positive">
-              {pluralize("commit", session.commit_count, true)}
-            </Badge>
-          ) : (
-            <Badge size="compact" tone={OUTCOME_TONES[session.outcome] ?? "neutral"}>
-              {session.outcome}
-            </Badge>
-          )}
-        </span>
-      </button>
+            {session.commit_count > 0 ? (
+              <Badge size="compact" tone="positive">
+                {pluralize("commit", session.commit_count, true)}
+              </Badge>
+            ) : (
+              <Badge size="compact" tone={OUTCOME_TONES[session.outcome] ?? "neutral"}>
+                {session.outcome}
+              </Badge>
+            )}
+          </span>
+        </button>
       )}
 
       {meta && !headless ? (
@@ -217,11 +217,7 @@ export function SessionCard({
       ) : null}
 
       {open ? (
-        <div
-          className={
-            headless ? "pt-1 pb-1" : layout === "log" ? "px-5 pt-3 pb-1" : "px-5 py-4"
-          }
-        >
+        <div className={headless ? "pt-1 pb-1" : layout === "log" ? "px-5 pt-3 pb-1" : "px-5 py-4"}>
           {/* Nothing of this session's own figures is on the card until they
               arrive: zeroes would read as measurements. */}
           {typeof detail === "string" && full.prompts.length === 0 ? (

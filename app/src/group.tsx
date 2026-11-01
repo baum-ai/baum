@@ -1,12 +1,4 @@
-import {
-  useCallback,
-  useEffect,
-  useMemo,
-  useId,
-  useRef,
-  useState,
-  type FormEvent,
-} from "react";
+import { useCallback, useEffect, useMemo, useId, useRef, useState, type FormEvent } from "react";
 import { ReviewViewer, type ReviewSteps } from "@baum/viewer/components/review-viewer";
 import { ChevronRightIcon, MergeIcon, StackIcon } from "@baum/viewer/components/icons";
 import { documentFilesSlot } from "./facts";
@@ -492,7 +484,10 @@ export function GroupPage({
     // Enter opens the block j and k are on, such as a commit from the list.
     if (
       event.key === "Enter" &&
-      !(event.target instanceof HTMLElement && event.target.closest("a, button, summary, input, textarea")) &&
+      !(
+        event.target instanceof HTMLElement &&
+        event.target.closest("a, button, summary, input, textarea")
+      ) &&
       openActiveBlock()
     ) {
       event.preventDefault();
@@ -537,11 +532,7 @@ export function GroupPage({
         steps={steps}
         // Every file of the stack's change, as GitHub's Files changed shows
         // them: a file's diff is its hunks' patches, read when it is opened.
-        files={
-          doc
-            ? documentFilesSlot(doc.index.hunks, filePatches, "")
-            : undefined
-        }
+        files={doc ? documentFilesSlot(doc.index.hunks, filePatches, "") : undefined}
         header={{
           heading: group.name,
           titleAside: group.stack ? (
@@ -575,114 +566,124 @@ export function GroupPage({
               </button>
               {membersOpen ? (
                 <div id={membersId} className="local-group-fold-body">
-            <section aria-label="Group members" className="local-group-panel">
-              <header className="local-group-head">
-                {addable.length > 0 && group.members.length < MAX_GROUP_MEMBERS ? (
-                  <select
-                    aria-label="Add pull request"
-                    className="local-field local-group-add"
-                    value=""
-                    disabled={managing}
-                    onChange={(event) => {
-                      const number = Number(event.target.value);
-                      if (number) void change({ members: [...group.members, number] });
-                    }}
-                  >
-                    <option value="">{managing && removing === null ? "Adding…" : "Add…"}</option>
-                    {addable.map((e) => (
-                      <option key={e.pull_request.number} value={e.pull_request.number}>
-                        #{e.pull_request.number} {e.pull_request.title}
-                      </option>
-                    ))}
-                  </select>
-                ) : null}
-              </header>
-              <ul className="local-group-members">
-                {landed.map(({ number, state, entry }) => (
-                  <li key={`landed-${number}`} className="local-group-member" data-landed={state}>
-                    <span className="local-group-number">#{number}</span>
-                    <div className="local-group-member-title">
-                      {entry ? (
-                        <ViewerLink href={memberHref(entry)}>{entry.pull_request.title}</ViewerLink>
-                      ) : (
-                        <span className="text-(--text-tertiary)">Not in the inbox</span>
-                      )}
-                      <span className="local-group-member-state">
-                        {state === "merged" ? (
-                          <span className="local-merged">
-                            <MergeIcon size={13} className="flex-none" />
-                            Merged
-                          </span>
-                        ) : (
-                          <span>{landedLabel[state] ?? "No longer open"}</span>
-                        )}
-                      </span>
-                    </div>
-                  </li>
-                ))}
-                {members.map(({ number, entry }) => (
-                  <li key={number} className="local-group-member">
-                    <span className="local-group-number">#{number}</span>
-                    <div className="local-group-member-title">
-                      {entry ? (
-                        <ViewerLink href={memberHref(entry)}>{entry.pull_request.title}</ViewerLink>
-                      ) : (
-                        <span className="text-(--text-tertiary)">Not in the inbox</span>
-                      )}
-                      {entry ? (
-                        <span className="local-group-member-state">
-                          <PullRequestState entry={entry} />
-                          {entry.status === "generating" ? (
-                            <span className="inline-flex items-center gap-1.5 text-(--text-secondary)">
-                              <NineDots size={14} />
-                              {reviewStatus.generating}
-                            </span>
-                          ) : (
-                            <span>{reviewStatus[entry.status] ?? entry.status}</span>
-                          )}
-                        </span>
+                  <section aria-label="Group members" className="local-group-panel">
+                    <header className="local-group-head">
+                      {addable.length > 0 && group.members.length < MAX_GROUP_MEMBERS ? (
+                        <select
+                          aria-label="Add pull request"
+                          className="local-field local-group-add"
+                          value=""
+                          disabled={managing}
+                          onChange={(event) => {
+                            const number = Number(event.target.value);
+                            if (number) void change({ members: [...group.members, number] });
+                          }}
+                        >
+                          <option value="">
+                            {managing && removing === null ? "Adding…" : "Add…"}
+                          </option>
+                          {addable.map((e) => (
+                            <option key={e.pull_request.number} value={e.pull_request.number}>
+                              #{e.pull_request.number} {e.pull_request.title}
+                            </option>
+                          ))}
+                        </select>
                       ) : null}
-                    </div>
-                    {group.members.length > 2 ? (
-                      <button
-                        type="button"
-                        className="local-group-remove"
-                        aria-label={`Remove #${number}`}
-                        title="Remove from the group"
+                    </header>
+                    <ul className="local-group-members">
+                      {landed.map(({ number, state, entry }) => (
+                        <li
+                          key={`landed-${number}`}
+                          className="local-group-member"
+                          data-landed={state}
+                        >
+                          <span className="local-group-number">#{number}</span>
+                          <div className="local-group-member-title">
+                            {entry ? (
+                              <ViewerLink href={memberHref(entry)}>
+                                {entry.pull_request.title}
+                              </ViewerLink>
+                            ) : (
+                              <span className="text-(--text-tertiary)">Not in the inbox</span>
+                            )}
+                            <span className="local-group-member-state">
+                              {state === "merged" ? (
+                                <span className="local-merged">
+                                  <MergeIcon size={13} className="flex-none" />
+                                  Merged
+                                </span>
+                              ) : (
+                                <span>{landedLabel[state] ?? "No longer open"}</span>
+                              )}
+                            </span>
+                          </div>
+                        </li>
+                      ))}
+                      {members.map(({ number, entry }) => (
+                        <li key={number} className="local-group-member">
+                          <span className="local-group-number">#{number}</span>
+                          <div className="local-group-member-title">
+                            {entry ? (
+                              <ViewerLink href={memberHref(entry)}>
+                                {entry.pull_request.title}
+                              </ViewerLink>
+                            ) : (
+                              <span className="text-(--text-tertiary)">Not in the inbox</span>
+                            )}
+                            {entry ? (
+                              <span className="local-group-member-state">
+                                <PullRequestState entry={entry} />
+                                {entry.status === "generating" ? (
+                                  <span className="inline-flex items-center gap-1.5 text-(--text-secondary)">
+                                    <NineDots size={14} />
+                                    {reviewStatus.generating}
+                                  </span>
+                                ) : (
+                                  <span>{reviewStatus[entry.status] ?? entry.status}</span>
+                                )}
+                              </span>
+                            ) : null}
+                          </div>
+                          {group.members.length > 2 ? (
+                            <button
+                              type="button"
+                              className="local-group-remove"
+                              aria-label={`Remove #${number}`}
+                              title="Remove from the group"
+                              disabled={managing}
+                              onClick={() => {
+                                setRemoving(number);
+                                void change({
+                                  members: group.members.filter((n) => n !== number),
+                                }).finally(() => setRemoving(null));
+                              }}
+                            >
+                              {removing === number ? "Removing…" : "Remove"}
+                            </button>
+                          ) : null}
+                        </li>
+                      ))}
+                    </ul>
+                    <footer className="local-group-foot">
+                      <Button
+                        variant="secondary"
+                        size="tiny"
                         disabled={managing}
-                        onClick={() => {
-                          setRemoving(number);
-                          void change({
-                            members: group.members.filter((n) => n !== number),
-                          }).finally(() => setRemoving(null));
-                        }}
+                        onClick={() => setRenaming(true)}
                       >
-                        {removing === number ? "Removing…" : "Remove"}
-                      </button>
-                    ) : null}
-                  </li>
-                ))}
-              </ul>
-              <footer className="local-group-foot">
-                <Button
-                  variant="secondary"
-                  size="tiny"
-                  disabled={managing}
-                  onClick={() => setRenaming(true)}
-                >
-                  Rename
-                </Button>
-                <Button
-                  variant="danger-outline"
-                  size="tiny"
-                  disabled={managing}
-                  onClick={() => setDeleting(true)}
-                >
-                  Delete group
-                </Button>
-              </footer>
-              {manageError ? <Alert>{manageError}</Alert> : null}
-            </section>
+                        Rename
+                      </Button>
+                      <Button
+                        variant="danger-outline"
+                        size="tiny"
+                        disabled={managing}
+                        onClick={() => setDeleting(true)}
+                      >
+                        Delete group
+                      </Button>
+                    </footer>
+                    {manageError ? <Alert>{manageError}</Alert> : null}
+                  </section>
                 </div>
               ) : null}
             </div>

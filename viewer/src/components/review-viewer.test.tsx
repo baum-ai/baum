@@ -98,6 +98,13 @@ function titles(labels: (string | null)[]) {
   return labels.map((label) => label?.replace(/\d+Review score.*$/, ""));
 }
 
+/** The review pane's source chip whose text starts with text. */
+function sourceChip(container: HTMLElement, text: string) {
+  return [...container.querySelectorAll<HTMLAnchorElement>("#review-section a")].find((link) =>
+    link.textContent?.startsWith(text),
+  )!;
+}
+
 describe("ReviewViewer without host slots", () => {
   it("opens old risk links within their complete Changes section", async () => {
     const section = current.sections.find((item) => item.risks.length > 0)!;
@@ -952,10 +959,6 @@ describe("source chips", () => {
     },
     renderPane: (selected: string | null) => <div id="commits-probe">{selected ?? "all"}</div>,
   };
-  const chip = (container: HTMLElement, text: string) =>
-    [...container.querySelectorAll<HTMLAnchorElement>("#review-section a")].find((link) =>
-      link.textContent?.startsWith(text),
-    )!;
 
   it("hands the description and other pull requests to the host and cancels the link", async () => {
     const { document, section } = withSources();
@@ -965,7 +968,7 @@ describe("source chips", () => {
         <ReviewViewer document={document} openSource={openSource} />
       </Host>,
     );
-    const body = chip(container, "From the PR description § Validation");
+    const body = sourceChip(container, "From the PR description § Validation");
     expect(body.target).toBe("");
     expect(body.querySelector("svg")).toBeNull();
     const click = new MouseEvent("click", { bubbles: true, cancelable: true });
@@ -975,7 +978,7 @@ describe("source chips", () => {
       { type: "pr_body", section: "Validation" },
       expect.objectContaining({ label: "From the PR description § Validation" }),
     );
-    await act(async () => chip(container, "From #9").click());
+    await act(async () => sourceChip(container, "From #9").click());
     expect(openSource).toHaveBeenLastCalledWith(
       { type: "pr", number: 9 },
       expect.objectContaining({ label: "From #9" }),
@@ -989,7 +992,7 @@ describe("source chips", () => {
         <ReviewViewer document={document} />
       </Host>,
     );
-    expect(chip(container, "From the PR description").target).toBe("_blank");
+    expect(sourceChip(container, "From the PR description").target).toBe("_blank");
   });
 
   it("selects a listed commit and leaves an unlisted one external", async () => {
@@ -999,9 +1002,9 @@ describe("source chips", () => {
         <ReviewViewer document={document} commits={commits} />
       </Host>,
     );
-    const unlisted = chip(container, "From commit fffffff");
+    const unlisted = sourceChip(container, "From commit fffffff");
     expect(unlisted.target).toBe("_blank");
-    const listed = chip(container, "From commit 0123456");
+    const listed = sourceChip(container, "From commit 0123456");
     expect(listed.target).toBe("");
     await act(async () => listed.click());
     expect(container.querySelector("#commits-probe")?.textContent).toBe(sha);

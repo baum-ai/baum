@@ -1,14 +1,16 @@
 import {
   contextRefUrl,
+  isContextDirectory,
   type ReviewContext,
   type ReviewContextRef,
   type ReviewDocument,
 } from "../review-document";
 import { cn, FOCUS_RING } from "./classnames";
-import { useReviewFiles, useReviewSources } from "./code-file-link";
+import { useReviewFiles, useReviewSources } from "./review-contexts";
 import { ChevronRightIcon, ExternalLinkIcon } from "./icons";
 import { Markdown } from "./markdown";
-import { chipLinkClass, PROSE } from "./review-parts";
+import { chipLinkClass } from "./chip-classes";
+import { PROSE } from "./review-parts";
 import { Spinner } from "./ui";
 
 /** The context's parts in reading order, each with its label. */
@@ -105,27 +107,6 @@ export function ContextPart({
       </details>
     </section>
   );
-}
-
-/** Whether a context reference names a directory rather than a file: it
- *  ends in "/", another path the document cites lies under it, or its last
- *  segment has no extension and no hunk of the change is that exact file.
- *  An extensionless file cited only by the context (a Makefile) reads as a
- *  directory too; it then keeps its GitHub link, which still works. */
-export function isContextDirectory(document: ReviewDocument, path: string): boolean {
-  if (path.endsWith("/")) return true;
-  const cited = new Set<string>();
-  for (const hunk of document.index.hunks) {
-    cited.add(hunk.path);
-    if (hunk.old_path) cited.add(hunk.old_path);
-  }
-  for (const part of Object.values(document.summary.context ?? {})) {
-    for (const ref of part?.refs ?? []) cited.add(ref.path);
-  }
-  const prefix = `${path}/`;
-  for (const candidate of cited) if (candidate.startsWith(prefix)) return true;
-  const name = path.slice(path.lastIndexOf("/") + 1);
-  return !name.includes(".") && !document.index.hunks.some((hunk) => hunk.path === path);
 }
 
 /** A file or directory the context rests on, as a compact chip: its symbol

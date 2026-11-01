@@ -180,20 +180,13 @@ export function SessionList({
     ].filter(Boolean);
     return (
       <>
-        <CardHeader
-          size="pane"
-          title={sessionLabel(session)}
-          detail={facts.join(" · ")}
-        />
+        <CardHeader size="pane" title={sessionLabel(session)} detail={facts.join(" · ")} />
         {commits.length > 0 ? (
           <ul aria-label="Linked commits" className="flex flex-col gap-0.5 pb-3">
             {commits.map((commit) => (
               <li key={commit.id} className="flex min-w-0 items-center gap-2 text-xs">
                 <CommitIcon size={13} className="flex-none text-(--text-tertiary)" />
-                <span
-                  className="flex-none font-mono text-(--text-tertiary)"
-                  title={commit.id}
-                >
+                <span className="flex-none font-mono text-(--text-tertiary)" title={commit.id}>
                   {formatSHA(commit.id)}
                 </span>
                 <JumpLink

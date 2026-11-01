@@ -117,16 +117,17 @@ function parseCommit(value: unknown): LocalCommit | null {
   };
 }
 
+/** A count of lines: null when left out, undefined when it is not a count. */
+function lineCount(n: unknown): number | null | undefined {
+  if (n === undefined || n === null) return null;
+  return typeof n === "number" && Number.isInteger(n) && n >= 0 ? n : undefined;
+}
+
 function parseCommitFile(value: unknown): CommitFileView | null {
   if (!isRecord(value) || typeof value.path !== "string" || value.path === "") return null;
   if (typeof value.status !== "string" || !isOptionalText(value.old_path)) return null;
-  // A count, null when left out, undefined when it is not a count.
-  const count = (n: unknown): number | null | undefined => {
-    if (n === undefined || n === null) return null;
-    return typeof n === "number" && Number.isInteger(n) && n >= 0 ? n : undefined;
-  };
-  const additions = count(value.additions);
-  const deletions = count(value.deletions);
+  const additions = lineCount(value.additions);
+  const deletions = lineCount(value.deletions);
   if (additions === undefined || deletions === undefined) return null;
   // A binary file has neither count.
   const binary = additions === null || deletions === null;
@@ -161,24 +162,27 @@ export type CommitRouteReader = (
   params: Record<string, string>,
 ) => Promise<unknown>;
 
+/** The answer cached under key, else start's, kept while it holds: a
+ *  failed read is forgotten, so the next asks again. */
+function once<T>(cache: Map<string, Promise<T>>, key: string, start: () => Promise<T>) {
+  let pending = cache.get(key);
+  if (!pending) {
+    const started = start();
+    started.catch(() => {
+      if (cache.get(key) === started) cache.delete(key);
+    });
+    cache.set(key, started);
+    pending = started;
+  }
+  return pending;
+}
+
 /** `commitsSlot`'s loaders over a host's reader. Each commit and each file is
  *  read once; a failed read is forgotten, so a retry asks again. A commit or
  *  file the daemon does not answer for (404) has no detail or no diff. */
 export function createCommitLoaders(read: CommitRouteReader): Required<CommitLoaders> {
   const commits = new Map<string, Promise<CommitDetailView | null>>();
   const patches = new Map<string, Promise<string | null>>();
-  function once<T>(cache: Map<string, Promise<T>>, key: string, start: () => Promise<T>) {
-    let pending = cache.get(key);
-    if (!pending) {
-      const started = start();
-      started.catch(() => {
-        if (cache.get(key) === started) cache.delete(key);
-      });
-      cache.set(key, started);
-      pending = started;
-    }
-    return pending;
-  }
   return {
     loadCommit: (oid) => once(commits, oid, () => read("commit", { oid }).then(parseCommitDetail)),
     loadPatch: (oid, path) =>

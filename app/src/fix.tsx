@@ -183,7 +183,11 @@ export function FixNotice({
       </section>
     );
   const pushed = job.state === "completed" && !!job.commit;
-  const Icon = pushed ? CircleCheckIcon : job.state === "failed" ? CircleCrossIcon : CircleDashedIcon;
+  const Icon = pushed
+    ? CircleCheckIcon
+    : job.state === "failed"
+      ? CircleCrossIcon
+      : CircleDashedIcon;
   return (
     <section aria-label="Fix" className="local-job-outcome local-fix-notice">
       <Icon

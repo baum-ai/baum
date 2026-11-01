@@ -134,7 +134,12 @@ export function documentFilesSlot(
   patches: FilePatchSource,
   href: string,
 ): ReviewFilesSlot<FactsFile> {
-  return filesSlot(indexFiles(hunks), { loading: false, failed: false, retry: () => {} }, patches, href);
+  return filesSlot(
+    indexFiles(hunks),
+    { loading: false, failed: false, retry: () => {} },
+    patches,
+    href,
+  );
 }
 
 function filesSlot(

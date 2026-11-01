@@ -136,9 +136,9 @@ describe("SessionList", () => {
     render({ status: "ready", sessions }, "s1", transcript);
     expect(container.querySelector("h2, h3")?.textContent).toBe("Wire the retry budget");
     expect(container.querySelector("#session-s1")).toBeNull();
-    expect(
-      container.querySelector('[aria-label="Linked commits"]')?.textContent,
-    ).toContain("Add the budget");
+    expect(container.querySelector('[aria-label="Linked commits"]')?.textContent).toContain(
+      "Add the budget",
+    );
     expect(container.querySelector('[data-testid="extra"]')?.textContent).toBe("s1 transcript");
   });
 

@@ -21,7 +21,11 @@ vi.mock("@baum/viewer/components/review-viewer", () => ({
     onRetryDetails,
     contextPending,
   }: ReviewViewerProps) => (
-    <div data-versions={versions?.length ?? 0} data-history={history ? "yes" : "no"}>
+    <div
+      data-versions={versions?.length ?? 0}
+      data-history={history ? "yes" : "no"}
+      data-generation={header?.generation?.state}
+    >
       {header?.beside}
       {notices}
       {document ? (
@@ -204,7 +208,7 @@ it("keeps the saved version while regenerating, and offers no view of the draft"
   draftValue = draftDocument();
   await render(saved, job("running", { draft: 1 }));
   expect(node.textContent).toContain("Saved text");
-  expect(node.textContent).toContain("Generating review");
+  expect(node.querySelector('[data-generation="pending"]')).not.toBeNull();
   expect(node.textContent).not.toContain("Draft text");
   expect(button("View draft")).toBeUndefined();
   await render(saved, job("completed"), undefined, 1);

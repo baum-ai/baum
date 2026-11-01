@@ -312,7 +312,10 @@ describe("attention risks", () => {
         anchors: [{ type: "hunk", id: hunk.id }],
       },
     ] as ReviewDocument["sections"][number]["evidence"];
-    section.attention = { text: "Confirm the fork entry stays unlinked", refs: ["ev_missing", "ev_reported"] };
+    section.attention = {
+      text: "Confirm the fork entry stays unlinked",
+      refs: ["ev_missing", "ev_reported"],
+    };
     const found = new DOMParser().parseFromString(
       renderToStaticMarkup(
         <ReviewSection document={document} section={section} onSelectSection={() => {}} />,

@@ -690,6 +690,9 @@ func (f fakeWrites) AllChecks(context.Context, github.Repository, int, string) (
 func (f fakeWrites) Conflicts(context.Context, github.Repository, int) (prupdate.ConflictFiles, error) {
 	return prupdate.ConflictFiles{}, nil
 }
+func (f fakeWrites) Description(context.Context, github.Repository, int) (prupdate.Description, error) {
+	return prupdate.Description{}, nil
+}
 
 func TestActionsRecordOnlyWritesThatSucceeded(t *testing.T) {
 	actions := &Actions{Path: filepath.Join(appdbtest.TempDir(t), "actions.json")}

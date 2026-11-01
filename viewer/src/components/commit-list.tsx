@@ -114,7 +114,11 @@ const STATUS_TONES: Record<string, BadgeTone> = {
 function FileStatus({ status }: { status: string }) {
   const known = Object.hasOwn(STATUS_TONES, status) ? STATUS_TONES[status] : undefined;
   const tone = known ?? "neutral";
-  return <Badge size="compact" tone={tone}>{humanize(status)}</Badge>;
+  return (
+    <Badge size="compact" tone={tone}>
+      {humanize(status)}
+    </Badge>
+  );
 }
 
 function FileCounts({ file }: { file: CommitFileView }) {

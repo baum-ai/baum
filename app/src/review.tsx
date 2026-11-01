@@ -14,7 +14,12 @@ import {
 } from "@baum/viewer/components/review-viewer";
 import { sessionsSlot, commitsSlot } from "@baum/viewer/components/list-slots";
 import { Alert, Button, LiveDot } from "@baum/viewer/components/ui";
-import { ChevronDownIcon, SparkleIcon, StackIcon, WarningIcon } from "@baum/viewer/components/icons";
+import {
+  ChevronDownIcon,
+  SparkleIcon,
+  StackIcon,
+  WarningIcon,
+} from "@baum/viewer/components/icons";
 import { type MenuItem, useContextMenu } from "./context-menu";
 import { useHistoryView } from "@baum/viewer/use-review-version";
 import { AttachmentUrlProvider } from "@baum/viewer/host";
@@ -384,7 +389,10 @@ export function LocalReview({
     // Enter opens the block j and k are on, such as a commit from the list.
     if (
       event.key === "Enter" &&
-      !(event.target instanceof HTMLElement && event.target.closest("a, button, summary, input, textarea")) &&
+      !(
+        event.target instanceof HTMLElement &&
+        event.target.closest("a, button, summary, input, textarea")
+      ) &&
       openActiveBlock()
     ) {
       event.preventDefault();
@@ -878,7 +886,7 @@ export function LocalReview({
                   // The description and other pull requests of this repository
                   // open here; the chip's link to GitHub is the fallback.
                   if (anchor.type === "pr_body") {
-                    setDescription({ section: anchor.section });
+                    setDescription({ section: anchor.section ?? undefined });
                     return true;
                   }
                   if (anchor.type === "pr") {
@@ -1199,7 +1207,11 @@ export function LocalReview({
                     : viewedDocument && !showingDraft
                       ? // Every file of the change, as GitHub's Files changed shows them,
                         // each diff read for the version on screen.
-                        documentFilesSlot(viewedDocument.index.hunks, filePatches, `${pr.url}/files`)
+                        documentFilesSlot(
+                          viewedDocument.index.hunks,
+                          filePatches,
+                          `${pr.url}/files`,
+                        )
                       : undefined
                 }
                 hunkPatches={

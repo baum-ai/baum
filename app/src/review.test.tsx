@@ -30,11 +30,23 @@ vi.mock("@baum/viewer/components/review-viewer", () => ({
       data-commits={commits?.state.status}
     >
       {header?.beside}
+      {header?.versionActions?.map((action) => (
+        <button
+          key={action.label}
+          type="button"
+          disabled={action.disabled}
+          onClick={action.onSelect}
+        >
+          {action.label}
+        </button>
+      ))}
       {notices}
       <button
         type="button"
         data-source="description"
-        onClick={() => openSource?.({ type: "pr_body", section: "Validation" }, { label: "", kind: "" })}
+        onClick={() =>
+          openSource?.({ type: "pr_body", section: "Validation" }, { label: "", kind: "" })
+        }
       />
       <button
         type="button"
@@ -436,9 +448,11 @@ it("opens the description a source chip cites in a panel, and another pull reque
   expect(dialog.querySelector("strong")?.textContent).toBe("suite");
   expect(dialog.querySelector(".local-description-cited")?.textContent).toBe("Validation");
   expect(
-    vi.mocked(fetch).mock.calls.some(([url]) =>
-      String(url).endsWith("api/prs/description?repository=acme%2Fdemo&pr=7"),
-    ),
+    vi
+      .mocked(fetch)
+      .mock.calls.some(([url]) =>
+        String(url).endsWith("api/prs/description?repository=acme%2Fdemo&pr=7"),
+      ),
   ).toBe(true);
   expect(dialog.querySelector<HTMLAnchorElement>("a[href*='github.com']")?.textContent).toContain(
     "View on GitHub",
@@ -487,9 +501,11 @@ it("opens a file a context chip cites in a panel, marking its symbol's definitio
   expect(dialog.querySelector("h2")?.textContent).toBe("queue/retry.go");
   expect(dialog.textContent).toContain("Backoff");
   expect(
-    vi.mocked(fetch).mock.calls.some(([url]) =>
-      String(url).includes("api/file?clone=selected-clone&pr=7&path=queue%2Fretry.go"),
-    ),
+    vi
+      .mocked(fetch)
+      .mock.calls.some(([url]) =>
+        String(url).includes("api/file?clone=selected-clone&pr=7&path=queue%2Fretry.go"),
+      ),
   ).toBe(true);
   const lines = [...dialog.querySelectorAll(".local-file-line")];
   expect(lines).toHaveLength(8);
@@ -527,6 +543,7 @@ it("offers Re-run checks and Update branch in the PR page header when they apply
   expect(node.textContent).not.toContain("Re-run checks");
   expect(node.textContent).not.toContain("Update branch");
   await render(job("completed"), 0, { ...entry, checks: "failing", pull_request: withPush });
+  await act(async () => node.querySelector<HTMLButtonElement>(".local-status-menu")!.click());
   expect(node.textContent).toContain("Re-run checks");
   expect(node.textContent).not.toContain("Update branch");
   await render(job("completed"), 0, {
@@ -534,6 +551,7 @@ it("offers Re-run checks and Update branch in the PR page header when they apply
     merge: "blocked",
     pull_request: { ...withPush, behind: true },
   });
+  await act(async () => node.querySelector<HTMLButtonElement>(".local-status-menu")!.click());
   expect(node.textContent).toContain("Update branch");
   expect(node.textContent).not.toContain("Re-run checks");
   // Without push access neither is offered.
@@ -578,18 +596,17 @@ it("leads with the fix of a broken pull request and follows its job", async () =
       ),
     );
   await show();
+  await act(async () => node.querySelector<HTMLButtonElement>(".local-status-menu")!.click());
   const button = Array.from(node.querySelectorAll("button")).find(
     (b) => b.textContent === "Fix conflicts",
   )!;
   await act(async () => button.click());
   expect(fix).toHaveBeenCalled();
-  // The fix starts at once: no dialog, and the button answers the click.
+  // The fix starts at once and the page answers the click.
   expect(node.querySelector("dialog")).toBeNull();
   await show(undefined, { starting: true, error: "" });
-  expect(
-    Array.from(node.querySelectorAll("button")).find((b) => b.textContent === "Starting…")!
-      .disabled,
-  ).toBe(true);
+  expect(node.textContent).toContain("Starting the fix");
+  expect(node.querySelector(".local-status-menu")).toBeNull();
   // A fix the daemon refused says why on the page.
   await show(undefined, {
     starting: false,
@@ -600,9 +617,8 @@ it("leads with the fix of a broken pull request and follows its job", async () =
   );
   await show(fixJob("running"));
   expect(node.textContent).toContain("Fix conflicts: Merging the base branch");
-  expect(
-    Array.from(node.querySelectorAll("button")).find((b) => b.textContent === "Fixing…")!.disabled,
-  ).toBe(true);
+  expect(node.textContent).toContain("Fixing");
+  expect(node.querySelector(".local-status-menu")).toBeNull();
   await show(
     fixJob("completed", {
       commit: "abcdef1234567890",

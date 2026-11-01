@@ -13,10 +13,11 @@ import { forgetFoldedSections } from "./sessions";
 import { forgetLastRows } from "./shortcuts";
 
 vi.mock("@baum/viewer/components/review-viewer", () => ({
-  ReviewViewer: ({ document, placeholder, notices }: ReviewViewerProps) => (
+  ReviewViewer: ({ document, placeholder, notices, sessions }: ReviewViewerProps) => (
     <div>
       {notices}
       {document ? null : placeholder}
+      {sessions?.renderPane(null, {} as never)}
     </div>
   ),
 }));

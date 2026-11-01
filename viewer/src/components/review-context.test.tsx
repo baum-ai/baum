@@ -195,7 +195,10 @@ describe("the summary's context", () => {
 
     // A changed file opens as the file in the host's dialog too, not its diff.
     act(() => chips[0]?.querySelector("button")?.click());
-    expect(openRepositoryFile).toHaveBeenCalledWith({ path: "queue/worker.go", symbol: "Worker.Run" });
+    expect(openRepositoryFile).toHaveBeenCalledWith({
+      path: "queue/worker.go",
+      symbol: "Worker.Run",
+    });
     expect(open).not.toHaveBeenCalled();
 
     // A file the change does not touch is a button for the host, with no ↗.

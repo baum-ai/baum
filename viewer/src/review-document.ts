@@ -1758,6 +1758,27 @@ function encodeSegments(value: string): string {
   return value.split("/").map(encodeURIComponent).join("/");
 }
 
+/** Whether a context reference names a directory rather than a file: it
+ *  ends in "/", another path the document cites lies under it, or its last
+ *  segment has no extension and no hunk of the change is that exact file.
+ *  An extensionless file cited only by the context (a Makefile) reads as a
+ *  directory too; it then keeps its GitHub link, which still works. */
+export function isContextDirectory(document: ReviewDocument, path: string): boolean {
+  if (path.endsWith("/")) return true;
+  const cited = new Set<string>();
+  for (const hunk of document.index.hunks) {
+    cited.add(hunk.path);
+    if (hunk.old_path) cited.add(hunk.old_path);
+  }
+  for (const part of Object.values(document.summary.context ?? {})) {
+    for (const ref of part?.refs ?? []) cited.add(ref.path);
+  }
+  const prefix = `${path}/`;
+  for (const candidate of cited) if (candidate.startsWith(prefix)) return true;
+  const name = path.slice(path.lastIndexOf("/") + 1);
+  return !name.includes(".") && !document.index.hunks.some((hunk) => hunk.path === path);
+}
+
 /** Where a context reference reads on GitHub: at head, or at the merge base
  *  when every indexed change on or under it removes or renames a file away.
  *  Stack file comparisons preserve member boundaries and source revisions,

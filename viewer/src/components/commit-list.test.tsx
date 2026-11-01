@@ -161,14 +161,14 @@ describe("CommitList", () => {
 
     act(() =>
       [...container.querySelectorAll("button")]
-        .find((button) => button.textContent === "Wire the retry budget")!
+        .find((each) => each.textContent === "Wire the retry budget")!
         .click(),
     );
     expect(select).toHaveBeenLastCalledWith({ kind: "session", id: "s1" });
 
     act(() =>
       [...container.querySelectorAll("button")]
-        .find((button) => button.textContent === "Add the retry budget")!
+        .find((each) => each.textContent === "Add the retry budget")!
         .click(),
     );
     expect(select).toHaveBeenLastCalledWith({ kind: "commit", id: ONE });

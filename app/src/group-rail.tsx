@@ -18,7 +18,11 @@ import { Transcript, routedCommitLoaders, withRunning } from "./review";
  *  commits from: the PR page's own routes, with its latest version. */
 export type RailMember = { number: number; clone: string };
 
-type Read = { number: number; query: string; answer: ReturnType<typeof parseSessionsAnswer> | null };
+type Read = {
+  number: number;
+  query: string;
+  answer: ReturnType<typeof parseSessionsAnswer> | null;
+};
 
 /** What the daemon's per-pull-request session routes answered for a group's
  *  members, as one answer: sessions by id and commits by oid, once each,
@@ -28,10 +32,14 @@ export function mergeReads(reads: Read[]) {
   const answered = reads.filter((r) => r.answer);
   if (answered.length === 0) return null;
   const available = answered.filter(
-    (r): r is Read & { answer: { available: true; sessions: LocalSession[]; commits: LocalCommit[] } } =>
-      r.answer?.available === true,
+    (
+      r,
+    ): r is Read & {
+      answer: { available: true; sessions: LocalSession[]; commits: LocalCommit[] };
+    } => r.answer?.available === true,
   );
-  if (available.length === 0) return { answer: answered[0]!.answer!, sessionQuery: new Map(), commitQuery: new Map() };
+  if (available.length === 0)
+    return { answer: answered[0]!.answer!, sessionQuery: new Map(), commitQuery: new Map() };
   const sessions = new Map<string, LocalSession>();
   const commits = new Map<string, LocalCommit>();
   const sessionQuery = new Map<string, string>();
@@ -167,12 +175,7 @@ export function useGroupRail({
       ? {
           count: decisions.total,
           renderPane: () => (
-            <PullRequestDecisionsPane
-              read={decisions}
-              live={running}
-              heading
-              scope="this stack"
-            />
+            <PullRequestDecisionsPane read={decisions} live={running} heading scope="this stack" />
           ),
         }
       : undefined,

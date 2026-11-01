@@ -23,7 +23,9 @@ import {
   type Tone,
 } from "../review-document";
 import { cn, FOCUS_RING } from "./classnames";
-import { CodeFileLink, useReviewSources } from "./code-file-link";
+import { chipClass, chipLinkClass } from "./chip-classes";
+import { CodeFileLink } from "./code-file-link";
+import { useReviewSources } from "./review-contexts";
 import { CheckIcon, ExternalLinkIcon } from "./icons";
 import { InlineMarkdown } from "./markdown";
 import { Badge } from "./ui";
@@ -383,15 +385,6 @@ export function DecisionContext({
     </div>
   );
 }
-
-const chipClass = cn(
-  "inline-flex max-w-full min-w-0 items-center gap-1 rounded-(--radius-sm) border border-(--border-subtle) bg-(--surface-sunken) px-1.5 py-0.5 text-xs leading-[1.4] text-(--text-secondary)",
-);
-
-export const chipLinkClass = cn(
-  chipClass,
-  "hover:border-(--border-default) hover:text-(--text-primary) hover:no-underline",
-);
 
 /** A chip for a file of the repository. It opens the review's file view when
  *  the pull request changes the file, and otherwise `href`, marked as leaving. */

@@ -103,7 +103,7 @@ const fixtures: Record<string, { block: unknown; shows: string[] }> = {
       items: [{ attachment: "att_0123456789abcdef", caption: "Images caption" }],
       source: [{ type: "pr_body", section: null }],
     },
-    shows: ["Images caption", 'src="/attachments/att_0123456789abcdef"', "Description"],
+    shows: ["Images caption", 'src="/attachments/att_0123456789abcdef"', "From the PR description"],
   },
   repro: {
     block: { kind: "repro", steps: ["Reproduce step one"], source },

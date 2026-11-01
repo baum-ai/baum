@@ -31,11 +31,17 @@ vi.mock("@baum/viewer/components/review-viewer", () => ({
     <div>
       <h1>{header?.heading}</h1>
       {header?.titleAside}
+      {header?.subtitle}
+      {header?.statistics}
       {header?.beside}
       {notices}
       {document ? <p>{document.summary.text}</p> : placeholder}
-      {decisions ? <section aria-label="Decisions">{decisions.renderPane({} as never)}</section> : null}
-      {sessions ? <section aria-label="Sessions">{sessions.renderPane(null, {} as never)}</section> : null}
+      {decisions ? (
+        <section aria-label="Decisions">{decisions.renderPane({} as never)}</section>
+      ) : null}
+      {sessions ? (
+        <section aria-label="Sessions">{sessions.renderPane(null, {} as never)}</section>
+      ) : null}
       {commits ? (
         <section aria-label="Commits">{commits.renderPane(rail.commit, {} as never)}</section>
       ) : null}
@@ -466,7 +472,9 @@ it("names the review groups a pull request belongs to", async () => {
   history.replaceState(null, "", "/s/test-ns/?clone=clone&pr=7");
   await act(async () => root.render(<App />));
   // The group is a link on the line under the title, named by its kind.
-  const link = node.querySelector<HTMLAnchorElement>('a.local-group-link[href="/s/test-ns/?group=g1"]')!;
+  const link = node.querySelector<HTMLAnchorElement>(
+    'a.local-group-link[href="/s/test-ns/?group=g1"]',
+  )!;
   expect(link.textContent).toBe("GroupAuth rework");
 });
 
