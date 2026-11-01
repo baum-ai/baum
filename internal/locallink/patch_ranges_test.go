@@ -111,3 +111,115 @@ func TestPatcherClosesAnIdleRange(t *testing.T) {
 		t.Fatalf("after closing: %+v", result)
 	}
 }
+
+// holdRange opens and resolves a range as a read does, failing the test
+// when it is not kept; the returned release ends the read.
+func holdRange(t *testing.T, p *Patcher, req PatchRequest) (*openRange, func()) {
+	t.Helper()
+	r, release, result, err := p.openRange(context.Background(), req, req.Base)
+	if err != nil || r == nil {
+		t.Fatalf("range not opened: %+v %v", result, err)
+	}
+	return r, release
+}
+
+// With more ranges in use than a Patcher keeps, the ones it lets go stay
+// open for their reads and close when the last one ends; nothing is left
+// open once the kept ones are closed.
+func TestEvictedRangesInUseCloseWithTheirLastRead(t *testing.T) {
+	f := twoChangedFiles(t)
+	tmp := t.TempDir()
+	t.Setenv("TMPDIR", tmp)
+	p := new(Patcher)
+	const ranges = maxChangeSets + 3
+	var releases []func()
+	for i := range ranges {
+		// Each spelling of the directory is its own range.
+		req := patchRequest(f, "one.txt")
+		req.Dir = f.Repo + strings.Repeat("/.", i)
+		r, release := holdRange(t, p, req)
+		if _, err := r.repo.ChangedFiles(context.Background(), r.oids[0], r.oids[1]); err != nil {
+			t.Fatal(err)
+		}
+		releases = append(releases, release)
+	}
+	if n := mirrors(t, tmp); n != ranges {
+		t.Fatalf("%d clones open with %d ranges in use", n, ranges)
+	}
+	for _, release := range releases {
+		release()
+	}
+	if n := mirrors(t, tmp); n != maxChangeSets {
+		t.Fatalf("%d clones open once released, want the %d kept", n, maxChangeSets)
+	}
+	p.Close()
+	if n := mirrors(t, tmp); n != 0 {
+		t.Fatalf("%d clones open after Close", n)
+	}
+}
+
+// Close during a read leaves the read's clone usable until the read ends,
+// then closes it.
+func TestCloseDuringAReadClosesWhenItEnds(t *testing.T) {
+	f := twoChangedFiles(t)
+	tmp := t.TempDir()
+	t.Setenv("TMPDIR", tmp)
+	p := new(Patcher)
+	r, release := holdRange(t, p, patchRequest(f, "one.txt"))
+	p.Close()
+	if n := mirrors(t, tmp); n != 1 {
+		t.Fatalf("%d clones open during the read", n)
+	}
+	if _, err := r.repo.FilePatch(context.Background(), r.oids[0], r.oids[1], MaxPatchBytes, "one.txt"); err != nil {
+		t.Fatalf("the read's clone was closed under it: %v", err)
+	}
+	release()
+	if n := mirrors(t, tmp); n != 0 {
+		t.Fatalf("%d clones open after the read", n)
+	}
+}
+
+// A range kept for rangeMaxAge is opened again by its next read, however
+// busy it was; the old clone closes.
+func TestABusyRangeIsReopenedAfterItsMaxAge(t *testing.T) {
+	f := twoChangedFiles(t)
+	tmp := t.TempDir()
+	t.Setenv("TMPDIR", tmp)
+	defer func(age time.Duration) { rangeMaxAge = age }(rangeMaxAge)
+	rangeMaxAge = 50 * time.Millisecond
+	p := new(Patcher)
+	defer p.Close()
+	first, release := holdRange(t, p, patchRequest(f, "one.txt"))
+	release()
+	again, release := holdRange(t, p, patchRequest(f, "one.txt"))
+	release()
+	if again != first {
+		t.Fatal("a young range was opened again")
+	}
+	time.Sleep(2 * rangeMaxAge)
+	renewed, release := holdRange(t, p, patchRequest(f, "two.txt"))
+	release()
+	if renewed == first {
+		t.Fatal("a range past its max age was kept")
+	}
+	if n := mirrors(t, tmp); n != 1 {
+		t.Fatalf("%d clones open, want the renewed one", n)
+	}
+}
+
+// A read cancelled by its own request does not drop the kept range.
+func TestACancelledReadKeepsTheRange(t *testing.T) {
+	f := twoChangedFiles(t)
+	p := new(Patcher)
+	defer p.Close()
+	kept, release := holdRange(t, p, patchRequest(f, "one.txt"))
+	release()
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, _ = p.readPatch(ctx, patchRequest(f, "two.txt"))
+	again, release := holdRange(t, p, patchRequest(f, "one.txt"))
+	release()
+	if again != kept {
+		t.Fatal("a cancelled read dropped the range")
+	}
+}

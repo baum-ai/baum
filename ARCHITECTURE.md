@@ -1442,16 +1442,22 @@ documents"). The app fills them in from `GET /api/patch?path=<path>`, answered b
 - A `Patcher` also keeps, for the last eight clones and ranges it read
   (directory, repository, merge base or base, head), the opened clone (its
   private repository), the remote match and the resolved commits, until 30
-  seconds after the range's last read (`rangeIdle`) or `Close`, so a further
+  seconds after the range's last read (`rangeIdle`), 5 minutes after it was
+  opened however busy (`rangeMaxAge`; the next read opens it again) or
+  `Close`, so a further
   file of a known range costs one `git diff` instead of about seven git
   processes (opening, remotes, two commit lookups, the patch). Only a
   resolution that succeeded is kept: no clone, no matching remote or missing
   commits are resolved again on the next request. A read that finds objects
   missing, a partial clone or git failing drops the kept range, so the next
-  request opens it again; a remote edited meanwhile is seen once the range
-  has idled out. An evicted, idled or closed range is closed when its last
-  read ends. `locallink.Patch`, `EmbedPatches` and `baum internal view`
-  close theirs; the daemon's long-lived `Patcher`s rely on the idle close.
+  request opens it again; a read cancelled by its own request, or an answer
+  about its path alone, does not. A remote edited meanwhile is seen once the
+  range has idled out or reached its maximum age. An evicted, aged, idled or
+  closed range is closed when its last read ends. `locallink.Patch`,
+  `EmbedPatches` and `baum internal view` close theirs, and the daemon closes
+  the app's document cache and the group API (`reviewgroups.API.Close`), and
+  so their `Patcher`s, when it stops; only a daemon killed within a range's
+  idle time leaves its private repository behind.
 
 ### Retained review commits
 

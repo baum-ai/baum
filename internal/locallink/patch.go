@@ -78,9 +78,13 @@ const maxChangeSets = 8
 var patchRedactor = sync.OnceValues(bundle.NewRedactor)
 
 // rangeIdle is how long a Patcher keeps a range's opened clone after its
-// last read. A remote edited in the meantime is seen once it has closed.
-// Tests shorten it.
-var rangeIdle = 30 * time.Second
+// last read, and rangeMaxAge how long after it was opened, however busy:
+// the next read after either opens and matches the clone again, so a remote
+// edited in the meantime is seen. Tests shorten them.
+var (
+	rangeIdle   = 30 * time.Second
+	rangeMaxAge = 5 * time.Minute
+)
 
 // Patcher reads file patches for pull requests. It finds the files a range
 // changes, and so the old name of each renamed one, once for a merge base
@@ -118,6 +122,8 @@ type openRange struct {
 	users   int
 	dropped bool
 	idle    *time.Timer
+	// opened is when the resolution succeeded; zero before.
+	opened time.Time
 }
 
 // changeSet is one computation of a range's changed files, shared by every
@@ -147,6 +153,9 @@ func Patch(ctx context.Context, req PatchRequest) (PatchResult, error) {
 // Close closes every clone the Patcher keeps open, once the reads using it
 // end. The Patcher stays usable: a later read opens the clone again.
 func (p *Patcher) Close() {
+	if p == nil {
+		return
+	}
 	p.mu.Lock()
 	ranges := p.ranges
 	p.ranges = nil
@@ -178,16 +187,25 @@ func (p *Patcher) openRange(ctx context.Context, req PatchRequest, start string)
 	for {
 		p.mu.Lock()
 		var r *openRange
+		var evicted []*openRange
 		for i, kept := range p.ranges {
-			if kept.key == key {
-				r = kept
-				p.ranges = append(slices.Delete(p.ranges, i, i+1), r)
-				break
+			if kept.key != key {
+				continue
 			}
+			p.ranges = slices.Delete(p.ranges, i, i+1)
+			if !kept.opened.IsZero() && time.Since(kept.opened) >= rangeMaxAge {
+				// Kept long enough: this read opens the clone again.
+				if kept.drop() {
+					evicted = append(evicted, kept)
+				}
+			} else {
+				r = kept
+				p.ranges = append(p.ranges, r)
+			}
+			break
 		}
 		if r == nil {
 			r = &openRange{key: key, ready: make(chan struct{}), users: 1}
-			var evicted []*openRange
 			for len(p.ranges) >= maxChangeSets {
 				old := p.ranges[0]
 				p.ranges = p.ranges[1:]
@@ -203,6 +221,9 @@ func (p *Patcher) openRange(ctx context.Context, req PatchRequest, start string)
 			repo, oids, result, err := resolveRange(ctx, dir, req.Repository, start, req.Head)
 			p.mu.Lock()
 			r.repo, r.oids, r.result, r.err = repo, oids, result, err
+			if repo != nil {
+				r.opened = time.Now()
+			}
 			if repo == nil {
 				r.users--
 				r.dropped = true
@@ -408,7 +429,9 @@ func (p *Patcher) readPatch(ctx context.Context, req PatchRequest) (PatchResult,
 	// opens and resolves it again.
 	unavailable := func(err error) (PatchResult, bool, error) {
 		result, handled, err := unreadable(err)
-		if handled && (err != nil || result.Code != CodeTooLarge) {
+		// Only what says the clone changed drops the range: not this
+		// request's own cancellation, nor an answer about its path.
+		if handled && ctx.Err() == nil && (err != nil || result.Code == CodeCommitsMissing || result.Code == CodePartialClone) {
 			p.forget(r)
 		}
 		return result, handled, err

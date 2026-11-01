@@ -30,10 +30,13 @@ type documentCache struct {
 	// patch is shared by every document, so versions of a pull request that
 	// compare the same commits share a read that is running.
 	patch func(context.Context, locallink.PatchRequest) (locallink.PatchResult, error)
+	// patcher answers patch; close closes the clones it keeps open.
+	patcher *locallink.Patcher
 }
 
 func newDocumentCache() *documentCache {
-	return &documentCache{entries: map[string]*cachedDocument{}, requests: make(chan struct{}, maxLocalReads), reads: make(chan struct{}, maxLocalReads), resolve: locallink.Resolve, patch: new(locallink.Patcher).Patch}
+	patcher := new(locallink.Patcher)
+	return &documentCache{entries: map[string]*cachedDocument{}, requests: make(chan struct{}, maxLocalReads), reads: make(chan struct{}, maxLocalReads), resolve: locallink.Resolve, patch: patcher.Patch, patcher: patcher}
 }
 func acquire(ctx context.Context, slots chan struct{}) bool {
 	select {
@@ -112,4 +115,5 @@ func (c *documentCache) close() {
 	for _, entry := range entries {
 		entry.server.Close()
 	}
+	c.patcher.Close()
 }
