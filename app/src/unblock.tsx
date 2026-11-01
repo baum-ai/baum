@@ -109,8 +109,8 @@ function UnblockDialog<Options extends { head_sha: string }, Result>({
       : refusal(options);
   const confirm = useRef<HTMLButtonElement>(null);
   const ready = Boolean(options) && !why && !busy && !outcome;
-  // Tab moves nothing, so once the write can be sent the confirm button takes
-  // the focus from Cancel: Enter confirms, Escape cancels.
+  // Once the write can be sent the confirm button takes the focus from
+  // Cancel: Enter confirms, Escape cancels, with no Tab needed.
   useEffect(() => {
     if (ready) confirm.current?.focus();
   }, [ready]);

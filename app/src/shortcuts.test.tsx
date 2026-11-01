@@ -309,6 +309,37 @@ it("clears the focus with Escape", async () => {
   expect(document.activeElement).toBe(document.body);
 });
 
+it("takes Escape from a button Tab reached back to the focused row, keeping it", async () => {
+  await render();
+  await press("j");
+  const button = document.createElement("button");
+  node.append(button);
+  button.focus();
+  await press("Escape", {}, button);
+  expect(focusedTitle()).toBe("Change 2");
+  expect(document.activeElement?.textContent).toBe("Change 2");
+  // On the row itself, Escape still gives the row up.
+  await press("Escape", {}, document.activeElement!);
+  expect(focused()).toBeNull();
+});
+
+it("leaves Enter and Space on a focused button outside the rows to the button", async () => {
+  await render();
+  await press("j");
+  const button = document.createElement("button");
+  node.append(button);
+  button.focus();
+  const clicked = vi.fn((event: Event) => event.preventDefault());
+  node.addEventListener("click", clicked);
+  await press("Enter", {}, button);
+  await press(" ", {}, button);
+  expect(clicked).not.toHaveBeenCalled();
+  expect(handlers.setSelection).not.toHaveBeenCalled();
+  // The page's other keys still act on the row.
+  await press("j", {}, button);
+  expect(focusedTitle()).not.toBe("Change 2");
+});
+
 it("lists exactly the keys that work in the sheet", async () => {
   await act(async () => root.render(<ShortcutsSheet close={() => {}} />));
   const sheet = node.querySelector("dialog")!;

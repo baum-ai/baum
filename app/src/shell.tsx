@@ -123,7 +123,7 @@ export function Sidebar({
     );
   };
   return (
-    <aside className="local-rail">
+    <aside data-tab-region="" className="local-rail">
       <Link href={appURL()} className="local-rail-mark" title="Inbox">
         <Stumpy size={28} className="flex-none" />
         <Wordmark size="sidebar" className="local-rail-label" />

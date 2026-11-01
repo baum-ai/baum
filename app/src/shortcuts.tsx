@@ -231,9 +231,14 @@ export function moveFocus(ids: string[], current: string | null, step: 1 | -1): 
   return ids[Math.min(ids.length - 1, Math.max(0, index + step))]!;
 }
 
+/** A list row, which keeps the keys while it has the focus. */
+const ROW = "[data-row-id], [data-row]";
+
 /** Whether a keydown belongs to something else: a modified key (the browser's
  *  or the app's own), typing, or an open dialog. Checkboxes and radios take
- *  no text, so the keys still work after one was clicked. */
+ *  no text, so the keys still work after one was clicked. Enter and Space on
+ *  a link or button Tab reached press it; on a row, or in Settings, whose
+ *  keys step through its controls, they stay the page's. */
 export function shouldIgnore(event: KeyboardEvent, allowSheet = false) {
   if (event.ctrlKey || event.metaKey || event.altKey || event.isComposing) return true;
   const target = event.target;
@@ -241,6 +246,12 @@ export function shouldIgnore(event: KeyboardEvent, allowSheet = false) {
     if (target.isContentEditable || target instanceof HTMLTextAreaElement) return true;
     if (target instanceof HTMLSelectElement) return true;
     if (target instanceof HTMLInputElement && !["checkbox", "radio"].includes(target.type))
+      return true;
+    if (
+      (event.key === "Enter" || event.key === " ") &&
+      target.closest("a[href], button, summary") &&
+      !target.closest(`${ROW}, .settings-page`)
+    )
       return true;
   }
   const dialogs = Array.from(document.querySelectorAll("dialog[open]"));
@@ -371,7 +382,9 @@ export function listKeys(
   if (key === "Escape") {
     if (!rows.focused) return false;
     event.preventDefault();
-    rows.clear();
+    const link = rows.rowLink(rows.focused);
+    if (returnsToRow(link)) link?.focus({ preventScroll: true });
+    else rows.clear();
     return true;
   }
   if (key === "Enter" || key === "o") {
@@ -410,9 +423,32 @@ export function useKeyHints() {
   }, [preferences.key_hints]);
 }
 
+/** Whether Escape takes the focus back to a list's selected row, through
+ *  `link`, rather than clearing the row: the focus is on a link or button
+ *  outside the row, which only Tab leaves there (a click gives it up,
+ *  `usePointerBlurs`). Tabs and menus, which keep a click's focus, and
+ *  Settings, whose Escape goes back to its sections, keep their own Escape. */
+export function returnsToRow(link: HTMLElement | null | undefined) {
+  const focused = document.activeElement;
+  if (!link || !(focused instanceof HTMLElement) || link.closest(ROW)?.contains(focused))
+    return false;
+  return (
+    !!focused.closest("a[href], button, summary") &&
+    !focused.closest('[role="tab"], [role="menu"], .local-rail-menu, .settings-page')
+  );
+}
+
+/** The selected row's link, where the page draws a list with one. */
+function selectedRowLink() {
+  const row = document.querySelector<HTMLElement>(":is([data-row-id], [data-row])[data-focused]");
+  return row?.querySelector<HTMLElement>(ROW_LINK) ?? null;
+}
+
 /** Escape gives up whatever the keyboard focused, so the page's keys act on
- *  its selection again. It leaves alone an Escape something else used: a
- *  dialog closing, a menu or a field clearing itself. */
+ *  its selection again: a link or button Tab reached hands the focus back to
+ *  the list's selected row (`returnsToRow`), anything else is let go. It
+ *  leaves alone an Escape something else used: a dialog closing, a menu or a
+ *  field clearing itself, a list giving up its row. */
 export function useEscapeBlurs() {
   useEffect(() => {
     const down = (event: KeyboardEvent) => {
@@ -423,7 +459,10 @@ export function useEscapeBlurs() {
       setTimeout(() => {
         if (event.defaultPrevented) return;
         const focused = document.activeElement;
-        if (focused instanceof HTMLElement && focused !== document.body) focused.blur();
+        if (!(focused instanceof HTMLElement) || focused === document.body) return;
+        const link = selectedRowLink();
+        if (returnsToRow(link)) link?.focus({ preventScroll: true });
+        else focused.blur();
       });
     };
     window.addEventListener("keydown", down);
@@ -431,14 +470,156 @@ export function useEscapeBlurs() {
   }, []);
 }
 
-/** Tab moves nothing, in pages and dialogs alike: the app's keys act on the
- *  selection, which a focus left on some control would only confuse. Where
- *  a place needs more than its keys, it gets its own. */
-export function useNoTab() {
+/** Where a click's focus is the keys' place and stays: list rows, whose
+ *  focus follows the selection, tabs and menus, which arrows move through,
+ *  dialogs, and Settings, whose keys step through its controls. */
+const KEEPS_FOCUS = [
+  "[data-row]",
+  "[data-row-id]",
+  '[role="tab"]',
+  '[role="menu"]',
+  '[role="menuitem"]',
+  "dialog",
+  ".settings-page",
+].join(", ");
+
+/** A link or button clicked with the pointer gives up the focus the click
+ *  gave it. Left there, the next key the page takes, j or k, would show its
+ *  ring (the browser shows one once the keyboard is used), on a control
+ *  nobody chose with the keyboard, such as Inbox in the sidebar. A click that
+ *  moved the focus on, as one opening a menu does, keeps it where it went. */
+export function usePointerBlurs() {
+  useEffect(() => {
+    const click = (event: MouseEvent) => {
+      // A keyboard's Enter or Space clicks with no pointer: detail is 0.
+      if (event.detail === 0 || !(event.target instanceof Element)) return;
+      const control = event.target.closest<HTMLElement>("a[href], button, summary");
+      if (!control || control.closest(KEEPS_FOCUS)) return;
+      setTimeout(() => {
+        if (document.activeElement === control) control.blur();
+      });
+    };
+    window.addEventListener("click", click);
+    return () => window.removeEventListener("click", click);
+  }, []);
+}
+
+/** A row's own link, where Tab and Escape put the focus. */
+const ROW_LINK = "[data-row-link], .inbox-pr-title, .upnext-row";
+const TABBABLE = [
+  "a[href]",
+  "button:not(:disabled)",
+  'input:not(:disabled):not([type="hidden"])',
+  "select:not(:disabled)",
+  "textarea:not(:disabled)",
+  "summary",
+  "[tabindex]",
+].join(", ");
+
+/** What Tab can reach inside `root`, in document order: shown, enabled, not
+ *  taken out of the order, and one radio of each group (the checked one). */
+function tabbables(root: ParentNode, all = false) {
+  return Array.from(root.querySelectorAll<HTMLElement>(TABBABLE)).filter((element) => {
+    if ((!all && element.tabIndex < 0) || element.closest("[inert]")) return false;
+    if (element.getClientRects().length === 0) return false;
+    if (element instanceof HTMLInputElement && element.type === "radio" && element.name) {
+      const group = Array.from(
+        (element.form ?? document).querySelectorAll<HTMLInputElement>(
+          `input[type="radio"][name="${CSS.escape(element.name)}"]`,
+        ),
+      );
+      return element === (group.find((radio) => radio.checked) ?? group[0]);
+    }
+    return true;
+  });
+}
+
+/** Where Tab lands in a place: a list's selected row, else its first; the
+ *  sidebar's current page; else the place's first control. */
+function entry(place: HTMLElement, rows: boolean) {
+  if (rows) {
+    const selected = place.querySelector<HTMLElement>(
+      ":is([data-row-id], [data-row])[data-focused]",
+    );
+    for (const row of [selected, place.querySelector<HTMLElement>(ROW)]) {
+      const link = row?.querySelector<HTMLElement>(ROW_LINK) ?? (row && tabbables(row)[0]);
+      if (link) return link;
+    }
+  }
+  const current = place.querySelector<HTMLElement>('[aria-current="page"]');
+  if (current && tabbables(place).includes(current)) return current;
+  return tabbables(place)[0] ?? null;
+}
+
+/** Tab moves the focus by place rather than by control, so a long list or
+ *  the sidebar costs one press: the sidebar (`data-tab-region`, whose links
+ *  ↑ and ↓ then move through) is one stop, and so are a page's list rows,
+ *  landing on the selected row so its keys go on working; every other
+ *  control (a toolbar's, a detail pane's) is a stop of its own. In a dialog
+ *  Tab stays inside it and goes through each of its controls. A menu keeps
+ *  its own Tab, which closes it. Nothing changes for whoever never presses
+ *  Tab: a click still gives up its focus (`usePointerBlurs`), and the page's
+ *  keys still act on the selection. */
+export function useTabStops() {
   useEffect(() => {
     const down = (event: KeyboardEvent) => {
-      if (event.key === "Tab") event.preventDefault();
+      if (event.ctrlKey || event.metaKey || event.altKey || event.isComposing) return;
+      const focused = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+      if (focused?.closest('[role="menu"], .local-rail-menu')) return;
+      const dialog = Array.from(document.querySelectorAll<HTMLDialogElement>("dialog[open]")).at(
+        -1,
+      );
+      const region = focused?.closest<HTMLElement>("[data-tab-region]");
+      if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+        if (dialog || !region || event.shiftKey) return;
+        const controls = tabbables(region, true);
+        const next = controls[controls.indexOf(focused!) + (event.key === "ArrowDown" ? 1 : -1)];
+        event.preventDefault();
+        next?.focus();
+        return;
+      }
+      if (event.key !== "Tab") return;
+      event.preventDefault();
+      const root = dialog ?? document.body;
+      // Each stop is a control, or a place whose controls count as one.
+      const stops: (HTMLElement | { place: HTMLElement; rows: boolean })[] = [];
+      const places = new Map<HTMLElement, { place: HTMLElement; rows: boolean }>();
+      const stopOf = (element: HTMLElement) => {
+        const place = dialog
+          ? null
+          : (element.closest<HTMLElement>("[data-tab-region]") ??
+            (element.closest(ROW) ? root : null));
+        if (!place) return element;
+        let stop = places.get(place);
+        if (!stop) places.set(place, (stop = { place, rows: place === root }));
+        return stop;
+      };
+      const elements = tabbables(root);
+      for (const element of elements) {
+        const stop = stopOf(element);
+        if (!stops.includes(stop)) stops.push(stop);
+      }
+      if (stops.length === 0) return;
+      const step = event.shiftKey ? -1 : 1;
+      let index: number;
+      if (!focused || focused === document.body || !root.contains(focused)) {
+        index = event.shiftKey ? stops.length - 1 : 0;
+      } else if (elements.includes(focused) || focused.closest("[data-tab-region]")) {
+        index = (stops.indexOf(stopOf(focused)) + step + stops.length) % stops.length;
+      } else {
+        // Focus Tab cannot reach itself, such as a heading a page focused:
+        // on from where it is.
+        const after = (element: HTMLElement) =>
+          !!(focused.compareDocumentPosition(element) & Node.DOCUMENT_POSITION_FOLLOWING);
+        const next = event.shiftKey
+          ? elements.findLast((element) => !after(element))
+          : elements.find(after);
+        index = next ? stops.indexOf(stopOf(next)) : event.shiftKey ? stops.length - 1 : 0;
+      }
+      const stop = stops[index]!;
+      (stop instanceof HTMLElement ? stop : entry(stop.place, stop.rows))?.focus();
     };
+    // Captured, so it comes before the page's own keys.
     window.addEventListener("keydown", down, true);
     return () => window.removeEventListener("keydown", down, true);
   }, []);
