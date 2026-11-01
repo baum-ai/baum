@@ -198,11 +198,12 @@ merges into ("Stacked on main"), its members' lines, files and review times
 summed, a line when its review is missing or outdated, **Open the stack** (or group) as the default, the
 same risk card with the group review's main reason, What changed from the group
 review (`api/groups/<id>/document`: its summary and sections), and its members.
-Their list opens and closes from its head, which counts them ("7 pull
-requests") and those merged; it starts open. A stack's members run from its
-base up, joined by a line, each with a dot and what it waits on ("#963 · Ready
-to merge"); picking one the queue lists previews it, and the others (merged,
-closed, or needing nothing now) are shown as read.
+Their list opens and closes from its head, which counts them, landed ones
+included ("7 pull requests"), and those merged (`landed`); it starts open. A
+stack's members run from its base up, its landed ones first, joined by a line,
+each with a dot and what it waits on ("#963 · Ready to merge", "Merged");
+picking one the queue lists previews it, and the others (landed, or needing
+nothing now) are shown as read.
 
 Under its title the panel shows the pull request's facts: its head branch and
 the base it merges into (`head_ref`, `base_ref`), its lines and files changed

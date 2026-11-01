@@ -2071,24 +2071,42 @@ function GroupPanel({
   const { group, members } = line;
   const [listOpen, setListOpen] = useState(true);
   const listId = useId();
-  // Every member in the group's order, a stack's from its base up: those the
-  // queue lists, which preview when picked, and the others as read, as
-  // merged; one not read at all is left out.
-  const others = (number: number) =>
+  // Every member, a stack's from its base up: those that landed (merged or
+  // closed, which the daemon lists apart, ascending, below the open ones),
+  // then the open ones in the group's order. Those the queue lists preview
+  // when picked; an open one it does not list shows as read, and one not
+  // read at all is left out.
+  const read = (number: number) =>
     entries.find(
       (entry) =>
         entry.pull_request.number === number &&
         sameRepository(entry.pull_request.repository, group.repository),
     );
-  const rows = group.members.flatMap((number) => {
-    const row = members.find((member) => member.entry.pull_request.number === number);
-    if (row) return [{ number, row, entry: row.entry }];
-    const entry = others(number);
-    return entry ? [{ number, row: undefined, entry }] : [];
-  });
-  const stateOf = (entry: Entry) => entry.pull_request.state.toUpperCase();
-  const merged = rows.filter(({ row, entry }) => !row && stateOf(entry) === "MERGED").length;
-  const unread = group.members.length - rows.length;
+  const landed = group.landed ?? [];
+  const total = group.members.length + landed.length;
+  const merged = landed.filter((member) => member.state === "merged").length;
+  const rows: { number: number; row?: Row; entry?: Entry; state: { text: string; tone: string } }[] =
+    [
+      ...landed.map((member) => ({
+        number: member.number,
+        entry: read(member.number),
+        state:
+          member.state === "merged"
+            ? { text: "Merged", tone: "merged" }
+            : member.state === "closed"
+              ? { text: "Closed", tone: "waiting" }
+              : { text: "No longer open", tone: "waiting" },
+      })),
+      ...group.members.flatMap((number) => {
+        const row = members.find((member) => member.entry.pull_request.number === number);
+        if (row) return [{ number, row, entry: row.entry, state: memberState(row) }];
+        const entry = read(number);
+        return entry
+          ? [{ number, entry, state: { text: "Nothing to do now", tone: "waiting" } }]
+          : [];
+      }),
+    ];
+  const unread = total - rows.length;
   const reason = doc?.summary.risk_score?.reasons[0];
   const reasonTitle = reason
     ? (doc?.sections.find((section) => section.id === reason.section)?.title ?? "")
@@ -2125,7 +2143,7 @@ function GroupPanel({
       <div className="upnext-panel-meta">
         <span className="upnext-chip upnext-chip-waiting">{group.stack ? "Stack" : "Group"}</span>
         <span className="upnext-panel-where">
-          {group.repository} · {plural(group.members.length, "pull request")}
+          {group.repository} · {plural(total, "pull request")}
         </span>
       </div>
       <h2 id="upnext-title" className="upnext-title">
@@ -2229,7 +2247,7 @@ function GroupPanel({
             onClick={() => setListOpen((open) => !open)}
           >
             <ChevronRightIcon size={12} className="upnext-chevron" />
-            {plural(group.members.length, "pull request")}
+            {plural(total, "pull request")}
           </button>
           {merged > 0 ? (
             <Badge tone="positive" size="compact">
@@ -2239,19 +2257,12 @@ function GroupPanel({
         </h3>
         {listOpen ? (
           <ul id={listId} className={cn("upnext-members", group.stack && "upnext-members-stack")}>
-              {rows.map(({ number, row, entry }) => {
-                const pr = entry.pull_request;
-                const state = row
-                  ? memberState(row)
-                  : stateOf(entry) === "MERGED"
-                    ? { text: "Merged", tone: "merged" }
-                    : stateOf(entry) === "CLOSED"
-                      ? { text: "Closed", tone: "waiting" }
-                      : { text: "Nothing to do now", tone: "waiting" };
+              {rows.map(({ number, row, entry, state }) => {
+                const pr = entry?.pull_request;
                 const text = (
                   <span className="upnext-block-text">
-                    <span className="upnext-member-title" title={pr.title}>
-                      {pr.title || "Untitled pull request"}
+                    <span className="upnext-member-title" title={pr?.title}>
+                      {pr ? pr.title || "Untitled pull request" : `Pull request #${number}`}
                     </span>
                     <span className="upnext-block-sub">
                       #{number}
@@ -2276,7 +2287,7 @@ function GroupPanel({
                     ) : (
                       text
                     )}
-                    {pr.additions || pr.deletions ? (
+                    {pr && (pr.additions || pr.deletions) ? (
                       <Lines
                         additions={pr.additions ?? 0}
                         deletions={pr.deletions ?? 0}
