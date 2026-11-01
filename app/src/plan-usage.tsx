@@ -127,14 +127,14 @@ export function PlanUsageView({
   );
 }
 
-/** Plan usage from the daemon, asking for a fresh reading on mount and every
- *  five minutes (the daemon still reads at most once a minute), with a clock
- *  that keeps "resets in" current between readings. A failed request leaves
- *  the last answer, or `plans` null. */
 /** Sent on `window` when the plans to show were changed in Settings, so the
  *  sidebar reads again at once. */
 export const PLAN_USAGE_CHANGED = "baum:plan-usage-changed";
 
+/** Plan usage from the daemon, asking for a fresh reading on mount and every
+ *  five minutes (the daemon still reads at most once a minute), with a clock
+ *  that keeps "resets in" current between readings. A failed request leaves
+ *  the last answer, or `plans` null. */
 export function usePlanUsage(all = false): { plans: PlanUsageEntry[] | null; now: number } {
   const [plans, setPlans] = useState<PlanUsageEntry[] | null>(null);
   const [now, setNow] = useState(() => Date.now());

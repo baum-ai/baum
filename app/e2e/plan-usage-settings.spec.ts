@@ -30,7 +30,12 @@ test("chooses which plans the sidebar shows and keeps the choice", async ({ page
     // Leave the fixture's choices as they were for the specs that follow.
     for (const name of ["Codex", "Claude Code"]) {
       const reset = page.getByRole("button", { name: /^Use baum's default/ });
-      if ((await reset.count()) > 0) await reset.first().click();
+      if ((await reset.count()) > 0) {
+        await reset.first().click();
+        await expect(page.getByRole("button", { name: /^Use baum's default/ })).toHaveCount(
+          (await reset.count()) - 1,
+        );
+      }
       await expect(page.getByRole("switch", { name: `Show ${name} plan usage` })).toBeVisible();
     }
   }

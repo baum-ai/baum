@@ -1077,7 +1077,8 @@ With no choice a plan shows when one of the backends baum uses is its own: the
 reviews', the fixes' and decision capture's (Auto counts the first plan it can
 read, Claude Code before Codex; the Anthropic API and Cursor have no plan). The
 row says which. Flipping a switch is the person's choice and stays as chosen
-when the backends change; "Use baum's default" gives it back. It is read and
+when the backends change; "Use baum's default" gives it back. A change of backend reaches the
+sidebar at its next reading (within five minutes) and the tray at its next poll. It is read and
 saved through `GET`/`PUT api/settings/plan-usage` (`{provider, shown}`, `shown`
 null to clear), and the sidebar reads again at once. Saves report failures
 and keep the previous choice;
