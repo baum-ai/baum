@@ -63,6 +63,7 @@ import {
   MergeDialog,
   type MergeOptions,
 } from "./merge";
+import { useModal } from "./modal";
 import { LoadingStatus, NineDots } from "./nine-dots";
 import { KeyBar, onBody, useLastRow, useShortcuts } from "./shortcuts";
 import { PullRequestChecks, checksCount, checksSummary, useChecks } from "./checks";
@@ -2379,7 +2380,7 @@ export function MergeReadyDialog({
   close: () => void;
   merged: () => Promise<void>;
 }) {
-  const dialog = useRef<HTMLDialogElement>(null);
+  const dialog = useModal();
   const [merges, setMerges] = useState<Merge[]>(() =>
     entries.map((entry) => ({ entry, state: "checking" })),
   );
@@ -2390,11 +2391,15 @@ export function MergeReadyDialog({
   const gone = useRef(false);
   useLayoutEffect(() => {
     gone.current = false;
-    dialog.current?.showModal();
     return () => {
       gone.current = true;
     };
   }, []);
+  // The merge button goes once the merges ran: Close takes the focus.
+  const closeButton = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    if (finished) closeButton.current?.focus();
+  }, [finished]);
   const set = (index: number, patch: Partial<Merge>) =>
     setMerges((all) => all.map((merge, i) => (i === index ? { ...merge, ...patch } : merge)));
   useEffect(() => {
@@ -2506,7 +2511,7 @@ export function MergeReadyDialog({
         <Alert>Some pull requests were not merged; the reasons are beside them.</Alert>
       ) : null}
       <div className="mt-4 flex justify-end gap-2">
-        <Button variant="ghost" size="compact" disabled={running} onClick={close}>
+        <Button ref={closeButton} variant="ghost" size="compact" disabled={running} onClick={close}>
           {finished ? "Close" : "Cancel"}
         </Button>
         {finished ? null : (

@@ -48,7 +48,11 @@ The multi-page production build emits every entry and assembles `../desktop/dist
 for Tauri, where the connecting screen becomes `index.html`, the page the
 window opens on; it is taken out of the daemon's copy. Every loading state uses
 one component, `NineDots` or `LoadingStatus` in `src/nine-dots.tsx`, whose look
-lives only in `src/nine-dots.css`. Every screen uses baum's bundled type from the
+lives only in `src/nine-dots.css`. A page that reads something says which of four things it is
+(`src/page-state.tsx`): waiting for its first read, that read failed (`Couldn't load jobs`,
+with the daemon's message and one Retry, never an empty page or an endless wait), empty, or its
+content. A failed later read keeps the content shown and says so in a banner. Native dialogs
+open through `useModal` (`src/modal.ts`), which gives the focus back to what opened them. Every screen uses baum's bundled type from the
 viewer (`../viewer/src/fonts/fonts.css`), Instrument Sans for text and Manrope for
 headings, through its `--font-text` and `--font-heading` tokens. Both fonts are
 under the SIL Open Font License, listed in the third-party notices. Fonts and

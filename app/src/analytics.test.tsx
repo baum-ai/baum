@@ -441,5 +441,8 @@ it("explains an older daemon and a failed read", async () => {
   await act(async () => root.render(<></>));
   await act(async () => root.render(<Harness />));
   await act(async () => {});
-  expect(node.textContent).toContain("Retry");
+  expect(node.textContent).toContain("Couldn't load analytics");
+  expect(
+    [...node.querySelectorAll("button")].filter((b) => b.textContent === "Retry"),
+  ).toHaveLength(1);
 });

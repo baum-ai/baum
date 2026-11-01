@@ -3,7 +3,6 @@ import { usePreferences } from "./preferences";
 import { PlanUsageSettings } from "./plan-usage-settings";
 import {
   useEffect,
-  useLayoutEffect,
   useRef,
   useState,
   type FocusEvent,
@@ -62,6 +61,7 @@ import {
   type PullRequests,
   type ReviewSettings,
 } from "./desktop/setup-model";
+import { useModal } from "./modal";
 import { LoadingStatus } from "./nine-dots";
 
 /** The harness and model reviews use, and the ones fixes use: an empty
@@ -1816,10 +1816,7 @@ function DiagnosticsDialog({
   authRevision: number;
   authChanged: () => void;
 }) {
-  const dialog = useRef<HTMLDialogElement>(null);
-  useLayoutEffect(() => {
-    dialog.current?.showModal();
-  }, []);
+  const dialog = useModal();
   return (
     <dialog
       ref={dialog}
@@ -1844,10 +1841,13 @@ function DiagnosticsDialog({
 
 export function RepositoriesPage({
   repositories,
+  loading = false,
   automatic,
   changed,
 }: {
   repositories: Repository[];
+  /** Whether the first read of the repositories is still running. */
+  loading?: boolean;
   automatic: Automatic | null;
   /** Reads everything again; a refresh pressed again restarts the read. */
   changed: (how?: { restart?: boolean }) => Promise<void>;
@@ -1908,7 +1908,9 @@ export function RepositoriesPage({
             <RepositoryPicker changed={changed} autoFocus />
           </div>
         ) : null}
-        {repositories.length === 0 ? (
+        {repositories.length === 0 && loading ? (
+          <LoadingStatus block>Loading repositories…</LoadingStatus>
+        ) : repositories.length === 0 ? (
           <div className="local-empty">
             <h2>No repositories yet</h2>
             <p>
@@ -2238,11 +2240,8 @@ function RepositoryDialog({
   remove: () => Promise<void>;
   close: () => void;
 }) {
-  const dialog = useRef<HTMLDialogElement>(null);
+  const dialog = useModal();
   const [error, setError] = useState("");
-  useLayoutEffect(() => {
-    dialog.current?.showModal();
-  }, []);
   return (
     <dialog
       ref={dialog}

@@ -45,6 +45,7 @@ import {
 } from "./api";
 import { FixNotice, FixRuns, type FixState, type FixChat } from "./fix";
 import { CloneActions } from "./repositories";
+import { useModal } from "./modal";
 import { Notice, RefreshButton, type RefreshRun, usePageRefreshAction } from "./shell";
 import { LiveSessions } from "./sessions";
 import { PullRequestDecisionsList } from "./decisions";
@@ -383,10 +384,7 @@ export function LocalReview({
   const [retryError, setRetryError] = useState("");
   const [confirmingIsolation, setConfirmingIsolation] = useState(false);
   const [retryStarting, setRetryStarting] = useState(false);
-  const isolationDialog = useRef<HTMLDialogElement>(null);
-  useEffect(() => {
-    if (confirmingIsolation) isolationDialog.current?.showModal();
-  }, [confirmingIsolation]);
+  const isolationDialog = useModal(confirmingIsolation);
   const [watchedDetails, setWatchedDetails] = useState("");
   useEffect(() => {
     if (detailsJob && isActiveJob(detailsJob)) setWatchedDetails(detailsJob.id);

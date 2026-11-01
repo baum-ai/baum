@@ -1,6 +1,7 @@
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { Alert, Button } from "@baum/viewer/components/ui";
 import { request, type Entry } from "./api";
+import { useModal } from "./modal";
 import { LoadingStatus, NineDots } from "./nine-dots";
 
 export type MergeOptions = {
@@ -66,14 +67,11 @@ export function MergeDialog({
   merged: () => Promise<void>;
 }) {
   const pr = entry.pull_request;
-  const dialog = useRef<HTMLDialogElement>(null);
+  const dialog = useModal();
   const [options, setOptions] = useState<MergeOptions | null>(null);
   const [method, setMethod] = useState("");
   const [error, setError] = useState("");
   const [merging, setMerging] = useState(false);
-  useLayoutEffect(() => {
-    dialog.current?.showModal();
-  }, []);
   useEffect(() => {
     const abort = new AbortController();
     request<MergeOptions>(
