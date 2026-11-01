@@ -11,7 +11,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/baum-ai/baum/bundle"
 	"github.com/baum-ai/baum/internal/locallink"
 	"github.com/baum-ai/baum/internal/repos"
 	"github.com/baum-ai/baum/internal/reviewindex"
@@ -338,7 +337,6 @@ type patchDocument struct {
 			ID       string `json:"id"`
 			Path     string `json:"path"`
 			NewRange []int  `json:"new_range"`
-			Role     string `json:"role"`
 		} `json:"hunks"`
 		FileComparisons []struct {
 			BaseRevision string `json:"base_revision"`
@@ -381,17 +379,12 @@ func (h *API) patch(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	cited, withheld, start, count := false, false, 0, -1
+	cited, start, count := false, 0, -1
 	for _, item := range doc.Index.Hunks {
 		if item.Path != path {
 			continue
 		}
 		cited = true
-		role := item.Role
-		if role == "" {
-			role = bundle.RoleForPath(path)
-		}
-		withheld = withheld || bundle.PatchTextWithheld(role)
 		if item.ID == hunk && len(item.NewRange) == 2 {
 			start, count = item.NewRange[0], item.NewRange[1]
 		}
@@ -416,7 +409,7 @@ func (h *API) patch(w http.ResponseWriter, r *http.Request) {
 	}
 	clone := h.clone(r.Context(), g.Repository)
 	answer := map[string]*string{"patch": nil}
-	if clone == "" || len(candidates) == 0 || withheld {
+	if clone == "" || len(candidates) == 0 {
 		respond(w, http.StatusOK, answer)
 		return
 	}

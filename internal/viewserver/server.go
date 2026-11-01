@@ -126,7 +126,7 @@ type Server struct {
 	// paths are the paths of the document's cited hunks, versions the other
 	// saved versions read for /api/patch, and patches its answers; all are
 	// replaced with the document.
-	paths      map[string]bool
+	paths      map[string]struct{}
 	versions   map[int]*patchVersion
 	patches    *patchCache
 	patchSlots chan struct{}

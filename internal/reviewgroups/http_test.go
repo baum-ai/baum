@@ -199,8 +199,10 @@ func TestPatchPicksTheMemberHoldingTheHunk(t *testing.T) {
 	if status, _ = f.do(t, "GET", "/api/groups/"+g.ID+"/patch?path=b.go", ""); status != http.StatusNotFound {
 		t.Fatalf("an uncited path answered %d", status)
 	}
+	// A vendored file is read like any other: the bundle cuts its text only
+	// over budget, and the patch is masked as stored hunks are.
 	reads := len(f.patches)
-	if status, raw = f.do(t, "GET", "/api/groups/"+g.ID+"/patch?path=vendor/x.go&hunk=hv", ""); status != http.StatusOK || !strings.Contains(string(raw), `"patch":null`) || len(f.patches) != reads {
+	if status, raw = f.do(t, "GET", "/api/groups/"+g.ID+"/patch?path=vendor/x.go&hunk=hv", ""); status != http.StatusOK || !strings.Contains(string(raw), "+1,3") || len(f.patches) != reads+1 {
 		t.Fatalf("a vendored file: %d %s after %d reads", status, raw, len(f.patches)-reads)
 	}
 }

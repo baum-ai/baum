@@ -139,9 +139,8 @@ group name as heading, member labels on sections). Patches come from
 `GET /api/groups/{id}/patch`, which picks the member whose comparison
 (`index.file_comparisons`) changes the path and whose hunk header matches the
 cited hunk's range. The patch is masked as a stored hunk is
-(`locallink.Patcher`, `bundle.RedactFilePatch`), and a path cited with the
-`generated` or `vendored` role has none (`bundle.PatchTextWithheld`), as for a
-pull request's `GET /api/patch`. Sessions and commits are not listed for a group in v1;
+(`locallink.Patcher`, `bundle.RedactFilePatch`), as for a pull request's
+`GET /api/patch`. Sessions and commits are not listed for a group in v1;
 the viewer shows the sessions the document recorded.
 
 ## HTTP

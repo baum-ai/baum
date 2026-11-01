@@ -11,7 +11,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/baum-ai/baum/bundle"
 	"github.com/baum-ai/baum/internal/locallink"
 )
 
@@ -64,35 +63,27 @@ type patchJob struct {
 // compared and the paths of its cited hunks.
 type patchVersion struct {
 	review Review
-	paths  map[string]bool
+	paths  map[string]struct{}
 }
 
 // hunkPaths reads the paths the document's cited hunks are in
-// (index.hunks[].path), each true when a hunk in it has its patch text
-// withheld for its role (bundle.PatchTextWithheld). A document that does not
-// parse has none.
-func hunkPaths(document []byte) map[string]bool {
+// (index.hunks[].path). A document that does not parse has none.
+func hunkPaths(document []byte) map[string]struct{} {
 	var parsed struct {
 		Index struct {
 			Hunks []struct {
 				Path string `json:"path"`
-				Role string `json:"role"`
 			} `json:"hunks"`
 		} `json:"index"`
 	}
-	paths := map[string]bool{}
+	paths := map[string]struct{}{}
 	if json.Unmarshal(document, &parsed) != nil {
 		return paths
 	}
 	for _, hunk := range parsed.Index.Hunks {
-		if hunk.Path == "" {
-			continue
+		if hunk.Path != "" {
+			paths[hunk.Path] = struct{}{}
 		}
-		role := hunk.Role
-		if role == "" {
-			role = bundle.RoleForPath(hunk.Path)
-		}
-		paths[hunk.Path] = paths[hunk.Path] || bundle.PatchTextWithheld(role)
 	}
 	return paths
 }
@@ -110,7 +101,7 @@ func hunkPaths(document []byte) map[string]bool {
 // not exist or is of another pull request. Every other outcome is 200 with
 // {"patch":"..."} (the file's diff from its first "@@" line, without git's
 // header lines, masked as the stored hunks are) or {"patch":null}: a
-// generated or vendored file, a binary file, a submodule, a path the range
+// binary file, a submodule, a path the range
 // does not change, commits or objects the clone lacks, a clone that is not
 // the document's repository, a patch over locallink.MaxPatchBytes. The viewer
 // treats null as no excerpt and keeps its link to GitHub. A failure that may
@@ -132,12 +123,7 @@ func (s *Server) handlePatch(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "cannot read this version", http.StatusInternalServerError)
 		return
 	}
-	var body []byte
-	if target.withheld {
-		body, err = encodePatch(locallink.PatchResult{Code: locallink.CodeNoTextPatch})
-	} else {
-		body, err = s.patch(r.Context(), target.cache, target.review, file)
-	}
+	body, err := s.patch(r.Context(), target.cache, target.review, file)
 	switch {
 	case r.Context().Err() != nil:
 		return
@@ -161,12 +147,10 @@ func (s *Server) handlePatch(w http.ResponseWriter, r *http.Request) {
 }
 
 // patchTarget is what a patch request is answered from: the served
-// document's cache, the review of the version asked for, and whether that
-// version withholds the file's text.
+// document's cache and the review of the version asked for.
 type patchTarget struct {
-	cache    *patchCache
-	review   Review
-	withheld bool
+	cache  *patchCache
+	review Review
 }
 
 // patchTarget finds the version a request names and checks that it cites
@@ -205,11 +189,9 @@ func (s *Server) patchTarget(ctx context.Context, file, version string) (patchTa
 		}
 		target.review, paths = saved.review, saved.paths
 	}
-	withheld, cited := paths[file]
-	if !cited {
+	if _, cited := paths[file]; !cited {
 		return patchTarget{}, errNotCited
 	}
-	target.withheld = withheld
 	return target, nil
 }
 

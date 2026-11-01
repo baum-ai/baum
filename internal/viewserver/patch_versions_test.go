@@ -167,21 +167,21 @@ func TestVersionsWithTheSameRangeShareOneRead(t *testing.T) {
 	}
 }
 
-// A generated or vendored file's text is withheld whole, as the bundle cuts
-// it before any other code, and nothing is read for it.
-func TestGeneratedAndVendoredFilesHaveNoPatch(t *testing.T) {
+// A generated or vendored file is read like any other: the bundle cuts its
+// text only over budget, and the patch is masked as stored hunks are.
+func TestGeneratedAndVendoredFilesArePatchedLikeAnyOther(t *testing.T) {
 	p := &patcher{}
 	_, base := start(t, Options{
-		Document: []byte(versionDocument(1, headB, headA, "generated:api/client.go", "vendor/lib/x.go", "code:src/a.go", "vendored:src/a.go")),
+		Document: []byte(versionDocument(1, headB, headA, "generated:api/client.go", "vendor/lib/x.go")),
 		Patch:    p.fn,
 	})
-	for _, path := range []string{"api/client.go", "vendor/lib/x.go", "src/a.go"} {
-		if resp, patch := fetchVersionPatch(t, base, "", path); resp.StatusCode != http.StatusOK || patch != nil {
+	for _, path := range []string{"api/client.go", "vendor/lib/x.go"} {
+		if resp, patch := fetchVersionPatch(t, base, "", path); resp.StatusCode != http.StatusOK || patch == nil {
 			t.Errorf("%s: status %d, patch %v", path, resp.StatusCode, patch)
 		}
 	}
-	if n := p.calls.Load(); n != 0 {
-		t.Errorf("read %d patches for withheld files", n)
+	if n := p.calls.Load(); n != 2 {
+		t.Errorf("read %d patches, want 2", n)
 	}
 }
 
@@ -195,12 +195,19 @@ func TestSavedVersionsPatchesFromAClone(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(f.Repo, "b.txt"), []byte("b\nkey = \""+secret+"\"\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	linktest.Git(t, f.Repo, "commit", "-q", "-am", "Key")
+	if err := os.MkdirAll(filepath.Join(f.Repo, "vendor"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(f.Repo, "vendor", "x.go"), []byte("key = \""+secret+"\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	linktest.Git(t, f.Repo, "add", "-A")
+	linktest.Git(t, f.Repo, "commit", "-q", "-m", "Key")
 	moved := linktest.Git(t, f.Repo, "rev-parse", "HEAD")
 	linktest.Git(t, f.Repo, "checkout", "-q", "main")
 
 	document := func(n int, head string) string {
-		return fmt.Sprintf(`{"schema":"baum.review/1","review":{"repository":%q,"pull_request":7,"version":%d,"head":%q,"base":%q,"merge_base":%q},"index":{"hunks":[{"id":"h0","path":"b.txt","role":"docs"},{"id":"h1","path":"c.txt","role":"docs"}]}}`+"\n",
+		return fmt.Sprintf(`{"schema":"baum.review/1","review":{"repository":%q,"pull_request":7,"version":%d,"head":%q,"base":%q,"merge_base":%q},"index":{"hunks":[{"id":"h0","path":"b.txt","role":"docs"},{"id":"h1","path":"c.txt","role":"docs"},{"id":"h2","path":"vendor/x.go","role":"vendored"}]}}`+"\n",
 			linktest.Repository, n, head, f.Base, f.Base)
 	}
 	patcher := new(locallink.Patcher)
@@ -223,6 +230,10 @@ func TestSavedVersionsPatchesFromAClone(t *testing.T) {
 	_, patch := fetchVersionPatch(t, base, "", "b.txt")
 	if patch == nil || strings.Contains(*patch, secret) || !strings.HasPrefix(*patch, "@@ -0,0 +1,2 @@\n+b\n+key = \"") {
 		t.Errorf("version 2, b.txt: %q", deref(patch))
+	}
+	_, patch = fetchVersionPatch(t, base, "", "vendor/x.go")
+	if patch == nil || strings.Contains(*patch, secret) || !strings.HasPrefix(*patch, "@@ -0,0 +1 @@\n+key = \"") {
+		t.Errorf("version 2, the vendored vendor/x.go: %q", deref(patch))
 	}
 }
 

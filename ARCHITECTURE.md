@@ -1299,11 +1299,10 @@ leaves out. The app fills them in from `GET /api/patch?path=<path>`, answered by
   is answered; anything else, including a missing, empty or
   over-long (4096 bytes) `path`, is 404 and runs nothing. A repeated `path`
   parameter is not an error: the first is the one asked for. The document
-  records one path per hunk, the file's name at the head. A path one of whose
-  hunks has the `generated` or `vendored` role (`bundle.PatchTextWithheld`,
-  the role generation recorded, else `bundle.RoleForPath`) is `{"patch":null}`
-  and runs nothing: the bundle cuts that text before any other code, so a
-  stored document may have hidden it.
+  records one path per hunk, the file's name at the head. A generated or
+  vendored file is answered like any other, masked: the bundle cuts its text
+  only when the bundle is over its byte budget, as a size measure, not to hide
+  it.
 - A local pull request document carries no `index.file_comparisons`; only
   group reviews do, and their patches come from `GET /api/groups/{id}/patch`,
   which picks the member comparison (`internal/reviewgroups`). Every hunk of a
@@ -1334,16 +1333,26 @@ leaves out. The app fills them in from `GET /api/patch?path=<path>`, answered by
 - The response is `200 {"patch":"@@ -1,3 +1,4 @@..."}`: the file's diff from its
   first `@@` line. git's header lines before it (`diff --git`, `index`, the
   rename lines, `---` and `+++`) are dropped; the viewer reads only the hunks.
-- The patch is masked exactly as a stored hunk's text is
+- The patch is masked by the code that masks a stored hunk's text
   (`bundle.RedactFilePatch`): the same diff parsing (`parseFileHunks`, without
   the line cap, so each line loses a CR before its newline) and the same
   `redactPatches` over the file's hunks as one text, with the one redaction
-  configuration (`redact.Config`, which has no per-repository input). A secret
-  masked in a stored hunk is masked identically in the patch; the bundle tests
-  check the two against each other. A patch diff parsing reads as textless
-  has no text patch.
+  configuration (`redact.Config`, which has no per-repository input). The
+  guarantee is that every byte masked in a stored hunk is masked in the
+  patch; the bundle and `locallink` tests check the two against each other.
+  The texts are not always byte-for-byte equal: a stored hunk the line cap
+  cut is a prefix of the patch's, redacted with less trailing context (the
+  redaction margin), and a type change's stored hunks keep the second
+  section's header lines as hunk lines, which the patch drops. A patch diff
+  parsing reads as textless has no text patch. The patch is masked with the
+  rules of the running binary, not those the document was saved with (see
+  the goredact upgrade note at `TestRedactionMarginCoversTheEngine`).
+- Size: a patch over 1 MiB (`locallink.MaxPatchBytes`) has no text. The
+  stored path's own size reasons (`omitted_size`, `omitted_budget`,
+  `trimmed_oversized`) are not recorded in documents, so a smaller patch of a
+  file the stored hunk dropped or shortened for size is served, masked.
 - Every outcome that is not a patch is `200 {"patch":null}` with nothing about
-  why: a generated or vendored file, a binary file or a mode-only change, a
+  why: a binary file or a mode-only change, a
   submodule, a path the range does
   not change (a directory is one), commits or blobs the clone lacks (including a partial
   clone), a directory that is not the repository's clone, a patch over 1 MiB

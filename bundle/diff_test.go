@@ -805,6 +805,9 @@ func TestRedactionMarginAtItsBoundary(t *testing.T) {
 // Once found, a key is masked to its END marker, past the margin. Any
 // goredact upgrade must re-measure redactionMargin against its rules'
 // lookaheads (see its comment), then update the version pinned here.
+// Lazy patches (`GET /api/patch`, bundle.RedactFilePatch) are masked with
+// the running binary's rules, so an upgrade must not weaken or remove a rule
+// without considering saved documents that no longer store hunk text.
 func TestRedactionMarginCoversTheEngine(t *testing.T) {
 	if goredactVersion(t) != "v0.4.0" {
 		t.Fatal("goredact changed: re-measure redactionMargin against its rules' lookaheads, then update the version this test pins")
