@@ -1,12 +1,4 @@
-import {
-  useCallback,
-  useEffect,
-  useLayoutEffect,
-  useMemo,
-  useRef,
-  useState,
-  type FormEvent,
-} from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { ReviewViewer, type ReviewSteps } from "@baum/viewer/components/review-viewer";
 import { StackIcon } from "@baum/viewer/components/icons";
 import { Alert, Badge, Button, LiveDot } from "@baum/viewer/components/ui";
@@ -33,6 +25,7 @@ import {
 import { PullRequestState } from "./inbox";
 import { CloneActions } from "./repositories";
 import { CancelJob, GenerationOutcome, ReviewJob } from "./review";
+import { useModal } from "./modal";
 import { Notice, PageBar, RefreshButton } from "./shell";
 import { useShortcuts } from "./shortcuts";
 import { LoadingStatus, NineDots } from "./nine-dots";
@@ -63,14 +56,6 @@ function waitingText(numbers: number[]) {
   }.`;
 }
 
-/** A native dialog that opens modally when it mounts; its parent unmounts it. */
-function useModal() {
-  const dialog = useRef<HTMLDialogElement>(null);
-  useLayoutEffect(() => {
-    dialog.current?.showModal();
-  }, []);
-  return dialog;
-}
 /** Asks for a group's name: when creating one and when renaming it. */
 export function NameDialog({
   title,

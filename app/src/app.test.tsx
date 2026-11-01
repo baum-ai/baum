@@ -162,6 +162,33 @@ it("keeps API, event and navigation URLs under the session namespace", async () 
   expect(location.pathname).toBe("/s/test-ns/");
   expect(location.search).toBe("?page=pulls&filter=mine");
 });
+it("says it is loading, not empty, until the first read of jobs and repositories finishes", async () => {
+  const original = vi.mocked(fetch).getMockImplementation()!;
+  let release: () => void = () => {};
+  let gate = Promise.resolve();
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (path: string, init?: RequestInit) => {
+      if (path.endsWith("api/jobs")) await gate;
+      return original(path, init);
+    }),
+  );
+  for (const [page, loading, empty] of [
+    ["jobs", "Loading jobs…", "No jobs yet"],
+    ["repositories", "Loading repositories…", "No repositories yet"],
+  ]) {
+    gate = new Promise<void>((resolve) => (release = resolve));
+    history.replaceState(null, "", `/s/test-ns/?page=${page}`);
+    await act(async () => root.render(<App />));
+    expect(node.textContent).toContain(loading);
+    expect(node.textContent).not.toContain(empty);
+    await act(async () => release());
+    expect(node.textContent).toContain(empty);
+    expect(node.textContent).not.toContain(loading);
+    await act(async () => root.unmount());
+    root = createRoot(node);
+  }
+});
 it("shows actionable launch authorization failure", async () => {
   fail = true;
   await act(async () => root.render(<App />));
@@ -611,7 +638,7 @@ it("shows diagnostics loading, then re-runs on Check again and disables it meanw
   let resolve: (r: Response) => void = () => {};
   const calls = stubDiagnostics(() => new Promise<Response>((r) => (resolve = r)));
   await act(async () => root.render(<App />));
-  expect(node.textContent).toContain("Checking this machine…");
+  expect(node.textContent).toContain("Checking this computer…");
   const button = () =>
     [
       ...node.querySelectorAll<HTMLButtonElement>("[aria-labelledby=diagnostics-heading] button"),

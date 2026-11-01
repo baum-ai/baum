@@ -211,7 +211,7 @@ export function TrayPanel() {
         <div className="tray-menu">
           <div className="tray-status">
             <strong>baum</strong>
-            <span>Connecting to the baum daemon</span>
+            <span>Connecting to baum…</span>
           </div>
         </div>
       )}

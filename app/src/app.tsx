@@ -937,7 +937,12 @@ function Workspace({ url }: { url: UrlState }) {
             <Alert>{inboxes.error}</Alert>
           ) : null}
           {page === "repositories" ? (
-            <RepositoriesPage repositories={picked} automatic={automatic} changed={reload} />
+            <RepositoriesPage
+              repositories={picked}
+              loading={loading}
+              automatic={automatic}
+              changed={reload}
+            />
           ) : page === "settings" || page === "diagnostics" ? (
             <SettingsPage
               authRevision={authRevision}
@@ -1022,7 +1027,7 @@ function Workspace({ url }: { url: UrlState }) {
                 actions={<RefreshButton refresh={reload} />}
               />
               <div className="local-page-body local-list-page">
-                <Jobs jobs={jobs} changed={reload} />
+                <Jobs jobs={jobs} loading={loading} changed={reload} />
               </div>
             </>
           ) : inboxWaiting ? (
@@ -1432,7 +1437,15 @@ function ForkConfirmation({
 /** The jobs, newest first: those running or waiting to, then those that
  *  finished. The keyboard moves through them as through any list; Enter
  *  opens the job's pull request or group and `t` its transcript. */
-function Jobs({ jobs, changed }: { jobs: Job[]; changed: () => Promise<void> }) {
+function Jobs({
+  jobs,
+  loading,
+  changed,
+}: {
+  jobs: Job[];
+  loading: boolean;
+  changed: () => Promise<void>;
+}) {
   const [error, setError] = useState("");
   const [folded, setFolded] = useState<ReadonlySet<string>>(new Set());
   const newest = jobs.slice().reverse();
@@ -1528,7 +1541,9 @@ function Jobs({ jobs, changed }: { jobs: Job[]; changed: () => Promise<void> }) 
           <Alert>{error}</Alert>
         </div>
       ) : null}
-      {jobs.length === 0 ? (
+      {jobs.length === 0 && loading ? (
+        <LoadingStatus block>Loading jobs…</LoadingStatus>
+      ) : jobs.length === 0 ? (
         <div className="local-empty">
           <h2>No jobs yet</h2>
           <p>Reviews and fixes you start, or that run automatically, show here.</p>
