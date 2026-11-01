@@ -204,14 +204,15 @@ func (g *Generator) call(ctx context.Context, budgets Budgets, request Request, 
 	var result Result
 	for attempt := 0; attempt < budgets.MaxProviderAttempts; attempt++ {
 		// A request gets what the run's budgets leave, or none when the run
-		// has none.
+		// has none. A negative budget is one already spent (a staged review's
+		// stage left nothing), so it allows no call.
 		request.MaxCalls, request.MaxTokens = 0, 0
-		if budgets.MaxCalls > 0 {
+		if budgets.MaxCalls != 0 {
 			if request.MaxCalls = budgets.MaxCalls - outcome.Calls; request.MaxCalls < 1 {
 				return result, errors.New(GenerationBudgetExceededReason("model calls"))
 			}
 		}
-		if budgets.MaxTokens > 0 {
+		if budgets.MaxTokens != 0 {
 			if request.MaxTokens = budgets.MaxTokens - outcome.Tokens; request.MaxTokens < 1 {
 				return result, errors.New(GenerationBudgetExceededReason("tokens"))
 			}

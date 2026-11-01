@@ -150,6 +150,18 @@ func (g *Generator) StagedReview(ctx context.Context, run StagedRun) (outcome St
 	calls := run.Budgets.MaxCalls - outcome.Outline.Calls
 	tokens := run.Budgets.MaxTokens - outcome.Outline.Tokens
 	detailsBudgets, contextBudgets := stageBudgets(run.Budgets, calls, tokens, len(toWrite) > 0)
+	// A stage left no share of a bounded budget has spent it: zero would be
+	// no limit, so it is made negative, which allows no call.
+	exhaust := func(b Budgets) Budgets {
+		if run.Budgets.MaxCalls > 0 && b.MaxCalls < 1 {
+			b.MaxCalls = -1
+		}
+		if run.Budgets.MaxTokens > 0 && b.MaxTokens < 1 {
+			b.MaxTokens = -1
+		}
+		return b
+	}
+	detailsBudgets, contextBudgets = exhaust(detailsBudgets), exhaust(contextBudgets)
 	if continued {
 		detailsBudgets = run.Budgets
 	}
