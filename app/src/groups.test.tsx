@@ -289,6 +289,53 @@ it("labels a stack group's page as a stack", async () => {
   expect(node.textContent).not.toContain("Review group");
 });
 
+it("counts a stack's merged and closed members in the stack on its row", async () => {
+  entries = [entry(3), entry(4)];
+  groups = [
+    group([3, 4], {
+      id: "g2",
+      name: "Stacked",
+      stack: true,
+      landed: [
+        { number: 1, state: "merged" },
+        { number: 2, state: "closed" },
+      ],
+    }),
+  ];
+  await act(async () => root.render(<App />));
+  expect(node.querySelector('[title="Stack of 4 pull requests"]')).not.toBeNull();
+});
+
+it("shows a stack's merged and closed members first on its page, each marked as it is", async () => {
+  entries = [entry(3), entry(4)];
+  groups = [
+    group([3, 4], {
+      id: "g2",
+      name: "Stacked",
+      stack: true,
+      landed: [
+        { number: 1, state: "merged" },
+        { number: 2, state: "closed" },
+        { number: 5, state: "unknown" },
+      ],
+    }),
+  ];
+  history.replaceState(null, "", "/s/test-ns/?group=g2");
+  await act(async () => root.render(<App />));
+  const rows = [...node.querySelectorAll("li.local-group-member")].map((li) => li.textContent);
+  expect(rows).toHaveLength(5);
+  expect(rows[0]).toContain("#1");
+  expect(rows[0]).toContain("Merged");
+  expect(rows[1]).toContain("#2");
+  expect(rows[1]).toContain("Closed");
+  expect(rows[1]).not.toContain("Merged");
+  expect(rows[2]).toContain("#5");
+  expect(rows[2]).toContain("No longer open");
+  expect(rows[3]).toContain("#3");
+  expect(rows[3]).not.toContain("Merged");
+  expect(node.querySelectorAll("[data-landed] button")).toHaveLength(0);
+});
+
 it("keeps group jobs apart from pull request jobs", () => {
   const base = {
     clone: "clone",

@@ -21,7 +21,8 @@ This package owns the group definitions, the group review versions and the
   `cross_repository`; groups across repositories are a later step.
 - Members are kept in ascending number order. Renaming, adding and removing
   members and deleting the group are allowed at any time; a group never has
-  fewer than two members.
+  fewer than two members. A stack group is the exception: it may have one
+  open member while the rest of its stack merged (`landed`, below).
 - Deleting a group removes it from every list. It never deletes a saved
   review: the members' own reviews stay in their clone's store and the
   group's combined versions stay in `app.sqlite`, unreachable.
@@ -45,9 +46,23 @@ groups in step (`Store.SyncStacks`):
 - A **stack** follows the hosted platform's rules, shared in
   [`stacks`](../../stacks/README.md) (`stacks.Plan`): pull requests by one
   author, each based on another's head branch (`base_ref` = `head_ref`), as a
-  chain or a tree; forks take no part. Only open pull requests are planned,
-  over the live stack groups, which keeps a group's identity when its stack
-  changes. A stack of more than eight pull requests gets no group.
+  chain or a tree; forks take no part. The open pull requests are planned over
+  the live stack groups, which keeps a group's identity when its stack
+  changes. A stack of more than eight open pull requests gets no group.
+- A member that **merged or closed stays in its stack group**, in its place,
+  in `landed` with its state (`merged`, `closed` or `unknown`): it is no
+  longer in `members`, so no review, automatic job or outdated check reads
+  it, and the group page lists these first, marked Merged, Closed or No
+  longer open. Discovery lists only open pull requests, so the group keeps
+  each member's parent, branches and author (`groups.chain`, written by every
+  sync) and plans a member discovery no longer lists from that. The state
+  comes from discovery's observations and is kept once known. A member
+  with no observation yet (or a stale open one) is `unknown` until the next
+  poll after its merged or closed state is observed, a brief window, and a
+  stack group saved before `chain` existed has no saved branches, so a
+  member that merges before its first sync leaves it. The group goes on
+  while one member is open, even if only one; automatic generation needs two
+  open members.
 - A stack without a group gets one (`stack` true), named after its bottom
   pull request's title as "Review together" names a group after the first.
   The app shows a stack group, and its automatically generated review, as it
@@ -55,8 +70,8 @@ groups in step (`Store.SyncStacks`):
   list's stack icon and count on its row, and "Stack" instead of "Review
   group" on its page. A stack that gained or lost members (a parent merged,
   a pull request added on top) gives its group the new members; one that is
-  gone (one open member left, or none) dissolves its group, which leaves every
-  list like a deleted one and keeps its versions.
+  gone (no open member left, or the stack split apart) dissolves its group,
+  which leaves every list like a deleted one and keeps its versions.
 - The person's choices win. A pull request in a group the person made, or in
   a stack group the person deleted, takes no part in stacks. Renaming a
   stack group or changing its members makes it the person's (`stack` false),
@@ -79,7 +94,7 @@ any one clone.
 
 | Table | Holds |
 | --- | --- |
-| `groups(id, repository, name, members, stack, created, updated, deleted)` | definitions; `members` is a JSON array of numbers; `stack` marks a stack group; `deleted` is a soft-delete time, 0 while live |
+| `groups(id, repository, name, members, stack, chain, created, updated, deleted)` | definitions; `members` is a JSON array of numbers; `stack` marks a stack group; `chain` is a stack group's saved placements (parent, branches, author, merged flag) for every member, merged ones included; `deleted` is a soft-delete time, 0 while live |
 | `versions(group_id, version, metadata, members, document)` | immutable combined reviews keyed by group ID and version; `metadata` is `store.Metadata`; `members` is the reviewed `stack.members` copied out of the document for listing |
 
 Group versions are keyed by group ID, never by `{repository, number}`, so
@@ -157,7 +172,7 @@ Behind the daemon's authenticated host. JSON is decoded strictly; errors are
 | `GET /api/groups/{id}/document?version=` | the latest or the named version |
 | `GET /api/groups/{id}/patch?version=&path=&hunk=` | `{"patch": string or null}` |
 
-`Group` is `{id, repository, name, members, stack, created_at, updated_at,
+`Group` is `{id, repository, name, members, stack, landed, created_at, updated_at,
 version_count, latest, risk_score, reviewed, outdated}`: `latest` is the
 latest version's metadata (or null), `reviewed` the members it covered with
 their heads, and `outdated` as above. Every mutation publishes an `index`

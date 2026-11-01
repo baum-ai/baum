@@ -937,12 +937,12 @@ function GroupRow({
             {group.stack ? (
               // The hosted pull request list's mark for a stack.
               <span
-                title={`Stack of ${formatCount(group.members.length)} pull requests`}
+                title={`Stack of ${formatCount(group.members.length + (group.landed?.length ?? 0))} pull requests`}
                 className="flex flex-none items-center gap-0.5 self-center text-xs font-semibold text-(--text-secondary)"
               >
                 <StackIcon size={14} />
                 <span className="sr-only">Stack of</span>
-                {formatCount(group.members.length)}
+                {formatCount(group.members.length + (group.landed?.length ?? 0))}
               </span>
             ) : null}
             <Link
