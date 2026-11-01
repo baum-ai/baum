@@ -58,8 +58,7 @@ const STOPS: Stop[] = [
     title: "Why it's here",
     body: (
       <>
-        Who's waiting, what changed and how risky it is. <B>Merge…</B> and <B>Fix</B> work from
-        here.
+        Who's waiting, what changed and how risky it is. <B>Open</B> takes you to the full review.
       </>
     ),
     target: ".upnext-panel",
