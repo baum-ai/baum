@@ -18,6 +18,14 @@ export default defineConfig({
     headless: true,
     viewport: { width: 1280, height: 900 },
     trace: "retain-on-failure",
+    // The first-run tour would cover the pages under test; tour.spec.ts starts it.
+    storageState: {
+      cookies: [],
+      origins: ["http://127.0.0.1:4167", "http://127.0.0.1:1420"].map((origin) => ({
+        origin,
+        localStorage: [{ name: "baum.tour.v1", value: "done" }],
+      })),
+    },
   },
   webServer: {
     command: `BAUM_APP_BROWSER_FIXTURE=1 BAUM_APP_SCHEMA_DIR=../schema BAUM_APP_STATE_DIR='${stateDir}' ./e2e/fixture -test.run '^TestLocalAppBrowserFixture$' -test.timeout=0`,
