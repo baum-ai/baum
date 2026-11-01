@@ -263,6 +263,27 @@ it("renders a group as one row with its members nested when expanded", async () 
   expect(node.textContent).toContain("Generate reviews (3)");
 });
 
+it("shows and hides a focused group's pull requests with Space", async () => {
+  entries = [entry(1), entry(2), entry(3)];
+  groups = [group([2, 3])];
+  await act(async () => root.render(<App />));
+  const key = (key: string) =>
+    act(async () => {
+      document.body.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true }));
+    });
+  const toggle = node.querySelector<HTMLButtonElement>('button[aria-label="Expand Auth rework"]')!;
+  // j moves down to the group's row, wherever its bucket puts it.
+  const groupRow = () => node.querySelector('[data-row-id="group:g1"]')!;
+  for (let i = 0; i < 3 && !groupRow().hasAttribute("data-focused"); i++) await key("j");
+  expect(groupRow().hasAttribute("data-focused")).toBe(true);
+  await key(" ");
+  expect(toggle.getAttribute("aria-expanded")).toBe("true");
+  await key(" ");
+  expect(toggle.getAttribute("aria-expanded")).toBe("false");
+  // A group's row has no peek.
+  expect(node.querySelector(".inbox-peek-panel")).toBeNull();
+});
+
 it("marks a stack baum grouped as the hosted list does, and a person's group as a group", async () => {
   entries = [entry(1), entry(2), entry(3), entry(4)];
   groups = [

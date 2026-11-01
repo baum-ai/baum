@@ -45,6 +45,41 @@ func TestRepositoriesRoutesNotifyOnWrites(t *testing.T) {
 	}
 }
 
+// The pull request's detail lists are the Update handler's, not discovery's
+// under /api/prs/: a route left out would answer 404 and the app would fall
+// back to listing the failing checks alone.
+func TestLocalAPIRoutesPullRequestDetailsToUpdate(t *testing.T) {
+	registry, err := repos.Open(filepath.Join(appdbtest.TempDir(t), "repos.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = registry.Close() }()
+	var reached []string
+	update := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		reached = append(reached, r.URL.Path)
+		w.WriteHeader(http.StatusNoContent)
+	})
+	prs := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { http.NotFound(w, r) })
+	handler := LocalAPI{Registry: registry, Config: config.Default(), Update: update, PRs: prs}.Handler()
+	defer handler.Close()
+	paths := []string{
+		"/api/prs/review-threads",
+		"/api/prs/failing-checks",
+		"/api/prs/checks",
+		"/api/prs/conflicts",
+	}
+	for _, path := range paths {
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, httptest.NewRequest("GET", "http://local"+path+"?repository=acme/demo&pr=7", nil))
+		if w.Code != http.StatusNoContent {
+			t.Fatalf("GET %s: %d %s, want the Update handler", path, w.Code, w.Body.String())
+		}
+	}
+	if strings.Join(reached, ",") != strings.Join(paths, ",") {
+		t.Fatalf("Update reached %v, want %v", reached, paths)
+	}
+}
+
 func TestLocalAPISelectorsAndSecretFreeSettings(t *testing.T) {
 	ctx := context.Background()
 	registry, err := repos.Open(filepath.Join(appdbtest.TempDir(t), "repos.sqlite"))

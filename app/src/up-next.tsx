@@ -21,7 +21,7 @@ import {
 } from "@baum/viewer/components/icons";
 import { InlineMarkdown, Markdown } from "@baum/viewer/components/markdown";
 import { Lines } from "@baum/viewer/components/review-parts";
-import { Alert, Button, LiveDot } from "@baum/viewer/components/ui";
+import { Alert, Badge, Button, LiveDot } from "@baum/viewer/components/ui";
 import type { ViewerLinkProps } from "@baum/viewer/navigation";
 import {
   RISK_SCORE_MEANING,
@@ -32,6 +32,7 @@ import {
 import {
   appURL,
   documentRequest,
+  groupDocumentRequest,
   fixJob,
   fixLabel,
   isActiveJob,
@@ -64,7 +65,7 @@ import {
 } from "./merge";
 import { LoadingStatus, NineDots } from "./nine-dots";
 import { KeyBar, onBody, useLastRow, useShortcuts } from "./shortcuts";
-import { PullRequestChecks } from "./checks";
+import { PullRequestChecks, checksCount, checksSummary, useChecks } from "./checks";
 import { ConflictingFiles } from "./conflicts";
 import { RefreshButton, type RefreshRun } from "./shell";
 import { ReviewThreads } from "./threads";
@@ -174,6 +175,23 @@ const CHECK_WORDS: Record<string, string> = {
   none: "No checks",
 };
 
+/** What a group's member waits on, in a few words: what needs fixing
+ *  ("Checks failing · Conflicts"), "Ready to merge", or else its kind. */
+function memberLabel(kind: UpNextKind, entry: Entry): string {
+  if (kind === "merge") return "Ready to merge";
+  if (kind !== "fix") return KINDS[kind].label;
+  const unresolved = entry.unresolved ?? 0;
+  const problems = [
+    entry.checks === "failing" ? "Checks failing" : "",
+    entry.merge === "conflict" ? "Conflicts" : "",
+    unresolved > 0
+      ? `${plural(unresolved, "unresolved thread")}${entry.unresolved_capped ? " or more" : ""}`
+      : "",
+    entry.review === "changes_requested" ? "Changes requested" : "",
+  ].filter(Boolean);
+  return problems.length ? problems.join(" · ") : KINDS.fix.label;
+}
+
 function why(kind: UpNextKind, entry: Entry, working: number): string {
   const pr = entry.pull_request;
   switch (kind) {
@@ -194,21 +212,9 @@ function why(kind: UpNextKind, entry: Entry, working: number): string {
           : "";
       return `${review}${agents}`;
     }
-    case "fix": {
-      const unresolved = entry.unresolved ?? 0;
-      const problems = [
-        entry.review === "changes_requested" ? "changes were requested" : "",
-        unresolved > 0
-          ? `${plural(unresolved, "review thread")}${entry.unresolved_capped ? " or more" : ""} ${unresolved === 1 ? "is" : "are"} unresolved`
-          : "",
-        entry.merge === "conflict" ? "it conflicts with its base" : "",
-        entry.checks === "failing" ? "checks are failing" : "",
-      ].filter(Boolean);
-      const sentence = joinAnd(problems);
-      return `${sentence.charAt(0).toUpperCase()}${sentence.slice(1)}.${
-        fixLabel(entry) ? " An agent can fix it while you do something else." : ""
-      }`;
-    }
+    case "fix":
+      // What needs fixing lists it, each problem opening to its detail.
+      return "";
     case "merge":
       // Its group already says it is ready to merge.
       return "";
@@ -223,14 +229,59 @@ function why(kind: UpNextKind, entry: Entry, working: number): string {
   }
 }
 
+/** The open pull requests of stacks stacked on another open one of their
+ *  stack, by key, each with the lowest open one under it: the one that must
+ *  merge first. A member is stacked on the one whose head branch is its base. */
+export function stackBases(entries: Entry[], groups: ReviewGroup[]): Map<string, number> {
+  const bases = new Map<string, number>();
+  for (const group of groups) {
+    if (!group.stack) continue;
+    const members = entries.filter(
+      (entry) =>
+        isOpen(entry) &&
+        sameRepository(entry.pull_request.repository, group.repository) &&
+        group.members.includes(entry.pull_request.number),
+    );
+    const byHead = new Map<string, Entry>();
+    for (const entry of members)
+      if (entry.pull_request.head_ref) byHead.set(entry.pull_request.head_ref, entry);
+    // The open member whose head branch is this one's base, if any.
+    const under = (entry: Entry) => byHead.get(entry.pull_request.base_ref ?? "");
+    for (const entry of members) {
+      let base = under(entry);
+      if (!base || base.pull_request.number === entry.pull_request.number) continue;
+      // Down the stack to its lowest open member; a cycle stops the walk.
+      const seen = new Set([entry.pull_request.number, base.pull_request.number]);
+      for (
+        let next = under(base);
+        next && !seen.has(next.pull_request.number);
+        next = under(base)
+      ) {
+        seen.add(next.pull_request.number);
+        base = next;
+      }
+      bases.set(upNextKey(entry.pull_request), base.pull_request.number);
+    }
+  }
+  return bases;
+}
+
 /** The pull requests waiting on the person, in the order to take them, and
  *  their own that wait on someone or something else. Each pull request is
- *  listed once, whichever clones hold it. */
+ *  listed once, whichever clones hold it. A stacked pull request GitHub would
+ *  merge is not ready while an open one of its stack lies under it: it waits
+ *  on that one (`stackedOn`), which must merge first. */
 export function upNext(
   entries: Entry[],
   live: LiveSession[] = [],
   jobs: Job[] = [],
-): { items: UpNextItem[]; waiting: Entry[]; fixing: { entry: Entry; job: Job }[] } {
+  groups: ReviewGroup[] = [],
+): {
+  items: UpNextItem[];
+  waiting: Entry[];
+  fixing: { entry: Entry; job: Job }[];
+  stackedOn: Map<string, number>;
+} {
   // Of the clones that hold a pull request, the one with a readable saved
   // review and a clone speaks for it.
   const score = (entry: Entry) =>
@@ -244,8 +295,10 @@ export function upNext(
   const items: UpNextItem[] = [];
   const waiting: Entry[] = [];
   const fixing: { entry: Entry; job: Job }[] = [];
+  const stackedOn = stackBases([...best.values()], groups);
   for (const [key, entry] of best) {
-    const kind = kindOf(entry, jobs);
+    const own = kindOf(entry, jobs);
+    const kind = own === "merge" && stackedOn.has(key) ? null : own;
     if (!kind) {
       if (isOpen(entry) && entry.pull_request.authored_by_me) {
         waiting.push(entry);
@@ -277,7 +330,7 @@ export function upNext(
       (a.kind === "review" ? readable(a) - readable(b) || risk(b) - risk(a) : 0) ||
       a.entry.pull_request.number - b.entry.pull_request.number,
   );
-  return { items, waiting, fixing };
+  return { items, waiting, fixing, stackedOn };
 }
 
 type Seen = {
@@ -364,7 +417,13 @@ export type UpNextState = ReturnType<typeof useUpNext>;
  *  of theirs that merely stopped being mergeable (a push, checks running)
  *  waits uncleared, and nothing of a repository missing from the read is
  *  cleared, since its pull requests may only be absent for now. */
-export function useUpNext(entries: Entry[], live: LiveSession[], jobs: Job[], ready: boolean) {
+export function useUpNext(
+  entries: Entry[],
+  live: LiveSession[],
+  jobs: Job[],
+  ready: boolean,
+  groups: ReviewGroup[] = [],
+) {
   const now = useNow(30_000);
   const persistence = useUIState(
     uiState<Stored>("api/ui-state/inbox", () => fresh(dayOf(Date.now()))),
@@ -373,7 +432,7 @@ export function useUpNext(entries: Entry[], live: LiveSession[], jobs: Job[], re
   const day = dayOf(now);
   const state =
     stored.day === day ? stored : fresh(day, stillSnoozed(stored.snoozed, now), stored.held);
-  const { items, waiting, fixing } = upNext(entries, live, jobs);
+  const { items, waiting, fixing, stackedOn } = upNext(entries, live, jobs, groups);
   const snoozedNow = (item: UpNextItem) =>
     (state.snoozed[item.key] ?? 0) > now ||
     state.held[item.key] === item.entry.pull_request.head_sha;
@@ -481,6 +540,8 @@ export function useUpNext(entries: Entry[], live: LiveSession[], jobs: Job[], re
     waiting,
     fixing,
     cleared,
+    /** The open pull request each stacked one waits on to merge first. */
+    stackedOn,
     /** The fix whose transcript `t` opens for a pull request. */
     watchable: (entry: Entry) => watchableFix(entry, jobs),
     snoozedUntil: (key: string): SnoozeEnd =>
@@ -500,9 +561,11 @@ export function useUpNext(entries: Entry[], live: LiveSession[], jobs: Job[], re
   };
 }
 
-/** What one of the person's own pull requests waits on, in a few words. */
-export function waitingOn(entry: Entry) {
+/** What one of the person's own pull requests waits on, in a few words; a
+ *  stacked one waits on the open pull request under it (`base`). */
+export function waitingOn(entry: Entry, base?: number) {
   if (entry.pull_request.draft || entry.merge === "draft") return "Draft";
+  if (base != null) return `Waiting on #${base}`;
   if (entry.checks === "running") return "Checks running";
   if (entry.review === "changes_requested") return "Changes requested";
   if (entry.review !== "approved") return "Waiting on review";
@@ -526,7 +589,15 @@ const sumMinutes = (items: { minutes?: number | null }[]) =>
 
 /** A row of the list: a queued item, a pull request an agent is fixing, or
  *  one of the person's own that waits on checks or reviewers. */
-type Row = { key: string; entry: Entry; item?: UpNextItem; job?: Job; waiting?: boolean };
+type Row = {
+  key: string;
+  entry: Entry;
+  item?: UpNextItem;
+  job?: Job;
+  waiting?: boolean;
+  /** The open pull request of its stack a waiting row must merge after. */
+  base?: number;
+};
 /** A review group or stack listed as one row, with those of its members the
  *  list shows, in the group's order. */
 type GroupRow = { key: string; group: ReviewGroup; members: Row[] };
@@ -645,9 +716,13 @@ export function UpNextPage({
   refresh,
   refreshing = false,
   reviewGroups = [],
+  entries = [],
   Link,
 }: {
   inbox: UpNextState;
+  /** Every pull request read, open or not, for what a group's panel says of
+   *  members the queue does not list, as those merged. */
+  entries?: Entry[];
   /** All of the person's inboxes, for the tags. */
   inboxes?: Inbox[];
   /** The review groups and stacks, whose shown members the list nests under one row. */
@@ -661,7 +736,7 @@ export function UpNextPage({
   loading: boolean;
   hasRepositories: boolean;
   cloneFor: (entry: Entry) => string;
-  /** Starts the fix at once, of the failing checks alone with "checks". */
+  /** Starts the pull request's fix at once. */
   fix: (entry: Entry, only?: FixOnly) => void;
   /** A pull request's fix that is starting or did not start. */
   fixState?: (entry: Entry) => FixState;
@@ -715,7 +790,12 @@ export function UpNextPage({
       id: "waiting" as const,
       title: "Waiting on checks or reviews",
       rows: others.map(
-        (entry): Row => ({ key: upNextKey(entry.pull_request), entry, waiting: true }),
+        (entry): Row => ({
+          key: upNextKey(entry.pull_request),
+          entry,
+          waiting: true,
+          base: inbox.stackedOn.get(upNextKey(entry.pull_request)),
+        }),
       ),
     },
   ];
@@ -785,6 +865,7 @@ export function UpNextPage({
     return () => clearTimeout(timer);
   }, [toast?.id]);
   const doc = useReviewDocument(selected?.entry, selected ? cloneFor(selected.entry) : "");
+  const groupDoc = useGroupDocument(selectedGroup?.group);
   // The panel's fix button, which `f` presses too: a Fix item whose pull
   // request offers a fix and has a clone.
   const selectedFix =
@@ -830,13 +911,23 @@ export function UpNextPage({
       event.preventDefault();
       const step = key === "j" || key === "ArrowDown" ? 1 : -1;
       select(rows[Math.min(rows.length - 1, Math.max(0, index + step))]!.key);
-    } else if (key === "l" || key === "ArrowRight") {
-      if (!selectedGroup || groupOpen(selectedGroup)) return;
-      event.preventDefault();
-      toggleGroup(selectedGroup, true);
-    } else if (key === "h" || key === "ArrowLeft") {
-      // From a member, back to its group, which closes.
-      const group = selectedGroup ?? (selected ? groupOf(selected.key) : undefined);
+    } else if (key === " ") {
+      // Space on a link or button presses it, except on a row, where it opens
+      // or closes the row's group: from a member, back to its group, which
+      // closes.
+      if (
+        !onBody(event) &&
+        event.target instanceof HTMLElement &&
+        event.target.closest("a, button") &&
+        !event.target.closest(".upnext-row")
+      )
+        return;
+      if (selectedGroup) {
+        event.preventDefault();
+        toggleGroup(selectedGroup);
+        return;
+      }
+      const group = selected ? groupOf(selected.key) : undefined;
       if (!group) return;
       event.preventDefault();
       toggleGroup(group, false);
@@ -1116,13 +1207,6 @@ export function UpNextPage({
               href={prHref(selected.entry, cloneFor)}
               Link={Link}
               fix={selectedFix}
-              fixChecks={
-                fixLabel(selected.entry) &&
-                cloneFor(selected.entry) &&
-                selected.entry.checks === "failing"
-                  ? () => fix(selected.entry, "checks")
-                  : undefined
-              }
               fixState={selectedFixState}
               merge={() => setMerging(selected.entry)}
               update={() => setUpdating(selected.entry)}
@@ -1136,7 +1220,9 @@ export function UpNextPage({
             <GroupPanel
               key={selectedGroup.key}
               line={selectedGroup}
-              href={appURL(`?page=pulls&group=${encodeURIComponent(selectedGroup.group.id)}`)}
+              doc={groupDoc}
+              entries={entries}
+              href={appURL(`?group=${encodeURIComponent(selectedGroup.group.id)}`)}
               pick={(key) => {
                 toggleGroup(selectedGroup, true);
                 select(key);
@@ -1204,18 +1290,19 @@ function ListRow({
   const pr = row.entry.pull_request;
   // The section heading already names the kind, so the line starts with the
   // pull request's number. Under a group, whose members may each be in
-  // another section, it names the kind, and the group names the repository.
+  // another section, it says what the member waits on (what needs fixing, or
+  // Ready to merge), and the group names the repository.
   const repository = inGroup ? "" : pr.repository;
   const sub = [
     `#${pr.number}`,
     ...(row.job
       ? ["Agent fixing", phaseText(row.job)]
       : row.waiting
-        ? [waitingOn(row.entry), repository]
+        ? [waitingOn(row.entry, row.base), repository]
         : row.item?.failedFix
-          ? [inGroup ? KINDS[row.item.kind].label : "", "Last fix failed"]
+          ? [inGroup ? memberLabel(row.item.kind, row.entry) : "", "Last fix failed"]
           : [
-              inGroup && row.item ? KINDS[row.item.kind].label : repository,
+              inGroup && row.item ? memberLabel(row.item.kind, row.entry) : repository,
               row.item?.minutes != null ? minutesText(row.item.minutes) : "",
             ]),
   ]
@@ -1230,15 +1317,19 @@ function ListRow({
       aria-current={on || undefined}
       onClick={() => pick(row.key)}
     >
-      <span className={`upnext-mark${row.job ? " upnext-mark-working" : ""}`}>
-        {row.job ? <NineDots size={12} /> : null}
-      </span>
       <span className="upnext-row-text">
         <span className="upnext-row-title">{pr.title || "Untitled pull request"}</span>
         <span
           className={`upnext-row-sub${row.job ? " upnext-row-working" : row.item?.failedFix ? " upnext-row-failed" : ""}`}
         >
-          {sub}
+          {row.job ? (
+            <>
+              <NineDots size={10} />
+              <span className="upnext-row-working-text">{sub}</span>
+            </>
+          ) : (
+            sub
+          )}
         </span>
       </span>
       {tag ? <InboxTag inbox={tag} /> : null}
@@ -1370,6 +1461,51 @@ function onGitHub(entry: Entry, fixing: boolean): PanelBlock[] {
 
 const SECTIONS_SHOWN = 6;
 
+/** What a saved review says changed: its summary, then its sections in
+ *  review order with their scores and lines; none without a review. */
+function whatChanged(doc: ReviewDocument | null): PanelBlock[] {
+  if (!doc) return [];
+  const sections = sectionsInReviewOrder(doc.sections).filter(
+    (section) => section.derived.state !== "stale",
+  );
+  return [
+    {
+      title: "What changed",
+      lead: doc.summary.text,
+      rows: sections.slice(0, SECTIONS_SHOWN).map((section) => ({
+        badge:
+          section.derived.review_score != null ? String(section.derived.review_score) : undefined,
+        main: section.title,
+        lines: section.derived,
+      })),
+      more:
+        sections.length > SECTIONS_SHOWN
+          ? `and ${plural(sections.length - SECTIONS_SHOWN, "more section")}`
+          : undefined,
+    },
+  ];
+}
+
+/** The latest group review of the selected group, once read; none while it
+ *  is read, without one, or when the read fails. */
+function useGroupDocument(group: ReviewGroup | undefined) {
+  const [doc, setDoc] = useState<{ id: string; doc: ReviewDocument } | null>(null);
+  // A new version leaves `updated_at` alone, so its count is in the key too.
+  const id =
+    group && group.version_count > 0
+      ? `${group.id}@${group.version_count}@${group.updated_at}`
+      : "";
+  useEffect(() => {
+    if (!id || !group) return;
+    const abort = new AbortController();
+    groupDocumentRequest(group.id, undefined, abort.signal)
+      .then((read) => setDoc({ id, doc: read }))
+      .catch(() => {});
+    return () => abort.abort();
+  }, [id]);
+  return doc?.id === id ? doc.doc : null;
+}
+
 /** What the panel lists under the pull request, by kind: what changed for a
  *  review or a merge, what blocks it for a fix, where it stands for an
  *  update, and what baum will do for a clone. */
@@ -1377,31 +1513,7 @@ function blocks(row: Row, doc: ReviewDocument | null): PanelBlock[] {
   const entry = row.entry;
   const pr = entry.pull_request;
   const unresolved = entry.unresolved ?? 0;
-  const changes: PanelBlock[] = doc
-    ? (() => {
-        const sections = sectionsInReviewOrder(doc.sections).filter(
-          (section) => section.derived.state !== "stale",
-        );
-        return [
-          {
-            title: "What changed",
-            lead: doc.summary.text,
-            rows: sections.slice(0, SECTIONS_SHOWN).map((section) => ({
-              badge:
-                section.derived.review_score != null
-                  ? String(section.derived.review_score)
-                  : undefined,
-              main: section.title,
-              lines: section.derived,
-            })),
-            more:
-              sections.length > SECTIONS_SHOWN
-                ? `and ${plural(sections.length - SECTIONS_SHOWN, "more section")}`
-                : undefined,
-          },
-        ];
-      })()
-    : [];
+  const changes = whatChanged(doc);
   const github = onGitHub(entry, row.item?.kind === "fix" && !row.job);
   if (row.job) return [...changes, ...github];
   if (row.waiting)
@@ -1409,7 +1521,7 @@ function blocks(row: Row, doc: ReviewDocument | null): PanelBlock[] {
       {
         title: "Where it stands",
         rows: [
-          { main: waitingOn(entry) },
+          { main: waitingOn(entry, row.base) },
           ...(REVIEW_WORDS[entry.review] && entry.review !== "changes_requested"
             ? [{ main: REVIEW_WORDS[entry.review]! }]
             : []),
@@ -1439,7 +1551,6 @@ function blocks(row: Row, doc: ReviewDocument | null): PanelBlock[] {
               ? [
                   {
                     main: `${plural(unresolved, "unresolved review thread")}${entry.unresolved_capped ? " or more" : ""}`,
-                    sub: "Resolve each one here once it is addressed.",
                     detail: "threads" as const,
                     open: true,
                   },
@@ -1449,7 +1560,6 @@ function blocks(row: Row, doc: ReviewDocument | null): PanelBlock[] {
               ? [
                   {
                     main: "Conflicts with its base",
-                    sub: "The branch and its base changed the same lines of these files.",
                     detail: "conflicts" as const,
                     open: true,
                   },
@@ -1507,7 +1617,6 @@ function Panel({
   href,
   Link,
   fix,
-  fixChecks,
   fixState,
   merge,
   update,
@@ -1524,8 +1633,6 @@ function Panel({
   href: string;
   Link: ComponentType<ViewerLinkProps>;
   fix?: () => void;
-  /** Starts the fix of the failing checks alone. */
-  fixChecks?: () => void;
   fixState: FixState;
   merge: () => void;
   update: () => void;
@@ -1705,23 +1812,7 @@ function Panel({
         ) : null}
       </div>
       {score != null ? (
-        <div className="upnext-risk">
-          <div className="upnext-risk-head">
-            <span className="upnext-label">Risk</span>
-            <span className="upnext-risk-blocks" aria-hidden="true">
-              {[1, 2, 3, 4, 5].map((n) => (
-                <span
-                  key={n}
-                  className={
-                    n <= score ? `upnext-risk-on upnext-risk-${Math.min(score, 5)}` : undefined
-                  }
-                />
-              ))}
-            </span>
-            <span className="upnext-risk-text">
-              {riskText(entry)} · {RISK_SCORE_MEANING[score as RiskScoreLevel]}
-            </span>
-          </div>
+        <RiskCard score={score} text={riskText(entry)}>
           {reason ? (
             <div className="upnext-risk-copy">
               {reasonTitle ? (
@@ -1734,7 +1825,7 @@ function Panel({
               </Markdown>
             </div>
           ) : null}
-        </div>
+        </RiskCard>
       ) : null}
       {blocks(row, doc).map((block) => (
         <section key={block.title} className="upnext-block" aria-label={block.title}>
@@ -1746,13 +1837,7 @@ function Panel({
           ) : null}
           <ul>
             {block.rows.map((line) => (
-              <BlockRow
-                key={line.main}
-                line={line}
-                entry={entry}
-                fixChecks={line.detail === "checks" && kind === "fix" ? fixChecks : undefined}
-                fixState={fixState}
-              />
+              <BlockRow key={line.main} line={line} entry={entry} />
             ))}
           </ul>
           {block.more ? <p className="upnext-block-more">{block.more}</p> : null}
@@ -1826,24 +1911,28 @@ function Facts({ entry }: { entry: Entry }) {
 
 /** A row of a panel block; one with a detail opens to it, read when it
  *  opens. */
-function BlockRow({
-  line,
-  entry,
-  fixChecks,
-  fixState,
-}: {
-  line: PanelRow;
-  entry: Entry;
-  /** Starts the fix of the failing checks alone, beside a fix's failing checks. */
-  fixChecks?: () => void;
-  fixState: FixState;
-}) {
+function BlockRow({ line, entry }: { line: PanelRow; entry: Entry }) {
   const [open, setOpen] = useState(line.open ?? false);
   const id = useId();
   const pr = entry.pull_request;
+  // A checks row reads them at once, open or not, to count them beside its
+  // title; the list it opens to shows the same read.
+  const checks = useChecks(pr.repository, pr.number, pr.head_sha, line.detail === "checks");
+  const count = checks.checks?.length ? checksCount(checks.checks) : null;
   const text = (
     <span className="upnext-block-text">
-      {line.lines ? <InlineMarkdown>{line.main}</InlineMarkdown> : <span>{line.main}</span>}
+      {line.lines ? (
+        <InlineMarkdown>{line.main}</InlineMarkdown>
+      ) : line.detail === "checks" && count ? (
+        <span className="upnext-block-title">
+          <span>{line.main}</span>
+          <Badge tone={count.tone} title={checksSummary(checks.checks!)}>
+            {count.text}
+          </Badge>
+        </span>
+      ) : (
+        <span>{line.main}</span>
+      )}
       {line.sub ? <span className="upnext-block-sub">{line.sub}</span> : null}
     </span>
   );
@@ -1876,16 +1965,6 @@ function BlockRow({
           className="upnext-block-right"
         />
       ) : null}
-      {fixChecks ? (
-        <button
-          type="button"
-          className={cn("upnext-secondary upnext-thread-resolve", SMALL)}
-          disabled={fixState.starting}
-          onClick={fixChecks}
-        >
-          Fix CI
-        </button>
-      ) : null}
       {line.detail && open ? (
         <div id={id} className="upnext-detail-body">
           {line.detail === "threads" ? (
@@ -1902,6 +1981,7 @@ function BlockRow({
               head={pr.head_sha}
               url={pr.url}
               canRetry={pr.viewer_can_push === true}
+              checks={checks}
             />
           ) : (
             <ConflictingFiles
@@ -1917,20 +1997,122 @@ function BlockRow({
   );
 }
 
-/** A review group's panel: its review, what its shown members wait on, and
- *  their facts summed. Picking a member previews it. */
+/** The risk card of a pull request's or a group's panel: its score as five
+ *  blocks, in words, and what the review says of it below (`children`). */
+function RiskCard({
+  score,
+  text,
+  children,
+}: {
+  score: number;
+  /** The score in words: "3 of 5", or "at least 3 of 5". */
+  text: string;
+  children?: ReactNode;
+}) {
+  return (
+    <div className="upnext-risk">
+      <div className="upnext-risk-head">
+        <span className="upnext-label">Risk</span>
+        <span className="upnext-risk-blocks" aria-hidden="true">
+          {[1, 2, 3, 4, 5].map((n) => (
+            <span
+              key={n}
+              className={
+                n <= score ? `upnext-risk-on upnext-risk-${Math.min(score, 5)}` : undefined
+              }
+            />
+          ))}
+        </span>
+        <span className="upnext-risk-text">
+          {text} · {RISK_SCORE_MEANING[score as RiskScoreLevel]}
+        </span>
+      </div>
+      {children}
+    </div>
+  );
+}
+
+/** What a group's member waits on, in a few words, and the tone of its dot:
+ *  an agent at work, what needs fixing, ready to merge, or waiting. */
+function memberState(row: Row): { text: string; tone: string } {
+  if (row.job) return { text: `Agent fixing · ${phaseText(row.job)}`, tone: "working" };
+  if (row.waiting) return { text: waitingOn(row.entry, row.base), tone: "waiting" };
+  if (!row.item) return { text: "", tone: "waiting" };
+  const label = memberLabel(row.item.kind, row.entry);
+  return {
+    text: row.item.failedFix ? `${label} · Last fix failed` : label,
+    tone: row.item.kind,
+  };
+}
+
+/** A review group's panel, laid out as a pull request's: its base and facts
+ *  summed, its review's state, its risk, and its shown members in order, a
+ *  stack's from its base up, each with what it waits on. Picking a member
+ *  previews it. */
 function GroupPanel({
   line,
+  doc,
+  entries,
   href,
   pick,
   Link,
 }: {
   line: GroupRow;
+  /** Its latest group review, once read. */
+  doc: ReviewDocument | null;
+  /** Every pull request read, for the members the queue does not list. */
+  entries: Entry[];
   href: string;
   pick: (key: string) => void;
   Link: ComponentType<ViewerLinkProps>;
 }) {
   const { group, members } = line;
+  const [listOpen, setListOpen] = useState(true);
+  const listId = useId();
+  // Every member, a stack's from its base up: those that landed (merged or
+  // closed, which the daemon lists apart, ascending, below the open ones),
+  // then the open ones in the group's order. Those the queue lists preview
+  // when picked; an open one it does not list shows as read, and one not
+  // read at all is left out.
+  const read = (number: number) =>
+    entries.find(
+      (entry) =>
+        entry.pull_request.number === number &&
+        sameRepository(entry.pull_request.repository, group.repository),
+    );
+  const landed = group.landed ?? [];
+  const total = group.members.length + landed.length;
+  const merged = landed.filter((member) => member.state === "merged").length;
+  const rows: {
+    number: number;
+    row?: Row;
+    entry?: Entry;
+    state: { text: string; tone: string };
+  }[] = [
+    ...landed.map((member) => ({
+      number: member.number,
+      entry: read(member.number),
+      state:
+        member.state === "merged"
+          ? { text: "Merged", tone: "merged" }
+          : member.state === "closed"
+            ? { text: "Closed", tone: "waiting" }
+            : { text: "No longer open", tone: "waiting" },
+    })),
+    ...group.members.flatMap((number) => {
+      const row = members.find((member) => member.entry.pull_request.number === number);
+      if (row) return [{ number, row, entry: row.entry, state: memberState(row) }];
+      const entry = read(number);
+      return entry
+        ? [{ number, entry, state: { text: "Nothing to do now", tone: "waiting" } }]
+        : [];
+    }),
+  ];
+  const unread = total - rows.length;
+  const reason = doc?.summary.risk_score?.reasons[0];
+  const reasonTitle = reason
+    ? (doc?.sections.find((section) => section.id === reason.section)?.title ?? "")
+    : "";
   const sum = (value: (row: Row) => number | null | undefined) =>
     members.reduce((total, row) => total + (value(row) ?? 0), 0);
   const additions = sum((row) => row.entry.pull_request.additions);
@@ -1939,107 +2121,190 @@ function GroupPanel({
   const minutes = members.some((row) => row.entry.review_minutes != null)
     ? sum((row) => row.entry.review_minutes)
     : null;
-  const hidden = group.members.length - members.length;
+  // Where the group merges: the one base branch that is not a member's own,
+  // as main under a stack.
+  const heads = new Set(members.map((row) => row.entry.pull_request.head_ref).filter(Boolean));
+  const bases = new Set(
+    members
+      .map((row) => row.entry.pull_request.base_ref)
+      .filter((base) => base && !heads.has(base)),
+  );
+  const base = bases.size === 1 ? [...bases][0] : "";
+  // A ready review says so through its risk and What changed; only its
+  // absence or age needs a word.
   const review =
     group.version_count === 0
       ? "There is no group review yet; generate one from its page."
       : group.outdated
         ? "The group review covers earlier commits of its pull requests."
-        : "The group review is ready.";
+        : "";
   const score = group.risk_score?.score ?? null;
+  const kind = group.stack ? "stack" : "group";
   return (
     <article className="upnext-panel" aria-labelledby="upnext-title">
       <div className="upnext-panel-meta">
         <span className="upnext-chip upnext-chip-waiting">{group.stack ? "Stack" : "Group"}</span>
         <span className="upnext-panel-where">
-          {group.repository} · {plural(group.members.length, "pull request")}
+          {group.repository} · {plural(total, "pull request")}
         </span>
       </div>
       <h2 id="upnext-title" className="upnext-title">
         <Link href={href}>{group.name}</Link>
       </h2>
-      <p className="upnext-why">{review}</p>
-      <dl className="upnext-facts">
+      <dl className="upnext-facts upnext-pr-facts">
+        {base ? (
+          <div className="upnext-branch-fact">
+            <dt className="sr-only">Base</dt>
+            <dd className="upnext-branches">
+              {group.stack ? <StackIcon size={14} /> : <BranchIcon size={14} />}
+              <span>{group.stack ? "Stacked on" : "Into"}</span>
+              <code title={base}>{base}</code>
+            </dd>
+          </div>
+        ) : null}
         {additions + deletions + files > 0 ? (
           <div>
-            <dt>Size</dt>
+            <dt className="sr-only">Size</dt>
             <dd>
               <Lines additions={additions} deletions={deletions} format={formatCount} />
-              {files ? ` · ${plural(files, "file")}` : ""}
+              {files ? <span className="upnext-fact-aside"> · {plural(files, "file")}</span> : null}
             </dd>
           </div>
         ) : null}
         {minutes != null ? (
           <div>
-            <dt>Time to review</dt>
+            <dt className="sr-only">Time to review</dt>
             <dd title="baum's estimates of the time to read each change, summed">
-              {minutesText(minutes)}
-            </dd>
-          </div>
-        ) : null}
-        {score != null ? (
-          <div>
-            <dt>Risk</dt>
-            <dd>
-              {group.risk_score?.status === "lower_bound" ? "at least " : ""}
-              {score} of 5 · {RISK_SCORE_MEANING[score as RiskScoreLevel]}
+              {minutesText(minutes)} review
             </dd>
           </div>
         ) : null}
       </dl>
+      {review ? <p className="upnext-why">{review}</p> : null}
       <div className="upnext-actions">
         <Link href={href} className={cn("upnext-primary", PRIMARY)}>
-          Open the {group.stack ? "stack" : "group"}
+          Open the {kind}
           <kbd aria-hidden="true" className="key-hint">
             ↵
           </kbd>
         </Link>
       </div>
-      <section className="upnext-block" aria-label="Pull requests">
-        <h3 className="upnext-label">Pull requests</h3>
-        <ul>
-          {members.map((row) => {
-            const pr = row.entry.pull_request;
-            const state = row.job
-              ? `Agent fixing · ${phaseText(row.job)}`
-              : row.waiting
-                ? waitingOn(row.entry)
-                : row.item
-                  ? [KINDS[row.item.kind].label, row.item.why].filter(Boolean).join(" · ")
-                  : "";
-            return (
-              <li key={row.key}>
-                <button type="button" className="upnext-member-pick" onClick={() => pick(row.key)}>
-                  <span className="upnext-block-text">
-                    <span>
-                      #{pr.number} {pr.title || "Untitled pull request"}
-                    </span>
-                    <span className="upnext-block-sub">
-                      {group.stack && pr.head_ref && pr.base_ref ? (
-                        <>
-                          <code>{pr.head_ref}</code> → <code>{pr.base_ref}</code>
-                          {state ? " · " : ""}
-                        </>
-                      ) : null}
-                      {state}
-                    </span>
-                  </span>
-                </button>
-                {pr.additions || pr.deletions ? (
+      {score != null ? (
+        <RiskCard
+          score={score}
+          text={`${group.risk_score?.status === "lower_bound" ? "at least " : ""}${score} of 5`}
+        >
+          {reason ? (
+            <div className="upnext-risk-copy">
+              {reasonTitle ? (
+                <strong>
+                  <InlineMarkdown>{reasonTitle}</InlineMarkdown>
+                </strong>
+              ) : null}
+              <Markdown html={false} className="upnext-prose">
+                {reason.text}
+              </Markdown>
+            </div>
+          ) : null}
+        </RiskCard>
+      ) : null}
+      {whatChanged(doc).map((block) => (
+        <section key={block.title} className="upnext-block" aria-label={block.title}>
+          <h3 className="upnext-label">{block.title}</h3>
+          {block.lead ? (
+            <Markdown html={false} className="upnext-lead upnext-prose">
+              {block.lead}
+            </Markdown>
+          ) : null}
+          <ul>
+            {block.rows.map((row) => (
+              <li key={row.main}>
+                {row.badge ? (
+                  <span className={`upnext-badge upnext-badge-${row.badge}`}>{row.badge}</span>
+                ) : null}
+                <span className="upnext-block-text">
+                  <InlineMarkdown>{row.main}</InlineMarkdown>
+                </span>
+                {row.lines ? (
                   <Lines
-                    additions={pr.additions ?? 0}
-                    deletions={pr.deletions ?? 0}
+                    additions={row.lines.additions}
+                    deletions={row.lines.deletions}
                     format={formatCount}
                     className="upnext-block-right"
                   />
                 ) : null}
               </li>
-            );
-          })}
-        </ul>
-        {hidden > 0 ? (
+            ))}
+          </ul>
+          {block.more ? <p className="upnext-block-more">{block.more}</p> : null}
+        </section>
+      ))}
+      <section className="upnext-block" aria-label="Pull requests">
+        <h3 className="upnext-label upnext-members-head">
+          <button
+            type="button"
+            className="upnext-members-toggle"
+            aria-expanded={listOpen}
+            aria-controls={listId}
+            onClick={() => setListOpen((open) => !open)}
+          >
+            <ChevronRightIcon size={12} className="upnext-chevron" />
+            {plural(total, "pull request")}
+          </button>
+          {merged > 0 ? (
+            <Badge tone="positive" size="compact">
+              {formatCount(merged)} merged
+            </Badge>
+          ) : null}
+        </h3>
+        {listOpen ? (
+          <ul id={listId} className={cn("upnext-members", group.stack && "upnext-members-stack")}>
+            {rows.map(({ number, row, entry, state }) => {
+              const pr = entry?.pull_request;
+              const text = (
+                <span className="upnext-block-text">
+                  <span className="upnext-member-title" title={pr?.title}>
+                    {pr ? pr.title || "Untitled pull request" : `Pull request #${number}`}
+                  </span>
+                  <span className="upnext-block-sub">
+                    #{number}
+                    {state.text ? ` · ${state.text}` : ""}
+                  </span>
+                </span>
+              );
+              return (
+                <li key={number} className={row ? undefined : "upnext-member-other"}>
+                  <span
+                    className={`upnext-member-dot upnext-member-${state.tone}`}
+                    aria-hidden="true"
+                  />
+                  {row ? (
+                    <button
+                      type="button"
+                      className="upnext-member-pick"
+                      onClick={() => pick(row.key)}
+                    >
+                      {text}
+                    </button>
+                  ) : (
+                    text
+                  )}
+                  {pr && (pr.additions || pr.deletions) ? (
+                    <Lines
+                      additions={pr.additions ?? 0}
+                      deletions={pr.deletions ?? 0}
+                      format={formatCount}
+                      className="upnext-block-right"
+                    />
+                  ) : null}
+                </li>
+              );
+            })}
+          </ul>
+        ) : null}
+        {listOpen && unread > 0 ? (
           <p className="upnext-block-more">
-            and {plural(hidden, "more pull request")} that needs nothing from you
+            and {plural(unread, "more pull request")} baum has not read
           </p>
         ) : null}
       </section>

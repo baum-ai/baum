@@ -4,8 +4,8 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import example from "../../schema/review-example.json" with { type: "json" };
 import { App } from "./app";
-import type { Entry, Job, LiveSession } from "./api";
-import { snoozeOptions, snoozeText, upNext } from "./up-next";
+import type { Entry, Job, LiveSession, ReviewGroup } from "./api";
+import { snoozeOptions, snoozeText, upNext, waitingOn } from "./up-next";
 import { forgetLastRows } from "./shortcuts";
 
 type Overrides = Partial<Omit<Entry, "pull_request">> & {
@@ -77,6 +77,60 @@ const fixture = () => [
   entry(6),
 ];
 
+it("keeps a stacked pull request GitHub would merge waiting on the lowest open one under it", () => {
+  const stacked = (number: number, head: string, base: string, overrides: Overrides = {}) =>
+    mine(number, {
+      merge: "ready",
+      checks: "passing",
+      ...overrides,
+      pull_request: { head_ref: head, base_ref: base },
+    });
+  const stack: ReviewGroup = {
+    id: "s1",
+    repository: "acme/demo",
+    name: "Stack",
+    members: [1, 2, 3, 4],
+    stack: true,
+    created_at: "",
+    updated_at: "",
+    version_count: 0,
+    latest: null,
+    risk_score: null,
+    reviewed: [],
+    outdated: false,
+  };
+  const entries = [
+    // The bottom targets main, which wants a review first.
+    stacked(1, "one", "main", { merge: "blocked" }),
+    stacked(2, "two", "one"),
+    stacked(3, "three", "two"),
+    // A failing one still needs fixing, whatever lies under it.
+    stacked(4, "four", "three", { merge: "blocked", checks: "failing" }),
+    // Outside a stack, a pull request on another's branch merges as GitHub says.
+    stacked(5, "five", "four"),
+  ];
+  const { items, waiting, stackedOn } = upNext(entries, [], [], [stack]);
+  expect(items.map((item) => [item.kind, item.entry.pull_request.number])).toEqual([
+    ["merge", 5],
+    ["fix", 4],
+  ]);
+  expect(waiting.map((e) => e.pull_request.number)).toEqual([1, 2, 3]);
+  expect([...stackedOn]).toEqual([
+    ["acme/demo#2", 1],
+    ["acme/demo#3", 1],
+    ["acme/demo#4", 1],
+  ]);
+  expect(waitingOn(entries[0]!, stackedOn.get("acme/demo#1"))).toBe("Waiting on review");
+  expect(waitingOn(entries[2]!, stackedOn.get("acme/demo#3"))).toBe("Waiting on #1");
+  // Once the bottom merges, the next one up is ready.
+  const { items: after } = upNext(entries.slice(1), [], [], [stack]);
+  expect(after.map((item) => [item.kind, item.entry.pull_request.number])).toEqual([
+    ["merge", 2],
+    ["merge", 5],
+    ["fix", 4],
+  ]);
+});
+
 it("orders what waits on the person and leaves out what waits on others", () => {
   const fixing: Job = {
     id: "job",
@@ -132,7 +186,8 @@ it("orders what waits on the person and leaves out what waits on others", () => 
   expect(review!.minutes).toBe(12);
   // Its group already says a merge is ready.
   expect(merge!.why).toBe("");
-  expect(fix!.why).toBe("Checks are failing. An agent can fix it while you do something else.");
+  // What needs fixing already lists a fix's problems.
+  expect(fix!.why).toBe("");
   expect(clone!.why).toContain("no local clone of acme/demo");
 });
 
@@ -722,13 +777,22 @@ it("lists every check of the head it shows, failing first, each linking to its d
   expect(shown()).toBe("Change 2");
   // A fix's failing checks start open.
   const items = () => Array.from(panel().querySelectorAll('[aria-label="Checks"] li'));
+  // Only the failing checks show at first; the others fold behind a toggle.
+  expect(items().map((item) => item.textContent)).toEqual([
+    "ci/circleTimed out",
+    "testFailed · 2 tests failed in pkgRetryDetails",
+  ]);
+  await act(async () => button("Show 2 other checks").click());
   expect(items().map((item) => item.textContent)).toEqual([
     "ci/circleTimed out",
     "testFailed · 2 tests failed in pkgRetryDetails",
     "buildRunning",
     "lintPassed",
   ]);
-  expect(panel().textContent).toContain("2 failing, 1 running and 1 passed.");
+  // The row counts the failing checks of them all beside its title.
+  const count = panel().querySelector(".upnext-block-title [title]")!;
+  expect(count.textContent).toBe("2/4 failing");
+  expect(count.getAttribute("title")).toBe("2 failing, 1 running and 1 passed");
   expect(items()[1]!.querySelector("a")!.getAttribute("href")).toBe(
     "https://github.com/acme/demo/runs/21",
   );
@@ -740,16 +804,10 @@ it("lists every check of the head it shows, failing first, each linking to its d
     .map(([, init]) => JSON.parse(String((init as RequestInit).body)));
   expect(reruns).toEqual([{ repository: "acme/demo", pr: 2, head_sha: "head", job_id: 21 }]);
   expect(items()[1]!.textContent).toBe("testRe-running on GitHubDetails");
-  // The row's Fix CI asks for a fix of the checks alone.
-  const fixCI = panel().querySelector<HTMLButtonElement>(
-    "li.upnext-has-threads > button.upnext-thread-resolve",
-  )!;
-  expect(fixCI.textContent).toBe("Fix CI");
-  await act(async () => fixCI.click());
-  expect(fixesStarted()).toEqual([
-    { items: [{ clone: "clone", pr: 2, kind: "fix", only: "checks" }], mode: "single" },
-  ]);
-  expect(node.querySelector("dialog")).toBeNull();
+  // The panel's own fix covers the checks; their row has no fix of its own.
+  expect(
+    panel().querySelector("li.upnext-has-threads > button:not(.upnext-detail-toggle)"),
+  ).toBeNull();
   const asked = vi
     .mocked(fetch)
     .mock.calls.map(([path]) => String(path))
@@ -789,9 +847,12 @@ it("keeps reading running checks after a read fails", async () => {
     expect(reads).toBe(2);
     await act(async () => vi.advanceTimersByTime(20_000));
     expect(reads).toBe(3);
-    expect(
-      Array.from(panel().querySelectorAll('[aria-label="Checks"] li')).map((li) => li.textContent),
-    ).toEqual(["testFailed", "buildPassed"]);
+    // The build, done now, folds behind the failing test.
+    const listed = () =>
+      Array.from(panel().querySelectorAll('[aria-label="Checks"] li')).map((li) => li.textContent);
+    expect(listed()).toEqual(["testFailed"]);
+    await act(async () => button("Show 1 other check").click());
+    expect(listed()).toEqual(["testFailed", "buildPassed"]);
   } finally {
     vi.useRealTimers();
   }
@@ -844,11 +905,12 @@ it("shows where a pull request merges, its size and time to review, and opens it
   expect(panel().querySelector(".upnext-branches a")!.getAttribute("aria-label")).toBe(
     "Open acme/demo#1 on GitHub",
   );
-  // A review's checks are folded, and read only once opened.
+  // A review's checks are folded but read at once, to count them beside the
+  // row's title; opening the row shows that read without asking again.
   const checksAsked = () =>
     vi.mocked(fetch).mock.calls.filter(([path]) => String(path).includes("api/prs/checks"));
   expect(button("Checks passing").getAttribute("aria-expanded")).toBe("false");
-  expect(checksAsked()).toEqual([]);
+  expect(checksAsked()).toHaveLength(1);
   await act(async () => button("Checks passing").click());
   expect(checksAsked()).toHaveLength(1);
 });
@@ -976,17 +1038,20 @@ it("lists a review group as one row that opens to its members", async () => {
     Array.from(panel().querySelectorAll('[aria-label="Pull requests"] li')).map(
       (li) => li.textContent,
     ),
-  ).toEqual([
-    "#2 Change 2Fix · Checks are failing. An agent can fix it while you do something else.",
-    "#3 Change 3Merge",
-  ]);
+  ).toEqual(["Change 2#2 · Checks failing", "Change 3#3 · Ready to merge"]);
   // A stack's members stay out of Merge all.
   expect(node.textContent).not.toContain("Merge all");
-  await press("l");
+  // Space opens the group, and from a member closes it again, back on the group.
+  await press(" ");
   expect(list()).toEqual(["Change 1", "Payments stack", "Change 2", "Change 3", "Change 4"]);
   await press("j");
   expect(shown()).toBe("Change 2");
-  await press("h");
+  await press(" ");
   expect(shown()).toBe("Payments stack");
+  expect(list()).toEqual(["Change 1", "Payments stack", "Change 4"]);
+  // On the group itself it opens and closes it.
+  await press(" ");
+  expect(list()).toEqual(["Change 1", "Payments stack", "Change 2", "Change 3", "Change 4"]);
+  await press(" ");
   expect(list()).toEqual(["Change 1", "Payments stack", "Change 4"]);
 });
