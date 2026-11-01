@@ -1,6 +1,7 @@
 package review
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"math"
@@ -360,6 +361,145 @@ func DetailsOf(section []byte) []byte {
 		return section
 	}
 	return encoded
+}
+
+// SpliceSections returns latest, the stored version as it is now (refreshed
+// since, perhaps), with the sections ids replaced by those of completed, the
+// same version completed again after their details were written
+// (CompleteStaged), so that the details land without losing what a refresh
+// brought in the meantime. What follows from the sections is taken from
+// completed, which derived it from the same sections: the risk score and
+// its limitations, the reading time and the risk line counts; the open
+// agent findings per section are counted again from latest's agent reviews.
+// The two must be the same generation (repository, pull request, version,
+// head, base, merge base and generation time), and every id a section of
+// both.
+func (v *DocumentValidator) SpliceSections(latest, completed []byte, ids []string) ([]byte, error) {
+	now, err := v.decodeFullDocument(latest)
+	if err != nil {
+		return nil, &StoredDocumentError{Err: err}
+	}
+	done, err := v.decodeFullDocument(completed)
+	if err != nil {
+		return nil, &StoredDocumentError{Err: err}
+	}
+	a, b := now.Review, done.Review
+	if a.Repository != b.Repository || a.PullRequest != b.PullRequest || a.Version != b.Version || a.Head != b.Head || a.Base != b.Base || a.MergeBase != b.MergeBase || a.GeneratedAt != b.GeneratedAt {
+		return nil, fmt.Errorf("the completed document is not the generation of the version")
+	}
+	written := map[string]documentSection{}
+	for _, section := range done.Sections {
+		written[section.ID] = section
+	}
+	checks := map[string]string{}
+	for _, check := range now.Index.Checks {
+		if check.Head == now.Review.Head {
+			checks[check.ID] = check.Conclusion
+		}
+	}
+	testHunks := map[string]bool{}
+	for _, hunk := range now.Index.Hunks {
+		testHunks[hunk.ID] = hunk.Role == "test"
+	}
+	sources := refreshEvidence{currentHead: now.Review.ChecksHead == now.Review.Head, checks: checks, testHunks: testHunks}
+	for _, id := range ids {
+		index := slices.IndexFunc(now.Sections, func(section documentSection) bool { return section.ID == id })
+		section, ok := written[id]
+		if index < 0 || !ok {
+			return nil, fmt.Errorf("section %s is not in both documents", id)
+		}
+		// A refresh may have changed checks or other evidence while details were
+		// being written. Keep its assessment for evidence already in the saved
+		// section; newly written evidence cannot claim a verified result from
+		// the older snapshot.
+		current := now.Sections[index]
+		statuses := make(map[string]documentEvidence, len(current.Evidence))
+		for _, evidence := range current.Evidence {
+			statuses[evidence.ID] = evidence
+		}
+		counts := map[string]int{}
+		for i := range section.Evidence {
+			evidence := &section.Evidence[i]
+			if saved, ok := statuses[evidence.ID]; ok && saved.Kind == evidence.Kind && saved.Claim == evidence.Claim && sameAnchors(saved.Anchors, evidence.Anchors) {
+				evidence.Status, evidence.Granularity = saved.Status, saved.Granularity
+			} else {
+				checkAnchored, onlyChecksAndHunks := false, true
+				for _, anchor := range evidence.Anchors {
+					checkAnchored = checkAnchored || anchor.Type == "check"
+					onlyChecksAndHunks = onlyChecksAndHunks && (anchor.Type == "check" || anchor.Type == "hunk")
+				}
+				if checkAnchored && onlyChecksAndHunks {
+					if status := sources.status(evidence.Kind, evidence.Anchors, evidence.Status); status != "" {
+						evidence.Status = status
+					}
+				} else if evidence.Status == "verified" || evidence.Status == "observed" {
+					evidence.Status = "asserted"
+				}
+				if evidence.Status != "verified" {
+					evidence.Granularity = nil
+				}
+			}
+			if section.Derived.State != "stale" {
+				counts[evidence.Status]++
+			}
+		}
+		section.Derived.EvidenceSummary = counts
+		section.Derived.Reviewers = current.Derived.Reviewers
+		now.Sections[index] = section
+	}
+	now.Summary.RiskScore, now.Summary.ReviewMinutes, now.Stats.RiskLOC = done.Summary.RiskScore, done.Summary.ReviewMinutes, done.Stats.RiskLOC
+	countFindings(now)
+	return v.encodeFullDocument(now)
+}
+
+func sameAnchors(a, b []documentAnchor) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		left, _ := json.Marshal(a[i])
+		right, _ := json.Marshal(b[i])
+		if !bytes.Equal(left, right) {
+			return false
+		}
+	}
+	return true
+}
+
+// StoredOutline returns the outline and the context of a stored document
+// written in stages, for a host that writes again the details of its failed
+// sections (agent's StagedRun.Outline): the summary and the sections the
+// version wrote, not the stale ones it carried from an earlier version, with
+// its relations, in the shape the outline stage writes, and the summary's
+// context, nil when it has none. PrepareOutline drops the host's fields left
+// in them.
+func StoredOutline(document []byte) (outline, context []byte, err error) {
+	root, _, err := decodeStored(document, "stored review")
+	if err != nil {
+		return nil, nil, err
+	}
+	sections := []any{}
+	for _, section := range jsonObjects(root["sections"]) {
+		if derived, _ := section["derived"].(map[string]any); derived["state"] == "stale" {
+			continue
+		}
+		sections = append(sections, section)
+	}
+	root["sections"] = sections
+	root["relations"] = []any{}
+	if meta, ok := root["review"].(map[string]any); ok && meta["relations"] != nil {
+		root["relations"] = meta["relations"]
+	}
+	if summary, ok := root["summary"].(map[string]any); ok && summary["context"] != nil {
+		if context, err = json.Marshal(summary["context"]); err != nil {
+			return nil, nil, err
+		}
+	}
+	encoded, err := json.Marshal(root)
+	if err != nil {
+		return nil, nil, err
+	}
+	return OutlineOf(encoded), context, nil
 }
 
 // SectionID returns the ID a section's details name, spelled as the outline

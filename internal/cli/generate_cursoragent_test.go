@@ -20,7 +20,8 @@ func TestFakeCursorAgentProcess(t *testing.T) { generatetest.RunFakeCursorAgent(
 // TestGenerateWithTheCursorAgentBackend runs "baum internal generate --backend
 // cursor-agent" with the real backend against a fake cursor-agent on PATH. Its
 // first answer is rejected by the validator, its repair holds a secret, and
-// what is stored is the repaired document, valid and masked.
+// what is stored is the repaired document, valid and masked. The fake replays
+// one-pass replies, so the review runs in one pass (--one-pass).
 func TestGenerateWithTheCursorAgentBackend(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("fake shell binaries")
@@ -32,7 +33,7 @@ func TestGenerateWithTheCursorAgentBackend(t *testing.T) {
 	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
 	generateBackends = generate.DefaultBackendsFor
 
-	stdout, stderr, err := run(t, append([]string{"internal", "generate", "--pr", "7", "--backend", "cursor-agent"}, stores...)...)
+	stdout, stderr, err := run(t, append([]string{"internal", "generate", "--pr", "7", "--backend", "cursor-agent", "--one-pass"}, stores...)...)
 	if err != nil {
 		t.Fatalf("generate: %v\n%s", err, stderr)
 	}

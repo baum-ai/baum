@@ -122,6 +122,17 @@ func (q *Queue) Handler() http.Handler {
 		}
 		respond(w, v)
 	})
+	// draft serves a running staged review's latest draft: masked and
+	// completed like a version, with the sections still being written
+	// pending, and never a version. A job without one, or ended, is 404.
+	mux.HandleFunc("GET /api/jobs/{id}/draft", func(w http.ResponseWriter, r *http.Request) {
+		draft, revision, ok := q.Draft(r.PathValue("id"))
+		if !ok {
+			http.Error(w, http.StatusText(404), 404)
+			return
+		}
+		respond(w, map[string]any{"draft": revision, "document": json.RawMessage(draft)})
+	})
 	// transcript serves a fix job's transcript from entry after on, read
 	// fresh from its file.
 	mux.HandleFunc("GET /api/jobs/{id}/transcript", func(w http.ResponseWriter, r *http.Request) {

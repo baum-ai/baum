@@ -154,7 +154,7 @@ func localRunner(registry *repos.Registry, headRepository, permission string, st
 	cfg.Backend = config.BackendClaude
 	cfg.Model = "claude-sonnet-4-5"
 	client := github.New(func(context.Context, string) (string, error) { return "fixture-token", nil }, github.Options{Transport: transportFunc(func(r *http.Request) (*http.Response, error) {
-		body := `{"state":"open","head":{"sha":"first","repo":{"full_name":"` + headRepository + `"}},"user":{"login":"author"}}`
+		body := `{"state":"open","head":{"sha":"first","repo":{"full_name":"` + headRepository + `"}},"base":{"sha":"base"},"user":{"login":"author"}}`
 		code := 200
 		if strings.HasSuffix(r.URL.Path, "/permission") {
 			code = status
@@ -277,6 +277,17 @@ func TestPreferencesChooseTheBackendAndModel(t *testing.T) {
 	p, _, e := local.Prepare(ctx, Item{Clone: clone.ID, PR: 1})
 	if e != nil || p.Backend != agent.BackendCursorAgent || p.Model != "app-model" {
 		t.Fatalf("prepared = %+v, %v", p, e)
+	}
+}
+
+// A job's tracked backend keeps the backend's answer to whether a staged
+// review's calls may run at once.
+func TestTrackedBackendForwardsConcurrentCalls(t *testing.T) {
+	backends := generate.DefaultBackendsFor(config.Config{})
+	for backend, want := range map[agent.Backend]bool{backends.Claude(""): true, backends.CursorAgent(""): false, &generatetest.Backend{}: false} {
+		if got := (&trackedBackend{Backend: backend}).ConcurrentCalls(); got != want {
+			t.Errorf("%s: %v", backend.Name(), got)
+		}
 	}
 }
 

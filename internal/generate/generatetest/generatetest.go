@@ -9,10 +9,12 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 
 	"github.com/baum-ai/baum/agent"
 	"github.com/baum-ai/baum/bundle"
+	"github.com/baum-ai/baum/review"
 )
 
 // Backend is an agent.Backend and a generate.CheckedBackend whose runs a test
@@ -60,15 +62,114 @@ func (b *Backend) Run(ctx context.Context, request agent.Request) (agent.Result,
 	if err != nil {
 		return agent.Result{}, err
 	}
-	result := agent.Result{Document: document, Model: "stub-model", Calls: 1, Tokens: 100, Usage: agent.Usage{Input: 60, Output: 40}}
+	result := agent.Result{Document: ForStage(request, document), Model: "stub-model", Calls: 1, Tokens: 100, Usage: agent.Usage{Input: 60, Output: 40}}
 	if request.PersistSession {
-		result.SessionID = SessionID
+		result.SessionID = StageSessionID(request)
 	}
 	return result, nil
 }
 
-// SessionID is the session the default Run reports when asked to persist one.
+// SessionID is the session the default Run reports when asked to persist one
+// for a review in one pass or a staged review's details; StageSessionID
+// names the others.
 const SessionID = "11111111-2222-4333-8444-555555555555"
+
+// The sessions the default Run reports for the outline and context stages
+// of a staged review.
+const (
+	OutlineSessionID = "11111111-2222-4333-8444-000000000001"
+	ContextSessionID = "11111111-2222-4333-8444-000000000003"
+)
+
+// StageSessionID is the session the default Run reports for a request.
+func StageSessionID(request agent.Request) string {
+	switch Stage(request) {
+	case agent.StageOutline:
+		return OutlineSessionID
+	case agent.StageContext:
+		return ContextSessionID
+	}
+	return SessionID
+}
+
+// Stage names the stage of a staged review a request is for, by the title of
+// its schema: agent.StageOutline, StageDetails or StageContext, or "" for a
+// review in one pass.
+func Stage(request agent.Request) string {
+	var schema struct {
+		Title string `json:"title"`
+	}
+	_ = json.Unmarshal(request.Schema, &schema)
+	switch schema.Title {
+	case "The outline of a baum review":
+		return agent.StageOutline
+	case "Section details of a baum review":
+		return agent.StageDetails
+	case "The codebase context of a baum review":
+		return agent.StageContext
+	}
+	return ""
+}
+
+// AskedSections are the sections a details request asks for: the list of
+// its first pass, or the sections a repair names.
+func AskedSections(request agent.Request) []string {
+	if _, list, ok := strings.Cut(request.Prompt, "in this order: "); ok {
+		list, _, _ = strings.Cut(list, ".\n")
+		return strings.Split(list, ", ")
+	}
+	var ids []string
+	for _, line := range strings.Split(request.Prompt, "\n") {
+		if id, ok := strings.CutPrefix(line, "Section "); ok {
+			ids = append(ids, id)
+		}
+	}
+	return ids
+}
+
+// ForStage is the part of a whole model document that a request's stage
+// writes: the outline, the details of the sections it asks for, or the
+// context; the document itself for a review in one pass. A document that
+// cannot be read is returned as it is.
+func ForStage(request agent.Request, document []byte) []byte {
+	stage := Stage(request)
+	if stage == "" {
+		return document
+	}
+	var doc map[string]any
+	if json.Unmarshal(document, &doc) != nil {
+		return document
+	}
+	var part any
+	switch stage {
+	case agent.StageOutline:
+		return review.OutlineOf(document)
+	case agent.StageDetails:
+		sections := map[string]json.RawMessage{}
+		var all struct {
+			Sections []json.RawMessage `json:"sections"`
+		}
+		_ = json.Unmarshal(document, &all)
+		for _, section := range all.Sections {
+			sections[review.SectionID(section)] = review.DetailsOf(section)
+		}
+		var asked []json.RawMessage
+		for _, id := range AskedSections(request) {
+			if section, ok := sections[id]; ok {
+				asked = append(asked, section)
+			}
+		}
+		part = map[string]any{"sections": asked}
+	case agent.StageContext:
+		summary, _ := doc["summary"].(map[string]any)
+		part = map[string]any{"context": summary["context"]}
+	}
+	encoded, err := json.Marshal(part)
+	if err != nil {
+		return document
+	}
+	return encoded
+}
 
 // Document builds a valid model document for the bundle the loop wrote into
 // dir: one section holding every hunk, anchored at the first. edit, when not
@@ -131,4 +232,74 @@ func DocumentFor(raw []byte, edit func(map[string]any)) ([]byte, error) {
 		edit(document)
 	}
 	return json.Marshal(document)
+}
+
+// TwoSections splits the stub document into a section of the first hunk,
+// sec_changes, and one of the others, sec_rest, so one can fail while the
+// other is written. Pass it as Document's edit.
+func TwoSections(d map[string]any) {
+	section := d["sections"].([]any)[0].(map[string]any)
+	hunks := section["hunks"].([]string)
+	first, second := map[string]any{}, map[string]any{}
+	for key, value := range section {
+		first[key], second[key] = value, value
+	}
+	first["hunks"] = hunks[:1]
+	second["id"], second["title"], second["hunks"] = "sec_rest", "The rest", hunks[1:]
+	anchor := []any{map[string]any{"type": "hunk", "id": hunks[1]}}
+	second["summary"] = map[string]any{"text": "The rest of the change.", "anchors": anchor}
+	second["attention"] = nil
+	second["risks"], second["evidence"] = []any{}, []any{}
+	second["assessment"] = map[string]any{"level": 2, "factors": []any{}, "reasons": []any{map[string]any{"text": "Small.", "anchors": anchor}}}
+	d["sections"] = []any{first, second}
+}
+
+// Answer answers a request of a stage itself, or reports false to leave it
+// to StagedReplies.
+type Answer func(stage string, request agent.Request) (agent.Result, error, bool)
+
+// StagedReplies is a RunFunc that answers every stage, and a review in one
+// pass, from the two-section document (TwoSections), with the stage's
+// session when one is asked to persist, unless answer answers first.
+func StagedReplies(answer Answer) func(context.Context, agent.Request, int) (agent.Result, error) {
+	return func(_ context.Context, request agent.Request, _ int) (agent.Result, error) {
+		if answer != nil {
+			if result, err, ok := answer(Stage(request), request); ok {
+				return result, err
+			}
+		}
+		document, err := Document(request.Directory, TwoSections)
+		result := agent.Result{Document: ForStage(request, document), Model: "stub-model", Calls: 1, Tokens: 100}
+		if request.PersistSession {
+			result.SessionID = StageSessionID(request)
+		}
+		return result, err
+	}
+}
+
+// WithoutSection is an Answer whose section details never include the
+// section id, which therefore fails after its repairs.
+func WithoutSection(id string) Answer {
+	return func(stage string, request agent.Request) (agent.Result, error, bool) {
+		if stage != agent.StageDetails {
+			return agent.Result{}, nil, false
+		}
+		document, err := Document(request.Directory, TwoSections)
+		var all struct {
+			Sections []json.RawMessage `json:"sections"`
+		}
+		_ = json.Unmarshal(ForStage(request, document), &all)
+		kept := []json.RawMessage{}
+		for _, section := range all.Sections {
+			if review.SectionID(section) != id {
+				kept = append(kept, section)
+			}
+		}
+		if len(kept) == 0 {
+			// The schema needs one section: a stray one is not the section.
+			kept = append(kept, json.RawMessage(`{"id":"sec_stray"}`))
+		}
+		encoded, _ := json.Marshal(map[string]any{"sections": kept})
+		return agent.Result{Document: encoded, Model: "stub-model", Calls: 1, Tokens: 100}, err, true
+	}
 }

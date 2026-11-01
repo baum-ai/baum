@@ -480,6 +480,7 @@ daemon serves are not involved.
 | --- | --- |
 | Review finished, with the review's risk score | `notice` `review_finished` |
 | Review failed, with its failure category | `notice` `review_failed` |
+| Couldn't write the missing section details (a retry failed), with its failure category; under Review failed | `notice` `details_failed` |
 | Review requested from me | `notice` `review_requested` |
 | Review generated automatically | `notice` `review_automatic` |
 | My pull request: checks failing | `notice` `checks_failed` |

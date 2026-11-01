@@ -3,6 +3,7 @@ package uiserver_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -12,6 +13,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"syscall"
 	"testing"
 	"time"
@@ -499,14 +501,53 @@ func TestLocalAppBrowserFixture(t *testing.T) {
 		b, _ := json.Marshal(body)
 		return &http.Response{StatusCode: status, Header: http.Header{"Content-Type": []string{"application/json"}}, Body: io.NopCloser(strings.NewReader(string(b)))}, nil
 	})})
-	backend := &generatetest.Backend{Version: "fixture", RunFunc: func(ctx context.Context, r agent.Request, _ int) (agent.Result, error) {
+	// Reviews are written in stages, each taking its time. The first review of
+	// pull request 8 loses one section's details and its context, so the page
+	// shows a published version with gaps; its retry, a later run, writes them.
+	var gapMu sync.Mutex
+	gappedDir := ""
+	gapped := func(r agent.Request, stage string) bool {
+		var b struct {
+			PullRequest struct {
+				Number int `json:"number"`
+			} `json:"pull_request"`
+		}
+		raw, err := os.ReadFile(filepath.Join(r.Directory, "bundle.json"))
+		if err != nil || json.Unmarshal(raw, &b) != nil || b.PullRequest.Number != 8 {
+			return false
+		}
+		gapMu.Lock()
+		defer gapMu.Unlock()
+		if gappedDir == "" && stage == agent.StageOutline {
+			gappedDir = r.Directory
+		}
+		return r.Directory == gappedDir
+	}
+	backend := &generatetest.Backend{Version: "fixture", RunFunc: func(ctx context.Context, r agent.Request, n int) (agent.Result, error) {
+		stage := generatetest.Stage(r)
+		delay := map[string]time.Duration{agent.StageOutline: time.Second, agent.StageDetails: 1500 * time.Millisecond, agent.StageContext: 500 * time.Millisecond}[stage]
+		if stage == "" {
+			delay = 3 * time.Second
+		}
 		select {
 		case <-ctx.Done():
 			return agent.Result{}, ctx.Err()
-		case <-time.After(3 * time.Second):
+		case <-time.After(delay):
 		}
-		document, e := generatetest.Document(r.Directory, nil)
-		return agent.Result{Document: document, Model: cfg.Model, Calls: 1, Tokens: 100, Usage: agent.Usage{Input: 60, Output: 40, CacheRead: 900}}, e
+		var answer generatetest.Answer
+		if gapped(r, stage) {
+			withoutRest := generatetest.WithoutSection("sec_rest")
+			answer = func(stage string, request agent.Request) (agent.Result, error, bool) {
+				if stage == agent.StageContext {
+					return agent.Result{Calls: 1}, errors.New("unavailable"), true
+				}
+				return withoutRest(stage, request)
+			}
+		}
+		result, e := generatetest.StagedReplies(answer)(ctx, r, n)
+		result.Model, result.Calls, result.Tokens = cfg.Model, 1, 100
+		result.Usage = agent.Usage{Input: 60, Output: 40, CacheRead: 900}
+		return result, e
 	}}
 	// Questions to the review's agent are answered at once by a scripted agent,
 	// which cites lines of docs/guide.md, a file of the review's own hunks.

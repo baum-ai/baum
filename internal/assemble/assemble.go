@@ -28,6 +28,7 @@ import (
 	"github.com/baum-ai/baum/bundle"
 	"github.com/baum-ai/baum/internal/github"
 	"github.com/baum-ai/baum/internal/gitlocal"
+	"github.com/baum-ai/baum/review"
 )
 
 // GitHub reads one pull request's metadata, checks and conversation;
@@ -288,6 +289,12 @@ func (a *Assembler) Assemble(ctx context.Context, req Request) (Result, error) {
 	// The previous version is the caller's: "baum internal bundle" has none.
 	b.Previous = req.Previous
 	b.Sources["previous_version"] = b.Previous != nil
+	// As the hosted builder does, the previous version's anchors move to
+	// where their hunks now sit, before a reused section's details are
+	// shown to the model or carried over.
+	if err := review.FitPreviousHunkAnchors(&b); err != nil {
+		return Result{}, fmt.Errorf("fitting the previous version to the diff: %w", err)
+	}
 
 	// No model reads facts, so nothing the checkout budget would omit loses
 	// its text there.

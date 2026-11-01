@@ -92,8 +92,10 @@ cached for five minutes.
 ## baum's work
 
 From the jobs ledger (`state/jobs` in `app.sqlite`), jobs created in the window: reviews, group
-reviews and fixes, automatic ones, their states, tokens and spend (a run with
-usage but no price makes it incomplete), failures by reason code (the app puts
+reviews and fixes, retries of a review's failed section details (counted
+apart, never as reviews; one that stood down because its version changed or
+the pull request moved is not counted as cancelled), automatic ones, their
+states, tokens and spend (a run with usage but no price makes it incomplete), failures by reason code (the app puts
 them in words), fixes that pushed or failed, and review threads a fix replied
 to and resolved; `reviews_completed` counts the reviews and group reviews that
 finished. Merges, branch updates and check re-runs made from the app are

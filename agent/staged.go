@@ -36,6 +36,20 @@ type StagedRun struct {
 	// Calls come from the stages' goroutines, one at a time, and hold up the
 	// stage that made them, so it must return quickly.
 	Progress func(StagedProgress)
+	// Outline, when set, continues a review whose outline was accepted
+	// before, such as a saved version some of whose sections failed: it is
+	// prepared as an outline reply (PrepareOutline) instead of being written,
+	// and the run writes no context. Only the details of the sections Reuse
+	// cannot supply are written, with every call and token of the budgets.
+	// Context is the context the review keeps, prepared with the outline
+	// (PrepareContext); nil, or one that no longer validates, leaves the
+	// document without one.
+	Outline, Context []byte
+	// Reuse is the version whose complete section details are reused
+	// (review.ReusableSectionDetails); nil is Run.Bundle.Previous. A host
+	// that continues a saved version passes that version here and the
+	// version before it as the bundle's, which completion reconciles with.
+	Reuse *bundle.PreviousVersion
 }
 
 // StagedProgress is one stage result of a staged review.
@@ -53,6 +67,9 @@ type StagedProgress struct {
 	// written. It is not redacted: a host masks it before it shows it, and
 	// completes it with review.DocumentValidator.CompleteStaged.
 	Document []byte
+	// MaskedClosed says the identifier pass has masked a secret in a closed
+	// value: the host rejects the run (RejectSecrets), so it shows no draft.
+	MaskedClosed bool
 }
 
 // StagedOutcome is what a staged review reports besides the document. Its
@@ -97,6 +114,9 @@ type StageOutcome struct {
 //     details when the backend may run calls at once (ConcurrentCaller),
 //     else after them. A run whose context fails succeeds without one.
 //
+// A run given an Outline (StagedRun.Outline) skips the outline and the
+// context and writes only the details its Reuse version cannot supply.
+//
 // The returned document is the assembled authored document with its reading
 // time (review.ReviewMinutes), prepared with review's staged contract: a host
 // completes it with CompleteStaged, as it completes Generate's document with
@@ -118,13 +138,33 @@ func (g *Generator) StagedReview(ctx context.Context, run StagedRun) (outcome St
 	if err := s.prepare(ctx); err != nil {
 		return outcome, nil, err
 	}
-	if err := s.outlineStage(ctx); err != nil || outcome.Reason != "" {
+	continued := run.Outline != nil
+	if continued {
+		if err := s.continueOutline(); err != nil {
+			return outcome, nil, err
+		}
+	} else if err := s.outlineStage(ctx); err != nil || outcome.Reason != "" {
 		return outcome, s.rejected, err
 	}
 	toWrite := s.reuse()
 	calls := run.Budgets.MaxCalls - outcome.Outline.Calls
 	tokens := run.Budgets.MaxTokens - outcome.Outline.Tokens
 	detailsBudgets, contextBudgets := stageBudgets(run.Budgets, calls, tokens, len(toWrite) > 0)
+	// A stage left no share of a bounded budget has spent it: zero would be
+	// no limit, so it is made negative, which allows no call.
+	exhaust := func(b Budgets) Budgets {
+		if run.Budgets.MaxCalls > 0 && b.MaxCalls < 1 {
+			b.MaxCalls = -1
+		}
+		if run.Budgets.MaxTokens > 0 && b.MaxTokens < 1 {
+			b.MaxTokens = -1
+		}
+		return b
+	}
+	detailsBudgets, contextBudgets = exhaust(detailsBudgets), exhaust(contextBudgets)
+	if continued {
+		detailsBudgets = run.Budgets
+	}
 	// A secret masked in a closed value rejects the run whatever the later
 	// stages write (RejectSecrets), so they are not run.
 	if s.closed() == 0 {
@@ -136,7 +176,9 @@ func (g *Generator) StagedReview(ctx context.Context, run StagedRun) (outcome St
 		}
 		// No section has its details: the run fails as a one-pass run would.
 		empty := func() bool { return len(outcome.Details.Written)+len(outcome.Details.Reused) == 0 }
-		if concurrentCalls(g.Backend) {
+		if continued {
+			details()
+		} else if concurrentCalls(g.Backend) {
 			var wg sync.WaitGroup
 			wg.Go(details)
 			wg.Go(func() { s.contextStage(ctx, contextBudgets) })
@@ -185,9 +227,9 @@ func (g *Generator) StagedReview(ctx context.Context, run StagedRun) (outcome St
 // between the details stage (two thirds, at least one) and the context stage
 // (the rest), or gives it all to the context stage when no section needs
 // writing. The outline stage has a quarter of the run's budgets, at least
-// one call and token; what it does not spend goes to the later stages. The
-// An exhausted call or token budget stays zero, so the outline cannot make a
-// provider call. The attempt, repair, stall and tool budgets are per call or per stage, as in a
+// one call and token; what it does not spend goes to the later stages. An
+// exhausted (negative) call or token budget stays negative, so the outline
+// cannot make a provider call. The attempt, repair, stall and tool budgets are per call or per stage, as in a
 // one-pass run, and the run's wall clock (applied by the host to the
 // context) covers every stage.
 func stageBudgets(run Budgets, calls, tokens int, details bool) (Budgets, Budgets) {
@@ -358,7 +400,7 @@ func (s *stagedReview) report(progress StagedProgress) {
 	if err != nil {
 		return
 	}
-	progress.Document = draft
+	progress.Document, progress.MaskedClosed = draft, s.closed() > 0
 	s.run.Progress(progress)
 }
 
@@ -407,11 +449,37 @@ func (s *stagedReview) outlineStage(ctx context.Context) error {
 	return nil
 }
 
-// reuse takes the details of each section the previous version can supply
-// and that pass validation, and returns the other sections, in outline
-// order, for the details stage.
+// continueOutline takes a run's given outline and context as the outline
+// and context stages would have accepted them. They were accepted before, so
+// an outline that no longer validates is the run's error, not a reply to
+// repair.
+func (s *stagedReview) continueOutline() error {
+	outline, findings := s.g.Validator.PrepareOutline(s.run.Outline, s.run.Bundle, s.run.Directory)
+	if findings != "" {
+		return errors.New("the outline to continue is no longer valid: " + boundedText(findings, 2048))
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.parts = review.StagedParts{Outline: outline, Sections: map[string][]byte{}, Failed: map[string]bool{}}
+	if s.run.Context != nil {
+		reply := []byte(`{"context":` + string(s.run.Context) + `}`)
+		if context, findings := s.g.Validator.PrepareContext(outline, reply, s.run.Bundle, s.run.Directory); findings == "" {
+			s.parts.Context = context
+		}
+	}
+	s.report(StagedProgress{Stage: StageOutline})
+	return nil
+}
+
+// reuse takes the details of each section the previous version (or
+// StagedRun.Reuse) can supply and that pass validation, and returns the
+// other sections, in outline order, for the details stage.
 func (s *stagedReview) reuse() []string {
-	reusable := review.ReusableSectionDetails(s.run.Bundle.Previous, s.parts.Outline)
+	from := s.run.Reuse
+	if from == nil {
+		from = s.run.Bundle.Previous
+	}
+	reusable := review.ReusableSectionDetails(from, s.parts.Outline)
 	var outline struct {
 		Sections []struct {
 			ID string `json:"id"`
