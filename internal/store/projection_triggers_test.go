@@ -3,19 +3,124 @@ package store
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"os"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 )
 
 func dropTriggers(db *sql.DB) error {
-	for _, name := range []string{"insert", "insert_invalid", "update", "update_invalid", "delete"} {
-		if _, err := db.Exec(`DROP TRIGGER summaries_` + name); err != nil {
+	names, err := summaryTriggerNames(context.Background(), db)
+	if err != nil || len(names) != len(summaryTriggers()) {
+		return fmt.Errorf("triggers %v: %v", names, err)
+	}
+	for _, name := range names {
+		if _, err := db.Exec(`DROP TRIGGER "` + name + `"`); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+// oldExtractionErr runs the pre-summaries query over the store.
+func oldExtractionErr(s *Store) error {
+	db, err := s.database(false)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	rows, err := db.Query(oldExtraction)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+	}
+	return rows.Err()
+}
+
+func deepDocument(k Key, n int, title string) []byte {
+	return docFor(k, n, `,"pr_state":"open"`, `"title":"`+title+`","deep":`+strings.Repeat("[", 1500)+strings.Repeat("]", 1500))
+}
+
+func TestTriggersAreReplacedWhenTheirBodyChanges(t *testing.T) {
+	s := opened(t)
+	k := Key{"a/b", 1}
+	putDoc(t, s, k, Version{}, docFor(k, 1, `,"pr_state":"open"`, `"title":"real","review_minutes":10`))
+	db, err := s.database(true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Triggers of an older extraction leave rows that still pass the version and length check.
+	err = dropTriggers(db)
+	if err == nil {
+		_, err = db.Exec(`CREATE TRIGGER summaries_update_0ldb0d1e AFTER UPDATE OF document ON versions BEGIN INSERT OR REPLACE INTO summaries VALUES (NEW.repository,NEW.pr,NEW.version,length(NEW.document),'stale','open',NULL,NULL); END`)
+	}
+	if err == nil {
+		_, err = db.Exec(`UPDATE versions SET document=? WHERE pr=1`, docFor(k, 1, `,"pr_state":"open"`, `"title":"new!","review_minutes":10`))
+	}
+	_ = db.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rows := snapshotRows(t, s); rows[0].Title != "stale" {
+		t.Fatalf("setup did not leave a stale row: %+v", rows)
+	}
+	if _, err = Open("", s.Root(), true); err != nil {
+		t.Fatal(err)
+	}
+	db, _ = s.database(false)
+	names, err := summaryTriggerNames(context.Background(), db)
+	_ = db.Close()
+	var want []string
+	for _, tr := range summaryTriggers() {
+		want = append(want, tr.name)
+	}
+	slices.Sort(want)
+	if err != nil || !reflect.DeepEqual(names, want) {
+		t.Fatalf("triggers=%v want=%v err=%v", names, want, err)
+	}
+	if rows := snapshotRows(t, s); rows[0].Title != "new!" || !reflect.DeepEqual(rows, oldRows(t, s)) {
+		t.Fatalf("stale projection survived: %+v", rows)
+	}
+}
+
+func TestInsertOfDocumentSQLiteCannotParseWrites(t *testing.T) {
+	ctx := context.Background()
+	s := opened(t)
+	k := Key{"a/b", 1}
+	putDoc(t, s, k, Version{}, deepDocument(k, 1, "t"))
+	if got := summaryRows(t, s); len(got) != 0 {
+		t.Fatalf("summary of an unparseable document: %v", got)
+	}
+	_, err := s.Snapshot(ctx)
+	if (oldExtractionErr(s) == nil) != (err == nil) {
+		t.Fatalf("old=%v new=%v", oldExtractionErr(s), err)
+	}
+}
+
+func TestDeleteWithUnparseableLatestLeavesNoSummary(t *testing.T) {
+	s := opened(t)
+	k := Key{"a/b", 1}
+	v1 := putDoc(t, s, k, Version{}, deepDocument(k, 1, "t"))
+	putDoc(t, s, k, v1, docFor(k, 2, `,"pr_state":"open"`, `"title":"fine"`))
+	if got := summaryRows(t, s); len(got) != 1 {
+		t.Fatalf("%v", got)
+	}
+	db, err := s.database(true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = db.Exec(`DELETE FROM versions WHERE version=2`)
+	_ = db.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := summaryRows(t, s); len(got) != 0 {
+		t.Fatalf("summary remains: %v", got)
+	}
 }
 
 func TestTriggersProjectWritesFromOlderBinaries(t *testing.T) {

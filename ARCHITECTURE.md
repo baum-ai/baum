@@ -2431,8 +2431,10 @@ fallback, in the transaction of whichever writer changed the latest document:
 failing or conflicting write rolls the projection back with the document. A
 document SQLite cannot parse (nested deeper than its limit) drops the row
 instead of failing the write, and `Snapshot` then extracts as it always did.
-Every write-open creates the table and triggers if missing and projects each
-latest document without a current row; the check is a read-only query that
+Trigger names carry a hash of their SQL: a write-open that does not find
+exactly the current ones replaces them, empties the table and re-projects it in
+one transaction, so a changed extraction never leaves rows computed by an older
+one. Every write-open projects each latest document without a current row; the check is a read-only query that
 parses no document and writes only when something is stale, so existing stores
 are backfilled on their first write-open and later opens are cheap. `Snapshot`
 uses a row only while its version is the latest and its length equals

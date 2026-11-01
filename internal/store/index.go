@@ -2,10 +2,13 @@ package store
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 )
@@ -134,17 +137,117 @@ const summaryColumns = `INSERT OR REPLACE INTO summaries(repository,pr,version,d
 // the writer's own transaction: older binaries too, once the triggers exist. A
 // document SQLite cannot parse (nested deeper than its limit) drops the row so
 // Snapshot falls back, rather than failing the write.
-func summaryTriggers() string {
+//
+// Trigger names carry a hash of every body and of the table, so a binary that
+// changes the extraction finds the old triggers missing and replaces them.
+func summaryTriggers() []trigger {
 	latest := `NEW.version=(SELECT MAX(version) FROM versions WHERE repository=NEW.repository AND pr=NEW.pr)`
 	upsert := summaryColumns + `SELECT NEW.repository,NEW.pr,NEW.version,length(NEW.document),` + extract("NEW.document") + `;`
 	drop := `DELETE FROM summaries WHERE repository=NEW.repository AND pr=NEW.pr;`
-	out := ""
+	var out []trigger
 	for _, event := range []struct{ name, on string }{{"insert", "INSERT"}, {"update", "UPDATE OF document"}} {
-		out += `CREATE TRIGGER IF NOT EXISTS summaries_` + event.name + ` AFTER ` + event.on + ` ON versions WHEN ` + latest + ` AND json_valid(NEW.document) BEGIN ` + upsert + ` END;`
-		out += `CREATE TRIGGER IF NOT EXISTS summaries_` + event.name + `_invalid AFTER ` + event.on + ` ON versions WHEN ` + latest + ` AND NOT json_valid(NEW.document) BEGIN ` + drop + ` END;`
+		out = append(out,
+			trigger{"summaries_" + event.name, ` AFTER ` + event.on + ` ON versions WHEN ` + latest + ` AND json_valid(NEW.document) BEGIN ` + upsert + ` END`},
+			trigger{"summaries_" + event.name + "_invalid", ` AFTER ` + event.on + ` ON versions WHEN ` + latest + ` AND NOT json_valid(NEW.document) BEGIN ` + drop + ` END`})
 	}
-	return out + `CREATE TRIGGER IF NOT EXISTS summaries_delete AFTER DELETE ON versions BEGIN DELETE FROM summaries WHERE repository=OLD.repository AND pr=OLD.pr; ` +
-		summaryColumns + `SELECT v.repository,v.pr,v.version,length(v.document),` + extract("v.document") + ` FROM versions v WHERE v.repository=OLD.repository AND v.pr=OLD.pr AND v.version=(SELECT MAX(version) FROM versions WHERE repository=OLD.repository AND pr=OLD.pr) AND json_valid(v.document); END;`
+	out = append(out, trigger{"summaries_delete", ` AFTER DELETE ON versions BEGIN DELETE FROM summaries WHERE repository=OLD.repository AND pr=OLD.pr; ` +
+		summaryColumns + `SELECT v.repository,v.pr,v.version,length(v.document),` + extract("v.document") + ` FROM versions v WHERE v.repository=OLD.repository AND v.pr=OLD.pr AND v.version=(SELECT MAX(version) FROM versions WHERE repository=OLD.repository AND pr=OLD.pr) AND json_valid(v.document); END`})
+	h := sha256.New()
+	h.Write([]byte(summariesSchema))
+	for _, t := range out {
+		h.Write([]byte(t.name + t.body))
+	}
+	suffix := "_" + hex.EncodeToString(h.Sum(nil))[:8]
+	for i := range out {
+		out[i].name += suffix
+	}
+	return out
+}
+
+type trigger struct{ name, body string }
+
+// immediate runs fn in a transaction that takes the writer lock up front.
+func immediate(ctx context.Context, db *sql.DB, fn func(*sql.Conn) error) error {
+	conn, err := db.Conn(ctx)
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+	if _, err = conn.ExecContext(ctx, `BEGIN IMMEDIATE`); err != nil {
+		return err
+	}
+	if err = fn(conn); err != nil {
+		_, _ = conn.ExecContext(context.Background(), `ROLLBACK`)
+		return err
+	}
+	_, err = conn.ExecContext(ctx, `COMMIT`)
+	return err
+}
+
+func summaryTriggerNames(ctx context.Context, q interface {
+	QueryContext(context.Context, string, ...any) (*sql.Rows, error)
+}) ([]string, error) {
+	rows, err := q.QueryContext(ctx, `SELECT name FROM sqlite_master WHERE type='trigger' AND substr(name,1,10)='summaries_' ORDER BY name`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var names []string
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return nil, err
+		}
+		names = append(names, name)
+	}
+	return names, rows.Err()
+}
+
+// setupSummaries makes the table and triggers current, and projects stale rows.
+// A store whose triggers are exactly the current ones is only read unless a row
+// is stale. Otherwise one transaction creates the table if missing, replaces
+// the triggers, drops every row (the extraction may have changed) and
+// backfills.
+func setupSummaries(ctx context.Context, db *sql.DB) error {
+	triggers := summaryTriggers()
+	var tables int
+	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='summaries'`).Scan(&tables); err != nil {
+		return err
+	}
+	have, err := summaryTriggerNames(ctx, db)
+	if err != nil {
+		return err
+	}
+	current := tables == 1 && len(have) == len(triggers)
+	for _, t := range triggers {
+		current = current && slices.Contains(have, t.name)
+	}
+	if current {
+		return backfill(ctx, db)
+	}
+	return immediate(ctx, db, func(conn *sql.Conn) error {
+		if _, err := conn.ExecContext(ctx, summariesSchema); err != nil {
+			return err
+		}
+		have, err := summaryTriggerNames(ctx, conn)
+		if err != nil {
+			return err
+		}
+		for _, name := range have {
+			if _, err := conn.ExecContext(ctx, `DROP TRIGGER "`+name+`"`); err != nil {
+				return err
+			}
+		}
+		for _, t := range triggers {
+			if _, err := conn.ExecContext(ctx, `CREATE TRIGGER "`+t.name+`"`+t.body); err != nil {
+				return err
+			}
+		}
+		if _, err := conn.ExecContext(ctx, `DELETE FROM summaries`); err != nil {
+			return err
+		}
+		return projectStale(ctx, conn)
+	})
 }
 
 // staleLatest selects every latest document without a current summary: a store
@@ -153,6 +256,13 @@ func summaryTriggers() string {
 // that is already current costs no document reads.
 const staleLatest = ` FROM versions v JOIN (SELECT repository,pr,MAX(version) latest FROM versions GROUP BY repository,pr) m ON v.repository=m.repository AND v.pr=m.pr AND v.version=m.latest LEFT JOIN summaries s ON s.repository=v.repository AND s.pr=v.pr WHERE CASE WHEN s.pr IS NULL OR s.version<>v.version OR s.document_length<>length(v.document) THEN json_valid(v.document) ELSE 0 END`
 
+var projectStaleSQL = summaryColumns + `SELECT v.repository,v.pr,v.version,length(v.document),` + extract("v.document") + staleLatest
+
+func projectStale(ctx context.Context, conn *sql.Conn) error {
+	_, err := conn.ExecContext(ctx, projectStaleSQL)
+	return err
+}
+
 // backfill projects the stale rows. A read-only check comes first so a store
 // that is already current is not written and its writer lock not taken.
 func backfill(ctx context.Context, db *sql.DB) error {
@@ -160,8 +270,7 @@ func backfill(ctx context.Context, db *sql.DB) error {
 	if err := db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1`+staleLatest+`)`).Scan(&stale); err != nil || !stale {
 		return err
 	}
-	_, err := db.ExecContext(ctx, summaryColumns+`SELECT v.repository,v.pr,v.version,length(v.document),`+extract("v.document")+staleLatest)
-	return err
+	return immediate(ctx, db, func(conn *sql.Conn) error { return projectStale(ctx, conn) })
 }
 
 func (s *Store) Snapshot(ctx context.Context) ([]Summary, error) {
