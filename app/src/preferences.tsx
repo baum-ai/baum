@@ -36,7 +36,8 @@ export function PreferencesProvider({ children }: { children: ReactNode }) {
       setReady(true);
       setError("");
     } catch (cause) {
-      if (!signal?.aborted && current === revision.current) setError(String(cause));
+      if (!signal?.aborted && current === revision.current)
+        setError(cause instanceof Error ? cause.message : "Local request failed.");
     }
   };
   useEffect(() => {
@@ -72,7 +73,7 @@ export function PreferencesProvider({ children }: { children: ReactNode }) {
       setPreferences(normalize(saved));
     } catch (cause) {
       setPreferences(previous);
-      setError(String(cause));
+      setError(cause instanceof Error ? cause.message : "Local request failed.");
     } finally {
       busy.current = false;
       setSaving(false);
