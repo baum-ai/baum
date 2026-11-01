@@ -130,19 +130,37 @@ const summariesSchema = `CREATE TABLE IF NOT EXISTS summaries (repository TEXT N
 
 const summaryColumns = `INSERT OR REPLACE INTO summaries(repository,pr,version,document_length,title,pr_state,risk_score,review_minutes) `
 
-// project records the projection of one version, in the transaction that wrote it.
-func project(ctx context.Context, tx *sql.Tx, k Key, version int) error {
-	if _, err := tx.ExecContext(ctx, summariesSchema); err != nil {
-		return err
+// summaryTriggers keep the projection current for every writer of versions, in
+// the writer's own transaction: older binaries too, once the triggers exist. A
+// document SQLite cannot parse (nested deeper than its limit) drops the row so
+// Snapshot falls back, rather than failing the write.
+func summaryTriggers() string {
+	latest := `NEW.version=(SELECT MAX(version) FROM versions WHERE repository=NEW.repository AND pr=NEW.pr)`
+	upsert := summaryColumns + `SELECT NEW.repository,NEW.pr,NEW.version,length(NEW.document),` + extract("NEW.document") + `;`
+	drop := `DELETE FROM summaries WHERE repository=NEW.repository AND pr=NEW.pr;`
+	out := ""
+	for _, event := range []struct{ name, on string }{{"insert", "INSERT"}, {"update", "UPDATE OF document"}} {
+		out += `CREATE TRIGGER IF NOT EXISTS summaries_` + event.name + ` AFTER ` + event.on + ` ON versions WHEN ` + latest + ` AND json_valid(NEW.document) BEGIN ` + upsert + ` END;`
+		out += `CREATE TRIGGER IF NOT EXISTS summaries_` + event.name + `_invalid AFTER ` + event.on + ` ON versions WHEN ` + latest + ` AND NOT json_valid(NEW.document) BEGIN ` + drop + ` END;`
 	}
-	_, err := tx.ExecContext(ctx, summaryColumns+`SELECT repository,pr,version,length(document),`+extract("document")+` FROM versions WHERE repository=? AND pr=? AND version=?`, k.repository(), k.Number, version)
-	return err
+	return out + `CREATE TRIGGER IF NOT EXISTS summaries_delete AFTER DELETE ON versions BEGIN DELETE FROM summaries WHERE repository=OLD.repository AND pr=OLD.pr; ` +
+		summaryColumns + `SELECT v.repository,v.pr,v.version,length(v.document),` + extract("v.document") + ` FROM versions v WHERE v.repository=OLD.repository AND v.pr=OLD.pr AND v.version=(SELECT MAX(version) FROM versions WHERE repository=OLD.repository AND pr=OLD.pr) AND json_valid(v.document); END;`
 }
 
-// backfill projects every latest document without a current summary: a store
-// written before summaries existed, or by a binary that does not maintain them.
+// staleLatest selects every latest document without a current summary: a store
+// written before summaries existed, or by a binary that does not maintain
+// them. SQLite parses a document only for such a row (CASE is lazy), so a store
+// that is already current costs no document reads.
+const staleLatest = ` FROM versions v JOIN (SELECT repository,pr,MAX(version) latest FROM versions GROUP BY repository,pr) m ON v.repository=m.repository AND v.pr=m.pr AND v.version=m.latest LEFT JOIN summaries s ON s.repository=v.repository AND s.pr=v.pr WHERE CASE WHEN s.pr IS NULL OR s.version<>v.version OR s.document_length<>length(v.document) THEN json_valid(v.document) ELSE 0 END`
+
+// backfill projects the stale rows. A read-only check comes first so a store
+// that is already current is not written and its writer lock not taken.
 func backfill(ctx context.Context, db *sql.DB) error {
-	_, err := db.ExecContext(ctx, summaryColumns+`SELECT v.repository,v.pr,v.version,length(v.document),`+extract("v.document")+` FROM versions v JOIN (SELECT repository,pr,MAX(version) latest FROM versions GROUP BY repository,pr) m ON v.repository=m.repository AND v.pr=m.pr AND v.version=m.latest LEFT JOIN summaries s ON s.repository=v.repository AND s.pr=v.pr WHERE (s.pr IS NULL OR s.version<>v.version OR s.document_length<>length(v.document)) AND json_valid(v.document)`)
+	var stale bool
+	if err := db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1`+staleLatest+`)`).Scan(&stale); err != nil || !stale {
+		return err
+	}
+	_, err := db.ExecContext(ctx, summaryColumns+`SELECT v.repository,v.pr,v.version,length(v.document),`+extract("v.document")+staleLatest)
 	return err
 }
 

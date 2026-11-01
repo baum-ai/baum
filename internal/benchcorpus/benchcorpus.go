@@ -53,13 +53,16 @@ func Root(b testing.TB) (root, label string) {
 
 // ProjectedRoot is Root with the summaries projection present. A real store is
 // copied into b.TempDir and write-opened there, which backfills the copy; the
-// original is never written. Synthetic stores are projected as they publish.
+// original is never written. Synthetic stores are projected by construction
+// (Put maintains the projection), so for them both benchmark variants measure
+// the projected path; the fallback is measured only on a real copy.
 func ProjectedRoot(b testing.TB) (root, label string) {
 	b.Helper()
 	src, label := Root(b)
 	if label == "synthetic" {
 		return src, label
 	}
+	// Stores do not use WAL, so versions.sqlite is the whole database.
 	raw, err := os.ReadFile(filepath.Join(src, "versions.sqlite"))
 	if err != nil {
 		b.Fatal(err)

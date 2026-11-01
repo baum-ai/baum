@@ -2424,17 +2424,23 @@ not move document bodies or maintain a second database. The document summaries
 (title, PR state, risk score, review minutes) are a projection of each pull
 request's latest document, kept in the `summaries` table of the same
 `versions.sqlite`, keyed by repository and PR with the version and byte length
-of the document it was computed from. `Put`, `RefreshCurrent` and
-`CompleteCurrent` upsert it in the transaction that writes the document, using
-the same SQL extraction as the fallback, so a failed or conflicting write
-leaves it unchanged. Opening a store for writes creates the table and projects
-every latest document that has no current row once, so existing stores are
-backfilled on their first write-open. `Snapshot` uses a row only while its
-version is the latest and its length equals `length(document)` (read from the
-record header, not the body); any other row, or a missing table (an old store,
-a read-only open before any write-open, a store written by an older binary),
-falls back per row to extracting from the document. A read-only open never
-writes. Without the fallback path a Snapshot parses no document body. CLI generation publishes
+of the document it was computed from. SQLite triggers on `versions` (insert,
+update of `document`, delete) upsert it from the same SQL extraction as the
+fallback, in the transaction of whichever writer changed the latest document:
+`Put`, `RefreshCurrent`, `CompleteCurrent` and an older baum binary alike. A
+failing or conflicting write rolls the projection back with the document. A
+document SQLite cannot parse (nested deeper than its limit) drops the row
+instead of failing the write, and `Snapshot` then extracts as it always did.
+Every write-open creates the table and triggers if missing and projects each
+latest document without a current row; the check is a read-only query that
+parses no document and writes only when something is stale, so existing stores
+are backfilled on their first write-open and later opens are cheap. `Snapshot`
+uses a row only while its version is the latest and its length equals
+`length(document)` (read from the record header, not the body). Any other row,
+or a missing table (an old store, or a read-only open before any write-open
+by this version), falls back per row to extracting from the document. A
+read-only open never writes. When every row is current, Snapshot parses no
+document body. CLI generation publishes
 lease-based run status independently of immutable successful version history;
 expired leases are read as interrupted without mutating stores during indexing.
 Once `Store.Put` commits a version, generation succeeds: failing to record the

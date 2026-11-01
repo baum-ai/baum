@@ -3,8 +3,8 @@
 // the previous version under the same write lock so concurrent generations
 // cannot fork history. A refresh replaces the latest document only while its
 // exact bytes are unchanged, so concurrent refreshes cannot lose each other.
-// Every write of a latest document also upserts its index projection in the
-// summaries table in the same transaction; see Snapshot.
+// Triggers keep the index projection of each latest document in the summaries
+// table current in the writer's own transaction; see Snapshot.
 package store
 
 import (
@@ -176,7 +176,7 @@ func openRoot(root string, write bool) (*Store, error) {
 		return nil, err
 	}
 	defer db.Close()
-	_, err = db.Exec(`CREATE TABLE IF NOT EXISTS versions (repository TEXT NOT NULL, pr INTEGER NOT NULL, version INTEGER NOT NULL, metadata BLOB NOT NULL, document BLOB NOT NULL, PRIMARY KEY(repository,pr,version)); CREATE TABLE IF NOT EXISTS runs (id INTEGER PRIMARY KEY AUTOINCREMENT, repository TEXT NOT NULL, pr INTEGER NOT NULL, state TEXT NOT NULL, reason TEXT NOT NULL, started INTEGER NOT NULL, expires INTEGER NOT NULL, finished INTEGER NOT NULL); CREATE INDEX IF NOT EXISTS runs_by_pr ON runs(repository,pr,id);` + summariesSchema)
+	_, err = db.Exec(`CREATE TABLE IF NOT EXISTS versions (repository TEXT NOT NULL, pr INTEGER NOT NULL, version INTEGER NOT NULL, metadata BLOB NOT NULL, document BLOB NOT NULL, PRIMARY KEY(repository,pr,version)); CREATE TABLE IF NOT EXISTS runs (id INTEGER PRIMARY KEY AUTOINCREMENT, repository TEXT NOT NULL, pr INTEGER NOT NULL, state TEXT NOT NULL, reason TEXT NOT NULL, started INTEGER NOT NULL, expires INTEGER NOT NULL, finished INTEGER NOT NULL); CREATE INDEX IF NOT EXISTS runs_by_pr ON runs(repository,pr,id);` + summariesSchema + `;` + summaryTriggers())
 	if err == nil {
 		err = backfill(context.Background(), db)
 	}
@@ -331,9 +331,6 @@ func (s *Store) Put(ctx context.Context, k Key, previous Version, v Version) err
 	if err := saveAttachments(ctx, tx, k, v); err != nil {
 		return err
 	}
-	if err := project(ctx, tx, k, v.Metadata.Version); err != nil {
-		return err
-	}
 	return tx.Commit()
 }
 
@@ -400,9 +397,6 @@ func (s *Store) replaceCurrent(ctx context.Context, k Key, previous Version, doc
 	}
 	if n != 1 {
 		return fmt.Errorf("%w; %s again using the latest document", ErrConflict, again)
-	}
-	if err := project(ctx, tx, k, previous.Metadata.Version); err != nil {
-		return err
 	}
 	return tx.Commit()
 }

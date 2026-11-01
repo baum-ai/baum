@@ -240,16 +240,21 @@ func TestFailedWritesLeaveProjectionUnchanged(t *testing.T) {
 	if got := summaryRows(t, s); !reflect.DeepEqual(got, before) {
 		t.Fatalf("projection changed: %v -> %v", before, got)
 	}
-	// A failure after the document write rolls the document back with the projection.
+	// A failing trigger rolls the document write back with the projection.
 	db, _ := s.database(true)
 	_, _ = db.Exec(`DROP TABLE summaries; CREATE TABLE summaries (x)`)
 	_ = db.Close()
 	if err := s.RefreshCurrent(ctx, k, v1, docFor(k, 1, `,"pr_state":"merged"`, `"title":"new"`)); err == nil {
 		t.Fatal("projection failure was ignored")
 	}
+	next := version(k, 2)
+	next.Document = docFor(k, 2, "", `"title":"two"`)
+	if err := s.Put(ctx, k, v1, next); err == nil {
+		t.Fatal("projection failure was ignored by put")
+	}
 	latest, err := s.Latest(ctx, k)
-	if err != nil || string(latest.Document) != string(v1.Document) {
-		t.Fatalf("document replaced although the projection failed: %s %v", latest.Document, err)
+	if err != nil || latest.Metadata.Version != 1 || string(latest.Document) != string(v1.Document) {
+		t.Fatalf("write persisted although the projection failed: %s %v", latest.Document, err)
 	}
 }
 
@@ -347,9 +352,13 @@ func TestStaleSummaryFallsBackToExtraction(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// An older binary appends a version to PR 1 and rewrites PR 2's document in
-	// place; neither touches summaries.
-	_, err = db.Exec(`INSERT INTO versions VALUES ('a/b',1,2,'{"version":2}',?)`, docFor(k1, 2, `,"pr_state":"merged"`, `"title":"newer","review_minutes":99`))
+	// Without triggers (a store no new binary has write-opened), an older binary
+	// appends a version to PR 1 and rewrites PR 2's document in place; neither
+	// touches summaries.
+	err = dropTriggers(db)
+	if err == nil {
+		_, err = db.Exec(`INSERT INTO versions VALUES ('a/b',1,2,'{"version":2}',?)`, docFor(k1, 2, `,"pr_state":"merged"`, `"title":"newer","review_minutes":99`))
+	}
 	if err == nil {
 		_, err = db.Exec(`UPDATE versions SET document=? WHERE repository='a/b' AND pr=2`, docFor(k2, 1, `,"pr_state":"closed"`, `"title":"rewritten, longer","review_minutes":77`))
 	}
