@@ -45,6 +45,10 @@ type Item struct {
 	// Only limits a fix to one of what it fixes: FixOnlyChecks fixes the
 	// failing checks and leaves conflicts and review comments alone.
 	Only string `json:"only,omitempty"`
+	// AwaitMembers, set by Generate on a group the person asked for, lets
+	// preparation accept members without a saved review: their reviews are
+	// queued ahead of the group's (Prepared.Awaiting).
+	AwaitMembers bool `json:"-"`
 }
 
 // KindFix is the Item.Kind of a fix: an agent with write access to a
@@ -167,6 +171,9 @@ type Prepared struct {
 	// confirmation covers like a pull request's head.
 	GroupName string `json:"group_name,omitempty"`
 	Members   string `json:"members,omitempty"`
+	// Awaiting are the members a group job found without a saved review
+	// (only with Item.AwaitMembers): their reviews were queued ahead of it.
+	Awaiting []int `json:"awaiting,omitempty"`
 	// RefuseDraft is set by the queue, never stored, on the inputs of an
 	// automatic job it executes: the executor refuses the run with
 	// NotAutomaticError{ReasonDraft} if GitHub now reports a draft.
@@ -580,7 +587,16 @@ var ErrIsolationRequired = errors.New("isolation confirmation required")
 // needs their confirmation (isolation) first. Nothing about the price stops a
 // run. A single item the daemon will not run is a BlockedError with its
 // reason.
+//
+// A group's review builds on each member's own: members without a saved
+// review have theirs queued ahead of the group's job. The queue starts jobs
+// in order and never runs two that share a pull request, so the group's job
+// starts after them, whatever the person does meanwhile.
 func (q *Queue) Generate(ctx context.Context, items []Item, mode string, isolation bool) ([]Job, error) {
+	if mode == "single" && len(items) == 1 && items[0].Group != "" && items[0].Kind == "" {
+		items = []Item{items[0]}
+		items[0].AwaitMembers = true
+	}
 	e, err := q.estimate(ctx, items, mode, isolation)
 	if err != nil {
 		return nil, err
@@ -595,7 +611,49 @@ func (q *Queue) Generate(ctx context.Context, items []Item, mode string, isolati
 		q.forget(e.ID)
 		return nil, &BlockedError{e.Items[0].BlockedReason}
 	}
+	if group := e.Items[0]; len(group.Awaiting) > 0 {
+		// The group's isolation covers its members: confirmed for it, it is
+		// confirmed for their reviews.
+		if err := q.reviewMembers(ctx, group, isolation); err != nil {
+			q.forget(e.ID)
+			return nil, err
+		}
+	}
 	return q.SubmitConfirmed(ctx, e.ID, Confirmation{Estimate: true, Isolation: isolation})
+}
+
+// reviewMembers queues the reviews a group job awaits, except those of
+// members already queued or running.
+func (q *Queue) reviewMembers(ctx context.Context, group Prepared, isolation bool) error {
+	q.mu.Lock()
+	items := []Item{}
+	for _, number := range group.Awaiting {
+		if !q.reviewPending(group.Clone, number) {
+			items = append(items, Item{Clone: group.Clone, PR: number})
+		}
+	}
+	q.mu.Unlock()
+	if len(items) == 0 {
+		return nil
+	}
+	e, err := q.estimate(ctx, items, "batch", isolation)
+	if err != nil {
+		return err
+	}
+	_, err = q.SubmitConfirmed(ctx, e.ID, Confirmation{Estimate: true, Isolation: isolation})
+	return err
+}
+
+// reviewPending reports whether a pull request's own review is queued or
+// running in a clone. Only one in the group's clone counts: each clone has
+// its own review store, which the group's review reads. mu is held.
+func (q *Queue) reviewPending(clone string, number int) bool {
+	for _, j := range q.jobs {
+		if j.Kind == "" && j.Group == "" && j.PR == number && j.Clone == clone && (j.State == "queued" || j.State == "running") {
+			return true
+		}
+	}
+	return false
 }
 
 // forget drops an estimate nothing will submit.
@@ -844,7 +902,14 @@ func (q *Queue) worker(chat bool) {
 			var refused *NotAutomaticError
 			var fixErr *fix.Error
 			var stopped *StoppedError
+			var members *MembersNeedReviewsError
 			switch {
+			case err != nil && errors.As(err, &members):
+				// A member's own review failed or was cancelled while the
+				// group waited for it.
+				current.State = "failed"
+				current.Reason = ReasonMembersNeedReviews
+				current.Detail = members.Error()
 			case err != nil && errors.As(err, &stopped):
 				current.State = "failed"
 				current.Reason = stopped.Reason

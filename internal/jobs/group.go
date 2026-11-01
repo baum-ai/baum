@@ -27,6 +27,11 @@ func (e *MembersNeedReviewsError) Error() string {
 	return "a group review needs a saved review of every member; generate one for " + strings.Join(numbers, ", ") + " first"
 }
 
+// ReasonMembersNeedReviews is a group job's failure when a member it waited
+// for still has no saved review: that member's own review failed or was
+// cancelled.
+const ReasonMembersNeedReviews = "members_need_reviews"
+
 // ErrGroupsUnavailable is a group job on a runner without a group store.
 var ErrGroupsUnavailable = errors.New("review groups are not available")
 
@@ -36,12 +41,15 @@ var ErrGroupsUnavailable = errors.New("review groups are not available")
 type groupInputs struct {
 	pull
 	name, members string
+	// awaiting are the members without a saved review, accepted with
+	// Item.AwaitMembers.
+	awaiting []int
 }
 
 // prepareGroup reads every member of the group from GitHub, as a pull
 // request job reads its pull request, and checks that each has a saved
-// review in the clone's store.
-func (l *Local) prepareGroup(ctx context.Context, c repos.Clone, reader *github.RESTReader, repository github.Repository, id string) (groupInputs, error) {
+// review in the clone's store, unless await accepts members without one.
+func (l *Local) prepareGroup(ctx context.Context, c repos.Clone, reader *github.RESTReader, repository github.Repository, id string, await bool) (groupInputs, error) {
 	if l.Groups == nil {
 		return groupInputs{}, ErrGroupsUnavailable
 	}
@@ -76,9 +84,10 @@ func (l *Local) prepareGroup(ctx context.Context, c repos.Clone, reader *github.
 			return groupInputs{}, err
 		}
 	}
-	if len(missing) > 0 {
+	if len(missing) > 0 && !await {
 		return groupInputs{}, &MembersNeedReviewsError{Numbers: missing}
 	}
+	out.awaiting = missing
 	out.members = strings.Join(parts, ",")
 	return out, nil
 }

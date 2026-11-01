@@ -112,7 +112,7 @@ func (l *Local) Prepare(ctx context.Context, item Item) (Prepared, string, error
 	if item.Group == "" {
 		pr, e = readPull(ctx, reader, repository, item.PR)
 	} else {
-		group, e = l.prepareGroup(ctx, c, reader, repository, item.Group)
+		group, e = l.prepareGroup(ctx, c, reader, repository, item.Group, item.AwaitMembers)
 		pr = group.pull
 	}
 	if e != nil {
@@ -144,7 +144,7 @@ func (l *Local) Prepare(ctx context.Context, item Item) (Prepared, string, error
 	}{cfg.Budgets, cfg.Caps, selected.Version, reader.CacheIdentity()})
 	digest := sha256.Sum256(fingerprint)
 	list := pricing.Active()
-	p := Prepared{MaxTokens: cfg.Budgets.MaxTokens, MaxCalls: cfg.Budgets.MaxCalls, ConfigDigest: hex.EncodeToString(digest[:]), PriceVersion: list.Version(), Item: item, Repository: c.Repository, HeadSHA: pr.Head, Backend: selected.Backend.Name(), Model: selected.Model, RequiresIsolationConfirmation: pr.Untrusted, Draft: pr.Draft, GroupName: group.name, Members: group.members}
+	p := Prepared{MaxTokens: cfg.Budgets.MaxTokens, MaxCalls: cfg.Budgets.MaxCalls, ConfigDigest: hex.EncodeToString(digest[:]), PriceVersion: list.Version(), Item: item, Repository: c.Repository, HeadSHA: pr.Head, Backend: selected.Backend.Name(), Model: selected.Model, RequiresIsolationConfirmation: pr.Untrusted, Draft: pr.Draft, GroupName: group.name, Members: group.members, Awaiting: group.awaiting}
 	return p, list.Version(), nil
 }
 
