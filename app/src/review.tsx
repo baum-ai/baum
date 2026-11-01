@@ -791,7 +791,7 @@ export function LocalReview({
                     canMerge(entry) ||
                     canRerunChecks(entry) ||
                     canUpdateBranch(entry) ? (
-                      <div className="flex flex-wrap items-center gap-2">
+                      <div data-tour="review-actions" className="flex flex-wrap items-center gap-2">
                         <span className="mr-2 empty:hidden">
                           <PullRequestState entry={entry} />
                         </span>

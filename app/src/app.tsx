@@ -50,6 +50,7 @@ import {
   useReadlineArrows,
 } from "./shortcuts";
 import { GoTo, type GoToItem } from "./go-to";
+import { Tour, TOUR_HREF, useTour } from "./tour";
 import { PAGES, type Page } from "./pages";
 import { LocalReview } from "./review";
 import { DecisionsRevision } from "./decisions";
@@ -247,6 +248,7 @@ function Workspace({ url }: { url: UrlState }) {
   );
   const [shortcuts, setShortcuts] = useState(false);
   const [goingTo, setGoingTo] = useState(false);
+  const tour = useTour(url.search.has("tour"));
   const [rates, setRates] = useState<
     {
       repository: string;
@@ -799,6 +801,7 @@ function Workspace({ url }: { url: UrlState }) {
         label: item.label,
         href: item.href(),
       })),
+      { id: "tour", kind: "Page" as const, label: "Take the tour", href: TOUR_HREF() },
       ...(inboxes.available
         ? [
             ...inboxes.inboxes.map((one) => ({
@@ -1502,6 +1505,7 @@ function Workspace({ url }: { url: UrlState }) {
           {goingTo ? (
             <GoTo items={goToItems()} go={navigate} close={() => setGoingTo(false)} />
           ) : null}
+          {tour.open ? <Tour close={tour.close} /> : null}
           {grouping ? (
             <NameDialog
               title="Review these pull requests together"

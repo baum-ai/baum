@@ -1,13 +1,15 @@
 # Durable desktop reading state
 
-`uistate` owns the Inbox's bookkeeping and review walkthrough drafts in the
-shared private application database (`internal/appdb`). It imports no legacy
+`uistate` owns the Inbox's bookkeeping, review walkthrough drafts and whether
+the first-run tour was seen in the shared private application database
+(`internal/appdb`). It imports no legacy
 browser storage. Original coding-session transcripts and submitted GitHub
 reviews are outside this store.
 
 | Document | Contents |
 | --- | --- |
 | `ui/inbox` | local day; per-PR seen/cleared records; time-based snoozes; head-based snoozes |
+| `ui/tour` | whether this computer has finished or skipped the app's first-run tour (`{seen}`) |
 | `ui/walkthrough` | per repository/PR/review-version seen stops, draft comments per stop, and overall comment |
 
 A walkthrough key is `owner/repository#number@vversion` (optionally prefixed
@@ -24,6 +26,8 @@ JSON-content checks. These routes grant no filesystem access.
 
 - `GET /api/ui-state/inbox`
 - `PUT /api/ui-state/inbox`
+- `GET /api/ui-state/tour`
+- `PUT /api/ui-state/tour`
 - `GET /api/ui-state/walkthrough?key=<URL-encoded review key>`
 - `PUT /api/ui-state/walkthrough?key=<URL-encoded review key>`
 
