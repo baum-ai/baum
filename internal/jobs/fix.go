@@ -215,6 +215,7 @@ func (l *Local) executeFix(ctx context.Context, p Prepared, progress func(Progre
 	if !ok || !fix.Supported(selected.Backend.Name()) {
 		return nil, &fix.Error{Reason: fix.ReasonUnsupportedBackend, Err: errors.New(selected.Backend.Name() + " cannot fix pull requests; choose Claude Code or Codex as the agent for fixes in Settings")}
 	}
+	progress(Progress{Phase: "preparing", Backend: selected.Backend.Name(), Model: selected.Model})
 	reader, e := l.Client.REST(ctx, repository)
 	if e != nil {
 		return nil, e

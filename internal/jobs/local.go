@@ -333,7 +333,7 @@ func (l *Local) Execute(ctx context.Context, p Prepared, progress func(Progress)
 		published = identityVersions{reviewgroups.Publisher{Store: l.Groups, Group: p.Group}, manager}
 		key.Number = group.Members[0].Number
 	}
-	progress(Progress{Phase: "assembling"})
+	progress(Progress{Phase: "assembling", Backend: selected.Backend.Name(), Model: selected.Model})
 	result, e := l.publish(ctx, published, versions, key, selected.Backend.Name(), generate.Options{Group: group, PriceList: list, Assembler: guarded, Request: assemble.Request{Repository: repository, Number: key.Number, Limits: assemble.LimitsFrom(caps)}, Backend: backend, BackendVersion: selected.Version, Model: selected.Model, Budgets: agent.Budgets{WallClock: time.Duration(cfg.Budgets.ReviewTimeout), MaxCalls: cfg.Budgets.MaxCalls, MaxTokens: cfg.Budgets.MaxTokens, MaxProviderAttempts: 3, MaxRepairAttempts: 2}, OnValidation: func(pass int, valid bool) {
 		backend.repairs = pass - 1
 		if !valid {

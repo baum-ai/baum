@@ -265,6 +265,9 @@ type Progress struct {
 	Threads                    []fix.ThreadOutcome
 	// HasTranscript is set once a fix's transcript file exists.
 	HasTranscript bool
+	// Backend and Model, when Backend is set, are the agent the run selected
+	// with the current settings, which replace the job's prepared ones.
+	Backend, Model string
 }
 type Executor interface {
 	Prepare(context.Context, Item) (Prepared, string, error)
@@ -1012,6 +1015,9 @@ func (q *Queue) worker(chat bool) {
 				}
 				if p.HasTranscript {
 					q.jobs[i].HasTranscript = true
+				}
+				if p.Backend != "" {
+					q.jobs[i].Backend, q.jobs[i].Model = p.Backend, p.Model
 				}
 				q.jobs[i].UpdatedAt = time.Now().UTC()
 				// Save every reported usage update before publishing it. A crash
