@@ -14,6 +14,7 @@ import (
 	"github.com/baum-ai/baum/internal/appdb/appdbtest"
 	"github.com/baum-ai/baum/internal/assemble"
 	"github.com/baum-ai/baum/internal/assemble/assembletest"
+	"github.com/baum-ai/baum/internal/discovery"
 	"github.com/baum-ai/baum/internal/generate"
 	"github.com/baum-ai/baum/internal/generate/generatetest"
 	"github.com/baum-ai/baum/internal/github"
@@ -166,7 +167,7 @@ func TestGroupRunReviewsEveryMemberAsOneDocument(t *testing.T) {
 	if err := json.Unmarshal(result.Document, &doc); err != nil {
 		t.Fatal(err)
 	}
-	if doc.Review.PullRequest != 7 || doc.Review.Head != f.repo.Head || doc.Review.Generator.PromptVersion != "group-review-public-v3" {
+	if doc.Review.PullRequest != 7 || doc.Review.Head != f.repo.Head || doc.Review.Generator.PromptVersion != "group-review-public-v4" {
 		t.Errorf("review block %+v", doc.Review)
 	}
 	want := []reviewgroups.ReviewedMember{{Number: 7, HeadSHA: f.repo.Head, ReviewVersion: 3}, {Number: 8, HeadSHA: f.repo.ShiftHead, ReviewVersion: 1}}
@@ -237,6 +238,95 @@ func TestGroupRunStopsWhenAMemberHeadMoved(t *testing.T) {
 	}
 	if _, err := generate.Run(context.Background(), f.groupOptions(t, generate.GroupMember{Number: 7, ReviewVersion: 0})); generate.CategoryOf(err) != generate.CategoryInput {
 		t.Fatalf("a member without a saved review: %v", err)
+	}
+	f.requireClean(t)
+}
+
+// A stack group's name is baum's: the review names it. The model is asked
+// for the stack's title alone, and the stored version renames the group.
+func TestGroupRunNamesAStackGroup(t *testing.T) {
+	f := newFixture(t)
+	f.backend.RunFunc = func(_ context.Context, request agent.Request, _ int) (agent.Result, error) {
+		var schema struct {
+			Required   []string `json:"required"`
+			Properties struct {
+				Stack struct {
+					Type     any      `json:"type"`
+					Required []string `json:"required"`
+				} `json:"stack"`
+			} `json:"properties"`
+		}
+		if err := json.Unmarshal(request.Schema, &schema); err != nil {
+			return agent.Result{}, err
+		}
+		if !slices.Contains(schema.Required, "stack") || schema.Properties.Stack.Type != "object" || !slices.Equal(schema.Properties.Stack.Required, []string{"title"}) {
+			t.Errorf("the model schema does not ask for the stack title alone: %+v", schema)
+		}
+		if !strings.Contains(request.Prompt, "`stack.title`: a name for the group") {
+			t.Error("the prompt does not ask for the group's name")
+		}
+		document, err := generatetest.Document(request.Directory, func(d map[string]any) {
+			d["stack"] = map[string]any{"title": "  Raise the limit\n\tand keep notes  "}
+		})
+		return agent.Result{Document: document, Model: "stub-model", Calls: 1, Tokens: 100}, err
+	}
+	groups, err := reviewgroups.Open(filepath.Join(appdbtest.TempDir(t), "groups.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = groups.Close() }()
+	ctx := context.Background()
+	if _, err := groups.SyncStacks(ctx, "acme/demo", []discovery.PullRequest{
+		{Number: 7, HeadRef: "feature", BaseRef: "main", Title: "Keep notes", Author: "dev"},
+		{Number: 8, HeadRef: "shift-feature", BaseRef: "feature", Title: "Raise the limit", Author: "dev"},
+	}, nil); err != nil {
+		t.Fatal(err)
+	}
+	list, err := groups.List(ctx)
+	if err != nil || len(list) != 1 || !list[0].Stack || list[0].Name != "Keep notes" {
+		t.Fatalf("stack groups %+v %v", list, err)
+	}
+	o := f.groupOptions(t)
+	o.Group.Name, o.Group.GeneratedName = list[0].Name, true
+	result, err := generate.Publish(ctx, reviewgroups.Publisher{Store: groups, Group: list[0].ID}, store.Key{Repository: "acme/demo", Number: 7}, o, nil)
+	if err != nil {
+		t.Fatalf("run: %v\n%s", err, f.progress.String())
+	}
+	var doc groupDocument
+	if err := json.Unmarshal(result.Document, &doc); err != nil {
+		t.Fatal(err)
+	}
+	const want = "Raise the limit and keep notes"
+	if doc.Stack.Title != want || len(doc.Stack.Members) != 2 {
+		t.Errorf("stack %+v", doc.Stack)
+	}
+	if g, err := groups.Get(ctx, list[0].ID); err != nil || g.Name != want || !g.Stack {
+		t.Fatalf("group %+v %v", g, err)
+	}
+	f.requireClean(t)
+}
+
+// A model that writes no usable name leaves the stack group's name.
+func TestGroupRunKeepsTheNameWhenTheModelWritesNone(t *testing.T) {
+	f := newFixture(t)
+	f.backend.RunFunc = func(_ context.Context, request agent.Request, _ int) (agent.Result, error) {
+		document, err := generatetest.Document(request.Directory, func(d map[string]any) {
+			d["stack"] = map[string]any{"title": " \n "}
+		})
+		return agent.Result{Document: document, Model: "stub-model", Calls: 1, Tokens: 100}, err
+	}
+	o := f.groupOptions(t)
+	o.Group.GeneratedName = true
+	result, err := generate.Run(context.Background(), o)
+	if err != nil {
+		t.Fatalf("run: %v\n%s", err, f.progress.String())
+	}
+	var doc groupDocument
+	if err := json.Unmarshal(result.Document, &doc); err != nil {
+		t.Fatal(err)
+	}
+	if doc.Stack.Title != "Release train" {
+		t.Errorf("stack title %q", doc.Stack.Title)
 	}
 	f.requireClean(t)
 }

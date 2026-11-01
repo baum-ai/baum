@@ -11,7 +11,6 @@ import (
 	"testing"
 
 	"github.com/baum-ai/baum/internal/locallink/linktest"
-	"github.com/baum-ai/baum/linkage"
 	"github.com/baum-ai/baum/sessions/vendors"
 )
 
@@ -27,119 +26,85 @@ func linkedTo(c Commit) map[string][]string {
 	return out
 }
 
-// A commit whose trailer names a checkpoint on the clone's branch links to the
-// sessions the checkpoint records. When they edited every file the commit
-// changed, it links only to them, although the session that ran git commit
-// would match it by commit_ref.
-func TestResolveLinksACommitToItsCheckpointSessions(t *testing.T) {
-	for _, tc := range []struct {
-		name    string
-		sources []vendors.Slug
-	}{
-		// Load reads the checkpoint branch and returns the sessions itself.
-		{"loaded", nil},
-		// Load reads no Entire session; the checkpoint is mapped for the link.
-		{"mapped for the link", []vendors.Slug{vendors.ClaudeCode}},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			f := linktest.NewWithTrailer(t, linktest.CheckpointTrailer)
-			f.AddCheckpointEditing(t, "b.txt")
-			req := request(f)
-			req.Sessions.Sources = tc.sources
-			result := resolve(t, req)
-			if !result.Available {
-				t.Fatalf("unavailable: %s: %s", result.Code, result.Reason)
+// Concurrent sessions in a checkpoint are candidates, not automatic links.
+func TestResolveCheckpointMembershipNeedsIndependentEvidence(t *testing.T) {
+	for _, sources := range [][]vendors.Slug{nil, {vendors.ClaudeCode}} {
+		f := linktest.NewWithTrailer(t, linktest.CheckpointTrailer)
+		f.AddCheckpointEditing(t, "b.txt")
+		req := request(f)
+		req.Sessions.Sources = sources
+		result := resolve(t, req)
+		first := result.Commits[0]
+		if !slices.Equal(first.CheckpointSessions, linktest.CheckpointSessions) {
+			t.Fatalf("checkpoint candidates = %v", first.CheckpointSessions)
+		}
+		got := linkedTo(first)
+		if len(got) != 2 || !slices.Equal(got["commit_ref"], []string{linktest.SessionID}) ||
+			!slices.Equal(got["files_overlap"], linktest.CheckpointSessions[:1]) {
+			t.Fatalf("links = %+v; want independent creator and checkpoint editor only", first.Links)
+		}
+		for _, link := range first.Links {
+			if link.Method == "entire_checkpoint" || link.Confidence == 1 {
+				t.Fatalf("checkpoint membership became proof: %+v", link)
 			}
-			first := result.Commits[0]
-			want := map[string][]string{"entire_checkpoint": linktest.CheckpointSessions}
-			if got := linkedTo(first); len(got) != 1 || !slices.Equal(got["entire_checkpoint"], want["entire_checkpoint"]) {
-				t.Fatalf("first commit links = %+v, want only the checkpoint's sessions", first.Links)
+		}
+		for _, session := range result.Sessions {
+			if session.ID == linktest.CheckpointSessions[1] {
+				t.Fatal("unrelated checkpoint session was listed as linked")
 			}
-			for _, link := range first.Links {
-				if link.Confidence != 1 {
-					t.Errorf("checkpoint link confidence = %v", link.Confidence)
-				}
-			}
-			listed := map[string]Session{}
-			for _, s := range result.Sessions {
-				listed[s.ID] = s
-			}
-			for _, id := range linktest.CheckpointSessions {
-				s, ok := listed[id]
-				if !ok {
-					t.Errorf("linked session %s is not listed: %+v", id, result.Sessions)
-					continue
-				}
-				if s.Source != "entire" || s.Vendor != "claude_code" {
-					t.Errorf("session %s = %+v", id, s)
-				}
-			}
-			if _, ok := listed[linktest.SessionID]; ok {
-				t.Errorf("the heuristic match was listed beside the checkpoint's: %+v", result.Sessions)
-			}
-		})
+		}
+		if _, ok := result.Graphs[linktest.CheckpointSessions[1]]; ok {
+			t.Fatal("unrelated checkpoint session transcript was exposed as linked")
+		}
 	}
 }
 
-// When the checkpoint's sessions did not edit all of the commit's files, the
-// heuristic steps go on over the other sessions until the files are covered,
-// as in the hosted resolver. The checkpoint's sessions edited a.txt and the
-// commit also changed b.txt: the session that ran git commit (which edited
-// nothing) and a session that edited b.txt are linked beside them.
-func TestResolveAddsMatchesBesideAnIncompleteCheckpoint(t *testing.T) {
+func TestResolveReadOnlyCheckpointDoesNotSuppressOutsideEditor(t *testing.T) {
 	const editor = "bbbbbbbb-0000-4000-8000-00000000000b"
-	f := linktest.NewWithTrailer(t, linktest.CheckpointTrailer)
-	f.AddCheckpointEditing(t, "a.txt")
+	f := linktest.NewWithTrailer(t, linktest.CheckpointTrailer).NoSession(t)
+	f.AddCheckpoint(t)
 	f.AddEditor(t, editor, "10", "b.txt")
 	result := resolve(t, request(f))
 	got := linkedTo(result.Commits[0])
-	if len(got) != 3 || !slices.Equal(got["entire_checkpoint"], linktest.CheckpointSessions) ||
-		!slices.Equal(got["commit_ref"], []string{linktest.SessionID}) || !slices.Equal(got["files_overlap"], []string{editor}) {
-		t.Fatalf("first commit links = %+v, want the checkpoint's sessions, the commit_ref and the editor", result.Commits[0].Links)
-	}
-	listed := 0
-	for _, s := range result.Sessions {
-		if s.ID == editor || s.ID == linktest.SessionID {
-			listed++
-		}
-	}
-	if listed != 2 {
-		t.Errorf("sessions = %+v, want the heuristic matches listed", result.Sessions)
+	if len(got) != 1 || !slices.Equal(got["files_overlap"], []string{editor}) {
+		t.Fatalf("links = %+v; want the outside editor", result.Commits[0].Links)
 	}
 }
 
-// A heuristic match below the review confidence is dropped once the commit
-// has a confident link, which a checkpoint's always are.
-func TestResolveDropsWeakMatchesBesideACheckpoint(t *testing.T) {
-	const weak = "cccccccc-0000-4000-8000-00000000000c"
-	// On its own, a session that edited b.txt but finished ten hours before
-	// the first commit matches it weakly.
-	plain := linktest.New(t).NoSession(t)
-	plain.AddEditor(t, weak, "00", "b.txt")
-	var confidence float64
-	for _, link := range resolve(t, request(plain)).Commits[0].Links {
-		if link.Session == weak {
-			confidence = link.Confidence
-		}
-	}
-	if confidence == 0 || confidence >= linkage.ReviewConfidence {
-		t.Fatalf("the editor matches with confidence %v on its own; the test needs a weak match", confidence)
-	}
-
-	f := linktest.NewWithTrailer(t, linktest.CheckpointTrailer)
+func TestResolveCheckpointAssociationAloneLeavesLinksEmpty(t *testing.T) {
+	f := linktest.NewWithTrailer(t, linktest.CheckpointTrailer).NoSession(t)
 	f.AddCheckpoint(t)
-	f.AddEditor(t, weak, "00", "b.txt")
 	result := resolve(t, request(f))
-	for _, link := range result.Commits[0].Links {
-		if link.Session == weak {
-			t.Errorf("the weak match was kept beside the checkpoint: %+v", result.Commits[0].Links)
-		}
+	if len(result.Commits[0].Links) != 0 || len(result.Sessions) != 0 || len(result.Graphs) != 0 {
+		t.Fatalf("membership alone added attribution: %+v", result)
 	}
-	for _, s := range result.Sessions {
-		if s.ID == weak {
-			t.Errorf("the weak match was listed: %+v", result.Sessions)
-		}
+	if !slices.Equal(result.Commits[0].CheckpointSessions, linktest.CheckpointSessions) {
+		t.Fatal("checkpoint association was lost")
 	}
+}
+
+func TestCheckpointDoesNotBreakATieWithAnOutsideEditor(t *testing.T) {
+	f := linktest.NewWithTrailer(t, linktest.CheckpointTrailer).NoSession(t)
+	f.AddCheckpointEditing(t, "b.txt")
+	f.AddEditor(t, "bbbbbbbb-0000-4000-8000-00000000000b", "10", "b.txt")
+	result := resolve(t, request(f))
+	if len(result.Commits[0].Links) != 0 {
+		t.Fatalf("checkpoint membership broke an edit tie: %+v", result.Commits[0].Links)
+	}
+	if !slices.Equal(result.Commits[0].CheckpointSessions, linktest.CheckpointSessions) {
+		t.Fatal("unresolved checkpoint candidates were lost")
+	}
+}
+
+// checkpointCandidates lets discovery tests check membership independently of
+// the matcher. Unrelated checkpoint sessions must never appear in Links.
+func checkpointCandidates(c Commit) map[string][]string {
+	if len(c.CheckpointSessions) == 0 {
+		return map[string][]string{}
+	}
+	ids := slices.Clone(c.CheckpointSessions)
+	slices.Sort(ids)
+	return map[string][]string{"entire_checkpoint": ids}
 }
 
 // A trailer with no valid checkpoint id, or one naming a checkpoint the clone
@@ -170,7 +135,7 @@ func TestResolveFallsBackFromAnUnusableTrailer(t *testing.T) {
 }
 
 // A commit naming several checkpoints links to the union of the sessions they
-// record, as the hosted resolver does. Repeats collapse, a checkpoint the
+// record. Repeats collapse, a checkpoint the
 // clone does not hold adds nothing, and the id is matched in any case.
 func TestResolveLinksTheUnionOfSeveralCheckpoints(t *testing.T) {
 	const second = "0004a7a444a1"
@@ -189,7 +154,7 @@ func TestResolveLinksTheUnionOfSeveralCheckpoints(t *testing.T) {
 	}
 	want := append(slices.Clone(linktest.CheckpointSessions), others[:]...)
 	slices.Sort(want)
-	got := linkedTo(result.Commits[0])
+	got := checkpointCandidates(result.Commits[0])
 	if len(got) != 1 || !slices.Equal(got["entire_checkpoint"], want) {
 		t.Fatalf("first commit links = %+v, want both checkpoints' sessions", result.Commits[0].Links)
 	}
@@ -204,7 +169,7 @@ func TestResolveSkipsAMalformedValueBesideAValidOne(t *testing.T) {
 	req := request(f)
 	req.Warn = &warnings
 	result := resolve(t, req)
-	got := linkedTo(result.Commits[0])
+	got := checkpointCandidates(result.Commits[0])
 	if len(got) != 1 || !slices.Equal(got["entire_checkpoint"], linktest.CheckpointSessions) {
 		t.Fatalf("first commit links = %+v, want the valid checkpoint's sessions", result.Commits[0].Links)
 	}
@@ -250,7 +215,7 @@ func TestResolveLinksTheCheckpointsOfASquashMergeBody(t *testing.T) {
 	}
 	want := append(append(slices.Clone(linktest.CheckpointSessions), secondSessions[:]...), thirdSessions[:]...)
 	slices.Sort(want)
-	got := linkedTo(result.Commits[0])
+	got := checkpointCandidates(result.Commits[0])
 	if len(got) != 1 || !slices.Equal(got["entire_checkpoint"], want) {
 		t.Fatalf("first commit links = %+v, want all three checkpoints' sessions", result.Commits[0].Links)
 	}
@@ -260,12 +225,12 @@ func TestResolveLinksTheCheckpointsOfASquashMergeBody(t *testing.T) {
 }
 
 // Entire's pattern is not anchored to a line, so a checkpoint id after the key
-// in the middle of a line links as Entire links it.
+// in the middle of a line contributes candidate membership.
 func TestResolveLinksACheckpointNamedMidLine(t *testing.T) {
 	f := linktest.NewWithTrailer(t, "Carries over "+linktest.CheckpointTrailer+" from the first attempt.")
 	f.AddCheckpointEditing(t, "b.txt")
 	result := resolve(t, request(f))
-	got := linkedTo(result.Commits[0])
+	got := checkpointCandidates(result.Commits[0])
 	if len(got) != 1 || !slices.Equal(got["entire_checkpoint"], linktest.CheckpointSessions) {
 		t.Fatalf("first commit links = %+v, want the checkpoint's sessions", result.Commits[0].Links)
 	}
@@ -339,7 +304,7 @@ func TestResolveLinksACheckpointInTheGitRefsStore(t *testing.T) {
 			if !result.Available {
 				t.Fatalf("unavailable: %s: %s", result.Code, result.Reason)
 			}
-			got := linkedTo(result.Commits[0])
+			got := checkpointCandidates(result.Commits[0])
 			if !slices.Equal(got["entire_checkpoint"], refSessions[:]) {
 				t.Fatalf("first commit links = %+v, want the ref checkpoint's sessions", result.Commits[0].Links)
 			}
@@ -351,8 +316,8 @@ func TestResolveLinksACheckpointInTheGitRefsStore(t *testing.T) {
 				listed[s.ID] = true
 			}
 			for _, id := range refSessions {
-				if !listed[id] {
-					t.Errorf("linked session %s is not listed: %+v", id, result.Sessions)
+				if listed[id] {
+					t.Errorf("unverified checkpoint session %s was listed: %+v", id, result.Sessions)
 				}
 			}
 		})
@@ -377,7 +342,7 @@ func TestResolveLinksAMigratedCloneFromTheRef(t *testing.T) {
 	result := resolve(t, request(f))
 	want := append(append(slices.Clone(refSessions[:]), branchOnlySessions[:]...), otherULID[:]...)
 	slices.Sort(want)
-	if got := linkedTo(result.Commits[0]); !slices.Equal(got["entire_checkpoint"], want) {
+	if got := checkpointCandidates(result.Commits[0]); !slices.Equal(got["entire_checkpoint"], want) {
 		t.Fatalf("first commit links = %+v, want %v: the ref's sessions for the migrated id, not the branch copy's %v",
 			result.Commits[0].Links, want, linktest.CheckpointSessions)
 	}

@@ -1,4 +1,5 @@
 import { usePreferences } from "./preferences";
+import { useModal } from "./modal";
 import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
 import { Button } from "@baum/viewer/components/ui";
 import { PAGES, type Page } from "./pages";
@@ -634,10 +635,9 @@ export function ShortcutsSheet({
   /** Where it was opened, listed first. */
   current?: ShortcutsPlace;
 }) {
-  const dialog = useRef<HTMLDialogElement>(null);
+  const dialog = useModal();
   const title = useRef<HTMLHeadingElement>(null);
   useEffect(() => {
-    dialog.current?.showModal();
     // The list scrolls; it opens at its top, on the current page's keys,
     // rather than on Close at its foot.
     title.current?.focus({ preventScroll: true });

@@ -257,7 +257,7 @@ func TestCaptureSkips(t *testing.T) {
 		edit func(*testing.T, *fixture)
 		want string
 	}{
-		"cursor-agent": {func(_ *testing.T, f *fixture) { f.registry.prefs.Backend = &cursor }, ReasonUnsupported},
+		"cursor-agent is not offered": {func(_ *testing.T, f *fixture) { f.registry.prefs.Backend = &cursor }, ReasonUnsupported},
 		"generation run": {func(t *testing.T, f *fixture) {
 			write(t, f.path, claudeTurn("s1", 1, sessions.GenerationRunMarker+"\nReview the pull request.", "Done."))
 		}, ReasonGenerationRun},
@@ -721,8 +721,8 @@ func TestEffectiveModelResolvesAsCaptureDoes(t *testing.T) {
 			Effective{Backend: agent.BackendCodex, Model: "gpt-6-luna", Ignored: true}},
 		"an unknown family is kept": {repos.Preferences{Backend: &auto, Decisions: repos.DecisionPreferences{Model: &house}},
 			Effective{Backend: agent.BackendCodex, Model: house}},
-		"cursor-agent captures nothing": {repos.Preferences{Backend: &cursor, Decisions: repos.DecisionPreferences{Model: &sonnet}},
-			Effective{Backend: agent.BackendCursorAgent}},
+		"cursor-agent is not offered": {repos.Preferences{Backend: &cursor, Decisions: repos.DecisionPreferences{Model: &sonnet}},
+			Effective{}},
 		"its own backend over the reviews'": {repos.Preferences{Backend: &cursor, Decisions: repos.DecisionPreferences{Backend: &codex}},
 			Effective{Backend: agent.BackendCodex, Model: "gpt-6-luna"}},
 		"its own backend with its model": {repos.Preferences{Backend: &auto, Decisions: repos.DecisionPreferences{Backend: &claude, Model: &sonnet}},

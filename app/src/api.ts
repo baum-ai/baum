@@ -432,8 +432,19 @@ export type LiveSession = {
   messageable?: boolean;
   repository: string;
   branch?: string;
-  /** Absent while the branch has no pull request. */
+  /** Absent while the branch has no unique matching pull request. */
   pr?: number;
+  link_status?:
+    | "resolved"
+    | "unmatched"
+    | "ambiguous"
+    | "stale"
+    | "unavailable"
+    | "unknown_history";
+  link_method?: "branch" | "upstream" | "head";
+  head_sha?: string;
+  upstream?: string;
+  observed_at?: string;
   /** The session's name as its agent shows it (Claude Code's title, Codex's
    *  thread name, Cursor's conversation name), else its first prompt; one
    *  line, masked by the daemon. Absent when the agent's files cannot be
@@ -704,7 +715,7 @@ const skipReasons: Record<string, string> = {
   over_token_cap: "The session is too long for one capture.",
   extraction_failed: "Capture failed three times; it tries again when the session changes.",
   backend_unsupported:
-    "Cursor Agent can't capture decisions. Choose Claude Code, Codex or the Anthropic API for reviews to capture them.",
+    "Decisions are captured with Claude Code or Codex only. Choose one of them for reviews or data extraction.",
   backend_unavailable: "No harness that can capture decisions is available on this computer.",
 };
 /** Why a session's decisions were not captured, in words. */

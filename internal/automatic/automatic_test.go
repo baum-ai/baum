@@ -630,19 +630,20 @@ func TestHandlerUpdatesPreferences(t *testing.T) {
 }
 
 // The settings page chooses the backend, model and pull requests; a bad
-// value changes nothing, and cursor-agent is chosen like any other harness.
+// value changes nothing, and so does cursor-agent or anthropic: the desktop
+// app offers Claude Code and Codex only.
 func TestHandlerSavesReviewChoices(t *testing.T) {
 	h := newHarness(t)
-	for _, body := range []string{`{"backend":"nope"}`, `{"pull_requests":"everyone"}`} {
+	for _, body := range []string{`{"backend":"nope"}`, `{"backend":"cursor-agent"}`, `{"backend":"anthropic"}`, `{"pull_requests":"everyone"}`} {
 		if code := put(h.scheduler, body); code != 400 {
 			t.Fatalf("%s: %d", body, code)
 		}
 	}
-	if code := put(h.scheduler, `{"backend":"cursor-agent","model":"composer-2.5","pull_requests":"requested"}`); code != 200 {
+	if code := put(h.scheduler, `{"backend":"codex","model":"gpt-6-luna","pull_requests":"requested"}`); code != 200 {
 		t.Fatal(code)
 	}
 	prefs, _ := h.registry.Preferences(context.Background())
-	if prefs.Backend == nil || *prefs.Backend != "cursor-agent" || prefs.Model == nil || *prefs.Model != "composer-2.5" || prefs.PullRequests != repos.PullRequestsRequested {
+	if prefs.Backend == nil || *prefs.Backend != "codex" || prefs.Model == nil || *prefs.Model != "gpt-6-luna" || prefs.PullRequests != repos.PullRequestsRequested {
 		t.Fatalf("%+v", prefs)
 	}
 	if code := put(h.scheduler, `{"pull_requests":"all"}`); code != 200 {
@@ -1146,5 +1147,31 @@ func TestPutSetsAndClearsTheFixAgent(t *testing.T) {
 	}
 	if p, _ = h.registry.Preferences(context.Background()); p.FixBackend != nil || p.FixModel != nil {
 		t.Fatalf("cleared: %+v", p)
+	}
+}
+
+// The notice of the cursor-agent acknowledgement, which an older baum saved
+// and nothing produces now, is dropped on load.
+func TestAnOldCursorAgentNoticeIsDropped(t *testing.T) {
+	h := newHarness(t)
+	h.observe(pr{number: 1, head: "a1", authored: true})
+	raw, err := appdb.Read(h.scheduler.Path, "state", "automatic")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var state map[string]map[string]map[string]any
+	if err = json.Unmarshal(raw, &state); err != nil {
+		t.Fatal(err)
+	}
+	state["repositories"]["org/repo"]["notice"] = "cursor_agent_acknowledgement_required"
+	if raw, err = json.Marshal(state); err != nil {
+		t.Fatal(err)
+	}
+	if err = appdb.Write(h.scheduler.Path, "state", "automatic", raw); err != nil {
+		t.Fatal(err)
+	}
+	h.restart()
+	if o, err := h.scheduler.Overview(context.Background()); err != nil || len(o.Repositories) != 1 || o.Repositories[0].Notice != "" {
+		t.Fatalf("overview %+v %v", o, err)
 	}
 }

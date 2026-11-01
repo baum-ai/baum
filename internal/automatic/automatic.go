@@ -34,8 +34,12 @@ import (
 const NoticeUnavailable = "unavailable"
 
 // legacyNoticeDailyCap is the notice of the daily spending cap baum no longer
-// has.
-const legacyNoticeDailyCap = "daily_cap"
+// has; legacyNoticeCursorAgent is the one of the cursor-agent acknowledgement,
+// which the desktop app no longer asks for. Both are dropped on load.
+const (
+	legacyNoticeDailyCap    = "daily_cap"
+	legacyNoticeCursorAgent = "cursor_agent_acknowledgement_required"
+)
 
 // maxAttempts bounds retries of a head whose job could not be prepared
 // (GitHub or the clone unavailable); the next head triggers again.
@@ -335,7 +339,7 @@ func (s *Scheduler) load() *fileState {
 		if r.Groups == nil {
 			r.Groups = map[string]*groupState{}
 		}
-		if r.Notice == legacyNoticeDailyCap {
+		if r.Notice == legacyNoticeDailyCap || r.Notice == legacyNoticeCursorAgent {
 			r.Notice = ""
 		}
 	}

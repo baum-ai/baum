@@ -132,24 +132,31 @@ func (r *Resolver) link(ctx context.Context, cwd string) (Link, bool) {
 	}
 	link := Link{Repository: strings.ToLower(clone.Repository)}
 	work := prlink.Local(ctx, repo, link.Repository)
-	link.Branch = work.Branch
-	link.PR = r.pullRequest(ctx, link.Repository, work)
-	return link, true
+	return r.resolve(ctx, link.Repository, work)
 }
 
-// pullRequest is the open pull request of repository holding the session's
-// work (prlink.Find), 0 when the discovery cache has none.
-func (r *Resolver) pullRequest(ctx context.Context, repository string, work prlink.Work) int {
+// Relink uses recorded branch, upstream and HEAD evidence, never the checkout.
+func (r *Resolver) Relink(ctx context.Context, s Session) (Link, bool) {
+	if s.LinkStatus == "unknown_history" {
+		return Link{Repository: s.Repository, Status: "unknown_history"}, true
+	}
+	return r.resolve(ctx, s.Repository, prlink.Work{Branch: s.Branch, Upstream: s.Upstream, Head: s.HeadSHA})
+}
+
+func (r *Resolver) resolve(ctx context.Context, repository string, work prlink.Work) (Link, bool) {
+	link := Link{Repository: repository, Branch: work.Branch, HeadSHA: work.Head, Upstream: work.Upstream, Status: "unavailable"}
 	if r.Discovery == nil {
-		return 0
+		return link, true
 	}
 	parsed, err := github.ParseRepository(repository)
 	if err != nil {
-		return 0
+		return Link{}, false
 	}
 	snapshot, err := r.Discovery.Cached(ctx, parsed)
 	if err != nil {
-		return 0
+		return link, true
 	}
-	return prlink.Find(snapshot, work)
+	selection := prlink.Resolve(snapshot, work)
+	link.PR, link.Method, link.Status = selection.PR, selection.Method, selection.Status
+	return link, true
 }
