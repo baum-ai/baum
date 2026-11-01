@@ -12,7 +12,7 @@
 .repository-clone,
 .repository-description {
   color: var(--text-secondary);
-  font-size: var(--text-xs, 0.875rem);
+  font-size: var(--text-xs);
   overflow-wrap: anywhere;
 }
 .repository-picker label,
@@ -27,7 +27,7 @@
   box-sizing: border-box;
   padding: 0.65rem 0.8rem;
   border: 1px solid var(--border-subtle);
-  border-radius: 0.4rem;
+  border-radius: var(--radius-md);
   background: var(--surface-card);
   color: inherit;
   font: inherit;
@@ -40,7 +40,7 @@
   overflow-y: auto;
   overscroll-behavior: contain;
   border: 1px solid var(--border-subtle);
-  border-radius: 0.6rem;
+  border-radius: var(--radius-lg);
 }
 .repository-results .loading-status,
 .repository-empty {
@@ -103,7 +103,7 @@
   padding: 0 0.4rem;
   border: 1px solid var(--border-subtle);
   border-radius: 999px;
-  font-size: 0.75rem;
+  font-size: var(--text-xs);
   color: var(--text-secondary);
 }
 .repository-text .repository-description,
@@ -127,17 +127,19 @@
 /* Clone actions as one quiet line: the status, then text buttons. */
 .repository-picker .repository-inline {
   gap: 0.25rem 1rem;
-  font-size: var(--text-xs, 0.875rem);
+  font-size: var(--text-xs);
 }
 .repository-inline-status {
   color: var(--text-secondary);
   font-style: italic;
 }
 .repository-picker .repository-inline button {
+  height: auto;
   padding: 0;
   border: 0;
   border-radius: 0;
   background: none;
+  box-shadow: none;
   color: var(--action-primary);
   font-size: inherit;
   font-weight: 500;
@@ -154,7 +156,7 @@
   margin: 0;
   padding: 0.7rem 1rem;
   color: var(--text-secondary);
-  font-size: var(--text-xs, 0.875rem);
+  font-size: var(--text-xs);
   text-align: center;
 }
 .repository-buttons {
@@ -163,32 +165,36 @@
   align-items: center;
   gap: 0.5rem;
 }
-.repository-picker button,
-.repository-actions button {
-  font: inherit;
-  font-size: var(--text-xs, 0.875rem);
-  border: 1px solid var(--border-subtle);
-  border-radius: 0.4rem;
-  background: transparent;
-  color: inherit;
-  padding: 0.45rem 0.75rem;
-  cursor: pointer;
-}
-.repository-picker button:hover,
-.repository-actions button:hover {
-  background: var(--surface-hover);
-}
-.repository-picker button:disabled,
-.repository-actions button:disabled {
-  cursor: default;
-  opacity: 0.5;
-}
-.repository-picker button:focus-visible,
-.repository-actions button:focus-visible,
-.repository-picker input:focus-visible,
-.repository-actions input:focus-visible {
-  outline: 2px solid var(--action-primary);
-  outline-offset: 2px;
+/* Under Tailwind's utilities: a button given the shared action classes keeps
+   them, and one without (the folder picker) still looks like a control. */
+@layer base {
+  .repository-picker button,
+  .repository-actions button {
+    font: inherit;
+    font-size: var(--text-xs);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-md);
+    background: transparent;
+    color: inherit;
+    padding: 0.45rem 0.75rem;
+    cursor: pointer;
+  }
+  .repository-picker button:hover,
+  .repository-actions button:hover {
+    background: var(--surface-hover);
+  }
+  .repository-picker button:disabled,
+  .repository-actions button:disabled {
+    cursor: default;
+    opacity: 0.5;
+  }
+  .repository-picker button:focus-visible,
+  .repository-actions button:focus-visible,
+  .repository-picker input:focus-visible,
+  .repository-actions input:focus-visible {
+    outline: none;
+    box-shadow: var(--focus-ring);
+  }
 }
 .repository-actions form {
   display: grid;
@@ -227,7 +233,7 @@
   margin: 0.15rem 0 0;
   padding: 0;
   border: 1.5px solid color-mix(in srgb, var(--text-secondary) 45%, transparent);
-  border-radius: 0.3rem;
+  border-radius: var(--radius-xs);
   background: var(--surface-card);
   cursor: pointer;
   transition:
@@ -281,23 +287,19 @@
   stroke-linecap: round;
   pointer-events: none;
 }
+/* The search box is a field like any other; only its glyph sets it apart. */
 .repository-picker .repository-search-field input {
   padding-left: 2.4rem;
-  border-color: color-mix(in srgb, var(--border-subtle) 70%, transparent);
-  border-radius: 0.6rem;
+  border-color: var(--border-default);
+  border-radius: var(--radius-md);
   background: var(--surface-card);
-  box-shadow: var(--shadow-raised);
-  transition:
-    border-color 120ms ease,
-    box-shadow 120ms ease;
 }
-.repository-picker .repository-search-field input::placeholder {
-  color: color-mix(in srgb, var(--text-secondary) 70%, transparent);
+.repository-picker .repository-search-field input:hover {
+  border-color: var(--border-strong);
 }
 .repository-picker .repository-search-field input:focus-visible {
   outline: none;
-  border-color: var(--action-primary);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--action-primary) 18%, transparent);
+  box-shadow: var(--focus-ring);
 }
 .repository-search-field input::-webkit-search-cancel-button {
   appearance: none;
@@ -331,6 +333,6 @@
 }
 .repository-warning {
   color: var(--status-caution);
-  font-size: var(--text-xs, 0.875rem);
+  font-size: var(--text-xs);
   overflow-wrap: anywhere;
 }

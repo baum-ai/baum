@@ -9,7 +9,7 @@ import {
   type FormEvent,
   type ReactNode,
 } from "react";
-import { Alert, Button, SegmentedControl, Toggle } from "@baum/viewer/components/ui";
+import { Alert, Button, SegmentedControl } from "@baum/viewer/components/ui";
 import {
   automaticNotice,
   parseAgentRequests,
@@ -1990,9 +1990,17 @@ function RepositorySettings({
         </p>
       ) : null}
       {notice ? <Notice>{notice}</Notice> : null}
-      <Toggle checked={decisions} disabled={pending || removing} onChange={setDecisions}>
+      <label className="local-switch-label">
+        <input
+          type="checkbox"
+          role="switch"
+          className="local-switch"
+          checked={decisions}
+          disabled={pending || removing}
+          onChange={(event) => setDecisions(event.target.checked)}
+        />
         Capture the decisions of agent sessions in this repository
-      </Toggle>
+      </label>
       <div className="local-dialog-actions">
         {remove ? (
           <Button

@@ -56,6 +56,7 @@ import { LoadingStatus, NineDots } from "./nine-dots";
 import { canMerge, MergeDialog } from "./merge";
 import { inboxAction, moveFocus, onBody, useFocusRow, useLastRow, useShortcuts } from "./shortcuts";
 import { MergeReadyDialog, useSavedReview, type SavedReviews } from "./up-next";
+import { SMALL } from "./action-classes";
 
 /** One row the keyboard can reach: a pull request or a review group. */
 type Item = { id: string; entry?: Entry; group?: ReviewGroup };
@@ -816,11 +817,11 @@ function RowPeek({
             </>
           ) : null}
           <div className="inbox-peek-actions">
-            <Link href={href} className={cn("inbox-action inbox-peek-open", FOCUS_RING)}>
+            <Link href={href} className={cn("inbox-peek-open", SMALL)}>
               {doc ? "Open the review" : "Open the pull request"}
             </Link>
             {!doc && generate && entry.status !== "generating" && !entry.needs_clone ? (
-              <button type="button" className={cn("inbox-action", FOCUS_RING)} onClick={generate}>
+              <button type="button" className={SMALL} onClick={generate}>
                 Generate the review
               </button>
             ) : null}

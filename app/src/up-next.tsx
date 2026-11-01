@@ -12,7 +12,7 @@ import {
   type SetStateAction,
 } from "react";
 import { formatCount } from "@baum/viewer/components/format";
-import { ChevronRightIcon, StackIcon } from "@baum/viewer/components/icons";
+import { ChevronDownIcon, ChevronRightIcon, StackIcon } from "@baum/viewer/components/icons";
 import { Lines } from "@baum/viewer/components/review-parts";
 import { Alert, Button } from "@baum/viewer/components/ui";
 import type { ViewerLinkProps } from "@baum/viewer/navigation";
@@ -62,6 +62,8 @@ import { ConflictingFiles } from "./conflicts";
 import { RefreshButton } from "./shell";
 import { ReviewThreads } from "./threads";
 import { canUpdateBranch, UpdateBranchDialog } from "./unblock";
+import { PRIMARY, SECONDARY, SMALL, SMALL_PRIMARY } from "./action-classes";
+import { cn } from "@baum/viewer/components/classnames";
 
 /** What the person does next about a pull request: read a review they were
  *  asked for, unblock their own, merge it, bring it up to date with its base,
@@ -975,7 +977,7 @@ export function UpNextPage({
                     ready.length > 1 ? (
                       <button
                         type="button"
-                        className="upnext-batch"
+                        className={cn("upnext-batch", SMALL_PRIMARY)}
                         onClick={() => setMergingAll(ready)}
                       >
                         Merge all {formatCount(ready.length)}
@@ -1117,7 +1119,7 @@ export function UpNextPage({
           <div role="status" className="upnext-toast">
             <span>{toast.text}</span>
             {toast.undo ? (
-              <button type="button" onClick={undo}>
+              <button type="button" className={SMALL} onClick={undo}>
                 Undo
                 <kbd aria-hidden="true" className="key-hint">
                   u
@@ -1517,7 +1519,7 @@ function Panel({
     ? `${pr.author ?? "Someone"} asked for your review`
     : "Yours";
   const github = (
-    <a href={pr.url} target="_blank" rel="noreferrer" className="upnext-secondary">
+    <a href={pr.url} target="_blank" rel="noreferrer" className={cn("upnext-secondary", SECONDARY)}>
       Open on GitHub
     </a>
   );
@@ -1526,14 +1528,14 @@ function Panel({
   // at once.
   const actions = (
     <>
-      <Link href={href} className="upnext-primary">
+      <Link href={href} className={cn("upnext-primary", PRIMARY)}>
         Open
         <kbd aria-hidden="true" className="key-hint">
           ↵
         </kbd>
       </Link>
       {job ? (
-        <Link href={jobHref(job)} className="upnext-secondary">
+        <Link href={jobHref(job)} className={cn("upnext-secondary", SECONDARY)}>
           Watch the agent
           {job.has_transcript ? (
             <kbd aria-hidden="true" className="key-hint">
@@ -1544,20 +1546,20 @@ function Panel({
       ) : waiting ? (
         github
       ) : kind === "merge" ? (
-        <button type="button" className="upnext-secondary" onClick={merge}>
+        <button type="button" className={cn("upnext-secondary", SECONDARY)} onClick={merge}>
           Merge
           <kbd aria-hidden="true" className="key-hint">
             m
           </kbd>
         </button>
       ) : kind === "update" ? (
-        <button type="button" className="upnext-secondary" onClick={update}>
+        <button type="button" className={cn("upnext-secondary", SECONDARY)} onClick={update}>
           Update the branch
         </button>
       ) : kind === "fix" && fix ? (
         <button
           type="button"
-          className="upnext-secondary"
+          className={cn("upnext-secondary", SECONDARY)}
           disabled={fixState.starting}
           onClick={fix}
         >
@@ -1640,12 +1642,13 @@ function Panel({
           <div className="upnext-snooze" ref={menuRef}>
             <button
               type="button"
-              className="upnext-secondary"
+              className={cn("upnext-secondary", SECONDARY)}
               aria-haspopup="menu"
               aria-expanded={menu}
               onClick={() => setMenu((open) => !open)}
             >
-              Snooze ▾
+              Snooze
+              <ChevronDownIcon size={14} className="text-(--text-tertiary)" />
               <kbd aria-hidden="true" className="key-hint">
                 s
               </kbd>
@@ -1829,7 +1832,7 @@ function BlockRow({
       {fixChecks ? (
         <button
           type="button"
-          className="upnext-secondary upnext-thread-resolve"
+          className={cn("upnext-secondary upnext-thread-resolve", SMALL)}
           disabled={fixState.starting}
           onClick={fixChecks}
         >
@@ -1938,7 +1941,7 @@ function GroupPanel({
         ) : null}
       </dl>
       <div className="upnext-actions">
-        <Link href={href} className="upnext-primary">
+        <Link href={href} className={cn("upnext-primary", PRIMARY)}>
           Open the {group.stack ? "stack" : "group"}
           <kbd aria-hidden="true" className="key-hint">
             ↵

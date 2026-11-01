@@ -1,3 +1,10 @@
+/* The app's control radii (style.css), which the picker's shared styles use. */
+:root {
+  --radius-xs: 4px;
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+}
 body {
   height: auto;
   min-height: 100vh;
@@ -66,12 +73,15 @@ body {
 .step-link {
   display: flex;
   align-items: center;
+  justify-content: flex-start;
   gap: 12px;
   width: 100%;
   padding: 12px 10px;
-  border-radius: 9px;
+  height: auto;
+  border-radius: 8px;
   background: transparent;
   color: inherit;
+  box-shadow: none;
   font-size: 14px;
   font-weight: 400;
   text-align: left;
@@ -155,34 +165,80 @@ li:not([aria-current]) > .step-link:hover:not(:disabled) {
   margin-bottom: 16px;
 }
 button {
-  border-radius: 7px;
-  padding: 11px 16px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  height: 40px;
+  border-radius: 8px;
+  padding: 0 16px;
   font-size: 14px;
   font-weight: 500;
+  color: var(--text-inverse);
+  background: var(--action-primary);
+  box-shadow: var(--shadow-raised);
   transition: background 0.15s;
 }
-button:hover:not(:disabled) {
+button:hover:not(:disabled):not(.step-link) {
   background: var(--action-primary-hover);
 }
 button.secondary {
-  box-shadow: inset 0 0 0 1px var(--border-strong);
+  border: 1px solid var(--border-default);
+  background: var(--surface-card);
   color: var(--text-primary);
+  box-shadow: var(--shadow-raised);
 }
-button.secondary:hover:not(:disabled),
-button.quiet:hover:not(:disabled) {
-  background: var(--surface-sunken);
+button.secondary:hover:not(:disabled) {
+  background: var(--action-secondary-hover);
 }
 button.quiet {
   color: var(--text-secondary);
   background: transparent;
+  box-shadow: none;
+}
+button.quiet:hover:not(:disabled) {
+  background: var(--surface-hover);
+  color: var(--text-primary);
+}
+button:active:not(:disabled):not(.step-link) {
+  transform: translateY(1px);
+  box-shadow: none;
 }
 /* A row's own action, quieter than the step's buttons. */
 button.compact {
-  padding: 8px 14px;
+  height: 32px;
+  padding: 0 14px;
   font-size: 13px;
 }
-button:focus-visible,
-input:focus-visible,
+/* The repository picker's clone and folder actions are a row's own actions
+   here too. */
+:is(.repository-picker, .repository-actions) button {
+  height: 32px;
+  padding: 0 14px;
+  border: 1px solid var(--border-default);
+  background: var(--surface-card);
+  color: var(--text-primary);
+  font-size: 13px;
+}
+:is(.repository-picker, .repository-actions) button:hover:not(:disabled) {
+  background: var(--action-secondary-hover);
+}
+:is(.repository-picker, .repository-actions) button[type="submit"] {
+  border-color: transparent;
+  background: var(--action-primary);
+  color: var(--text-inverse);
+}
+:is(.repository-picker, .repository-actions) button[type="submit"]:hover:not(:disabled) {
+  background: var(--action-primary-hover);
+}
+button:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+input:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
 summary:focus-visible {
   outline: 2px solid var(--action-primary);
   outline-offset: 4px;
@@ -262,7 +318,7 @@ input {
   min-width: 0;
   width: 100%;
   border: 1px solid var(--border-default);
-  border-radius: 7px;
+  border-radius: 8px;
   padding: 10px 12px;
   font: inherit;
   font-size: 13px;
@@ -450,15 +506,14 @@ input {
   flex-wrap: nowrap;
 }
 button:disabled {
-  opacity: 1;
+  opacity: 0.5;
   cursor: not-allowed;
+  box-shadow: none;
 }
-button:disabled:not(.loading) {
-  color: var(--text-disabled);
-  background: var(--surface-wash);
-  box-shadow: inset 0 0 0 1px var(--border-subtle);
-}
+/* The button that is working stays at full strength: its spinner is the
+   answer to the click. */
 button:disabled.loading {
+  opacity: 1;
   cursor: progress;
 }
 .github-code-step {
@@ -490,18 +545,29 @@ button:disabled.loading {
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  gap: 8px;
   min-inline-size: 180px;
-  border-radius: 7px;
-  padding: 11px 16px;
+  height: 40px;
+  border-radius: 8px;
+  padding: 0 16px;
   font-size: 14px;
   font-weight: 500;
   line-height: 1.5;
-  color: var(--surface-page);
+  color: var(--text-inverse);
   background: var(--action-primary);
+  box-shadow: var(--shadow-raised);
   text-decoration: none;
 }
 .github-code-step a.button:hover {
   background: var(--action-primary-hover);
+}
+.github-code-step a.button:active {
+  transform: translateY(1px);
+  box-shadow: none;
+}
+.github-code-step a.button:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
 }
 .github-code-step .button:disabled {
   background: var(--action-primary);

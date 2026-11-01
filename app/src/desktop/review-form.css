@@ -51,7 +51,7 @@
   height: 100%;
   padding: 8px 10px;
   border: 1px solid var(--border-default);
-  border-radius: 9px;
+  border-radius: 8px;
   background: var(--surface-page);
   font-size: 13px;
   font-weight: 500;
@@ -103,8 +103,13 @@
   box-shadow: inset 0 0 0 1px var(--action-primary);
 }
 .harness-option input:focus-visible + .harness-tile,
-.agent-install-links a:focus-visible,
-.segmented input:focus-visible + span {
+.segmented input:focus-visible + span,
+.select select:focus-visible,
+.model-row input:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+.agent-install-links a:focus-visible {
   outline: 2px solid var(--action-primary);
   outline-offset: 2px;
 }
@@ -172,7 +177,7 @@
   width: 100%;
   min-width: 0;
   border: 1px solid var(--border-default);
-  border-radius: 7px;
+  border-radius: 8px;
   padding: 10px 36px 10px 12px;
   cursor: pointer;
   font: inherit;
@@ -236,15 +241,18 @@
   clear: both;
   display: inline-flex;
   flex-wrap: wrap;
+  gap: 2px;
   max-width: 100%;
   padding: 3px;
-  border: 1px solid var(--border-default);
-  border-radius: 9px;
-  background: var(--surface-page);
+  border: 0;
+  border-radius: 8px;
+  background: var(--surface-sunken);
 }
 .segmented span {
-  display: block;
-  padding: 6px 10px;
+  display: flex;
+  align-items: center;
+  height: 28px;
+  padding: 0 10px;
   border-radius: 6px;
   font-size: 13px;
   color: var(--text-secondary);
@@ -253,10 +261,9 @@
 .segmented label:hover input:not(:checked) + span {
   color: var(--text-primary);
 }
-/* The chosen option reads like a chosen harness tile. */
 .segmented input:checked + span {
-  background: var(--surface-selected);
-  box-shadow: inset 0 0 0 1px var(--action-primary);
+  background: var(--surface-card);
+  box-shadow: var(--shadow-raised);
   color: var(--text-primary);
   font-weight: 500;
 }
@@ -270,7 +277,7 @@
   min-width: 0;
   flex: 1;
   border: 1px solid var(--border-default);
-  border-radius: 7px;
+  border-radius: 8px;
   padding: 10px 12px;
   font: inherit;
   font-size: 13px;

@@ -109,6 +109,8 @@ import { LoadingStatus } from "./nine-dots";
 import { FixDetails, type FixChat } from "./fix";
 import { JobPage } from "./job-transcript";
 import { useLocation } from "./location";
+import { SMALL } from "./action-classes";
+import { cn } from "@baum/viewer/components/classnames";
 
 /** Pull requests' views, in the order of their tabs and of `h` and `l`. */
 const VIEWS = [
@@ -1139,7 +1141,7 @@ function Workspace({ url }: { url: UrlState }) {
                 selectedInbox ? (
                   <LocalLink
                     href={editInboxHref(selectedInbox.id)}
-                    className="inbox-btn inbox-edit-link"
+                    className={cn("inbox-edit-link", SMALL)}
                   >
                     Edit
                   </LocalLink>
@@ -1330,6 +1332,7 @@ function Workspace({ url }: { url: UrlState }) {
               <span>{inboxToast.text}</span>
               <button
                 type="button"
+                className={SMALL}
                 onClick={() => {
                   inboxToast.undo();
                   setInboxToast(null);

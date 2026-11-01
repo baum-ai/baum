@@ -155,6 +155,9 @@
     0 8px 32px color-mix(in srgb, var(--shadow-ink) 14%, transparent),
     0 2px 8px color-mix(in srgb, var(--shadow-ink) 8%, transparent);
   --focus-ring: 0 0 0 2px var(--paper-0), 0 0 0 4px var(--border-focus);
+  /* A host that raises its buttons sets this to --shadow-raised. Not `none`:
+     it joins Tailwind's list of shadows, where `none` is invalid. */
+  --action-shadow: 0 0 #0000;
   --rule-masthead: var(--brand-forest);
 
   --radius-xs: 0;

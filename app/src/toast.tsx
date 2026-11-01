@@ -1,6 +1,8 @@
 import { CircleCheckIcon, CloseIcon, WarningIcon } from "@baum/viewer/components/icons";
 import { BrandMark } from "@baum/viewer/components/brand-logo";
 import type { Brand } from "@baum/viewer/brands";
+import { SMALL } from "./action-classes";
+import { cn } from "@baum/viewer/components/classnames";
 import {
   createContext,
   useCallback,
@@ -77,7 +79,7 @@ function ToastView({ toast, close }: { toast: Toast; close: () => void }) {
       {toast.action ? (
         <button
           type="button"
-          className="local-toast-action"
+          className={cn("local-toast-action", SMALL)}
           onClick={() => {
             toast.action!.run();
             close();

@@ -52,6 +52,7 @@ import { Walkthrough, type WalkMode } from "./walkthrough";
 import { buildTour } from "./walkthrough-model";
 import { AnswerActions } from "./answer-actions";
 import { AskPanel, sectionFocus } from "./chat";
+import { SECONDARY } from "./action-classes";
 function Transcript({ id, query }: { id: string; query: string }) {
   const [load, setLoad] = useState<LocalTranscript | null>(null);
   const [error, setError] = useState(false);
@@ -391,7 +392,7 @@ export function LocalReview({
                     {fix && fixLabelText ? (
                       <button
                         type="button"
-                        className="walk-secondary"
+                        className={SECONDARY}
                         disabled={fixing || fixStarting}
                         onClick={() => fix()}
                       >
@@ -400,27 +401,19 @@ export function LocalReview({
                       </button>
                     ) : null}
                     {canMerge(entry) ? (
-                      <button
-                        type="button"
-                        className="walk-secondary"
-                        onClick={() => setMerging(true)}
-                      >
+                      <button type="button" className={SECONDARY} onClick={() => setMerging(true)}>
                         Merge…
                       </button>
                     ) : null}
                     {canUpdateBranch(entry) ? (
-                      <button
-                        type="button"
-                        className="walk-secondary"
-                        onClick={() => setUpdating(true)}
-                      >
+                      <button type="button" className={SECONDARY} onClick={() => setUpdating(true)}>
                         Update branch
                       </button>
                     ) : null}
                     {canRerunChecks(entry) ? (
                       <button
                         type="button"
-                        className="walk-secondary"
+                        className={SECONDARY}
                         onClick={() => setRerunning(true)}
                       >
                         Re-run checks
@@ -429,7 +422,7 @@ export function LocalReview({
                     {entry.status === "outdated" || generating ? (
                       <button
                         type="button"
-                        className="walk-secondary"
+                        className={SECONDARY}
                         disabled={generating || entry.needs_clone}
                         onClick={generate}
                       >

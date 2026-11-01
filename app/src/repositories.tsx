@@ -12,6 +12,7 @@ import { invoke } from "./desktop/native";
 import { displayPath, repositoryPath } from "./desktop/setup-model";
 import { LoadingStatus } from "./nine-dots";
 import "./repositories.css";
+import { PRIMARY, SECONDARY } from "./action-classes";
 
 export type RepositoryItem = {
   repository: string;
@@ -270,10 +271,10 @@ export function useCloneActions({
         </span>
       </div>
       <div className="repository-buttons">
-        <button type="submit" disabled={busy}>
+        <button type="submit" className={PRIMARY} disabled={busy}>
           {busy ? "Working…" : mode === "clone" ? "Clone repository" : "Use folder"}
         </button>
-        <button type="button" disabled={busy} onClick={() => setMode("")}>
+        <button type="button" className={SECONDARY} disabled={busy} onClick={() => setMode("")}>
           Cancel
         </button>
       </div>
@@ -322,10 +323,20 @@ export function CloneActions({
         // The one-line form gives way to an open path form, which has Cancel.
         <div className={status ? "repository-buttons repository-inline" : "repository-buttons"}>
           {status ? <span className="repository-inline-status">{status}</span> : null}
-          <button type="button" disabled={busy} onClick={actions.choose}>
+          <button
+            type="button"
+            className={status ? undefined : SECONDARY}
+            disabled={busy}
+            onClick={actions.choose}
+          >
             {busy && doing === "choose" ? "Choosing…" : "Choose folder"}
           </button>
-          <button type="button" disabled={busy} onClick={actions.clone}>
+          <button
+            type="button"
+            className={status ? undefined : SECONDARY}
+            disabled={busy}
+            onClick={actions.clone}
+          >
             {busy && doing === "clone" ? "Preparing…" : "Clone it"}
           </button>
         </div>
@@ -495,6 +506,7 @@ export function RepositoryPicker({
           <p>{error}</p>
           <button
             type="button"
+            className={SECONDARY}
             disabled={retrying}
             onClick={() => {
               setRetrying(true);
@@ -598,6 +610,7 @@ export function RepositoryPicker({
       {mac && list.some((r) => r.picked && !r.clone) ? (
         <button
           type="button"
+          className={SECONDARY}
           disabled={busy !== null || found?.running}
           onClick={() =>
             void action("documents", () => call("refresh", { include_documents: true }))

@@ -49,6 +49,8 @@ import { useNow } from "./live";
 import { useToast } from "./toast";
 import { LiveSessionDecisions } from "./decisions";
 import { listKeys, useRowFocus, useShortcuts } from "./shortcuts";
+import { SMALL } from "./action-classes";
+import { cn } from "@baum/viewer/components/classnames";
 
 /** What marks a list row for the row focus (`useRowFocus`). */
 type RowProps = (s: LiveSession) => { "data-row-id": string; "data-focused"?: true };
@@ -247,7 +249,7 @@ export function FocusSession({
       <button
         ref={button}
         type="button"
-        className="inbox-action local-session-focus"
+        className={cn("local-session-focus", SMALL)}
         disabled={state.busy}
         aria-busy={state.busy}
         aria-label={labelFor(label, s)}
@@ -1002,7 +1004,7 @@ function OpenTranscript({
   hint?: boolean;
 }) {
   return (
-    <Link href={transcriptHref(s)} className="inbox-action local-feed-open-transcript">
+    <Link href={transcriptHref(s)} className={cn("local-feed-open-transcript", SMALL)}>
       Open transcript
       {hint ? (
         <kbd aria-hidden="true" className="key-hint">

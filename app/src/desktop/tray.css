@@ -83,12 +83,15 @@ body {
 }
 .tray-item:hover:not(:disabled),
 .tray-item:focus-visible {
-  background: var(--surface-selected);
+  background: var(--surface-hover);
   color: var(--text-primary);
   outline: none;
 }
+.tray-item:focus-visible {
+  box-shadow: var(--focus-ring);
+}
 .tray-item:active:not(:disabled) {
-  filter: brightness(0.92);
+  background: var(--surface-pressed);
 }
 .tray-item:disabled {
   color: var(--text-secondary);

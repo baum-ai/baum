@@ -440,7 +440,7 @@ export function Setup() {
                 if (step < last) navigate(step + 1);
                 else void run("continue", finish);
               },
-              "secondary",
+              "",
               undefined,
               (step >= reviewStep && (!agentReady || modelMissing)) || (step === 0 && !githubReady),
             )}
