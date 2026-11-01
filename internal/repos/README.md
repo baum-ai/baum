@@ -113,9 +113,9 @@ what is stored: it fails with `ErrClonedElsewhere` when the path or its
 repository directory belongs to another repository, and with `ErrNotPicked`
 unless the repository is picked, checked in the same transaction, so an unpick
 in between is not undone. `PickedWithoutClones` (picked repositories with no
-clone row) and `CloneRows` (clones as stored, `available` false) read the
-registry only and run no git, unlike `List` and `Repositories`, which probe
-every clone.
+clone row), `CloneRows` (clones as stored, `available` false) and
+`RepositoryRows` (`Repositories` with clones as stored) read the registry only
+and run no git, unlike `List` and `Repositories`, which probe every clone.
 
 Settings PUTs replace the whole object and require `automatic`, `null` for
 the default. A `daily_cap` an older app still sends, in a settings PUT or in

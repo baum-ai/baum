@@ -11,8 +11,8 @@ import (
 // changes made outside this process. Only Snapshot is required; without the
 // others every tick reads a snapshot.
 type IndexWatch struct {
-	// Fingerprint digests the files the index is built from. It must not
-	// open them or run anything.
+	// Fingerprint digests what the index is built from that other processes
+	// change. It must be cheap: it runs every tick.
 	Fingerprint func(context.Context) string
 	// Invalidate drops the cached index; it is called when Fingerprint moves.
 	Invalidate func()

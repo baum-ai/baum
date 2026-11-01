@@ -4,10 +4,12 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime/debug"
 	"sync"
 	"time"
 
@@ -18,7 +20,7 @@ import (
 // MaxAge bounds how long a snapshot is served without building again, for
 // what neither an invalidation, the watcher's fingerprint nor a computed
 // expiry covers, such as a clone becoming unavailable through a change the
-// fingerprint does not stat.
+// fingerprint does not stat, or a GitHub credential edited outside baum.
 const MaxAge = 30 * time.Second
 
 // Cache serves one built snapshot to every reader until it is invalidated or
@@ -116,7 +118,7 @@ func (c *Cache) run(f *flight, started time.Time) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	snapshot, next, err := c.build(ctx, started)
+	snapshot, next, err := c.recovered(ctx, started)
 	c.mu.Lock()
 	if err == nil && f.generation == c.generation {
 		expires := started.Add(MaxAge)
@@ -135,16 +137,31 @@ func (c *Cache) run(f *flight, started time.Time) {
 	close(f.done)
 }
 
+// recovered builds with a panic turned into an error for the waiting
+// readers, as net/http contains one in a handler.
+func (c *Cache) recovered(ctx context.Context, started time.Time) (snapshot Snapshot, next time.Time, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			snapshot, next, err = Snapshot{}, time.Time{}, fmt.Errorf("review index build panicked: %v\n%s", r, debug.Stack())
+		}
+	}()
+	return c.build(ctx, started)
+}
+
 // Handler serves GET /api/index as Service.Handler does, from the cache.
 func (c *Cache) Handler() http.Handler { return handler(c.Snapshot) }
 
-// Fingerprint digests, without opening a database or running git, what other
-// processes change under a build: the size and modification time of the
-// application database and of each registered clone's store under both roots
-// store.Open chooses between, and of the clone's git config, which holds its
-// remotes; and whether its working tree is still there. A missing file is part
-// of the digest, not an error.
-func Fingerprint(appDB string, clones func(context.Context) ([]repos.Clone, error)) func(context.Context) string {
+// Fingerprint digests what a build reads that may change with no
+// invalidation, without running git or touching a store's files beyond stat:
+// the registry rows (rows, which must not probe clones), identity (the
+// GitHub account revision), and for each clone the size and modification
+// time of its store under both roots store.Open chooses between and of its git
+// config, which holds its remotes, and whether its working tree is still
+// there. A missing file is part of the digest, not an error.
+//
+// Stores are not opened even to read their header: closing any descriptor
+// of a SQLite file drops the locks this process's own connections hold on it.
+func Fingerprint(rows func(context.Context) ([]repos.Repository, error), identity func() string) func(context.Context) string {
 	return func(ctx context.Context) string {
 		h := sha256.New()
 		stat := func(path string, times bool) {
@@ -158,26 +175,28 @@ func Fingerprint(appDB string, clones func(context.Context) ([]repos.Clone, erro
 				fmt.Fprintf(h, "%q %v\n", path, info.Mode().Type())
 			}
 		}
-		database := func(path string) {
-			stat(path, true)
-			stat(path+"-wal", true)
+		if identity != nil {
+			fmt.Fprintf(h, "identity %q\n", identity())
 		}
-		database(appDB)
-		rows, err := clones(ctx)
+		picked, err := rows(ctx)
 		if err != nil {
-			fmt.Fprintf(h, "clones: %v\n", err)
+			fmt.Fprintf(h, "registry: %v\n", err)
 		}
-		for _, clone := range rows {
-			stat(clone.Path, false)
-			stat(filepath.Join(clone.Path, ".git"), false)
-			stat(filepath.Join(clone.CommonDir, "config"), true)
-			roots, err := store.Roots(clone.CommonDir)
-			if err != nil {
-				fmt.Fprintf(h, "%q roots: %v\n", clone.CommonDir, err)
-				continue
-			}
-			for _, root := range roots {
-				database(filepath.Join(root, "versions.sqlite"))
+		for _, repository := range picked {
+			raw, _ := json.Marshal(repository)
+			fmt.Fprintf(h, "%s\n", raw)
+			for _, clone := range repository.Clones {
+				stat(clone.Path, false)
+				stat(filepath.Join(clone.Path, ".git"), false)
+				stat(filepath.Join(clone.CommonDir, "config"), true)
+				roots, err := store.Roots(clone.CommonDir)
+				if err != nil {
+					fmt.Fprintf(h, "%q roots: %v\n", clone.CommonDir, err)
+					continue
+				}
+				for _, root := range roots {
+					stat(filepath.Join(root, "versions.sqlite"), true)
+				}
 			}
 		}
 		return hex.EncodeToString(h.Sum(nil))

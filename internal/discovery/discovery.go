@@ -160,6 +160,16 @@ type Service struct {
 	validated map[string]bool
 	epoch     uint64
 	active    context.CancelFunc
+	// Updated, when set before use, is called after anything Cached reads
+	// changes: a cache write, or live freshness. It may run with the
+	// service's locks held, so it must not call the service.
+	Updated func()
+}
+
+func (s *Service) updated() {
+	if s.Updated != nil {
+		s.Updated()
+	}
 }
 
 // ResetIdentity cancels the old transaction and invalidates live discovery.
@@ -173,6 +183,7 @@ func (s *Service) ResetIdentity() {
 		s.active = nil
 	}
 	s.validated = map[string]bool{}
+	s.updated()
 }
 func (s *Service) Epoch() uint64 {
 	s.liveMu.Lock()
@@ -233,7 +244,11 @@ func (s *Service) save(key string, cache diskCache) error {
 	if err != nil {
 		return err
 	}
-	return appdb.Write(path, "cache", "discovery/"+key, raw)
+	if err = appdb.Write(path, "cache", "discovery/"+key, raw); err != nil {
+		return err
+	}
+	s.updated()
+	return nil
 }
 
 // Cached never makes a network request. Resolving the configured local token
@@ -501,6 +516,7 @@ func (s *Service) poll(ctx context.Context, repository github.Repository, force 
 		return Snapshot{}, github.ErrIdentityChanged
 	}
 	s.validated[path] = err == nil
+	s.updated()
 	snapshot.Epoch = epoch
 	p.cache.Snapshot = snapshot
 	if saveErr := s.save(budgetPath, diskCache{Snapshot: Snapshot{Rate: p.rate}, GraphQLRate: p.graphRate}); saveErr != nil {
@@ -719,6 +735,7 @@ func (s *Service) setValidated(path string, value bool) {
 	s.liveMu.Lock()
 	defer s.liveMu.Unlock()
 	s.validated[path] = value
+	s.updated()
 }
 
 // visibleRate exposes the active limiting budget without combining REST request

@@ -2437,29 +2437,50 @@ in-process change that publishes an `index` event (the daemon's `changed`,
 which settings, registry, clone, job, discovery, merge, review, update, inbox,
 group and GitHub-account changes all go through) calls `Invalidate` first, so
 a client reading after the event gets a new build, and a build that started
-before an invalidation still answers its waiting readers but is not kept. A
+before an invalidation still answers its waiting readers but is not kept.
+Discovery, which only the daemon runs, invalidates through
+`discovery.Service.Updated` after each cache write and each change to its live
+freshness, without an event of its own: the watcher below publishes if the
+index moved. A panicking build is an error for its readers and is not kept. A
 kept snapshot expires at the earliest instant at which building again could
 differ with nothing written: a `generating` run's lease end (it then reads as
 interrupted), a fresh discovery snapshot's next poll, or an applied
 observation turning stale two minutes after it was fetched; and at the latest
-after `reviewindex.MaxAge` (30 seconds), for what nothing models, such as a
-clone made unavailable by a change outside the files below. Nothing is
-persisted: a restarted daemon builds on first read.
+after `reviewindex.MaxAge` (30 seconds), for what nothing models (below).
+Nothing is persisted: a restarted daemon builds on first read.
 
 `uiserver.Server.WatchIndex` catches changes made outside the daemon (a CLI
-`baum internal generate`, another process writing `app.sqlite` or a store) and
-those that come with time. Every 2 seconds it computes
-`reviewindex.Fingerprint`, which opens no database and runs no git: the size,
-modification time and mode of `app.sqlite` and `app.sqlite-wal`, of each
-registered clone's `versions.sqlite` and `versions.sqlite-wal` under both
-roots `store.Open` chooses between (the clones from `Registry.CloneRows`), and
-of the clone's git `config`, plus whether its working tree and `.git` exist; a
-missing file is part of the digest. Only when the fingerprint moved (it then
-invalidates), the cached snapshot expired, or another reader replaced it does
-the watcher read the index, and it publishes `index` only when the snapshot's
-JSON hash differs from the last one it published. The first read publishes.
-The daemon's own `app.sqlite` writes, such as a discovery poll's, also move
-the fingerprint and cost one rebuild.
+`baum internal generate`, another process editing the registry) and those that
+come with time. Every 2 seconds it computes `reviewindex.Fingerprint`, which
+runs no git and opens no store: the registry's picked repositories and clone
+rows as stored (`Registry.RepositoryRows`, one query on the registry's
+connection), the GitHub account revision (`githubauth.Manager.Revision`), and
+for each clone the size, modification time and mode of `versions.sqlite` under
+both roots `store.Open` chooses between and of its git `config`, plus whether
+its working tree and `.git` exist; a missing file is part of the digest. Only
+when the fingerprint moved (it then invalidates), the cached snapshot expired,
+or another reader replaced it does the watcher read the index, and it publishes
+`index` only when the snapshot's JSON hash differs from the last one it
+published. The first read publishes.
+
+The fingerprint reads registry rows rather than `app.sqlite`'s file times or
+`PRAGMA data_version`: most daemon stores (jobs, chat, UI state, analytics,
+automatic generation, decisions) open their own connections, and
+`appdb.Read`/`Write` a new one per call, so both signals move on every job
+progress save, which is no input to the index. A store's SQLite header change
+counter is not read either: closing any descriptor of a SQLite file drops the
+POSIX locks this process's own connections hold on it, and the daemon reads and
+writes stores itself. The databases use the rollback journal, so a commit
+changes the main file's modification time; two commits within one timestamp
+step of a check, at the same size, look alike until `MaxAge`. What nothing
+models is also bounded by `MaxAge`: a clone made unavailable by a change the
+stats miss, and a GitHub credential replaced outside baum. Connecting and
+disconnecting go through the daemon, which invalidates; another process can
+only rotate the same account's token, which keeps its discovery partition.
+Detecting an outside keyring edit at once would take a credential read per
+tick, which is a process (`baum internal github-credential`) running the
+native keyring, the cost the cache removes: before it, every build ran one per
+picked repository.
 
 ### Local pull request discovery
 

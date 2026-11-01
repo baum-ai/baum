@@ -14,6 +14,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -377,13 +378,11 @@ func localApplication(paths daemon.Paths, log *slog.Logger) func(context.Context
 			return daemon.App{}, err
 		}
 		discover := discovery.New(github.NewFromConfig(cfg, github.Options{}), "")
-		// Every reader shares one cached index. A change made here invalidates
-		// it before the event, so a client reading again sees the change.
+		// Every reader shares one cached index. Discovery's writes only
+		// invalidate it: the index watcher publishes if the index moved.
 		index := reviewindex.NewCache(ctx, &reviewindex.Service{Registry: registry, Discovery: discover})
-		changed := func() {
-			index.Invalidate()
-			_ = server.Publish("index", struct{}{})
-		}
+		discover.Updated = index.Invalidate
+		changed := indexChanged(index, server.Publish)
 		worker := &background.Service{Registry: registry, Discovery: discover, Saved: background.Saved, Refresh: background.Local{Client: github.NewFromConfig(cfg, github.Options{}), Config: cfg}.Refresh, Changed: changed}
 		database, err := appdb.Path()
 		if err != nil {
@@ -715,7 +714,7 @@ func localApplication(paths daemon.Paths, log *slog.Logger) func(context.Context
 				}
 				wg.Go(func() {
 					server.WatchIndex(ctx, 0, uiserver.IndexWatch{
-						Fingerprint: reviewindex.Fingerprint(database, registry.CloneRows),
+						Fingerprint: reviewindex.Fingerprint(registry.RepositoryRows, func() string { return strconv.FormatUint(config.GitHubAuth.Revision(), 10) }),
 						Invalidate:  index.Invalidate,
 						Fresh:       index.Fresh,
 						Snapshot: func(ctx context.Context) (any, uint64, error) {
@@ -866,6 +865,15 @@ func maintainReviewRuns(ctx context.Context, log *slog.Logger) {
 		return
 	}
 	reviewruns.Maintain(ctx, root, 24*time.Hour, func(err error) { log.Warn("expiring kept review runs", "error", err) })
+}
+
+// indexChanged announces a change to the review index. It invalidates the
+// cache before the event, so a client reading again after it sees the change.
+func indexChanged(index *reviewindex.Cache, publish func(string, any) error) func() {
+	return func() {
+		index.Invalidate()
+		_ = publish("index", struct{}{})
+	}
 }
 
 // newCloneFinder builds the service that finds local clones of picked

@@ -170,17 +170,36 @@ func BenchmarkCachedBuild(b *testing.B) {
 	}
 }
 
-// BenchmarkFingerprint measures the watcher's per-tick check over n clones,
-// each with a store.
+// BenchmarkFingerprint measures the watcher's per-tick check: the stats over
+// n clones, each with a store, and separately the registry read of four
+// picked repositories.
 func BenchmarkFingerprint(b *testing.B) {
+	b.Run("registry", func(b *testing.B) {
+		private := filepath.Join(b.TempDir(), "private")
+		if err := privatefs.MkdirAll(private); err != nil {
+			b.Fatal(err)
+		}
+		reg, err := repos.Open(filepath.Join(private, "app.sqlite"))
+		if err != nil {
+			b.Fatal(err)
+		}
+		b.Cleanup(func() { _ = reg.Close() })
+		for i := range 4 {
+			if _, err := reg.Pick(context.Background(), fmt.Sprintf("acme/r%d", i), nil); err != nil {
+				b.Fatal(err)
+			}
+		}
+		fingerprint := Fingerprint(reg.RepositoryRows, func() string { return "1" })
+		ctx := context.Background()
+		b.ReportAllocs()
+		for b.Loop() {
+			fingerprint(ctx)
+		}
+	})
 	for _, n := range []int{1, 4} {
 		b.Run(fmt.Sprintf("clones=%d", n), func(b *testing.B) {
 			dir := b.TempDir()
 			b.Setenv("XDG_DATA_HOME", filepath.Join(dir, "data"))
-			app := filepath.Join(dir, "app.sqlite")
-			if err := os.WriteFile(app, nil, 0o600); err != nil {
-				b.Fatal(err)
-			}
 			clones := make([]repos.Clone, n)
 			for i := range clones {
 				path := filepath.Join(dir, fmt.Sprint(i))
@@ -193,7 +212,8 @@ func BenchmarkFingerprint(b *testing.B) {
 				}
 				clones[i] = repos.Clone{ID: fmt.Sprint(i), Path: path, CommonDir: common}
 			}
-			fingerprint := Fingerprint(app, func(context.Context) ([]repos.Clone, error) { return clones, nil })
+			picked := []repos.Repository{{Repository: "acme/a", Clones: clones}}
+			fingerprint := Fingerprint(func(context.Context) ([]repos.Repository, error) { return picked, nil }, nil)
 			ctx := context.Background()
 			b.ReportAllocs()
 			for b.Loop() {

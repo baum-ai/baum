@@ -11,7 +11,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/baum-ai/baum/internal/appdb"
 	"github.com/baum-ai/baum/internal/discovery"
+	"github.com/baum-ai/baum/internal/privatefs"
 	"github.com/baum-ai/baum/internal/repos"
 	"github.com/baum-ai/baum/internal/store"
 )
@@ -352,64 +354,181 @@ func TestCacheExpiresWithGenerationLease(t *testing.T) {
 	}
 }
 
-func TestFingerprintFollowsStoreAndDatabaseFiles(t *testing.T) {
+func TestFingerprintFollowsStoreCommitsAndClones(t *testing.T) {
 	ctx := context.Background()
 	dir := t.TempDir()
 	t.Setenv("XDG_DATA_HOME", filepath.Join(dir, "data"))
-	app := filepath.Join(dir, "app.sqlite")
-	if err := os.WriteFile(app, []byte("a"), 0o600); err != nil {
-		t.Fatal(err)
-	}
 	worktree := filepath.Join(dir, "clone")
 	common := filepath.Join(worktree, ".git")
 	if err := os.MkdirAll(common, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	clones := []repos.Clone{{ID: "c", Path: worktree, CommonDir: common, Repository: "acme/a"}}
-	fingerprint := Fingerprint(app, func(context.Context) ([]repos.Clone, error) { return clones, nil })
-	last := fingerprint(ctx)
-	if again := fingerprint(ctx); again != last {
-		t.Fatal("fingerprint moved without a change")
+	picked := []repos.Repository{{Repository: "acme/a", Clones: []repos.Clone{{ID: "c", Path: worktree, CommonDir: common, Repository: "acme/a"}}}}
+	revision := "1"
+	fingerprint := Fingerprint(func(context.Context) ([]repos.Repository, error) { return picked, nil }, func() string { return revision })
+	check := fingerprints(t, fingerprint)
+	key := store.Key{Repository: "acme/a", Number: 1}
+	s, err := store.Open(common, "", true)
+	if err != nil {
+		t.Fatal(err)
 	}
-	moved := func(what string) {
-		t.Helper()
-		got := fingerprint(ctx)
-		if got == last {
-			t.Fatal("fingerprint did not move:", what)
-		}
-		last = got
+	id, err := s.BeginRun(ctx, key, time.Now().Add(time.Hour))
+	if err != nil {
+		t.Fatal(err)
 	}
-	write := func(path, data string) {
-		t.Helper()
-		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(path, []byte(data), 0o600); err != nil {
-			t.Fatal(err)
-		}
+	check.moved("store created by a commit")
+	info, err := os.Stat(filepath.Join(common, "baum", "reviews", "versions.sqlite"))
+	if err != nil {
+		t.Fatal(err)
 	}
-	write(filepath.Join(common, "baum", "reviews", "versions.sqlite"), "v")
-	moved("store created")
-	write(filepath.Join(common, "baum", "reviews", "versions.sqlite"), "vv")
-	moved("store written")
+	// An in-place commit is seen by its modification time, which moves in
+	// coarse steps: commits within one step of the last check look alike
+	// until MaxAge.
+	time.Sleep(20 * time.Millisecond)
+	if err := s.HeartbeatRun(ctx, id, time.Now().Add(2*time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	if again, err := os.Stat(filepath.Join(common, "baum", "reviews", "versions.sqlite")); err != nil || again.Size() != info.Size() {
+		t.Fatal("the lease renewal was expected to keep the store's size", err)
+	}
+	check.moved("same-size lease renewal")
+	time.Sleep(20 * time.Millisecond)
+	if err := s.FinishRun(ctx, id, ""); err != nil {
+		t.Fatal(err)
+	}
+	check.moved("run finished")
 	roots, err := store.Roots(common)
 	if err != nil {
 		t.Fatal(err)
 	}
-	write(filepath.Join(roots[1], "versions.sqlite-wal"), "w")
-	moved("fallback store's log written")
-	write(app+"-wal", "w")
-	moved("application database log written")
-	write(app, "bb")
-	moved("application database written")
-	write(filepath.Join(common, "config"), "[remote]")
-	moved("git config written")
+	fallback, err := store.Open("", roots[1], true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fallback.BeginRun(ctx, key, time.Now().Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	check.moved("fallback store written")
+	if err := os.WriteFile(filepath.Join(common, "config"), []byte("[remote]"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	check.moved("git config written")
+	revision = "2"
+	check.moved("GitHub account changed")
 	if err := os.RemoveAll(worktree); err != nil {
 		t.Fatal(err)
 	}
-	moved("clone removed")
-	clones = nil
-	moved("clone unregistered")
+	check.moved("clone removed")
+	picked = nil
+	check.moved("clone unregistered")
+}
+
+type fingerprintCheck struct {
+	t           *testing.T
+	fingerprint func(context.Context) string
+	last        string
+}
+
+func fingerprints(t *testing.T, fingerprint func(context.Context) string) *fingerprintCheck {
+	c := &fingerprintCheck{t: t, fingerprint: fingerprint, last: fingerprint(context.Background())}
+	c.still("nothing changed")
+	return c
+}
+
+func (c *fingerprintCheck) moved(what string) {
+	c.t.Helper()
+	got := c.fingerprint(context.Background())
+	if got == c.last {
+		c.t.Fatal("fingerprint did not move:", what)
+	}
+	c.last = got
+}
+
+func (c *fingerprintCheck) still(what string) {
+	c.t.Helper()
+	if got := c.fingerprint(context.Background()); got != c.last {
+		c.t.Fatal("fingerprint moved:", what)
+	}
+}
+
+// The registry is read as rows: another process's registry write moves the
+// fingerprint, and other application database writes, such as job progress,
+// do not.
+func TestFingerprintFollowsRegistryRowsOnly(t *testing.T) {
+	ctx := context.Background()
+	private := filepath.Join(t.TempDir(), "private")
+	if err := privatefs.MkdirAll(private); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(private, "app.sqlite")
+	daemon, err := repos.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = daemon.Close() }()
+	check := fingerprints(t, Fingerprint(daemon.RepositoryRows, nil))
+	other, err := repos.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = other.Close() }()
+	if _, err := other.Pick(ctx, "acme/a", nil); err != nil {
+		t.Fatal(err)
+	}
+	check.moved("repository picked elsewhere")
+	if err := appdb.Write(path, "state", "jobs", []byte(`{"jobs":[]}`)); err != nil {
+		t.Fatal(err)
+	}
+	check.still("job state written")
+	off := false
+	if err := other.UpdateRepository(ctx, "acme/a", repos.Settings{Automatic: &off}); err != nil {
+		t.Fatal(err)
+	}
+	check.moved("settings changed elsewhere")
+}
+
+func TestCacheRecoversBuildPanic(t *testing.T) {
+	calls := 0
+	c := testCache(func(context.Context, time.Time) (Snapshot, time.Time, error) {
+		calls++
+		if calls == 1 {
+			panic("boom")
+		}
+		return snap(1), time.Time{}, nil
+	}, (&clock{now: time.Unix(1000, 0)}).Now)
+	if _, err := c.Snapshot(context.Background()); err == nil || !strings.Contains(err.Error(), "boom") {
+		t.Fatal(err)
+	}
+	if got, err := c.Snapshot(context.Background()); err != nil || got.Waiting != 1 {
+		t.Fatal(got, err)
+	}
+}
+
+// A new cache, as after a daemon restart, shows a review written while no
+// cache was running on its first read.
+func TestCacheReopenedSeesReviewWrittenMeanwhile(t *testing.T) {
+	ctx := context.Background()
+	common := t.TempDir()
+	s, err := store.Open(common, "", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	service := &Service{
+		Registry:  registry{{ID: "c", Repository: "acme/a", CommonDir: common, Available: true}},
+		Discovery: source{"acme/a": {PullRequests: []discovery.PullRequest{{Number: 1, HeadSHA: "head", State: "OPEN"}}, NextPoll: time.Now().Add(time.Hour)}},
+	}
+	before, err := NewCache(ctx, service).Snapshot(ctx)
+	if err != nil || len(before.Entries) != 1 || before.Entries[0].Status != "no_review" {
+		t.Fatalf("%+v %v", before, err)
+	}
+	doc := []byte(`{"review":{"repository":"acme/a","pull_request":1,"version":1}}`)
+	if err := s.Put(ctx, store.Key{Repository: "acme/a", Number: 1}, store.Version{}, store.Version{Metadata: store.Metadata{Version: 1, Head: "head", Backend: "claude", Model: "model", GeneratedAt: "2026-10-15T12:00:00Z"}, Document: doc}); err != nil {
+		t.Fatal(err)
+	}
+	after, err := NewCache(ctx, service).Snapshot(ctx)
+	if err != nil || len(after.Entries) != 1 || after.Entries[0].Status != "current" {
+		t.Fatalf("%+v %v", after, err)
+	}
 }
 
 // Requests filter their own copy: the shared snapshot keeps historical rows.
