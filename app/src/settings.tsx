@@ -1819,7 +1819,8 @@ export function RepositoriesPage({
   /** Whether the first read of the repositories is still running. */
   loading?: boolean;
   automatic: Automatic | null;
-  changed: () => Promise<void>;
+  /** Reads everything again; a refresh pressed again restarts the read. */
+  changed: (how?: { restart?: boolean }) => Promise<void>;
 }) {
   const [adding, setAdding] = useState(false);
   const [error, setError] = useState("");
@@ -1862,7 +1863,7 @@ export function RepositoriesPage({
             <Button size="compact" onClick={() => setAdding(!adding)}>
               {adding ? "Done" : "Add repositories"}
             </Button>
-            <RefreshButton refresh={changed} />
+            <RefreshButton refresh={(run) => changed({ restart: run.restart })} />
           </>
         }
       />
