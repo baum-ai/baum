@@ -168,30 +168,30 @@ func Fingerprint(rows func(context.Context) ([]repos.Repository, error), identit
 			info, err := os.Stat(path)
 			switch {
 			case err != nil:
-				fmt.Fprintf(h, "%q -\n", path)
+				_, _ = fmt.Fprintf(h, "%q -\n", path)
 			case times:
-				fmt.Fprintf(h, "%q %d %d %v\n", path, info.Size(), info.ModTime().UnixNano(), info.Mode())
+				_, _ = fmt.Fprintf(h, "%q %d %d %v\n", path, info.Size(), info.ModTime().UnixNano(), info.Mode())
 			default:
-				fmt.Fprintf(h, "%q %v\n", path, info.Mode().Type())
+				_, _ = fmt.Fprintf(h, "%q %v\n", path, info.Mode().Type())
 			}
 		}
 		if identity != nil {
-			fmt.Fprintf(h, "identity %q\n", identity())
+			_, _ = fmt.Fprintf(h, "identity %q\n", identity())
 		}
 		picked, err := rows(ctx)
 		if err != nil {
-			fmt.Fprintf(h, "registry: %v\n", err)
+			_, _ = fmt.Fprintf(h, "registry: %v\n", err)
 		}
 		for _, repository := range picked {
 			raw, _ := json.Marshal(repository)
-			fmt.Fprintf(h, "%s\n", raw)
+			_, _ = fmt.Fprintf(h, "%s\n", raw)
 			for _, clone := range repository.Clones {
 				stat(clone.Path, false)
 				stat(filepath.Join(clone.Path, ".git"), false)
 				stat(filepath.Join(clone.CommonDir, "config"), true)
 				roots, err := store.Roots(clone.CommonDir)
 				if err != nil {
-					fmt.Fprintf(h, "%q roots: %v\n", clone.CommonDir, err)
+					_, _ = fmt.Fprintf(h, "%q roots: %v\n", clone.CommonDir, err)
 					continue
 				}
 				for _, root := range roots {

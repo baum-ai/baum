@@ -172,7 +172,7 @@ func immediate(ctx context.Context, db *sql.DB, fn func(*sql.Conn) error) error 
 	if err != nil {
 		return err
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 	if _, err = conn.ExecContext(ctx, `BEGIN IMMEDIATE`); err != nil {
 		return err
 	}
