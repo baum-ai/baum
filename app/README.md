@@ -185,12 +185,24 @@ clears `walk`; the retired `walk=full` also opens the full review.
 Up next's list shows a review group or stack (`api/groups`) with a shown member
 as one row, in the section and at the place of its first member in the list
 (`withGroups` in `src/up-next.tsx`); its members leave their own rows and nest
-under it when it is opened (its chevron, `l`/`→`; `h`/`←` closes it from the
-group or a member). Each member names its kind, since it may belong to another
-section. A stack's members stay out of **Merge all**, as a stack merges from its
-base up. The group's panel shows its review's state and risk, its members'
-lines, files and review times summed, **Open the stack** (or group) as the
-default, and its members with what each waits on; picking one previews it.
+under it when it is opened (its chevron, or `Space`, which opens or closes it
+from the group and closes it from a member, back on the group). Each member says what it waits on, since it may belong to another
+section: what needs fixing ("Checks failing · Conflicts", "2 unresolved
+threads", "Changes requested"), "Ready to merge", or else its kind. A stack's
+member whose base branch is another open member's head (`stackBases`) is not
+ready to merge, whatever GitHub's merge state, while an open member lies under
+it: it waits, as "Waiting on #N", on the lowest of them, which merges first,
+and stays out of Ready to merge and Merge all. A stack's members stay out of **Merge all**, as a stack merges from its
+base up. The group's panel is laid out as a pull request's: the branch it
+merges into ("Stacked on main"), its members' lines, files and review times
+summed, a line when its review is missing or outdated, **Open the stack** (or group) as the default, the
+same risk card with the group review's main reason, What changed from the group
+review (`api/groups/<id>/document`: its summary and sections), and its members.
+Their list opens and closes from its head, which counts them ("7 pull
+requests") and those merged; it starts open. A stack's members run from its
+base up, joined by a line, each with a dot and what it waits on ("#963 · Ready
+to merge"); picking one the queue lists previews it, and the others (merged,
+closed, or needing nothing now) are shown as read.
 
 Under its title the panel shows the pull request's facts: its head branch and
 the base it merges into (`head_ref`, `base_ref`), its lines and files changed
@@ -221,19 +233,25 @@ link to the rest on GitHub. A thread the signed-in account may resolve
 once, without a dialog, reads **Resolving…** meanwhile, and removes the thread
 from the list once GitHub confirms; a refusal is shown under the thread.
 
-The checks (`PullRequestChecks` in `src/checks.tsx`) are asked for with `GET
+The checks (`useChecks` and `PullRequestChecks` in `src/checks.tsx`) are asked
+for by their row as soon as the panel shows it, open or not, with `GET
 api/prs/checks` and the head commit the panel shows (`head_sha`), again when
 that head changes and every 20 seconds while any still runs; an older daemon's
 `api/prs/failing-checks` lists only the failing ones. They are listed failing
 first, then running, then passed, then skipped or neutral, each with its state
-icon, its name, its state in words (`conclusionText`), its title when it has one
-and a **Details** link (`url`), above a count by state. A failing check with a
+icon, its name (a GitHub Actions job's after its workflow, as GitHub lists it:
+"Web CI / check"; the daemon reads the commit's workflow runs for it), its state in words (`conclusionText`), its title when it has one
+and a **Details** link (`url`). While any check fails, only the failing ones
+(and any retried from the list) show, the rest behind **Show N other checks**,
+which **Hide other checks** folds again; with none failing every check shows.
+The row's title carries a pill counting them out of them all (`checksCount`):
+red "1/9 failing" while any fails, else amber "2/9 running" while any runs,
+else green "9/9 passing", with the count by state (`checksSummary`) as its
+tooltip. A failing check with a
 `job_id` has **Retry** when discovery says the account can push
 (`viewer_can_push`): it posts `api/prs/rerun-job` at once, reads **Retrying…**,
-then shows "Re-running on GitHub"; a refusal is shown under the check. When a
-fix's pull request offers one, the Checks failing row has **Fix CI**, which
-starts at once a fix of the failing checks alone (`startFix(clone, pr,
-"checks")`, `"only":"checks"` on the item).
+then shows "Re-running on GitHub"; a refusal is shown under the check. The
+Checks failing row has no fix of its own: the panel's fix covers the checks.
 
 The conflicting files (`ConflictingFiles` in `src/conflicts.tsx`) are asked for
 with `GET api/prs/conflicts`. The daemon fetches the base branch's tip (and the
@@ -534,13 +552,21 @@ the agent sessions, and, with a daemon that has inboxes, each inbox by its name
 query ranks first, `↑` and `↓` move, `Enter` opens and `Esc` closes. The sidebar
 draws each page's key while Alt is held and names it in the link's tooltip and
 `aria-keyshortcuts`. Tab moves nothing anywhere, dialogs included: the keys act
-on the selection, and a place that needs more gets its own keys. `Esc` gives up
-any focus a click left on a control.
+on the selection, and a place that needs more gets its own keys. A link or
+button clicked with the pointer gives up its focus once clicked, so a later key
+never rings it (a sidebar link, a panel button); list rows, tabs, menus,
+dialogs and Settings keep it, since there the focus is where their keys act.
+`Esc` gives up any focus left on a control. On a pull request, a group, a job's
+transcript or a session, `Esc` and `u` go back to the page it was opened from
+(the Inbox, an inbox, Pull requests, a group), past moves within it (a
+walkthrough step, the Ask panel): each history entry the app adds records its
+place and the entry it was opened from (`writeHistory`, `backToOpener`). A window
+opened on the page itself goes to its list.
 
 On Pull requests, `j`/`↓` and `k`/`↑` move a row focus through the
 rows as drawn (group rows count; rows of collapsed buckets and collapsed groups
 are skipped), `Enter` or `o` opens the focused pull request or group, `x` toggles
-its selection, `Space` opens or closes its peek, `m` opens Merge and `f` starts the fix where the row offers them (Merge wins
+its selection, `Space` opens or closes its peek (on a group's row, shows or hides its pull requests), `m` opens Merge and `f` starts the fix where the row offers them (Merge wins
 where both could), `g` generates the pull request's review through the same path
 as the PR page's Generate (so the same confirmations and the instant "Starting"
 state), `t` opens its fix transcript, `r` refreshes from GitHub at once rather than after the polling backoff,
