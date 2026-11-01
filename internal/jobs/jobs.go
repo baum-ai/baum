@@ -26,6 +26,7 @@ import (
 	"github.com/baum-ai/baum/internal/generate"
 	"github.com/baum-ai/baum/internal/privatefs"
 	"github.com/baum-ai/baum/internal/repos"
+	"github.com/baum-ai/baum/internal/reviewgroups"
 )
 
 type Item struct {
@@ -46,8 +47,8 @@ type Item struct {
 	// failing checks and leaves conflicts and review comments alone.
 	Only string `json:"only,omitempty"`
 	// AwaitMembers, set by Generate on a group the person asked for, lets
-	// preparation accept members without a saved review: their reviews are
-	// queued ahead of the group's (Prepared.Awaiting).
+	// preparation accept members without a saved review of their current
+	// head: their reviews are queued with the group's (Prepared.Awaiting).
 	AwaitMembers bool `json:"-"`
 }
 
@@ -171,8 +172,9 @@ type Prepared struct {
 	// confirmation covers like a pull request's head.
 	GroupName string `json:"group_name,omitempty"`
 	Members   string `json:"members,omitempty"`
-	// Awaiting are the members a group job found without a saved review
-	// (only with Item.AwaitMembers): their reviews were queued ahead of it.
+	// Awaiting are the members a group job found without a saved review of
+	// their current head (only with Item.AwaitMembers): their reviews were
+	// queued with it.
 	Awaiting []int `json:"awaiting,omitempty"`
 	// RefuseDraft is set by the queue, never stored, on the inputs of an
 	// automatic job it executes: the executor refuses the run with
@@ -189,6 +191,12 @@ type Prepared struct {
 	FixThreadsUntrusted int         `json:"fix_threads_untrusted,omitempty"`
 	// Chat is what a chat job (KindChat) answers.
 	Chat ChatInputs `json:"chat,omitzero"`
+	// account identifies the GitHub credential partition the job was
+	// prepared with, apart from the rest of ConfigDigest, so a changed agent,
+	// model or limit does not stop a queued run but a changed account does.
+	// It stays in memory: neither the journal nor the API carries it, and a
+	// job read back from the journal compares ConfigDigest whole.
+	account string
 }
 
 // sameConfirmedInputs reports whether two confirmations authorize the same
@@ -239,8 +247,11 @@ type Job struct {
 	ThreadOutcomes []fix.ThreadOutcome `json:"thread_outcomes,omitempty"`
 	// HasTranscript says a fix kept a transcript of its agent's run, which
 	// GET /api/jobs/{id}/transcript serves.
-	HasTranscript bool      `json:"has_transcript,omitempty"`
-	CreatedAt     time.Time `json:"created_at"`
+	HasTranscript bool `json:"has_transcript,omitempty"`
+	// Requeued counts the times a group job went back to waiting because a
+	// member's head moved (maxGroupRequeues).
+	Requeued  int       `json:"requeued,omitempty"`
+	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt     time.Time `json:"updated_at"`
 }
 type Progress struct {
@@ -589,9 +600,8 @@ var ErrIsolationRequired = errors.New("isolation confirmation required")
 // reason.
 //
 // A group's review builds on each member's own: members without a saved
-// review have theirs queued ahead of the group's job. The queue starts jobs
-// in order and never runs two that share a pull request, so the group's job
-// starts after them, whatever the person does meanwhile.
+// review of their current head have theirs queued with the group's job,
+// which waits for them (membersBusy), whatever the person does meanwhile.
 func (q *Queue) Generate(ctx context.Context, items []Item, mode string, isolation bool) ([]Job, error) {
 	if mode == "single" && len(items) == 1 && items[0].Group != "" && items[0].Kind == "" {
 		items = []Item{items[0]}
@@ -614,7 +624,7 @@ func (q *Queue) Generate(ctx context.Context, items []Item, mode string, isolati
 	if group := e.Items[0]; len(group.Awaiting) > 0 {
 		// The group's isolation covers its members: confirmed for it, it is
 		// confirmed for their reviews.
-		if err := q.reviewMembers(ctx, group, isolation); err != nil {
+		if err := q.reviewMembers(ctx, group, false, isolation); err != nil {
 			q.forget(e.ID)
 			return nil, err
 		}
@@ -623,8 +633,9 @@ func (q *Queue) Generate(ctx context.Context, items []Item, mode string, isolati
 }
 
 // reviewMembers queues the reviews a group job awaits, except those of
-// members already queued or running.
-func (q *Queue) reviewMembers(ctx context.Context, group Prepared, isolation bool) error {
+// members already queued or running. An automatic group's are automatic
+// reviews of the members' new heads.
+func (q *Queue) reviewMembers(ctx context.Context, group Prepared, automatic, isolation bool) error {
 	q.mu.Lock()
 	items := []Item{}
 	for _, number := range group.Awaiting {
@@ -636,6 +647,22 @@ func (q *Queue) reviewMembers(ctx context.Context, group Prepared, isolation boo
 	if len(items) == 0 {
 		return nil
 	}
+	if automatic {
+		members, _ := groupMembers(group.Members)
+		for _, item := range items {
+			for _, m := range members {
+				if m.Number != item.PR {
+					continue
+				}
+				// Busy or already run for this head: nothing more to queue.
+				_, err := q.SubmitAutomatic(ctx, AutomaticRequest{Item: item, Repository: group.Repository, Head: m.Head, Trigger: TriggerNewHead})
+				if err != nil && !errors.Is(err, ErrBusy) && !errors.Is(err, ErrDuplicate) {
+					return err
+				}
+			}
+		}
+		return nil
+	}
 	e, err := q.estimate(ctx, items, "batch", isolation)
 	if err != nil {
 		return err
@@ -643,6 +670,115 @@ func (q *Queue) reviewMembers(ctx context.Context, group Prepared, isolation boo
 	_, err = q.SubmitConfirmed(ctx, e.ID, Confirmation{Estimate: true, Isolation: isolation})
 	return err
 }
+
+// membersBusy reports whether a group's review waits for one of its
+// members: a review or a fix of it queued or running. A fix may push, and
+// the group's review reads each member's review of its current head. mu is
+// held.
+func (q *Queue) membersBusy(j Job) bool {
+	if j.Group == "" || j.Kind != "" {
+		return false
+	}
+	members, _ := groupMembers(j.Members)
+	for _, r := range q.jobs {
+		if r.Group == "" && r.Kind != KindChat && (r.State == "queued" || r.State == "running") && strings.EqualFold(r.Repository, j.Repository) && slices.ContainsFunc(members, func(m generate.GroupMember) bool { return m.Number == r.PR }) {
+			return true
+		}
+	}
+	return false
+}
+
+// maxGroupRequeues bounds how often a group job waits again for moved
+// members before it fails like any changed input.
+const maxGroupRequeues = 5
+
+// requeueGroup puts a group job whose member heads moved back to waiting,
+// at the new heads: the members without a review of their new head have one
+// queued first. It reports whether it did; otherwise the job fails, with
+// the returned error when there is one (a group removed meanwhile). GitHub
+// can lag a push by seconds, so a view without the move is read again a few
+// times.
+//
+// Only the heads may differ: the same members, the same GitHub account and,
+// for a person's group, the same isolation confirmation, so the person's
+// confirmation still covers the job.
+func (q *Queue) requeueGroup(ctx context.Context, j Job) (bool, error) {
+	if j.Requeued >= maxGroupRequeues {
+		return false, nil
+	}
+	item := j.Item
+	item.AwaitMembers = true
+	var p Prepared
+	for attempt := 0; ; attempt++ {
+		var err error
+		if p, _, err = q.executor.Prepare(ctx, item); err != nil {
+			return false, err
+		}
+		if p.Members != j.Members {
+			break
+		}
+		if attempt == 3 {
+			return false, nil
+		}
+		select {
+		case <-ctx.Done():
+			return false, nil
+		case <-time.After(groupRequeueWait):
+		}
+	}
+	sameAccount := p.ConfigDigest == j.ConfigDigest || (j.account != "" && p.account == j.account)
+	if !sameAccount || !sameMembers(p.Members, j.Members) {
+		return false, nil
+	}
+	// An automatic group never needs a confirmation, and a person's covered
+	// these pull requests.
+	if p.RequiresIsolationConfirmation && (j.Automatic || !j.RequiresIsolationConfirmation) {
+		return false, nil
+	}
+	if q.reviewMembers(ctx, p, j.Automatic, p.RequiresIsolationConfirmation) != nil {
+		return false, nil
+	}
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	// A person's cancel only cancels the run's context: it must stay final.
+	if ctx.Err() != nil {
+		return false, nil
+	}
+	for i := range q.jobs {
+		if q.jobs[i].ID != j.ID || q.jobs[i].State != "running" {
+			continue
+		}
+		old := q.jobs[i]
+		current := &q.jobs[i]
+		current.Prepared = p
+		current.State, current.Phase = "queued", "queued"
+		current.Requeued++
+		current.UpdatedAt = time.Now().UTC()
+		if q.save() != nil {
+			q.jobs[i] = old
+			return false, nil
+		}
+		return true, nil
+	}
+	return false, nil
+}
+
+// sameMembers reports whether two encodings of group member heads name the
+// same pull requests, whatever their heads.
+func sameMembers(a, b string) bool {
+	numbers := func(encoded string) []int {
+		members, _ := groupMembers(encoded)
+		out := make([]int, len(members))
+		for i, m := range members {
+			out[i] = m.Number
+		}
+		return out
+	}
+	return slices.Equal(numbers(a), numbers(b))
+}
+
+// groupRequeueWait is how long requeueGroup waits for GitHub to show a move.
+var groupRequeueWait = 10 * time.Second
 
 // reviewPending reports whether a pull request's own review is queued or
 // running in a clone. Only one in the group's clone counts: each clone has
@@ -822,7 +958,7 @@ func (q *Queue) worker(chat bool) {
 				for n, j := range q.jobs {
 					// Without a gate an automatic job waits: the daemon installs it
 					// right after Open, and a journaled job must not start first.
-					if j.State == "queued" && (j.Kind == KindChat) == chat && (!j.Automatic || q.gate != nil) && (chat || !q.pullRunning(j)) {
+					if j.State == "queued" && (j.Kind == KindChat) == chat && (!j.Automatic || q.gate != nil) && (chat || (!q.pullRunning(j) && !q.membersBusy(j))) {
 						i = n
 						break
 					}
@@ -890,6 +1026,23 @@ func (q *Queue) worker(chat bool) {
 				q.mu.Unlock()
 				q.notify(current)
 			})
+			// A member's head moved: the group waits for it instead of failing.
+			if err != nil && errors.Is(err, ErrHeadChanged) && j.Group != "" && j.Kind == "" && ctx.Err() == nil {
+				requeued, cause := q.requeueGroup(ctx, j)
+				if requeued {
+					q.mu.Lock()
+					cancel()
+					delete(q.cancels, j.ID)
+					result := q.jobs[i]
+					q.mu.Unlock()
+					q.notify(result)
+					q.signal()
+					continue
+				}
+				if cause != nil {
+					err = cause
+				}
+			}
 			q.mu.Lock()
 			current := &q.jobs[i]
 			current.ActualCostUSD = cost
@@ -921,6 +1074,20 @@ func (q *Queue) worker(chat bool) {
 				if len(current.Detail) > 500 {
 					current.Detail = strings.ToValidUTF8(current.Detail[:500], "") + "…"
 				}
+			case err != nil && current.Group != "" && errors.Is(err, reviewgroups.ErrNotFound):
+				// The group was deleted, or its stack dissolved, while it
+				// waited: there is nothing left to review.
+				current.State = "cancelled"
+				current.Reason = ReasonGroupRemoved
+			case err != nil && current.Group != "" && errors.Is(err, ErrHeadChanged):
+				// Its members kept moving, or changed, while it waited.
+				current.State = "failed"
+				current.Reason = ReasonMembersChanged
+			case err != nil && current.Automatic && current.Group == "" && errors.Is(err, ErrHeadChanged):
+				// A push (often a fix) moved the head while it waited: the
+				// new head has its own automatic run, so this is not news.
+				current.State = "cancelled"
+				current.Reason = "superseded"
 			case err != nil && current.Automatic && errors.As(err, &refused):
 				// The recheck found what automatic generation skips (a PR
 				// turned draft) before any model call.

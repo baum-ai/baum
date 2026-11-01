@@ -258,6 +258,9 @@ const jobReasons: Record<string, string> = {
   // A job an older baum stopped for its daily spending cap, which is gone.
   daily_cap: "It stopped before it started.",
   draft: "The pull request became a draft.",
+  members_changed:
+    "The pull requests in the group kept changing while its review waited. Generate it again.",
+  group_removed: "The review group was deleted, or its stack dissolved, before its review ran.",
   members_need_reviews:
     "A pull request's own review failed or was cancelled, and the group review builds on it. Generate it again to retry.",
   fork: "The pull request's branch is in a fork, which baum never pushes to.",

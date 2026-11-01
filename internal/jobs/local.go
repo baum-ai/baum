@@ -144,8 +144,14 @@ func (l *Local) Prepare(ctx context.Context, item Item) (Prepared, string, error
 	}{cfg.Budgets, cfg.Caps, selected.Version, reader.CacheIdentity()})
 	digest := sha256.Sum256(fingerprint)
 	list := pricing.Active()
-	p := Prepared{MaxTokens: cfg.Budgets.MaxTokens, MaxCalls: cfg.Budgets.MaxCalls, ConfigDigest: hex.EncodeToString(digest[:]), PriceVersion: list.Version(), Item: item, Repository: c.Repository, HeadSHA: pr.Head, Backend: selected.Backend.Name(), Model: selected.Model, RequiresIsolationConfirmation: pr.Untrusted, Draft: pr.Draft, GroupName: group.name, Members: group.members, Awaiting: group.awaiting}
+	p := Prepared{account: accountOf(reader), MaxTokens: cfg.Budgets.MaxTokens, MaxCalls: cfg.Budgets.MaxCalls, ConfigDigest: hex.EncodeToString(digest[:]), PriceVersion: list.Version(), Item: item, Repository: c.Repository, HeadSHA: pr.Head, Backend: selected.Backend.Name(), Model: selected.Model, RequiresIsolationConfirmation: pr.Untrusted, Draft: pr.Draft, GroupName: group.name, Members: group.members, Awaiting: group.awaiting}
 	return p, list.Version(), nil
+}
+
+// accountOf identifies the reader's credential partition for Prepared.account.
+func accountOf(reader *github.RESTReader) string {
+	sum := sha256.Sum256([]byte("account:" + reader.CacheIdentity()))
+	return hex.EncodeToString(sum[:])
 }
 
 // pull is what preparation reads of a pull request from GitHub.
@@ -194,14 +200,21 @@ func readPull(ctx context.Context, reader *github.RESTReader, repository github.
 // job runs, and is priced, with whichever list is active when it runs. An
 // automatic job (RefuseDraft) whose pull request is a draft now is refused
 // with ReasonDraft; a confirmed run of a draft is not.
+//
+// A changed agent, model or limit is not a changed input: the run uses the
+// current settings, as one started now would. The GitHub account is one.
 func (l *Local) confirmed(ctx context.Context, p Prepared) error {
 	current, _, e := l.Prepare(ctx, p.Item)
 	if e != nil {
 		return e
 	}
-	if current.ConfigDigest != p.ConfigDigest || current.HeadSHA != p.HeadSHA || current.Members != p.Members || current.Backend != p.Backend || current.Model != p.Model || current.RequiresIsolationConfirmation != p.RequiresIsolationConfirmation {
+	sameAccount := current.ConfigDigest == p.ConfigDigest || (p.account != "" && current.account == p.account)
+	if !sameAccount || current.HeadSHA != p.HeadSHA || current.Members != p.Members || current.RequiresIsolationConfirmation != p.RequiresIsolationConfirmation {
 		if p.Kind == KindFix && current.HeadSHA != p.HeadSHA {
 			return &fix.Error{Reason: fix.ReasonHeadChanged, Err: errors.New("the pull request's head changed since the fix was started")}
+		}
+		if sameAccount && (current.HeadSHA != p.HeadSHA || current.Members != p.Members) {
+			return fmt.Errorf("generation inputs changed: %w", ErrHeadChanged)
 		}
 		return errors.New("generation inputs changed")
 	}
@@ -295,7 +308,7 @@ func (l *Local) Execute(ctx context.Context, p Prepared, progress func(Progress)
 	if backends.Claude == nil {
 		backends = generate.DefaultBackendsFor(cfg)
 	}
-	selected, e := generate.Select(ctx, config.Backend(p.Backend), p.Model, backends, io.Discard)
+	selected, e := generate.Select(ctx, cfg.Backend, cfg.Model, backends, io.Discard)
 	if e != nil {
 		return nil, e
 	}
@@ -321,20 +334,20 @@ func (l *Local) Execute(ctx context.Context, p Prepared, progress func(Progress)
 		key.Number = group.Members[0].Number
 	}
 	progress(Progress{Phase: "assembling"})
-	result, e := l.publish(ctx, published, versions, key, p.Backend, generate.Options{Group: group, PriceList: list, Assembler: guarded, Request: assemble.Request{Repository: repository, Number: key.Number, Limits: assemble.LimitsFrom(caps)}, Backend: backend, BackendVersion: selected.Version, Model: p.Model, Budgets: agent.Budgets{WallClock: time.Duration(cfg.Budgets.ReviewTimeout), MaxCalls: cfg.Budgets.MaxCalls, MaxTokens: cfg.Budgets.MaxTokens, MaxProviderAttempts: 3, MaxRepairAttempts: 2}, OnValidation: func(pass int, valid bool) {
+	result, e := l.publish(ctx, published, versions, key, selected.Backend.Name(), generate.Options{Group: group, PriceList: list, Assembler: guarded, Request: assemble.Request{Repository: repository, Number: key.Number, Limits: assemble.LimitsFrom(caps)}, Backend: backend, BackendVersion: selected.Version, Model: selected.Model, Budgets: agent.Budgets{WallClock: time.Duration(cfg.Budgets.ReviewTimeout), MaxCalls: cfg.Budgets.MaxCalls, MaxTokens: cfg.Budgets.MaxTokens, MaxProviderAttempts: 3, MaxRepairAttempts: 2}, OnValidation: func(pass int, valid bool) {
 		backend.repairs = pass - 1
 		if !valid {
 			backend.repairs = pass
 		}
 		backend.report("validating")
 	}, PassTimeout: max(time.Duration(cfg.Budgets.PassTimeout), time.Duration(cfg.Budgets.ReviewTimeout))}, func(r generate.Result) *float64 {
-		return list.BackendOutcomeCost(p.Backend, r.Outcome.Model, r.Outcome)
+		return list.BackendOutcomeCost(selected.Backend.Name(), r.Outcome.Model, r.Outcome)
 	})
 	backend.repairs = result.Outcome.ValidationRepairs
 	backend.accounting = result.Outcome.Accounting.Clone()
 	backend.redacted = true
 	backend.report("publishing")
-	return list.BackendOutcomeCost(p.Backend, result.Outcome.Model, result.Outcome), e
+	return list.BackendOutcomeCost(selected.Backend.Name(), result.Outcome.Model, result.Outcome), e
 }
 
 // publish generates and stores a review. A single pull request reviewed by a
@@ -400,7 +413,7 @@ type headAssembler struct {
 func (a headAssembler) Assemble(ctx context.Context, r assemble.Request) (assemble.Result, error) {
 	result, e := a.Assembler.Assemble(ctx, r)
 	if e == nil && result.Head != a.head {
-		return assemble.Result{}, errors.New("pull request head changed; start it again")
+		return assemble.Result{}, fmt.Errorf("%w; start it again", ErrHeadChanged)
 	}
 	return result, e
 }
