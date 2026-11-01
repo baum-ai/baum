@@ -5978,3 +5978,5 @@ kbd.key-hint {
 .local-feed-card.compact .row-menu-button {
   margin-left: auto;
 }
+
+body { --hot-reload-probe: ready; }

@@ -303,6 +303,8 @@ pub struct Hooks {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AgentHooks {
+    #[serde(default)]
+    trust: Option<HookTrust>,
     agent: String,
     name: String,
     #[serde(default)]
@@ -316,6 +318,11 @@ pub struct AgentHooks {
     version: Option<String>,
     #[serde(default)]
     error: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HookTrust {
+    state: String,
 }
 
 /// What a change printed, for the setup screen.
@@ -1093,6 +1100,14 @@ mod tests {
             crate::navigation::Decision::Allow
         );
         assert!(url.path().ends_with("/setup.html"));
+    }
+
+    #[test]
+    fn preserves_codex_hook_trust_status() {
+        let hooks: Hooks = last_json(&[
+            r#"{"agents":[{"agent":"codex","name":"Codex","detected":true,"plugin":"baum@baum","installed":true,"enabled":true,"trust":{"state":"untrusted"}}]}"#.into()
+        ]).unwrap();
+        assert_eq!(hooks.agents[0].trust.as_ref().unwrap().state, "untrusted");
     }
 
     #[test]

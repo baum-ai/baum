@@ -52,6 +52,7 @@ import { GoTo, type GoToItem } from "./go-to";
 import { PAGES, type Page } from "./pages";
 import { LocalReview } from "./review";
 import { DecisionsRevision } from "./decisions";
+import { useCodexHookTrust } from "./codex-hooks";
 import { useDiagnosticProblems } from "./diagnostics";
 import { RepositoriesPage, SettingsPage, settingsSection, type ReviewDefaults } from "./settings";
 import { asksYou, SessionsPage, transcriptHref } from "./sessions";
@@ -523,6 +524,7 @@ function Workspace({ url }: { url: UrlState }) {
   // The pages that show the diagnostics run them themselves.
   // The diagnostics dialog runs them itself while it is open.
   const diagnostics = useDiagnosticProblems(page !== "diagnostics");
+  const codexTrust = useCodexHookTrust();
   const reviewTogether = () => {
     const chosen = snapshot.entries.filter((e) => selection.has(rowKey(e)));
     if (
@@ -891,6 +893,7 @@ function Workspace({ url }: { url: UrlState }) {
         runningSessions={live.filter((s) => s.state === "running").length}
         needsYou={asksYou(live).length}
         problems={diagnostics.problems}
+        settingsWarning={codexTrust.warning}
         Link={LocalLink}
       />
       <div className="local-frame">
@@ -964,6 +967,7 @@ function Workspace({ url }: { url: UrlState }) {
                 })
               }
               onDiagnostics={diagnostics.update}
+              codexTrust={codexTrust}
             />
           ) : page === "sessions" && openSession ? (
             <SessionTranscriptPage
@@ -1166,7 +1170,7 @@ function Workspace({ url }: { url: UrlState }) {
           ) : (
             <>
               <PageBar
-                title="Pull requests"
+                title="Hot reload works"
                 actions={
                   <>
                     <UpdatedAgo at={updatedAt} busy={loading || refreshing > 0} />

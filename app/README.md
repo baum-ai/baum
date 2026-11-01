@@ -1518,3 +1518,19 @@ later text follows it. Neither operation sends the draft to GitHub.
 Sidebar folding and viewer panel/tab layout remain presentation preferences
 in browser storage. Durable inbox records and review drafts do not use or
 import legacy localStorage values.
+
+
+Codex hook readiness is separate from plugin installation. Onboarding and
+Settings show Connected only after Codex reports all baum hook definitions
+enabled and trusted. Untrusted or changed hooks show Needs approval in Codex
+with `/hooks` instructions; disabled, missing and unverified hooks have
+distinct states. Setup may still be finished with an unfinished connection.
+
+The bottom Settings link has a caution badge and an accessible description
+while Codex session reporting needs attention. Opening Settings shows the
+reason and Check again. The app reads `GET api/agent-hooks/codex` once on load,
+on window focus, after native Settings actions and every minute while visible.
+The warning clears after a successful ready result; a failed request retains
+the previous warning. Older daemons without this endpoint show no new global
+badge. Onboarding rechecks on focus or Check again. Checking never trusts a
+hook, restarts Codex or starts a conversation.

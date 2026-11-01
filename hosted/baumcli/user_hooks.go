@@ -65,14 +65,15 @@ Without --agent, uses ` + defaults + `.`, Args: cobra.NoArgs,
 }
 
 type userHooksStatus struct {
-	Agent     string `json:"agent"`
-	Name      string `json:"name"`
-	Detected  bool   `json:"detected"`
-	Plugin    string `json:"plugin"`
-	Installed bool   `json:"installed"`
-	Enabled   bool   `json:"enabled"`
-	Version   string `json:"version,omitempty"`
-	Error     string `json:"error,omitempty"`
+	Agent     string                  `json:"agent"`
+	Name      string                  `json:"name"`
+	Detected  bool                    `json:"detected"`
+	Plugin    string                  `json:"plugin"`
+	Installed bool                    `json:"installed"`
+	Enabled   bool                    `json:"enabled"`
+	Version   string                  `json:"version,omitempty"`
+	Error     string                  `json:"error,omitempty"`
+	Trust     *agentplugins.HookTrust `json:"trust,omitempty"`
 }
 
 func newUserHooksStatusCommand(stdout io.Writer) *cobra.Command {
@@ -101,6 +102,9 @@ agent: inspect its hooks UI. This does not edit hook settings.`, Args: cobra.NoA
 					state = "installed, disabled"
 				case s.Installed:
 					state = "installed, enabled (review hook trust in agent)"
+					if s.Trust != nil {
+						state = "installed, enabled (hooks: " + s.Trust.State + ")"
+					}
 				}
 				_, _ = fmt.Fprintf(stdout, "%s: %s %s\n", s.Name, s.Plugin, state)
 			}
@@ -127,6 +131,10 @@ func userHooksStatuses(ctx context.Context) []userHooksStatus {
 				s.Installed = status.Installed
 				s.Enabled = status.Enabled
 				s.Version = status.Version
+				if agent == "codex" && status.Installed && status.Enabled {
+					trust := client.HookTrust(ctx, nil)
+					s.Trust = &trust
+				}
 			}
 		}
 		statuses = append(statuses, s)

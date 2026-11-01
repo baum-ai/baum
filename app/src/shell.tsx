@@ -68,6 +68,7 @@ export function Sidebar({
   runningSessions,
   needsYou,
   problems,
+  settingsWarning,
   inboxes,
   Link,
 }: {
@@ -80,6 +81,7 @@ export function Sidebar({
    *  in the caution tone, while there are any. */
   needsYou: number;
   problems: number;
+  settingsWarning?: string | null;
   inboxes?: RailInboxes;
   Link: ComponentType<ViewerLinkProps>;
 }) {
@@ -92,7 +94,10 @@ export function Sidebar({
       tone: needsYou > 0 ? "caution" : undefined,
     },
     jobs: { badge: activeJobs > 0 ? activeJobs : null },
-    settings: { badge: problems > 0 ? problems : null, tone: "warn" },
+    settings: {
+      badge: problems > 0 ? problems + (settingsWarning ? 1 : 0) : settingsWarning ? "!" : null,
+      tone: problems > 0 ? "warn" : "caution",
+    },
   };
   const link = ({ page: target, label, href, icon: Icon }: (typeof PAGES)[number]) => {
     const { badge, tone } = badges[target] ?? {};
@@ -100,7 +105,8 @@ export function Sidebar({
       <Link
         key={target}
         href={href()}
-        title={`${label} (${pageKeyLabel(target)})`}
+        title={`${label} (${pageKeyLabel(target)})${target === "settings" && settingsWarning ? ": " + settingsWarning : ""}`}
+        aria-description={target === "settings" ? (settingsWarning ?? undefined) : undefined}
         aria-current={
           page === target && !(target === "inbox" && (inboxes?.selected || inboxes?.elsewhere))
             ? "page"
