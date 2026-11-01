@@ -1198,6 +1198,7 @@ function JobConcurrencyRow() {
     );
   }, []);
   async function choose(next: number) {
+    if (saving) return;
     const before = value;
     setValue(next);
     setSaving(true);
@@ -1231,7 +1232,7 @@ function JobConcurrencyRow() {
       <select
         id="job-concurrency"
         className="local-field settings-select"
-        disabled={value === null || saving}
+        disabled={value === null}
         value={value ?? MAX_JOB_CONCURRENCY}
         onChange={(e) => void choose(Number(e.target.value))}
       >
@@ -1277,7 +1278,7 @@ function TimeLimitRows() {
     );
   }, []);
   async function choose(key: keyof TimeLimits, minutes: number) {
-    if (!value) return;
+    if (!value || saving) return;
     const before = value;
     setValue({ ...value, [key]: minutes });
     setSaving(true);
@@ -1307,7 +1308,7 @@ function TimeLimitRows() {
         <select
           id={id}
           className="local-field settings-select"
-          disabled={value === null || saving}
+          disabled={value === null}
           value={current}
           onChange={(e) => void choose(key, Number(e.target.value))}
         >
@@ -1704,6 +1705,9 @@ function AgentEnvSection() {
         )
       ) : (
         <div className="settings-env">
+          {rows.length === 0 ? (
+            <p className="text-xs text-(--text-tertiary)">No variables set.</p>
+          ) : null}
           {rows.map((row) => (
             <div key={row.id} className="settings-env-row">
               <input
@@ -2263,7 +2267,7 @@ function hasFolderPicker() {
 }
 
 function GeneralSection() {
-  const { preferences, update, ready, saving, error, refresh } = usePreferences();
+  const { preferences, update, ready, error, refresh } = usePreferences();
   return (
     <section aria-labelledby="settings-general-heading" className="settings-section">
       <SectionHead
@@ -2283,7 +2287,7 @@ function GeneralSection() {
         <SettingRow label="Preferred theme" htmlFor="preferred-theme">
           <select
             id="preferred-theme"
-            disabled={!ready || saving}
+            disabled={!ready}
             className="local-field settings-select"
             value={preferences.theme}
             onChange={(event) => update({ theme: event.target.value as typeof preferences.theme })}
@@ -2300,7 +2304,7 @@ function GeneralSection() {
         >
           <input
             id="keyboard-hints"
-            disabled={!ready || saving}
+            disabled={!ready}
             type="checkbox"
             role="switch"
             className="local-switch"
