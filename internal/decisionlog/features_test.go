@@ -750,7 +750,7 @@ func TestPullFlowReadsOpenedOrMergedSince(t *testing.T) {
 	if err := s.SavePulls(ctx, "o/r", pulls, "", t0); err != nil {
 		t.Fatal(err)
 	}
-	got, listed, err := s.PullFlow(ctx, "O/R", since)
+	got, listed, err := s.PullFlow(ctx, "o/r", since)
 	if err != nil || !listed {
 		t.Fatalf("listed %v, %v", listed, err)
 	}

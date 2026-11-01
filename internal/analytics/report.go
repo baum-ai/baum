@@ -380,13 +380,20 @@ func (s *Service) Report(ctx context.Context, q Query) (Report, error) {
 	}
 	report.Summary.AgentShare = report.Commits.Share
 
-	report.Baum = s.baumWork(ctx, start, time.Time{}, q)
 	// The last seven local days, as the 7-day window counts them, against
-	// the seven before, whatever the window.
+	// the seven before, whatever the window. The ledgers are read once for
+	// all three.
 	weekAgo := today.AddDate(0, 0, -6)
+	lastWeek := weekAgo.AddDate(0, 0, -7)
+	since := start
+	if lastWeek.Before(since) {
+		since = lastWeek
+	}
+	ledgers := s.baumLedgers(ctx, since)
+	report.Baum = baumWork(ledgers, start, time.Time{}, q)
 	report.Baum.Weeks = &BaumWeeks{
-		This:     weekOf(s.baumWork(ctx, weekAgo, time.Time{}, q)),
-		Previous: weekOf(s.baumWork(ctx, weekAgo.AddDate(0, 0, -7), weekAgo, q)),
+		This:     weekOf(baumWork(ledgers, weekAgo, time.Time{}, q)),
+		Previous: weekOf(baumWork(ledgers, lastWeek, weekAgo, q)),
 	}
 	report.Delivery = s.delivery(start, q, picked)
 	report.Flow = s.flow(ctx, start, today, loc, q, picked)
@@ -651,13 +658,14 @@ func groupCost(prices *pricing.List, vendor string, g Usage) Cost {
 	return cost
 }
 
-// decisionCapture counts the calls matching q; the agent filter matches the
-// backend that made them, as it matches a job's harness.
-func decisionCapture(captures []decisionlog.LedgerEntry, end time.Time, q Query) *DecisionCapture {
+// decisionCapture counts the calls matching q started from start on, before
+// end when it is set; the agent filter matches the backend that made them, as
+// it matches a job's harness.
+func decisionCapture(captures []decisionlog.LedgerEntry, start, end time.Time, q Query) *DecisionCapture {
 	out := &DecisionCapture{Cost: Cost{Reasons: []string{}}, Failures: []ReasonCount{}}
 	failures := map[string]int{}
 	for _, c := range captures {
-		if !end.IsZero() && !c.StartedAt.Before(end) || q.Repository != "" && !strings.EqualFold(c.Repository, q.Repository) || q.Agent != "" && jobAgents[c.Backend] != q.Agent {
+		if c.StartedAt.Before(start) || !end.IsZero() && !c.StartedAt.Before(end) || q.Repository != "" && !strings.EqualFold(c.Repository, q.Repository) || q.Agent != "" && jobAgents[c.Backend] != q.Agent {
 			continue
 		}
 		out.Attempts++
@@ -690,22 +698,45 @@ func decisionCapture(captures []decisionlog.LedgerEntry, end time.Time, q Query)
 	return out
 }
 
-// baumWork counts the jobs created, actions taken and decisions captured
-// from start on, before end when it is set.
-func (s *Service) baumWork(ctx context.Context, start, end time.Time, q Query) BaumWork {
-	work := BaumWork{Failures: []ReasonCount{}, Cost: Cost{Reasons: []string{}}}
-	// An unreadable ledger leaves the figures out, as no ledger does.
+// baumLedgers is what baum's work is counted from. A ledger that is missing,
+// or unreadable, leaves its figures out.
+type baumLedgers struct {
+	captures                         []decisionlog.LedgerEntry
+	jobs                             []jobs.Job
+	actions                          []Action
+	hasCaptures, hasJobs, hasActions bool
+}
+
+// baumLedgers reads the ledgers from since on.
+func (s *Service) baumLedgers(ctx context.Context, since time.Time) baumLedgers {
+	var l baumLedgers
 	if s.Captures != nil {
-		if captures, err := s.Captures(ctx, start); err == nil {
-			work.Decisions = decisionCapture(captures, end, q)
+		if captures, err := s.Captures(ctx, since); err == nil {
+			l.captures, l.hasCaptures = captures, true
 		}
 	}
-	if s.Jobs == nil {
+	if s.Jobs != nil {
+		l.jobs, l.hasJobs = s.Jobs(), true
+	}
+	if s.Actions != nil {
+		l.actions, l.hasActions = s.Actions.Since(since), true
+	}
+	return l
+}
+
+// baumWork counts the jobs created, actions taken and decisions captured
+// from start on, before end when it is set.
+func baumWork(l baumLedgers, start, end time.Time, q Query) BaumWork {
+	work := BaumWork{Failures: []ReasonCount{}, Cost: Cost{Reasons: []string{}}}
+	if l.hasCaptures {
+		work.Decisions = decisionCapture(l.captures, start, end, q)
+	}
+	if !l.hasJobs {
 		return work
 	}
 	work.Available = true
 	failures := map[string]int{}
-	for _, j := range s.Jobs() {
+	for _, j := range l.jobs {
 		// A feature build is the decision log's spend, not a review's.
 		if j.Kind == jobs.KindFeatureBuild || j.CreatedAt.Before(start) || !end.IsZero() && !j.CreatedAt.Before(end) || q.Repository != "" && !strings.EqualFold(j.Repository, q.Repository) || q.Agent != "" && jobAgents[j.Backend] != q.Agent {
 			continue
@@ -767,11 +798,11 @@ func (s *Service) baumWork(ctx context.Context, start, end time.Time, q Query) B
 	slices.SortFunc(work.Failures, func(a, b ReasonCount) int {
 		return cmp.Or(cmp.Compare(b.Count, a.Count), strings.Compare(a.Reason, b.Reason))
 	})
-	if s.Actions != nil {
+	if l.hasActions {
 		merges, updates, reruns := 0, 0, 0
-		for _, a := range s.Actions.Since(start) {
+		for _, a := range l.actions {
 			// The writes are the person's, whichever agent they use.
-			if !end.IsZero() && !a.At.Before(end) || q.Repository != "" && a.Repository != q.Repository {
+			if a.At.Before(start) || !end.IsZero() && !a.At.Before(end) || q.Repository != "" && a.Repository != q.Repository {
 				continue
 			}
 			switch a.Kind {

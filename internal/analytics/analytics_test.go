@@ -3,6 +3,7 @@ package analytics
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -518,12 +519,27 @@ func TestBaumWorkCountsJobsAndActions(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	s := &Service{Registry: fakeRegistry{picked: []repos.Repository{{Repository: "acme/demo"}}}, Jobs: func() []jobs.Job { return list }, Actions: actions, Location: time.UTC, Now: func() time.Time { return now }}
+	// A capture from the week before counts in its trend, not the window.
+	captures := []decisionlog.LedgerEntry{{State: decisionlog.AttemptSucceeded, StartedAt: recent}, {State: decisionlog.AttemptSucceeded, StartedAt: now.AddDate(0, 0, -10)}}
+	jobReads, captureReads := 0, 0
+	s := &Service{Registry: fakeRegistry{picked: []repos.Repository{{Repository: "acme/demo"}}}, Actions: actions, Location: time.UTC, Now: func() time.Time { return now },
+		Jobs: func() []jobs.Job { jobReads++; return list },
+		Captures: func(_ context.Context, since time.Time) ([]decisionlog.LedgerEntry, error) {
+			captureReads++
+			return slices.DeleteFunc(slices.Clone(captures), func(c decisionlog.LedgerEntry) bool { return c.StartedAt.Before(since) }), nil
+		}}
 	report, err := s.Report(context.Background(), Query{Days: 7})
 	if err != nil {
 		t.Fatal(err)
 	}
+	// The window and both trend weeks share one read of each ledger.
+	if jobReads != 1 || captureReads != 1 {
+		t.Errorf("reads: jobs %d, captures %d, want one each", jobReads, captureReads)
+	}
 	b := report.Baum
+	if b.Decisions == nil || b.Decisions.Succeeded != 1 {
+		t.Errorf("decisions = %+v, want the window's one", b.Decisions)
+	}
 	if b.Reviews != 3 || b.GroupReviews != 1 || b.ReviewsCompleted != 2 || b.Fixes != 2 || b.Failed != 3 || b.Completed != 3 || b.FixesPushed != 1 || b.FixesFailed != 1 || b.ThreadsResolved != 2 {
 		t.Fatalf("baum = %+v", b)
 	}
@@ -698,19 +714,19 @@ func TestDecisionCaptureCounts(t *testing.T) {
 		{Repository: "acme/other", Backend: "codex", State: "failed", Reason: "timeout", StartedAt: at},
 		{Repository: "acme/demo", Backend: "claude", State: "abandoned", StartedAt: at, Cost: &cost},
 	}
-	all := decisionCapture(captures, time.Time{}, Query{})
+	all := decisionCapture(captures, time.Time{}, time.Time{}, Query{})
 	if all.Attempts != 5 || all.Succeeded != 1 || all.Failed != 2 || all.Abandoned != 1 || all.Cost.USD == nil || *all.Cost.USD != 0.06 || !all.Cost.Incomplete ||
 		len(all.Failures) != 1 || all.Failures[0] != (ReasonCount{Reason: "timeout", Count: 2}) {
 		t.Fatalf("all %+v", all)
 	}
-	codex := decisionCapture(captures, time.Time{}, Query{Agent: "codex"})
+	codex := decisionCapture(captures, time.Time{}, time.Time{}, Query{Agent: "codex"})
 	if codex.Attempts != 1 || codex.Cost.USD != nil || !codex.Cost.Incomplete || len(codex.Cost.Reasons) != 1 {
 		t.Fatalf("codex %+v", codex)
 	}
-	if other := decisionCapture(captures, time.Time{}, Query{Repository: "ACME/other"}); other.Attempts != 1 {
+	if other := decisionCapture(captures, time.Time{}, time.Time{}, Query{Repository: "ACME/other"}); other.Attempts != 1 {
 		t.Fatalf("by repository %+v", other)
 	}
-	if none := decisionCapture(nil, time.Time{}, Query{}); none.Attempts != 0 || none.Cost.USD != nil || none.Cost.Incomplete || none.Failures == nil {
+	if none := decisionCapture(nil, time.Time{}, time.Time{}, Query{}); none.Attempts != 0 || none.Cost.USD != nil || none.Cost.Incomplete || none.Failures == nil {
 		t.Fatalf("none %+v", none)
 	}
 }
@@ -729,11 +745,14 @@ func TestFlowCountsOpenedAndMergedPerDay(t *testing.T) {
 			{Repository: "acme/off", Clones: clone},
 			{Repository: "acme/turned-off", Clones: clone, Settings: repos.Settings{Decisions: ptr(false)}},
 			{Repository: "acme/no-clone"},
+			{Repository: "Acme/Broken", Clones: clone},
 		}},
 		Location: time.UTC, Now: func() time.Time { return now },
 		Login: func(context.Context) string { return "Me" },
 		Pulls: func(_ context.Context, repository string, _ time.Time) ([]decisionlog.FlowPull, bool, error) {
 			switch repository {
+			case "Acme/Broken":
+				return nil, true, errors.New("database is locked")
 			case "acme/off":
 				return nil, false, nil
 			case "acme/demo":
@@ -755,7 +774,7 @@ func TestFlowCountsOpenedAndMergedPerDay(t *testing.T) {
 		t.Fatal(err)
 	}
 	f := report.Flow
-	if !f.Available || !f.Yours || !slices.Equal(f.Unlisted, []string{"acme/off", "acme/turned-off", "acme/no-clone"}) || len(f.Days) != 7 {
+	if !f.Available || !f.Yours || !slices.Equal(f.Unlisted, []string{"acme/off", "acme/turned-off", "acme/no-clone"}) || !slices.Equal(f.Unread, []string{"acme/broken"}) || len(f.Days) != 7 {
 		t.Fatalf("flow = %+v", f)
 	}
 	monday, tuesday := f.Days[5], f.Days[6]

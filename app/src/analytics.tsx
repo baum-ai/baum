@@ -176,6 +176,8 @@ export type Analytics = {
     available: boolean;
     yours: boolean;
     unlisted: string[];
+    /** Repositories whose pull requests could not be read. */
+    unread?: string[];
     days: { date: string; mine: FlowCounts; team: FlowCounts }[];
   };
   plan_usage: {
@@ -1008,6 +1010,12 @@ function Flow({ data }: { data: Analytics }) {
         <p className="analytics-note">
           Not counted: {flow.unlisted.join(", ")}. The Timeline reads a repository's pull requests
           once its decisions are on and it has a clone.
+        </p>
+      ) : null}
+      {flow.unread?.length ? (
+        <p className="analytics-note">
+          Could not read the pull requests of {flow.unread.join(", ")}. They are tried again on the
+          next refresh.
         </p>
       ) : null}
     </Card>

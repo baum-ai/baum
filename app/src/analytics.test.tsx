@@ -297,6 +297,7 @@ it("splits activity by model on asking, and draws the pull request flow, yours o
       available: true,
       yours: true,
       unlisted: ["acme/off"],
+      unread: ["acme/broken"],
       days: [
         {
           date: "2026-10-26",
@@ -318,6 +319,7 @@ it("splits activity by model on asking, and draws the pull request flow, yours o
     "Mon, Oct 26: Merge rate 100%, Median time to merge 2 h",
   );
   expect(node.textContent).toContain("Not counted: acme/off");
+  expect(node.textContent).toContain("Could not read the pull requests of acme/broken");
   const created = () =>
     node
       .querySelector('[aria-label="Pull requests created and shipped by day"] [role="img"]')

@@ -20,8 +20,10 @@ type FlowReport struct {
 	Yours bool `json:"yours"`
 	// Unlisted names the repositories in scope the feature log has not
 	// listed: those with decisions off, or no clone.
-	Unlisted []string  `json:"unlisted"`
-	Days     []FlowDay `json:"days"`
+	Unlisted []string `json:"unlisted"`
+	// Unread names those whose pull requests could not be read.
+	Unread []string  `json:"unread"`
+	Days   []FlowDay `json:"days"`
 }
 
 // FlowDay is one local day's flow.
@@ -43,7 +45,7 @@ type FlowCounts struct {
 }
 
 func (s *Service) flow(ctx context.Context, start, today time.Time, loc *time.Location, q Query, picked []repos.Repository) FlowReport {
-	report := FlowReport{Unlisted: []string{}, Days: []FlowDay{}}
+	report := FlowReport{Unlisted: []string{}, Unread: []string{}, Days: []FlowDay{}}
 	if s.Pulls == nil {
 		return report
 	}
@@ -84,8 +86,13 @@ func (s *Service) flow(ctx context.Context, start, today time.Time, loc *time.Lo
 			report.Unlisted = append(report.Unlisted, name)
 			continue
 		}
-		pulls, listed, err := s.Pulls(ctx, name, start)
-		if err != nil || !listed {
+		// As the feature log stores it, so the store's key finds its rows.
+		pulls, listed, err := s.Pulls(ctx, r.Repository, start)
+		if err != nil {
+			report.Unread = append(report.Unread, name)
+			continue
+		}
+		if !listed {
 			report.Unlisted = append(report.Unlisted, name)
 			continue
 		}

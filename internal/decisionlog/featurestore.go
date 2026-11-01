@@ -393,16 +393,18 @@ type FlowPull struct {
 
 // PullFlow lists the repository's pull requests not opened by a bot that
 // were opened or merged at or after since, and whether the feature log has
-// listed the repository yet: one it never listed has none to give.
+// listed the repository yet: one it never listed has none to give. The
+// repository is named as the feature log stores it, so the primary key finds
+// its rows.
 func (s *Store) PullFlow(ctx context.Context, repository string, since time.Time) ([]FlowPull, bool, error) {
 	var listed bool
-	err := s.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM pull_sync WHERE repository=? COLLATE NOCASE AND cursor_updated_at IS NOT NULL)`,
+	err := s.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM pull_sync WHERE repository=? AND cursor_updated_at IS NOT NULL)`,
 		repository).Scan(&listed)
 	if err != nil || !listed {
 		return nil, listed, err
 	}
 	rows, err := s.db.QueryContext(ctx, `SELECT author, draft, created_at, merged_at FROM pull_request
-WHERE repository=?1 COLLATE NOCASE AND bot=0 AND (created_at >= ?2 OR merged_at >= ?2) ORDER BY created_at`,
+WHERE repository=?1 AND bot=0 AND (created_at >= ?2 OR merged_at >= ?2) ORDER BY created_at`,
 		repository, since.UnixMilli())
 	if err != nil {
 		return nil, true, err

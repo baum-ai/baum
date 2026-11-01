@@ -115,8 +115,10 @@ day it counts, for the team and for the person (their GitHub login from
 opened and how many of those have merged since, for the merge rate, and the
 pull requests merged that day with each one's time to merge. Pull requests
 opened by bots are left out. A repository the feature log does not read,
-with decisions off or no clone, is listed in `unlisted`; the agent filter
-does not apply. Without the store, `available` is false.
+with decisions off or no clone, is listed in `unlisted`, and one whose pull
+requests could not be read in `unread`; the agent filter does not apply. The
+repository is passed as the feature log stores it, so the store's key finds
+its rows. Without the store, `available` is false.
 
 ## Delivery
 
