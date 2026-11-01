@@ -1551,6 +1551,10 @@ use by generation, disconnect, and access to saved reviews. Denial, expiry,
 network/scope/persistence failures and the endpoint namespace/CSRF matrix stay
 in component and Go handler tests.
 
+Linked session evidence on an open review refreshes every 30 seconds without
+reloading the review document. Polling allows late transcript/checkpoint arrivals
+to appear; a transient poll failure retains the last successful evidence.
+
 ## Durable reading state
 
 `GET` and `PUT api/ui-state/inbox` store the Inbox's local-day seen/cleared

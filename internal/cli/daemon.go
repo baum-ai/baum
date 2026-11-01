@@ -721,6 +721,7 @@ func localApplication(paths daemon.Paths, log *slog.Logger) func(context.Context
 								if !ok {
 									return
 								}
+								api.InvalidateSessions()
 								sessionIndex.Trigger()
 							}
 						}

@@ -73,8 +73,8 @@ type Options struct {
 	Sample bool
 	// Sessions links the sessions on this machine to the document's pull
 	// request. It is called on the first request for /api/sessions, never at
-	// start-up, and its available answers are kept until the document's
-	// repository, head or base changes. Unset, /api/sessions is unavailable.
+	// start-up, and its available answers are kept for at most a minute, or until
+	// invalidation or a change to the document's repository, head or base. Unset, /api/sessions is unavailable.
 	Sessions SessionsFunc
 	// Patch reads one file's patch of the document's pull request from this
 	// machine, for GET /api/patch. It is called when a file's patch is first
@@ -124,10 +124,11 @@ type Server struct {
 	patchSlots chan struct{}
 
 	// sessions is the answer for /api/sessions, computed on demand.
-	sessionsMu     sync.Mutex
-	sessions       *sessionsEntry
-	sessionsClosed bool
-	compute        sync.WaitGroup
+	sessionsMu       sync.Mutex
+	sessions         *sessionsEntry
+	sessionsClosed   bool
+	sessionsRevision uint64
+	compute          sync.WaitGroup
 	// render writes transcripts, with the home directory as ~.
 	render *transcript.Renderer
 	// life ends when the server stops, and bounds sessions computations,

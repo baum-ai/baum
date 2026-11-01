@@ -503,21 +503,62 @@ export function LocalReview({
   useEffect(() => {
     if (sessionsVersion == null) return;
     const abort = new AbortController();
-    request<unknown>(`api/sessions?${query}`, undefined, "GET", abort.signal)
-      .then((body) => {
+    let pending = false;
+    const refresh = async () => {
+      if (pending || abort.signal.aborted) return;
+      pending = true;
+      try {
+        const body = await request<unknown>(
+          `api/sessions?${query}`,
+          undefined,
+          "GET",
+          abort.signal,
+        );
         const answer = parseSessionsAnswer(body);
         if (!abort.signal.aborted)
-          setSessions({
-            query,
-            version: sessionsVersion,
-            load: answer ? { state: "answered", answer } : { state: "request-failed" },
+          setSessions((previous) => {
+            const current =
+              previous?.query === query && previous.version === sessionsVersion
+                ? previous.load
+                : null;
+            // The resolver reports transient errors as HTTP 200. Keep the
+            // last successful linkage until a genuine answer replaces it.
+            if (
+              current &&
+              answer?.available === false &&
+              typeof body === "object" &&
+              body !== null &&
+              "code" in body &&
+              body.code === "error" &&
+              current.state === "answered" &&
+              current.answer.available
+            )
+              return previous;
+            return {
+              query,
+              version: sessionsVersion,
+              load: answer ? { state: "answered", answer } : { state: "request-failed" },
+            };
           });
-      })
-      .catch(() => {
+      } catch {
         if (!abort.signal.aborted)
-          setSessions({ query, version: sessionsVersion, load: { state: "request-failed" } });
-      });
-    return () => abort.abort();
+          setSessions((previous) =>
+            previous?.query === query &&
+            previous.version === sessionsVersion &&
+            previous.load.state === "answered"
+              ? previous
+              : { query, version: sessionsVersion, load: { state: "request-failed" } },
+          );
+      } finally {
+        pending = false;
+      }
+    };
+    void refresh();
+    const timer = window.setInterval(() => void refresh(), 30_000);
+    return () => {
+      window.clearInterval(timer);
+      abort.abort();
+    };
   }, [sessionsVersion, query, revision, retry, ended]);
   // Without a saved version the page shows the pull request's facts: no
   // model's text, only what GitHub, the clone and the sessions on this
