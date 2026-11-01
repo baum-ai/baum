@@ -541,18 +541,25 @@ draws each page's key while Alt is held and names it in the link's tooltip and
 
 Tab (`useTabStops`) reaches every control without leaving the keys' model
 behind. On a page it moves by place: the sidebar is one stop, on the current
-page, where `↑` and `↓` move through its links; all of a page's list rows are
-one stop, landing on the focused or selected row (else the first), so `j`, `k`
-and `Enter` go on from there; every other control (a page bar's, a detail
-pane's, a section heading's) is a stop of its own. Shift+Tab goes back, and
-both wrap. In a dialog Tab goes through each of its controls and stays inside
-it. A row menu keeps its own Tab, which closes it. With focus on a link or
-button that Tab reached, `Enter` and `Space` press it; every other key still
+page, where `↑` and `↓` move through its links, and so is each Analytics
+chart, whose bars they move through; all of a page's list rows are one stop,
+landing on the focused or selected row (else the first), so `j`, `k` and
+`Enter` go on from there, and a row's other controls stay with its keys (`x`,
+⌘. for its ⋯) except a form opened in it, such as a repository's clone form in
+Settings, whose controls are stops; every other control (a page bar's, a
+detail pane's, a section heading's) is a stop of its own. Shift+Tab goes back,
+and both wrap. In a dialog Tab goes through each of its controls, a radio
+group as one, and stays inside it. A row's menu and the sidebar's inbox menu
+close on Tab, with the focus back on their ⋯. With focus on a link or button
+that Tab reached, `Enter` and `Space` press it; every other key still
 acts on the selection, and `Esc` brings the focus back to the selected row
 (or lets it go where there is none) instead of clearing the row. Rows keep
 their own `Enter` and `Space`, and Settings its own keys. Nothing changes for
-whoever never presses Tab: a link or button clicked with the pointer gives up
-its focus (`usePointerBlurs`), so the next `j` or `k` paints no ring on it;
+whoever never presses Tab: the sidebar's arrows, `Esc` back to the row and
+`Enter` and `Space` pressing a focused button apply only once Tab was
+pressed, until the pointer is next pressed, and a
+link or button clicked with the pointer gives up its focus
+(`usePointerBlurs`), so the next `j` or `k` paints no ring on it;
 rows, tabs, menus, dialogs and Settings keep a click's focus, being where the
 keys act. Rings show only for the keyboard (`:focus-visible`). `Esc` in a text
 field gives it up, as before.

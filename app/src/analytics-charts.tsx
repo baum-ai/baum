@@ -122,7 +122,11 @@ export function ColumnChart({
             <span>{format(tick)}</span>
           </div>
         ))}
-        <div className="analytics-columns" onPointerLeave={() => setActive(null)}>
+        <div
+          data-tab-region=""
+          className="analytics-columns"
+          onPointerLeave={() => setActive(null)}
+        >
           {columns.map((column, i) => {
             const total = totals[i]!;
             const parts = series.filter((s) => (column.values[s.key] ?? 0) > 0);
@@ -441,7 +445,11 @@ export function TwoAxisChart({
             );
           }),
         )}
-        <div className="analytics-columns" onPointerLeave={() => setActive(null)}>
+        <div
+          data-tab-region=""
+          className="analytics-columns"
+          onPointerLeave={() => setActive(null)}
+        >
           {points.map((p, i) => {
             const rows = axes.map((axis, a) => ({
               series: axis.series,

@@ -231,14 +231,21 @@ export function moveFocus(ids: string[], current: string | null, step: 1 | -1): 
   return ids[Math.min(ids.length - 1, Math.max(0, index + step))]!;
 }
 
+/** Whether Tab moved the focus since the pointer was last pressed: until
+ *  then the sidebar's arrows, Escape back to the row (`returnsToRow`) and
+ *  Enter and Space pressing a focused button (`shouldIgnore`) stay out of
+ *  the way, so whoever never presses Tab sees no change. */
+let tabbed = false;
+
 /** A list row, which keeps the keys while it has the focus. */
 const ROW = "[data-row-id], [data-row]";
 
 /** Whether a keydown belongs to something else: a modified key (the browser's
  *  or the app's own), typing, or an open dialog. Checkboxes and radios take
- *  no text, so the keys still work after one was clicked. Enter and Space on
- *  a link or button Tab reached press it; on a row, or in Settings, whose
- *  keys step through its controls, they stay the page's. */
+ *  no text, so the keys still work after one was clicked. Once Tab is in use
+ *  (`tabbed`), Enter and Space on a focused link or button press it; on a
+ *  row, or in Settings, whose keys step through its controls, they stay the
+ *  page's. */
 export function shouldIgnore(event: KeyboardEvent, allowSheet = false) {
   if (event.ctrlKey || event.metaKey || event.altKey || event.isComposing) return true;
   const target = event.target;
@@ -248,6 +255,7 @@ export function shouldIgnore(event: KeyboardEvent, allowSheet = false) {
     if (target instanceof HTMLInputElement && !["checkbox", "radio"].includes(target.type))
       return true;
     if (
+      tabbed &&
       (event.key === "Enter" || event.key === " ") &&
       target.closest("a[href], button, summary") &&
       !target.closest(`${ROW}, .settings-page`)
@@ -424,14 +432,13 @@ export function useKeyHints() {
 }
 
 /** Whether Escape takes the focus back to a list's selected row, through
- *  `link`, rather than clearing the row: the focus is on a link or button
- *  outside the row, which only Tab leaves there (a click gives it up,
- *  `usePointerBlurs`). Tabs and menus, which keep a click's focus, and
- *  Settings, whose Escape goes back to its sections, keep their own Escape. */
+ *  `link`, rather than clearing the row: Tab left the focus on a link or
+ *  button outside the row. Tabs and menus, and Settings, whose Escape goes
+ *  back to its sections, keep their own Escape. */
 export function returnsToRow(link: HTMLElement | null | undefined) {
   const focused = document.activeElement;
-  if (!link || !(focused instanceof HTMLElement) || link.closest(ROW)?.contains(focused))
-    return false;
+  if (!tabbed || !link || !(focused instanceof HTMLElement)) return false;
+  if (link.closest(ROW)?.contains(focused)) return false;
   return (
     !!focused.closest("a[href], button, summary") &&
     !focused.closest('[role="tab"], [role="menu"], .local-rail-menu, .settings-page')
@@ -499,11 +506,16 @@ export function usePointerBlurs() {
         if (document.activeElement === control) control.blur();
       });
     };
-    window.addEventListener("click", click);
-    return () => window.removeEventListener("click", click);
+    // Captured: the click's own handler may redraw what was clicked, as the
+    // refresh button swaps its glyph, and leave the target outside it.
+    window.addEventListener("click", click, true);
+    return () => window.removeEventListener("click", click, true);
   }, []);
 }
 
+/** A form opened inside a row, such as a repository's clone form in
+ *  Settings: its controls are stops of their own, as they have no keys. */
+const ROW_PANEL = "form, .local-repo-panel";
 /** A row's own link, where Tab and Escape put the focus. */
 const ROW_LINK = "[data-row-link], .inbox-pr-title, .upnext-row";
 const TABBABLE = [
@@ -527,7 +539,7 @@ function tabbables(root: ParentNode, all = false) {
         (element.form ?? document).querySelectorAll<HTMLInputElement>(
           `input[type="radio"][name="${CSS.escape(element.name)}"]`,
         ),
-      );
+      ).filter((radio) => !radio.disabled && radio.getClientRects().length > 0);
       return element === (group.find((radio) => radio.checked) ?? group[0]);
     }
     return true;
@@ -558,8 +570,9 @@ function entry(place: HTMLElement, rows: boolean) {
  *  control (a toolbar's, a detail pane's) is a stop of its own. In a dialog
  *  Tab stays inside it and goes through each of its controls. A menu keeps
  *  its own Tab, which closes it. Nothing changes for whoever never presses
- *  Tab: a click still gives up its focus (`usePointerBlurs`), and the page's
- *  keys still act on the selection. */
+ *  Tab: a click still gives up its focus (`usePointerBlurs`), the page's
+ *  keys still act on the selection, and ↑, ↓ and Escape keep their old
+ *  meaning until Tab is pressed again after the pointer (`tabbed`). */
 export function useTabStops() {
   useEffect(() => {
     const down = (event: KeyboardEvent) => {
@@ -571,7 +584,7 @@ export function useTabStops() {
       );
       const region = focused?.closest<HTMLElement>("[data-tab-region]");
       if (event.key === "ArrowDown" || event.key === "ArrowUp") {
-        if (dialog || !region || event.shiftKey) return;
+        if (!tabbed || dialog || !region || event.shiftKey) return;
         const controls = tabbables(region, true);
         const next = controls[controls.indexOf(focused!) + (event.key === "ArrowDown" ? 1 : -1)];
         event.preventDefault();
@@ -580,6 +593,7 @@ export function useTabStops() {
       }
       if (event.key !== "Tab") return;
       event.preventDefault();
+      tabbed = true;
       const root = dialog ?? document.body;
       // Each stop is a control, or a place whose controls count as one.
       const stops: (HTMLElement | { place: HTMLElement; rows: boolean })[] = [];
@@ -588,7 +602,7 @@ export function useTabStops() {
         const place = dialog
           ? null
           : (element.closest<HTMLElement>("[data-tab-region]") ??
-            (element.closest(ROW) ? root : null));
+            (element.closest(ROW) && !element.closest(ROW_PANEL) ? root : null));
         if (!place) return element;
         let stop = places.get(place);
         if (!stop) places.set(place, (stop = { place, rows: place === root }));
@@ -619,9 +633,17 @@ export function useTabStops() {
       const stop = stops[index]!;
       (stop instanceof HTMLElement ? stop : entry(stop.place, stop.rows))?.focus();
     };
+    const pointer = () => {
+      tabbed = false;
+    };
     // Captured, so it comes before the page's own keys.
     window.addEventListener("keydown", down, true);
-    return () => window.removeEventListener("keydown", down, true);
+    window.addEventListener("pointerdown", pointer, true);
+    return () => {
+      window.removeEventListener("keydown", down, true);
+      window.removeEventListener("pointerdown", pointer, true);
+      tabbed = false;
+    };
   }, []);
 }
 

@@ -139,6 +139,8 @@ test("a click leaves no focus ring behind, and j and k still move the selection"
   await pulls.click();
   const inbox = page.getByRole("region", { name: "Pull request inbox" });
   await expect(inbox.locator("[data-row-id]").first()).toBeVisible();
+  // The click left no focus behind for a key to paint a ring on.
+  await expect.poll(() => page.evaluate(() => document.activeElement === document.body)).toBe(true);
   await page.keyboard.press("j");
   // No ring on the link clicked: the focus went to the row j chose.
   await expect(pulls).not.toBeFocused();
@@ -153,6 +155,7 @@ test("a click leaves no focus ring behind, and j and k still move the selection"
     .getByRole("button", { name: /^Refresh/ })
     .first()
     .click();
+  await expect.poll(() => page.evaluate(() => document.activeElement === document.body)).toBe(true);
   await page.keyboard.press("j");
   const second = inbox.locator("[data-row-id][data-focused] .inbox-pr-title");
   await expect(second).not.toHaveText(first);
@@ -175,4 +178,42 @@ test("a click leaves no focus ring behind, and j and k still move the selection"
   expect(await page.evaluate(() => !!document.querySelector(".local-rail :focus-visible"))).toBe(
     false,
   );
+});
+
+test("Tab goes through a dialog's controls, a radio group as one, and wraps inside it", async ({
+  page,
+}) => {
+  await page.goto(await launchURL());
+  await expect(page.locator("button.upnext-row").first()).toBeVisible();
+  // A dialog of every kind of control, opened over the app as its own are.
+  await page.evaluate(() => {
+    const dialog = document.createElement("dialog");
+    dialog.innerHTML = `
+      <input type="text" aria-label="Name">
+      <label><input type="radio" name="method" value="a"> A</label>
+      <label><input type="radio" name="method" value="b" checked> B</label>
+      <label><input type="radio" name="method" value="c"> C</label>
+      <button type="button" disabled>Off</button>
+      <button type="button">Cancel</button>
+      <button type="button">Save</button>`;
+    document.body.append(dialog);
+    dialog.showModal();
+    dialog.querySelector("input")!.focus();
+  });
+  const seen: string[] = [];
+  for (let i = 0; i < 8; i++) {
+    await page.keyboard.press("Tab");
+    seen.push(
+      await page.evaluate(() => {
+        const element = document.activeElement as HTMLElement;
+        if (!element.closest("dialog")) return "outside";
+        return element instanceof HTMLInputElement
+          ? `${element.type}${element.type === "radio" ? `:${element.value}` : ""}`
+          : (element.textContent ?? "").trim();
+      }),
+    );
+  }
+  expect(seen).toEqual(["radio:b", "Cancel", "Save", "text", "radio:b", "Cancel", "Save", "text"]);
+  await page.keyboard.press("Shift+Tab");
+  expect(await page.evaluate(() => document.activeElement?.textContent)).toBe("Save");
 });
