@@ -49,7 +49,7 @@ func TestPublicSummaryLeaksNothing(t *testing.T) {
 			t.Errorf("summary contains %q:\n%s", bad, summary)
 		}
 	}
-	for _, want := range []string{"- git: problem, ~/bin/git", "claude: warning, version 2.1.7", "the configuration does not load", "~/go/bin", "omitted"} {
+	for _, want := range []string{"- git: problem, ~/bin/git", "claude: warning, version 2.1.7", "the configuration does not load", "entries omitted", "omitted"} {
 		if !strings.Contains(summary, want) {
 			t.Errorf("summary lacks %q:\n%s", want, summary)
 		}
@@ -118,5 +118,46 @@ func TestIssueURLTruncatesGracefully(t *testing.T) {
 	// A small report is not truncated.
 	if small := IssueURL(Report{Status: StatusOK}, IssueInfo{Version: "1"}); strings.Contains(small, "truncated") {
 		t.Error("small report truncated")
+	}
+}
+
+func TestPublicSummaryOmitsPathEntriesAndPrivateHosts(t *testing.T) {
+	r := Report{Status: StatusOK, Checks: []Check{
+		{ID: "path", Label: "PATH", Status: StatusInfo, Detail: "2 entries, searched in order: /etc/profiles/per-user/alice/bin, /work/clients/acme/bin"},
+		{ID: "github-token-git.corp.example.com", Label: "GitHub token: git.corp.example.com", Status: StatusProblem, Detail: "baum will not read git.corp.example.com: it is not github.com"},
+		{ID: "github-token-github.com", Label: "GitHub token: github.com", Status: StatusOK, Detail: "a token is available for github.com"},
+	}}
+	s := r.PublicSummary("/home/alice")
+	for _, bad := range []string{"alice", "acme", "corp.example.com"} {
+		if strings.Contains(s, bad) {
+			t.Errorf("summary contains %q:\n%s", bad, s)
+		}
+	}
+	for _, want := range []string{"2 entries, searched in order (entries omitted)", "GitHub token: github.com"} {
+		if !strings.Contains(s, want) {
+			t.Errorf("summary lacks %q:\n%s", want, s)
+		}
+	}
+}
+
+func TestScrubAuthorizationAndOtherHomes(t *testing.T) {
+	for in, bad := range map[string]string{
+		"Authorization: token 0123abcd4567efgh": "0123abcd4567efgh",
+		"Authorization: Token zzzzzzzz":         "zzzzzzzz",
+		"Bearer abcdef123":                      "abcdef123",
+		`\\fileserver\users\bob\bin`:            "bob",
+		`C:\Documents and Settings\bob\bin`:     "bob",
+		"/etc/profiles/per-user/bob/bin":        "bob",
+	} {
+		if got := Scrub(in, ""); strings.Contains(got, bad) {
+			t.Errorf("Scrub(%q) = %q still has %q", in, got, bad)
+		}
+	}
+}
+
+func TestIssueURLClipsVersionAndOS(t *testing.T) {
+	long := strings.Repeat("v", 9000)
+	if u := IssueURL(Report{Status: StatusOK}, IssueInfo{Version: long, OS: long}); len(u) > maxIssueURL {
+		t.Fatalf("link is %d bytes", len(u))
 	}
 }

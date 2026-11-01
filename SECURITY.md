@@ -230,9 +230,11 @@ whether it is set. It does print paths, tool versions and the `PATH` entries,
 so look at a report before pasting it into a public issue. The desktop app's
 "Report a problem" shows a shorter summary in the issue form: home directories
 become `~`, secret-shaped values, e-mail addresses and @mentions are masked,
-the configuration's load error and the per-repository store checks (which name
-your clones) are left out, and each line is clipped. It still lists tool
-versions and paths, which you review in the form before submitting.
+the configuration's load error, the `PATH` entries, the per-repository store
+checks (which name your clones) and the names of GitHub hosts other than
+github.com are left out, and each line is clipped. It still lists tool versions
+and paths, and a machine or host name inside a tool's error text is not
+recognised, so review the form before submitting.
 
 ## What `baum internal view` shows
 

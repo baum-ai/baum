@@ -443,7 +443,8 @@ browser. The daemon builds the link in its `/api/diagnostics` answer
 (`report_issue_url`) with the version, OS and a redacted summary of the
 Diagnostics report (`doctor.Report.PublicSummary`): home directories become
 `~`, secret-shaped values and e-mail addresses are masked, and the
-configuration's load error and the per-repository store checks are left out. The
+configuration's load error, the `PATH` entries, the per-repository store
+checks and non-github.com host names are left out. The
 summary loses whole lines from its end, with a note, to keep the link under
 about 6.5 KB, as GitHub refuses longer ones. The user reads and edits the form
 in the browser, and nothing is sent until they submit it. The tray menu asks the

@@ -56,7 +56,7 @@ var secretPatterns = []*regexp.Regexp{
 
 var (
 	// "Authorization: Bearer x", "Bearer x", "Basic x".
-	authPattern = regexp.MustCompile(`(?i)\b(bearer|basic)\s+[A-Za-z0-9._~+/=\-]{6,}`)
+	authPattern = regexp.MustCompile(`(?i)\b(authorization\s*[:=]\s*(?:bearer |basic |token )?|bearer\s+|basic\s+)[A-Za-z0-9._~+/=\-]{6,}`)
 	// user:password@ in a URL.
 	userinfoPattern = regexp.MustCompile(`(?i)([a-z][a-z0-9+.\-]*://)[^/\s@]+@`)
 	// token=..., "password": "...", api_key: ... keep the name, drop the value.
@@ -66,7 +66,7 @@ var (
 	// Home directories of other spellings than Home: the account name is
 	// personal.
 	// A Windows account name may hold spaces, so it runs to the next separator.
-	homePattern = regexp.MustCompile(`(?i)(?:` + unixHomes + `[^/\\\s:"']+|[A-Z]:[\\/]+Users[\\/]+[^/\\:"'\r\n]+)`)
+	homePattern = regexp.MustCompile(`(?i)(?:` + unixHomes + `[^/\\\s:"']+|/per-user/[^/\\\s:"']+|\\\\[^\\\s]+\\users\\[^\\\s:"']+|[A-Z]:[\\/]+Documents and Settings[\\/]+[^/\\:"'\r\n]+|[A-Z]:[\\/]+Users[\\/]+[^/\\:"'\r\n]+)`)
 )
 
 // Scrub removes from one line of the report what must not be published: the
@@ -81,7 +81,7 @@ func Scrub(s, home string) string {
 	for _, p := range secretPatterns {
 		s = p.ReplaceAllString(s, "[redacted]")
 	}
-	s = authPattern.ReplaceAllString(s, "$1 [redacted]")
+	s = authPattern.ReplaceAllString(s, "${1}[redacted]")
 	s = userinfoPattern.ReplaceAllString(s, "${1}[redacted]@")
 	s = assignPattern.ReplaceAllString(s, "${1}[redacted]")
 	s = blobPattern.ReplaceAllStringFunc(s, func(m string) string {
@@ -94,12 +94,14 @@ func Scrub(s, home string) string {
 	return s
 }
 
-func clip(s string) string {
+func clip(s string) string { return clipTo(s, maxLineLen) }
+
+func clipTo(s string, n int) string {
 	r := []rune(s)
-	if len(r) <= maxLineLen {
+	if len(r) <= n {
 		return s
 	}
-	return string(r[:maxLineLen]) + "…"
+	return string(r[:n]) + "…"
 }
 
 // PublicSummary is the report as markdown lines that are safe to paste into a
@@ -118,11 +120,21 @@ func (r Report) PublicSummary(home string) string {
 			stores++
 			continue
 		}
-		detail := c.Detail
-		if c.ID == "config" && c.Status == StatusProblem {
+		label, detail := c.Label, c.Detail
+		switch {
+		case c.ID == "config" && c.Status == StatusProblem:
 			detail = "the configuration does not load"
+		case c.ID == "path":
+			// The entries name accounts, projects and tools of this machine.
+			detail, _, _ = strings.Cut(detail, ":")
+			detail += " (entries omitted)"
+		case strings.HasPrefix(c.ID, "github-token-") && c.ID != "github-token-"+"github.com" && !strings.HasSuffix(c.ID, ".ghe.com"):
+			// A private GitHub Enterprise host names the user's employer.
+			label, detail = "GitHub token: other host", "a host other than github.com (name omitted)"
 		}
-		line := fmt.Sprintf("- %s: %s", c.Label, c.Status)
+		// Labels are fixed text ("GitHub token: github.com" would otherwise look
+		// like an assignment); everything after them is scrubbed.
+		line := string(c.Status)
 		if c.Version != "" {
 			line += ", version " + c.Version
 		}
@@ -133,7 +145,7 @@ func (r Report) PublicSummary(home string) string {
 		if first != "" {
 			line += " — " + first
 		}
-		lines = append(lines, clip(Scrub(strings.Join(strings.Fields(line), " "), home)))
+		lines = append(lines, "- "+label+": "+clip(Scrub(strings.Join(strings.Fields(line), " "), home)))
 		for _, extra := range strings.Split(rest, "\n") {
 			if extra = strings.TrimSpace(extra); extra != "" {
 				lines = append(lines, "  "+clip(Scrub(extra, home)))
@@ -153,8 +165,8 @@ func IssueURL(r Report, info IssueInfo) string {
 	build := func(summary string) string {
 		q := url.Values{}
 		q.Set("template", issueForm)
-		q.Set("version", Scrub(info.Version, info.Home))
-		q.Set("os", Scrub(info.OS, info.Home))
+		q.Set("version", clipTo(Scrub(info.Version, info.Home), 100))
+		q.Set("os", clipTo(Scrub(info.OS, info.Home), 100))
 		q.Set("diagnostics", summary)
 		return IssuesNewURL + "?" + q.Encode()
 	}
