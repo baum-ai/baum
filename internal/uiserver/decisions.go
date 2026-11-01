@@ -195,7 +195,7 @@ func (a LocalAPI) putDecisionSettings(w http.ResponseWriter, r *http.Request) {
 				return p
 			}
 		}
-		if invalid = next.Validate(); invalid != nil {
+		if invalid = next.ValidateChange(p); invalid != nil {
 			return p
 		}
 		return next

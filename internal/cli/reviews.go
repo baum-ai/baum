@@ -191,7 +191,7 @@ func newReviewsCommand() *cobra.Command {
 					next.Decisions.Model = &v
 				}
 			}
-			if invalid = next.Validate(); invalid != nil {
+			if invalid = next.ValidateChange(p); invalid != nil {
 				return p
 			}
 			return next

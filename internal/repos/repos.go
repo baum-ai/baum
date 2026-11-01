@@ -162,14 +162,29 @@ func (p Preferences) Covers(authored, requested bool) bool {
 	return authored || requested
 }
 
+// ValidateChange is Validate for preferences saved over prev: the desktop app
+// offers Claude Code and Codex only, so a backend chosen now must be one of
+// them. A retired backend already stored (cursor-agent or anthropic, from a
+// pre-release version) does not block saving other settings; the daemon
+// refuses the jobs that use it.
+func (p Preferences) ValidateChange(prev Preferences) error {
+	if err := p.Validate(); err != nil {
+		return err
+	}
+	if p.Backend != nil && !p.Backend.Desktop() && (prev.Backend == nil || *prev.Backend != *p.Backend) {
+		return errors.New("reviews run with auto, Claude Code or Codex only")
+	}
+	if b := p.Decisions.Backend; b != nil && *b == config.BackendAnthropic && (prev.Decisions.Backend == nil || *prev.Decisions.Backend != *b) {
+		return errors.New("data extraction runs with Claude Code or Codex only")
+	}
+	return nil
+}
+
 // Validate accepts an empty Model, unlike Settings: it means the backend's
 // default even when the config file names a model.
 func (p Preferences) Validate() error {
 	if p.Backend != nil && !p.Backend.Valid() {
 		return errors.New("invalid backend")
-	}
-	if p.Backend != nil && !p.Backend.Desktop() {
-		return errors.New("reviews run with auto, Claude Code or Codex only")
 	}
 	if p.Model != nil && len(*p.Model) > 256 {
 		return errors.New("model must be at most 256 bytes")
@@ -177,8 +192,8 @@ func (p Preferences) Validate() error {
 	if m := p.Decisions.Model; m != nil && len(*m) > 256 {
 		return errors.New("decisions model must be at most 256 bytes")
 	}
-	if b := p.Decisions.Backend; b != nil && *b != config.BackendClaude && *b != config.BackendCodex {
-		return errors.New("data extraction runs with Claude Code or Codex only")
+	if b := p.Decisions.Backend; b != nil && *b != config.BackendClaude && *b != config.BackendCodex && *b != config.BackendAnthropic {
+		return errors.New("data extraction runs with Claude Code, Codex or the Anthropic API only")
 	}
 	if p.FixBackend != nil && *p.FixBackend != config.BackendClaude && *p.FixBackend != config.BackendCodex {
 		return errors.New("fixes run with Claude Code or Codex only")

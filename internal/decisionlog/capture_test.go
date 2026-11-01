@@ -257,7 +257,7 @@ func TestCaptureSkips(t *testing.T) {
 		edit func(*testing.T, *fixture)
 		want string
 	}{
-		"cursor-agent is not offered": {func(_ *testing.T, f *fixture) { f.registry.prefs.Backend = &cursor }, ReasonUnavailable},
+		"cursor-agent is not offered": {func(_ *testing.T, f *fixture) { f.registry.prefs.Backend = &cursor }, ReasonUnsupported},
 		"generation run": {func(t *testing.T, f *fixture) {
 			write(t, f.path, claudeTurn("s1", 1, sessions.GenerationRunMarker+"\nReview the pull request.", "Done."))
 		}, ReasonGenerationRun},

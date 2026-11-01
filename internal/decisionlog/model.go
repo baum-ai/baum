@@ -352,6 +352,9 @@ func (c caller) plan(ctx context.Context, prefs repos.Preferences, backend, mode
 	var err error
 	if p.Backend, p.Model, err = resolveModel(ctx, requested, p.backends, c.prices, prefs.Decisions.Model); err != nil {
 		c.log.Info("decision log backend unavailable", "backend", requested, "error", err)
+		if errors.Is(err, generate.ErrBackendNotOffered) {
+			return p, ReasonUnsupported
+		}
 		return p, ReasonUnavailable
 	}
 	if model != "" {
@@ -369,6 +372,9 @@ func (c caller) begin(ctx context.Context, p planned, a Attempt) (*completerMode
 	selected, err := generate.SelectDesktop(ctx, config.Backend(p.Backend), p.Model, p.backends, io.Discard)
 	if err != nil {
 		c.log.Info("decision log backend unavailable", "backend", p.Backend, "error", err)
+		if errors.Is(err, generate.ErrBackendNotOffered) {
+			return nil, 0, ReasonUnsupported, nil
+		}
 		return nil, 0, ReasonUnavailable, nil
 	}
 	completer, ok := selected.Backend.(agent.Completer)

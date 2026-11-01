@@ -69,12 +69,12 @@ not a failure.
    `auto` resolves as for reviews in the desktop app (`generate.SelectDesktop`):
    the first of claude and codex that passes its check, never the Anthropic API
    or cursor-agent; none is `backend_unavailable`. A requested backend other than
-   auto, claude or codex is refused and is `backend_unavailable` too. The model
+   auto, claude or codex is refused (`backend_unsupported`). The model
    follows the resolved backend: `preferences.decisions.model` unless it names
    another provider's family, else `claude-haiku-5-5` for claude and
    `gpt-6-luna` for codex. A backend that does not pass its check is
-   `backend_unavailable`. `backend_unsupported` is a reason older versions
-   recorded for cursor-agent.
+   `backend_unavailable`. A backend that cannot make a single structured
+   call is `backend_unsupported` too.
 7. The cost is reserved before the call: the prompt's byte bound and 16,384
    output tokens at the model's list price. Claude Code caches the prompt, so
    claude's call is reserved at the cache-write rate when that is higher. It
