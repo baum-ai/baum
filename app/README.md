@@ -1077,8 +1077,10 @@ for which pull requests (authored, requested, both, or all open pull requests
 in the repository), the harness and its model (a listed model or a custom
 name, saved when its field is left or Enter is pressed) and the reasoning
 effort (Default, which leaves it to the agent, Low, Medium or High; higher levels
-selected in onboarding remain visible; no row for
-Cursor Agent, whose models name their own). Each change is saved
+selected in onboarding remain visible). The harness is Claude Code or Codex
+only: the daemon refuses `cursor-agent` and `anthropic` (400 when saving, a
+failed job for one already in `config.toml`), and when neither is installed
+the section says so. Each change is saved
 at once, with "Saved" beside the title, through `PUT api/automatic`
 (`enabled`, `backend`, `model`, `effort`, `pull_requests`), which the daemon
 keeps as app preferences over the config file; `GET api/settings` reports the
