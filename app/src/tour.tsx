@@ -115,6 +115,12 @@ const STOPS: Stop[] = [
     at: href("timeline"),
   },
   {
+    title: "Decisions",
+    body: "The decisions behind the code, why they were made and the prompt behind each.",
+    target: ".local-main",
+    at: `${href("timeline")}&tab=all`,
+  },
+  {
     title: "Sessions",
     body: "Every agent session on this computer, linked to its commits and pull requests.",
     target: ".local-main",
