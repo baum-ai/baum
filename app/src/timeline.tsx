@@ -261,6 +261,8 @@ export function TimelinePage({
 }
 
 type Pages<T> = {
+  /** The revision of the latest read from the first page that ended. */
+  readAt: number;
   rows: T[];
   cursor: string | null;
   status: "loading" | "idle" | "failed";
@@ -271,19 +273,18 @@ type Pages<T> = {
 };
 
 /** A paged list of `path` under `query`, read again when either or the
- *  revision changes; older rows load by button. `settled` hears each read
- *  from the first page end. */
+ *  revision changes; older rows load by button. */
 function usePages<T>(
   path: string,
   query: string,
   key: "features" | "decisions",
   revision: number,
   active: boolean,
-  settled: () => void,
 ): Pages<T> {
   type State = {
     query: string;
     revision: number;
+    readAt: number;
     rows: T[];
     cursor: string | null;
     status: "loading" | "idle" | "failed";
@@ -293,6 +294,7 @@ function usePages<T>(
   const [state, setState] = useState<State>({
     query,
     revision,
+    readAt: -1,
     rows: [],
     cursor: null,
     status: "loading",
@@ -339,13 +341,20 @@ function usePages<T>(
         cursor = (body.next_cursor as string | null) ?? null;
         coverage = (body.coverage as Coverage | undefined) ?? null;
       } while (cursor && rows.length < want);
-      setState({ query, revision, rows, cursor, status: "idle", loaded: true, coverage });
-      settled();
+      setState({
+        query,
+        revision,
+        readAt: revision,
+        rows,
+        cursor,
+        status: "idle",
+        loaded: true,
+        coverage,
+      });
     };
     read().catch(() => {
       if (abort.signal.aborted) return;
-      setState((current) => ({ ...current, status: "failed" }));
-      settled();
+      setState((current) => ({ ...current, readAt: revision, status: "failed" }));
     });
     return () => abort.abort();
   }, [path, query, key, revision, active]);
@@ -481,7 +490,6 @@ function TimelineLog({
     "features",
     revision,
     tab === "features",
-    settled,
   );
   const decisions = usePages<DecisionSummary>(
     "api/timeline/decisions",
@@ -489,8 +497,15 @@ function TimelineLog({
     "decisions",
     revision,
     tab === "all",
-    settled,
   );
+  // The open tab's list has been read at the revision shown: a refresh,
+  // which changes the revision, has its answer. Read from what the list
+  // holds, so a read the list skips does not leave the refresh waiting.
+  const shownList = tab === "features" ? features : decisions;
+  const read = shownList.status !== "loading" && shownList.readAt === revision;
+  useEffect(() => {
+    if (read) settled();
+  }, [read, revision]);
   // The keys move through the open tab's features or decisions and open
   // them, as through any list.
   const rows = useRowFocus<HTMLDivElement>(
