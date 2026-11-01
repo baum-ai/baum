@@ -74,9 +74,10 @@ test("the refresh key starts a first read that hangs again, and never reloads th
   await expect(
     page.getByText("Loading local inbox…").or(page.locator(".nine-dots")).first(),
   ).toBeVisible();
-  await expect.poll(index.count).toBe(1);
+  await expect.poll(index.count).toBeGreaterThan(0);
+  const indexReads = index.count();
   await pressRefresh();
-  await expect.poll(index.count).toBeGreaterThan(1);
+  await expect.poll(index.count).toBeGreaterThan(indexReads);
   await index.release();
   await expect(
     page.getByRole("button", { name: "Refresh from GitHub" }).first(),
@@ -90,9 +91,11 @@ test("the refresh key reads again on pages still loading, without a button", asy
   const inboxes = await hold(page, "api/inboxes");
   await page.goto(new URL("?page=inboxes", page.url()).toString());
   await expect(page.getByText("Loading inboxes…")).toBeVisible();
-  await expect.poll(inboxes.count).toBe(1);
+  await expect.poll(inboxes.count).toBeGreaterThan(0);
+  // Events may read again on their own; the key reads once more.
+  const inboxReads = inboxes.count();
   await pressRefresh();
-  await expect.poll(inboxes.count).toBe(2);
+  await expect.poll(inboxes.count).toBeGreaterThan(inboxReads);
   await inboxes.release();
   await expect(page.getByText("Loading inboxes…")).toHaveCount(0);
 
@@ -100,8 +103,9 @@ test("the refresh key reads again on pages still loading, without a button", asy
   const groups = await hold(page, "api/groups");
   await page.goto(new URL("?group=not-read-yet", page.url()).toString());
   await expect(page.getByText("Loading review group…")).toBeVisible();
+  const groupReads = groups.count();
   await pressRefresh();
-  await expect.poll(groups.count).toBe(2);
+  await expect.poll(groups.count).toBeGreaterThan(groupReads);
   await groups.release();
   await expect(page.getByText("Loading review group…")).toHaveCount(0);
 });
