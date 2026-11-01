@@ -352,8 +352,9 @@ The daemon outlives the app, so the app's presence is a tray icon.
   3 h"); Open baum; Pause or Resume automatic reviews; Start at login;
   a Notifications submenu (see
   "Notifications"); Quit; Quit and stop background reviews. Plan usage shows
-  only the plans the daemon could read, and nothing when it can read neither
-  Claude Code nor Codex. The menu is rebuilt whenever a "resets in" text would
+  only the plans the daemon could read and the person has not hidden in
+  Settings (by default those of the backends baum uses), and nothing when
+  none remain. The menu is rebuilt whenever a "resets in" text would
   read differently, which the 3–10 s polls check.
 - **Tray panel (macOS and Windows):** a left click on the icon opens a small
   borderless window under the icon (above it, on a bottom taskbar), drawn

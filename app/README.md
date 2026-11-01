@@ -943,8 +943,11 @@ is; hovering "resets in" shows the exact date and time. A narrow window folds
 it to the lowest share left. Only
 plans the daemon could read show: a provider that is not installed, signed
 out or has not run yet is left out, and with neither readable (or a failed
-request) the box is not drawn. The desktop setup's review step shows the same
-meters, with "Unavailable: <reason>" for a provider it cannot read. Both ask
+request) the box is not drawn. Which plans show is a choice in Settings
+(below): by default only those of the backends baum uses. The desktop setup's
+review step shows every plan, whatever the choice (`?all=1`), so the harness
+can be chosen knowing what each has to spare, with "Unavailable: <reason>" for
+a provider it cannot read. Both ask
 `GET api/plan-usage?refresh=1` on mount and every five minutes (the daemon
 reads again at most once a minute), and work out "resets in" again every 30
 seconds between readings. Codex figures are live when Codex is signed in with
@@ -1082,7 +1085,17 @@ straight to Connections. **General**, the default, offers System, Light and Dark
 themes and whether holding Alt/Option shows keyboard shortcut hints. Preferences
 are read and saved through `GET`/`PUT api/settings/appearance` (`theme`,
 `key_hints`), in the daemon’s SQLite registry, so they survive daemon restarts
-and loopback port changes. Saves report failures and keep the previous choice;
+and loopback port changes. **Plan usage** below them has a switch per plan
+(Claude Code, Codex) for whether it shows in the sidebar and the desktop tray.
+With no choice a plan shows when one of the backends baum uses is its own: the
+reviews', the fixes' and decision capture's (Auto counts the first plan it can
+read, Claude Code before Codex; the Anthropic API and Cursor have no plan). The
+row says which. Flipping a switch is the person's choice and stays as chosen
+when the backends change; "Use baum's default" gives it back. A change of backend reaches the
+sidebar at its next reading (within five minutes) and the tray at its next poll. It is read and
+saved through `GET`/`PUT api/settings/plan-usage` (`{provider, shown}`, `shown`
+null to clear), and the sidebar reads again at once. Saves report failures
+and keep the previous choice;
 returning to a window rereads the saved preferences. Orange or red markers
 beside section names identify issues needing attention. Fixes needs attention when it follows reviews whose
 harness cannot fix. **Reviews** holds

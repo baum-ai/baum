@@ -1927,6 +1927,11 @@ dialog.local-dialog-wide {
   margin: 0.25rem 0 0;
   color: var(--text-secondary);
 }
+.settings-subhead {
+  margin: 0.75rem 0 -0.25rem;
+  font-size: var(--text-base);
+  font-weight: 600;
+}
 .settings-saved {
   margin: 0;
   font-size: var(--text-xs);
