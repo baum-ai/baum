@@ -344,7 +344,8 @@ export function LocalReview({
           });
       })
       .catch(() => {
-        if (!abort.signal.aborted) setSessions({ query, version: sessionsVersion, load: { state: "request-failed" } });
+        if (!abort.signal.aborted)
+          setSessions({ query, version: sessionsVersion, load: { state: "request-failed" } });
       });
     return () => abort.abort();
   }, [sessionsVersion, query, revision, retry, ended]);
