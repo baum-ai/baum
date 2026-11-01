@@ -454,7 +454,7 @@ func cutOldestComments(bundle *Bundle) bool {
 func cutGeneratedOrVendoredPatches(bundle *Bundle) bool {
 	cut := false
 	for i := range bundle.Diff {
-		if (bundle.Diff[i].Role == RoleGenerated || bundle.Diff[i].Role == RoleVendored) && bundle.Diff[i].Patch != "" {
+		if PatchTextWithheld(bundle.Diff[i].Role) && bundle.Diff[i].Patch != "" {
 			bundle.Diff[i].Patch = ""
 			bundle.Diff[i].Textless = true
 			bundle.Diff[i].TextlessReason = "trimmed_" + bundle.Diff[i].Role
@@ -462,6 +462,14 @@ func cutGeneratedOrVendoredPatches(bundle *Bundle) bool {
 		}
 	}
 	return cut
+}
+
+// PatchTextWithheld reports whether a hunk of role loses its patch text
+// before any other code: generated and vendored files. A patch read later
+// for such a hunk (the viewer's excerpts) is withheld whole, so it never
+// shows text the stored hunk could have been cut to.
+func PatchTextWithheld(role string) bool {
+	return role == RoleGenerated || role == RoleVendored
 }
 
 // cutSupersededDecisions drops decisions a later decision of the same

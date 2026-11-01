@@ -454,7 +454,13 @@ func (a LocalAPI) Handler() *LocalHandler {
 			return
 		}
 		defer release()
-		viewer.Mux().ServeHTTP(w, r)
+		// The version asked for is the document the viewer serves, so the
+		// viewer answers it as its own.
+		routed := r.Clone(r.Context())
+		query := routed.URL.Query()
+		query.Del("version")
+		routed.URL.RawQuery = query.Encode()
+		viewer.Mux().ServeHTTP(w, routed)
 	}
 	mux.HandleFunc("GET /api/document", document)
 	mux.HandleFunc("GET /api/sessions", document)

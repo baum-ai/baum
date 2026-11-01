@@ -1258,7 +1258,7 @@ anything. The server has six API routes and an asset fallback:
 | `GET /api/health` | `{"status":"ok"}` |
 | `GET /api/sessions` | the sessions on this machine linked to the document's pull request, as below; `no-store` |
 | `GET /api/sessions/{id}` | the redacted transcript of one of those sessions, as below; `no-store` |
-| `GET /api/patch?path=` | the patch of one file the document cites, as below; `no-store` |
+| `GET /api/patch?path=&version=` | the patch of one file the document, or another saved version of its pull request, cites, as below; `no-store` |
 | any other `GET` | the embedded file of that name, or `index.html` for a path that names none, so the app's own URLs work as deep links |
 
 Only the embedded files and the one document are ever served; a request path
@@ -1283,11 +1283,32 @@ leaves out. The app fills them in from `GET /api/patch?path=<path>`, answered by
 `locallink.Patch` over the same clone and remote matching as the sessions
 (`gitlocal.Open`, any remote naming the document's repository, no fetch).
 
-- Only a `path` that is the `path` of a hunk in `index.hunks` of the document
-  being served is answered; anything else, including a missing, empty or
+- Without `version`, or with the served document's own `review.version`, the
+  served document is answered. Another positive `version` names a saved
+  version of the same pull request, which `baum internal view --pr` reads
+  from the store (`store.Get`, `viewserver.Options.Versions`); its document
+  must name the same repository, pull request and version, and is kept until
+  the served document changes. That version's head, base and merge base and
+  its own `index.hunks` are used, never the working tree or a branch. A
+  version that is not a plain positive number, does not exist, belongs to
+  another pull request, or that a server without saved versions (a document
+  file, the sample) is asked for, is 404; one the store fails to read is 500.
+  The daemon's app resolves `version` to the stored document itself and
+  hands the request on without it.
+- Only a `path` that is the `path` of a hunk in `index.hunks` of that version
+  is answered; anything else, including a missing, empty or
   over-long (4096 bytes) `path`, is 404 and runs nothing. A repeated `path`
   parameter is not an error: the first is the one asked for. The document
-  records one path per hunk, the file's name at the head.
+  records one path per hunk, the file's name at the head. A path one of whose
+  hunks has the `generated` or `vendored` role (`bundle.PatchTextWithheld`,
+  the role generation recorded, else `bundle.RoleForPath`) is `{"patch":null}`
+  and runs nothing: the bundle cuts that text before any other code, so a
+  stored document may have hidden it.
+- A local pull request document carries no `index.file_comparisons`; only
+  group reviews do, and their patches come from `GET /api/groups/{id}/patch`,
+  which picks the member comparison (`internal/reviewgroups`). Every hunk of a
+  pull request document is that version's merge base to head, so that range
+  is the one read.
 - The range's changed files are listed once per merge base and head
   (`gitlocal.Repo.ChangedFiles`: `git diff --raw -z -M -l1000`, bounded like the
   other reads) and kept while the commits stay the same. That list gives the old
@@ -1313,8 +1334,17 @@ leaves out. The app fills them in from `GET /api/patch?path=<path>`, answered by
 - The response is `200 {"patch":"@@ -1,3 +1,4 @@..."}`: the file's diff from its
   first `@@` line. git's header lines before it (`diff --git`, `index`, the
   rename lines, `---` and `+++`) are dropped; the viewer reads only the hunks.
-  Every outcome that is not a patch is `200 {"patch":null}` with nothing about
-  why: a binary file or a mode-only change, a submodule, a path the range does
+- The patch is masked exactly as a stored hunk's text is
+  (`bundle.RedactFilePatch`): the same diff parsing (`parseFileHunks`, without
+  the line cap, so each line loses a CR before its newline) and the same
+  `redactPatches` over the file's hunks as one text, with the one redaction
+  configuration (`redact.Config`, which has no per-repository input). A secret
+  masked in a stored hunk is masked identically in the patch; the bundle tests
+  check the two against each other. A patch diff parsing reads as textless
+  has no text patch.
+- Every outcome that is not a patch is `200 {"patch":null}` with nothing about
+  why: a generated or vendored file, a binary file or a mode-only change, a
+  submodule, a path the range does
   not change (a directory is one), commits or blobs the clone lacks (including a partial
   clone), a directory that is not the repository's clone, a patch over 1 MiB
   (`locallink.MaxPatchBytes`), the sample document. A failure that may pass (git
@@ -1322,10 +1352,17 @@ leaves out. The app fills them in from `GET /api/patch?path=<path>`, answered by
   the app turns both into a rejected request and tries again when the excerpt is
   next opened.
 - Answers that hold until the document changes (a patch, no text patch, unchanged,
-  too large) are kept per path; those a person can fix (no clone, no remote,
+  too large) are kept by the commits and path they were read for (the merge
+  base, else the base; the head; the path), so versions that compare the same
+  commits share them; those a person can fix (no clone, no remote,
   missing commits) and failures are computed again on the next request. A
-  document reload (`--watch`) drops every answer and the set of cited paths. At
-  most four git reads run at once, each bounded by the server's lifetime.
+  document reload (`--watch`) drops every answer, the set of cited paths and
+  the saved versions read. At most four git reads run at once, each bounded by
+  the server's lifetime and one minute. `locallink.Patcher` also shares a read
+  that is running among requests for the same clone, repository, range and
+  path, so the daemon's app, which serves each saved version from its own
+  server over one `Patcher`, reads a file once for versions with the same
+  commits; it keeps the changed-file lists of the last eight ranges.
 
 ### Local session linkage
 

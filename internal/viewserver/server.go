@@ -80,6 +80,10 @@ type Options struct {
 	// machine, for GET /api/patch. It is called when a file's patch is first
 	// asked for, never at start-up. Unset, every patch is unavailable.
 	Patch PatchFunc
+	// Versions reads another saved version of the document's pull request,
+	// for GET /api/patch?version=. Unset, only the served document's version
+	// has patches.
+	Versions VersionsFunc
 	// Home is the user's home directory, written as ~ in the transcripts
 	// GET /api/sessions/{id} serves. It defaults to os.UserHomeDir, else the
 	// account's home directory.
@@ -98,6 +102,8 @@ type Review struct {
 	Head, Base  string
 	// MergeBase is the merge base the document records, when it does.
 	MergeBase string
+	// Version is the document's review version.
+	Version int
 }
 
 // SessionsFunc links local sessions to a pull request. It may run twice at
@@ -117,9 +123,11 @@ type Server struct {
 	document []byte
 	review   Review
 	hub      hub
-	// paths are the paths of the document's cited hunks, and patches the
-	// answers of /api/patch for it; both are replaced with the document.
-	paths      map[string]struct{}
+	// paths are the paths of the document's cited hunks, versions the other
+	// saved versions read for /api/patch, and patches its answers; all are
+	// replaced with the document.
+	paths      map[string]bool
+	versions   map[int]*patchVersion
 	patches    *patchCache
 	patchSlots chan struct{}
 
@@ -434,6 +442,7 @@ func (s *Server) setDocument(document []byte) {
 	s.document = document
 	s.review = review
 	s.paths = paths
+	s.versions = nil
 	s.patches = &patchCache{jobs: map[string]*patchJob{}}
 	s.mu.Unlock()
 	s.hub.broadcast()

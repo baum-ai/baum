@@ -53,13 +53,14 @@ func parseReview(document []byte) Review {
 			Head        string `json:"head"`
 			Base        string `json:"base"`
 			MergeBase   string `json:"merge_base"`
+			Version     int    `json:"version"`
 		} `json:"review"`
 	}
 	if json.Unmarshal(document, &parsed) != nil {
 		return Review{}
 	}
 	r := parsed.Review
-	return Review{Repository: r.Repository, PullRequest: r.PullRequest, Head: r.Head, Base: r.Base, MergeBase: r.MergeBase}
+	return Review{Repository: r.Repository, PullRequest: r.PullRequest, Head: r.Head, Base: r.Base, MergeBase: r.MergeBase, Version: r.Version}
 }
 
 func (s *Server) currentReview() Review {
