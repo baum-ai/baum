@@ -20,6 +20,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/baum-ai/baum/hosted/agentplugins"
 	"github.com/baum-ai/baum/internal/agentrequests"
 	"github.com/baum-ai/baum/internal/analytics"
 	"github.com/baum-ai/baum/internal/appdb"
@@ -421,7 +422,7 @@ func localApplication(paths daemon.Paths, log *slog.Logger) func(context.Context
 			}
 			// Stacked pull requests are grouped for review by default.
 			if !snapshot.Stale && snapshot.Error == "" {
-				if synced, err := groups.SyncStacks(ctx, snapshot.Repository, snapshot.PullRequests); err != nil {
+				if synced, err := groups.SyncStacks(ctx, snapshot.Repository, snapshot.PullRequests, snapshot.Observations); err != nil {
 					log.Warn("stack groups not updated", "repository", snapshot.Repository, "error", err)
 				} else if synced {
 					changed()
@@ -655,6 +656,23 @@ func localApplication(paths daemon.Paths, log *slog.Logger) func(context.Context
 				e := decisionlog.EffectiveModel(ctx, cfg, prefs, generate.Backends{}, nil)
 				return uiserver.DecisionModel{Backend: e.Backend, Undetermined: e.Undetermined, Model: e.Model, Ignored: e.Ignored}
 			},
+			HookTrust: func(ctx context.Context) agentplugins.HookTrust {
+				home, err := os.UserHomeDir()
+				if err != nil {
+					return agentplugins.HookTrust{State: "unknown"}
+				}
+				dirs := []string{home}
+				clones, err := registry.List(ctx)
+				if err != nil {
+					return agentplugins.HookTrust{State: "unknown"}
+				}
+				for _, clone := range clones {
+					if clone.Available {
+						dirs = append(dirs, clone.Path)
+					}
+				}
+				return agentplugins.New().CodexTrust(ctx, dirs)
+			},
 			Diagnostics: uiDiagnostics}.Handler()
 		return daemon.App{
 			API:     api,
@@ -703,6 +721,7 @@ func localApplication(paths daemon.Paths, log *slog.Logger) func(context.Context
 								if !ok {
 									return
 								}
+								api.InvalidateSessions()
 								sessionIndex.Trigger()
 							}
 						}
@@ -877,9 +896,12 @@ func (h hookEvents) Close() {
 }
 
 // uiDiagnostics is the report the daemon serves. It never fetches the price
-// list: the page shows what the startup refresh produced.
+// list: the page shows what the startup refresh produced. It reports for the
+// desktop app, which runs jobs with Claude Code and Codex only.
 func uiDiagnostics(ctx context.Context) doctor.Report {
-	return doctor.Run(ctx, doctorOptions(false))
+	options := doctorOptions(false)
+	options.Desktop = true
+	return doctor.Run(ctx, options)
 }
 
 // daemonReport describes the daemon for "baum internal doctor" without starting it.

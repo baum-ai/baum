@@ -51,7 +51,7 @@ const assert = require('node:assert/strict');
     if (command === 'install_command') { await new Promise(resolve => setTimeout(resolve, 300)); state.command.installed = true; return { ok: true, lines: ['Installed CLI'] }; }
     if (command === 'install_hooks') {
       if (fail) return { ok: false, lines: ['Plugin download failed. Retry.'] };
-      Object.assign(state.hooks.agents.find(a => a.agent === args.agent), { installed: true, enabled: true });
+      Object.assign(state.hooks.agents.find(a => a.agent === args.agent), { installed: true, enabled: true, ...(args.agent === "codex" ? {trust:{state:"untrusted"}} : {}) });
     }
     return { ok: true, lines: ['Done'] };
   });
@@ -247,9 +247,15 @@ const assert = require('node:assert/strict');
   assert.equal(await page.locator('#step-label').textContent(), 'STEP 3 OF 3');
   fail = false;
   await page.locator('#codex-install').click();
-  await page.waitForSelector('#codex-state.ok');
+  await expect(page.locator('#codex-state')).toHaveText('Needs approval in Codex');
+  assert(!await page.locator('#codex-state').evaluate(e=>e.classList.contains('ok')), 'Installed hooks must not imply trusted');
+  await expect(page.locator('#codex-hint')).toContainText('/hooks');
   await page.locator('#claude-code-install').click();
   await page.waitForSelector('#claude-code-state.ok');
+  await expect(page.locator('#refresh')).toBeVisible();
+  state.hooks.agents.find(a=>a.agent==='codex').trust.state='trusted';
+  await page.locator('#refresh').click();
+  await expect(page.locator('#codex-state.ok')).toHaveText('Connected');
   assert(await page.locator('#refresh').isHidden() && await page.locator('#skip-note').isHidden(), 'A finished step should not offer to recheck or skip');
   await page.screenshot({ path: `${screenshots}/onboarding-agents-connected.png` });
   assert.deepEqual(calls.filter(([c]) => c === 'install_hooks').map(([,a]) => a.agent), ['codex', 'codex', 'claude-code']);

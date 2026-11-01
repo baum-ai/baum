@@ -189,12 +189,25 @@ clears `walk`; the retired `walk=full` also opens the full review.
 Up next's list shows a review group or stack (`api/groups`) with a shown member
 as one row, in the section and at the place of its first member in the list
 (`withGroups` in `src/up-next.tsx`); its members leave their own rows and nest
-under it when it is opened (its chevron, `l`/`→`; `h`/`←` closes it from the
-group or a member). Each member names its kind, since it may belong to another
-section. A stack's members stay out of **Merge all**, as a stack merges from its
-base up. The group's panel shows its review's state and risk, its members'
-lines, files and review times summed, **Open the stack** (or group) as the
-default, and its members with what each waits on; picking one previews it.
+under it when it is opened (its chevron, or `Space`, which opens or closes it
+from the group and closes it from a member, back on the group). Each member says what it waits on, since it may belong to another
+section: what needs fixing ("Checks failing · Conflicts", "2 unresolved
+threads", "Changes requested"), "Ready to merge", or else its kind. A stack's
+member whose base branch is another open member's head (`stackBases`) is not
+ready to merge, whatever GitHub's merge state, while an open member lies under
+it: it waits, as "Waiting on #N", on the lowest of them, which merges first,
+and stays out of Ready to merge and Merge all. A stack's members stay out of **Merge all**, as a stack merges from its
+base up. The group's panel is laid out as a pull request's: the branch it
+merges into ("Stacked on main"), its members' lines, files and review times
+summed, a line when its review is missing or outdated, **Open the stack** (or group) as the default, the
+same risk card with the group review's main reason, What changed from the group
+review (`api/groups/<id>/document`: its summary and sections), and its members.
+Their list opens and closes from its head, which counts them, landed ones
+included ("7 pull requests"), and those merged (`landed`); it starts open. A
+stack's members run from its base up, its landed ones first, joined by a line,
+each with a dot and what it waits on ("#963 · Ready to merge", "Merged");
+picking one the queue lists previews it, and the others (landed, or needing
+nothing now) are shown as read.
 
 Under its title the panel shows the pull request's facts: its head branch and
 the base it merges into (`head_ref`, `base_ref`), its lines and files changed
@@ -225,19 +238,25 @@ link to the rest on GitHub. A thread the signed-in account may resolve
 once, without a dialog, reads **Resolving…** meanwhile, and removes the thread
 from the list once GitHub confirms; a refusal is shown under the thread.
 
-The checks (`PullRequestChecks` in `src/checks.tsx`) are asked for with `GET
+The checks (`useChecks` and `PullRequestChecks` in `src/checks.tsx`) are asked
+for by their row as soon as the panel shows it, open or not, with `GET
 api/prs/checks` and the head commit the panel shows (`head_sha`), again when
 that head changes and every 20 seconds while any still runs; an older daemon's
 `api/prs/failing-checks` lists only the failing ones. They are listed failing
 first, then running, then passed, then skipped or neutral, each with its state
-icon, its name, its state in words (`conclusionText`), its title when it has one
-and a **Details** link (`url`), above a count by state. A failing check with a
+icon, its name (a GitHub Actions job's after its workflow, as GitHub lists it:
+"Web CI / check"; the daemon reads the commit's workflow runs for it), its state in words (`conclusionText`), its title when it has one
+and a **Details** link (`url`). While any check fails, only the failing ones
+(and any retried from the list) show, the rest behind **Show N other checks**,
+which **Hide other checks** folds again; with none failing every check shows.
+The row's title carries a pill counting them out of them all (`checksCount`):
+red "1/9 failing" while any fails, else amber "2/9 running" while any runs,
+else green "9/9 passing", with the count by state (`checksSummary`) as its
+tooltip. A failing check with a
 `job_id` has **Retry** when discovery says the account can push
 (`viewer_can_push`): it posts `api/prs/rerun-job` at once, reads **Retrying…**,
-then shows "Re-running on GitHub"; a refusal is shown under the check. When a
-fix's pull request offers one, the Checks failing row has **Fix CI**, which
-starts at once a fix of the failing checks alone (`startFix(clone, pr,
-"checks")`, `"only":"checks"` on the item).
+then shows "Re-running on GitHub"; a refusal is shown under the check. The
+Checks failing row has no fix of its own: the panel's fix covers the checks.
 
 The conflicting files (`ConflictingFiles` in `src/conflicts.tsx`) are asked for
 with `GET api/prs/conflicts`. The daemon fetches the base branch's tip (and the
@@ -562,12 +581,17 @@ link or button clicked with the pointer gives up its focus
 (`usePointerBlurs`), so the next `j` or `k` paints no ring on it;
 rows, tabs, menus, dialogs and Settings keep a click's focus, being where the
 keys act. Rings show only for the keyboard (`:focus-visible`). `Esc` in a text
-field gives it up, as before.
+field gives it up, as before. On a pull request, a group, a job's
+transcript or a session, `Esc` and `u` go back to the page it was opened from
+(the Inbox, an inbox, Pull requests, a group), past moves within it (a
+walkthrough step, the Ask panel): each history entry the app adds records its
+place and the entry it was opened from (`writeHistory`, `backToOpener`). A window
+opened on the page itself goes to its list.
 
 On Pull requests, `j`/`↓` and `k`/`↑` move a row focus through the
 rows as drawn (group rows count; rows of collapsed buckets and collapsed groups
 are skipped), `Enter` or `o` opens the focused pull request or group, `x` toggles
-its selection, `Space` opens or closes its peek, `m` opens Merge and `f` starts the fix where the row offers them (Merge wins
+its selection, `Space` opens or closes its peek (on a group's row, shows or hides its pull requests), `m` opens Merge and `f` starts the fix where the row offers them (Merge wins
 where both could), `g` generates the pull request's review through the same path
 as the PR page's Generate (so the same confirmations and the instant "Starting"
 state), `t` opens its fix transcript, `r` refreshes from GitHub at once rather than after the polling backoff,
@@ -951,9 +975,11 @@ their own review status, each linking to its page) with Rename, Add pull
 request, Remove (never below two members, nor above eight) and Delete group.
 Deleting never deletes saved reviews. Generating needs an available clone of
 the repository, and the group review builds on a saved review of every member:
-Generate queues the reviews of members without one ahead of the group's (members already being reviewed are
-not queued again), and the group review starts after them even if the person
-leaves the page. Meanwhile the page says "Reviewing the pull requests first",
+Generate queues the reviews of members without a review of their current head
+with the group's (members already being reviewed are not queued again), and
+the group review starts after them even if the person leaves the page. It also
+waits while a member is being fixed, and when a member's head moves while it
+waits, it reviews that member again and then the group, at the new heads. Meanwhile the page says "Reviewing the pull requests first",
 the members' rows show a loader, and Cancel stops the group's job. If a
 member's review fails, the group's job fails with that reason and Try again
 starts over. A fork or an author without
@@ -969,8 +995,11 @@ is; hovering "resets in" shows the exact date and time. A narrow window folds
 it to the lowest share left. Only
 plans the daemon could read show: a provider that is not installed, signed
 out or has not run yet is left out, and with neither readable (or a failed
-request) the box is not drawn. The desktop setup's review step shows the same
-meters, with "Unavailable: <reason>" for a provider it cannot read. Both ask
+request) the box is not drawn. Which plans show is a choice in Settings
+(below): by default only those of the backends baum uses. The desktop setup's
+review step shows every plan, whatever the choice (`?all=1`), so the harness
+can be chosen knowing what each has to spare, with "Unavailable: <reason>" for
+a provider it cannot read. Both ask
 `GET api/plan-usage?refresh=1` on mount and every five minutes (the daemon
 reads again at most once a minute), and work out "resets in" again every 30
 seconds between readings. Codex figures are live when Codex is signed in with
@@ -1095,7 +1124,7 @@ did for the person (reviews that completed, fixes pushed, threads resolved, merg
 branch updates and check re-runs from the app, decision capture runs that succeeded), its
 failures left to Jobs. A figure that is unknown is "—" with its reason as a tooltip and to
 screen readers, never 0; a floor reads "≥". Charts are HTML and inline SVG in the
-viewer's `--data-*` slots, agents in a fixed order (Claude Code, Codex, Cursor),
+viewer's `--data-*` slots, agents in a fixed order (Claude Code, Codex, then any other recorded, such as earlier Cursor sessions, in a muted colour; the agent filter offers Claude Code and Codex only),
 with tooltips on hover and focus. The page reads again every two seconds while
 the daemon is still indexing or searching GitHub, then every five minutes. An
 older daemon without the capability gets a note to update baum.
@@ -1108,7 +1137,17 @@ straight to Connections. **General**, the default, offers System, Light and Dark
 themes and whether holding Alt/Option shows keyboard shortcut hints. Preferences
 are read and saved through `GET`/`PUT api/settings/appearance` (`theme`,
 `key_hints`), in the daemon’s SQLite registry, so they survive daemon restarts
-and loopback port changes. Saves report failures and keep the previous choice;
+and loopback port changes. **Plan usage** below them has a switch per plan
+(Claude Code, Codex) for whether it shows in the sidebar and the desktop tray.
+With no choice a plan shows when one of the backends baum uses is its own: the
+reviews', the fixes' and decision capture's (Auto counts the first plan it can
+read, Claude Code before Codex; the Anthropic API and Cursor have no plan). The
+row says which. Flipping a switch is the person's choice and stays as chosen
+when the backends change; "Use baum's default" gives it back. A change of backend reaches the
+sidebar at its next reading (within five minutes) and the tray at its next poll. It is read and
+saved through `GET`/`PUT api/settings/plan-usage` (`{provider, shown}`, `shown`
+null to clear), and the sidebar reads again at once. Saves report failures
+and keep the previous choice;
 returning to a window rereads the saved preferences. Orange or red markers
 beside section names identify issues needing attention. Fixes needs attention when it follows reviews whose
 harness cannot fix. **Reviews** holds
@@ -1117,8 +1156,10 @@ for which pull requests (authored, requested, both, or all open pull requests
 in the repository), the harness and its model (a listed model or a custom
 name, saved when its field is left or Enter is pressed) and the reasoning
 effort (Default, which leaves it to the agent, Low, Medium or High; higher levels
-selected in onboarding remain visible; no row for
-Cursor Agent, whose models name their own). Each change is saved
+selected in onboarding remain visible). The harness is Claude Code or Codex
+only: the daemon refuses `cursor-agent` and `anthropic` (400 when saving, a
+failed job for one already in `config.toml`), and when neither is installed
+the section says so. Each change is saved
 at once, with "Saved" beside the title, through `PUT api/automatic`
 (`enabled`, `backend`, `model`, `effort`, `pull_requests`), which the daemon
 keeps as app preferences over the config file; `GET api/settings` reports the
@@ -1383,8 +1424,12 @@ note shows on its own line after the actions, a failure as an alert.
 
 Inherited tmux variables without a recorded terminal do not identify a session's
 pane. Codex's shared app server runs hooks separately from its terminal clients;
-baum locates those clients by the thread ID in their terminal titles. Include
-`thread-id` in Codex's `tui.terminal_title` setting. A unique matching tmux pane,
+baum locates those clients by the thread ID in their terminal titles.
+Connecting or updating Codex through baum automatically puts `thread-id` last
+in `tui.terminal_title`, preserving the user's other title items. If an older
+connection lacks it, Focus repairs the setting and asks the user to restart
+the Codex terminal session and resume their conversation. No manual config
+edit is needed. A unique matching tmux pane,
 kitty tab (with remote control), iTerm2 session, Terminal tab, Hyprland window or
 X11 window can then be selected. Shortened thread IDs need at least 24 characters;
 missing or ambiguous titles produce a notice without selecting another session.
@@ -1535,6 +1580,19 @@ use by generation, disconnect, and access to saved reviews. Denial, expiry,
 network/scope/persistence failures and the endpoint namespace/CSRF matrix stay
 in component and Go handler tests.
 
+Linked session evidence on an open review refreshes every 30 seconds without
+reloading the review document. Polling allows late transcript/checkpoint arrivals
+to appear; a transient poll failure retains the last successful evidence.
+
+Live-session linkage reports `link_status` and `link_method`, with recorded
+branch/upstream/HEAD evidence. Ambiguous matches have no selected PR. Recently
+ended sessions can acquire a PR after ending, using their saved Git observation
+rather than the current checkout. Active observations are also saved without
+notification message text or local paths for restart recovery.
+
+A session retains up to 32 timestamped Git work observations across branch
+changes; these are context associations, not asserted code contributions.
+
 ## Durable reading state
 
 `GET` and `PUT api/ui-state/inbox` store the Inbox's local-day seen/cleared
@@ -1554,3 +1612,19 @@ later text follows it. Neither operation sends the draft to GitHub.
 Sidebar folding and viewer panel/tab layout remain presentation preferences
 in browser storage. Durable inbox records and review drafts do not use or
 import legacy localStorage values.
+
+
+Codex hook readiness is separate from plugin installation. Onboarding and
+Settings show Connected only after Codex reports all baum hook definitions
+enabled and trusted. Untrusted or changed hooks show Needs approval in Codex
+with `/hooks` instructions; disabled, missing and unverified hooks have
+distinct states. Setup may still be finished with an unfinished connection.
+
+The bottom Settings link has a caution badge and an accessible description
+while Codex session reporting needs attention. Opening Settings shows the
+reason and Check again. The app reads `GET api/agent-hooks/codex` once on load,
+on window focus, after native Settings actions and every minute while visible.
+The warning clears after a successful ready result; a failed request retains
+the previous warning. Older daemons without this endpoint show no new global
+badge. Onboarding rechecks on focus or Check again. Checking never trusts a
+hook, restarts Codex or starts a conversation.

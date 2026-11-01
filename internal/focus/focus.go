@@ -94,6 +94,8 @@ type Focuser struct {
 	// ClaudeDir is Claude desktop's configuration directory; empty is its
 	// default for the platform.
 	ClaudeDir string
+	// ConfigureCodexTitle prepares Codex's terminal title for session focus.
+	ConfigureCodexTitle func() (bool, error)
 }
 
 func (f *Focuser) run(ctx context.Context, env []string, name string, args ...string) ([]byte, error) {
@@ -230,7 +232,11 @@ func (f *Focuser) Focus(ctx context.Context, agent, id string, t *hookevents.Ter
 			}
 		}
 		if located == nil {
-			return f.codexNative(ctx, id, t)
+			result := f.codexNative(ctx, id, t)
+			if result.Message == codexTitleHint {
+				return f.repairCodexTitle()
+			}
+			return result
 		}
 		t = located
 	}
@@ -313,7 +319,7 @@ func (f *Focuser) codexTmuxPane(ctx context.Context, id string, t *hookevents.Te
 		pane, tty = fields[0], fields[1]
 	}
 	if pane == "" {
-		return nil, "Could not find this Codex session's tmux pane. Open the session in Codex and include thread-id in its tui.terminal_title setting."
+		return nil, codexTitleHint
 	}
 	located := *t
 	located.Env = maps.Clone(t.Env)

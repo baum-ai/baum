@@ -54,6 +54,7 @@ h1 {
 }
 
 p {
+  overflow-wrap: anywhere;
   color: var(--text-secondary);
   margin: 0 0 20px;
   line-height: 1.5;

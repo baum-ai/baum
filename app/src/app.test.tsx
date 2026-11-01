@@ -1336,7 +1336,7 @@ it("chooses the data extraction agent apart from the reviews'", async () => {
   const agent = section.querySelector<HTMLSelectElement>("#decisions-agent")!;
   expect(agent.selectedOptions[0]!.textContent).toBe("Same as reviews");
   expect(section.textContent).toContain("Now Codex.");
-  expect([...agent.options].map((o) => o.value)).toEqual(["", "claude", "codex", "anthropic"]);
+  expect([...agent.options].map((o) => o.value)).toEqual(["", "claude", "codex"]);
   // A new agent starts over at its default model, which is saved as none.
   await choose(agent, "claude");
   expect(puts.at(-1)).toEqual({
@@ -1395,9 +1395,10 @@ it("saves a reasoning effort per use case", async () => {
   });
   await pick("Review reasoning effort", "Default");
   expect(puts.at(-1)!.body).toMatchObject({ effort: "" });
-  // Cursor Agent names its effort in the model, so it has no effort row.
-  await choose(node.querySelector<HTMLSelectElement>("#review-agent")!, "cursor-agent");
-  expect(node.querySelector('[aria-label="Review reasoning effort"]')).toBeNull();
+  // Only Claude Code and Codex can be chosen for reviews.
+  expect(
+    [...node.querySelector<HTMLSelectElement>("#review-agent")!.options].map((o) => o.value),
+  ).toEqual(["claude", "codex"]);
 });
 it("offers a fix effort only with a fix agent of its own", async () => {
   history.replaceState(null, "", "/s/test-ns/?page=settings&section=fixes");
@@ -1713,6 +1714,34 @@ it("manages CLI and hooks inline in desktop Settings", async () => {
   }
 });
 
+it("says in desktop Settings when neither Claude Code nor Codex is installed", async () => {
+  history.replaceState(null, "", "/s/test-ns/?page=settings&section=reviews");
+  stubDiagnostics(async () => Response.json({ local: true, report: diagnosticsReport }));
+  stubAutomatic(demoClone, automaticOverview, { backend: "auto", model: "" });
+  const invoke = vi.fn(async () => ({
+    first_run: false,
+    command: {
+      installed: false,
+      target: "/app/baum",
+      plan: { link: "/home/user/bin/baum", on_path: true, admin: false },
+    },
+    hooks: { agents: [] },
+  }));
+  Object.defineProperty(window, "__TAURI_INTERNALS__", { configurable: true, value: { invoke } });
+  try {
+    await act(async () => root.render(<App />));
+    const section = node.querySelector('[aria-labelledby="settings-reviews-heading"]')!;
+    expect(section.parentElement!.textContent).toContain(
+      "Neither Claude Code nor Codex is installed on this computer",
+    );
+    expect(
+      [...section.querySelector<HTMLSelectElement>("#review-agent")!.options].map((o) => o.value),
+    ).toEqual(["claude", "codex"]);
+  } finally {
+    Reflect.deleteProperty(window, "__TAURI_INTERNALS__");
+  }
+});
+
 it("sets the desktop window's zoom in Settings and follows the shortcuts", async () => {
   history.replaceState(null, "", "/s/test-ns/?page=settings&section=computer");
   const invoke = vi.fn(async (command: string, args?: { level: number }) => {
@@ -1876,4 +1905,48 @@ it("adds a history entry for an address write, and replaces it when asked", () =
   expect(location.search).toBe("?page=timeline&feature=F2");
   expect(url!.search.get("feature")).toBe("F2");
   act(() => probe.unmount());
+});
+
+it("warns beside Settings until Codex hooks are trusted and rechecks on focus", async () => {
+  const original = vi.mocked(fetch).getMockImplementation()!;
+  let state = "untrusted";
+  let unavailable = false;
+  vi.stubGlobal(
+    "fetch",
+    vi.fn((path: string) =>
+      path.endsWith("/api/agent-hooks/codex")
+        ? Promise.resolve(
+            unavailable ? new Response("offline", { status: 503 }) : Response.json({ state }),
+          )
+        : original(path),
+    ),
+  );
+  await act(async () => root.render(<App />));
+  const settings = () =>
+    node.querySelector<HTMLAnchorElement>('.local-rail a[href*="page=settings"]')!;
+  expect(settings().querySelector(".local-rail-badge")?.textContent).toBe("!");
+  expect(settings().getAttribute("title")).toContain("Codex hooks need approval");
+  await act(async () => settings().click());
+  expect(node.querySelector(".settings-content")?.textContent).toContain("Open /hooks in Codex");
+  unavailable = true;
+  await act(async () => window.dispatchEvent(new Event("focus")));
+  expect(settings().querySelector(".local-rail-badge")).not.toBeNull();
+  unavailable = false;
+  state = "trusted";
+  await act(async () => window.dispatchEvent(new Event("focus")));
+  expect(settings().querySelector(".local-rail-badge")).toBeNull();
+  expect(node.querySelector(".settings-content")?.textContent).not.toContain(
+    "Codex hooks need approval",
+  );
+  state = "unknown";
+  await act(async () => window.dispatchEvent(new Event("focus")));
+  expect(settings().querySelector(".local-rail-badge")).not.toBeNull();
+  expect(node.querySelector(".settings-content")?.textContent).toContain(
+    "Could not verify Codex hook approval",
+  );
+  state = "hooks_disabled";
+  await act(async () => window.dispatchEvent(new Event("focus")));
+  expect(node.querySelector(".settings-content")?.textContent).toContain(
+    "codex features enable hooks",
+  );
 });

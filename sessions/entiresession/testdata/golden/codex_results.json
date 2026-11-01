@@ -608,7 +608,10 @@
           "model_invocation_id": "5192a727-1636-5faf-bd78-1a33308b1b04",
           "name": "exec",
           "verb": "execute",
-          "input": "const r = await tools.exec_command({cmd: \"rg -n 'func runList' cmd\", workdir: \"/home/dev/taskline\"});\ntext(r.output);",
+          "input": {
+            "command": "rg -n 'func runList' cmd",
+            "input": "const r = await tools.exec_command({cmd: \"rg -n 'func runList' cmd\", workdir: \"/home/dev/taskline\"});\ntext(r.output);"
+          },
           "status": "ok",
           "metadata": {},
           "timestamp": "2026-07-10T12:09:21Z"
@@ -620,7 +623,10 @@
           "model_invocation_id": "ffafad19-c26e-5a34-abf5-15b8fa0c420e",
           "name": "exec",
           "verb": "execute",
-          "input": "const r = await tools.exec_command({cmd: \"sed -n 1,60p cmd/taskline/list.go\", workdir: \"/home/dev/taskline\"});\ntext(r.output);",
+          "input": {
+            "command": "sed -n 1,60p cmd/taskline/list.go",
+            "input": "const r = await tools.exec_command({cmd: \"sed -n 1,60p cmd/taskline/list.go\", workdir: \"/home/dev/taskline\"});\ntext(r.output);"
+          },
           "status": "ok",
           "metadata": {},
           "timestamp": "2026-07-10T12:09:27Z"
@@ -632,7 +638,10 @@
           "model_invocation_id": "dc2fee61-5ad8-5238-a0a7-6c6f0b5f2283",
           "name": "exec",
           "verb": "execute",
-          "input": "const r = await tools.exec_command({cmd: \"ls cmd/taskline\", workdir: \"/home/dev/taskline\"});\ntext(r.output);",
+          "input": {
+            "command": "ls cmd/taskline",
+            "input": "const r = await tools.exec_command({cmd: \"ls cmd/taskline\", workdir: \"/home/dev/taskline\"});\ntext(r.output);"
+          },
           "status": "ok",
           "metadata": {},
           "timestamp": "2026-07-10T12:09:33Z"
@@ -668,7 +677,10 @@
           "model_invocation_id": "3f8c793f-8747-56c1-9383-f7bab28fd79a",
           "name": "exec",
           "verb": "execute",
-          "input": "const r = await tools.exec_command({cmd: \"gofmt -l cmd\", workdir: \"/home/dev/taskline\"});\ntext(r.output);",
+          "input": {
+            "command": "gofmt -l cmd",
+            "input": "const r = await tools.exec_command({cmd: \"gofmt -l cmd\", workdir: \"/home/dev/taskline\"});\ntext(r.output);"
+          },
           "status": "ok",
           "metadata": {},
           "timestamp": "2026-07-10T12:09:57Z"
@@ -680,7 +692,10 @@
           "model_invocation_id": "02c540ff-ebb1-507f-b8cb-069534100104",
           "name": "exec",
           "verb": "execute",
-          "input": "const r = await tools.exec_command({cmd: \"go test ./cmd/...\", workdir: \"/home/dev/taskline\"});\ntext(r.output);",
+          "input": {
+            "command": "go test ./cmd/...",
+            "input": "const r = await tools.exec_command({cmd: \"go test ./cmd/...\", workdir: \"/home/dev/taskline\"});\ntext(r.output);"
+          },
           "status": "ok",
           "metadata": {},
           "timestamp": "2026-07-10T12:10:06Z"
@@ -692,7 +707,10 @@
           "model_invocation_id": "4a193d24-68a5-5fe1-83e1-2765c7410ebd",
           "name": "exec",
           "verb": "execute",
-          "input": "const r = await tools.exec_command({cmd: \"git diff --stat\", workdir: \"/home/dev/taskline\"});\ntext(r.output);",
+          "input": {
+            "command": "git diff --stat",
+            "input": "const r = await tools.exec_command({cmd: \"git diff --stat\", workdir: \"/home/dev/taskline\"});\ntext(r.output);"
+          },
           "status": "ok",
           "metadata": {},
           "timestamp": "2026-07-10T12:10:10.5Z"

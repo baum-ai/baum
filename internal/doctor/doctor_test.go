@@ -945,3 +945,44 @@ func TestWriteTextShowsMarkerDetailAndFix(t *testing.T) {
 	}
 	wantContains(t, "text", out.String(), "[ok]", "alpha", "path: /bin/a; version: 1.2.3; source: PATH", "[problem]", "    second line", "fix: do the thing", "problem: 1 problem, 0 warnings")
 }
+
+// The desktop report checks only Claude Code and Codex: auto never falls back
+// to the Anthropic API, and says so when neither is installed.
+func TestDesktopReportOffersOnlyClaudeAndCodex(t *testing.T) {
+	m := newMachine(t)
+	m.git()
+	m.cursorAgent()
+	t.Setenv("ANTHROPIC_API_KEY", plantedAnthropicAK)
+	report := run(t, Options{Desktop: true})
+	for _, id := range []string{"cursor-agent", "anthropic-api-key"} {
+		for _, c := range report.Checks {
+			if c.ID == id {
+				t.Errorf("the desktop report has a %s check", id)
+			}
+		}
+	}
+	auto := find(t, report, "backend-auto")
+	wantStatus(t, auto, StatusProblem)
+	wantContains(t, "auto detail", auto.Detail, "Neither Claude Code nor Codex is available")
+	if strings.Contains(auto.Detail+auto.Fix, "ANTHROPIC") {
+		t.Errorf("auto mentions the Anthropic API: %+v", auto)
+	}
+	m.claude("2.1.7")
+	auto = find(t, run(t, Options{Desktop: true}), "backend-auto")
+	wantStatus(t, auto, StatusOK)
+	wantContains(t, "auto detail", auto.Detail, "auto picks claude")
+}
+
+func TestDesktopReportRefusesAConfiguredCursorAgentOrAnthropic(t *testing.T) {
+	for _, backend := range []string{"cursor-agent", "anthropic"} {
+		m := newMachine(t)
+		m.git()
+		m.claude("2.1.7")
+		m.cursorAgent()
+		t.Setenv("BAUM_BACKEND", backend)
+		configured := find(t, run(t, Options{Desktop: true}), "backend-configured")
+		wantStatus(t, configured, StatusProblem)
+		wantContains(t, backend+" detail", configured.Detail, "does not run jobs with this backend")
+		wantContains(t, backend+" fix", configured.Fix, "Claude Code or Codex")
+	}
+}

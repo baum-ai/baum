@@ -1,5 +1,6 @@
 import { BrandMark } from "@baum/viewer/components/brand-logo";
 import { usePreferences } from "./preferences";
+import { PlanUsageSettings } from "./plan-usage-settings";
 import {
   useEffect,
   useRef,
@@ -31,6 +32,7 @@ import {
 import { MenuButton, useContextMenu, type MenuItem } from "./context-menu";
 import { GitHubConnectionSection } from "./github-connection";
 import { messages as githubMessages } from "./github-auth";
+import { CodexHookWarning, type useCodexHookTrust } from "./codex-hooks";
 import { DiagnosticsSection } from "./diagnostics";
 import { invoke } from "./desktop/native";
 import { Notice, PageBar, PanelHeader, RefreshButton } from "./shell";
@@ -48,10 +50,12 @@ import { effortLabels } from "./model-effort";
 import {
   describeCommand,
   describeAgent,
+  agentConnected,
   displayPath,
   type SetupView,
   type Outcome,
   decisionModelDefaults,
+  detectedHarnesses,
   modelPresets,
   withModel,
   type PullRequests,
@@ -86,7 +90,7 @@ function shownBackend(backend: string) {
 const fixHarnesses = ["claude", "codex"];
 
 /** The harnesses that can make data extraction's structured calls, those
- *  with a default decision model; Cursor Agent cannot. */
+ *  with a default decision model. */
 const extractionHarnesses = Object.keys(decisionModelDefaults);
 
 export const settingsSections = ["general", "reviews", "fixes", "connections", "computer"] as const;
@@ -376,6 +380,9 @@ function AgentSelect({
   disabled?: boolean;
   onChange: (next: string) => void;
 }) {
+  // A saved harness the app no longer offers, such as a retired backend from
+  // the config file, shows as chosen so choosing any offered one is a change.
+  const unavailable = value !== "" && !options.includes(value) ? value : null;
   return (
     <select
       id={id}
@@ -385,6 +392,11 @@ function AgentSelect({
       onChange={(event) => onChange(event.target.value)}
     >
       {same !== undefined ? <option value="">{same}</option> : null}
+      {unavailable !== null ? (
+        <option value={unavailable} disabled>
+          {harnessName(unavailable)} (no longer offered)
+        </option>
+      ) : null}
       {options.map((option) => (
         <option key={option} value={option}>
           {harnessName(option)}
@@ -473,20 +485,16 @@ const efforts: { value: string; label: string }[] = [
   { value: "high", label: "High" },
 ];
 
-/** A use case's reasoning effort: "" leaves it to the agent. Cursor Agent has
- *  none (its models name their own), so it gets no row. */
+/** A use case's reasoning effort: "" leaves it to the agent. */
 function EffortRow({
   label,
-  backend,
   value,
   onChange,
 }: {
   label: string;
-  backend: string;
   value: string;
   onChange: (next: string) => void;
 }) {
-  if (backend === "cursor-agent") return null;
   const items = efforts.some((item) => item.value === value)
     ? efforts
     : [...efforts, { value, label: effortLabels[value] ?? value }];
@@ -506,10 +514,13 @@ function ReviewsSection({
   automatic,
   defaults,
   changed,
+  available,
 }: {
   automatic: Automatic;
   defaults: ReviewDefaults;
   changed: () => Promise<void>;
+  /** The agents found on this computer; undefined when the app cannot tell. */
+  available?: readonly string[];
 }) {
   const saved: ReviewSettings & { effort: string } = {
     ...withModel({
@@ -548,6 +559,12 @@ function ReviewsSection({
         status={status}
       />
       {error ? <Alert>{error}</Alert> : null}
+      {available?.length === 0 ? (
+        <p role="status" className="settings-caution">
+          Neither Claude Code nor Codex is installed on this computer, so baum can't write reviews.
+          Install one and open it in your terminal to sign in; baum doesn't switch to another agent.
+        </p>
+      ) : null}
       <div className="local-panel settings-list">
         <SettingRow
           label="Review pull requests automatically"
@@ -607,7 +624,6 @@ function ReviewsSection({
         </SettingRow>
         <EffortRow
           label="Review reasoning effort"
-          backend={draft.backend}
           value={draft.effort}
           onChange={(effort) => change({ effort })}
         />
@@ -701,7 +717,6 @@ function FixesSection({
         {draft.backend ? (
           <EffortRow
             label="Fix reasoning effort"
-            backend={draft.backend}
             value={draft.effort}
             onChange={(effort) => change({ ...draft, effort })}
           />
@@ -718,7 +733,7 @@ function FixesSection({
 
 /** The desktop app's view of the CLI and agent hooks, and the actions that
  *  change them. Outside the desktop app it stays empty. */
-function useDesktopSetup() {
+function useDesktopSetup(onChanged?: () => Promise<void>) {
   const desktop = hasFolderPicker();
   const [view, setView] = useState<SetupView | null>(null);
   const [busy, setBusy] = useState(false);
@@ -729,6 +744,7 @@ function useDesktopSetup() {
   const working = useRef(false);
   async function refresh() {
     setView(await invoke<SetupView>("setup_state"));
+    void onChanged?.();
   }
   // biome-ignore lint/correctness/useExhaustiveDependencies: read once on mount
   useEffect(() => {
@@ -807,14 +823,7 @@ function AgentHooksPanel({ setup }: { setup: DesktopSetup }) {
               <div className="min-w-0 space-y-1">
                 <div className="flex flex-wrap items-center gap-3">
                   <h3 className="text-base font-medium">{agent.name}</h3>
-                  {connectedState(
-                    agent.installed && agent.enabled
-                      ? "Connected"
-                      : agent.installed
-                        ? "Disabled"
-                        : "Not connected",
-                    agent.installed && agent.enabled && !agent.error,
-                  )}
+                  {connectedState(describeAgent(agent) || "Not connected", agentConnected(agent))}
                   {agent.installed && agent.version ? (
                     <span className="text-xs text-(--text-tertiary)">Plugin {agent.version}</span>
                   ) : null}
@@ -825,7 +834,9 @@ function AgentHooksPanel({ setup }: { setup: DesktopSetup }) {
                 {agent.installed ? (
                   <p className="text-xs text-(--text-tertiary)">
                     {agent.agent === "codex"
-                      ? "Review hook trust with /hooks in Codex."
+                      ? agent.trust?.state === "trusted"
+                        ? "Codex hooks are approved."
+                        : "Review hook trust with /hooks in Codex."
                       : "Review plugin trust in Claude Code."}
                   </p>
                 ) : null}
@@ -956,8 +967,8 @@ function CommandLinePanel({ setup }: { setup: DesktopSetup }) {
 function hooksHealth(view: SetupView | null): { tone: Tone; detail: string } | null {
   if (!view) return null;
   const agents = view.hooks.agents;
-  const connected = agents.filter((a) => a.installed && a.enabled && !a.error);
-  const waiting = agents.filter((a) => a.error || (a.detected && (!a.installed || !a.enabled)));
+  const connected = agents.filter(agentConnected);
+  const waiting = agents.filter((a) => a.error || (a.detected && !agentConnected(a)));
   if (view.hooks.error || waiting.length > 0)
     return {
       tone: "caution",
@@ -984,6 +995,7 @@ export function SettingsPage({
   onDiagnostics,
   authRevision,
   authChanged,
+  codexTrust,
 }: {
   automatic: Automatic | null;
   defaults: ReviewDefaults | null;
@@ -997,13 +1009,18 @@ export function SettingsPage({
   onDiagnostics: (report: DiagnosticReport | null) => void;
   authRevision: number;
   authChanged: () => void;
+  codexTrust?: ReturnType<typeof useCodexHookTrust>;
 }) {
-  const setup = useDesktopSetup();
+  const setup = useDesktopSetup(codexTrust?.recheck);
   const gh = githubHealth(github);
   const hooks = setup.desktop ? hooksHealth(setup.view) : null;
   const fix = defaults ? fixSummary(defaults) : null;
   const connectionTone: Tone =
-    gh.tone === "critical" ? "critical" : hooks?.tone === "caution" ? "caution" : gh.tone;
+    gh.tone === "critical"
+      ? "critical"
+      : hooks?.tone === "caution" || codexTrust?.warning
+        ? "caution"
+        : gh.tone;
   const nav: { id: SettingsSection; sub: string; tone?: Tone }[] = [
     {
       id: "general",
@@ -1089,12 +1106,22 @@ export function SettingsPage({
           ))}
         </nav>
         <div ref={keys.content} className="settings-content" onFocus={keys.onFocus}>
+          <CodexHookWarning check={codexTrust} />
           {section === "general" ? (
             <GeneralSection />
           ) : section === "reviews" ? (
             automatic && defaults ? (
               <>
-                <ReviewsSection automatic={automatic} defaults={defaults} changed={changed} />
+                <ReviewsSection
+                  automatic={automatic}
+                  defaults={defaults}
+                  changed={changed}
+                  available={
+                    setup.desktop && setup.view && !setup.view.hooks.error
+                      ? detectedHarnesses(setup.view.hooks.agents)
+                      : undefined
+                  }
+                />
                 {/* A new review harness changes what capture resolves to. */}
                 <DecisionSettingsSection key={defaults.backend} defaults={defaults} />
               </>
@@ -1192,6 +1219,7 @@ function JobConcurrencyRow() {
     );
   }, []);
   async function choose(next: number) {
+    if (saving) return;
     const before = value;
     setValue(next);
     setSaving(true);
@@ -1225,7 +1253,7 @@ function JobConcurrencyRow() {
       <select
         id="job-concurrency"
         className="local-field settings-select"
-        disabled={value === null || saving}
+        disabled={value === null}
         value={value ?? MAX_JOB_CONCURRENCY}
         onChange={(e) => void choose(Number(e.target.value))}
       >
@@ -1271,7 +1299,7 @@ function TimeLimitRows() {
     );
   }, []);
   async function choose(key: keyof TimeLimits, minutes: number) {
-    if (!value) return;
+    if (!value || saving) return;
     const before = value;
     setValue({ ...value, [key]: minutes });
     setSaving(true);
@@ -1301,7 +1329,7 @@ function TimeLimitRows() {
         <select
           id={id}
           className="local-field settings-select"
-          disabled={value === null || saving}
+          disabled={value === null}
           value={current}
           onChange={(e) => void choose(key, Number(e.target.value))}
         >
@@ -1524,7 +1552,6 @@ function DecisionSettingsSection({ defaults }: { defaults: ReviewDefaults }) {
         {fallback ? (
           <EffortRow
             label="Extraction reasoning effort"
-            backend={backend}
             value={draft.effort}
             onChange={(effort) => change({ effort })}
           />
@@ -1698,6 +1725,9 @@ function AgentEnvSection() {
         )
       ) : (
         <div className="settings-env">
+          {rows.length === 0 ? (
+            <p className="text-xs text-(--text-tertiary)">No variables set.</p>
+          ) : null}
           {rows.map((row) => (
             <div key={row.id} className="settings-env-row">
               <input
@@ -2256,13 +2286,13 @@ function hasFolderPicker() {
 }
 
 function GeneralSection() {
-  const { preferences, update, ready, saving, error, refresh } = usePreferences();
+  const { preferences, update, ready, error, refresh } = usePreferences();
   return (
     <section aria-labelledby="settings-general-heading" className="settings-section">
       <SectionHead
         id="settings-general-heading"
         title="General"
-        detail="Appearance and keyboard preferences on this device."
+        detail="Appearance, keyboard and plan usage preferences on this device."
       />
       {error ? (
         <Alert>
@@ -2276,7 +2306,7 @@ function GeneralSection() {
         <SettingRow label="Preferred theme" htmlFor="preferred-theme">
           <select
             id="preferred-theme"
-            disabled={!ready || saving}
+            disabled={!ready}
             className="local-field settings-select"
             value={preferences.theme}
             onChange={(event) => update({ theme: event.target.value as typeof preferences.theme })}
@@ -2293,7 +2323,7 @@ function GeneralSection() {
         >
           <input
             id="keyboard-hints"
-            disabled={!ready || saving}
+            disabled={!ready}
             type="checkbox"
             role="switch"
             className="local-switch"
@@ -2302,6 +2332,8 @@ function GeneralSection() {
           />
         </SettingRow>
       </div>
+      <h3 className="settings-subhead">Plan usage</h3>
+      <PlanUsageSettings />
     </section>
   );
 }

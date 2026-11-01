@@ -18,6 +18,8 @@
 // top-level user input of kind prompt or slash command from a human with text
 // left once the wrapper constructs are stripped (prompttext), and a nested
 // session's activity belongs to the prompt whose tool call spawned it.
+// Activity under a system input, such as a subagent's report, or one the
+// harness wrote under the person's name continues the prompt before it.
 // Activity under any other input belongs to the session and to no prompt.
 package transcript
 
@@ -660,9 +662,10 @@ type ownership struct {
 	// ordered lists them by ordinal.
 	prompts map[string]bool
 	ordered []session.UserInput
-	// follows is, for an input the harness wrote under the person's name
-	// (harnessInput), the prompt before it: the agent's answer to a
-	// subagent's report is that prompt's turn going on.
+	// follows is, for a system input or one the harness wrote under the
+	// person's name (harnessInput), the prompt before it: what the agent does
+	// after a subagent's report or a task notification is that prompt's turn
+	// going on.
 	follows map[string]string
 }
 
@@ -672,15 +675,26 @@ func newOwnership(g *session.Graph) *ownership {
 		follows: map[string]string{},
 	}
 	root := g.Root()
-	var harness []session.UserInput
+	// continuing are the top-level inputs that carry on the prompt before
+	// them: system inputs, such as a subagent's report or a task
+	// notification, and what the harness wrote under the person's name
+	// (harnessInput).
+	var continuing []session.UserInput
 	for _, input := range g.UserInputs {
 		o.inputSession[input.ID] = input.SessionID
-		if input.SessionID != root.ID || input.Origin != session.OriginHuman ||
+		if input.SessionID != root.ID {
+			continue
+		}
+		if input.Origin == session.OriginSystem {
+			continuing = append(continuing, input)
+			continue
+		}
+		if input.Origin != session.OriginHuman ||
 			(input.Kind != session.KindPrompt && input.Kind != session.KindSlashCommand) {
 			continue
 		}
 		if harnessInput(input) {
-			harness = append(harness, input)
+			continuing = append(continuing, input)
 			continue
 		}
 		o.prompts[input.ID] = true
@@ -690,7 +704,7 @@ func newOwnership(g *session.Graph) *ownership {
 		return cmp.Or(cmp.Compare(a.Ordinal, b.Ordinal), strings.Compare(a.ID, b.ID))
 	}
 	slices.SortStableFunc(o.ordered, byOrdinal)
-	for _, input := range harness {
+	for _, input := range continuing {
 		// The last prompt before it; one before every prompt stays the
 		// session's.
 		at, _ := slices.BinarySearchFunc(o.ordered, input, byOrdinal)

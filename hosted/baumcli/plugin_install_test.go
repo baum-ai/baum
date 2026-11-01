@@ -177,3 +177,38 @@ func TestSetupInstallsPluginsOnlyForHostedUsersAndRespectsConfirmation(t *testin
 		})
 	}
 }
+
+func TestCodexConnectionAndUpdateConfigureTerminalFocus(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("CODEX_HOME", t.TempDir())
+	bin := t.TempDir()
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+systemBinaryPath)
+	stubPluginAgent(t, bin, "codex")
+	path := filepath.Join(os.Getenv("CODEX_HOME"), "config.toml")
+	const original = "# keep\n[tui]\nterminal_title = ['model']\n"
+	if err := os.WriteFile(path, []byte(original), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, action := range []string{"install", "update"} {
+		// Update must repair users who connected before focus was configured,
+		// even when the native plugin is already at its latest version.
+		if err := os.WriteFile(path, []byte(original), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		stdout, _, err := runCLI(t, "hooks", action, "--user", "--agent", "codex")
+		if err != nil || !strings.Contains(stdout, "Configured Codex terminal focus") || !strings.Contains(stdout, "Restart") {
+			t.Fatalf("%s=%v %s", action, err, stdout)
+		}
+		got := readHookTestFile(t, path)
+		if !strings.Contains(got, "thread-id") || !strings.Contains(got, "model") || !strings.HasPrefix(got, "# keep\n") {
+			t.Fatalf("config=%s", got)
+		}
+	}
+	before := readHookTestFile(t, path)
+	if _, _, err := runCLI(t, "hooks", "uninstall", "--user", "--agent", "codex"); err != nil {
+		t.Fatal(err)
+	}
+	if got := readHookTestFile(t, path); got != before {
+		t.Fatalf("uninstall changed terminal preferences: %s", got)
+	}
+}

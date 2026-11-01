@@ -488,6 +488,41 @@ func TestReviewThreadMessagesAreBounded(t *testing.T) {
 	}
 }
 
+// A GitHub Actions job is named after its workflow, as GitHub lists it, so
+// two workflows' "check" jobs tell apart; other apps' checks, and a job whose
+// workflow run is not listed, keep their own names.
+func TestChecksNameActionsJobsAfterTheirWorkflow(t *testing.T) {
+	fake := fakeGitHub{head: "abc", runs: []string{
+		`{"id":1,"name":"Web CI","check_suite_id":101}`,
+		`{"id":2,"name":"Cloudflare IP ranges","check_suite_id":102}`,
+	}, checks: []string{
+		`{"id":21,"name":"check","status":"completed","conclusion":"failure","app":{"slug":"github-actions"},"check_suite":{"id":101},"output":{}}`,
+		`{"id":22,"name":"check","status":"completed","conclusion":"success","app":{"slug":"github-actions"},"check_suite":{"id":102},"output":{}}`,
+		`{"id":23,"name":"orphan","status":"completed","conclusion":"success","app":{"slug":"github-actions"},"check_suite":{"id":999},"output":{}}`,
+		`{"id":24,"name":"CodeRabbit","status":"completed","conclusion":"success","app":{"slug":"coderabbitai"},"check_suite":{"id":101},"output":{}}`,
+	}}
+	s := Service{Client: fake.client()}
+	ctx := context.Background()
+	all, err := s.AllChecks(ctx, repo, 7, "abc")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var names []string
+	for _, check := range all.Checks {
+		names = append(names, check.Name)
+	}
+	if want := []string{"Web CI / check", "Cloudflare IP ranges / check", "CodeRabbit", "orphan"}; !reflect.DeepEqual(names, want) {
+		t.Fatalf("names %q, want %q", names, want)
+	}
+	failing, err := s.FailingChecks(ctx, repo, 7, "abc")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(failing.Checks) != 1 || failing.Checks[0].Name != "Web CI / check" {
+		t.Fatalf("failing checks %+v, want Web CI / check", failing.Checks)
+	}
+}
+
 func TestAllChecks(t *testing.T) {
 	fake := fakeGitHub{head: "abc", checks: []string{
 		`{"id":21,"name":"test","status":"completed","conclusion":"failure","html_url":"https://github.com/acme/app/runs/21","app":{"slug":"github-actions"},"output":{"title":"2 tests failed"}}`,

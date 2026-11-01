@@ -346,7 +346,7 @@ func (s *Service) Report(ctx context.Context, q Query) (Report, error) {
 	}
 	entries := latestReadings(all)
 	report.Options = Options{Repositories: repositories, Agents: []string{}}
-	for _, agent := range Agents {
+	for _, agent := range FilterAgents {
 		if slices.ContainsFunc(entries, func(e Entry) bool { return e.Source == agent }) {
 			report.Options.Agents = append(report.Options.Agents, agent)
 		}

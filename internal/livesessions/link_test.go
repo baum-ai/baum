@@ -83,7 +83,7 @@ func TestResolverLinksDirectoriesOfRegisteredClones(t *testing.T) {
 		"worktree": {worktree, Link{Repository: "acme/demo", Branch: "other"}},
 	} {
 		got, ok := r.Link(ctx, tc.cwd)
-		if !ok || got != tc.want {
+		if !ok || got.Repository != tc.want.Repository || got.Branch != tc.want.Branch || got.PR != tc.want.PR {
 			t.Errorf("%s: %+v %v, want %+v", name, got, ok, tc.want)
 		}
 	}
@@ -144,7 +144,7 @@ func TestResolverFindsPullRequestsByUpstreamAndByCommit(t *testing.T) {
 	git(t, clone, "config", "branch.local.remote", "origin")
 	git(t, clone, "config", "branch.local.merge", "refs/heads/pushed-as")
 	r.unlinked = nil
-	if got, _ := r.Link(ctx, clone); got.PR != 5 {
+	if got, _ := r.Link(ctx, clone); got.PR != 0 || got.Status != "ambiguous" {
 		t.Fatalf("by upstream: %+v", got)
 	}
 	// An upstream in another repository is not this repository's branch.

@@ -151,7 +151,7 @@ func (s *Service) Run(ctx context.Context, ref Ref, o RunOptions) (report Report
 		backends = generate.DefaultBackendsFor(cfg)
 	}
 	progress("preparing")
-	selected, err := generate.Select(ctx, config.Backend(conversation.Backend), conversation.Model, backends, io.Discard)
+	selected, err := generate.SelectDesktop(ctx, config.Backend(conversation.Backend), conversation.Model, backends, io.Discard)
 	if err != nil {
 		return report, err
 	}

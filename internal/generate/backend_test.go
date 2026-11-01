@@ -359,3 +359,35 @@ func TestDefaultBackendsCarryTheEffort(t *testing.T) {
 		t.Errorf("anthropic effort %q", a.Effort)
 	}
 }
+
+func TestSelectDesktopRunsClaudeAndCodexOnly(t *testing.T) {
+	claude := &generatetest.Backend{BackendName: "claude", CheckErr: errors.New("not installed")}
+	codex := &generatetest.Backend{BackendName: "codex", CheckErr: errors.New("not installed")}
+	backends := fakes(claude, codex)
+	backends.Anthropic = func(string) generate.CheckedBackend { return &generatetest.Backend{BackendName: "anthropic"} }
+	backends.CursorAgent = func(string) generate.CheckedBackend { return &generatetest.Backend{BackendName: "cursor-agent"} }
+	ctx := context.Background()
+	// auto never falls back to the Anthropic API; it names what it tried.
+	_, err := generate.SelectDesktop(ctx, config.BackendAuto, "", backends, nil)
+	if generate.CategoryOf(err) != generate.CategoryBackend || err == nil || strings.Contains(err.Error(), "anthropic") {
+		t.Fatalf("auto without claude or codex: %v", err)
+	}
+	codex.CheckErr = nil
+	if selected, err := generate.SelectDesktop(ctx, config.BackendAuto, "", backends, nil); err != nil || selected.Backend.Name() != "codex" {
+		t.Fatalf("auto: %v %v", selected, err)
+	}
+	// A requested cursor-agent or anthropic is refused, not replaced.
+	for _, backend := range []config.Backend{config.BackendCursorAgent, config.BackendAnthropic} {
+		_, err := generate.SelectDesktop(ctx, backend, "", backends, nil)
+		if !errors.Is(err, generate.ErrBackendNotOffered) || generate.CategoryOf(err) != generate.CategoryBackend || !strings.Contains(err.Error(), string(backend)) {
+			t.Errorf("%s: %v", backend, err)
+		}
+		// The command line still runs it.
+		if selected, err := generate.Select(ctx, backend, "", backends, nil); err != nil || selected.Backend.Name() != string(backend) {
+			t.Errorf("Select %s: %v %v", backend, selected, err)
+		}
+	}
+	if _, err := generate.SelectDesktop(ctx, "nope", "", backends, nil); err == nil || errors.Is(err, generate.ErrBackendNotOffered) {
+		t.Errorf("an unknown backend: %v", err)
+	}
+}

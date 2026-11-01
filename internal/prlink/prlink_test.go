@@ -23,7 +23,7 @@ func TestFindFollowsBranchUpstreamThenCommit(t *testing.T) {
 		work Work
 		want int
 	}{
-		{"branch, newest of several", Work{Branch: "feature", Upstream: "pr-head"}, 5},
+		{"conflicting branches", Work{Branch: "feature", Upstream: "pr-head"}, 0},
 		{"upstream name", Work{Branch: "local", Upstream: "pr-head"}, 6},
 		{"a fork's branch of the same name is another", Work{Branch: "local"}, 0},
 		{"commit", Work{Branch: "local", Head: "CCC"}, 6},
@@ -75,5 +75,17 @@ func TestLocalUpstreamComparesTheHost(t *testing.T) {
 				t.Fatalf("other host: %q", got)
 			}
 		})
+	}
+}
+
+func TestResolveReportsAmbiguityAndStaleness(t *testing.T) {
+	snapshot := discovery.Snapshot{PullRequests: []discovery.PullRequest{{Number: 1, HeadRef: "feature"}, {Number: 2, HeadRef: "feature"}}}
+	if got := Resolve(snapshot, Work{Branch: "feature"}); got.PR != 0 || got.Status != "ambiguous" {
+		t.Fatalf("arbitrary winner: %+v", got)
+	}
+	snapshot.PullRequests = snapshot.PullRequests[:1]
+	snapshot.Stale = true
+	if got := Resolve(snapshot, Work{Branch: "feature"}); got.PR != 1 || got.Status != "stale" {
+		t.Fatalf("stale evidence not identified: %+v", got)
 	}
 }

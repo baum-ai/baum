@@ -80,6 +80,13 @@ type AppearancePreferences struct {
 	KeyHints *bool  `json:"key_hints,omitempty"`
 }
 
+// PlanUsagePreferences are the plans the person chose to show or hide in plan
+// usage, by provider ("claude", "codex"). A provider with no entry follows
+// the backends baum uses, so a choice survives backend changes.
+type PlanUsagePreferences struct {
+	Show map[string]bool `json:"show,omitempty"`
+}
+
 // Preferences are the registry's global choices, edited in the app. Fields
 // an older baum saved and this one dropped, such as
 // cursor_agent_acknowledged, are ignored on read and gone after the next
@@ -112,6 +119,8 @@ type Preferences struct {
 	Appearance AppearancePreferences `json:"appearance,omitzero"`
 	// Decisions configures local decision capture.
 	Decisions DecisionPreferences `json:"decisions,omitzero"`
+	// PlanUsage chooses which plans plan usage shows.
+	PlanUsage PlanUsagePreferences `json:"plan_usage,omitzero"`
 	// JobConcurrency, when set, is how many jobs the daemon runs at once
 	// besides questions to a review's agent; Concurrency resolves it.
 	JobConcurrency int `json:"job_concurrency,omitempty"`
@@ -160,6 +169,24 @@ func (p Preferences) Covers(authored, requested bool) bool {
 		return true
 	}
 	return authored || requested
+}
+
+// ValidateChange is Validate for preferences saved over prev: the desktop app
+// offers Claude Code and Codex only, so a backend chosen now must be one of
+// them. A retired backend already stored (cursor-agent or anthropic, from a
+// pre-release version) does not block saving other settings; the daemon
+// refuses the jobs that use it.
+func (p Preferences) ValidateChange(prev Preferences) error {
+	if err := p.Validate(); err != nil {
+		return err
+	}
+	if p.Backend != nil && !p.Backend.Desktop() && (prev.Backend == nil || *prev.Backend != *p.Backend) {
+		return errors.New("reviews run with auto, Claude Code or Codex only")
+	}
+	if b := p.Decisions.Backend; b != nil && *b == config.BackendAnthropic && (prev.Decisions.Backend == nil || *prev.Decisions.Backend != *b) {
+		return errors.New("data extraction runs with Claude Code or Codex only")
+	}
+	return nil
 }
 
 // Validate accepts an empty Model, unlike Settings: it means the backend's

@@ -59,11 +59,11 @@ func LinkCommits(ctx context.Context, dir string, commits []gitlocal.Commit, opt
 		}
 		remote = remoteFor(remotes, opts.Repository)
 	}
-	found, truth, err := loadSessions(ctx, dir, opts.Sessions, commits, remote, opts.Warn)
+	found, _, err := loadSessions(ctx, dir, opts.Sessions, commits, remote, opts.Warn)
 	if err != nil {
 		return nil, err
 	}
-	_, latest, edges, err := linkSessions(ctx, found, commits, truth)
+	_, latest, edges, err := linkSessions(ctx, found, commits)
 	if err != nil {
 		return nil, err
 	}

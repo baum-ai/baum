@@ -15,29 +15,12 @@ import (
 	"github.com/baum-ai/baum/sessions/entirecheckpoint"
 )
 
-// checkpointLinks is the ground truth Entire left in the pull request's
-// commits: for each commit whose Entire-Checkpoint trailers name checkpoints
-// in the clone, on the per-checkpoint refs (refs/entire/checkpoints/*) or the
-// checkpoint branch, the sessions those checkpoints record.
-// Trailers are read as the hosted resolver reads them
-// (entirecheckpoint.ParseMessage), from the whole commit message as Entire
-// reads them, so a squash merge's body paragraphs count: a commit naming
-// several checkpoints links to the union of their sessions, in message order,
-// each once, and a malformed value beside valid ones is skipped with a
-// warning.
-//
-// Every such session must be listed with the result, so one that loading did
-// not return (it ran before the sessions read, or only the checkpoint records
-// it) is mapped from the checkpoint and returned in extra. A session that
-// cannot be mapped is left out, and a commit none of whose sessions are left
-// has no ground truth. A trailer with no valid id, a checkpoint the clone does
-// not hold (warned about, with the command that fetches the refs: nothing is
-// fetched here), and a store that cannot be read all leave the commit to the
-// heuristic steps, as in the hosted resolver.
-//
-// The checkpoints are read whatever Request.Sessions.Sources says: a
-// trailer is evidence in the commit, not a store the caller chose to read.
-func checkpointLinks(ctx context.Context, dir string, commits []gitlocal.Commit, found []sessions.Session, remote string, warn io.Writer) (truth map[string][]string, extra []sessions.Session) {
+// checkpointLinks reads the candidate sessions named by each commit's checkpoints.
+// Membership is an association, not proof that the session contributed. Missing
+// local transcripts are loaded from the checkpoint when possible; an unreadable
+// transcript does not erase the recorded membership. Nothing is fetched.
+// Checkpoints are read even when Sessions.Sources excludes the Entire store.
+func checkpointLinks(ctx context.Context, dir string, commits []gitlocal.Commit, found []sessions.Session, remote string, warn io.Writer) (associated map[string][]string, extra []sessions.Session) {
 	named := map[string][]string{} // commit → checkpoints, in trailer order
 	firstNamedBy := map[string]string{}
 	var ids []string
@@ -104,21 +87,21 @@ func checkpointLinks(ctx context.Context, dir string, commits []gitlocal.Commit,
 		}
 	}
 
-	truth = map[string][]string{}
+	associated = map[string][]string{}
 	for _, c := range commits {
 		var linked []string
 		for _, id := range named[c.OID] {
 			for _, sessionID := range recorded[id] {
-				if have[sessionID] && !slices.Contains(linked, sessionID) {
+				if !slices.Contains(linked, sessionID) {
 					linked = append(linked, sessionID)
 				}
 			}
 		}
 		if len(linked) > 0 {
-			truth[c.OID] = linked
+			associated[c.OID] = linked
 		}
 	}
-	return truth, extra
+	return associated, extra
 }
 
 // warnMissing reports the checkpoints a trailer names that Sessions did not
@@ -166,61 +149,46 @@ func warnMissing(warn io.Writer, ids []string, recorded map[string][]string, loc
 		strings.Join(missing, ", "), hint)
 }
 
-// entireEdges are a commit's links to the sessions its checkpoints record,
-// exactly as the hosted resolver writes them: matched, certain, and by the
-// entire_checkpoint method.
-func entireEdges(commitSHA string, sessionIDs []string) []linkage.Edge {
-	edges := make([]linkage.Edge, 0, len(sessionIDs))
-	for _, sessionID := range sessionIDs {
-		edges = append(edges, linkage.Edge{
-			CommitSHA: commitSHA, RunID: sessionID, Status: linkage.StatusMatched,
-			Method: linkage.MethodEntireCheckpoint, Confidence: 1,
-			MatchedBy:           string(linkage.MethodEntireCheckpoint),
-			CandidatesRemaining: len(sessionIDs),
-		})
-	}
-	return edges
-}
-
-// commitEdges links one commit as the hosted resolver does: the sessions its
-// Entire checkpoints record first (linked; none for a commit without one),
-// then, while the files the linked sessions edited do not cover the commit's,
-// the heuristic matcher again over the other sessions, up to the link cap,
-// and finally only the links at or above the review confidence once one is
-// (a checkpoint's always are). Only matched edges are returned: the hosted
-// resolver's unmatched edge and its reasons, and a trailer-only attribution,
-// name no session and have nothing to show here.
-func commitEdges(commit linkage.EnrichedCommit, linked []string, candidates []linkage.RunCandidate, cfg linkage.Config) ([]linkage.Edge, error) {
-	edges := entireEdges(commit.OID, linked)
+// commitEdges requires independent evidence for every matched session. The
+// checkpoint reader adds candidate transcripts before this runs; membership
+// never gives a candidate precedence over an equally plausible contributor.
+func commitEdges(commit linkage.EnrichedCommit, candidates []linkage.RunCandidate, cfg linkage.Config) ([]linkage.Edge, error) {
 	byID := make(map[string]linkage.RunCandidate, len(candidates))
 	for _, candidate := range candidates {
 		byID[candidate.RunID] = candidate
 	}
-	// The hosted groundTruthCoverage: the checkpoints' sessions' edits paired
-	// against the commit as one set.
-	var edited []string
-	for _, id := range linked {
-		edited = append(edited, byID[id].FilesEdited...)
+	if cfg.ExcludeMergeCommits && commit.IsMerge {
+		return nil, nil
 	}
-	explained := map[string]bool{}
-	for _, path := range steps.ExplainedFiles(commit, linkage.RunCandidate{FilesEdited: edited}) {
-		explained[path] = true
+	// Sharing the parent SHA is common for concurrent sessions. It cannot
+	// independently validate checkpoint membership or establish contribution.
+	cfg.EnabledMatchSteps = slices.DeleteFunc(slices.Clone(cfg.EnabledMatchSteps), func(id string) bool {
+		return id == steps.StartCommitStepID
+	})
+	linked, explained := map[string]bool{}, map[string]bool{}
+	var edges []linkage.Edge
+	for _, candidate := range candidates {
+		result := (steps.CommitRefStep{}).Apply(commit, []linkage.RunCandidate{candidate}, cfg)
+		for _, edge := range result.Edges {
+			if edge.Status == linkage.StatusMatched {
+				edges = append(edges, edge)
+				linked[edge.RunID] = true
+				for _, path := range steps.ExplainedFiles(commit, candidate) {
+					explained[path] = true
+				}
+			}
+		}
 	}
-	taken := make(map[string]bool, len(linked))
-	for _, id := range linked {
-		taken[id] = true
-	}
-	matched, err := matchRemaining(commit, candidates, byID, taken, explained, cfg)
+	matched, err := matchRemaining(commit, candidates, byID, linked, explained, cfg)
 	if err != nil {
 		return nil, err
 	}
-	return dropSupersededGuesses(append(edges, matched...)), nil
+	edges = append(edges, matched...)
+	return dropSupersededGuesses(edges), nil
 }
 
-// matchRemaining is the hosted resolver's: it runs linkage.MatchCommit over
-// the sessions not yet linked until the commit's files are all explained, the
-// per-commit link cap is reached, or nothing matches. Only matched edges are
-// returned; a commit with ground truth never needs the unmatched one.
+// matchRemaining runs the matcher over unlinked sessions until the changed
+// paths are explained, the file-link cap is reached, or no candidate matches.
 func matchRemaining(
 	commit linkage.EnrichedCommit, candidates []linkage.RunCandidate, byID map[string]linkage.RunCandidate,
 	linked, explained map[string]bool, cfg linkage.Config,
@@ -249,8 +217,11 @@ func matchRemaining(
 		if len(edges) == 0 || edges[0].Status != linkage.StatusMatched {
 			return matched, nil
 		}
-		if limit > 0 {
-			edges = capTiedEdges(edges, limit-links)
+		// Equal file scores cannot distinguish concurrent sessions working on
+		// the same paths. Keep them as candidates for later adjudication rather
+		// than crediting all of them or picking one by ID.
+		if len(edges) > 1 {
+			return matched, nil
 		}
 		for _, edge := range edges {
 			linked[edge.RunID] = true
@@ -263,21 +234,6 @@ func matchRemaining(
 		}
 		matched = append(matched, edges...)
 	}
-}
-
-// capTiedEdges is the hosted resolver's: it keeps room edges of a tie and
-// says the tie was capped.
-func capTiedEdges(edges []linkage.Edge, room int) []linkage.Edge {
-	if room >= len(edges) {
-		return edges
-	}
-	edges = edges[:room]
-	for i := range edges {
-		if edges[i].Tie != nil && edges[i].Tie.Resolution == linkage.TieResolutionLinkedAll {
-			edges[i].Tie.Resolution = linkage.TieResolutionLinkedCapped
-		}
-	}
-	return edges
 }
 
 // dropSupersededGuesses is the hosted resolver's: once a commit has a matched

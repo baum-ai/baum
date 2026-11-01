@@ -131,7 +131,7 @@ func (l *Local) Prepare(ctx context.Context, item Item) (Prepared, string, error
 	if backends.Claude == nil {
 		backends = generate.DefaultBackendsFor(cfg)
 	}
-	selected, e := generate.Select(ctx, cfg.Backend, cfg.Model, backends, io.Discard)
+	selected, e := generate.SelectDesktop(ctx, cfg.Backend, cfg.Model, backends, io.Discard)
 	if e != nil {
 		return Prepared{}, "", e
 	}
@@ -149,8 +149,14 @@ func (l *Local) Prepare(ctx context.Context, item Item) (Prepared, string, error
 	}{cfg.Budgets, cfg.Caps, selected.Version, reader.CacheIdentity()})
 	digest := sha256.Sum256(fingerprint)
 	list := pricing.Active()
-	p := Prepared{MaxTokens: cfg.Budgets.MaxTokens, MaxCalls: cfg.Budgets.MaxCalls, ConfigDigest: hex.EncodeToString(digest[:]), PriceVersion: list.Version(), Item: item, Repository: c.Repository, HeadSHA: pr.Head, BaseSHA: pr.Base, Backend: selected.Backend.Name(), Model: selected.Model, RequiresIsolationConfirmation: pr.Untrusted, Draft: pr.Draft, GroupName: group.name, Members: group.members, Awaiting: group.awaiting}
+	p := Prepared{account: accountOf(reader), MaxTokens: cfg.Budgets.MaxTokens, MaxCalls: cfg.Budgets.MaxCalls, ConfigDigest: hex.EncodeToString(digest[:]), PriceVersion: list.Version(), Item: item, Repository: c.Repository, HeadSHA: pr.Head, BaseSHA: pr.Base, Backend: selected.Backend.Name(), Model: selected.Model, RequiresIsolationConfirmation: pr.Untrusted, Draft: pr.Draft, GroupName: group.name, Members: group.members, Awaiting: group.awaiting}
 	return p, list.Version(), nil
+}
+
+// accountOf identifies the reader's credential partition for Prepared.account.
+func accountOf(reader *github.RESTReader) string {
+	sum := sha256.Sum256([]byte("account:" + reader.CacheIdentity()))
+	return hex.EncodeToString(sum[:])
 }
 
 // The BlockedReasons of a retry of a version's details (KindDetails).
@@ -216,7 +222,7 @@ func (l *Local) prepareDetails(ctx context.Context, item Item) (Prepared, string
 	if backends.Claude == nil {
 		backends = generate.DefaultBackendsFor(cfg)
 	}
-	selected, e := generate.Select(ctx, config.Backend(latest.Metadata.Backend), latest.Metadata.Model, backends, io.Discard)
+	selected, e := generate.SelectDesktop(ctx, config.Backend(latest.Metadata.Backend), latest.Metadata.Model, backends, io.Discard)
 	if e != nil {
 		return Prepared{}, "", e
 	}
@@ -272,6 +278,9 @@ func readPull(ctx context.Context, reader *github.RESTReader, repository github.
 // job runs, and is priced, with whichever list is active when it runs. An
 // automatic job (RefuseDraft) whose pull request is a draft now is refused
 // with ReasonDraft; a confirmed run of a draft is not.
+//
+// A changed agent, model or limit is not a changed input: the run uses the
+// current settings, as one started now would. The GitHub account is one.
 func (l *Local) confirmed(ctx context.Context, p Prepared) error {
 	current, _, e := l.Prepare(ctx, p.Item)
 	if e != nil {
@@ -282,9 +291,13 @@ func (l *Local) confirmed(ctx context.Context, p Prepared) error {
 	if p.Kind == KindDetails && current.BlockedReason != "" {
 		return &BlockedError{current.BlockedReason}
 	}
-	if current.ConfigDigest != p.ConfigDigest || current.HeadSHA != p.HeadSHA || current.Members != p.Members || current.Backend != p.Backend || current.Model != p.Model || current.RequiresIsolationConfirmation != p.RequiresIsolationConfirmation {
+	sameAccount := current.ConfigDigest == p.ConfigDigest || (p.account != "" && current.account == p.account)
+	if !sameAccount || current.HeadSHA != p.HeadSHA || current.Members != p.Members || current.RequiresIsolationConfirmation != p.RequiresIsolationConfirmation {
 		if p.Kind == KindFix && current.HeadSHA != p.HeadSHA {
 			return &fix.Error{Reason: fix.ReasonHeadChanged, Err: errors.New("the pull request's head changed since the fix was started")}
+		}
+		if sameAccount && (current.HeadSHA != p.HeadSHA || current.Members != p.Members) {
+			return fmt.Errorf("generation inputs changed: %w", ErrHeadChanged)
 		}
 		return errors.New("generation inputs changed")
 	}
@@ -378,7 +391,13 @@ func (l *Local) Execute(ctx context.Context, p Prepared, progress func(Progress)
 	if backends.Claude == nil {
 		backends = generate.DefaultBackendsFor(cfg)
 	}
-	selected, e := generate.Select(ctx, config.Backend(p.Backend), p.Model, backends, io.Discard)
+	// A review runs with the current settings; a details retry with what
+	// wrote the version (prepareDetails).
+	wanted, model := cfg.Backend, cfg.Model
+	if p.Kind == KindDetails {
+		wanted, model = config.Backend(p.Backend), p.Model
+	}
+	selected, e := generate.SelectDesktop(ctx, wanted, model, backends, io.Discard)
 	if e != nil {
 		return nil, e
 	}
@@ -403,10 +422,11 @@ func (l *Local) Execute(ctx context.Context, p Prepared, progress func(Progress)
 		published = identityVersions{reviewgroups.Publisher{Store: l.Groups, Group: p.Group}, manager}
 		key.Number = group.Members[0].Number
 	}
-	progress(Progress{Phase: "assembling"})
+	name := selected.Backend.Name()
+	progress(Progress{Phase: "assembling", Backend: name, Model: selected.Model})
 	// A single pull request is written in stages, with a draft while they
 	// run; a group's combined review in one pass.
-	options := generate.Options{Group: group, Staged: group == nil, PriceList: list, Assembler: guarded, Request: assemble.Request{Repository: repository, Number: key.Number, Limits: assemble.LimitsFrom(caps)}, Backend: backend, BackendVersion: selected.Version, Model: p.Model, Budgets: agent.Budgets{WallClock: time.Duration(cfg.Budgets.ReviewTimeout), MaxCalls: cfg.Budgets.MaxCalls, MaxTokens: cfg.Budgets.MaxTokens, MaxProviderAttempts: 3, MaxRepairAttempts: 2},
+	options := generate.Options{Group: group, Staged: group == nil, PriceList: list, Assembler: guarded, Request: assemble.Request{Repository: repository, Number: key.Number, Limits: assemble.LimitsFrom(caps)}, Backend: backend, BackendVersion: selected.Version, Model: selected.Model, Budgets: agent.Budgets{WallClock: time.Duration(cfg.Budgets.ReviewTimeout), MaxCalls: cfg.Budgets.MaxCalls, MaxTokens: cfg.Budgets.MaxTokens, MaxProviderAttempts: 3, MaxRepairAttempts: 2},
 		OnRepairs: backend.repaired, PassTimeout: max(time.Duration(cfg.Budgets.PassTimeout), time.Duration(cfg.Budgets.ReviewTimeout))}
 	if group == nil {
 		options.OnDraft = backend.draft
@@ -415,12 +435,12 @@ func (l *Local) Execute(ctx context.Context, p Prepared, progress func(Progress)
 	if p.Kind == KindDetails {
 		result, e = l.completeDetails(ctx, versions, manager, key, p, options)
 	} else {
-		result, e = l.publish(ctx, published, versions, key, p.Backend, options, func(r generate.Result) *float64 {
-			return list.BackendOutcomeCost(p.Backend, r.Outcome.Model, r.Outcome)
+		result, e = l.publish(ctx, published, versions, key, name, options, func(r generate.Result) *float64 {
+			return list.BackendOutcomeCost(name, r.Outcome.Model, r.Outcome)
 		})
 	}
 	backend.finish(result, e == nil && group == nil)
-	return list.BackendOutcomeCost(p.Backend, result.Outcome.Model, result.Outcome), e
+	return list.BackendOutcomeCost(name, result.Outcome.Model, result.Outcome), e
 }
 
 // completeDetails writes again the failed section details of the latest
@@ -624,7 +644,7 @@ type headAssembler struct {
 func (a headAssembler) Assemble(ctx context.Context, r assemble.Request) (assemble.Result, error) {
 	result, e := a.Assembler.Assemble(ctx, r)
 	if e == nil && result.Head != a.head {
-		return assemble.Result{}, errors.New("pull request head changed; start it again")
+		return assemble.Result{}, fmt.Errorf("%w; start it again", ErrHeadChanged)
 	}
 	return result, e
 }

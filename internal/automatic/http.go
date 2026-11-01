@@ -97,7 +97,7 @@ func (s *Scheduler) Handler() http.Handler {
 					next.PullRequests = ""
 				}
 			}
-			if invalid = next.Validate(); invalid != nil {
+			if invalid = next.ValidateChange(p); invalid != nil {
 				return p
 			}
 			return next

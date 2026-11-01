@@ -32,9 +32,15 @@ override it where they differ.
   breaks when merged before or after another, duplicated work. Then keep
   each member's own important findings, in sections that cover that
   member's hunks.
+- **Name the group.** Unlike a pull request's review, a group's writes
+  `stack.title`: a name for the group, in a few words, saying what the
+  members do together, as a pull request title reads (at most 80
+  characters, one line). Do not reuse one member's title unless it names
+  the whole group, and do not number the members. When the bundle's title
+  already names the group well, keep it. Write nothing else in `stack`:
+  baum fills its members.
 - **Sections and members.** A section lists in `hunks` the hunks it covers,
-  and baum names the members it covers from them. Do not write `stack` or a
-  section's `pull_requests`. A section about a concern between members
-  lists hunks of every member involved; a member's own section lists that
-  member's hunks.
+  and baum names the members it covers from them. Do not write a section's
+  `pull_requests`. A section about a concern between members lists hunks of
+  every member involved; a member's own section lists that member's hunks.
 - `summary.review_minutes` estimates the time to review the whole group.

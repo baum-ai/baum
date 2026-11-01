@@ -115,7 +115,9 @@ func (s *Scheduler) passGroups(ctx context.Context, v view, interrupted, refused
 	var due []groupWork
 	for _, g := range groups {
 		rs := state.Repositories[g.Repository]
-		if !g.Stack || rs == nil || rs.AwaitingBaseline {
+		// A stack group with one open member left (the rest merged) is that
+		// pull request's own review.
+		if !g.Stack || len(g.Members) < reviewgroups.MinMembers || rs == nil || rs.AwaitingBaseline {
 			continue
 		}
 		live[g.ID] = true
