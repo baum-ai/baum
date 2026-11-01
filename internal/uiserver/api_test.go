@@ -12,6 +12,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/baum-ai/baum/bundle"
 	"github.com/baum-ai/baum/internal/appdb/appdbtest"
 	"github.com/baum-ai/baum/internal/config"
 	"github.com/baum-ai/baum/internal/repos"
@@ -134,7 +135,7 @@ func TestLocalAPISelectorsAndSecretFreeSettings(t *testing.T) {
 	}
 	const id = "att_0123456789abcdef0123456789abcdef"
 	png, _ := base64.StdEncoding.DecodeString("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==")
-	document := []byte(fmt.Sprintf(`{"review":{"repository":"owner/repo","pull_request":7,"version":1},"index":{"attachments":[{"id":%q}]}}`, id))
+	document := []byte(fmt.Sprintf(`{"review":{"repository":"owner/repo","pull_request":7,"version":1},"index":{"attachments":[{"id":%q}],"hunks":[{"id":"h_000000000001","path":"a.go","new_range":[3,1],"github_url":"diff-storedR3","diff":{"header":"@@ -3 +3 @@","lines":[]}}]}}`, id))
 	if err = versions.Put(ctx, store.Key{Repository: "owner/repo", Number: 7}, store.Version{}, store.Version{Metadata: store.Metadata{Version: 1}, Document: document, Attachments: []store.Attachment{{ID: id, ContentType: "image/png", Bytes: png}}}); err != nil {
 		t.Fatal(err)
 	}
@@ -159,6 +160,11 @@ func TestLocalAPISelectorsAndSecretFreeSettings(t *testing.T) {
 			}
 			if strings.HasPrefix(tt.path, "/api/attachments/"+id) && w.Header().Get("Content-Type") != "image/png" {
 				t.Fatal("wrong media type")
+			}
+			// The store kept the hunk without its evidence; the document is
+			// served with the derived fragment.
+			if tt.path == "/api/document"+selector && !strings.Contains(w.Body.String(), `"new_range":[3,1],"github_url":"`+bundle.HunkDiffURL("a.go", 3)+`"}]`) {
+				t.Fatalf("document served as %s", w.Body.String())
 			}
 		})
 	}

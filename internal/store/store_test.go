@@ -428,6 +428,69 @@ func TestRefreshInOlderStoreWithoutRuns(t *testing.T) {
 	}
 }
 
+// Put leaves out every indexed hunk's diff and github_url, and a refresh or
+// a details completion of such a version keeps them out, whatever the
+// replacement carries. A version stored with them, before Put left them out,
+// is read and replaced as it is: nothing rewrites it.
+func TestStoredDocumentsKeepNoHunkEvidence(t *testing.T) {
+	ctx := context.Background()
+	s := opened(t)
+	key := Key{"owner/repo", 7}
+	const header = `"review":{"repository":"owner/repo","pull_request":7,"version":1,"head":"aaa","generated_at":"2026-10-30T10:00:00Z"}`
+	const hunk = `{"id":"h_000000000001","path":"a.go","change":"modified","role":"code","new_range":[3,2],"additions":1,"deletions":0`
+	const evidence = `,"github_url":"diff-aaR3","diff":{"header":"@@ -3,1 +3,2 @@","lines":[{"kind":"context","text":"x","old_line":3,"new_line":3},{"kind":"add","text":"y","new_line":4}]}`
+	withEvidence := func(details string) []byte {
+		return []byte(`{` + header + `,"details":"` + details + `","sections":[{"id":"sec_a","hunks":["h_000000000001"],"tiles":[{"kind":"code"}]}],"index":{"hunks":[` + hunk + evidence + `}],"checks":[]}}`)
+	}
+	stripped := func(details string) string {
+		return `{` + header + `,"details":"` + details + `","sections":[{"id":"sec_a","hunks":["h_000000000001"],"tiles":[{"kind":"code"}]}],"index":{"hunks":[` + hunk + `}],"checks":[]}}`
+	}
+	saved := version(key, 1)
+	saved.Document = withEvidence("failed")
+	if err := s.Put(ctx, key, Version{}, saved); err != nil {
+		t.Fatal(err)
+	}
+	current, err := s.Latest(ctx, key)
+	if err != nil || string(current.Document) != stripped("failed") {
+		t.Fatalf("stored %s %v", current.Document, err)
+	}
+	if err := s.RefreshCurrent(ctx, key, current, withEvidence("refreshed")); err != nil {
+		t.Fatal(err)
+	}
+	if current, err = s.Latest(ctx, key); err != nil || string(current.Document) != stripped("refreshed") {
+		t.Fatalf("refreshed %s %v", current.Document, err)
+	}
+	if err := s.CompleteCurrent(ctx, key, current, withEvidence("complete")); err != nil {
+		t.Fatal(err)
+	}
+	if current, err = s.Latest(ctx, key); err != nil || string(current.Document) != stripped("complete") {
+		t.Fatalf("completed %s %v", current.Document, err)
+	}
+
+	// A version saved with its evidence, as Put stored versions before.
+	old := Key{"owner/repo", 8}
+	oldDocument := strings.Replace(string(withEvidence("failed")), `"pull_request":7`, `"pull_request":8`, 1)
+	db, err := s.database(true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO versions(repository,pr,version,metadata,document) VALUES ('owner/repo',8,1,'{"version":1}',?)`, []byte(oldDocument)); err != nil {
+		t.Fatal(err)
+	}
+	_ = db.Close()
+	saved, err = s.Latest(ctx, old)
+	if err != nil || string(saved.Document) != oldDocument {
+		t.Fatalf("old version read as %s %v", saved.Document, err)
+	}
+	refreshed := strings.Replace(oldDocument, `"failed"`, `"refreshed"`, 1)
+	if err := s.RefreshCurrent(ctx, old, saved, []byte(refreshed)); err != nil {
+		t.Fatal(err)
+	}
+	if saved, err = s.Latest(ctx, old); err != nil || string(saved.Document) != refreshed {
+		t.Fatalf("old version refreshed as %s %v", saved.Document, err)
+	}
+}
+
 func TestMetadataSessionIsOptional(t *testing.T) {
 	var old Metadata
 	if err := json.Unmarshal([]byte(`{"version":1,"head":"h","backend":"claude"}`), &old); err != nil || old.Session != nil {

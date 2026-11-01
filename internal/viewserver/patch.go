@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -30,9 +31,22 @@ const maxConcurrentPatches = 4
 // changes during a computation, and it should stop when ctx ends.
 type PatchFunc func(ctx context.Context, review Review, path string) (locallink.PatchResult, error)
 
-// patchCache holds the answers for one document, by path (or, for the
-// commits' answers, by commit and path). A document that is
-// rewritten gets a new cache, so nothing answered for the old one is served.
+// VersionsFunc reads the document of another saved version of the served
+// document's pull request. A version that does not exist is ErrNoVersion.
+type VersionsFunc func(ctx context.Context, version int) ([]byte, error)
+
+// ErrNoVersion is the error a VersionsFunc returns for a version that does
+// not exist.
+var ErrNoVersion = errors.New("no such review version")
+
+// errNotCited is a patch request the server does not answer: 404.
+var errNotCited = errors.New("not a cited path of that version")
+
+// patchCache holds the answers for one document, by the range and path they
+// were read for, so versions of the pull request that compare the same
+// commits share them. A document that is rewritten gets a new cache, so
+// nothing answered for the old one is served. Commit and file reads
+// use separate caches with the same sharing mechanism.
 type patchCache struct {
 	mu   sync.Mutex
 	jobs map[string]*patchJob
@@ -46,6 +60,13 @@ type patchJob struct {
 	// detail is the commit a GET /api/commit answer is about.
 	detail locallink.CommitDetail
 	err    error
+}
+
+// patchVersion is what /api/patch reads of a saved version: the commits it
+// compared and the paths of its cited hunks.
+type patchVersion struct {
+	review Review
+	paths  map[string]struct{}
 }
 
 // hunkPaths reads the paths the document's cited hunks are in
@@ -70,30 +91,42 @@ func hunkPaths(document []byte) map[string]struct{} {
 	return paths
 }
 
-// handlePatch serves GET /api/patch?path=<repository-relative path>: the patch
-// of one file the current document cites, between the document's merge base
-// (its base when it records none) and its head, read from the clone containing
-// the server's working directory. A renamed file is diffed with its old name,
-// as the hosted service does.
+// handlePatch serves GET /api/patch?path=<repository-relative path>&version=N:
+// the patch of one file a saved version of the document's pull request
+// cites, between that version's merge base (its base when it records none)
+// and its head, read from the clone containing the server's working
+// directory. Without version, or with the served document's own, it is the
+// served document; another version is read with Options.Versions. A renamed
+// file is diffed with its old name, as the hosted service does.
 //
-// A path that is not the path of a hunk of the current document is 404,
-// whatever this machine holds. Every other outcome is 200 with {"patch":"..."}
-// (the file's diff from its first "@@" line, without git's header lines) or
-// {"patch":null}: a binary file, a submodule, a path the range does not
-// change, commits or objects the clone lacks, a clone that is not the
-// document's repository, a patch over locallink.MaxPatchBytes. The viewer
+// A path that is not the path of a hunk of that version is 404, whatever
+// this machine holds, and so is a version that is not a positive number, does
+// not exist or is of another pull request. Every other outcome is 200 with
+// {"patch":"..."} (the file's diff from its first "@@" line, without git's
+// header lines, masked as the stored hunks are) or {"patch":null}: a
+// binary file, a submodule, a path the range
+// does not change, commits or objects the clone lacks, a clone that is not
+// the document's repository, a patch over locallink.MaxPatchBytes. The viewer
 // treats null as no excerpt and keeps its link to GitHub. A failure that may
-// pass, such as a git command that fails or runs out of time, is 500, and a
-// server that is stopping is 503, so the viewer tries again the next time the
-// excerpt is opened.
+// pass, such as a git command that fails or runs out of time, or a version
+// that cannot be read, is 500, and a server that is stopping is 503, so the
+// viewer tries again the next time the excerpt is opened.
 func (s *Server) handlePatch(w http.ResponseWriter, r *http.Request) {
-	file := r.URL.Query().Get("path")
-	cache, review, ok := s.patchTarget(file)
-	if !ok {
+	query := r.URL.Query()
+	file := query.Get("path")
+	target, err := s.patchTarget(r.Context(), file, query.Get("version"))
+	switch {
+	case r.Context().Err() != nil:
+		return
+	case errors.Is(err, errNotCited):
 		http.NotFound(w, r)
 		return
+	case err != nil:
+		_, _ = fmt.Fprintf(s.opts.Warn, "warning: cannot read a review version: %v\n", err)
+		http.Error(w, "cannot read this version", http.StatusInternalServerError)
+		return
 	}
-	body, err := s.patch(r.Context(), cache, review, file)
+	body, err := s.patch(r.Context(), target.cache, target.review, file)
 	switch {
 	case r.Context().Err() != nil:
 		return
@@ -116,18 +149,85 @@ func (s *Server) handlePatch(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write(body)
 }
 
-// patchTarget is the cache and review to answer for file, and false when the
-// current document does not cite file.
-func (s *Server) patchTarget(file string) (*patchCache, Review, bool) {
+// patchTarget is what a patch request is answered from: the served
+// document's cache and the review of the version asked for.
+type patchTarget struct {
+	cache  *patchCache
+	review Review
+}
+
+// patchTarget finds the version a request names and checks that it cites
+// file; errNotCited when it does not, or there is no such version.
+func (s *Server) patchTarget(ctx context.Context, file, version string) (patchTarget, error) {
 	if file == "" || len(file) > maxPatchPathBytes {
-		return nil, Review{}, false
+		return patchTarget{}, errNotCited
 	}
 	s.mu.RLock()
-	defer s.mu.RUnlock()
-	if _, cited := s.paths[file]; !cited {
-		return nil, Review{}, false
+	target := patchTarget{cache: s.patches, review: s.review}
+	paths, n := s.paths, s.review.Version
+	if version != "" {
+		parsed, err := strconv.Atoi(version)
+		if err != nil || parsed <= 0 || strconv.Itoa(parsed) != version {
+			s.mu.RUnlock()
+			return patchTarget{}, errNotCited
+		}
+		n = parsed
 	}
-	return s.patches, s.review, true
+	saved := s.versions[n]
+	s.mu.RUnlock()
+	if n != target.review.Version {
+		if saved == nil {
+			var err error
+			if saved, err = s.loadVersion(ctx, target.review, n); err != nil {
+				return patchTarget{}, err
+			}
+			s.mu.Lock()
+			if s.patches == target.cache {
+				if s.versions == nil {
+					s.versions = map[int]*patchVersion{}
+				}
+				s.versions[n] = saved
+			}
+			s.mu.Unlock()
+		}
+		target.review, paths = saved.review, saved.paths
+	}
+	if _, cited := paths[file]; !cited {
+		return patchTarget{}, errNotCited
+	}
+	return target, nil
+}
+
+// loadVersion reads saved version n of the pull request current reviews. A
+// version that is missing, too large or of another pull request is
+// errNotCited.
+func (s *Server) loadVersion(ctx context.Context, current Review, n int) (*patchVersion, error) {
+	if s.opts.Versions == nil || s.opts.Sample {
+		return nil, errNotCited
+	}
+	document, err := s.opts.Versions(ctx, n)
+	if errors.Is(err, ErrNoVersion) {
+		return nil, errNotCited
+	}
+	if err != nil {
+		return nil, err
+	}
+	review := parseReview(document)
+	if len(document) > MaxDocumentBytes || review.Version != n || review.PullRequest != current.PullRequest ||
+		review.Repository == "" || !strings.EqualFold(review.Repository, current.Repository) {
+		return nil, errNotCited
+	}
+	return &patchVersion{review: review, paths: hunkPaths(document)}, nil
+}
+
+// patchKey names a file's patch by the commits it is read between, which
+// never change.
+func patchKey(review Review, file string) string {
+	start := review.MergeBase
+	if start == "" {
+		start = review.Base
+	}
+	return start + "\x00" + review.Head + "\x00" + file
 }
 
 func encodePatch(result locallink.PatchResult) ([]byte, error) {
@@ -144,11 +244,12 @@ func encodePatch(result locallink.PatchResult) ([]byte, error) {
 	return append(body, '\n'), nil
 }
 
-// patch answers for one file. Each file is computed once at a time, apart from
-// the others; an answer that can change when the clone is fixed is not kept,
-// and neither is a failure.
+// patch answers for one file of a version. Each file and range is computed
+// once at a time, apart from the others, so versions that compare the same
+// commits share it; an answer that can change when the clone is fixed is not
+// kept, and neither is a failure.
 func (s *Server) patch(ctx context.Context, cache *patchCache, review Review, file string) ([]byte, error) {
-	job, err := s.shared(ctx, cache, file, func() (*patchJob, bool, error) {
+	job, err := s.shared(ctx, cache, patchKey(review, file), func() (*patchJob, bool, error) {
 		body, keep, err := s.computePatch(review, file)
 		return &patchJob{body: body}, keep, err
 	})

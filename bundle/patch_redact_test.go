@@ -257,3 +257,51 @@ func TestParsingKeepsTheWholePatchForTrimmedBlankLines(t *testing.T) {
 		}
 	}
 }
+
+// A file's patch read after the bundle is masked as the bundle masks its
+// hunks: uncapped, the stored hunks are RedactFilePatch's hunks, and capped,
+// each stored hunk starts its lazy hunk. That holds for a token, an e-mail
+// address, a key running from one hunk into the next and a CRLF line.
+func TestRedactFilePatchMatchesTheStoredHunks(t *testing.T) {
+	ctx := context.Background()
+	redactor, err := NewRedactor()
+	if err != nil {
+		t.Fatal(err)
+	}
+	pem := syntheticKeyLines()
+	patch := "@@ -1,4 +1,4 @@ func a() {\n context\n-token = \"old\"\r\n+token = \"" + corpusStripe + "\"\n contact: dev@example.com\n" +
+		"@@ -20,5 +20,5 @@\n" + prefixLines(" ", strings.Join(pem[:4], "\n")) + "\n" +
+		"@@ -40,6 +40,6 @@\n" + prefixLines(" ", strings.Join(pem[4:], "\n")) + "\n-after\n+after 2\n"
+	lazy, ok, err := RedactFilePatch(ctx, redactor, "key.pem", patch)
+	if err != nil || !ok {
+		t.Fatalf("RedactFilePatch: ok %t, err %v", ok, err)
+	}
+	for _, secret := range append([]string{corpusStripe, "dev@example.com", "PRIVATE KEY", "\r"}, pem[1:len(pem)-1]...) {
+		if strings.Contains(lazy, secret) {
+			t.Fatalf("%q survives:\n%s", secret, lazy)
+		}
+	}
+	if !strings.HasSuffix(lazy, "\n") {
+		t.Errorf("the patch does not end in a newline: %q", lazy)
+	}
+	hunks := strings.Split(strings.TrimSuffix(lazy, "\n"), "\n@@ -")
+	for i := 1; i < len(hunks); i++ {
+		hunks[i] = "@@ -" + hunks[i]
+	}
+	for _, limit := range []int{0, 3} {
+		stored, _, _ := assembleFilePatch(t, redactor, patch, limit)
+		if len(stored) != len(hunks) {
+			t.Fatalf("cap %d: %d stored hunks, %d lazy", limit, len(stored), len(hunks))
+		}
+		for i := range stored {
+			if limit == 0 && stored[i] != hunks[i] || !strings.HasPrefix(hunks[i], stored[i]) {
+				t.Errorf("cap %d, hunk %d: stored\n%s\nlazy\n%s", limit, i, stored[i], hunks[i])
+			}
+		}
+	}
+	for _, textless := range []string{"", "Binary files a/x and b/x differ\n", "diff --git a/x b/x\nold mode 100644\nnew mode 100755\n"} {
+		if masked, ok, err := RedactFilePatch(ctx, redactor, "x", textless); err != nil || ok || masked != "" {
+			t.Errorf("%q: masked %q, ok %t, err %v", textless, masked, ok, err)
+		}
+	}
+}

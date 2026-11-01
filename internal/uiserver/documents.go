@@ -27,10 +27,16 @@ type documentCache struct {
 	closed          bool
 	requests, reads chan struct{}
 	resolve         func(context.Context, locallink.Request) (locallink.Result, error)
+	// patch is shared by every document, so versions of a pull request that
+	// compare the same commits share a read that is running.
+	patch func(context.Context, locallink.PatchRequest) (locallink.PatchResult, error)
+	// patcher answers patch; close closes the clones it keeps open.
+	patcher *locallink.Patcher
 }
 
 func newDocumentCache() *documentCache {
-	return &documentCache{entries: map[string]*cachedDocument{}, requests: make(chan struct{}, maxLocalReads), reads: make(chan struct{}, maxLocalReads), resolve: locallink.Resolve}
+	patcher := new(locallink.Patcher)
+	return &documentCache{entries: map[string]*cachedDocument{}, requests: make(chan struct{}, maxLocalReads), reads: make(chan struct{}, maxLocalReads), resolve: locallink.Resolve, patch: patcher.Patch, patcher: patcher}
 }
 func acquire(ctx context.Context, slots chan struct{}) bool {
 	select {
@@ -71,7 +77,6 @@ func (c *documentCache) get(clone repos.Clone, document []byte) (*viewserver.Ser
 		old = c.entries[oldestKey].server
 		delete(c.entries, oldestKey)
 	}
-	patcher := new(locallink.Patcher)
 	server, err := viewserver.New(viewserver.Options{Document: document, Sessions: func(ctx context.Context, v viewserver.Review) (locallink.Result, error) {
 		if !acquire(ctx, c.reads) {
 			return locallink.Result{}, ctx.Err()
@@ -83,7 +88,7 @@ func (c *documentCache) get(clone repos.Clone, document []byte) (*viewserver.Ser
 			return locallink.PatchResult{}, ctx.Err()
 		}
 		defer func() { <-c.reads }()
-		return patcher.Patch(ctx, locallink.PatchRequest{Dir: clone.Path, Repository: v.Repository, Head: v.Head, Base: v.Base, MergeBase: v.MergeBase, Path: path})
+		return c.patch(ctx, locallink.PatchRequest{Dir: clone.Path, Repository: v.Repository, Head: v.Head, Base: v.Base, MergeBase: v.MergeBase, Path: path})
 	}, Commit: func(ctx context.Context, v viewserver.Review, oid string) (locallink.CommitDetail, error) {
 		if !acquire(ctx, c.reads) {
 			return locallink.CommitDetail{}, ctx.Err()
@@ -128,6 +133,7 @@ func (c *documentCache) close() {
 	for _, entry := range entries {
 		entry.server.Close()
 	}
+	c.patcher.Close()
 }
 
 func (c *documentCache) invalidateSessions() {

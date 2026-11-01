@@ -376,7 +376,7 @@ test("asks the review's agent a question and reads the lines its answer cites", 
   await expect(panel.getByText("Started without the review's own context.")).toBeVisible();
   // The citation opens the lines it names, from the review's own hunk.
   await panel.getByRole("button", { name: "docs/guide.md:3–6" }).click();
-  await expect(panel.getByText("A job that fails more often than its retry budget")).toBeVisible();
+  await expect(panel.getByText("guide line six", { exact: true })).toBeVisible();
   // A reload keeps the panel open and the conversation.
   await page.reload();
   await expect(panel.getByLabel("Question 1").getByText("Why is the delay capped?")).toBeVisible();

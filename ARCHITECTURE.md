@@ -1258,16 +1258,16 @@ keeps the last answer on screen while it does.
 `internal/viewserver` is the host. `baum internal view` loads one document file (or the
 embedded `schema.Example` for `--sample`), binds `127.0.0.1` on the given port
 or a free one, and prints the URL. It never contacts a server or fetches
-anything. The server has nine API routes and an asset fallback:
+anything. The server has ten API routes and an asset fallback:
 
 | Route | Serves |
 | --- | --- |
-| `GET /api/document` | the document's bytes exactly as read, `no-store` |
+| `GET /api/document` | the document's bytes exactly as read, except that a hunk without a `github_url` gets the derived one (see "Hunk evidence in saved documents"), `no-store` |
 | `GET /api/events` | a Server-Sent Events stream, always valid, so the app stays connected; pings keep it open and, with `--watch`, a `document` event follows each change |
 | `GET /api/health` | `{"status":"ok"}` |
 | `GET /api/sessions` | the sessions on this machine linked to the document's pull request, as below; `no-store` |
 | `GET /api/sessions/{id}` | the redacted transcript of one of those sessions, as below; `no-store` |
-| `GET /api/patch?path=` | the patch of one file the document cites, as below; `no-store` |
+| `GET /api/patch?path=&version=` | the patch of one file the document, or another saved version of its pull request, cites, as below; `no-store` |
 | `GET /api/commits` | the commits of the `/api/sessions` answer, each with its linked sessions; `no-store` |
 | `GET /api/commit?oid=` | one of those commits' message body and changed files, as below; `no-store` |
 | `GET /api/commit-patch?oid=&path=` | the patch of one file one of those commits changed, as below; `no-store` |
@@ -1289,18 +1289,105 @@ editor's save by rename is followed. A change that is not valid JSON or is too
 large is warned about and ignored, and the previous document keeps being
 served. Findings print again on each accepted change.
 
+### Hunk evidence in saved documents
+
+A document saved to the local store carries no hunk evidence: `store.Put`
+removes every `index.hunks[].diff` and `index.hunks[].github_url`
+(`review.StripHunkEvidence`), which together were about 70% of a saved
+document's bytes. Everything else is kept byte for byte, in its order: each
+hunk's `id`, `path`, `old_path`, `change`, `role`, `new_range`, `additions`
+and `deletions`, the sections' hunk assignments and tiles (a tile's code is
+the model's, not a hunk's `diff`), `unassigned_hunks` and the stats. Both
+fields are optional in `review-1.json`, so the schema is unchanged.
+
+- Every writer of the store goes through it: `generate.Publish` (the CLI and
+  the daemon's generation jobs), `RefreshCurrent` (the CLI's and the
+  background refresh, which keep the stored `index.hunks` as they are) and
+  `CompleteCurrent` (a details retry, which splices sections into the stored
+  bytes). A replacement of a document stored without evidence is stored
+  without it whatever it carries. A version stored with evidence, before
+  this, is never rewritten: it is read, served and refreshed with its
+  `diff` and `github_url` as stored, and the app shows its inline excerpts.
+- What `Publish` returns, and so what `baum internal generate` prints or
+  writes with `-o`, keeps the evidence as generated: that file is read
+  without the store.
+- `github_url` is derived where a document is served: `viewserver`
+  (`baum internal view`, and each version the daemon's app serves through
+  it) and the app's `GET /api/document` give each hunk without one
+  `bundle.HunkDiffURL(path, new_range[0])` (`review.DeriveHunkURLs`), the
+  value generation records: GitHub's fragment shape
+  `diff-<sha256(path)>R<first new line>`. A hunk that has one keeps it, so an
+  older document whose hunks all carry theirs is served byte for byte; an
+  older one with hunks that lack it (a hosted-style document opened with
+  `baum internal view`, say) gets it derived for those hunks, which changes
+  nothing the reader sees. The viewer never used the value as a
+  link (it is not an absolute URL), and builds the same fragment on the pull
+  request's files page itself. One difference: generation hashes the path as
+  git gave it, before redaction, so for a path the redactor masked the
+  derived fragment hashes the masked path, as the viewer's own link does.
+- A document read without the clone gets its patches back. The one such
+  reader is a seeded chat session (see "Chat with the review agent"), whose
+  `review.json` is `locallink.EmbedPatches` of the stored version: each hunk
+  without a `diff` gets the hunk of its file's patch with the same new range
+  and the same counts of added and removed lines, read from the clone by the
+  document's own repository, head, base and merge base and masked as
+  "Local patches" describes (`review.EmbedHunkPatches`), until the patch text
+  read reaches the generation bundle's byte cap (`max_bytes`); a file the
+  clone cannot provide (missing commits, no remote, binary, over 1 MiB) or a
+  failed read leaves its hunks without a `diff`, and only the context ending
+  fails the turn. Every hunk also gets its derived `github_url`. A hunk with
+  an explicit `"diff": null` counts as one without, and a duplicate key is
+  read as `encoding/json` reads it, the last one. The patches are read ahead
+  over one `Patcher`, four at a time (read or held unused), in the order the
+  hunks use them (`review.HunkPatchPaths`), and used one by one in that
+  order, so the hunks that get text within the cap never depend on which read
+  finishes first; the clone is opened and the range resolved once, then each
+  file costs one `git diff`.
+- Nothing else hands a stored document on. The other readers use only
+  fields the store keeps: refresh, `PreviousVersionOf` and `StoredOutline`
+  (ranges, sections), group reviews (`reviewgroups.MembersFile`: summaries,
+  sections and risks), the decision log and feature log (summary text), the
+  index projection (summary fields) and validation. No command exports a
+  stored document, and nothing uploads one: the hosted service generates and
+  stores its own documents (its generation reads its own hunks' `diff`), and
+  no hosted path accepts a locally generated document. Group documents live
+  in the daemon's group store, not this one, and keep their evidence; their
+  patches are not retained (see "Retained review commits"). Staged drafts are
+  held in memory while a job runs and never stored.
+
 ### Local patches
 
-Most hunks a document cites carry no inline `diff`, which the generation budget
-leaves out. The app fills them in from `GET /api/patch?path=<path>`, answered by
+Most hunks a document cites carry no inline `diff`: the generation budget
+leaves most out, and the local store keeps none (see "Hunk evidence in saved
+documents"). The app fills them in from `GET /api/patch?path=<path>`, answered by
 `locallink.Patch` over the same clone and remote matching as the sessions
 (`gitlocal.Open`, any remote naming the document's repository, no fetch).
 
-- Only a `path` that is the `path` of a hunk in `index.hunks` of the document
-  being served is answered; anything else, including a missing, empty or
+- Without `version`, or with the served document's own `review.version`, the
+  served document is answered. Another positive `version` names a saved
+  version of the same pull request, which `baum internal view --pr` reads
+  from the store (`store.Get`, `viewserver.Options.Versions`); its document
+  must name the same repository, pull request and version, and is kept until
+  the served document changes. That version's head, base and merge base and
+  its own `index.hunks` are used, never the working tree or a branch. A
+  version that is not a plain positive number, does not exist, belongs to
+  another pull request, or that a server without saved versions (a document
+  file, the sample) is asked for, is 404; one the store fails to read is 500.
+  The daemon's app resolves `version` to the stored document itself and
+  hands the request on without it.
+- Only a `path` that is the `path` of a hunk in `index.hunks` of that version
+  is answered; anything else, including a missing, empty or
   over-long (4096 bytes) `path`, is 404 and runs nothing. A repeated `path`
   parameter is not an error: the first is the one asked for. The document
-  records one path per hunk, the file's name at the head.
+  records one path per hunk, the file's name at the head. A generated or
+  vendored file is answered like any other, masked: the bundle cuts its text
+  only when the bundle is over its byte budget, as a size measure, not to hide
+  it.
+- A local pull request document carries no `index.file_comparisons`; only
+  group reviews do, and their patches come from `GET /api/groups/{id}/patch`,
+  which picks the member comparison (`internal/reviewgroups`). Every hunk of a
+  pull request document is that version's merge base to head, so that range
+  is the one read.
 - The range's changed files are listed once per merge base and head
   (`gitlocal.Repo.ChangedFiles`: `git diff --raw -z -M -l1000`, bounded like the
   other reads) and kept while the commits stay the same. That list gives the old
@@ -1326,8 +1413,27 @@ leaves out. The app fills them in from `GET /api/patch?path=<path>`, answered by
 - The response is `200 {"patch":"@@ -1,3 +1,4 @@..."}`: the file's diff from its
   first `@@` line. git's header lines before it (`diff --git`, `index`, the
   rename lines, `---` and `+++`) are dropped; the viewer reads only the hunks.
-  Every outcome that is not a patch is `200 {"patch":null}` with nothing about
-  why: a binary file or a mode-only change, a submodule, a path the range does
+- The patch is masked by the code that masks a stored hunk's text
+  (`bundle.RedactFilePatch`): the same diff parsing (`parseFileHunks`, without
+  the line cap, so each line loses a CR before its newline) and the same
+  `redactPatches` over the file's hunks as one text, with the one redaction
+  configuration (`redact.Config`, which has no per-repository input). The
+  guarantee is that every byte masked in a stored hunk is masked in the
+  patch; the bundle and `locallink` tests check the two against each other.
+  The texts are not always byte-for-byte equal: a stored hunk the line cap
+  cut is a prefix of the patch's, redacted with less trailing context (the
+  redaction margin), and a type change's stored hunks keep the second
+  section's header lines as hunk lines, which the patch drops. A patch diff
+  parsing reads as textless has no text patch. The patch is masked with the
+  rules of the running binary, not those the document was saved with (see
+  the goredact upgrade note at `TestRedactionMarginCoversTheEngine`).
+- Size: a patch over 1 MiB (`locallink.MaxPatchBytes`) has no text. The
+  stored path's own size reasons (`omitted_size`, `omitted_budget`,
+  `trimmed_oversized`) are not recorded in documents, so a smaller patch of a
+  file the stored hunk dropped or shortened for size is served, masked.
+- Every outcome that is not a patch is `200 {"patch":null}` with nothing about
+  why: a binary file or a mode-only change, a
+  submodule, a path the range does
   not change (a directory is one), commits or blobs the clone lacks (including a partial
   clone), a directory that is not the repository's clone, a patch over 1 MiB
   (`locallink.MaxPatchBytes`), the sample document. A failure that may pass (git
@@ -1335,10 +1441,122 @@ leaves out. The app fills them in from `GET /api/patch?path=<path>`, answered by
   the app turns both into a rejected request and tries again when the excerpt is
   next opened.
 - Answers that hold until the document changes (a patch, no text patch, unchanged,
-  too large) are kept per path; those a person can fix (no clone, no remote,
+  too large) are kept by the commits and path they were read for (the merge
+  base, else the base; the head; the path), so versions that compare the same
+  commits share them; those a person can fix (no clone, no remote,
   missing commits) and failures are computed again on the next request. A
-  document reload (`--watch`) drops every answer and the set of cited paths. At
-  most four git reads run at once, each bounded by the server's lifetime.
+  document reload (`--watch`) drops every answer, the set of cited paths and
+  the saved versions read. At most four git reads run at once, each bounded by
+  the server's lifetime and one minute. `locallink.Patcher` also shares a read
+  that is running among requests for the same clone, repository, range and
+  path, so the daemon's app, which serves each saved version from its own
+  server over one `Patcher`, reads a file once for versions with the same
+  commits; it keeps the changed-file lists of the last eight ranges.
+- A `Patcher` also keeps, for the last eight clones and ranges it read
+  (directory, repository, merge base or base, head), the opened clone (its
+  private repository), the remote match and the resolved commits, until 30
+  seconds after the range's last read (`rangeIdle`), 5 minutes after it was
+  opened however busy (`rangeMaxAge`; the next read opens it again) or
+  `Close`, so a further
+  file of a known range costs one `git diff` instead of about seven git
+  processes (opening, remotes, two commit lookups, the patch). Only a
+  resolution that succeeded is kept: no clone, no matching remote or missing
+  commits are resolved again on the next request. A read that finds objects
+  missing, a partial clone or git failing drops the kept range, so the next
+  request opens it again; a read cancelled by its own request, or an answer
+  about its path alone, does not. A remote edited meanwhile is seen once the
+  range has idled out or reached its maximum age. An evicted, aged, idled or
+  closed range is closed when its last read ends. `locallink.Patch`,
+  `EmbedPatches` and `baum internal view` close theirs, and the daemon closes
+  the app's document cache and the group API (`reviewgroups.API.Close`), and
+  so their `Patcher`s, when it stops; only a daemon killed within a range's
+  idle time leaves its private repository behind.
+
+### Retained review commits
+
+A saved version's lazy patches are read from its head, base and merge base by
+id, so those commits must stay in the clone after a force push, a deleted
+branch or the latest head moving `refs/baum/pull/<N>/` on, and a `git gc`
+(the user's or automatic) would otherwise prune them. `internal/reviewrefs`
+keeps them reachable with refs that live exactly as long as their versions:
+
+- Layout, in the clone's common git directory (shared by its linked
+  worktrees): `refs/baum/reviews/<repository>/<pr>/<version>/<role>`.
+  `<repository>` is the store key's lowercased repository (`owner/name`, or
+  `host/owner/name` for Enterprise) as one component, every byte but `a-z`,
+  `0-9`, `-` and `_` written `%XX` (`acme%2Fwidgets`), so one clone holding
+  the reviews of several repositories never mixes them; `<role>` is `head`,
+  `base` or `merge-base`, one ref per commit the metadata records
+  (`gitlocal.RetainPrefix`, `gitlocal.ParseRetainRef`). Nothing outside
+  `refs/baum/reviews/` is created, moved or deleted, and only names that
+  layout writes exactly are ever deleted; `refs/baum/pull/`, `refs/baum/fix/`
+  and `refs/baum/default` keep their meaning.
+- Git runs as for the private repository's reads (no caller `GIT_`
+  variable, no system or global configuration, an empty home, no replace
+  refs, `GIT_NO_LAZY_FETCH=1`) with `GIT_DIR` the clone's common directory,
+  whose own configuration git still reads, and with `core.hooksPath` the
+  private repository's empty hooks directory (so no `reference-transaction`
+  hook runs), `core.logAllRefUpdates=false` (no reflog), `core.fsmonitor`,
+  `gc.auto` and `maintenance.auto` off. Writes are one `git update-ref
+  --no-deref --stdin` transaction with old-value checks: `create` for a new
+  ref, `update <new> <old>` to move one, `delete <old>`. `--no-deref` acts on
+  the ref itself, never on a ref a symbolic ref names; and since baum never
+  writes symbolic refs, one found at a retained name (`for-each-ref`'s
+  `%(symref)`) is foreign: it is never moved or deleted, nor taken for a
+  version's ref, and `Keep` reports it and the daemon logs it. Deleting a
+  packed ref rewrites `packed-refs` under its lock, so a ref command the user
+  runs during a cleanup (bounded, at most daily) may briefly wait on git's
+  lock timeout. Commits are looked up with
+  `cat-file --batch-check` in the private repository; a commit the clone
+  lacks (pruned already, a partial clone) is skipped, never fetched, and the
+  lazy path keeps falling back to the GitHub link for it.
+- Written on publish: once `generate.Publish` has stored a version
+  (`Options.Stored`), `reviewrefs.Keep` writes that version's refs, from
+  `baum internal generate` and from the daemon's generation jobs (a single
+  pull request; a group's combined review lives in the daemon's state, and
+  a details retry rewrites a version in place with the same commits). It
+  runs outside the store's transaction: a failure is a warning on the
+  command's progress or a daemon log line, and never fails or undoes the
+  version. A write another writer beat (the daemon's reconciliation) is no
+  failure when the refs it left are the version's. A version saved to an
+  explicit `--store` outside the clone's own store roots (`store.Roots`)
+  gets no refs, since nothing would delete them with it.
+- Reconciled by the daemon: the background worker (see "Free background
+  synchronization") calls `reviewrefs.Reconcile` for each available clone of
+  a picked repository, once per common git directory, on its first pass,
+  then once a day, an hour after a failure, and on the next pass while a
+  bound left work; a 30-second pass otherwise runs no git for it. A pass
+  lists the retained refs, then reads every version's commits from each of
+  the clone's own store roots (`store.Store.Commits`, metadata only), creates
+  the refs versions saved before this existed (or whose write failed) lack,
+  for commits the clone holds, and deletes the refs of versions no store
+  holds (a store reset or removed, the clone pointed at another store root).
+  Refs to write go newest version first, so commits old versions lost do not
+  hold up a new one's; commits are looked up 3000 at a time, at most 12000
+  per pass, and a pass writes and deletes at most 600 refs each
+  (`reviewrefs.DefaultLimits`). A bound that left refs asks for the next
+  pass, except a lookup bound reached with nothing written, which the next
+  pass would only reach again. Listing the refs before reading the stores
+  means a version published meanwhile, whose refs are written only after it
+  is stored, never loses them. When a transaction fails (a write another
+  writer beat, a name clashing with another ref), the pass is listed, read
+  and planned once more, then applied in halves down to single refs, so one
+  ref that cannot change holds up no other; those are logged.
+- The roots read are those of the daemon's environment (`XDG_DATA_HOME`, else
+  the home directory, for the fallback root). A `baum internal generate` run
+  with another `XDG_DATA_HOME`, whose clone is read-only so its store went to
+  the fallback root, writes refs the daemon then finds in no store it reads
+  and deletes, and the daemon's own fallback store is not that run's; the
+  clone-local root is the same for both.
+- Failures delete nothing: a store that exists but cannot be read fails the
+  pass before any ref changes, and when no store root holds a database at all
+  nothing is deleted, since a missing store cannot be told from one that
+  moved. A clone that is unavailable or cannot be opened is skipped with a log
+  line; nothing reaches the app.
+- Group reviews are not covered (a known gap): `GET /api/groups/{id}/patch`
+  reads each member's head and its comparison's `base_revision` from the
+  group document, and nothing retains those commits, so a gc after a force
+  push can leave a group's patches unavailable (`{"patch": null}`).
 
 ### Local commits
 
@@ -1369,7 +1587,8 @@ the patches (`viewserver.Options.Commit` and `CommitPatch`).
   `git diff-tree -p` of the commit against its first parent (`--root` for a
   root commit) with the flags and `:(literal)` pathspecs of `/api/patch`, the
   old path included for a rename (`gitlocal.Repo.CommitFilePatch`), cut to the
-  file's diff from its first `@@` line. The answer is `/api/patch`'s:
+  file's diff from its first `@@` line and masked as the stored hunks are.
+  The answer is `/api/patch`'s:
   `{"patch":"..."}`, or `{"patch":null}` for a binary file, a submodule, a
   rename without an edit or a patch over 1 MiB.
 - Both share `/api/patch`'s bounds: at most four git reads at once (one pool),
@@ -2033,7 +2252,9 @@ directory is gone, the turn seeds a new run directory under the review-runs
 root (`reviewruns.Create`): the checkout of the review's head commit exported
 from the registered clone (`head/` only, within the review's checkout limits;
 a clone that lacks the commit fails the turn with `needs_clone`), the stored,
-already-masked review as `review.json`, and the earlier answered turns as
+already-masked review as `review.json`, with its hunks' masked patch text read
+back from the clone (`locallink.EmbedPatches`, see "Hunk evidence in saved
+documents"), and the earlier answered turns as
 `conversation.json` (question, masked here, and `answer_markdown`, oldest
 first, the newest that fit in 64 KiB), and starts a new persisted session there. The
 conversation is then marked `seeded` and the turn's `note` says it started
@@ -2144,6 +2365,8 @@ read-only, keyed by the canonical common-directory digest; `--store` overrides
 the root. Existing local or fallback history wins over creating another store,
 and a read-only existing store fails writes without hiding its history.
 Repository names, including GitHub host, and pull request numbers key rows.
+Documents are stored without their hunks' `diff` and `github_url` (see "Hunk
+evidence in saved documents").
 
 `Latest`, `Versions`, `Get` and `Put` expose the local history.
 `RefreshCurrent` updates only the latest document with one SQLite statement
@@ -3299,6 +3522,8 @@ first after the reset, so a small renewed budget still reaches every pull
 request. `Run` passes every 30 seconds, or sooner when a repository is due
 sooner, as a settling one is. Linked worktrees are deduplicated by common git directory. No-review PRs fetch only a header and checks;
 saved reviews use `refresh.Refresher` and `Store.RefreshCurrent`'s exact-byte CAS.
+After a pass, `Service.Retain` reconciles the retained review refs of each
+due common git directory (see "Retained review commits").
 `Service.RefreshNow` refreshes named PRs of one clone the same way outside
 that schedule (see "Refresh on hook events"), and its reads count as the
 last read; it shares the per-host rate pause with `Sync` in both directions,

@@ -70,12 +70,35 @@ describe("createPatchSource", () => {
     expect(calls).toEqual(["/api/patch?path=a.go", "/api/patch?path=b.go"]);
   });
 
-  it("has no patch for a version other than the document's, without asking", async () => {
-    const { fn } = fetcher(() => json({ patch: "@@ -1 +1 @@\n-a\n+b\n" }));
+  it("asks for another version's patch by its version, once per version and path", async () => {
+    const { fn, calls } = fetcher(
+      () => json({ patch: "@@ -1 +1 @@\n-a\n+current\n" }),
+      () => json({ patch: "@@ -1 +1 @@\n-a\n+older\n" }),
+      () => json({}, 404),
+    );
     const source = createPatchSource(3, fn);
-    await expect(source("a.go", 2, "h_a")).resolves.toBeNull();
-    await expect(source("a.go", 4, "h_a")).resolves.toBeNull();
-    expect(fn).not.toHaveBeenCalled();
+    await expect(source("a b.go", 3, "h_a")).resolves.toBe("@@ -1 +1 @@\n-a\n+current\n");
+    await expect(source("a b.go", 2, "h_a")).resolves.toBe("@@ -1 +1 @@\n-a\n+older\n");
+    await expect(source("a b.go", 4, "h_a")).resolves.toBeNull();
+    await source("a b.go", 2, "h_a");
+    await source("a b.go", 3, "h_a");
+    expect(calls).toEqual([
+      "/api/patch?path=a%20b.go",
+      "/api/patch?path=a%20b.go&version=2",
+      "/api/patch?path=a%20b.go&version=4",
+    ]);
+  });
+
+  it("forgets another version's failed request, so the next ask tries again", async () => {
+    const { fn, calls } = fetcher(
+      () => json({}, 503),
+      () => json({ patch: "@@ -1 +1 @@\n-a\n+b\n" }),
+    );
+    const source = createPatchSource(3, fn);
+    await expect(source("a.go", 1, "h_a")).rejects.toThrow("503");
+    await expect(source("a.go", 1, "h_a")).resolves.toBe("@@ -1 +1 @@\n-a\n+b\n");
+    await expect(source("a.go", 1, "h_a")).resolves.toBe("@@ -1 +1 @@\n-a\n+b\n");
+    expect(calls).toEqual(["/api/patch?path=a.go&version=1", "/api/patch?path=a.go&version=1"]);
   });
 
   it("keeps a null answer without asking again", async () => {

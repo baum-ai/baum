@@ -129,7 +129,7 @@ type CommitPatchRequest struct {
 // parent (the empty tree for a root commit), as Patch reads a pull request's:
 // rename-aware, from its first "@@" line, git's header lines left out. A
 // submodule, a binary file or a patch over MaxPatchBytes is an unavailable
-// PatchResult.
+// PatchResult. Text is masked as the stored review's hunks are.
 func CommitPatch(ctx context.Context, req CommitPatchRequest) (PatchResult, error) {
 	if !req.Commit.Available || req.File.Path == "" {
 		return noPatch(CodeError)
@@ -150,7 +150,11 @@ func CommitPatch(ctx context.Context, req CommitPatchRequest) (PatchResult, erro
 	if result, handled, err := unreadable(err); handled {
 		return result, err
 	}
-	return patchOf(string(out), req.File.TypeChanged)
+	result, err := patchOf(string(out), req.File.TypeChanged)
+	if err != nil || !result.Available {
+		return result, err
+	}
+	return redactPatch(ctx, req.File.Path, result.Patch)
 }
 
 // openFor opens the clone containing dir for reads, once one of its remotes
