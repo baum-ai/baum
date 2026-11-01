@@ -41,6 +41,12 @@ func (r Retention) Retain(ctx context.Context, clone repos.Clone) (bool, error) 
 	if result.Written > 0 || result.Deleted > 0 {
 		r.log(slog.LevelInfo, "retained review refs reconciled", clone, "written", result.Written, "deleted", result.Deleted, "missing", result.Missing, "more", result.More)
 	}
+	if result.Symbolic > 0 {
+		r.log(slog.LevelWarn, "retained review refs: symbolic refs left alone", clone, "count", result.Symbolic)
+	}
+	if len(result.Failed) > 0 {
+		r.log(slog.LevelWarn, "retained review refs: refs that could not change", clone, "count", len(result.Failed), "refs", result.Failed[:min(len(result.Failed), 10)])
+	}
 	return result.More, nil
 }
 

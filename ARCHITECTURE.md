@@ -1399,8 +1399,15 @@ keeps them reachable with refs that live exactly as long as their versions:
   private repository's empty hooks directory (so no `reference-transaction`
   hook runs), `core.logAllRefUpdates=false` (no reflog), `core.fsmonitor`,
   `gc.auto` and `maintenance.auto` off. Writes are one `git update-ref
-  --stdin` transaction with old-value checks: `create` for a new ref,
-  `update <new> <old>` to move one, `delete <old>`. Commits are looked up with
+  --no-deref --stdin` transaction with old-value checks: `create` for a new
+  ref, `update <new> <old>` to move one, `delete <old>`. `--no-deref` acts on
+  the ref itself, never on a ref a symbolic ref names; and since baum never
+  writes symbolic refs, one found at a retained name (`for-each-ref`'s
+  `%(symref)`) is foreign: it is never moved or deleted, nor taken for a
+  version's ref, and `Keep` reports it and the daemon logs it. Deleting a
+  packed ref rewrites `packed-refs` under its lock, so a ref command the user
+  runs during a cleanup (bounded, at most daily) may briefly wait on git's
+  lock timeout. Commits are looked up with
   `cat-file --batch-check` in the private repository; a commit the clone
   lacks (pruned already, a partial clone) is skipped, never fetched, and the
   lazy path keeps falling back to the GitHub link for it.
@@ -1411,9 +1418,10 @@ keeps them reachable with refs that live exactly as long as their versions:
   a details retry rewrites a version in place with the same commits). It
   runs outside the store's transaction: a failure is a warning on the
   command's progress or a daemon log line, and never fails or undoes the
-  version. A version saved to an explicit `--store` outside the clone's own
-  store roots (`store.Roots`) gets no refs, since nothing would delete them
-  with it.
+  version. A write another writer beat (the daemon's reconciliation) is no
+  failure when the refs it left are the version's. A version saved to an
+  explicit `--store` outside the clone's own store roots (`store.Roots`)
+  gets no refs, since nothing would delete them with it.
 - Reconciled by the daemon: the background worker (see "Free background
   synchronization") calls `reviewrefs.Reconcile` for each available clone of
   a picked repository, once per common git directory, on its first pass,
@@ -1424,15 +1432,32 @@ keeps them reachable with refs that live exactly as long as their versions:
   the refs versions saved before this existed (or whose write failed) lack,
   for commits the clone holds, and deletes the refs of versions no store
   holds (a store reset or removed, the clone pointed at another store root).
-  It checks at most 3000 commits and writes and deletes at most 600 refs
-  each (`reviewrefs.DefaultLimits`). Listing the refs before reading the
-  stores means a version published meanwhile, whose refs are written only
-  after it is stored, never loses them.
+  Refs to write go newest version first, so commits old versions lost do not
+  hold up a new one's; commits are looked up 3000 at a time, at most 12000
+  per pass, and a pass writes and deletes at most 600 refs each
+  (`reviewrefs.DefaultLimits`). A bound that left refs asks for the next
+  pass, except a lookup bound reached with nothing written, which the next
+  pass would only reach again. Listing the refs before reading the stores
+  means a version published meanwhile, whose refs are written only after it
+  is stored, never loses them. When a transaction fails (a write another
+  writer beat, a name clashing with another ref), the pass is listed, read
+  and planned once more, then applied in halves down to single refs, so one
+  ref that cannot change holds up no other; those are logged.
+- The roots read are those of the daemon's environment (`XDG_DATA_HOME`, else
+  the home directory, for the fallback root). A `baum internal generate` run
+  with another `XDG_DATA_HOME`, whose clone is read-only so its store went to
+  the fallback root, writes refs the daemon then finds in no store it reads
+  and deletes, and the daemon's own fallback store is not that run's; the
+  clone-local root is the same for both.
 - Failures delete nothing: a store that exists but cannot be read fails the
   pass before any ref changes, and when no store root holds a database at all
   nothing is deleted, since a missing store cannot be told from one that
   moved. A clone that is unavailable or cannot be opened is skipped with a log
   line; nothing reaches the app.
+- Group reviews are not covered (a known gap): `GET /api/groups/{id}/patch`
+  reads each member's head and its comparison's `base_revision` from the
+  group document, and nothing retains those commits, so a gc after a force
+  push can leave a group's patches unavailable (`{"patch": null}`).
 
 ### Local session linkage
 

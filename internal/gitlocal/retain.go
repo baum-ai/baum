@@ -131,32 +131,48 @@ func (r *Repo) refEnv() []string {
 	return env
 }
 
+// Retained are the clone's refs under a prefix of RetainPrefix.
+type Retained struct {
+	// Refs are the plain refs, by name, with the commit each names.
+	Refs map[string]string
+	// Symbolic are the symbolic refs, which baum never writes: they are
+	// foreign, and must be neither moved nor deleted.
+	Symbolic map[string]bool
+}
+
 // RetainedRefs lists the clone's refs under prefix, which must be within
-// RetainPrefix, by name, with the commit each names.
-func (r *Repo) RetainedRefs(ctx context.Context, prefix string) (map[string]string, error) {
+// RetainPrefix.
+func (r *Repo) RetainedRefs(ctx context.Context, prefix string) (Retained, error) {
 	if !strings.HasPrefix(prefix, RetainPrefix) || !strings.HasSuffix(prefix, "/") || !validRefName(strings.TrimSuffix(prefix, "/")) {
-		return nil, ErrInvalidInput
+		return Retained{}, ErrInvalidInput
 	}
 	done, err := r.begin()
 	if err != nil {
-		return nil, err
+		return Retained{}, err
 	}
 	defer done()
 	out, err := run(ctx, runSpec{dir: r.dir, env: r.refEnv(), limit: maxRetainListBytes, timeout: r.opts.CommandTimeout, config: r.refConfig()},
-		"for-each-ref", "--format=%(objectname) %(refname)", "--end-of-options", prefix)
+		"for-each-ref", "--format=%(refname) %(symref) %(objectname)", "--end-of-options", prefix)
 	if err != nil {
-		return nil, err
+		return Retained{}, err
 	}
-	refs := map[string]string{}
+	refs := Retained{Refs: map[string]string{}, Symbolic: map[string]bool{}}
 	for _, line := range strings.Split(strings.TrimRight(string(out), "\n"), "\n") {
 		if line == "" {
 			continue
 		}
-		oid, name, ok := strings.Cut(line, " ")
-		if !ok || !validOID(oid) || !strings.HasPrefix(name, prefix) {
-			return nil, errors.New("listing retained refs: unexpected for-each-ref output")
+		fields := strings.SplitN(line, " ", 3)
+		if len(fields) != 3 || !strings.HasPrefix(fields[0], prefix) {
+			return Retained{}, errors.New("listing retained refs: unexpected for-each-ref output")
 		}
-		refs[name] = oid
+		switch name, target, oid := fields[0], fields[1], fields[2]; {
+		case target != "":
+			refs.Symbolic[name] = true
+		case validOID(oid):
+			refs.Refs[name] = oid
+		default:
+			return Retained{}, errors.New("listing retained refs: unexpected for-each-ref output")
+		}
 	}
 	return refs, nil
 }
@@ -198,7 +214,8 @@ func (r *Repo) HasCommits(ctx context.Context, oids []string) (map[string]bool, 
 // UpdateRetained applies updates to the clone's retained refs as one
 // transaction: all of them, or none when any fails. Every name must be one
 // ParseRetainRef reads; git runs with no hooks and none of the user's global
-// configuration.
+// configuration, and acts on the refs themselves (--no-deref): a symbolic
+// ref is never followed to the ref it names.
 func (r *Repo) UpdateRetained(ctx context.Context, updates []RefUpdate) error {
 	if len(updates) == 0 {
 		return nil
@@ -224,6 +241,6 @@ func (r *Repo) UpdateRetained(ctx context.Context, updates []RefUpdate) error {
 	}
 	defer done()
 	_, err = run(ctx, runSpec{dir: r.dir, env: r.refEnv(), timeout: r.opts.CommandTimeout, config: r.refConfig(), stdin: input.Bytes()},
-		"update-ref", "--stdin")
+		"update-ref", "--no-deref", "--stdin")
 	return err
 }

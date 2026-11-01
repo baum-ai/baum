@@ -68,7 +68,7 @@ func TestUpdateRetainedWritesOnlyItsNamespaceWithoutHooks(t *testing.T) {
 		t.Fatal(err)
 	}
 	got, err := repo.RetainedRefs(ctx, RetainPrefix)
-	if err != nil || len(got) != 2 || got[head] != f.head || got[base] != f.base {
+	if err != nil || len(got.Refs) != 2 || got.Refs[head] != f.head || got.Refs[base] != f.base {
 		t.Fatalf("refs = %v, %v", got, err)
 	}
 	// create refuses an existing ref, and the whole transaction with it.
@@ -80,13 +80,13 @@ func TestUpdateRetainedWritesOnlyItsNamespaceWithoutHooks(t *testing.T) {
 	if err := repo.UpdateRetained(ctx, []RefUpdate{{Name: head, Old: f.base}}); err == nil {
 		t.Fatal("deleting with a stale old value succeeded")
 	}
-	if got, _ := repo.RetainedRefs(ctx, RetainPrefix); len(got) != 2 {
+	if got, _ := repo.RetainedRefs(ctx, RetainPrefix); len(got.Refs) != 2 {
 		t.Fatalf("a failed transaction changed refs: %v", got)
 	}
 	if err := repo.UpdateRetained(ctx, []RefUpdate{{Name: head, Old: f.head}, {Name: base, Old: f.base, New: f.head}}); err != nil {
 		t.Fatal(err)
 	}
-	if got, _ := repo.RetainedRefs(ctx, RetainPrefix); len(got) != 1 || got[base] != f.head {
+	if got, _ := repo.RetainedRefs(ctx, RetainPrefix); len(got.Refs) != 1 || got.Refs[base] != f.head {
 		t.Fatalf("refs = %v", got)
 	}
 	if _, err := os.Stat(marker); !errors.Is(err, os.ErrNotExist) {
@@ -112,5 +112,30 @@ func TestHasCommitsReportsOnlyCommitsTheCloneHolds(t *testing.T) {
 	got, err := repo.HasCommits(context.Background(), []string{f.head, f.base, f.head, tree, absent, "not-an-id"})
 	if err != nil || len(got) != 2 || !got[f.head] || !got[f.base] {
 		t.Fatalf("present = %v, %v", got, err)
+	}
+}
+
+// A symbolic ref planted at a retained name is listed as such, and an update
+// or delete of that name never reaches the branch it points at.
+func TestUpdateRetainedNeverFollowsASymbolicRef(t *testing.T) {
+	f := newFixture(t)
+	name := RetainedName{"acme/widgets", 7, 1, "head"}.Ref()
+	git(t, f.dir, "symbolic-ref", name, "refs/heads/main")
+	repo, err := Open(context.Background(), f.dir, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = repo.Close() }()
+	ctx := context.Background()
+	got, err := repo.RetainedRefs(ctx, RetainPrefix)
+	if err != nil || len(got.Refs) != 0 || !got.Symbolic[name] {
+		t.Fatalf("listed %+v, %v", got, err)
+	}
+	refs := func() string { return git(t, f.dir, "for-each-ref", "--format=%(refname) %(objectname)", "refs/heads") }
+	before := refs()
+	_ = repo.UpdateRetained(ctx, []RefUpdate{{Name: name, Old: f.base, New: f.head}})
+	_ = repo.UpdateRetained(ctx, []RefUpdate{{Name: name, Old: f.base}})
+	if after := refs(); after != before {
+		t.Fatalf("branches changed:\n%s\nwant:\n%s", after, before)
 	}
 }

@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -239,7 +240,7 @@ func TestReconcileCreatesMissingRefsForExistingVersions(t *testing.T) {
 	if got := c.refs(t, gitlocal.RetainPrefix); got != want {
 		t.Fatalf("refs:\n%s\nwant:\n%s", got, want)
 	}
-	if result, err := Reconcile(ctx, repo, DefaultLimits); err != nil || result != (Result{Missing: 1}) {
+	if result, err := Reconcile(ctx, repo, DefaultLimits); err != nil || !reflect.DeepEqual(result, Result{Missing: 1}) {
 		t.Fatalf("settled pass = %+v, %v", result, err)
 	}
 }
@@ -297,7 +298,7 @@ func TestReconcileDeletesNothingWithoutAReadableStore(t *testing.T) {
 	orphan := "refs/baum/reviews/acme%2Fwidgets/7/1/head"
 	c.git(t, "update-ref", orphan, c.Head)
 	// No store at all: a store gone missing is not an empty one.
-	if result, err := Reconcile(ctx, repo, DefaultLimits); err != nil || result != (Result{}) {
+	if result, err := Reconcile(ctx, repo, DefaultLimits); err != nil || !reflect.DeepEqual(result, Result{}) {
 		t.Fatalf("pass without a store = %+v, %v", result, err)
 	}
 	roots, err := store.Roots(c.common)
