@@ -592,7 +592,8 @@ func TestLocalAppBrowserFixture(t *testing.T) {
 		sessionIndex := &analytics.Index{Path: filepath.Join(home, "app.sqlite"), Clones: registry}
 		insights := &analytics.Service{Registry: registry, Index: sessionIndex, Jobs: runner.List, Actions: actions,
 			Plans:    &planusage.History{Path: filepath.Join(home, "app.sqlite"), Service: &planusage.Service{Sources: []planusage.Source{fixedPlans{}}}},
-			Delivery: &analytics.Delivery{Search: client}, Captures: decided.Ledger}
+			Delivery: &analytics.Delivery{Search: client}, Captures: decided.Ledger,
+			Pulls: browserFlow, Login: func(context.Context) string { return "me" }}
 		finder := &clonefind.Service{Registry: registry, Options: clonefind.Options{Home: home}, Changed: changed}
 		repositoryService := &githubrepos.Service{Registry: registry, Lister: browserRepositoryLister{}, Home: home, Context: appCtx, Changed: changed, Clone: func(ctx context.Context, opts gitlocal.CloneOptions) error {
 			if err := os.MkdirAll(filepath.Dir(opts.Dir), 0700); err != nil {
@@ -664,3 +665,30 @@ var browserPlanUsage = http.HandlerFunc(func(w http.ResponseWriter, _ *http.Requ
 {"provider":"codex","available":true,"plan":"pro","windows":[{"name":"weekly","used_percent":93,"resets_at":%q}],"fetched_at":%q}]}`,
 		at(3*time.Hour), at(52*time.Hour), at(0), at(30*time.Hour), at(-20*time.Minute))
 })
+
+// browserFlow is the feature log's pull requests of acme/demo for the
+// Analytics flow: over the last few weeks, the person's and a teammate's,
+// some merged.
+func browserFlow(_ context.Context, repository string, _ time.Time) ([]decisionlog.FlowPull, bool, error) {
+	if repository != "acme/demo" {
+		return nil, false, nil
+	}
+	now := time.Now()
+	var pulls []decisionlog.FlowPull
+	for i := range 24 {
+		created := now.Add(-time.Duration(i*26+3) * time.Hour)
+		author := "me"
+		if i%3 != 0 {
+			author = "ada"
+		}
+		p := decisionlog.FlowPull{Author: author, CreatedAt: created}
+		if i%4 != 1 {
+			merged := created.Add(time.Duration(2+i%5*7) * time.Hour)
+			if merged.Before(now) {
+				p.MergedAt = &merged
+			}
+		}
+		pulls = append(pulls, p)
+	}
+	return pulls, true, nil
+}

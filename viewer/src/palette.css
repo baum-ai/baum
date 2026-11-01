@@ -25,6 +25,12 @@
   --series-7: #94552a;
   --series-8: #6b8f12;
 
+  /* The hosted dashboard's warm series, beside forest (--series-1), for
+     the local Analytics charts. */
+  --series-caramel: #a8803f;
+  --series-sage: #7d8c62;
+  --series-espresso: #5c4636;
+
   /* Neutral steps: the number describes emphasis, not a separate color choice. */
   --ink-900: var(--color-ink);
   --ink-800: color-mix(in srgb, var(--color-ink) 92%, var(--color-paper));
@@ -138,6 +144,9 @@
   --data-8: var(--series-8);
   --data-muted: var(--ink-400);
   --data-muted-strong: var(--ink-500);
+  --data-caramel: var(--series-caramel);
+  --data-sage: var(--series-sage);
+  --data-espresso: var(--series-espresso);
 
   --inbox-blue: var(--syntax-token-function);
   --inbox-green: var(--status-positive);
@@ -169,7 +178,7 @@
   --z-sheet: 40;
 }
 
-/* Dark mode changes the mixing recipes, retaining the same sixteen seeds. */
+/* Dark mode changes the mixing recipes, retaining the same nineteen seeds. */
 :root[data-theme="dark"] {
   color-scheme: dark;
   --ink-900: color-mix(in srgb, var(--color-paper) 94%, var(--color-shadow));
@@ -227,6 +236,9 @@
   --data-6: color-mix(in srgb, var(--series-6) 78%, var(--color-paper));
   --data-7: color-mix(in srgb, var(--series-7) 78%, var(--color-paper));
   --data-8: color-mix(in srgb, var(--series-8) 78%, var(--color-paper));
+  --data-caramel: color-mix(in srgb, var(--series-caramel) 50%, var(--color-paper));
+  --data-sage: color-mix(in srgb, var(--series-sage) 50%, var(--color-paper));
+  --data-espresso: color-mix(in srgb, var(--series-espresso) 70%, var(--color-paper));
 
   --shadow-raised:
     0 2px 8px color-mix(in srgb, var(--shadow-ink) 55%, transparent),

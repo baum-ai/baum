@@ -690,6 +690,7 @@ function Workspace({ url }: { url: UrlState }) {
               page === "sessions" ||
               page === "jobs" ||
               page === "repositories" ||
+              page === "timeline" ||
               page === "settings"
             ? page
             : "anywhere";

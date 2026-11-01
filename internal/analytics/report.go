@@ -36,6 +36,7 @@ type Report struct {
 	Baum      BaumWork        `json:"baum"`
 	Delivery  DeliveryReport  `json:"delivery"`
 	PlanUsage PlanUsageReport `json:"plan_usage"`
+	Flow      FlowReport      `json:"flow"`
 }
 
 // Window is the report's span: whole local days, today included.
@@ -103,10 +104,12 @@ type Summary struct {
 }
 
 // Day is one local day's sessions (by when they started) and active time
-// (by when it happened), per agent.
+// (by when it happened), per agent and per model. A session counts under its
+// main model, the one with the most tokens, so either split sums to the day.
 type Day struct {
 	Date   string              `json:"date"`
 	Agents map[string]DayAgent `json:"agents"`
+	Models map[string]DayAgent `json:"models"`
 }
 
 // DayAgent is one agent's part of a day.
@@ -148,6 +151,9 @@ type ModelRow struct {
 	Cost     Cost   `json:"cost"`
 }
 
+// LongestSessions is how many of the longest sessions the report lists.
+const LongestSessions = 10
+
 // SessionRow is one session among the longest.
 type SessionRow struct {
 	Agent           string     `json:"agent"`
@@ -170,7 +176,9 @@ type BaumWork struct {
 	Available    bool `json:"available"`
 	Reviews      int  `json:"reviews"`
 	GroupReviews int  `json:"group_reviews"`
-	Fixes        int  `json:"fixes"`
+	// ReviewsCompleted counts the reviews and group reviews that finished.
+	ReviewsCompleted int `json:"reviews_completed"`
+	Fixes            int `json:"fixes"`
 	// Questions counts questions asked of a review's agent (jobs.KindChat).
 	Questions       int           `json:"questions"`
 	Automatic       int           `json:"automatic"`
@@ -191,6 +199,36 @@ type BaumWork struct {
 	CheckReruns   *int `json:"check_reruns"`
 	// Decisions is decision capture's model calls, nil without its ledger.
 	Decisions *DecisionCapture `json:"decisions"`
+	// Weeks is the last seven days' figures against the seven before; nil
+	// in a week's own figures.
+	Weeks *BaumWeeks `json:"weeks,omitempty"`
+}
+
+// BaumWeeks is two weeks of baum's work, for its trend.
+type BaumWeeks struct {
+	This     BaumWeek `json:"this"`
+	Previous BaumWeek `json:"previous"`
+}
+
+// BaumWeek is one week of what baum did for the person; a figure without
+// its ledger is nil.
+type BaumWeek struct {
+	Reviews         int  `json:"reviews"`
+	FixesPushed     int  `json:"fixes_pushed"`
+	ThreadsResolved int  `json:"threads_resolved"`
+	Merges          *int `json:"merges"`
+	BranchUpdates   *int `json:"branch_updates"`
+	CheckReruns     *int `json:"check_reruns"`
+	Decisions       *int `json:"decisions"`
+}
+
+func weekOf(w BaumWork) BaumWeek {
+	week := BaumWeek{Reviews: w.ReviewsCompleted, FixesPushed: w.FixesPushed, ThreadsResolved: w.ThreadsResolved,
+		Merges: w.Merges, BranchUpdates: w.BranchUpdates, CheckReruns: w.CheckReruns}
+	if w.Decisions != nil {
+		week.Decisions = &w.Decisions.Succeeded
+	}
+	return week
 }
 
 // DecisionCapture counts decision capture's calls started in the window.
@@ -342,14 +380,23 @@ func (s *Service) Report(ctx context.Context, q Query) (Report, error) {
 	}
 	report.Summary.AgentShare = report.Commits.Share
 
-	report.Baum = s.baumWork(start, q)
-	// An unreadable ledger leaves the figures out, as no ledger does.
-	if s.Captures != nil {
-		if captures, err := s.Captures(ctx, start); err == nil {
-			report.Baum.Decisions = decisionCapture(captures, q)
-		}
+	// The last seven local days, as the 7-day window counts them, against
+	// the seven before, whatever the window. The ledgers are read once for
+	// all three.
+	weekAgo := today.AddDate(0, 0, -6)
+	lastWeek := weekAgo.AddDate(0, 0, -7)
+	since := start
+	if lastWeek.Before(since) {
+		since = lastWeek
+	}
+	ledgers := s.baumLedgers(ctx, since)
+	report.Baum = baumWork(ledgers, start, time.Time{}, q)
+	report.Baum.Weeks = &BaumWeeks{
+		This:     weekOf(baumWork(ledgers, weekAgo, time.Time{}, q)),
+		Previous: weekOf(baumWork(ledgers, lastWeek, weekAgo, q)),
 	}
 	report.Delivery = s.delivery(start, q, picked)
+	report.Flow = s.flow(ctx, start, today, loc, q, picked)
 	report.PlanUsage = s.planUsage(start, q)
 	return report, nil
 }
@@ -386,7 +433,7 @@ func (s *Service) sessions(report *Report, entries []Entry, start, today time.Ti
 	prices := pricing.Active()
 	days := map[string]*Day{}
 	for d := start; !d.After(today); d = d.AddDate(0, 0, 1) {
-		day := &Day{Date: d.Format(time.DateOnly), Agents: map[string]DayAgent{}}
+		day := &Day{Date: d.Format(time.DateOnly), Agents: map[string]DayAgent{}, Models: map[string]DayAgent{}}
 		days[day.Date] = day
 	}
 	hours := make([]int64, 24)
@@ -438,11 +485,15 @@ func (s *Service) sessions(report *Report, entries []Entry, start, today time.Ti
 			m.Tokens += g.Tokens(e.Source)
 			m.Cost.add(groupCost(prices, e.Source, g))
 		}
+		main := mainModel(prices, e)
 		date := startOf(e).In(loc).Format(time.DateOnly)
 		if day := days[date]; day != nil {
 			part := day.Agents[e.Source]
 			part.Sessions++
 			day.Agents[e.Source] = part
+			part = day.Models[main]
+			part.Sessions++
+			day.Models[main] = part
 		}
 		for hour, seconds := range e.Hours {
 			at := time.Unix(hour*3600, 0).In(loc)
@@ -451,6 +502,9 @@ func (s *Service) sessions(report *Report, entries []Entry, start, today time.Ti
 				part := day.Agents[e.Source]
 				part.ActiveSeconds += seconds
 				day.Agents[e.Source] = part
+				part = day.Models[main]
+				part.ActiveSeconds += seconds
+				day.Models[main] = part
 			}
 		}
 		sessionRows = append(sessionRows, SessionRow{
@@ -496,7 +550,7 @@ func (s *Service) sessions(report *Report, entries []Entry, start, today time.Ti
 		return cmp.Compare(deref64(b.ActiveSeconds), deref64(a.ActiveSeconds))
 	})
 	for _, row := range sessionRows {
-		if len(report.Longest) == 5 || row.ActiveSeconds == nil || *row.ActiveSeconds == 0 {
+		if len(report.Longest) == LongestSessions || row.ActiveSeconds == nil || *row.ActiveSeconds == 0 {
 			break
 		}
 		report.Longest = append(report.Longest, row)
@@ -530,6 +584,24 @@ func addInt(total *int64, n int64) *int64 {
 	}
 	*total += n
 	return total
+}
+
+// mainModel is the name of the model that took most of a session's tokens,
+// "Unknown model" when it reported none.
+func mainModel(prices *pricing.List, e Entry) string {
+	// A model's usage can be split over several groups (speed, band), so
+	// its tokens are summed first.
+	tokens := map[string]int64{}
+	for _, g := range e.Usage {
+		tokens[modelName(prices, g.Model, e.Source)] += g.Tokens(e.Source)
+	}
+	name, most := modelName(prices, "", e.Source), int64(0)
+	for model, n := range tokens {
+		if n > most || n == most && n > 0 && model < name {
+			name, most = model, n
+		}
+	}
+	return name
 }
 
 // modelName is the price list's name for a model, or what the agent recorded
@@ -586,13 +658,14 @@ func groupCost(prices *pricing.List, vendor string, g Usage) Cost {
 	return cost
 }
 
-// decisionCapture counts the calls matching q; the agent filter matches the
-// backend that made them, as it matches a job's harness.
-func decisionCapture(captures []decisionlog.LedgerEntry, q Query) *DecisionCapture {
+// decisionCapture counts the calls matching q started from start on, before
+// end when it is set; the agent filter matches the backend that made them, as
+// it matches a job's harness.
+func decisionCapture(captures []decisionlog.LedgerEntry, start, end time.Time, q Query) *DecisionCapture {
 	out := &DecisionCapture{Cost: Cost{Reasons: []string{}}, Failures: []ReasonCount{}}
 	failures := map[string]int{}
 	for _, c := range captures {
-		if q.Repository != "" && !strings.EqualFold(c.Repository, q.Repository) || q.Agent != "" && jobAgents[c.Backend] != q.Agent {
+		if c.StartedAt.Before(start) || !end.IsZero() && !c.StartedAt.Before(end) || q.Repository != "" && !strings.EqualFold(c.Repository, q.Repository) || q.Agent != "" && jobAgents[c.Backend] != q.Agent {
 			continue
 		}
 		out.Attempts++
@@ -625,17 +698,47 @@ func decisionCapture(captures []decisionlog.LedgerEntry, q Query) *DecisionCaptu
 	return out
 }
 
-// baumWork counts the jobs created in the window.
-func (s *Service) baumWork(start time.Time, q Query) BaumWork {
+// baumLedgers is what baum's work is counted from. A ledger that is missing,
+// or unreadable, leaves its figures out.
+type baumLedgers struct {
+	captures                         []decisionlog.LedgerEntry
+	jobs                             []jobs.Job
+	actions                          []Action
+	hasCaptures, hasJobs, hasActions bool
+}
+
+// baumLedgers reads the ledgers from since on.
+func (s *Service) baumLedgers(ctx context.Context, since time.Time) baumLedgers {
+	var l baumLedgers
+	if s.Captures != nil {
+		if captures, err := s.Captures(ctx, since); err == nil {
+			l.captures, l.hasCaptures = captures, true
+		}
+	}
+	if s.Jobs != nil {
+		l.jobs, l.hasJobs = s.Jobs(), true
+	}
+	if s.Actions != nil {
+		l.actions, l.hasActions = s.Actions.Since(since), true
+	}
+	return l
+}
+
+// baumWork counts the jobs created, actions taken and decisions captured
+// from start on, before end when it is set.
+func baumWork(l baumLedgers, start, end time.Time, q Query) BaumWork {
 	work := BaumWork{Failures: []ReasonCount{}, Cost: Cost{Reasons: []string{}}}
-	if s.Jobs == nil {
+	if l.hasCaptures {
+		work.Decisions = decisionCapture(l.captures, start, end, q)
+	}
+	if !l.hasJobs {
 		return work
 	}
 	work.Available = true
 	failures := map[string]int{}
-	for _, j := range s.Jobs() {
+	for _, j := range l.jobs {
 		// A feature build is the decision log's spend, not a review's.
-		if j.Kind == jobs.KindFeatureBuild || j.CreatedAt.Before(start) || q.Repository != "" && !strings.EqualFold(j.Repository, q.Repository) || q.Agent != "" && jobAgents[j.Backend] != q.Agent {
+		if j.Kind == jobs.KindFeatureBuild || j.CreatedAt.Before(start) || !end.IsZero() && !j.CreatedAt.Before(end) || q.Repository != "" && !strings.EqualFold(j.Repository, q.Repository) || q.Agent != "" && jobAgents[j.Backend] != q.Agent {
 			continue
 		}
 		switch {
@@ -655,6 +758,9 @@ func (s *Service) baumWork(start time.Time, q Query) BaumWork {
 		switch j.State {
 		case "completed":
 			work.Completed++
+			if j.Kind != jobs.KindFix && j.Kind != jobs.KindChat {
+				work.ReviewsCompleted++
+			}
 		case "failed":
 			work.Failed++
 			failures[cmp.Or(j.Reason, "internal")]++
@@ -692,11 +798,11 @@ func (s *Service) baumWork(start time.Time, q Query) BaumWork {
 	slices.SortFunc(work.Failures, func(a, b ReasonCount) int {
 		return cmp.Or(cmp.Compare(b.Count, a.Count), strings.Compare(a.Reason, b.Reason))
 	})
-	if s.Actions != nil {
+	if l.hasActions {
 		merges, updates, reruns := 0, 0, 0
-		for _, a := range s.Actions.Since(start) {
+		for _, a := range l.actions {
 			// The writes are the person's, whichever agent they use.
-			if q.Repository != "" && a.Repository != q.Repository {
+			if a.At.Before(start) || !end.IsZero() && !a.At.Before(end) || q.Repository != "" && a.Repository != q.Repository {
 				continue
 			}
 			switch a.Kind {

@@ -328,16 +328,11 @@ func (t *Timeline) repositoryList(ctx context.Context) (map[string]any, error) {
 	}
 	enabled := prefs.Decisions.Enabled == nil || *prefs.Decisions.Enabled
 	type servedRepository struct {
-		Repository  string `json:"repository"`
-		HasFeatures bool   `json:"has_features"`
+		Repository string `json:"repository"`
 	}
 	served, off := []servedRepository{}, []string{}
 	for _, name := range servedRepositories(prefs, list) {
-		features, _, err := t.current(ctx, name)
-		if err != nil {
-			return nil, err
-		}
-		served = append(served, servedRepository{Repository: name, HasFeatures: features})
+		served = append(served, servedRepository{Repository: name})
 	}
 	for _, r := range list {
 		if r.Settings.Decisions != nil && !*r.Settings.Decisions {

@@ -24,7 +24,7 @@ generator reuse them. Fixed vendor logo colors live in
 `../viewer/src/components/brand-artwork.ts`. `pnpm lint` rejects color literals
 and Tailwind color utilities outside the UI palette,
 `../viewer/src/themes/*.css` and those two artwork modules.
-The default UI palette has sixteen explicit base colors shared by light and dark mode;
+The default UI palette has nineteen explicit base colors shared by light and dark mode;
 its neutral ramps, status backgrounds and interaction shades are derived mixes.
 Custom colors go in `../viewer/src/themes/custom.css`, loaded by every desktop
 screen after the default palette in a higher-priority cascade layer. Override
@@ -976,10 +976,9 @@ the loaded list does not hold (further down, filtered out, archived or gone)
 shows above the list as the opened feature. With no features yet, the page
 explains that features appear as pull requests and sessions are placed and
 offers **Build feature history** (in a view of one repository) and All
-decisions. The feature build below belongs to a view of one repository; over
-several, each of them without a feature history has a line saying so that opens
-its own view. When the repository has features at all (whatever the filters),
-the page bar offers a quieter **Rebuild feature history**. Either starts a
+decisions. The feature build below belongs to a view of one repository. When
+the repository has features at all (whatever the filters), the kebab menu at the
+end of the filter bar offers a quieter **Rebuild feature history**. Either starts a
 `feature_build` job for the repository's clone at once, as every run the person
 asks for starts (`src/feature-build.tsx`, `POST api/jobs` with `kind:
 "feature_build"`): there is no dialog, no estimate and nothing about the price
@@ -997,7 +996,9 @@ which starts it again at once; a building version with no reason and no job
 says that a build is in progress or stopped and offers Resume too, which goes
 on with the same version. A latest build that ended before it made a version
 shows "The last feature history build stopped before it made a version" with
-its reason and **Try again**, until a version newer than the job is current.
+its reason and **Try again**, until a version newer than the job is current or
+the person closes it; closed jobs are remembered in `localStorage`, so a later
+job shows again. One the person cancelled shows nothing.
 Feature builds' reasons have their own words, here and in Jobs (`jobReasonText`
 with the job's kind). A failed read of the build state keeps what was shown.
 The current features stay listed throughout, and the lists are read again when
@@ -1008,20 +1009,30 @@ is off, and which picked repositories have their decisions turned off.
 The Analytics page (`?page=analytics&days=7|30|90&repo=&agent=`, `src/analytics.tsx`)
 reads `GET api/analytics` (see the daemon's [analytics README](../internal/analytics/README.md)).
 Its bar holds the window (7, 30 or 90 days, as a segmented control) and the
-repository and agent selects in the inbox's select style; all three live in the
-address. A new choice shows at once and the last report stays, faded, until the
-new one answers. Cards: summary tiles (sessions, active agent time, human prompts,
+repository and agent selects, bordered like the Timeline's filters; all three
+live in the address. The page uses the shared palette as the Inbox does, and
+its charts the hosted dashboard's warm series (forest, then `--data-caramel`,
+`--data-sage` and `--data-espresso` from `../viewer/src/palette.css`). A new
+choice shows at once and the last report stays, faded, until the new one
+answers. Cards: summary tiles (sessions, active agent time, human prompts,
 the cost at API prices, marked "Incomplete" when part is unpriced, and the
 agent-written share of commits); agent activity per day, sessions or active time
-stacked by agent, with a legend and a table behind "Show as a table"; a breakdown
+stacked by harness or by model (each session under its main model; the top
+four named, the rest as Other), with a legend that shows each harness's or
+model maker's logo and a table behind "Show as a table"; a breakdown
 by agent, model or repository (sessions, prompts, tool calls, failed share, active
-time, tokens, cost at API prices); agent-written commits by evidence; baum's
-work (reviews, fixes pushed, threads resolved, cost at API prices, failures by
-reason, merges,
-branch updates and re-runs from the app); delivery from GitHub ("Loading from
-GitHub…" for that card only while the daemon searches); plan usage over time per
-provider, with how often each window hit its limit; busiest hours; and the longest
-sessions. A figure that is unknown is "—" with its reason as a tooltip and to
+time, tokens, cost at API prices); pull requests, yours or the team's (one
+switch), created and shipped as bars side by side, then the merge rate and the
+median time to merge as lines on their own axes (left and right) beneath, by day over 7 days and by week otherwise, read
+from the pull requests the Timeline's feature log keeps (a repository it does
+not read, with decisions off or no clone, is named as not counted); delivery
+from GitHub ("Loading from GitHub…" for that card only while the daemon
+searches) beside the busiest hours; plan usage over time per provider, with
+how often each window hit its limit, beside the ten longest sessions, in a list that scrolls
+within its card; and baum's work, only what it
+did for the person (reviews that completed, fixes pushed, threads resolved, merges,
+branch updates and check re-runs from the app, decision capture runs that succeeded), its
+failures left to Jobs. A figure that is unknown is "—" with its reason as a tooltip and to
 screen readers, never 0; a floor reads "≥". Charts are HTML and inline SVG in the
 viewer's `--data-*` slots, agents in a fixed order (Claude Code, Codex, Cursor),
 with tooltips on hover and focus. The page reads again every two seconds while
@@ -1167,8 +1178,7 @@ the default is saved as none, so it follows the harness, and a saved model
 the daemon reports ignored (`baum internal reviews show`, with the harness it
 resolved) is shown the same way while that harness is chosen, and kept unless
 changed.
-Analytics shows decision capture's calls, failures by reason, calls cut short
-by a stop and spend under baum's work; an unknown cost stays unknown.
+Analytics counts the decisions captured under baum's work.
 
 Every list page draws its list one way: Pull requests, the Inbox's queue, Sessions,
 Jobs, Repositories and Manage inboxes. The page lies on the panel's warm paper
