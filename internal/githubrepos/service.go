@@ -70,6 +70,9 @@ type Service struct {
 	Token func(ctx context.Context) (string, error)
 	// Clone runs the clone; nil uses gitlocal.Clone.
 	Clone func(ctx context.Context, opts gitlocal.CloneOptions) error
+	// Organizations reports the organizations the person belongs to that this
+	// sign-in cannot reach (githubauth.Manager.Organizations); nil reports none.
+	Organizations func(ctx context.Context, refresh bool) (githubauth.OrganizationAccess, error)
 	// Health reports the runtime health of the GitHub sign-in after a failed
 	// request (config.GitHubAuth.Health); nil means healthy.
 	Health func() error
@@ -170,6 +173,10 @@ type Listing struct {
 	TopRepositories []Item    `json:"top_repositories,omitempty"`
 	// HasMore says GitHub has another page for this query, which ?more=1 loads.
 	HasMore bool `json:"has_more,omitempty"`
+	// OrganizationAccess is set when the person belongs to an organization
+	// whose repositories this sign-in cannot see, typically because it
+	// restricts OAuth app access until an owner approves baum.
+	OrganizationAccess *githubauth.OrganizationAccess `json:"organization_access,omitempty"`
 }
 
 // maxSearchResults is the most results GitHub search returns for one query.
@@ -521,6 +528,11 @@ func (s *Service) Listing(ctx context.Context, query string, refresh, more bool)
 	}
 	if query != "" {
 		sort.SliceStable(out.Repositories, func(i, j int) bool { return repositoryBefore(out.Repositories[i], out.Repositories[j], query) })
+	}
+	if s.Organizations != nil {
+		if access, err := s.Organizations(ctx, refresh); err == nil && len(access.Hidden) > 0 {
+			out.OrganizationAccess = &access
+		}
 	}
 	return out, nil
 }

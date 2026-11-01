@@ -62,6 +62,13 @@ setup bundle. `pnpm test:desktop` exercises setup with mocked IPC; it needs a
 completed `pnpm build`. The proxy suite covers login, CSRF, event streaming and
 React/CSS hot reload for the daemon-served application.
 
+When the daemon reports organizations the sign-in cannot reach
+(`organization_access`, from organizations that restrict OAuth app access), the
+picker in setup step 1 and in Add repositories, and the Repositories page, say
+which ones and link to baum's page in GitHub's settings, where a member requests
+approval; Check again asks the daemon to look again. An SSO failure links to
+the same page. See [GitHub access](../docs/github-access.md).
+
 Setup and the app's Add repositories use the same repository picker and daemon
 search. They first fetch eight top repositories, matching the visible rows, then
 fetch up to one hundred more from `topRepositories` in the background using the

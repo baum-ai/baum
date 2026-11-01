@@ -4,6 +4,7 @@ package githubauth
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -85,6 +86,10 @@ type Manager struct {
 	pending         *pending
 	rotated         *tokenResponse
 	rotatedID       int64
+	orgsMu          sync.Mutex
+	orgs            OrganizationAccess
+	orgsKey         [sha256.Size]byte
+	orgsAt          time.Time
 }
 
 type Options struct{ Transport http.RoundTripper }
@@ -134,6 +139,9 @@ func (m *Manager) changedIdentity() {
 	m.issuedAccountID = 0
 	m.health = nil
 	m.healthMu.Unlock()
+	m.orgsMu.Lock()
+	m.orgsAt = time.Time{}
+	m.orgsMu.Unlock()
 	m.identityCancel()
 	m.identity, m.identityCancel = context.WithCancel(context.Background())
 }
@@ -175,6 +183,10 @@ func (m *Manager) Health() error {
 	return m.health
 }
 func (m *Manager) request(ctx context.Context, endpoint string, form url.Values, token string, out any) (http.Header, error) {
+	return m.requestLimit(ctx, endpoint, form, token, out, 64*1024)
+}
+
+func (m *Manager) requestLimit(ctx context.Context, endpoint string, form url.Values, token string, out any, limit int64) (http.Header, error) {
 	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
 	method := http.MethodGet
@@ -203,11 +215,14 @@ func (m *Manager) request(ctx context.Context, endpoint string, form url.Values,
 	if resp.StatusCode == 401 {
 		return nil, ErrReconnect
 	}
+	if resp.StatusCode == 403 && resp.Header.Get("X-GitHub-SSO") != "" {
+		return nil, ErrSSO
+	}
 	if resp.StatusCode != 200 {
 		return nil, ErrRequest
 	}
-	b, err := io.ReadAll(io.LimitReader(resp.Body, 64*1024+1))
-	if err != nil || len(b) > 64*1024 {
+	b, err := io.ReadAll(io.LimitReader(resp.Body, limit+1))
+	if err != nil || int64(len(b)) > limit {
 		return nil, ErrRequest
 	}
 	if json.Unmarshal(b, out) != nil {

@@ -341,3 +341,22 @@
   font-size: var(--text-xs);
   overflow-wrap: anywhere;
 }
+
+.organization-access {
+  display: grid;
+  justify-items: start;
+  gap: 0.5rem;
+  padding: 0.65rem 0.8rem;
+  border-radius: var(--radius-md);
+  background: var(--status-info-bg);
+  color: var(--status-info);
+  font-size: var(--text-base);
+  overflow-wrap: anywhere;
+}
+.organization-access p {
+  margin: 0;
+}
+.organization-access a {
+  color: inherit;
+  text-decoration: underline;
+}

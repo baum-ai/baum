@@ -32,6 +32,7 @@ import {
 } from "./repositories";
 import { MenuButton, useContextMenu, type MenuItem } from "./context-menu";
 import { GitHubConnectionSection } from "./github-connection";
+import { OrganizationAccessNotice } from "./organization-access";
 import { messages as githubMessages } from "./github-auth";
 import { CodexHookWarning, type useCodexHookTrust } from "./codex-hooks";
 import { DiagnosticsSection } from "./diagnostics";
@@ -1821,10 +1822,12 @@ function DiagnosticsDialog({
 export function RepositoriesPage({
   repositories,
   automatic,
+  github,
   changed,
 }: {
   repositories: Repository[];
   automatic: Automatic | null;
+  github?: GitHubConnection | null;
   /** Reads everything again; a refresh pressed again restarts the read. */
   changed: (how?: { restart?: boolean }) => Promise<void>;
 }) {
@@ -1879,9 +1882,20 @@ export function RepositoriesPage({
             <Alert>{error}</Alert>
           </div>
         ) : null}
+        {github?.organization_access ? (
+          <div className="local-list-note">
+            <OrganizationAccessNotice
+              access={github.organization_access}
+              recheck={async () => {
+                await request("api/github-auth/retry", {});
+                await changed();
+              }}
+            />
+          </div>
+        ) : null}
         {adding ? (
           <div className="local-list-note local-repo-adding">
-            <RepositoryPicker changed={changed} autoFocus />
+            <RepositoryPicker changed={changed} autoFocus showOrganizations={false} />
           </div>
         ) : null}
         {repositories.length === 0 ? (

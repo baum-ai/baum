@@ -23,7 +23,15 @@ type GitHubConnection struct {
 	Pending  *githubauth.Device `json:"pending,omitempty"`
 	Error    string             `json:"error,omitempty"`
 	Message  string             `json:"message,omitempty"`
+	// OrganizationAccess names organizations the person belongs to that this
+	// sign-in cannot reach, typically ones that restrict OAuth app access
+	// until an owner approves baum. It is absent when none are known.
+	OrganizationAccess *githubauth.OrganizationAccess `json:"organization_access,omitempty"`
 }
+
+// organizationsRecheck is how often a connected status asks again; the manager
+// also caches an answer, so most asks cost nothing.
+const organizationsRecheck = 30 * time.Second
 
 // GitHubAuthentication owns the lifetime of polling independently of browser
 // requests. Its handler must be mounted inside the local session/CSRF boundary.
@@ -39,6 +47,11 @@ type GitHubAuthentication struct {
 	mu       sync.Mutex
 	status   GitHubConnection
 	cancel   context.CancelFunc
+	// Organizations reports the organizations the sign-in cannot reach; nil
+	// leaves OrganizationAccess unset.
+	Organizations func(ctx context.Context, refresh bool) (githubauth.OrganizationAccess, error)
+	orgsAt        time.Time
+	orgsFetching  bool
 }
 
 func NewGitHubAuthentication(ctx context.Context, manager *githubauth.Manager, cfg config.Config, changed func(), transitions ...func() func(bool)) *GitHubAuthentication {
@@ -95,6 +108,7 @@ func (a *GitHubAuthentication) setError(err error) {
 func (a *GitHubAuthentication) snapshot() GitHubConnection {
 	a.mu.Lock()
 	defer a.mu.Unlock()
+	a.refreshOrganizations()
 	s := a.status
 	if err := a.manager.Health(); err != nil && s.Pending == nil {
 		// Runtime health is composed afresh: an API success clears it without
@@ -110,6 +124,37 @@ func (a *GitHubAuthentication) snapshot() GitHubConnection {
 		s.Source = config.SourceBaum
 	}
 	return s
+}
+
+// refreshOrganizations starts a background read of the organizations the
+// sign-in cannot reach, so a status request never waits on GitHub. Called with
+// a.mu held.
+func (a *GitHubAuthentication) refreshOrganizations() {
+	if a.Organizations == nil || !a.status.Saved || a.status.Pending != nil || a.orgsFetching ||
+		time.Since(a.orgsAt) < organizationsRecheck {
+		return
+	}
+	a.orgsFetching = true
+	go func() {
+		access, err := a.Organizations(a.ctx, false)
+		a.mu.Lock()
+		defer a.mu.Unlock()
+		a.orgsFetching = false
+		a.orgsAt = time.Now()
+		a.setOrganizations(access, err)
+	}()
+}
+
+// setOrganizations keeps the earlier answer when GitHub could not be asked.
+// Called with a.mu held.
+func (a *GitHubAuthentication) setOrganizations(access githubauth.OrganizationAccess, err error) {
+	if err != nil || !a.status.Saved {
+		return
+	}
+	a.status.OrganizationAccess = nil
+	if len(access.Hidden) > 0 {
+		a.status.OrganizationAccess = &access
+	}
 }
 
 func (a *GitHubAuthentication) stop() {
@@ -153,7 +198,16 @@ func (a *GitHubAuthentication) Handler() http.Handler {
 			a.status.State, a.status.Login, a.status.Saved = status.State, status.Login, status.State == "connected"
 			a.setError(err)
 		}
+		saved := a.status.Saved
 		a.mu.Unlock()
+		if saved && a.Organizations != nil {
+			// "Check again" is how a person tells baum an owner approved it.
+			access, orgErr := a.Organizations(r.Context(), true)
+			a.mu.Lock()
+			a.orgsAt = time.Now()
+			a.setOrganizations(access, orgErr)
+			a.mu.Unlock()
+		}
 		writeJSON(w, a.snapshot())
 	})
 	mux.HandleFunc("POST /api/github-auth/start", func(w http.ResponseWriter, r *http.Request) {
@@ -325,6 +379,7 @@ func (a *GitHubAuthentication) poll(ctx context.Context, id string) {
 			if status.State == "connected" {
 				a.status.Saved = true
 				a.status.Login = status.Login
+				a.status.OrganizationAccess, a.orgsAt = nil, time.Time{}
 			}
 		}
 		a.mu.Unlock()

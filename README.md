@@ -47,6 +47,12 @@ behind them. GitHub checks, comments and approvals stay connected.
 Start at **[usebaum.com](https://usebaum.com)**. Access is currently limited;
 you can join the waitlist there.
 
+## Troubleshooting
+
+If a GitHub organization's repositories do not appear, see
+[GitHub access](docs/github-access.md): organizations that restrict OAuth app
+access or require SAML single sign-on need an approval or authorization first.
+
 ## Agent plugins
 
 Install baum's versioned Claude Code or Codex lifecycle hooks from the public

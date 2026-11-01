@@ -576,3 +576,42 @@ it("warns about a picked repository whose clone uses an earlier name", async () 
   await act(async () => root.render(<RepositoryPicker call={call} />));
   expect(node.querySelector(".repository-warning")!.textContent).toBe("Pointing to old/repo.");
 });
+const approval = "https://github.com/settings/connections/applications/Ov23liFSMjrhof9WQlOi";
+it("names organizations GitHub hides from baum, links to approval and rechecks", async () => {
+  let hidden = ["locked-co", "acme"];
+  const calls: string[] = [];
+  const call: RepositoryCall = async (action) => {
+    calls.push(action);
+    return (
+      action === "list" || action === "retry-list"
+        ? {
+            repositories: [{ repository: "me/personal", clone: "", description: "" }],
+            ...(hidden.length ? { organization_access: { hidden, approval_url: approval } } : {}),
+          }
+        : action === "picked"
+          ? []
+          : {}
+    ) as never;
+  };
+  await act(async () => root.render(<RepositoryPicker call={call} />));
+  const note = () => node.querySelector(".organization-access");
+  expect(note()!.textContent).toContain("baum can't see repositories in locked-co and acme.");
+  expect(note()!.textContent).toContain("These organizations restrict OAuth app access");
+  const link = note()!.querySelector<HTMLAnchorElement>("a")!;
+  expect(link.href).toBe(approval);
+  expect(link.textContent).toContain("Request approval on GitHub");
+  // The personal repositories still list beside the explanation.
+  expect(node.textContent).toContain("me/personal");
+  hidden = [];
+  await act(async () =>
+    [...note()!.querySelectorAll("button")].find((b) => b.textContent === "Check again")!.click(),
+  );
+  expect(calls).toContain("retry-list");
+  expect(note()).toBeNull();
+});
+it("says nothing about organizations when none is hidden", async () => {
+  const call: RepositoryCall = async (action) =>
+    (action === "list" ? { repositories: [] } : action === "picked" ? [] : {}) as never;
+  await act(async () => root.render(<RepositoryPicker call={call} />));
+  expect(node.querySelector(".organization-access")).toBeNull();
+});

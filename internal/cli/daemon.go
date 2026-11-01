@@ -37,6 +37,7 @@ import (
 	"github.com/baum-ai/baum/internal/focus"
 	"github.com/baum-ai/baum/internal/generate"
 	"github.com/baum-ai/baum/internal/github"
+	"github.com/baum-ai/baum/internal/githubauth"
 	"github.com/baum-ai/baum/internal/githubrepos"
 	"github.com/baum-ai/baum/internal/gitlocal"
 	"github.com/baum-ai/baum/internal/hookevents"
@@ -556,6 +557,9 @@ func localApplication(paths daemon.Paths, log *slog.Logger) func(context.Context
 			Lister: github.NewFromConfig(cfg, github.Options{}), Registry: registry,
 			Token:  func(ctx context.Context) (string, error) { return cfg.ResolveGitHubToken(ctx, config.GitHubHost) },
 			Health: config.GitHubAuth.Health, Home: home, Context: ctx, Changed: settingsChanged,
+			Organizations: func(ctx context.Context, refresh bool) (githubauth.OrganizationAccess, error) {
+				return config.DeviceOrganizations(ctx, cfg, refresh)
+			},
 		}
 		// The delivery figures' searches, cached per repository, and the
 		// review threads and failing checks the Inbox lists; an account
@@ -583,6 +587,9 @@ func localApplication(paths daemon.Paths, log *slog.Logger) func(context.Context
 		}
 		githubConnection := uiserver.NewGitHubAuthentication(ctx, config.GitHubAuth, cfg, changed, beginIdentityChange)
 		connectionLogin = githubConnection.Login
+		githubConnection.Organizations = func(ctx context.Context, refresh bool) (githubauth.OrganizationAccess, error) {
+			return config.DeviceOrganizations(ctx, cfg, refresh)
+		}
 		// A write to a pull request re-reads the repository's pull requests so
 		// the inbox shows its new state.
 		githubClient := github.NewFromConfig(cfg, github.Options{})
