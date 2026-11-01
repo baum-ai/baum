@@ -37,6 +37,18 @@ test("a failed first read says so on Inbox and Jobs, once, with one Retry", asyn
   await expect(page.getByRole("region", { name: "Generation jobs" })).toBeVisible();
 });
 
+test("a failed later read keeps the jobs shown and says so", async ({ page }) => {
+  await page.goto(await launchURL());
+  await page.getByRole("link", { name: "Jobs", exact: true }).click();
+  const jobs = page.getByRole("region", { name: "Generation jobs" });
+  await expect(jobs).toBeVisible();
+  await refuse(page, "api/jobs");
+  await page.keyboard.press("Control+r");
+  await expect(page.getByText("The daemon is not answering.")).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Couldn't load jobs" })).toHaveCount(0);
+  await expect(jobs).toBeVisible();
+});
+
 test("a review group is not called missing when the groups could not be read", async ({ page }) => {
   const heal = await refuse(page, "api/groups");
   await page.goto(await launchURL());

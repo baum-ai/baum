@@ -255,6 +255,29 @@ it("says the sessions could not be read instead of listing none", async () => {
   expect(node.textContent).not.toContain("Couldn't load sessions");
 });
 
+it("keeps the sessions and says so when a later read of them fails", async () => {
+  const listeners = new Map<string, () => void>();
+  vi.stubGlobal(
+    "EventSource",
+    class {
+      addEventListener(name: string, listener: () => void) {
+        listeners.set(name, listener);
+      }
+      close() {}
+    },
+  );
+  history.replaceState(null, "", "/s/test-ns/?page=sessions");
+  await act(async () => root.render(<App />));
+  expect(node.textContent).not.toContain("Couldn't");
+  const heal = refuse("api/live-sessions");
+  await act(async () => listeners.get("live")!());
+  expect(node.textContent).toContain("Couldn't read the sessions again");
+  expect(node.textContent).not.toContain("Couldn't load sessions");
+  heal();
+  await act(async () => retryButtons()[0]!.click());
+  expect(node.textContent).not.toContain("Couldn't read the sessions again");
+});
+
 it("keeps what a page read when a later read fails", async () => {
   const listeners = new Map<string, () => void>();
   vi.stubGlobal(

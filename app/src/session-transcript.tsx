@@ -29,6 +29,7 @@ import {
 } from "./api";
 import { useNow } from "./live";
 import { LoadingStatus } from "./nine-dots";
+import { useModal } from "./modal";
 import { ReadFailed } from "./page-state";
 import {
   absolute,
@@ -350,7 +351,7 @@ export function useMessageKeys(
  *  height at a time, as Space and the arrows do theirs. Escape, a click
  *  outside it or its Close button closes it. */
 function MessageReader({ message, onClose }: { message: HTMLElement; onClose: () => void }) {
-  const dialog = useRef<HTMLDialogElement>(null);
+  const dialog = useModal();
   const content = useRef<HTMLDivElement>(null);
   useEffect(() => {
     const show = () => {
@@ -380,7 +381,6 @@ function MessageReader({ message, onClose }: { message: HTMLElement; onClose: ()
     show();
     const observer = new MutationObserver(show);
     observer.observe(message, { subtree: true, childList: true, characterData: true });
-    dialog.current?.showModal();
     // The message, not its Close button, takes the keys, so they scroll it.
     content.current?.focus({ preventScroll: true });
     return () => {

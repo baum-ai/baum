@@ -198,9 +198,22 @@ export function TimelinePage({
     .map((each) => each.repository)
     .filter((name) => asked.includes(name.toLowerCase()));
   const scope = selected.length > 0 ? selected : served.map((each) => each.repository);
+  // A later read that failed leaves the page as it was and says so.
+  const stale =
+    list && failed ? (
+      <div className="local-list-note">
+        <Alert className="flex flex-wrap items-center gap-x-3 gap-y-2">
+          <span>Couldn't read the Timeline again. It may be out of date.</span>
+          <Button variant="secondary" size="compact" onClick={() => void reread.again()}>
+            Retry
+          </Button>
+        </Alert>
+      </div>
+    ) : null;
   if (list && showsLog(list))
     return (
       <div className="timeline-page">
+        {stale}
         <TimelineLog
           key={scope.join("\n")}
           scope={scope}
@@ -225,6 +238,7 @@ export function TimelinePage({
         detail={PAGE_DETAIL}
         actions={<RefreshButton refresh={reread.again} />}
       />
+      {stale}
       {!list ? (
         <div className="local-page-body">
           <PageRead

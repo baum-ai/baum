@@ -258,6 +258,8 @@ function Workspace({ url }: { url: UrlState }) {
   const [live, setLive] = useState<LiveSession[]>([]);
   // Whether the sessions have been read, or the first read failed.
   const [liveRead, setLiveRead] = useState<"loading" | "loaded" | "failed">("loading");
+  // A later read of the sessions that failed: they stay as they were.
+  const [liveStale, setLiveStale] = useState(false);
   // What agents wait on and the messages queued for them; none from a daemon
   // without the route.
   const [agentRequests, setAgentRequests] = useState<AgentRequests>(noAgentRequests);
@@ -299,7 +301,11 @@ function Workspace({ url }: { url: UrlState }) {
     if (sessions) {
       setLive(sessions);
       setLiveRead("loaded");
-    } else setLiveRead((read) => (read === "loaded" ? read : "failed"));
+      setLiveStale(false);
+    } else {
+      setLiveRead((read) => (read === "loaded" ? read : "failed"));
+      setLiveStale(true);
+    }
     setAgentRequests(pending);
   }, []);
   const reloadPending = useRef(false);
@@ -993,6 +999,12 @@ function Workspace({ url }: { url: UrlState }) {
               {error} <Button onClick={() => void reload()}>Retry</Button>
             </Alert>
           ) : null}
+          {groupsError && groupId && groups.some((g) => g.id === groupId) ? (
+            <Alert>
+              Couldn't read the review groups again: {groupsError}{" "}
+              <Button onClick={() => void reload()}>Retry</Button>
+            </Alert>
+          ) : null}
           {inboxes.error && !(inboxWaiting && inboxes.status === "failed") ? (
             <Alert>{inboxes.error}</Alert>
           ) : null}
@@ -1080,6 +1092,20 @@ function Workspace({ url }: { url: UrlState }) {
                   message="baum could not read the agent sessions on this computer."
                   retry={reloadLive}
                 >
+                  {liveStale ? (
+                    <div className="local-list-note">
+                      <Alert className="flex flex-wrap items-center gap-x-3 gap-y-2">
+                        <span>Couldn't read the sessions again. They may be out of date.</span>
+                        <Button
+                          variant="secondary"
+                          size="compact"
+                          onClick={() => void reloadLive()}
+                        >
+                          Retry
+                        </Button>
+                      </Alert>
+                    </div>
+                  ) : null}
                   <SessionsPage
                     sessions={live}
                     requests={agentRequests}

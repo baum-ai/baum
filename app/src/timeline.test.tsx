@@ -372,6 +372,20 @@ it("says the Timeline could not be read, with one Retry that reads again", async
   expect(node.textContent).not.toContain("Couldn't load the Timeline");
 });
 
+it("keeps the Timeline and says so when a later read of it fails", async () => {
+  await show();
+  expect(node.textContent).not.toContain("Couldn't");
+  const good = answers["api/timeline/repositories"];
+  answers["api/timeline/repositories"] = () =>
+    Promise.resolve(Response.json({ message: "The daemon is not answering." }, { status: 500 }));
+  await act(async () => root.render(<Harness initial="page=timeline" revision={1} />));
+  await act(async () => {});
+  await act(async () => {});
+  expect(node.textContent).toContain("Couldn't read the Timeline again");
+  expect(node.textContent).not.toContain("Couldn't load the Timeline");
+  answers["api/timeline/repositories"] = good;
+});
+
 it("opens the feature a merged one went into", async () => {
   await show("page=timeline&feature=F0");
   await act(async () => {});
