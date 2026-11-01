@@ -31,6 +31,12 @@ type fakeExecutor struct {
 	prepareErr error
 	// awaiting are the members a group finds without a saved review.
 	awaiting []int
+	// members, when set, replaces a group's member heads; groupFail, when
+	// set, fails the next group run before it waits.
+	members   string
+	groupFail error
+	// account is the GitHub account a preparation reads with.
+	account string
 }
 
 func (f *fakeExecutor) Prepare(_ context.Context, item Item) (Prepared, string, error) {
@@ -50,6 +56,10 @@ func (f *fakeExecutor) Prepare(_ context.Context, item Item) (Prepared, string, 
 	p := Prepared{ConfigDigest: f.digest, PriceVersion: version, Item: item, Repository: "org/repo", HeadSHA: f.head, Backend: backend, Model: "claude-sonnet-4-5", RequiresIsolationConfirmation: f.restricted}
 	if item.Group != "" {
 		p.Members = "1@first,2@first"
+		p.account = f.account
+		if f.members != "" {
+			p.Members = f.members
+		}
 		if item.AwaitMembers {
 			p.Awaiting = f.awaiting
 		}
@@ -58,6 +68,15 @@ func (f *fakeExecutor) Prepare(_ context.Context, item Item) (Prepared, string, 
 }
 func (f *fakeExecutor) Execute(ctx context.Context, p Prepared, progress func(Progress)) (*float64, error) {
 	f.started <- p
+	f.mu.Lock()
+	fail := f.groupFail
+	if p.Group != "" {
+		f.groupFail = nil
+	}
+	f.mu.Unlock()
+	if p.Group != "" && fail != nil {
+		return nil, fail
+	}
 	a := &agent.Accounting{}
 	a.Add(agent.Result{Model: "reported-model", Calls: 2, Tokens: 10, Usage: agent.Usage{Input: 6, Output: 4, CacheRead: 100}}, false)
 	progress(Progress{Phase: "repairing", Calls: 2, Tokens: 10, Repairs: 1, Accounting: a, CostReason: "speed_not_reported"})
