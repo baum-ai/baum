@@ -2,7 +2,9 @@
 
 `agentplugins` registers the public `baum-ai/baum` marketplace and installs
 `baum@baum` through Claude Code or Codex's native CLI. It never edits hook
-settings or keeps migration markers. Native list JSON reports installation,
+settings or keeps migration markers. Claude Code's install, uninstall and
+update commands run without `--json`, which baum does not read and which
+Claude Code 2.1.248 refuses. Native list JSON reports installation,
 enablement and version separately. A separate Codex `hooks/list` query
 establishes readiness of the current baum hook definitions.
 

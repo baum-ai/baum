@@ -134,11 +134,13 @@ func (c *Backend) environment(directory string, endpoint *agent.Endpoint) []stri
 	return env
 }
 
-// minimumVersion is the oldest Claude Code the User profile runs. It is the
-// 2.1 line that was checked to have every flag args passes, --restricted
-// included. The release that introduced --restricted was not determined, so
-// the floor is the first of the line rather than that release.
-const minimumVersion = "2.1.0"
+// minimumVersion is the oldest Claude Code the User profile runs: the first
+// release whose argument parser accepts every flag args and fixArgs pass.
+// Found with the agent version matrix (scripts/agent-matrix): 2.1.247 refuses
+// --restricted ("unknown option") and 2.1.248 accepts every argument of a
+// review, a resumed or forked session, a fix and a completion. Older 2.1
+// releases lack --effort (2.1.0 to 2.1.32 at least) or --restricted.
+const minimumVersion = "2.1.248"
 
 var versionPattern = regexp.MustCompile(`\d+\.\d+\.\d+`)
 

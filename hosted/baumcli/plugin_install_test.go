@@ -67,7 +67,7 @@ func TestHooksCommandsUseNativeMarketplaceAndReportTrustSeparately(t *testing.T)
 		t.Fatal(err)
 	}
 	calls := readHookTestFile(t, log)
-	for _, want := range []string{"plugin marketplace add baum-ai/baum", "plugin install baum@baum --scope user --json", "plugin uninstall baum@baum --scope user --json"} {
+	for _, want := range []string{"plugin marketplace add baum-ai/baum", "plugin install baum@baum --scope user", "plugin uninstall baum@baum --scope user"} {
 		if !strings.Contains(calls, want) {
 			t.Fatalf("missing %q in %s", want, calls)
 		}
@@ -106,7 +106,7 @@ func TestHooksUpdateBringsInstalledPluginsToTheLatestVersion(t *testing.T) {
 		t.Fatalf("codex update=%v %q", err, stdout)
 	}
 	for log, wants := range map[string][]string{
-		log:      {"plugin marketplace update baum", "plugin update baum@baum --scope user --json"},
+		log:      {"plugin marketplace update baum", "plugin update baum@baum --scope user"},
 		codexLog: {"plugin marketplace upgrade baum", "plugin add baum@baum --json"},
 	} {
 		calls := readHookTestFile(t, log)
