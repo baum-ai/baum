@@ -128,8 +128,9 @@ func (r Report) PublicSummary(home string) string {
 			// The entries name accounts, projects and tools of this machine.
 			detail, _, _ = strings.Cut(detail, ":")
 			detail += " (entries omitted)"
-		case strings.HasPrefix(c.ID, "github-token-") && c.ID != "github-token-"+"github.com" && !strings.HasSuffix(c.ID, ".ghe.com"):
-			// A private GitHub Enterprise host names the user's employer.
+		case strings.HasPrefix(c.ID, "github-token-") && c.ID != "github-token-"+"github.com":
+			// A GitHub Enterprise host or a GitHub Enterprise Cloud tenant
+			// (*.ghe.com) names the user's employer.
 			label, detail = "GitHub token: other host", "a host other than github.com (name omitted)"
 		}
 		// Labels are fixed text ("GitHub token: github.com" would otherwise look

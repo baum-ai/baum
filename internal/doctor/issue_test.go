@@ -125,10 +125,11 @@ func TestPublicSummaryOmitsPathEntriesAndPrivateHosts(t *testing.T) {
 	r := Report{Status: StatusOK, Checks: []Check{
 		{ID: "path", Label: "PATH", Status: StatusInfo, Detail: "2 entries, searched in order: /etc/profiles/per-user/alice/bin, /work/clients/acme/bin"},
 		{ID: "github-token-git.corp.example.com", Label: "GitHub token: git.corp.example.com", Status: StatusProblem, Detail: "baum will not read git.corp.example.com: it is not github.com"},
+		{ID: "github-token-initech.ghe.com", Label: "GitHub token: initech.ghe.com", Status: StatusWarning, Detail: "no token for initech.ghe.com"},
 		{ID: "github-token-github.com", Label: "GitHub token: github.com", Status: StatusOK, Detail: "a token is available for github.com"},
 	}}
 	s := r.PublicSummary("/home/alice")
-	for _, bad := range []string{"alice", "acme", "corp.example.com"} {
+	for _, bad := range []string{"alice", "acme", "corp.example.com", "initech"} {
 		if strings.Contains(s, bad) {
 			t.Errorf("summary contains %q:\n%s", bad, s)
 		}

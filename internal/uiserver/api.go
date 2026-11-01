@@ -212,7 +212,11 @@ func (a LocalAPI) Handler() *LocalHandler {
 	mux.Handle("GET /api/repositories/{owner}/{name}/clone-target", repositories)
 	mux.Handle("GET /api/repositories/{owner}/{name}/clone", repositories)
 	mux.Handle("POST /api/repositories/{owner}/{name}/clone", repositories)
-	mux.Handle("/api/plan-usage", provider(a.PlanUsage, "plan_usage_unavailable"))
+	if a.PlanUsage != nil {
+		mux.HandleFunc("/api/plan-usage", a.planUsageHandler)
+	} else {
+		mux.Handle("/api/plan-usage", provider(nil, "plan_usage_unavailable"))
+	}
 	mux.Handle("/api/analytics", provider(a.Analytics, "analytics_unavailable"))
 	mux.Handle("/api/timeline/", provider(a.Timeline, "timeline_unavailable"))
 	var decisions http.Handler
@@ -298,6 +302,8 @@ func (a LocalAPI) Handler() *LocalHandler {
 	})
 	mux.HandleFunc("GET /api/settings/appearance", a.getAppearance)
 	mux.HandleFunc("PUT /api/settings/appearance", a.putAppearance)
+	mux.HandleFunc("GET /api/settings/plan-usage", a.getPlanUsageSettings)
+	mux.HandleFunc("PUT /api/settings/plan-usage", a.putPlanUsageSettings)
 	mux.HandleFunc("GET /api/settings/decisions", a.getDecisionSettings)
 	mux.HandleFunc("PUT /api/settings/decisions", a.putDecisionSettings)
 	// The app's agent environment replaces the config file's; an empty one

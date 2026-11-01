@@ -306,7 +306,7 @@ export function Setup() {
                   available={available}
                   detectionError={view.hooks.error}
                 />
-                <PlanUsage className="setup-card" />
+                <PlanUsage className="setup-card" all />
               </>
             )}
             {step === reviewStep && !reviews && !error && (
