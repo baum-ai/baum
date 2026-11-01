@@ -22,6 +22,8 @@ function normalize(saved: Partial<Preferences>): Preferences {
 export function PreferencesProvider({ children }: { children: ReactNode }) {
   const revision = useRef(0);
   const busy = useRef(false);
+  const queued = useRef<Partial<Preferences> | null>(null);
+  const confirmed = useRef<Preferences>(defaults);
   const [preferences, setPreferences] = useState(defaults);
   const [ready, setReady] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -32,7 +34,8 @@ export function PreferencesProvider({ children }: { children: ReactNode }) {
     try {
       const saved = await request<Preferences>("api/settings/appearance", undefined, "GET", signal);
       if (signal?.aborted || current !== revision.current) return;
-      setPreferences(normalize(saved));
+      confirmed.current = normalize(saved);
+      setPreferences(confirmed.current);
       setReady(true);
       setError("");
     } catch (cause) {
@@ -61,19 +64,33 @@ export function PreferencesProvider({ children }: { children: ReactNode }) {
     return () => dark?.removeEventListener("change", apply);
   }, [preferences.theme]);
   const update = async (patch: Partial<Preferences>) => {
-    if (!ready || busy.current) return;
-    busy.current = true;
-    const previous = preferences;
-    setPreferences({ ...previous, ...patch });
+    if (!ready) return;
+    setPreferences((current) => ({ ...current, ...patch }));
     ++revision.current;
+    if (busy.current) {
+      // A save is in flight: coalesce this change and send it once that save finishes.
+      queued.current = { ...queued.current, ...patch };
+      return;
+    }
+    busy.current = true;
     setSaving(true);
     setError("");
+    // Changes made while a save is in flight land in `queued`; read it through a function.
+    const pending = (): Partial<Preferences> | null => queued.current;
+    let next: Partial<Preferences> | null = patch;
     try {
-      const saved = await request<Preferences>("api/settings/appearance", patch, "PUT");
-      setPreferences(normalize(saved));
-    } catch (cause) {
-      setPreferences(previous);
-      setError(cause instanceof Error ? cause.message : "Local request failed.");
+      while (next) {
+        queued.current = null;
+        try {
+          const saved = await request<Preferences>("api/settings/appearance", next, "PUT");
+          confirmed.current = normalize(saved);
+          setPreferences({ ...confirmed.current, ...pending() });
+        } catch (cause) {
+          setPreferences({ ...confirmed.current, ...pending() });
+          setError(cause instanceof Error ? cause.message : "Local request failed.");
+        }
+        next = pending();
+      }
     } finally {
       busy.current = false;
       setSaving(false);
