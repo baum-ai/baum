@@ -2532,7 +2532,13 @@ notices, keyed by pull request, never match a group job; the queue's busy and
 duplicate checks key a group job by group ID and member heads. Preparation reads every member from GitHub like a pull request
 job (`Prepared.Members` holds each member's head, which the confirmation
 covers) and needs a saved review of each member in the clone's store, or
-answers `409 {"members_need_reviews": [...]}`. Execution passes
+answers `409 {"members_need_reviews": [...]}`. `Queue.Generate`, which starts
+what a person asked for, instead sets `Item.AwaitMembers`: preparation accepts
+those members (`Prepared.Awaiting`) and their own reviews are queued ahead of
+the group's job, except members whose review is already queued or running. The
+queue starts jobs in order and never runs two that share a pull request, so the
+group's job runs after them. If a member still has no saved review when it
+runs, it fails with reason `members_need_reviews`. Execution passes
 `generate.Options.Group` and publishes through `reviewgroups.Publisher`.
 `generate.Run` then assembles each member with the ordinary assembler (no
 description images, an equal share of the checkout budget), merges the

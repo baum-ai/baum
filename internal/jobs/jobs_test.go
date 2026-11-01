@@ -29,6 +29,8 @@ type fakeExecutor struct {
 	release          chan struct{}
 	// prepareErr, when set, fails Prepare.
 	prepareErr error
+	// awaiting are the members a group finds without a saved review.
+	awaiting []int
 }
 
 func (f *fakeExecutor) Prepare(_ context.Context, item Item) (Prepared, string, error) {
@@ -48,6 +50,9 @@ func (f *fakeExecutor) Prepare(_ context.Context, item Item) (Prepared, string, 
 	p := Prepared{ConfigDigest: f.digest, PriceVersion: version, Item: item, Repository: "org/repo", HeadSHA: f.head, Backend: backend, Model: "claude-sonnet-4-5", RequiresIsolationConfirmation: f.restricted}
 	if item.Group != "" {
 		p.Members = "1@first,2@first"
+		if item.AwaitMembers {
+			p.Awaiting = f.awaiting
+		}
 	}
 	return p, version, nil
 }

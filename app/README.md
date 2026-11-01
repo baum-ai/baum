@@ -795,8 +795,13 @@ heading, member labels on sections, and above the review the members (state and
 their own review status, each linking to its page) with Rename, Add pull
 request, Remove (never below two members, nor above eight) and Delete group.
 Deleting never deletes saved reviews. Generating needs an available clone of
-the repository and a saved review of every member: members without one are
-named, and "Generate their reviews" queues them. A fork or an author without
+the repository, and the group review builds on a saved review of every member:
+Generate queues the reviews of members without one ahead of the group's (members already being reviewed are
+not queued again), and the group review starts after them even if the person
+leaves the page. Meanwhile the page says "Reviewing the pull requests first",
+the members' rows show a loader, and Cancel stops the group's job. If a
+member's review fails, the group's job fails with that reason and Try again
+starts over. A fork or an author without
 write access asks for the same confirmation as a pull request. An outdated
 group offers Regenerate. A pull request's page links the groups it belongs to,
 and the Jobs page labels a group job "Review group: <name>". Groups across
