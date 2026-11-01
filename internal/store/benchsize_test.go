@@ -39,6 +39,8 @@ func TestBenchCorpusSize(t *testing.T) {
 	}
 	const latest = `FROM versions v JOIN (SELECT repository,pr,MAX(version) latest FROM versions GROUP BY repository,pr) l ON v.repository=l.repository AND v.pr=l.pr AND v.version=l.latest`
 	bytes := func(expr string) string { return `COALESCE(SUM(length(CAST(` + expr + ` AS BLOB))),0)` }
+	// A hunk field's bytes are its compact JSON text: diff is an object, so this
+	// counts its re-serialized form, not the stored formatting.
 	hunks := func(field string, from string) int64 {
 		return one(`SELECT COALESCE(SUM(length(CAST(json_extract(h.value,'$.` + field + `') AS BLOB))),0) ` + from + `, json_each(v.document,'$.index.hunks') h`)
 	}
