@@ -48,6 +48,10 @@ type memberRisk struct {
 // past it are left out.
 const maxMemberContextBytes = 24 << 10
 
+// missingDetailsNote stands in members.json for the summary of a section whose
+// details are pending or failed.
+const missingDetailsNote = "Details for this section are unavailable."
+
 // MembersFile is members.json, the members' saved reviews in brief for the
 // group run: each member's title, the head the run reviews, and its review's
 // summary, current sections and active risks. Stale sections and mitigated
@@ -70,7 +74,8 @@ func MembersFile(members []MemberReview) ([]byte, error) {
 			Sections []struct {
 				Title   string `json:"title"`
 				Kind    string `json:"kind"`
-				Summary struct {
+				Details string `json:"details"`
+				Summary *struct {
 					Text string `json:"text"`
 				} `json:"summary"`
 				Risks []struct {
@@ -99,7 +104,12 @@ func MembersFile(members []MemberReview) ([]byte, error) {
 			if section.Derived.State == "stale" {
 				continue
 			}
-			item := memberSection{Title: section.Title, Kind: section.Kind, Summary: section.Summary.Text}
+			item := memberSection{Title: section.Title, Kind: section.Kind, Summary: missingDetailsNote}
+			// A section that lacks its details says so, so the group run
+			// knows this member's review is incomplete there.
+			if section.Details == "" && section.Summary != nil {
+				item.Summary = section.Summary.Text
+			}
 			for _, risk := range section.Risks {
 				if risk.State == "" || strings.EqualFold(risk.State, "active") {
 					item.Risks = append(item.Risks, memberRisk{Tier: risk.Tier, Category: risk.Category, Text: risk.Text})

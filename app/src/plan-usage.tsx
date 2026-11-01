@@ -127,18 +127,22 @@ export function PlanUsageView({
   );
 }
 
+/** Sent on `window` when the plans to show were changed in Settings, so the
+ *  sidebar reads again at once. */
+export const PLAN_USAGE_CHANGED = "baum:plan-usage-changed";
+
 /** Plan usage from the daemon, asking for a fresh reading on mount and every
  *  five minutes (the daemon still reads at most once a minute), with a clock
  *  that keeps "resets in" current between readings. A failed request leaves
  *  the last answer, or `plans` null. */
-export function usePlanUsage(): { plans: PlanUsageEntry[] | null; now: number } {
+export function usePlanUsage(all = false): { plans: PlanUsageEntry[] | null; now: number } {
   const [plans, setPlans] = useState<PlanUsageEntry[] | null>(null);
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
     const controller = new AbortController();
     const load = () => {
       request<{ plans?: PlanUsageEntry[] }>(
-        "api/plan-usage?refresh=1",
+        all ? "api/plan-usage?refresh=1&all=1" : "api/plan-usage?refresh=1",
         undefined,
         "GET",
         controller.signal,
@@ -151,14 +155,16 @@ export function usePlanUsage(): { plans: PlanUsageEntry[] | null; now: number } 
       );
     };
     load();
+    window.addEventListener(PLAN_USAGE_CHANGED, load);
     const timer = window.setInterval(load, PLAN_USAGE_REFRESH_MS);
     const clock = window.setInterval(() => setNow(Date.now()), CLOCK_MS);
     return () => {
       controller.abort();
+      window.removeEventListener(PLAN_USAGE_CHANGED, load);
       window.clearInterval(timer);
       window.clearInterval(clock);
     };
-  }, []);
+  }, [all]);
   return { plans, now };
 }
 
@@ -168,12 +174,15 @@ export function PlanUsage({
   only,
   heading,
   className,
+  all,
 }: {
   only?: string;
   heading?: ReactNode;
   className?: string;
+  /** Every plan, not just those chosen in Settings: the setup step compares them. */
+  all?: boolean;
 }) {
-  const { plans, now } = usePlanUsage();
+  const { plans, now } = usePlanUsage(all);
   if (!plans?.some((plan) => !only || plan.provider === only)) return null;
   return (
     <div className={className}>

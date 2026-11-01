@@ -124,6 +124,8 @@ export function DecisionRow({
       ref={rowRef}
       data-decision={decision.id}
       data-who={decision.who}
+      // A row the app's keys move through, opened by its button.
+      data-row-id={decision.id}
       className={cn(
         "border-b border-(--border-subtle) last:border-b-0",
         expanded && "bg-(--surface-wash)",
@@ -132,6 +134,7 @@ export function DecisionRow({
       <button
         type="button"
         id={`${id}-button`}
+        data-row-link=""
         aria-expanded={expanded}
         aria-controls={`${id}-panel`}
         onClick={onToggle}

@@ -1,3 +1,4 @@
+import { mockStateFetch } from "./ui-state-test-helper";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
@@ -81,7 +82,7 @@ const clone: Clone = {
   path: "/work/demo",
   repository: "acme/demo",
   available: true,
-  settings: { automatic: null, backend: null, model: null },
+  settings: { automatic: null },
 };
 
 let root: Root, node: HTMLDivElement;
@@ -116,7 +117,7 @@ beforeEach(() => {
   );
   vi.stubGlobal(
     "fetch",
-    vi.fn(async (input: string, init?: RequestInit) => {
+    mockStateFetch(async (input: string, init?: RequestInit) => {
       const path = String(input).replace("/s/test-ns/", "");
       const method = init?.method ?? "GET";
       const body = init?.body ? JSON.parse(String(init.body)) : undefined;
@@ -242,7 +243,7 @@ it("renders a group as one row with its members nested when expanded", async () 
   expect(bucket("Your pull requests").textContent).toContain("acme/demo · #2, #3");
   expect(bucket("Your pull requests").textContent).toContain("Group review outdated");
   // One group row, counted as one row; nothing is repeated loose.
-  expect(bucket("Your pull requests").textContent).toContain("Your pull requests1");
+  expect(bucket("Your pull requests").textContent).toContain("Your pull requests 1");
   expect(bucket("Other pull requests")).toBeNull();
   expect(node.querySelectorAll('input[aria-label="Select acme/demo #3"]')).toHaveLength(1);
   const toggle = node.querySelector<HTMLButtonElement>('button[aria-label="Expand Auth rework"]')!;
@@ -260,6 +261,27 @@ it("renders a group as one row with its members nested when expanded", async () 
   // Select all covers the loose row and the expanded members.
   await selectAll();
   expect(node.textContent).toContain("Generate reviews (3)");
+});
+
+it("shows and hides a focused group's pull requests with Space", async () => {
+  entries = [entry(1), entry(2), entry(3)];
+  groups = [group([2, 3])];
+  await act(async () => root.render(<App />));
+  const key = (key: string) =>
+    act(async () => {
+      document.body.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true }));
+    });
+  const toggle = node.querySelector<HTMLButtonElement>('button[aria-label="Expand Auth rework"]')!;
+  // j moves down to the group's row, wherever its bucket puts it.
+  const groupRow = () => node.querySelector('[data-row-id="group:g1"]')!;
+  for (let i = 0; i < 3 && !groupRow().hasAttribute("data-focused"); i++) await key("j");
+  expect(groupRow().hasAttribute("data-focused")).toBe(true);
+  await key(" ");
+  expect(toggle.getAttribute("aria-expanded")).toBe("true");
+  await key(" ");
+  expect(toggle.getAttribute("aria-expanded")).toBe("false");
+  // A group's row has no peek.
+  expect(node.querySelector(".inbox-peek-panel")).toBeNull();
 });
 
 it("marks a stack baum grouped as the hosted list does, and a person's group as a group", async () => {
@@ -286,6 +308,53 @@ it("labels a stack group's page as a stack", async () => {
     node.querySelector('[title="baum grouped these stacked pull requests"]')!.textContent,
   ).toBe("Stack");
   expect(node.textContent).not.toContain("Review group");
+});
+
+it("counts a stack's merged and closed members in the stack on its row", async () => {
+  entries = [entry(3), entry(4)];
+  groups = [
+    group([3, 4], {
+      id: "g2",
+      name: "Stacked",
+      stack: true,
+      landed: [
+        { number: 1, state: "merged" },
+        { number: 2, state: "closed" },
+      ],
+    }),
+  ];
+  await act(async () => root.render(<App />));
+  expect(node.querySelector('[title="Stack of 4 pull requests"]')).not.toBeNull();
+});
+
+it("shows a stack's merged and closed members first on its page, each marked as it is", async () => {
+  entries = [entry(3), entry(4)];
+  groups = [
+    group([3, 4], {
+      id: "g2",
+      name: "Stacked",
+      stack: true,
+      landed: [
+        { number: 1, state: "merged" },
+        { number: 2, state: "closed" },
+        { number: 5, state: "unknown" },
+      ],
+    }),
+  ];
+  history.replaceState(null, "", "/s/test-ns/?group=g2");
+  await act(async () => root.render(<App />));
+  const rows = [...node.querySelectorAll("li.local-group-member")].map((li) => li.textContent);
+  expect(rows).toHaveLength(5);
+  expect(rows[0]).toContain("#1");
+  expect(rows[0]).toContain("Merged");
+  expect(rows[1]).toContain("#2");
+  expect(rows[1]).toContain("Closed");
+  expect(rows[1]).not.toContain("Merged");
+  expect(rows[2]).toContain("#5");
+  expect(rows[2]).toContain("No longer open");
+  expect(rows[3]).toContain("#3");
+  expect(rows[3]).not.toContain("Merged");
+  expect(node.querySelectorAll("[data-landed] button")).toHaveLength(0);
 });
 
 it("keeps group jobs apart from pull request jobs", () => {
@@ -356,38 +425,6 @@ it("shows a group's members and manages them", async () => {
   await type(node.querySelector<HTMLInputElement>("dialog input")!, "Login work");
   await press("Rename", node.querySelector("dialog")!);
   expect(posted().at(-1)).toMatchObject({ method: "PATCH", body: { name: "Login work" } });
-});
-
-it("offers to generate the reviews a group review builds on", async () => {
-  entries = [entry(7), entry(8)];
-  groups = [group([7, 8, 9], { version_count: 1 })];
-  jobAnswer = () => Response.json({ members_need_reviews: [8, 9] }, { status: 409 });
-  history.replaceState(null, "", "/s/test-ns/?group=g1");
-  await act(async () => root.render(<App />));
-  await press("Regenerate");
-  expect(posted().at(-1)).toEqual({
-    path: "api/jobs",
-    method: "POST",
-    body: { items: [{ clone: "clone", group: "g1" }], mode: "single", confirm_isolation: false },
-  });
-  expect(node.textContent).toContain(
-    "A group review builds on each member's own review. #8 and #9 have no review yet.",
-  );
-  jobAnswer = () => Response.json({ jobs: [] });
-  await press("Generate their reviews");
-  expect(posted().at(-1)).toEqual({
-    path: "api/jobs",
-    method: "POST",
-    body: {
-      items: [
-        { clone: "clone", pr: 8 },
-        { clone: "clone", pr: 9 },
-      ],
-      mode: "batch",
-      confirm_isolation: false,
-    },
-  });
-  expect(node.textContent).not.toContain("have no review yet");
 });
 
 it("says so when the group does not exist, and links groups on a pull request page", async () => {

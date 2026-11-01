@@ -107,6 +107,11 @@ type Backend struct {
 
 func (*Backend) Name() string { return agent.BackendAnthropic }
 
+// ConcurrentCalls reports that calls may run over one run directory at once
+// (agent.ConcurrentCaller): a call is HTTP requests and read-only tools, and
+// writes nothing.
+func (*Backend) ConcurrentCalls() bool { return true }
+
 // ErrNoKey is Check's failure for a Backend without an API key.
 var ErrNoKey = errors.New("ANTHROPIC_API_KEY is not set; export your Anthropic API key to use the anthropic backend")
 
@@ -149,10 +154,10 @@ func (b *Backend) Run(ctx context.Context, request agent.Request) (result agent.
 	if request.WantsSession() {
 		return result, errors.New("anthropic: session options are not supported")
 	}
-	if request.MaxCalls < 1 {
+	if request.MaxCalls < 0 {
 		return result, errors.New(agent.GenerationBudgetExceededReason("model calls"))
 	}
-	if request.MaxTokens < 1 {
+	if request.MaxTokens < 0 {
 		return result, errors.New(agent.GenerationBudgetExceededReason("tokens"))
 	}
 	endpoint := agent.Endpoint{BaseURL: b.BaseURL, Key: b.APIKey}
@@ -254,14 +259,17 @@ func (b *Backend) Run(ctx context.Context, request agent.Request) (result agent.
 
 	nudges := 0
 	for {
-		if result.Calls >= request.MaxCalls {
+		if agent.Exceeds(result.Calls+1, request.MaxCalls) {
 			return result, errors.New(agent.GenerationBudgetExceededReason("model calls"))
 		}
-		remaining := request.MaxTokens - result.Tokens
-		if remaining < 1 {
-			return result, errors.New(agent.GenerationBudgetExceededReason("tokens"))
+		body.MaxTokens = maxOutputTokens
+		if request.MaxTokens > 0 {
+			remaining := request.MaxTokens - result.Tokens
+			if remaining < 1 {
+				return result, errors.New(agent.GenerationBudgetExceededReason("tokens"))
+			}
+			body.MaxTokens = min(maxOutputTokens, remaining)
 		}
-		body.MaxTokens = min(maxOutputTokens, remaining)
 		encoded, err := json.Marshal(body)
 		if err != nil {
 			return result, err
@@ -270,7 +278,7 @@ func (b *Backend) Run(ctx context.Context, request agent.Request) (result agent.
 		if err != nil {
 			return result, err
 		}
-		if result.Tokens > request.MaxTokens {
+		if agent.Exceeds(result.Tokens, request.MaxTokens) {
 			return result, errors.New(agent.GenerationBudgetExceededReason("tokens"))
 		}
 		record(agent.Event{Kind: "response", ID: response.ID, Status: stopStatus(response.StopReason)})

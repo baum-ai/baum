@@ -324,8 +324,23 @@ func (s *Store) Put(ctx context.Context, k Key, previous Version, v Version) err
 // refresh. A running generation does not block it: live facts refresh
 // independently, and the generated version still publishes over it.
 func (s *Store) RefreshCurrent(ctx context.Context, k Key, previous Version, document []byte) error {
+	return s.replaceCurrent(ctx, k, previous, document, "refresh", "refresh")
+}
+
+// CompleteCurrent replaces the latest document with the same version whose
+// failed section details were written again, preserving its metadata. It is
+// fenced as RefreshCurrent is: the generation identity (repository, pull
+// request, version, head, base, merge base and generation time) must not
+// change, and the version and exact previous bytes must still be the
+// latest's, so a refresh or a new version in the meantime makes it a
+// conflict.
+func (s *Store) CompleteCurrent(ctx context.Context, k Key, previous Version, document []byte) error {
+	return s.replaceCurrent(ctx, k, previous, document, "completion", "complete it")
+}
+
+func (s *Store) replaceCurrent(ctx context.Context, k Key, previous Version, document []byte, what, again string) error {
 	if !k.valid() || previous.Metadata.Version <= 0 || !json.Valid(document) {
-		return errors.New("invalid refreshed version")
+		return fmt.Errorf("invalid %s of the current version", what)
 	}
 	var before, after struct {
 		Review struct {
@@ -345,7 +360,7 @@ func (s *Store) RefreshCurrent(ctx context.Context, k Key, previous Version, doc
 		return err
 	}
 	if before != after || !strings.EqualFold(after.Review.Repository, k.documentRepository()) || after.Review.PullRequest != k.Number || after.Review.Version != previous.Metadata.Version {
-		return errors.New("refresh changed generation identity")
+		return fmt.Errorf("%s changed generation identity", what)
 	}
 	db, err := s.database(true)
 	if err != nil {
@@ -361,7 +376,7 @@ func (s *Store) RefreshCurrent(ctx context.Context, k Key, previous Version, doc
 		return err
 	}
 	if n != 1 {
-		return fmt.Errorf("%w; refresh again using the latest document", ErrConflict)
+		return fmt.Errorf("%w; %s again using the latest document", ErrConflict, again)
 	}
 	return nil
 }

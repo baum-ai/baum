@@ -24,6 +24,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -93,6 +94,8 @@ type Focuser struct {
 	// ClaudeDir is Claude desktop's configuration directory; empty is its
 	// default for the platform.
 	ClaudeDir string
+	// ConfigureCodexTitle prepares Codex's terminal title for session focus.
+	ConfigureCodexTitle func() (bool, error)
 }
 
 func (f *Focuser) run(ctx context.Context, env []string, name string, args ...string) ([]byte, error) {
@@ -191,7 +194,7 @@ func (f *Focuser) Predict(agent string, t *hookevents.Terminal) string {
 	if f.goos() == "linux" && !hyprland(env) && !x11(env) {
 		return ""
 	}
-	if t.Env["TMUX"] != "" && t.Env["TMUX_PANE"] != "" {
+	if tmuxTerminalRecorded(t) || sharedCodex(agent, t) {
 		return Session
 	}
 	for _, p := range t.Processes {
@@ -219,6 +222,24 @@ func (f *Focuser) Focus(ctx context.Context, agent, id string, t *hookevents.Ter
 	if len(chain) == 0 {
 		return Result{Message: "The session's process has exited."}
 	}
+	if sharedCodex(agent, t) {
+		var located *hookevents.Terminal
+		if t.Env["TMUX"] != "" {
+			var why string
+			located, why = f.codexTmuxPane(ctx, id, t)
+			if why == codexTmuxAmbiguous {
+				return Result{Message: why}
+			}
+		}
+		if located == nil {
+			result := f.codexNative(ctx, id, t)
+			if result.Message == codexTitleHint {
+				return f.repairCodexTitle()
+			}
+			return result
+		}
+		t = located
+	}
 	env := f.environment(t.Env)
 	if agent == "claude-code" && slices.ContainsFunc(chain, func(p hookevents.Process) bool { return claudeDesktopProcess(p.Name) }) {
 		if result, ok := f.claudeDesktop(ctx, id, chain, env); ok {
@@ -227,7 +248,7 @@ func (f *Focuser) Focus(ctx context.Context, agent, id string, t *hookevents.Ter
 	}
 	outer, tty := chain, t.TTY
 	pane := false
-	if t.Env["TMUX"] != "" && t.Env["TMUX_PANE"] != "" {
+	if tmuxTerminalRecorded(t) {
 		client, inPane, why := f.tmux(ctx, t.Env["TMUX"], t.Env["TMUX_PANE"], t.TTY)
 		switch {
 		case why != "":
@@ -259,6 +280,51 @@ func cmpOr(s, fallback string) string {
 		return s
 	}
 	return fallback
+}
+
+// Shared Codex app servers run hooks separately from the TUI clients. Their
+// inherited terminal variables locate the server's launcher, not the thread.
+func sharedCodex(agent string, t *hookevents.Terminal) bool {
+	return agent == "codex" && t.TTY == "" && len(t.Processes) > 0 &&
+		!slices.ContainsFunc(t.Processes, func(p hookevents.Process) bool {
+			return p.Name != "codex" && p.Name != "systemd" && p.Name != "launchd"
+		})
+}
+
+func tmuxTerminalRecorded(t *hookevents.Terminal) bool {
+	return t.TTY != "" && t.Env["TMUX"] != "" && t.Env["TMUX_PANE"] != ""
+}
+
+// Codex can include the thread ID as the final part of its terminal title.
+// Long titles shorten the UUID with an ellipsis; require at least 24 characters
+// and one matching pane rather than guessing from a conversation's name.
+func (f *Focuser) codexTmuxPane(ctx context.Context, id string, t *hookevents.Terminal) (*hookevents.Terminal, string) {
+	socket, _, _ := strings.Cut(t.Env["TMUX"], ",")
+	out, err := f.run(ctx, nil, "tmux", "-S", socket, "list-panes", "-a", "-F", "#{pane_id}\t#{pane_tty}\t#{pane_current_command}\t#{pane_title}")
+	if err != nil {
+		return nil, fmt.Sprintf("Could not find Codex's terminal in tmux: %v.", err)
+	}
+	var pane, tty string
+	for line := range strings.SplitSeq(string(out), "\n") {
+		fields := strings.SplitN(line, "\t", 4)
+		if len(fields) != 4 || fields[0] == "" || fields[1] == "" || fields[2] != "codex" {
+			continue
+		}
+		if !codexTitleMatches(fields[3], id) {
+			continue
+		}
+		if pane != "" {
+			return nil, codexTmuxAmbiguous
+		}
+		pane, tty = fields[0], fields[1]
+	}
+	if pane == "" {
+		return nil, codexTitleHint
+	}
+	located := *t
+	located.Env = maps.Clone(t.Env)
+	located.Env["TMUX_PANE"], located.TTY = pane, tty
+	return &located, ""
 }
 
 // displayEnv are the variables the window commands read, taken from the
@@ -321,7 +387,11 @@ func (f *Focuser) tmux(ctx context.Context, server, pane, tty string) (tmuxClien
 		return tmuxClient{}, false, "The session's tmux pane is gone."
 	}
 	session, paneTTY, _ := strings.Cut(strings.TrimSpace(string(out)), "\t")
-	if tty != "" && paneTTY != "" && paneTTY != tty {
+	// display-message can succeed with empty fields for a pane that is gone.
+	if session == "" || paneTTY == "" {
+		return tmuxClient{}, false, "The session's tmux pane is gone."
+	}
+	if paneTTY != tty {
 		return tmuxClient{}, false, ""
 	}
 	out, err = tmux("list-clients", "-F", "#{client_pid}\t#{client_tty}\t#{session_id}\t#{client_activity}")
@@ -549,6 +619,7 @@ func appBundle(exe string) string {
 // hyprClient is a window as hyprctl lists it.
 type hyprClient struct {
 	Address        string        `json:"address"`
+	Title          string        `json:"title"`
 	PID            int           `json:"pid"`
 	FocusHistoryID int           `json:"focusHistoryID"`
 	Workspace      hyprWorkspace `json:"workspace"`

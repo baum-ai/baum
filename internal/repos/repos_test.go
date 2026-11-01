@@ -14,7 +14,9 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
+	"github.com/baum-ai/baum/internal/appdb/appdbtest"
 	"github.com/baum-ai/baum/internal/config"
 )
 
@@ -28,7 +30,7 @@ func git(t *testing.T, dir string, args ...string) {
 }
 func clone(t *testing.T, remote string) string {
 	t.Helper()
-	p := t.TempDir()
+	p := appdbtest.TempDir(t)
 	git(t, p, "init")
 	git(t, p, "-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "--allow-empty", "-m", "init")
 	git(t, p, "remote", "add", "origin", remote)
@@ -36,7 +38,7 @@ func clone(t *testing.T, remote string) string {
 }
 func registry(t *testing.T) *Registry {
 	t.Helper()
-	r, e := Open(filepath.Join(t.TempDir(), "registry.sqlite"))
+	r, e := Open(filepath.Join(appdbtest.TempDir(t), "registry.sqlite"))
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -47,14 +49,12 @@ func TestClonesAndSettings(t *testing.T) {
 	ctx := context.Background()
 	r := registry(t)
 	p := clone(t, "https://github.com/Owner/Repo.git")
-	b := config.BackendCodex
-	m := "model"
-	s := Settings{Automatic: new(true), Backend: &b, Model: &m}
+	s := Settings{Automatic: new(true)}
 	c, e := r.Add(ctx, p, &s)
 	if e != nil {
 		t.Fatal(e)
 	}
-	wt := filepath.Join(t.TempDir(), "linked")
+	wt := filepath.Join(appdbtest.TempDir(t), "linked")
 	git(t, p, "worktree", "add", "-b", "linked", wt)
 	w, e := r.Add(ctx, wt, nil)
 	if e != nil {
@@ -70,14 +70,6 @@ func TestClonesAndSettings(t *testing.T) {
 	again, e := r.Add(ctx, p, nil)
 	if e != nil || !explicitlyOn(again.Settings.Automatic) {
 		t.Fatalf("idempotent %#v %v", again, e)
-	}
-	global := config.Default()
-	global.Model = "global"
-	if got := s.Resolve(global); got.Backend != b || got.Model != m {
-		t.Fatal(got)
-	}
-	if got := (Settings{}).Resolve(global); got.Model != "global" {
-		t.Fatal(got)
 	}
 	git(t, p, "remote", "set-url", "origin", "https://github.com/owner/replaced")
 	list, e := r.List(ctx)
@@ -114,7 +106,7 @@ func TestClonesAndSettings(t *testing.T) {
 func TestRejectAndFallback(t *testing.T) {
 	r := registry(t)
 	ctx := context.Background()
-	for _, p := range []string{filepath.Join(t.TempDir(), "gone"), t.TempDir(), clone(t, "https://gitlab.com/owner/repo")} {
+	for _, p := range []string{filepath.Join(appdbtest.TempDir(t), "gone"), appdbtest.TempDir(t), clone(t, "https://gitlab.com/owner/repo")} {
 		if _, e := r.Add(ctx, p, nil); e == nil {
 			t.Fatal("accepted", p)
 		}
@@ -130,10 +122,6 @@ func TestRejectAndFallback(t *testing.T) {
 	if e != nil || enterprise.Repository == c.Repository {
 		t.Fatalf("enterprise %#v %v", enterprise, e)
 	}
-	empty := ""
-	if _, e = r.Add(ctx, p, &Settings{Model: &empty}); e == nil {
-		t.Fatal("empty model accepted")
-	}
 }
 func TestPermissionsAndConcurrentProcesses(t *testing.T) {
 	if os.Getenv("BAUM_REGISTRY_CHILD") != "" {
@@ -147,9 +135,18 @@ func TestPermissionsAndConcurrentProcesses(t *testing.T) {
 		}
 		return
 	}
-	path := filepath.Join(t.TempDir(), "registry.sqlite")
-	if e := os.WriteFile(path, nil, 0644); e != nil {
-		t.Fatal(e)
+	path := filepath.Join(appdbtest.TempDir(t), "registry.sqlite")
+	if runtime.GOOS != "windows" {
+		if e := os.WriteFile(path, nil, 0644); e != nil {
+			t.Fatal(e)
+		}
+		if db, e := Open(path); e == nil {
+			_ = db.Close()
+			t.Fatal("accepted a public database file")
+		}
+		if e := os.Remove(path); e != nil {
+			t.Fatal(e)
+		}
 	}
 	r, e := Open(path)
 	if e != nil {
@@ -199,7 +196,7 @@ func TestHTTP(t *testing.T) {
 	if got := check(p); got != `{"valid":true,"repository":"owner/repo"}` {
 		t.Fatal(got)
 	}
-	if got := check(t.TempDir()); !strings.Contains(got, `"valid":false`) || !strings.Contains(got, "not a git working tree") {
+	if got := check(appdbtest.TempDir(t)); !strings.Contains(got, `"valid":false`) || !strings.Contains(got, "not a git working tree") {
 		t.Fatal(got)
 	}
 	body, _ := json.Marshal(map[string]string{"path": p})
@@ -214,7 +211,7 @@ func TestHTTP(t *testing.T) {
 	if got := check(p); got != `{"valid":true,"repository":"owner/repo","registered":true}` {
 		t.Fatal(got)
 	}
-	for _, body := range []string{`{"unknown":1}`, `{"daily_cap":-1}`, `{"backend":"no"}`, `{} {}`, `{"model":""}`, `{"automatic":null,"model":""}`} {
+	for _, body := range []string{`{"unknown":1}`, `{"daily_cap":-1}`, `{"backend":"no"}`, `{} {}`, `{"model":""}`} {
 		if w = request("PUT", "/api/repos/"+c.ID+"/settings", body); w.Code != 400 {
 			t.Fatal(body, w.Code)
 		}
@@ -240,7 +237,7 @@ func TestSpecialDatabasePath(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		name = "with# space" // Windows forbids '?' and trailing spaces in directory names.
 	}
-	p := filepath.Join(t.TempDir(), name, "repos.sqlite")
+	p := filepath.Join(appdbtest.TempDir(t), name, "repos.sqlite")
 	r, e := Open(p)
 	if e != nil {
 		t.Fatal(e)
@@ -256,7 +253,7 @@ func TestSpecialDatabasePath(t *testing.T) {
 
 func TestConcurrentSettingsPatches(t *testing.T) {
 	p := clone(t, "https://github.com/owner/repo")
-	path := filepath.Join(t.TempDir(), "repos.sqlite")
+	path := filepath.Join(appdbtest.TempDir(t), "repos.sqlite")
 	r, e := Open(path)
 	if e != nil {
 		t.Fatal(e)
@@ -278,8 +275,7 @@ func TestConcurrentSettingsPatches(t *testing.T) {
 				if i == 0 {
 					s.Automatic = new(true)
 				} else {
-					v := "model-b"
-					s.Model = &v
+					s.Decisions = new(false)
 				}
 				return s, nil
 			})
@@ -291,7 +287,7 @@ func TestConcurrentSettingsPatches(t *testing.T) {
 	close(start)
 	wg.Wait()
 	list, e := r.List(context.Background())
-	if e != nil || len(list) != 1 || !explicitlyOn(list[0].Settings.Automatic) || list[0].Settings.Model == nil || *list[0].Settings.Model != "model-b" {
+	if e != nil || len(list) != 1 || !explicitlyOn(list[0].Settings.Automatic) || list[0].Settings.Decisions == nil || *list[0].Settings.Decisions {
 		t.Fatalf("lost settings %#v %v", list, e)
 	}
 }
@@ -318,6 +314,36 @@ func TestPreferencesCoverTheChosenPullRequests(t *testing.T) {
 	}
 	if (Preferences{PullRequests: "everyone"}).Validate() == nil {
 		t.Fatal("unknown choice accepted")
+	}
+}
+
+func TestPreferencesConcurrencyFallsBackToTheMaximum(t *testing.T) {
+	for stored, want := range map[int]int{0: MaxJobConcurrency, 2: 2, MaxJobConcurrency + 1: MaxJobConcurrency, -1: MaxJobConcurrency} {
+		p := Preferences{JobConcurrency: stored}
+		if got := p.Concurrency(); got != want {
+			t.Errorf("stored %d: %d, want %d", stored, got, want)
+		}
+		if err := p.Validate(); err != nil {
+			t.Errorf("stored %d blocks other settings: %v", stored, err)
+		}
+	}
+}
+func TestPreferencesTimeLimitsReplaceTheFiles(t *testing.T) {
+	global := config.Default()
+	got := (Preferences{ReviewTimeLimit: 20, RunTimeLimit: 90}).Resolve(global).Budgets
+	if time.Duration(got.ReviewTimeout) != 20*time.Minute || time.Duration(got.RunTimeout) != 90*time.Minute {
+		t.Fatalf("set limits: %+v", got)
+	}
+	for _, p := range []Preferences{{}, {ReviewTimeLimit: -1, RunTimeLimit: MaxTimeLimit + 1}} {
+		if got := p.Resolve(global).Budgets; got != global.Budgets {
+			t.Errorf("%+v changed the file's budgets: %+v", p, got)
+		}
+		if err := p.Validate(); err != nil {
+			t.Errorf("%+v blocks other settings: %v", p, err)
+		}
+	}
+	if ValidateTimeLimit(0) != nil || ValidateTimeLimit(MaxTimeLimit) != nil || ValidateTimeLimit(MaxTimeLimit+1) == nil || ValidateTimeLimit(-1) == nil {
+		t.Error("ValidateTimeLimit bounds")
 	}
 }
 
@@ -355,5 +381,56 @@ func TestPreferencesFixAgent(t *testing.T) {
 	model := " gpt-fix "
 	if got := (Preferences{FixBackend: &codex, FixModel: &model}).ResolveFix(review); got.Backend != config.BackendCodex || got.Model != "gpt-fix" {
 		t.Fatalf("fix agent: %+v", got)
+	}
+}
+
+func TestPreferencesExtractionBackend(t *testing.T) {
+	claude, codex, anthropic, cursor, auto := config.BackendClaude, config.BackendCodex, config.BackendAnthropic, config.BackendCursorAgent, config.BackendAuto
+	for _, b := range []*config.Backend{nil, &claude, &codex, &anthropic} {
+		if err := (Preferences{Decisions: DecisionPreferences{Backend: b}}).Validate(); err != nil {
+			t.Fatalf("%v rejected: %v", b, err)
+		}
+	}
+	for _, b := range []*config.Backend{&cursor, &auto} {
+		if (Preferences{Decisions: DecisionPreferences{Backend: b}}).Validate() == nil {
+			t.Fatalf("%s accepted", *b)
+		}
+	}
+}
+
+// Each use case has its own reasoning effort: reviews', fixes' with a fix
+// agent, and data extraction's.
+func TestPreferencesEfforts(t *testing.T) {
+	low, high, medium, wrong, empty := "low", "high", "medium", "extreme", ""
+	codex := config.BackendCodex
+	for _, p := range []Preferences{{Effort: &wrong}, {FixBackend: &codex, FixEffort: &wrong}, {Decisions: DecisionPreferences{Effort: &wrong}}, {FixEffort: &high}} {
+		if p.Validate() == nil {
+			t.Fatalf("%+v accepted", p)
+		}
+	}
+	p := Preferences{Effort: &low, FixBackend: &codex, FixEffort: &high, Decisions: DecisionPreferences{Effort: &medium}}
+	if err := p.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	if err := (Preferences{FixEffort: &empty}).Validate(); err != nil {
+		t.Fatalf("an empty fix effort without a fix agent: %v", err)
+	}
+	review := p.Resolve(config.Config{Backend: config.BackendClaude})
+	if review.Effort != "low" {
+		t.Fatalf("review %+v", review)
+	}
+	if fix := p.ResolveFix(review); fix.Effort != "high" || fix.Backend != codex {
+		t.Fatalf("fix %+v", fix)
+	}
+	if extraction := p.ResolveExtraction(review); extraction.Effort != "medium" {
+		t.Fatalf("extraction %+v", extraction)
+	}
+	// Without a fix agent the fix follows the reviews, effort included; data
+	// extraction without an effort of its own uses the harness's own.
+	if fix := (Preferences{Effort: &low}).ResolveFix(review); fix.Effort != "low" {
+		t.Fatalf("same as reviews %+v", fix)
+	}
+	if extraction := (Preferences{}).ResolveExtraction(review); extraction.Effort != "" {
+		t.Fatalf("extraction default %+v", extraction)
 	}
 }

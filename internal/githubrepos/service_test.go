@@ -16,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/baum-ai/baum/internal/appdb/appdbtest"
 	"github.com/baum-ai/baum/internal/config"
 	"github.com/baum-ai/baum/internal/github"
 	"github.com/baum-ai/baum/internal/githubauth"
@@ -24,14 +25,42 @@ import (
 )
 
 type fakeLister struct {
-	list  []github.ViewerRepository
-	err   error
-	calls atomic.Int32
+	list        []github.ViewerRepository
+	total       int
+	err         error
+	calls       atomic.Int32
+	searchCalls atomic.Int32
+	more        []github.ViewerRepository
+	allList     []github.ViewerRepository
+	next        *string
+	scope       github.SearchScope
+	mu          sync.Mutex
+	searched    github.SearchScope
 }
 
-func (f *fakeLister) ViewerRepositories(context.Context, string) ([]github.ViewerRepository, error) {
+func (f *fakeLister) ViewerRepositories(_ context.Context, _ string, _ int, cursor *string) (github.ViewerRepositoryList, error) {
 	f.calls.Add(1)
-	return f.list, f.err
+	if cursor != nil {
+		return github.ViewerRepositoryList{Repositories: f.more, TotalCount: f.total}, f.err
+	}
+	return github.ViewerRepositoryList{Repositories: f.list, TotalCount: f.total, NextCursor: f.next, Scope: f.scope}, f.err
+}
+func (f *fakeLister) SearchRepositories(_ context.Context, _, query string, scope github.SearchScope, _ *string) (github.ViewerRepositoryList, error) {
+	f.searchCalls.Add(1)
+	f.mu.Lock()
+	f.searched = scope
+	f.mu.Unlock()
+	source := f.allList
+	if source == nil {
+		source = f.list
+	}
+	out := []github.ViewerRepository{}
+	for _, r := range source {
+		if matches(r.Repository, strings.Fields(query)) {
+			out = append(out, r)
+		}
+	}
+	return github.ViewerRepositoryList{Repositories: out, TotalCount: len(out)}, f.err
 }
 
 var pushed = time.Date(2026, 7, 1, 12, 0, 0, 0, time.UTC)
@@ -39,10 +68,10 @@ var pushed = time.Date(2026, 7, 1, 12, 0, 0, 0, time.UTC)
 func sampleList() []github.ViewerRepository {
 	return []github.ViewerRepository{
 		{Repository: "acme/quiet", PushedAt: pushed.Add(-10 * time.Hour)},
-		{Repository: "acme/busy", PushedAt: pushed.Add(-5 * time.Hour), OpenPullRequests: 3, Private: true, Description: "busy repo"},
+		{Repository: "acme/busy", PushedAt: pushed.Add(-5 * time.Hour), Private: true, Description: "busy repo"},
 		{Repository: "acme/recent", PushedAt: pushed, Fork: true},
-		{Repository: "other/one-pr", PushedAt: pushed.Add(-20 * time.Hour), OpenPullRequests: 1},
-		{Repository: "acme/also-busy", PushedAt: pushed.Add(-30 * time.Hour), OpenPullRequests: 3},
+		{Repository: "other/one-pr", PushedAt: pushed.Add(-20 * time.Hour)},
+		{Repository: "acme/also-busy", PushedAt: pushed.Add(-30 * time.Hour)},
 	}
 }
 
@@ -61,7 +90,7 @@ func newHarness(t *testing.T) *harness {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not installed")
 	}
-	registry, err := repos.Open(filepath.Join(t.TempDir(), "repos.sqlite"))
+	registry, err := repos.Open(filepath.Join(appdbtest.TempDir(t), "repos.sqlite"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -73,7 +102,7 @@ func newHarness(t *testing.T) *harness {
 	if err != nil {
 		t.Fatal(err)
 	}
-	h := &harness{t: t, home: home, registry: registry, lister: &fakeLister{list: sampleList()}}
+	h := &harness{t: t, home: home, registry: registry, lister: &fakeLister{list: sampleList(), total: 5}}
 	h.service = &Service{
 		Lister: h.lister, Registry: registry, Home: h.home, Changed: func() { h.changed.Add(1) },
 		Token: func(context.Context) (string, error) { return "tok", nil },
@@ -129,7 +158,7 @@ func names(l Listing) []string {
 	return out
 }
 
-func TestListingRanksFiltersAndAnnotates(t *testing.T) {
+func TestListingPreservesTopOrderFiltersAndAnnotates(t *testing.T) {
 	h := newHarness(t)
 	if _, err := h.registry.Pick(context.Background(), "acme/quiet", nil); err != nil {
 		t.Fatal(err)
@@ -139,18 +168,17 @@ func TestListingRanksFiltersAndAnnotates(t *testing.T) {
 		t.Fatalf("status %d %s", rec.Code, rec.Body)
 	}
 	l := decode[Listing](t, rec)
-	// Open pull requests first (3, 3, 1; the more recent push breaks the tie), then by push.
-	if got, want := strings.Join(names(l), " "), "acme/busy acme/also-busy other/one-pr acme/recent acme/quiet"; got != want {
+	if got, want := strings.Join(names(l), " "), "acme/quiet acme/busy acme/recent other/one-pr acme/also-busy"; got != want {
 		t.Fatalf("order = %s, want %s", got, want)
 	}
-	busy := l.Repositories[0]
-	if !busy.Private || busy.OpenPullRequests != 3 || busy.Description != "busy repo" || busy.Clone != "" || busy.Picked || busy.PushedAt == nil {
+	busy := l.Repositories[1]
+	if !busy.Private || busy.Description != "busy repo" || busy.Clone != "" || busy.Picked || busy.PushedAt == nil {
 		t.Errorf("busy = %+v", busy)
 	}
-	if quiet := l.Repositories[4]; !quiet.Picked || quiet.Clone != "" {
+	if quiet := l.Repositories[0]; !quiet.Picked || quiet.Clone != "" {
 		t.Errorf("quiet = %+v", quiet)
 	}
-	if recent := l.Repositories[3]; !recent.Fork {
+	if recent := l.Repositories[2]; !recent.Fork {
 		t.Errorf("recent = %+v", recent)
 	}
 	if !strings.Contains(rec.Body.String(), `"clone":""`) {
@@ -169,16 +197,19 @@ func TestListingRanksFiltersAndAnnotates(t *testing.T) {
 		t.Errorf("no match = %+v, want an empty array", empty.Repositories)
 	}
 	if h.lister.calls.Load() != 1 {
-		t.Errorf("GitHub was called %d times; filtering must not call it", h.lister.calls.Load())
+		t.Errorf("GitHub was called %d times; top suggestions should be cached independently of search", h.lister.calls.Load())
 	}
 }
 
 func TestListingIsCachedUntilTheTTLOrRefresh(t *testing.T) {
 	h := newHarness(t)
+	h.lister.total = 147
 	now := pushed
 	h.service.Now = func() time.Time { return now }
 	for range 3 {
-		h.do("GET", "/api/github/repositories", "")
+		if list := decode[Listing](t, h.do("GET", "/api/github/repositories", "")); list.TotalCount != 147 {
+			t.Errorf("total = %d, want 147 even though only 5 repositories were fetched", list.TotalCount)
+		}
 	}
 	if n := h.lister.calls.Load(); n != 1 {
 		t.Fatalf("calls = %d, want 1 (cached)", n)
@@ -530,13 +561,17 @@ type changingLister struct {
 	release chan struct{}
 }
 
-func (l *changingLister) ViewerRepositories(context.Context, string) ([]github.ViewerRepository, error) {
+func (l *changingLister) ViewerRepositories(context.Context, string, int, *string) (github.ViewerRepositoryList, error) {
 	if l.calls.Add(1) == 1 {
 		close(l.started)
 		<-l.release
-		return []github.ViewerRepository{{Repository: "old/private"}}, nil
+		return github.ViewerRepositoryList{Repositories: []github.ViewerRepository{{Repository: "old/private"}}, TotalCount: 500}, nil
 	}
-	return []github.ViewerRepository{{Repository: "new/private"}}, nil
+	return github.ViewerRepositoryList{Repositories: []github.ViewerRepository{{Repository: "new/private"}}, TotalCount: 100}, nil
+}
+
+func (l *changingLister) SearchRepositories(ctx context.Context, host, _ string, _ github.SearchScope, _ *string) (github.ViewerRepositoryList, error) {
+	return l.ViewerRepositories(ctx, host, 8, nil)
 }
 
 func TestAccountChangeDoesNotCacheAnOldInFlightListing(t *testing.T) {
@@ -550,14 +585,14 @@ func TestAccountChangeDoesNotCacheAnOldInFlightListing(t *testing.T) {
 	}()
 	<-lister.started
 	h.service.ResetIdentity()
-	newResult := make(chan []github.ViewerRepository, 1)
+	newResult := make(chan github.ViewerRepositoryList, 1)
 	go func() {
 		list, _, _ := h.service.viewerRepositories(false)
 		newResult <- list
 	}()
 	select {
 	case list := <-newResult:
-		if len(list) != 1 || list[0].Repository != "new/private" {
+		if len(list.Repositories) != 1 || list.Repositories[0].Repository != "new/private" || list.TotalCount != 100 {
 			t.Errorf("new account got %+v", list)
 		}
 	case <-time.After(5 * time.Second):
@@ -568,7 +603,7 @@ func TestAccountChangeDoesNotCacheAnOldInFlightListing(t *testing.T) {
 	close(lister.release)
 	<-old
 	list, _, err := h.service.viewerRepositories(false)
-	if err != nil || len(list) != 1 || list[0].Repository != "new/private" || lister.calls.Load() != 2 {
+	if err != nil || len(list.Repositories) != 1 || list.Repositories[0].Repository != "new/private" || list.TotalCount != 100 || lister.calls.Load() != 2 {
 		t.Fatalf("cache after old response: %+v, %v, %d calls", list, err, lister.calls.Load())
 	}
 }
@@ -583,14 +618,14 @@ func TestListingIncludesAnAlreadyRegisteredClone(t *testing.T) {
 		t.Fatal(err)
 	}
 	list := decode[Listing](t, h.do("GET", "/api/github/repositories", ""))
-	if busy := list.Repositories[0]; !busy.Picked || busy.Clone != dir {
+	if busy := list.Repositories[1]; !busy.Picked || busy.Clone != dir {
 		t.Fatalf("already registered clone = %+v", busy)
 	}
 	if err := os.RemoveAll(dir); err != nil {
 		t.Fatal(err)
 	}
 	list = decode[Listing](t, h.do("GET", "/api/github/repositories", ""))
-	if busy := list.Repositories[0]; busy.Clone != "" {
+	if busy := list.Repositories[1]; busy.Clone != "" {
 		t.Fatalf("unavailable registered clone listed: %+v", busy)
 	}
 }

@@ -180,7 +180,7 @@ describe("JSON review tiles", () => {
         showTiles
       />,
     );
-    expect(after).toContain(doc.sections[0]!.summary.text);
+    expect(after).toContain(doc.sections[0]!.summary!.text);
     expect(after).toContain("Risks");
     expect(after).not.toContain('aria-label="Evidence"');
   });

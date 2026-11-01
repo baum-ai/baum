@@ -110,6 +110,37 @@ func TestRiskScoreIsALowerBoundWhenInputIsIncomplete(t *testing.T) {
 	checkEqual(t, "assessed", result.Status)
 }
 
+// A section whose details are still being written, or failed, keeps its
+// assessment and the risks it holds, so it is scored by them; the risks its
+// details would add are unknown, which makes the pull request's score a
+// lower bound.
+func TestRiskScoreIsALowerBoundWhileSectionsLackTheirDetails(t *testing.T) {
+	for _, details := range []string{sectionDetailsPending, sectionDetailsFailed} {
+		t.Run(details, func(t *testing.T) {
+			outline := assessedSection("sec_b", 3, "Shared code.")
+			outline.Details = details
+			retained := withRisk(assessedSection("sec_c", 2, "Localized."), "rsk_c", "high", "active")
+			retained.Details = details
+			sections := []documentSection{assessedSection("sec_a", 2, "Localized."), outline, retained}
+			result := riskScore(sections, nil)
+			checkEqual(t, "lower_bound", result.Status)
+			checkEqual(t, 4, scoreOf(t, result))
+			checkEqual(t, []documentRiskLimitation{{Kind: "incomplete_sections", Count: 2}}, result.Limitations)
+			score, reason := sectionReviewScore(&sections[1])
+			checkEqual(t, 3, score)
+			checkEqual(t, &documentReviewReason{Text: "Shared code."}, reason)
+			score, _ = sectionReviewScore(&sections[2])
+			checkEqual(t, 4, score)
+
+			// An obsolete section takes no part, with or without details.
+			outline.Derived.State, retained.Derived.State = "stale", "stale"
+			result = riskScore([]documentSection{assessedSection("sec_a", 2, "Localized."), outline, retained}, nil)
+			checkEqual(t, "assessed", result.Status)
+			checkEqual(t, 2, scoreOf(t, result))
+		})
+	}
+}
+
 func TestRiskScoreWithoutAssessmentsIsNotAssessedUnlessAFindingSetsAFloor(t *testing.T) {
 	legacy := documentSection{sectionContent: sectionContent{ID: "sec_a", Kind: "logical"}, Derived: documentDerived{State: "new"}}
 	result := riskScore([]documentSection{legacy}, nil)

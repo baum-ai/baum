@@ -90,7 +90,7 @@ func SelectThreads(list github.ReviewThreads) Selection {
 			continue
 		}
 		t := Thread{Ref: fmt.Sprintf("T%d", len(out.Threads)+1), ID: thread.ID, Path: bounded(thread.Path, 512), Line: thread.Line, Outdated: thread.Outdated}
-		for _, comment := range thread.Comments {
+		for _, comment := range thread.Comments[:min(len(thread.Comments), github.MaxThreadComments)] {
 			if !trusted(comment) {
 				continue
 			}

@@ -9,15 +9,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net/url"
-	"os"
 	"path/filepath"
 	"slices"
 	"sort"
 	"strings"
+	"time"
 
-	_ "modernc.org/sqlite"
-
+	"github.com/baum-ai/baum/internal/appdb"
 	"github.com/baum-ai/baum/internal/config"
 	"github.com/baum-ai/baum/internal/github"
 	"github.com/baum-ai/baum/internal/gitlocal"
@@ -29,31 +27,20 @@ var ErrNotFound = errors.New("registered clone or picked repository not found")
 // ErrInvalidRepository reports a name that is not a github.com owner/name.
 var ErrInvalidRepository = errors.New("repository must be a github.com owner/name")
 
-// Settings are shared by all clones of a repository. Nil overrides inherit
-// global settings. Automatic is the repository's choice under the global
-// master switch (see AutomaticEnabled): nil follows it, false turns the
-// repository off, true is an explicit on that still stops while the global
-// switch is off. Registration itself starts no generation. A daily_cap an
-// older baum stored is ignored on read and dropped on the next write: baum
-// sets no spending limits, since it cannot price what a subscription bills.
+// Settings are shared by all clones of a repository. Automatic is the
+// repository's choice under the global master switch (see AutomaticEnabled):
+// nil follows it, false turns the repository off, true is an explicit on that
+// still stops while the global switch is off. Registration itself starts no
+// generation. A daily_cap, backend or model an older baum stored is ignored
+// on read and dropped on the next write: baum sets no spending limits, since
+// it cannot price what a subscription bills, and the harnesses and models are
+// global (Preferences).
 type Settings struct {
-	Automatic *bool           `json:"automatic"`
-	Backend   *config.Backend `json:"backend,omitempty"`
-	Model     *string         `json:"model,omitempty"`
+	Automatic *bool `json:"automatic"`
 	// Decisions is the repository's choice for local decision capture under
 	// the global switches (see DecisionsEnabled): nil and true follow them,
 	// false turns the repository off.
 	Decisions *bool `json:"decisions,omitempty"`
-}
-
-func (s Settings) Validate() error {
-	if s.Backend != nil && !s.Backend.Valid() {
-		return errors.New("invalid backend")
-	}
-	if s.Model != nil && (strings.TrimSpace(*s.Model) == "" || len(*s.Model) > 256) {
-		return errors.New("model must be nonempty and at most 256 bytes")
-	}
-	return nil
 }
 
 // AutomaticEnabled reports whether the daemon generates reviews of this
@@ -76,17 +63,28 @@ func (s Settings) DecisionsEnabled(p Preferences) bool {
 }
 
 // DecisionPreferences are the global choices for local decision capture and
-// the feature log. A nil Enabled is on. Model, when set, replaces the
-// backend's default decision model.
+// the feature log, the data extraction the app's settings name. A nil Enabled
+// is on. A nil Backend follows the reviews' backend. Model, when set,
+// replaces the backend's default decision model. Effort is the reasoning
+// effort (config.Efforts), empty or nil for the harness's own.
 type DecisionPreferences struct {
-	Enabled *bool   `json:"enabled,omitempty"`
-	Model   *string `json:"model,omitempty"`
+	Enabled *bool           `json:"enabled,omitempty"`
+	Backend *config.Backend `json:"backend,omitempty"`
+	Model   *string         `json:"model,omitempty"`
+	Effort  *string         `json:"effort,omitempty"`
 }
 
 // AppearancePreferences are device choices kept independently of the daemon HTTP origin.
 type AppearancePreferences struct {
 	Theme    string `json:"theme,omitempty"`
 	KeyHints *bool  `json:"key_hints,omitempty"`
+}
+
+// PlanUsagePreferences are the plans the person chose to show or hide in plan
+// usage, by provider ("claude", "codex"). A provider with no entry follows
+// the backends baum uses, so a choice survives backend changes.
+type PlanUsagePreferences struct {
+	Show map[string]bool `json:"show,omitempty"`
 }
 
 // Preferences are the registry's global choices, edited in the app. Fields
@@ -100,11 +98,16 @@ type Preferences struct {
 	// in the app; a repository's own settings still override them.
 	Backend *config.Backend `json:"backend,omitempty"`
 	Model   *string         `json:"model,omitempty"`
-	// FixBackend and FixModel choose the agent that fixes pull requests
-	// (ResolveFix). A nil FixBackend means the same as reviews; an empty
-	// FixModel is the fix backend's default model.
+	// Effort is the reviews' reasoning effort (config.Efforts), empty or nil
+	// for the harness's own.
+	Effort *string `json:"effort,omitempty"`
+	// FixBackend, FixModel and FixEffort choose the agent that fixes pull
+	// requests (ResolveFix). A nil FixBackend means the same as reviews; an
+	// empty FixModel is the fix backend's default model and an empty
+	// FixEffort its own effort.
 	FixBackend *config.Backend `json:"fix_backend,omitempty"`
 	FixModel   *string         `json:"fix_model,omitempty"`
+	FixEffort  *string         `json:"fix_effort,omitempty"`
 	// PullRequests narrows which pull requests get automatic reviews:
 	// PullRequestsAuthored, PullRequestsRequested, PullRequestsAll, or empty
 	// for both authored and requested.
@@ -116,6 +119,34 @@ type Preferences struct {
 	Appearance AppearancePreferences `json:"appearance,omitzero"`
 	// Decisions configures local decision capture.
 	Decisions DecisionPreferences `json:"decisions,omitzero"`
+	// PlanUsage chooses which plans plan usage shows.
+	PlanUsage PlanUsagePreferences `json:"plan_usage,omitzero"`
+	// JobConcurrency, when set, is how many jobs the daemon runs at once
+	// besides questions to a review's agent; Concurrency resolves it.
+	JobConcurrency int `json:"job_concurrency,omitempty"`
+	// ReviewTimeLimit and RunTimeLimit, in minutes, when set replace the
+	// config file's review_timeout and run_timeout (Resolve): how long a
+	// review, and any other agent run, may take.
+	ReviewTimeLimit int `json:"review_time_limit_minutes,omitempty"`
+	RunTimeLimit    int `json:"run_time_limit_minutes,omitempty"`
+}
+
+// MaxTimeLimit is the longest time limit, in minutes, the app sets.
+const MaxTimeLimit = 240
+
+// MaxJobConcurrency is the most jobs the daemon runs at once besides
+// questions to a review's agent, and the default. A person lowers it when
+// parallel agents load the computer too much.
+const MaxJobConcurrency = 4
+
+// Concurrency is how many jobs run at once: JobConcurrency, or
+// MaxJobConcurrency when it is unset or out of range (a hand edit, or a newer
+// baum's).
+func (p Preferences) Concurrency() int {
+	if p.JobConcurrency < 1 || p.JobConcurrency > MaxJobConcurrency {
+		return MaxJobConcurrency
+	}
+	return p.JobConcurrency
 }
 
 // The PullRequests choices besides both.
@@ -152,6 +183,9 @@ func (p Preferences) Validate() error {
 	if m := p.Decisions.Model; m != nil && len(*m) > 256 {
 		return errors.New("decisions model must be at most 256 bytes")
 	}
+	if b := p.Decisions.Backend; b != nil && *b != config.BackendClaude && *b != config.BackendCodex && *b != config.BackendAnthropic {
+		return errors.New("data extraction runs with Claude Code, Codex or the Anthropic API only")
+	}
 	if p.FixBackend != nil && *p.FixBackend != config.BackendClaude && *p.FixBackend != config.BackendCodex {
 		return errors.New("fixes run with Claude Code or Codex only")
 	}
@@ -160,6 +194,14 @@ func (p Preferences) Validate() error {
 	}
 	if p.FixBackend == nil && p.FixModel != nil && strings.TrimSpace(*p.FixModel) != "" {
 		return errors.New("choose the agent for fixes before its model")
+	}
+	for _, effort := range []*string{p.Effort, p.FixEffort, p.Decisions.Effort} {
+		if effort != nil && !config.ValidEffort(*effort) {
+			return fmt.Errorf("unknown reasoning effort %q; use %s or leave it empty for the agent's own", *effort, strings.Join(config.Efforts, ", "))
+		}
+	}
+	if p.FixBackend == nil && p.FixEffort != nil && *p.FixEffort != "" {
+		return errors.New("choose the agent for fixes before its effort")
 	}
 	if err := config.ValidateAgentEnv(p.AgentEnv); err != nil {
 		return fmt.Errorf("agent environment: %w", err)
@@ -171,11 +213,28 @@ func (p Preferences) Validate() error {
 	return fmt.Errorf("unknown pull requests choice %q; use %s, %s, %s or leave it empty for both", p.PullRequests, PullRequestsAuthored, PullRequestsRequested, PullRequestsAll)
 }
 
-// Resolve overlays the app's backend, model and agent environment on the
-// config file's.
+// ValidateTimeLimit accepts zero (the config file's) or 1 to MaxTimeLimit
+// minutes.
+func ValidateTimeLimit(minutes int) error {
+	if minutes < 0 || minutes > MaxTimeLimit {
+		return fmt.Errorf("must be between 1 and %d minutes", MaxTimeLimit)
+	}
+	return nil
+}
+
+// Resolve overlays the app's backend, model, agent environment and time
+// limits on the config file's.
 func (p Preferences) Resolve(global config.Config) config.Config {
 	if len(p.AgentEnv) > 0 {
 		global.AgentEnv = p.AgentEnv
+	}
+	// A limit out of range (a hand edit, or a newer baum's) keeps the file's,
+	// and does not block saving other choices.
+	if ValidateTimeLimit(p.ReviewTimeLimit) == nil && p.ReviewTimeLimit > 0 {
+		global.Budgets.ReviewTimeout = config.Duration(time.Duration(p.ReviewTimeLimit) * time.Minute)
+	}
+	if ValidateTimeLimit(p.RunTimeLimit) == nil && p.RunTimeLimit > 0 {
+		global.Budgets.RunTimeout = config.Duration(time.Duration(p.RunTimeLimit) * time.Minute)
 	}
 	if p.Backend != nil {
 		global.Backend = *p.Backend
@@ -183,22 +242,38 @@ func (p Preferences) Resolve(global config.Config) config.Config {
 	if p.Model != nil {
 		global.Model = strings.TrimSpace(*p.Model)
 	}
+	if p.Effort != nil {
+		global.Effort = *p.Effort
+	}
 	return global
 }
 
+// ResolveExtraction gives the config data extraction runs with, from cfg,
+// the config resolved for reviews: the extraction's own effort. Its backend
+// and model are decisionlog's to resolve.
+func (p Preferences) ResolveExtraction(cfg config.Config) config.Config {
+	cfg.Effort = ""
+	if p.Decisions.Effort != nil {
+		cfg.Effort = *p.Decisions.Effort
+	}
+	return cfg
+}
+
 // ResolveFix gives the config a fix runs with, from review, the config
-// already resolved for reviews (the global preferences and the repository's
-// overrides). A set FixBackend wins over the repository's own review backend
-// and model, and takes FixModel (empty for the backend's default); without
-// one the fix follows the reviews, repository overrides included.
+// already resolved for reviews. A set FixBackend replaces the review backend,
+// model and effort, and takes FixModel and FixEffort (empty for the backend's
+// own); without one the fix follows the reviews.
 func (p Preferences) ResolveFix(review config.Config) config.Config {
 	if p.FixBackend == nil {
 		return review
 	}
 	review.Backend = *p.FixBackend
-	review.Model = ""
+	review.Model, review.Effort = "", ""
 	if p.FixModel != nil {
 		review.Model = strings.TrimSpace(*p.FixModel)
+	}
+	if p.FixEffort != nil {
+		review.Effort = *p.FixEffort
 	}
 	return review
 }
@@ -206,17 +281,6 @@ func (p Preferences) ResolveFix(review config.Config) config.Config {
 // DefaultPreferences apply until the user changes them: automatic generation
 // on.
 func DefaultPreferences() Preferences { return Preferences{Automatic: true} }
-
-// Resolve overlays generation choices without changing credentials or budgets.
-func (s Settings) Resolve(global config.Config) config.Config {
-	if s.Backend != nil {
-		global.Backend = *s.Backend
-	}
-	if s.Model != nil {
-		global.Model = *s.Model
-	}
-	return global
-}
 
 type Clone struct {
 	ID         string   `json:"id"`
@@ -230,63 +294,21 @@ type Registry struct {
 	db *sql.DB
 	// noSchema marks a read-only registry whose file has no tables yet.
 	noSchema bool
-	// legacy marks a read-only registry not yet migrated to schemaVersion,
-	// whose stored automatic=false only ever meant the old default.
-	legacy bool
-	// noPicked marks a read-only registry without the picked table.
 	noPicked bool
 	// noPreferences marks a read-only registry without saved preferences.
 	noPreferences bool
 }
 
-// schemaVersion is the registry's PRAGMA user_version. Version 1 makes a null
-// automatic setting follow the global preference; before it, registration
-// stored automatic=false for every repository.
-const schemaVersion = 1
+func Path() (string, error) { return appdb.Path() }
 
-func Path() (string, error) {
-	p, e := config.Path()
-	return filepath.Join(filepath.Dir(p), "repos.sqlite"), e
-}
-
-// Open creates a private registry beside config.toml. SQLite serializes writers
-// across processes. The rollback journal inherits the private database mode.
+// Open opens repository tables in the shared application database.
 func Open(path string) (*Registry, error) {
-	if path == "" {
-		var e error
-		path, e = Path()
-		if e != nil {
-			return nil, e
-		}
-	}
-	if e := os.MkdirAll(filepath.Dir(path), 0700); e != nil {
-		return nil, e
-	}
-	f, e := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0600)
+	db, e := appdb.Open(path, false)
 	if e != nil {
 		return nil, e
 	}
-	e = f.Chmod(0600)
-	ce := f.Close()
-	if e != nil {
-		return nil, e
-	}
-	if ce != nil {
-		return nil, ce
-	}
-	uri, e := databaseURI(path)
-	if e != nil {
-		return nil, e
-	}
-	db, e := sql.Open("sqlite", uri+"?_pragma=busy_timeout(10000)&_pragma=foreign_keys(1)")
-	if e != nil {
-		return nil, e
-	}
-	db.SetMaxOpenConns(1)
 	_, e = db.Exec(`CREATE TABLE IF NOT EXISTS repositories(identity TEXT PRIMARY KEY,settings TEXT NOT NULL); CREATE TABLE IF NOT EXISTS clones(id TEXT PRIMARY KEY,path TEXT NOT NULL UNIQUE,common_dir TEXT NOT NULL,repository TEXT NOT NULL REFERENCES repositories(identity)); CREATE TABLE IF NOT EXISTS preferences(key TEXT PRIMARY KEY,value TEXT NOT NULL); CREATE TABLE IF NOT EXISTS picked(identity TEXT PRIMARY KEY REFERENCES repositories(identity) ON DELETE CASCADE); CREATE TABLE IF NOT EXISTS aliases(alias TEXT PRIMARY KEY,repository TEXT NOT NULL);`)
-	if e == nil {
-		e = migrate(context.Background(), db)
-	}
+
 	if e == nil {
 		e = loadAliases(db)
 	}
@@ -297,112 +319,16 @@ func Open(path string) (*Registry, error) {
 	return &Registry{db: db}, nil
 }
 
-// migrate brings the registry to schemaVersion in one immediate write
-// transaction, so concurrent processes migrate it exactly once. Before
-// version 1 the app had no automatic control and registration stored
-// automatic=false for every repository, so a stored false becomes "follow the
-// global preference"; a stored true was an explicit choice and stays.
-func migrate(ctx context.Context, db *sql.DB) (err error) {
-	conn, err := db.Conn(ctx)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = conn.Close() }()
-	if _, err = conn.ExecContext(ctx, "BEGIN IMMEDIATE"); err != nil {
-		return err
-	}
-	defer func() {
-		if err != nil {
-			_, _ = conn.ExecContext(ctx, "ROLLBACK")
-		}
-	}()
-	var version int
-	if err = conn.QueryRowContext(ctx, "PRAGMA user_version").Scan(&version); err != nil {
-		return err
-	}
-	if version < schemaVersion {
-		if err = migrateAutomatic(ctx, conn); err != nil {
-			return err
-		}
-		if _, err = conn.ExecContext(ctx, fmt.Sprintf("PRAGMA user_version=%d", schemaVersion)); err != nil {
-			return err
-		}
-	}
-	_, err = conn.ExecContext(ctx, "COMMIT")
-	return err
-}
-
-func migrateAutomatic(ctx context.Context, conn *sql.Conn) error {
-	rows, err := conn.QueryContext(ctx, "SELECT identity,settings FROM repositories")
-	if err != nil {
-		return err
-	}
-	updates := map[string]string{}
-	for rows.Next() {
-		var identity, raw string
-		var s Settings
-		if err = rows.Scan(&identity, &raw); err == nil {
-			err = json.Unmarshal([]byte(raw), &s)
-		}
-		if err != nil {
-			_ = rows.Close()
-			return err
-		}
-		if s.Automatic != nil && !*s.Automatic {
-			s.Automatic = nil
-			updates[identity] = mustJSON(s)
-		}
-	}
-	err = rows.Err()
-	_ = rows.Close()
-	if err != nil {
-		return err
-	}
-	for identity, settings := range updates {
-		if _, err = conn.ExecContext(ctx, "UPDATE repositories SET settings=? WHERE identity=?", settings, identity); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func databaseURI(path string) (string, error) {
-	absolute, e := filepath.Abs(path)
-	if e != nil {
-		return "", e
-	}
-	uriPath := filepath.ToSlash(absolute)
-	if !strings.HasPrefix(uriPath, "/") {
-		uriPath = "/" + uriPath
-	}
-	return (&url.URL{Scheme: "file", Path: uriPath}).String(), nil
-}
-
 // OpenReadOnly opens an existing registry only to list it. Unlike Open it
 // creates no directory, file or table and changes no file mode, and SQLite
 // opens the file read-only, so it writes no journal. A missing file is an error
 // wrapping fs.ErrNotExist; a file without tables lists no clones.
 func OpenReadOnly(path string) (*Registry, error) {
-	if path == "" {
-		var e error
-		path, e = Path()
-		if e != nil {
-			return nil, e
-		}
-	}
-	if _, e := os.Stat(path); e != nil {
-		return nil, e
-	}
-	uri, e := databaseURI(path)
+	db, e := appdb.Open(path, true)
 	if e != nil {
 		return nil, e
 	}
-	db, e := sql.Open("sqlite", uri+"?mode=ro&_pragma=busy_timeout(10000)")
-	if e != nil {
-		return nil, e
-	}
-	db.SetMaxOpenConns(1)
-	var tables, preferences, picked, version int
+	var tables, preferences, picked int
 	if e = db.QueryRow(`SELECT count(*) FROM sqlite_master WHERE type='table' AND name IN ('clones','repositories')`).Scan(&tables); e != nil {
 		_ = db.Close()
 		return nil, e
@@ -415,13 +341,9 @@ func OpenReadOnly(path string) (*Registry, error) {
 		_ = db.Close()
 		return nil, e
 	}
-	if e = db.QueryRow(`PRAGMA user_version`).Scan(&version); e != nil {
-		_ = db.Close()
-		return nil, e
-	}
 	// A registry from before aliases has none to load.
 	_ = loadAliases(db)
-	return &Registry{db: db, noSchema: tables < 2, noPreferences: preferences == 0, legacy: version < schemaVersion, noPicked: picked == 0}, nil
+	return &Registry{db: db, noSchema: tables < 2, noPreferences: preferences == 0, noPicked: picked == 0}, nil
 }
 
 func (r *Registry) Close() error { return r.db.Close() }
@@ -642,7 +564,7 @@ func (e *RemoteMismatchError) Is(target error) bool { return target == ErrNoMatc
 func (r *Registry) Add(ctx context.Context, path string, settings *Settings) (Clone, error) {
 	return r.AddPatch(ctx, path, func(previous Settings) (Settings, error) {
 		if settings != nil {
-			return *settings, settings.Validate()
+			return *settings, nil
 		}
 		return previous, nil
 	})
@@ -699,7 +621,7 @@ func (r *Registry) AttachFound(ctx context.Context, path, repository string) (Cl
 func (r *Registry) addFor(ctx context.Context, path, repository string, settings *Settings, guard addGuard) (Clone, error) {
 	return r.addPatch(ctx, path, repository, guard, func(previous Settings) (Settings, error) {
 		if settings != nil {
-			return *settings, settings.Validate()
+			return *settings, nil
 		}
 		return previous, nil
 	})
@@ -751,9 +673,6 @@ func (r *Registry) addPatch(ctx context.Context, path, repository string, guard 
 	}
 	c.Settings, e = edit(c.Settings)
 	if e != nil {
-		return Clone{}, e
-	}
-	if e = c.Settings.Validate(); e != nil {
 		return Clone{}, e
 	}
 	data, e := json.Marshal(c.Settings)
@@ -852,9 +771,6 @@ func (r *Registry) cloneRows(ctx context.Context, repository string) ([]Clone, e
 			_ = rows.Close()
 			return nil, e
 		}
-		if r.legacy && c.Settings.Automatic != nil && !*c.Settings.Automatic {
-			c.Settings.Automatic = nil
-		}
 		result = append(result, c)
 	}
 	e = rows.Err()
@@ -880,9 +796,6 @@ func probe(ctx context.Context, clones []Clone) error {
 
 // Update replaces shared repository settings without needing an available clone.
 func (r *Registry) Update(ctx context.Context, id string, s Settings) error {
-	if e := s.Validate(); e != nil {
-		return e
-	}
 	data, e := json.Marshal(s)
 	if e != nil {
 		return e
@@ -912,9 +825,6 @@ func (r *Registry) RepositorySettings(ctx context.Context, repository string) (S
 	}
 	if e == nil {
 		e = json.Unmarshal([]byte(raw), &s)
-	}
-	if e == nil && r.legacy && s.Automatic != nil && !*s.Automatic {
-		s.Automatic = nil
 	}
 	return s, e == nil, e
 }
@@ -1002,11 +912,6 @@ func (r *Registry) Pick(ctx context.Context, repository string, settings *Settin
 		return Repository{}, ErrInvalidRepository
 	}
 	identity := strings.ToLower(gh.String())
-	if settings != nil {
-		if e = settings.Validate(); e != nil {
-			return Repository{}, e
-		}
-	}
 	tx, e := r.db.BeginTx(ctx, nil)
 	if e != nil {
 		return Repository{}, e
@@ -1094,9 +999,6 @@ func (r *Registry) repositories(ctx context.Context, only string) ([]Repository,
 			_ = rows.Close()
 			return nil, e
 		}
-		if r.legacy && v.Settings.Automatic != nil && !*v.Settings.Automatic {
-			v.Settings.Automatic = nil
-		}
 		v.Clones = []Clone{}
 		v.EarlierNames = gitlocal.EarlierNames(v.Repository)
 		byIdentity[v.Repository] = len(result)
@@ -1121,9 +1023,6 @@ func (r *Registry) repositories(ctx context.Context, only string) ([]Repository,
 
 // UpdateRepository replaces a picked repository's shared settings by identity.
 func (r *Registry) UpdateRepository(ctx context.Context, repository string, s Settings) error {
-	if e := s.Validate(); e != nil {
-		return e
-	}
 	res, e := r.db.ExecContext(ctx, `UPDATE repositories AS r SET settings=? WHERE r.identity=? AND (`+r.pickedSQL()+`)`, mustJSON(s), strings.ToLower(repository))
 	if e != nil {
 		return e

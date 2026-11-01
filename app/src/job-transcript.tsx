@@ -1,11 +1,6 @@
 import { useEffect, useState, type ComponentType } from "react";
 import { Alert, LiveDot } from "@baum/viewer/components/ui";
-import {
-  ChevronRightIcon,
-  CircleCheckIcon,
-  CircleCrossIcon,
-  CircleDashedIcon,
-} from "@baum/viewer/components/icons";
+import { ChevronRightIcon, CircleCheckIcon, CircleCrossIcon } from "@baum/viewer/components/icons";
 import { Markdown } from "@baum/viewer/components/markdown";
 import type { ViewerLinkProps } from "@baum/viewer/navigation";
 import {
@@ -21,6 +16,7 @@ import { phaseText } from "./fix";
 import { LoadingStatus } from "./nine-dots";
 import { PageBar } from "./shell";
 import { useFollowScroll } from "./session-transcript";
+import { SMALL } from "./action-classes";
 
 /** One line of a fix agent's transcript, from `api/jobs/{id}/transcript`.
  *  Entries are append-only; a tool's later entry with the same `id` updates
@@ -115,7 +111,7 @@ export function useJobTranscript(id: string): TranscriptState {
 function ToolStatus({ status }: { status?: TranscriptEntry["status"] }) {
   if (status === "failed") return <CircleCrossIcon size={14} className="local-tool-failed" />;
   if (status === "completed") return <CircleCheckIcon size={14} className="local-tool-done" />;
-  return <CircleDashedIcon size={14} className="local-spin" />;
+  return <LiveDot />;
 }
 
 /** Codex's tools by the names a reader knows them by. */
@@ -348,7 +344,7 @@ export function JobPage({
         title={job ? jobName(job) : "Job"}
         detail={job ? `${job.repository} #${job.pr}` : "Agent run on this computer"}
         actions={
-          <Link href={appURL("?page=jobs")} className="inbox-action">
+          <Link href={appURL("?page=jobs")} className={SMALL}>
             Back to jobs
           </Link>
         }

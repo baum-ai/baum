@@ -74,6 +74,19 @@ the HTTP client refuses redirects. baum never refreshes it: refreshing would
 rotate Claude Code's credential. An expired token, or a 401 or 403, reads "Open
 Claude Code to refresh its sign-in."
 
+## Which plans are served
+
+`GET /api/plan-usage` serves only the plans chosen in Settings, so the
+sidebar and tray show the same ones; `?all=1` serves every plan (the desktop
+setup compares them). The choice, `GET`/`PUT /api/settings/plan-usage`, is the
+`plan_usage.show` object of the [registry's global preferences](../repos/README.md)
+in `app.sqlite`: provider to true or false, only for plans the person
+switched. A plan with no entry follows the backends baum uses: those of the
+reviews, fixes and decision capture (Auto counts the first readable plan,
+Claude Code before Codex; the Anthropic API and Cursor have none), so an
+explicit choice survives a backend change and the default follows it. The
+history behind the Analytics chart samples every plan regardless.
+
 ## Caching
 
 `Service` keeps the result for five minutes. `?refresh=1` (the app sends it when
@@ -84,8 +97,8 @@ reading, so simultaneous requests share it.
 
 `History` samples the plans every 15 minutes while the daemon runs, through
 `Service`'s cache, so Claude's endpoint is asked at most that often when no
-page is open, and appends what is new to `plan-usage-history.json` in the
-daemon's state directory: the snapshot time, provider, window name, percent
+page is open, and appends what is new to the `state/plan-usage-history` document in the
+shared [`app.sqlite`](../appdb/README.md) application database: the snapshot time, provider, window name, percent
 used and reset time. No token, account or plan name is stored. A figure is
 kept when it changed, when its window's reset changed, or an hour after the
 last kept one; a reading no newer than the last (Codex's snapshot did not

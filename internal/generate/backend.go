@@ -51,16 +51,16 @@ func DefaultBackendsFor(cfg config.Config) Backends {
 	env := cfg.AgentEnviron()
 	return Backends{
 		Claude: func(model string) CheckedBackend {
-			return withExplicitPath(&claude.Backend{Binary: claudePath, Model: model, Profile: claude.User, Env: env}, config.BackendClaude, claudePath)
+			return withExplicitPath(&claude.Backend{Binary: claudePath, Model: model, Profile: claude.User, Effort: cfg.Effort, Env: env}, config.BackendClaude, claudePath)
 		},
 		Codex: func(model string) CheckedBackend {
-			return withExplicitPath(&codex.Backend{Binary: codexPath, Model: model, Profile: codex.Local, Env: env}, config.BackendCodex, codexPath)
+			return withExplicitPath(&codex.Backend{Binary: codexPath, Model: model, Profile: codex.Local, Effort: cfg.Effort, Env: env}, config.BackendCodex, codexPath)
 		},
 		CursorAgent: func(model string) CheckedBackend {
 			return withExplicitPath(&cursor.Backend{Binary: cursorPath, Model: model, Env: env}, config.BackendCursorAgent, cursorPath)
 		},
 		Anthropic: func(model string) CheckedBackend {
-			return &anthropic.Backend{APIKey: cfg.AnthropicAPIKey, Model: model}
+			return &anthropic.Backend{APIKey: cfg.AnthropicAPIKey, Model: model, Effort: cfg.Effort}
 		},
 	}
 }
@@ -116,6 +116,9 @@ func (e explicitPath) Check(ctx context.Context) (string, error) {
 	}
 	return e.CheckedBackend.Check(ctx)
 }
+
+// ConcurrentCalls forwards the backend's agent.ConcurrentCaller.
+func (e explicitPath) ConcurrentCalls() bool { return ConcurrentCalls(e.CheckedBackend) }
 
 // Fix forwards a fix (agent.Fixer) to a backend that can make one.
 func (e explicitPath) Fix(ctx context.Context, request agent.Request) (agent.Result, error) {

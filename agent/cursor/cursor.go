@@ -83,10 +83,10 @@ func (c *Backend) Run(ctx context.Context, request agent.Request) (result agent.
 	if request.WantsSession() {
 		return result, errors.New("cursor-agent: session options are not supported")
 	}
-	if request.MaxCalls < 1 {
+	if request.MaxCalls < 0 {
 		return result, errors.New(agent.GenerationBudgetExceededReason("model calls"))
 	}
-	if request.MaxTokens < 1 {
+	if request.MaxTokens < 0 {
 		return result, errors.New(agent.GenerationBudgetExceededReason("tokens"))
 	}
 	if request.Endpoint != nil {
@@ -254,10 +254,10 @@ func (c *Backend) Run(ctx context.Context, request agent.Request) (result agent.
 		if completed && (len(calls) == 0 || (final.Len() > 0 && finalUnidentified)) {
 			result.Calls++
 		}
-		if err == nil && result.Calls > request.MaxCalls {
+		if err == nil && agent.Exceeds(result.Calls, request.MaxCalls) {
 			err = errors.New(agent.GenerationBudgetExceededReason("model calls"))
 		}
-		if err == nil && result.Tokens > request.MaxTokens {
+		if err == nil && agent.Exceeds(result.Tokens, request.MaxTokens) {
 			err = errors.New(agent.GenerationBudgetExceededReason("tokens"))
 		}
 		if err != nil {

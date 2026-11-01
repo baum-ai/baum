@@ -10,7 +10,10 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/baum-ai/baum/internal/appdb/appdbtest"
+	"github.com/baum-ai/baum/internal/generate"
 	"github.com/baum-ai/baum/internal/reviewgroups"
 	"github.com/baum-ai/baum/internal/store"
 )
@@ -44,6 +47,108 @@ func TestGroupJobsAreKeyedByTheirGroup(t *testing.T) {
 	}
 	f.release <- struct{}{}
 	waitState(t, q, jobs[0].ID, "completed")
+}
+
+// Generating a group whose members lack reviews queues theirs, and the
+// group's job runs after them.
+func TestGroupGenerationReviewsMembersFirst(t *testing.T) {
+	f := &fakeExecutor{head: "first", started: make(chan Prepared, 10), release: make(chan struct{}), awaiting: []int{1, 2}}
+	q, err := Open(filepath.Join(privateDir(t), "jobs.json"), f, 4, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(q.Close)
+	jobs, err := q.Generate(context.Background(), []Item{{Clone: "clone", Group: "g1"}}, "single", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(jobs) != 1 || jobs[0].Group != "g1" || !slices.Equal(jobs[0].Awaiting, []int{1, 2}) {
+		t.Fatalf("group jobs = %+v", jobs)
+	}
+	started := []int{(<-f.started).PR, (<-f.started).PR}
+	slices.Sort(started)
+	if !slices.Equal(started, []int{1, 2}) {
+		t.Fatalf("started %v, want the members' reviews side by side", started)
+	}
+	f.release <- struct{}{}
+	select {
+	case p := <-f.started:
+		t.Fatalf("%+v started while a member's review ran", p.Item)
+	case <-time.After(50 * time.Millisecond):
+	}
+	f.release <- struct{}{}
+	if p := <-f.started; p.Group != "g1" {
+		t.Fatalf("started %+v, want the group", p.Item)
+	}
+	f.release <- struct{}{}
+	waitState(t, q, jobs[0].ID, "completed")
+}
+
+// A group job that finds a member's head moved, as after a fix's push,
+// waits again at the new heads for that member's review instead of failing.
+func TestGroupJobWaitsForAMovedMember(t *testing.T) {
+	wait := groupRequeueWait
+	groupRequeueWait = time.Millisecond
+	t.Cleanup(func() { groupRequeueWait = wait })
+	f := &fakeExecutor{head: "first", started: make(chan Prepared, 10), release: make(chan struct{})}
+	q, err := Open(filepath.Join(privateDir(t), "jobs.json"), f, 4, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(q.Close)
+	jobs, err := q.Generate(context.Background(), []Item{{Clone: "clone", Group: "g1"}}, "single", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.mu.Lock()
+	f.members, f.awaiting = "1@second,2@first", []int{1}
+	f.groupFail = &generate.Error{Category: generate.CategoryInput, Err: generate.ErrHeadChanged}
+	f.mu.Unlock()
+	if p := <-f.started; p.Group != "g1" {
+		t.Fatalf("started %+v, want the group", p.Item)
+	}
+	if p := <-f.started; p.PR != 1 {
+		t.Fatalf("started %+v, want the moved member's review", p.Item)
+	}
+	select {
+	case p := <-f.started:
+		t.Fatalf("%+v started while the member's review ran", p.Item)
+	case <-time.After(50 * time.Millisecond):
+	}
+	f.release <- struct{}{}
+	if p := <-f.started; p.Group != "g1" || p.Members != "1@second,2@first" {
+		t.Fatalf("started %+v, want the group at the new heads", p)
+	}
+	f.release <- struct{}{}
+	if j := waitState(t, q, jobs[0].ID, "completed"); j.Requeued != 1 {
+		t.Fatalf("requeued %d times", j.Requeued)
+	}
+}
+
+// A group job waits again only under the account it was confirmed with: a
+// switch of GitHub account while it ran fails it instead.
+func TestGroupJobDoesNotWaitAgainUnderAnotherAccount(t *testing.T) {
+	wait := groupRequeueWait
+	groupRequeueWait = time.Millisecond
+	t.Cleanup(func() { groupRequeueWait = wait })
+	f := &fakeExecutor{head: "first", digest: "a", account: "alice", started: make(chan Prepared, 10), release: make(chan struct{})}
+	q, err := Open(filepath.Join(privateDir(t), "jobs.json"), f, 4, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(q.Close)
+	jobs, err := q.Generate(context.Background(), []Item{{Clone: "clone", Group: "g1"}}, "single", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.mu.Lock()
+	f.members, f.digest, f.account = "1@second,2@first", "b", "bob"
+	f.groupFail = &generate.Error{Category: generate.CategoryInput, Err: generate.ErrHeadChanged}
+	f.mu.Unlock()
+	<-f.started
+	if j := waitState(t, q, jobs[0].ID, "failed"); j.Reason != ReasonMembersChanged || j.Members != "1@first,2@first" {
+		t.Fatalf("job %+v", j)
+	}
 }
 
 func TestGroupJobRefusalsOverHTTP(t *testing.T) {
@@ -94,7 +199,7 @@ func saveReview(t *testing.T, commonDir string, number int) {
 func TestPrepareGroupReadsEveryMemberAndNeedsTheirReviews(t *testing.T) {
 	ctx := context.Background()
 	registry, clone := registeredClone(t)
-	groups, err := reviewgroups.Open(filepath.Join(t.TempDir(), "groups.sqlite"))
+	groups, err := reviewgroups.Open(filepath.Join(appdbtest.TempDir(t), "groups.sqlite"))
 	if err != nil {
 		t.Fatal(err)
 	}

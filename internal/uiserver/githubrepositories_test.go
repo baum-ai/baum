@@ -7,11 +7,12 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/baum-ai/baum/internal/appdb/appdbtest"
 	"github.com/baum-ai/baum/internal/repos"
 )
 
 func TestLocalAPIMountsTheGitHubRepositoriesProvider(t *testing.T) {
-	registry, err := repos.Open(filepath.Join(t.TempDir(), "registry.sqlite"))
+	registry, err := repos.Open(filepath.Join(appdbtest.TempDir(t), "registry.sqlite"))
 	if err != nil {
 		t.Fatal(err)
 	}

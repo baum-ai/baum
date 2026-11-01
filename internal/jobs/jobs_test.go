@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/baum-ai/baum/agent"
+	"github.com/baum-ai/baum/internal/appdb"
 )
 
 type fakeExecutor struct {
@@ -28,6 +29,14 @@ type fakeExecutor struct {
 	release          chan struct{}
 	// prepareErr, when set, fails Prepare.
 	prepareErr error
+	// awaiting are the members a group finds without a saved review.
+	awaiting []int
+	// members, when set, replaces a group's member heads; groupFail, when
+	// set, fails the next group run before it waits.
+	members   string
+	groupFail error
+	// account is the GitHub account a preparation reads with.
+	account string
 }
 
 func (f *fakeExecutor) Prepare(_ context.Context, item Item) (Prepared, string, error) {
@@ -44,10 +53,30 @@ func (f *fakeExecutor) Prepare(_ context.Context, item Item) (Prepared, string, 
 	if version == "" {
 		version = "2026-10-01"
 	}
-	return Prepared{ConfigDigest: f.digest, PriceVersion: version, Item: item, Repository: "org/repo", HeadSHA: f.head, Backend: backend, Model: "claude-sonnet-4-5", RequiresIsolationConfirmation: f.restricted}, version, nil
+	p := Prepared{ConfigDigest: f.digest, PriceVersion: version, Item: item, Repository: "org/repo", HeadSHA: f.head, Backend: backend, Model: "claude-sonnet-4-5", RequiresIsolationConfirmation: f.restricted}
+	if item.Group != "" {
+		p.Members = "1@first,2@first"
+		p.account = f.account
+		if f.members != "" {
+			p.Members = f.members
+		}
+		if item.AwaitMembers {
+			p.Awaiting = f.awaiting
+		}
+	}
+	return p, version, nil
 }
 func (f *fakeExecutor) Execute(ctx context.Context, p Prepared, progress func(Progress)) (*float64, error) {
 	f.started <- p
+	f.mu.Lock()
+	fail := f.groupFail
+	if p.Group != "" {
+		f.groupFail = nil
+	}
+	f.mu.Unlock()
+	if p.Group != "" && fail != nil {
+		return nil, fail
+	}
 	a := &agent.Accounting{}
 	a.Add(agent.Result{Model: "reported-model", Calls: 2, Tokens: 10, Usage: agent.Usage{Input: 6, Output: 4, CacheRead: 100}}, false)
 	progress(Progress{Phase: "repairing", Calls: 2, Tokens: 10, Repairs: 1, Accounting: a, CostReason: "speed_not_reported"})
@@ -144,6 +173,104 @@ func TestQueuedReplacementBatchEstimateAndNoParallelPR(t *testing.T) {
 	case <-f.started:
 		t.Fatal("concurrency limit exceeded")
 	default:
+	}
+}
+func TestConcurrencyLimitsRunningJobsAndChangesLive(t *testing.T) {
+	f := &fakeExecutor{head: "first", started: make(chan Prepared, 10), release: make(chan struct{})}
+	q, err := Open(filepath.Join(privateDir(t), "jobs.json"), f, 2, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(q.Close)
+	started := func(want int) {
+		t.Helper()
+		for range want {
+			select {
+			case <-f.started:
+			case <-time.After(3 * time.Second):
+				t.Fatal("job did not start")
+			}
+		}
+		select {
+		case p := <-f.started:
+			t.Fatalf("job started beyond the limit: %+v", p.Item)
+		case <-time.After(50 * time.Millisecond):
+		}
+	}
+	batch := estimate(t, q, "batch", Item{Clone: "clone", PR: 1}, Item{Clone: "clone", PR: 2}, Item{Clone: "clone", PR: 3}, Item{Clone: "clone", PR: 4})
+	if _, err := q.Submit(context.Background(), batch.ID, true, false); err != nil {
+		t.Fatal(err)
+	}
+	started(2)
+	if err := q.SetConcurrency(3); err != nil {
+		t.Fatal(err)
+	}
+	started(1)
+	// Lowering the limit stops nothing; the last job waits until one runs.
+	if err := q.SetConcurrency(1); err != nil {
+		t.Fatal(err)
+	}
+	f.release <- struct{}{}
+	f.release <- struct{}{}
+	started(0)
+	f.release <- struct{}{}
+	started(1)
+	for _, n := range []int{0, 5} {
+		if q.SetConcurrency(n) == nil {
+			t.Errorf("concurrency %d accepted", n)
+		}
+	}
+}
+func TestJobWaitsWhileAnotherOfItsPullRequestRuns(t *testing.T) {
+	f := &fakeExecutor{head: "first", started: make(chan Prepared, 10), release: make(chan struct{})}
+	q, err := Open(filepath.Join(privateDir(t), "jobs.json"), f, 4, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(q.Close)
+	submit := func(item Item) {
+		t.Helper()
+		if _, err := q.Submit(context.Background(), estimate(t, q, "single", item).ID, true, false); err != nil {
+			t.Fatal(err)
+		}
+	}
+	next := func() Item {
+		t.Helper()
+		select {
+		case p := <-f.started:
+			return p.Item
+		case <-time.After(3 * time.Second):
+			t.Fatal("job did not start")
+		}
+		return Item{}
+	}
+	submit(Item{Clone: "clone", PR: 1})
+	submit(Item{Clone: "clone", PR: 1, Kind: KindFix})
+	submit(Item{Clone: "clone", PR: 2})
+	// The fix of pull request 1 waits for its review; pull request 2 does not.
+	if a, b := next(), next(); a.PR+b.PR != 3 || a.Kind != "" || b.Kind != "" {
+		t.Fatalf("started %+v and %+v", a, b)
+	}
+	select {
+	case p := <-f.started:
+		t.Fatalf("started beside its pull request's review: %+v", p.Item)
+	case <-time.After(50 * time.Millisecond):
+	}
+	f.release <- struct{}{}
+	f.release <- struct{}{}
+	if fix := next(); fix.PR != 1 || fix.Kind != KindFix {
+		t.Fatalf("started %+v", fix)
+	}
+	// A group's review waits for a fix of a member.
+	submit(Item{Clone: "clone", Group: "stack"})
+	select {
+	case p := <-f.started:
+		t.Fatalf("group started beside a member's fix: %+v", p.Item)
+	case <-time.After(50 * time.Millisecond):
+	}
+	f.release <- struct{}{}
+	if group := next(); group.Group != "stack" {
+		t.Fatalf("started %+v", group)
 	}
 }
 func TestSameHeadWithChangedInputsSupersedesQueuedJob(t *testing.T) {
@@ -281,7 +408,7 @@ func TestUnpricedBackendRuns(t *testing.T) {
 func TestRestartInterruptsRunningAndKeepsHistory(t *testing.T) {
 	path := filepath.Join(privateDir(t), "jobs.json")
 	raw, _ := json.Marshal([]Job{{ID: "old", State: "running", Phase: "generating"}, {ID: "completed", State: "completed"}})
-	if e := os.WriteFile(path, raw, 0600); e != nil {
+	if e := appdb.Write(path, "state", "jobs", raw); e != nil {
 		t.Fatal(e)
 	}
 	f := &fakeExecutor{}
@@ -294,7 +421,7 @@ func TestRestartInterruptsRunningAndKeepsHistory(t *testing.T) {
 	if jobs[0].State != "interrupted" || jobs[0].Reason != "interrupted" || jobs[1].State != "completed" {
 		t.Fatal(jobs)
 	}
-	raw, e = os.ReadFile(path)
+	raw, e = appdb.Read(path, "state", "jobs")
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -314,7 +441,7 @@ func TestShutdownRecordsRunningJobInterrupted(t *testing.T) {
 	if err = q.Shutdown(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	raw, err := os.ReadFile(q.path)
+	raw, err := appdb.Read(q.path, "state", "jobs")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -523,7 +650,7 @@ func TestQueuedMutationsNotifyAfterPersistenceOutsideMutex(t *testing.T) {
 	notifications := make(chan Job, 10)
 	q.changed = func(job Job) {
 		_ = q.List()
-		raw, e := os.ReadFile(q.path)
+		raw, e := appdb.Read(q.path, "state", "jobs")
 		if e != nil {
 			t.Error(e)
 		}
@@ -590,7 +717,7 @@ func TestUsageProgressIsDurableAndDetached(t *testing.T) {
 	if q.List()[0].Accounting.Usage.Input != 6 {
 		t.Fatal("List leaked mutable accounting")
 	}
-	raw, err := os.ReadFile(q.path)
+	raw, err := appdb.Read(q.path, "state", "jobs")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -617,4 +744,21 @@ func TestUsageProgressIsDurableAndDetached(t *testing.T) {
 	if reopened.List()[0].Accounting.Usage.Input != 6 {
 		t.Fatal("lost usage after restart")
 	}
+}
+
+func TestSeparateDatabasePathsHaveIndependentQueueLocks(t *testing.T) {
+	dir := privateDir(t)
+	executor := func() *fakeExecutor {
+		return &fakeExecutor{head: "head", started: make(chan Prepared, 1), release: make(chan struct{})}
+	}
+	first, err := Open(filepath.Join(dir, "first.sqlite"), executor(), 1, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer first.Close()
+	second, err := Open(filepath.Join(dir, "second.sqlite"), executor(), 1, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer second.Close()
 }

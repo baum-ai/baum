@@ -528,14 +528,14 @@ impl Tracker {
 
         let plans = seen.plans.as_deref().filter(|_| seen.link == Link::Up);
         let (icon, summary) = match seen.link {
-            Link::Connecting => (Icon::Idle, "Connecting to the baum daemon".to_string()),
+            Link::Connecting => (Icon::Idle, "Connecting to baum…".to_string()),
             Link::Down => (
                 Icon::Attention,
                 "Background reviews are not running".to_string(),
             ),
             Link::Up if !attention.is_empty() => (Icon::Attention, summary(running, queued)),
             Link::Up if seen.jobs.is_none() => {
-                (Icon::Idle, "Checking background reviews".to_string())
+                (Icon::Idle, "Checking background reviews…".to_string())
             }
             Link::Up if running + queued > 0 => (Icon::Running, summary(running, queued)),
             Link::Up => (Icon::Idle, summary(running, queued)),
@@ -749,7 +749,7 @@ mod tests {
         gap.jobs = None;
         gap.automatic = None;
         let view = tracker.update(&gap);
-        assert_eq!(view.summary, "Checking background reviews");
+        assert_eq!(view.summary, "Checking background reviews…");
         assert_eq!(view.automatic, None);
         let view = tracker.update(&up(jobs(0, 0, &["old"])));
         assert_eq!(view.icon, Icon::Idle);
@@ -812,7 +812,7 @@ mod tests {
         );
         assert_eq!(
             view.tooltip(),
-            "baum: Checking background reviews · 3 pull requests waiting on you"
+            "baum: Checking background reviews… · 3 pull requests waiting on you"
         );
         assert_eq!(view.badge(), Some(3));
         let one = waiting(Link::Up, Some(1));

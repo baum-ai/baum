@@ -92,100 +92,6 @@ const (
 	VersionRetired  = "retired"
 )
 
-// migrate brings a store an earlier release made up to the schema, in one
-// transaction: the ledger's stage, item and rejections columns, and the pull
-// requests' fork and default branch columns, and the features' split time,
-// the sync state's history listing and the feature versions' taxonomy,
-// unpriced calls and why one is unseeded,
-// added when missing. Pull
-// requests listed before the latter are listed again: the sync state's ETag
-// and cursor are reset. The columns are read without a lock; only when one is
-// missing is the write lock taken and they are read again, so a store two
-// processes open at once is migrated by one of them.
-func migrate(ctx context.Context, db *sql.DB) error {
-	// A migrated store is read without the write lock.
-	if missing, err := missingColumns(ctx, db); err != nil || len(missing) == 0 {
-		return err
-	}
-	conn, err := db.Conn(ctx)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = conn.Close() }()
-	if _, err := conn.ExecContext(ctx, `BEGIN IMMEDIATE`); err != nil {
-		return err
-	}
-	committed := false
-	defer func() {
-		if !committed {
-			_, _ = conn.ExecContext(context.WithoutCancel(ctx), `ROLLBACK`)
-		}
-	}()
-	// Read again under the lock: another process may have migrated it.
-	missing, err := missingColumns(ctx, conn)
-	if err != nil {
-		return err
-	}
-	relist := false
-	for _, column := range missing {
-		if _, err := conn.ExecContext(ctx, column.ddl); err != nil {
-			return err
-		}
-		relist = relist || column.relist
-	}
-	if relist {
-		if _, err := conn.ExecContext(ctx, `UPDATE pull_sync SET etag='', cursor_updated_at=NULL`); err != nil {
-			return err
-		}
-	}
-	_, err = conn.ExecContext(ctx, `COMMIT`)
-	committed = err == nil
-	return err
-}
-
-// migration is a column migrate adds, and whether adding it lists the pull
-// requests again.
-type migration struct {
-	table, name, ddl string
-	relist           bool
-}
-
-var migrations = []migration{
-	{"capture_attempt", "stage", `ALTER TABLE capture_attempt ADD COLUMN stage TEXT NOT NULL DEFAULT 'capture'`, false},
-	{"capture_attempt", "item", `ALTER TABLE capture_attempt ADD COLUMN item TEXT`, false},
-	{"capture_attempt", "rejections", `ALTER TABLE capture_attempt ADD COLUMN rejections INTEGER NOT NULL DEFAULT 0`, false},
-	{"pull_request", "cross_repository", `ALTER TABLE pull_request ADD COLUMN cross_repository INTEGER NOT NULL DEFAULT 0`, true},
-	{"pull_request", "default_branch", `ALTER TABLE pull_request ADD COLUMN default_branch TEXT NOT NULL DEFAULT ''`, true},
-	{"feature", "split_at", `ALTER TABLE feature ADD COLUMN split_at INTEGER`, false},
-	{"pull_sync", "history_listed_at", `ALTER TABLE pull_sync ADD COLUMN history_listed_at INTEGER`, false},
-	{"feature_version", "taxonomy_id", `ALTER TABLE feature_version ADD COLUMN taxonomy_id INTEGER`, false},
-	{"feature_version", "unpriced_calls", `ALTER TABLE feature_version ADD COLUMN unpriced_calls INTEGER NOT NULL DEFAULT 0`, false},
-	{"feature_version", "unseeded", `ALTER TABLE feature_version ADD COLUMN unseeded TEXT NOT NULL DEFAULT ''`, false},
-}
-
-// missingColumns are the migrations whose column the store lacks.
-func missingColumns(ctx context.Context, q interface {
-	QueryContext(context.Context, string, ...any) (*sql.Rows, error)
-}) ([]migration, error) {
-	have := map[string]bool{}
-	for _, table := range []string{"capture_attempt", "pull_request", "feature", "pull_sync", "feature_version"} {
-		names, err := collect(scanString)(q.QueryContext(ctx, `SELECT name FROM pragma_table_info(?)`, table))
-		if err != nil {
-			return nil, err
-		}
-		for _, name := range names {
-			have[table+"."+name] = true
-		}
-	}
-	var missing []migration
-	for _, m := range migrations {
-		if !have[m.table+"."+m.name] {
-			missing = append(missing, m)
-		}
-	}
-	return missing, nil
-}
-
 // searchSchema is the Timeline's keyword index (timeline.go): FTS5 tables
 // over the decisions', features' and pull requests' text, kept by triggers.
 const searchSchema = `
@@ -474,6 +380,52 @@ func (s *Store) PullsWithCommitsSince(ctx context.Context, repository string, si
 FROM pull_request p WHERE repository=?1 AND EXISTS
 (SELECT 1 FROM pull_commit c WHERE c.repository=p.repository AND c.number=p.number AND c.committed_at >= ?2) ORDER BY number`,
 		repository, since.UnixMilli())
+}
+
+// FlowPull is one pull request for Analytics' pull request flow: who opened
+// it, when, and when it merged.
+type FlowPull struct {
+	Author    string
+	Draft     bool
+	CreatedAt time.Time
+	MergedAt  *time.Time
+}
+
+// PullFlow lists the repository's pull requests not opened by a bot that
+// were opened or merged at or after since, and whether the feature log has
+// listed the repository yet: one it never listed has none to give. The
+// repository is named as the feature log stores it, so the primary key finds
+// its rows.
+func (s *Store) PullFlow(ctx context.Context, repository string, since time.Time) ([]FlowPull, bool, error) {
+	var listed bool
+	err := s.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM pull_sync WHERE repository=? AND cursor_updated_at IS NOT NULL)`,
+		repository).Scan(&listed)
+	if err != nil || !listed {
+		return nil, listed, err
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT author, draft, created_at, merged_at FROM pull_request
+WHERE repository=?1 AND bot=0 AND (created_at >= ?2 OR merged_at >= ?2) ORDER BY created_at`,
+		repository, since.UnixMilli())
+	if err != nil {
+		return nil, true, err
+	}
+	defer func() { _ = rows.Close() }()
+	var out []FlowPull
+	for rows.Next() {
+		var p FlowPull
+		var created int64
+		var merged sql.NullInt64
+		if err := rows.Scan(&p.Author, &p.Draft, &created, &merged); err != nil {
+			return nil, true, err
+		}
+		p.CreatedAt = time.UnixMilli(created)
+		if merged.Valid {
+			at := time.UnixMilli(merged.Int64)
+			p.MergedAt = &at
+		}
+		out = append(out, p)
+	}
+	return out, true, rows.Err()
 }
 
 func (s *Store) pulls(ctx context.Context, query string, args ...any) ([]StoredPull, error) {

@@ -3,10 +3,11 @@ import type { ReactNode } from "react";
 import { type Brand, harnessBrand, modelBrand } from "../brands";
 import { harnessName } from "../agent-names";
 import { cn } from "./classnames";
+import { BRAND_ARTWORK } from "./brand-artwork";
 
 /** The product marks of the agents and model makers a session names, drawn
- *  in `currentColor`, which the mark sets to the brand's colour token
- *  (`--brand-mark-*` in `viewer.css`). Paths are the vendors' own marks as
+ *  in their fixed artwork colors. Monochrome marks inherit the text color.
+ *  Paths are the vendors' own marks as
  *  published by Lobe Icons (MIT), on their 24-unit grid. */
 const MARKS: Record<Brand, string[]> = {
   claude: [
@@ -64,8 +65,7 @@ export function BrandMark({
       role={title ? "img" : undefined}
       aria-label={title ? NAMES[brand] : undefined}
       focusable="false"
-      // Always the vendor's own colour: the marks are not ours to recolour.
-      style={{ color: `var(--brand-mark-${brand})` }}
+      style={{ color: BRAND_ARTWORK[brand] }}
       className={cn("flex-none", className)}
     >
       {MARKS[brand].map((d) => (

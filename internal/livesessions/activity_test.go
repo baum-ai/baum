@@ -5,11 +5,31 @@ import (
 	"fmt"
 	"net/http/httptest"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
 	"github.com/baum-ai/baum/internal/hookevents"
 )
+
+func TestRelativeTo(t *testing.T) {
+	cases := []struct{ dir, target, want string }{
+		{"/work/demo", "/work/demo/src/a.go", "src/a.go"},
+		{"/work/demo", "/work/demo/../other/a.go", "/work/demo/../other/a.go"},
+		{"/work/demo", "/work/demo-other/a.go", "/work/demo-other/a.go"},
+		{"/work/demo", "src/a.go", "src/a.go"},
+		{"/", "/src/a.go", "src/a.go"},
+		{"/work/demo", "/work/demo", "."},
+	}
+	if runtime.GOOS == "windows" {
+		cases = append(cases, struct{ dir, target, want string }{`C:\work\demo`, `C:\work\demo\src\a.go`, "src/a.go"})
+	}
+	for _, c := range cases {
+		if got := relativeTo(c.dir, c.target); got != c.want {
+			t.Errorf("relativeTo(%q, %q) = %q, want %q", c.dir, c.target, got, c.want)
+		}
+	}
+}
 
 // activities is the list's activity of each session, by agent and id, as the
 // JSON the list serves.

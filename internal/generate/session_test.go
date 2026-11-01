@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -14,6 +15,7 @@ import (
 	"github.com/baum-ai/baum/internal/assemble/assembletest"
 	"github.com/baum-ai/baum/internal/generate"
 	"github.com/baum-ai/baum/internal/generate/generatetest"
+	"github.com/baum-ai/baum/internal/privatefs"
 	"github.com/baum-ai/baum/internal/store"
 	"github.com/baum-ai/baum/sessions/collector/claudecode"
 )
@@ -64,8 +66,15 @@ func TestKeepSessionRecordsTheSessionAndKeepsTheDirectory(t *testing.T) {
 	if session.Directory != result.RunDir {
 		t.Errorf("run dir %q, session dir %q", result.RunDir, session.Directory)
 	}
-	if info, err := os.Stat(session.Directory); err != nil || info.Mode().Perm() != 0o700 {
+	if info, err := os.Stat(session.Directory); err != nil || !info.IsDir() || (runtime.GOOS != "windows" && info.Mode().Perm() != 0o700) {
 		t.Fatalf("kept directory: %v %v", info, err)
+	}
+	privacy := filepath.Join(session.Directory, "privacy-test")
+	if err := os.WriteFile(privacy, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if info, err := os.Stat(privacy); err != nil || !privatefs.PrivateFile(privacy, info) {
+		t.Fatalf("kept directory did not keep its file private: %v %v", info, err)
 	}
 	if _, err := os.Stat(filepath.Join(session.Directory, "bundle.json")); err != nil {
 		t.Error(err)

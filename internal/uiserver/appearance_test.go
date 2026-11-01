@@ -8,11 +8,12 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/baum-ai/baum/internal/appdb/appdbtest"
 	"github.com/baum-ai/baum/internal/repos"
 )
 
 func TestAppearanceSurvivesNewDaemonOrigin(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "repos.sqlite")
+	path := filepath.Join(appdbtest.TempDir(t), "repos.sqlite")
 	start := func() (*httptest.Server, func()) {
 		t.Helper()
 		registry, err := repos.Open(path)

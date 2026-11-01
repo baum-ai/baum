@@ -105,8 +105,9 @@ verified, baum uses a copy embedded at release. The hosted service commands
 are described [below](#hosted-service-commands). Tokens are read from the
 environment, `gh auth token` or the 0600 config file and are never written
 anywhere else. Local inbox discovery also reads GitHub's REST API using that
-same token and derived host, without redirects or extra scopes. Its private
-0600 cache contains minimal inbox metadata and ETags, partitioned by a credential
+same token and derived host, without redirects or extra scopes. Its private application database
+contains minimal inbox metadata and ETags in `cache/discovery/<hash>` documents,
+partitioned by a credential
 fingerprint and repository. Tokens, PR bodies and signed image URLs are never
 put in that cache. Cached and offline results are marked stale; unreadable
 author write permissions remain unknown, rather than granting automatic work.
@@ -167,10 +168,12 @@ to a baum server until you run `baum login` (or provide a `BAUM_TOKEN`).
   `~/.codex/hooks.json` for Codex. `baum setup` does the same for a hosted
   install or a logged-in user, unless `--skip-user-hooks` or `--skip-entire`,
   and its `--all` plan names those files first. The hooks run in every
-  directory an agent works in, so they run baum only in a Git repository with
-  Entire enabled where no other hook the agent runs (the repository's, yours,
-  managed policy's, `/etc/codex`'s; not plugins') already hands the event to
-  Entire, and there only under the rules above; everywhere else they do
+  directory an agent works in, so they run baum only in a Git repository
+  where no other hook the agent runs (the repository's, yours, managed
+  policy's, `/etc/codex`'s; not plugins') already hands the event to Entire,
+  and there only under the rules above. In a repository without Entire enabled
+  they run only if a baum daemon has run for you, and then only record the
+  event for it: no Entire, no Git hooks. Everywhere else they do
   nothing. They read local files only. Nothing else in the files changes; the
   previous version is kept in `~/.local/state/baum/backups/` (or under
   `$XDG_STATE_HOME`), a file baum cannot parse is left alone, and root is
@@ -841,9 +844,28 @@ daemon's authenticated Host/Origin boundary.
 For the Analytics page the daemon also reads the plans every 15 minutes while
 it runs, through the same cache, so Claude's endpoint is asked at most that
 often even with no window open. It keeps only the snapshot time, provider,
-window name, percent used and reset time, in `plan-usage-history.json` in its
+window name, percent used and reset time, in the `state/plan-usage-history` document in `app.sqlite` in its
 state directory (`$XDG_STATE_HOME/baum`, default `~/.local/state/baum`), for 90
 days.
+
+### Local application database
+
+Durable repository settings, review groups, decisions/features, jobs, inboxes,
+analytics/history and persistent caches share `$XDG_STATE_HOME/baum/app.sqlite`
+(default `~/.local/state/baum/app.sqlite`). The containing directory and file
+are private to the current user (0700/0600 on Unix; a current-user-only DACL on
+Windows). SQLite journals inherit that protection. Small state/cache records
+are JSON documents in database rows, rather than separate files. The schema
+baseline is identified and versioned; newer and unrecognized databases are
+refused without being replaced. Pre-release storage is not imported.
+
+Per-clone review versions, attachments and chats remain in the clone's
+`versions.sqlite`. OS credential storage, optional configuration, daemon
+launch credentials, locks, hook spool/event records, live-session recovery
+snapshots, logs, fix transcripts and agent work directories remain separate
+so startup and failure recovery can work independently of the database.
+See the [database storage map and release checks](internal/appdb/README.md).
+
 
 ### Analytics
 
@@ -854,7 +876,7 @@ computer, plus one GitHub search per picked repository:
   stores (`~/.claude/projects`, `~/.codex/sessions`, Cursor's `state.vscdb`),
   the same files the PR page reads, but only sessions whose working directory is
   inside a registered clone and that were written in the last 90 days. It keeps
-  aggregates only, in `analytics-index.json` in its state directory (owner-only, 0600): per
+  aggregates only, in the `cache/analytics-index` document in its private application database: per
   session file, its path, size and modification time (to
   read only what changed), the agent, session id, clone and repository, the
   top-level branch, start and end, active seconds by hour, counts of human
@@ -868,12 +890,12 @@ computer, plus one GitHub search per picked repository:
   repository the PR page uses; nothing is fetched. They are held in memory for
   five minutes and not stored.
 - **Fix transcripts.** What a fix's agent said and ran, with its tool output,
-  in `transcripts/` beside `jobs.json` (private files, secrets masked, bounded,
+  in `transcripts/` beside `app.sqlite` (private files, secrets masked, bounded,
   the 50 latest fixes). It stays on your machine.
-- **baum's own work.** The jobs list (`jobs.json`) and a small ledger,
-  `analytics-actions.json`, of the merges, branch updates and check re-runs you
-  made from the app (time, kind, repository and pull request number), kept 90
-  days.
+- **baum's own work.** The jobs document (`state/jobs` in `app.sqlite`) and a
+  small ledger (`state/analytics-actions` in that database) of the merges,
+  branch updates and check re-runs you made from the app (time, kind,
+  repository and pull request number), kept 90 days.
 - **Delivery.** For each picked repository, one GraphQL search of GitHub with
   your GitHub token for the pull requests you opened in the last 90 days
   (`repo:owner/name is:pr author:@me`): number, state, draft, created and
@@ -998,7 +1020,9 @@ What it runs while it is up:
   `baum internal generate` does. Some you started in the app; the others it
   starts by itself, unattended (below). Prices only report what usage would
   cost at API prices: baum shows none before a run, and no price limits,
-  refuses or decides a run. The token and call budgets bound each run.
+  refuses or decides a run. Each run's time limit bounds it: 10 minutes for
+  a review and 30 for a fix or any other agent run by default, set in
+  Settings; call and token budgets apply only when the config file sets them.
 
 Automatic generation is on by default and runs without anyone watching. It
 starts a job when a pull request in a registered repository that you authored,
@@ -1013,8 +1037,8 @@ confirmation in the app. Each automatic job is prepared exactly like a
 confirmed one (same backend, model, budgets and recheck of the head before any
 model call, which also stops it if the pull request was converted to a draft
 while it waited). A model without a known price runs automatically like any
-other. What it can use: up to the configured per-run token and call budgets
-for each new head (twice when a daemon stop or restart interrupts the first
+other. What it can use: one review run, within its time limit (and any call
+and token budgets the config file sets), for each new head (twice when a daemon stop or restart interrupts the first
 run, which is retried once; failed or cancelled runs are not retried). There
 is no daily or dollar limit: baum cannot price what a subscription bills, so
 it sets none; turn automatic generation off for a repository to stop it.
@@ -1287,8 +1311,7 @@ Origin and Host checks as every application route. How it works:
   session's end drops one queued before it.
 - Pending requests and messages are held in the daemon's memory only: never
   written to disk, logged or sent to a baum server, and gone when the daemon
-  stops. Only the Codex setting is saved, in `agent-requests.json` in the
-  daemon's state directory.
+  stops. Only the Codex setting is saved, in the `state/agent-requests` document in `app.sqlite`.
 
 Document selectors must name a registered clone. Linked transcripts use the
 same redaction and linked-session allowlist as `baum internal view`; file patches are
@@ -1398,8 +1421,13 @@ installs its bundled `baum` as your `baum` command, because agent hooks run
   runs, since its own files vanish when it quits.
 - On Windows it keeps a copy of its `baum.exe` alone in a directory of its
   data directory and adds that directory to the front of your user `PATH`.
-- It records what it created in `setup.json` in its configuration directory.
-  Removing the command deletes only that link, and only while it still points
+- It records what it created in the `setup` section of `desktop.json` in its
+  configuration directory. Notification preferences, zoom and update state
+  use other sections of the same file. Native writes preserve unrelated
+  sections under one process-wide lock and replace the file atomically
+  (mode 0600 on Unix). Corrupt JSON or a malformed target section is never
+  overwritten; command install/removal refuses unreadable setup records
+  before changing a link. Removing the command deletes only that link, and only while it still points
   at the app's baum, and puts back a baum it replaced; on Windows it removes
   the `PATH` entry. Since you (and your programs) can edit that file, the app
   asks for the password to remove a link only when the record has the shape

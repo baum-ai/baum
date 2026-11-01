@@ -14,15 +14,16 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/spf13/cobra"
 
+	"github.com/baum-ai/baum/hosted/agentplugins"
 	"github.com/baum-ai/baum/internal/agentrequests"
 	"github.com/baum-ai/baum/internal/analytics"
+	"github.com/baum-ai/baum/internal/appdb"
 	"github.com/baum-ai/baum/internal/automatic"
 	"github.com/baum-ai/baum/internal/background"
 	"github.com/baum-ai/baum/internal/chat"
@@ -32,6 +33,7 @@ import (
 	"github.com/baum-ai/baum/internal/decisionlog"
 	"github.com/baum-ai/baum/internal/discovery"
 	"github.com/baum-ai/baum/internal/doctor"
+	"github.com/baum-ai/baum/internal/facts"
 	"github.com/baum-ai/baum/internal/focus"
 	"github.com/baum-ai/baum/internal/generate"
 	"github.com/baum-ai/baum/internal/github"
@@ -54,6 +56,7 @@ import (
 	"github.com/baum-ai/baum/internal/shellenv"
 	"github.com/baum-ai/baum/internal/transcript"
 	"github.com/baum-ai/baum/internal/uiserver"
+	"github.com/baum-ai/baum/internal/uistate"
 )
 
 // Seams for tests.
@@ -89,8 +92,8 @@ that path is too long for a socket. TMPDIR never changes where it is.`,
 		Long: `Ensure starts the daemon unless one of this version or newer is running,
 waits until it serves, and prints its status. An older daemon is stopped
 (running jobs are recorded as interrupted) and replaced. A daemon speaking a
-newer control protocol is an error. --port and --concurrency apply only when
-this command starts the daemon.`,
+newer control protocol is an error. --port applies only when this command
+starts the daemon.`,
 		Args: cobra.NoArgs,
 		RunE: runDaemonEnsure,
 	}
@@ -133,23 +136,18 @@ is already running.`,
 
 func startFlags(cmd *cobra.Command) {
 	cmd.Flags().Int("port", 0, "serve the app on this loopback port instead of a free one")
-	cmd.Flags().Int("concurrency", 1, "maximum concurrent generation jobs (1–16)")
+	// The app's settings choose how many jobs run at once; an older daemon
+	// may still pass the flag when it respawns a newer one.
+	cmd.Flags().Int("concurrency", 0, "ignored")
+	_ = cmd.Flags().MarkDeprecated("concurrency", "set how many jobs run at once in the app's settings, under This computer")
 }
 
 func startOptions(cmd *cobra.Command) (daemon.StartOptions, error) {
 	port, _ := cmd.Flags().GetInt("port")
-	concurrency, _ := cmd.Flags().GetInt("concurrency")
 	if port < 0 || port > 65535 {
 		return daemon.StartOptions{}, fmt.Errorf("--port %d is out of range", port)
 	}
-	if concurrency < 1 || concurrency > 16 {
-		return daemon.StartOptions{}, fmt.Errorf("--concurrency %d is out of range (1–16)", concurrency)
-	}
-	start := daemon.StartOptions{Port: port}
-	if concurrency != 1 {
-		start.Concurrency = concurrency
-	}
-	return start, nil
+	return daemon.StartOptions{Port: port}, nil
 }
 
 func daemonClient(cmd *cobra.Command, start daemon.StartOptions) (*daemon.Client, error) {
@@ -266,10 +264,6 @@ func runDaemonRun(cmd *cobra.Command, _ []string) error {
 	}
 	ctx, stop := viewContext()
 	defer stop()
-	concurrency := start.Concurrency
-	if concurrency == 0 {
-		concurrency = 1
-	}
 	err = daemon.Run(ctx, daemon.Options{
 		Paths:      paths,
 		Version:    version(),
@@ -284,7 +278,7 @@ func runDaemonRun(cmd *cobra.Command, _ []string) error {
 			return nil
 		},
 		Start: func(ctx context.Context, server *uiserver.Server) (daemon.App, error) {
-			return localApplication(paths, concurrency, logger)(ctx, server)
+			return localApplication(paths, logger)(ctx, server)
 		},
 		Respawn: func(executable string, status daemon.Status) error {
 			return respawnDaemon(paths, executable, status, start)
@@ -312,9 +306,6 @@ func respawnDaemon(paths daemon.Paths, executable string, status daemon.Status, 
 	args := []string{"daemon", "run", "--detached"}
 	if u, err := url.Parse(status.App); err == nil && u.Port() != "" {
 		args = append(args, "--port", u.Port())
-	}
-	if start.Concurrency != 0 {
-		args = append(args, "--concurrency", strconv.Itoa(start.Concurrency))
 	}
 	_, err := daemon.Spawn(paths, exec.Command(executable, args...))
 	return err
@@ -374,7 +365,7 @@ func applyLoginEnvironment(ctx context.Context, log *slog.Logger) {
 // A session ending or a push in a registered clone refreshes its pull requests
 // at once (hookrefresh), and reaches the scheduler only through
 // Scheduler.Trigger.
-func localApplication(paths daemon.Paths, concurrency int, log *slog.Logger) func(context.Context, *uiserver.Server) (daemon.App, error) {
+func localApplication(paths daemon.Paths, log *slog.Logger) func(context.Context, *uiserver.Server) (daemon.App, error) {
 	return func(ctx context.Context, server *uiserver.Server) (daemon.App, error) {
 		cfg, err := config.Load(config.Overrides{})
 		if err != nil {
@@ -390,19 +381,20 @@ func localApplication(paths daemon.Paths, concurrency int, log *slog.Logger) fun
 		discover := discovery.New(github.NewFromConfig(cfg, github.Options{}), "")
 		index := &reviewindex.Service{Registry: registry, Discovery: discover}
 		worker := &background.Service{Registry: registry, Discovery: discover, Saved: background.Saved, Refresh: background.Local{Client: github.NewFromConfig(cfg, github.Options{}), Config: cfg}.Refresh, Changed: changed}
-		state, err := jobs.Directory()
+		database, err := appdb.Path()
 		if err != nil {
 			_ = registry.Close()
 			events.Close()
 			return daemon.App{}, err
 		}
+		state := filepath.Dir(database)
 		// Jobs are priced with the newest verified list, so reinstall the
 		// downloaded one before workers start.
 		if err := pricing.LoadPersisted(state); err != nil {
 			log.Warn("stored price list not loaded", "error", err)
 		}
 		// Review groups live in the daemon's state, not in a clone.
-		groups, err := reviewgroups.Open(filepath.Join(state, "groups.sqlite"))
+		groups, err := reviewgroups.Open(database)
 		if err != nil {
 			_ = registry.Close()
 			events.Close()
@@ -411,7 +403,7 @@ func localApplication(paths daemon.Paths, concurrency int, log *slog.Logger) fun
 		// Automatic generation is separate from the model-free background
 		// refresh: discovery hands it snapshots, and it queues through the
 		// same runner as confirmed jobs.
-		scheduler := &automatic.Scheduler{Registry: registry, Path: filepath.Join(state, "automatic.json"), Discover: discover.PollNow, Groups: groups, Log: log,
+		scheduler := &automatic.Scheduler{Registry: registry, Path: database, Discover: discover.PollNow, Groups: groups, Log: log,
 			Hold: func() bool {
 				status, ok := daemon.Self()
 				return ok && (status.Stopping || status.RestartPending)
@@ -430,7 +422,7 @@ func localApplication(paths daemon.Paths, concurrency int, log *slog.Logger) fun
 			}
 			// Stacked pull requests are grouped for review by default.
 			if !snapshot.Stale && snapshot.Error == "" {
-				if synced, err := groups.SyncStacks(ctx, snapshot.Repository, snapshot.PullRequests); err != nil {
+				if synced, err := groups.SyncStacks(ctx, snapshot.Repository, snapshot.PullRequests, snapshot.Observations); err != nil {
 					log.Warn("stack groups not updated", "repository", snapshot.Repository, "error", err)
 				} else if synced {
 					changed()
@@ -442,7 +434,8 @@ func localApplication(paths daemon.Paths, concurrency int, log *slog.Logger) fun
 		chats := &chat.Service{Registry: registry, Config: cfg, Log: log}
 		// Feature builds run on the feature worker made below.
 		builds := &featureBuilder{}
-		queue, err := jobs.Open(filepath.Join(state, "jobs.json"), &jobs.Local{Registry: registry, Groups: groups, Config: cfg, Client: github.NewFromConfig(cfg, github.Options{}), Features: builds, Chat: chats}, concurrency, func(job jobs.Job) {
+		prefs, _ := registry.Preferences(ctx)
+		queue, err := jobs.Open(database, &jobs.Local{Registry: registry, Groups: groups, Config: cfg, Client: github.NewFromConfig(cfg, github.Options{}), Features: builds, Chat: chats, Log: log}, prefs.Concurrency(), func(job jobs.Job) {
 			_ = server.Publish("progress", map[string]any{"job": job})
 			if event, ok := jobs.ChatEvent(job); ok {
 				_ = server.Publish("chat", event)
@@ -466,6 +459,7 @@ func localApplication(paths daemon.Paths, concurrency int, log *slog.Logger) fun
 			events.Close()
 			return daemon.App{}, err
 		}
+		queue.SetLogger(log)
 		scheduler.Queue = queue
 		queue.SetAutomaticGate(scheduler.Gate)
 		queue.SetChat(chats)
@@ -518,7 +512,7 @@ func localApplication(paths daemon.Paths, concurrency int, log *slog.Logger) fun
 			// for running sessions, stay in memory, masked as the sessions
 			// are; only the Codex setting is kept, in the state directory.
 			// The app reads them with the live sessions.
-			requests = &agentrequests.Store{Sessions: live, Mask: live.Mask, StateDir: paths.State, Log: log,
+			requests = &agentrequests.Store{Sessions: live, Mask: live.Mask, Database: database, Log: log,
 				Notify: func() { _ = server.Publish("live", struct{}{}) },
 				// The store's own Notify, as the request or message goes, tells
 				// the app.
@@ -545,7 +539,7 @@ func localApplication(paths daemon.Paths, concurrency int, log *slog.Logger) fun
 		// The GitHub connection's login, once it exists below.
 		var connectionLogin func() string
 		if live != nil {
-			if decisionStore, err = decisionlog.Open(filepath.Join(state, "decisions", "decisions.sqlite"), decisionlog.OpenOptions{AbandonPending: true}); err != nil {
+			if decisionStore, err = decisionlog.Open(database, decisionlog.OpenOptions{AbandonPending: true}); err != nil {
 				log.Warn("decision capture is off: its store did not open", "error", err)
 			} else {
 				decisionStore.Changed = func() { _ = server.Publish("decisions", struct{}{}) }
@@ -617,29 +611,67 @@ func localApplication(paths daemon.Paths, concurrency int, log *slog.Logger) fun
 		// of the sessions in registered clones, the merges, branch updates
 		// and re-runs made from the app, and plan usage samples.
 		plans := planusage.NewService()
-		planHistory := &planusage.History{Path: filepath.Join(state, "plan-usage-history.json"), Service: plans}
-		actions := &analytics.Actions{Path: filepath.Join(state, "analytics-actions.json")}
-		sessionIndex := &analytics.Index{Path: filepath.Join(state, "analytics-index.json"), Clones: registry, Log: log}
+		planHistory := &planusage.History{Path: database, Service: plans}
+		actions := &analytics.Actions{Path: database}
+		sessionIndex := &analytics.Index{Path: database, Clones: registry, Log: log}
 		insights := &analytics.Service{Registry: registry, Index: sessionIndex, Jobs: queue.List, Actions: actions, Plans: planHistory, Delivery: delivery}
 		var decisionsAPI func(uiserver.LinkedSessions) http.Handler
 		if decisionStore != nil {
 			insights.Captures = decisionStore.Ledger
+			insights.Pulls = decisionStore.PullFlow
+			insights.Login = func(ctx context.Context) string { return viewerLogin(ctx, registry, discover.Cached, connectionLogin) }
 			decisionsAPI = func(linked uiserver.LinkedSessions) http.Handler {
 				return (&decisionlog.API{Store: decisionStore, Registry: registry, Live: live.Sessions, Linked: linked, Log: log}).Handler()
 			}
 		}
+		// A pull request with no saved review shows its facts, read when its
+		// page asks, within the background refresh's window and rate pause.
+		pageFacts := &facts.Service{Build: facts.Local{Client: githubClient, Config: cfg}.Build, Window: worker.RefreshInterval(), Paused: worker.Paused, Limited: worker.Limited}
 		// A session that ended has its last lines written: read it soon.
 		endedSessions, unsubscribeEnded := events.Subscribe(4, func(e hookevents.Event) bool {
 			return e.Kind == hookevents.KindAgent && e.Name == "session-end"
 		})
-		api := uiserver.LocalAPI{GitHubAuth: githubConnection.Handler(), Registry: registry, Config: cfg, PRs: uiserver.DiscoveryHandler(registry, discover, changed), Index: index.Handler(), Jobs: queue.Handler(), Chat: uiserver.ChatHandler(registry, queue), Background: worker.Handler(), Automatic: scheduler.Handler(), Live: liveAPI, AgentRequests: requestsAPI, Clones: clones.Handler(), GitHubRepositories: pickList.Handler(), CurrentName: currentName(githubClient), PlanUsage: plans.Handler(), Analytics: insights.Handler(), Timeline: timeline, Merge: uiserver.MergeHandler(registry, actions.RecordMerges(githubClient), mergedPullRequest, changed), Review: uiserver.ReviewHandler(registry, githubClient, changed), Update: uiserver.UpdateHandler(registry, actions.RecordUpdates(prupdate.Service{Client: githubClient, Cache: panelCache, Counted: countedThreads}), refreshRepository, changed), Changed: settingsChanged,
-			Inboxes:   (&inboxes.API{Store: inboxes.Open(filepath.Join(state, "inboxes.json")), Changed: changed}).Handler(),
+		// The panel's git reads (conflicting files) use the first available
+		// clone of the repository.
+		availableClone := func(ctx context.Context, repo github.Repository) (string, bool) {
+			clones, err := registry.List(ctx)
+			if err != nil {
+				return "", false
+			}
+			for _, c := range clones {
+				if c.Available && strings.EqualFold(c.Repository, repo.String()) {
+					return c.Path, true
+				}
+			}
+			return "", false
+		}
+		api := uiserver.LocalAPI{GitHubAuth: githubConnection.Handler(), Registry: registry, Config: cfg, PRs: uiserver.DiscoveryHandler(registry, discover, changed), Index: index.Handler(), Jobs: queue.Handler(), Chat: uiserver.ChatHandler(registry, queue), Background: worker.Handler(), Automatic: scheduler.Handler(), Live: liveAPI, AgentRequests: requestsAPI, Clones: clones.Handler(), GitHubRepositories: pickList.Handler(), CurrentName: currentName(githubClient), PlanUsage: plans.Handler(), Analytics: insights.Handler(), Timeline: timeline, Merge: uiserver.MergeHandler(registry, actions.RecordMerges(githubClient), mergedPullRequest, changed), Review: uiserver.ReviewHandler(registry, githubClient, changed), Update: uiserver.UpdateHandler(registry, actions.RecordUpdates(prupdate.Service{Client: githubClient, Cache: panelCache, Counted: countedThreads, Clone: availableClone}), refreshRepository, changed), Changed: settingsChanged,
+			UIState:   (&uistate.Store{Path: database}).Handler(),
+			Inboxes:   (&inboxes.API{Store: inboxes.Open(database), Changed: changed}).Handler(),
 			Groups:    (&reviewgroups.API{Store: groups, Registry: registry, Index: index.Build, Changed: changed}).Handler(),
-			Decisions: decisionsAPI, Log: log,
-			DecisionsChanged: func() { _ = server.Publish("decisions", struct{}{}) },
+			Decisions: decisionsAPI, Facts: pageFacts, Log: log,
+			DecisionsChanged:   func() { _ = server.Publish("decisions", struct{}{}) },
+			ConcurrencyChanged: func(n int) { _ = queue.SetConcurrency(n) },
 			DecisionModel: func(ctx context.Context, prefs repos.Preferences) uiserver.DecisionModel {
 				e := decisionlog.EffectiveModel(ctx, cfg, prefs, generate.Backends{}, nil)
 				return uiserver.DecisionModel{Backend: e.Backend, Undetermined: e.Undetermined, Model: e.Model, Ignored: e.Ignored}
+			},
+			HookTrust: func(ctx context.Context) agentplugins.HookTrust {
+				home, err := os.UserHomeDir()
+				if err != nil {
+					return agentplugins.HookTrust{State: "unknown"}
+				}
+				dirs := []string{home}
+				clones, err := registry.List(ctx)
+				if err != nil {
+					return agentplugins.HookTrust{State: "unknown"}
+				}
+				for _, clone := range clones {
+					if clone.Available {
+						dirs = append(dirs, clone.Path)
+					}
+				}
+				return agentplugins.New().CodexTrust(ctx, dirs)
 			},
 			Diagnostics: uiDiagnostics}.Handler()
 		return daemon.App{
@@ -752,11 +784,23 @@ func (h hookEvents) liveSessions(paths daemon.Paths, registry *repos.Registry, d
 	return &livesessions.Tracker{
 		Source: h.service.Store,
 		Linker: &livesessions.Resolver{Registry: registry, Discovery: discover},
-		// Ended sessions are kept for a day, longer than the record may reach.
+		// Ended sessions are kept for a day, longer than the record may reach,
+		// and a Claude Code session waiting for its user while its process runs.
 		StateDir: hookevents.RecordDir(paths),
+		Alive:    liveAlive(),
 		Notify:   func() { _ = server.Publish("live", struct{}{}) },
 		Log:      log,
 	}
+}
+
+// liveAlive is how the tracker tells a silent session's agent still runs:
+// Claude Code registers its processes (macOS and Linux). Codex's run in a
+// shared app server, so there is none for them.
+func liveAlive() func(agent, id string) bool {
+	if runtime.GOOS == "windows" {
+		return nil
+	}
+	return livesessions.ClaudeAlive{}.Alive
 }
 
 // liveSenders are how the app's messages reach a waiting session: Claude

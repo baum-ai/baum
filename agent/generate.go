@@ -66,6 +66,11 @@ type Run struct {
 	// validated. It must not fail: a document it cannot read is returned
 	// as it came, for the validator to report.
 	Decorate func([]byte) []byte
+	// ModelSchema, when set, adjusts the model schema the run offers, such
+	// as a group review's, which asks the model to name the group. What it
+	// asks for must still prepare into a document the validator accepts,
+	// with Decorate's help.
+	ModelSchema func([]byte) ([]byte, error)
 	// PersistSession keeps the backend's session of every call, so the
 	// Outcome's SessionID can be resumed later (Request.PersistSession).
 	PersistSession bool
@@ -125,6 +130,11 @@ func (g *Generator) ReviewTask(ctx context.Context, run Run) (Task, error) {
 	schema, err := g.Validator.ModelSchema(run.TileKinds)
 	if err != nil {
 		return Task{}, err
+	}
+	if run.ModelSchema != nil {
+		if schema, err = run.ModelSchema(schema); err != nil {
+			return Task{}, fmt.Errorf("model schema: %w", err)
+		}
 	}
 	if err := os.WriteFile(filepath.Join(run.Directory, "bundle.json"), run.EncodedBundle, 0400); err != nil {
 		return Task{}, err
@@ -203,13 +213,19 @@ func (g *Generator) ReviewTask(ctx context.Context, run Run) (Task, error) {
 func (g *Generator) call(ctx context.Context, budgets Budgets, request Request, outcome *Outcome, stalls *int) (Result, error) {
 	var result Result
 	for attempt := 0; attempt < budgets.MaxProviderAttempts; attempt++ {
-		request.MaxCalls = budgets.MaxCalls - outcome.Calls
-		request.MaxTokens = budgets.MaxTokens - outcome.Tokens
-		if request.MaxCalls < 1 {
-			return result, errors.New(GenerationBudgetExceededReason("model calls"))
+		// A request gets what the run's budgets leave, or none when the run
+		// has none. A negative budget is one already spent (a staged review's
+		// stage left nothing), so it allows no call.
+		request.MaxCalls, request.MaxTokens = 0, 0
+		if budgets.MaxCalls != 0 {
+			if request.MaxCalls = budgets.MaxCalls - outcome.Calls; request.MaxCalls < 1 {
+				return result, errors.New(GenerationBudgetExceededReason("model calls"))
+			}
 		}
-		if request.MaxTokens < 1 {
-			return result, errors.New(GenerationBudgetExceededReason("tokens"))
+		if budgets.MaxTokens != 0 {
+			if request.MaxTokens = budgets.MaxTokens - outcome.Tokens; request.MaxTokens < 1 {
+				return result, errors.New(GenerationBudgetExceededReason("tokens"))
+			}
 		}
 		var err error
 		outcome.ProviderAttempts++
@@ -230,10 +246,10 @@ func (g *Generator) call(ctx context.Context, budgets Budgets, request Request, 
 		outcome.Accounting.Add(result, err != nil)
 		outcome.StructuredOutputRejections += result.StructuredOutputRejections
 		outcome.Diagnostics = append(outcome.Diagnostics, result.Events[:min(len(result.Events), MaxDiagnostics-len(outcome.Diagnostics))]...)
-		if outcome.Calls > budgets.MaxCalls {
+		if Exceeds(outcome.Calls, budgets.MaxCalls) {
 			return result, errors.New(GenerationBudgetExceededReason("model calls"))
 		}
-		if outcome.Tokens > budgets.MaxTokens {
+		if Exceeds(outcome.Tokens, budgets.MaxTokens) {
 			return result, errors.New(GenerationBudgetExceededReason("tokens"))
 		}
 		if ctx.Err() != nil {
