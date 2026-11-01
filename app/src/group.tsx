@@ -569,7 +569,7 @@ export function GroupPage({
               </header>
               <ul className="local-group-members">
                 {landed.map(({ number, state, entry }) => (
-                  <li key={`merged-${number}`} className="local-group-member" data-landed={state}>
+                  <li key={`landed-${number}`} className="local-group-member" data-landed={state}>
                     <span className="local-group-number">#{number}</span>
                     <div className="local-group-member-title">
                       {entry ? (

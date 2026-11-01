@@ -238,7 +238,7 @@ func landedState(observed, previous string) string {
 
 func entryOf(number int, parent *int, candidates map[int]stacks.Candidate) chainEntry {
 	c := candidates[number]
-	return chainEntry{Number: number, Parent: parent, BaseRef: c.BaseRef, HeadRef: c.HeadRef, Author: c.Author, State: ""}
+	return chainEntry{Number: number, Parent: parent, BaseRef: c.BaseRef, HeadRef: c.HeadRef, Author: c.Author}
 }
 
 func sortedEntries(entries []chainEntry) []chainEntry {

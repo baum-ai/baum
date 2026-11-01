@@ -252,3 +252,38 @@ func TestSyncStacksDoesNotKeepAPullRequestThePersonGroupedAsLanded(t *testing.T)
 		}
 	}
 }
+
+func TestSyncStacksKeepsAKnownClosedStateAndResolvesUnknownOnes(t *testing.T) {
+	ctx := context.Background()
+	s := openStore(t)
+	sync := func(observations []discovery.Observation, prs ...discovery.PullRequest) {
+		t.Helper()
+		if _, err := s.SyncStacks(ctx, "acme/demo", prs, observations); err != nil {
+			t.Fatal(err)
+		}
+	}
+	landed := func() []LandedMember {
+		t.Helper()
+		list, _ := s.List(ctx)
+		if len(list) != 1 {
+			t.Fatalf("groups %+v", list)
+		}
+		return list[0].Landed
+	}
+	sync(nil, open(1, "a", "main"), open(2, "b", "a"), open(3, "c", "b"), open(4, "d", "b"))
+	// #4 closes, #1 vanishes unseen: closed is known, #1 unknown.
+	sync([]discovery.Observation{{Number: 4, State: "CLOSED"}}, open(2, "b", "main"), open(3, "c", "b"))
+	if got := landed(); !slices.Equal(got, []LandedMember{{1, StateUnknown}, {4, StateClosed}}) {
+		t.Fatalf("landed %+v", got)
+	}
+	// With no observation again, the closed state stays; #1 is then seen merged.
+	sync([]discovery.Observation{{Number: 1, State: "MERGED"}}, open(2, "b", "main"), open(3, "c", "b"))
+	if got := landed(); !slices.Equal(got, []LandedMember{{1, StateMerged}, {4, StateClosed}}) {
+		t.Fatalf("landed %+v", got)
+	}
+	// #4 is reopened: it is a member again, in its place.
+	sync(nil, open(2, "b", "main"), open(3, "c", "b"), open(4, "d", "b"))
+	if got := landed(); !slices.Equal(got, []LandedMember{{1, StateMerged}}) {
+		t.Fatalf("landed %+v", got)
+	}
+}
