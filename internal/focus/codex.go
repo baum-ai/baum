@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/baum-ai/baum/internal/codexconfig"
 	"github.com/baum-ai/baum/internal/hookevents"
 )
 
@@ -44,7 +45,23 @@ func (f *Focuser) codexNative(ctx context.Context, id string, t *hookevents.Term
 	return Result{Message: "Bringing windows forward works on Hyprland and X11; this desktop is neither."}
 }
 
-const codexTitleHint = "Could not find this Codex session's terminal. Open the session in Codex and include thread-id in its tui.terminal_title setting."
+const codexTitleHint = "Could not find this Codex session's terminal. Open or restart the session in Codex, then try Focus again. Your terminal must allow Codex to update its title."
+
+func (f *Focuser) repairCodexTitle() Result {
+	configure := f.ConfigureCodexTitle
+	if configure == nil {
+		configure = codexconfig.EnsureTerminalTitle
+	}
+	changed, err := configure()
+	if err != nil {
+		return Result{Message: fmt.Sprintf("Could not configure Codex terminal focus: %v. Reconnect Codex in Settings after fixing its configuration.", err)}
+	}
+	if changed {
+		return Result{Message: "Configured Codex terminal focus. Restart this Codex terminal session and resume the conversation, then try Focus again."}
+	}
+	return Result{Message: codexTitleHint}
+}
+
 const codexAmbiguous = "More than one terminal matches this Codex session. Leave it open in one terminal, then try again."
 const codexTmuxAmbiguous = "More than one Codex terminal matches this session. Leave it open in one pane, then try again."
 

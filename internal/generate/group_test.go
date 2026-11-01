@@ -279,7 +279,7 @@ func TestGroupRunNamesAStackGroup(t *testing.T) {
 	if _, err := groups.SyncStacks(ctx, "acme/demo", []discovery.PullRequest{
 		{Number: 7, HeadRef: "feature", BaseRef: "main", Title: "Keep notes", Author: "dev"},
 		{Number: 8, HeadRef: "shift-feature", BaseRef: "feature", Title: "Raise the limit", Author: "dev"},
-	}); err != nil {
+	}, nil); err != nil {
 		t.Fatal(err)
 	}
 	list, err := groups.List(ctx)

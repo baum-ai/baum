@@ -239,8 +239,8 @@ minutes.
 ### Sessions linked to pull requests
 
 The commits are linked to the sessions on this machine with the local
-linkage of the review page (`locallink.LinkCommits`: Entire checkpoints, then
-the matcher; generation runs left out), and their links replace the ones
+linkage of the review page (`locallink.LinkCommits`: checkpoint candidate discovery followed by
+independent creation or edit evidence; generation runs left out), and their links replace the ones
 they had:
 
 - each run, the commits just recorded, made in the last 7 days (hosted looks

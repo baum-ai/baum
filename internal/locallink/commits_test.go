@@ -11,7 +11,7 @@ import (
 )
 
 // LinkCommits links a pull request's commits exactly as Resolve does, with
-// checkpoint truth and the matcher's own steps.
+// checkpoint associations and the matcher's own steps.
 func TestLinkCommitsEqualsResolve(t *testing.T) {
 	for name, build := range map[string]func(t *testing.T) linktest.Fixture{
 		"matcher": linktest.New,

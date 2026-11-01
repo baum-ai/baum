@@ -1,3 +1,4 @@
+import type { CodexHookTrust } from "../codex-hooks";
 import { supportedEffort } from "../model-effort";
 
 export type Found = { path: string; resolved: string; version: string };
@@ -26,6 +27,7 @@ export type Agent = {
   enabled: boolean;
   plugin: string;
   version?: string | null;
+  trust?: CodexHookTrust | null;
   error?: string | null;
 };
 export type SetupView = {
@@ -112,9 +114,35 @@ export function describeCommand(command: CommandStatus): CommandDescription {
   return { state, note: notes.join(" "), action: command.record ? "Update" : "Install" };
 }
 
+export function agentConnected(agent: Agent) {
+  return (
+    agent.installed &&
+    agent.enabled &&
+    !agent.error &&
+    (agent.agent !== "codex" || agent.trust?.state === "trusted")
+  );
+}
+
 export function describeAgent(agent: Agent) {
   if (agent.error) return agent.error;
-  if (agent.installed) return agent.enabled ? "Connected" : "Installed but disabled";
+  if (agent.installed) {
+    if (!agent.enabled) return "Installed but disabled";
+    if (agent.agent === "codex" && !agentConnected(agent)) {
+      switch (agent.trust?.state) {
+        case "untrusted":
+          return "Needs approval in Codex";
+        case "hooks_disabled":
+          return "Lifecycle hooks disabled in Codex";
+        case "disabled":
+          return "Hooks disabled in Codex";
+        case "missing":
+          return "Update Codex hooks";
+        default:
+          return "Hook approval could not be verified";
+      }
+    }
+    return "Connected";
+  }
   if (!agent.detected)
     return `${agent.name} isn't on your PATH. Install or update it, then check again.`;
   return "";

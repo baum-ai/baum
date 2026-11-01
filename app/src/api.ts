@@ -120,6 +120,12 @@ export type ReviewGroup = {
   members: number[];
   /** baum made the group for stacked pull requests, not a person. */
   stack?: boolean;
+  /**
+   * A stack group's members that are no longer open, ascending: still part of
+   * the stack, in place, but not reviewed. `unknown`: not open any more, and
+   * not yet seen whether it merged.
+   */
+  landed?: { number: number; state: "merged" | "closed" | "unknown" }[];
   created_at: string;
   updated_at: string;
   version_count: number;
@@ -718,9 +724,57 @@ export function appBase(pathname = location.pathname): string {
 export function appURL(path = ""): string {
   return appBase() + path;
 }
+/** What the app keeps in each of its history entries: how many of its own
+ *  entries lie behind it (`depth`), the place it shows (`place`), and the
+ *  depth of the entry it was opened from (`back`), the last one that showed
+ *  another place. Moves within a place (a walkthrough step, the Ask panel)
+ *  keep their `back`, so going back leaves the place in one step. */
+type AppHistory = { depth: number; place: string; back?: number };
+
+/** The place an address shows: the pull request, group, job transcript or
+ *  session open in it, else its page and inbox. */
+function placeOf(search: URLSearchParams): string {
+  const detail = ["pr", "clone", "repository", "group", "job", "session"]
+    .map((key) => (search.get(key) ? `${key}=${search.get(key)}` : ""))
+    .filter(Boolean);
+  if (search.get("pr") || search.get("group") || search.get("job") || search.get("session"))
+    return detail.join("&");
+  return `page=${search.get("page") ?? "inbox"}&inbox=${search.get("inbox") ?? ""}`;
+}
+
+function currentHistory(): AppHistory {
+  const state = history.state as Partial<AppHistory> | null;
+  return typeof state?.depth === "number" && typeof state.place === "string"
+    ? (state as AppHistory)
+    : { depth: 0, place: placeOf(new URLSearchParams(location.search)) };
+}
+
+/** Adds a history entry for one of the app's addresses, or with `replace`
+ *  takes the current one's place, remembering where it was opened from. */
+export function writeHistory(href: string, replace = false) {
+  const current = currentHistory();
+  const place = placeOf(new URL(href, location.href).searchParams);
+  if (replace) {
+    history.replaceState({ ...current, place } satisfies AppHistory, "", href);
+    return;
+  }
+  const back = place === current.place ? current.back : current.depth;
+  history.pushState({ depth: current.depth + 1, place, back } satisfies AppHistory, "", href);
+}
+
+/** Goes back to the entry the current place was opened from, past any moves
+ *  within the place; false when this window opened on it, with nowhere to
+ *  go back to. */
+export function backToOpener(): boolean {
+  const { depth, back } = currentHistory();
+  if (back == null || back >= depth) return false;
+  history.go(back - depth);
+  return true;
+}
+
 /** Opens one of the app's own addresses in place, as a link in it does. */
 export function navigate(href: string) {
-  history.pushState(null, "", href);
+  writeHistory(href);
   dispatchEvent(new PopStateEvent("popstate"));
 }
 /** A fix job's transcript when it has one, else the job in the list. */

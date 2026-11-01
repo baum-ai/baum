@@ -20,6 +20,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/baum-ai/baum/hosted/agentplugins"
 	"github.com/baum-ai/baum/internal/agentrequests"
 	"github.com/baum-ai/baum/internal/analytics"
 	"github.com/baum-ai/baum/internal/appdb"
@@ -421,7 +422,7 @@ func localApplication(paths daemon.Paths, log *slog.Logger) func(context.Context
 			}
 			// Stacked pull requests are grouped for review by default.
 			if !snapshot.Stale && snapshot.Error == "" {
-				if synced, err := groups.SyncStacks(ctx, snapshot.Repository, snapshot.PullRequests); err != nil {
+				if synced, err := groups.SyncStacks(ctx, snapshot.Repository, snapshot.PullRequests, snapshot.Observations); err != nil {
 					log.Warn("stack groups not updated", "repository", snapshot.Repository, "error", err)
 				} else if synced {
 					changed()
@@ -654,6 +655,23 @@ func localApplication(paths daemon.Paths, log *slog.Logger) func(context.Context
 			DecisionModel: func(ctx context.Context, prefs repos.Preferences) uiserver.DecisionModel {
 				e := decisionlog.EffectiveModel(ctx, cfg, prefs, generate.Backends{}, nil)
 				return uiserver.DecisionModel{Backend: e.Backend, Undetermined: e.Undetermined, Model: e.Model, Ignored: e.Ignored}
+			},
+			HookTrust: func(ctx context.Context) agentplugins.HookTrust {
+				home, err := os.UserHomeDir()
+				if err != nil {
+					return agentplugins.HookTrust{State: "unknown"}
+				}
+				dirs := []string{home}
+				clones, err := registry.List(ctx)
+				if err != nil {
+					return agentplugins.HookTrust{State: "unknown"}
+				}
+				for _, clone := range clones {
+					if clone.Available {
+						dirs = append(dirs, clone.Path)
+					}
+				}
+				return agentplugins.New().CodexTrust(ctx, dirs)
 			},
 			Diagnostics: uiDiagnostics}.Handler()
 		return daemon.App{

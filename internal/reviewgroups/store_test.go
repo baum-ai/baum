@@ -228,7 +228,7 @@ func TestPutNamesOnlyStackGroups(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.SyncStacks(ctx, "acme/demo", []discovery.PullRequest{open(1, "a", "main"), open(2, "b", "a")}); err != nil {
+	if _, err := s.SyncStacks(ctx, "acme/demo", []discovery.PullRequest{open(1, "a", "main"), open(2, "b", "a")}, nil); err != nil {
 		t.Fatal(err)
 	}
 	var stack Group
