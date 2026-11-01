@@ -264,10 +264,10 @@ func TestAccountChangeCancelsSearchAndRejectsLateResults(t *testing.T) {
 	h.do("GET", "/api/github/repositories?query=private", "")
 	<-started
 	h.service.ResetIdentity()
-	got := decode[Listing](t, h.search("/api/github/repositories?query=private"))
+	decode[Listing](t, h.search("/api/github/repositories?query=private"))
 	released()
 	h.service.running.Wait()
-	got = decode[Listing](t, h.search("/api/github/repositories?query=private"))
+	got := decode[Listing](t, h.search("/api/github/repositories?query=private"))
 	if len(got.Repositories) != 1 || got.Repositories[0].Repository != "new/private" || calls.Load() != 2 {
 		t.Fatalf("new account got %+v", got)
 	}
