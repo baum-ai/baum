@@ -1,3 +1,4 @@
+import { mockStateFetch } from "./ui-state-test-helper";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
@@ -80,7 +81,7 @@ beforeEach(() => {
   root = createRoot(node);
   vi.stubGlobal(
     "fetch",
-    vi.fn(async (path: string) =>
+    mockStateFetch(async (path: string) =>
       path.includes("/cancel")
         ? new Response(cancelFails ? "failed" : "{}", {
             status: cancelFails ? 500 : 200,

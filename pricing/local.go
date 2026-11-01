@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/baum-ai/baum/agent"
+	"github.com/baum-ai/baum/internal/appdb"
 )
 
 // Source says where the active price list came from: compiled in, fetched by
@@ -83,10 +84,6 @@ func noteCached(installed *List) {
 	refreshState.list, refreshState.origin, refreshState.fetchedAt = installed, OriginCached, time.Time{}
 }
 
-// persistedName holds the newest installed published list beside the job
-// journal, with its signature, so queued jobs confirmed against it can resume.
-const persistedName = "prices.signed.json"
-
 type persisted struct {
 	List      []byte `json:"list"`
 	Signature []byte `json:"signature"`
@@ -98,15 +95,10 @@ type persisted struct {
 func LoadPersisted(dir string) error { return loadPersisted(dir, PublishedKey()) }
 
 func loadPersisted(dir string, key ed25519.PublicKey) error {
-	file, e := os.Open(filepath.Join(dir, persistedName))
+	raw, e := appdb.Read(filepath.Join(dir, "app.sqlite"), "cache", "pricing")
 	if errors.Is(e, os.ErrNotExist) {
 		return nil
 	}
-	if e != nil {
-		return e
-	}
-	defer func() { _ = file.Close() }()
-	raw, e := io.ReadAll(io.LimitReader(file, 4<<20+1))
 	if e != nil {
 		return e
 	}
@@ -194,34 +186,7 @@ func refresh(ctx context.Context, client *http.Client, published string, key ed2
 	if e != nil {
 		return e
 	}
-	return writePrivate(filepath.Join(dir, persistedName), encoded)
-}
-
-func writePrivate(path string, data []byte) (err error) {
-	if err = os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return err
-	}
-	file, err := os.CreateTemp(filepath.Dir(path), ".baum-prices-*")
-	if err != nil {
-		return err
-	}
-	defer func() {
-		if err != nil {
-			_ = os.Remove(file.Name())
-		}
-	}()
-	if _, err = file.Write(data); err != nil {
-		_ = file.Close()
-		return err
-	}
-	if err = file.Sync(); err != nil {
-		_ = file.Close()
-		return err
-	}
-	if err = file.Close(); err != nil {
-		return err
-	}
-	return os.Rename(file.Name(), path)
+	return appdb.Write(filepath.Join(dir, "app.sqlite"), "cache", "pricing", encoded)
 }
 
 // OutcomeCost keeps unknown or ambiguous usage unknown. Agent usage is already

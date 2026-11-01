@@ -14,7 +14,9 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
+	"github.com/baum-ai/baum/internal/appdb/appdbtest"
 	"github.com/baum-ai/baum/internal/config"
 )
 
@@ -28,7 +30,7 @@ func git(t *testing.T, dir string, args ...string) {
 }
 func clone(t *testing.T, remote string) string {
 	t.Helper()
-	p := t.TempDir()
+	p := appdbtest.TempDir(t)
 	git(t, p, "init")
 	git(t, p, "-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "--allow-empty", "-m", "init")
 	git(t, p, "remote", "add", "origin", remote)
@@ -36,7 +38,7 @@ func clone(t *testing.T, remote string) string {
 }
 func registry(t *testing.T) *Registry {
 	t.Helper()
-	r, e := Open(filepath.Join(t.TempDir(), "registry.sqlite"))
+	r, e := Open(filepath.Join(appdbtest.TempDir(t), "registry.sqlite"))
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -52,7 +54,7 @@ func TestClonesAndSettings(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	wt := filepath.Join(t.TempDir(), "linked")
+	wt := filepath.Join(appdbtest.TempDir(t), "linked")
 	git(t, p, "worktree", "add", "-b", "linked", wt)
 	w, e := r.Add(ctx, wt, nil)
 	if e != nil {
@@ -104,7 +106,7 @@ func TestClonesAndSettings(t *testing.T) {
 func TestRejectAndFallback(t *testing.T) {
 	r := registry(t)
 	ctx := context.Background()
-	for _, p := range []string{filepath.Join(t.TempDir(), "gone"), t.TempDir(), clone(t, "https://gitlab.com/owner/repo")} {
+	for _, p := range []string{filepath.Join(appdbtest.TempDir(t), "gone"), appdbtest.TempDir(t), clone(t, "https://gitlab.com/owner/repo")} {
 		if _, e := r.Add(ctx, p, nil); e == nil {
 			t.Fatal("accepted", p)
 		}
@@ -133,9 +135,18 @@ func TestPermissionsAndConcurrentProcesses(t *testing.T) {
 		}
 		return
 	}
-	path := filepath.Join(t.TempDir(), "registry.sqlite")
-	if e := os.WriteFile(path, nil, 0644); e != nil {
-		t.Fatal(e)
+	path := filepath.Join(appdbtest.TempDir(t), "registry.sqlite")
+	if runtime.GOOS != "windows" {
+		if e := os.WriteFile(path, nil, 0644); e != nil {
+			t.Fatal(e)
+		}
+		if db, e := Open(path); e == nil {
+			_ = db.Close()
+			t.Fatal("accepted a public database file")
+		}
+		if e := os.Remove(path); e != nil {
+			t.Fatal(e)
+		}
 	}
 	r, e := Open(path)
 	if e != nil {
@@ -185,7 +196,7 @@ func TestHTTP(t *testing.T) {
 	if got := check(p); got != `{"valid":true,"repository":"owner/repo"}` {
 		t.Fatal(got)
 	}
-	if got := check(t.TempDir()); !strings.Contains(got, `"valid":false`) || !strings.Contains(got, "not a git working tree") {
+	if got := check(appdbtest.TempDir(t)); !strings.Contains(got, `"valid":false`) || !strings.Contains(got, "not a git working tree") {
 		t.Fatal(got)
 	}
 	body, _ := json.Marshal(map[string]string{"path": p})
@@ -226,7 +237,7 @@ func TestSpecialDatabasePath(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		name = "with# space" // Windows forbids '?' and trailing spaces in directory names.
 	}
-	p := filepath.Join(t.TempDir(), name, "repos.sqlite")
+	p := filepath.Join(appdbtest.TempDir(t), name, "repos.sqlite")
 	r, e := Open(p)
 	if e != nil {
 		t.Fatal(e)
@@ -242,7 +253,7 @@ func TestSpecialDatabasePath(t *testing.T) {
 
 func TestConcurrentSettingsPatches(t *testing.T) {
 	p := clone(t, "https://github.com/owner/repo")
-	path := filepath.Join(t.TempDir(), "repos.sqlite")
+	path := filepath.Join(appdbtest.TempDir(t), "repos.sqlite")
 	r, e := Open(path)
 	if e != nil {
 		t.Fatal(e)
@@ -317,6 +328,25 @@ func TestPreferencesConcurrencyFallsBackToTheMaximum(t *testing.T) {
 		}
 	}
 }
+func TestPreferencesTimeLimitsReplaceTheFiles(t *testing.T) {
+	global := config.Default()
+	got := (Preferences{ReviewTimeLimit: 20, RunTimeLimit: 90}).Resolve(global).Budgets
+	if time.Duration(got.ReviewTimeout) != 20*time.Minute || time.Duration(got.RunTimeout) != 90*time.Minute {
+		t.Fatalf("set limits: %+v", got)
+	}
+	for _, p := range []Preferences{{}, {ReviewTimeLimit: -1, RunTimeLimit: MaxTimeLimit + 1}} {
+		if got := p.Resolve(global).Budgets; got != global.Budgets {
+			t.Errorf("%+v changed the file's budgets: %+v", p, got)
+		}
+		if err := p.Validate(); err != nil {
+			t.Errorf("%+v blocks other settings: %v", p, err)
+		}
+	}
+	if ValidateTimeLimit(0) != nil || ValidateTimeLimit(MaxTimeLimit) != nil || ValidateTimeLimit(MaxTimeLimit+1) == nil || ValidateTimeLimit(-1) == nil {
+		t.Error("ValidateTimeLimit bounds")
+	}
+}
+
 func TestPreferencesFixAgent(t *testing.T) {
 	claude, codex, cursor := config.BackendClaude, config.BackendCodex, config.BackendCursorAgent
 	for _, b := range []*config.Backend{nil, &claude, &codex} {
@@ -371,7 +401,7 @@ func TestPreferencesExtractionBackend(t *testing.T) {
 // Each use case has its own reasoning effort: reviews', fixes' with a fix
 // agent, and data extraction's.
 func TestPreferencesEfforts(t *testing.T) {
-	low, high, medium, wrong, empty := "low", "high", "medium", "max", ""
+	low, high, medium, wrong, empty := "low", "high", "medium", "extreme", ""
 	codex := config.BackendCodex
 	for _, p := range []Preferences{{Effort: &wrong}, {FixBackend: &codex, FixEffort: &wrong}, {Decisions: DecisionPreferences{Effort: &wrong}}, {FixEffort: &high}} {
 		if p.Validate() == nil {

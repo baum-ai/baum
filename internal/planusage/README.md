@@ -84,8 +84,8 @@ reading, so simultaneous requests share it.
 
 `History` samples the plans every 15 minutes while the daemon runs, through
 `Service`'s cache, so Claude's endpoint is asked at most that often when no
-page is open, and appends what is new to `plan-usage-history.json` in the
-daemon's state directory: the snapshot time, provider, window name, percent
+page is open, and appends what is new to the `state/plan-usage-history` document in the
+shared [`app.sqlite`](../appdb/README.md) application database: the snapshot time, provider, window name, percent
 used and reset time. No token, account or plan name is stored. A figure is
 kept when it changed, when its window's reset changed, or an hour after the
 last kept one; a reading no newer than the last (Codex's snapshot did not

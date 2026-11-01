@@ -1,3 +1,4 @@
+import { mockStateFetch } from "./ui-state-test-helper";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
@@ -71,7 +72,7 @@ beforeEach(() => {
   });
   vi.stubGlobal(
     "fetch",
-    vi.fn(async (path: string, init?: RequestInit) => {
+    mockStateFetch(async (path: string, init?: RequestInit) => {
       if (path.includes("api/prs/merge-options")) return Response.json(optionsAnswer);
       posts.push(JSON.parse(String(init?.body)));
       return mergeAnswer;

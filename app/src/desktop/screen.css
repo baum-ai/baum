@@ -1,25 +1,24 @@
 /* Base styles of the desktop app's own screens: connecting (connecting.html)
    and setup (setup.html), in baum's bundled type, as every other screen. */
 @import "../../../viewer/src/fonts/fonts.css";
+@import "../../../viewer/src/theme.css";
 
 :root {
-  color-scheme: light dark;
-  --bg: #fbf8f2;
-  --fg: #2a211a;
-  --muted: #6f6257;
-  --accent: #7a4a26;
-  --panel: #f1ebe0;
+  /* The type scale: mirrors the steps in oss/viewer/src/viewer.css. */
+  --text-xs: 13px;
+  --text-base: 16px;
+  --text-lg: 18px;
+  --text-2xl: 24px;
+  --text-3xl: 28px;
+}
+
+:root {
+  color-scheme: light;
   font-family: var(--font-text);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg: #1a1613;
-    --fg: #f3ebe0;
-    --muted: #b3a597;
-    --accent: #d9a46e;
-    --panel: #26201b;
-  }
+:root[data-theme="dark"] {
+  color-scheme: dark;
 }
 
 * {
@@ -30,8 +29,8 @@ html,
 body {
   height: 100%;
   margin: 0;
-  background: var(--bg);
-  color: var(--fg);
+  background: var(--surface-page);
+  color: var(--text-primary);
 }
 
 main {
@@ -48,31 +47,54 @@ section {
 
 h1 {
   font-family: var(--font-heading);
-  font-size: 1.4rem;
+  font-size: var(--text-3xl);
   font-weight: 800;
   letter-spacing: -0.02em;
   margin: 16px 0 8px;
 }
 
 p {
-  color: var(--muted);
+  color: var(--text-secondary);
   margin: 0 0 20px;
   line-height: 1.5;
 }
 
 button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  height: 40px;
   font: inherit;
-  padding: 8px 18px;
+  font-size: var(--text-base);
+  font-weight: 500;
+  padding: 0 16px;
   border: 0;
-  border-radius: 6px;
-  background: var(--accent);
-  color: var(--bg);
+  border-radius: 8px;
+  background: var(--action-primary);
+  color: var(--text-inverse);
+  box-shadow: var(--shadow-raised);
   cursor: pointer;
 }
 
+button:hover:not(:disabled) {
+  background: var(--action-primary-hover);
+}
+
+button:active:not(:disabled) {
+  transform: translateY(1px);
+  box-shadow: none;
+}
+
+button:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
 button:disabled {
-  opacity: 0.6;
-  cursor: default;
+  opacity: 0.5;
+  cursor: not-allowed;
+  box-shadow: none;
 }
 
 details {
@@ -82,7 +104,7 @@ details {
 
 summary {
   cursor: pointer;
-  color: var(--muted);
+  color: var(--text-secondary);
 }
 
 pre {
@@ -90,8 +112,8 @@ pre {
   overflow: auto;
   padding: 12px;
   border-radius: 6px;
-  background: var(--panel);
-  font-size: 0.8rem;
+  background: var(--surface-sunken);
+  font-size: var(--text-xs);
   white-space: pre-wrap;
   word-break: break-word;
 }
@@ -111,7 +133,7 @@ pre {
 }
 
 .setup h2 {
-  font-size: 1.05rem;
+  font-size: var(--text-lg);
   font-weight: 600;
   margin: 0 0 8px;
 }
@@ -120,7 +142,7 @@ pre {
   margin: 0 0 16px;
   padding: 16px;
   border-radius: 8px;
-  background: var(--panel);
+  background: var(--surface-sunken);
 }
 
 .panel p,
@@ -135,7 +157,7 @@ pre {
 }
 
 .note {
-  font-size: 0.9rem;
+  font-size: var(--text-xs);
 }
 
 .actions {
@@ -149,13 +171,17 @@ pre {
 }
 
 button.secondary {
-  background: transparent;
-  color: var(--accent);
-  box-shadow: inset 0 0 0 1px var(--accent);
+  border: 1px solid var(--border-default);
+  background: var(--surface-card);
+  color: var(--text-primary);
+}
+
+button.secondary:hover:not(:disabled) {
+  background: var(--action-secondary-hover);
 }
 
 pre.failed {
-  box-shadow: inset 3px 0 0 var(--accent);
+  box-shadow: inset 3px 0 0 var(--action-primary);
 }
 
 code {

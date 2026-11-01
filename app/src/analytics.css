@@ -94,6 +94,7 @@
   letter-spacing: 0.08em;
   text-transform: uppercase;
   color: var(--text-tertiary);
+  font-weight: 500;
 }
 .analytics-tile dd {
   display: flex;
@@ -285,7 +286,7 @@
   gap: 2px;
   height: 10px;
   overflow: hidden;
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
 }
 .analytics-meter > div {
   flex-basis: 0;

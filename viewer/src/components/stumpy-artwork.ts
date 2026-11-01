@@ -1,0 +1,27 @@
+/** Fixed artwork colors shared by Stumpy, the log mark and native icon generation.
+ *  These belong to the illustration and stay the same in both UI themes. */
+export const STUMPY_ARTWORK = {
+  iconBackground: "#f7ead0",
+  ink: "#1e120a",
+  shine: "#fff6e0",
+  stem: "#2e7d3e",
+  barkDark: "#4e2e16",
+  hatBand: "#e9a23b",
+  hatStitch: "#f6d27a",
+  fur: "#fffaf0",
+  furEdge: "#e6dac2",
+  bark: "#7a4a26",
+  barkLight: "#a86b3c",
+  shadow: "#2a1d15",
+  faceLight: "#fff3da",
+  face: "#f3d9ac",
+  faceDark: "#d9b27c",
+  leafLight: "#8ed07a",
+  glassesLight: "#3a3f4d",
+  glassesDark: "#0e1016",
+  witchLight: "#4a3366",
+  witchDark: "#1f1430",
+  santaLight: "#e2554a",
+  santaDark: "#a52a22",
+  white: "#ffffff",
+} as const;

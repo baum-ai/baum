@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/baum-ai/baum/internal/appdb/appdbtest"
 	"github.com/baum-ai/baum/internal/reviewgroups"
 	"github.com/baum-ai/baum/internal/store"
 )
@@ -94,7 +95,7 @@ func saveReview(t *testing.T, commonDir string, number int) {
 func TestPrepareGroupReadsEveryMemberAndNeedsTheirReviews(t *testing.T) {
 	ctx := context.Background()
 	registry, clone := registeredClone(t)
-	groups, err := reviewgroups.Open(filepath.Join(t.TempDir(), "groups.sqlite"))
+	groups, err := reviewgroups.Open(filepath.Join(appdbtest.TempDir(t), "groups.sqlite"))
 	if err != nil {
 		t.Fatal(err)
 	}

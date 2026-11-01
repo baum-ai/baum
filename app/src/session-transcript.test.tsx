@@ -1,3 +1,4 @@
+import { mockStateFetch } from "./ui-state-test-helper";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
@@ -103,7 +104,7 @@ beforeEach(() => {
   answer = { version: "v1", prompts: ["Add a retry budget"] };
   vi.stubGlobal(
     "fetch",
-    vi.fn(async (path: string) => {
+    mockStateFetch(async (path: string) => {
       requests.push(path);
       if ("body" in answer) return Response.json(answer.body, { status: answer.status ?? 200 });
       const known = new URL(path, "http://x").searchParams.get("version");

@@ -1,3 +1,4 @@
+import { mockStateFetch } from "./ui-state-test-helper";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
@@ -81,7 +82,7 @@ beforeEach(() => {
   root = createRoot(node);
   vi.stubGlobal(
     "fetch",
-    vi.fn(async (path: string, init?: RequestInit) => {
+    mockStateFetch(async (path: string, init?: RequestInit) => {
       requests.push({ path, body: init?.body ? JSON.parse(String(init.body)) : undefined });
       return answer();
     }),

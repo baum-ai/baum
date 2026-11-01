@@ -584,7 +584,7 @@ func TestGitHubTokenSources(t *testing.T) {
 func TestRegisteredCloneHostsGetTheirOwnTokenCheck(t *testing.T) {
 	m := newMachine(t)
 	m.git()
-	registry := filepath.Join(m.config, "baum", "repos.sqlite")
+	registry := filepath.Join(os.Getenv("XDG_STATE_HOME"), "baum", "app.sqlite")
 	if err := os.MkdirAll(filepath.Dir(registry), 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -627,7 +627,7 @@ func TestRegisteredCloneHostsGetTheirOwnTokenCheck(t *testing.T) {
 func TestEnterpriseTokenFromTheEnvironmentIsFound(t *testing.T) {
 	m := newMachine(t)
 	m.git()
-	registry := filepath.Join(m.config, "baum", "repos.sqlite")
+	registry := filepath.Join(os.Getenv("XDG_STATE_HOME"), "baum", "app.sqlite")
 	if err := os.MkdirAll(filepath.Dir(registry), 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -832,17 +832,13 @@ func TestLocations(t *testing.T) {
 		t.Errorf("%+v", cfg)
 	}
 	home := os.Getenv("HOME")
-	if got := find(t, report, "jobs").Path; got != filepath.Join(home, "state", "baum", "jobs.json") {
+	if got := find(t, report, "jobs").Path; got != filepath.Join(home, "state", "baum", "app.sqlite") {
 		t.Errorf("jobs path = %q", got)
 	}
-	cacheDir, err := os.UserCacheDir()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got := find(t, report, "discovery").Path; got != filepath.Join(cacheDir, "baum", "discovery") {
+	if got := find(t, report, "discovery").Path; got != filepath.Join(home, "state", "baum", "app.sqlite") {
 		t.Errorf("discovery path = %q", got)
 	}
-	if got := find(t, report, "registry").Path; got != filepath.Join(m.config, "baum", "repos.sqlite") {
+	if got := find(t, report, "registry").Path; got != filepath.Join(os.Getenv("XDG_STATE_HOME"), "baum", "app.sqlite") {
 		t.Errorf("registry path = %q", got)
 	}
 	if got := find(t, report, "daemon").Path; got != "/state/baum/daemon" {

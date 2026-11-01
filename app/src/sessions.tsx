@@ -1,3 +1,5 @@
+import type { Brand } from "@baum/viewer/brands";
+import { BrandMark } from "@baum/viewer/components/brand-logo";
 import {
   createContext,
   useEffect,
@@ -41,23 +43,22 @@ import {
   type RequestQuestion,
   type WaitingReason,
 } from "./api";
-import claudeLogo from "./desktop/claude-code.svg";
-import codexLogo from "./desktop/codex.svg";
-import cursorLogo from "./desktop/cursor.svg";
 import { MenuButton, useContextMenu, type MenuItem } from "./context-menu";
 import { ListHeading, type ListTone } from "./list";
 import { useNow } from "./live";
 import { useToast } from "./toast";
 import { LiveSessionDecisions } from "./decisions";
 import { listKeys, useRowFocus, useShortcuts } from "./shortcuts";
+import { SMALL } from "./action-classes";
+import { cn } from "@baum/viewer/components/classnames";
 
 /** What marks a list row for the row focus (`useRowFocus`). */
 type RowProps = (s: LiveSession) => { "data-row-id": string; "data-focused"?: true };
 
-const agentLogos: Record<string, string> = {
-  "claude-code": claudeLogo,
-  codex: codexLogo,
-  cursor: cursorLogo,
+const agentLogos: Partial<Record<string, Brand>> = {
+  "claude-code": "claude",
+  codex: "openai",
+  cursor: "cursor",
 };
 
 /** How long a session ran, in whole units a person reads at a glance:
@@ -124,7 +125,7 @@ export function Agent({ agent }: { agent: string }) {
   const logo = agentLogos[agent];
   return (
     <span className="flex min-w-0 items-center gap-2 font-medium text-(--text-primary)">
-      {logo ? <img src={logo} alt="" width="18" height="18" className="shrink-0" /> : null}
+      {logo ? <BrandMark brand={logo} size={18} className="shrink-0" /> : null}
       {agentName(agent)}
     </span>
   );
@@ -135,7 +136,9 @@ export function Agent({ agent }: { agent: string }) {
 function AgentMark({ agent }: { agent: string }) {
   const logo = agentLogos[agent];
   return logo ? (
-    <img src={logo} alt={agentName(agent)} width="18" height="18" className="flex-none" />
+    <span role="img" aria-label={agentName(agent)}>
+      <BrandMark brand={logo} size={18} />
+    </span>
   ) : (
     <span className="local-feed-agent">{agentName(agent)}</span>
   );
@@ -246,7 +249,7 @@ export function FocusSession({
       <button
         ref={button}
         type="button"
-        className="inbox-action local-session-focus"
+        className={cn("local-session-focus", SMALL)}
         disabled={state.busy}
         aria-busy={state.busy}
         aria-label={labelFor(label, s)}
@@ -1001,7 +1004,7 @@ function OpenTranscript({
   hint?: boolean;
 }) {
   return (
-    <Link href={transcriptHref(s)} className="inbox-action local-feed-open-transcript">
+    <Link href={transcriptHref(s)} className={cn("local-feed-open-transcript", SMALL)}>
       Open transcript
       {hint ? (
         <kbd aria-hidden="true" className="key-hint">
@@ -1378,7 +1381,7 @@ function useSessionNotice() {
     toast({
       ...n,
       context: session,
-      icon: logo ? { src: logo, alt: agentName(agent!) } : undefined,
+      icon: logo ? { brand: logo, alt: agentName(agent!) } : undefined,
     });
   };
 }

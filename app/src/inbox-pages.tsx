@@ -22,6 +22,7 @@ import { MenuButton, useContextMenu, type MenuItem } from "./context-menu";
 import { PageBar } from "./shell";
 import { SettingRow } from "./settings";
 import { GROUPS, InboxTag, type UpNextItem } from "./up-next";
+import { DANGER, SECONDARY } from "./action-classes";
 
 /** What the three inbox pages share: the person's inboxes and the unsnoozed
  *  queue they are matched against, the same items the sidebar counts. */
@@ -461,7 +462,7 @@ function EditInbox({
             </p>
             <button
               type="button"
-              className="inbox-btn"
+              className={DANGER}
               onClick={() => {
                 remove(inbox);
                 go(appURL());
@@ -571,7 +572,7 @@ export function ManageInboxesPage({
   };
   const uncovered = items.filter((item) => inboxesOf(item, inboxes).length === 0).length;
   const newLink = (
-    <Link href={newInboxHref()} className="inbox-btn">
+    <Link href={newInboxHref()} className={SECONDARY}>
       New inbox
     </Link>
   );

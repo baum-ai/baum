@@ -1,3 +1,4 @@
+import { uiState, useUIState } from "./ui-state";
 import {
   Fragment,
   useEffect,
@@ -11,9 +12,9 @@ import {
   type SetStateAction,
 } from "react";
 import { formatCount } from "@baum/viewer/components/format";
-import { ChevronRightIcon, StackIcon } from "@baum/viewer/components/icons";
+import { ChevronDownIcon, ChevronRightIcon, StackIcon } from "@baum/viewer/components/icons";
 import { Lines } from "@baum/viewer/components/review-parts";
-import { Alert, Button } from "@baum/viewer/components/ui";
+import { Alert, Button, LiveDot } from "@baum/viewer/components/ui";
 import type { ViewerLinkProps } from "@baum/viewer/navigation";
 import {
   RISK_SCORE_MEANING,
@@ -61,6 +62,8 @@ import { ConflictingFiles } from "./conflicts";
 import { RefreshButton } from "./shell";
 import { ReviewThreads } from "./threads";
 import { canUpdateBranch, UpdateBranchDialog } from "./unblock";
+import { PRIMARY, SECONDARY, SMALL, SMALL_PRIMARY } from "./action-classes";
+import { cn } from "@baum/viewer/components/classnames";
 
 /** What the person does next about a pull request: read a review they were
  *  asked for, unblock their own, merge it, bring it up to date with its base,
@@ -290,7 +293,6 @@ type Stored = {
   /** Snoozes until the pull request changes: the head it had then. */
   held: Record<string, string>;
 };
-const STORAGE_KEY = "baum.inbox.v1";
 
 /** A snooze's end: a time, or the pull request's next push. */
 export type SnoozeEnd = number | "change";
@@ -311,34 +313,6 @@ function fresh(
 
 function stillSnoozed(snoozed: Record<string, number>, now: number) {
   return Object.fromEntries(Object.entries(snoozed).filter(([, until]) => until > now));
-}
-
-function load(now: number): Stored {
-  try {
-    const stored = JSON.parse(
-      localStorage.getItem(STORAGE_KEY) ?? "null",
-    ) as Partial<Stored> | null;
-    const record = (value: unknown) =>
-      value && typeof value === "object" && !Array.isArray(value) ? value : {};
-    if (stored && typeof stored === "object") {
-      // Rebuilt field by field: whatever else the storage holds, the page works.
-      const snoozed = stillSnoozed(record(stored.snoozed) as Record<string, number>, now);
-      const held = Object.fromEntries(
-        Object.entries(record(stored.held)).filter(([, head]) => typeof head === "string"),
-      ) as Record<string, string>;
-      return stored.day === dayOf(now)
-        ? {
-            day: stored.day,
-            seen: record(stored.seen) as Record<string, Seen>,
-            snoozed,
-            held,
-          }
-        : fresh(dayOf(now), snoozed, held);
-    }
-  } catch {
-    // Storage may be unavailable or hold something else; start empty.
-  }
-  return fresh(dayOf(now));
 }
 
 /** The snoozes offered at `now`: an hour, this afternoon while 3 PM is more
@@ -383,7 +357,10 @@ export type UpNextState = ReturnType<typeof useUpNext>;
  *  cleared, since its pull requests may only be absent for now. */
 export function useUpNext(entries: Entry[], live: LiveSession[], jobs: Job[], ready: boolean) {
   const now = useNow(30_000);
-  const [stored, setStored] = useState(() => load(Date.now()));
+  const persistence = useUIState(
+    uiState<Stored>("api/ui-state/inbox", () => fresh(dayOf(Date.now()))),
+  );
+  const stored = persistence.value;
   const day = dayOf(now);
   const state =
     stored.day === day ? stored : fresh(day, stillSnoozed(stored.snoozed, now), stored.held);
@@ -394,18 +371,13 @@ export function useUpNext(entries: Entry[], live: LiveSession[], jobs: Job[], re
   const snoozed = items.filter(snoozedNow);
   const queue = items.filter((item) => !snoozedNow(item));
   const update = (change: (state: Stored) => Stored) =>
-    setStored((previous) => {
+    persistence.update((previous) => {
       const time = Date.now();
       const base =
         previous.day === dayOf(time)
           ? previous
           : fresh(dayOf(time), stillSnoozed(previous.snoozed, time), previous.held);
       const next = change(base);
-      try {
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
-      } catch {
-        // Not remembered across reloads, but the page still works.
-      }
       return next;
     });
   // Record what is in the queue and when something leaves it. A pull request
@@ -428,7 +400,7 @@ export function useUpNext(entries: Entry[], live: LiveSession[], jobs: Job[], re
     ...[...listed].map((repository) => `listed:${repository}`),
   ].join("\n");
   useEffect(() => {
-    if (!ready) return;
+    if (!ready || !persistence.ready) return;
     const keys = new Set(items.map((item) => item.key));
     const heads = new Map(items.map((item) => [item.key, item.entry.pull_request.head_sha]));
     // A fix counts once it pushed: not while it runs, nor after it failed.
@@ -480,12 +452,13 @@ export function useUpNext(entries: Entry[], live: LiveSession[], jobs: Job[], re
       return { ...previous, seen, held };
     });
     // `signature` stands for `items`.
-  }, [ready, signature, day]);
+  }, [ready, signature, day, persistence.ready]);
   const cleared = Object.entries(state.seen)
     .filter(([, seen]) => seen.cleared != null)
     .sort(([, a], [, b]) => (b.cleared ?? 0) - (a.cleared ?? 0))
     .map(([key, seen]) => ({ key, ...seen }));
   return {
+    persistence,
     now,
     queue,
     snoozed,
@@ -1004,7 +977,7 @@ export function UpNextPage({
                     ready.length > 1 ? (
                       <button
                         type="button"
-                        className="upnext-batch"
+                        className={cn("upnext-batch", SMALL_PRIMARY)}
                         onClick={() => setMergingAll(ready)}
                       >
                         Merge all {formatCount(ready.length)}
@@ -1146,7 +1119,7 @@ export function UpNextPage({
           <div role="status" className="upnext-toast">
             <span>{toast.text}</span>
             {toast.undo ? (
-              <button type="button" onClick={undo}>
+              <button type="button" className={SMALL} onClick={undo}>
                 Undo
                 <kbd aria-hidden="true" className="key-hint">
                   u
@@ -1546,7 +1519,7 @@ function Panel({
     ? `${pr.author ?? "Someone"} asked for your review`
     : "Yours";
   const github = (
-    <a href={pr.url} target="_blank" rel="noreferrer" className="upnext-secondary">
+    <a href={pr.url} target="_blank" rel="noreferrer" className={cn("upnext-secondary", SECONDARY)}>
       Open on GitHub
     </a>
   );
@@ -1555,14 +1528,14 @@ function Panel({
   // at once.
   const actions = (
     <>
-      <Link href={href} className="upnext-primary">
+      <Link href={href} className={cn("upnext-primary", PRIMARY)}>
         Open
         <kbd aria-hidden="true" className="key-hint">
           ↵
         </kbd>
       </Link>
       {job ? (
-        <Link href={jobHref(job)} className="upnext-secondary">
+        <Link href={jobHref(job)} className={cn("upnext-secondary", SECONDARY)}>
           Watch the agent
           {job.has_transcript ? (
             <kbd aria-hidden="true" className="key-hint">
@@ -1573,20 +1546,20 @@ function Panel({
       ) : waiting ? (
         github
       ) : kind === "merge" ? (
-        <button type="button" className="upnext-secondary" onClick={merge}>
+        <button type="button" className={cn("upnext-secondary", SECONDARY)} onClick={merge}>
           Merge
           <kbd aria-hidden="true" className="key-hint">
             m
           </kbd>
         </button>
       ) : kind === "update" ? (
-        <button type="button" className="upnext-secondary" onClick={update}>
+        <button type="button" className={cn("upnext-secondary", SECONDARY)} onClick={update}>
           Update the branch
         </button>
       ) : kind === "fix" && fix ? (
         <button
           type="button"
-          className="upnext-secondary"
+          className={cn("upnext-secondary", SECONDARY)}
           disabled={fixState.starting}
           onClick={fix}
         >
@@ -1669,12 +1642,13 @@ function Panel({
           <div className="upnext-snooze" ref={menuRef}>
             <button
               type="button"
-              className="upnext-secondary"
+              className={cn("upnext-secondary", SECONDARY)}
               aria-haspopup="menu"
               aria-expanded={menu}
               onClick={() => setMenu((open) => !open)}
             >
-              Snooze ▾
+              Snooze
+              <ChevronDownIcon size={14} className="text-(--text-tertiary)" />
               <kbd aria-hidden="true" className="key-hint">
                 s
               </kbd>
@@ -1744,7 +1718,7 @@ function Panel({
       ))}
       {item && item.working > 0 ? (
         <p className="upnext-agents">
-          <span className="upnext-pulse" aria-hidden="true" />
+          <LiveDot className="text-(--status-positive)" />
           {plural(item.working, "agent session")} working on its branch right now
         </p>
       ) : null}
@@ -1858,7 +1832,7 @@ function BlockRow({
       {fixChecks ? (
         <button
           type="button"
-          className="upnext-secondary upnext-thread-resolve"
+          className={cn("upnext-secondary upnext-thread-resolve", SMALL)}
           disabled={fixState.starting}
           onClick={fixChecks}
         >
@@ -1967,7 +1941,7 @@ function GroupPanel({
         ) : null}
       </dl>
       <div className="upnext-actions">
-        <Link href={href} className="upnext-primary">
+        <Link href={href} className={cn("upnext-primary", PRIMARY)}>
           Open the {group.stack ? "stack" : "group"}
           <kbd aria-hidden="true" className="key-hint">
             ↵

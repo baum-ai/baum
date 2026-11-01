@@ -68,8 +68,9 @@ read-only ask mode with its sandbox enabled, but Cursor cannot be confined as
 tightly as the others, so auto never picks it; see SECURITY.md.
 
 Progress goes to stderr; stdout holds only the document. Budgets come from the
-config file: run_timeout (the whole run), pass_timeout (each model call),
-max_calls and max_tokens. --model names a model of one backend, so with
+config file: review_timeout (the whole run, 10m by default), pass_timeout (each
+model call), and max_calls and max_tokens, which are unlimited unless set.
+--model names a model of one backend, so with
 --backend auto it applies to claude only; if auto falls back to codex or
 anthropic, that backend uses its own default model and stderr says why the
 earlier ones were skipped. The anthropic backend's default model
@@ -172,12 +173,12 @@ func doGenerate(cmd *cobra.Command, started *bool) (runErr error) {
 	if err != nil {
 		return input(err)
 	}
-	budgets := agent.Budgets{
-		WallClock: time.Duration(cfg.Budgets.RunTimeout), MaxCalls: cfg.Budgets.MaxCalls, MaxTokens: cfg.Budgets.MaxTokens,
-		MaxProviderAttempts: maxProviderAttempts, MaxRepairAttempts: maxRepairAttempts,
+	if err := cfg.Budgets.Validate(); err != nil {
+		return input(err)
 	}
-	if budgets.WallClock <= 0 || budgets.MaxCalls <= 0 || budgets.MaxTokens <= 0 {
-		return input(errors.New("the budgets run_timeout, max_calls and max_tokens must be positive"))
+	budgets := agent.Budgets{
+		WallClock: time.Duration(cfg.Budgets.ReviewTimeout), MaxCalls: cfg.Budgets.MaxCalls, MaxTokens: cfg.Budgets.MaxTokens,
+		MaxProviderAttempts: maxProviderAttempts, MaxRepairAttempts: maxRepairAttempts,
 	}
 
 	// Ctrl-C cancels the work, which kills the backend's process group and
