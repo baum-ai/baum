@@ -2,6 +2,7 @@ package review
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
@@ -119,5 +120,33 @@ func TestEmbedHunkPatchesFindsEachHunkInItsFilesPatch(t *testing.T) {
 	failed := errors.New("git failed")
 	if _, err := EmbedHunkPatches(context.Background(), stripped, func(context.Context, string) (string, bool, error) { return "", false, failed }, 0); !errors.Is(err, failed) {
 		t.Fatalf("error %v", err)
+	}
+}
+
+// A duplicate key is read as encoding/json reads it, the last one, and an
+// explicit null diff is no diff: it is filled in where it stands.
+func TestEmbedHunkPatchesReadsDuplicateKeysAndNullDiffs(t *testing.T) {
+	document := []byte(`{"index":{"hunks":[{"id":"h_000000000001","path":"x.go","path":"a.go","new_range":[9,9],"new_range":[3,3],` +
+		`"additions":1,"deletions":0,"github_url":"kept","diff":null}]}}`)
+	paths, err := HunkPatchPaths(document)
+	if err != nil || strings.Join(paths, ",") != "a.go" {
+		t.Fatalf("paths %v %v", paths, err)
+	}
+	out, err := EmbedHunkPatches(context.Background(), document, func(_ context.Context, path string) (string, bool, error) {
+		return "@@ -3,2 +3,3 @@\n c\n+d\n e\n", path == "a.go", nil
+	}, 0)
+	want := `"github_url":"kept","diff":{"header":"@@ -3,2 +3,3 @@","lines":[`
+	if err != nil || !strings.Contains(string(out), want) || strings.Contains(string(out), "null") {
+		t.Fatalf("embedded %s %v", out, err)
+	}
+	var decoded struct {
+		Index struct {
+			Hunks []struct {
+				Diff *struct{ Header string } `json:"diff"`
+			} `json:"hunks"`
+		} `json:"index"`
+	}
+	if err := json.Unmarshal(out, &decoded); err != nil || decoded.Index.Hunks[0].Diff == nil {
+		t.Fatalf("encoding/json reads no diff: %s %v", out, err)
 	}
 }

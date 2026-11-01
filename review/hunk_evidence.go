@@ -69,7 +69,8 @@ type FilePatch func(ctx context.Context, path string) (patch string, ok bool, er
 // it; a hunk the patch does not hold, or whose file has no patch, keeps no
 // diff. Reading stops once maxBytes of patch text have been read (0 is no
 // limit), leaving later hunks without a diff. An error from patch, or the
-// context ending, fails the call.
+// context ending, fails the call. The paths are asked for in the order of
+// HunkPatchPaths, so a caller can read them ahead.
 func EmbedHunkPatches(ctx context.Context, document []byte, patch FilePatch, maxBytes int64) ([]byte, error) {
 	type read struct {
 		text string
@@ -79,21 +80,11 @@ func EmbedHunkPatches(ctx context.Context, document []byte, patch FilePatch, max
 	var total int64
 	out, _, err := editIndexHunks(document, func(hunk *jsonObject) (bool, error) {
 		changed, err := deriveHunkURL(hunk)
-		if err != nil || hunk.has("diff") {
+		if err != nil {
 			return changed, err
 		}
-		var h struct {
-			Path      string `json:"path"`
-			NewRange  []int  `json:"new_range"`
-			Additions int    `json:"additions"`
-			Deletions int    `json:"deletions"`
-		}
-		for key, target := range map[string]any{"path": &h.Path, "new_range": &h.NewRange, "additions": &h.Additions, "deletions": &h.Deletions} {
-			if json.Unmarshal(hunk.get(key), target) != nil {
-				return changed, nil
-			}
-		}
-		if h.Path == "" || len(h.NewRange) != 2 {
+		h, ok := patchableHunk(*hunk)
+		if !ok {
 			return changed, nil
 		}
 		if err := ctx.Err(); err != nil {
@@ -123,10 +114,52 @@ func EmbedHunkPatches(ctx context.Context, document []byte, patch FilePatch, max
 		if err != nil {
 			return changed, err
 		}
-		hunk.insertAfter("github_url", "diff", encoded)
+		if hunk.has("diff") {
+			hunk.set("diff", encoded) // an explicit null
+		} else {
+			hunk.insertAfter("github_url", "diff", encoded)
+		}
 		return true, nil
 	})
 	return out, err
+}
+
+// HunkPatchPaths lists, each once and in the order EmbedHunkPatches asks for
+// them, the paths of the hunks of index.hunks whose diff it would fill in.
+func HunkPatchPaths(document []byte) ([]string, error) {
+	var paths []string
+	seen := map[string]bool{}
+	_, _, err := editIndexHunks(document, func(hunk *jsonObject) (bool, error) {
+		if h, ok := patchableHunk(*hunk); ok && !seen[h.Path] {
+			seen[h.Path] = true
+			paths = append(paths, h.Path)
+		}
+		return false, nil
+	})
+	return paths, err
+}
+
+type patchable struct {
+	Path      string `json:"path"`
+	NewRange  []int  `json:"new_range"`
+	Additions int    `json:"additions"`
+	Deletions int    `json:"deletions"`
+}
+
+// patchableHunk reads what EmbedHunkPatches matches a hunk by, and reports
+// whether the hunk is one it fills in: it has no diff (or a null one) and a
+// path, a two-number new_range and counts.
+func patchableHunk(hunk jsonObject) (patchable, bool) {
+	var h patchable
+	if diff := hunk.get("diff"); diff != nil && !bytes.Equal(bytes.TrimSpace(diff), []byte("null")) {
+		return h, false
+	}
+	for key, target := range map[string]any{"path": &h.Path, "new_range": &h.NewRange, "additions": &h.Additions, "deletions": &h.Deletions} {
+		if json.Unmarshal(hunk.get(key), target) != nil {
+			return h, false
+		}
+	}
+	return h, h.Path != "" && len(h.NewRange) == 2
 }
 
 // hunkFromFilePatch is the hunk of a file's patch whose header names the
@@ -249,31 +282,40 @@ func decodeJSONObject(raw []byte) (jsonObject, error) {
 	return object, nil
 }
 
+// get is the value of key's last member, as encoding/json reads a duplicate
+// key; nil when there is none.
 func (o jsonObject) get(key string) json.RawMessage {
-	for _, member := range o {
-		if member.key == key {
-			return member.value
-		}
+	if i := o.last(key); i >= 0 {
+		return o[i].value
 	}
 	return nil
 }
 
-func (o jsonObject) has(key string) bool { return o.get(key) != nil }
-
-func (o *jsonObject) set(key string, value json.RawMessage) {
-	for i := range *o {
-		if (*o)[i].key == key {
-			(*o)[i].value = value
-			return
+func (o jsonObject) last(key string) int {
+	for i := len(o) - 1; i >= 0; i-- {
+		if o[i].key == key {
+			return i
 		}
+	}
+	return -1
+}
+
+func (o jsonObject) has(key string) bool { return o.last(key) >= 0 }
+
+// set replaces the value of key's last member, the one a reader takes, or
+// adds key last.
+func (o *jsonObject) set(key string, value json.RawMessage) {
+	if i := o.last(key); i >= 0 {
+		(*o)[i].value = value
+		return
 	}
 	*o = append(*o, jsonMember{key: key, value: value})
 }
 
-// insertAfter adds key just after the member named after, or last when there
-// is no such member.
+// insertAfter adds key just after the last member named after, or last when
+// there is no such member.
 func (o *jsonObject) insertAfter(after, key string, value json.RawMessage) {
-	for i := range *o {
+	for i := len(*o) - 1; i >= 0; i-- {
 		if (*o)[i].key == after {
 			*o = append((*o)[:i+1], append(jsonObject{{key: key, value: value}}, (*o)[i+1:]...)...)
 			return

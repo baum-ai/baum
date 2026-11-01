@@ -84,6 +84,7 @@ func runView(cmd *cobra.Command, args []string) error {
 		})
 	}
 	patcher := new(locallink.Patcher)
+	defer patcher.Close()
 	opts.Patch = func(ctx context.Context, review viewserver.Review, path string) (locallink.PatchResult, error) {
 		return patcher.Patch(ctx, locallink.PatchRequest{
 			Repository: review.Repository, Head: review.Head, Base: review.Base, MergeBase: review.MergeBase, Path: path,

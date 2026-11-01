@@ -126,3 +126,90 @@ func TestEmbedPatchesMasksTheStoredHunksText(t *testing.T) {
 		}
 	}
 }
+
+// A renamed file's hunk, cited by its new name, gets only its edit, masked,
+// without git's rename lines. Past the byte budget the later hunks get no
+// text, the same ones on every run however the reads ahead finish.
+func TestEmbedPatchesReadsRenamesAndStopsAtTheBudget(t *testing.T) {
+	f := linktest.New(t)
+	f.Base = onFeature(t, f, func() { writeIn(t, f, "old/name.txt", numbered(40)) })
+	f.Head = onFeature(t, f, func() {
+		writeIn(t, f, "new/.keep", "")
+		linktest.Git(t, f.Repo, "mv", "old/name.txt", "new/place.txt")
+		writeIn(t, f, "new/place.txt", strings.Replace(numbered(40), "line 20\n", "line 20\nkey = \""+patchSecret+"\"\n", 1))
+		for _, name := range []string{"x1.txt", "x2.txt", "x3.txt"} {
+			writeIn(t, f, name, numbered(5))
+		}
+	})
+	document := fmt.Appendf(nil, `{"review":{"repository":%q,"head":%q,"base":%q,"merge_base":%q},"index":{"hunks":[`+
+		`{"id":"h_000000000001","path":"new/place.txt","old_path":"old/name.txt","change":"renamed","role":"docs","new_range":[18,7],"additions":1,"deletions":0},`+
+		`{"id":"h_000000000002","path":"x1.txt","change":"added","role":"docs","new_range":[1,5],"additions":5,"deletions":0},`+
+		`{"id":"h_000000000003","path":"x2.txt","change":"added","role":"docs","new_range":[1,5],"additions":5,"deletions":0},`+
+		`{"id":"h_000000000004","path":"x3.txt","change":"added","role":"docs","new_range":[1,5],"additions":5,"deletions":0}]}}`,
+		linktest.Repository, f.Head, f.Base, f.Base)
+	type embedded struct {
+		Index struct {
+			Hunks []struct {
+				Path string `json:"path"`
+				Diff *struct {
+					Header string `json:"header"`
+					Lines  []struct {
+						Kind string `json:"kind"`
+						Text string `json:"text"`
+					} `json:"lines"`
+				} `json:"diff"`
+			} `json:"hunks"`
+		} `json:"index"`
+	}
+	embed := func(maxBytes int64) embedded {
+		t.Helper()
+		out, err := EmbedPatches(context.Background(), f.Repo, document, maxBytes)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(string(out), patchSecret) {
+			t.Fatalf("the secret survives:\n%s", out)
+		}
+		var e embedded
+		if err := json.Unmarshal(out, &e); err != nil {
+			t.Fatal(err)
+		}
+		return e
+	}
+
+	for _, hunk := range embed(0).Index.Hunks {
+		if hunk.Diff == nil {
+			t.Fatalf("%s: no text without a budget", hunk.Path)
+		}
+	}
+	renamed := embed(0).Index.Hunks[0].Diff
+	if renamed == nil || renamed.Header != "@@ -18,6 +18,7 @@ line 17" || len(renamed.Lines) != 7 {
+		t.Fatalf("renamed hunk: %+v", renamed)
+	}
+	if added := renamed.Lines[3]; added.Kind != "add" || !strings.HasPrefix(added.Text, "key = ") {
+		t.Errorf("edit line: %+v", added)
+	}
+	for _, line := range renamed.Lines {
+		if strings.HasPrefix(line.Text, "rename ") || strings.HasPrefix(line.Text, "--") {
+			t.Errorf("a header line is a hunk line: %+v", line)
+		}
+	}
+
+	// The budget holds the renamed file's patch and x1.txt's; reading x2.txt's
+	// passes it, so x2.txt gets no text and x3.txt is not read.
+	size := func(path string) int64 {
+		return int64(len(patch(t, PatchRequest{Dir: f.Repo, Repository: linktest.Repository, Head: f.Head, Base: f.Base, MergeBase: f.Base, Path: path}).Patch))
+	}
+	budget := size("new/place.txt") + size("x1.txt") + 1
+	for range 5 {
+		var got []string
+		for _, hunk := range embed(budget).Index.Hunks {
+			if hunk.Diff != nil {
+				got = append(got, hunk.Path)
+			}
+		}
+		if strings.Join(got, ",") != "new/place.txt,x1.txt" {
+			t.Fatalf("text embedded for %v, want new/place.txt and x1.txt", got)
+		}
+	}
+}

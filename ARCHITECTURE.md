@@ -1304,7 +1304,10 @@ fields are optional in `review-1.json`, so the schema is unchanged.
   `bundle.HunkDiffURL(path, new_range[0])` (`review.DeriveHunkURLs`), the
   value generation records: GitHub's fragment shape
   `diff-<sha256(path)>R<first new line>`. A hunk that has one keeps it, so an
-  older document is served unchanged. The viewer never used the value as a
+  older document whose hunks all carry theirs is served byte for byte; an
+  older one with hunks that lack it (a hosted-style document opened with
+  `baum internal view`, say) gets it derived for those hunks, which changes
+  nothing the reader sees. The viewer never used the value as a
   link (it is not an absolute URL), and builds the same fragment on the pull
   request's files page itself. One difference: generation hashes the path as
   git gave it, before redaction, so for a path the redactor masked the
@@ -1319,7 +1322,14 @@ fields are optional in `review-1.json`, so the schema is unchanged.
   read reaches the generation bundle's byte cap (`max_bytes`); a file the
   clone cannot provide (missing commits, no remote, binary, over 1 MiB) or a
   failed read leaves its hunks without a `diff`, and only the context ending
-  fails the turn. Every hunk also gets its derived `github_url`.
+  fails the turn. Every hunk also gets its derived `github_url`. A hunk with
+  an explicit `"diff": null` counts as one without, and a duplicate key is
+  read as `encoding/json` reads it, the last one. The patches are read ahead
+  over one `Patcher`, four at a time (read or held unused), in the order the
+  hunks use them (`review.HunkPatchPaths`), and used one by one in that
+  order, so the hunks that get text within the cap never depend on which read
+  finishes first; the clone is opened and the range resolved once, then each
+  file costs one `git diff`.
 - Nothing else hands a stored document on. The other readers use only
   fields the store keeps: refresh, `PreviousVersionOf` and `StoredOutline`
   (ranges, sections), group reviews (`reviewgroups.MembersFile`: summaries,
@@ -1429,6 +1439,19 @@ documents"). The app fills them in from `GET /api/patch?path=<path>`, answered b
   path, so the daemon's app, which serves each saved version from its own
   server over one `Patcher`, reads a file once for versions with the same
   commits; it keeps the changed-file lists of the last eight ranges.
+- A `Patcher` also keeps, for the last eight clones and ranges it read
+  (directory, repository, merge base or base, head), the opened clone (its
+  private repository), the remote match and the resolved commits, until 30
+  seconds after the range's last read (`rangeIdle`) or `Close`, so a further
+  file of a known range costs one `git diff` instead of about seven git
+  processes (opening, remotes, two commit lookups, the patch). Only a
+  resolution that succeeded is kept: no clone, no matching remote or missing
+  commits are resolved again on the next request. A read that finds objects
+  missing, a partial clone or git failing drops the kept range, so the next
+  request opens it again; a remote edited meanwhile is seen once the range
+  has idled out. An evicted, idled or closed range is closed when its last
+  read ends. `locallink.Patch`, `EmbedPatches` and `baum internal view`
+  close theirs; the daemon's long-lived `Patcher`s rely on the idle close.
 
 ### Retained review commits
 

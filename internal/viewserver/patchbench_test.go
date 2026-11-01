@@ -126,11 +126,11 @@ func BenchmarkDiffOpen(b *testing.B) {
 	// First open of a range: a new Patcher finds the changed files, then
 	// reads the patch.
 	b.Run("cold-first-open", func(b *testing.B) {
-		n := gitCount(b, func() { check(new(locallink.Patcher).Patch(ctx, req(0))) })
+		n := gitCount(b, func() { check(locallink.Patch(ctx, req(0))) })
 		b.ReportAllocs()
 		i := 0
 		for b.Loop() {
-			check(new(locallink.Patcher).Patch(ctx, req(i)))
+			check(locallink.Patch(ctx, req(i)))
 			i++
 		}
 		b.ReportMetric(float64(n), "git/op")
@@ -191,4 +191,34 @@ func BenchmarkDiffOpen(b *testing.B) {
 		}
 		b.ReportMetric(float64(n), "git/op")
 	})
+}
+
+// Embedding a stored document's patches for a reader without the clone (a
+// seeded chat's review.json): N cited files of one range, one hunk each, no
+// byte budget. git/op counts the git processes of one whole embedding.
+func BenchmarkEmbedPatches(b *testing.B) {
+	dir, base, head := benchRepo(b)
+	ctx := context.Background()
+	for _, files := range []int{10, 100} {
+		var hunks []string
+		for i := 0; i < files; i++ {
+			hunks = append(hunks, fmt.Sprintf(`{"id":"h%d","path":%q,"change":"modified","role":"code","new_range":[18,7],"additions":1,"deletions":1}`, i, benchPath(i)))
+		}
+		doc := []byte(fmt.Sprintf(`{"review":{"repository":"acme/widgets","head":%q,"base":%q,"merge_base":%q},"index":{"hunks":[%s]}}`,
+			head, base, base, strings.Join(hunks, ",")))
+		embed := func() {
+			out, err := locallink.EmbedPatches(ctx, dir, doc, 0)
+			if err != nil || strings.Count(string(out), `"diff":`) != files {
+				b.Fatalf("embedded %d of %d: %v", strings.Count(string(out), `"diff":`), files, err)
+			}
+		}
+		b.Run(fmt.Sprintf("files-%d", files), func(b *testing.B) {
+			n := gitCount(b, embed)
+			b.ReportAllocs()
+			for b.Loop() {
+				embed()
+			}
+			b.ReportMetric(float64(n), "git/op")
+		})
+	}
 }

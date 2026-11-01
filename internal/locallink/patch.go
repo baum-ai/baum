@@ -7,6 +7,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/baum-ai/baum/bundle"
 	"github.com/baum-ai/baum/internal/gitlocal"
@@ -76,18 +77,47 @@ const maxChangeSets = 8
 // bundle masks stored hunks with.
 var patchRedactor = sync.OnceValues(bundle.NewRedactor)
 
+// rangeIdle is how long a Patcher keeps a range's opened clone after its
+// last read. A remote edited in the meantime is seen once it has closed.
+// Tests shorten it.
+var rangeIdle = 30 * time.Second
+
 // Patcher reads file patches for pull requests. It finds the files a range
 // changes, and so the old name of each renamed one, once for a merge base
 // and head, and keeps that for the last few ranges while the answer holds.
+// It also keeps, for the last few clones and ranges it read, the opened clone,
+// its matched remote and the range's resolved commits, for rangeIdle after
+// the last read, so a further file of a known range costs one git diff.
 // Requests for the same patch of the same clone that arrive while one is
 // read share that read, whichever document or version asked. The zero value
-// is ready. It is safe for concurrent use.
+// is ready. It is safe for concurrent use; Close releases what it keeps.
 type Patcher struct {
 	mu      sync.Mutex
 	changes []*changeSet
+	ranges  []*openRange
 	reads   map[string]*patchRead
 	// read reads one patch; nil is Patcher.read. Tests count reads with it.
 	read func(context.Context, PatchRequest) (PatchResult, error)
+}
+
+// openRange is a clone opened and matched for one repository, with one
+// range's commits resolved. Only a resolution that succeeded is kept; an
+// unavailable answer (no clone, no matching remote, missing commits) is
+// computed again on the next request.
+type openRange struct {
+	key   string
+	ready chan struct{}
+	repo  *gitlocal.Repo
+	oids  [2]string
+	// result and err are a resolution's unavailable answer or failure; repo is
+	// nil then.
+	result PatchResult
+	err    error
+	// users counts the reads using repo; a range dropped while in use is
+	// closed by its last user.
+	users   int
+	dropped bool
+	idle    *time.Timer
 }
 
 // changeSet is one computation of a range's changed files, shared by every
@@ -109,7 +139,200 @@ type patchRead struct {
 
 // Patch is Patcher.Patch with nothing kept between calls.
 func Patch(ctx context.Context, req PatchRequest) (PatchResult, error) {
-	return new(Patcher).Patch(ctx, req)
+	p := new(Patcher)
+	defer p.Close()
+	return p.Patch(ctx, req)
+}
+
+// Close closes every clone the Patcher keeps open, once the reads using it
+// end. The Patcher stays usable: a later read opens the clone again.
+func (p *Patcher) Close() {
+	p.mu.Lock()
+	ranges := p.ranges
+	p.ranges = nil
+	var idle []*openRange
+	for _, r := range ranges {
+		r.dropped = true
+		if r.idle != nil {
+			r.idle.Stop()
+		}
+		if r.users == 0 && r.repo != nil {
+			idle = append(idle, r)
+		}
+	}
+	p.mu.Unlock()
+	for _, r := range idle {
+		_ = r.repo.Close()
+	}
+}
+
+// openRange returns the kept or newly resolved range for req, with a release
+// to call once the read is done, or the unavailable answer or failure of
+// resolving it, which is not kept.
+func (p *Patcher) openRange(ctx context.Context, req PatchRequest, start string) (*openRange, func(), PatchResult, error) {
+	dir := req.Dir
+	if dir == "" {
+		dir = "."
+	}
+	key := strings.Join([]string{dir, req.Repository, start, req.Head}, "\x00")
+	for {
+		p.mu.Lock()
+		var r *openRange
+		for i, kept := range p.ranges {
+			if kept.key == key {
+				r = kept
+				p.ranges = append(slices.Delete(p.ranges, i, i+1), r)
+				break
+			}
+		}
+		if r == nil {
+			r = &openRange{key: key, ready: make(chan struct{}), users: 1}
+			var evicted []*openRange
+			for len(p.ranges) >= maxChangeSets {
+				old := p.ranges[0]
+				p.ranges = p.ranges[1:]
+				if old.drop() {
+					evicted = append(evicted, old)
+				}
+			}
+			p.ranges = append(p.ranges, r)
+			p.mu.Unlock()
+			for _, old := range evicted {
+				_ = old.repo.Close()
+			}
+			repo, oids, result, err := resolveRange(ctx, dir, req.Repository, start, req.Head)
+			p.mu.Lock()
+			r.repo, r.oids, r.result, r.err = repo, oids, result, err
+			if repo == nil {
+				r.users--
+				r.dropped = true
+				if i := slices.Index(p.ranges, r); i >= 0 {
+					p.ranges = slices.Delete(p.ranges, i, i+1)
+				}
+			}
+			p.mu.Unlock()
+			close(r.ready)
+			if r.repo == nil {
+				return nil, nil, r.result, r.err
+			}
+			return r, func() { p.release(r) }, PatchResult{}, nil
+		}
+		r.users++
+		if r.idle != nil {
+			r.idle.Stop()
+		}
+		p.mu.Unlock()
+		select {
+		case <-r.ready:
+		case <-ctx.Done():
+			p.release(r)
+			return nil, nil, PatchResult{}, ctx.Err()
+		}
+		if r.repo != nil {
+			return r, func() { p.release(r) }, PatchResult{}, nil
+		}
+		// Another request's resolution failed or was unavailable; its answer
+		// is not kept, so this one resolves again.
+		p.mu.Lock()
+		r.users--
+		p.mu.Unlock()
+	}
+}
+
+// drop takes r out of use and reports whether it is unused and open, so
+// its caller closes it. p.mu is held.
+func (r *openRange) drop() bool {
+	r.dropped = true
+	if r.idle != nil {
+		r.idle.Stop()
+	}
+	return r.users == 0 && r.repo != nil
+}
+
+// forget drops r, once a read found its clone no longer answers for the
+// range; the next request resolves it again.
+func (p *Patcher) forget(r *openRange) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if i := slices.Index(p.ranges, r); i >= 0 {
+		p.ranges = slices.Delete(p.ranges, i, i+1)
+	}
+	r.dropped = true
+}
+
+// release ends one read of r. The last read closes a dropped range, or
+// starts its idle time.
+func (p *Patcher) release(r *openRange) {
+	p.mu.Lock()
+	r.users--
+	closing := r.users == 0 && r.dropped && r.repo != nil
+	if r.users == 0 && !r.dropped && r.repo != nil {
+		if r.idle == nil {
+			r.idle = time.AfterFunc(rangeIdle, func() { p.expire(r) })
+		} else {
+			r.idle.Reset(rangeIdle)
+		}
+	}
+	p.mu.Unlock()
+	if closing {
+		_ = r.repo.Close()
+	}
+}
+
+// expire closes r once it has been idle for rangeIdle.
+func (p *Patcher) expire(r *openRange) {
+	p.mu.Lock()
+	if r.users > 0 || r.dropped {
+		p.mu.Unlock()
+		return
+	}
+	r.dropped = true
+	if i := slices.Index(p.ranges, r); i >= 0 {
+		p.ranges = slices.Delete(p.ranges, i, i+1)
+	}
+	p.mu.Unlock()
+	_ = r.repo.Close()
+}
+
+// resolveRange opens the clone containing dir, matches its remotes to
+// repository and resolves the range's commits. Without an error, either repo
+// is the open clone or result is the unavailable answer.
+func resolveRange(ctx context.Context, dir, repository, start, head string) (repo *gitlocal.Repo, oids [2]string, result PatchResult, err error) {
+	repo, err = gitlocal.Open(ctx, dir, gitlocal.Options{MaxPatchBytes: MaxPatchBytes})
+	if err != nil {
+		var gitErr *gitlocal.Error
+		if errors.As(err, &gitErr) && gitErr.Command == "rev-parse" {
+			result, err = noPatch(CodeNotAClone)
+			return nil, oids, result, err
+		}
+		return nil, oids, PatchResult{}, fmt.Errorf("opening the clone: %w", err)
+	}
+	fail := func(r PatchResult, e error) (*gitlocal.Repo, [2]string, PatchResult, error) {
+		_ = repo.Close()
+		return nil, oids, r, e
+	}
+	remotes, err := repo.RemoteURLs(ctx)
+	if err != nil {
+		return fail(PatchResult{}, fmt.Errorf("reading the clone's remotes: %w", err))
+	}
+	if !anyRemoteIs(remotes, repository) {
+		return fail(noPatch(CodeRemoteMismatch))
+	}
+	for i, id := range []string{start, head} {
+		oids[i], err = repo.ResolveCommit(ctx, id)
+		switch {
+		case err == nil:
+		case errors.Is(err, gitlocal.ErrObjectNotFound):
+			return fail(noPatch(CodeCommitsMissing))
+		case errors.Is(err, gitlocal.ErrAmbiguous):
+			return fail(noPatch(CodeAmbiguousCommit))
+		case errors.Is(err, gitlocal.ErrInvalidInput):
+			return fail(noPatch(CodeNoHead))
+		default:
+			return fail(PatchResult{}, fmt.Errorf("resolving commit %s: %w", id, err))
+		}
+	}
+	return repo, oids, PatchResult{}, nil
 }
 
 // Patch reads one file's patch for a pull request from the clone containing
@@ -175,46 +398,26 @@ func (p *Patcher) readPatch(ctx context.Context, req PatchRequest) (PatchResult,
 	if req.Repository == "" || req.Head == "" || start == "" {
 		return noPatch(CodeNoHead)
 	}
-	dir := req.Dir
-	if dir == "" {
-		dir = "."
+	r, release, result, err := p.openRange(ctx, req, start)
+	if r == nil {
+		return result, err
 	}
-	repo, err := gitlocal.Open(ctx, dir, gitlocal.Options{MaxPatchBytes: MaxPatchBytes})
-	if err != nil {
-		var gitErr *gitlocal.Error
-		if errors.As(err, &gitErr) && gitErr.Command == "rev-parse" {
-			return noPatch(CodeNotAClone)
+	defer release()
+	// An answer the clone may give otherwise later, such as objects gone
+	// missing or git failing, drops the kept range, so the next request
+	// opens and resolves it again.
+	unavailable := func(err error) (PatchResult, bool, error) {
+		result, handled, err := unreadable(err)
+		if handled && (err != nil || result.Code != CodeTooLarge) {
+			p.forget(r)
 		}
-		return PatchResult{}, fmt.Errorf("opening the clone: %w", err)
+		return result, handled, err
 	}
-	defer func() { _ = repo.Close() }()
-
-	remotes, err := repo.RemoteURLs(ctx)
-	if err != nil {
-		return PatchResult{}, fmt.Errorf("reading the clone's remotes: %w", err)
-	}
-	if !anyRemoteIs(remotes, req.Repository) {
-		return noPatch(CodeRemoteMismatch)
-	}
-	var oids [2]string
-	for i, id := range []string{start, req.Head} {
-		oids[i], err = repo.ResolveCommit(ctx, id)
-		switch {
-		case err == nil:
-		case errors.Is(err, gitlocal.ErrObjectNotFound):
-			return noPatch(CodeCommitsMissing)
-		case errors.Is(err, gitlocal.ErrAmbiguous):
-			return noPatch(CodeAmbiguousCommit)
-		case errors.Is(err, gitlocal.ErrInvalidInput):
-			return noPatch(CodeNoHead)
-		default:
-			return PatchResult{}, fmt.Errorf("resolving commit %s: %w", id, err)
-		}
-	}
+	repo, oids := r.repo, r.oids
 	files, err := p.changedFiles(ctx, oids[0], oids[1], func(ctx context.Context) (map[string]gitlocal.ChangedFile, error) {
 		return repo.ChangedFiles(ctx, oids[0], oids[1])
 	})
-	if result, handled, err := unreadable(err); handled {
+	if result, handled, err := unavailable(err); handled {
 		return result, err
 	}
 	// Only a path the range changes has a patch. Any other, a directory with
@@ -232,10 +435,10 @@ func (p *Patcher) readPatch(ctx context.Context, req PatchRequest) (PatchResult,
 		paths = []string{change.OldPath, req.Path}
 	}
 	out, err := repo.FilePatch(ctx, oids[0], oids[1], MaxPatchBytes, paths...)
-	if result, handled, err := unreadable(err); handled {
+	if result, handled, err := unavailable(err); handled {
 		return result, err
 	}
-	result, err := patchOf(string(out), change.TypeChanged)
+	result, err = patchOf(string(out), change.TypeChanged)
 	if err != nil || !result.Available {
 		return result, err
 	}
