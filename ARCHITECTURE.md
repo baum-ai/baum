@@ -4416,3 +4416,9 @@ removed worktree cannot rewrite their historical work. Replay without a saved
 observation recovers clone identity only and reports `unknown_history`.
 Active and ended observations survive restarts; notification message text and
 local paths are not persisted. Stale or unavailable discovery is explicit.
+
+Live PR selection compares the canonical head repository (including host) as
+well as branch names. Discovery retains fork head identity; local Git records
+the origin and configured upstream identities. Thus equal branch names in the
+base, a fork and another GitHub host cannot alias one another. Older cache
+entries lacking fork head identity remain unlinked until discovery refreshes.

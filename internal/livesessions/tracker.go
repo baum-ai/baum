@@ -132,12 +132,14 @@ const (
 
 // WorkObservation is recorded Git context, not proof of code contribution.
 type WorkObservation struct {
-	At         time.Time `json:"at"`
-	Repository string    `json:"repository"`
-	Branch     string    `json:"branch,omitempty"`
-	HeadSHA    string    `json:"head_sha,omitempty"`
-	Upstream   string    `json:"upstream,omitempty"`
-	PR         int       `json:"pr,omitempty"`
+	At                 time.Time `json:"at"`
+	HeadRepository     string    `json:"head_repository,omitempty"`
+	UpstreamRepository string    `json:"upstream_repository,omitempty"`
+	Repository         string    `json:"repository"`
+	Branch             string    `json:"branch,omitempty"`
+	HeadSHA            string    `json:"head_sha,omitempty"`
+	Upstream           string    `json:"upstream,omitempty"`
+	PR                 int       `json:"pr,omitempty"`
 }
 
 type WorkHistory struct {
@@ -177,13 +179,15 @@ type Session struct {
 	Branch     string    `json:"branch,omitempty"`
 	// PR is the pull request whose head is Branch, 0 when there is none
 	// (yet) or it cannot be told.
-	PR          int          `json:"pr,omitempty"`
-	HeadSHA     string       `json:"head_sha,omitempty"`
-	Upstream    string       `json:"upstream,omitempty"`
-	LinkMethod  string       `json:"link_method,omitempty"`
-	LinkStatus  string       `json:"link_status,omitempty"`
-	ObservedAt  time.Time    `json:"observed_at,omitzero"`
-	WorkHistory *WorkHistory `json:"work_history,omitempty"`
+	PR                 int          `json:"pr,omitempty"`
+	HeadSHA            string       `json:"head_sha,omitempty"`
+	Upstream           string       `json:"upstream,omitempty"`
+	HeadRepository     string       `json:"head_repository,omitempty"`
+	UpstreamRepository string       `json:"upstream_repository,omitempty"`
+	LinkMethod         string       `json:"link_method,omitempty"`
+	LinkStatus         string       `json:"link_status,omitempty"`
+	ObservedAt         time.Time    `json:"observed_at,omitzero"`
+	WorkHistory        *WorkHistory `json:"work_history,omitempty"`
 }
 
 // Link is where a working directory belongs.
@@ -194,8 +198,9 @@ type Link struct {
 	// Branch is the branch checked out, empty when detached.
 	Branch string
 	// PR is the pull request of Branch, 0 when none is known.
-	PR                                int
-	HeadSHA, Upstream, Method, Status string
+	PR                                 int
+	HeadSHA, Upstream, Method, Status  string
+	HeadRepository, UpstreamRepository string
 }
 
 // Linker links a hook's working directory to a repository, branch and pull
@@ -663,15 +668,15 @@ func (t *Tracker) Reconcile(ctx context.Context) bool {
 }
 
 func (e *entry) setLink(link Link, now time.Time) {
-	if e.Repository != link.Repository || e.Branch != link.Branch || e.HeadSHA != link.HeadSHA || e.Upstream != link.Upstream || e.ObservedAt.IsZero() {
+	if e.Repository != link.Repository || e.Branch != link.Branch || e.HeadSHA != link.HeadSHA || e.Upstream != link.Upstream || e.HeadRepository != link.HeadRepository || e.UpstreamRepository != link.UpstreamRepository || e.ObservedAt.IsZero() {
 		e.ObservedAt = now
 	}
-	if e.WorkHistory == nil || e.Repository != link.Repository || e.Branch != link.Branch || e.HeadSHA != link.HeadSHA || e.Upstream != link.Upstream || e.PR != link.PR {
+	if e.WorkHistory == nil || e.Repository != link.Repository || e.Branch != link.Branch || e.HeadSHA != link.HeadSHA || e.Upstream != link.Upstream || e.HeadRepository != link.HeadRepository || e.UpstreamRepository != link.UpstreamRepository || e.PR != link.PR {
 		var history []WorkObservation
 		if e.WorkHistory != nil {
 			history = slices.Clone(e.WorkHistory.Entries)
 		}
-		observation := WorkObservation{At: e.ObservedAt, Repository: link.Repository, Branch: link.Branch, HeadSHA: link.HeadSHA, Upstream: link.Upstream, PR: link.PR}
+		observation := WorkObservation{At: e.ObservedAt, Repository: link.Repository, Branch: link.Branch, HeadSHA: link.HeadSHA, Upstream: link.Upstream, PR: link.PR, HeadRepository: link.HeadRepository, UpstreamRepository: link.UpstreamRepository}
 		if len(history) > 0 && history[len(history)-1].At.Equal(observation.At) {
 			history[len(history)-1] = observation
 		} else {
@@ -684,6 +689,7 @@ func (e *entry) setLink(link Link, now time.Time) {
 	}
 	e.Repository, e.Branch, e.PR = link.Repository, link.Branch, link.PR
 	e.HeadSHA, e.Upstream = link.HeadSHA, link.Upstream
+	e.HeadRepository, e.UpstreamRepository = link.HeadRepository, link.UpstreamRepository
 	e.LinkMethod, e.LinkStatus = link.Method, link.Status
 	e.linkedAt = now
 	e.stale = false

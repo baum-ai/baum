@@ -140,11 +140,11 @@ func (r *Resolver) Relink(ctx context.Context, s Session) (Link, bool) {
 	if s.LinkStatus == "unknown_history" {
 		return Link{Repository: s.Repository, Status: "unknown_history"}, true
 	}
-	return r.resolve(ctx, s.Repository, prlink.Work{Branch: s.Branch, Upstream: s.Upstream, Head: s.HeadSHA})
+	return r.resolve(ctx, s.Repository, prlink.Work{Branch: s.Branch, Upstream: s.Upstream, Head: s.HeadSHA, Repository: s.HeadRepository, UpstreamRepository: s.UpstreamRepository})
 }
 
 func (r *Resolver) resolve(ctx context.Context, repository string, work prlink.Work) (Link, bool) {
-	link := Link{Repository: repository, Branch: work.Branch, HeadSHA: work.Head, Upstream: work.Upstream, Status: "unavailable"}
+	link := Link{Repository: repository, Branch: work.Branch, HeadSHA: work.Head, Upstream: work.Upstream, Status: "unavailable", HeadRepository: work.Repository, UpstreamRepository: work.UpstreamRepository}
 	if r.Discovery == nil {
 		return link, true
 	}

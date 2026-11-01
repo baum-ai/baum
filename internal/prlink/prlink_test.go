@@ -89,3 +89,40 @@ func TestResolveReportsAmbiguityAndStaleness(t *testing.T) {
 		t.Fatalf("stale evidence not identified: %+v", got)
 	}
 }
+
+func TestForkHeadIdentitySeparatesSameNamedBranches(t *testing.T) {
+	snapshot := discovery.Snapshot{Repository: "acme/demo", PullRequests: []discovery.PullRequest{
+		{Number: 1, HeadRef: "feature", HeadRepository: "acme/demo"},
+		{Number: 2, HeadRef: "feature", HeadRepository: "ada/demo", Fork: true},
+		{Number: 3, HeadRef: "feature", HeadRepository: "other.example/ada/demo", Fork: true},
+	}}
+	if got := Find(snapshot, Work{Repository: "ada/demo", Branch: "feature"}); got != 2 {
+		t.Fatalf("fork matched PR %d", got)
+	}
+	if got := Find(snapshot, Work{Repository: "acme/demo", Branch: "feature"}); got != 1 {
+		t.Fatalf("base matched PR %d", got)
+	}
+	if got := Find(snapshot, Work{Repository: "local/demo", Branch: "local", Upstream: "feature", UpstreamRepository: "ada/demo"}); got != 2 {
+		t.Fatalf("fork upstream matched PR %d", got)
+	}
+}
+
+func TestLocalDoesNotAliasAnOriginOnAnotherHost(t *testing.T) {
+	dir := t.TempDir()
+	gitIn(t, dir, "init", "-q", "-b", "feature")
+	gitIn(t, dir, "commit", "-q", "--allow-empty", "-m", "start")
+	gitIn(t, dir, "remote", "add", "origin", "https://other.example/acme/demo")
+	repo, err := gitlocal.Open(context.Background(), dir, gitlocal.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = repo.Close() }()
+	work := Local(context.Background(), repo, "acme/demo")
+	if work.Repository != "other.example/acme/demo" {
+		t.Fatalf("origin identity lost: %+v", work)
+	}
+	snapshot := discovery.Snapshot{Repository: "acme/demo", PullRequests: []discovery.PullRequest{{Number: 1, HeadRef: "feature"}}}
+	if got := Find(snapshot, work); got != 0 {
+		t.Fatalf("cross-host branch linked to PR %d", got)
+	}
+}
