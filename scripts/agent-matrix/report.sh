@@ -12,7 +12,7 @@ jq -rs '
     (group_by([.agent, .version, .support]) | sort_by(.[0].agent, .[0].version) | reverse | .[]
      | . as $rows
      | [$rows[0].agent, $rows[0].version, $rows[0].support]
-       + ($checks | map(. as $c | ($rows | map(select(.check == $c)) | first | (.status // "-") | mark)))
+       + ($checks | map(. as $c | ($rows | map(select(.check == $c)) | first | (.status // "-") | if . == "-" then "-" else mark end)))
      | "| " + join(" | ") + " |"),
     "",
     "Details:",

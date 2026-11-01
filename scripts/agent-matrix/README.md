@@ -16,11 +16,11 @@ just agent-matrix --only-latest                     # latest and the declared fl
 The recipe runs in the `agent-matrix` Docker service (Go and Node, built from
 the [`Dockerfile`](Dockerfile)), with the development CPU set and the shared
 cache in `BAUM_DEV_CACHE_DIR`. Without Docker, `sh scripts/agent-matrix/run.sh`
-from this directory's parent works anywhere with Go, Node, npm, git and jq.
+from `oss/` works anywhere with Go, Node, npm, git and jq.
 It needs the network (npm, and github.com/baum-ai/baum for one check) and
 takes about four minutes with a warm cache. It prints a table of
 checks by release and the detail of each check, and fails when a release marked
-`supported` fails a check. `AGENT_MATRIX_FILE` names another matrix file.
+`supported` fails a check, a release below the floor is not refused, or nothing was tested. `AGENT_MATRIX_FILE` names another matrix file.
 
 It is not part of CI: the network installs and run time make it a manual or
 scheduled check. `go test ./...` skips the test without its environment.

@@ -46,8 +46,6 @@ binary() {
   esac
 }
 
-seen_latest=
-unexpected=0
 grep -v '^#' "${AGENT_MATRIX_FILE:-$here/matrix.txt}" | while read -r agent version support note; do
   [ -n "$agent" ] || continue
   [ -z "$only_agent" ] || [ "$only_agent" = "$agent" ] || continue
@@ -70,11 +68,14 @@ grep -v '^#' "${AGENT_MATRIX_FILE:-$here/matrix.txt}" | while read -r agent vers
   echo "== testing $agent $version ($support)"
   BAUM_MATRIX_AGENT=$agent BAUM_MATRIX_VERSION=$version BAUM_MATRIX_SUPPORT=$support \
     BAUM_MATRIX_PREFIX=$prefix BAUM_MATRIX_BIN="$prefix/node_modules/.bin/$(binary "$agent")" \
-    go test -count=1 -run TestAgentMatrix -timeout 20m ./internal/agentmatrix || true
+    go test -count=1 -run TestAgentMatrix -timeout 20m ./internal/agentmatrix </dev/null || \
+    jq -nc --arg a "$agent" --arg v "$version" --arg s "$support" \
+      '{agent: $a, version: $v, support: $s, check: "harness", status: "fail", detail: "go test failed outside a check (compile error, timeout or fatal error); see its output above"}' >> "$results"
 done
 
 echo
 sh "$here/report.sh" "$results"
 if [ -n "${AGENT_MATRIX_KEEP:-}" ]; then cp "$results" "$AGENT_MATRIX_KEEP"; fi
-# A supported release that fails a check fails the run.
-jq -s -e 'map(select(.support == "supported" and .status == "fail")) | length == 0' "$results" >/dev/null
+# A supported release that fails any check, a release below the floor that
+# baum does not refuse, a harness error, or a run that tested nothing fails the run.
+jq -s -e 'length > 0 and (map(select(.status == "fail" and (.support == "supported" or (.check | IN("flags", "doctor", "harness", "install"))))) | length == 0)' "$results" >/dev/null

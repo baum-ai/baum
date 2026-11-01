@@ -87,11 +87,11 @@ func (m *matrix) checkReplay() {
 		m.record("replay", "fail", "registering the clone: %v: %s", err, oneLine(out))
 		return
 	}
+	m.t.Cleanup(func() { _, _, _ = h.run(h.dir, time.Minute, "", m.baum, "daemon", "stop") })
 	if out, _, err := h.run(h.dir, time.Minute, "", m.baum, "daemon", "ensure", "--json"); err != nil {
 		m.record("replay", "fail", "daemon did not start: %v: %s", err, oneLine(out))
 		return
 	}
-	m.t.Cleanup(func() { _, _, _ = h.run(h.dir, time.Minute, "", m.baum, "daemon", "stop") })
 	paths, err := daemon.DefaultPaths()
 	if err != nil {
 		m.t.Fatal(err)
