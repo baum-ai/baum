@@ -84,7 +84,7 @@ func TestUnknownBackendIsAnError(t *testing.T) {
 func TestGroupInstructionsInsertGroupTextBeforeSubmitting(t *testing.T) {
 	shared := readFile(t, "review-public-v6.md")
 	group := readFile(t, "group-public-v1.md")
-	for _, phrase := range []string{"members/<number>/head/", "members.json", "Do not write `stack`"} {
+	for _, phrase := range []string{"members/<number>/head/", "members.json", "`stack.title`: a name for the group", "baum fills its members"} {
 		if !strings.Contains(group, phrase) {
 			t.Errorf("the group text does not say %q", phrase)
 		}

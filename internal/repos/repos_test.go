@@ -386,15 +386,24 @@ func TestPreferencesFixAgent(t *testing.T) {
 
 func TestPreferencesExtractionBackend(t *testing.T) {
 	claude, codex, anthropic, cursor, auto := config.BackendClaude, config.BackendCodex, config.BackendAnthropic, config.BackendCursorAgent, config.BackendAuto
-	for _, b := range []*config.Backend{nil, &claude, &codex, &anthropic} {
-		if err := (Preferences{Decisions: DecisionPreferences{Backend: b}}).Validate(); err != nil {
+	for _, b := range []*config.Backend{nil, &claude, &codex} {
+		if err := (Preferences{Decisions: DecisionPreferences{Backend: b}}).ValidateChange(Preferences{}); err != nil {
 			t.Fatalf("%v rejected: %v", b, err)
 		}
 	}
-	for _, b := range []*config.Backend{&cursor, &auto} {
-		if (Preferences{Decisions: DecisionPreferences{Backend: b}}).Validate() == nil {
+	for _, b := range []*config.Backend{&anthropic, &cursor, &auto} {
+		if (Preferences{Decisions: DecisionPreferences{Backend: b}}).ValidateChange(Preferences{}) == nil {
 			t.Fatalf("%s accepted", *b)
 		}
+	}
+	// A retired backend stored by a pre-release version does not block saving
+	// other settings, but choosing it anew is refused.
+	stored := Preferences{Backend: &cursor, Decisions: DecisionPreferences{Backend: &anthropic}}
+	if err := stored.ValidateChange(stored); err != nil {
+		t.Fatalf("stored retired backends block saving: %v", err)
+	}
+	if (Preferences{Backend: &cursor}).ValidateChange(Preferences{}) == nil || (Preferences{Backend: &anthropic}).ValidateChange(Preferences{}) == nil {
+		t.Fatal("a retired review backend was accepted")
 	}
 }
 

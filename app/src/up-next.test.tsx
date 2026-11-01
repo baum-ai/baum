@@ -435,7 +435,7 @@ it("counts what left the queue as cleared today", async () => {
   // repository in the read.
   entries = [entry(6)];
   await render();
-  expect(node.textContent).toContain("Inbox zero.");
+  expect(node.textContent).toContain("Inbox zero");
   expect(node.textContent).toContain("All 4 handled. Nothing needs you right now.");
 });
 

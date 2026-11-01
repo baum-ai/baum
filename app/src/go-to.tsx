@@ -1,4 +1,5 @@
 import { useEffect, useId, useMemo, useRef, useState } from "react";
+import { useModal } from "./modal";
 
 /** A place Go to can open: a page, a pull request, a review group or an
  *  agent session. */
@@ -55,16 +56,13 @@ export function GoTo({
   go: (href: string) => void;
   close: () => void;
 }) {
-  const dialog = useRef<HTMLDialogElement>(null);
+  const dialog = useModal();
   const list = useRef<HTMLUListElement>(null);
   const [query, setQuery] = useState("");
   const [active, setActive] = useState(0);
   const matches = useMemo(() => goToMatches(items, query), [items, query]);
   const marked = Math.min(active, matches.length - 1);
   const id = useId();
-  useEffect(() => {
-    dialog.current?.showModal();
-  }, []);
   useEffect(() => {
     list.current
       ?.querySelector<HTMLElement>(`[data-index="${marked}"]`)

@@ -31,6 +31,17 @@ type linker struct {
 	calls int
 }
 
+type restoredLinker struct {
+	*linker
+	link  Link
+	calls int
+}
+
+func (l *restoredLinker) Relink(_ context.Context, _ Session) (Link, bool) {
+	l.calls++
+	return l.link, true
+}
+
 func (l *linker) Link(_ context.Context, cwd string) (Link, bool) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -376,6 +387,29 @@ func TestEndedSessionsSurviveARestartPastTheRecord(t *testing.T) {
 	}
 }
 
+func TestRestoredLiveSessionRelinksWithoutWorkingDirectory(t *testing.T) {
+	dir := t.TempDir()
+	c := &clock{t0}
+	before := &Tracker{Source: &source{}, Linker: newLinker(), Now: c.Now, StateDir: dir}
+	apply(before, event("s1", "session-start", c.now, "/work/demo"))
+	before.persist()
+
+	recorded := &restoredLinker{linker: newLinker(), link: Link{Repository: "acme/demo", Branch: "feature", PR: 9}}
+	after := &Tracker{Source: &source{}, Linker: recorded, Now: c.Now, StateDir: dir}
+	after.Rebuild(context.Background())
+	if got := after.Sessions(); len(got) != 1 || got[0].PR != 7 {
+		t.Fatalf("restored sessions = %+v", got)
+	}
+	c.advance(RelinkEvery)
+	after.Sweep()
+	if !after.ResolvePending(context.Background()) || recorded.calls != 1 {
+		t.Fatalf("restored session did not relink: calls = %d", recorded.calls)
+	}
+	if got := after.Sessions()[0]; got.PR != 9 {
+		t.Fatalf("relinked session = %+v", got)
+	}
+}
+
 // The latest prompt is kept apart from the activity, which every tool call
 // moves; a late delivery of an older prompt does not move it back.
 func TestLastPromptAtIsTheLatestPrompt(t *testing.T) {
@@ -541,7 +575,7 @@ func TestAPIPayloadHasNoPathsOrTranscript(t *testing.T) {
 		t.Fatal(err)
 	}
 	fields := decoded["sessions"][0]
-	want := []string{"agent", "session_id", "state", "started_at", "last_activity_at", "last_prompt_at", "last_event", "repository", "branch", "pr"}
+	want := []string{"agent", "session_id", "state", "started_at", "last_activity_at", "last_prompt_at", "last_event", "repository", "branch", "pr", "observed_at", "work_history"}
 	if len(fields) != len(want) {
 		t.Fatalf("fields = %v", fields)
 	}

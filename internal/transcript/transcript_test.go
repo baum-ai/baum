@@ -204,6 +204,65 @@ func TestBuildLeavesTheHarnessInputsOutOfThePrompts(t *testing.T) {
 	}
 }
 
+// Claude Code marks a subagent's report coming back as its own
+// (promptSource "system"), so the mapping keeps it as a system input. What the
+// agent does after it, its final answer among it, is still the turn of the
+// prompt before it, and the next prompt's turn is its own. A system input
+// before every prompt stays the session's.
+func TestBuildHandsASystemInputsActivityToThePromptBeforeIt(t *testing.T) {
+	report := "Another Claude session sent a message:\n<agent-message from=\"a1\">\n[Subagent hand-back] Done.\n</agent-message>"
+	meta := json.RawMessage(`{"isMeta":true,"promptSource":"system","origin":{"kind":"peer","from":"a1","name":"Explore"}}`)
+	g := &session.Graph{
+		Sessions: []session.Session{{ID: "root", Outcome: session.OutcomeUnknown}},
+		UserInputs: []session.UserInput{
+			{ID: "early", SessionID: "root", Ordinal: 1, Text: "<task-notification>\n<task-id>b1</task-id>\n</task-notification>", Kind: session.KindOther, Origin: session.OriginSystem},
+			{ID: "p1", SessionID: "root", Ordinal: 2, Text: "Plan it", Kind: session.KindPrompt, Origin: session.OriginHuman},
+			{ID: "p2", SessionID: "root", Ordinal: 3, Text: "It merged", Kind: session.KindPrompt, Origin: session.OriginHuman},
+			{ID: "report", SessionID: "root", Ordinal: 4, Text: report, Kind: session.KindOther, Origin: session.OriginSystem, Metadata: meta},
+		},
+		ModelInvocations: []session.ModelInvocation{
+			{ID: "m0", SessionID: "root", UserInputID: "early", Model: ptr("claude-opus"), StartedAt: at(0)},
+			{ID: "m1", SessionID: "root", UserInputID: "p2", Model: ptr("claude-opus"), StartedAt: at(2)},
+			{ID: "m2", SessionID: "root", UserInputID: "report", Model: ptr("claude-opus"), StartedAt: at(4)},
+		},
+		AssistantMessages: []session.AssistantMessage{
+			{ID: "a0", SessionID: "root", UserInputID: "early", ModelInvocationID: "m0", Text: ptr("Noted."), Timestamp: at(0)},
+			{ID: "a1", SessionID: "root", UserInputID: "p2", ModelInvocationID: "m1", Text: ptr("The subagent is still running."), Timestamp: at(2)},
+			{ID: "a2", SessionID: "root", UserInputID: "report", ModelInvocationID: "m2", Text: ptr("Here is the plan."), Timestamp: at(5)},
+		},
+		ToolUses: []session.ToolUse{
+			{ID: "early-bash", SessionID: "root", UserInputID: "early", ModelInvocationID: "m0", Name: "Bash", Verb: session.VerbExecute, Input: json.RawMessage(`{}`), Status: session.StatusOK, Timestamp: at(0)},
+			{ID: "bash", SessionID: "root", UserInputID: "report", ModelInvocationID: "m2", Name: "Bash", Verb: session.VerbExecute, Input: json.RawMessage(`{}`), Status: session.StatusOK, Timestamp: at(4)},
+			{ID: "comment", SessionID: "root", UserInputID: "report", ModelInvocationID: "m2", Name: "save_comment", Verb: session.VerbOther, Input: json.RawMessage(`{}`), Status: session.StatusOK, Timestamp: at(5)},
+		},
+	}
+	got := build(t, g, Meta{ID: "root"}, DefaultLimits)
+	s := got.Session
+	var ids []string
+	for _, prompt := range s.Prompts {
+		ids = append(ids, prompt.TurnID)
+	}
+	if strings.Join(ids, ",") != "p1,p2" {
+		t.Fatalf("prompts = %v", ids)
+	}
+	if first := s.Prompts[0]; len(first.Replies) != 0 || first.Effects == nil || first.Effects.ToolCalls != 0 {
+		t.Errorf("first prompt = %+v", first)
+	}
+	second := s.Prompts[1]
+	if n := len(second.Replies); n != 2 || second.Replies[1].Text != "Here is the plan." {
+		t.Errorf("replies = %+v", second.Replies)
+	}
+	if second.Effects == nil || second.Effects.ToolCalls != 2 {
+		t.Errorf("effects = %+v", second.Effects)
+	}
+	if calls := got.Activity["p2"].ToolCalls; len(calls) != 2 || calls[1].Name != "save_comment" {
+		t.Errorf("activity = %+v", got.Activity["p2"])
+	}
+	if s.Unattributed.ToolCalls != 1 || s.Totals.ToolCalls != 3 {
+		t.Errorf("unattributed %+v, totals %+v", *s.Unattributed, *s.Totals)
+	}
+}
+
 func build(t *testing.T, g *session.Graph, meta Meta, limits Limits) Transcript {
 	t.Helper()
 	got, err := Build(g, meta, limits, nil)

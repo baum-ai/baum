@@ -168,6 +168,25 @@ it("says what is still loading and what is empty", () => {
   expect(empty).toContain("No plan usage sampled yet");
 });
 
+it("still draws earlier Cursor sessions with a neutral name, though the filter does not offer it", () => {
+  const data = report({
+    daily: [
+      {
+        date: "2026-10-26",
+        agents: {
+          claude_code: { sessions: 1, active_seconds: 0 },
+          cursor: { sessions: 2, active_seconds: 0 },
+        },
+      },
+    ],
+    by_agent: [{ ...report().by_agent[0]!, key: "cursor" }],
+  });
+  expect(data.options.agents).toEqual(["claude_code", "codex"]);
+  const html = renderToStaticMarkup(<AnalyticsReport data={data} Link={Link} />);
+  expect(html).toContain("Cursor");
+  expect(html).not.toContain("undefined");
+});
+
 it("draws known figures, an incomplete estimate and the limit hits", () => {
   const html = renderToStaticMarkup(
     <AnalyticsReport
@@ -422,5 +441,8 @@ it("explains an older daemon and a failed read", async () => {
   await act(async () => root.render(<></>));
   await act(async () => root.render(<Harness />));
   await act(async () => {});
-  expect(node.textContent).toContain("Retry");
+  expect(node.textContent).toContain("Couldn't load analytics");
+  expect(
+    [...node.querySelectorAll("button")].filter((b) => b.textContent === "Retry"),
+  ).toHaveLength(1);
 });

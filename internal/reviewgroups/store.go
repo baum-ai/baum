@@ -394,7 +394,9 @@ type versionSummary struct {
 
 // Put appends v only while previous is still the group's latest version (0
 // for none). The document must be the group's: a review of its repository
-// with a stack, at version previous+1.
+// with a stack, at version previous+1. A stack group, whose name is baum's,
+// takes the name the review gave it (the document's stack title); a group
+// the person made or took over keeps theirs.
 func (s *Store) Put(ctx context.Context, id string, previous int, v store.Version) error {
 	g, err := s.Get(ctx, id)
 	if err != nil {
@@ -409,6 +411,7 @@ func (s *Store) Put(ctx context.Context, id string, previous int, v store.Versio
 			RiskScore json.RawMessage `json:"risk_score"`
 		} `json:"summary"`
 		Stack *struct {
+			Title   string           `json:"title"`
 			Members []ReviewedMember `json:"members"`
 		} `json:"stack"`
 	}
@@ -429,14 +432,26 @@ func (s *Store) Put(ctx context.Context, id string, previous int, v store.Versio
 	if err != nil {
 		return err
 	}
-	result, err := s.db.ExecContext(ctx, `INSERT INTO versions(group_id,version,metadata,summary,document) SELECT ?,?,?,?,? WHERE COALESCE((SELECT MAX(version) FROM versions WHERE group_id=?),0)=?`, id, v.Metadata.Version, metadata, summary, []byte(v.Document), id, previous)
+	// One transaction, so a rename or a dissolution by SyncStacks in between
+	// is never written over.
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	result, err := tx.ExecContext(ctx, `INSERT INTO versions(group_id,version,metadata,summary,document) SELECT ?,?,?,?,? WHERE COALESCE((SELECT MAX(version) FROM versions WHERE group_id=?),0)=?`, id, v.Metadata.Version, metadata, summary, []byte(v.Document), id, previous)
 	if err != nil {
 		return err
 	}
 	if n, err := result.RowsAffected(); err != nil || n != 1 {
 		return ErrConflict
 	}
-	return nil
+	if name, err := cleanName(doc.Stack.Title); err == nil {
+		if _, err := tx.ExecContext(ctx, `UPDATE groups SET name=?, updated=? WHERE id=? AND stack=1 AND deleted=0 AND name<>?`, name, time.Now().UTC().Truncate(time.Millisecond).UnixMilli(), id, name); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }
 
 // documentRepository is how a document names the repository: owner/name,

@@ -130,7 +130,6 @@ func TestPrepareFixFromConversationNeedsNothingBroken(t *testing.T) {
 		{"a turn that does not exist", clean(), agent.BackendClaude, FixChatRef{Conversation: chatA, Turn: 9}, fix.ReasonNoChat},
 		{"fork", &fakeGitHub{head: r.head, headRepository: "someone/repo", push: true, mergeable: true}, agent.BackendClaude, FixChatRef{Conversation: chatA}, fix.ReasonFork},
 		{"no push access", &fakeGitHub{head: r.head, headRepository: "owner/repo", mergeable: true}, agent.BackendClaude, FixChatRef{Conversation: chatA}, fix.ReasonNoPushAccess},
-		{"cursor-agent", clean(), agent.BackendCursorAgent, FixChatRef{Conversation: chatA}, fix.ReasonUnsupportedBackend},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			ref := test.ref

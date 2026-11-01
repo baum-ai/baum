@@ -24,6 +24,7 @@ import {
   type Series,
 } from "./analytics-charts";
 import { LoadingStatus } from "./nine-dots";
+import { PageRead, readState } from "./page-state";
 import { lasted } from "./sessions";
 import { Notice, PageBar, RefreshButton, useReread } from "./shell";
 import "./analytics.css";
@@ -192,7 +193,7 @@ export type Analytics = {
 };
 
 /** The agents in their fixed colour order: a filter never repaints one. */
-export const AGENTS = ["claude_code", "codex", "cursor"] as const;
+export const AGENTS = ["claude_code", "codex"] as const;
 const agentLogos: Partial<Record<string, Brand>> = {
   claude_code: "claude",
   codex: "openai",
@@ -409,7 +410,13 @@ function Activity({ data }: { data: Analytics }) {
       totals.set(model, (totals.get(model) ?? 0) + value(part));
   const ranked = [...totals].filter(([, n]) => n > 0).sort((a, b) => b[1] - a[1]);
   const named = ranked.slice(0, ranked.length > MODEL_SLOTS ? MODEL_SLOTS - 1 : MODEL_SLOTS);
-  const agents = AGENTS.filter((a) =>
+  // The offered agents first, then any other recorded, such as earlier Cursor
+  // sessions, in a muted colour.
+  const recorded = new Set(data.daily.flatMap((d) => Object.keys(d.agents)));
+  const agents = [
+    ...AGENTS,
+    ...[...recorded].filter((a) => !(AGENTS as readonly string[]).includes(a)).sort(),
+  ].filter((a) =>
     data.daily.some((d) => (d.agents[a]?.sessions ?? 0) + (d.agents[a]?.active_seconds ?? 0) > 0),
   );
   const series: Series[] = byModel
@@ -478,8 +485,8 @@ function Activity({ data }: { data: Analytics }) {
         <div className="analytics-empty">
           <h3>No agent sessions in this window</h3>
           <p>
-            Claude Code, Codex and Cursor sessions whose working folder is inside one of your local
-            clones count here.
+            Claude Code and Codex sessions whose working folder is inside one of your local clones
+            count here, as do Cursor sessions recorded earlier.
           </p>
         </div>
       ) : (
@@ -1280,7 +1287,7 @@ export function AnalyticsPage({ Link }: { Link: ComponentType<ViewerLinkProps> }
         aria-busy={loading}
         data-stale={(loading && data && shown.current !== query) || undefined}
       >
-        {error ? (
+        {error && data ? (
           <Alert>
             {error}{" "}
             <Button
@@ -1298,11 +1305,19 @@ export function AnalyticsPage({ Link }: { Link: ComponentType<ViewerLinkProps> }
             <h2>Analytics are not available</h2>
             <p>This baum daemon is older than the app. Update baum to see analytics.</p>
           </div>
-        ) : data ? (
-          <AnalyticsReport data={data} Link={Link} />
-        ) : loading ? (
-          <LoadingStatus block>Loading analytics…</LoadingStatus>
-        ) : null}
+        ) : (
+          <PageRead
+            state={readState({ loaded: Boolean(data), failed: Boolean(error) })}
+            what="analytics"
+            message={error}
+            retry={() => {
+              setError("");
+              setAttempt((n) => n + 1);
+            }}
+          >
+            {data ? <AnalyticsReport data={data} Link={Link} /> : null}
+          </PageRead>
+        )}
       </div>
     </>
   );

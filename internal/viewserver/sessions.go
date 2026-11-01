@@ -23,19 +23,22 @@ const sessionsTimeout = 2 * time.Minute
 // are cheap to reach and a person can fix them, for example by fetching.
 var failureTTL = 30 * time.Second
 
+const sessionsTTL = time.Minute
+
 // computeGrace is how long Serve waits for a computation to wind down after
 // the server is told to stop.
 var computeGrace = 10 * time.Second
 
 // sessionsEntry is one computation of the sessions answer, shared by every
 // request that arrives while it runs and, when the answer is available, by
-// every later request for the same pull request.
+// later requests for the same pull request until it expires or is invalidated.
 type sessionsEntry struct {
-	key    string
-	done   chan struct{}
-	result locallink.Result
-	// expires is when a failed answer is worked out again; zero for any
-	// other, which is kept until the document's pull request changes.
+	key      string
+	revision uint64
+	done     chan struct{}
+	result   locallink.Result
+	// expires bounds reuse of successful and failed answers independently
+	// of document revisions.
 	expires time.Time
 	// transcripts are the session transcripts served from this answer, by
 	// session id, built once each.
@@ -127,38 +130,53 @@ func (s *Server) sessionsAnswer(ctx context.Context) (*sessionsEntry, bool) {
 	}
 	key := fmt.Sprintf("%s\x00%s\x00%s\x00%s", review.Repository, review.Head, review.Base, review.MergeBase)
 
-	s.sessionsMu.Lock()
-	if s.sessionsClosed {
+	for {
+		s.sessionsMu.Lock()
+		if s.sessionsClosed {
+			s.sessionsMu.Unlock()
+			return nil, false
+		}
+		entry := s.sessions
+		start := entry == nil || entry.key != key
+		if !start {
+			select {
+			case <-entry.done:
+				start = entry.revision != s.sessionsRevision || (!entry.expires.IsZero() && time.Now().After(entry.expires))
+			default:
+				// Wait for the shared computation before replacing stale evidence.
+			}
+		}
+		if start {
+			entry = &sessionsEntry{key: key, revision: s.sessionsRevision, done: make(chan struct{})}
+			s.sessions = entry
+			s.compute.Add(1)
+		}
 		s.sessionsMu.Unlock()
-		return nil, false
-	}
-	entry := s.sessions
-	start := entry == nil || entry.key != key
-	if !start {
+		if start {
+			go s.computeSessions(entry, review)
+		}
 		select {
-		case <-entry.done: // expires is only read once the computation is over
-			start = !entry.expires.IsZero() && time.Now().After(entry.expires)
-		default:
+		case <-entry.done:
+			s.sessionsMu.Lock()
+			stale := entry.revision != s.sessionsRevision
+			s.sessionsMu.Unlock()
+			if !stale {
+				return entry, true
+			}
+		case <-ctx.Done():
+			return nil, false
+		case <-s.done:
+			return nil, false
 		}
 	}
-	if start {
-		entry = &sessionsEntry{key: key, done: make(chan struct{})}
-		s.sessions = entry
-		s.compute.Add(1)
-	}
-	s.sessionsMu.Unlock()
-	if start {
-		go s.computeSessions(entry, review)
-	}
+}
 
-	select {
-	case <-entry.done:
-		return entry, true
-	case <-ctx.Done():
-		return nil, false
-	case <-s.done:
-		return nil, false
-	}
+// InvalidateSessions marks cached evidence stale. An in-flight read is allowed
+// to finish, then its waiters coalesce onto one read of the new revision.
+func (s *Server) InvalidateSessions() {
+	s.sessionsMu.Lock()
+	s.sessionsRevision++
+	s.sessionsMu.Unlock()
 }
 
 func (s *Server) computeSessions(entry *sessionsEntry, review Review) {
@@ -170,6 +188,9 @@ func (s *Server) computeSessions(entry *sessionsEntry, review Review) {
 		_, _ = fmt.Fprintf(s.opts.Warn, "warning: cannot link sessions: %v\n", err)
 		result = locallink.Unavailable(locallink.CodeError, "the sessions on this machine could not be read")
 		entry.expires = time.Now().Add(failureTTL)
+	}
+	if result.Available {
+		entry.expires = time.Now().Add(sessionsTTL)
 	}
 	entry.result = result
 	if !result.Available && entry.expires.IsZero() {

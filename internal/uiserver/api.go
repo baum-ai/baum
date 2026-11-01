@@ -145,6 +145,8 @@ type LocalHandler struct {
 	documents *documentCache
 }
 
+func (h *LocalHandler) InvalidateSessions() { h.documents.invalidateSessions() }
+
 func (h *LocalHandler) Close() { h.documents.close() }
 func (a LocalAPI) Handler() *LocalHandler {
 	cache := newDocumentCache()

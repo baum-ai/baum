@@ -68,7 +68,7 @@ func (l *Local) prepareFix(ctx context.Context, item Item) (Prepared, string, er
 	if backends.Claude == nil {
 		backends = generate.DefaultBackendsFor(cfg)
 	}
-	selected, e := generate.Select(ctx, cfg.Backend, cfg.Model, backends, io.Discard)
+	selected, e := generate.SelectDesktop(ctx, cfg.Backend, cfg.Model, backends, io.Discard)
 	if e != nil {
 		return Prepared{}, "", e
 	}
@@ -207,7 +207,7 @@ func (l *Local) executeFix(ctx context.Context, p Prepared, progress func(Progre
 	if backends.Claude == nil {
 		backends = generate.DefaultBackendsFor(cfg)
 	}
-	selected, e := generate.Select(ctx, cfg.Backend, cfg.Model, backends, io.Discard)
+	selected, e := generate.SelectDesktop(ctx, cfg.Backend, cfg.Model, backends, io.Discard)
 	if e != nil {
 		return nil, e
 	}

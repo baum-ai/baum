@@ -96,7 +96,9 @@ it("shows a live session's decisions and rereads them on a decisions event", asy
   };
   await act(async () => render(2));
   expect(node.querySelector("details")).toBeNull();
-  expect(node.textContent).toContain("Decisions (0) · Cursor Agent can't capture decisions");
+  expect(node.textContent).toContain(
+    "Decisions (0) · Decisions are captured with Claude Code or Codex only",
+  );
 });
 
 it("draws nothing for a daemon without decision capture", async () => {

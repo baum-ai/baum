@@ -171,6 +171,18 @@ happen only when the user selects an install or add action. Displayed paths abbr
      refreshes approval, without granting it. The person can finish setup with
      an unfinished connection; the app keeps a warning beside Settings.
 
+### Backends
+
+The app and its daemon run reviews, fixes, chats and decision extraction with
+Claude Code and Codex only. Setup and Settings list those two; `auto` tries
+Claude Code, then Codex, and never falls back to the Anthropic API. When
+neither is installed, setup replaces the model controls with installation
+guides, Settings' Reviews section says so and Diagnostics reports the `auto`
+check as a problem. The daemon refuses a job whose backend is `cursor-agent` or
+`anthropic`, for example one set in `config.toml`, failing it with a message
+that names the allowed choices; it does not switch backends, and pre-release
+configurations are not migrated. `baum internal generate` keeps every backend.
+
 ### Model effort choices
 
 The onboarding selectors use CLI capabilities, checked on 2026-10-31 against
@@ -525,6 +537,11 @@ with the line the agent showed (masked by the daemon; Codex sends none, so
 daemon publishes one when a session begins waiting for a permission or an
 answer, once per wait, never for a turn that just finished (see "Live
 sessions" in ARCHITECTURE.md).
+
+Codex requests delegated to its automatic reviewer do not raise a permission
+notification or mark the session as waiting. Its hook runs before review,
+so baum checks the active turn's reviewer in the rollout, including session
+overrides, before treating it as a request for the person.
 
 The pull request notifications read like "Checks failing · acme/demo #12",
 with the pull request's title as the text. They are about the user's own pull

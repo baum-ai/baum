@@ -1243,3 +1243,10 @@ it("peeks at a session under its row with Space: its summary and latest response
   expect(peek()).toBeNull();
   expect(node.querySelector("[data-focused]")).not.toBeNull();
 });
+
+it("shows ambiguous and stale PR associations explicitly", async () => {
+  await render([session({ link_status: "ambiguous" })]);
+  expect(node.textContent).toContain("Several pull requests match");
+  await render([session({ link_status: "stale", pr: 7 })]);
+  expect(node.textContent).toContain("PR link may be out of date");
+});
