@@ -42,7 +42,6 @@ import {
   useEscapeBlurs,
   useKeyHints,
   useNoTab,
-  usePointerBlurs,
   useRowFocus,
   useShortcuts,
   VIEW_KEYS,
@@ -824,7 +823,6 @@ function Workspace({ url }: { url: UrlState }) {
   };
   useKeyHints();
   useEscapeBlurs();
-  usePointerBlurs();
   useNoTab();
   useActionsKey();
   useReadlineArrows();

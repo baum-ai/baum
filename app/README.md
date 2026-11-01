@@ -553,11 +553,7 @@ the agent sessions, and, with a daemon that has inboxes, each inbox by its name
 query ranks first, `↑` and `↓` move, `Enter` opens and `Esc` closes. The sidebar
 draws each page's key while Alt is held and names it in the link's tooltip and
 `aria-keyshortcuts`. Tab moves nothing anywhere, dialogs included: the keys act
-on the selection, and a place that needs more gets its own keys. A link or
-button clicked with the pointer gives up its focus once clicked, so a later key
-never rings it (a sidebar link, a panel button); list rows, tabs, menus,
-dialogs and Settings keep it, since there the focus is where their keys act.
-`Esc` gives up any focus left on a control. On a pull request, a group, a job's
+on the selection, and a place that needs more gets its own keys. `Esc` gives up any focus left on a control. On a pull request, a group, a job's
 transcript or a session, `Esc` and `u` go back to the page it was opened from
 (the Inbox, an inbox, Pull requests, a group), past moves within it (a
 walkthrough step, the Ask panel): each history entry the app adds records its

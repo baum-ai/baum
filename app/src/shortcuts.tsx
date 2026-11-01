@@ -434,40 +434,6 @@ export function useEscapeBlurs() {
   }, []);
 }
 
-/** Where a click's focus is the keys' place and stays: list rows, whose
- *  focus follows the selection, tabs and menus, which arrows move through,
- *  dialogs, and Settings, whose keys step through its controls. */
-const KEEPS_FOCUS = [
-  "[data-row]",
-  "[data-row-id]",
-  '[role="tab"]',
-  '[role="menu"]',
-  '[role="menuitem"]',
-  "dialog",
-  ".settings-page",
-].join(", ");
-
-/** A link or button clicked with the pointer gives up the focus the click
- *  gave it. Left there, the next key the page takes, j or k, would show its
- *  ring (the browser shows one once the keyboard is used), on a control
- *  nobody chose with the keyboard, such as Inbox in the sidebar. A click that
- *  moved the focus on, as one opening a menu does, keeps it where it went. */
-export function usePointerBlurs() {
-  useEffect(() => {
-    const click = (event: MouseEvent) => {
-      // A keyboard's Enter or Space clicks with no pointer: detail is 0.
-      if (event.detail === 0 || !(event.target instanceof Element)) return;
-      const control = event.target.closest<HTMLElement>("a[href], button, summary");
-      if (!control || control.closest(KEEPS_FOCUS)) return;
-      setTimeout(() => {
-        if (document.activeElement === control) control.blur();
-      });
-    };
-    window.addEventListener("click", click);
-    return () => window.removeEventListener("click", click);
-  }, []);
-}
-
 /** Tab moves nothing, in pages and dialogs alike: the app's keys act on the
  *  selection, which a focus left on some control would only confuse. Where
  *  a place needs more than its keys, it gets its own. */
