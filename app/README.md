@@ -1557,6 +1557,15 @@ Linked session evidence on an open review refreshes every 30 seconds without
 reloading the review document. Polling allows late transcript/checkpoint arrivals
 to appear; a transient poll failure retains the last successful evidence.
 
+Live-session linkage reports `link_status` and `link_method`, with recorded
+branch/upstream/HEAD evidence. Ambiguous matches have no selected PR. Recently
+ended sessions can acquire a PR after ending, using their saved Git observation
+rather than the current checkout. Active observations are also saved without
+notification message text or local paths for restart recovery.
+
+A session retains up to 32 timestamped Git work observations across branch
+changes; these are context associations, not asserted code contributions.
+
 ## Durable reading state
 
 `GET` and `PUT api/ui-state/inbox` store the Inbox's local-day seen/cleared

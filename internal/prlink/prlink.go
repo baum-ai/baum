@@ -65,34 +65,49 @@ func upstreamBranch(ctx context.Context, repo *gitlocal.Repo, repository github.
 	return name
 }
 
-// Find is the open pull request of the snapshot whose head is the work, in
-// the repository itself (a fork's branch of the same name is another
-// branch), the newest when several; 0 when there is none. It follows the
-// branch's name, then the head branch the upstream names (a branch pushed
-// under another name), then the commit checked out (a detached HEAD, or a
-// push to a branch of another name without an upstream).
-func Find(snapshot discovery.Snapshot, w Work) int {
-	find := func(match func(discovery.PullRequest) bool) int {
-		number := 0
-		for _, pr := range snapshot.PullRequests {
-			if !pr.Fork && match(pr) && pr.Number > number {
-				number = pr.Number
-			}
-		}
-		return number
-	}
-	if w.Branch != "" {
-		if number := find(func(pr discovery.PullRequest) bool { return pr.HeadRef == w.Branch }); number > 0 {
-			return number
-		}
-		if w.Upstream != "" && w.Upstream != w.Branch {
-			if number := find(func(pr discovery.PullRequest) bool { return pr.HeadRef == w.Upstream }); number > 0 {
-				return number
-			}
-		}
-	}
-	if w.Head == "" {
-		return 0
-	}
-	return find(func(pr discovery.PullRequest) bool { return strings.EqualFold(pr.HeadSHA, w.Head) })
+// Selection preserves how a live PR association was established.
+type Selection struct {
+	PR             int
+	Method, Status string
 }
+
+// Resolve refuses ambiguous or contradictory branch, upstream and HEAD evidence.
+func Resolve(snapshot discovery.Snapshot, w Work) Selection {
+	matches := map[int]string{}
+	for _, pr := range snapshot.PullRequests {
+		if pr.Fork {
+			continue
+		}
+		method := ""
+		if w.Branch != "" && pr.HeadRef == w.Branch {
+			method = "branch"
+		}
+		if w.Upstream != "" && pr.HeadRef == w.Upstream {
+			method = "upstream"
+		}
+		if w.Head != "" && strings.EqualFold(pr.HeadSHA, w.Head) {
+			method = "head"
+		}
+		if method != "" {
+			matches[pr.Number] = method
+		}
+	}
+	if len(matches) > 1 {
+		return Selection{Status: "ambiguous"}
+	}
+	for number, method := range matches {
+		status := "resolved"
+		if snapshot.Stale {
+			status = "stale"
+		}
+		return Selection{PR: number, Method: method, Status: status}
+	}
+	if snapshot.Stale {
+		return Selection{Status: "stale"}
+	}
+	return Selection{Status: "unmatched"}
+}
+
+// Find returns the unique matching open pull request, or zero when evidence
+// is missing, conflicting or ambiguous.
+func Find(snapshot discovery.Snapshot, w Work) int { return Resolve(snapshot, w).PR }

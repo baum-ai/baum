@@ -4327,3 +4327,14 @@ read waits for it to finish and coalesces callers onto one fresh computation;
 its stale result is not served as current evidence. Open PR pages reread linked
 sessions every 30 seconds, with one request in flight, to pick up late transcript
 writes and checkpoint arrivals even without another lifecycle event.
+
+### Recorded live work
+
+Live links retain the observed branch, upstream and HEAD plus the selection
+method and status. Multiple matching PRs remain ambiguous. Existing links are
+rechecked every sweep, including quiet sessions whose PR has closed. Ended
+sessions reconcile from saved observations only, so a later branch switch or
+removed worktree cannot rewrite their historical work. Replay without a saved
+observation recovers clone identity only and reports `unknown_history`.
+Active and ended observations survive restarts; notification message text and
+local paths are not persisted. Stale or unavailable discovery is explicit.
