@@ -1,25 +1,15 @@
 /* Base styles of the desktop app's own screens: connecting (connecting.html)
    and setup (setup.html), in baum's bundled type, as every other screen. */
 @import "../../../viewer/src/fonts/fonts.css";
+@import "../../../viewer/src/theme.css";
 
 :root {
-  color-scheme: light dark;
-  --bg: #fbf8f2;
-  --fg: #2a211a;
-  --muted: #6f6257;
-  --accent: #7a4a26;
-  --panel: #f1ebe0;
+  color-scheme: light;
   font-family: var(--font-text);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg: #1a1613;
-    --fg: #f3ebe0;
-    --muted: #b3a597;
-    --accent: #d9a46e;
-    --panel: #26201b;
-  }
+:root[data-theme="dark"] {
+  color-scheme: dark;
 }
 
 * {
@@ -30,8 +20,8 @@ html,
 body {
   height: 100%;
   margin: 0;
-  background: var(--bg);
-  color: var(--fg);
+  background: var(--surface-page);
+  color: var(--text-primary);
 }
 
 main {
@@ -55,7 +45,7 @@ h1 {
 }
 
 p {
-  color: var(--muted);
+  color: var(--text-secondary);
   margin: 0 0 20px;
   line-height: 1.5;
 }
@@ -65,8 +55,8 @@ button {
   padding: 8px 18px;
   border: 0;
   border-radius: 6px;
-  background: var(--accent);
-  color: var(--bg);
+  background: var(--action-primary);
+  color: var(--surface-page);
   cursor: pointer;
 }
 
@@ -82,7 +72,7 @@ details {
 
 summary {
   cursor: pointer;
-  color: var(--muted);
+  color: var(--text-secondary);
 }
 
 pre {
@@ -90,7 +80,7 @@ pre {
   overflow: auto;
   padding: 12px;
   border-radius: 6px;
-  background: var(--panel);
+  background: var(--surface-sunken);
   font-size: 0.8rem;
   white-space: pre-wrap;
   word-break: break-word;
@@ -120,7 +110,7 @@ pre {
   margin: 0 0 16px;
   padding: 16px;
   border-radius: 8px;
-  background: var(--panel);
+  background: var(--surface-sunken);
 }
 
 .panel p,
@@ -150,12 +140,12 @@ pre {
 
 button.secondary {
   background: transparent;
-  color: var(--accent);
-  box-shadow: inset 0 0 0 1px var(--accent);
+  color: var(--action-primary);
+  box-shadow: inset 0 0 0 1px var(--action-primary);
 }
 
 pre.failed {
-  box-shadow: inset 3px 0 0 var(--accent);
+  box-shadow: inset 3px 0 0 var(--action-primary);
 }
 
 code {

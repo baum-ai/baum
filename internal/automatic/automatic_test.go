@@ -658,7 +658,7 @@ func TestHandlerSavesReviewChoices(t *testing.T) {
 		t.Fatalf("%+v", o)
 	}
 	// The reviews' and fixes' reasoning efforts; empty is the agent's own.
-	for _, body := range []string{`{"effort":"max"}`, `{"fix_effort":"high"}`} {
+	for _, body := range []string{`{"effort":"extreme"}`, `{"fix_effort":"high"}`} {
 		if code := put(h.scheduler, body); code != 400 {
 			t.Fatalf("%s: %d", body, code)
 		}

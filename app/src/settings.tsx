@@ -1,3 +1,4 @@
+import { BrandMark } from "@baum/viewer/components/brand-logo";
 import { usePreferences } from "./preferences";
 import {
   useEffect,
@@ -35,8 +36,6 @@ import { DiagnosticsSection } from "./diagnostics";
 import { invoke } from "./desktop/native";
 import { Notice, PageBar, PanelHeader, RefreshButton } from "./shell";
 import { listKeys, onBody, useRowFocus, useShortcuts } from "./shortcuts";
-import codexLogo from "./desktop/codex.svg";
-import claudeLogo from "./desktop/claude-code.svg";
 import {
   TerminalIcon,
   SessionsIcon,
@@ -46,6 +45,7 @@ import {
   PlusIcon,
 } from "@baum/viewer/components/icons";
 import { DecisionsDisclosure, harnesses, harnessName } from "./desktop/reviews";
+import { effortLabels } from "./model-effort";
 import {
   describeCommand,
   describeAgent,
@@ -487,12 +487,15 @@ function EffortRow({
   onChange: (next: string) => void;
 }) {
   if (backend === "cursor-agent") return null;
+  const items = efforts.some((item) => item.value === value)
+    ? efforts
+    : [...efforts, { value, label: effortLabels[value] ?? value }];
   return (
     <SettingRow
       label="Reasoning effort"
       detail="Default leaves it to the agent. Higher thinks longer and costs more."
     >
-      <SegmentedControl label={label} value={value} items={efforts} onChange={onChange} />
+      <SegmentedControl label={label} value={value} items={items} onChange={onChange} />
     </SettingRow>
   );
 }
@@ -796,11 +799,9 @@ function AgentHooksPanel({ setup }: { setup: DesktopSetup }) {
             className="flex flex-wrap items-center justify-between gap-4 border-t border-(--border-subtle) px-5 py-4"
           >
             <div className="flex min-w-0 flex-[1_1_16rem] items-start gap-3">
-              <img
-                src={agent.agent === "codex" ? codexLogo : claudeLogo}
-                alt=""
-                width="24"
-                height="24"
+              <BrandMark
+                brand={agent.agent === "codex" ? "openai" : "claude"}
+                size={24}
                 className="mt-0.5 shrink-0"
               />
               <div className="min-w-0 space-y-1">
@@ -2107,9 +2108,7 @@ function RepositoryRow({
           </p>
         )}
         {clone.available && repository.earlier_names?.length ? (
-          <p className="repository-warning">
-            {earlierNamesWarning(repository.earlier_names, repository.repository)}
-          </p>
+          <p className="repository-warning">{earlierNamesWarning(repository.earlier_names)}</p>
         ) : null}
         <p className="local-repo-summary">{summary.join(" · ")}</p>
       </div>

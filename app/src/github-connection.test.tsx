@@ -114,7 +114,7 @@ it("observes daemon progress through GET and slows observation after approval", 
   status = pending;
   await render();
   status = { ...disconnected, state: "connected", saved: true, login: "octocat" };
-  await act(async () => vi.advanceTimersByTimeAsync(1500));
+  await act(async () => vi.advanceTimersByTimeAsync(300));
   expect(node.textContent).toContain("octocat");
   const count = calls.length;
   await act(async () => vi.advanceTimersByTimeAsync(6000));
@@ -177,7 +177,7 @@ it("ignores an old GET that finishes after a new authorization starts", async ()
         finish = resolve;
       }),
   );
-  await act(async () => vi.advanceTimersByTimeAsync(1500));
+  await act(async () => vi.advanceTimersByTimeAsync(300));
   status = { ...disconnected, state: "cancelled" };
   await click("Cancel sign-in");
   await act(async () => finish(Response.json(pending)));

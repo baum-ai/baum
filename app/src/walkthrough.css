@@ -1,5 +1,5 @@
 /* The walkthrough (walkthrough.tsx), drawn as the inbox is: its colours and
-   sizes are the Up next design's (the --un-* tokens in style.css), the stops
+   sizes follow the shared app palette, with the stops
    listed on the left and the one being read beside them. */
 
 /* The page fills the panel to the window's foot, and its list and panel
@@ -9,7 +9,7 @@
 }
 .local-frame:has(.walkthrough) {
   min-height: 0;
-  background: var(--un-panel);
+  background: var(--surface-card);
 }
 .local-main:has(.walkthrough) {
   display: flex;
@@ -36,15 +36,15 @@
   flex: 1;
   flex-direction: column;
   min-height: 0;
-  background: var(--un-panel);
-  color: var(--un-ink);
+  background: var(--surface-card);
+  color: var(--text-primary);
   font-family: var(--font-sans);
 }
 .walkthrough a {
-  color: var(--un-link);
+  color: var(--text-link);
 }
 .walkthrough a:hover {
-  color: var(--un-link-hover);
+  color: var(--text-link-hover);
 }
 .walkthrough button {
   color: inherit;
@@ -52,7 +52,7 @@
   cursor: pointer;
 }
 .walkthrough :is(button, a, textarea):focus-visible {
-  outline: 2px solid var(--un-focus);
+  outline: 2px solid var(--border-focus);
   outline-offset: 2px;
 }
 .walkthrough kbd {
@@ -68,7 +68,7 @@
   align-items: center;
   gap: 6px;
   margin: 0;
-  color: var(--un-muted);
+  color: var(--text-tertiary);
   font-size: 12px;
   font-weight: 600;
   letter-spacing: 0.08em;
@@ -84,7 +84,7 @@
 .walk-head {
   position: relative;
   padding-top: 14px;
-  border-bottom: 1px solid var(--un-line);
+  border-bottom: 1px solid var(--border-subtle);
 }
 /* On the page's column, so the tour lines up with the overview it left. */
 .walk-head-inner {
@@ -115,21 +115,21 @@
   white-space: nowrap;
 }
 .walk-head-number {
-  color: var(--un-muted);
+  color: var(--text-tertiary);
   font-weight: 500;
 }
 .walk-head p {
   margin: 0;
-  color: var(--un-muted);
+  color: var(--text-tertiary);
   font-size: 13px;
   font-variant-numeric: tabular-nums;
 }
 .walk-head strong {
-  color: var(--un-ink-soft);
+  color: var(--text-secondary);
   font-weight: 600;
 }
 .walk-head-comments {
-  color: var(--un-working);
+  color: var(--status-caution);
   font-weight: 600;
 }
 .walk-head-actions {
@@ -151,17 +151,17 @@
   transition: width 0.4s;
 }
 .walk-head-bar-seen {
-  background: var(--un-done);
+  background: var(--status-positive);
 }
 .walk-head-bar-commented {
-  background: var(--un-risk-mid);
+  background: var(--status-caution);
 }
 .walk-stale {
   margin: 0;
   padding: 8px 20px;
-  border-bottom: 1px solid var(--un-working-line);
-  background: var(--un-working-bg);
-  color: var(--un-working-ink);
+  border-bottom: 1px solid var(--status-caution-border);
+  background: var(--status-caution-bg);
+  color: var(--status-caution);
   font-size: 13px;
 }
 
@@ -185,15 +185,15 @@
   border-bottom: 2px solid transparent;
   border-radius: 8px 8px 0 0;
   background: transparent;
-  color: var(--un-ink-soft);
+  color: var(--text-secondary);
   text-align: left;
 }
 .walkthrough .walk-step:hover {
-  background: var(--un-hover);
+  background: var(--surface-hover);
 }
 .walkthrough .walk-step[aria-current] {
-  border-bottom-color: var(--un-ink);
-  color: var(--un-ink);
+  border-bottom-color: var(--text-primary);
+  color: var(--text-primary);
 }
 .walkthrough .walk-step-end {
   flex: none;
@@ -201,7 +201,7 @@
   align-items: center;
   gap: 4px;
   min-width: 0;
-  color: var(--un-muted);
+  color: var(--text-tertiary);
   font-size: 13px;
 }
 .walk-step-name {
@@ -231,13 +231,13 @@
   width: 7px;
   height: 7px;
   border-radius: 50%;
-  background: var(--un-line);
+  background: var(--border-subtle);
 }
 .walk-step-dots .seen {
-  background: var(--un-done);
+  background: var(--status-positive);
 }
 .walk-step-dots .commented {
-  background: var(--un-risk-mid);
+  background: var(--status-caution);
 }
 .walk-mark {
   display: flex;
@@ -247,17 +247,17 @@
   box-sizing: border-box;
   align-items: center;
   justify-content: center;
-  border: 1.5px solid var(--un-mark);
+  border: 1.5px solid var(--text-disabled);
   border-radius: 50%;
-  color: var(--un-on-hot);
+  color: var(--text-inverse);
 }
 .walk-mark.seen {
   border: 0;
-  background: var(--un-done);
+  background: var(--status-positive);
 }
 .walk-mark.commented {
   border: 0;
-  background: var(--un-risk-mid);
+  background: var(--status-caution);
 }
 /* Risk, as the inbox's numbered badges show it */
 .walk-badge {
@@ -268,23 +268,23 @@
   align-items: center;
   justify-content: center;
   border-radius: 4px;
-  background: var(--un-clone-bg);
-  color: var(--un-clone);
+  background: var(--status-neutral-bg);
+  color: var(--status-neutral);
   font-size: 11.5px;
   font-weight: 700;
   letter-spacing: 0;
 }
 .walk-badge.risk-3 {
-  background: var(--un-review-bg);
-  color: var(--un-review);
+  background: var(--status-caution-bg);
+  color: var(--status-caution);
 }
 .walk-badge.risk-4 {
-  background: var(--un-score4-bg);
-  color: var(--un-score4);
+  background: var(--status-critical-bg);
+  color: var(--status-critical);
 }
 .walk-badge.risk-5 {
-  background: var(--un-hot);
-  color: var(--un-on-hot);
+  background: var(--status-critical);
+  color: var(--text-inverse);
 }
 
 /* The panel */
@@ -314,28 +314,28 @@
   padding: 2px 8px;
   overflow: hidden;
   border-radius: 4px;
-  background: var(--un-clone-bg);
-  color: var(--un-clone);
+  background: var(--status-neutral-bg);
+  color: var(--status-neutral);
   font-size: 12px;
   font-weight: 600;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 .walk-chip.risk-3 {
-  background: var(--un-review-bg);
-  color: var(--un-review);
+  background: var(--status-caution-bg);
+  color: var(--status-caution);
 }
 .walk-chip:is(.risk-4, .risk-5) {
-  background: var(--un-score4-bg);
-  color: var(--un-score4);
+  background: var(--status-critical-bg);
+  color: var(--status-critical);
 }
 .walk-where {
-  color: var(--un-muted);
+  color: var(--text-tertiary);
   font-size: 13.5px;
 }
 .walk-minutes {
   margin-left: auto;
-  color: var(--un-ink-soft);
+  color: var(--text-secondary);
   font-size: 13.5px;
   white-space: nowrap;
 }
@@ -351,12 +351,12 @@
   align-items: center;
   gap: 4px;
   margin-left: auto;
-  color: var(--un-done);
+  color: var(--status-positive);
   font-size: 13px;
   font-weight: 600;
 }
 .walk-state.commented {
-  color: var(--un-working);
+  color: var(--status-caution);
 }
 .walk-title {
   margin: 0;
@@ -375,7 +375,7 @@
 }
 .walk-why {
   margin: 0;
-  color: var(--un-ink-soft);
+  color: var(--text-secondary);
   font-size: 16px;
   line-height: 1.6;
 }
@@ -409,43 +409,43 @@
   white-space: nowrap;
 }
 .walkthrough .walk-primary {
-  border: 1px solid var(--un-primary-line);
-  background: var(--un-primary);
-  box-shadow: var(--un-shadow-primary);
-  color: var(--un-on-primary);
+  border: 1px solid var(--status-positive-border);
+  background: var(--status-positive-bg);
+  box-shadow: var(--shadow-raised);
+  color: var(--status-positive);
   font-weight: 600;
 }
 .walkthrough .walk-secondary {
-  border: 1px solid var(--un-line);
-  background: var(--un-card);
-  box-shadow: var(--un-shadow-button);
-  color: var(--un-ink);
+  border: 1px solid var(--border-subtle);
+  background: var(--surface-card);
+  box-shadow: var(--shadow-raised);
+  color: var(--text-primary);
   font-weight: 500;
 }
 .walkthrough .walk-primary:hover:not(:disabled) {
-  border-color: var(--un-on-primary);
+  border-color: var(--status-positive);
 }
 .walkthrough .walk-secondary:hover:not(:disabled) {
-  border-color: var(--un-line-strong);
-  background: var(--un-list);
+  border-color: var(--border-default);
+  background: var(--surface-sunken);
 }
 .walkthrough .walk-small {
   flex: none;
   padding: 3px 9px;
-  border: 1px solid var(--un-line);
+  border: 1px solid var(--border-subtle);
   border-radius: 6px;
-  background: var(--un-card);
-  box-shadow: var(--un-shadow-button);
-  color: var(--un-ink-soft);
+  background: var(--surface-card);
+  box-shadow: var(--shadow-raised);
+  color: var(--text-secondary);
   font-size: 12px;
   font-weight: 500;
   line-height: 1.3;
   white-space: nowrap;
 }
 .walkthrough .walk-small:hover {
-  border-color: var(--un-line-strong);
-  background: var(--un-hover);
-  color: var(--un-ink);
+  border-color: var(--border-default);
+  background: var(--surface-hover);
+  color: var(--text-primary);
 }
 .walkthrough :is(.walk-primary, .walk-secondary, .walk-small, .walk-step):active:not(:disabled) {
   transform: translateY(1px);
@@ -456,7 +456,7 @@
   cursor: not-allowed;
 }
 .walk-skipped {
-  color: var(--un-muted);
+  color: var(--text-tertiary);
   font-size: 12.5px;
 }
 .walk-link {
@@ -466,7 +466,7 @@
   padding: 0;
   border: 0;
   background: transparent;
-  color: var(--un-link);
+  color: var(--text-link);
   font-weight: 600;
   text-align: left;
   text-decoration: underline;
@@ -474,7 +474,7 @@
   text-underline-offset: 2px;
 }
 .walk-link:hover {
-  color: var(--un-link-hover);
+  color: var(--text-link-hover);
   text-decoration-color: currentColor;
 }
 
@@ -484,9 +484,9 @@
   flex-direction: column;
   gap: 10px;
   padding: 14px 16px;
-  border: 1px solid var(--un-working-line);
+  border: 1px solid var(--status-caution-border);
   border-radius: 12px;
-  background: var(--un-working-bg);
+  background: var(--status-caution-bg);
   animation: walk-drop 0.15s ease-out;
 }
 @keyframes walk-drop {
@@ -508,7 +508,7 @@
 .walk-comment-icon {
   flex: none;
   margin-top: 2px;
-  color: var(--un-working);
+  color: var(--status-caution);
 }
 .walk-comment-body {
   display: flex;
@@ -518,7 +518,7 @@
   min-width: 12rem;
 }
 .walk-comment-where {
-  color: var(--un-muted);
+  color: var(--text-tertiary);
   font-size: 12.5px;
 }
 .walk-comment-body p {
@@ -530,10 +530,10 @@
 .walk-textarea {
   min-height: 84px;
   padding: 8px 10px;
-  border: 1px solid var(--un-line-strong);
+  border: 1px solid var(--border-default);
   border-radius: 6px;
-  background: var(--un-card);
-  color: var(--un-ink);
+  background: var(--surface-card);
+  color: var(--text-primary);
   font: inherit;
   font-size: 14.5px;
   line-height: 1.5;
@@ -546,9 +546,9 @@
   flex-direction: column;
   gap: 8px;
   padding: 14px 16px;
-  border: 1px solid var(--un-line);
+  border: 1px solid var(--border-subtle);
   border-radius: 12px;
-  background: var(--un-card);
+  background: var(--surface-card);
 }
 .walk-risk-head {
   display: flex;
@@ -564,16 +564,16 @@
   width: 14px;
   height: 7px;
   border-radius: 2px;
-  background: var(--un-line);
+  background: var(--border-subtle);
 }
 .walk-risk-blocks .on {
-  background: var(--un-muted);
+  background: var(--text-tertiary);
 }
 .walk-risk-blocks :is(.risk-3, .risk-4) {
-  background: var(--un-risk-mid);
+  background: var(--status-caution);
 }
 .walk-risk-blocks .risk-5 {
-  background: var(--un-hot);
+  background: var(--status-critical);
 }
 .walk-risk-text {
   font-size: 13.5px;
@@ -592,7 +592,7 @@
   gap: 8px;
   margin: 4px 0 0;
   padding: 10px 0 0;
-  border-top: 1px solid var(--un-hairline);
+  border-top: 1px solid var(--border-subtle);
   list-style: none;
 }
 .walk-risks li {
@@ -606,19 +606,19 @@
   flex: none;
   padding: 1px 6px;
   border-radius: 4px;
-  background: var(--un-clone-bg);
-  color: var(--un-clone);
+  background: var(--status-neutral-bg);
+  color: var(--status-neutral);
   font-size: 11px;
   font-weight: 700;
   text-transform: capitalize;
 }
 .walk-tier.medium {
-  background: var(--un-review-bg);
-  color: var(--un-review);
+  background: var(--status-caution-bg);
+  color: var(--status-caution);
 }
 .walk-tier:is(.high, .critical) {
-  background: var(--un-score4-bg);
-  color: var(--un-score4);
+  background: var(--status-critical-bg);
+  color: var(--status-critical);
 }
 
 /* The chapter's behaviours, the picked one raised as the list's current row */
@@ -639,16 +639,16 @@
   scroll-margin: 16px;
 }
 .walk-behaviour + .walk-behaviour {
-  box-shadow: 0 -1px 0 var(--un-hairline);
+  box-shadow: 0 -1px 0 var(--border-subtle);
 }
 .walk-behaviour:hover:not(.picked) {
-  background: color-mix(in srgb, var(--un-hover) 55%, transparent);
+  background: color-mix(in srgb, var(--surface-hover) 55%, transparent);
 }
 .walk-behaviour.picked {
-  background: var(--un-card);
+  background: var(--surface-card);
   box-shadow:
-    inset 3px 0 0 var(--un-done),
-    var(--un-shadow-selected);
+    inset 3px 0 0 var(--status-positive),
+    var(--shadow-raised);
   cursor: default;
 }
 .walk-behaviour.picked + .walk-behaviour {
@@ -661,22 +661,22 @@
   flex: none;
   align-items: center;
   justify-content: center;
-  border: 1.5px solid var(--un-mark);
+  border: 1.5px solid var(--text-disabled);
   border-radius: 50%;
-  color: var(--un-muted);
+  color: var(--text-tertiary);
   font-size: 11.5px;
   font-weight: 700;
   font-variant-numeric: tabular-nums;
 }
 .walk-behaviour-number.seen {
-  border-color: var(--un-done);
-  background: var(--un-done);
-  color: var(--un-on-hot);
+  border-color: var(--status-positive);
+  background: var(--status-positive);
+  color: var(--text-inverse);
 }
 .walk-behaviour.commented .walk-behaviour-number {
-  border-color: var(--un-risk-mid);
-  background: var(--un-risk-mid);
-  color: var(--un-on-hot);
+  border-color: var(--status-caution);
+  background: var(--status-caution);
+  color: var(--text-inverse);
 }
 .walk-behaviour-body {
   display: flex;
@@ -699,7 +699,7 @@
   line-height: 1.35;
 }
 .walk-behaviour-text {
-  color: var(--un-ink-soft);
+  color: var(--text-secondary);
   font-size: 14.5px;
   line-height: 1.55;
 }
@@ -724,7 +724,7 @@
 }
 .walk-page-foot {
   padding-top: 8px;
-  border-top: 1px solid var(--un-hairline);
+  border-top: 1px solid var(--border-subtle);
 }
 
 /* Labelled blocks of rows */
@@ -742,7 +742,7 @@
   list-style: none;
 }
 .walk-block li {
-  border-top: 1px solid var(--un-hairline);
+  border-top: 1px solid var(--border-subtle);
   font-size: 14px;
 }
 .walk-block-row {
@@ -759,7 +759,7 @@
   box-sizing: content-box;
 }
 .walk-block-row:hover {
-  background: var(--un-hover);
+  background: var(--surface-hover);
 }
 .walk-block-row .walk-mark {
   margin-top: 1px;
@@ -772,8 +772,8 @@
   align-items: center;
   justify-content: center;
   border-radius: 4px;
-  background: var(--un-hairline);
-  color: var(--un-ink-soft);
+  background: var(--border-subtle);
+  color: var(--text-secondary);
   font-size: 11.5px;
   font-weight: 700;
 }
@@ -786,26 +786,26 @@
   line-height: 1.4;
 }
 .walk-block-sub {
-  color: var(--un-muted);
+  color: var(--text-tertiary);
   font-size: 13px;
   line-height: 1.45;
 }
 .walk-block-right {
   flex: none;
   align-self: center;
-  color: var(--un-ink-soft);
+  color: var(--text-secondary);
   font-size: 13px;
   font-variant-numeric: tabular-nums;
 }
 .walk-lead {
   margin: 0;
-  color: var(--un-ink-soft);
+  color: var(--text-secondary);
   font-size: 14.5px;
   line-height: 1.5;
 }
 .walk-note {
   margin: 0;
-  color: var(--un-muted);
+  color: var(--text-tertiary);
   font-size: 13px;
   line-height: 1.5;
 }
@@ -814,7 +814,7 @@
 .walk-code details[open] > :not(summary) {
   max-height: 70vh;
   overflow: auto;
-  border: 1px solid var(--un-line);
+  border: 1px solid var(--border-subtle);
   border-radius: 8px;
 }
 
@@ -834,18 +834,18 @@
   align-items: flex-start;
   gap: 10px;
   padding: 10px 12px;
-  border: 1px solid var(--un-line);
+  border: 1px solid var(--border-subtle);
   border-radius: 8px;
-  background: var(--un-card);
-  box-shadow: var(--un-shadow-button);
+  background: var(--surface-card);
+  box-shadow: var(--shadow-raised);
   text-align: left;
 }
 .walkthrough .walk-event:hover:not([aria-disabled="true"]) {
-  border-color: var(--un-line-strong);
+  border-color: var(--border-default);
 }
 .walkthrough .walk-event[aria-checked="true"] {
-  border-color: var(--un-primary-line);
-  background: var(--un-primary);
+  border-color: var(--status-positive-border);
+  background: var(--status-positive-bg);
 }
 .walkthrough .walk-event[aria-disabled="true"] {
   box-shadow: none;
@@ -859,12 +859,12 @@
   width: 14px;
   height: 14px;
   margin-top: 2px;
-  border: 1.5px solid var(--un-mark);
+  border: 1.5px solid var(--text-disabled);
   border-radius: 50%;
-  background: var(--un-card);
+  background: var(--surface-card);
 }
 .walk-event[aria-checked="true"] .walk-event-dot {
-  border: 4px solid var(--un-done);
+  border: 4px solid var(--status-positive);
 }
 .walk-event-text {
   display: flex;
@@ -876,7 +876,7 @@
   font-weight: 600;
 }
 .walk-event-hint {
-  color: var(--un-muted);
+  color: var(--text-tertiary);
   font-size: 12.5px;
   line-height: 1.4;
 }
@@ -884,7 +884,7 @@
   display: flex;
   flex-direction: column;
   gap: 6px;
-  color: var(--un-muted);
+  color: var(--text-tertiary);
   font-size: 12.5px;
 }
 .walk-field > p {
@@ -903,23 +903,23 @@
   flex-direction: column;
   gap: 2px;
   padding: 8px 10px;
-  border: 1px solid var(--un-working-line);
+  border: 1px solid var(--status-caution-border);
   border-radius: 6px;
-  background: var(--un-working-bg);
+  background: var(--status-caution-bg);
 }
 .walk-notes p {
   margin: 0;
-  color: var(--un-ink);
+  color: var(--text-primary);
   font-size: 14px;
   white-space: pre-line;
 }
 .walk-failed {
   margin: 0;
   padding: 10px 12px;
-  border: 1px solid var(--un-line);
+  border: 1px solid var(--border-subtle);
   border-radius: 8px;
-  background: var(--un-fix-bg);
-  color: var(--un-fix);
+  background: var(--status-critical-bg);
+  color: var(--status-critical);
   font-size: 14px;
 }
 .walk-sent {
@@ -928,16 +928,16 @@
   align-items: flex-start;
   gap: 8px;
   padding: 14px 16px;
-  border: 1px solid var(--un-primary-line);
+  border: 1px solid var(--status-positive-border);
   border-radius: 12px;
-  background: var(--un-primary);
+  background: var(--status-positive-bg);
 }
 .walk-sent p {
   display: flex;
   align-items: center;
   gap: 6px;
   margin: 0;
-  color: var(--un-on-primary);
+  color: var(--status-positive);
   font-weight: 600;
 }
 .walk-sent a {
@@ -975,16 +975,16 @@
   align-self: flex-start;
   gap: 6px;
   padding: 7px 12px;
-  border: 1px solid var(--un-line);
+  border: 1px solid var(--border-subtle);
   border-radius: 6px;
-  background: var(--un-card);
-  box-shadow: var(--un-shadow-button);
-  color: var(--un-ink-soft);
+  background: var(--surface-card);
+  box-shadow: var(--shadow-raised);
+  color: var(--text-secondary);
   font-size: 13.5px;
 }
 .walk-code summary:hover {
-  border-color: var(--un-line-strong);
-  color: var(--un-ink);
+  border-color: var(--border-default);
+  color: var(--text-primary);
 }
 .walk-code details[open] > summary {
   margin-bottom: 10px;
@@ -1008,12 +1008,12 @@
   align-self: flex-start;
   gap: 4px;
   margin-bottom: -6px;
-  color: var(--un-muted);
+  color: var(--text-tertiary);
   font-size: 13px;
   text-decoration: none;
 }
 .walkthrough .walk-back:hover {
-  color: var(--un-ink);
+  color: var(--text-primary);
 }
 .walk-facts {
   display: flex;
@@ -1021,7 +1021,7 @@
   align-items: center;
   gap: 6px 16px;
   margin-top: -6px;
-  color: var(--un-ink-soft);
+  color: var(--text-secondary);
   font-size: 13.5px;
   font-variant-numeric: tabular-nums;
 }
@@ -1034,14 +1034,14 @@
   gap: 5px;
 }
 .walk-fact.caution {
-  color: var(--un-working);
+  color: var(--status-caution);
   font-weight: 600;
 }
 .walk-add {
-  color: var(--un-done);
+  color: var(--status-positive);
 }
 .walk-del {
-  color: var(--un-hot);
+  color: var(--status-critical);
 }
 .walk-notices {
   display: flex;
@@ -1058,16 +1058,16 @@
   gap: 6px;
   margin: 0;
   padding: 14px 16px;
-  border-left: 3px solid var(--un-risk-mid);
+  border-left: 3px solid var(--status-caution);
   border-radius: 0 10px 10px 0;
-  background: var(--un-working-bg);
-  color: var(--un-ink);
+  background: var(--status-caution-bg);
+  color: var(--text-primary);
   font-size: 14.5px;
   line-height: 1.5;
 }
 .walk-flag.breaking {
-  border-left-color: var(--un-hot);
-  background: var(--un-fix-bg);
+  border-left-color: var(--status-critical);
+  background: var(--status-critical-bg);
 }
 .walk-flag p {
   margin: 0;
@@ -1076,5 +1076,5 @@
   margin-top: 1px;
 }
 .walk-fact.failing {
-  color: var(--un-hot);
+  color: var(--status-critical);
 }

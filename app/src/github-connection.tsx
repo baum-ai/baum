@@ -191,7 +191,7 @@ export function GitHubConnectionSection({ onChanged }: { onChanged?: () => void 
       {connection ? (
         <footer className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1 border-t border-(--border-subtle) px-5 py-3 text-xs text-(--text-tertiary)">
           <div className="space-y-1">
-            <p>Data is downloaded to this computer and never shared with baum.</p>
+            <p>Data is stored on this computer and never shared with baum.</p>
             {connection.saved ? (
               <p>
                 Credential: {connection.source || "none"}.{" "}

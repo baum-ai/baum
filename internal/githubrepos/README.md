@@ -9,32 +9,77 @@ explicit token, else the saved device sign-in).
 
 ## Listing
 
-`ViewerRepositories` reads `viewer.repositories` (owner, collaborator and
-organization-member affiliations, newest push first, archived left out) up to
-300, and one search for open pull requests that involve the account
-(`is:pr is:open involves:@me archived:false`, first 100) to count them per
-repository. If only the search fails the counts are zero. Names are lowercased.
+`ViewerRepositories` reads one `viewer.topRepositories` page ordered by latest
+push, plus the accessible `totalCount` from `viewer.repositories` in the same
+request. The first page has eight nodes, matching the visible rows. Once it
+returns, one background request asks for one hundred nodes after its cursor.
+Later pages of one hundred load only when asked for (`more=1`, below). Names
+already returned are skipped. Archives are excluded after each response. The top list is cached for
+five minutes; when it reloads, the earlier extra rows stay listed after the new
+first page until the new extra page replaces them, so the list never shrinks
+to eight rows and grows back.
 
-`GET /api/github/repositories?query=&refresh=1` answers
+Search calls GitHub's `search(type: REPOSITORY, first: 100)` directly. Queries
+search repository names and include forks but exclude archives. GitHub search
+covers all of GitHub, so a search is limited to repositories the person has a
+permission on, read in the same request as the top list: every repository of
+the viewer's login and of each organization it belongs to
+(`viewer.organizations(first: 100)`), as `user:` qualifiers, and each
+repository it collaborates on elsewhere
+(`viewer.repositories(affiliations: [COLLABORATOR], first: 100)`, most recently
+pushed first), as exact `repo:` qualifiers. GitHub combines the qualifiers with
+OR; at most 300 are sent. The owner of a collaboration, or of a top repository
+the viewer only contributed to, is never searched as a whole: the viewer has no
+permission on that owner's other repositories. Top repositories still match from
+the cache. With nothing in scope a search returns nothing rather than searching
+all of GitHub. Owners a query names (`owner/name`, or `user:`, `org:` or `repo:`
+qualifiers) narrow the scope to theirs and their names become search terms, so
+`acme/wid` searches `wid` among acme's repositories in scope, and a stranger's
+`owner/name` finds nothing. No accessible-repository enumeration runs beyond
+those first hundred collaborations. A search made before the top list exists
+loads its first page first, since the scope comes from it.
+
+`GET /api/github/repositories?query=&refresh=1&more=1` answers
 
 ```json
-{"fetched_at": "2026-07-01T10:00:00Z",
- "repositories": [{"repository": "owner/name", "private": false, "fork": false,
-   "pushed_at": "2026-07-01T09:00:00Z", "description": "", "open_pull_requests": 2,
+{"fetched_at": "2026-07-01T10:00:00Z", "total_count": 147, "searching": true,
+ "has_more": true,
+ "repositories": [{"repository": "owner/name", "private": false, "top": true,
+   "fork": false, "pushed_at": "2026-07-01T09:00:00Z", "description": "",
    "picked": true, "clone": "/work/code/name"}]}
 ```
 
-Ranking: repositories with open pull requests involving the account first (most
-first), then latest push, then name. `query` keeps repositories whose
-`owner/name` contains every whitespace-separated term, ignoring case; it filters
-the cached list and calls GitHub no further. The GitHub result is cached in
-memory for 5 minutes, dropped when the signed-in account changes, and
-`refresh=1` bypasses it; simultaneous requests for the same account share one
-call. A response started before an account change cannot refill the cache
-afterward. `picked` comes
-from the registry; `clone` is an available registered path, otherwise the best
-path the clone finder's last result has for the repository, or `""`.
-`earlier_names` are a picked repository's recorded earlier names (see
+A non-empty query returns matching cached top rows immediately while its GitHub
+search runs in the background. The response also includes `top_repositories`,
+the full cached top list, so the picker can filter it on each keystroke before
+any network request or debounce. On completion the search results merge with
+matching top rows without duplicates. An empty search preserves the order returned
+by `topRepositories`. Search sorting is exact repository name or
+owner/name match first, then membership in the top list, then latest push time;
+names break remaining ties. Search results are cached for five minutes by
+normalized query (case-insensitive, trimmed and collapsed whitespace), with at
+most 64 cached queries. Concurrent requests for one query share a request.
+
+`more=1` starts loading the next page of the current listing in the background,
+unless one is loading or there is none: one hundred more top repositories after
+the last cursor for an empty query, or the search's next page of one hundred
+(with the owners it started with) for a query. New rows are appended without
+duplicates. `has_more` says another page exists. `total_count` is the
+accessible, non-archived total for an empty query; for a query it counts every
+match: the rows returned plus the search results not loaded yet (GitHub returns
+at most 1,000 per search). A failed next page keeps the loaded rows and reports
+`search_error`; `refresh=1` starts the listing again from its first page.
+
+`searching: true` means a search or the extra top page is still pending. Cached
+rows remain pickable. A failed request with cached matches returns those rows
+and a sanitized `search_error`; with no matches it uses the HTTP errors below.
+`refresh=1` retries the current query or refreshes the top list when the query is
+empty. The native relay's named `retry-list` action uses this option, and its
+`more-list` action sends `more=1`. Account
+changes cancel background requests and discard both caches; late responses
+cannot refill them. Shutdown cancels background requests and waits for them.
+`picked` comes from the registry; `clone` is an available registered path or
+`""`. `earlier_names` are the registry's recorded earlier repository names (see
 [`internal/repos`](../repos/README.md)).
 
 A failure answers a JSON `{"code","message"}` (never a token or an upstream
