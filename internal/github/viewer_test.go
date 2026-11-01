@@ -3,7 +3,6 @@ package github
 import (
 	"context"
 	"errors"
-	"fmt"
 	"net/http"
 	"strings"
 	"testing"
@@ -11,117 +10,102 @@ import (
 )
 
 func viewerNode(name string, pushed time.Time, extra map[string]any) map[string]any {
-	node := map[string]any{
-		"nameWithOwner": name, "isPrivate": false, "isFork": false, "isArchived": false,
-		"pushedAt": pushed.Format(time.RFC3339), "description": "about " + name,
-	}
+	node := map[string]any{"nameWithOwner": name, "isPrivate": false, "isFork": false, "isArchived": false, "pushedAt": pushed.Format(time.RFC3339), "description": "about " + name}
 	for k, v := range extra {
 		node[k] = v
 	}
 	return node
 }
 
-func viewerData(connection map[string]any) fakeResponse {
-	return data(map[string]any{"viewer": map[string]any{
-		"topRepositories": map[string]any{"nodes": connection["nodes"]},
-		"repositories":    map[string]any{"totalCount": 147},
-	}})
+func viewerSuggestionsData(connection map[string]any) fakeResponse {
+	return data(map[string]any{"viewer": map[string]any{"login": "Me", "organizations": map[string]any{"nodes": []any{map[string]any{"login": "Acme"}, map[string]any{"login": "me"}, map[string]any{"login": "bad owner"}}}, "collaborations": map[string]any{"nodes": []any{map[string]any{"nameWithOwner": "Friend/Shared"}, map[string]any{"nameWithOwner": "acme/inside-an-org"}}}, "topRepositories": connection, "repositories": map[string]any{"totalCount": 147}}})
 }
 
-func TestViewerRepositoriesReadsTopRepositoriesInOneRequest(t *testing.T) {
-	now := time.Date(2026, 7, 1, 12, 0, 0, 0, time.UTC)
-	fake := newFakeGitHub(t, map[string]route{
-		"ViewerRepositories": func(gqlRequest, int) fakeResponse {
-			return viewerData(page([]any{
-				viewerNode("Acme/Widgets", now, map[string]any{"isPrivate": true}),
-				viewerNode("acme/old", now.Add(-48*time.Hour), map[string]any{"isFork": true}),
-				viewerNode("acme/archived", now.Add(-time.Hour), map[string]any{"isArchived": true}),
-				viewerNode("acme/empty", now, map[string]any{"pushedAt": nil, "description": nil}),
-				viewerNode("ACME/widgets", now, nil),
-			}, ""))
-		},
-	})
-	got, err := fake.client(nil).ViewerRepositories(context.Background(), "github.com")
-	if err != nil {
-		t.Fatal(err)
-	}
-	var names []string
-	for _, r := range got.Repositories {
-		names = append(names, r.Repository)
-	}
-	if want := "acme/widgets acme/old acme/empty"; strings.Join(names, " ") != want {
-		t.Fatalf("repositories = %v, want %s (GitHub order, lowercase, archived and duplicates dropped)", names, want)
-	}
-	if got.TotalCount != 147 {
-		t.Errorf("total = %d, want the full accessible count of 147", got.TotalCount)
-	}
-	widgets, old, empty := got.Repositories[0], got.Repositories[1], got.Repositories[2]
-	if !widgets.Private || widgets.Fork || !widgets.PushedAt.Equal(now) || widgets.Description != "about Acme/Widgets" {
-		t.Errorf("widgets = %+v", widgets)
-	}
-	if !old.Fork {
-		t.Errorf("old = %+v, want a fork", old)
-	}
-	if !empty.PushedAt.IsZero() || empty.Description != "" {
-		t.Errorf("empty = %+v", empty)
-	}
-
-	requests := fake.recorded()
-	if len(requests) != 1 {
-		t.Fatalf("made %d requests, want one top repositories request", len(requests))
-	}
-	for _, r := range requests {
-		if r.Authorization != "token test-token" {
-			t.Errorf("%s sent authorization %q", r.OperationName, r.Authorization)
-		}
-	}
-	list := requests[0].Query
-	for _, want := range []string{"viewer{topRepositories(first: 20, orderBy: {field: PUSHED_AT, direction: DESC})", "nameWithOwner", "isPrivate", "isFork", "pushedAt", "description", "repositories(first: 1, affiliations: [OWNER, COLLABORATOR, ORGANIZATION_MEMBER], ownerAffiliations: [OWNER, COLLABORATOR, ORGANIZATION_MEMBER], isArchived: false){totalCount}"} {
-		if !strings.Contains(list, want) {
-			t.Errorf("listing query lacks %q:\n%s", want, list)
-		}
-	}
-}
-
-func TestViewerRepositoriesFetchesTwentyInOneRequest(t *testing.T) {
-	now := time.Date(2026, 7, 1, 12, 0, 0, 0, time.UTC)
-	fake := newFakeGitHub(t, map[string]route{
-		"ViewerRepositories": func(gqlRequest, int) fakeResponse {
-			nodes := make([]any, 0, MaxViewerRepositories)
-			for i := 0; i < MaxViewerRepositories; i++ {
-				nodes = append(nodes, viewerNode(fmt.Sprintf("acme/r%03d", i), now.Add(-time.Duration(i)*time.Minute), nil))
+func TestViewerRepositoriesFetchesEightThenOneHundredUsingCursor(t *testing.T) {
+	now := time.Now().UTC().Truncate(time.Second)
+	fake := newFakeGitHub(t, map[string]route{"ViewerRepositories": func(r gqlRequest, call int) fakeResponse {
+		if call == 1 {
+			if r.Variables["first"] != float64(8) || r.cursor() != "" {
+				t.Errorf("initial request = %v", r.Variables)
 			}
-			return viewerData(page(nodes, "more"))
-		},
-	})
-	got, err := fake.client(nil).ViewerRepositories(context.Background(), "github.com")
+			return viewerSuggestionsData(page([]any{viewerNode("Acme/Widgets", now, map[string]any{"isPrivate": true}), viewerNode("acme/archive", now, map[string]any{"isArchived": true})}, "after-eight"))
+		}
+		if r.Variables["first"] != float64(100) || r.cursor() != "after-eight" {
+			t.Errorf("next request = %v", r.Variables)
+		}
+		return viewerSuggestionsData(page([]any{viewerNode("acme/next", now, map[string]any{"isFork": true})}, "still-more"))
+	}})
+	c := fake.client(nil)
+	first, err := c.ViewerRepositories(context.Background(), "github.com", InitialViewerRepositories, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(got.Repositories) != MaxViewerRepositories {
-		t.Fatalf("got %d repositories, want %d", len(got.Repositories), MaxViewerRepositories)
+	if len(first.Repositories) != 1 || first.Repositories[0].Repository != "acme/widgets" || !first.Repositories[0].Private || first.TotalCount != 147 || first.NextCursor == nil || *first.NextCursor != "after-eight" || strings.Join(first.Scope.Owners, " ") != "me acme" || strings.Join(first.Scope.Repositories, " ") != "friend/shared" {
+		t.Fatalf("first = %+v", first)
 	}
-	if got.Repositories[0].Repository != "acme/r000" || got.Repositories[len(got.Repositories)-1].Repository != "acme/r019" {
-		t.Fatalf("repositories = %+v", got.Repositories)
+	more, err := c.ViewerRepositories(context.Background(), "github.com", AdditionalViewerRepositories, first.NextCursor)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if n := len(fake.recorded()); n != 1 {
-		t.Errorf("made %d requests, want one", n)
+	if len(more.Repositories) != 1 || !more.Repositories[0].Fork || fake.callCount("ViewerRepositories") != 2 {
+		t.Fatalf("more = %+v", more)
+	}
+	query := fake.recorded()[0].Query
+	for _, want := range []string{"login", "organizations(first: 100)", "collaborations: repositories(first: 100, affiliations: [COLLABORATOR]", "topRepositories(first: $first, after: $cursor", "field: PUSHED_AT", "pageInfo", "repositories(first: 1", "totalCount"} {
+		if !strings.Contains(query, want) {
+			t.Errorf("query lacks %s: %s", want, query)
+		}
+	}
+}
+
+func TestSearchRepositoriesUsesGitHubSearchWithoutEnumeratingRepositories(t *testing.T) {
+	for _, tc := range []struct{ input, search string }{
+		{"widgets", "widgets user:me user:acme repo:friend/shared in:name archived:false fork:true"},
+		// A named owner narrows the scope; acme's repositories are all in it.
+		{"acme/widgets", "widgets user:acme in:name archived:false fork:true"},
+		{"org:acme widgets", "widgets user:acme in:name archived:false fork:true"},
+		// Only the collaboration, never the friend's other repositories.
+		{"friend/shared", "shared repo:friend/shared in:name archived:false fork:true"},
+	} {
+		t.Run(tc.input, func(t *testing.T) {
+			fake := newFakeGitHub(t, map[string]route{"SearchRepositories": func(r gqlRequest, _ int) fakeResponse {
+				if r.Variables["search"] != tc.search {
+					t.Errorf("search = %v, want %s", r.Variables["search"], tc.search)
+				}
+				return data(map[string]any{"search": map[string]any{"repositoryCount": 200, "nodes": []any{viewerNode("New-Org/Widgets", time.Now(), map[string]any{"isPrivate": true, "isFork": true}), viewerNode("archived/widgets", time.Now(), map[string]any{"isArchived": true}), viewerNode("NEW-ORG/widgets", time.Now(), nil)}}})
+			}})
+			got, err := fake.client(nil).SearchRepositories(context.Background(), "github.com", tc.input, SearchScope{Owners: []string{"Me", "acme", "me", "not an owner"}, Repositories: []string{"Friend/Shared", "acme/inside-acme", "bad"}}, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(got.Repositories) != 1 || got.Repositories[0].Repository != "new-org/widgets" || !got.Repositories[0].Private || !got.Repositories[0].Fork || got.TotalCount != 200 {
+				t.Fatalf("results = %+v", got)
+			}
+			if fake.callCount("ViewerRepositories") != 0 || len(fake.recorded()) != 1 || !strings.Contains(fake.recorded()[0].Query, "search(query: $search, type: REPOSITORY, first: 100, after: $cursor)") {
+				t.Fatal("search must make exactly one repository search request")
+			}
+		})
+	}
+}
+
+func TestViewerRepositoriesRejectsInvalidCursor(t *testing.T) {
+	fake := newFakeGitHub(t, map[string]route{"ViewerRepositories": func(gqlRequest, int) fakeResponse {
+		return viewerSuggestionsData(map[string]any{"nodes": []any{}, "pageInfo": map[string]any{"hasNextPage": true, "endCursor": nil}})
+	}})
+	_, err := fake.client(nil).ViewerRepositories(context.Background(), "github.com", 8, nil)
+	if !errors.Is(err, errInvalidPagination) {
+		t.Fatalf("err = %v", err)
 	}
 }
 
 func TestViewerRepositoriesReportsARateLimit(t *testing.T) {
-	fake := newFakeGitHub(t, map[string]route{
-		"ViewerRepositories": func(gqlRequest, int) fakeResponse {
-			return fakeResponse{status: http.StatusForbidden, header: http.Header{"X-Ratelimit-Remaining": {"0"}, "Retry-After": {"3600"}}}
-		},
-	})
-	_, err := fake.client(nil).ViewerRepositories(context.Background(), "github.com")
+	fake := newFakeGitHub(t, map[string]route{"ViewerRepositories": func(gqlRequest, int) fakeResponse {
+		return fakeResponse{status: http.StatusForbidden, header: http.Header{"X-Ratelimit-Remaining": {"0"}, "Retry-After": {"3600"}}}
+	}})
+	_, err := fake.client(nil).ViewerRepositories(context.Background(), "github.com", 8, nil)
 	var limited *RateLimitedError
 	if !errors.As(err, &limited) || time.Until(limited.ResumeAt) < 59*time.Minute {
-		t.Fatalf("err = %v, want a rate limit resuming in an hour", err)
-	}
-	if fake.callCount("ViewerOpenPullRequests") != 0 {
-		t.Error("searched after the listing failed")
+		t.Fatalf("err = %v", err)
 	}
 }
 
@@ -150,7 +134,7 @@ func TestViewerRepositoriesFeedsAuthFailuresToTheAuthHook(t *testing.T) {
 				sso = h.Get("X-Github-Sso")
 			}})
 			t.Setenv("GH_CONFIG_DIR", t.TempDir())
-			_, err := c.ViewerRepositories(context.Background(), "github.com")
+			_, err := c.ViewerRepositories(context.Background(), "github.com", InitialViewerRepositories, nil)
 			if err == nil || strings.Contains(err.Error(), "test-token") {
 				t.Fatalf("err = %v", err)
 			}
@@ -158,5 +142,42 @@ func TestViewerRepositoriesFeedsAuthFailuresToTheAuthHook(t *testing.T) {
 				t.Errorf("hook saw statuses %v sso %q", seen, sso)
 			}
 		})
+	}
+}
+
+func TestSearchRepositoriesOutsideTheScopeNeverSearchesAllOfGitHub(t *testing.T) {
+	scope := SearchScope{Owners: []string{"me"}, Repositories: []string{"friend/shared"}}
+	for _, tc := range []struct {
+		query string
+		scope SearchScope
+	}{{"python", SearchScope{}}, {"stranger/python", scope}, {"user:stranger python", scope}} {
+		fake := newFakeGitHub(t, map[string]route{})
+		got, err := fake.client(nil).SearchRepositories(context.Background(), "github.com", tc.query, tc.scope, nil)
+		if err != nil || len(got.Repositories) != 0 || len(fake.recorded()) != 0 {
+			t.Fatalf("%s: search = %+v, %v, %d requests", tc.query, got, err, len(fake.recorded()))
+		}
+	}
+}
+
+func TestSearchRepositoriesPagesWithItsCursor(t *testing.T) {
+	fake := newFakeGitHub(t, map[string]route{"SearchRepositories": func(r gqlRequest, call int) fakeResponse {
+		connection := page([]any{viewerNode("acme/one", time.Now(), nil)}, "after-one")
+		if call == 2 {
+			if r.cursor() != "after-one" {
+				t.Errorf("second cursor = %q", r.cursor())
+			}
+			connection = page([]any{viewerNode("acme/two", time.Now(), nil)}, "")
+		}
+		connection["repositoryCount"] = 2
+		return data(map[string]any{"search": connection})
+	}})
+	c := fake.client(nil)
+	first, err := c.SearchRepositories(context.Background(), "github.com", "acme", SearchScope{Owners: []string{"acme"}}, nil)
+	if err != nil || first.NextCursor == nil || *first.NextCursor != "after-one" {
+		t.Fatalf("first = %+v, %v", first, err)
+	}
+	second, err := c.SearchRepositories(context.Background(), "github.com", "acme", SearchScope{Owners: []string{"acme"}}, first.NextCursor)
+	if err != nil || second.NextCursor != nil || second.Repositories[0].Repository != "acme/two" {
+		t.Fatalf("second = %+v, %v", second, err)
 	}
 }

@@ -32,7 +32,8 @@ const assert = require('node:assert/strict');
     if (command === 'repositories') {
       const repo = args.repository;
       switch(args.action) {
-        case 'list': return {repositories: ['acme/found','acme/clone','acme/folder'].map(repository=>({repository,description:'',picked:picked.has(repository),clone:localClones.get(repository)||''}))};
+        case 'list':
+        case 'retry-list': return {searching:Boolean(args.query), repositories: (args.query ? ['acme/found','acme/clone','acme/folder','new-org/never-contributed'].filter(repository=>args.query.toLowerCase().split(/\s+/).every(term=>repository.includes(term))) : ['acme/found','acme/clone','acme/folder']).map(repository=>({repository,description:'',picked:picked.has(repository),clone:localClones.get(repository)||''}))};
         case 'picked': return [...picked].map(repository=>({repository,settings:{},clones:[]}));
         case 'found': return {running:false,scanned_at:'2026-10-23',repositories:{},attached:[]};
         case 'pick': picked.add(repo); return {};
@@ -127,6 +128,19 @@ const assert = require('node:assert/strict');
   assert(!calls.some(([c,a])=>c==='repositories'&&a.action==='pick'), 'Nothing is picked without the person');
   assert(await page.locator('#refresh').isVisible(), 'Without a picked repository the step offers to recheck');
   await page.screenshot({ path: `${screenshots}/onboarding-repositories-empty.png` });
+  const search = page.getByRole('searchbox');
+  await search.fill('new-org never');
+  const searchedBox = page.getByRole('checkbox',{name:'Pick new-org/never-contributed',exact:true});
+  await expect(searchedBox).toBeVisible();
+  await expect(page.getByText('Searching your GitHub repositories…',{exact:true})).toBeVisible();
+  await searchedBox.check();
+  await expect(page.locator('#continue')).toBeEnabled();
+  await expect(page.getByText('Searching your GitHub repositories…',{exact:true})).toBeVisible();
+  await search.fill('');
+  await expect(searchedBox).toBeChecked();
+  await searchedBox.uncheck();
+  await expect(page.locator('#continue')).toBeDisabled();
+  await expect(foundBox).toBeVisible();
   assert(await page.locator('.repository-choice input').first().evaluate(element=>element.getBoundingClientRect().width<24),'Repository checkbox must stay compact under setup input styles');
   await foundBox.check();
   await expect(page.locator('#continue')).toBeEnabled();

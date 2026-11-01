@@ -774,12 +774,14 @@ fn repository_request(
     };
     let base = || identity().map(|name| format!("/api/repositories/{name}"));
     Ok(match action {
-        "list" => (
+        "list" | "retry-list" | "more-list" => (
             "GET",
             format!(
                 "/api/github/repositories?{}",
                 url::form_urlencoded::Serializer::new(String::new())
                     .append_pair("query", query.unwrap_or(""))
+                    .append_pair("refresh", if action == "retry-list" { "1" } else { "0" })
+                    .append_pair("more", if action == "more-list" { "1" } else { "0" })
                     .finish()
             ),
             None,
@@ -833,6 +835,19 @@ mod repository_relay_tests {
         let (_, route, _) =
             repository_request("list", None, Some("x\r\nHeader: bad"), None, None, false).unwrap();
         assert!(!route.contains('\r') && !route.contains('\n'));
+        let (method, route, _) =
+            repository_request("retry-list", None, Some("acme widget"), None, None, false).unwrap();
+        assert_eq!(method, "GET");
+        assert_eq!(
+            route,
+            "/api/github/repositories?query=acme+widget&refresh=1&more=0"
+        );
+        let (_, route, _) =
+            repository_request("more-list", None, Some("acme"), None, None, false).unwrap();
+        assert_eq!(
+            route,
+            "/api/github/repositories?query=acme&refresh=0&more=1"
+        );
         let (method, route, body) = repository_request(
             "attach",
             Some("owner/repo"),
