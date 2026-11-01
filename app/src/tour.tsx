@@ -31,10 +31,11 @@ export function useTour(asked: boolean, pullRequests: boolean | undefined) {
     if (inSample() || pullRequests) setOpen(true);
     else location.replace(`${ownBase()}sample/?tour=1`);
   }, [firstRun, asked, pullRequests]);
-  // Leaving the sample reloads the page, so the tour's state is saved first.
+  // Leaving the sample reloads the page, so the tour's state is saved first;
+  // a save that fails still leaves, and the tour shows again next time.
   useEffect(() => {
-    if (leaving && saved.value.seen && !saved.saving) location.assign(ownBase());
-  }, [leaving, saved.value.seen, saved.saving]);
+    if (leaving && ((saved.value.seen && !saved.saving) || saved.error)) location.assign(ownBase());
+  }, [leaving, saved.value.seen, saved.saving, saved.error]);
   const close = () => {
     if (!saved.value.seen) saved.update(() => ({ seen: true }));
     setOpen(false);

@@ -194,7 +194,9 @@ func (w *Workspace) build(ctx context.Context, now time.Time) (http.Handler, err
 	index := &reviewindex.Service{Registry: registry, Discovery: disc}
 	actions := &analytics.Actions{Path: appDB}
 	sessionIndex := &analytics.Index{Path: appDB, Clones: registry, Stores: analytics.Stores{ClaudeProjectsDir: filepath.Join(home, ".claude", "projects")}}
-	sessionIndex.Refresh(ctx)
+	if err := sessionIndex.Refresh(ctx); err != nil {
+		return nil, fmt.Errorf("indexing the sessions: %w", err)
+	}
 	insights := &analytics.Service{Registry: registry, Index: sessionIndex, Jobs: queue.List, Actions: actions,
 		Plans:    &planusage.History{Path: appDB, Service: &planusage.Service{Sources: []planusage.Source{noPlan{}}}},
 		Captures: decided.Ledger, Pulls: decided.PullFlow, Login: login}
