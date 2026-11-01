@@ -28,13 +28,16 @@
   box-shadow: var(--shadow-overlay);
   color: var(--text-primary);
 }
-.tour-stumpy {
+.tour-corner {
   position: absolute;
-  top: 10px;
-  right: 10px;
+  top: 8px;
+  right: 8px;
+  display: flex;
+  align-items: center;
+  gap: 2px;
 }
 .tour-card h2 {
-  margin: 0 44px 6px 0;
+  margin: 0 80px 6px 0;
   font-size: var(--text-base);
   font-weight: 600;
 }

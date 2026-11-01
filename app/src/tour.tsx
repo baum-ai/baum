@@ -1,5 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { CloseIcon } from "@baum/viewer/components/icons";
 import { Stumpy } from "@baum/viewer/components/stumpy";
+import { Button } from "@baum/viewer/components/ui";
 import { appURL, navigate } from "./api";
 import { PRIMARY, SECONDARY, SMALL } from "./action-classes";
 import { PAGES } from "./pages";
@@ -99,7 +101,8 @@ const STOPS: Stop[] = [
     title: "Act on it",
     body: (
       <>
-        <B>Ask</B> questions about the change, <B>Regenerate review</B> after new commits.
+        <B>Ask</B> questions about the change, <B>Regenerate review</B> after new commits,{" "}
+        <B>Merge…</B> when it's ready.
       </>
     ),
     target: "[data-tour=review-actions]",
@@ -229,7 +232,12 @@ export function Tour({ close }: { close: () => void }) {
           if (["Escape", "Enter", " "].includes(event.key)) event.stopPropagation();
         }}
       >
-        <Stumpy size={36} className="tour-stumpy" />
+        <div className="tour-corner">
+          <Stumpy size={36} />
+          <Button variant="ghost" size="compact" aria-label="Close the tour" onClick={close}>
+            <CloseIcon size={14} />
+          </Button>
+        </div>
         <h2 id="tour-title">{stop.title}</h2>
         <p>{stop.body}</p>
         <div className="tour-foot">

@@ -92,7 +92,7 @@ test("the tour shows on the first launch only, and Go to opens it again", async 
       await page.keyboard.type("Take the tour");
       await page.keyboard.press("Enter");
       await expect(card).toContainText("Welcome to baum");
-      await card.getByRole("button", { name: "Skip" }).click();
+      await card.getByRole("button", { name: replay ? "Close the tour" : "Skip" }).click();
       await expect(card).toHaveCount(0);
       await expect(page).not.toHaveURL(/[?&]tour=/);
     }
