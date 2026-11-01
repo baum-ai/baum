@@ -428,8 +428,8 @@ fn install_window_menu(app: &AppHandle, login: bool) -> Result<CheckMenuItem<Wry
         _ => background.append(&setup).map_err(e)?,
     }
     window_menu.append(&background).map_err(e)?;
-    let report = MenuItem::with_id(app, MENU_REPORT, "Report a problem…", true, None::<&str>)
-        .map_err(e)?;
+    let report =
+        MenuItem::with_id(app, MENU_REPORT, "Report a problem…", true, None::<&str>).map_err(e)?;
     let help = window_menu
         .items()
         .map_err(e)?

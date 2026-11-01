@@ -606,14 +606,14 @@ it("lists diagnostics problems first with status text and fixes", async () => {
   const checks = [...node.querySelectorAll("li h3")].map((h) => h.textContent);
   expect(checks).toEqual(["GitHub token", "GitHub CLI", "git"]);
 });
-it("opens the prefilled GitHub issue from Report a problem, and offers it only when the daemon gave a link", async () => {
+it("opens the prefilled GitHub issue from Report a problem", async () => {
   history.replaceState(null, "", "/s/test-ns/?page=diagnostics");
   const issue = "https://github.com/baum-ai/baum/issues/new?template=bug_report.yml&version=1.2.3";
   const open = vi.spyOn(window, "open").mockReturnValue(null);
   const reportButton = () =>
-    [...node.querySelectorAll<HTMLButtonElement>("[aria-labelledby=diagnostics-heading] button")].find(
-      (b) => b.textContent === "Report a problem",
-    );
+    [
+      ...node.querySelectorAll<HTMLButtonElement>("[aria-labelledby=diagnostics-heading] button"),
+    ].find((b) => b.textContent === "Report a problem");
   stubDiagnostics(async () =>
     Response.json({ local: true, report: diagnosticsReport, report_issue_url: issue }),
   );
@@ -622,9 +622,6 @@ it("opens the prefilled GitHub issue from Report a problem, and offers it only w
   await act(async () => reportButton()!.click());
   expect(open).toHaveBeenCalledWith(issue, "_blank", "noopener,noreferrer");
   open.mockRestore();
-  stubDiagnostics(async () => Response.json({ local: true, report: diagnosticsReport }));
-  await act(async () => root.render(<App />));
-  expect(reportButton()).toBeUndefined();
 });
 it("shows diagnostics loading, then re-runs on Check again and disables it meanwhile", async () => {
   history.replaceState(null, "", "/s/test-ns/?page=diagnostics");

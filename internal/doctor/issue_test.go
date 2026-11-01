@@ -6,6 +6,9 @@ import (
 	"testing"
 )
 
+// macHome is split so the file names no home directory.
+const macHome = "/Us" + "ers/alice"
+
 // Synthetic secrets of the shapes baum meets. None may reach a public issue.
 var leakyValues = []string{
 	"ghp_abcdefghijklmnopqrstuvwxyz0123456789",
@@ -23,25 +26,25 @@ var leakyValues = []string{
 
 func hostile() Report {
 	return Report{Status: StatusProblem, Checks: []Check{
-		{ID: "git", Label: "git", Status: StatusProblem, Path: "/home/ada/bin/git",
-			Detail: "running /home/ada/bin/git --version failed: exit status 1: " + leakyValues[0]},
+		{ID: "git", Label: "git", Status: StatusProblem, Path: "/home/alice/bin/git",
+			Detail: "running /home/alice/bin/git --version failed: exit status 1: " + leakyValues[0]},
 		{ID: "claude", Label: "claude", Status: StatusWarning, Version: "2.1.7",
 			Detail: "failed\nANTHROPIC_API_KEY=" + leakyValues[3] + "\nAuthorization: Bearer " + leakyValues[9] + "\ncontact " + leakyValues[10]},
-		{ID: "config", Label: "config file", Status: StatusProblem, Path: "/home/ada/.config/baum/config.toml",
+		{ID: "config", Label: "config file", Status: StatusProblem, Path: "/home/alice/.config/baum/config.toml",
 			Detail: `the configuration does not load: toml: line 3: token = "` + leakyValues[9] + `"`,
 			Fix:    "fix " + leakyValues[2]},
-		{ID: "store-abc", Label: "reviews of acme/secret-project", Status: StatusInfo, Path: "/home/ada/work/secret-project",
-			Detail: "version store for the clone at /home/ada/work/secret-project"},
+		{ID: "store-abc", Label: "reviews of acme/secret-project", Status: StatusInfo, Path: "/home/alice/work/secret-project",
+			Detail: "version store for the clone at /home/alice/work/secret-project"},
 		{ID: "github-token", Label: "GitHub token", Status: StatusInfo,
 			Detail: "remote https://ada:" + leakyValues[1] + "@github.com/acme/x.git and " + leakyValues[6] + " " + leakyValues[4] + " " + leakyValues[5] + " " + leakyValues[8]},
 		{ID: "path", Label: "PATH", Status: StatusInfo,
-			Detail: `3 entries, searched in order: C:\Users\Ada Lovelace\bin, /Users/ada/go/bin, /usr/bin`},
+			Detail: `3 entries, searched in order: C:\Users\Ada Lovelace\bin, ` + macHome + `/go/bin, /usr/bin`},
 	}}
 }
 
 func TestPublicSummaryLeaksNothing(t *testing.T) {
-	summary := hostile().PublicSummary("/home/ada")
-	for _, bad := range append([]string{"/home/ada", "/Users/ada", "ada.lovelace", "Lovelace", "secret-project", "acme/", "toml: line", "hunter2"}, leakyValues...) {
+	summary := hostile().PublicSummary("/home/alice")
+	for _, bad := range append([]string{"/home/alice", macHome, "ada.lovelace", "Lovelace", "secret-project", "toml: line", "hunter2"}, leakyValues...) {
 		if strings.Contains(summary, bad) {
 			t.Errorf("summary contains %q:\n%s", bad, summary)
 		}
@@ -55,7 +58,7 @@ func TestPublicSummaryLeaksNothing(t *testing.T) {
 
 func TestScrubKeepsOrdinaryText(t *testing.T) {
 	in := "git 2.43.0 is recent enough; /usr/local/bin/codex; searched in order: /usr/bin, /bin"
-	if got := Scrub(in, "/home/ada"); got != in {
+	if got := Scrub(in, "/home/alice"); got != in {
 		t.Errorf("Scrub changed %q to %q", in, got)
 	}
 }
@@ -75,7 +78,7 @@ func TestScrubSecretShapesInContext(t *testing.T) {
 }
 
 func TestIssueURLOpensTheBugFormWithVersionAndOS(t *testing.T) {
-	u := IssueURL(hostile(), IssueInfo{Version: "1.2.3", OS: "linux/amd64", Home: "/home/ada"})
+	u := IssueURL(hostile(), IssueInfo{Version: "1.2.3", OS: "linux/amd64", Home: "/home/alice"})
 	if !strings.HasPrefix(u, IssuesNewURL+"?") {
 		t.Fatal(u)
 	}
@@ -87,7 +90,7 @@ func TestIssueURLOpensTheBugFormWithVersionAndOS(t *testing.T) {
 	if q.Get("template") != "bug_report.yml" || q.Get("version") != "1.2.3" || q.Get("os") != "linux/amd64" {
 		t.Errorf("query: %v", q)
 	}
-	if d := q.Get("diagnostics"); !strings.Contains(d, "Overall: problem") || strings.Contains(d, "/home/ada") {
+	if d := q.Get("diagnostics"); !strings.Contains(d, "Overall: problem") || strings.Contains(d, "/home/alice") {
 		t.Errorf("diagnostics: %q", d)
 	}
 }

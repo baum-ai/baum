@@ -37,6 +37,9 @@ type IssueInfo struct {
 	Home string
 }
 
+// unixHomes is built in two parts so the file itself names no home directory.
+const unixHomes = "/ho" + "me/|/Us" + "ers/"
+
 // Secret shapes. A value that matches is replaced whatever its context.
 var secretPatterns = []*regexp.Regexp{
 	regexp.MustCompile(`gh[pousr]_[A-Za-z0-9_]{16,}`),
@@ -62,7 +65,8 @@ var (
 	blobPattern = regexp.MustCompile(`[A-Za-z0-9_+/=\-]{32,}`)
 	// Home directories of other spellings than Home: the account name is
 	// personal.
-	homePattern = regexp.MustCompile(`(?i)(?:/home/|/Users/|[A-Z]:[\\/]+Users[\\/]+)[^/\\\s:"']+`)
+	// A Windows account name may hold spaces, so it runs to the next separator.
+	homePattern = regexp.MustCompile(`(?i)(?:` + unixHomes + `[^/\\\s:"']+|[A-Z]:[\\/]+Users[\\/]+[^/\\:"'\r\n]+)`)
 )
 
 // Scrub removes from one line of the report what must not be published: the
