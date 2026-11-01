@@ -36,6 +36,22 @@ type Backend interface {
 	Run(context.Context, Request) (Result, error)
 }
 
+// ConcurrentCaller is a Backend that reports whether it may run several
+// calls over one run directory at once, each with its own schema: one that
+// writes nothing per call to a shared fixed path. A Backend that does not
+// implement it, or reports false, gets one call at a time
+// (Generator.StagedReview).
+type ConcurrentCaller interface {
+	ConcurrentCalls() bool
+}
+
+// concurrentCalls reports whether a backend says it may run calls over one
+// run directory at once.
+func concurrentCalls(backend Backend) bool {
+	caller, ok := backend.(ConcurrentCaller)
+	return ok && caller.ConcurrentCalls()
+}
+
 // Endpoint is a complete provider base URL and the key or token that
 // authenticates to it.
 type Endpoint struct {

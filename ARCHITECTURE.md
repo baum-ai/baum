@@ -309,6 +309,53 @@ the state, a desktop daemon fails stored validation and refresh of a local
 document that carries `details` or the `incomplete_sections` limitation;
 the hosted service never stores either, so a hosted rollback is unaffected.
 
+A staged review (`agent.Generator.StagedReview`) is written in parts, and
+`review` holds everything it validates them with, so no rule has a second
+copy:
+
+- **Stage schemas.** `OutlineSchema`, `DetailsSchema(kinds)` and
+  `ContextSchema` project the model schema (`ModelSchema`): the outline keeps
+  the document's `schema`, `summary` (every model-written field but
+  `context` and `review_minutes`), `relations` and, per section, `id`,
+  `title`, `kind`, `hunks` and `assessment`; the details are
+  `{"sections": [...]}` with each section's `id`, `summary`, `attention`,
+  `risks`, `evidence`, `blocks` and `tiles`; the context is
+  `{"context": ...}`. Each property is the model schema's own, rules naming
+  a dropped property go, and so do unreachable definitions.
+- **The staged contract**: the strict authored contract, except that a
+  section may carry the `details` state (with a null summary, a null
+  attention and no evidence, blocks or tiles) and the summary may lack its
+  context. `PrepareStaged` and `CompleteStaged` are `Prepare` and
+  `CompleteWithPrompt` under it; the one-pass contract is unchanged.
+- **Parts.** `PrepareOutline` keeps the outline fields, gives every section
+  pending details, applies the whole-document rules (schema, hunk and
+  section IDs, at most one mechanical section) plus one of its own (every
+  logical section with hunks has an assessment), and puts the previous
+  version's sections first in their order, as completion would.
+  `PrepareSectionDetails` merges one section's details into that outline and
+  validates the whole document, every other section still pending, so each
+  finding is the section's own. `PrepareContext` does the same for the
+  context. `AssembleStaged` builds a draft (sections not written are
+  `pending`, or `failed` once they failed) or the final document (no
+  `pending`, and the reading time set).
+- **Reuse.** `ReusableSectionDetails` returns, for each outline section
+  whose hunk IDs are those of the previous version's section with the same
+  ID, that section's previous details, when they were complete (no
+  `details` state): its summary, attention, active risks without their
+  lifecycle fields, evidence, blocks and tiles. A mitigated risk is left
+  out, so completion keeps it mitigated. The generator validates what it
+  reuses like model output and sends a section it rejects to the model.
+- **Reading time.** `ReviewMinutes` replaces the model's estimate in a
+  staged review: the words of the overview (text, attention, review
+  exchange, release note, breaking change), the context, and each section's
+  title, summary, attention, behaviour steps (title, text, before, after,
+  question), risks, evidence (claim, detail, expects) and decisions (title,
+  text, rationale, trigger, rejected alternative, evidence) at 200 words a
+  minute, plus the code lines it shows (code blocks, tile code excerpts and
+  the lines a behaviour step's first hunk anchor names) at 12 lines a
+  minute, rounded up and kept within 1 to 240. A one-pass review keeps the
+  model's estimate.
+
 ### Validation and derivation
 
 - Validation reports every finding in one pass, each located to the item it
@@ -763,6 +810,18 @@ review group's prompt (`group-review-public-v3`): the same text with
 group's bundle, per-member checkout and `members.json` differ and what a
 combined review covers (see "Review groups").
 
+A staged review takes its instructions through `StagedPrompts`, whose
+`StagedInstructions(ctx, backend)` returns a `StagedPrompt`: `Shared` and
+one text per stage (`Outline`, `Details`, `Context`), with a `Version` and a
+`Digest` covering all four. The module's `prompt.StagedPrompts`
+(`review-staged-public-v1`) embeds `review-shared-public-v1.md` (the stages
+and what each writes, so none repeats another, plus the ground rules,
+inputs, checks, anchors, writing and calibration of `review-public-v6.md`)
+and `review-outline-public-v1.md`, `review-details-public-v1.md` and
+`review-context-public-v1.md`, which carry the v6 rules for the parts each
+stage writes, name the stage's own schema file and end with a "Submitting"
+heading under which the backend's submit block goes, as for `Prompts`.
+
 A host can also pass `Run.Decorate`, which the loop applies to every document
 the model returns before masking and validation, to fill what the host
 decides and the model never writes: a review group's `stack` and each
@@ -887,6 +946,110 @@ exactly as the hosted worker does: `ReasonValidationRejected`, the document
 withheld and only its masked copy kept. They are for hosts to call, including
 the local CLI (not yet wired); today only the hosted worker calls them.
 
+### Staged review
+
+```go
+outcome, document, err := generator.StagedReview(ctx, agent.StagedRun{
+	Run: agent.Run{Bundle: b, EncodedBundle: encoded, Directory: dir,
+		TileKinds: kinds, Budgets: budgets},
+	Prompts: prompt.StagedPrompts{}, Progress: onProgress})
+completed, findings := validator.CompleteStaged(document, b, dir, outcome.Model, version, now)
+```
+
+`StagedReview` writes a review in three stages so a reader sees part of it
+sooner and a failure loses less. `Generate` is unchanged and still writes a
+review, and every review group, in one pass; `StagedReview` refuses
+`Run.Decorate`. Each stage is a `RunTask` task in the same run directory,
+labelled with its name (`Task.Label`), so its schema and rejected replies
+are `schema-outline.json`, `rejected-details-1.json` and so on, and the
+stage prompts name their own file. Every stage's prompt starts with the
+same prefix (the shared instructions, the bundle and the source excerpts),
+followed by the stage's instructions, the accepted outline (for the later
+stages) and, on a repair, the rejected part and its findings; a repair
+resends the prefix, which its stage's earlier call has cached, and nothing
+the stage did not write. Across stages the prefix probably does not hit the
+provider's cache: each stage's schema (the `StructuredOutput` tool, Claude
+Code's `--json-schema`, Codex's output schema) comes before the prompt in
+what the provider caches, and it differs per stage. The evaluation after
+the daemon wiring measures it; if it matters, the follow-up is one schema
+shared by the stages and a cache breakpoint after the prefix.
+
+The details and the context run at the same time only when the backend
+reports that its calls may share the run directory
+(`agent.ConcurrentCaller`): Claude Code's `User` profile (the schema goes on
+the command line), Codex's `Local` profile (a temporary schema directory per
+call) and the Anthropic API backend (HTTP and read-only tools). Claude
+Code's `Isolated` profile shares one `HOME` and config directory under the
+run directory, Codex's `Container` profile writes the output schema into the
+shared `CODEX_HOME`, and Cursor's per-workspace state is not known to be
+safe, so they run the details first and then the context, which is skipped
+when no section has its details. A host that wraps a backend must forward
+`ConcurrentCalls` for it to apply.
+
+1. **Outline**, first: the overview and each section's `id`, `title`,
+   `kind`, `hunks` and `assessment`, with little or no reading of files.
+   `review.PrepareOutline` validates it, and a repair resends only the
+   outline and its findings. A failed outline fails the run as `Generate`
+   fails (`ReasonValidationRejected` with the rejected outline, or the
+   error).
+2. **Section details**, once the outline is accepted. A section whose hunks
+   are unchanged since a previous version with complete details keeps those
+   (`review.ReusableSectionDetails`) and is not sent. The model writes the
+   rest in one call; each section is validated on its own
+   (`review.PrepareSectionDetails`), and a repair sends only the sections
+   still failing, each with its rejected details and its findings, and
+   cannot reactivate a risk the section's first details left out
+   (`review.PreserveSectionRiskOmissions`). A section still invalid after
+   `MaxRepairAttempts`, or never reached because the stage ended early (a
+   spent budget, a provider failure), is published with `details: "failed"`
+   and its outline. If no section ends with its details (none written and
+   none reused), the run fails as a one-pass run would; a regeneration that
+   reuses some sections succeeds even if every section sent fails.
+3. **Context**, with or after the details: `summary.context`, with
+   the reading the context rules ask for (`review.PrepareContext`). If it
+   fails, after its repairs or with any error, the document has no context
+   and the run still succeeds.
+
+The result is `review.AssembleStaged`'s final document (complete sections,
+failed ones without details, the context when written, and
+`summary.review_minutes` from `review.ReviewMinutes`, which no model
+writes), checked with `review.PrepareStaged`; it never holds `pending`. A
+host completes it with `CompleteStaged` where it completes `Generate`'s
+document with `CompleteWithPrompt`, after `RedactStagedOutput` (where it
+calls `RedactOutput`) and `RejectSecrets`: each stage's outcome carries its
+own findings, rejected part, model and diagnostics, and
+`RedactStagedOutput` masks them, and each stage's reason, as `RedactOutput`
+masks the run's. One identifier pass masks every reply of every stage
+before anything is built from it, so its
+counts cover the run; a secret masked in a closed value during the outline
+skips the later stages, since the host rejects the run anyway.
+
+`StagedRun.Progress` is told of each stage result as it lands (the outline
+accepted, each section's details written, reused or failed, the context
+written or failed) with `AssembleStaged`'s draft so far, in which sections
+not yet written are `pending`; calls come one at a time from the stages'
+goroutines. A host completes a draft with `CompleteStaged` to show it, and
+never stores one with `pending`.
+
+**Budgets.** The outline has a quarter of the run's calls and tokens (at
+least one of each). What it leaves goes two thirds to the details (at least
+one call while any remains) and the rest to the context, or all to the
+context when every section was reused, so the stages never spend more than
+the run's budgets together. `MaxProviderAttempts`, `MaxRepairAttempts`,
+`StallTimeout` and `ToolTimeout` apply per stage and per call as in
+`Generate`, and the host's wall clock covers the whole run. A stage whose
+share is spent fails with `GenerationBudgetExceededReason`, with the
+consequences above.
+
+**Outcome.** `StagedOutcome` embeds the run's `Outcome`, with the calls,
+tokens, attempts, repairs, usage, accounting, diagnostics (at most 512) and
+sessions of every stage summed, and has each stage's own `StageOutcome`:
+its outcome, with its reason when it failed even if the run went on, and
+for the details stage the sections written, reused and failed. Each stage
+records the backend session of its call; the details stage's is its first
+pass, the one that wrote most of the document, and it is the run's
+`SessionID` (the outline's when nothing was sent to the details stage).
+
 ### Tasks
 
 ```go
@@ -912,7 +1075,11 @@ pass), `ReasonValidationRejected` with the last rejected document after the
 last repair, or an error. `RunTask` logs sizes and counts only, never what the
 model wrote. A host masks the outcome with `RedactTaskOutput`, which is
 `RedactOutput` without a review contract: every string of the document, keys
-included, is free text, and none is a closed value.
+included, is free text, and none is a closed value. A task with a `Label`
+(lowercase letters, digits and dashes) writes `schema-<label>.json` and
+`rejected-<label>-N.json` instead (`TaskSchemaFile`), so tasks running in
+one directory at once, such as a staged review's stages, keep their own
+files; without one the names are unchanged.
 
 ## `decisions`
 

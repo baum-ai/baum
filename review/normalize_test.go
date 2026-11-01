@@ -168,7 +168,7 @@ func TestNormalizationMapsLenientDocumentOntoStrictContract(t *testing.T) {
 	if err := resolvedSchema(t, v.Schema).Validate(lenientDocument); err != nil {
 		t.Fatalf("lenient contract rejects the fixture: %v", err)
 	}
-	if err := v.resolved.Validate(lenientDocument); err == nil {
+	if err := v.authored.resolved.Validate(lenientDocument); err == nil {
 		t.Fatal("strict contract accepted the un-normalized fixture")
 	}
 
@@ -221,7 +221,7 @@ func TestNormalizationMapsLenientDocumentOntoStrictContract(t *testing.T) {
 
 	var strictDocument any
 	checkNoError(t, json.Unmarshal(prepared, &strictDocument))
-	checkNoError(t, v.resolved.Validate(strictDocument))
+	checkNoError(t, v.authored.resolved.Validate(strictDocument))
 	again, findings := v.Prepare(prepared, bundle, directory)
 	checkEqual(t, "", findings)
 	assertSameDocumentJSON(t, prepared, again)
