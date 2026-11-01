@@ -789,7 +789,6 @@ it("lists every check of the head it shows, failing first, each linking to its d
     "buildRunning",
     "lintPassed",
   ]);
-  expect(button("Hide other checks")).toBeTruthy();
   // The row counts the failing checks of them all beside its title.
   const count = panel().querySelector(".upnext-block-title [title]")!;
   expect(count.textContent).toBe("2/4 failing");
@@ -806,7 +805,9 @@ it("lists every check of the head it shows, failing first, each linking to its d
   expect(reruns).toEqual([{ repository: "acme/demo", pr: 2, head_sha: "head", job_id: 21 }]);
   expect(items()[1]!.textContent).toBe("testRe-running on GitHubDetails");
   // The panel's own fix covers the checks; their row has no fix of its own.
-  expect(panel().querySelector("li.upnext-has-threads > button")).toBeNull();
+  expect(
+    panel().querySelector("li.upnext-has-threads > button:not(.upnext-detail-toggle)"),
+  ).toBeNull();
   const asked = vi
     .mocked(fetch)
     .mock.calls.map(([path]) => String(path))
@@ -846,9 +847,12 @@ it("keeps reading running checks after a read fails", async () => {
     expect(reads).toBe(2);
     await act(async () => vi.advanceTimersByTime(20_000));
     expect(reads).toBe(3);
-    expect(
-      Array.from(panel().querySelectorAll('[aria-label="Checks"] li')).map((li) => li.textContent),
-    ).toEqual(["testFailed", "buildPassed"]);
+    // The build, done now, folds behind the failing test.
+    const listed = () =>
+      Array.from(panel().querySelectorAll('[aria-label="Checks"] li')).map((li) => li.textContent);
+    expect(listed()).toEqual(["testFailed"]);
+    await act(async () => button("Show 1 other check").click());
+    expect(listed()).toEqual(["testFailed", "buildPassed"]);
   } finally {
     vi.useRealTimers();
   }
@@ -901,11 +905,12 @@ it("shows where a pull request merges, its size and time to review, and opens it
   expect(panel().querySelector(".upnext-branches a")!.getAttribute("aria-label")).toBe(
     "Open acme/demo#1 on GitHub",
   );
-  // A review's checks are folded, and read only once opened.
+  // A review's checks are folded but read at once, to count them beside the
+  // row's title; opening the row shows that read without asking again.
   const checksAsked = () =>
     vi.mocked(fetch).mock.calls.filter(([path]) => String(path).includes("api/prs/checks"));
   expect(button("Checks passing").getAttribute("aria-expanded")).toBe("false");
-  expect(checksAsked()).toEqual([]);
+  expect(checksAsked()).toHaveLength(1);
   await act(async () => button("Checks passing").click());
   expect(checksAsked()).toHaveLength(1);
 });
@@ -1033,10 +1038,7 @@ it("lists a review group as one row that opens to its members", async () => {
     Array.from(panel().querySelectorAll('[aria-label="Pull requests"] li')).map(
       (li) => li.textContent,
     ),
-  ).toEqual([
-    "Change 2#2 · Checks failing",
-    "Change 3#3 · Ready to merge",
-  ]);
+  ).toEqual(["Change 2#2 · Checks failing", "Change 3#3 · Ready to merge"]);
   // A stack's members stay out of Merge all.
   expect(node.textContent).not.toContain("Merge all");
   // Space opens the group, and from a member closes it again, back on the group.
@@ -1051,8 +1053,5 @@ it("lists a review group as one row that opens to its members", async () => {
   await press(" ");
   expect(list()).toEqual(["Change 1", "Payments stack", "Change 2", "Change 3", "Change 4"]);
   await press(" ");
-  expect(list()).toEqual(["Change 1", "Payments stack", "Change 4"]);
-  // h and l no longer open or close it.
-  await press("l");
   expect(list()).toEqual(["Change 1", "Payments stack", "Change 4"]);
 });

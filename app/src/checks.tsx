@@ -61,8 +61,7 @@ export function checksCount(checks: Check[]): {
   tone: "critical" | "caution" | "positive";
 } {
   const count = (state: CheckState) => checks.filter((check) => checkState(check) === state).length;
-  const of = (n: number, word: string) =>
-    `${formatCount(n)}/${formatCount(checks.length)} ${word}`;
+  const of = (n: number, word: string) => `${formatCount(n)}/${formatCount(checks.length)} ${word}`;
   if (count("failing")) return { text: of(count("failing"), "failing"), tone: "critical" };
   if (count("running")) return { text: of(count("running"), "running"), tone: "caution" };
   return { text: of(count("passing"), "passing"), tone: "positive" };

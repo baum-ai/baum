@@ -245,15 +245,17 @@ export function stackBases(entries: Entry[], groups: ReviewGroup[]): Map<string,
     const byHead = new Map<string, Entry>();
     for (const entry of members)
       if (entry.pull_request.head_ref) byHead.set(entry.pull_request.head_ref, entry);
+    // The open member whose head branch is this one's base, if any.
+    const under = (entry: Entry) => byHead.get(entry.pull_request.base_ref ?? "");
     for (const entry of members) {
-      let base = byHead.get(entry.pull_request.base_ref);
+      let base = under(entry);
       if (!base || base.pull_request.number === entry.pull_request.number) continue;
       // Down the stack to its lowest open member; a cycle stops the walk.
       const seen = new Set([entry.pull_request.number, base.pull_request.number]);
       for (
-        let next = byHead.get(base.pull_request.base_ref);
+        let next = under(base);
         next && !seen.has(next.pull_request.number);
-        next = byHead.get(base.pull_request.base_ref)
+        next = under(base)
       ) {
         seen.add(next.pull_request.number);
         base = next;
@@ -1831,11 +1833,7 @@ function Panel({
           ) : null}
           <ul>
             {block.rows.map((line) => (
-              <BlockRow
-                key={line.main}
-                line={line}
-                entry={entry}
-              />
+              <BlockRow key={line.main} line={line} entry={entry} />
             ))}
           </ul>
           {block.more ? <p className="upnext-block-more">{block.more}</p> : null}
@@ -1909,13 +1907,7 @@ function Facts({ entry }: { entry: Entry }) {
 
 /** A row of a panel block; one with a detail opens to it, read when it
  *  opens. */
-function BlockRow({
-  line,
-  entry,
-}: {
-  line: PanelRow;
-  entry: Entry;
-}) {
+function BlockRow({ line, entry }: { line: PanelRow; entry: Entry }) {
   const [open, setOpen] = useState(line.open ?? false);
   const id = useId();
   const pr = entry.pull_request;
@@ -2021,7 +2013,9 @@ function RiskCard({
           {[1, 2, 3, 4, 5].map((n) => (
             <span
               key={n}
-              className={n <= score ? `upnext-risk-on upnext-risk-${Math.min(score, 5)}` : undefined}
+              className={
+                n <= score ? `upnext-risk-on upnext-risk-${Math.min(score, 5)}` : undefined
+              }
             />
           ))}
         </span>
@@ -2085,27 +2079,31 @@ function GroupPanel({
   const landed = group.landed ?? [];
   const total = group.members.length + landed.length;
   const merged = landed.filter((member) => member.state === "merged").length;
-  const rows: { number: number; row?: Row; entry?: Entry; state: { text: string; tone: string } }[] =
-    [
-      ...landed.map((member) => ({
-        number: member.number,
-        entry: read(member.number),
-        state:
-          member.state === "merged"
-            ? { text: "Merged", tone: "merged" }
-            : member.state === "closed"
-              ? { text: "Closed", tone: "waiting" }
-              : { text: "No longer open", tone: "waiting" },
-      })),
-      ...group.members.flatMap((number) => {
-        const row = members.find((member) => member.entry.pull_request.number === number);
-        if (row) return [{ number, row, entry: row.entry, state: memberState(row) }];
-        const entry = read(number);
-        return entry
-          ? [{ number, entry, state: { text: "Nothing to do now", tone: "waiting" } }]
-          : [];
-      }),
-    ];
+  const rows: {
+    number: number;
+    row?: Row;
+    entry?: Entry;
+    state: { text: string; tone: string };
+  }[] = [
+    ...landed.map((member) => ({
+      number: member.number,
+      entry: read(member.number),
+      state:
+        member.state === "merged"
+          ? { text: "Merged", tone: "merged" }
+          : member.state === "closed"
+            ? { text: "Closed", tone: "waiting" }
+            : { text: "No longer open", tone: "waiting" },
+    })),
+    ...group.members.flatMap((number) => {
+      const row = members.find((member) => member.entry.pull_request.number === number);
+      if (row) return [{ number, row, entry: row.entry, state: memberState(row) }];
+      const entry = read(number);
+      return entry
+        ? [{ number, entry, state: { text: "Nothing to do now", tone: "waiting" } }]
+        : [];
+    }),
+  ];
   const unread = total - rows.length;
   const reason = doc?.summary.risk_score?.reasons[0];
   const reasonTitle = reason
@@ -2257,47 +2255,47 @@ function GroupPanel({
         </h3>
         {listOpen ? (
           <ul id={listId} className={cn("upnext-members", group.stack && "upnext-members-stack")}>
-              {rows.map(({ number, row, entry, state }) => {
-                const pr = entry?.pull_request;
-                const text = (
-                  <span className="upnext-block-text">
-                    <span className="upnext-member-title" title={pr?.title}>
-                      {pr ? pr.title || "Untitled pull request" : `Pull request #${number}`}
-                    </span>
-                    <span className="upnext-block-sub">
-                      #{number}
-                      {state.text ? ` · ${state.text}` : ""}
-                    </span>
+            {rows.map(({ number, row, entry, state }) => {
+              const pr = entry?.pull_request;
+              const text = (
+                <span className="upnext-block-text">
+                  <span className="upnext-member-title" title={pr?.title}>
+                    {pr ? pr.title || "Untitled pull request" : `Pull request #${number}`}
                   </span>
-                );
-                return (
-                  <li key={number} className={row ? undefined : "upnext-member-other"}>
-                    <span
-                      className={`upnext-member-dot upnext-member-${state.tone}`}
-                      aria-hidden="true"
+                  <span className="upnext-block-sub">
+                    #{number}
+                    {state.text ? ` · ${state.text}` : ""}
+                  </span>
+                </span>
+              );
+              return (
+                <li key={number} className={row ? undefined : "upnext-member-other"}>
+                  <span
+                    className={`upnext-member-dot upnext-member-${state.tone}`}
+                    aria-hidden="true"
+                  />
+                  {row ? (
+                    <button
+                      type="button"
+                      className="upnext-member-pick"
+                      onClick={() => pick(row.key)}
+                    >
+                      {text}
+                    </button>
+                  ) : (
+                    text
+                  )}
+                  {pr && (pr.additions || pr.deletions) ? (
+                    <Lines
+                      additions={pr.additions ?? 0}
+                      deletions={pr.deletions ?? 0}
+                      format={formatCount}
+                      className="upnext-block-right"
                     />
-                    {row ? (
-                      <button
-                        type="button"
-                        className="upnext-member-pick"
-                        onClick={() => pick(row.key)}
-                      >
-                        {text}
-                      </button>
-                    ) : (
-                      text
-                    )}
-                    {pr && (pr.additions || pr.deletions) ? (
-                      <Lines
-                        additions={pr.additions ?? 0}
-                        deletions={pr.deletions ?? 0}
-                        format={formatCount}
-                        className="upnext-block-right"
-                      />
-                    ) : null}
-                  </li>
-                );
-              })}
+                  ) : null}
+                </li>
+              );
+            })}
           </ul>
         ) : null}
         {listOpen && unread > 0 ? (

@@ -4576,8 +4576,7 @@ a.upnext-done-text:hover {
 }
 /* A thread that opens to its conversation lines its details up under the
    headline, past the chevron. */
-.upnext-thread:has(> .upnext-block-text > .upnext-thread-toggle)
-  > .upnext-block-text
+.upnext-thread:has(> .upnext-block-text > .upnext-thread-toggle) > .upnext-block-text
   > :not(.upnext-thread-toggle) {
   margin-left: 20px;
 }
