@@ -981,10 +981,11 @@ The Analytics page (`?page=analytics&days=7|30|90&repo=&agent=`, `src/analytics.
 reads `GET api/analytics` (see the daemon's [analytics README](../internal/analytics/README.md)).
 Its bar holds the window (7, 30 or 90 days, as a segmented control) and the
 repository and agent selects, bordered like the Timeline's filters; all three
-live in the address. The page uses the shared palette as the Inbox does, and its
-charts the hosted dashboard's warm series (forest, then `--data-caramel`,
-`--data-sage` and `--data-espresso` from `../viewer/src/palette.css`). A new choice shows at once and the last report stays, faded,
-until the new one answers. Cards: summary tiles (sessions, active agent time, human prompts,
+live in the address. The page uses the shared palette as the Inbox does, and
+its charts the hosted dashboard's warm series (forest, then `--data-caramel`,
+`--data-sage` and `--data-espresso` from `../viewer/src/palette.css`). A new
+choice shows at once and the last report stays, faded, until the new one
+answers. Cards: summary tiles (sessions, active agent time, human prompts,
 the cost at API prices, marked "Incomplete" when part is unpriced, and the
 agent-written share of commits); agent activity per day, sessions or active time
 stacked by harness or by model (each session under its main model; the top

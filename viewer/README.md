@@ -41,8 +41,8 @@ add its sources so the utilities its components use are generated:
 `viewer.css` defines the type scale and animations. It imports
 `src/theme.css`, which loads the default palette from `src/palette.css` and
 custom theme overrides. Dark variants apply under `:root[data-theme="dark"]`.
-Sixteen explicit base colors are shared by the two default modes:
-eight core UI colors and eight chart hues. Neutral ramps,
+Nineteen explicit base colors are shared by the two default modes:
+eight core UI colors, eight chart hues and three warm dashboard hues. Neutral ramps,
 status tints, interaction states, syntax colors and dark variants derive from
 those bases with `color-mix()`. Semantic token names describe their role;
 they are not additional independently chosen colors.
@@ -119,6 +119,7 @@ The full default file is the reference for derived roles and base dependencies.
 | `--brand-forest`, `--brand-sand-100` | Canvas, navigation, links and selection tints |
 | `--brand-green-600`, `--color-critical` | Action green and status hues |
 | `--color-blue`, `--series-1` … `--series-8` | Syntax, chart and categorical hues |
+| `--series-caramel`, `--series-sage`, `--series-espresso` | The local Analytics charts' warm series |
 
 Dark mode uses different mixing recipes, so a seed can affect the two modes
 differently. Use mode-specific role overrides when the default recipe is not
