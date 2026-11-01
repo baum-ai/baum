@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -383,8 +384,17 @@ func TestFingerprintFollowsStoreCommitsAndClones(t *testing.T) {
 	}
 	// An in-place commit is seen by its modification time, which moves in
 	// coarse steps: commits within one step of the last check look alike
-	// until MaxAge.
-	time.Sleep(20 * time.Millisecond)
+	// until MaxAge. Backdating the file first keeps the test independent of
+	// the file system's timestamp granularity.
+	backdate := func() {
+		t.Helper()
+		past := time.Now().Add(-time.Hour)
+		if err := os.Chtimes(filepath.Join(common, "baum", "reviews", "versions.sqlite"), past, past); err != nil {
+			t.Fatal(err)
+		}
+		check.rebase()
+	}
+	backdate()
 	if err := s.HeartbeatRun(ctx, id, time.Now().Add(2*time.Hour)); err != nil {
 		t.Fatal(err)
 	}
@@ -392,7 +402,7 @@ func TestFingerprintFollowsStoreCommitsAndClones(t *testing.T) {
 		t.Fatal("the lease renewal was expected to keep the store's size", err)
 	}
 	check.moved("same-size lease renewal")
-	time.Sleep(20 * time.Millisecond)
+	backdate()
 	if err := s.FinishRun(ctx, id, ""); err != nil {
 		t.Fatal(err)
 	}
@@ -444,6 +454,9 @@ func (c *fingerprintCheck) moved(what string) {
 	c.last = got
 }
 
+// rebase takes the current fingerprint as the baseline without asserting.
+func (c *fingerprintCheck) rebase() { c.last = c.fingerprint(context.Background()) }
+
 func (c *fingerprintCheck) still(what string) {
 	c.t.Helper()
 	if got := c.fingerprint(context.Background()); got != c.last {
@@ -488,16 +501,23 @@ func TestFingerprintFollowsRegistryRowsOnly(t *testing.T) {
 }
 
 func TestCacheRecoversBuildPanic(t *testing.T) {
-	calls := 0
+	var calls atomic.Int32
+	release := make(chan struct{})
 	c := testCache(func(context.Context, time.Time) (Snapshot, time.Time, error) {
-		calls++
-		if calls == 1 {
+		if calls.Add(1) == 1 {
+			<-release
 			panic("boom")
 		}
 		return snap(1), time.Time{}, nil
 	}, (&clock{now: time.Unix(1000, 0)}).Now)
-	if _, err := c.Snapshot(context.Background()); err == nil || !strings.Contains(err.Error(), "boom") {
-		t.Fatal(err)
+	// Every reader waiting on the panicking build gets the error.
+	first, second := readAsync(context.Background(), c), readAsync(context.Background(), c)
+	c.joined(t, 2)
+	close(release)
+	for _, r := range []<-chan read{first, second} {
+		if got := <-r; got.err == nil || !strings.Contains(got.err.Error(), "boom") {
+			t.Fatal(got.err)
+		}
 	}
 	if got, err := c.Snapshot(context.Background()); err != nil || got.Waiting != 1 {
 		t.Fatal(got, err)
