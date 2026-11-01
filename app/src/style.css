@@ -4262,6 +4262,11 @@ kbd.key-hint {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  color: inherit;
+}
+a.upnext-done-text:hover {
+  color: var(--text-secondary);
+  text-decoration: underline;
 }
 /* The Inbox draws its key bar at the foot of its list, under the queue it
    moves through, so the page's own bar steps aside. */

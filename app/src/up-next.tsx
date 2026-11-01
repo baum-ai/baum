@@ -285,6 +285,8 @@ type Seen = {
   title: string;
   repository: string;
   number: number;
+  /** Its GitHub page; absent in records kept before it was. */
+  url?: string;
   /** Its reading estimate, summed into the work done once it is cleared. */
   minutes?: number | null;
   /** When it left the queue; absent while it is in it. */
@@ -450,6 +452,7 @@ export function useUpNext(entries: Entry[], live: LiveSession[], jobs: Job[], re
           title: pr.title,
           repository: pr.repository,
           number: pr.number,
+          url: pr.url,
           minutes: item.minutes,
         };
       }
@@ -463,7 +466,13 @@ export function useUpNext(entries: Entry[], live: LiveSession[], jobs: Job[], re
   const cleared = Object.entries(state.seen)
     .filter(([, seen]) => seen.cleared != null)
     .sort(([, a], [, b]) => (b.cleared ?? 0) - (a.cleared ?? 0))
-    .map(([key, seen]) => ({ key, ...seen }));
+    // Its row in the latest read, which a merged pull request keeps while a
+    // saved review holds it, so its page can open.
+    .map(([key, seen]) => ({
+      key,
+      ...seen,
+      entry: entries.find((entry) => upNextKey(entry.pull_request) === key),
+    }));
   return {
     persistence,
     now,
@@ -1067,9 +1076,25 @@ export function UpNextPage({
                     <span aria-hidden="true" className="upnext-done-check">
                       ✓
                     </span>
-                    <span className="upnext-done-text">
-                      {KINDS[item.kind].done} #{item.number} {item.title}
-                    </span>
+                    {/* Its page while the app still lists it, otherwise GitHub. */}
+                    {item.entry ? (
+                      <Link href={prHref(item.entry, cloneFor)} className="upnext-done-text">
+                        {KINDS[item.kind].done} #{item.number} {item.title}
+                      </Link>
+                    ) : item.url ? (
+                      <a
+                        href={item.url}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="upnext-done-text"
+                      >
+                        {KINDS[item.kind].done} #{item.number} {item.title}
+                      </a>
+                    ) : (
+                      <span className="upnext-done-text">
+                        {KINDS[item.kind].done} #{item.number} {item.title}
+                      </span>
+                    )}
                   </li>
                 ))}
               </ListSection>
