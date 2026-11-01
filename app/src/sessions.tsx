@@ -1078,7 +1078,7 @@ function WaitingCard({
           </p>
         ) : (
           <blockquote className="local-feed-quote">
-            “<InlineMarkdown>{opening(message)}</InlineMarkdown>”
+            <InlineMarkdown>{`“${opening(message)}”`}</InlineMarkdown>
           </blockquote>
         )
       ) : null}
