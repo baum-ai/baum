@@ -267,6 +267,9 @@
   color: var(--text-primary);
   font-weight: 500;
 }
+.harness-grid.with-inherit {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
 .review-card .review-note {
   margin: 8px 0 0;
   font-size: var(--text-xs);

@@ -68,7 +68,7 @@ func (l *Local) prepareFix(ctx context.Context, item Item) (Prepared, string, er
 	if backends.Claude == nil {
 		backends = generate.DefaultBackendsFor(cfg)
 	}
-	selected, e := generate.Select(ctx, cfg.Backend, cfg.Model, backends, io.Discard)
+	selected, e := generate.SelectDesktop(ctx, cfg.Backend, cfg.Model, backends, io.Discard)
 	if e != nil {
 		return Prepared{}, "", e
 	}
@@ -157,6 +157,7 @@ func (l *Local) prepareFix(ctx context.Context, item Item) (Prepared, string, er
 	}{KindFix, cfg.Budgets, selected.Version, reader.CacheIdentity()})
 	digest := sha256.Sum256(fingerprint)
 	p.ConfigDigest = hex.EncodeToString(digest[:])
+	p.account = accountOf(reader)
 	return p, list.Version(), nil
 }
 
@@ -206,7 +207,7 @@ func (l *Local) executeFix(ctx context.Context, p Prepared, progress func(Progre
 	if backends.Claude == nil {
 		backends = generate.DefaultBackendsFor(cfg)
 	}
-	selected, e := generate.Select(ctx, config.Backend(p.Backend), p.Model, backends, io.Discard)
+	selected, e := generate.SelectDesktop(ctx, cfg.Backend, cfg.Model, backends, io.Discard)
 	if e != nil {
 		return nil, e
 	}
@@ -214,6 +215,7 @@ func (l *Local) executeFix(ctx context.Context, p Prepared, progress func(Progre
 	if !ok || !fix.Supported(selected.Backend.Name()) {
 		return nil, &fix.Error{Reason: fix.ReasonUnsupportedBackend, Err: errors.New(selected.Backend.Name() + " cannot fix pull requests; choose Claude Code or Codex as the agent for fixes in Settings")}
 	}
+	progress(Progress{Phase: "preparing", Backend: selected.Backend.Name(), Model: selected.Model})
 	reader, e := l.Client.REST(ctx, repository)
 	if e != nil {
 		return nil, e
@@ -278,7 +280,7 @@ func (l *Local) executeFix(ctx context.Context, p Prepared, progress func(Progre
 	list := pricing.Active()
 	out, err := fix.Run(ctx, fix.Options{ID: id(), Clone: c.Path, Repository: repository, Number: p.PR, Title: pr.Title,
 		HeadRef: p.Fix.HeadRef, HeadSHA: p.HeadSHA, BaseRef: p.Fix.BaseRef, Conflicts: p.Fix.Conflicts, Checks: p.Fix.Checks, Evidence: evidence,
-		Threads: threads, Chat: conversation, Replies: l.Client, Agent: fixer, Backend: p.Backend, Model: p.Model, MaxCalls: cfg.Budgets.MaxCalls, MaxTokens: cfg.Budgets.MaxTokens,
+		Threads: threads, Chat: conversation, Replies: l.Client, Agent: fixer, Backend: selected.Backend.Name(), Model: selected.Model, MaxCalls: cfg.Budgets.MaxCalls, MaxTokens: cfg.Budgets.MaxTokens,
 		WallClock: time.Duration(cfg.Budgets.RunTimeout), Directory: l.FixDirectory, Env: cfg.AgentEnviron(), Transcript: transcript, Logger: jobLogger(ctx, l.Log, p),
 		Progress: func(phase string) { progress(Progress{Phase: phase, HasTranscript: hasTranscript}) }})
 	report := Progress{Phase: "finishing", HasTranscript: hasTranscript}
@@ -287,7 +289,7 @@ func (l *Local) executeFix(ctx context.Context, p Prepared, progress func(Progre
 		accounting := &agent.Accounting{}
 		accounting.Add(*out.Agent, err != nil)
 		report.Calls, report.Tokens = out.Agent.Calls, out.Agent.Tokens
-		cost, report.CostReason = list.BackendAccountingCost(p.Backend, accounting)
+		cost, report.CostReason = list.BackendAccountingCost(selected.Backend.Name(), accounting)
 		report.Accounting = accounting
 	}
 	// The summary and the provider's model names are the model's words:

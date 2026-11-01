@@ -5,10 +5,14 @@ import {
   displayPath,
   repositoryPath,
   shownHarness,
+  setupSave,
+  shownFix,
   storedReviews,
   withModel,
   withEfforts,
 } from "./setup-model";
+
+const followsReviews = { fix_backend: "", fix_model: "", fix_effort: "" };
 
 it("abbreviates only the current home and expands repository input for native actions", () => {
   expect(displayPath("Install /home/user/.local/bin/baum", "/home/user")).toBe(
@@ -44,7 +48,10 @@ it("keeps a chosen decision model out of onboarding saves", () => {
   expect(withModel({ ...base, decisions_model: "claude-haiku-5-5" }).decisions_model).toBe(
     "claude-haiku-5-5",
   );
-  expect(storedReviews({ ...base, decisions_model: "gpt-6-luna" })).toEqual(base);
+  expect(storedReviews({ ...base, decisions_model: "gpt-6-luna" })).toEqual({
+    ...base,
+    ...followsReviews,
+  });
   expect(
     storedReviews({
       ...base,
@@ -52,7 +59,49 @@ it("keeps a chosen decision model out of onboarding saves", () => {
       decisions_effective_model: "gpt-6-sol",
       decisions_model_ignored: false,
     }),
-  ).toEqual(base);
+  ).toEqual({ ...base, ...followsReviews });
+});
+
+it("saves fixes and gives extraction the review choice only when setup changes it", () => {
+  const saved = {
+    backend: "auto",
+    model: "",
+    effort: "",
+    automatic: true,
+    pull_requests: "both" as const,
+    ...followsReviews,
+    decisions_chosen_backend: "anthropic",
+    decisions_model: "claude-sonnet-5-5",
+    decisions_effort: "low",
+  };
+  const shown = withModel({ ...saved, backend: "codex" });
+  // Luna is the harness's default decision model, so extraction follows it.
+  expect(setupSave(shown, saved)).toMatchObject({
+    backend: "codex",
+    model: "gpt-6-luna",
+    decisions_model: "",
+    decisions_effort: "",
+  });
+  const chosen = { ...shown, model: "gpt-6.1-sol", effort: "high" };
+  expect(setupSave(chosen, saved)).toMatchObject({
+    decisions_model: "gpt-6.1-sol",
+    decisions_effort: "high",
+  });
+  // Unchanged settings save nothing; a fix change alone leaves extraction be.
+  expect(setupSave(chosen, chosen)).toBeNull();
+  const fixes = withModel({ ...chosen, fix_backend: "claude", fix_model: "", fix_effort: "max" });
+  expect(fixes).toMatchObject({ fix_model: "claude-haiku-5-5", fix_effort: "max" });
+  const fixOnly = setupSave(fixes, chosen);
+  expect(fixOnly).toMatchObject({
+    fix_backend: "claude",
+    fix_model: "claude-haiku-5-5",
+    fix_effort: "max",
+  });
+  expect(fixOnly).not.toHaveProperty("decisions_model");
+  // Following the reviews again clears the fixes' own model and effort.
+  expect(storedReviews({ ...fixes, fix_backend: "" })).toMatchObject(followsReviews);
+  expect(shownFix(fixes, ["codex"])).toMatchObject(followsReviews);
+  expect(shownFix(fixes, ["claude"])).toBe(fixes);
 });
 
 it("shows the resolved harness only when installed and limits setup to Claude Code and Codex", () => {
@@ -115,6 +164,7 @@ it("keeps the decision model of an extraction harness Settings chose", () => {
     model: "claude-opus-5-5",
     automatic: true,
     pull_requests: "both",
+    ...followsReviews,
   });
   expect(storedReviews({ ...own, decisions_model: "gpt-6.1-sol" })).not.toHaveProperty(
     "decisions_model",
@@ -140,6 +190,7 @@ it("resets an effort unsupported by a new model without filling an empty custom 
     effort: "ultra",
     automatic: true,
     pull_requests: "both",
+    ...followsReviews,
   });
 });
 
@@ -156,4 +207,24 @@ it("uses the effective decision model's effort options when the saved model is i
   };
   expect(withModel(base).decisions_effort).toBe("max");
   expect(withEfforts(base, "claude-haiku-5-5").decisions_effort).toBe("max");
+});
+
+it("only calls Codex connected when its hooks are enabled and trusted", async () => {
+  const { agentConnected, describeAgent } = await import("./setup-model");
+  const codex = {
+    agent: "codex",
+    name: "Codex",
+    detected: true,
+    installed: true,
+    enabled: true,
+    plugin: "baum@baum",
+  };
+  expect(agentConnected(codex)).toBe(false);
+  expect(describeAgent(codex)).toBe("Hook approval could not be verified");
+  expect(describeAgent({ ...codex, trust: { state: "untrusted" } })).toBe(
+    "Needs approval in Codex",
+  );
+  expect(agentConnected({ ...codex, trust: { state: "trusted" } })).toBe(true);
+  expect(agentConnected({ ...codex, enabled: false, trust: { state: "trusted" } })).toBe(false);
+  expect(agentConnected({ ...codex, agent: "claude-code" })).toBe(true);
 });

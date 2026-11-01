@@ -145,16 +145,19 @@ happen only when the user selects an install or add action. Displayed paths abbr
    guides and Check again replace the model controls. Continue and the final
    step in the rail wait for an installed agent; rechecking selects one as
    soon as it is detected. Detection errors show retry guidance.
-   A compact row pairs the review model
-   with its reasoning effort. The review
-   effort also applies to fixes that follow reviews. A model can be a preset or
-   a custom name. Choose whether reviews run automatically and, if so, for which
-   pull requests (authored, requested, both, or all open pull requests). The
-   screen reads them with `baum internal reviews show` and saves changes with
-   `baum internal reviews set` when the user opens baum at the end of setup.
-   They are stored as app preferences in the repository registry, which the
-   daemon rereads for every job. The native bridge forwards the review `effort`
-   CLI flag. Extraction preferences remain in Settings; setup leaves them intact.
+   A compact row pairs the model for reviews and data extraction with its
+   reasoning effort. Fixes start as Same as reviews; choosing Claude Code or
+   Codex for them adds their own model and effort row. A model can be a preset
+   or a custom name. Choose whether reviews run automatically and, if so, for
+   which pull requests (authored, requested, both, or all open pull requests).
+   The screen reads them with `baum internal reviews show` and saves changes
+   with `baum internal reviews set` when the user opens baum at the end of
+   setup. They are stored as app preferences in the repository registry, which
+   the daemon rereads for every job. The native bridge forwards the review,
+   fix and extraction flags. Extraction is saved only when setup changes the
+   review agent, model or effort: it then follows the review agent, with the
+   review model (none when it is the agent's default decision model) and
+   effort. An untouched setup leaves the extraction choice from Settings intact.
 3. Install the CLI and connect agents.
    - Install the bundled `baum` command onto the login shell's `PATH` (below).
      The step states in one line where baum will be installed, or which other
@@ -164,7 +167,24 @@ happen only when the user selects an install or add action. Displayed paths abbr
      --agent codex`. The screen explains reviewing trust with `/hooks`. The
      Claude Code plugin is installed separately with `--agent claude-code`.
      Both use the native agent CLI to fetch the public marketplace.
-     Installation and enablement do not mean the user has trusted the hooks.
+     Codex status additionally checks its effective hook inventory. Connected
+     requires every baum hook to be present, enabled and trusted; untrusted or
+     modified definitions show Needs approval in Codex. Missing, disabled and
+     unavailable checks are distinct. Returning from Codex or Check again
+     refreshes approval, without granting it. The person can finish setup with
+     an unfinished connection; the app keeps a warning beside Settings.
+
+### Backends
+
+The app and its daemon run reviews, fixes, chats and decision extraction with
+Claude Code and Codex only. Setup and Settings list those two; `auto` tries
+Claude Code, then Codex, and never falls back to the Anthropic API. When
+neither is installed, setup replaces the model controls with installation
+guides, Settings' Reviews section says so and Diagnostics reports the `auto`
+check as a problem. The daemon refuses a job whose backend is `cursor-agent` or
+`anthropic`, for example one set in `config.toml`, failing it with a message
+that names the allowed choices; it does not switch backends, and pre-release
+configurations are not migrated. `baum internal generate` keeps every backend.
 
 ### Model effort choices
 
@@ -206,8 +226,9 @@ first `baum` on it (the one hooks run) with its version. On Unix, the login
 shell’s PATH comes first and inherited PATH directories are appended without
 duplicates, preserving tools available to the process that launched the app.
 `baum hooks status --user --json` reads each agent's native plugin registry, reporting
-plugin ID, installation and enablement separately. Disabled plugins offer an
-Enable action; trust must be reviewed in the agent. Each native action has a
+plugin ID, installation and enablement separately, plus Codex's hook trust
+state. The native bridge preserves this state for onboarding and Settings.
+Disabled plugins offer an Enable action; approval still belongs to Codex. Each native action has a
 90-second bound and status queries have 10 seconds. The desktop gives both
 agents, login PATH resolution and process overhead a 240-second total budget.
 Status, install and removal run with the resolved login shell PATH so agents
@@ -352,8 +373,9 @@ The daemon outlives the app, so the app's presence is a tray icon.
   3 h"); Open baum; Pause or Resume automatic reviews; Start at login;
   a Notifications submenu (see
   "Notifications"); Quit; Quit and stop background reviews. Plan usage shows
-  only the plans the daemon could read, and nothing when it can read neither
-  Claude Code nor Codex. The menu is rebuilt whenever a "resets in" text would
+  only the plans the daemon could read and the person has not hidden in
+  Settings (by default those of the backends baum uses), and nothing when
+  none remain. The menu is rebuilt whenever a "resets in" text would
   read differently, which the 3–10 s polls check.
 - **Tray panel (macOS and Windows):** a left click on the icon opens a small
   borderless window under the icon (above it, on a bottom taskbar), drawn
@@ -499,6 +521,11 @@ with the line the agent showed (masked by the daemon; Codex sends none, so
 daemon publishes one when a session begins waiting for a permission or an
 answer, once per wait, never for a turn that just finished (see "Live
 sessions" in ARCHITECTURE.md).
+
+Codex requests delegated to its automatic reviewer do not raise a permission
+notification or mark the session as waiting. Its hook runs before review,
+so baum checks the active turn's reviewer in the rollout, including session
+overrides, before treating it as a request for the person.
 
 The pull request notifications read like "Checks failing · acme/demo #12",
 with the pull request's title as the text. They are about the user's own pull

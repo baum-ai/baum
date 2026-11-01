@@ -14,12 +14,14 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/spf13/cobra"
 
+	"github.com/baum-ai/baum/hosted/agentplugins"
 	"github.com/baum-ai/baum/internal/agentrequests"
 	"github.com/baum-ai/baum/internal/analytics"
 	"github.com/baum-ai/baum/internal/appdb"
@@ -376,9 +378,12 @@ func localApplication(paths daemon.Paths, log *slog.Logger) func(context.Context
 			events.Close()
 			return daemon.App{}, err
 		}
-		changed := func() { _ = server.Publish("index", struct{}{}) }
 		discover := discovery.New(github.NewFromConfig(cfg, github.Options{}), "")
-		index := &reviewindex.Service{Registry: registry, Discovery: discover}
+		// Every reader shares one cached index. Discovery's writes only
+		// invalidate it: the index watcher publishes if the index moved.
+		index := reviewindex.NewCache(ctx, &reviewindex.Service{Registry: registry, Discovery: discover})
+		discover.Updated = index.Invalidate
+		changed := indexChanged(index, server.Publish)
 		worker := &background.Service{Registry: registry, Discovery: discover, Saved: background.Saved, Refresh: background.Local{Client: github.NewFromConfig(cfg, github.Options{}), Config: cfg}.Refresh, Changed: changed}
 		database, err := appdb.Path()
 		if err != nil {
@@ -411,7 +416,7 @@ func localApplication(paths daemon.Paths, log *slog.Logger) func(context.Context
 		}
 		// Notices are what the desktop app turns into notifications; they
 		// carry the pull request's title and risk score, read when they happen.
-		notify := &notices.Service{Registry: registry, Index: index.Build, Publish: func(n notices.Notice) { _ = server.Publish("notice", n) }}
+		notify := &notices.Service{Registry: registry, Index: index.Snapshot, Publish: func(n notices.Notice) { _ = server.Publish("notice", n) }}
 		var identityMu sync.RWMutex
 		worker.Discovered = func(ctx context.Context, snapshot discovery.Snapshot) {
 			identityMu.RLock()
@@ -421,7 +426,7 @@ func localApplication(paths daemon.Paths, log *slog.Logger) func(context.Context
 			}
 			// Stacked pull requests are grouped for review by default.
 			if !snapshot.Stale && snapshot.Error == "" {
-				if synced, err := groups.SyncStacks(ctx, snapshot.Repository, snapshot.PullRequests); err != nil {
+				if synced, err := groups.SyncStacks(ctx, snapshot.Repository, snapshot.PullRequests, snapshot.Observations); err != nil {
 					log.Warn("stack groups not updated", "repository", snapshot.Repository, "error", err)
 				} else if synced {
 					changed()
@@ -647,13 +652,30 @@ func localApplication(paths daemon.Paths, log *slog.Logger) func(context.Context
 		api := uiserver.LocalAPI{GitHubAuth: githubConnection.Handler(), Registry: registry, Config: cfg, PRs: uiserver.DiscoveryHandler(registry, discover, changed), Index: index.Handler(), Jobs: queue.Handler(), Chat: uiserver.ChatHandler(registry, queue), Background: worker.Handler(), Automatic: scheduler.Handler(), Live: liveAPI, AgentRequests: requestsAPI, Clones: clones.Handler(), GitHubRepositories: pickList.Handler(), CurrentName: currentName(githubClient), PlanUsage: plans.Handler(), Analytics: insights.Handler(), Timeline: timeline, Merge: uiserver.MergeHandler(registry, actions.RecordMerges(githubClient), mergedPullRequest, changed), Review: uiserver.ReviewHandler(registry, githubClient, changed), Update: uiserver.UpdateHandler(registry, actions.RecordUpdates(prupdate.Service{Client: githubClient, Cache: panelCache, Counted: countedThreads, Clone: availableClone}), refreshRepository, changed), Changed: settingsChanged,
 			UIState:   (&uistate.Store{Path: database}).Handler(),
 			Inboxes:   (&inboxes.API{Store: inboxes.Open(database), Changed: changed}).Handler(),
-			Groups:    (&reviewgroups.API{Store: groups, Registry: registry, Index: index.Build, Changed: changed}).Handler(),
+			Groups:    (&reviewgroups.API{Store: groups, Registry: registry, Index: index.Snapshot, Changed: changed}).Handler(),
 			Decisions: decisionsAPI, Facts: pageFacts, Log: log,
 			DecisionsChanged:   func() { _ = server.Publish("decisions", struct{}{}) },
 			ConcurrencyChanged: func(n int) { _ = queue.SetConcurrency(n) },
 			DecisionModel: func(ctx context.Context, prefs repos.Preferences) uiserver.DecisionModel {
 				e := decisionlog.EffectiveModel(ctx, cfg, prefs, generate.Backends{}, nil)
 				return uiserver.DecisionModel{Backend: e.Backend, Undetermined: e.Undetermined, Model: e.Model, Ignored: e.Ignored}
+			},
+			HookTrust: func(ctx context.Context) agentplugins.HookTrust {
+				home, err := os.UserHomeDir()
+				if err != nil {
+					return agentplugins.HookTrust{State: "unknown"}
+				}
+				dirs := []string{home}
+				clones, err := registry.List(ctx)
+				if err != nil {
+					return agentplugins.HookTrust{State: "unknown"}
+				}
+				for _, clone := range clones {
+					if clone.Available {
+						dirs = append(dirs, clone.Path)
+					}
+				}
+				return agentplugins.New().CodexTrust(ctx, dirs)
 			},
 			Diagnostics: uiDiagnostics}.Handler()
 		return daemon.App{
@@ -703,13 +725,22 @@ func localApplication(paths daemon.Paths, log *slog.Logger) func(context.Context
 								if !ok {
 									return
 								}
+								api.InvalidateSessions()
 								sessionIndex.Trigger()
 							}
 						}
 					})
 				}
 				wg.Go(func() {
-					server.WatchIndex(ctx, 0, func(ctx context.Context) (any, error) { return index.Build(ctx) })
+					server.WatchIndex(ctx, 0, uiserver.IndexWatch{
+						Fingerprint: reviewindex.Fingerprint(registry.RepositoryRows, func() string { return strconv.FormatUint(config.GitHubAuth.Revision(), 10) }),
+						Invalidate:  index.Invalidate,
+						Fresh:       index.Fresh,
+						Snapshot: func(ctx context.Context) (any, uint64, error) {
+							snapshot, version, err := index.Current(ctx)
+							return snapshot, version, err
+						},
+					})
 				})
 				wg.Wait()
 			},
@@ -855,6 +886,15 @@ func maintainReviewRuns(ctx context.Context, log *slog.Logger) {
 	reviewruns.Maintain(ctx, root, 24*time.Hour, func(err error) { log.Warn("expiring kept review runs", "error", err) })
 }
 
+// indexChanged announces a change to the review index. It invalidates the
+// cache before the event, so a client reading again after it sees the change.
+func indexChanged(index *reviewindex.Cache, publish func(string, any) error) func() {
+	return func() {
+		index.Invalidate()
+		_ = publish("index", struct{}{})
+	}
+}
+
 // newCloneFinder builds the service that finds local clones of picked
 // repositories from the folders agents worked in and the usual code folders.
 func newCloneFinder(registry *repos.Registry, events hookEvents, changed func(), log *slog.Logger) *clonefind.Service {
@@ -877,9 +917,12 @@ func (h hookEvents) Close() {
 }
 
 // uiDiagnostics is the report the daemon serves. It never fetches the price
-// list: the page shows what the startup refresh produced.
+// list: the page shows what the startup refresh produced. It reports for the
+// desktop app, which runs jobs with Claude Code and Codex only.
 func uiDiagnostics(ctx context.Context) doctor.Report {
-	return doctor.Run(ctx, doctorOptions(false))
+	options := doctorOptions(false)
+	options.Desktop = true
+	return doctor.Run(ctx, options)
 }
 
 // daemonReport describes the daemon for "baum internal doctor" without starting it.

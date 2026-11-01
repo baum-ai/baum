@@ -292,3 +292,42 @@ func TestSessionsRouteIsBehindTheHostCheckAndHeaders(t *testing.T) {
 		}
 	}
 }
+
+func TestInvalidationRefreshesSuccessfulAndEmptyAnswers(t *testing.T) {
+	for _, empty := range []bool{false, true} {
+		l := &linker{reply: func(int) (locallink.Result, error) { return locallink.Result{Available: true}, nil }}
+		if !empty {
+			l.reply = nil
+		}
+		s, base := start(t, Options{Document: []byte(reviewDocument(headA, "one")), Sessions: l.fn})
+		fetchSessions(t, base)
+		s.InvalidateSessions()
+		fetchSessions(t, base)
+		if l.calls.Load() != 2 {
+			t.Fatalf("calls = %d, want a new read after invalidation", l.calls.Load())
+		}
+	}
+}
+
+func TestInvalidationDuringComputationDoesNotServeOldEvidence(t *testing.T) {
+	entered, release := make(chan struct{}), make(chan struct{})
+	l := &linker{reply: func(n int) (locallink.Result, error) {
+		if n == 1 {
+			close(entered)
+			<-release
+		}
+		return locallink.Result{Available: true, Sessions: []locallink.Session{{ID: fmt.Sprint(n)}}}, nil
+	}}
+	s, _ := start(t, Options{Document: []byte(reviewDocument(headA, "one")), Sessions: l.fn})
+	done := make(chan locallink.Result, 1)
+	go func() { result, _ := s.LinkedSessions(context.Background()); done <- result }()
+	<-entered
+	for range 10 {
+		s.InvalidateSessions()
+	}
+	close(release)
+	result := <-done
+	if l.calls.Load() != 2 || result.Sessions[0].ID != "2" {
+		t.Fatalf("calls=%d, result=%+v", l.calls.Load(), result)
+	}
+}

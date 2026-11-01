@@ -33,12 +33,13 @@ export function Connecting() {
   return (
     <main>
       {connection.phase === "failed" ? (
-        <section id="failed">
+        <section id="failed" role="alert">
           <h1>baum is not running</h1>
           <p id="message">{connection.message}</p>
           <button
             id="reconnect"
             type="button"
+            autoFocus
             onClick={() => {
               setConnection({ phase: "connecting" });
               invoke("reconnect").catch((error) =>

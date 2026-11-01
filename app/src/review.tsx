@@ -45,7 +45,8 @@ import {
 } from "./api";
 import { FixNotice, FixRuns, type FixState, type FixChat } from "./fix";
 import { CloneActions } from "./repositories";
-import { Notice, RefreshButton } from "./shell";
+import { useModal } from "./modal";
+import { Notice, RefreshButton, type RefreshRun, usePageRefreshAction } from "./shell";
 import { LiveSessions } from "./sessions";
 import { PullRequestDecisionsList } from "./decisions";
 import { LoadingStatus } from "./nine-dots";
@@ -153,7 +154,7 @@ export function LocalReview({
   detailsJob?: Job;
   changed: () => Promise<void>;
   /** Reads the pull request from GitHub again, from the head's refresh. */
-  refresh?: () => Promise<void>;
+  refresh?: (run: RefreshRun) => Promise<unknown>;
   /** Agent sessions in progress; those of this pull request are listed. */
   live?: LiveSession[];
   /** The review groups this pull request belongs to. */
@@ -171,6 +172,9 @@ export function LocalReview({
   const pr = entry.pull_request;
   const url = useUrlState();
   const back = backTo(url.search);
+  // The refresh key works on every state of the page, also where the button
+  // is not drawn, as while the review loads or has nothing to walk through.
+  usePageRefreshAction(refresh);
   // One of the head's actions, on the walkthrough and on the full review alike.
   const refreshButton = refresh ? (
     <RefreshButton refresh={refresh} label="Refresh from GitHub" />
@@ -380,10 +384,7 @@ export function LocalReview({
   const [retryError, setRetryError] = useState("");
   const [confirmingIsolation, setConfirmingIsolation] = useState(false);
   const [retryStarting, setRetryStarting] = useState(false);
-  const isolationDialog = useRef<HTMLDialogElement>(null);
-  useEffect(() => {
-    if (confirmingIsolation) isolationDialog.current?.showModal();
-  }, [confirmingIsolation]);
+  const isolationDialog = useModal(confirmingIsolation);
   const [watchedDetails, setWatchedDetails] = useState("");
   useEffect(() => {
     if (detailsJob && isActiveJob(detailsJob)) setWatchedDetails(detailsJob.id);
@@ -500,21 +501,62 @@ export function LocalReview({
   useEffect(() => {
     if (sessionsVersion == null) return;
     const abort = new AbortController();
-    request<unknown>(`api/sessions?${query}`, undefined, "GET", abort.signal)
-      .then((body) => {
+    let pending = false;
+    const refresh = async () => {
+      if (pending || abort.signal.aborted) return;
+      pending = true;
+      try {
+        const body = await request<unknown>(
+          `api/sessions?${query}`,
+          undefined,
+          "GET",
+          abort.signal,
+        );
         const answer = parseSessionsAnswer(body);
         if (!abort.signal.aborted)
-          setSessions({
-            query,
-            version: sessionsVersion,
-            load: answer ? { state: "answered", answer } : { state: "request-failed" },
+          setSessions((previous) => {
+            const current =
+              previous?.query === query && previous.version === sessionsVersion
+                ? previous.load
+                : null;
+            // The resolver reports transient errors as HTTP 200. Keep the
+            // last successful linkage until a genuine answer replaces it.
+            if (
+              current &&
+              answer?.available === false &&
+              typeof body === "object" &&
+              body !== null &&
+              "code" in body &&
+              body.code === "error" &&
+              current.state === "answered" &&
+              current.answer.available
+            )
+              return previous;
+            return {
+              query,
+              version: sessionsVersion,
+              load: answer ? { state: "answered", answer } : { state: "request-failed" },
+            };
           });
-      })
-      .catch(() => {
+      } catch {
         if (!abort.signal.aborted)
-          setSessions({ query, version: sessionsVersion, load: { state: "request-failed" } });
-      });
-    return () => abort.abort();
+          setSessions((previous) =>
+            previous?.query === query &&
+            previous.version === sessionsVersion &&
+            previous.load.state === "answered"
+              ? previous
+              : { query, version: sessionsVersion, load: { state: "request-failed" } },
+          );
+      } finally {
+        pending = false;
+      }
+    };
+    void refresh();
+    const timer = window.setInterval(() => void refresh(), 30_000);
+    return () => {
+      window.clearInterval(timer);
+      abort.abort();
+    };
   }, [sessionsVersion, query, revision, retry, ended]);
   // Without a saved version the page shows the pull request's facts: no
   // model's text, only what GitHub, the clone and the sessions on this
@@ -1132,8 +1174,7 @@ function GeneratedBy({
             href={appURL(`?page=jobs#job-${encodeURIComponent(made.id)}`)}
             onClick={(event) => {
               event.preventDefault();
-              window.history.pushState(null, "", event.currentTarget.href);
-              dispatchEvent(new PopStateEvent("popstate"));
+              navigate(event.currentTarget.href);
             }}
           >
             View job

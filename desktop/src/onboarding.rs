@@ -303,6 +303,8 @@ pub struct Hooks {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AgentHooks {
+    #[serde(default)]
+    trust: Option<HookTrust>,
     agent: String,
     name: String,
     #[serde(default)]
@@ -316,6 +318,11 @@ pub struct AgentHooks {
     version: Option<String>,
     #[serde(default)]
     error: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HookTrust {
+    state: String,
 }
 
 /// What a change printed, for the setup screen.
@@ -588,11 +595,19 @@ pub struct ReviewSettings {
     effort: String,
     automatic: bool,
     pull_requests: String,
-    /// Extraction preferences are read only during setup; edited in Settings.
+    /// The fixes' agent, model and effort; an empty agent follows reviews.
     #[serde(default)]
-    decisions_model: String,
+    fix_backend: String,
     #[serde(default)]
-    decisions_effort: String,
+    fix_model: String,
+    #[serde(default)]
+    fix_effort: String,
+    /// The extraction model and effort. Setup sends them only when it
+    /// changes the review choice, which extraction then follows.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    decisions_model: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    decisions_effort: Option<String>,
     /// The data extraction harness Settings chose, empty while it follows
     /// the reviews'; read only, never saved.
     #[serde(default)]
@@ -624,6 +639,30 @@ pub async fn review_settings() -> Result<ReviewSettings, String> {
     .await
 }
 
+/// The `reviews set` flags for setup's choices. Extraction, when sent,
+/// follows the reviews' harness.
+fn review_set_args(settings: &ReviewSettings) -> Vec<String> {
+    // `--flag=value` keeps a value starting with `-` from reading as a flag.
+    let mut args = vec![
+        format!("--backend={}", settings.backend),
+        format!("--model={}", settings.model),
+        format!("--effort={}", settings.effort),
+        format!("--automatic={}", settings.automatic),
+        format!("--pull-requests={}", settings.pull_requests),
+        format!("--fix-backend={}", settings.fix_backend),
+    ];
+    if !settings.fix_backend.is_empty() {
+        args.push(format!("--fix-model={}", settings.fix_model));
+        args.push(format!("--fix-effort={}", settings.fix_effort));
+    }
+    if let (Some(model), Some(effort)) = (&settings.decisions_model, &settings.decisions_effort) {
+        args.push("--decisions-backend=".into());
+        args.push(format!("--decisions-model={model}"));
+        args.push(format!("--decisions-effort={effort}"));
+    }
+    args
+}
+
 /// Saves the review settings; the CLI validates every value.
 #[tauri::command]
 pub async fn save_review_settings(
@@ -633,14 +672,7 @@ pub async fn save_review_settings(
     blocking(move || {
         let setup = app.state::<Setup>();
         let _busy = setup.busy.lock().unwrap_or_else(|p| p.into_inner());
-        // `--flag=value` keeps a value starting with `-` from reading as a flag.
-        let args = [
-            format!("--backend={}", settings.backend),
-            format!("--model={}", settings.model),
-            format!("--effort={}", settings.effort),
-            format!("--automatic={}", settings.automatic),
-            format!("--pull-requests={}", settings.pull_requests),
-        ];
+        let args = review_set_args(&settings);
         let mut command = vec!["internal", "reviews", "set"];
         command.extend(args.iter().map(String::as_str));
         let out = run(&cli()?, &command, LOGIN_PATH_TIMEOUT)?;
@@ -986,6 +1018,29 @@ mod tests {
     }
 
     #[test]
+    fn review_settings_send_fixes_and_changed_extraction() {
+        let settings = |json: &str| serde_json::from_str::<ReviewSettings>(json).unwrap();
+        let base = r#""backend":"codex","model":"gpt-6.1-sol","effort":"high","automatic":true,"pull_requests":"all""#;
+        assert_eq!(
+            review_set_args(&settings(&format!("{{{base}}}")))[5..],
+            ["--fix-backend="]
+        );
+        assert_eq!(
+            review_set_args(&settings(&format!(
+                r#"{{{base},"fix_backend":"claude","fix_model":"claude-opus-5-5","fix_effort":"max","decisions_model":"gpt-6.1-sol","decisions_effort":"high"}}"#
+            )))[5..],
+            [
+                "--fix-backend=claude",
+                "--fix-model=claude-opus-5-5",
+                "--fix-effort=max",
+                "--decisions-backend=",
+                "--decisions-model=gpt-6.1-sol",
+                "--decisions-effort=high",
+            ]
+        );
+    }
+
+    #[test]
     fn first_run_state_round_trips() {
         let path = temp_dir("state").join("config").join(crate::settings::FILE);
         assert_eq!(load_from(&path), Saved::default());
@@ -1093,6 +1148,14 @@ mod tests {
             crate::navigation::Decision::Allow
         );
         assert!(url.path().ends_with("/setup.html"));
+    }
+
+    #[test]
+    fn preserves_codex_hook_trust_status() {
+        let hooks: Hooks = last_json(&[
+            r#"{"agents":[{"agent":"codex","name":"Codex","detected":true,"plugin":"baum@baum","installed":true,"enabled":true,"trust":{"state":"untrusted"}}]}"#.into()
+        ]).unwrap();
+        assert_eq!(hooks.agents[0].trust.as_ref().unwrap().state, "untrusted");
     }
 
     #[test]

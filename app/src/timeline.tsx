@@ -4,7 +4,8 @@ import type { DetailState, OpenSessionSource } from "@baum/viewer/components/dec
 import type { FeatureState } from "@baum/viewer/components/feature-log";
 import { formatCount } from "@baum/viewer/components/format";
 import { ChevronDownIcon, RepositoryIcon } from "@baum/viewer/components/icons";
-import { Empty, Failed } from "@baum/viewer/components/states";
+import { Empty } from "@baum/viewer/components/states";
+import { PageRead, readState } from "./page-state";
 import {
   type TimelineList,
   TimelinePage as SharedTimelinePage,
@@ -197,9 +198,22 @@ export function TimelinePage({
     .map((each) => each.repository)
     .filter((name) => asked.includes(name.toLowerCase()));
   const scope = selected.length > 0 ? selected : served.map((each) => each.repository);
+  // A later read that failed leaves the page as it was and says so.
+  const stale =
+    list && failed ? (
+      <div className="local-list-note">
+        <Alert className="flex flex-wrap items-center gap-x-3 gap-y-2">
+          <span>Couldn't read the Timeline again. It may be out of date.</span>
+          <Button variant="secondary" size="compact" onClick={() => void reread.again()}>
+            Retry
+          </Button>
+        </Alert>
+      </div>
+    ) : null;
   if (list && showsLog(list))
     return (
       <div className="timeline-page">
+        {stale}
         <TimelineLog
           key={scope.join("\n")}
           scope={scope}
@@ -224,13 +238,14 @@ export function TimelinePage({
         detail={PAGE_DETAIL}
         actions={<RefreshButton refresh={reread.again} />}
       />
-      {failed && !list ? (
+      {stale}
+      {!list ? (
         <div className="local-page-body">
-          <Failed>The Timeline could not be loaded.</Failed>
-        </div>
-      ) : !list ? (
-        <div className="local-page-body">
-          <LoadingStatus block>Loading the Timeline…</LoadingStatus>
+          <PageRead
+            state={readState({ loaded: false, failed })}
+            what="the Timeline"
+            retry={reread.again}
+          />
         </div>
       ) : list.available === false ? (
         <div className="local-page-body">
@@ -261,6 +276,8 @@ export function TimelinePage({
 }
 
 type Pages<T> = {
+  /** The revision of the latest read from the first page that ended. */
+  readAt: number;
   rows: T[];
   cursor: string | null;
   status: "loading" | "idle" | "failed";
@@ -271,19 +288,18 @@ type Pages<T> = {
 };
 
 /** A paged list of `path` under `query`, read again when either or the
- *  revision changes; older rows load by button. `settled` hears each read
- *  from the first page end. */
+ *  revision changes; older rows load by button. */
 function usePages<T>(
   path: string,
   query: string,
   key: "features" | "decisions",
   revision: number,
   active: boolean,
-  settled: () => void,
 ): Pages<T> {
   type State = {
     query: string;
     revision: number;
+    readAt: number;
     rows: T[];
     cursor: string | null;
     status: "loading" | "idle" | "failed";
@@ -293,6 +309,7 @@ function usePages<T>(
   const [state, setState] = useState<State>({
     query,
     revision,
+    readAt: -1,
     rows: [],
     cursor: null,
     status: "loading",
@@ -339,13 +356,20 @@ function usePages<T>(
         cursor = (body.next_cursor as string | null) ?? null;
         coverage = (body.coverage as Coverage | undefined) ?? null;
       } while (cursor && rows.length < want);
-      setState({ query, revision, rows, cursor, status: "idle", loaded: true, coverage });
-      settled();
+      setState({
+        query,
+        revision,
+        readAt: revision,
+        rows,
+        cursor,
+        status: "idle",
+        loaded: true,
+        coverage,
+      });
     };
     read().catch(() => {
       if (abort.signal.aborted) return;
-      setState((current) => ({ ...current, status: "failed" }));
-      settled();
+      setState((current) => ({ ...current, readAt: revision, status: "failed" }));
     });
     return () => abort.abort();
   }, [path, query, key, revision, active]);
@@ -481,7 +505,6 @@ function TimelineLog({
     "features",
     revision,
     tab === "features",
-    settled,
   );
   const decisions = usePages<DecisionSummary>(
     "api/timeline/decisions",
@@ -489,8 +512,15 @@ function TimelineLog({
     "decisions",
     revision,
     tab === "all",
-    settled,
   );
+  // The open tab's list has been read at the revision shown: a refresh,
+  // which changes the revision, has its answer. Read from what the list
+  // holds, so a read the list skips does not leave the refresh waiting.
+  const shownList = tab === "features" ? features : decisions;
+  const read = shownList.status !== "loading" && shownList.readAt === revision;
+  useEffect(() => {
+    if (read) settled();
+  }, [read, revision]);
   // The keys move through the open tab's features or decisions and open
   // them, as through any list.
   const rows = useRowFocus<HTMLDivElement>(

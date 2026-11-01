@@ -310,5 +310,6 @@ it("says why a transcript is not served, and when the session is gone", async ()
   root = createRoot(node);
   await show(null);
   expect(node.textContent).toContain("This session is no longer listed");
+  expect(node.textContent).toContain("Couldn't load the transcript");
   expect(node.querySelector("button")?.textContent).toBe("Retry");
 });

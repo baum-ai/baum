@@ -17,6 +17,7 @@ import { jobReasonText, type Job } from "./api";
 import { decisionSections, localDayStart } from "@baum/viewer/decision-log";
 import { pullRequestHref, TimelinePage } from "./timeline";
 import { forgetLastRows } from "./shortcuts";
+import { PageRefreshProvider, usePageRefresh } from "./shell";
 
 const Link = (props: ViewerLinkProps) => <a {...props} />;
 const me = { email: "me@example.com", name: null, login: null, avatar_url: null };
@@ -354,6 +355,37 @@ it("explains a Timeline with no repositories", async () => {
   expect(node.textContent).toContain("No repositories with decisions");
 });
 
+it("says the Timeline could not be read, with one Retry that reads again", async () => {
+  const good = answers["api/timeline/repositories"];
+  answers["api/timeline/repositories"] = () =>
+    Promise.resolve(Response.json({ message: "The daemon is not answering." }, { status: 500 }));
+  await show();
+  expect(node.textContent).toContain("Couldn't load the Timeline");
+  expect(node.textContent).not.toContain("Loading the Timeline");
+  expect(node.textContent).not.toContain("The Timeline is not available");
+  const retry = [...node.querySelectorAll("button")].filter((b) => b.textContent === "Retry");
+  expect(retry).toHaveLength(1);
+  answers["api/timeline/repositories"] = good;
+  await act(async () => retry[0]!.click());
+  await act(async () => {});
+  await act(async () => {});
+  expect(node.textContent).not.toContain("Couldn't load the Timeline");
+});
+
+it("keeps the Timeline and says so when a later read of it fails", async () => {
+  await show();
+  expect(node.textContent).not.toContain("Couldn't");
+  const good = answers["api/timeline/repositories"];
+  answers["api/timeline/repositories"] = () =>
+    Promise.resolve(Response.json({ message: "The daemon is not answering." }, { status: 500 }));
+  await act(async () => root.render(<Harness initial="page=timeline" revision={1} />));
+  await act(async () => {});
+  await act(async () => {});
+  expect(node.textContent).toContain("Couldn't read the Timeline again");
+  expect(node.textContent).not.toContain("Couldn't load the Timeline");
+  answers["api/timeline/repositories"] = good;
+});
+
 it("opens the feature a merged one went into", async () => {
   await show("page=timeline&feature=F0");
   await act(async () => {});
@@ -375,6 +407,29 @@ it("reads only the tab shown, and again with the rows it had when the log change
   await act(async () => {});
   expect(requests).toContain("/s/test-ns/api/timeline/features");
   expect(requests.some((path) => path.includes("api/timeline/decisions"))).toBe(false);
+});
+
+it("ends the refresh's loader once the open tab's list is read again, or fails to be", async () => {
+  function Page() {
+    const page = usePageRefresh("timeline", () => Promise.resolve());
+    return (
+      <PageRefreshProvider value={page}>
+        <Harness initial="page=timeline" />
+      </PageRefreshProvider>
+    );
+  }
+  await act(async () => root.render(<Page />));
+  await act(async () => {});
+  const button = () => node.querySelector<HTMLButtonElement>('button[aria-label="Refresh"]')!;
+  const refreshed = async () => {
+    act(() => button().click());
+    expect(button().getAttribute("aria-busy")).toBe("true");
+    for (let i = 0; i < 4; i++) await act(async () => {});
+    return button().getAttribute("aria-busy");
+  };
+  expect(await refreshed()).toBeNull();
+  answers["api/timeline/features"] = () => Promise.resolve(new Response("down", { status: 500 }));
+  expect(await refreshed()).toBeNull();
 });
 
 it("says when the decision store or the decisions switch is off", async () => {

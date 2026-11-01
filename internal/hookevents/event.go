@@ -156,6 +156,9 @@ type Session struct {
 	// AgentID is the Claude Code subagent (or in-process teammate) the hook
 	// fired in, when it fired in one.
 	AgentID string `json:"agent_id,omitempty"`
+	// AutoReview says Codex's active turn delegates approvals to its automatic
+	// reviewer. Its PermissionRequest is not a request for the user's attention.
+	AutoReview bool `json:"auto_review,omitempty"`
 }
 
 // Git is a Git hook run.

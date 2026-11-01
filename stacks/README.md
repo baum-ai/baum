@@ -42,7 +42,10 @@ parents, and dissolves a group where a hosted stack ends.
   (`NULL` for the root). A pull request is a current member (`left_at IS
   NULL`) of at most one stack; leaving keeps the row, and joining again clears
   `left_at` and restarts `joined_at`.
-- A merged or closed member stays, with its parent. When the bottom pull
+- A merged or closed member stays in its original position, with its parent,
+  so membership is never recomputed from the open pull requests alone. A
+  member closed without merging stays as closed, not as merged: the
+  consumers tell them apart by the pull request's state. When the bottom pull
   request merges and GitHub retargets the next one to the bottom's base, the
   next one keeps its merged parent and stays in the stack. If several
   descendants are automatically retargeted to the merged ancestor's base,

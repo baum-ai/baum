@@ -67,11 +67,11 @@ func BuildSessionEvidence(ctx context.Context, req EvidenceRequest) ([]bundle.Se
 	}
 	// The pull request's repository is not known here, so a missing
 	// checkpoint's fetch hint names a placeholder remote.
-	found, truth, err := loadSessions(ctx, dir, req.Sessions, req.Commits, "", req.Warn)
+	found, _, err := loadSessions(ctx, dir, req.Sessions, req.Commits, "", req.Warn)
 	if err != nil {
 		return nil, err
 	}
-	ids, latest, edges, err := linkSessions(ctx, found, req.Commits, truth)
+	ids, latest, edges, err := linkSessions(ctx, found, req.Commits)
 	if err != nil {
 		return nil, err
 	}
@@ -209,9 +209,9 @@ func existsInClone(root string) func(string) bool {
 
 // withoutGenerationRuns drops baum's own generation runs before matching, so
 // they can neither be linked nor take a link from another session, and from
-// the checkpoints' ground truth. A session any reading of which is marked is
+// the checkpoints' candidate associations. A session any reading of which is marked is
 // dropped whole.
-func withoutGenerationRuns(found []sessions.Session, truth map[string][]string) ([]sessions.Session, map[string][]string) {
+func withoutGenerationRuns(found []sessions.Session, associations map[string][]string) ([]sessions.Session, map[string][]string) {
 	marked := map[string]bool{}
 	for _, s := range found {
 		if sessions.IsGenerationRun(s.Graph) {
@@ -219,11 +219,11 @@ func withoutGenerationRuns(found []sessions.Session, truth map[string][]string) 
 		}
 	}
 	if len(marked) == 0 {
-		return found, truth
+		return found, associations
 	}
 	kept := slices.DeleteFunc(slices.Clone(found), func(s sessions.Session) bool { return marked[s.ID] })
-	pruned := make(map[string][]string, len(truth))
-	for commit, ids := range truth {
+	pruned := make(map[string][]string, len(associations))
+	for commit, ids := range associations {
 		if ids = slices.DeleteFunc(slices.Clone(ids), func(id string) bool { return marked[id] }); len(ids) > 0 {
 			pruned[commit] = ids
 		}

@@ -61,7 +61,7 @@ export function useDiagnosticProblems(enabled: boolean) {
 }
 
 /** The report `baum internal doctor` prints, as the local server computes it. It never
- * fetches the price list; "Check again" re-inspects this machine. */
+ * fetches the price list; "Check again" re-inspects this computer. */
 export function DiagnosticsSection({
   onReport,
 }: {
@@ -115,7 +115,7 @@ export function DiagnosticsSection({
         </Button>
       </div>
       <p className="text-xs">
-        Which tools and credentials baum found on this machine, never their values.
+        Which tools and credentials baum found on this computer, never their values.
       </p>
       {error ? (
         <Alert>
@@ -126,7 +126,7 @@ export function DiagnosticsSection({
         </Alert>
       ) : null}
       {running && report === undefined && !error ? (
-        <LoadingStatus block>Checking this machine…</LoadingStatus>
+        <LoadingStatus block>Checking this computer…</LoadingStatus>
       ) : null}
       {report === null ? <p>Diagnostics are not available in this build.</p> : null}
       {report ? (

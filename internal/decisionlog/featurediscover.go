@@ -110,7 +110,7 @@ func (r *featureRun) planDiscovery(ctx context.Context) discoveryPlan {
 		return p
 	}
 	var err error
-	if p.selected, err = generate.Select(ctx, config.Backend(planned.Backend), planned.Model, planned.backends, io.Discard); err != nil {
+	if p.selected, err = generate.SelectDesktop(ctx, config.Backend(planned.Backend), planned.Model, planned.backends, io.Discard); err != nil {
 		r.w.logger().Info("feature discovery: backend unavailable", "backend", planned.Backend, "error", err)
 		p.skip = ReasonUnavailable
 		return p

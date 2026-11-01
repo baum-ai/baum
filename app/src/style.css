@@ -573,6 +573,10 @@ body {
 }
 .local-repo-filter select {
   appearance: none;
+  /* A native select is as wide as its longest option; a long repository
+     name would push the filter onto its own row with a stray chevron. */
+  max-width: min(100%, 16rem);
+  text-overflow: ellipsis;
   padding: 0.3rem 1.6rem 0.3rem 0.6rem;
   border: 0;
   border-radius: var(--radius-md);
@@ -1926,6 +1930,11 @@ dialog.local-dialog-wide {
 .settings-section-head p {
   margin: 0.25rem 0 0;
   color: var(--text-secondary);
+}
+.settings-subhead {
+  margin: 0.75rem 0 -0.25rem;
+  font-size: var(--text-base);
+  font-weight: 600;
 }
 .settings-saved {
   margin: 0;
@@ -4170,20 +4179,6 @@ kbd.key-hint {
 .upnext-page .upnext-row:active {
   transform: none;
 }
-.upnext-mark {
-  display: flex;
-  width: 16px;
-  height: 16px;
-  flex: none;
-  box-sizing: border-box;
-  align-items: center;
-  justify-content: center;
-  border: 1.5px solid var(--text-disabled);
-  border-radius: 50%;
-}
-.upnext-mark-working {
-  border: 0;
-}
 .upnext-row-text {
   display: flex;
   flex: 1;
@@ -4208,8 +4203,17 @@ kbd.key-hint {
   color: var(--text-tertiary);
   font-size: var(--text-xs);
 }
+/* An agent at work: the nine dots lead the line that says so. */
 .upnext-row-working {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   color: var(--status-caution);
+}
+.upnext-row-working-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .upnext-row-failed {
   color: var(--status-critical);
@@ -4269,6 +4273,11 @@ kbd.key-hint {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  color: inherit;
+}
+a.upnext-done-text:hover {
+  color: var(--text-secondary);
+  text-decoration: underline;
 }
 /* The Inbox draws its key bar at the foot of its list, under the queue it
    moves through, so the page's own bar steps aside. */
@@ -4506,7 +4515,7 @@ kbd.key-hint {
 .upnext-lead {
   margin: 0;
   padding-bottom: 6px;
-  color: var(--text-secondary);
+  color: var(--text-primary);
   font-size: var(--text-base);
   line-height: 1.5;
 }
@@ -4531,6 +4540,12 @@ kbd.key-hint {
   min-width: 0;
   line-height: 1.4;
 }
+/* A row's title with a count beside it: "Checks failing 1/9 failing". */
+.upnext-block-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
 .upnext-block-sub {
   color: var(--text-tertiary);
   font-size: var(--text-xs);
@@ -4544,22 +4559,44 @@ kbd.key-hint {
 }
 .upnext-block li.upnext-has-threads {
   flex-wrap: wrap;
+  align-items: center;
 }
 .upnext-threads {
   flex-basis: 100%;
   margin: 0;
 }
+/* A detail's items (threads, checks, conflicting files) sit in one bordered
+   list, each a row of its icon, its text and its actions. */
 .upnext-block .upnext-threads ul {
-  margin-top: 4px;
-  padding-left: 12px;
-  border-left: 2px solid var(--border-subtle);
+  margin: 0;
+  padding: 0;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  list-style: none;
 }
 .upnext-block .upnext-threads li {
+  display: flex;
   align-items: center;
-  padding: 8px 0;
+  gap: 10px;
+  padding: 10px 12px;
+  border-top: 1px solid var(--border-subtle);
+  font-size: var(--text-base);
 }
 .upnext-block .upnext-threads li:first-child {
   border-top: none;
+}
+/* A thread that opens to its conversation lines its details up under the
+   headline, past the chevron. */
+.upnext-thread:has(> .upnext-block-text > .upnext-thread-toggle) > .upnext-block-text
+  > :not(.upnext-thread-toggle) {
+  margin-left: 20px;
+}
+.upnext-threads .upnext-block-sub a {
+  color: var(--text-secondary);
+}
+.upnext-threads .upnext-block-sub a:hover {
+  color: var(--text-link-hover);
+  text-decoration: underline;
 }
 .upnext-thread-excerpt {
   display: -webkit-box;
@@ -4580,6 +4617,19 @@ kbd.key-hint {
 }
 .upnext-page .upnext-thread-resolve {
   flex: none;
+}
+/* Show other checks, under a list folded to its failing checks. */
+.upnext-page .upnext-checks-more {
+  margin-top: 6px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text-tertiary);
+  font-size: var(--text-xs);
+}
+.upnext-page .upnext-checks-more:hover {
+  color: var(--text-secondary);
+  text-decoration: underline;
 }
 .upnext-check-actions {
   display: flex;
@@ -4623,13 +4673,16 @@ kbd.key-hint {
 .upnext-page
   :is(.upnext-detail-toggle, .upnext-member-pick):hover
   .upnext-block-text
-  > :first-child,
+  > :first-child:not(.upnext-block-title),
+.upnext-page .upnext-detail-toggle:hover .upnext-block-title > :first-child,
 .upnext-page .upnext-thread-toggle:hover .upnext-thread-excerpt {
   text-decoration: underline;
 }
+/* The detail lines up with its row's title, past the chevron. */
 .upnext-detail-body {
   flex-basis: 100%;
   min-width: 0;
+  margin: 2px 0 4px 20px;
 }
 .upnext-check-icon {
   flex: none;
@@ -4672,6 +4725,97 @@ kbd.key-hint {
   line-height: 1.5;
   overflow-wrap: anywhere;
   white-space: pre-wrap;
+}
+/* A group's members in its panel: a dot for what each waits on, its title on
+   one line and its number with its state under it. A stack's dots are joined
+   by a line, from its base up, and its rows drop their rules. */
+.upnext-block > ul.upnext-members > li {
+  align-items: center;
+  gap: 12px;
+}
+.upnext-member-dot {
+  position: relative;
+  z-index: 1;
+  flex: none;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--text-tertiary);
+  box-shadow: 0 0 0 3px var(--surface-card);
+}
+.upnext-member-merge {
+  background: var(--status-positive);
+}
+.upnext-member-fix {
+  background: var(--status-critical);
+}
+.upnext-member-working {
+  background: var(--status-info);
+}
+:is(.upnext-member-review, .upnext-member-clone, .upnext-member-update) {
+  background: var(--status-caution);
+}
+.upnext-member-waiting {
+  border: 1.5px solid var(--text-tertiary);
+  background: transparent;
+}
+.upnext-member-merged {
+  border: 1.5px solid var(--status-positive);
+  background: var(--status-positive-bg);
+}
+/* A member the queue does not list (merged, or needing nothing) is read but
+   not picked. */
+.upnext-member-other .upnext-member-title {
+  color: var(--text-secondary);
+}
+/* The member list's head opens and closes it: its count, and how many
+   merged. */
+.upnext-members-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.upnext-page .upnext-members-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  letter-spacing: inherit;
+  text-transform: inherit;
+}
+.upnext-page .upnext-members-toggle:hover {
+  color: var(--text-secondary);
+}
+.upnext-member-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.upnext-block > ul.upnext-members-stack > li {
+  position: relative;
+  border-top: 0;
+}
+.upnext-block > ul.upnext-members-stack > li::before {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 4px;
+  width: 1px;
+  background: var(--border-default);
+  content: "";
+}
+.upnext-block > ul.upnext-members-stack > li:first-child::before {
+  top: 50%;
+}
+.upnext-block > ul.upnext-members-stack > li:last-child::before {
+  bottom: 50%;
+}
+.upnext-block > ul.upnext-members-stack > li:only-child::before {
+  display: none;
 }
 /* The facts under the title: branches, size, time to review, GitHub. */
 .upnext-facts {
@@ -4766,7 +4910,7 @@ kbd.key-hint {
   flex: none;
   align-items: center;
   justify-content: center;
-  margin-left: calc(1.5rem - 3px);
+  margin-left: calc(1.5rem - 24px);
   padding: 0;
   border: 0;
   border-radius: var(--radius-xs);
@@ -4776,11 +4920,13 @@ kbd.key-hint {
   background: var(--surface-hover);
 }
 /* Beside its toggle, the row takes the rest of the line, not all of it. */
+/* Its chevron sits in the row's gutter, so its title lines up with the
+   titles of the rows around it. */
 .upnext-group-line .upnext-row {
   flex: 1;
   width: auto;
   min-width: 0;
-  padding-left: 7px;
+  padding-left: 2px;
 }
 .upnext-member .upnext-row {
   padding-left: 3rem;

@@ -32,6 +32,14 @@ func (e *MembersNeedReviewsError) Error() string {
 // cancelled.
 const ReasonMembersNeedReviews = "members_need_reviews"
 
+// ReasonMembersChanged fails a group job whose members kept moving, or
+// changed, while it waited, so it could not wait for them again.
+const ReasonMembersChanged = "members_changed"
+
+// ReasonGroupRemoved cancels a group job whose group was deleted or whose
+// stack dissolved before it ran.
+const ReasonGroupRemoved = "group_removed"
+
 // ErrGroupsUnavailable is a group job on a runner without a group store.
 var ErrGroupsUnavailable = errors.New("review groups are not available")
 
@@ -41,8 +49,8 @@ var ErrGroupsUnavailable = errors.New("review groups are not available")
 type groupInputs struct {
 	pull
 	name, members string
-	// awaiting are the members without a saved review, accepted with
-	// Item.AwaitMembers.
+	// awaiting, with Item.AwaitMembers, are the members without a saved
+	// review of their current head.
 	awaiting []int
 }
 
@@ -78,16 +86,23 @@ func (l *Local) prepareGroup(ctx context.Context, c repos.Clone, reader *github.
 		out.Untrusted = out.Untrusted || pr.Untrusted
 		out.Draft = out.Draft || pr.Draft
 		parts = append(parts, strconv.Itoa(number)+"@"+pr.Head)
-		if _, err := versions.Latest(ctx, store.Key{Repository: c.Repository, Number: number}); errors.Is(err, store.ErrNotFound) {
+		latest, err := versions.Latest(ctx, store.Key{Repository: c.Repository, Number: number})
+		switch {
+		case errors.Is(err, store.ErrNotFound):
 			missing = append(missing, number)
-		} else if err != nil {
+			out.awaiting = append(out.awaiting, number)
+		case err != nil:
 			return groupInputs{}, err
+		case latest.Metadata.Head != pr.Head:
+			out.awaiting = append(out.awaiting, number)
 		}
 	}
 	if len(missing) > 0 && !await {
 		return groupInputs{}, &MembersNeedReviewsError{Numbers: missing}
 	}
-	out.awaiting = missing
+	if !await {
+		out.awaiting = nil
+	}
 	out.members = strings.Join(parts, ",")
 	return out, nil
 }
@@ -141,5 +156,5 @@ func (l *Local) groupRequest(ctx context.Context, p Prepared, versions *store.St
 	if err != nil {
 		return nil, err
 	}
-	return &generate.Group{Name: group.Name, Members: members, MemberReviews: file}, nil
+	return &generate.Group{Name: group.Name, GeneratedName: group.Stack, Members: members, MemberReviews: file}, nil
 }

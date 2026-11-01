@@ -1,6 +1,7 @@
-import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Alert, Button } from "@baum/viewer/components/ui";
 import { request, type Entry } from "./api";
+import { useModal } from "./modal";
 import { LoadingStatus, NineDots } from "./nine-dots";
 
 export type UpdateOptions = {
@@ -82,14 +83,11 @@ function UnblockDialog<Options extends { head_sha: string }, Result>({
   finished: (result: Result) => { message: ReactNode; problem?: string } | null;
 }) {
   const pr = entry.pull_request;
-  const dialog = useRef<HTMLDialogElement>(null);
+  const dialog = useModal();
   const [options, setOptions] = useState<Options | null>(null);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [outcome, setOutcome] = useState<ReturnType<typeof finished>>(null);
-  useLayoutEffect(() => {
-    dialog.current?.showModal();
-  }, []);
   useEffect(() => {
     const abort = new AbortController();
     request<Options>(
@@ -111,11 +109,16 @@ function UnblockDialog<Options extends { head_sha: string }, Result>({
       : refusal(options);
   const confirm = useRef<HTMLButtonElement>(null);
   const ready = Boolean(options) && !why && !busy && !outcome;
-  // Tab moves nothing, so once the write can be sent the confirm button takes
-  // the focus from Cancel: Enter confirms, Escape cancels.
+  // Once the write can be sent the confirm button takes the focus from
+  // Cancel: Enter confirms, Escape cancels, with no Tab needed.
   useEffect(() => {
     if (ready) confirm.current?.focus();
   }, [ready]);
+  // The confirm button goes once the write was sent: Close takes the focus.
+  const closeButton = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    if (outcome) closeButton.current?.focus();
+  }, [outcome]);
   const send = async () => {
     setBusy(true);
     setError("");
@@ -168,7 +171,7 @@ function UnblockDialog<Options extends { head_sha: string }, Result>({
       {outcome?.problem ? <Alert>{outcome.problem}</Alert> : null}
       {error ? <Alert>{error}</Alert> : null}
       <div className="mt-4 flex justify-end gap-2">
-        <Button variant="ghost" size="compact" disabled={busy} onClick={close}>
+        <Button ref={closeButton} variant="ghost" size="compact" disabled={busy} onClick={close}>
           {outcome ? "Close" : "Cancel"}
           <kbd aria-hidden="true" className="key-hint">
             Esc
@@ -307,7 +310,7 @@ export function RerunChecksDialog({
               ),
               problem: `GitHub would not re-run ${result.refused
                 .map((r) => `${r.name} (${r.message})`)
-                .join("; ")}`,
+                .join("; ")}.`,
             }
       }
     />

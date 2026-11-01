@@ -38,6 +38,9 @@ its HTTP handler uses.
 - `preferences(key, value)`: the global preferences as one JSON row. Its
   `appearance` object (`theme`, `key_hints`) stores the device’s General
   settings independently of the daemon’s loopback port. Its
+  `plan_usage.show` object maps `claude` and `codex` to the person's choice of
+  showing that plan's usage; a missing plan follows the backends in use (see
+  [`planusage`](../planusage/README.md)). Its
   `decisions` object (`enabled`, `model`) configures local
   decision capture; `Settings.DecisionsEnabled` combines it with the automatic
   master switch and the repository's `decisions` (nil is on). See
@@ -113,9 +116,9 @@ what is stored: it fails with `ErrClonedElsewhere` when the path or its
 repository directory belongs to another repository, and with `ErrNotPicked`
 unless the repository is picked, checked in the same transaction, so an unpick
 in between is not undone. `PickedWithoutClones` (picked repositories with no
-clone row) and `CloneRows` (clones as stored, `available` false) read the
-registry only and run no git, unlike `List` and `Repositories`, which probe
-every clone.
+clone row), `CloneRows` (clones as stored, `available` false) and
+`RepositoryRows` (`Repositories` with clones as stored) read the registry only
+and run no git, unlike `List` and `Repositories`, which probe every clone.
 
 Settings PUTs replace the whole object and require `automatic`, `null` for
 the default. A `daily_cap` an older app still sends, in a settings PUT or in

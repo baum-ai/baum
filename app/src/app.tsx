@@ -41,7 +41,8 @@ import {
   useCommandKeys,
   useEscapeBlurs,
   useKeyHints,
-  useNoTab,
+  usePointerBlurs,
+  useTabStops,
   useRowFocus,
   useShortcuts,
   VIEW_KEYS,
@@ -53,6 +54,7 @@ import { Tour, TOUR_HREF, useTour } from "./tour";
 import { PAGES, type Page } from "./pages";
 import { LocalReview } from "./review";
 import { DecisionsRevision } from "./decisions";
+import { useCodexHookTrust } from "./codex-hooks";
 import { useDiagnosticProblems } from "./diagnostics";
 import { RepositoriesPage, SettingsPage, settingsSection, type ReviewDefaults } from "./settings";
 import { asksYou, SessionsPage, transcriptHref } from "./sessions";
@@ -66,6 +68,7 @@ import {
   PageBar,
   PageRefreshProvider,
   RefreshButton,
+  type RefreshRun,
   Sidebar,
   usePageRefresh,
 } from "./shell";
@@ -93,7 +96,9 @@ import {
   parseAgentRequests,
   noAgentRequests,
   type AgentRequests,
+  LocalRequestError,
   parseGroups,
+  backToOpener,
   sameRepository,
   MAX_GROUP_MEMBERS,
   type ReviewGroup,
@@ -107,6 +112,8 @@ import {
   type Job,
   type LiveSession,
 } from "./api";
+import { useModal } from "./modal";
+import { PageRead, ReadFailed, readState } from "./page-state";
 import { LoadingStatus } from "./nine-dots";
 import { FixDetails, type FixChat } from "./fix";
 import { JobPage } from "./job-transcript";
@@ -215,10 +222,9 @@ function Workspace({ url }: { url: UrlState }) {
   // do not end them, and each waits for the one before it.
   const [refreshing, setRefreshing] = useState(0);
   const refreshQueue = useRef(Promise.resolve());
+  const refreshesRunning = useRef(new Set<AbortController>());
   // Why the latest refresh from GitHub failed, on the page it was asked on.
   const [refreshError, setRefreshError] = useState("");
-  const shownPageRef = useRef("");
-  const lastRefresh = useRef(0);
   const [error, setError] = useState("");
   // When the latest read of the daemon completed, for Pull requests' bar.
   const [updatedAt, setUpdatedAt] = useState<number | null>(null);
@@ -255,6 +261,10 @@ function Workspace({ url }: { url: UrlState }) {
   const [github, setGitHub] = useState<GitHubConnection | null>(null);
   const [defaults, setDefaults] = useState<ReviewDefaults | null>(null);
   const [live, setLive] = useState<LiveSession[]>([]);
+  // Whether the sessions have been read, or the first read failed.
+  const [liveRead, setLiveRead] = useState<"loading" | "loaded" | "failed">("loading");
+  // A later read of the sessions that failed: they stay as they were.
+  const [liveStale, setLiveStale] = useState(false);
   // What agents wait on and the messages queued for them; none from a daemon
   // without the route.
   const [agentRequests, setAgentRequests] = useState<AgentRequests>(noAgentRequests);
@@ -268,6 +278,8 @@ function Workspace({ url }: { url: UrlState }) {
   // automatic switch changes.
   const [decisionsTick, setDecisionsTick] = useState(0);
   const [groups, setGroups] = useState<ReviewGroup[]>([]);
+  // Why the groups could not be read, so a group is not called missing then.
+  const [groupsError, setGroupsError] = useState("");
   const inboxes = useInboxes();
   // The inbox just made from a template, whose page says so.
   const [freshInbox, setFreshInbox] = useState<string | null>(null);
@@ -291,19 +303,34 @@ function Workspace({ url }: { url: UrlState }) {
       request<unknown>("api/agent-requests").then(parseAgentRequests, () => noAgentRequests),
     ]);
     if (sequence !== lastLive.current) return;
-    if (sessions) setLive(sessions);
+    if (sessions) {
+      setLive(sessions);
+      setLiveRead("loaded");
+      setLiveStale(false);
+    } else {
+      setLiveRead((read) => (read === "loaded" ? read : "failed"));
+      setLiveStale(true);
+    }
     setAgentRequests(pending);
   }, []);
   const reloadPending = useRef(false);
   const reloadInFlight = useRef<Promise<void> | null>(null);
-  const reload = useCallback(() => {
+  const reloadAbort = useRef<AbortController | null>(null);
+  // `restart` drops the read under way, which may never answer, for a new one.
+  const reload = useCallback(({ restart = false }: { restart?: boolean } = {}) => {
     reloadPending.current = true;
-    if (reloadInFlight.current) return reloadInFlight.current;
+    if (reloadInFlight.current && !restart) return reloadInFlight.current;
+    reloadAbort.current?.abort();
+    const abort = new AbortController();
+    reloadAbort.current = abort;
+    const { signal } = abort;
+    const get = <T,>(path: string) => request<T>(path, undefined, "GET", signal);
     // Publish each completed snapshot; events during a read queue one more
     // instead of starting competing reads that discard each other's results.
     const drain = async () => {
-      while (reloadPending.current) {
+      while (reloadPending.current && !signal.aborted) {
         reloadPending.current = false;
+        let groupsFailure = "";
         try {
           const [
             repos,
@@ -319,22 +346,28 @@ function Workspace({ url }: { url: UrlState }) {
             groupList,
             inboxList,
           ] = await Promise.all([
-            request<Clone[]>("api/repos"),
-            request<Snapshot>("api/index?history=1"),
-            request<{ jobs?: Job[] }>("api/jobs"),
-            request<typeof rates>("api/prs"),
-            request<typeof background>("api/background"),
+            get<Clone[]>("api/repos"),
+            get<Snapshot>("api/index?history=1"),
+            get<{ jobs?: Job[] }>("api/jobs"),
+            get<typeof rates>("api/prs"),
+            get<typeof background>("api/background"),
             // A daemon without automatic generation answers without repositories.
-            request<Partial<Automatic>>("api/automatic").catch(() => null),
-            request<ReviewDefaults>("api/settings").catch(() => null),
-            request<GitHubConnection>("api/github-auth").catch(() => null),
-            request<Repository[]>("api/repositories"),
-            request<FoundClones>("api/clones/found").catch(() => null),
-            // An older daemon has no groups.
-            request<unknown>("api/groups").catch(() => null),
+            get<Partial<Automatic>>("api/automatic").catch(() => null),
+            get<ReviewDefaults>("api/settings").catch(() => null),
+            get<GitHubConnection>("api/github-auth").catch(() => null),
+            get<Repository[]>("api/repositories"),
+            get<FoundClones>("api/clones/found").catch(() => null),
+            // An older daemon (404) has no groups; another failure is kept
+            // apart, so it is not taken for a group that is gone.
+            get<unknown>("api/groups").catch((e) => {
+              if (!(e instanceof LocalRequestError && e.status === 404))
+                groupsFailure = errorText(e);
+              return null;
+            }),
             // An older daemon (404) has no inboxes; another failure is reported.
-            readInboxes(),
+            readInboxes(signal),
           ]);
+          if (signal.aborted) return;
           setClones(repos);
           setPicked(Array.isArray(repositories) ? repositories : []);
           if (Array.isArray(found?.attached)) {
@@ -348,7 +381,9 @@ function Workspace({ url }: { url: UrlState }) {
           }
           setSnapshot(index);
           setJobs(jobList.jobs ?? []);
-          setGroups(parseGroups(groupList));
+          // A failed read keeps the groups shown.
+          if (!groupsFailure) setGroups(parseGroups(groupList));
+          setGroupsError(groupsFailure);
           inboxes.read(inboxList);
           setRates(discovery);
           setBackground(Array.isArray(sync) ? sync : []);
@@ -359,16 +394,17 @@ function Workspace({ url }: { url: UrlState }) {
           setUpdatedAt(Date.now());
           setRevision((n) => n + 1);
         } catch (e) {
-          setError(errorText(e));
+          if (!signal.aborted) setError(errorText(e));
         } finally {
-          setLoading(false);
+          if (!signal.aborted) setLoading(false);
         }
       }
     };
-    reloadInFlight.current = drain().finally(() => {
-      reloadInFlight.current = null;
+    const run: Promise<void> = drain().finally(() => {
+      if (reloadInFlight.current === run) reloadInFlight.current = null;
     });
-    return reloadInFlight.current;
+    reloadInFlight.current = run;
+    return run;
   }, []);
   useEffect(() => {
     void reload();
@@ -475,7 +511,7 @@ function Workspace({ url }: { url: UrlState }) {
   // The inbox's queue counts in the sidebar on every page. Its record of what
   // was cleared waits for the first complete read, and pauses while reads
   // fail, so an empty or failed read clears nothing.
-  const inbox = useUpNext(indexedEntries, live, jobs, revision > 0 && !error);
+  const inbox = useUpNext(indexedEntries, live, jobs, revision > 0 && !error, groups);
   // What the sidebar highlights is the page that shows the queue, with the
   // inbox the address names, when the daemon still has it.
   const railPage: Page =
@@ -525,6 +561,7 @@ function Workspace({ url }: { url: UrlState }) {
   // The pages that show the diagnostics run them themselves.
   // The diagnostics dialog runs them itself while it is open.
   const diagnostics = useDiagnosticProblems(page !== "diagnostics");
+  const codexTrust = useCodexHookTrust();
   const reviewTogether = () => {
     const chosen = snapshot.entries.filter((e) => selection.has(rowKey(e)));
     if (
@@ -624,41 +661,65 @@ function Workspace({ url }: { url: UrlState }) {
   // others refreshed and is named.
   // A repository is named by its local clone where there is one, which
   // the daemon knows even when the repository is not picked.
-  const refreshFrom = (targets: { repository: string; clone?: string }[]) => {
-    const askedOn = shownPageRef.current;
-    const sequence = ++lastRefresh.current;
+  // A press that starts one again drops every refresh under way, on any page,
+  // since one that never answers holds the queue and the lists' loader.
+  const refreshFrom = (targets: { repository: string; clone?: string }[], press: RefreshRun) => {
+    if (press.restart) for (const other of refreshesRunning.current) other.abort();
+    const abort = new AbortController();
+    press.signal.addEventListener("abort", () => abort.abort(), { once: true });
+    // A press superseded before its refresh started does not run.
+    if (press.signal.aborted) abort.abort();
+    const { signal } = abort;
+    const dropped = new Promise<void>((resolve) =>
+      signal.addEventListener("abort", () => resolve(), { once: true }),
+    );
+    refreshesRunning.current.add(abort);
     setRefreshing((n) => n + 1);
-    const run = refreshQueue.current.then(async () => {
+    const before = refreshQueue.current;
+    const run = (async () => {
       const failed: string[] = [];
       try {
-        for (const { repository, clone } of targets)
-          await request("api/prs/refresh", clone ? { clone } : { repository }).catch((e) => {
-            failed.push(`${repository}: ${errorText(e)}`);
+        if (!press.restart) await Promise.race([before, dropped]);
+        for (const { repository, clone } of targets) {
+          if (signal.aborted) return;
+          await request(
+            "api/prs/refresh",
+            clone ? { clone } : { repository },
+            "POST",
+            signal,
+          ).catch((e) => {
+            if (!signal.aborted) failed.push(`${repository}: ${errorText(e)}`);
           });
-        await reload();
-        // Only the latest refresh speaks, on the page it was asked on.
-        if (sequence === lastRefresh.current && shownPageRef.current === askedOn)
-          setRefreshError(failed.join(" "));
+        }
+        // The press that dropped this one reads the daemon again itself.
+        if (signal.aborted) return;
+        await reload({ restart: press.restart });
+        // Only the page's latest refresh speaks, while the page is shown.
+        if (press.current()) setRefreshError(failed.join(" "));
       } finally {
+        refreshesRunning.current.delete(abort);
         setRefreshing((n) => n - 1);
       }
-    });
+    })();
     // One that fails does not hold up the next.
     refreshQueue.current = run.catch(() => {});
     return run;
   };
   // The picked repositories, and those known only by a registered clone.
-  const refresh = () =>
-    refreshFrom([
-      ...picked.map(({ repository }) => ({ repository })),
-      ...clones
-        .filter(
-          (c, i) =>
-            !picked.some((p) => sameRepository(p.repository, c.repository)) &&
-            clones.findIndex((other) => sameRepository(other.repository, c.repository)) === i,
-        )
-        .map((c) => ({ repository: c.repository, clone: c.id })),
-    ]);
+  const refresh = (press: RefreshRun) =>
+    refreshFrom(
+      [
+        ...picked.map(({ repository }) => ({ repository })),
+        ...clones
+          .filter(
+            (c, i) =>
+              !picked.some((p) => sameRepository(p.repository, c.repository)) &&
+              clones.findIndex((other) => sameRepository(other.repository, c.repository)) === i,
+          )
+          .map((c) => ({ repository: c.repository, clone: c.id })),
+      ],
+      press,
+    );
   // A failed refresh belongs to the page it was asked for on.
   const shownPage = [
     page,
@@ -667,9 +728,20 @@ function Workspace({ url }: { url: UrlState }) {
     requestedClone ?? requestedRepository,
     requestedNumber,
   ].join(":");
-  shownPageRef.current = shownPage;
   useEffect(() => setRefreshError(""), [shownPage]);
-  const pageRefresh = usePageRefresh(shownPage);
+  // A page without a refresh of its own, as one still loading, reads
+  // everything again.
+  const pageRefresh = usePageRefresh(shownPage, () =>
+    Promise.all([reload({ restart: true }), reloadLive()]),
+  );
+  // The pages that show what the first read brought: when it failed they say
+  // so, once, rather than wait for it or call themselves empty.
+  const readFailed =
+    Boolean(error) &&
+    revision === 0 &&
+    !inboxPage &&
+    !["settings", "diagnostics", "sessions", "timeline", "analytics"].includes(page);
+  const hasRepositories = picked.length > 0 || clones.length > 0;
   // Before the first read there is nothing to refresh.
   const listBusy = refreshing > 0 || (loading && revision === 0);
   // The list's own keys live in `Inbox`, which knows its rows; these are the
@@ -789,7 +861,8 @@ function Workspace({ url }: { url: UrlState }) {
   };
   useKeyHints();
   useEscapeBlurs();
-  useNoTab();
+  usePointerBlurs();
+  useTabStops();
   useActionsKey();
   useReadlineArrows();
   useCommandKeys((action) => {
@@ -799,9 +872,8 @@ function Workspace({ url }: { url: UrlState }) {
       return;
     }
     setGoingTo(false);
-    // A page without a refresh button leaves the key to the browser.
-    if (action.kind === "refresh") return pageRefresh.press();
-    if (action.kind === "back") history.back();
+    if (action.kind === "refresh") pageRefresh.press();
+    else if (action.kind === "back") history.back();
     else if (action.kind === "forward") history.forward();
     else navigate(PAGES.find((item) => item.page === action.page)!.href());
   });
@@ -827,8 +899,9 @@ function Workspace({ url }: { url: UrlState }) {
           return current;
         });
       } else if (openJob && (event.key === "u" || (event.key === "Escape" && onBody(event)))) {
-        // From a job's transcript back to the list.
+        // From a job's transcript back to where it was opened from, else the list.
         event.preventDefault();
+        if (backToOpener()) return;
         url.update((current) => {
           current.delete("job");
           return current;
@@ -839,7 +912,11 @@ function Workspace({ url }: { url: UrlState }) {
         (event.key === "u" || (event.key === "Escape" && onBody(event)))
       ) {
         // Only the review page's own keys use a focused Escape (its sheets).
+        // Back to where it was opened from (the Inbox, an inbox, Pull
+        // requests, a group), past moves within it; a window opened on it
+        // goes to its list.
         event.preventDefault();
+        if (backToOpener()) return;
         url.update((current) => {
           for (const key of ["pr", "clone", "repository", "group", "walk"]) current.delete(key);
           return current;
@@ -849,8 +926,9 @@ function Workspace({ url }: { url: UrlState }) {
         openSession &&
         (event.key === "u" || (event.key === "Escape" && onBody(event)))
       ) {
-        // The same way back, from a session's transcript to the list.
+        // The same way back, from a session's transcript.
         event.preventDefault();
+        if (backToOpener()) return;
         url.update((current) => {
           current.delete("session");
           return current;
@@ -894,6 +972,7 @@ function Workspace({ url }: { url: UrlState }) {
         runningSessions={live.filter((s) => s.state === "running").length}
         needsYou={asksYou(live).length}
         problems={diagnostics.problems}
+        settingsWarning={codexTrust.warning}
         Link={LocalLink}
       />
       <div className="local-frame">
@@ -926,21 +1005,48 @@ function Workspace({ url }: { url: UrlState }) {
         <main className="local-main">
           <SavedStateNotice state={inbox.persistence} label="inbox state" />
           {refreshError ? (
-            <Alert>
-              Couldn't refresh from GitHub: {refreshError}{" "}
-              <Button onClick={() => setRefreshError("")}>Dismiss</Button>
-            </Alert>
+            <div className="local-list-note">
+              <Alert className="flex flex-wrap items-center gap-x-3 gap-y-2">
+                <span>Couldn't refresh from GitHub: {refreshError}</span>
+                <Button variant="secondary" size="compact" onClick={() => setRefreshError("")}>
+                  Dismiss
+                </Button>
+              </Alert>
+            </div>
           ) : null}
-          {error ? (
+          {error && !readFailed ? (
+            <div className="local-list-note">
+              <Alert className="flex flex-wrap items-center gap-x-3 gap-y-2">
+                <span>{error}</span>
+                <Button variant="secondary" size="compact" onClick={() => void reload()}>
+                  Retry
+                </Button>
+              </Alert>
+            </div>
+          ) : null}
+          {groupsError && groupId && groups.some((g) => g.id === groupId) ? (
             <Alert>
-              {error} <Button onClick={() => void reload()}>Retry</Button>
+              Couldn't read the review groups again: {groupsError}{" "}
+              <Button onClick={() => void reload()}>Retry</Button>
             </Alert>
           ) : null}
           {inboxes.error && !(inboxWaiting && inboxes.status === "failed") ? (
             <Alert>{inboxes.error}</Alert>
           ) : null}
-          {page === "repositories" ? (
-            <RepositoriesPage repositories={picked} automatic={automatic} changed={reload} />
+          {readFailed ? (
+            <section>
+              <PageBar title={readPageTitle(page, groupId)} />
+              <div className="local-page-body local-list-page">
+                <ReadFailed what={readPageWhat(page, groupId)} message={error} retry={reload} />
+              </div>
+            </section>
+          ) : page === "repositories" ? (
+            <RepositoriesPage
+              repositories={picked}
+              loading={loading}
+              automatic={automatic}
+              changed={reload}
+            />
           ) : page === "settings" || page === "diagnostics" ? (
             <SettingsPage
               authRevision={authRevision}
@@ -967,6 +1073,7 @@ function Workspace({ url }: { url: UrlState }) {
                 })
               }
               onDiagnostics={diagnostics.update}
+              codexTrust={codexTrust}
             />
           ) : page === "sessions" && openSession ? (
             <SessionTranscriptPage
@@ -1002,13 +1109,37 @@ function Workspace({ url }: { url: UrlState }) {
                 actions={<RefreshButton refresh={reloadLive} />}
               />
               <div className="local-page-body local-list-page">
-                <SessionsPage
-                  sessions={live}
-                  requests={agentRequests}
-                  Link={LocalLink}
-                  prHref={sessionPR}
-                  navigate={navigate}
-                />
+                <PageRead
+                  state={readState({
+                    loaded: liveRead === "loaded",
+                    failed: liveRead === "failed",
+                  })}
+                  what="sessions"
+                  message="baum could not read the agent sessions on this computer."
+                  retry={reloadLive}
+                >
+                  {liveStale ? (
+                    <div className="local-list-note">
+                      <Alert className="flex flex-wrap items-center gap-x-3 gap-y-2">
+                        <span>Couldn't read the sessions again. They may be out of date.</span>
+                        <Button
+                          variant="secondary"
+                          size="compact"
+                          onClick={() => void reloadLive()}
+                        >
+                          Retry
+                        </Button>
+                      </Alert>
+                    </div>
+                  ) : null}
+                  <SessionsPage
+                    sessions={live}
+                    requests={agentRequests}
+                    Link={LocalLink}
+                    prHref={sessionPR}
+                    navigate={navigate}
+                  />
+                </PageRead>
               </div>
             </>
           ) : page === "jobs" && url.search.get("job") ? (
@@ -1022,10 +1153,10 @@ function Workspace({ url }: { url: UrlState }) {
               <PageBar
                 title="Jobs"
                 detail="Reviews and fixes run on this computer"
-                actions={<RefreshButton refresh={reload} />}
+                actions={<RefreshButton refresh={(run) => reload({ restart: run.restart })} />}
               />
               <div className="local-page-body local-list-page">
-                <Jobs jobs={jobs} changed={reload} />
+                <Jobs jobs={jobs} loading={loading} changed={reload} />
               </div>
             </>
           ) : inboxWaiting ? (
@@ -1054,18 +1185,28 @@ function Workspace({ url }: { url: UrlState }) {
                   cloneFor={cloneFor}
                   revision={revision}
                   changed={reload}
-                  refresh={() =>
-                    refreshFrom([
-                      {
-                        repository: group.repository,
-                        clone: clones.find((c) => sameRepository(c.repository, group.repository))
-                          ?.id,
-                      },
-                    ])
+                  refresh={(press) =>
+                    refreshFrom(
+                      [
+                        {
+                          repository: group.repository,
+                          clone: clones.find((c) => sameRepository(c.repository, group.repository))
+                            ?.id,
+                        },
+                      ],
+                      press,
+                    )
                   }
                 />
               ) : loading ? (
                 <LoadingStatus block>Loading review group…</LoadingStatus>
+              ) : groupsError ? (
+                <section>
+                  <PageBar title="Review group" />
+                  <div className="local-page-body">
+                    <ReadFailed what="the review group" message={groupsError} retry={reload} />
+                  </div>
+                </section>
               ) : (
                 <GroupMissing />
               );
@@ -1077,8 +1218,8 @@ function Workspace({ url }: { url: UrlState }) {
                 detail={`${selectedEntry.pull_request.repository} #${selectedEntry.pull_request.number}`}
                 actions={
                   <RefreshButton
-                    refresh={() =>
-                      refreshFrom([{ repository: selectedEntry.pull_request.repository }])
+                    refresh={(press) =>
+                      refreshFrom([{ repository: selectedEntry.pull_request.repository }], press)
                     }
                     label="Refresh from GitHub"
                   />
@@ -1111,13 +1252,16 @@ function Workspace({ url }: { url: UrlState }) {
                 job={reviewJob(selectedEntry, jobs)}
                 detailsJob={detailsJob(selectedEntry, jobs)}
                 changed={reload}
-                refresh={() =>
-                  refreshFrom([
-                    {
-                      repository: selectedEntry.pull_request.repository,
-                      clone: cloneFor(selectedEntry) || undefined,
-                    },
-                  ])
+                refresh={(press) =>
+                  refreshFrom(
+                    [
+                      {
+                        repository: selectedEntry.pull_request.repository,
+                        clone: cloneFor(selectedEntry) || undefined,
+                      },
+                    ],
+                    press,
+                  )
                 }
                 live={live}
                 groups={groups.filter(
@@ -1156,7 +1300,7 @@ function Workspace({ url }: { url: UrlState }) {
               login={github?.login}
               // Until a read succeeds there is nothing to say an empty inbox about.
               loading={revision === 0}
-              hasRepositories={picked.length > 0 || clones.length > 0}
+              hasRepositories={hasRepositories}
               cloneFor={cloneFor}
               fix={(entry, only) => void fix(entry, only)}
               fixState={fixState}
@@ -1164,6 +1308,7 @@ function Workspace({ url }: { url: UrlState }) {
               refresh={refresh}
               refreshing={listBusy}
               reviewGroups={groups}
+              entries={indexedEntries}
               Link={LocalLink}
             />
           ) : (
@@ -1252,21 +1397,27 @@ function Workspace({ url }: { url: UrlState }) {
                 ))}
                 {loading ? (
                   <LoadingStatus block>Loading local inbox…</LoadingStatus>
-                ) : rows.length === 0 ? (
+                ) : rows.length === 0 && !(error && revision === 0) ? (
                   <div className="local-empty">
                     <h2>
-                      {filter === "inbox" && clones.length
+                      {filter === "inbox" && hasRepositories
                         ? "Nothing is waiting on you"
                         : "No pull requests here"}
                     </h2>
                     <p>
-                      {!clones.length
-                        ? "Pick GitHub repositories in Repositories to get started."
-                        : filter === "inbox"
-                          ? "No pull request asks for your review and none of yours is open. Others has the rest of your repositories' pull requests."
-                          : filter === "history"
-                            ? "Reviews saved for pull requests that are closed, merged or no longer listed show here."
-                            : "Nothing matches this view. Refresh from GitHub or choose another tab."}
+                      {!hasRepositories ? (
+                        <>
+                          Pick GitHub repositories in{" "}
+                          <LocalLink href={appURL("?page=repositories")}>Repositories</LocalLink> to
+                          get started.
+                        </>
+                      ) : filter === "inbox" ? (
+                        "No pull request asks for your review and none of yours is open. Others has the rest of your repositories' pull requests."
+                      ) : filter === "history" ? (
+                        "Reviews saved for pull requests that are closed, merged or no longer listed show here."
+                      ) : (
+                        "Nothing matches this view. Refresh from GitHub or choose another tab."
+                      )}
                     </p>
                   </div>
                 ) : null}
@@ -1406,10 +1557,7 @@ function ForkConfirmation({
   confirm: () => void;
   pending: boolean;
 }) {
-  const dialog = useRef<HTMLDialogElement>(null);
-  useEffect(() => {
-    dialog.current?.showModal();
-  }, []);
+  const dialog = useModal();
   return (
     <dialog ref={dialog} onCancel={close} aria-labelledby="fork-title">
       <h2 id="fork-title" className="text-lg font-semibold">
@@ -1436,7 +1584,15 @@ function ForkConfirmation({
 /** The jobs, newest first: those running or waiting to, then those that
  *  finished. The keyboard moves through them as through any list; Enter
  *  opens the job's pull request or group and `t` its transcript. */
-function Jobs({ jobs, changed }: { jobs: Job[]; changed: () => Promise<void> }) {
+function Jobs({
+  jobs,
+  loading,
+  changed,
+}: {
+  jobs: Job[];
+  loading: boolean;
+  changed: () => Promise<void>;
+}) {
   const [error, setError] = useState("");
   const [folded, setFolded] = useState<ReadonlySet<string>>(new Set());
   const newest = jobs.slice().reverse();
@@ -1532,7 +1688,9 @@ function Jobs({ jobs, changed }: { jobs: Job[]; changed: () => Promise<void> }) 
           <Alert>{error}</Alert>
         </div>
       ) : null}
-      {jobs.length === 0 ? (
+      {jobs.length === 0 && loading ? (
+        <LoadingStatus block>Loading jobs…</LoadingStatus>
+      ) : jobs.length === 0 ? (
         <div className="local-empty">
           <h2>No jobs yet</h2>
           <p>Reviews and fixes you start, or that run automatically, show here.</p>
@@ -1716,4 +1874,19 @@ function syncNotice(github: GitHubConnection | null, repositories: string[]) {
   if (github?.error)
     return `The GitHub connection needs attention, so baum cannot refresh pull requests. ${saved}`;
   return `baum could not refresh ${repositoryList(repositories)} from GitHub and will keep retrying. ${saved}`;
+}
+
+/** The title a page that failed to read has over its error. */
+function readPageTitle(page: string, group: string | null) {
+  if (group) return "Review group";
+  if (page === "jobs") return "Jobs";
+  if (page === "repositories") return "Repositories";
+  return page === "pulls" ? "Pull requests" : "Inbox";
+}
+/** What a page that failed to read could not load. */
+function readPageWhat(page: string, group: string | null) {
+  if (group) return "the review group";
+  if (page === "jobs") return "jobs";
+  if (page === "repositories") return "repositories";
+  return page === "pulls" ? "pull requests" : "your inbox";
 }

@@ -29,6 +29,8 @@ prompt, message, tool input or output, or file path is stored.
   its worktrees) are read, from the same stores and with the same discovery
   as the PR page (`sessions/collector`, `sessions.Map`). Sessions last written
   more than 90 days ago are skipped, and their entries dropped.
+- The index format version invalidates derived evidence after parser changes,
+  including Codex code-mode command extraction.
 - An entry is keyed by its files' sizes and modification times (a digest for
   Cursor's generated tree), so a refresh reads only what changed. Files that
   are gone, and the entries of unregistered clones, are dropped; a clone that

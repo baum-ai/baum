@@ -111,3 +111,11 @@ func (c *documentCache) close() {
 		entry.server.Close()
 	}
 }
+
+func (c *documentCache) invalidateSessions() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for _, entry := range c.entries {
+		entry.server.InvalidateSessions()
+	}
+}

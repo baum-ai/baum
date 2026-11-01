@@ -1,3 +1,4 @@
+import type { CodexHookTrust } from "../codex-hooks";
 import { supportedEffort } from "../model-effort";
 
 export type Found = { path: string; resolved: string; version: string };
@@ -26,6 +27,7 @@ export type Agent = {
   enabled: boolean;
   plugin: string;
   version?: string | null;
+  trust?: CodexHookTrust | null;
   error?: string | null;
 };
 export type SetupView = {
@@ -112,9 +114,35 @@ export function describeCommand(command: CommandStatus): CommandDescription {
   return { state, note: notes.join(" "), action: command.record ? "Update" : "Install" };
 }
 
+export function agentConnected(agent: Agent) {
+  return (
+    agent.installed &&
+    agent.enabled &&
+    !agent.error &&
+    (agent.agent !== "codex" || agent.trust?.state === "trusted")
+  );
+}
+
 export function describeAgent(agent: Agent) {
   if (agent.error) return agent.error;
-  if (agent.installed) return agent.enabled ? "Connected" : "Installed but disabled";
+  if (agent.installed) {
+    if (!agent.enabled) return "Installed but disabled";
+    if (agent.agent === "codex" && !agentConnected(agent)) {
+      switch (agent.trust?.state) {
+        case "untrusted":
+          return "Needs approval in Codex";
+        case "hooks_disabled":
+          return "Lifecycle hooks disabled in Codex";
+        case "disabled":
+          return "Hooks disabled in Codex";
+        case "missing":
+          return "Update Codex hooks";
+        default:
+          return "Hook approval could not be verified";
+      }
+    }
+    return "Connected";
+  }
   if (!agent.detected)
     return `${agent.name} isn't on your PATH. Install or update it, then check again.`;
   return "";
@@ -127,7 +155,13 @@ export type ReviewSettings = {
   effort?: string;
   automatic: boolean;
   pull_requests: PullRequests;
-  /** Saved extraction preferences, read only during setup. */
+  /** The fixes' own agent, model and effort; an empty agent follows the
+   *  reviews. */
+  fix_backend?: string;
+  fix_model?: string;
+  fix_effort?: string;
+  /** Extraction preferences. Setup shows the reviews' choice for them and
+   *  saves them only when it changes that choice (`setupSave`). */
   decisions_model?: string;
   decisions_effort?: string;
   /** What the daemon reports, never saved: the data extraction harness
@@ -146,17 +180,13 @@ const claudeModels = ["claude-haiku-5-5", "claude-sonnet-5-5", "claude-opus-5-5"
  *  a custom model. */
 export const modelPresets: Record<string, string[]> = {
   claude: claudeModels,
-  anthropic: claudeModels,
   codex: ["gpt-6-luna", "gpt-6.1-sol", "gpt-6.1-terra", "gpt-6-astra"],
-  "cursor-agent": ["composer-2.5", "composer-2.5-fast", "grok-4.7-medium", "grok-4.7-high"],
 };
 
-/** The cheap model decision capture uses per harness when none is chosen;
- *  Cursor Agent cannot capture decisions. */
+/** The cheap model decision capture uses per harness when none is chosen. */
 export const decisionModelDefaults: Record<string, string> = {
   claude: "claude-haiku-5-5",
   codex: "gpt-6-luna",
-  anthropic: "claude-haiku-5-5",
 };
 
 /** Settings with an explicit model: an unset one becomes the harness's
@@ -168,6 +198,8 @@ export function withModel(settings: ReviewSettings): ReviewSettings {
     ...settings,
     model: settings.model.trim() ? settings.model : (modelPresets[settings.backend]?.[0] ?? ""),
   };
+  if (next.fix_backend && !next.fix_model?.trim())
+    next.fix_model = modelPresets[next.fix_backend]?.[0] ?? "";
   const extraction = extractionHarness(next);
   const defaultDecisionModel = decisionModelDefaults[extraction] ?? "";
   if (next.decisions_model !== undefined && !next.decisions_model.trim())
@@ -187,6 +219,10 @@ export function withEfforts(
   const next = { ...settings };
   if (next.effort !== undefined)
     next.effort = supportedEffort(next.backend, next.model, next.effort);
+  if (next.fix_effort !== undefined)
+    next.fix_effort = next.fix_backend
+      ? supportedEffort(next.fix_backend, next.fix_model ?? "", next.fix_effort)
+      : "";
   if (next.decisions_effort !== undefined) {
     const extraction = extractionHarness(next);
     const decisionModel =
@@ -196,15 +232,46 @@ export function withEfforts(
   return next;
 }
 
-/** Setup saves only its review controls; extraction preferences stay in Settings. */
+/** Setup's review and fix controls as it saves them. */
 export function storedReviews(settings: ReviewSettings): ReviewSettings {
+  const fix = settings.fix_backend ?? "";
   return {
     backend: settings.backend,
     model: settings.model,
     ...(settings.effort !== undefined ? { effort: settings.effort } : {}),
     automatic: settings.automatic,
     pull_requests: settings.pull_requests,
+    fix_backend: fix,
+    fix_model: fix ? (settings.fix_model ?? "") : "",
+    fix_effort: fix ? (settings.fix_effort ?? "") : "",
   };
+}
+
+/** What finishing setup saves, null when nothing changed. Extraction takes
+ *  the reviews' agent, model and effort, but only when setup changes that
+ *  choice, so an untouched setup keeps what Settings chose. The harness's
+ *  default decision model is saved as none, so it follows the harness. */
+export function setupSave(settings: ReviewSettings, saved: ReviewSettings): ReviewSettings | null {
+  const next = storedReviews(settings);
+  const before = storedReviews(saved);
+  if (JSON.stringify(next) === JSON.stringify(before)) return null;
+  if (
+    next.backend === before.backend &&
+    next.model === before.model &&
+    (next.effort ?? "") === (before.effort ?? "")
+  )
+    return next;
+  return {
+    ...next,
+    decisions_model: next.model === decisionModelDefaults[next.backend] ? "" : next.model,
+    decisions_effort: next.effort ?? "",
+  };
+}
+
+/** Fixes follow the reviews again when their saved agent is not installed. */
+export function shownFix(settings: ReviewSettings, available: readonly string[]): ReviewSettings {
+  if (!settings.fix_backend || available.includes(settings.fix_backend)) return settings;
+  return { ...settings, fix_backend: "", fix_model: "", fix_effort: "" };
 }
 
 /** Agent CLIs found on the login shell's PATH, in default preference order. */

@@ -314,7 +314,9 @@ func trackedFiles(t *testing.T, root string) []string {
 			return err
 		}
 		if d.IsDir() {
-			if d.Name() == ".git" || d.Name() == "node_modules" || desktopBuildOutput[filepath.ToSlash(rel)] {
+			// .bench holds git-ignored private benchmark corpora
+			// (scripts/bench-index-corpus.sh), never published.
+			if d.Name() == ".git" || d.Name() == "node_modules" || filepath.ToSlash(rel) == ".bench" || desktopBuildOutput[filepath.ToSlash(rel)] {
 				return filepath.SkipDir
 			}
 			return nil

@@ -69,9 +69,24 @@ type Group struct {
 	// Stack marks a group baum made for a stack of pull requests and keeps
 	// in step with it (SyncStacks); a person's rename or member change makes
 	// it theirs.
-	Stack     bool      `json:"stack"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	Stack bool `json:"stack"`
+	// Landed are the members of a stack group that are no longer open,
+	// ascending, with what became of them. They stay in the stack, in
+	// place, but are not Members: a review never reads them. Empty for a
+	// group a person made.
+	Landed    []LandedMember `json:"landed"`
+	CreatedAt time.Time      `json:"created_at"`
+	UpdatedAt time.Time      `json:"updated_at"`
+	// chain is a stack group's saved placements (see SyncStacks).
+	chain []chainEntry
+}
+
+// LandedMember is a stack group member that is no longer open. State is
+// StateMerged, StateClosed or StateUnknown (not open any more, but discovery
+// has not yet seen whether it merged).
+type LandedMember struct {
+	Number int    `json:"number"`
+	State  string `json:"state"`
 }
 
 // ReviewedMember is a member as a group review version covered it: the
@@ -105,7 +120,22 @@ CREATE TABLE IF NOT EXISTS versions(group_id TEXT NOT NULL, version INTEGER NOT 
 		_ = db.Close()
 		return nil, err
 	}
+	if err = addChainColumn(db); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
 	return &Store{db: db}, nil
+}
+
+// addChainColumn adds groups.chain, a stack group's placements (SyncStacks),
+// to a database created before it existed.
+func addChainColumn(db *sql.DB) error {
+	var found int
+	if err := db.QueryRow(`SELECT count(*) FROM pragma_table_info('groups') WHERE name='chain'`).Scan(&found); err != nil || found > 0 {
+		return err
+	}
+	_, err := db.Exec(`ALTER TABLE groups ADD COLUMN chain TEXT NOT NULL DEFAULT '[]'`)
+	return err
 }
 
 // Close closes the database.
@@ -162,7 +192,7 @@ func (s *Store) Create(ctx context.Context, repository, name string, members []i
 		return Group{}, err
 	}
 	now := time.Now().UTC().Truncate(time.Millisecond)
-	g := Group{ID: newID(), Repository: repository, Name: name, Members: members, CreatedAt: now, UpdatedAt: now}
+	g := Group{ID: newID(), Repository: repository, Name: name, Members: members, Landed: []LandedMember{}, CreatedAt: now, UpdatedAt: now}
 	encoded, _ := json.Marshal(members)
 	if _, err := s.db.ExecContext(ctx, `INSERT INTO groups(id,repository,name,members,created,updated) VALUES(?,?,?,?,?,?)`, g.ID, g.Repository, g.Name, string(encoded), now.UnixMilli(), now.UnixMilli()); err != nil {
 		return Group{}, err
@@ -170,18 +200,28 @@ func (s *Store) Create(ctx context.Context, repository, name string, members []i
 	return g, nil
 }
 
-const groupColumns = `id,repository,name,members,stack,created,updated`
+const groupColumns = `id,repository,name,members,stack,created,updated,chain`
 
 func scanGroup(row interface{ Scan(...any) error }) (Group, error) {
 	var g Group
-	var members string
+	var members, chain string
 	var created, updated int64
-	if err := row.Scan(&g.ID, &g.Repository, &g.Name, &members, &g.Stack, &created, &updated); err != nil {
+	if err := row.Scan(&g.ID, &g.Repository, &g.Name, &members, &g.Stack, &created, &updated, &chain); err != nil {
 		return Group{}, err
 	}
 	if err := json.Unmarshal([]byte(members), &g.Members); err != nil {
 		return Group{}, err
 	}
+	g.Landed = []LandedMember{}
+	if err := json.Unmarshal([]byte(chain), &g.chain); err != nil {
+		return Group{}, err
+	}
+	for _, entry := range g.chain {
+		if g.Stack && entry.State != "" {
+			g.Landed = append(g.Landed, LandedMember{Number: entry.Number, State: entry.State})
+		}
+	}
+	slices.SortFunc(g.Landed, func(a, b LandedMember) int { return a.Number - b.Number })
 	g.CreatedAt, g.UpdatedAt = time.UnixMilli(created).UTC(), time.UnixMilli(updated).UTC()
 	return g, nil
 }
@@ -242,10 +282,10 @@ func (s *Store) Update(ctx context.Context, id string, name *string, members []i
 	if name == nil && members == nil {
 		return g, nil
 	}
-	g.Stack = false
+	g.Stack, g.Landed = false, []LandedMember{}
 	g.UpdatedAt = time.Now().UTC().Truncate(time.Millisecond)
 	encoded, _ := json.Marshal(g.Members)
-	if _, err := tx.ExecContext(ctx, `UPDATE groups SET name=?, members=?, stack=0, updated=? WHERE id=?`, g.Name, string(encoded), g.UpdatedAt.UnixMilli(), id); err != nil {
+	if _, err := tx.ExecContext(ctx, `UPDATE groups SET name=?, members=?, stack=0, chain='[]', updated=? WHERE id=?`, g.Name, string(encoded), g.UpdatedAt.UnixMilli(), id); err != nil {
 		return Group{}, err
 	}
 	return g, tx.Commit()
@@ -354,7 +394,9 @@ type versionSummary struct {
 
 // Put appends v only while previous is still the group's latest version (0
 // for none). The document must be the group's: a review of its repository
-// with a stack, at version previous+1.
+// with a stack, at version previous+1. A stack group, whose name is baum's,
+// takes the name the review gave it (the document's stack title); a group
+// the person made or took over keeps theirs.
 func (s *Store) Put(ctx context.Context, id string, previous int, v store.Version) error {
 	g, err := s.Get(ctx, id)
 	if err != nil {
@@ -369,6 +411,7 @@ func (s *Store) Put(ctx context.Context, id string, previous int, v store.Versio
 			RiskScore json.RawMessage `json:"risk_score"`
 		} `json:"summary"`
 		Stack *struct {
+			Title   string           `json:"title"`
 			Members []ReviewedMember `json:"members"`
 		} `json:"stack"`
 	}
@@ -389,14 +432,26 @@ func (s *Store) Put(ctx context.Context, id string, previous int, v store.Versio
 	if err != nil {
 		return err
 	}
-	result, err := s.db.ExecContext(ctx, `INSERT INTO versions(group_id,version,metadata,summary,document) SELECT ?,?,?,?,? WHERE COALESCE((SELECT MAX(version) FROM versions WHERE group_id=?),0)=?`, id, v.Metadata.Version, metadata, summary, []byte(v.Document), id, previous)
+	// One transaction, so a rename or a dissolution by SyncStacks in between
+	// is never written over.
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	result, err := tx.ExecContext(ctx, `INSERT INTO versions(group_id,version,metadata,summary,document) SELECT ?,?,?,?,? WHERE COALESCE((SELECT MAX(version) FROM versions WHERE group_id=?),0)=?`, id, v.Metadata.Version, metadata, summary, []byte(v.Document), id, previous)
 	if err != nil {
 		return err
 	}
 	if n, err := result.RowsAffected(); err != nil || n != 1 {
 		return ErrConflict
 	}
-	return nil
+	if name, err := cleanName(doc.Stack.Title); err == nil {
+		if _, err := tx.ExecContext(ctx, `UPDATE groups SET name=?, updated=? WHERE id=? AND stack=1 AND deleted=0 AND name<>?`, name, time.Now().UTC().Truncate(time.Millisecond).UnixMilli(), id, name); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }
 
 // documentRepository is how a document names the repository: owner/name,

@@ -7,13 +7,6 @@ import "./review-form.css";
 export const harnesses = [
   { id: "claude", name: "Claude Code", detail: "Your Claude plan", brand: "claude" as const },
   { id: "codex", name: "Codex", detail: "Your ChatGPT plan", brand: "openai" as const },
-  {
-    id: "cursor-agent",
-    name: "Cursor Agent",
-    detail: "Your Cursor plan",
-    brand: "cursor" as const,
-  },
-  { id: "anthropic", name: "Anthropic API", detail: "Pay per use", brand: "claude" as const },
 ];
 const scopes: { id: PullRequests; label: string }[] = [
   { id: "all", label: "All" },
@@ -23,7 +16,13 @@ const scopes: { id: PullRequests; label: string }[] = [
 ];
 const CUSTOM = "\u0000custom";
 const INHERIT = "\u0000inherit";
-export const harnessName = (id: string) => harnesses.find((h) => h.id === id)?.name ?? id;
+/** Backends the app no longer offers; a job or config file may still name one. */
+const retiredNames: Record<string, string> = {
+  "cursor-agent": "Cursor Agent",
+  anthropic: "Anthropic API",
+};
+export const harnessName = (id: string) =>
+  harnesses.find((h) => h.id === id)?.name ?? retiredNames[id] ?? id;
 
 /** The harness tiles. With `inherit`, a first tile leaves the choice to the
  *  level above, and `value` is null while it is picked. */
@@ -47,7 +46,7 @@ export function HarnessPicker({
   const name = useId();
   const options = [
     ...(inherit ? [{ id: INHERIT, name: inherit.label, detail: inherit.detail, brand: null }] : []),
-    ...harnesses.filter((harness) => harness.id === "claude" || harness.id === "codex"),
+    ...harnesses,
   ];
   return (
     <fieldset className="review-section">
@@ -92,6 +91,11 @@ export function HarnessPicker({
   );
 }
 
+const effortNames: Record<string, string> = {
+  "review-effort": "Review reasoning effort",
+  "fix-effort": "Fix reasoning effort",
+};
+
 type EffortSelection = {
   value: string;
   onChange: (next: string) => void;
@@ -117,11 +121,7 @@ function EffortPicker({
           value={supportedEffort(backend, model, value)}
           disabled={disabled || levels.length === 0}
           onChange={(event) => onChange(event.target.value)}
-          aria-label={
-            id === "review-effort"
-              ? "Review reasoning effort"
-              : "Decision extraction reasoning effort"
-          }
+          aria-label={effortNames[id] ?? "Decision extraction reasoning effort"}
         >
           <option value="">Default</option>
           {levels.map((level) => (
@@ -215,7 +215,7 @@ export function ModelPicker({
       </div>
       {effort ? (
         <EffortPicker
-          id={id === "review-model" ? "review-effort" : "decisions-effort"}
+          id={id.replace(/-model$/, "-effort")}
           backend={backend}
           model={effort.model ?? value ?? ""}
           value={effort.value}
@@ -258,11 +258,19 @@ export function ReviewSettingsForm({
 }) {
   const update = (patch: Partial<ReviewSettings>) => {
     const next = { ...settings, ...patch };
-    onChange({ ...next, effort: supportedEffort(next.backend, next.model, next.effort) });
+    onChange({
+      ...next,
+      effort: supportedEffort(next.backend, next.model, next.effort),
+      fix_effort: next.fix_backend
+        ? supportedEffort(next.fix_backend, next.fix_model ?? "", next.fix_effort)
+        : "",
+    });
   };
+  const fix = settings.fix_backend || null;
   return (
     <div id="review-panel" className={`${className} review-card`}>
       <HarnessPicker
+        legend="Reviews and extraction"
         value={available.includes(settings.backend) ? settings.backend : null}
         disabled={disabled}
         available={available}
@@ -310,6 +318,35 @@ export function ReviewSettingsForm({
             effort={{ value: settings.effort ?? "", onChange: (effort) => update({ effort }) }}
             note="You can customise the agent and model per task in the app settings."
           />
+          <HarnessPicker
+            legend="Fixes"
+            inherit={{ label: "Same as reviews", detail: "Agent and model" }}
+            value={fix}
+            disabled={disabled}
+            available={available}
+            missingLabel={detectionError ? "Not detected" : "Not installed"}
+            onChange={(backend) =>
+              update({
+                fix_backend: backend ?? "",
+                fix_model: backend ? (modelPresets[backend]?.[0] ?? "") : "",
+                fix_effort: backend ? settings.fix_effort : "",
+              })
+            }
+          />
+          {fix ? (
+            <ModelPicker
+              key={fix}
+              id="fix-model"
+              backend={fix}
+              value={settings.fix_model ?? ""}
+              disabled={disabled}
+              onChange={(model) => update({ fix_model: model ?? "" })}
+              effort={{
+                value: settings.fix_effort ?? "",
+                onChange: (fix_effort) => update({ fix_effort }),
+              }}
+            />
+          ) : null}
           <div className="review-section">
             <label className="switch-row">
               <span>
