@@ -33,7 +33,8 @@ const href = (page: string) => PAGES.find((item) => item.page === page)!.href();
 type Stop = {
   title: string;
   body: ReactNode;
-  /** What the stop points at; without one, or until it shows, the card is centred. */
+  /** What the stop points at, the first match on screen; without one, or
+   *  until it shows, the card is centred. */
   target?: string;
   /** Where the stop is: a page's address, or "review" for the pull request
    *  the Inbox stops opened. */
@@ -90,15 +91,15 @@ const STOPS: Stop[] = [
   {
     title: "Changes, riskiest first",
     body: "Each cites its lines and the agent session that wrote them.",
-    target: "#review-rail",
+    // In a narrow window the list is a sheet, and its button stands for it.
+    target: "#review-rail, [aria-controls=review-rail]",
     at: "review",
   },
   {
     title: "Act on it",
     body: (
       <>
-        <B>Walk through</B> goes change by change and sends your comments as one review.{" "}
-        <B>Merge…</B> when it's green.
+        <B>Ask</B> questions about the change, <B>Regenerate review</B> after new commits.
       </>
     ),
     target: "[data-tour=review-actions]",
@@ -106,7 +107,7 @@ const STOPS: Stop[] = [
   },
   {
     title: "Timeline",
-    body: "Decisions you and your agents made, and why.",
+    body: "Each feature you're building: its status, people and pull requests.",
     target: ".local-main",
     at: href("timeline"),
   },
@@ -180,9 +181,11 @@ export function Tour({ close }: { close: () => void }) {
     const measure = () => {
       if (stop.at === "review" && new URLSearchParams(location.search).has("pr"))
         review.current = `${location.pathname}${location.search}`;
-      const element = stop.target ? document.querySelector(stop.target) : null;
-      const found = element?.getBoundingClientRect();
-      const box = found?.width && found.height ? found : null;
+      // The first match on screen: a narrow window hides some targets.
+      const box =
+        [...(stop.target ? document.querySelectorAll(stop.target) : [])]
+          .map((element) => element.getBoundingClientRect())
+          .find((found) => found.width && found.height) ?? null;
       setRect((old) =>
         old &&
         box &&

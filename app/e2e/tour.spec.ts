@@ -22,8 +22,15 @@ test("the tour walks the Inbox, a pull request and the other pages", async ({ pa
   test.slow();
   await page.goto(await launchURL());
   await expect(page.locator("button.upnext-row").first()).toBeVisible({ timeout: 15000 });
-  for (const scheme of pictures ? (["light", "dark"] as const) : (["light"] as const)) {
+  // Wide, and narrow enough that the review's sections become a sheet.
+  const passes = [
+    { scheme: "light", width: 1280 },
+    { scheme: "light", width: 1100 },
+    ...(pictures ? [{ scheme: "dark", width: 1280 }] : []),
+  ] as const;
+  for (const { scheme, width } of passes) {
     await page.emulateMedia({ colorScheme: scheme });
+    await page.setViewportSize({ width, height: 900 });
     const start = new URL(page.url());
     start.search = "?tour=1";
     await page.goto(start.href);
@@ -34,7 +41,10 @@ test("the tour walks the Inbox, a pull request and the other pages", async ({ pa
       const tour = page.locator(".tour-card");
       titles.push((await tour.locator("h2").textContent()) ?? "");
       await expect(tour).toBeInViewport();
-      if (pictures) {
+      // Every stop but the first and last points at what it talks about.
+      if (stop > 1 && titles.at(-1) !== "That's the tour")
+        await expect(page.locator(".tour-spot"), titles.at(-1)).toBeVisible();
+      if (pictures && width === 1280) {
         await page.waitForTimeout(400);
         await page.screenshot({
           path: `test-results/tour-screens/${String(stop).padStart(2, "0")}-${scheme}.png`,
