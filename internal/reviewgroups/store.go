@@ -69,9 +69,15 @@ type Group struct {
 	// Stack marks a group baum made for a stack of pull requests and keeps
 	// in step with it (SyncStacks); a person's rename or member change makes
 	// it theirs.
-	Stack     bool      `json:"stack"`
+	Stack bool `json:"stack"`
+	// Landed are the members of a stack group that merged, ascending. They
+	// stay in the stack (shown as merged) but are not Members: a review
+	// never reads them. Empty for a group a person made.
+	Landed    []int     `json:"landed"`
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
+	// chain is a stack group's saved placements (see SyncStacks).
+	chain []chainEntry
 }
 
 // ReviewedMember is a member as a group review version covered it: the
@@ -105,7 +111,22 @@ CREATE TABLE IF NOT EXISTS versions(group_id TEXT NOT NULL, version INTEGER NOT 
 		_ = db.Close()
 		return nil, err
 	}
+	if err = addChainColumn(db); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
 	return &Store{db: db}, nil
+}
+
+// addChainColumn adds groups.chain, a stack group's placements (SyncStacks),
+// to a database created before it existed.
+func addChainColumn(db *sql.DB) error {
+	var found int
+	if err := db.QueryRow(`SELECT count(*) FROM pragma_table_info('groups') WHERE name='chain'`).Scan(&found); err != nil || found > 0 {
+		return err
+	}
+	_, err := db.Exec(`ALTER TABLE groups ADD COLUMN chain TEXT NOT NULL DEFAULT '[]'`)
+	return err
 }
 
 // Close closes the database.
@@ -162,7 +183,7 @@ func (s *Store) Create(ctx context.Context, repository, name string, members []i
 		return Group{}, err
 	}
 	now := time.Now().UTC().Truncate(time.Millisecond)
-	g := Group{ID: newID(), Repository: repository, Name: name, Members: members, CreatedAt: now, UpdatedAt: now}
+	g := Group{ID: newID(), Repository: repository, Name: name, Members: members, Landed: []int{}, CreatedAt: now, UpdatedAt: now}
 	encoded, _ := json.Marshal(members)
 	if _, err := s.db.ExecContext(ctx, `INSERT INTO groups(id,repository,name,members,created,updated) VALUES(?,?,?,?,?,?)`, g.ID, g.Repository, g.Name, string(encoded), now.UnixMilli(), now.UnixMilli()); err != nil {
 		return Group{}, err
@@ -170,18 +191,28 @@ func (s *Store) Create(ctx context.Context, repository, name string, members []i
 	return g, nil
 }
 
-const groupColumns = `id,repository,name,members,stack,created,updated`
+const groupColumns = `id,repository,name,members,stack,created,updated,chain`
 
 func scanGroup(row interface{ Scan(...any) error }) (Group, error) {
 	var g Group
-	var members string
+	var members, chain string
 	var created, updated int64
-	if err := row.Scan(&g.ID, &g.Repository, &g.Name, &members, &g.Stack, &created, &updated); err != nil {
+	if err := row.Scan(&g.ID, &g.Repository, &g.Name, &members, &g.Stack, &created, &updated, &chain); err != nil {
 		return Group{}, err
 	}
 	if err := json.Unmarshal([]byte(members), &g.Members); err != nil {
 		return Group{}, err
 	}
+	g.Landed = []int{}
+	if err := json.Unmarshal([]byte(chain), &g.chain); err != nil {
+		return Group{}, err
+	}
+	for _, entry := range g.chain {
+		if g.Stack && entry.Landed {
+			g.Landed = append(g.Landed, entry.Number)
+		}
+	}
+	slices.Sort(g.Landed)
 	g.CreatedAt, g.UpdatedAt = time.UnixMilli(created).UTC(), time.UnixMilli(updated).UTC()
 	return g, nil
 }
@@ -242,10 +273,10 @@ func (s *Store) Update(ctx context.Context, id string, name *string, members []i
 	if name == nil && members == nil {
 		return g, nil
 	}
-	g.Stack = false
+	g.Stack, g.Landed = false, []int{}
 	g.UpdatedAt = time.Now().UTC().Truncate(time.Millisecond)
 	encoded, _ := json.Marshal(g.Members)
-	if _, err := tx.ExecContext(ctx, `UPDATE groups SET name=?, members=?, stack=0, updated=? WHERE id=?`, g.Name, string(encoded), g.UpdatedAt.UnixMilli(), id); err != nil {
+	if _, err := tx.ExecContext(ctx, `UPDATE groups SET name=?, members=?, stack=0, chain='[]', updated=? WHERE id=?`, g.Name, string(encoded), g.UpdatedAt.UnixMilli(), id); err != nil {
 		return Group{}, err
 	}
 	return g, tx.Commit()

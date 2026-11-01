@@ -2,10 +2,12 @@ package reviewgroups
 
 import (
 	"context"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
 
+	"github.com/baum-ai/baum/internal/appdb/appdbtest"
 	"github.com/baum-ai/baum/internal/discovery"
 )
 
@@ -31,7 +33,7 @@ func TestSyncStacksFollowsTheStackAndLeavesThePersonsGroups(t *testing.T) {
 	s := openStore(t)
 	sync := func(prs ...discovery.PullRequest) bool {
 		t.Helper()
-		changed, err := s.SyncStacks(ctx, "Acme/Demo", prs)
+		changed, err := s.SyncStacks(ctx, "Acme/Demo", prs, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -58,17 +60,18 @@ func TestSyncStacksFollowsTheStackAndLeavesThePersonsGroups(t *testing.T) {
 		t.Fatal("the same stack changed something")
 	}
 	// The bottom merged (#2 retargeted to main) and #4 was added on top: same
-	// group, new members, same name.
+	// group, new members, same name; #1 stays, landed.
 	if !sync(open(2, "b", "main"), open(3, "c", "b"), open(4, "d", "c")) {
 		t.Fatal("new members changed nothing")
 	}
-	if list = groups(); len(list) != 1 || list[0].ID != id || list[0].Name != "PR a" || !slices.Equal(list[0].Members, []int{2, 3, 4}) {
+	if list = groups(); len(list) != 1 || list[0].ID != id || list[0].Name != "PR a" || !slices.Equal(list[0].Members, []int{2, 3, 4}) || !slices.Equal(list[0].Landed, []int{1}) {
 		t.Fatalf("groups %+v", list)
 	}
-	// The stack is gone: the group is dissolved, and its pull requests may
-	// form a stack group again.
-	if !sync(open(4, "d", "main")) || len(groups()) != 0 {
-		t.Fatalf("dissolved %+v", groups())
+	// The stack is gone (#2 and #3 closed, #1 merged): the group is
+	// dissolved, and its pull requests may form a stack group again.
+	closedAndMerged := []discovery.Observation{{Number: 1, State: "MERGED"}, {Number: 2, State: "CLOSED"}, {Number: 3, State: "CLOSED"}}
+	if changed, err := s.SyncStacks(ctx, "Acme/Demo", []discovery.PullRequest{open(4, "d", "main")}, closedAndMerged); err != nil || !changed || len(groups()) != 0 {
+		t.Fatalf("dissolved %+v %v %v", groups(), changed, err)
 	}
 	sync(open(3, "c", "main"), open(4, "d", "c"))
 	if list = groups(); len(list) != 1 || list[0].ID == id {
@@ -115,7 +118,91 @@ func TestSyncStacksLeavesOutStacksPastMaxMembers(t *testing.T) {
 	for i := 2; i <= MaxMembers+1; i++ {
 		prs = append(prs, open(i, "b"+string(rune('0'+i)), "b"+string(rune('0'+i-1))))
 	}
-	if changed, err := s.SyncStacks(context.Background(), "acme/demo", prs); err != nil || changed {
+	if changed, err := s.SyncStacks(context.Background(), "acme/demo", prs, nil); err != nil || changed {
 		t.Fatalf("a stack of %d: %v %v", len(prs), changed, err)
+	}
+}
+
+func TestSyncStacksKeepsMergedMembersInPlaceAndDropsClosedOnes(t *testing.T) {
+	ctx := context.Background()
+	s := openStore(t)
+	sync := func(observations []discovery.Observation, prs ...discovery.PullRequest) bool {
+		t.Helper()
+		changed, err := s.SyncStacks(ctx, "acme/demo", prs, observations)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return changed
+	}
+	only := func() Group {
+		t.Helper()
+		list, err := s.List(ctx)
+		if err != nil || len(list) != 1 {
+			t.Fatalf("groups %+v %v", list, err)
+		}
+		return list[0]
+	}
+	// main <- a (#1) <- b (#2) <- c (#3) and d (#4) also on b.
+	sync(nil, open(1, "a", "main"), open(2, "b", "a"), open(3, "c", "b"), open(4, "d", "b"))
+	id := only().ID
+	merged := func(numbers ...int) []discovery.Observation {
+		var out []discovery.Observation
+		for _, n := range numbers {
+			out = append(out, discovery.Observation{Number: n, State: "MERGED"})
+		}
+		return out
+	}
+
+	// #1 merges and leaves the open list: it stays, landed, and the open
+	// members keep the group (membership is not recomputed from open only).
+	if !sync(merged(1), open(2, "b", "main"), open(3, "c", "b"), open(4, "d", "b")) {
+		t.Fatal("a merge changed nothing")
+	}
+	if g := only(); g.ID != id || !slices.Equal(g.Members, []int{2, 3, 4}) || !slices.Equal(g.Landed, []int{1}) {
+		t.Fatalf("after #1 merged %+v", g)
+	}
+	if sync(merged(1), open(2, "b", "main"), open(3, "c", "b"), open(4, "d", "b")) {
+		t.Fatal("the same state changed something")
+	}
+	// #2 merges too and its children are retargeted: still one group.
+	sync(merged(1, 2), open(3, "c", "main"), open(4, "d", "main"))
+	if g := only(); g.ID != id || !slices.Equal(g.Members, []int{3, 4}) || !slices.Equal(g.Landed, []int{1, 2}) {
+		t.Fatalf("after #2 merged %+v", g)
+	}
+	// A member not known to be merged yet is kept, not dropped.
+	sync(nil, open(3, "c", "main"), open(4, "d", "main"))
+	if g := only(); g.ID != id || !slices.Equal(g.Landed, []int{1, 2}) {
+		t.Fatalf("unobserved members %+v", g)
+	}
+	// #4 closes without merging: it drops out, the merged ones stay with #3.
+	closedFour := append(merged(1, 2), discovery.Observation{Number: 4, State: "CLOSED"})
+	sync(closedFour, open(3, "c", "main"))
+	if g := only(); g.ID != id || !slices.Equal(g.Members, []int{3}) || !slices.Equal(g.Landed, []int{1, 2}) {
+		t.Fatalf("after #4 closed %+v", g)
+	}
+	// The last open member merges: nothing is left to review together.
+	sync(merged(1, 2, 3))
+	if list, _ := s.List(ctx); len(list) != 0 {
+		t.Fatalf("an ended stack kept its group: %+v", list)
+	}
+}
+
+func TestOpenAddsTheChainColumnToAnOlderDatabase(t *testing.T) {
+	path := filepath.Join(appdbtest.TempDir(t), "state", "groups.sqlite")
+	s, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.Exec(`ALTER TABLE groups DROP COLUMN chain`); err != nil {
+		t.Fatal(err)
+	}
+	_ = s.Close()
+	s, err = Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = s.Close() }()
+	if _, err := s.List(context.Background()); err != nil {
+		t.Fatal(err)
 	}
 }

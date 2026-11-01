@@ -221,6 +221,14 @@ export function GroupPage({
         same.find((e) => e.pull_request.number === number),
     };
   });
+  const landed = (group.landed ?? []).map((number) => ({
+    number,
+    entry: entries.find(
+      (e) =>
+        sameRepository(e.pull_request.repository, group.repository) &&
+        e.pull_request.number === number,
+    ),
+  }));
   const memberHref = (entry: Entry) => {
     const cloneId = cloneFor(entry);
     return appURL(
@@ -552,6 +560,21 @@ export function GroupPage({
                 ) : null}
               </header>
               <ul className="local-group-members">
+                {landed.map(({ number, entry }) => (
+                  <li key={`merged-${number}`} className="local-group-member" data-landed="true">
+                    <span className="local-group-number">#{number}</span>
+                    <div className="local-group-member-title">
+                      {entry ? (
+                        <ViewerLink href={memberHref(entry)}>{entry.pull_request.title}</ViewerLink>
+                      ) : (
+                        <span className="text-(--text-tertiary)">Not in the inbox</span>
+                      )}
+                      <span className="local-group-member-state">
+                        <span>Merged</span>
+                      </span>
+                    </div>
+                  </li>
+                ))}
                 {members.map(({ number, entry }) => (
                   <li key={number} className="local-group-member">
                     <span className="local-group-number">#{number}</span>

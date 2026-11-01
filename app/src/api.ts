@@ -120,6 +120,8 @@ export type ReviewGroup = {
   members: number[];
   /** baum made the group for stacked pull requests, not a person. */
   stack?: boolean;
+  /** A stack group's members that merged, ascending: still part of the stack, not reviewed. */
+  landed?: number[];
   created_at: string;
   updated_at: string;
   version_count: number;
