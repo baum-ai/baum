@@ -172,6 +172,11 @@ handshake, in [`apiclient`](../apiclient).
   without it, or with it disabled, is an error. No raw hook settings are edited and no
   migration markers or compatibility cleanup are maintained. Installation
   downloads from GitHub; it needs no baum sign-in and calls no baum server.
+- Codex plugin installation and updates also prepare its terminal title for
+  Focus, preserving other title items and reporting when running terminal
+  sessions need restarting. Existing connections are repaired when Focus
+  cannot locate their terminal. See
+  [Codex focus configuration](../../internal/codexconfig/README.md).
 - [`agentplugins`](../agentplugins/README.md) owns the native commands. Claude
   uses user-scope plugin install/list/uninstall; Codex uses plugin add/list/
   remove. Successful commands are verified with native list JSON. A missing
@@ -181,7 +186,10 @@ handshake, in [`apiclient`](../apiclient).
   processes where supported. One failing agent does not stop the other.
 - `baum hooks status --user [--json]` reads native registries without changing
   them. It reports detection of the CLI, plugin ID, installation, enablement
-  and version separately; installed and enabled never imply trusted. A config
+  and version separately. Installed, enabled Codex plugins also include
+  `trust.state`, read through Codex's effective hook inventory. Only a
+  trusted result means every required baum hook is present, enabled and
+  approved; an unavailable check reports unknown. A config
   directory alone is not an executable agent. The desktop setup screen uses
   these commands, shows disabled plugins separately and offers installation/
   enablement. It allows both agents' action budgets plus process overhead.

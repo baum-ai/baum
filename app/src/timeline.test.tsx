@@ -17,6 +17,7 @@ import { jobReasonText, type Job } from "./api";
 import { decisionSections, localDayStart } from "@baum/viewer/decision-log";
 import { pullRequestHref, TimelinePage } from "./timeline";
 import { forgetLastRows } from "./shortcuts";
+import { PageRefreshProvider, usePageRefresh } from "./shell";
 
 const Link = (props: ViewerLinkProps) => <a {...props} />;
 const me = { email: "me@example.com", name: null, login: null, avatar_url: null };
@@ -375,6 +376,29 @@ it("reads only the tab shown, and again with the rows it had when the log change
   await act(async () => {});
   expect(requests).toContain("/s/test-ns/api/timeline/features");
   expect(requests.some((path) => path.includes("api/timeline/decisions"))).toBe(false);
+});
+
+it("ends the refresh's loader once the open tab's list is read again, or fails to be", async () => {
+  function Page() {
+    const page = usePageRefresh("timeline", () => Promise.resolve());
+    return (
+      <PageRefreshProvider value={page}>
+        <Harness initial="page=timeline" />
+      </PageRefreshProvider>
+    );
+  }
+  await act(async () => root.render(<Page />));
+  await act(async () => {});
+  const button = () => node.querySelector<HTMLButtonElement>('button[aria-label="Refresh"]')!;
+  const refreshed = async () => {
+    act(() => button().click());
+    expect(button().getAttribute("aria-busy")).toBe("true");
+    for (let i = 0; i < 4; i++) await act(async () => {});
+    return button().getAttribute("aria-busy");
+  };
+  expect(await refreshed()).toBeNull();
+  answers["api/timeline/features"] = () => Promise.resolve(new Response("down", { status: 500 }));
+  expect(await refreshed()).toBeNull();
 });
 
 it("says when the decision store or the decisions switch is off", async () => {

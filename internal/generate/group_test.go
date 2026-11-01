@@ -3,6 +3,7 @@ package generate_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"slices"
@@ -227,7 +228,8 @@ func TestGroupRunReviewsEveryMemberAsOneDocument(t *testing.T) {
 func TestGroupRunStopsWhenAMemberHeadMoved(t *testing.T) {
 	f := newFixture(t)
 	_, err := generate.Run(context.Background(), f.groupOptions(t, generate.GroupMember{Number: 7, Head: f.repo.Head, ReviewVersion: 1}, generate.GroupMember{Number: 8, Head: "0123456789abcdef", ReviewVersion: 1}))
-	if generate.CategoryOf(err) != generate.CategoryInput || !strings.Contains(err.Error(), "#8 head changed") {
+	// The job queue tells a moved head from other input failures.
+	if generate.CategoryOf(err) != generate.CategoryInput || !strings.Contains(err.Error(), "#8: pull request head changed") || !errors.Is(err, generate.ErrHeadChanged) {
 		t.Fatalf("moved head: %v", err)
 	}
 	if len(f.backend.Requests) != 0 {

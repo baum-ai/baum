@@ -2722,6 +2722,16 @@ browser. A single item the daemon will not run (a fix's `blocked_reason`) is
 `Generate` is `Estimate` (a preparation of the items, the name historical)
 then `SubmitConfirmed`, which prepares again and refuses changed inputs;
 there is no estimate endpoint.
+Before any model call the executor rechecks a queued job (`Local.confirmed`).
+A changed head, group members or isolation warning stops it, and so does a
+changed GitHub account. A changed agent, model or limit does not: the run uses
+the settings current when it starts, as one started then would. The account
+is compared through `Prepared.account`, a hash of the credential partition
+kept in memory only; a job read back from the journal compares the whole
+`ConfigDigest`, which also covers the account. An automatic pull request
+review whose head moved is cancelled as `superseded` (the new head has its
+own run), and a group job whose group was deleted or whose stack dissolved is
+cancelled as `group_removed`.
 Fresh GitHub REST evidence authorizes the head and isolation warning; all
 preflight I/O happens outside the queue mutex so cancellation stays responsive.
 A job names a clone (`Item.Clone`). An item whose clone is unknown or
@@ -2876,11 +2886,23 @@ job (`Prepared.Members` holds each member's head, which the confirmation
 covers) and needs a saved review of each member in the clone's store, or
 answers `409 {"members_need_reviews": [...]}`. `Queue.Generate`, which starts
 what a person asked for, instead sets `Item.AwaitMembers`: preparation accepts
-those members (`Prepared.Awaiting`) and their own reviews are queued ahead of
-the group's job, except members whose review is already queued or running. The
-queue starts jobs in order and never runs two that share a pull request, so the
-group's job runs after them. If a member still has no saved review when it
-runs, it fails with reason `members_need_reviews`. Execution passes
+members without a saved review of their current head (`Prepared.Awaiting`), and
+their own reviews are queued with the group's job, except members whose review
+is already queued or running in the group's clone. A group job does not start
+while any member has a review or a fix queued or running (`membersBusy`). When
+it starts and finds a member's head moved, often after a fix pushed, it does
+not fail: `requeueGroup` prepares it again at the new heads, queues reviews of
+the moved members that lack one of their new head (automatic ones for an
+automatic group), and puts the job back to waiting, at most
+`maxGroupRequeues` times (`Job.Requeued`). Only the heads may differ: the same
+members, the same GitHub account and no isolation confirmation the job lacks;
+otherwise, or past the limit, it fails with reason `members_changed`, and a
+person's cancel during the requeue stays final. GitHub can lag a push by
+seconds, so a preparation that does not show the move yet is read again a few
+times, while the job keeps its worker slot. A member whose new review fails
+leaves the group to read that member's previous saved review. If
+a member still has no saved review when it runs, it fails with reason
+`members_need_reviews`. Execution passes
 `generate.Options.Group` and publishes through `reviewgroups.Publisher`.
 `generate.Run` then assembles each member with the ordinary assembler (no
 description images, an equal share of the checkout budget), merges the
@@ -3854,6 +3876,12 @@ replace it.
     titles. A failed tmux lookup falls through to native terminals, since its
     variables may be inherited. A shortened ID needs at least 24 characters and
     an ellipsis. Missing or ambiguous matches select nothing and explain why.
+    Connecting or updating Codex through baum also puts `thread-id` last in
+    its user terminal title via `internal/codexconfig`, preserving other
+    title items. When no terminal matches, Focus repairs an older user's
+    title setting and asks them to restart the TUI and resume the conversation.
+    Configuration errors leave the file unchanged; ambiguous matches and
+    terminal API failures do not change settings.
     This selects an existing TUI; it never resumes a second conversation.
 - **Transcripts.** `GET /api/live-sessions/{agent}/{id}/transcript`
   (`Transcripts`, mounted beside the list by the same `LocalAPI.Live`

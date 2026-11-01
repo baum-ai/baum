@@ -33,7 +33,7 @@ import {
 import { PullRequestState } from "./inbox";
 import { CloneActions } from "./repositories";
 import { CancelJob, GenerationOutcome, ReviewJob } from "./review";
-import { Notice, PageBar, RefreshButton } from "./shell";
+import { Notice, PageBar, RefreshButton, type RefreshRun, usePageRefreshAction } from "./shell";
 import { useShortcuts } from "./shortcuts";
 import { LoadingStatus, NineDots } from "./nine-dots";
 
@@ -53,6 +53,13 @@ function numberList(numbers: number[]) {
     ? `${named.slice(0, -1).join(", ")} and ${named[named.length - 1]}`
     : (named[0] ?? "");
 }
+
+/** What a stack group says of a member that is no longer open. */
+const landedLabel: Record<string, string> = {
+  merged: "Merged",
+  closed: "Closed",
+  unknown: "No longer open",
+};
 
 /** What a group review waits for while its members' reviews run. */
 function waitingText(numbers: number[]) {
@@ -205,8 +212,10 @@ export function GroupPage({
   revision: number;
   changed: () => Promise<void>;
   /** Reads the group's repository from GitHub again, from the head's refresh. */
-  refresh?: () => Promise<void>;
+  refresh?: (run: RefreshRun) => Promise<unknown>;
 }) {
+  // The refresh key works before the head and its button are drawn.
+  usePageRefreshAction(refresh);
   const url = useUrlState();
   const back = backTo(url.search);
   const job = groupJob(group, jobs);
@@ -221,6 +230,15 @@ export function GroupPage({
         same.find((e) => e.pull_request.number === number),
     };
   });
+  const landed = (group.landed ?? []).map(({ number, state }) => ({
+    number,
+    state,
+    entry: entries.find(
+      (e) =>
+        sameRepository(e.pull_request.repository, group.repository) &&
+        e.pull_request.number === number,
+    ),
+  }));
   const memberHref = (entry: Entry) => {
     const cloneId = cloneFor(entry);
     return appURL(
@@ -552,6 +570,21 @@ export function GroupPage({
                 ) : null}
               </header>
               <ul className="local-group-members">
+                {landed.map(({ number, state, entry }) => (
+                  <li key={`landed-${number}`} className="local-group-member" data-landed={state}>
+                    <span className="local-group-number">#{number}</span>
+                    <div className="local-group-member-title">
+                      {entry ? (
+                        <ViewerLink href={memberHref(entry)}>{entry.pull_request.title}</ViewerLink>
+                      ) : (
+                        <span className="text-(--text-tertiary)">Not in the inbox</span>
+                      )}
+                      <span className="local-group-member-state">
+                        <span>{landedLabel[state] ?? "No longer open"}</span>
+                      </span>
+                    </div>
+                  </li>
+                ))}
                 {members.map(({ number, entry }) => (
                   <li key={number} className="local-group-member">
                     <span className="local-group-number">#{number}</span>

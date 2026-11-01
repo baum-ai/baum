@@ -17,7 +17,14 @@ import {
 } from "./shortcuts";
 import { rowKey, type Entry, type ReviewGroup } from "./api";
 import type { ReactNode } from "react";
-import { PageRefreshProvider, RefreshButton, usePageRefresh, useReread } from "./shell";
+import {
+  PageRefreshProvider,
+  RefreshButton,
+  type RefreshRun,
+  usePageRefresh,
+  usePageRefreshAction,
+  useReread,
+} from "./shell";
 
 const entry = (number: number, patch: Partial<Entry> = {}, mine = true): Entry => ({
   pull_request: {
@@ -345,22 +352,7 @@ it("lists exactly the keys that work in the sheet", async () => {
     "Alt",
     "Esc",
   ]);
-  expect(listed("Inbox")).toEqual([
-    "j",
-    "↓",
-    "k",
-    "↑",
-    "Enter",
-    "l",
-    "→",
-    "h",
-    "←",
-    "m",
-    "f",
-    "t",
-    "s",
-    "u",
-  ]);
+  expect(listed("Inbox")).toEqual(["j", "↓", "k", "↑", "Enter", "Space", "m", "f", "t", "s", "u"]);
   expect(listed("Pull requests")).toEqual([
     "j",
     "↓",
@@ -588,8 +580,16 @@ it("reads the refresh key with the platform's command key, leaving Shift to the 
 });
 
 /** A page as the app holds one: its refresh, and ⌘R pressing it. */
-function RefreshPage({ scope = "page", children }: { scope?: string; children: ReactNode }) {
-  const page = usePageRefresh(scope);
+function RefreshPage({
+  scope = "page",
+  fallback = () => Promise.resolve(),
+  children,
+}: {
+  scope?: string;
+  fallback?: (run: RefreshRun) => Promise<unknown>;
+  children: ReactNode;
+}) {
+  const page = usePageRefresh(scope, fallback);
   useCommandKeys((action) => (action.kind === "refresh" ? page.press() : undefined));
   return <PageRefreshProvider value={page}>{children}</PageRefreshProvider>;
 }
@@ -602,14 +602,22 @@ const pressRefreshKey = () => {
   return event;
 };
 
-it("refreshes from its button and the refresh key, with the loader until it settles", async () => {
-  let settle = () => {};
+/** A refresh that settles only when told, with the presses it was given. */
+function heldRefresh() {
+  const runs: RefreshRun[] = [];
+  const settles: (() => void)[] = [];
   const refresh = vi.fn(
-    () =>
+    (run: RefreshRun) =>
       new Promise<void>((resolve) => {
-        settle = resolve;
+        runs.push(run);
+        settles.push(resolve);
       }),
   );
+  return { refresh, runs, settle: (index = settles.length - 1) => settles[index]!() };
+}
+
+it("refreshes from its button and the refresh key, with the loader until it settles", async () => {
+  const { refresh, runs, settle } = heldRefresh();
   await act(async () =>
     root.render(
       <RefreshPage>
@@ -620,19 +628,18 @@ it("refreshes from its button and the refresh key, with the loader until it sett
   const button = node.querySelector<HTMLButtonElement>("button")!;
   expect(button.getAttribute("aria-keyshortcuts")).toBe("Control+R");
   expect(button.querySelector(".nine-dots")).toBeNull();
-  // The key never reloads the app; a press while one runs starts no other.
+  // The key never reloads the app.
   expect(pressRefreshKey().defaultPrevented).toBe(true);
   await act(async () => {});
   expect(refresh).toHaveBeenCalledTimes(1);
+  expect(runs[0]!.restart).toBe(false);
+  expect(runs[0]!.current()).toBe(true);
   expect(button.getAttribute("aria-busy")).toBe("true");
   expect(button.querySelector(".nine-dots")).not.toBeNull();
-  pressRefreshKey();
-  act(() => button.click());
-  await act(async () => {});
-  expect(refresh).toHaveBeenCalledTimes(1);
   await act(async () => settle());
   expect(button.getAttribute("aria-busy")).toBeNull();
   expect(button.querySelector(".nine-dots")).toBeNull();
+  expect(runs[0]!.current()).toBe(false);
   act(() => button.click());
   await act(async () => {});
   expect(refresh).toHaveBeenCalledTimes(2);
@@ -647,14 +654,39 @@ it("refreshes from its button and the refresh key, with the loader until it sett
   dialog.remove();
 });
 
-it("keeps a refresh under way when the page draws its button again", async () => {
-  let settle = () => {};
-  const refresh = vi.fn(
-    () =>
-      new Promise<void>((resolve) => {
-        settle = resolve;
-      }),
+it("starts a refresh under way again, dropping the one that may never answer", async () => {
+  const { refresh, runs, settle } = heldRefresh();
+  await act(async () =>
+    root.render(
+      <RefreshPage>
+        <RefreshButton refresh={refresh} />
+      </RefreshPage>,
+    ),
   );
+  const button = node.querySelector<HTMLButtonElement>("button")!;
+  pressRefreshKey();
+  await act(async () => {});
+  pressRefreshKey();
+  await act(async () => {});
+  expect(refresh).toHaveBeenCalledTimes(2);
+  expect(runs[0]!.signal.aborted).toBe(true);
+  expect(runs[0]!.current()).toBe(false);
+  expect(runs[1]!.restart).toBe(true);
+  expect(runs[1]!.current()).toBe(true);
+  // The dropped one settling late does not end the new one.
+  await act(async () => settle(0));
+  expect(button.getAttribute("aria-busy")).toBe("true");
+  // The button starts it again as the key does.
+  act(() => button.click());
+  await act(async () => {});
+  expect(refresh).toHaveBeenCalledTimes(3);
+  expect(runs[1]!.signal.aborted).toBe(true);
+  await act(async () => settle(2));
+  expect(button.getAttribute("aria-busy")).toBeNull();
+});
+
+it("keeps a refresh under way when the page draws its button again", async () => {
+  const { refresh, settle } = heldRefresh();
   const draw = (key: string) =>
     act(async () =>
       root.render(
@@ -669,15 +701,13 @@ it("keeps a refresh under way when the page draws its button again", async () =>
   await draw("full review");
   const button = node.querySelector<HTMLButtonElement>("button")!;
   expect(button.getAttribute("aria-busy")).toBe("true");
-  act(() => button.click());
-  await act(async () => {});
-  expect(refresh).toHaveBeenCalledTimes(1);
   await act(async () => settle());
   expect(button.getAttribute("aria-busy")).toBeNull();
+  expect(refresh).toHaveBeenCalledTimes(1);
 });
 
-it("shows the loader while the page reads by itself, and ignores presses meanwhile", async () => {
-  const refresh = vi.fn(() => Promise.resolve());
+it("shows the loader while the page reads by itself, and a press starts the read again", async () => {
+  const { refresh, runs, settle } = heldRefresh();
   await act(async () =>
     root.render(
       <RefreshPage>
@@ -689,12 +719,66 @@ it("shows the loader while the page reads by itself, and ignores presses meanwhi
   expect(button.querySelector(".nine-dots")).not.toBeNull();
   act(() => button.click());
   await act(async () => {});
-  expect(refresh).not.toHaveBeenCalled();
+  expect(refresh).toHaveBeenCalledTimes(1);
+  expect(runs[0]!.restart).toBe(true);
+  await act(async () => settle());
 });
 
-it("leaves the refresh key to the browser on a page without a refresh", async () => {
-  await act(async () => root.render(<RefreshPage>{null}</RefreshPage>));
-  expect(pressRefreshKey().defaultPrevented).toBe(false);
+it("shows each page's refresh on its own page", async () => {
+  const a = heldRefresh();
+  const b = heldRefresh();
+  const draw = (scope: "a" | "b") =>
+    act(async () =>
+      root.render(
+        <RefreshPage scope={scope}>
+          <RefreshButton key={scope} refresh={scope === "a" ? a.refresh : b.refresh} />
+        </RefreshPage>,
+      ),
+    );
+  const busy = () => node.querySelector("button")!.getAttribute("aria-busy");
+  await draw("a");
+  pressRefreshKey();
+  await act(async () => {});
+  await draw("b");
+  expect(busy()).toBeNull();
+  // A's refresh is not current while B shows, and B's does not end it.
+  expect(a.runs[0]!.current()).toBe(false);
+  pressRefreshKey();
+  await act(async () => {});
+  expect(a.runs[0]!.signal.aborted).toBe(false);
+  expect(b.runs[0]!.restart).toBe(false);
+  await act(async () => b.settle());
+  await draw("a");
+  expect(busy()).toBe("true");
+  expect(a.runs[0]!.current()).toBe(true);
+  await act(async () => a.settle());
+  expect(busy()).toBeNull();
+});
+
+it("refreshes a page without a button with what the page registered, else the fallback", async () => {
+  const fallback = heldRefresh();
+  await act(async () => root.render(<RefreshPage fallback={fallback.refresh}>{null}</RefreshPage>));
+  expect(pressRefreshKey().defaultPrevented).toBe(true);
+  await act(async () => {});
+  expect(fallback.refresh).toHaveBeenCalledTimes(1);
+  await act(async () => fallback.settle());
+  const own = heldRefresh();
+  function Loading() {
+    usePageRefreshAction(own.refresh);
+    return <p>Loading…</p>;
+  }
+  await act(async () =>
+    root.render(
+      <RefreshPage fallback={fallback.refresh}>
+        <Loading />
+      </RefreshPage>,
+    ),
+  );
+  pressRefreshKey();
+  await act(async () => {});
+  expect(own.refresh).toHaveBeenCalledTimes(1);
+  expect(fallback.refresh).toHaveBeenCalledTimes(1);
+  await act(async () => own.settle());
 });
 
 it("settles a reread with its own read, or when the page goes", async () => {

@@ -397,3 +397,27 @@ test("asks the review's agent a question and reads the lines its answer cites", 
   expect(page.url()).not.toContain("ask=");
   expect(errors).toEqual([]);
 });
+
+test("Settings warns about Codex hook approval and clears after verification", async ({ page }) => {
+  let state = "untrusted";
+  await page.route("**/api/agent-hooks/codex", (route) =>
+    route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify({ state }),
+    }),
+  );
+  await page.goto(await launchURL());
+  const settings = page.getByRole("link", { name: "Settings", exact: true });
+  await expect(settings.locator(".local-rail-badge")).toHaveText(/!|\d/);
+  await expect(settings).toHaveAttribute("title", /Codex hooks need approval/);
+  await settings.click();
+  await expect(page.getByText(/Open \/hooks in Codex and trust baum/)).toBeVisible();
+  await page.setViewportSize({ width: 390, height: 844 });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(
+    true,
+  );
+  state = "trusted";
+  await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+  await expect(settings).not.toHaveAttribute("title", /Codex hooks need approval/);
+  await expect(page.getByText(/Open \/hooks in Codex and trust baum/)).toHaveCount(0);
+});

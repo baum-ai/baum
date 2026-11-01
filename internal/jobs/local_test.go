@@ -355,6 +355,28 @@ func TestJobRunsWhateverPriceListIsActive(t *testing.T) {
 	}
 }
 
+// A queued job runs with the agent, model and limits current when it starts,
+// as one started then would; only the account it was prepared with binds it,
+// and a job read back from the journal, which does not keep the account,
+// compares its whole configuration.
+func TestQueuedJobRunsWithChangedSettingsButNotAnotherAccount(t *testing.T) {
+	registry, clone := registeredClone(t)
+	local := localRunner(registry, "owner/repo", "write", 200)
+	prepared, _, err := local.Prepare(context.Background(), Item{Clone: clone.ID, PR: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	older := prepared
+	older.ConfigDigest, older.Backend, older.Model = "older-settings", "codex", "older-model"
+	if err := local.confirmed(context.Background(), older); err != nil {
+		t.Fatalf("changed settings stopped a queued job: %v", err)
+	}
+	older.account = ""
+	if err := local.confirmed(context.Background(), older); err == nil {
+		t.Fatal("a journaled job ran without its configuration compared")
+	}
+}
+
 // The execution-time recheck refuses an automatic job whose PR GitHub now
 // reports as a draft, before any model call; a confirmed job runs a draft.
 func TestLocalRecheckRefusesAnAutomaticJobOfADraft(t *testing.T) {

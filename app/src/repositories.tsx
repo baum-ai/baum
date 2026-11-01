@@ -11,6 +11,7 @@ import { request, type Repository } from "./api";
 import { invoke } from "./desktop/native";
 import { displayPath, repositoryPath } from "./desktop/setup-model";
 import { LoadingStatus } from "./nine-dots";
+import { usePageRefreshAction } from "./shell";
 import "./repositories.css";
 import { PRIMARY, SECONDARY } from "./action-classes";
 
@@ -368,7 +369,7 @@ export function RepositoryPicker({
   call?: RepositoryCall;
   home?: string;
   onPicked?: (count: number) => void;
-  changed?: () => Promise<void>;
+  changed?: (how?: { restart?: boolean }) => Promise<void>;
   connected?: boolean;
   /** Whether the search takes the focus when it shows. */
   autoFocus?: boolean;
@@ -482,6 +483,11 @@ export function RepositoryPicker({
       }
     },
     [call, connected, search, listingKey],
+  );
+  // While the picker shows, the page's refresh reads its list from GitHub
+  // again too.
+  usePageRefreshAction((run) =>
+    Promise.all([reload("retry-list"), changedCallback.current?.({ restart: run.restart })]),
   );
   useEffect(() => {
     active.current = true;

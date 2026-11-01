@@ -293,8 +293,14 @@ export function Inbox({
         return;
       case "peek":
         // Space still presses a button or ticks a box it is on.
-        if (!entry) return;
         if (event.target instanceof HTMLElement && event.target.closest("button, input")) return;
+        // On a group's row it shows or hides the group's pull requests.
+        if (focused?.group) {
+          event.preventDefault();
+          toggleGroup(focused.group.id);
+          return;
+        }
+        if (!entry) return;
         event.preventDefault();
         peek(rowKey(entry));
         return;
@@ -329,6 +335,13 @@ export function Inbox({
       const next = new Set(previous);
       if (checked) next.add(key);
       else next.delete(key);
+      return next;
+    });
+  const toggleGroup = (id: string) =>
+    setExpanded((previous) => {
+      const next = new Set(previous);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
       return next;
     });
   const peek = (key: string) =>
@@ -485,14 +498,7 @@ export function Inbox({
               focused={focusedKey === `group:${reviewGroup.id}`}
               job={groupJob(reviewGroup, jobs)}
               expanded={expanded.has(reviewGroup.id)}
-              onToggle={() =>
-                setExpanded((previous) => {
-                  const next = new Set(previous);
-                  if (next.has(reviewGroup.id)) next.delete(reviewGroup.id);
-                  else next.add(reviewGroup.id);
-                  return next;
-                })
-              }
+              onToggle={() => toggleGroup(reviewGroup.id)}
               Link={Link}
             >
               {members.map((entry) => renderRow(entry, true))}
@@ -937,12 +943,12 @@ function GroupRow({
             {group.stack ? (
               // The hosted pull request list's mark for a stack.
               <span
-                title={`Stack of ${formatCount(group.members.length)} pull requests`}
+                title={`Stack of ${formatCount(group.members.length + (group.landed?.length ?? 0))} pull requests`}
                 className="flex flex-none items-center gap-0.5 self-center text-xs font-semibold text-(--text-secondary)"
               >
                 <StackIcon size={14} />
                 <span className="sr-only">Stack of</span>
-                {formatCount(group.members.length)}
+                {formatCount(group.members.length + (group.landed?.length ?? 0))}
               </span>
             ) : null}
             <Link
