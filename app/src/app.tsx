@@ -668,6 +668,7 @@ function Workspace({ url }: { url: UrlState }) {
   shownPageRef.current = shownPage;
   useEffect(() => setRefreshError(""), [shownPage]);
   const pageRefresh = usePageRefresh(shownPage);
+  const hasRepositories = picked.length > 0 || clones.length > 0;
   // Before the first read there is nothing to refresh.
   const listBusy = refreshing > 0 || (loading && revision === 0);
   // The list's own keys live in `Inbox`, which knows its rows; these are the
@@ -923,15 +924,24 @@ function Workspace({ url }: { url: UrlState }) {
         <main className="local-main">
           <SavedStateNotice state={inbox.persistence} label="inbox state" />
           {refreshError ? (
-            <Alert>
-              Couldn't refresh from GitHub: {refreshError}{" "}
-              <Button onClick={() => setRefreshError("")}>Dismiss</Button>
-            </Alert>
+            <div className="local-list-note">
+              <Alert className="flex flex-wrap items-center gap-x-3 gap-y-2">
+                <span>Couldn't refresh from GitHub: {refreshError}</span>
+                <Button variant="secondary" size="compact" onClick={() => setRefreshError("")}>
+                  Dismiss
+                </Button>
+              </Alert>
+            </div>
           ) : null}
           {error ? (
-            <Alert>
-              {error} <Button onClick={() => void reload()}>Retry</Button>
-            </Alert>
+            <div className="local-list-note">
+              <Alert className="flex flex-wrap items-center gap-x-3 gap-y-2">
+                <span>{error}</span>
+                <Button variant="secondary" size="compact" onClick={() => void reload()}>
+                  Retry
+                </Button>
+              </Alert>
+            </div>
           ) : null}
           {inboxes.error && !(inboxWaiting && inboxes.status === "failed") ? (
             <Alert>{inboxes.error}</Alert>
@@ -1153,7 +1163,7 @@ function Workspace({ url }: { url: UrlState }) {
               login={github?.login}
               // Until a read succeeds there is nothing to say an empty inbox about.
               loading={revision === 0}
-              hasRepositories={picked.length > 0 || clones.length > 0}
+              hasRepositories={hasRepositories}
               cloneFor={cloneFor}
               fix={(entry, only) => void fix(entry, only)}
               fixState={fixState}
@@ -1249,21 +1259,27 @@ function Workspace({ url }: { url: UrlState }) {
                 ))}
                 {loading ? (
                   <LoadingStatus block>Loading local inbox…</LoadingStatus>
-                ) : rows.length === 0 ? (
+                ) : rows.length === 0 && !(error && revision === 0) ? (
                   <div className="local-empty">
                     <h2>
-                      {filter === "inbox" && clones.length
+                      {filter === "inbox" && hasRepositories
                         ? "Nothing is waiting on you"
                         : "No pull requests here"}
                     </h2>
                     <p>
-                      {!clones.length
-                        ? "Pick GitHub repositories in Repositories to get started."
-                        : filter === "inbox"
-                          ? "No pull request asks for your review and none of yours is open. Others has the rest of your repositories' pull requests."
-                          : filter === "history"
-                            ? "Reviews saved for pull requests that are closed, merged or no longer listed show here."
-                            : "Nothing matches this view. Refresh from GitHub or choose another tab."}
+                      {!hasRepositories ? (
+                        <>
+                          Pick GitHub repositories in{" "}
+                          <LocalLink href={appURL("?page=repositories")}>Repositories</LocalLink> to
+                          get started.
+                        </>
+                      ) : filter === "inbox" ? (
+                        "No pull request asks for your review and none of yours is open. Others has the rest of your repositories' pull requests."
+                      ) : filter === "history" ? (
+                        "Reviews saved for pull requests that are closed, merged or no longer listed show here."
+                      ) : (
+                        "Nothing matches this view. Refresh from GitHub or choose another tab."
+                      )}
                     </p>
                   </div>
                 ) : null}

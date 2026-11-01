@@ -605,7 +605,7 @@ export function GroupPage({
                   Rename
                 </Button>
                 <Button
-                  variant="secondary"
+                  variant="danger-outline"
                   size="tiny"
                   disabled={managing}
                   onClick={() => setDeleting(true)}

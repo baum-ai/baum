@@ -573,6 +573,10 @@ body {
 }
 .local-repo-filter select {
   appearance: none;
+  /* A native select is as wide as its longest option; a long repository
+     name would push the filter onto its own row with a stray chevron. */
+  max-width: min(100%, 16rem);
+  text-overflow: ellipsis;
   padding: 0.3rem 1.6rem 0.3rem 0.6rem;
   border: 0;
   border-radius: var(--radius-md);
