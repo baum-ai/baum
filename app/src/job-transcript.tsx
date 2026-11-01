@@ -1,11 +1,6 @@
 import { useEffect, useState, type ComponentType } from "react";
 import { Alert, LiveDot } from "@baum/viewer/components/ui";
-import {
-  ChevronRightIcon,
-  CircleCheckIcon,
-  CircleCrossIcon,
-  CircleDashedIcon,
-} from "@baum/viewer/components/icons";
+import { ChevronRightIcon, CircleCheckIcon, CircleCrossIcon } from "@baum/viewer/components/icons";
 import { Markdown } from "@baum/viewer/components/markdown";
 import type { ViewerLinkProps } from "@baum/viewer/navigation";
 import {
@@ -116,7 +111,7 @@ export function useJobTranscript(id: string): TranscriptState {
 function ToolStatus({ status }: { status?: TranscriptEntry["status"] }) {
   if (status === "failed") return <CircleCrossIcon size={14} className="local-tool-failed" />;
   if (status === "completed") return <CircleCheckIcon size={14} className="local-tool-done" />;
-  return <CircleDashedIcon size={14} className="local-spin" />;
+  return <LiveDot />;
 }
 
 /** Codex's tools by the names a reader knows them by. */

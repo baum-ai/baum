@@ -60,12 +60,7 @@
   }
 }
 .walkthrough kbd {
-  padding: 1px 5px;
-  border: 1px solid currentColor;
-  border-radius: var(--radius-xs);
-  font-family: var(--font-mono, ui-monospace, monospace);
-  font-size: var(--text-xs);
-  opacity: 0.6;
+  vertical-align: baseline;
 }
 .walk-label {
   display: flex;
@@ -74,7 +69,7 @@
   margin: 0;
   color: var(--text-tertiary);
   font-size: var(--text-xs);
-  font-weight: 600;
+  font-weight: 500;
   letter-spacing: 0.08em;
   text-transform: uppercase;
 }
@@ -312,18 +307,23 @@
   align-items: center;
   gap: 10px;
 }
+/* A state beside the title is a pill, like the shared Badge; the chapter's
+   place in the tour is a tag, and stays boxed. */
 .walk-chip {
   flex: none;
   max-width: 100%;
   padding: 2px 8px;
   overflow: hidden;
-  border-radius: var(--radius-xs);
+  border-radius: 999px;
   background: var(--status-neutral-bg);
   color: var(--status-neutral);
   font-size: var(--text-xs);
   font-weight: 600;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.walk-chip.walk-tag {
+  border-radius: var(--radius-xs);
 }
 .walk-chip.risk-3 {
   background: var(--status-caution-bg);
@@ -555,12 +555,11 @@
 }
 .walk-tier {
   flex: none;
-  padding: 1px 6px;
-  border-radius: var(--radius-xs);
+  padding: 2px 8px;
+  border-radius: 999px;
   background: var(--status-neutral-bg);
   color: var(--status-neutral);
   font-size: var(--text-xs);
-  font-weight: 700;
   text-transform: capitalize;
 }
 .walk-tier.medium {

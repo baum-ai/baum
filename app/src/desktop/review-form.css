@@ -23,7 +23,7 @@
   width: 100%;
   margin-bottom: 8px;
   padding: 0;
-  font-size: 12px;
+  font-size: var(--text-xs);
   font-weight: 500;
   color: var(--text-secondary);
 }
@@ -53,14 +53,14 @@
   border: 1px solid var(--border-default);
   border-radius: 8px;
   background: var(--surface-page);
-  font-size: 13px;
+  font-size: var(--text-xs);
   font-weight: 500;
   cursor: pointer;
 }
 .harness-tile small {
   display: block;
   margin-top: 2px;
-  font-size: 11px;
+  font-size: var(--text-xs);
   font-weight: 400;
   color: var(--text-secondary);
 }
@@ -83,7 +83,7 @@
   color: var(--text-disabled);
 }
 .agent-installation h2 {
-  font-size: 14px;
+  font-size: var(--text-base);
   margin: 0;
 }
 .agent-install-links {
@@ -91,7 +91,7 @@
   flex-wrap: wrap;
   gap: 12px 20px;
   margin-top: 16px;
-  font-size: 13px;
+  font-size: var(--text-xs);
 }
 .agent-install-links a {
   color: var(--action-primary);
@@ -181,7 +181,7 @@
   padding: 10px 36px 10px 12px;
   cursor: pointer;
   font: inherit;
-  font-size: 13px;
+  font-size: var(--text-base);
   background: var(--surface-page);
   color: var(--text-primary);
 }
@@ -190,14 +190,14 @@
   align-items: center;
   justify-content: space-between;
   gap: 16px;
-  font-size: 14px;
+  font-size: var(--text-base);
   font-weight: 500;
   cursor: pointer;
 }
 .switch-row small {
   display: block;
   margin-top: 3px;
-  font-size: 12px;
+  font-size: var(--text-xs);
   font-weight: 400;
   color: var(--text-secondary);
 }
@@ -254,7 +254,7 @@
   height: 28px;
   padding: 0 10px;
   border-radius: 6px;
-  font-size: 13px;
+  font-size: var(--text-xs);
   color: var(--text-secondary);
   cursor: pointer;
 }
@@ -269,7 +269,7 @@
 }
 .review-card .review-note {
   margin: 8px 0 0;
-  font-size: 12px;
+  font-size: var(--text-xs);
   line-height: 1.5;
   color: var(--text-secondary);
 }
@@ -280,7 +280,7 @@
   border-radius: 8px;
   padding: 10px 12px;
   font: inherit;
-  font-size: 13px;
+  font-size: var(--text-base);
   background: var(--surface-page);
   color: var(--text-primary);
 }

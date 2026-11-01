@@ -303,12 +303,16 @@ it("shows a running session's current step and files touched, and a quiet one", 
     session({
       session_id: "s2",
       state: "idle",
+      // Started before the busy one, so Running now (newest first) lists
+      // them in this order whatever the clock does between the calls.
+      started_at: ago(8 * 60),
       last_activity_at: ago(12 * 60),
       title: "Quiet one",
     }),
     session({
       session_id: "s3",
       title: "No activity",
+      started_at: ago(9 * 60),
       activity: undefined,
       last_activity_at: ago(120),
     }),

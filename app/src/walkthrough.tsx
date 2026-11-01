@@ -805,7 +805,7 @@ function ChapterPage({
   return (
     <article aria-labelledby={`walk-title-${chapter.id}`} className="walk-panel">
       <div className="walk-meta">
-        <span className={cn("walk-chip", chapter.level && `risk-${chapter.level}`)}>
+        <span className={cn("walk-chip walk-tag", chapter.level && `risk-${chapter.level}`)}>
           Chapter {page} of {tour.chapters.length}
         </span>
         <span className="walk-where">
@@ -1043,7 +1043,7 @@ function WrapUp({
   return (
     <article aria-labelledby="walk-wrap-title" className="walk-panel">
       <div className="walk-meta">
-        <span className="walk-chip">Submit</span>
+        <span className="walk-chip walk-tag">Submit</span>
         <span className="walk-where">
           {seenCount} of {tour.stops.length} looked at ·{" "}
           {commentCount ? plural(commentCount, "comment") : "no comments"}

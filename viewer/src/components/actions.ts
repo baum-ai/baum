@@ -14,7 +14,7 @@ const actionSizes = {
   // Table-row scale. Exists so a caller never reaches for
   // `className="px-3 py-1.5"`, which cannot reliably beat the size it is
   // fighting — `cn` concatenates, so stylesheet order decides.
-  tiny: "h-7 px-2.5 text-base",
+  tiny: "h-7 px-2.5 text-xs",
   compact: "h-8 px-3.5",
   standard: "px-4 py-[11px]",
   large: "px-4 py-3 text-base",

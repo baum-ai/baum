@@ -139,6 +139,7 @@
   letter-spacing: 0.08em;
   text-transform: uppercase;
   color: var(--text-tertiary);
+  font-weight: 500;
 }
 .analytics-tile dd {
   display: flex;

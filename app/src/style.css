@@ -318,7 +318,7 @@ body {
   justify-content: space-between;
   gap: 0.5rem;
   font-size: var(--text-xs);
-  font-weight: 600;
+  font-weight: 500;
   letter-spacing: 0.08em;
   text-transform: uppercase;
   color: var(--text-tertiary);
@@ -789,7 +789,8 @@ button.list-heading-label:hover {
   color: var(--text-secondary);
 }
 /* An empty page's way forward stands clear of the sentence above it. */
-.local-empty > :is(a, button):last-child {
+:is(.local-empty, .local-review-empty, .upnext-zero)
+  > :is(a, button, div):last-child:not(:first-child, p) {
   margin-top: 1rem;
 }
 .local-empty h2 {
@@ -1090,7 +1091,7 @@ select.local-field {
   margin: 0;
   color: var(--text-tertiary);
   font-size: var(--text-xs);
-  font-weight: 600;
+  font-weight: 500;
   letter-spacing: 0.08em;
   text-transform: uppercase;
 }
@@ -1199,6 +1200,7 @@ select.local-field {
   background: var(--surface-inverse-hover);
   color: var(--text-inverse);
   font: inherit;
+  font-size: var(--text-xs);
   font-weight: 500;
   white-space: nowrap;
   cursor: pointer;
@@ -1241,12 +1243,6 @@ select.local-field {
   height: 0.5rem;
   border-radius: 50%;
   background: var(--status-positive);
-}
-.inbox-updated-mark.busy {
-  border: 1.5px solid var(--text-tertiary);
-  border-right-color: transparent;
-  background: none;
-  animation: local-spin 0.9s linear infinite;
 }
 .merge-methods {
   display: grid;
@@ -1575,19 +1571,6 @@ dialog.local-dialog-wide {
 .local-job-state.waiting {
   color: var(--text-tertiary);
 }
-.local-spin {
-  animation: local-spin 1.4s linear infinite;
-}
-@keyframes local-spin {
-  to {
-    transform: rotate(360deg);
-  }
-}
-@media (prefers-reduced-motion: reduce) {
-  .local-spin {
-    animation: none;
-  }
-}
 .local-job-title {
   overflow-wrap: anywhere;
   font-weight: 500;
@@ -1678,19 +1661,19 @@ dialog.local-dialog-wide {
 .local-review-empty {
   display: grid;
   justify-items: center;
-  gap: 0.75rem;
-  padding: 3.5rem 1.5rem;
+  gap: 0.25rem;
+  padding: 3rem 1rem;
   text-align: center;
+  color: var(--text-secondary);
 }
 .local-review-empty h2 {
   margin: 0;
   font-size: var(--text-base);
   font-weight: 600;
+  color: var(--text-primary);
 }
 .local-review-empty > p {
-  margin: -0.25rem 0 0;
-  font-size: var(--text-xs);
-  color: var(--text-tertiary);
+  margin: 0;
 }
 .local-outcome {
   display: grid;
@@ -3900,7 +3883,7 @@ dialog.go-to {
   margin: 1.125rem 0 0;
   color: var(--text-tertiary);
   font-size: var(--text-xs);
-  font-weight: 600;
+  font-weight: 500;
   letter-spacing: 0.08em;
   text-transform: uppercase;
 }
@@ -3939,14 +3922,6 @@ dialog.go-to {
 }
 .key-bar kbd {
   margin-right: 0.125rem;
-  padding: 1px 5px;
-  border: 1px solid currentColor;
-  border-radius: var(--radius-xs);
-  font-family: var(--font-mono, ui-monospace, monospace);
-  font-size: var(--text-xs);
-  font-weight: 500;
-  line-height: 1.2;
-  opacity: 0.75;
 }
 .key-bar kbd + kbd {
   margin-left: 0.125rem;
@@ -3964,26 +3939,25 @@ dialog.go-to {
 :root:not([data-key-hints]) .key-hint {
   display: none;
 }
-kbd.key-hint {
-  margin-left: 6px;
+/* One key, wherever a key is shown outside a menu: inside a button, in a
+   page's key bar, in the shortcuts sheet and the walkthrough. A menu lists its
+   keys as plain grey text instead, as a desktop menu does. */
+:is(kbd.key-hint, .key-bar kbd, .shortcuts-sheet kbd, .walkthrough kbd, .upnext-page kbd) {
   padding: 1px 5px;
   border: 1px solid currentColor;
   border-radius: var(--radius-xs);
+  background: none;
   font-family: var(--font-mono, ui-monospace, monospace);
   font-size: var(--text-xs);
   font-weight: 500;
   line-height: 1.2;
   opacity: 0.6;
 }
+kbd.key-hint {
+  margin-left: 6px;
+}
 .shortcuts-sheet kbd {
   min-width: 1.5rem;
-  padding: 0.05rem 0.4rem;
-  border: 1px solid var(--border-default);
-  border-bottom-width: 2px;
-  border-radius: var(--radius-md);
-  background: var(--surface-wash);
-  font-family: inherit;
-  font-size: var(--text-xs);
   text-align: center;
 }
 .inbox-blue {
@@ -4096,18 +4070,12 @@ kbd.key-hint {
 }
 .upnext-page kbd {
   margin-left: 6px;
-  padding: 1px 5px;
-  border: 1px solid currentColor;
-  border-radius: var(--radius-xs);
-  font-family: var(--font-mono, ui-monospace, monospace);
-  font-size: var(--text-xs);
-  opacity: 0.6;
 }
 .upnext-label {
   margin: 0;
   color: var(--text-tertiary);
   font-size: var(--text-xs);
-  font-weight: 600;
+  font-weight: 500;
   letter-spacing: 0.08em;
   text-transform: uppercase;
 }
@@ -4328,15 +4296,6 @@ kbd.key-hint {
   from {
     opacity: 0;
     transform: translateY(-4px);
-  }
-}
-@keyframes upnext-pulse {
-  0%,
-  100% {
-    opacity: 0.4;
-  }
-  50% {
-    opacity: 1;
   }
 }
 .upnext-panel-meta {
@@ -4818,18 +4777,13 @@ kbd.key-hint {
   color: var(--text-secondary);
   font-size: var(--text-xs);
 }
-.upnext-pulse {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: var(--status-positive);
-  animation: upnext-pulse 1.4s ease-in-out infinite;
-}
 .upnext-zero {
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  padding: 70px 48px;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 3rem 1rem;
+  text-align: center;
   animation: upnext-rise 0.3s ease-out;
 }
 .upnext-zero h2,
@@ -4837,7 +4791,7 @@ kbd.key-hint {
   margin: 0;
 }
 .upnext-zero h2 {
-  font-size: var(--text-2xl);
+  font-size: var(--text-base);
   font-weight: 600;
 }
 .upnext-zero p {
@@ -4920,8 +4874,7 @@ kbd.key-hint {
   .upnext-working,
   .upnext-failed,
   .upnext-menu,
-  .upnext-toast,
-  .upnext-pulse {
+  .upnext-toast {
     animation: none;
   }
   .upnext-bar div {
@@ -5127,11 +5080,6 @@ kbd.key-hint {
   font-size: var(--text-base);
   resize: vertical;
 }
-.walk-evidence {
-  display: flex;
-  flex-direction: column;
-  gap: 0.5rem;
-}
 .walk-chapter-stop {
   display: flex;
   align-items: flex-start;
@@ -5168,12 +5116,6 @@ kbd.key-hint {
 .walk-state-dot.commented {
   border-color: var(--status-caution);
   background: var(--status-caution);
-}
-.walk-chip {
-  padding: 2px 6px;
-  border-radius: var(--radius-xs);
-  background: var(--surface-wash);
-  font-size: var(--text-xs);
 }
 .walk-filter {
   padding: 0.375rem 0.75rem;
