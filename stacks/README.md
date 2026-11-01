@@ -50,6 +50,12 @@ parents, and dissolves a group where a hosted stack ends.
   descendants are automatically retargeted to the merged ancestor's base,
   they keep their stored chain, even when the descendant updates arrive
   before their parents' updates.
+- A member **closed without merging** drops out: it is abandoned, so it
+  leaves the stack, and a pull request still based on its branch loses the
+  link to it (the stack may split there). This is one decision, the constant
+  `KeepClosedUnmerged` (false) in `plan.go`; set it to true to keep closed
+  members like merged ones. A closed pull request that reopens joins again
+  by its branches.
 - Any other retarget of an open member loses its parent: without a merged
   ancestor explaining the new base, after the parent was closed without
   merging, or onto a branch other than the merged ancestor's base. If that
