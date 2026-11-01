@@ -2347,7 +2347,7 @@ function Zero({
     );
   return (
     <div className="upnext-zero">
-      <h2>Inbox zero.</h2>
+      <h2>Inbox zero</h2>
       <p>
         {snoozed.length > 0
           ? `Everything is handled except ${plural(snoozed.length, "snoozed pull request")}; they come back on their own.`
