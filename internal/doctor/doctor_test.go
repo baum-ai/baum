@@ -967,7 +967,7 @@ func TestDesktopReportOffersOnlyClaudeAndCodex(t *testing.T) {
 	if strings.Contains(auto.Detail+auto.Fix, "ANTHROPIC") {
 		t.Errorf("auto mentions the Anthropic API: %+v", auto)
 	}
-	m.claude("2.1.7")
+	m.claude("2.1.296")
 	auto = find(t, run(t, Options{Desktop: true}), "backend-auto")
 	wantStatus(t, auto, StatusOK)
 	wantContains(t, "auto detail", auto.Detail, "auto picks claude")
@@ -977,7 +977,7 @@ func TestDesktopReportRefusesAConfiguredCursorAgentOrAnthropic(t *testing.T) {
 	for _, backend := range []string{"cursor-agent", "anthropic"} {
 		m := newMachine(t)
 		m.git()
-		m.claude("2.1.7")
+		m.claude("2.1.296")
 		m.cursorAgent()
 		t.Setenv("BAUM_BACKEND", backend)
 		configured := find(t, run(t, Options{Desktop: true}), "backend-configured")
