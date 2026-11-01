@@ -2,8 +2,8 @@ package generate_test
 
 import (
 	"context"
-	"errors"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"slices"

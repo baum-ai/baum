@@ -79,7 +79,8 @@ func (e *Error) Error() string { return e.Err.Error() }
 // ErrHeadChanged: a pull request's head moved after the run was prepared, so
 // its evidence would not be what was confirmed.
 var ErrHeadChanged = errors.New("pull request head changed")
-func (e *Error) Unwrap() error { return e.Err }
+
+func (e *Error) Unwrap() error        { return e.Err }
 func (e *Error) Is(target error) bool { return e.headChanged && target == ErrHeadChanged }
 
 // CategoryOf returns the category of err, or "" when it is not an *Error.

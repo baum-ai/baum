@@ -252,7 +252,7 @@ type Job struct {
 	// member's head moved (maxGroupRequeues).
 	Requeued  int       `json:"requeued,omitempty"`
 	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt     time.Time `json:"updated_at"`
+	UpdatedAt time.Time `json:"updated_at"`
 }
 type Progress struct {
 	Accounting             *agent.Accounting
