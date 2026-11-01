@@ -1,4 +1,6 @@
 import { uiState, useUIState } from "./ui-state";
+import { FilterMenu } from "./filter-menu";
+import { chips, matchesCriteria, NO_CRITERIA, usePageFilter, type Criteria } from "./pr-filter";
 import {
   Fragment,
   useEffect,
@@ -718,6 +720,7 @@ export function UpNextPage({
   refreshing = false,
   reviewGroups = [],
   entries = [],
+  saveAsInbox,
   Link,
 }: {
   inbox: UpNextState;
@@ -747,6 +750,8 @@ export function UpNextPage({
   refresh?: (run: RefreshRun) => Promise<unknown>;
   /** A read of every repository is under way, the first or a refresh. */
   refreshing?: boolean;
+  /** Makes a new inbox of the quick filter; offered in the Inbox (all). */
+  saveAsInbox?: (criteria: Criteria) => void;
   Link: ComponentType<ViewerLinkProps>;
 }) {
   const [merging, setMerging] = useState<Entry | null>(null);
@@ -760,13 +765,26 @@ export function UpNextPage({
   const [toast, setToast] = useState<{ id: number; text: string; undo?: () => void } | null>(null);
   const list = useRef<HTMLDivElement>(null);
   const detail = useRef<HTMLDivElement>(null);
-  const inScope = (item: { kind: UpNextKind; entry: Entry }) => !scope || matches(scope, item);
+  // The quick filter narrows what the page shows, on top of its inbox.
+  const quick = usePageFilter(scope ? `inbox:${scope.id}` : "inbox");
+  const filtering = chips(quick.criteria).length > 0;
+  const inInbox = (item: { kind: UpNextKind; entry: Entry }) => !scope || matches(scope, item);
+  const inScope = (item: { kind: UpNextKind; entry: Entry }) =>
+    inInbox(item) && matchesCriteria(quick.criteria, item.entry);
   const queue = all.queue.filter(inScope);
   const snoozed = all.snoozed.filter(inScope);
   const fixing = all.fixing.filter(({ entry }) => inScope({ kind: "fix", entry }));
   // Done today and what waits on others are the Inbox's alone.
   const cleared = scope ? [] : all.cleared;
-  const waiting = scope ? [] : all.waiting;
+  const waiting = scope
+    ? []
+    : all.waiting.filter((entry) => matchesCriteria(quick.criteria, entry));
+  // What the filter's counts and repositories come from: the page before it.
+  const unfiltered = [
+    ...all.queue.filter(inInbox).map((item) => item.entry),
+    ...all.fixing.filter(({ entry }) => inInbox({ kind: "fix", entry })).map(({ entry }) => entry),
+    ...(scope ? [] : all.waiting),
+  ];
   const inbox = { ...all, queue, snoozed, fixing, cleared, waiting };
   const { now } = all;
   // Those an agent is fixing are listed under Hand to an agent.
@@ -1008,6 +1026,24 @@ export function UpNextPage({
     },
   ];
   const alsoIn = (row: Row) => rowInboxes(row, inboxes).filter((other) => other.id !== scope?.id);
+  const filterMenu = (
+    <div className="upnext-filter">
+      <FilterMenu
+        criteria={quick.criteria}
+        onChange={quick.set}
+        entries={unfiltered}
+        onSave={!scope && saveAsInbox ? () => saveAsInbox(quick.criteria) : undefined}
+      />
+      {quick.error ? (
+        <p role="alert" className="upnext-filter-error">
+          {quick.error}{" "}
+          <button type="button" onClick={() => void quick.retry()}>
+            Retry
+          </button>
+        </p>
+      ) : null}
+    </div>
+  );
   return (
     <>
       <div className="upnext-page">
@@ -1023,6 +1059,7 @@ export function UpNextPage({
                 </div>
                 <p>{sentence(scope, login)}</p>
                 <p className="upnext-list-summary">{summary}</p>
+                {filterMenu}
               </>
             ) : (
               <>
@@ -1041,6 +1078,7 @@ export function UpNextPage({
                 >
                   <div style={{ width: `${total ? (100 * cleared.length) / total : 0}%` }} />
                 </div>
+                {filterMenu}
               </>
             )}
           </header>
@@ -1230,6 +1268,15 @@ export function UpNextPage({
               }}
               Link={Link}
             />
+          ) : filtering && unfiltered.length > 0 ? (
+            <div className="upnext-zero">
+              <h2>Nothing matches the filter</h2>
+              <p>
+                {formatCount(unfiltered.length)} pull{" "}
+                {unfiltered.length === 1 ? "request is" : "requests are"} hidden by it.
+              </p>
+              <Button onClick={() => quick.set(NO_CRITERIA)}>Clear the filter</Button>
+            </div>
           ) : (
             <Zero inbox={inbox} scoped={!!scope} hasRepositories={hasRepositories} Link={Link} />
           )}

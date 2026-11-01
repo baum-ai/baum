@@ -1,3 +1,4 @@
+import { NO_CRITERIA } from "./pr-filter";
 import { expect, it, vi } from "vitest";
 import { LocalRequestError, type Entry } from "./api";
 import {
@@ -17,9 +18,7 @@ const inbox = (overrides: Partial<Inbox> = {}): Inbox => ({
   name: "Inbox one",
   color: "blue",
   what: "any",
-  owners: [],
-  risk: "any",
-  repositories: [],
+  ...NO_CRITERIA,
   no_bots: false,
   badge: true,
   ...overrides,
@@ -268,9 +267,7 @@ it("reads a malformed entry defensively and drops one without an id or name", ()
       name: "A",
       color: "grey",
       what: "any",
-      owners: [],
-      risk: "any",
-      repositories: [],
+      ...NO_CRITERIA,
       no_bots: false,
       badge: true,
     },
@@ -279,9 +276,8 @@ it("reads a malformed entry defensively and drops one without an id or name", ()
       name: "B",
       color: "red",
       what: "merge",
+      ...NO_CRITERIA,
       owners: ["acme"],
-      risk: "any",
-      repositories: [],
       no_bots: false,
       badge: false,
     },

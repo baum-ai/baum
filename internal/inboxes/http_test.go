@@ -104,6 +104,40 @@ func TestRoundTripOrderAndIDs(t *testing.T) {
 	}
 }
 
+func TestPullRequestCriteriaRoundTrip(t *testing.T) {
+	h := newHarness(t)
+	code, body := h.put(`{"revision":0,"inboxes":[` + strings.Replace(entry("PRs"), `"no_bots":false`, `"involvement":["assigned","authored","assigned"],"no_drafts":true,"review":["approved"],"checks":["failing"],"merge":["ready","conflict"],"no_bots":false`, 1) + `,` + entry("Plain") + `]}`)
+	if code != 200 {
+		t.Fatalf("%d %v", code, body)
+	}
+	got := list(body)
+	if involvement := got[0]["involvement"].([]any); len(involvement) != 2 || involvement[0] != "assigned" || involvement[1] != "authored" {
+		t.Fatalf("involvement not deduplicated in order: %v", involvement)
+	}
+	if got[0]["no_drafts"] != true || len(got[0]["review"].([]any)) != 1 || len(got[0]["checks"].([]any)) != 1 || len(got[0]["merge"].([]any)) != 2 {
+		t.Fatalf("criteria lost: %v", got[0])
+	}
+	// An entry that leaves the lists out saves them empty.
+	for _, field := range []string{"involvement", "review", "checks", "merge"} {
+		if values, ok := got[1][field].([]any); !ok || len(values) != 0 {
+			t.Fatalf("%s: %v", field, got[1][field])
+		}
+	}
+}
+
+func TestInboxesSavedBeforeCriteriaReadEmptyLists(t *testing.T) {
+	h := newHarness(t)
+	old := `{"revision":1,"inboxes":[{"id":"0123456789abcdef0123456789abcdef","name":"Old","color":"blue","what":"any","owners":[],"risk":"any","repositories":[],"no_bots":false,"badge":true}]}`
+	if err := appdb.Write(h.path, "state", "inboxes", []byte(old)); err != nil {
+		t.Fatal(err)
+	}
+	_, body := h.do(http.MethodGet, "")
+	got := list(body)
+	if values, ok := got[0]["involvement"].([]any); !ok || len(values) != 0 || got[0]["no_drafts"] != false {
+		t.Fatalf("%v", got[0])
+	}
+}
+
 func TestDeletedInboxComesBackWithItsID(t *testing.T) {
 	h := newHarness(t)
 	_, saved := h.put(`{"revision":0,"inboxes":[` + entry("One") + `]}`)
@@ -178,6 +212,10 @@ func TestValidation(t *testing.T) {
 		"repo dots":       {`[` + with(`"repositories":[]`, `"repositories":["a/.."]`) + `]`, "invalid_inbox"},
 		"too many owners": {`[` + with(`"owners":[]`, owners) + `]`, "invalid_inbox"},
 		"too many repos":  {`[` + with(`"repositories":[]`, repos) + `]`, "invalid_inbox"},
+		"involvement":     {`[` + with(`"owners":[]`, `"owners":[],"involvement":["mentioned"]`) + `]`, "invalid_inbox"},
+		"review":          {`[` + with(`"owners":[]`, `"owners":[],"review":["commented"]`) + `]`, "invalid_inbox"},
+		"checks":          {`[` + with(`"owners":[]`, `"owners":[],"checks":["none"]`) + `]`, "invalid_inbox"},
+		"merge":           {`[` + with(`"owners":[]`, `"owners":[],"merge":["draft"]`) + `]`, "invalid_inbox"},
 		"foreign id":      {`[{"id":"nope","name":"B","color":"blue","what":"any","owners":[],"risk":"any","repositories":[],"no_bots":false,"badge":true}]`, "invalid_inbox"},
 		"duplicate id":    {`[{"id":"` + id + `","name":"B","color":"blue","what":"any","owners":[],"risk":"any","repositories":[],"no_bots":false,"badge":true},{"id":"` + id + `","name":"C","color":"blue","what":"any","owners":[],"risk":"any","repositories":[],"no_bots":false,"badge":true}]`, "duplicate_id"},
 	} {

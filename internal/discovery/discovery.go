@@ -55,6 +55,9 @@ type PullRequest struct {
 	Fork                  bool   `json:"fork"`
 	AuthoredByMe          bool   `json:"authored_by_me"`
 	ReviewRequestedFromMe bool   `json:"review_requested_from_me"`
+	// AssignedToMe is true when the viewer is one of the first 20 assignees.
+	// Snapshots cached before it existed decode as false.
+	AssignedToMe bool `json:"assigned_to_me"`
 	// Nil means the token could not establish repository write permission.
 	AuthorHasWrite *bool `json:"author_has_write"`
 	// ViewerCanPush is whether the signed-in account may push to the
@@ -581,6 +584,11 @@ func (p *poll) discover(ctx context.Context, repository github.Repository) (Snap
 			head, parseErr := github.ParseRepository(repository.Host + "/" + pr.Head.Repo.FullName)
 			if parseErr == nil {
 				item.HeadRepository = strings.ToLower(head.String())
+			}
+		}
+		for _, user := range row.Assignees.Nodes {
+			if strings.EqualFold(user.Login, viewer.Login) {
+				item.AssignedToMe = true
 			}
 		}
 		for _, user := range pr.RequestedReviewers {

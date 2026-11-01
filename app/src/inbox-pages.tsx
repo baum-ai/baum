@@ -1,3 +1,4 @@
+import { CHECKS, INVOLVEMENT, MERGES, REVIEWS, toggled } from "./pr-filter";
 import { useEffect, useId, useRef, useState, type ComponentType, type ReactNode } from "react";
 import type { ViewerLinkProps } from "@baum/viewer/navigation";
 import { appURL } from "./api";
@@ -296,8 +297,40 @@ function EditInbox({
       </div>
     ) : null;
 
-  const repositoryChips = Array.from(new Set([...repositories, ...inbox.repositories])).sort(
+  // Only the owners' repositories, so a pick narrows what matches above.
+  const ownRepositories = repositories.filter(
+    (r) =>
+      inbox.owners.length === 0 ||
+      inbox.owners.some((o) => o.toLowerCase() === r.split("/")[0]?.toLowerCase()),
+  );
+  const repositoryChips = Array.from(new Set([...ownRepositories, ...inbox.repositories])).sort(
     (a, b) => a.localeCompare(b),
+  );
+  const stateList = <K extends "involvement" | "review" | "checks" | "merge">(
+    field: K,
+    title: string,
+    options: [Inbox[K][number], string][],
+  ) => (
+    <div role="group" aria-labelledby={`${ids}-${field}`}>
+      <h3 id={`${ids}-${field}`} className="inbox-fine-title">
+        {title}
+        <span> · none picked means any</span>
+      </h3>
+      <div className="inbox-choices">
+        {options.map(([value, label]) => {
+          const list = inbox[field] as string[];
+          return (
+            <Chip
+              key={value}
+              label={label}
+              on={list.includes(value)}
+              count={countOf({ ...inbox, [field]: [value] }, items)}
+              onClick={() => change({ [field]: toggled(list, value) })}
+            />
+          );
+        })}
+      </div>
+    </div>
   );
   const toggleRepository = (repository: string) =>
     change({
@@ -421,6 +454,10 @@ function EditInbox({
                     ) : null}
                   </div>
                 </div>
+                {stateList("involvement", "Involvement", INVOLVEMENT)}
+                {stateList("review", "Review", REVIEWS)}
+                {stateList("checks", "Checks", CHECKS)}
+                {stateList("merge", "State", MERGES)}
                 <fieldset className="inbox-leave-out">
                   <legend className="inbox-fine-title">Leave out</legend>
                   <label className="inbox-check">
@@ -431,6 +468,14 @@ function EditInbox({
                     />
                     <span>Bots</span>
                     <span className="inbox-check-note">· Renovate, Dependabot</span>
+                  </label>
+                  <label className="inbox-check">
+                    <input
+                      type="checkbox"
+                      checked={inbox.no_drafts}
+                      onChange={(event) => change({ no_drafts: event.target.checked })}
+                    />
+                    <span>Drafts</span>
                   </label>
                 </fieldset>
               </div>

@@ -18,12 +18,26 @@ later step.
 | `owners` | GitHub owner logins (organization or user), at most 50; empty means any |
 | `risk` | `any`, `3`, `4` (strings) |
 | `repositories` | `owner/name`, at most 50; empty means every repository that matches |
+| `involvement` | any of `assigned`, `requested`, `authored`; empty means any |
+| `no_drafts` | leave out draft pull requests |
+| `review` | any of `approved`, `changes_requested`, `none` (no decision yet); empty means any |
+| `checks` | any of `passing`, `failing`, `running`; empty means any |
+| `merge` | any of `ready`, `conflict`; empty means any |
 | `no_bots` | leave out pull requests by bot authors (`author_bot` in discovery) |
 | `badge` | show a count badge in the sidebar |
 
 At most 20 inboxes. The array order is the sidebar order. Owners and
 repositories are compared and de-duplicated ignoring case; the first spelling
-given is kept.
+given is kept. The four lists of pull request states are de-duplicated in
+order, and an entry that leaves one out saves it empty; inboxes stored before
+they existed read them as empty and `no_drafts` as false.
+
+`owners` through `merge` are `Criteria`, which the app's quick filters share
+(the `ui/filters` document of [`uistate`](../uistate/README.md), validated by
+`Criteria.Clean`). A list's values combine with or and the parts with and.
+Owners and repositories form one tree: an owner alone is all of its
+repositories, an owner with some of its repositories listed is only those,
+and a listed repository whose owner is not listed is included as well.
 
 ## Storage
 
@@ -31,7 +45,7 @@ The `state/inboxes` document in the shared private
 [`app.sqlite`](../appdb/README.md) application database:
 
 ```json
-{"revision": 3, "inboxes": [{"id": "...", "name": "Platform", "color": "blue", "what": "any", "owners": ["baum-ai"], "risk": "any", "repositories": ["baum-ai/baum"], "no_bots": false, "badge": true}]}
+{"revision": 3, "inboxes": [{"id": "...", "name": "Platform", "color": "blue", "what": "any", "owners": ["baum-ai"], "risk": "any", "repositories": ["baum-ai/baum"], "involvement": ["requested"], "no_drafts": true, "review": [], "checks": [], "merge": [], "no_bots": false, "badge": true}]}
 ```
 
 A missing document reads as revision 0 with no inboxes. A document that does
@@ -58,7 +72,7 @@ changes nothing.
 | Status | Code | Meaning |
 | --- | --- | --- |
 | 400 | `invalid_request` | the body is not one JSON object of the expected shape, has no `revision`, or is over 256 KB |
-| 400 | `invalid_inbox` | a field is out of range: an id the daemon did not assign, name length, color, what, risk, owner or repository shape, or too many owners or repositories |
+| 400 | `invalid_inbox` | a field is out of range: an id the daemon did not assign, name length, color, what, risk, owner or repository shape, too many owners or repositories, or an unknown involvement, review, checks or merge value |
 | 400 | `too_many_inboxes` | more than 20 inboxes |
 | 400 | `duplicate_name` | two names equal ignoring case |
 | 400 | `duplicate_id` | the same id twice |

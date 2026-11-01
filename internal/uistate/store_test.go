@@ -58,6 +58,27 @@ func TestPersistenceAndRevisionAcrossInstances(t *testing.T) {
 		t.Fatalf("stale: %v", err)
 	}
 }
+func TestFiltersArePerPageCriteria(t *testing.T) {
+	s := store(t)
+	criteria := `{"owners":["acme"],"risk":"3","repositories":[],"involvement":["assigned"],"no_drafts":true,"review":[],"checks":["failing"],"merge":[]}`
+	value := `{"pages":{"inbox":` + criteria + `,"pulls":` + criteria + `,"inbox:0123456789abcdef0123456789abcdef":` + criteria + `}}`
+	save(t, s, "filters", "", 0, "mutation-00000001", value)
+	if got, err := (&Store{Path: s.Path}).Read("filters", ""); err != nil || string(got.Value) != value {
+		t.Fatalf("reopen: %+v %v", got, err)
+	}
+	for name, bad := range map[string]string{
+		"no pages":    `{}`,
+		"page key":    `{"pages":{"timeline":` + criteria + `}}`,
+		"null page":   `{"pages":{"inbox":null}}`,
+		"risk":        `{"pages":{"inbox":` + strings.Replace(criteria, `"3"`, `"5"`, 1) + `}}`,
+		"involvement": `{"pages":{"inbox":` + strings.Replace(criteria, `"assigned"`, `"mentioned"`, 1) + `}}`,
+		"repository":  `{"pages":{"inbox":` + strings.Replace(criteria, `"repositories":[]`, `"repositories":["acme"]`, 1) + `}}`,
+	} {
+		if _, err := s.Replace("filters", "", 1, "mutation-00000002:1", json.RawMessage(bad)); !errors.Is(err, ErrInvalid) {
+			t.Errorf("%s: %v", name, err)
+		}
+	}
+}
 func TestCommittedMutationRetryDoesNotOverwriteLaterChanges(t *testing.T) {
 	s := store(t)
 	key := "acme/demo#7@v1"

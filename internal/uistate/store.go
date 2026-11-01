@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/baum-ai/baum/internal/appdb"
+	"github.com/baum-ai/baum/internal/inboxes"
 )
 
 const KeepWalkthroughs = 40
@@ -22,6 +23,7 @@ var ErrUnreadable = errors.New("saved UI state is unreadable")
 var clientKey = regexp.MustCompile(`^[A-Za-z0-9_-]{12,64}$`)
 var mutationKey = regexp.MustCompile(`^([A-Za-z0-9_-]{12,64}):([1-9][0-9]{0,15})$`)
 var dayKey = regexp.MustCompile(`^[0-9]{4}-[0-9]{1,2}-[0-9]{1,2}$`)
+var filterPage = regexp.MustCompile(`^(inbox|pulls|inbox:[0-9a-f]{32})$`)
 var reviewKey = regexp.MustCompile(`^[A-Za-z0-9._-]+(?:/[A-Za-z0-9._-]+){1,2}#[1-9][0-9]*@v[1-9][0-9]*$`)
 
 type Record struct {
@@ -43,7 +45,7 @@ type Store struct {
 }
 
 func valid(kind, key string) bool {
-	return (kind == "inbox" || kind == "tour") && key == "" || kind == "walkthrough" && len(key) <= 300 && reviewKey.MatchString(key)
+	return (kind == "inbox" || kind == "tour" || kind == "filters") && key == "" || kind == "walkthrough" && len(key) <= 300 && reviewKey.MatchString(key)
 }
 func empty() Record { return Record{Value: json.RawMessage("null")} }
 func decode(raw []byte, kind, key string) (Record, error) {
@@ -232,6 +234,18 @@ func validate(kind string, raw []byte) error {
 		}
 		for id, note := range *value.Notes {
 			if id == "" || len(id) > 256 || note == nil || len(*note) > 64<<10 {
+				return ErrInvalid
+			}
+		}
+	case "filters":
+		var value struct {
+			Pages *map[string]*inboxes.Criteria `json:"pages"`
+		}
+		if json.Unmarshal(raw, &value) != nil || value.Pages == nil || len(*value.Pages) > 64 {
+			return ErrInvalid
+		}
+		for page, criteria := range *value.Pages {
+			if !filterPage.MatchString(page) || criteria == nil || criteria.Clean(page) != nil {
 				return ErrInvalid
 			}
 		}

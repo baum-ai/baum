@@ -28,3 +28,7 @@ export function mockStateFetch(handler: (path: string, init?: RequestInit) => Pr
     return Response.json(saved);
   });
 }
+/** What the mock daemon holds for a record, as a test reads it back. */
+export function savedUIState(path: string): unknown {
+  return documents.get(path)?.value ?? null;
+}

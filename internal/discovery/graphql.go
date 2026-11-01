@@ -23,6 +23,7 @@ const inboxQuery = `query LocalInbox($owner: String!, $name: String!, $cursor: S
    nodes {
     number title headRefOid headRefName baseRefName isDraft additions deletions changedFiles updatedAt author { __typename login }
     headRepository { databaseId nameWithOwner } baseRepository { databaseId nameWithOwner }
+    assignees(first: 20) { nodes { login } }
     reviewRequests(first: 100) { nodes { requestedReviewer { __typename ... on User { login } ... on Team { databaseId } } } pageInfo { hasNextPage } }
     reviewDecision latestOpinionatedReviews(first: 100) { nodes { state } pageInfo { hasNextPage } }
     latestReviews: reviews(last: 100) { nodes { state } pageInfo { hasPreviousPage } }
@@ -55,6 +56,7 @@ type gqlPR struct {
 	Author         actor
 	HeadRepository *gqlRepository
 	BaseRepository gqlRepository
+	Assignees      struct{ Nodes []actor }
 	ReviewRequests struct {
 		Nodes []struct {
 			RequestedReviewer struct {

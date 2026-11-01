@@ -26,13 +26,17 @@ import {
   RailLinks,
 } from "./inbox-pages";
 import {
+  fromCriteria,
   inboxBadgeCount,
   matches,
+  MAX_INBOXES,
   readInboxes,
   useInboxes,
   type Inbox as SavedInbox,
 } from "./inboxes";
 import { UpNextPage, useUpNext } from "./up-next";
+import { FilterMenu } from "./filter-menu";
+import { matchesCriteria, usePageFilter, type Criteria } from "./pr-filter";
 import {
   onBody,
   KeyBar,
@@ -456,13 +460,26 @@ function Workspace({ url }: { url: UrlState }) {
     clones.find((c) => c.repository === e.pull_request.repository && c.available)?.id ??
     "";
   const filter = url.search.get("filter") ?? "inbox";
-  const repo = url.search.get("repo") ?? "";
+  const pullsFilter = usePageFilter("pulls");
+  // A link from before the filter menu names one repository: it becomes the
+  // page's filter.
+  const linkedRepo = url.search.get("repo");
+  useEffect(() => {
+    if (!linkedRepo) return;
+    pullsFilter.set({ ...pullsFilter.criteria, owners: [], repositories: [linkedRepo] });
+    url.update((current) => {
+      current.delete("repo");
+      return current;
+    });
+  }, [linkedRepo]);
   const indexedEntries = snapshot.entries.map((entry) =>
     isActiveJob(reviewJob(entry, jobs)) || starting.has(rowKey(entry))
       ? { ...entry, status: "generating" }
       : entry,
   );
-  const rows = filtered(indexedEntries, filter, repo);
+  const filteredPulls = (view: string) =>
+    filtered(indexedEntries, view, "").filter((e) => matchesCriteria(pullsFilter.criteria, e));
+  const rows = filteredPulls(filter);
   const repositories = Array.from(
     new Set([
       ...picked.map((r) => r.repository),
@@ -859,6 +876,16 @@ function Workspace({ url }: { url: UrlState }) {
     go: navigate,
     Link: LocalLink,
   };
+  // The Inbox's quick filter as an inbox of its own, opened to be named.
+  const saveAsInbox =
+    inboxes.status === "ready" && inboxes.inboxes.length < MAX_INBOXES
+      ? (criteria: Criteria) => {
+          const made = fromCriteria(criteria, inboxes.inboxes);
+          inboxes.save([...inboxes.inboxes, made]);
+          setFreshInbox(made.id);
+          navigate(editInboxHref(made.id));
+        }
+      : undefined;
   useKeyHints();
   useEscapeBlurs();
   usePointerBlurs();
@@ -1308,6 +1335,7 @@ function Workspace({ url }: { url: UrlState }) {
               refresh={refresh}
               refreshing={listBusy}
               reviewGroups={groups}
+              saveAsInbox={saveAsInbox}
               entries={indexedEntries}
               Link={LocalLink}
             />
@@ -1334,7 +1362,7 @@ function Workspace({ url }: { url: UrlState }) {
               <div className="local-filter-bar">
                 <div role="group" aria-label="Show" className="local-tabs">
                   {VIEWS.map(([value, label]) => {
-                    const count = filtered(indexedEntries, value, repo).length;
+                    const count = filteredPulls(value).length;
                     return (
                       <button
                         key={value}
@@ -1355,27 +1383,16 @@ function Workspace({ url }: { url: UrlState }) {
                     );
                   })}
                 </div>
-                {repositories.length > 1 ? (
-                  <label className="local-repo-filter">
-                    <span className="sr-only">Repository</span>
-                    <select
-                      value={repo}
-                      onChange={(e) => {
-                        setSelection(new Set());
-                        url.update((current) => {
-                          if (e.target.value) current.set("repo", e.target.value);
-                          else current.delete("repo");
-                          return current;
-                        });
-                      }}
-                    >
-                      <option value="">All repositories</option>
-                      {repositories.map((name) => (
-                        <option key={name}>{name}</option>
-                      ))}
-                    </select>
-                  </label>
-                ) : null}
+                <FilterMenu
+                  align="end"
+                  criteria={pullsFilter.criteria}
+                  onChange={(next) => {
+                    setSelection(new Set());
+                    pullsFilter.set(next);
+                  }}
+                  entries={filtered(indexedEntries, filter, "")}
+                  repositories={repositories}
+                />
               </div>
               <div className="local-page-body">
                 {/* A cache older than the poll interval is normal; only a failed refresh

@@ -1,7 +1,7 @@
 # Durable desktop reading state
 
-`uistate` owns the Inbox's bookkeeping, review walkthrough drafts and whether
-the first-run tour was seen in the shared private application database
+`uistate` owns the Inbox's bookkeeping, review walkthrough drafts, each
+page's quick filter and whether the first-run tour was seen in the shared private application database
 (`internal/appdb`). It imports no legacy
 browser storage. Original coding-session transcripts and submitted GitHub
 reviews are outside this store.
@@ -9,8 +9,14 @@ reviews are outside this store.
 | Document | Contents |
 | --- | --- |
 | `ui/inbox` | local day; per-PR seen/cleared records; time-based snoozes; head-based snoozes |
+| `ui/filters` | each page's quick filter over pull requests (`{pages: {<page>: criteria}}`) |
 | `ui/tour` | whether this computer has finished or skipped the app's first-run tour (`{seen}`) |
 | `ui/walkthrough` | per repository/PR/review-version seen stops, draft comments per stop, and overall comment |
+
+A filter page is `inbox`, `inbox:<inbox id>` or `pulls`; at most 64 are kept,
+each one inbox `Criteria` (see the [inboxes README](../inboxes/README.md)), and
+a page without a filter is left out. The app drops the least recently changed
+pages beyond 60.
 
 A walkthrough key is `owner/repository#number@vversion` (optionally prefixed
 with an Enterprise host). The latest 40 saved review versions are retained.
@@ -26,6 +32,8 @@ JSON-content checks. These routes grant no filesystem access.
 
 - `GET /api/ui-state/inbox`
 - `PUT /api/ui-state/inbox`
+- `GET /api/ui-state/filters`
+- `PUT /api/ui-state/filters`
 - `GET /api/ui-state/tour`
 - `PUT /api/ui-state/tour`
 - `GET /api/ui-state/walkthrough?key=<URL-encoded review key>`
