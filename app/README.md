@@ -1097,7 +1097,7 @@ did for the person (reviews that completed, fixes pushed, threads resolved, merg
 branch updates and check re-runs from the app, decision capture runs that succeeded), its
 failures left to Jobs. A figure that is unknown is "—" with its reason as a tooltip and to
 screen readers, never 0; a floor reads "≥". Charts are HTML and inline SVG in the
-viewer's `--data-*` slots, agents in a fixed order (Claude Code, Codex, Cursor),
+viewer's `--data-*` slots, agents in a fixed order (Claude Code, Codex, then any other recorded, such as earlier Cursor sessions, in a muted colour; the agent filter offers Claude Code and Codex only),
 with tooltips on hover and focus. The page reads again every two seconds while
 the daemon is still indexing or searching GitHub, then every five minutes. An
 older daemon without the capability gets a note to update baum.
@@ -1129,8 +1129,10 @@ for which pull requests (authored, requested, both, or all open pull requests
 in the repository), the harness and its model (a listed model or a custom
 name, saved when its field is left or Enter is pressed) and the reasoning
 effort (Default, which leaves it to the agent, Low, Medium or High; higher levels
-selected in onboarding remain visible; no row for
-Cursor Agent, whose models name their own). Each change is saved
+selected in onboarding remain visible). The harness is Claude Code or Codex
+only: the daemon refuses `cursor-agent` and `anthropic` (400 when saving, a
+failed job for one already in `config.toml`), and when neither is installed
+the section says so. Each change is saved
 at once, with "Saved" beside the title, through `PUT api/automatic`
 (`enabled`, `backend`, `model`, `effort`, `pull_requests`), which the daemon
 keeps as app preferences over the config file; `GET api/settings` reports the

@@ -241,7 +241,6 @@ func TestPrepareFixChecksForkPushAccessAndWhatIsBroken(t *testing.T) {
 		{"nothing broken", &fakeGitHub{headRepository: "owner/repo", push: true, mergeable: true}, agent.BackendClaude, fix.ReasonNothingToFix, FixInputs{HeadRef: "feature", BaseRef: "main"}},
 		{"fork", &fakeGitHub{headRepository: "someone/repo", push: true}, agent.BackendClaude, fix.ReasonFork, FixInputs{HeadRef: "feature", BaseRef: "main"}},
 		{"no push access", &fakeGitHub{headRepository: "owner/repo"}, agent.BackendClaude, fix.ReasonNoPushAccess, FixInputs{HeadRef: "feature", BaseRef: "main"}},
-		{"cursor-agent", &fakeGitHub{headRepository: "owner/repo", push: true}, agent.BackendCursorAgent, fix.ReasonUnsupportedBackend, FixInputs{HeadRef: "feature", BaseRef: "main"}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			g := test.github

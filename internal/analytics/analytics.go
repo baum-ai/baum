@@ -25,6 +25,11 @@ var Windows = []int{7, 30, 90}
 // reads.
 var Agents = []string{"claude_code", "codex", "cursor"}
 
+// FilterAgents are the agents the report offers as filter choices: the desktop
+// app offers Claude Code and Codex only. A Cursor session already recorded
+// still counts in the figures and still filters when a query names it.
+var FilterAgents = []string{"claude_code", "codex"}
+
 // Registry is what the report reads of the registered repositories;
 // *repos.Registry is one.
 type Registry interface {

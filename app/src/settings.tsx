@@ -56,6 +56,7 @@ import {
   type SetupView,
   type Outcome,
   decisionModelDefaults,
+  detectedHarnesses,
   modelPresets,
   withModel,
   type PullRequests,
@@ -89,7 +90,7 @@ function shownBackend(backend: string) {
 const fixHarnesses = ["claude", "codex"];
 
 /** The harnesses that can make data extraction's structured calls, those
- *  with a default decision model; Cursor Agent cannot. */
+ *  with a default decision model. */
 const extractionHarnesses = Object.keys(decisionModelDefaults);
 
 export const settingsSections = ["general", "reviews", "fixes", "connections", "computer"] as const;
@@ -379,6 +380,9 @@ function AgentSelect({
   disabled?: boolean;
   onChange: (next: string) => void;
 }) {
+  // A saved harness the app no longer offers, such as a retired backend from
+  // the config file, shows as chosen so choosing any offered one is a change.
+  const unavailable = value !== "" && !options.includes(value) ? value : null;
   return (
     <select
       id={id}
@@ -388,6 +392,11 @@ function AgentSelect({
       onChange={(event) => onChange(event.target.value)}
     >
       {same !== undefined ? <option value="">{same}</option> : null}
+      {unavailable !== null ? (
+        <option value={unavailable} disabled>
+          {harnessName(unavailable)} (no longer offered)
+        </option>
+      ) : null}
       {options.map((option) => (
         <option key={option} value={option}>
           {harnessName(option)}
@@ -476,20 +485,16 @@ const efforts: { value: string; label: string }[] = [
   { value: "high", label: "High" },
 ];
 
-/** A use case's reasoning effort: "" leaves it to the agent. Cursor Agent has
- *  none (its models name their own), so it gets no row. */
+/** A use case's reasoning effort: "" leaves it to the agent. */
 function EffortRow({
   label,
-  backend,
   value,
   onChange,
 }: {
   label: string;
-  backend: string;
   value: string;
   onChange: (next: string) => void;
 }) {
-  if (backend === "cursor-agent") return null;
   const items = efforts.some((item) => item.value === value)
     ? efforts
     : [...efforts, { value, label: effortLabels[value] ?? value }];
@@ -509,10 +514,13 @@ function ReviewsSection({
   automatic,
   defaults,
   changed,
+  available,
 }: {
   automatic: Automatic;
   defaults: ReviewDefaults;
   changed: () => Promise<void>;
+  /** The agents found on this computer; undefined when the app cannot tell. */
+  available?: readonly string[];
 }) {
   const saved: ReviewSettings & { effort: string } = {
     ...withModel({
@@ -551,6 +559,12 @@ function ReviewsSection({
         status={status}
       />
       {error ? <Alert>{error}</Alert> : null}
+      {available?.length === 0 ? (
+        <p role="status" className="settings-caution">
+          Neither Claude Code nor Codex is installed on this computer, so baum can't write reviews.
+          Install one and open it in your terminal to sign in; baum doesn't switch to another agent.
+        </p>
+      ) : null}
       <div className="local-panel settings-list">
         <SettingRow
           label="Review pull requests automatically"
@@ -610,7 +624,6 @@ function ReviewsSection({
         </SettingRow>
         <EffortRow
           label="Review reasoning effort"
-          backend={draft.backend}
           value={draft.effort}
           onChange={(effort) => change({ effort })}
         />
@@ -704,7 +717,6 @@ function FixesSection({
         {draft.backend ? (
           <EffortRow
             label="Fix reasoning effort"
-            backend={draft.backend}
             value={draft.effort}
             onChange={(effort) => change({ ...draft, effort })}
           />
@@ -1100,7 +1112,16 @@ export function SettingsPage({
           ) : section === "reviews" ? (
             automatic && defaults ? (
               <>
-                <ReviewsSection automatic={automatic} defaults={defaults} changed={changed} />
+                <ReviewsSection
+                  automatic={automatic}
+                  defaults={defaults}
+                  changed={changed}
+                  available={
+                    setup.desktop && setup.view && !setup.view.hooks.error
+                      ? detectedHarnesses(setup.view.hooks.agents)
+                      : undefined
+                  }
+                />
                 {/* A new review harness changes what capture resolves to. */}
                 <DecisionSettingsSection key={defaults.backend} defaults={defaults} />
               </>
@@ -1531,7 +1552,6 @@ function DecisionSettingsSection({ defaults }: { defaults: ReviewDefaults }) {
         {fallback ? (
           <EffortRow
             label="Extraction reasoning effort"
-            backend={backend}
             value={draft.effort}
             onChange={(effort) => change({ effort })}
           />
