@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -106,6 +107,45 @@ type Summary struct {
 	Run           *Run            `json:"run,omitempty"`
 }
 
+// The projection of a latest document, shared by Snapshot's fallback, the
+// write-time maintenance and the backfill so all three agree exactly.
+const (
+	titleSQL   = `COALESCE(json_extract({doc},'$.summary.title'),'')`
+	prStateSQL = `COALESCE(json_extract({doc},'$.review.pr_state'),'')`
+	riskSQL    = `json_extract({doc},'$.summary.risk_score')`
+	minutesSQL = `CASE WHEN json_type({doc},'$.summary.review_minutes') IN ('integer','real') AND json_extract({doc},'$.summary.review_minutes') BETWEEN 1 AND 240 AND CAST(json_extract({doc},'$.summary.review_minutes') AS INTEGER)=json_extract({doc},'$.summary.review_minutes') THEN CAST(json_extract({doc},'$.summary.review_minutes') AS INTEGER) END`
+)
+
+func extract(doc string) string {
+	return strings.NewReplacer("{doc}", doc).Replace(titleSQL + `,` + prStateSQL + `,` + riskSQL + `,` + minutesSQL)
+}
+
+// fromSummary reads a column of a matching summaries row, extracting from the
+// document only for a row without one. SQLite evaluates CASE lazily.
+func fromSummary(column, expr string) string {
+	return `CASE WHEN s.pr IS NULL THEN ` + strings.ReplaceAll(expr, "{doc}", "v.document") + ` ELSE ` + column + ` END`
+}
+
+const summariesSchema = `CREATE TABLE IF NOT EXISTS summaries (repository TEXT NOT NULL, pr INTEGER NOT NULL, version INTEGER NOT NULL, document_length INTEGER NOT NULL, title, pr_state, risk_score, review_minutes INTEGER, PRIMARY KEY(repository,pr)) WITHOUT ROWID`
+
+const summaryColumns = `INSERT OR REPLACE INTO summaries(repository,pr,version,document_length,title,pr_state,risk_score,review_minutes) `
+
+// project records the projection of one version, in the transaction that wrote it.
+func project(ctx context.Context, tx *sql.Tx, k Key, version int) error {
+	if _, err := tx.ExecContext(ctx, summariesSchema); err != nil {
+		return err
+	}
+	_, err := tx.ExecContext(ctx, summaryColumns+`SELECT repository,pr,version,length(document),`+extract("document")+` FROM versions WHERE repository=? AND pr=? AND version=?`, k.repository(), k.Number, version)
+	return err
+}
+
+// backfill projects every latest document without a current summary: a store
+// written before summaries existed, or by a binary that does not maintain them.
+func backfill(ctx context.Context, db *sql.DB) error {
+	_, err := db.ExecContext(ctx, summaryColumns+`SELECT v.repository,v.pr,v.version,length(v.document),`+extract("v.document")+` FROM versions v JOIN (SELECT repository,pr,MAX(version) latest FROM versions GROUP BY repository,pr) m ON v.repository=m.repository AND v.pr=m.pr AND v.version=m.latest LEFT JOIN summaries s ON s.repository=v.repository AND s.pr=v.pr WHERE (s.pr IS NULL OR s.version<>v.version OR s.document_length<>length(v.document)) AND json_valid(v.document)`)
+	return err
+}
+
 func (s *Store) Snapshot(ctx context.Context) ([]Summary, error) {
 	db, err := s.database(false)
 	if errors.Is(err, ErrNotFound) {
@@ -120,7 +160,18 @@ func (s *Store) Snapshot(ctx context.Context) ([]Summary, error) {
 		return nil, err
 	}
 	defer func() { _ = tx.Rollback() }()
-	rows, err := tx.QueryContext(ctx, `SELECT v.repository,v.pr,v.metadata,COALESCE(json_extract(v.document,'$.summary.title'),''),COALESCE(json_extract(v.document,'$.review.pr_state'),''),json_extract(v.document,'$.summary.risk_score'),CASE WHEN json_type(v.document,'$.summary.review_minutes') IN ('integer','real') AND json_extract(v.document,'$.summary.review_minutes') BETWEEN 1 AND 240 AND CAST(json_extract(v.document,'$.summary.review_minutes') AS INTEGER)=json_extract(v.document,'$.summary.review_minutes') THEN CAST(json_extract(v.document,'$.summary.review_minutes') AS INTEGER) END,summary.n FROM versions v JOIN (SELECT repository,pr,MAX(version) latest,COUNT(*) n FROM versions GROUP BY repository,pr) summary ON v.repository=summary.repository AND v.pr=summary.pr AND v.version=summary.latest ORDER BY v.repository,v.pr`)
+	// Read old stores without migrating them: summaries is used where present and current.
+	var projected int
+	if err = tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='summaries'`).Scan(&projected); err != nil {
+		return nil, err
+	}
+	table := `(SELECT NULL repository,NULL pr,NULL version,NULL document_length,NULL title,NULL pr_state,NULL risk_score,NULL review_minutes WHERE 0)`
+	if projected != 0 {
+		table = "summaries"
+	}
+	rows, err := tx.QueryContext(ctx, `SELECT v.repository,v.pr,v.metadata,`+
+		fromSummary("s.title", titleSQL)+`,`+fromSummary("s.pr_state", prStateSQL)+`,`+fromSummary("s.risk_score", riskSQL)+`,`+fromSummary("s.review_minutes", minutesSQL)+
+		`,m.n FROM versions v JOIN (SELECT repository,pr,MAX(version) latest,COUNT(*) n FROM versions GROUP BY repository,pr) m ON v.repository=m.repository AND v.pr=m.pr AND v.version=m.latest LEFT JOIN `+table+` s ON s.repository=v.repository AND s.pr=v.pr AND s.version=v.version AND s.document_length=length(v.document) ORDER BY v.repository,v.pr`)
 	if err != nil {
 		return nil, err
 	}
@@ -161,7 +212,7 @@ func (s *Store) Snapshot(ctx context.Context) ([]Summary, error) {
 	for i := range out {
 		entries[out[i].Key] = &out[i]
 	}
-	// Read old stores without migrating them. Opening for writes creates runs.
+	// Opening for writes creates runs.
 	var exists int
 	if err = tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='runs'`).Scan(&exists); err != nil {
 		return nil, err

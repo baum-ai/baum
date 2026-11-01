@@ -51,6 +51,29 @@ func Root(b testing.TB) (root, label string) {
 	return root, "synthetic"
 }
 
+// ProjectedRoot is Root with the summaries projection present. A real store is
+// copied into b.TempDir and write-opened there, which backfills the copy; the
+// original is never written. Synthetic stores are projected as they publish.
+func ProjectedRoot(b testing.TB) (root, label string) {
+	b.Helper()
+	src, label := Root(b)
+	if label == "synthetic" {
+		return src, label
+	}
+	raw, err := os.ReadFile(filepath.Join(src, "versions.sqlite"))
+	if err != nil {
+		b.Fatal(err)
+	}
+	root = b.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "versions.sqlite"), raw, 0o600); err != nil {
+		b.Fatal(err)
+	}
+	if _, err := store.Open("", root, true); err != nil {
+		b.Fatal(err)
+	}
+	return root, label
+}
+
 // Generate publishes the synthetic corpus into a new store at root.
 func Generate(root string) error {
 	ctx := context.Background()

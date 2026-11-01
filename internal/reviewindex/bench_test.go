@@ -20,7 +20,12 @@ import (
 // an independent store of the same size.
 func benchService(b *testing.B, n int) (*Service, string) {
 	b.Helper()
-	root, label := benchcorpus.Root(b)
+	return benchServiceAt(b, n, benchcorpus.Root)
+}
+
+func benchServiceAt(b *testing.B, n int, corpus func(testing.TB) (string, string)) (*Service, string) {
+	b.Helper()
+	root, label := corpus(b)
 	s, err := store.Open("", root, false)
 	if err != nil {
 		b.Fatal(err)
@@ -49,10 +54,16 @@ func benchService(b *testing.B, n int) (*Service, string) {
 
 // BenchmarkBuild measures Service.Build with a static registry and discovery
 // and real store readers: the store and index-assembly share of one build.
-func BenchmarkBuild(b *testing.B) {
+func BenchmarkBuild(b *testing.B) { benchBuild(b, benchcorpus.Root) }
+
+// BenchmarkBuildProjected is BenchmarkBuild over a store with the summaries
+// projection (a backfilled copy of a real store).
+func BenchmarkBuildProjected(b *testing.B) { benchBuild(b, benchcorpus.ProjectedRoot) }
+
+func benchBuild(b *testing.B, corpus func(testing.TB) (string, string)) {
 	for _, n := range []int{1, 4} {
 		b.Run(fmt.Sprintf("clones=%d", n), func(b *testing.B) {
-			service, label := benchService(b, n)
+			service, label := benchServiceAt(b, n, corpus)
 			ctx := context.Background()
 			snapshot, err := service.Build(ctx)
 			if err != nil || len(snapshot.Entries) == 0 {
