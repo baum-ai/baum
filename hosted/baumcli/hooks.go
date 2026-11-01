@@ -152,6 +152,9 @@ func newAgentHooksCommand(stdout, stderr io.Writer) *cobra.Command {
 			}
 			hookEvent := newHookEvent(hookevents.KindAgent, agent, event, started)
 			hookEvent.Session = agentSession(event, input.identifiers())
+			if hookEvent.Session != nil && agent == "codex" && event == permissionRequestEvent {
+				hookEvent.Session.AutoReview = codexAutoReview(input)
+			}
 			if hookEvent.Session != nil && digestsToolCall(agent, event) {
 				hookEvent.Session.ToolDigest = toolDigest(input)
 			}
@@ -165,7 +168,7 @@ func newAgentHooksCommand(stdout, stderr io.Writer) *cobra.Command {
 			delivered := sendHookEvent(cmd.Context(), hookEvent)
 			switch {
 			case userWide && event == permissionRequestEvent:
-				if delivered {
+				if delivered && (hookEvent.Session == nil || !hookEvent.Session.AutoReview) {
 					answerFromApp(cmd.Context(), agent, input, started, stdout)
 				}
 			case stopOut != nil:

@@ -1133,8 +1133,7 @@ function GeneratedBy({
             href={appURL(`?page=jobs#job-${encodeURIComponent(made.id)}`)}
             onClick={(event) => {
               event.preventDefault();
-              window.history.pushState(null, "", event.currentTarget.href);
-              dispatchEvent(new PopStateEvent("popstate"));
+              navigate(event.currentTarget.href);
             }}
           >
             View job

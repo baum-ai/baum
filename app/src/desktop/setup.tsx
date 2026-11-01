@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef, useState, type ReactNode } from "react"
 import { invoke } from "./native";
 import {
   describeAgent,
+  agentConnected,
   describeCommand,
   detectedHarnesses,
   displayPath,
@@ -143,6 +144,24 @@ export function Setup() {
     if (view) title.current?.focus();
   }, [step, Boolean(view)]);
 
+  useEffect(() => {
+    if (step !== last) return;
+    let checking = false;
+    const focus = async () => {
+      if (working.current || checking) return;
+      checking = true;
+      try {
+        await refresh();
+      } catch {
+        /* Check again remains available. */
+      } finally {
+        checking = false;
+      }
+    };
+    window.addEventListener("focus", focus);
+    return () => window.removeEventListener("focus", focus);
+  }, [step, refresh]);
+
   async function run(id: string, action: () => Promise<void>) {
     if (working.current) return;
     working.current = true;
@@ -187,9 +206,7 @@ export function Setup() {
   }
   const command = view ? describeCommand(view.command) : null;
   const agentsDone =
-    view !== null &&
-    view.hooks.agents.length > 0 &&
-    view.hooks.agents.every((a) => a.installed && a.enabled && !a.error);
+    view !== null && view.hooks.agents.length > 0 && view.hooks.agents.every(agentConnected);
   const githubReady = github && pickedCount > 0;
   const available = view ? detectedHarnesses(view.hooks.agents) : [];
   const agentReady = reviews !== null && available.includes(reviews.backend);
@@ -306,7 +323,7 @@ export function Setup() {
                   available={available}
                   detectionError={view.hooks.error}
                 />
-                <PlanUsage className="setup-card" />
+                <PlanUsage className="setup-card" all />
               </>
             )}
             {step === reviewStep && !reviews && !error && (
@@ -365,7 +382,7 @@ export function Setup() {
                 </li>
                 {agents.map((definition) => {
                   const agent = view.hooks.agents.find((a) => a.agent === definition.id);
-                  const connected = agent?.installed && agent.enabled && !agent.error;
+                  const connected = agent ? agentConnected(agent) : false;
                   const state = agent
                     ? describeAgent(agent)
                     : `${definition.name} status unavailable. Check again to retry.`;
@@ -380,7 +397,11 @@ export function Setup() {
                         </p>
                         {agent?.installed && !agent.error && (
                           <p id={`${definition.id}-hint`} className="agent-hint">
-                            {definition.hint}
+                            {definition.id === "codex" && connected
+                              ? "Codex hooks are approved."
+                              : agent.trust?.state === "hooks_disabled"
+                                ? "Run codex features enable hooks, then start a new conversation."
+                                : definition.hint}
                           </p>
                         )}
                       </div>
@@ -399,7 +420,7 @@ export function Setup() {
                           )}
                         {agent?.detected &&
                           !agent.error &&
-                          !connected &&
+                          (!agent.installed || !agent.enabled) &&
                           button(
                             `${definition.id}-install`,
                             verb,

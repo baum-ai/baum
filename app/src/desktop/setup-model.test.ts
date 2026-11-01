@@ -157,3 +157,23 @@ it("uses the effective decision model's effort options when the saved model is i
   expect(withModel(base).decisions_effort).toBe("max");
   expect(withEfforts(base, "claude-haiku-5-5").decisions_effort).toBe("max");
 });
+
+it("only calls Codex connected when its hooks are enabled and trusted", async () => {
+  const { agentConnected, describeAgent } = await import("./setup-model");
+  const codex = {
+    agent: "codex",
+    name: "Codex",
+    detected: true,
+    installed: true,
+    enabled: true,
+    plugin: "baum@baum",
+  };
+  expect(agentConnected(codex)).toBe(false);
+  expect(describeAgent(codex)).toBe("Hook approval could not be verified");
+  expect(describeAgent({ ...codex, trust: { state: "untrusted" } })).toBe(
+    "Needs approval in Codex",
+  );
+  expect(agentConnected({ ...codex, trust: { state: "trusted" } })).toBe(true);
+  expect(agentConnected({ ...codex, enabled: false, trust: { state: "trusted" } })).toBe(false);
+  expect(agentConnected({ ...codex, agent: "claude-code" })).toBe(true);
+});

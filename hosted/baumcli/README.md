@@ -172,6 +172,11 @@ handshake, in [`apiclient`](../apiclient).
   without it, or with it disabled, is an error. No raw hook settings are edited and no
   migration markers or compatibility cleanup are maintained. Installation
   downloads from GitHub; it needs no baum sign-in and calls no baum server.
+- Codex plugin installation and updates also prepare its terminal title for
+  Focus, preserving other title items and reporting when running terminal
+  sessions need restarting. Existing connections are repaired when Focus
+  cannot locate their terminal. See
+  [Codex focus configuration](../../internal/codexconfig/README.md).
 - [`agentplugins`](../agentplugins/README.md) owns the native commands. Claude
   uses user-scope plugin install/list/uninstall; Codex uses plugin add/list/
   remove. Successful commands are verified with native list JSON. A missing
@@ -181,7 +186,10 @@ handshake, in [`apiclient`](../apiclient).
   processes where supported. One failing agent does not stop the other.
 - `baum hooks status --user [--json]` reads native registries without changing
   them. It reports detection of the CLI, plugin ID, installation, enablement
-  and version separately; installed and enabled never imply trusted. A config
+  and version separately. Installed, enabled Codex plugins also include
+  `trust.state`, read through Codex's effective hook inventory. Only a
+  trusted result means every required baum hook is present, enabled and
+  approved; an unavailable check reports unknown. A config
   directory alone is not an executable agent. The desktop setup screen uses
   these commands, shows disabled plugins separately and offers installation/
   enablement. It allows both agents' action budgets plus process overhead.
@@ -241,6 +249,15 @@ handshake, in [`apiclient`](../apiclient).
   Codex hook's definition is unchanged, so its trust stands. With no daemon,
   one that did not take the event in time, an incompatible one or any error,
   the hook prints nothing and never starts a daemon to wait for.
+- A Codex permission hook checks the latest `turn_context` in the rollout
+  named by the payload, matching its `turn_id`. With
+  `approvals_reviewer = "auto_review"`, it marks the local event `auto_review`
+  and never asks the app for a decision: automatic review has not yet run,
+  so this is not a wait for the person and raises no desktop notification.
+  Session overrides take precedence over the user's config. The read searches
+  backwards through at most 64 MiB with bounded memory; absent, unreadable or
+  unrecognized context keeps the usual manual-approval behavior. Hook
+  definitions and their trust are unchanged.
 - `post-tool-use` and `post-tool-use-failure` events of Claude Code and
   Codex carry `tool_digest`, the SHA-256 of the tool's name and canonical
   input (`agentrequests.Digest`), read from the whole payload, so the daemon

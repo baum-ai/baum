@@ -26,8 +26,14 @@ Update in Settings does per agent. Restart running agent sessions to use new
 hooks, and review trust again where the agent asks (Codex: `/hooks`). No baum sign-in
 is required; installation fetches the public GitHub marketplace but calls no baum server. An old/missing
 agent CLI or failed command gives an error with upgrade/manual instructions.
-baum never edits hook settings directly, keeps no migration markers and
-performs no settings migration or backward-compatibility cleanup.
+baum never edits hook settings directly. Installing or updating Codex through
+baum also configures its terminal title to include the thread ID needed for
+Focus, keeping other title items. Restart running Codex terminal sessions to
+load that preference. Focus repairs older connections when needed and explains
+how to restart and resume the session. The preference follows `CODEX_HOME`
+(default `~/.codex`); removal leaves it in place. See
+[Codex focus configuration](../internal/codexconfig/README.md). No migration
+markers or hook-settings migration are used.
 
 Setup uses the same installer once per invocation for a hosted install or
 logged-in user, unless `--skip-user-hooks` or `--skip-entire` is set. The
@@ -39,11 +45,16 @@ running Entire cannot be enumerated; avoid enabling overlapping plugins.
 
 ## Compatibility and behavior
 
-Plugin **1.2.0** uses the existing shared user-wide dispatcher:
+Plugin **1.2.1** uses the existing shared user-wide dispatcher:
 `baum hooks agent --check --user AGENT EVENT`, then
 `baum hooks agent --user AGENT EVENT`. It needs a CLI supporting that contract;
 a missing baum or one too old to recognize the check makes the plugin quietly
 do nothing.
+
+1.2.1 fixes Codex hook discovery by using its compatibility manifest layout.
+Hook definitions and commands are unchanged. Update the plugin after updating
+baum; review `/hooks` in a new Codex conversation. Working project hooks are
+independent and do not prove the plugin is loaded.
 
 1.1.0 adds events baum only records, for the desktop app's "Needs you"
 (sessions waiting on their user): Claude Code's `Notification` (every type:
@@ -128,7 +139,10 @@ approve the current definitions; installing/enabling alone grants no hook
 trust. Start a fresh agent session as required to reload plugins. Verify
 installation, enablement and trust through the agent's plugins and hooks UI;
 `baum hooks status --user [--json]` reads native registries and reports
-installation and enablement separately; it cannot verify trust. A config
+installation and enablement separately, plus Codex hook readiness when the
+plugin is installed and enabled. An unknown result does not imply approval.
+Onboarding and Settings direct users to `/hooks` until Codex reports the
+current baum hook definitions trusted. A config
 directory without an executable CLI is reported as unavailable.
 
 ## Update and remove
@@ -154,13 +168,14 @@ See the [Claude manifest reference](https://code.claude.com/docs/en/plugins-refe
 [Claude marketplaces](https://code.claude.com/docs/en/plugin-marketplaces), and
 [OpenAI plugin packaging](https://developers.openai.com/plugins/build/plugins).
 Each plugin has one default `hooks/hooks.json`; its manifest does not also
-declare that file (Claude merges both sources). Codex's portable root manifest
-declares the Agent Plugins schema. Its `.agents/plugins/marketplace.json`
-local source resolves from the marketplace repository root. Claude uses
+declare that file (Claude merges both sources). Codex uses
+`.codex-plugin/plugin.json`: Codex 0.166.0 installs a portable-schema root
+manifest but does not load its hooks, while this compatibility layout does.
+Its `.agents/plugins/marketplace.json` local source resolves from the marketplace repository root. Claude uses
 `.claude-plugin/marketplace.json` and `.claude-plugin/plugin.json`.
 
 `TestMarketplacePluginsMatchUserWideHooks` checks the shipped catalogs,
-manifests/schema, events, matchers, timeouts and dispatcher strings against
+manifest layout, events, matchers, timeouts and dispatcher strings against
 `agenthooks`. CLI tests execute shipped commands to verify opt-ins, project
 hook deduplication and quiet behavior without a compatible CLI.
 [`agentplugins`](../hosted/agentplugins/README.md) tests captured native registry

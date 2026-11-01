@@ -53,6 +53,20 @@ export function checkState(check: Check): CheckState {
 
 const ORDER: Record<CheckState, number> = { failing: 0, running: 1, passing: 2, other: 3 };
 
+/** The checks counted in a word, out of them all, and how it reads: "2/9
+ *  failing" while any fails, else "1/9 running" while any runs, else "9/9
+ *  passing". */
+export function checksCount(checks: Check[]): {
+  text: string;
+  tone: "critical" | "caution" | "positive";
+} {
+  const count = (state: CheckState) => checks.filter((check) => checkState(check) === state).length;
+  const of = (n: number, word: string) => `${formatCount(n)}/${formatCount(checks.length)} ${word}`;
+  if (count("failing")) return { text: of(count("failing"), "failing"), tone: "critical" };
+  if (count("running")) return { text: of(count("running"), "running"), tone: "caution" };
+  return { text: of(count("passing"), "passing"), tone: "positive" };
+}
+
 /** The checks counted by state, in words: "1 failing, 2 running and 9 passed". */
 export function checksSummary(checks: Check[]): string {
   const count = (state: CheckState) => checks.filter((check) => checkState(check) === state).length;
@@ -79,39 +93,27 @@ function StateIcon({ state }: { state: CheckState }) {
   }
 }
 
-type Read = { checks?: Check[]; error?: string };
+/** The checks as last read, or why the read failed; neither while the first
+ *  read is under way. */
+export type ChecksRead = { checks?: Check[]; error?: string };
 
 /** While any check runs, the list is read again this often. */
 const RUNNING_REFRESH_MS = 20_000;
 
-/** Every check of the head commit the panel shows, failing first, read from
- *  GitHub (the daemon keeps them for a short while) and read again while any
- *  still runs, each linking to its details. When the signed-in account may
- *  push (`canRetry`), a failing GitHub Actions job has Retry, which re-runs
- *  that job at once. `failingOnly` lists only the failing ones. An older
+/** The head commit's checks, read from GitHub (the daemon keeps them for a
+ *  short while) when `enabled`, and read again while any still runs. An older
  *  daemon lists only the failing checks. */
-export function PullRequestChecks({
-  repository,
-  number,
-  head,
-  url,
-  canRetry,
-  failingOnly = false,
-}: {
-  repository: string;
-  number: number;
-  head: string;
-  url: string;
-  canRetry: boolean;
-  failingOnly?: boolean;
-}) {
-  const [read, setRead] = useState<Read>({});
+export function useChecks(
+  repository: string,
+  number: number,
+  head: string,
+  enabled = true,
+): ChecksRead {
+  const [read, setRead] = useState<ChecksRead>({});
   const [reads, setReads] = useState(0);
-  const [retrying, setRetrying] = useState<Set<number>>(new Set());
-  const [retried, setRetried] = useState<Set<number>>(new Set());
-  const [failed, setFailed] = useState<Record<number, string>>({});
   const query = `repository=${encodeURIComponent(repository)}&pr=${number}&head_sha=${encodeURIComponent(head)}`;
   useEffect(() => {
+    if (!enabled) return;
     const abort = new AbortController();
     request<{ checks: Check[] }>(`api/prs/checks?${query}`, undefined, "GET", abort.signal)
       .catch((error: unknown) => {
@@ -134,16 +136,48 @@ export function PullRequestChecks({
         }));
       });
     return () => abort.abort();
-  }, [query, reads]);
+  }, [query, reads, enabled]);
   const running = read.checks?.some((check) => checkState(check) === "running") ?? false;
   // Every read, failed or not, sets `read` anew, so the next one is
   // scheduled after each while a check runs.
   useEffect(() => {
-    if (!running) return;
+    if (!enabled || !running) return;
     const timer = setTimeout(() => setReads((n) => n + 1), RUNNING_REFRESH_MS);
     return () => clearTimeout(timer);
-  }, [running, read]);
+  }, [enabled, running, read]);
+  return read;
+}
 
+/** Every check of the head commit the panel shows, failing first, each
+ *  linking to its details: `checks` when the caller reads them (`useChecks`),
+ *  else read here. When the signed-in account may push (`canRetry`), a failing
+ *  GitHub Actions job has Retry, which re-runs that job at once. While any
+ *  check fails only the failing ones show, the others behind Show other
+ *  checks. `failingOnly` lists only the failing ones. */
+export function PullRequestChecks({
+  repository,
+  number,
+  head,
+  url,
+  canRetry,
+  failingOnly = false,
+  checks,
+}: {
+  repository: string;
+  number: number;
+  head: string;
+  url: string;
+  canRetry: boolean;
+  failingOnly?: boolean;
+  checks?: ChecksRead;
+}) {
+  const own = useChecks(repository, number, head, checks === undefined);
+  const read = checks ?? own;
+  const [retrying, setRetrying] = useState<Set<number>>(new Set());
+  const [retried, setRetried] = useState<Set<number>>(new Set());
+  const [failed, setFailed] = useState<Record<number, string>>({});
+  // The checks that are not failing stay folded away until asked for.
+  const [showOthers, setShowOthers] = useState(false);
   const retry = async (job: number) => {
     setRetrying((ids) => new Set(ids).add(job));
     setFailed((all) =>
@@ -180,9 +214,17 @@ export function PullRequestChecks({
       </div>
     );
   }
-  const shown = read.checks
+  // A failing check, or one retried here, which stays in sight as it reruns.
+  const failingNow = (check: Check) =>
+    checkState(check) === "failing" || (check.job_id != null && retried.has(check.job_id));
+  const sorted = read.checks
     .filter((check) => !failingOnly || checkState(check) === "failing")
     .sort((a, b) => ORDER[checkState(a)] - ORDER[checkState(b)] || a.name.localeCompare(b.name));
+  // With nothing failing every check shows; otherwise the failing ones, and
+  // the others behind Show other checks.
+  const folds = !failingOnly && sorted.some(failingNow);
+  const others = folds ? sorted.filter((check) => !failingNow(check)).length : 0;
+  const shown = folds && !showOthers ? sorted.filter(failingNow) : sorted;
   if (shown.length === 0) {
     return (
       <p className="upnext-threads upnext-block-sub">
@@ -248,7 +290,18 @@ export function PullRequestChecks({
           );
         })}
       </ul>
-      {failingOnly ? null : <p className="upnext-block-more">{checksSummary(read.checks)}.</p>}
+      {others > 0 ? (
+        <button
+          type="button"
+          className="upnext-checks-more"
+          aria-expanded={showOthers}
+          onClick={() => setShowOthers((show) => !show)}
+        >
+          {showOthers
+            ? "Hide other checks"
+            : `Show ${others === 1 ? "1 other check" : `${formatCount(others)} other checks`}`}
+        </button>
+      ) : null}
     </div>
   );
 }

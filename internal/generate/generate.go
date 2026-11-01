@@ -70,10 +70,19 @@ const (
 type Error struct {
 	Category Category
 	Err      error
+	// headChanged keeps ErrHeadChanged visible through the redaction that
+	// rebuilds Err from its text.
+	headChanged bool
 }
 
 func (e *Error) Error() string { return e.Err.Error() }
-func (e *Error) Unwrap() error { return e.Err }
+
+// ErrHeadChanged: a pull request's head moved after the run was prepared, so
+// its evidence would not be what was confirmed.
+var ErrHeadChanged = errors.New("pull request head changed")
+
+func (e *Error) Unwrap() error        { return e.Err }
+func (e *Error) Is(target error) bool { return e.headChanged && target == ErrHeadChanged }
 
 // CategoryOf returns the category of err, or "" when it is not an *Error.
 func CategoryOf(err error) Category {
@@ -241,7 +250,7 @@ func Run(ctx context.Context, o Options) (result Result, err error) {
 		if masked, _, maskErr := redactor.RedactString(context.WithoutCancel(ctx), text); maskErr == nil {
 			text = masked
 		}
-		return &Error{Category: category, Err: errors.New(text)}
+		return &Error{Category: category, Err: errors.New(text), headChanged: errors.Is(err, ErrHeadChanged)}
 	}
 	interrupted := func(err error) error {
 		if ctx.Err() != nil {
@@ -378,6 +387,9 @@ func Run(ctx context.Context, o Options) (result Result, err error) {
 	}
 	run := agent.Run{
 		Bundle: &b, EncodedBundle: assembled.JSON, Directory: runDir, TileKinds: o.TileKinds, Budgets: o.Budgets, Decorate: decorate, PersistSession: keepSession,
+	}
+	if o.Group != nil {
+		run.ModelSchema = groupModelSchema
 	}
 	// What the loop returned is masked on every path, as the hosted worker
 	// does, before any of it is shown, written or put in an error.

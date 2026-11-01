@@ -1,5 +1,6 @@
 import { BrandMark } from "@baum/viewer/components/brand-logo";
 import { usePreferences } from "./preferences";
+import { PlanUsageSettings } from "./plan-usage-settings";
 import {
   useEffect,
   useRef,
@@ -31,6 +32,7 @@ import {
 import { MenuButton, useContextMenu, type MenuItem } from "./context-menu";
 import { GitHubConnectionSection } from "./github-connection";
 import { messages as githubMessages } from "./github-auth";
+import { CodexHookWarning, type useCodexHookTrust } from "./codex-hooks";
 import { DiagnosticsSection } from "./diagnostics";
 import { invoke } from "./desktop/native";
 import { Notice, PageBar, PanelHeader, RefreshButton } from "./shell";
@@ -48,6 +50,7 @@ import { effortLabels } from "./model-effort";
 import {
   describeCommand,
   describeAgent,
+  agentConnected,
   displayPath,
   type SetupView,
   type Outcome,
@@ -718,7 +721,7 @@ function FixesSection({
 
 /** The desktop app's view of the CLI and agent hooks, and the actions that
  *  change them. Outside the desktop app it stays empty. */
-function useDesktopSetup() {
+function useDesktopSetup(onChanged?: () => Promise<void>) {
   const desktop = hasFolderPicker();
   const [view, setView] = useState<SetupView | null>(null);
   const [busy, setBusy] = useState(false);
@@ -729,6 +732,7 @@ function useDesktopSetup() {
   const working = useRef(false);
   async function refresh() {
     setView(await invoke<SetupView>("setup_state"));
+    void onChanged?.();
   }
   // biome-ignore lint/correctness/useExhaustiveDependencies: read once on mount
   useEffect(() => {
@@ -807,14 +811,7 @@ function AgentHooksPanel({ setup }: { setup: DesktopSetup }) {
               <div className="min-w-0 space-y-1">
                 <div className="flex flex-wrap items-center gap-3">
                   <h3 className="text-base font-medium">{agent.name}</h3>
-                  {connectedState(
-                    agent.installed && agent.enabled
-                      ? "Connected"
-                      : agent.installed
-                        ? "Disabled"
-                        : "Not connected",
-                    agent.installed && agent.enabled && !agent.error,
-                  )}
+                  {connectedState(describeAgent(agent) || "Not connected", agentConnected(agent))}
                   {agent.installed && agent.version ? (
                     <span className="text-xs text-(--text-tertiary)">Plugin {agent.version}</span>
                   ) : null}
@@ -825,7 +822,9 @@ function AgentHooksPanel({ setup }: { setup: DesktopSetup }) {
                 {agent.installed ? (
                   <p className="text-xs text-(--text-tertiary)">
                     {agent.agent === "codex"
-                      ? "Review hook trust with /hooks in Codex."
+                      ? agent.trust?.state === "trusted"
+                        ? "Codex hooks are approved."
+                        : "Review hook trust with /hooks in Codex."
                       : "Review plugin trust in Claude Code."}
                   </p>
                 ) : null}
@@ -956,8 +955,8 @@ function CommandLinePanel({ setup }: { setup: DesktopSetup }) {
 function hooksHealth(view: SetupView | null): { tone: Tone; detail: string } | null {
   if (!view) return null;
   const agents = view.hooks.agents;
-  const connected = agents.filter((a) => a.installed && a.enabled && !a.error);
-  const waiting = agents.filter((a) => a.error || (a.detected && (!a.installed || !a.enabled)));
+  const connected = agents.filter(agentConnected);
+  const waiting = agents.filter((a) => a.error || (a.detected && !agentConnected(a)));
   if (view.hooks.error || waiting.length > 0)
     return {
       tone: "caution",
@@ -984,6 +983,7 @@ export function SettingsPage({
   onDiagnostics,
   authRevision,
   authChanged,
+  codexTrust,
 }: {
   automatic: Automatic | null;
   defaults: ReviewDefaults | null;
@@ -997,13 +997,18 @@ export function SettingsPage({
   onDiagnostics: (report: DiagnosticReport | null) => void;
   authRevision: number;
   authChanged: () => void;
+  codexTrust?: ReturnType<typeof useCodexHookTrust>;
 }) {
-  const setup = useDesktopSetup();
+  const setup = useDesktopSetup(codexTrust?.recheck);
   const gh = githubHealth(github);
   const hooks = setup.desktop ? hooksHealth(setup.view) : null;
   const fix = defaults ? fixSummary(defaults) : null;
   const connectionTone: Tone =
-    gh.tone === "critical" ? "critical" : hooks?.tone === "caution" ? "caution" : gh.tone;
+    gh.tone === "critical"
+      ? "critical"
+      : hooks?.tone === "caution" || codexTrust?.warning
+        ? "caution"
+        : gh.tone;
   const nav: { id: SettingsSection; sub: string; tone?: Tone }[] = [
     {
       id: "general",
@@ -1089,6 +1094,7 @@ export function SettingsPage({
           ))}
         </nav>
         <div ref={keys.content} className="settings-content" onFocus={keys.onFocus}>
+          <CodexHookWarning check={codexTrust} />
           {section === "general" ? (
             <GeneralSection />
           ) : section === "reviews" ? (
@@ -1192,6 +1198,7 @@ function JobConcurrencyRow() {
     );
   }, []);
   async function choose(next: number) {
+    if (saving) return;
     const before = value;
     setValue(next);
     setSaving(true);
@@ -1225,7 +1232,7 @@ function JobConcurrencyRow() {
       <select
         id="job-concurrency"
         className="local-field settings-select"
-        disabled={value === null || saving}
+        disabled={value === null}
         value={value ?? MAX_JOB_CONCURRENCY}
         onChange={(e) => void choose(Number(e.target.value))}
       >
@@ -1271,7 +1278,7 @@ function TimeLimitRows() {
     );
   }, []);
   async function choose(key: keyof TimeLimits, minutes: number) {
-    if (!value) return;
+    if (!value || saving) return;
     const before = value;
     setValue({ ...value, [key]: minutes });
     setSaving(true);
@@ -1301,7 +1308,7 @@ function TimeLimitRows() {
         <select
           id={id}
           className="local-field settings-select"
-          disabled={value === null || saving}
+          disabled={value === null}
           value={current}
           onChange={(e) => void choose(key, Number(e.target.value))}
         >
@@ -1698,6 +1705,9 @@ function AgentEnvSection() {
         )
       ) : (
         <div className="settings-env">
+          {rows.length === 0 ? (
+            <p className="text-xs text-(--text-tertiary)">No variables set.</p>
+          ) : null}
           {rows.map((row) => (
             <div key={row.id} className="settings-env-row">
               <input
@@ -2256,13 +2266,13 @@ function hasFolderPicker() {
 }
 
 function GeneralSection() {
-  const { preferences, update, ready, saving, error, refresh } = usePreferences();
+  const { preferences, update, ready, error, refresh } = usePreferences();
   return (
     <section aria-labelledby="settings-general-heading" className="settings-section">
       <SectionHead
         id="settings-general-heading"
         title="General"
-        detail="Appearance and keyboard preferences on this device."
+        detail="Appearance, keyboard and plan usage preferences on this device."
       />
       {error ? (
         <Alert>
@@ -2276,7 +2286,7 @@ function GeneralSection() {
         <SettingRow label="Preferred theme" htmlFor="preferred-theme">
           <select
             id="preferred-theme"
-            disabled={!ready || saving}
+            disabled={!ready}
             className="local-field settings-select"
             value={preferences.theme}
             onChange={(event) => update({ theme: event.target.value as typeof preferences.theme })}
@@ -2293,7 +2303,7 @@ function GeneralSection() {
         >
           <input
             id="keyboard-hints"
-            disabled={!ready || saving}
+            disabled={!ready}
             type="checkbox"
             role="switch"
             className="local-switch"
@@ -2302,6 +2312,8 @@ function GeneralSection() {
           />
         </SettingRow>
       </div>
+      <h3 className="settings-subhead">Plan usage</h3>
+      <PlanUsageSettings />
     </section>
   );
 }

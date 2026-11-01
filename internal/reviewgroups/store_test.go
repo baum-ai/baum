@@ -6,10 +6,12 @@ import (
 	"errors"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 
 	"github.com/baum-ai/baum/internal/appdb/appdbtest"
+	"github.com/baum-ai/baum/internal/discovery"
 	"github.com/baum-ai/baum/internal/store"
 )
 
@@ -214,6 +216,63 @@ func TestMembersFileKeepsCurrentSectionsAndActiveRisks(t *testing.T) {
 	}
 	if _, err := MembersFile([]MemberReview{{Number: 8, Document: []byte("not json")}}); err == nil {
 		t.Fatal("an unreadable review was accepted")
+	}
+}
+
+// A stack group takes the name its review gave it; the person's group keeps
+// theirs, and so does a stack group the person renamed meanwhile.
+func TestPutNamesOnlyStackGroups(t *testing.T) {
+	ctx := context.Background()
+	s := openStore(t)
+	mine, err := s.Create(ctx, "acme/demo", "Mine", []int{7, 8})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.SyncStacks(ctx, "acme/demo", []discovery.PullRequest{open(1, "a", "main"), open(2, "b", "a")}, nil); err != nil {
+		t.Fatal(err)
+	}
+	var stack Group
+	list, err := s.List(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, g := range list {
+		if g.Stack {
+			stack = g
+		}
+	}
+	titled := func(version int, title string) store.Version {
+		v := groupReview(t, "acme/demo", version, ReviewedMember{Number: 1, HeadSHA: "aaaaaaa", ReviewVersion: 1})
+		v.Document = []byte(strings.Replace(string(v.Document), `"title":"Release train"`, `"title":`+strconv.Quote(title), 1))
+		return v
+	}
+	name := func(id string) string {
+		t.Helper()
+		g, err := s.Get(ctx, id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return g.Name
+	}
+	if err := s.Put(ctx, mine.ID, 0, titled(1, "A generated name")); err != nil || name(mine.ID) != "Mine" {
+		t.Fatalf("the person's group was renamed: %q %v", name(mine.ID), err)
+	}
+	if err := s.Put(ctx, stack.ID, 0, titled(1, "A generated name")); err != nil || name(stack.ID) != "A generated name" {
+		t.Fatalf("the stack group was not named: %q %v", name(stack.ID), err)
+	}
+	if g, _ := s.Get(ctx, stack.ID); !g.Stack {
+		t.Fatal("naming made the stack group the person's")
+	}
+	// A title the name rules refuse leaves the name; the version is stored.
+	if err := s.Put(ctx, stack.ID, 1, titled(2, "two\nlines")); err != nil || name(stack.ID) != "A generated name" {
+		t.Fatalf("a refused title: %q %v", name(stack.ID), err)
+	}
+	renamed := "Renamed"
+	if _, err := s.Update(ctx, stack.ID, &renamed, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Put(ctx, stack.ID, 2, titled(3, "Another generated name")); err != nil || name(stack.ID) != "Renamed" {
+		t.Fatalf("the person's rename was written over: %q %v", name(stack.ID), err)
 	}
 }
 

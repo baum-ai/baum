@@ -323,6 +323,9 @@ func normalise(name string) (string, bool) {
 // Code adds later still shows.
 func waitReason(e hookevents.Event) (string, bool) {
 	if e.Name == "permission-request" {
+		if e.Agent == "codex" && e.Session.AutoReview {
+			return "", false
+		}
 		return WaitPermission, true
 	}
 	switch e.Session.NotificationType {

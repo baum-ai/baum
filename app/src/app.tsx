@@ -52,6 +52,7 @@ import { GoTo, type GoToItem } from "./go-to";
 import { PAGES, type Page } from "./pages";
 import { LocalReview } from "./review";
 import { DecisionsRevision } from "./decisions";
+import { useCodexHookTrust } from "./codex-hooks";
 import { useDiagnosticProblems } from "./diagnostics";
 import { RepositoriesPage, SettingsPage, settingsSection, type ReviewDefaults } from "./settings";
 import { asksYou, SessionsPage, transcriptHref } from "./sessions";
@@ -95,6 +96,7 @@ import {
   type AgentRequests,
   LocalRequestError,
   parseGroups,
+  backToOpener,
   sameRepository,
   MAX_GROUP_MEMBERS,
   type ReviewGroup,
@@ -506,7 +508,7 @@ function Workspace({ url }: { url: UrlState }) {
   // The inbox's queue counts in the sidebar on every page. Its record of what
   // was cleared waits for the first complete read, and pauses while reads
   // fail, so an empty or failed read clears nothing.
-  const inbox = useUpNext(indexedEntries, live, jobs, revision > 0 && !error);
+  const inbox = useUpNext(indexedEntries, live, jobs, revision > 0 && !error, groups);
   // What the sidebar highlights is the page that shows the queue, with the
   // inbox the address names, when the daemon still has it.
   const railPage: Page =
@@ -556,6 +558,7 @@ function Workspace({ url }: { url: UrlState }) {
   // The pages that show the diagnostics run them themselves.
   // The diagnostics dialog runs them itself while it is open.
   const diagnostics = useDiagnosticProblems(page !== "diagnostics");
+  const codexTrust = useCodexHookTrust();
   const reviewTogether = () => {
     const chosen = snapshot.entries.filter((e) => selection.has(rowKey(e)));
     if (
@@ -735,6 +738,7 @@ function Workspace({ url }: { url: UrlState }) {
     revision === 0 &&
     !inboxPage &&
     !["settings", "diagnostics", "sessions", "timeline", "analytics"].includes(page);
+  const hasRepositories = picked.length > 0 || clones.length > 0;
   // Before the first read there is nothing to refresh.
   const listBusy = refreshing > 0 || (loading && revision === 0);
   // The list's own keys live in `Inbox`, which knows its rows; these are the
@@ -890,8 +894,9 @@ function Workspace({ url }: { url: UrlState }) {
           return current;
         });
       } else if (openJob && (event.key === "u" || (event.key === "Escape" && onBody(event)))) {
-        // From a job's transcript back to the list.
+        // From a job's transcript back to where it was opened from, else the list.
         event.preventDefault();
+        if (backToOpener()) return;
         url.update((current) => {
           current.delete("job");
           return current;
@@ -902,7 +907,11 @@ function Workspace({ url }: { url: UrlState }) {
         (event.key === "u" || (event.key === "Escape" && onBody(event)))
       ) {
         // Only the review page's own keys use a focused Escape (its sheets).
+        // Back to where it was opened from (the Inbox, an inbox, Pull
+        // requests, a group), past moves within it; a window opened on it
+        // goes to its list.
         event.preventDefault();
+        if (backToOpener()) return;
         url.update((current) => {
           for (const key of ["pr", "clone", "repository", "group", "walk"]) current.delete(key);
           return current;
@@ -912,8 +921,9 @@ function Workspace({ url }: { url: UrlState }) {
         openSession &&
         (event.key === "u" || (event.key === "Escape" && onBody(event)))
       ) {
-        // The same way back, from a session's transcript to the list.
+        // The same way back, from a session's transcript.
         event.preventDefault();
+        if (backToOpener()) return;
         url.update((current) => {
           current.delete("session");
           return current;
@@ -957,6 +967,7 @@ function Workspace({ url }: { url: UrlState }) {
         runningSessions={live.filter((s) => s.state === "running").length}
         needsYou={asksYou(live).length}
         problems={diagnostics.problems}
+        settingsWarning={codexTrust.warning}
         Link={LocalLink}
       />
       <div className="local-frame">
@@ -989,15 +1000,24 @@ function Workspace({ url }: { url: UrlState }) {
         <main className="local-main">
           <SavedStateNotice state={inbox.persistence} label="inbox state" />
           {refreshError ? (
-            <Alert>
-              Couldn't refresh from GitHub: {refreshError}{" "}
-              <Button onClick={() => setRefreshError("")}>Dismiss</Button>
-            </Alert>
+            <div className="local-list-note">
+              <Alert className="flex flex-wrap items-center gap-x-3 gap-y-2">
+                <span>Couldn't refresh from GitHub: {refreshError}</span>
+                <Button variant="secondary" size="compact" onClick={() => setRefreshError("")}>
+                  Dismiss
+                </Button>
+              </Alert>
+            </div>
           ) : null}
           {error && !readFailed ? (
-            <Alert>
-              {error} <Button onClick={() => void reload()}>Retry</Button>
-            </Alert>
+            <div className="local-list-note">
+              <Alert className="flex flex-wrap items-center gap-x-3 gap-y-2">
+                <span>{error}</span>
+                <Button variant="secondary" size="compact" onClick={() => void reload()}>
+                  Retry
+                </Button>
+              </Alert>
+            </div>
           ) : null}
           {groupsError && groupId && groups.some((g) => g.id === groupId) ? (
             <Alert>
@@ -1048,6 +1068,7 @@ function Workspace({ url }: { url: UrlState }) {
                 })
               }
               onDiagnostics={diagnostics.update}
+              codexTrust={codexTrust}
             />
           ) : page === "sessions" && openSession ? (
             <SessionTranscriptPage
@@ -1274,7 +1295,7 @@ function Workspace({ url }: { url: UrlState }) {
               login={github?.login}
               // Until a read succeeds there is nothing to say an empty inbox about.
               loading={revision === 0}
-              hasRepositories={picked.length > 0 || clones.length > 0}
+              hasRepositories={hasRepositories}
               cloneFor={cloneFor}
               fix={(entry, only) => void fix(entry, only)}
               fixState={fixState}
@@ -1282,6 +1303,7 @@ function Workspace({ url }: { url: UrlState }) {
               refresh={refresh}
               refreshing={listBusy}
               reviewGroups={groups}
+              entries={indexedEntries}
               Link={LocalLink}
             />
           ) : (
@@ -1370,21 +1392,27 @@ function Workspace({ url }: { url: UrlState }) {
                 ))}
                 {loading ? (
                   <LoadingStatus block>Loading local inbox…</LoadingStatus>
-                ) : rows.length === 0 ? (
+                ) : rows.length === 0 && !(error && revision === 0) ? (
                   <div className="local-empty">
                     <h2>
-                      {filter === "inbox" && clones.length
+                      {filter === "inbox" && hasRepositories
                         ? "Nothing is waiting on you"
                         : "No pull requests here"}
                     </h2>
                     <p>
-                      {!clones.length
-                        ? "Pick GitHub repositories in Repositories to get started."
-                        : filter === "inbox"
-                          ? "No pull request asks for your review and none of yours is open. Others has the rest of your repositories' pull requests."
-                          : filter === "history"
-                            ? "Reviews saved for pull requests that are closed, merged or no longer listed show here."
-                            : "Nothing matches this view. Refresh from GitHub or choose another tab."}
+                      {!hasRepositories ? (
+                        <>
+                          Pick GitHub repositories in{" "}
+                          <LocalLink href={appURL("?page=repositories")}>Repositories</LocalLink> to
+                          get started.
+                        </>
+                      ) : filter === "inbox" ? (
+                        "No pull request asks for your review and none of yours is open. Others has the rest of your repositories' pull requests."
+                      ) : filter === "history" ? (
+                        "Reviews saved for pull requests that are closed, merged or no longer listed show here."
+                      ) : (
+                        "Nothing matches this view. Refresh from GitHub or choose another tab."
+                      )}
                     </p>
                   </div>
                 ) : null}

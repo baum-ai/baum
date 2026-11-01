@@ -42,7 +42,8 @@ type Status struct {
 }
 
 type Client struct {
-	run func(context.Context, string, ...string) ([]byte, error)
+	run   func(context.Context, string, ...string) ([]byte, error)
+	hooks func(context.Context, []string) ([]byte, error)
 }
 
 func New() *Client { return &Client{run: runCommand} }

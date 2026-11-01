@@ -15,6 +15,7 @@ import (
 
 	"golang.org/x/sync/singleflight"
 
+	"github.com/baum-ai/baum/hosted/agentplugins"
 	"github.com/baum-ai/baum/internal/config"
 	"github.com/baum-ai/baum/internal/doctor"
 	"github.com/baum-ai/baum/internal/repos"
@@ -106,6 +107,8 @@ type LocalAPI struct {
 	// Diagnostics builds the report served at /api/diagnostics; nil serves the
 	// capability fields with a null report. It must honour its context.
 	Diagnostics func(context.Context) doctor.Report
+	// HookTrust checks Codex session reporting without running a conversation.
+	HookTrust func(context.Context) agentplugins.HookTrust
 	// DiagnosticsTimeout bounds one shared run; zero means
 	// defaultDiagnosticsTimeout.
 	DiagnosticsTimeout time.Duration
@@ -183,6 +186,8 @@ func (a LocalAPI) Handler() *LocalHandler {
 	mux.Handle("GET /api/prs/review-threads", update)
 	mux.Handle("POST /api/prs/resolve-thread", update)
 	mux.Handle("GET /api/prs/failing-checks", update)
+	mux.Handle("GET /api/prs/checks", update)
+	mux.Handle("GET /api/prs/conflicts", update)
 	mux.Handle("POST /api/prs/rerun-job", update)
 	mux.Handle("/api/prs", provider(a.PRs, "discovery_unavailable"))
 	mux.Handle("/api/prs/", provider(a.PRs, "discovery_unavailable"))
@@ -206,7 +211,11 @@ func (a LocalAPI) Handler() *LocalHandler {
 	mux.Handle("GET /api/repositories/{owner}/{name}/clone-target", repositories)
 	mux.Handle("GET /api/repositories/{owner}/{name}/clone", repositories)
 	mux.Handle("POST /api/repositories/{owner}/{name}/clone", repositories)
-	mux.Handle("/api/plan-usage", provider(a.PlanUsage, "plan_usage_unavailable"))
+	if a.PlanUsage != nil {
+		mux.HandleFunc("/api/plan-usage", a.planUsageHandler)
+	} else {
+		mux.Handle("/api/plan-usage", provider(nil, "plan_usage_unavailable"))
+	}
 	mux.Handle("/api/analytics", provider(a.Analytics, "analytics_unavailable"))
 	mux.Handle("/api/timeline/", provider(a.Timeline, "timeline_unavailable"))
 	var decisions http.Handler
@@ -292,6 +301,8 @@ func (a LocalAPI) Handler() *LocalHandler {
 	})
 	mux.HandleFunc("GET /api/settings/appearance", a.getAppearance)
 	mux.HandleFunc("PUT /api/settings/appearance", a.putAppearance)
+	mux.HandleFunc("GET /api/settings/plan-usage", a.getPlanUsageSettings)
+	mux.HandleFunc("PUT /api/settings/plan-usage", a.putPlanUsageSettings)
 	mux.HandleFunc("GET /api/settings/decisions", a.getDecisionSettings)
 	mux.HandleFunc("PUT /api/settings/decisions", a.putDecisionSettings)
 	// The app's agent environment replaces the config file's; an empty one
@@ -360,6 +371,24 @@ func (a LocalAPI) Handler() *LocalHandler {
 	// Runs are shared only while one is in flight; a later request runs the
 	// checks again. That is deliberate: the endpoint is local, authenticated
 	// and user-triggered, so there is no cache.
+	var hookTrust singleflight.Group
+	mux.HandleFunc("GET /api/agent-hooks/codex", func(w http.ResponseWriter, r *http.Request) {
+		if a.HookTrust == nil {
+			writeJSON(w, map[string]bool{"available": false})
+			return
+		}
+		result := hookTrust.DoChan("codex", func() (any, error) {
+			ctx, cancel := context.WithTimeout(context.Background(), 2*agentplugins.StatusTimeout)
+			defer cancel()
+			return a.HookTrust(ctx), nil
+		})
+		select {
+		case <-r.Context().Done():
+			return
+		case res := <-result:
+			writeJSON(w, res.Val)
+		}
+	})
 	var diagnostics singleflight.Group
 	mux.HandleFunc("GET /api/diagnostics", func(w http.ResponseWriter, r *http.Request) {
 		body := map[string]any{"local": true, "generation_runner": a.Jobs != nil, "discovery": a.PRs != nil, "index": a.Index != nil, "report": nil}

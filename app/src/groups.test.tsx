@@ -263,6 +263,27 @@ it("renders a group as one row with its members nested when expanded", async () 
   expect(node.textContent).toContain("Generate reviews (3)");
 });
 
+it("shows and hides a focused group's pull requests with Space", async () => {
+  entries = [entry(1), entry(2), entry(3)];
+  groups = [group([2, 3])];
+  await act(async () => root.render(<App />));
+  const key = (key: string) =>
+    act(async () => {
+      document.body.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true }));
+    });
+  const toggle = node.querySelector<HTMLButtonElement>('button[aria-label="Expand Auth rework"]')!;
+  // j moves down to the group's row, wherever its bucket puts it.
+  const groupRow = () => node.querySelector('[data-row-id="group:g1"]')!;
+  for (let i = 0; i < 3 && !groupRow().hasAttribute("data-focused"); i++) await key("j");
+  expect(groupRow().hasAttribute("data-focused")).toBe(true);
+  await key(" ");
+  expect(toggle.getAttribute("aria-expanded")).toBe("true");
+  await key(" ");
+  expect(toggle.getAttribute("aria-expanded")).toBe("false");
+  // A group's row has no peek.
+  expect(node.querySelector(".inbox-peek-panel")).toBeNull();
+});
+
 it("marks a stack baum grouped as the hosted list does, and a person's group as a group", async () => {
   entries = [entry(1), entry(2), entry(3), entry(4)];
   groups = [
@@ -287,6 +308,53 @@ it("labels a stack group's page as a stack", async () => {
     node.querySelector('[title="baum grouped these stacked pull requests"]')!.textContent,
   ).toBe("Stack");
   expect(node.textContent).not.toContain("Review group");
+});
+
+it("counts a stack's merged and closed members in the stack on its row", async () => {
+  entries = [entry(3), entry(4)];
+  groups = [
+    group([3, 4], {
+      id: "g2",
+      name: "Stacked",
+      stack: true,
+      landed: [
+        { number: 1, state: "merged" },
+        { number: 2, state: "closed" },
+      ],
+    }),
+  ];
+  await act(async () => root.render(<App />));
+  expect(node.querySelector('[title="Stack of 4 pull requests"]')).not.toBeNull();
+});
+
+it("shows a stack's merged and closed members first on its page, each marked as it is", async () => {
+  entries = [entry(3), entry(4)];
+  groups = [
+    group([3, 4], {
+      id: "g2",
+      name: "Stacked",
+      stack: true,
+      landed: [
+        { number: 1, state: "merged" },
+        { number: 2, state: "closed" },
+        { number: 5, state: "unknown" },
+      ],
+    }),
+  ];
+  history.replaceState(null, "", "/s/test-ns/?group=g2");
+  await act(async () => root.render(<App />));
+  const rows = [...node.querySelectorAll("li.local-group-member")].map((li) => li.textContent);
+  expect(rows).toHaveLength(5);
+  expect(rows[0]).toContain("#1");
+  expect(rows[0]).toContain("Merged");
+  expect(rows[1]).toContain("#2");
+  expect(rows[1]).toContain("Closed");
+  expect(rows[1]).not.toContain("Merged");
+  expect(rows[2]).toContain("#5");
+  expect(rows[2]).toContain("No longer open");
+  expect(rows[3]).toContain("#3");
+  expect(rows[3]).not.toContain("Merged");
+  expect(node.querySelectorAll("[data-landed] button")).toHaveLength(0);
 });
 
 it("keeps group jobs apart from pull request jobs", () => {
