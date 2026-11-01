@@ -1819,7 +1819,8 @@ export function RepositoriesPage({
 }: {
   repositories: Repository[];
   automatic: Automatic | null;
-  changed: () => Promise<void>;
+  /** Reads everything again; a refresh pressed again restarts the read. */
+  changed: (how?: { restart?: boolean }) => Promise<void>;
 }) {
   const [adding, setAdding] = useState(false);
   const [error, setError] = useState("");
