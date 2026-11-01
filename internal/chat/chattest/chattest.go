@@ -31,6 +31,10 @@ type Options struct {
 	Backend string
 	// NoSession stores the review without a kept session.
 	NoSession bool
+	// Hunk gives the review its base and merge base and indexes the pull
+	// request's config/settings.env hunk, which adds the assembletest
+	// PlantedSecret, without its diff, as the store keeps it.
+	Hunk bool
 }
 
 // Fixture is a registered clone of acme/demo with review version 1 of pull
@@ -136,6 +140,12 @@ func New(t *testing.T, o Options) *Fixture {
 		metadata.Session = &store.ReviewSession{Backend: backend, ID: f.SessionID, Directory: dir}
 	}
 	document := fmt.Sprintf(`{"review":{"repository":"acme/demo","pull_request":%d,"version":1,"head":%q}}`, assembletest.Number, repo.Head)
+	if o.Hunk {
+		metadata.Base, metadata.MergeBase = repo.Base, repo.MergeBase
+		document = fmt.Sprintf(`{"review":{"repository":"acme/demo","pull_request":%d,"version":1,"head":%q,"base":%q,"merge_base":%q},"index":{"hunks":[`+
+			`{"id":"h_000000000001","path":"config/settings.env","change":"added","role":"config","new_range":[1,2],"additions":2,"deletions":0}]}}`,
+			assembletest.Number, repo.Head, repo.Base, repo.MergeBase)
+	}
 	if err := st.Put(ctx, key, store.Version{}, store.Version{Metadata: metadata, Document: json.RawMessage(document)}); err != nil {
 		t.Fatal(err)
 	}

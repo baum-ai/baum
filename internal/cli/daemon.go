@@ -384,7 +384,7 @@ func localApplication(paths daemon.Paths, log *slog.Logger) func(context.Context
 		index := reviewindex.NewCache(ctx, &reviewindex.Service{Registry: registry, Discovery: discover})
 		discover.Updated = index.Invalidate
 		changed := indexChanged(index, server.Publish)
-		worker := &background.Service{Registry: registry, Discovery: discover, Saved: background.Saved, Refresh: background.Local{Client: github.NewFromConfig(cfg, github.Options{}), Config: cfg}.Refresh, Changed: changed}
+		worker := &background.Service{Registry: registry, Discovery: discover, Saved: background.Saved, Refresh: background.Local{Client: github.NewFromConfig(cfg, github.Options{}), Config: cfg}.Refresh, Retain: background.Retention{Log: log}.Retain, Changed: changed}
 		database, err := appdb.Path()
 		if err != nil {
 			_ = registry.Close()
@@ -649,10 +649,11 @@ func localApplication(paths daemon.Paths, log *slog.Logger) func(context.Context
 			}
 			return "", false
 		}
+		groupsAPI := &reviewgroups.API{Store: groups, Registry: registry, Index: index.Snapshot, Changed: changed}
 		api := uiserver.LocalAPI{GitHubAuth: githubConnection.Handler(), Registry: registry, Config: cfg, PRs: uiserver.DiscoveryHandler(registry, discover, changed), Index: index.Handler(), Jobs: queue.Handler(), Chat: uiserver.ChatHandler(registry, queue), Background: worker.Handler(), Automatic: scheduler.Handler(), Live: liveAPI, AgentRequests: requestsAPI, Clones: clones.Handler(), GitHubRepositories: pickList.Handler(), CurrentName: currentName(githubClient), PlanUsage: plans.Handler(), Analytics: insights.Handler(), Timeline: timeline, Merge: uiserver.MergeHandler(registry, actions.RecordMerges(githubClient), mergedPullRequest, changed), Review: uiserver.ReviewHandler(registry, githubClient, changed), Update: uiserver.UpdateHandler(registry, actions.RecordUpdates(prupdate.Service{Client: githubClient, Cache: panelCache, Counted: countedThreads, Clone: availableClone}), refreshRepository, changed), Changed: settingsChanged,
 			UIState:   (&uistate.Store{Path: database}).Handler(),
 			Inboxes:   (&inboxes.API{Store: inboxes.Open(database), Changed: changed}).Handler(),
-			Groups:    (&reviewgroups.API{Store: groups, Registry: registry, Index: index.Snapshot, Changed: changed}).Handler(),
+			Groups:    groupsAPI.Handler(),
 			Decisions: decisionsAPI, Facts: pageFacts, Log: log,
 			DecisionsChanged:   func() { _ = server.Publish("decisions", struct{}{}) },
 			ConcurrencyChanged: func(n int) { _ = queue.SetConcurrency(n) },
@@ -749,6 +750,7 @@ func localApplication(paths daemon.Paths, log *slog.Logger) func(context.Context
 			Resume:   queue.Resume,
 			Close: func() {
 				api.Close()
+				groupsAPI.Close()
 				unsubscribe()
 				unsubscribeClones()
 				unsubscribeEnded()

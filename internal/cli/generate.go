@@ -16,6 +16,7 @@ import (
 	"github.com/baum-ai/baum/internal/generate"
 	"github.com/baum-ai/baum/internal/github"
 	"github.com/baum-ai/baum/internal/gitlocal"
+	"github.com/baum-ai/baum/internal/reviewrefs"
 	"github.com/baum-ai/baum/internal/store"
 	"github.com/baum-ai/baum/sessions"
 )
@@ -253,6 +254,9 @@ func doGenerate(cmd *cobra.Command, started *bool) (runErr error) {
 		Backend:   selected.Backend, BackendVersion: selected.Version, Model: selected.Model,
 		Budgets: budgets, PassTimeout: time.Duration(cfg.Budgets.PassTimeout),
 		Staged: !onePass, Progress: stderr, KeepRunDir: keepRunDir, BundleOut: bundleOut, DiagnosticsOut: diagnostics,
+		Stored: func(ctx context.Context, key store.Key, m store.Metadata) error {
+			return reviewrefs.Keep(ctx, clone, versions, key, m)
+		},
 	}, nil)
 	if err != nil {
 		return err

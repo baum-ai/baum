@@ -34,6 +34,7 @@ import (
 	"github.com/baum-ai/baum/internal/locallink"
 	"github.com/baum-ai/baum/internal/transcript"
 	"github.com/baum-ai/baum/internal/viewer"
+	"github.com/baum-ai/baum/review"
 )
 
 // MaxDocumentBytes is the largest document the server accepts, at start-up and
@@ -80,6 +81,10 @@ type Options struct {
 	// machine, for GET /api/patch. It is called when a file's patch is first
 	// asked for, never at start-up. Unset, every patch is unavailable.
 	Patch PatchFunc
+	// Versions reads another saved version of the document's pull request,
+	// for GET /api/patch?version=. Unset, only the served document's version
+	// has patches.
+	Versions VersionsFunc
 	// Home is the user's home directory, written as ~ in the transcripts
 	// GET /api/sessions/{id} serves. It defaults to os.UserHomeDir, else the
 	// account's home directory.
@@ -98,6 +103,8 @@ type Review struct {
 	Head, Base  string
 	// MergeBase is the merge base the document records, when it does.
 	MergeBase string
+	// Version is the document's review version.
+	Version int
 }
 
 // SessionsFunc links local sessions to a pull request. It may run twice at
@@ -117,9 +124,11 @@ type Server struct {
 	document []byte
 	review   Review
 	hub      hub
-	// paths are the paths of the document's cited hunks, and patches the
-	// answers of /api/patch for it; both are replaced with the document.
+	// paths are the paths of the document's cited hunks, versions the other
+	// saved versions read for /api/patch, and patches its answers; all are
+	// replaced with the document.
 	paths      map[string]struct{}
+	versions   map[int]*patchVersion
 	patches    *patchCache
 	patchSlots chan struct{}
 
@@ -185,7 +194,7 @@ func New(opts Options) (*Server, error) {
 	} else if !isJSON(document) {
 		return nil, errors.New("viewserver: the document is not valid JSON")
 	}
-	s.document = document
+	s.document = WithHunkURLs(document)
 	s.review = parseReview(document)
 	s.paths = hunkPaths(document)
 	s.patches = &patchCache{jobs: map[string]*patchJob{}}
@@ -427,14 +436,28 @@ func contentType(name string) string {
 	return "application/octet-stream"
 }
 
+// WithHunkURLs is the document as it is served: each indexed hunk without a
+// github_url, as a locally stored document holds none, gets the one its
+// generation would have recorded (review.DeriveHunkURLs). A document whose
+// index cannot be read that way is served as given.
+func WithHunkURLs(document []byte) []byte {
+	derived, err := review.DeriveHunkURLs(document)
+	if err != nil {
+		return document
+	}
+	return derived
+}
+
 // setDocument swaps the served bytes and tells every open event stream.
 func (s *Server) setDocument(document []byte) {
 	review := parseReview(document)
 	paths := hunkPaths(document)
+	document = WithHunkURLs(document)
 	s.mu.Lock()
 	s.document = document
 	s.review = review
 	s.paths = paths
+	s.versions = nil
 	s.patches = &patchCache{jobs: map[string]*patchJob{}}
 	s.mu.Unlock()
 	s.hub.broadcast()

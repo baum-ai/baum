@@ -310,8 +310,8 @@ export function App() {
     [lists, linkedHere],
   );
   const commits = useMemo(() => (lists?.commits ? commitsSlot(lists.commits) : undefined), [lists]);
-  // The server reads patches for the document it serves now, and keeps none of
-  // an earlier one, so a rewritten document starts with no patches fetched.
+  // The server drops its answers when the document is rewritten, so a
+  // rewritten document starts with no patches fetched.
   const hunkPatches = useMemo(
     () => (document ? createPatchSource(document.review.version) : null),
     [document],

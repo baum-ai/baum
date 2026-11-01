@@ -18,6 +18,7 @@ import (
 	"testing/fstest"
 	"time"
 
+	"github.com/baum-ai/baum/bundle"
 	"github.com/baum-ai/baum/internal/uibuild"
 	"github.com/baum-ai/baum/internal/viewer"
 	"github.com/baum-ai/baum/schema"
@@ -226,6 +227,24 @@ func TestServesDocumentBytesUnchanged(t *testing.T) {
 	}
 	if got := resp.Header.Get("Cache-Control"); got != "no-store" {
 		t.Errorf("Cache-Control = %q", got)
+	}
+}
+
+// A stored document's hunks carry no github_url; each is served with the one
+// generation recorded. A document whose hunks keep theirs, and their diffs,
+// as versions stored before did, is served byte for byte.
+func TestServesDerivedHunkURLsAndOldDocumentsUnchanged(t *testing.T) {
+	const hunk = `{"id":"h_000000000001","path":"src/a.go","change":"modified","role":"code","new_range":[7,2],"additions":1,"deletions":0`
+	stored := `{"schema":"baum.review/1","index":{"hunks":[` + hunk + `}]}}`
+	_, base := start(t, Options{Document: []byte(stored)})
+	want := `{"schema":"baum.review/1","index":{"hunks":[` + hunk + `,"github_url":"` + bundle.HunkDiffURL("src/a.go", 7) + `"}]}}`
+	if got := fetchDocument(t, base); got != want {
+		t.Errorf("served %s, want %s", got, want)
+	}
+	old := `{"schema":"baum.review/1", "index":{"hunks":[` + hunk + `,"github_url":"diff-oldR7","diff":{"header":"@@ -7 +7,2 @@","lines":[]}}]}}`
+	_, base = start(t, Options{Document: []byte(old)})
+	if got := fetchDocument(t, base); got != old {
+		t.Errorf("served %s, want it unchanged", got)
 	}
 }
 

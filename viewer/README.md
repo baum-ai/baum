@@ -679,10 +679,15 @@ page's own origin:
   only when that session is opened.
 - `GET /api/patch?path=<path>` returns `{"patch": "<unified diff>"}` or
   `{"patch": null}` for a file the document cites, from the clone on this
-  machine. The app passes `hunkPatches` to `ReviewViewer` (see `createPatchSource`
+  machine, masked as the document's stored hunks are; `&version=<n>` asks for
+  that saved version of the pull request instead, between its own commits.
+  The app passes `hunkPatches` to `ReviewViewer` (see `createPatchSource`
   in `app/local-patches.ts`) so cited code whose excerpt the document left out
-  shows the diff when its evidence is opened. It asks once per path, only for
-  the document's own version, turns a null patch, an unknown path or a body that
+  shows the diff when its evidence is opened. A locally saved review leaves
+  out every excerpt, and its hunks' `github_url` too, which the server derives
+  before serving it; the viewer needs neither. It asks once per version and
+  path, without `version` for the document's own, turns a null patch, an
+  unknown path or version or a body that
   is not an answer into no patch (the excerpt keeps its link to GitHub), and
   forgets a request that failed or got a server error, so opening the excerpt
   again retries. The summary shows excerpt and file counts immediately; line

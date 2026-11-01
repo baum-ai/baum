@@ -95,6 +95,35 @@ func redactPatches(ctx context.Context, redactor *Redactor, diff []Hunk) (int, e
 	return total, nil
 }
 
+// RedactFilePatch masks one file's patch, its text from the first hunk
+// header on, as Redact masks the hunks diff parsing takes from the same
+// patch: parseFileHunks reads it, with no line cap, and redactPatches masks
+// the hunks as one file's text. A patch read after the bundle was built,
+// such as the viewer's excerpt of a hunk whose text a document left out,
+// therefore shows no secret the stored hunk would have hidden. The result is
+// the masked hunk texts, each ending in a newline and without a CR before
+// it, as stored hunks hold them. ok is false for a patch diff parsing reads
+// as textless: binary, without a hunk, or with a line over its limit.
+func RedactFilePatch(ctx context.Context, redactor *Redactor, path, patch string) (masked string, ok bool, err error) {
+	raw, file, textless := parseFileHunks(path, []byte(patch), 0)
+	if textless {
+		return "", false, nil
+	}
+	diff := make([]Hunk, len(raw))
+	for i, hunk := range raw {
+		diff[i] = Hunk{Patch: hunk.text, file: file, offset: hunk.start}
+	}
+	if _, err := redactPatches(ctx, redactor, diff); err != nil {
+		return "", false, err
+	}
+	var out strings.Builder
+	for _, hunk := range diff {
+		out.WriteString(hunk.Patch)
+		out.WriteByte('\n')
+	}
+	return out.String(), true, nil
+}
+
 // maskSpan is a byte range of a patch base64Masks masks; spans of one run
 // share its index.
 type maskSpan struct{ start, end, run int }

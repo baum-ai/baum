@@ -38,6 +38,16 @@ type API struct {
 	Patch func(context.Context, locallink.PatchRequest) (locallink.PatchResult, error)
 
 	patches chan struct{}
+	// patcher is the Patcher Handler made when Patch was nil; Close closes it.
+	patcher *locallink.Patcher
+}
+
+// Close closes the clones the API's own Patcher keeps open. A Patch the
+// caller supplied is the caller's to close.
+func (h *API) Close() {
+	if h.patcher != nil {
+		h.patcher.Close()
+	}
 }
 
 // View is a group as the API answers it.
@@ -53,8 +63,8 @@ const maxPatchReads = 4
 func (h *API) Handler() http.Handler {
 	h.patches = make(chan struct{}, maxPatchReads)
 	if h.Patch == nil {
-		patcher := new(locallink.Patcher)
-		h.Patch = patcher.Patch
+		h.patcher = new(locallink.Patcher)
+		h.Patch = h.patcher.Patch
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/groups", h.list)

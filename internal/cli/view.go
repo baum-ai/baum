@@ -14,6 +14,7 @@ import (
 
 	"github.com/baum-ai/baum/internal/locallink"
 	"github.com/baum-ai/baum/internal/openurl"
+	"github.com/baum-ai/baum/internal/store"
 	"github.com/baum-ai/baum/internal/viewserver"
 	"github.com/baum-ai/baum/review"
 	"github.com/baum-ai/baum/schema"
@@ -83,6 +84,7 @@ func runView(cmd *cobra.Command, args []string) error {
 		})
 	}
 	patcher := new(locallink.Patcher)
+	defer patcher.Close()
 	opts.Patch = func(ctx context.Context, review viewserver.Review, path string) (locallink.PatchResult, error) {
 		return patcher.Patch(ctx, locallink.PatchRequest{
 			Repository: review.Repository, Head: review.Head, Base: review.Base, MergeBase: review.MergeBase, Path: path,
@@ -92,11 +94,18 @@ func runView(cmd *cobra.Command, args []string) error {
 		opts.Sample = true
 		opts.Document = schema.Example
 	} else if flags.Changed("pr") {
-		_, _, v, err := loadStoredVersion(cmd)
+		versions, key, v, err := loadStoredVersion(cmd)
 		if err != nil {
 			return err
 		}
 		opts.Document = v.Document
+		opts.Versions = func(ctx context.Context, n int) ([]byte, error) {
+			saved, err := versions.Get(ctx, key, n)
+			if errors.Is(err, store.ErrNotFound) {
+				return nil, viewserver.ErrNoVersion
+			}
+			return saved.Document, err
+		}
 	} else {
 		opts.Path = args[0]
 	}
