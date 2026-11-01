@@ -1,5 +1,6 @@
 import { BrandMark } from "@baum/viewer/components/brand-logo";
 import { usePreferences } from "./preferences";
+import { PlanUsageSettings } from "./plan-usage-settings";
 import {
   useEffect,
   useLayoutEffect,
@@ -1819,7 +1820,8 @@ export function RepositoriesPage({
 }: {
   repositories: Repository[];
   automatic: Automatic | null;
-  changed: () => Promise<void>;
+  /** Reads everything again; a refresh pressed again restarts the read. */
+  changed: (how?: { restart?: boolean }) => Promise<void>;
 }) {
   const [adding, setAdding] = useState(false);
   const [error, setError] = useState("");
@@ -1862,7 +1864,7 @@ export function RepositoriesPage({
             <Button size="compact" onClick={() => setAdding(!adding)}>
               {adding ? "Done" : "Add repositories"}
             </Button>
-            <RefreshButton refresh={changed} />
+            <RefreshButton refresh={(run) => changed({ restart: run.restart })} />
           </>
         }
       />
@@ -2262,7 +2264,7 @@ function GeneralSection() {
       <SectionHead
         id="settings-general-heading"
         title="General"
-        detail="Appearance and keyboard preferences on this device."
+        detail="Appearance, keyboard and plan usage preferences on this device."
       />
       {error ? (
         <Alert>
@@ -2302,6 +2304,8 @@ function GeneralSection() {
           />
         </SettingRow>
       </div>
+      <h3 className="settings-subhead">Plan usage</h3>
+      <PlanUsageSettings />
     </section>
   );
 }

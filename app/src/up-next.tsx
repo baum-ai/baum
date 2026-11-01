@@ -66,7 +66,7 @@ import { LoadingStatus, NineDots } from "./nine-dots";
 import { KeyBar, onBody, useLastRow, useShortcuts } from "./shortcuts";
 import { PullRequestChecks } from "./checks";
 import { ConflictingFiles } from "./conflicts";
-import { RefreshButton } from "./shell";
+import { RefreshButton, type RefreshRun } from "./shell";
 import { ReviewThreads } from "./threads";
 import { canUpdateBranch, UpdateBranchDialog } from "./unblock";
 import { PRIMARY, SECONDARY, SMALL, SMALL_PRIMARY } from "./action-classes";
@@ -659,7 +659,7 @@ export function UpNextPage({
   /** Reloads the inbox after a write to GitHub. */
   changed: () => Promise<void>;
   /** Reads the pull requests from GitHub again, from the head's refresh. */
-  refresh?: () => Promise<void>;
+  refresh?: (run: RefreshRun) => Promise<unknown>;
   /** A read of every repository is under way, the first or a refresh. */
   refreshing?: boolean;
   Link: ComponentType<ViewerLinkProps>;

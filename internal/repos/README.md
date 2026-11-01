@@ -38,6 +38,9 @@ its HTTP handler uses.
 - `preferences(key, value)`: the global preferences as one JSON row. Its
   `appearance` object (`theme`, `key_hints`) stores the device’s General
   settings independently of the daemon’s loopback port. Its
+  `plan_usage.show` object maps `claude` and `codex` to the person's choice of
+  showing that plan's usage; a missing plan follows the backends in use (see
+  [`planusage`](../planusage/README.md)). Its
   `decisions` object (`enabled`, `model`) configures local
   decision capture; `Settings.DecisionsEnabled` combines it with the automatic
   master switch and the repository's `decisions` (nil is on). See

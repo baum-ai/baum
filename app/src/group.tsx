@@ -33,7 +33,7 @@ import {
 import { PullRequestState } from "./inbox";
 import { CloneActions } from "./repositories";
 import { CancelJob, GenerationOutcome, ReviewJob } from "./review";
-import { Notice, PageBar, RefreshButton } from "./shell";
+import { Notice, PageBar, RefreshButton, type RefreshRun, usePageRefreshAction } from "./shell";
 import { useShortcuts } from "./shortcuts";
 import { LoadingStatus, NineDots } from "./nine-dots";
 
@@ -205,8 +205,10 @@ export function GroupPage({
   revision: number;
   changed: () => Promise<void>;
   /** Reads the group's repository from GitHub again, from the head's refresh. */
-  refresh?: () => Promise<void>;
+  refresh?: (run: RefreshRun) => Promise<unknown>;
 }) {
+  // The refresh key works before the head and its button are drawn.
+  usePageRefreshAction(refresh);
   const url = useUrlState();
   const back = backTo(url.search);
   const job = groupJob(group, jobs);
