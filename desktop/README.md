@@ -145,16 +145,19 @@ happen only when the user selects an install or add action. Displayed paths abbr
    guides and Check again replace the model controls. Continue and the final
    step in the rail wait for an installed agent; rechecking selects one as
    soon as it is detected. Detection errors show retry guidance.
-   A compact row pairs the review model
-   with its reasoning effort. The review
-   effort also applies to fixes that follow reviews. A model can be a preset or
-   a custom name. Choose whether reviews run automatically and, if so, for which
-   pull requests (authored, requested, both, or all open pull requests). The
-   screen reads them with `baum internal reviews show` and saves changes with
-   `baum internal reviews set` when the user opens baum at the end of setup.
-   They are stored as app preferences in the repository registry, which the
-   daemon rereads for every job. The native bridge forwards the review `effort`
-   CLI flag. Extraction preferences remain in Settings; setup leaves them intact.
+   A compact row pairs the model for reviews and data extraction with its
+   reasoning effort. Fixes start as Same as reviews; choosing Claude Code or
+   Codex for them adds their own model and effort row. A model can be a preset
+   or a custom name. Choose whether reviews run automatically and, if so, for
+   which pull requests (authored, requested, both, or all open pull requests).
+   The screen reads them with `baum internal reviews show` and saves changes
+   with `baum internal reviews set` when the user opens baum at the end of
+   setup. They are stored as app preferences in the repository registry, which
+   the daemon rereads for every job. The native bridge forwards the review,
+   fix and extraction flags. Extraction is saved only when setup changes the
+   review agent, model or effort: it then follows the review agent, with the
+   review model (none when it is the agent's default decision model) and
+   effort. An untouched setup leaves the extraction choice from Settings intact.
 3. Install the CLI and connect agents.
    - Install the bundled `baum` command onto the login shell's `PATH` (below).
      The step states in one line where baum will be installed, or which other
