@@ -10,7 +10,8 @@ import { App } from "./app";
 import { LocalReview } from "./review";
 import { reviewJob, type Entry, type Job } from "./api";
 import type { FixState } from "./fix";
-import { forgetLastRows } from "./shortcuts";
+import { forgetLastRows, useCommandKeys } from "./shortcuts";
+import { PageRefreshProvider, usePageRefresh } from "./shell";
 vi.mock("@baum/viewer/components/review-viewer", () => ({
   ReviewViewer: ({
     document,
@@ -139,6 +140,40 @@ async function render(current: Job, revision = 0, currentEntry = entry) {
     ),
   );
 }
+it("takes the refresh key while its button is not drawn, as while the review loads", async () => {
+  const refresh = vi.fn(() => Promise.resolve());
+  function Page() {
+    const page = usePageRefresh("pr", () => Promise.reject(Error("not this page's")));
+    useCommandKeys((action) => (action.kind === "refresh" ? page.press() : undefined));
+    return (
+      <PageRefreshProvider value={page}>
+        <UrlStateProvider value={{ search: new URLSearchParams(), update: () => {} }}>
+          <LocalReview
+            entry={{ ...entry, version_count: 1 }}
+            clone="selected-clone"
+            revision={0}
+            changed={changed}
+            generate={generate}
+            refresh={refresh}
+          />
+        </UrlStateProvider>
+      </PageRefreshProvider>
+    );
+  }
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(() => new Promise(() => {})),
+  );
+  await act(async () => root.render(<Page />));
+  expect(node.textContent).toContain("Loading review");
+  const key = new KeyboardEvent("keydown", { key: "r", ctrlKey: true, cancelable: true });
+  act(() => {
+    window.dispatchEvent(key);
+  });
+  await act(async () => {});
+  expect(key.defaultPrevented).toBe(true);
+  expect(refresh).toHaveBeenCalledTimes(1);
+});
 it("matches active PR jobs across clones while isolating GitHub hosts and PRs", () => {
   const earlier = job("running");
   const terminal = job("completed");

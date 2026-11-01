@@ -80,6 +80,13 @@ type AppearancePreferences struct {
 	KeyHints *bool  `json:"key_hints,omitempty"`
 }
 
+// PlanUsagePreferences are the plans the person chose to show or hide in plan
+// usage, by provider ("claude", "codex"). A provider with no entry follows
+// the backends baum uses, so a choice survives backend changes.
+type PlanUsagePreferences struct {
+	Show map[string]bool `json:"show,omitempty"`
+}
+
 // Preferences are the registry's global choices, edited in the app. Fields
 // an older baum saved and this one dropped, such as
 // cursor_agent_acknowledged, are ignored on read and gone after the next
@@ -112,6 +119,8 @@ type Preferences struct {
 	Appearance AppearancePreferences `json:"appearance,omitzero"`
 	// Decisions configures local decision capture.
 	Decisions DecisionPreferences `json:"decisions,omitzero"`
+	// PlanUsage chooses which plans plan usage shows.
+	PlanUsage PlanUsagePreferences `json:"plan_usage,omitzero"`
 	// JobConcurrency, when set, is how many jobs the daemon runs at once
 	// besides questions to a review's agent; Concurrency resolves it.
 	JobConcurrency int `json:"job_concurrency,omitempty"`

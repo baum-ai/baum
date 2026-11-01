@@ -45,7 +45,7 @@ import {
 } from "./api";
 import { FixNotice, FixRuns, type FixState, type FixChat } from "./fix";
 import { CloneActions } from "./repositories";
-import { Notice, RefreshButton } from "./shell";
+import { Notice, RefreshButton, type RefreshRun, usePageRefreshAction } from "./shell";
 import { LiveSessions } from "./sessions";
 import { PullRequestDecisionsList } from "./decisions";
 import { LoadingStatus } from "./nine-dots";
@@ -153,7 +153,7 @@ export function LocalReview({
   detailsJob?: Job;
   changed: () => Promise<void>;
   /** Reads the pull request from GitHub again, from the head's refresh. */
-  refresh?: () => Promise<void>;
+  refresh?: (run: RefreshRun) => Promise<unknown>;
   /** Agent sessions in progress; those of this pull request are listed. */
   live?: LiveSession[];
   /** The review groups this pull request belongs to. */
@@ -171,6 +171,9 @@ export function LocalReview({
   const pr = entry.pull_request;
   const url = useUrlState();
   const back = backTo(url.search);
+  // The refresh key works on every state of the page, also where the button
+  // is not drawn, as while the review loads or has nothing to walk through.
+  usePageRefreshAction(refresh);
   // One of the head's actions, on the walkthrough and on the full review alike.
   const refreshButton = refresh ? (
     <RefreshButton refresh={refresh} label="Refresh from GitHub" />

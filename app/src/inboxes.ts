@@ -59,9 +59,11 @@ export function parseInboxes(body: unknown): InboxList | null {
 
 /** What a read of the inboxes came to: the list, `null` for an older daemon
  *  (404), or a failure, which says nothing about the daemon's version. */
-export async function readInboxes(): Promise<InboxList | null | { failed: string }> {
+export async function readInboxes(
+  signal?: AbortSignal,
+): Promise<InboxList | null | { failed: string }> {
   try {
-    return parseInboxes(await request<unknown>("api/inboxes"));
+    return parseInboxes(await request<unknown>("api/inboxes", undefined, "GET", signal));
   } catch (e) {
     if (e instanceof LocalRequestError && e.status === 404) return null;
     return {

@@ -6,6 +6,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/baum-ai/baum/internal/generate"
 )
 
 // Why an automatic job was queued.
@@ -49,8 +51,8 @@ var (
 	// than one automatic run a daemon stop or restart interrupted.
 	ErrDuplicate = errors.New("a job for this pull request head already exists")
 	// ErrHeadChanged: GitHub reports a different head than the one that
-	// triggered the job; the newer head triggers its own job.
-	ErrHeadChanged = errors.New("pull request head changed")
+	// triggered or confirmed the job; the newer head triggers its own job.
+	ErrHeadChanged = generate.ErrHeadChanged
 )
 
 // NotAutomaticError refuses an item automatic generation may never run:
