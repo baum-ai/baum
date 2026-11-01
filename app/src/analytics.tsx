@@ -24,6 +24,7 @@ import {
   type Series,
 } from "./analytics-charts";
 import { LoadingStatus } from "./nine-dots";
+import { PageRead, readState } from "./page-state";
 import { lasted } from "./sessions";
 import { Notice, PageBar, RefreshButton, useReread } from "./shell";
 import "./analytics.css";
@@ -1280,7 +1281,7 @@ export function AnalyticsPage({ Link }: { Link: ComponentType<ViewerLinkProps> }
         aria-busy={loading}
         data-stale={(loading && data && shown.current !== query) || undefined}
       >
-        {error ? (
+        {error && data ? (
           <Alert>
             {error}{" "}
             <Button
@@ -1298,11 +1299,19 @@ export function AnalyticsPage({ Link }: { Link: ComponentType<ViewerLinkProps> }
             <h2>Analytics are not available</h2>
             <p>This baum daemon is older than the app. Update baum to see analytics.</p>
           </div>
-        ) : data ? (
-          <AnalyticsReport data={data} Link={Link} />
-        ) : loading ? (
-          <LoadingStatus block>Loading analytics…</LoadingStatus>
-        ) : null}
+        ) : (
+          <PageRead
+            state={readState({ loaded: Boolean(data), failed: Boolean(error) })}
+            what="analytics"
+            message={error}
+            retry={() => {
+              setError("");
+              setAttempt((n) => n + 1);
+            }}
+          >
+            {data ? <AnalyticsReport data={data} Link={Link} /> : null}
+          </PageRead>
+        )}
       </div>
     </>
   );

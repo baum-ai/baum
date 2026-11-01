@@ -355,6 +355,23 @@ it("explains a Timeline with no repositories", async () => {
   expect(node.textContent).toContain("No repositories with decisions");
 });
 
+it("says the Timeline could not be read, with one Retry that reads again", async () => {
+  const good = answers["api/timeline/repositories"];
+  answers["api/timeline/repositories"] = () =>
+    Promise.resolve(Response.json({ message: "The daemon is not answering." }, { status: 500 }));
+  await show();
+  expect(node.textContent).toContain("Couldn't load the Timeline");
+  expect(node.textContent).not.toContain("Loading the Timeline");
+  expect(node.textContent).not.toContain("The Timeline is not available");
+  const retry = [...node.querySelectorAll("button")].filter((b) => b.textContent === "Retry");
+  expect(retry).toHaveLength(1);
+  answers["api/timeline/repositories"] = good;
+  await act(async () => retry[0]!.click());
+  await act(async () => {});
+  await act(async () => {});
+  expect(node.textContent).not.toContain("Couldn't load the Timeline");
+});
+
 it("opens the feature a merged one went into", async () => {
   await show("page=timeline&feature=F0");
   await act(async () => {});

@@ -174,6 +174,29 @@ it("says so when the job left no transcript", async () => {
   expect(node.textContent).toContain("Git couldn't sign a commit");
 });
 
+it("says the transcript could not be read, not that it is empty, and reads again on Retry", async () => {
+  let broken = true;
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () =>
+      broken
+        ? Response.json({ message: "The daemon is not answering." }, { status: 500 })
+        : Response.json({ entries: [], next: 1, more: false, done: true }),
+    ),
+  );
+  await act(async () => root.render(<JobTranscript job={job({ state: "completed" })} />));
+  await wait(20);
+  expect(node.textContent).toContain("Couldn't load the agent's transcript");
+  expect(node.textContent).toContain("The daemon is not answering.");
+  expect(node.textContent).not.toContain("Nothing yet");
+  broken = false;
+  const retry = [...node.querySelectorAll("button")].find((b) => b.textContent === "Retry")!;
+  await act(async () => retry.click());
+  await wait(20);
+  expect(node.textContent).not.toContain("Couldn't load");
+  expect(node.textContent).toContain("Nothing yet");
+});
+
 it("stops reading when it is closed", async () => {
   const fetched = vi.fn(async () =>
     Response.json({ entries: [], next: 0, more: false, done: false }),

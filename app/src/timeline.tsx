@@ -4,7 +4,8 @@ import type { DetailState, OpenSessionSource } from "@baum/viewer/components/dec
 import type { FeatureState } from "@baum/viewer/components/feature-log";
 import { formatCount } from "@baum/viewer/components/format";
 import { ChevronDownIcon, RepositoryIcon } from "@baum/viewer/components/icons";
-import { Empty, Failed } from "@baum/viewer/components/states";
+import { Empty } from "@baum/viewer/components/states";
+import { PageRead, readState } from "./page-state";
 import {
   type TimelineList,
   TimelinePage as SharedTimelinePage,
@@ -224,13 +225,13 @@ export function TimelinePage({
         detail={PAGE_DETAIL}
         actions={<RefreshButton refresh={reread.again} />}
       />
-      {failed && !list ? (
+      {!list ? (
         <div className="local-page-body">
-          <Failed>The Timeline could not be loaded.</Failed>
-        </div>
-      ) : !list ? (
-        <div className="local-page-body">
-          <LoadingStatus block>Loading the Timeline…</LoadingStatus>
+          <PageRead
+            state={readState({ loaded: false, failed })}
+            what="the Timeline"
+            retry={reread.again}
+          />
         </div>
       ) : list.available === false ? (
         <div className="local-page-body">

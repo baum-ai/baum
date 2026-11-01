@@ -93,6 +93,7 @@ import {
   parseAgentRequests,
   noAgentRequests,
   type AgentRequests,
+  LocalRequestError,
   parseGroups,
   sameRepository,
   MAX_GROUP_MEMBERS,
@@ -107,6 +108,8 @@ import {
   type Job,
   type LiveSession,
 } from "./api";
+import { useModal } from "./modal";
+import { PageRead, ReadFailed, readState } from "./page-state";
 import { LoadingStatus } from "./nine-dots";
 import { FixDetails, type FixChat } from "./fix";
 import { JobPage } from "./job-transcript";
@@ -253,6 +256,8 @@ function Workspace({ url }: { url: UrlState }) {
   const [github, setGitHub] = useState<GitHubConnection | null>(null);
   const [defaults, setDefaults] = useState<ReviewDefaults | null>(null);
   const [live, setLive] = useState<LiveSession[]>([]);
+  // Whether the sessions have been read, or the first read failed.
+  const [liveRead, setLiveRead] = useState<"loading" | "loaded" | "failed">("loading");
   // What agents wait on and the messages queued for them; none from a daemon
   // without the route.
   const [agentRequests, setAgentRequests] = useState<AgentRequests>(noAgentRequests);
@@ -266,6 +271,8 @@ function Workspace({ url }: { url: UrlState }) {
   // automatic switch changes.
   const [decisionsTick, setDecisionsTick] = useState(0);
   const [groups, setGroups] = useState<ReviewGroup[]>([]);
+  // Why the groups could not be read, so a group is not called missing then.
+  const [groupsError, setGroupsError] = useState("");
   const inboxes = useInboxes();
   // The inbox just made from a template, whose page says so.
   const [freshInbox, setFreshInbox] = useState<string | null>(null);
@@ -289,7 +296,10 @@ function Workspace({ url }: { url: UrlState }) {
       request<unknown>("api/agent-requests").then(parseAgentRequests, () => noAgentRequests),
     ]);
     if (sequence !== lastLive.current) return;
-    if (sessions) setLive(sessions);
+    if (sessions) {
+      setLive(sessions);
+      setLiveRead("loaded");
+    } else setLiveRead((read) => (read === "loaded" ? read : "failed"));
     setAgentRequests(pending);
   }, []);
   const reloadPending = useRef(false);
@@ -309,6 +319,7 @@ function Workspace({ url }: { url: UrlState }) {
     const drain = async () => {
       while (reloadPending.current && !signal.aborted) {
         reloadPending.current = false;
+        let groupsFailure = "";
         try {
           const [
             repos,
@@ -335,8 +346,13 @@ function Workspace({ url }: { url: UrlState }) {
             get<GitHubConnection>("api/github-auth").catch(() => null),
             get<Repository[]>("api/repositories"),
             get<FoundClones>("api/clones/found").catch(() => null),
-            // An older daemon has no groups.
-            get<unknown>("api/groups").catch(() => null),
+            // An older daemon (404) has no groups; another failure is kept
+            // apart, so it is not taken for a group that is gone.
+            get<unknown>("api/groups").catch((e) => {
+              if (!(e instanceof LocalRequestError && e.status === 404))
+                groupsFailure = errorText(e);
+              return null;
+            }),
             // An older daemon (404) has no inboxes; another failure is reported.
             readInboxes(signal),
           ]);
@@ -354,7 +370,9 @@ function Workspace({ url }: { url: UrlState }) {
           }
           setSnapshot(index);
           setJobs(jobList.jobs ?? []);
-          setGroups(parseGroups(groupList));
+          // A failed read keeps the groups shown.
+          if (!groupsFailure) setGroups(parseGroups(groupList));
+          setGroupsError(groupsFailure);
           inboxes.read(inboxList);
           setRates(discovery);
           setBackground(Array.isArray(sync) ? sync : []);
@@ -704,6 +722,13 @@ function Workspace({ url }: { url: UrlState }) {
   const pageRefresh = usePageRefresh(shownPage, () =>
     Promise.all([reload({ restart: true }), reloadLive()]),
   );
+  // The pages that show what the first read brought: when it failed they say
+  // so, once, rather than wait for it or call themselves empty.
+  const readFailed =
+    Boolean(error) &&
+    revision === 0 &&
+    !inboxPage &&
+    !["settings", "diagnostics", "sessions", "timeline", "analytics"].includes(page);
   // Before the first read there is nothing to refresh.
   const listBusy = refreshing > 0 || (loading && revision === 0);
   // The list's own keys live in `Inbox`, which knows its rows; these are the
@@ -963,7 +988,7 @@ function Workspace({ url }: { url: UrlState }) {
               <Button onClick={() => setRefreshError("")}>Dismiss</Button>
             </Alert>
           ) : null}
-          {error ? (
+          {error && !readFailed ? (
             <Alert>
               {error} <Button onClick={() => void reload()}>Retry</Button>
             </Alert>
@@ -971,7 +996,14 @@ function Workspace({ url }: { url: UrlState }) {
           {inboxes.error && !(inboxWaiting && inboxes.status === "failed") ? (
             <Alert>{inboxes.error}</Alert>
           ) : null}
-          {page === "repositories" ? (
+          {readFailed ? (
+            <section>
+              <PageBar title={readPageTitle(page, groupId)} />
+              <div className="local-page-body local-list-page">
+                <ReadFailed what={readPageWhat(page, groupId)} message={error} retry={reload} />
+              </div>
+            </section>
+          ) : page === "repositories" ? (
             <RepositoriesPage
               repositories={picked}
               loading={loading}
@@ -1039,13 +1071,23 @@ function Workspace({ url }: { url: UrlState }) {
                 actions={<RefreshButton refresh={reloadLive} />}
               />
               <div className="local-page-body local-list-page">
-                <SessionsPage
-                  sessions={live}
-                  requests={agentRequests}
-                  Link={LocalLink}
-                  prHref={sessionPR}
-                  navigate={navigate}
-                />
+                <PageRead
+                  state={readState({
+                    loaded: liveRead === "loaded",
+                    failed: liveRead === "failed",
+                  })}
+                  what="sessions"
+                  message="baum could not read the agent sessions on this computer."
+                  retry={reloadLive}
+                >
+                  <SessionsPage
+                    sessions={live}
+                    requests={agentRequests}
+                    Link={LocalLink}
+                    prHref={sessionPR}
+                    navigate={navigate}
+                  />
+                </PageRead>
               </div>
             </>
           ) : page === "jobs" && url.search.get("job") ? (
@@ -1106,6 +1148,13 @@ function Workspace({ url }: { url: UrlState }) {
                 />
               ) : loading ? (
                 <LoadingStatus block>Loading review group…</LoadingStatus>
+              ) : groupsError ? (
+                <section>
+                  <PageBar title="Review group" />
+                  <div className="local-page-body">
+                    <ReadFailed what="the review group" message={groupsError} retry={reload} />
+                  </div>
+                </section>
               ) : (
                 <GroupMissing />
               );
@@ -1448,10 +1497,7 @@ function ForkConfirmation({
   confirm: () => void;
   pending: boolean;
 }) {
-  const dialog = useRef<HTMLDialogElement>(null);
-  useEffect(() => {
-    dialog.current?.showModal();
-  }, []);
+  const dialog = useModal();
   return (
     <dialog ref={dialog} onCancel={close} aria-labelledby="fork-title">
       <h2 id="fork-title" className="text-lg font-semibold">
@@ -1768,4 +1814,19 @@ function syncNotice(github: GitHubConnection | null, repositories: string[]) {
   if (github?.error)
     return `The GitHub connection needs attention, so baum cannot refresh pull requests. ${saved}`;
   return `baum could not refresh ${repositoryList(repositories)} from GitHub and will keep retrying. ${saved}`;
+}
+
+/** The title a page that failed to read has over its error. */
+function readPageTitle(page: string, group: string | null) {
+  if (group) return "Review group";
+  if (page === "jobs") return "Jobs";
+  if (page === "repositories") return "Repositories";
+  return page === "pulls" ? "Pull requests" : "Inbox";
+}
+/** What a page that failed to read could not load. */
+function readPageWhat(page: string, group: string | null) {
+  if (group) return "the review group";
+  if (page === "jobs") return "jobs";
+  if (page === "repositories") return "repositories";
+  return page === "pulls" ? "pull requests" : "your inbox";
 }

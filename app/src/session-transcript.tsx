@@ -15,7 +15,7 @@ import { SessionCard } from "@baum/viewer/components/session-card";
 import { SessionTranscript } from "@baum/viewer/components/transcript";
 import { Markdown } from "@baum/viewer/components/markdown";
 import { ChevronLeftIcon } from "@baum/viewer/components/icons";
-import { Alert, Button } from "@baum/viewer/components/ui";
+import { Button } from "@baum/viewer/components/ui";
 import { parseTranscript, type LocalTranscript } from "@baum/viewer/local-transcript";
 import type { TranscriptSession, TranscriptSource } from "@baum/viewer/transcript";
 import type { ViewerLinkProps } from "@baum/viewer/navigation";
@@ -29,6 +29,7 @@ import {
 } from "./api";
 import { useNow } from "./live";
 import { LoadingStatus } from "./nine-dots";
+import { ReadFailed } from "./page-state";
 import {
   absolute,
   Agent,
@@ -548,11 +549,7 @@ const TranscriptBody = memo(function TranscriptBody({
         </section>
       );
     case "failed":
-      return (
-        <Alert>
-          {state.message} <Button onClick={retry}>Retry</Button>
-        </Alert>
-      );
+      return <ReadFailed what="the transcript" message={state.message} retry={retry} />;
   }
   return (
     <TranscriptReader

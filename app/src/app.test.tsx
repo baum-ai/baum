@@ -189,6 +189,93 @@ it("says it is loading, not empty, until the first read of jobs and repositories
     root = createRoot(node);
   }
 });
+/** Makes the daemon refuse the reads whose path ends as one of `paths`, until
+ *  `heal` is called. */
+function refuse(...paths: string[]) {
+  const original = vi.mocked(fetch).getMockImplementation()!;
+  let broken = true;
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (path: string, init?: RequestInit) =>
+      broken && paths.some((p) => path.includes(p))
+        ? Response.json({ message: "The daemon is not answering." }, { status: 500 })
+        : original(path, init),
+    ),
+  );
+  return () => {
+    broken = false;
+  };
+}
+const retryButtons = () =>
+  [...node.querySelectorAll("button")].filter((b) => b.textContent === "Retry");
+
+it.each([
+  ["jobs", "Couldn't load jobs", ["No jobs yet", "Loading jobs"]],
+  ["repositories", "Couldn't load repositories", ["No repositories yet", "Loading repositories"]],
+  ["inbox", "Couldn't load your inbox", ["Loading your inbox", "Inbox zero", "Nothing is waiting"]],
+  ["pulls", "Couldn't load pull requests", ["No pull requests here", "Loading local inbox"]],
+])(
+  "says the %s page could not be read, once, instead of looking empty or loading",
+  async (page, title, misleading) => {
+    const heal = refuse("api/jobs");
+    history.replaceState(null, "", `/s/test-ns/?page=${page}`);
+    await act(async () => root.render(<App />));
+    expect(node.textContent).toContain(title);
+    expect(node.textContent).toContain("The daemon is not answering.");
+    for (const text of misleading) expect(node.textContent).not.toContain(text);
+    // One way to try again: the page's, not the banner's as well.
+    expect(retryButtons()).toHaveLength(1);
+    heal();
+    await act(async () => retryButtons()[0]!.click());
+    expect(node.textContent).not.toContain(title);
+    expect(node.textContent).not.toContain("The daemon is not answering.");
+  },
+);
+
+it("does not call a review group missing when the groups could not be read", async () => {
+  const heal = refuse("api/groups");
+  history.replaceState(null, "", "/s/test-ns/?page=pulls&group=g1");
+  await act(async () => root.render(<App />));
+  expect(node.textContent).toContain("Couldn't load the review group");
+  expect(node.textContent).not.toContain("does not exist any more");
+  expect(retryButtons()).toHaveLength(1);
+  heal();
+  await act(async () => retryButtons()[0]!.click());
+  expect(node.textContent).toContain("does not exist any more");
+});
+
+it("says the sessions could not be read instead of listing none", async () => {
+  const heal = refuse("api/live-sessions");
+  history.replaceState(null, "", "/s/test-ns/?page=sessions");
+  await act(async () => root.render(<App />));
+  expect(node.textContent).toContain("Couldn't load sessions");
+  expect(retryButtons()).toHaveLength(1);
+  heal();
+  await act(async () => retryButtons()[0]!.click());
+  expect(node.textContent).not.toContain("Couldn't load sessions");
+});
+
+it("keeps what a page read when a later read fails", async () => {
+  const listeners = new Map<string, () => void>();
+  vi.stubGlobal(
+    "EventSource",
+    class {
+      addEventListener(name: string, listener: () => void) {
+        listeners.set(name, listener);
+      }
+      close() {}
+    },
+  );
+  entries = [entry(1)];
+  history.replaceState(null, "", "/s/test-ns/?page=pulls&filter=all");
+  await act(async () => root.render(<App />));
+  expect(node.textContent).toContain("Change 1");
+  refuse("api/jobs");
+  await act(async () => listeners.get("index")!());
+  expect(node.textContent).toContain("Change 1");
+  expect(node.textContent).toContain("The daemon is not answering.");
+  expect(node.textContent).not.toContain("Couldn't load");
+});
 it("shows actionable launch authorization failure", async () => {
   fail = true;
   await act(async () => root.render(<App />));
