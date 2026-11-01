@@ -401,7 +401,7 @@ func TestPreferencesExtractionBackend(t *testing.T) {
 // Each use case has its own reasoning effort: reviews', fixes' with a fix
 // agent, and data extraction's.
 func TestPreferencesEfforts(t *testing.T) {
-	low, high, medium, wrong, empty := "low", "high", "medium", "max", ""
+	low, high, medium, wrong, empty := "low", "high", "medium", "extreme", ""
 	codex := config.BackendCodex
 	for _, p := range []Preferences{{Effort: &wrong}, {FixBackend: &codex, FixEffort: &wrong}, {Decisions: DecisionPreferences{Effort: &wrong}}, {FixEffort: &high}} {
 		if p.Validate() == nil {

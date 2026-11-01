@@ -801,3 +801,67 @@ func TestLocalSessionsWithASubagentOnDisk(t *testing.T) {
 		}
 	}
 }
+
+// exportCounter is the fixture clone with its tree exports counted.
+type exportCounter struct {
+	*gitlocal.Repo
+	exports int
+}
+
+func (e *exportCounter) ExportCommit(ctx context.Context, commitOID string) (io.ReadCloser, error) {
+	e.exports++
+	return e.Repo.ExportCommit(ctx, commitOID)
+}
+
+func (e *exportCounter) ExportCommitPath(ctx context.Context, commitOID, path string) (io.ReadCloser, error) {
+	e.exports++
+	return e.Repo.ExportCommitPath(ctx, commitOID, path)
+}
+
+// Facts are read by no model: their assembly exports no tree and downloads no
+// image, and a file the checkout budget would omit keeps its hunk's text.
+func TestFactsAssemblyExportsNothing(t *testing.T) {
+	repo := assembletest.NewRepo(t, assembletest.Options{})
+	tight := func(req *assemble.Request) { req.Limits.Checkout.MaxTotalFiles = 1 }
+	normal, err := assembleWith(t, repo, repo.Evidence(), assembletest.SessionTree(), func(req *assemble.Request, _ *assemble.Assembler) { tight(req) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	git := &exportCounter{Repo: open(t, repo.Dir)}
+	downloads := 0
+	facts, err := assembleWith(t, repo, repo.Evidence(), assembletest.SessionTree(), func(req *assemble.Request, a *assemble.Assembler) {
+		tight(req)
+		req.Facts, req.Checkout, req.Attachments = true, nil, nil
+		a.Git = git
+		a.Images = func(context.Context, string, int64) ([]byte, error) {
+			downloads++
+			return assembletest.PNG, nil
+		}
+	})
+	if err != nil {
+		t.Fatalf("facts assembly: %v\n%s", err, facts.stderr.String())
+	}
+	if git.exports != 0 || downloads != 0 {
+		t.Errorf("facts exported %d trees and downloaded %d images", git.exports, downloads)
+	}
+	b := facts.result.Bundle
+	if len(b.Attachments) != 0 || b.Sources["attachments"] || len(facts.result.Images) != 0 {
+		t.Errorf("facts carry description images: %+v", b.Attachments)
+	}
+	if len(b.Diff) != len(normal.result.Bundle.Diff) || len(b.Sessions) != len(normal.result.Bundle.Sessions) || len(b.Checks) != len(normal.result.Bundle.Checks) {
+		t.Fatalf("facts hold %d hunks, %d sessions and %d checks; generation %d, %d and %d", len(b.Diff), len(b.Sessions), len(b.Checks),
+			len(normal.result.Bundle.Diff), len(normal.result.Bundle.Sessions), len(normal.result.Bundle.Checks))
+	}
+	kept := 0
+	for i, hunk := range normal.result.Bundle.Diff {
+		if fact := b.Diff[i]; hunk.Patch == "" && fact.ID == hunk.ID && fact.Patch != "" {
+			kept++
+		}
+	}
+	if kept == 0 {
+		t.Error("no hunk the checkout budget left textless kept its text in the facts")
+	}
+	if _, err := assembleWith(t, repo, repo.Evidence(), nil, func(req *assemble.Request, _ *assemble.Assembler) { req.Facts = true }); err == nil {
+		t.Error("a facts assembly accepted a checkout archive")
+	}
+}

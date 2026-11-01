@@ -516,6 +516,20 @@ func (s *Service) setPause(host string, until time.Time, epoch uint64) {
 	s.hostPause[host] = maxTime(s.hostPause[host], until)
 }
 
+// Paused is when the host's rate limit lets refreshes resume, for another
+// reader of the same account's GitHub budget, such as the PR page's facts
+// (internal/facts), to wait it out too.
+func (s *Service) Paused(host string) time.Time { return s.pause(host) }
+
+// Limited records a rate limit another reader of the account's GitHub
+// budget hit, so refreshes wait it out too.
+func (s *Service) Limited(host string, until time.Time) {
+	s.setPause(host, until, s.identityEpoch())
+}
+
+// RefreshInterval is how often the background refresh polls.
+func (s *Service) RefreshInterval() time.Duration { return s.interval() }
+
 // RefreshNow refreshes some pull requests of one clone at once, as Sync
 // refreshes each of them, outside Sync's schedule: a hook event said they
 // changed. It honors the host's rate pause, which a rate-limited refresh here

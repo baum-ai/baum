@@ -38,6 +38,7 @@ import {
   type Tour,
 } from "./walkthrough-model";
 import "./walkthrough.css";
+import { PRIMARY, SECONDARY, SMALL } from "./action-classes";
 
 /** The overview a pull request opens on, or the tour it leads into. */
 export type WalkMode = "landing" | "tour";
@@ -284,7 +285,7 @@ export function Walkthrough({
     return (
       <section aria-label="Walkthrough" className="walkthrough">
         <SavedStateNotice state={saved} label="review draft" />
-        <button type="button" className="walk-secondary" onClick={close}>
+        <button type="button" className={SECONDARY} onClick={close}>
           Full review
         </button>
       </section>
@@ -296,7 +297,7 @@ export function Walkthrough({
         <div className="local-review-empty">
           <h2>Nothing to walk through</h2>
           <p>This review has no logical sections with changes to look at.</p>
-          <button type="button" className="walk-secondary" onClick={close}>
+          <button type="button" className={SECONDARY} onClick={close}>
             Back to the full review
           </button>
         </div>
@@ -348,7 +349,7 @@ export function Walkthrough({
           </div>
           <div className="walk-head-actions">
             {ask ? <AskButton ask={ask} /> : null}
-            <button type="button" className="walk-secondary" onClick={close}>
+            <button type="button" className={SECONDARY} onClick={close}>
               Full review
               <kbd aria-hidden>v</kbd>
             </button>
@@ -447,7 +448,7 @@ function AskButton({ ask }: { ask: { open: boolean; toggle: () => void } }) {
   return (
     <button
       type="button"
-      className="walk-secondary"
+      className={SECONDARY}
       aria-pressed={ask.open}
       aria-keyshortcuts="a"
       data-ask-button=""
@@ -654,17 +655,17 @@ function Landing({
       </div>
       {tour.intro ? <p className="walk-why">{tour.intro}</p> : null}
       <div className="walk-actions">
-        <button type="button" className="walk-primary" onClick={() => open(1)}>
+        <button type="button" className={PRIMARY} onClick={() => open(1)}>
           {started ? "Continue the review" : "Start the review"}
           <kbd aria-hidden>→</kbd>
         </button>
         {actions}
         {ask ? <AskButton ask={ask} /> : null}
-        <button type="button" className="walk-secondary" onClick={close}>
+        <button type="button" className={SECONDARY} onClick={close}>
           Full review
           <kbd aria-hidden>v</kbd>
         </button>
-        <a href={pr.url} target="_blank" rel="noreferrer" className="walk-secondary">
+        <a href={pr.url} target="_blank" rel="noreferrer" className={SECONDARY}>
           GitHub
           <ExternalLinkIcon size={12} />
         </a>
@@ -804,7 +805,7 @@ function ChapterPage({
   return (
     <article aria-labelledby={`walk-title-${chapter.id}`} className="walk-panel">
       <div className="walk-meta">
-        <span className={cn("walk-chip", chapter.level && `risk-${chapter.level}`)}>
+        <span className={cn("walk-chip walk-tag", chapter.level && `risk-${chapter.level}`)}>
           Chapter {page} of {tour.chapters.length}
         </span>
         <span className="walk-where">
@@ -865,11 +866,11 @@ function ChapterPage({
         </ol>
       </section>
       <div className="walk-actions walk-page-foot">
-        <button type="button" className="walk-primary" onClick={next}>
+        <button type="button" className={PRIMARY} onClick={next}>
           {following ? `Next: ${following.title}` : "Wrap up"}
           <kbd aria-hidden>→</kbd>
         </button>
-        <button type="button" className="walk-secondary" onClick={back}>
+        <button type="button" className={SECONDARY} onClick={back}>
           <ChevronLeftIcon size={14} />
           Back
         </button>
@@ -948,7 +949,7 @@ function Behaviour({
           {picked && !editing && !hasNote ? (
             <button
               type="button"
-              className="walk-small"
+              className={SMALL}
               onClick={(event) => {
                 event.stopPropagation();
                 startComment();
@@ -962,7 +963,7 @@ function Behaviour({
           {picked && ask ? (
             <button
               type="button"
-              className="walk-small"
+              className={SMALL}
               onClick={(event) => {
                 event.stopPropagation();
                 ask();
@@ -993,13 +994,13 @@ function Behaviour({
             <div className="walk-actions">
               <button
                 type="button"
-                className="walk-primary"
+                className={PRIMARY}
                 onClick={saveComment}
                 disabled={!draft.trim()}
               >
                 Save comment
               </button>
-              <button type="button" className="walk-secondary" onClick={cancelComment}>
+              <button type="button" className={SECONDARY} onClick={cancelComment}>
                 {hasNote ? "Cancel" : "Never mind"}
               </button>
             </div>
@@ -1011,10 +1012,10 @@ function Behaviour({
               <span className="walk-comment-where">Your comment on {target}</span>
               <p>{note}</p>
             </div>
-            <button type="button" className="walk-small" onClick={startComment}>
+            <button type="button" className={SMALL} onClick={startComment}>
               Edit
             </button>
-            <button type="button" className="walk-small" onClick={removeComment}>
+            <button type="button" className={SMALL} onClick={removeComment}>
               Remove
             </button>
           </div>
@@ -1042,7 +1043,7 @@ function WrapUp({
   return (
     <article aria-labelledby="walk-wrap-title" className="walk-panel">
       <div className="walk-meta">
-        <span className="walk-chip">Submit</span>
+        <span className="walk-chip walk-tag">Submit</span>
         <span className="walk-where">
           {seenCount} of {tour.stops.length} looked at ·{" "}
           {commentCount ? plural(commentCount, "comment") : "no comments"}
@@ -1200,7 +1201,7 @@ function Submit({
         <a href={sending.url} target="_blank" rel="noreferrer">
           Open it on GitHub <ExternalLinkIcon size={12} />
         </a>
-        <button type="button" className="walk-small" onClick={() => setSending({ state: "idle" })}>
+        <button type="button" className={SMALL} onClick={() => setSending({ state: "idle" })}>
           Write another
         </button>
       </div>
@@ -1259,7 +1260,7 @@ function Submit({
           {sending.code === "invalid_line" ? (
             <>
               {" "}
-              <button type="button" className="walk-small" onClick={() => void send(false)}>
+              <button type="button" className={SMALL} onClick={() => void send(false)}>
                 Put the comments in the review body instead
               </button>
             </>
@@ -1269,7 +1270,7 @@ function Submit({
       <div className="walk-actions">
         <button
           type="button"
-          className="walk-primary"
+          className={PRIMARY}
           onClick={() => void send(true)}
           disabled={sending.state === "sending" || seenCount === 0 || empty}
         >

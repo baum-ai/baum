@@ -16,7 +16,7 @@ const viaApp: GitHubAuthCall = (action) =>
 
 function GitHubLogo() {
   return (
-    <svg className="agent-logo" viewBox="0 0 16 16" aria-hidden="true">
+    <svg className="agent-logo" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
       <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z" />
     </svg>
   );
@@ -32,11 +32,12 @@ export function GitHubStep({ onConnected }: { onConnected: (connected: boolean) 
     working,
     checking,
     copied,
+    openingBrowser,
     recheck,
     action,
     signIn,
     copy,
-  } = useGitHubConnection(viaApp);
+  } = useGitHubConnection(viaApp, undefined, 5000);
   // An explicit credential (environment or config) is in use and wins over a
   // saved account, so it counts as connected.
   const connected = Boolean((connection?.saved || connection?.override) && !connection.error);
@@ -44,15 +45,25 @@ export function GitHubStep({ onConnected }: { onConnected: (connected: boolean) 
   useEffect(() => {
     if (known) onConnected(connected);
   }, [known, connected, onConnected]);
-  const state = connection?.saved
-    ? `Signed in as ${connection.login}.`
-    : connection?.override
-      ? `Using the GitHub credential from ${connection.source}.`
+  const waiting = Boolean(
+    !connection || connection.state === "loading" || working === "start" || pending,
+  );
+  const state =
+    working === "start"
+      ? "Preparing GitHub sign-in…"
       : pending
-        ? "Waiting for you to enter the code on GitHub."
-        : connection
-          ? "Not connected."
-          : "Checking the GitHub connection…";
+        ? openingBrowser
+          ? "Opening GitHub in your browser…"
+          : "Waiting for GitHub confirmation…"
+        : connected
+          ? connection?.override
+            ? `Using the GitHub credential from ${connection.source}.`
+            : `Connected as ${connection?.login}.`
+          : waiting
+            ? "Checking the GitHub connection…"
+            : connection?.error
+              ? "GitHub connection needs attention."
+              : "Not connected.";
   return (
     <div id="github-panel">
       <div className="setup-card agent-list">
@@ -60,7 +71,12 @@ export function GitHubStep({ onConnected }: { onConnected: (connected: boolean) 
           <GitHubLogo />
           <div className="agent-info">
             <h2>GitHub</h2>
-            <p id="github-state" className={connected ? "ok" : undefined} role="status">
+            <p
+              id="github-state"
+              className={waiting ? "github-waiting" : connected ? "ok" : undefined}
+              role="status"
+            >
+              {waiting && <NineDots size={14} />}
               {state}
             </p>
           </div>
@@ -85,23 +101,39 @@ export function GitHubStep({ onConnected }: { onConnected: (connected: boolean) 
         </div>
         {pending && (
           <div className="github-code-step">
+            <p>
+              {openingBrowser
+                ? "Your browser will open in a moment. Paste this code on GitHub to sign in."
+                : "Approve access on GitHub, then return here. Confirmation can take a few seconds."}
+            </p>
             <div className="github-code">
               <span aria-label="GitHub sign-in code">{pending.user_code}</span>
               <button type="button" className="secondary" onClick={() => void copy()}>
                 Copy code
               </button>
             </div>
-            {copied && <p className="github-note">{copied}</p>}
+            {copied && (
+              <p className="github-note" role="status">
+                {copied}
+              </p>
+            )}
             <div className="actions">
-              <a
-                className="button"
-                href={DEVICE_URL}
-                target="_blank"
-                rel="noreferrer"
-                onClick={() => void copy()}
-              >
-                Open GitHub ↗
-              </a>
+              {openingBrowser ? (
+                <button type="button" className="button loading" disabled aria-busy="true">
+                  <NineDots size={14} tone="text" />
+                  Opening GitHub…
+                </button>
+              ) : (
+                <a
+                  className="button"
+                  href={DEVICE_URL}
+                  target="_blank"
+                  rel="noreferrer"
+                  onClick={() => void copy()}
+                >
+                  Open GitHub ↗
+                </a>
+              )}
               <button
                 type="button"
                 className="quiet"
@@ -139,7 +171,7 @@ export function GitHubStep({ onConnected }: { onConnected: (connected: boolean) 
           </div>
         )}
       </div>
-      <p className="repo-note">Data is downloaded to this computer and never shared with baum.</p>
+      <p className="repo-note">Data is stored on this computer and never shared with baum.</p>
     </div>
   );
 }

@@ -83,6 +83,10 @@ type LocalAPI struct {
 	// Timeline serves /api/timeline/: the features and decisions of the
 	// local decision log (internal/decisionlog).
 	Timeline http.Handler
+	// Facts builds what GET /api/facts answers: a pull request's facts for
+	// its page while it has no saved review (internal/facts). Without it the
+	// route reports the capability unavailable.
+	Facts FactsSource
 	// Decisions builds the handler of /api/decisions, the decisions captured
 	// from agent sessions (internal/decisionlog), given the sessions a pull
 	// request's saved review links, as its PR page lists them.
@@ -109,6 +113,17 @@ type LocalAPI struct {
 	// diagnosticsWaiting is a test hook, called once a request is waiting on
 	// the shared run.
 	diagnosticsWaiting func()
+}
+
+// FactsSource builds and keeps pull requests' facts (review.Facts);
+// *facts.Service implements it.
+type FactsSource interface {
+	// Facts answers the pull request's facts at head, the head the page
+	// shows, building them when they are due.
+	Facts(ctx context.Context, clone repos.Clone, number int, head string) ([]byte, error)
+	// Cached is the facts last built for the pull request and the head they
+	// describe, nil when none; it never reads GitHub.
+	Cached(clone repos.Clone, number int) ([]byte, string)
 }
 
 const defaultDiagnosticsTimeout = 45 * time.Second
@@ -191,7 +206,11 @@ func (a LocalAPI) Handler() *LocalHandler {
 	mux.Handle("GET /api/repositories/{owner}/{name}/clone-target", repositories)
 	mux.Handle("GET /api/repositories/{owner}/{name}/clone", repositories)
 	mux.Handle("POST /api/repositories/{owner}/{name}/clone", repositories)
-	mux.Handle("/api/plan-usage", provider(a.PlanUsage, "plan_usage_unavailable"))
+	if a.PlanUsage != nil {
+		mux.HandleFunc("/api/plan-usage", a.planUsageHandler)
+	} else {
+		mux.Handle("/api/plan-usage", provider(nil, "plan_usage_unavailable"))
+	}
 	mux.Handle("/api/analytics", provider(a.Analytics, "analytics_unavailable"))
 	mux.Handle("/api/timeline/", provider(a.Timeline, "timeline_unavailable"))
 	var decisions http.Handler
@@ -277,6 +296,8 @@ func (a LocalAPI) Handler() *LocalHandler {
 	})
 	mux.HandleFunc("GET /api/settings/appearance", a.getAppearance)
 	mux.HandleFunc("PUT /api/settings/appearance", a.putAppearance)
+	mux.HandleFunc("GET /api/settings/plan-usage", a.getPlanUsageSettings)
+	mux.HandleFunc("PUT /api/settings/plan-usage", a.putPlanUsageSettings)
 	mux.HandleFunc("GET /api/settings/decisions", a.getDecisionSettings)
 	mux.HandleFunc("PUT /api/settings/decisions", a.putDecisionSettings)
 	// The app's agent environment replaces the config file's; an empty one
@@ -446,6 +467,7 @@ func (a LocalAPI) Handler() *LocalHandler {
 	mux.HandleFunc("GET /api/sessions/{id}", document)
 	mux.HandleFunc("GET /api/patch", document)
 	mux.HandleFunc("GET /api/commits", document)
+	a.factsRoutes(mux, cache)
 	mux.HandleFunc("GET /api/attachments/{id}", func(w http.ResponseWriter, r *http.Request) {
 		c, key, n, ok := a.selector(w, r)
 		if !ok {

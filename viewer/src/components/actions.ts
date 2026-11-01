@@ -14,7 +14,7 @@ const actionSizes = {
   // Table-row scale. Exists so a caller never reaches for
   // `className="px-3 py-1.5"`, which cannot reliably beat the size it is
   // fighting — `cn` concatenates, so stylesheet order decides.
-  tiny: "h-7 px-2.5 text-base",
+  tiny: "h-7 px-2.5 text-xs",
   compact: "h-8 px-3.5",
   standard: "px-4 py-[11px]",
   large: "px-4 py-3 text-base",
@@ -42,6 +42,15 @@ function actionShape(variant: NonNullable<ActionOptions["variant"]>) {
   return variant === "tag" ? "rounded-full" : "rounded-(--radius-md)";
 }
 
+/** Every boxed action stands on `--action-shadow` and sinks a pixel while
+ *  pressed, so a click shows in the same frame. The shadow is transparent
+ *  unless a host raises its controls, as the desktop app does. */
+function actionDepth(variant: NonNullable<ActionOptions["variant"]>) {
+  return variant === "ghost"
+    ? "enabled:active:translate-y-px"
+    : "shadow-(--action-shadow) enabled:active:translate-y-px enabled:active:shadow-none";
+}
+
 export function actionClassName({
   variant = "primary",
   size = "standard",
@@ -50,6 +59,7 @@ export function actionClassName({
   return cn(
     "inline-flex cursor-pointer items-center justify-center font-medium disabled:cursor-not-allowed disabled:opacity-50",
     actionShape(variant),
+    actionDepth(variant),
     FOCUS_RING,
     actionSizes[size],
     actionVariants[variant],

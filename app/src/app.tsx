@@ -5,7 +5,7 @@ import { UsageDetails } from "./usage";
 import { useCallback, useEffect, useRef, useState, type MouseEvent, type ReactNode } from "react";
 import { LogoMark } from "@baum/viewer/components/editorial";
 import { CircleCheckIcon, CircleCrossIcon, CircleDashedIcon } from "@baum/viewer/components/icons";
-import { Button, Alert } from "@baum/viewer/components/ui";
+import { Alert, Button, LiveDot } from "@baum/viewer/components/ui";
 import {
   UrlStateProvider,
   ViewerLinkProvider,
@@ -65,6 +65,7 @@ import {
   PageBar,
   PageRefreshProvider,
   RefreshButton,
+  type RefreshRun,
   Sidebar,
   usePageRefresh,
 } from "./shell";
@@ -75,6 +76,7 @@ import {
   appURL,
   request,
   reviewJob,
+  detailsJob,
   fixJob,
   jobName,
   chatJobs,
@@ -109,6 +111,8 @@ import { LoadingStatus } from "./nine-dots";
 import { FixDetails, type FixChat } from "./fix";
 import { JobPage } from "./job-transcript";
 import { useLocation } from "./location";
+import { SMALL } from "./action-classes";
+import { cn } from "@baum/viewer/components/classnames";
 
 /** Pull requests' views, in the order of their tabs and of `h` and `l`. */
 const VIEWS = [
@@ -211,10 +215,9 @@ function Workspace({ url }: { url: UrlState }) {
   // do not end them, and each waits for the one before it.
   const [refreshing, setRefreshing] = useState(0);
   const refreshQueue = useRef(Promise.resolve());
+  const refreshesRunning = useRef(new Set<AbortController>());
   // Why the latest refresh from GitHub failed, on the page it was asked on.
   const [refreshError, setRefreshError] = useState("");
-  const shownPageRef = useRef("");
-  const lastRefresh = useRef(0);
   const [error, setError] = useState("");
   // When the latest read of the daemon completed, for Pull requests' bar.
   const [updatedAt, setUpdatedAt] = useState<number | null>(null);
@@ -291,13 +294,20 @@ function Workspace({ url }: { url: UrlState }) {
   }, []);
   const reloadPending = useRef(false);
   const reloadInFlight = useRef<Promise<void> | null>(null);
-  const reload = useCallback(() => {
+  const reloadAbort = useRef<AbortController | null>(null);
+  // `restart` drops the read under way, which may never answer, for a new one.
+  const reload = useCallback(({ restart = false }: { restart?: boolean } = {}) => {
     reloadPending.current = true;
-    if (reloadInFlight.current) return reloadInFlight.current;
+    if (reloadInFlight.current && !restart) return reloadInFlight.current;
+    reloadAbort.current?.abort();
+    const abort = new AbortController();
+    reloadAbort.current = abort;
+    const { signal } = abort;
+    const get = <T,>(path: string) => request<T>(path, undefined, "GET", signal);
     // Publish each completed snapshot; events during a read queue one more
     // instead of starting competing reads that discard each other's results.
     const drain = async () => {
-      while (reloadPending.current) {
+      while (reloadPending.current && !signal.aborted) {
         reloadPending.current = false;
         try {
           const [
@@ -314,22 +324,23 @@ function Workspace({ url }: { url: UrlState }) {
             groupList,
             inboxList,
           ] = await Promise.all([
-            request<Clone[]>("api/repos"),
-            request<Snapshot>("api/index?history=1"),
-            request<{ jobs?: Job[] }>("api/jobs"),
-            request<typeof rates>("api/prs"),
-            request<typeof background>("api/background"),
+            get<Clone[]>("api/repos"),
+            get<Snapshot>("api/index?history=1"),
+            get<{ jobs?: Job[] }>("api/jobs"),
+            get<typeof rates>("api/prs"),
+            get<typeof background>("api/background"),
             // A daemon without automatic generation answers without repositories.
-            request<Partial<Automatic>>("api/automatic").catch(() => null),
-            request<ReviewDefaults>("api/settings").catch(() => null),
-            request<GitHubConnection>("api/github-auth").catch(() => null),
-            request<Repository[]>("api/repositories"),
-            request<FoundClones>("api/clones/found").catch(() => null),
+            get<Partial<Automatic>>("api/automatic").catch(() => null),
+            get<ReviewDefaults>("api/settings").catch(() => null),
+            get<GitHubConnection>("api/github-auth").catch(() => null),
+            get<Repository[]>("api/repositories"),
+            get<FoundClones>("api/clones/found").catch(() => null),
             // An older daemon has no groups.
-            request<unknown>("api/groups").catch(() => null),
+            get<unknown>("api/groups").catch(() => null),
             // An older daemon (404) has no inboxes; another failure is reported.
-            readInboxes(),
+            readInboxes(signal),
           ]);
+          if (signal.aborted) return;
           setClones(repos);
           setPicked(Array.isArray(repositories) ? repositories : []);
           if (Array.isArray(found?.attached)) {
@@ -354,16 +365,17 @@ function Workspace({ url }: { url: UrlState }) {
           setUpdatedAt(Date.now());
           setRevision((n) => n + 1);
         } catch (e) {
-          setError(errorText(e));
+          if (!signal.aborted) setError(errorText(e));
         } finally {
-          setLoading(false);
+          if (!signal.aborted) setLoading(false);
         }
       }
     };
-    reloadInFlight.current = drain().finally(() => {
-      reloadInFlight.current = null;
+    const run: Promise<void> = drain().finally(() => {
+      if (reloadInFlight.current === run) reloadInFlight.current = null;
     });
-    return reloadInFlight.current;
+    reloadInFlight.current = run;
+    return run;
   }, []);
   useEffect(() => {
     void reload();
@@ -619,41 +631,65 @@ function Workspace({ url }: { url: UrlState }) {
   // others refreshed and is named.
   // A repository is named by its local clone where there is one, which
   // the daemon knows even when the repository is not picked.
-  const refreshFrom = (targets: { repository: string; clone?: string }[]) => {
-    const askedOn = shownPageRef.current;
-    const sequence = ++lastRefresh.current;
+  // A press that starts one again drops every refresh under way, on any page,
+  // since one that never answers holds the queue and the lists' loader.
+  const refreshFrom = (targets: { repository: string; clone?: string }[], press: RefreshRun) => {
+    if (press.restart) for (const other of refreshesRunning.current) other.abort();
+    const abort = new AbortController();
+    press.signal.addEventListener("abort", () => abort.abort(), { once: true });
+    // A press superseded before its refresh started does not run.
+    if (press.signal.aborted) abort.abort();
+    const { signal } = abort;
+    const dropped = new Promise<void>((resolve) =>
+      signal.addEventListener("abort", () => resolve(), { once: true }),
+    );
+    refreshesRunning.current.add(abort);
     setRefreshing((n) => n + 1);
-    const run = refreshQueue.current.then(async () => {
+    const before = refreshQueue.current;
+    const run = (async () => {
       const failed: string[] = [];
       try {
-        for (const { repository, clone } of targets)
-          await request("api/prs/refresh", clone ? { clone } : { repository }).catch((e) => {
-            failed.push(`${repository}: ${errorText(e)}`);
+        if (!press.restart) await Promise.race([before, dropped]);
+        for (const { repository, clone } of targets) {
+          if (signal.aborted) return;
+          await request(
+            "api/prs/refresh",
+            clone ? { clone } : { repository },
+            "POST",
+            signal,
+          ).catch((e) => {
+            if (!signal.aborted) failed.push(`${repository}: ${errorText(e)}`);
           });
-        await reload();
-        // Only the latest refresh speaks, on the page it was asked on.
-        if (sequence === lastRefresh.current && shownPageRef.current === askedOn)
-          setRefreshError(failed.join(" "));
+        }
+        // The press that dropped this one reads the daemon again itself.
+        if (signal.aborted) return;
+        await reload({ restart: press.restart });
+        // Only the page's latest refresh speaks, while the page is shown.
+        if (press.current()) setRefreshError(failed.join(" "));
       } finally {
+        refreshesRunning.current.delete(abort);
         setRefreshing((n) => n - 1);
       }
-    });
+    })();
     // One that fails does not hold up the next.
     refreshQueue.current = run.catch(() => {});
     return run;
   };
   // The picked repositories, and those known only by a registered clone.
-  const refresh = () =>
-    refreshFrom([
-      ...picked.map(({ repository }) => ({ repository })),
-      ...clones
-        .filter(
-          (c, i) =>
-            !picked.some((p) => sameRepository(p.repository, c.repository)) &&
-            clones.findIndex((other) => sameRepository(other.repository, c.repository)) === i,
-        )
-        .map((c) => ({ repository: c.repository, clone: c.id })),
-    ]);
+  const refresh = (press: RefreshRun) =>
+    refreshFrom(
+      [
+        ...picked.map(({ repository }) => ({ repository })),
+        ...clones
+          .filter(
+            (c, i) =>
+              !picked.some((p) => sameRepository(p.repository, c.repository)) &&
+              clones.findIndex((other) => sameRepository(other.repository, c.repository)) === i,
+          )
+          .map((c) => ({ repository: c.repository, clone: c.id })),
+      ],
+      press,
+    );
   // A failed refresh belongs to the page it was asked for on.
   const shownPage = [
     page,
@@ -662,9 +698,12 @@ function Workspace({ url }: { url: UrlState }) {
     requestedClone ?? requestedRepository,
     requestedNumber,
   ].join(":");
-  shownPageRef.current = shownPage;
   useEffect(() => setRefreshError(""), [shownPage]);
-  const pageRefresh = usePageRefresh(shownPage);
+  // A page without a refresh of its own, as one still loading, reads
+  // everything again.
+  const pageRefresh = usePageRefresh(shownPage, () =>
+    Promise.all([reload({ restart: true }), reloadLive()]),
+  );
   // Before the first read there is nothing to refresh.
   const listBusy = refreshing > 0 || (loading && revision === 0);
   // The list's own keys live in `Inbox`, which knows its rows; these are the
@@ -688,6 +727,7 @@ function Workspace({ url }: { url: UrlState }) {
               page === "sessions" ||
               page === "jobs" ||
               page === "repositories" ||
+              page === "timeline" ||
               page === "settings"
             ? page
             : "anywhere";
@@ -792,9 +832,8 @@ function Workspace({ url }: { url: UrlState }) {
       return;
     }
     setGoingTo(false);
-    // A page without a refresh button leaves the key to the browser.
-    if (action.kind === "refresh") return pageRefresh.press();
-    if (action.kind === "back") history.back();
+    if (action.kind === "refresh") pageRefresh.press();
+    else if (action.kind === "back") history.back();
     else if (action.kind === "forward") history.forward();
     else navigate(PAGES.find((item) => item.page === action.page)!.href());
   });
@@ -1015,7 +1054,7 @@ function Workspace({ url }: { url: UrlState }) {
               <PageBar
                 title="Jobs"
                 detail="Reviews and fixes run on this computer"
-                actions={<RefreshButton refresh={reload} />}
+                actions={<RefreshButton refresh={(run) => reload({ restart: run.restart })} />}
               />
               <div className="local-page-body local-list-page">
                 <Jobs jobs={jobs} changed={reload} />
@@ -1047,14 +1086,17 @@ function Workspace({ url }: { url: UrlState }) {
                   cloneFor={cloneFor}
                   revision={revision}
                   changed={reload}
-                  refresh={() =>
-                    refreshFrom([
-                      {
-                        repository: group.repository,
-                        clone: clones.find((c) => sameRepository(c.repository, group.repository))
-                          ?.id,
-                      },
-                    ])
+                  refresh={(press) =>
+                    refreshFrom(
+                      [
+                        {
+                          repository: group.repository,
+                          clone: clones.find((c) => sameRepository(c.repository, group.repository))
+                            ?.id,
+                        },
+                      ],
+                      press,
+                    )
                   }
                 />
               ) : loading ? (
@@ -1070,8 +1112,8 @@ function Workspace({ url }: { url: UrlState }) {
                 detail={`${selectedEntry.pull_request.repository} #${selectedEntry.pull_request.number}`}
                 actions={
                   <RefreshButton
-                    refresh={() =>
-                      refreshFrom([{ repository: selectedEntry.pull_request.repository }])
+                    refresh={(press) =>
+                      refreshFrom([{ repository: selectedEntry.pull_request.repository }], press)
                     }
                     label="Refresh from GitHub"
                   />
@@ -1102,14 +1144,18 @@ function Workspace({ url }: { url: UrlState }) {
                 clone={cloneFor(selectedEntry)}
                 revision={revision}
                 job={reviewJob(selectedEntry, jobs)}
+                detailsJob={detailsJob(selectedEntry, jobs)}
                 changed={reload}
-                refresh={() =>
-                  refreshFrom([
-                    {
-                      repository: selectedEntry.pull_request.repository,
-                      clone: cloneFor(selectedEntry) || undefined,
-                    },
-                  ])
+                refresh={(press) =>
+                  refreshFrom(
+                    [
+                      {
+                        repository: selectedEntry.pull_request.repository,
+                        clone: cloneFor(selectedEntry) || undefined,
+                      },
+                    ],
+                    press,
+                  )
                 }
                 live={live}
                 groups={groups.filter(
@@ -1139,7 +1185,7 @@ function Workspace({ url }: { url: UrlState }) {
                 selectedInbox ? (
                   <LocalLink
                     href={editInboxHref(selectedInbox.id)}
-                    className="inbox-btn inbox-edit-link"
+                    className={cn("inbox-edit-link", SMALL)}
                   >
                     Edit
                   </LocalLink>
@@ -1330,6 +1376,7 @@ function Workspace({ url }: { url: UrlState }) {
               <span>{inboxToast.text}</span>
               <button
                 type="button"
+                className={SMALL}
                 onClick={() => {
                   inboxToast.undo();
                   setInboxToast(null);
@@ -1579,7 +1626,7 @@ function JobState({ job }: { job: Job }) {
         : CircleDashedIcon;
   return (
     <span className={`local-job-state ${state.tone}`}>
-      <Icon size={14} className={state.tone === "running" ? "local-spin" : undefined} />
+      {state.tone === "running" ? <LiveDot /> : <Icon size={14} />}
       {state.label}
     </span>
   );
@@ -1647,7 +1694,9 @@ function JobRow({
           </LocalLink>
         )}
         <p className="local-job-meta">
-          {job.kind === "fix" || job.kind === "chat" ? `${jobName(job)} · ` : null}
+          {job.kind === "fix" || job.kind === "chat" || job.kind === "details"
+            ? `${jobName(job)} · `
+            : null}
           {started ?? (job.automatic ? null : "Started by you")}
         </p>
         {job.kind === "fix" && job.commit ? (

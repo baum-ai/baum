@@ -90,7 +90,15 @@ func TestReviewsCLI(t *testing.T) {
 	if got := show(); got.Effort != "high" || got.DecisionsEffort != "low" || got.FixEffort != "" {
 		t.Fatalf("after choosing efforts %+v", got)
 	}
-	if _, e := run("set", "--effort=max"); e == nil {
+	for _, effort := range []string{"xhigh", "max", "ultra"} {
+		if _, e := run("set", "--effort="+effort); e != nil {
+			t.Fatal(e)
+		}
+		if got := show(); got.Effort != effort {
+			t.Fatalf("after choosing %s effort %+v", effort, got)
+		}
+	}
+	if _, e := run("set", "--effort=extreme"); e == nil {
 		t.Fatal("an unknown effort was accepted")
 	}
 	if _, e := run("set", "--effort=", "--decisions-effort="); e != nil {

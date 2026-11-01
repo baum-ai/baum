@@ -108,11 +108,11 @@ func (q *Queue) SubmitAutomatic(ctx context.Context, r AutomaticRequest) (Job, e
 		return Job{}, &NotAutomaticError{p.BlockedReason}
 	}
 	q.mu.Lock()
-	var notification *Job
+	var notifications []Job
 	defer func() {
 		q.mu.Unlock()
-		if notification != nil {
-			q.notify(*notification)
+		for _, j := range notifications {
+			q.notify(j)
 		}
 	}()
 	if err := q.automaticConflict(p.Repository, p.PR, p.Group, p.head()); err != nil {
@@ -128,12 +128,20 @@ func (q *Queue) SubmitAutomatic(ctx context.Context, r AutomaticRequest) (Job, e
 			return Job{}, &NotAllowedError{a.Reason}
 		}
 	}
+	before := append([]Job(nil), q.jobs...)
+	// A review of a new head replaces a retry of the old head's details.
+	var superseded []Job
+	var stop []string
+	if p.Group == "" {
+		superseded, stop = q.supersedeDetails(p.Repository, p.PR, p.HeadSHA)
+	}
 	q.jobs = append(q.jobs, j)
 	if err := q.save(); err != nil {
-		q.jobs = q.jobs[:len(q.jobs)-1]
+		q.jobs = before
 		return Job{}, err
 	}
-	notification = &j
+	q.stopSuperseded(stop)
+	notifications = append(superseded, j)
 	q.signal()
 	return j, nil
 }
@@ -218,7 +226,9 @@ func (q *Queue) automaticConflict(repository string, pr int, group, head string)
 	sameHead := 0
 	retryable := false
 	for _, j := range q.jobs {
-		if !strings.EqualFold(j.Repository, repository) || j.PR != pr || j.Group != group || j.Kind == KindChat {
+		// A retry of a version's details is not a review of its head, and a
+		// review of another head supersedes it.
+		if !strings.EqualFold(j.Repository, repository) || j.PR != pr || j.Group != group || j.Kind == KindChat || j.Kind == KindDetails {
 			continue
 		}
 		if j.State == "queued" || j.State == "running" {

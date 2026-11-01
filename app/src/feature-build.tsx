@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { formatCount } from "@baum/viewer/components/format";
+import { CloseIcon } from "@baum/viewer/components/icons";
 import { Button, LiveDot } from "@baum/viewer/components/ui";
 import { ViewerLink } from "@baum/viewer/navigation";
 import {
@@ -101,6 +102,7 @@ export function BuildStatus({
   starting: boolean;
 }) {
   const { building } = state;
+  const [closed, setClosed] = useState(closedBuilds);
   const action = (label: string) => (
     <Button
       variant="secondary"
@@ -133,11 +135,12 @@ export function BuildStatus({
   const ended = job && job.state !== "completed" ? job.reason || job.state : "";
   if (!building) {
     // It stopped before it made its version: shown until a version newer
-    // than the job is current.
+    // than the job is current or the person closes it. One they cancelled
+    // (state cancelled; a daemon stop leaves it interrupted) needs no word.
     const stale =
       state.currentSince !== null &&
       (!job?.updated_at || Date.parse(job.updated_at) < Date.parse(state.currentSince));
-    if (!ended || stale) return null;
+    if (!ended || job!.state === "cancelled" || stale || closed.includes(job!.id)) return null;
     return (
       <section aria-label="Feature build" className="local-job-outcome">
         <p role="status" className="min-w-0 flex-1 font-medium">
@@ -145,6 +148,14 @@ export function BuildStatus({
         </p>
         <ViewerLink href={jobHref(job!)}>View in Jobs</ViewerLink>
         {action("Try again")}
+        <Button
+          variant="ghost"
+          size="compact"
+          aria-label="Dismiss"
+          onClick={() => setClosed(closeBuild(job!.id))}
+        >
+          <CloseIcon size={14} />
+        </Button>
       </section>
     );
   }
@@ -170,6 +181,27 @@ export function BuildStatus({
       {action("Resume build")}
     </section>
   );
+}
+
+// The stopped builds the person closed, the latest few; a later job of the
+// repository shows again.
+const CLOSED_KEY = "baum.timeline.closed-builds.v1";
+function closedBuilds(): string[] {
+  try {
+    const ids = JSON.parse(localStorage.getItem(CLOSED_KEY) ?? "[]");
+    return Array.isArray(ids) ? ids : [];
+  } catch {
+    return [];
+  }
+}
+function closeBuild(id: string): string[] {
+  const ids = [...closedBuilds(), id].slice(-20);
+  try {
+    localStorage.setItem(CLOSED_KEY, JSON.stringify(ids));
+  } catch {
+    // Closed until the page is opened again.
+  }
+  return ids;
 }
 
 export const NO_CLONE = "Needs a local clone of the repository";

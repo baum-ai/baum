@@ -48,8 +48,7 @@ pub const SETUP_PERMISSIONS: &[&str] = &[
 ];
 /// The bundled connecting screen.
 const CONNECTING_PAGE: &str = "index.html";
-/// The menu item's id in the window's menu bar, and its label there and in
-/// the tray.
+/// The menu item's id and label in the window's menu bar.
 pub const MENU_ID: &str = "command-line-and-hooks";
 pub const MENU_LABEL: &str = "Command Line and Hooks…";
 
@@ -238,8 +237,7 @@ fn bundled(page: &str) -> url::Url {
     url
 }
 
-/// The "Command Line and Hooks…" item of the window's menu bar; the tray
-/// builds the menu bar and its own menu, and calls `show` for it.
+/// The "Command Line and Hooks…" item of the window's menu bar.
 pub fn menu_item(app: &AppHandle) -> tauri::Result<MenuItem<tauri::Wry>> {
     MenuItem::with_id(app, MENU_ID, MENU_LABEL, true, None::<&str>)
 }
@@ -586,11 +584,15 @@ pub async fn add_repository(app: AppHandle, path: PathBuf) -> Result<Outcome, St
 pub struct ReviewSettings {
     backend: String,
     model: String,
+    #[serde(default)]
+    effort: String,
     automatic: bool,
     pull_requests: String,
-    /// The decision capture model, empty for the harness's default.
+    /// Extraction preferences are read only during setup; edited in Settings.
     #[serde(default)]
     decisions_model: String,
+    #[serde(default)]
+    decisions_effort: String,
     /// The data extraction harness Settings chose, empty while it follows
     /// the reviews'; read only, never saved.
     #[serde(default)]
@@ -635,9 +637,9 @@ pub async fn save_review_settings(
         let args = [
             format!("--backend={}", settings.backend),
             format!("--model={}", settings.model),
+            format!("--effort={}", settings.effort),
             format!("--automatic={}", settings.automatic),
             format!("--pull-requests={}", settings.pull_requests),
-            format!("--decisions-model={}", settings.decisions_model),
         ];
         let mut command = vec!["internal", "reviews", "set"];
         command.extend(args.iter().map(String::as_str));
@@ -772,12 +774,14 @@ fn repository_request(
     };
     let base = || identity().map(|name| format!("/api/repositories/{name}"));
     Ok(match action {
-        "list" => (
+        "list" | "retry-list" | "more-list" => (
             "GET",
             format!(
                 "/api/github/repositories?{}",
                 url::form_urlencoded::Serializer::new(String::new())
                     .append_pair("query", query.unwrap_or(""))
+                    .append_pair("refresh", if action == "retry-list" { "1" } else { "0" })
+                    .append_pair("more", if action == "more-list" { "1" } else { "0" })
                     .finish()
             ),
             None,
@@ -831,6 +835,19 @@ mod repository_relay_tests {
         let (_, route, _) =
             repository_request("list", None, Some("x\r\nHeader: bad"), None, None, false).unwrap();
         assert!(!route.contains('\r') && !route.contains('\n'));
+        let (method, route, _) =
+            repository_request("retry-list", None, Some("acme widget"), None, None, false).unwrap();
+        assert_eq!(method, "GET");
+        assert_eq!(
+            route,
+            "/api/github/repositories?query=acme+widget&refresh=1&more=0"
+        );
+        let (_, route, _) =
+            repository_request("more-list", None, Some("acme"), None, None, false).unwrap();
+        assert_eq!(
+            route,
+            "/api/github/repositories?query=acme&refresh=0&more=1"
+        );
         let (method, route, body) = repository_request(
             "attach",
             Some("owner/repo"),

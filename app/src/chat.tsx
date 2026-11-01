@@ -7,7 +7,6 @@ import type { Anchor, ReviewDocument } from "@baum/viewer/review-document";
 import {
   askChat,
   chatTurnActive,
-  cost,
   jobReasonText,
   listChats,
   request,
@@ -329,9 +328,6 @@ function TurnView({
         </div>
       )}
       {turn.note ? <p className="ask-note">{turn.note}</p> : null}
-      {!chatTurnActive(turn) && turn.cost_usd != null ? (
-        <p className="ask-cost">Cost {cost(turn.cost_usd)}</p>
-      ) : null}
     </article>
   );
 }

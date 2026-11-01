@@ -70,7 +70,7 @@ func (b Backend) Valid() bool {
 // Efforts are the reasoning efforts the app offers, passed to Claude Code as
 // --effort, to Codex as model_reasoning_effort and to the Anthropic API as
 // output_config.effort; cursor-agent has none.
-var Efforts = []string{"low", "medium", "high"}
+var Efforts = []string{"low", "medium", "high", "xhigh", "max", "ultra"}
 
 // ValidEffort reports whether effort is empty (the harness's own) or one of
 // Efforts.

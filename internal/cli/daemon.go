@@ -32,6 +32,7 @@ import (
 	"github.com/baum-ai/baum/internal/decisionlog"
 	"github.com/baum-ai/baum/internal/discovery"
 	"github.com/baum-ai/baum/internal/doctor"
+	"github.com/baum-ai/baum/internal/facts"
 	"github.com/baum-ai/baum/internal/focus"
 	"github.com/baum-ai/baum/internal/generate"
 	"github.com/baum-ai/baum/internal/github"
@@ -616,10 +617,15 @@ func localApplication(paths daemon.Paths, log *slog.Logger) func(context.Context
 		var decisionsAPI func(uiserver.LinkedSessions) http.Handler
 		if decisionStore != nil {
 			insights.Captures = decisionStore.Ledger
+			insights.Pulls = decisionStore.PullFlow
+			insights.Login = func(ctx context.Context) string { return viewerLogin(ctx, registry, discover.Cached, connectionLogin) }
 			decisionsAPI = func(linked uiserver.LinkedSessions) http.Handler {
 				return (&decisionlog.API{Store: decisionStore, Registry: registry, Live: live.Sessions, Linked: linked, Log: log}).Handler()
 			}
 		}
+		// A pull request with no saved review shows its facts, read when its
+		// page asks, within the background refresh's window and rate pause.
+		pageFacts := &facts.Service{Build: facts.Local{Client: githubClient, Config: cfg}.Build, Window: worker.RefreshInterval(), Paused: worker.Paused, Limited: worker.Limited}
 		// A session that ended has its last lines written: read it soon.
 		endedSessions, unsubscribeEnded := events.Subscribe(4, func(e hookevents.Event) bool {
 			return e.Kind == hookevents.KindAgent && e.Name == "session-end"
@@ -642,7 +648,7 @@ func localApplication(paths daemon.Paths, log *slog.Logger) func(context.Context
 			UIState:   (&uistate.Store{Path: database}).Handler(),
 			Inboxes:   (&inboxes.API{Store: inboxes.Open(database), Changed: changed}).Handler(),
 			Groups:    (&reviewgroups.API{Store: groups, Registry: registry, Index: index.Build, Changed: changed}).Handler(),
-			Decisions: decisionsAPI, Log: log,
+			Decisions: decisionsAPI, Facts: pageFacts, Log: log,
 			DecisionsChanged:   func() { _ = server.Publish("decisions", struct{}{}) },
 			ConcurrencyChanged: func(n int) { _ = queue.SetConcurrency(n) },
 			DecisionModel: func(ctx context.Context, prefs repos.Preferences) uiserver.DecisionModel {

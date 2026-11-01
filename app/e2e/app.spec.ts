@@ -75,6 +75,61 @@ test("daemon bootstrap keeps credentials private and opens saved review versions
   ).toEqual([]);
 });
 
+test("Add repositories searches beyond suggestions and picks the result", async ({ page }) => {
+  const release = join(process.env.BAUM_APP_STATE_DIR ?? "", "repository-search-release");
+  await rm(release, { force: true });
+  try {
+    await page.goto(await launchURL());
+    await page.getByRole("link", { name: "Repositories", exact: true }).click();
+    await page.getByRole("button", { name: "Add repositories", exact: true }).click();
+    const picker = page.getByRole("region", { name: "Choose GitHub repositories" });
+    await expect(
+      picker.getByRole("checkbox", { name: "Pick acme/demo", exact: true }),
+    ).toBeVisible();
+    const initialOrder = [
+      "acme/demo",
+      "acme/other",
+      "acme/missing",
+      "acme/clone-me",
+      "acme/renamed",
+    ];
+    expect((await picker.locator(".repository-name strong").allTextContents()).slice(0, 5)).toEqual(
+      initialOrder,
+    );
+    const result = picker.getByRole("checkbox", { name: "Pick acme/search-only", exact: true });
+    await expect(result).toHaveCount(0);
+    await picker.getByRole("searchbox").fill("acme");
+    const cached = picker.getByRole("checkbox", { name: "Pick acme/top-extra", exact: true });
+    await expect(cached).toBeVisible();
+    await expect(
+      picker.getByText("Searching your GitHub repositories…", { exact: true }),
+    ).toBeVisible();
+    await cached.check();
+    await expect(
+      picker.getByText("Searching your GitHub repositories…", { exact: true }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("button", { name: "Settings for acme/top-extra", exact: true }),
+    ).toBeVisible();
+    await writeFile(release, "");
+    await expect(result).toBeVisible();
+    await result.check();
+    await picker.getByRole("searchbox").fill("");
+    await expect(result).toBeChecked();
+    expect((await picker.locator(".repository-name strong").allTextContents()).slice(0, 5)).toEqual(
+      initialOrder,
+    );
+    // Leave the shared fixture registry as it was for the remaining stories.
+    await cached.uncheck();
+    await result.uncheck();
+    await expect(
+      page.getByRole("button", { name: "Settings for acme/search-only", exact: true }),
+    ).toHaveCount(0);
+  } finally {
+    await writeFile(release, "");
+  }
+});
+
 test("automatic review of a new head, shown as started automatically", async ({ page }) => {
   const errors: string[] = [];
   page.on("pageerror", (e) => errors.push(e.message));

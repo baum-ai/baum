@@ -41,6 +41,7 @@ import {
   TranscriptCard,
 } from "./session-transcript";
 import { PageBar, RefreshButton, useReread } from "./shell";
+import { listKeys, useRowFocus, useShortcuts } from "./shortcuts";
 import "./timeline.css";
 
 /** The Timeline: the picked repositories' features and decisions from the
@@ -122,7 +123,7 @@ const OPEN_SESSION: OpenSessionSource<LiveTranscriptAnswer> = {
   },
 };
 
-type ServedRepository = { repository: string; has_features?: boolean };
+type ServedRepository = { repository: string };
 
 type RepositoryList = {
   available?: false;
@@ -198,24 +199,26 @@ export function TimelinePage({
   const scope = selected.length > 0 ? selected : served.map((each) => each.repository);
   if (list && showsLog(list))
     return (
-      <TimelineLog
-        key={scope.join("\n")}
-        scope={scope}
-        all={selected.length === 0}
-        served={served}
-        revision={revision}
-        jobs={jobs}
-        cloneOf={cloneOf}
-        jobsChanged={jobsChanged}
-        refresh={reread.again}
-        settled={() => {
-          reads.current.log = Math.max(reads.current.log, reread.count);
-          settle();
-        }}
-      />
+      <div className="timeline-page">
+        <TimelineLog
+          key={scope.join("\n")}
+          scope={scope}
+          all={selected.length === 0}
+          served={served}
+          revision={revision}
+          jobs={jobs}
+          cloneOf={cloneOf}
+          jobsChanged={jobsChanged}
+          refresh={reread.again}
+          settled={() => {
+            reads.current.log = Math.max(reads.current.log, reread.count);
+            settle();
+          }}
+        />
+      </div>
     );
   return (
-    <>
+    <div className="timeline-page">
       <PageBar
         title="Timeline"
         detail={PAGE_DETAIL}
@@ -253,11 +256,13 @@ export function TimelinePage({
           </Empty>
         </div>
       )}
-    </>
+    </div>
   );
 }
 
 type Pages<T> = {
+  /** The revision of the latest read from the first page that ended. */
+  readAt: number;
   rows: T[];
   cursor: string | null;
   status: "loading" | "idle" | "failed";
@@ -268,19 +273,18 @@ type Pages<T> = {
 };
 
 /** A paged list of `path` under `query`, read again when either or the
- *  revision changes; older rows load by button. `settled` hears each read
- *  from the first page end. */
+ *  revision changes; older rows load by button. */
 function usePages<T>(
   path: string,
   query: string,
   key: "features" | "decisions",
   revision: number,
   active: boolean,
-  settled: () => void,
 ): Pages<T> {
   type State = {
     query: string;
     revision: number;
+    readAt: number;
     rows: T[];
     cursor: string | null;
     status: "loading" | "idle" | "failed";
@@ -290,6 +294,7 @@ function usePages<T>(
   const [state, setState] = useState<State>({
     query,
     revision,
+    readAt: -1,
     rows: [],
     cursor: null,
     status: "loading",
@@ -336,13 +341,20 @@ function usePages<T>(
         cursor = (body.next_cursor as string | null) ?? null;
         coverage = (body.coverage as Coverage | undefined) ?? null;
       } while (cursor && rows.length < want);
-      setState({ query, revision, rows, cursor, status: "idle", loaded: true, coverage });
-      settled();
+      setState({
+        query,
+        revision,
+        readAt: revision,
+        rows,
+        cursor,
+        status: "idle",
+        loaded: true,
+        coverage,
+      });
     };
     read().catch(() => {
       if (abort.signal.aborted) return;
-      setState((current) => ({ ...current, status: "failed" }));
-      settled();
+      setState((current) => ({ ...current, readAt: revision, status: "failed" }));
     });
     return () => abort.abort();
   }, [path, query, key, revision, active]);
@@ -478,7 +490,6 @@ function TimelineLog({
     "features",
     revision,
     tab === "features",
-    settled,
   );
   const decisions = usePages<DecisionSummary>(
     "api/timeline/decisions",
@@ -486,8 +497,22 @@ function TimelineLog({
     "decisions",
     revision,
     tab === "all",
-    settled,
   );
+  // The open tab's list has been read at the revision shown: a refresh,
+  // which changes the revision, has its answer. Read from what the list
+  // holds, so a read the list skips does not leave the refresh waiting.
+  const shownList = tab === "features" ? features : decisions;
+  const read = shownList.status !== "loading" && shownList.readAt === revision;
+  useEffect(() => {
+    if (read) settled();
+  }, [read, revision]);
+  // The keys move through the open tab's features or decisions and open
+  // them, as through any list.
+  const rows = useRowFocus<HTMLDivElement>(
+    `timeline:${tab}`,
+    (tab === "features" ? features.rows : decisions.rows).map((row) => row.id),
+  );
+  useShortcuts((event) => listKeys(event, rows));
   // The people the person filter offers: those with decisions on All
   // decisions, those among the features' people on Features.
   const readPeople = useCallback(
@@ -540,108 +565,92 @@ function TimelineLog({
       <PageBar
         title="Timeline"
         detail={PAGE_DETAIL}
-        actions={
-          <>
-            {canRebuild ? (
-              <Button
-                variant="ghost"
-                size="compact"
-                disabled={build.starting}
-                onClick={() => void build.start()}
-              >
-                {build.starting ? "Starting…" : "Rebuild feature history"}
-              </Button>
-            ) : null}
-            <RefreshButton refresh={refresh} />
-          </>
-        }
+        actions={<RefreshButton refresh={refresh} />}
       />
       {build.error ? (
         <Alert className="mx-5 mt-3">Couldn't start the feature build: {build.error}</Alert>
       ) : null}
-      <SharedTimelinePage
-        withFeatures
-        features={timelineList(features)}
-        decisions={timelineList(decisions)}
-        readDecision={readDecision}
-        readFeature={readFeature}
-        readPeople={readPeople}
-        revision={revision}
-        files={files}
-        openSession={OPEN_SESSION}
-        pullRequestHref={pullRequestHref}
-        repository={single ?? ""}
-        repositoryLabel={several ? (name) => name : undefined}
-        withheldNote={WITHHELD_NOTE}
-        // The hosted Timeline's filter bar: the repository picker, then the
-        // viewer's shared controls over the same address.
-        filterBar={(controls) => (
-          <div className="local-filter-bar timeline-filters">
-            {served.length > 1 ? (
-              <RepositoryPicker
-                repositories={served.map((each) => each.repository)}
-                selected={all ? [] : scope}
-                onChange={openRepositories}
-              />
-            ) : null}
-            {controls}
-          </div>
-        )}
-        tabsClassName="timeline-tabs"
-        bodyClassName="local-page-body timeline-body"
-        loading={(label) => <LoadingStatus block>{label}</LoadingStatus>}
-        featuresIntro={
-          single ? (
-            <BuildStatus
-              job={buildJob}
-              state={buildState}
-              clone={clone}
-              onBuild={() => void build.start()}
-              starting={build.starting}
-            />
-          ) : (
-            <WithoutHistory
-              repositories={served.filter(
-                (each) => scope.includes(each.repository) && !each.has_features,
-              )}
-              open={(name) => openRepositories([name])}
-            />
-          )
-        }
-        decisionsIntro={
-          coverage && coverage.extracted + coverage.skipped + coverage.pending > 0 ? (
-            <CoverageLine coverage={coverage} />
-          ) : null
-        }
-        noFeatures={(showAll) => (
-          <>
-            {several
-              ? "Features appear here as baum places these repositories' pull requests and agent sessions in them, from now on. Open one repository to build its feature history. The decisions read so far are under All decisions."
-              : "Features appear here as baum places this repository's pull requests and agent sessions in them, from now on. Build its feature history to place the pull requests of the last 180 days too. The decisions read so far are under All decisions."}
-            <span className="mt-3 flex flex-wrap justify-center gap-2">
-              {single && !buildActive && !building ? (
-                <Button
-                  size="tiny"
-                  disabled={!clone || build.starting}
-                  title={clone ? undefined : NO_CLONE}
-                  onClick={() => void build.start()}
-                >
-                  {build.starting ? "Starting…" : "Build feature history"}
-                </Button>
+      <div ref={rows.list}>
+        <SharedTimelinePage
+          withFeatures
+          features={timelineList(features)}
+          decisions={timelineList(decisions)}
+          readDecision={readDecision}
+          readFeature={readFeature}
+          readPeople={readPeople}
+          revision={revision}
+          files={files}
+          openSession={OPEN_SESSION}
+          pullRequestHref={pullRequestHref}
+          repository={single ?? ""}
+          repositoryLabel={several ? (name) => name : undefined}
+          withheldNote={WITHHELD_NOTE}
+          // The hosted Timeline's filter bar: the repository picker, then the
+          // viewer's shared controls over the same address.
+          filterBar={(controls) => (
+            <div className="local-filter-bar timeline-filters">
+              {served.length > 1 ? (
+                <RepositoryPicker
+                  repositories={served.map((each) => each.repository)}
+                  selected={all ? [] : scope}
+                  onChange={openRepositories}
+                />
               ) : null}
-              <Button variant="secondary" size="tiny" onClick={showAll}>
-                Show all decisions
-              </Button>
-            </span>
-          </>
-        )}
-        noDecisions={
-          <>
-            Decisions appear here as baum reads the agent sessions in{" "}
-            {several ? "these repositories" : "this repository"}.
-          </>
-        }
-      />
+              {controls}
+              {canRebuild ? (
+                <MoreMenu starting={build.starting} onRebuild={() => void build.start()} />
+              ) : null}
+            </div>
+          )}
+          tabsClassName="timeline-tabs"
+          bodyClassName="local-page-body timeline-body"
+          loading={(label) => <LoadingStatus block>{label}</LoadingStatus>}
+          featuresIntro={
+            single ? (
+              <BuildStatus
+                job={buildJob}
+                state={buildState}
+                clone={clone}
+                onBuild={() => void build.start()}
+                starting={build.starting}
+              />
+            ) : null
+          }
+          decisionsIntro={
+            coverage && coverage.extracted + coverage.skipped + coverage.pending > 0 ? (
+              <CoverageLine coverage={coverage} />
+            ) : null
+          }
+          noFeatures={(showAll) => (
+            <>
+              {several
+                ? "Features appear here as baum places these repositories' pull requests and agent sessions in them, from now on. Open one repository to build its feature history. The decisions read so far are under All decisions."
+                : "Features appear here as baum places this repository's pull requests and agent sessions in them, from now on. Build its feature history to place the pull requests of the last 180 days too. The decisions read so far are under All decisions."}
+              <span className="mt-3 flex flex-wrap justify-center gap-2">
+                {single && !buildActive && !building ? (
+                  <Button
+                    size="tiny"
+                    disabled={!clone || build.starting}
+                    title={clone ? undefined : NO_CLONE}
+                    onClick={() => void build.start()}
+                  >
+                    {build.starting ? "Starting…" : "Build feature history"}
+                  </Button>
+                ) : null}
+                <Button variant="secondary" size="tiny" onClick={showAll}>
+                  Show all decisions
+                </Button>
+              </span>
+            </>
+          )}
+          noDecisions={
+            <>
+              Decisions appear here as baum reads the agent sessions in{" "}
+              {several ? "these repositories" : "this repository"}.
+            </>
+          }
+        />
+      </div>
     </>
   );
 }
@@ -659,27 +668,39 @@ function timelineList<T>(pages: Pages<T>): TimelineList<T> {
   };
 }
 
-/** The repositories shown that have no feature history yet, a line each,
- *  each opening its own view, where it can be built. */
-function WithoutHistory({
-  repositories,
-  open,
-}: {
-  repositories: ServedRepository[];
-  open: (name: string) => void;
-}) {
-  if (repositories.length === 0) return null;
+/** The filter bar's kebab menu, at its end: the quieter actions, such as
+ *  rebuilding the feature history. */
+function MoreMenu({ starting, onRebuild }: { starting: boolean; onRebuild: () => void }) {
+  const { detailsProps, close } = useDisclosure();
   return (
-    <ul aria-label="Repositories without feature history" className="timeline-history-lines">
-      {repositories.map((each) => (
-        <li key={each.repository}>
-          <span className="font-mono">{each.repository}</span> has no feature history yet.{" "}
-          <button type="button" className="underline" onClick={() => open(each.repository)}>
-            Open {each.repository}
-          </button>
-        </li>
-      ))}
-    </ul>
+    <details {...detailsProps} className="group relative ml-auto">
+      <summary
+        aria-label="More"
+        className={cn(
+          "flex cursor-pointer list-none items-center rounded-(--radius-sm) p-1.5 text-(--text-secondary) group-open:bg-(--surface-hover) hover:bg-(--surface-hover) [&::-webkit-details-marker]:hidden",
+          FOCUS_RING,
+        )}
+      >
+        <svg aria-hidden width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
+          <circle cx="8" cy="3" r="1.5" />
+          <circle cx="8" cy="8" r="1.5" />
+          <circle cx="8" cy="13" r="1.5" />
+        </svg>
+      </summary>
+      <div className="absolute right-0 z-20 mt-1 flex w-60 flex-col rounded-(--radius-md) border border-(--border-default) bg-(--surface-card) p-1 shadow-(--shadow-overlay)">
+        <button
+          type="button"
+          disabled={starting}
+          className="rounded-(--radius-sm) px-2 py-1.5 text-left text-base text-(--text-primary) hover:bg-(--surface-hover) disabled:opacity-50"
+          onClick={() => {
+            close();
+            onRebuild();
+          }}
+        >
+          {starting ? "Starting…" : "Rebuild feature history"}
+        </button>
+      </div>
+    </details>
   );
 }
 

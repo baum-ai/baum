@@ -725,3 +725,36 @@ func TestListHistoryOnce(t *testing.T) {
 		t.Fatalf("second listing %+v, %v; %d stored", again, err, stored)
 	}
 }
+
+// The flow reads people's pull requests opened or merged in the window, and
+// tells a repository the feature log never listed from one with none.
+func TestPullFlowReadsOpenedOrMergedSince(t *testing.T) {
+	ctx := context.Background()
+	s := openStore(t, &clock{t0})
+	since := t0.Add(-7 * 24 * time.Hour)
+	if _, listed, err := s.PullFlow(ctx, "o/r", since); err != nil || listed {
+		t.Fatalf("before a listing: listed %v, %v", listed, err)
+	}
+	if _, err := s.Activate(ctx, "o/r"); err != nil {
+		t.Fatal(err)
+	}
+	merged := t0.Add(-time.Hour)
+	old := since.Add(-24 * time.Hour)
+	pulls := []github.ListedPull{
+		{Number: 1, State: "open", Author: "me", HeadSHA: "h", BaseSHA: "b", CreatedAt: t0.Add(-2 * time.Hour), UpdatedAt: t0},
+		// Opened before the window, merged in it: shipped in the window.
+		{Number: 2, State: "closed", Author: "ada", HeadSHA: "h", BaseSHA: "b", CreatedAt: old, UpdatedAt: t0, MergedAt: &merged},
+		{Number: 3, State: "open", Author: "dependabot[bot]", Bot: true, HeadSHA: "h", BaseSHA: "b", CreatedAt: t0, UpdatedAt: t0},
+		{Number: 4, State: "closed", Author: "ada", HeadSHA: "h", BaseSHA: "b", CreatedAt: old, UpdatedAt: old},
+	}
+	if err := s.SavePulls(ctx, "o/r", pulls, "", t0); err != nil {
+		t.Fatal(err)
+	}
+	got, listed, err := s.PullFlow(ctx, "o/r", since)
+	if err != nil || !listed {
+		t.Fatalf("listed %v, %v", listed, err)
+	}
+	if len(got) != 2 || got[0].Author != "ada" || got[0].MergedAt == nil || !got[0].MergedAt.Equal(merged) || got[1].Author != "me" || got[1].MergedAt != nil {
+		t.Errorf("flow = %+v, want ada's merged one, then mine", got)
+	}
+}

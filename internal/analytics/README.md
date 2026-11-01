@@ -69,6 +69,10 @@ The hosted service's counting rules apply:
   reads it.
 - Failed tool calls are calls whose result was an error. A tool error is not an
   interruption.
+- Each day's sessions and active time are split by agent and by model. A
+  session counts whole under its main model, the one that took most of its
+  tokens ("Unknown model" when none reported any), so both splits sum to the
+  day.
 
 ## Agent-written share
 
@@ -88,10 +92,13 @@ cached for five minutes.
 ## baum's work
 
 From the jobs ledger (`state/jobs` in `app.sqlite`), jobs created in the window: reviews, group
-reviews and fixes, automatic ones, their states, tokens and spend (a run with
-usage but no price makes it incomplete), failures by reason code (the app puts
+reviews and fixes, retries of a review's failed section details (counted
+apart, never as reviews; one that stood down because its version changed or
+the pull request moved is not counted as cancelled), automatic ones, their
+states, tokens and spend (a run with usage but no price makes it incomplete), failures by reason code (the app puts
 them in words), fixes that pushed or failed, and review threads a fix replied
-to and resolved. Merges, branch updates and check re-runs made from the app are
+to and resolved; `reviews_completed` counts the reviews and group reviews that
+finished. Merges, branch updates and check re-runs made from the app are
 recorded by `Actions` in the `state/analytics-actions` document in `app.sqlite` (time, kind, repository,
 pull request number) when GitHub accepts them, kept 90 days; they are `null`
 when there is no ledger. The agent filter matches a job's harness.
@@ -100,6 +107,20 @@ ledger (`Captures`; null without one): calls, those that succeeded, failed
 and were abandoned when the daemon stopped, failures by reason code, and the
 spend of settled calls, incomplete when one has no cost and unknown, never
 zero, when none has. The agent filter matches the backend that made the call.
+
+## Pull request flow
+
+`flow` reads the pull requests the Timeline's feature log keeps (`Pulls`,
+`decisionlog.Store.PullFlow`) for each picked repository in scope. Per local
+day it counts, for the team and for the person (their GitHub login from
+`Login`; `yours` is false when it is not known), the non-draft pull requests
+opened and how many of those have merged since, for the merge rate, and the
+pull requests merged that day with each one's time to merge. Pull requests
+opened by bots are left out. A repository the feature log does not read,
+with decisions off or no clone, is listed in `unlisted`, and one whose pull
+requests could not be read in `unread`; the agent filter does not apply. The
+repository is passed as the feature log stores it, so the store's key finds
+its rows. Without the store, `available` is false.
 
 ## Delivery
 
