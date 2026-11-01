@@ -5,7 +5,7 @@ import { UsageDetails } from "./usage";
 import { useCallback, useEffect, useRef, useState, type MouseEvent, type ReactNode } from "react";
 import { LogoMark } from "@baum/viewer/components/editorial";
 import { CircleCheckIcon, CircleCrossIcon, CircleDashedIcon } from "@baum/viewer/components/icons";
-import { Button, Alert } from "@baum/viewer/components/ui";
+import { Alert, Button, LiveDot } from "@baum/viewer/components/ui";
 import {
   UrlStateProvider,
   ViewerLinkProvider,
@@ -1582,7 +1582,7 @@ function JobState({ job }: { job: Job }) {
         : CircleDashedIcon;
   return (
     <span className={`local-job-state ${state.tone}`}>
-      <Icon size={14} className={state.tone === "running" ? "local-spin" : undefined} />
+      {state.tone === "running" ? <LiveDot /> : <Icon size={14} />}
       {state.label}
     </span>
   );
