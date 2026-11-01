@@ -26,8 +26,8 @@ import (
 	"time"
 
 	"github.com/baum-ai/baum/agent"
+	"github.com/baum-ai/baum/internal/appdb"
 	"github.com/baum-ai/baum/internal/config"
-	"github.com/baum-ai/baum/internal/discovery"
 	"github.com/baum-ai/baum/internal/generate"
 	"github.com/baum-ai/baum/internal/github"
 	"github.com/baum-ai/baum/internal/gitlocal"
@@ -88,6 +88,11 @@ type Options struct {
 	// FetchPrices fetches the signed price list first. It is the report's one
 	// network request.
 	FetchPrices bool
+	// Desktop reports for the desktop app and its daemon, which run jobs with
+	// Claude Code and Codex only: the cursor-agent and anthropic backends are
+	// neither checked nor offered, and a configured backend other than auto,
+	// claude or codex is a problem.
+	Desktop bool
 
 	Getenv   func(string) string
 	LookPath func(string) (string, error)
@@ -395,6 +400,9 @@ func (r *runner) backends() checkedBackends {
 	} else {
 		result.codex.err = errors.New("no codex backend")
 	}
+	if r.opts.Desktop {
+		return result
+	}
 	if built.CursorAgent != nil {
 		result.cursorAgent = r.backend(config.BackendCursorAgent, built.CursorAgent(""))
 	} else {
@@ -500,22 +508,37 @@ func (r *runner) selection(checked checkedBackends) {
 			return replay{CheckedBackend: built.Codex(model), version: checked.codex.version, err: checked.codex.err}
 		}
 	}
-	if built.CursorAgent != nil {
+	if built.CursorAgent != nil && !r.opts.Desktop {
 		replayed.CursorAgent = func(model string) generate.CheckedBackend {
 			return replay{CheckedBackend: built.CursorAgent(model), version: checked.cursorAgent.version, err: checked.cursorAgent.err}
 		}
 	}
-	if built.Anthropic != nil {
+	if built.Anthropic != nil && !r.opts.Desktop {
 		replayed.Anthropic = func(model string) generate.CheckedBackend {
 			return replay{CheckedBackend: built.Anthropic(model), version: checked.anthropic.version, err: checked.anthropic.err}
 		}
 	}
 
 	var skipped bytes.Buffer
-	selected, err := generate.Select(r.ctx, config.BackendAuto, r.cfg.Model, replayed, &skipped)
+	selectBackend := generate.Select
+	if r.opts.Desktop {
+		selectBackend = generate.SelectDesktop
+	}
+	selected, err := selectBackend(r.ctx, config.BackendAuto, r.cfg.Model, replayed, &skipped)
 	c := Check{ID: "backend-auto", Label: "backend: auto"}
 	reasons := strings.TrimSpace(skipped.String())
-	if err != nil {
+	if r.opts.Desktop {
+		if err != nil {
+			c.Status, c.Detail = StatusProblem, "Neither Claude Code nor Codex is available: "+err.Error()
+			c.Fix = fmt.Sprintf("install Claude Code or Codex and sign in, or set backend_paths.claude or backend_paths.codex to its absolute path in %s; see the claude and codex checks above. baum does not fall back to another backend", r.cfgPath)
+		} else {
+			c.Status, c.Version = StatusOK, selected.Version
+			c.Detail = fmt.Sprintf("auto picks %s, the first of Claude Code and Codex that passes its checks", selected.Backend.Name())
+			if reasons != "" {
+				c.Detail += "\n" + reasons
+			}
+		}
+	} else if err != nil {
 		c.Status, c.Detail = StatusProblem, "auto finds no usable backend: "+err.Error()
 		c.Fix = fmt.Sprintf("install Claude Code or Codex, or set backend_paths.claude or backend_paths.codex to its absolute path in %s, or set ANTHROPIC_API_KEY to use the Anthropic API; see the claude and codex checks above. auto never picks cursor-agent: set backend = \"cursor-agent\" to use it", r.cfgPath)
 	} else {
@@ -538,18 +561,24 @@ func (r *runner) selection(checked checkedBackends) {
 		}
 		r.add(Check{ID: "backend-configured", Label: "backend: " + name, Status: StatusProblem,
 			Detail: fmt.Sprintf("the configured backend %q is not a known backend", name),
-			Fix:    fmt.Sprintf("unknown backend %s; set backend = \"auto\", \"claude\", \"codex\", \"cursor-agent\" or \"anthropic\" in %s", name, r.cfgPath)})
+			Fix:    fmt.Sprintf("unknown backend %s; set backend = %s in %s", name, r.backendChoices(), r.cfgPath)})
 		return
 	}
 	configured := Check{ID: "backend-configured", Label: "backend: " + string(r.cfg.Backend)}
-	selected, err = generate.Select(r.ctx, r.cfg.Backend, r.cfg.Model, replayed, nil)
+	if r.opts.Desktop && !generate.DesktopBackend(r.cfg.Backend) {
+		configured.Status, configured.Detail = StatusProblem, generate.NotOfferedError(r.cfg.Backend).Error()
+		configured.Fix = fmt.Sprintf("choose Claude Code or Codex in Settings, or set backend = \"auto\", \"claude\" or \"codex\" in %s; baum does not switch backends for you", r.cfgPath)
+		r.add(configured)
+		return
+	}
+	selected, err = selectBackend(r.ctx, r.cfg.Backend, r.cfg.Model, replayed, nil)
 	if err != nil {
 		configured.Status, configured.Detail = StatusProblem, fmt.Sprintf("the configured backend %s cannot run: %v", r.cfg.Backend, err)
 		switch r.cfg.Backend {
 		case config.BackendAnthropic:
 			configured.Fix = fmt.Sprintf("export ANTHROPIC_API_KEY with your Anthropic API key, or set backend = \"auto\", \"claude\", \"codex\" or \"cursor-agent\" in %s (BAUM_BACKEND and --backend override it)", r.cfgPath)
 		default:
-			configured.Fix = fmt.Sprintf("fix the %s check above, or set backend = \"auto\", \"claude\", \"codex\", \"cursor-agent\" or \"anthropic\" in %s (BAUM_BACKEND and --backend override it)", r.cfg.Backend, r.cfgPath)
+			configured.Fix = fmt.Sprintf("fix the %s check above, or set backend = %s in %s (BAUM_BACKEND and --backend override it)", r.cfg.Backend, r.backendChoices(), r.cfgPath)
 		}
 	} else {
 		configured.Status, configured.Version = StatusOK, selected.Version
@@ -586,7 +615,7 @@ func (r *runner) locations(cfgErr error) []repos.Clone {
 	registryPath, err := repos.Path()
 	switch {
 	case err != nil:
-		r.add(Check{ID: "registry", Label: "repository registry", Status: StatusWarning, Detail: err.Error(), Fix: "set HOME or XDG_CONFIG_HOME so baum can find its config directory"})
+		r.add(Check{ID: "registry", Label: "repository registry", Status: StatusWarning, Detail: err.Error(), Fix: "set HOME or XDG_STATE_HOME so baum can find its application database"})
 	default:
 		c := Check{ID: "registry", Label: "repository registry", Path: registryPath, Status: StatusInfo}
 		if _, statErr := os.Stat(registryPath); statErr != nil {
@@ -624,7 +653,7 @@ func (r *runner) locations(cfgErr error) []repos.Clone {
 	}
 
 	r.location("jobs", "job queue", jobs.DefaultPath, "created when the baum daemon runs its first job")
-	r.location("discovery", "discovery cache", discovery.DefaultDirectory, "created when the baum daemon first looks for pull requests")
+	r.location("discovery", "discovery cache", appdb.Path, "created when the baum daemon first looks for pull requests")
 	if r.opts.Daemon != nil {
 		r.daemon()
 	}
@@ -750,7 +779,18 @@ func (r *runner) tokens(clones []repos.Clone) {
 	}
 }
 
+// backendChoices lists the backend values to suggest, quoted.
+func (r *runner) backendChoices() string {
+	if r.opts.Desktop {
+		return `"auto", "claude" or "codex"`
+	}
+	return `"auto", "claude", "codex", "cursor-agent" or "anthropic"`
+}
+
 func (r *runner) anthropicKey() {
+	if r.opts.Desktop {
+		return
+	}
 	c := Check{ID: "anthropic-api-key", Label: "ANTHROPIC_API_KEY (anthropic backend)", Status: StatusInfo}
 	switch {
 	case r.opts.Getenv(config.EnvAnthropicAPIKey) != "":

@@ -37,6 +37,8 @@ import {
   sectionBadgeState,
   riskSegments,
   type Section,
+  sectionDetails,
+  type SectionDetailsState,
   sectionFindings,
   sectionHunks,
   sectionsInReviewOrder,
@@ -1726,6 +1728,7 @@ describe("riskScoreView", () => {
         reasons: [],
         limitations: [
           { kind: "unassessed_sections", count: 1 },
+          { kind: "incomplete_sections", count: 2 },
           { kind: "omitted_source", count: 3 },
         ],
       }),
@@ -1734,7 +1737,11 @@ describe("riskScoreView", () => {
       assessed: true,
       score: 2,
       lowerBound: true,
-      limitations: ["1 section not assessed", "3 changed files unreadable"],
+      limitations: [
+        "1 section not assessed",
+        "2 sections without details",
+        "3 changed files unreadable",
+      ],
     });
   });
 
@@ -1753,6 +1760,28 @@ describe("riskScoreView", () => {
       legacy: false,
       limitations: ["2 sections not assessed"],
     });
+  });
+});
+
+describe("sectionDetails", () => {
+  const summary = { text: "Adds retries.", anchors: [] };
+  it("reads a section with its summary and no state as complete", () => {
+    expect(sectionDetails({ summary })).toBe("complete");
+  });
+  it("reads the states a host records", () => {
+    expect(sectionDetails({ details: "pending", summary: null })).toBe("pending");
+    expect(sectionDetails({ details: "failed" })).toBe("failed");
+    // A draft may keep a summary while its other details are written.
+    expect(sectionDetails({ details: "pending", summary })).toBe("pending");
+  });
+  it("reads a section that holds only its outline as failed", () => {
+    expect(sectionDetails({ summary: null })).toBe("failed");
+    // Nothing writes the details of a section the review dropped.
+    expect(sectionDetails({ details: "pending", derived: { state: "stale" } })).toBe("failed");
+    expect(sectionDetails({})).toBe("failed");
+    expect(sectionDetails({ details: "partial" as unknown as SectionDetailsState, summary })).toBe(
+      "failed",
+    );
   });
 });
 

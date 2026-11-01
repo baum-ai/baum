@@ -4,15 +4,18 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"golang.org/x/sync/singleflight"
 
+	"github.com/baum-ai/baum/hosted/agentplugins"
 	"github.com/baum-ai/baum/internal/config"
 	"github.com/baum-ai/baum/internal/doctor"
 	"github.com/baum-ai/baum/internal/repos"
@@ -62,6 +65,8 @@ type LocalAPI struct {
 	// Inboxes serves /api/inboxes: the saved filters listed under Inbox in
 	// the app. Without it the route reports the capability unavailable.
 	Inboxes http.Handler
+	// UIState keeps inbox bookkeeping and review drafts across browser origins.
+	UIState http.Handler
 	// GitHubRepositories serves the account's repositories for picking
 	// (/api/github/repositories) and cloning one
 	// (/api/repositories/{owner}/{name}/clone and clone-target).
@@ -79,6 +84,10 @@ type LocalAPI struct {
 	// Timeline serves /api/timeline/: the features and decisions of the
 	// local decision log (internal/decisionlog).
 	Timeline http.Handler
+	// Facts builds what GET /api/facts answers: a pull request's facts for
+	// its page while it has no saved review (internal/facts). Without it the
+	// route reports the capability unavailable.
+	Facts FactsSource
 	// Decisions builds the handler of /api/decisions, the decisions captured
 	// from agent sessions (internal/decisionlog), given the sessions a pull
 	// request's saved review links, as its PR page lists them.
@@ -90,11 +99,16 @@ type LocalAPI struct {
 	// capture does: its settings or a repository's. The daemon publishes the
 	// app's decisions event with it.
 	DecisionsChanged func()
+	// ConcurrencyChanged, when set, applies a new job concurrency
+	// (repos.Preferences.JobConcurrency) to the running queue.
+	ConcurrencyChanged func(int)
 	// Log receives what the API logs; nil is slog.Default.
 	Log *slog.Logger
 	// Diagnostics builds the report served at /api/diagnostics; nil serves the
 	// capability fields with a null report. It must honour its context.
 	Diagnostics func(context.Context) doctor.Report
+	// HookTrust checks Codex session reporting without running a conversation.
+	HookTrust func(context.Context) agentplugins.HookTrust
 	// DiagnosticsTimeout bounds one shared run; zero means
 	// defaultDiagnosticsTimeout.
 	DiagnosticsTimeout time.Duration
@@ -102,6 +116,17 @@ type LocalAPI struct {
 	// diagnosticsWaiting is a test hook, called once a request is waiting on
 	// the shared run.
 	diagnosticsWaiting func()
+}
+
+// FactsSource builds and keeps pull requests' facts (review.Facts);
+// *facts.Service implements it.
+type FactsSource interface {
+	// Facts answers the pull request's facts at head, the head the page
+	// shows, building them when they are due.
+	Facts(ctx context.Context, clone repos.Clone, number int, head string) ([]byte, error)
+	// Cached is the facts last built for the pull request and the head they
+	// describe, nil when none; it never reads GitHub.
+	Cached(clone repos.Clone, number int) ([]byte, string)
 }
 
 const defaultDiagnosticsTimeout = 45 * time.Second
@@ -163,6 +188,8 @@ func (a LocalAPI) Handler() *LocalHandler {
 	mux.Handle("GET /api/prs/review-threads", update)
 	mux.Handle("POST /api/prs/resolve-thread", update)
 	mux.Handle("GET /api/prs/failing-checks", update)
+	mux.Handle("GET /api/prs/checks", update)
+	mux.Handle("GET /api/prs/conflicts", update)
 	mux.Handle("POST /api/prs/rerun-job", update)
 	mux.Handle("/api/prs", provider(a.PRs, "discovery_unavailable"))
 	mux.Handle("/api/prs/", provider(a.PRs, "discovery_unavailable"))
@@ -178,6 +205,7 @@ func (a LocalAPI) Handler() *LocalHandler {
 	mux.Handle("/api/groups", provider(a.Groups, "groups_unavailable"))
 	mux.Handle("/api/groups/", provider(a.Groups, "groups_unavailable"))
 	mux.Handle("/api/inboxes", provider(a.Inboxes, "inboxes_unavailable"))
+	mux.Handle("/api/ui-state/", provider(a.UIState, "ui_state_unavailable"))
 	mux.Handle("/api/clones/found", provider(a.Clones, "clones_unavailable"))
 	mux.Handle("/api/clones/found/", provider(a.Clones, "clones_unavailable"))
 	repositories := provider(a.GitHubRepositories, "github_repositories_unavailable")
@@ -185,7 +213,11 @@ func (a LocalAPI) Handler() *LocalHandler {
 	mux.Handle("GET /api/repositories/{owner}/{name}/clone-target", repositories)
 	mux.Handle("GET /api/repositories/{owner}/{name}/clone", repositories)
 	mux.Handle("POST /api/repositories/{owner}/{name}/clone", repositories)
-	mux.Handle("/api/plan-usage", provider(a.PlanUsage, "plan_usage_unavailable"))
+	if a.PlanUsage != nil {
+		mux.HandleFunc("/api/plan-usage", a.planUsageHandler)
+	} else {
+		mux.Handle("/api/plan-usage", provider(nil, "plan_usage_unavailable"))
+	}
 	mux.Handle("/api/analytics", provider(a.Analytics, "analytics_unavailable"))
 	mux.Handle("/api/timeline/", provider(a.Timeline, "timeline_unavailable"))
 	var decisions http.Handler
@@ -205,14 +237,19 @@ func (a LocalAPI) Handler() *LocalHandler {
 		if len(cfg.AgentEnv) > 0 {
 			source = "file"
 		}
-		fixBackend, fixModel := "", ""
+		fixBackend, fixModel, fixEffort := "", "", ""
+		concurrency := repos.MaxJobConcurrency
 		if prefs, err := a.Registry.Preferences(r.Context()); err == nil {
+			concurrency = prefs.Concurrency()
 			cfg = prefs.Resolve(cfg)
 			if prefs.FixBackend != nil {
 				fixBackend = string(*prefs.FixBackend)
 			}
 			if prefs.FixModel != nil {
 				fixModel = *prefs.FixModel
+			}
+			if prefs.FixEffort != nil {
+				fixEffort = *prefs.FixEffort
 			}
 			if len(prefs.AgentEnv) > 0 {
 				source = "app"
@@ -227,10 +264,47 @@ func (a LocalAPI) Handler() *LocalHandler {
 			AgentEnvSource string            `json:"agent_env_source"`
 			FixBackend     string            `json:"fix_backend"`
 			FixModel       string            `json:"fix_model"`
-		}{cfg.Backend, cfg.Model, cfg.Budgets, cfg.Caps, cfg.AgentEnv, source, fixBackend, fixModel})
+			Effort         string            `json:"effort"`
+			FixEffort      string            `json:"fix_effort"`
+			JobConcurrency int               `json:"job_concurrency"`
+			// The time limits in force, in whole minutes.
+			ReviewTimeLimit int `json:"review_time_limit_minutes"`
+			RunTimeLimit    int `json:"run_time_limit_minutes"`
+		}{cfg.Backend, cfg.Model, cfg.Budgets, cfg.Caps, cfg.AgentEnv, source, fixBackend, fixModel, cfg.Effort, fixEffort, concurrency,
+			minutes(cfg.Budgets.ReviewTimeout), minutes(cfg.Budgets.RunTimeout)})
+	})
+	// The time limits apply to runs that start after the change.
+	mux.HandleFunc("PUT /api/settings/time-limits", func(w http.ResponseWriter, r *http.Request) {
+		var input struct {
+			ReviewTimeLimit int `json:"review_time_limit_minutes"`
+			RunTimeLimit    int `json:"run_time_limit_minutes"`
+		}
+		r.Body = http.MaxBytesReader(w, r.Body, 4<<10)
+		d := json.NewDecoder(r.Body)
+		d.DisallowUnknownFields()
+		if d.Decode(&input) != nil || d.Decode(new(any)) != io.EOF {
+			http.Error(w, "invalid JSON request", http.StatusBadRequest)
+			return
+		}
+		if input.ReviewTimeLimit < 1 || input.RunTimeLimit < 1 || repos.ValidateTimeLimit(input.ReviewTimeLimit) != nil || repos.ValidateTimeLimit(input.RunTimeLimit) != nil {
+			http.Error(w, fmt.Sprintf("time limits must be between 1 and %d minutes", repos.MaxTimeLimit), http.StatusBadRequest)
+			return
+		}
+		prefs, err := a.Registry.UpdatePreferences(r.Context(), func(p repos.Preferences) repos.Preferences {
+			p.ReviewTimeLimit, p.RunTimeLimit = input.ReviewTimeLimit, input.RunTimeLimit
+			return p
+		})
+		if err != nil {
+			http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+			return
+		}
+		budgets := prefs.Resolve(a.Config).Budgets
+		writeJSON(w, map[string]int{"review_time_limit_minutes": minutes(budgets.ReviewTimeout), "run_time_limit_minutes": minutes(budgets.RunTimeout)})
 	})
 	mux.HandleFunc("GET /api/settings/appearance", a.getAppearance)
 	mux.HandleFunc("PUT /api/settings/appearance", a.putAppearance)
+	mux.HandleFunc("GET /api/settings/plan-usage", a.getPlanUsageSettings)
+	mux.HandleFunc("PUT /api/settings/plan-usage", a.putPlanUsageSettings)
 	mux.HandleFunc("GET /api/settings/decisions", a.getDecisionSettings)
 	mux.HandleFunc("PUT /api/settings/decisions", a.putDecisionSettings)
 	// The app's agent environment replaces the config file's; an empty one
@@ -263,9 +337,60 @@ func (a LocalAPI) Handler() *LocalHandler {
 		}
 		writeJSON(w, map[string]map[string]string{"agent_env": prefs.Resolve(a.Config).AgentEnv})
 	})
+	// How many jobs run at once applies to the running queue at once; one
+	// change at a time, so the queue ends with the saved value.
+	var concurrencyMu sync.Mutex
+	mux.HandleFunc("PUT /api/settings/job-concurrency", func(w http.ResponseWriter, r *http.Request) {
+		var input struct {
+			JobConcurrency int `json:"job_concurrency"`
+		}
+		r.Body = http.MaxBytesReader(w, r.Body, 4<<10)
+		d := json.NewDecoder(r.Body)
+		d.DisallowUnknownFields()
+		if d.Decode(&input) != nil || d.Decode(new(any)) != io.EOF {
+			http.Error(w, "invalid JSON request", http.StatusBadRequest)
+			return
+		}
+		if input.JobConcurrency < 1 || input.JobConcurrency > repos.MaxJobConcurrency {
+			http.Error(w, fmt.Sprintf("job_concurrency must be between 1 and %d", repos.MaxJobConcurrency), http.StatusBadRequest)
+			return
+		}
+		concurrencyMu.Lock()
+		defer concurrencyMu.Unlock()
+		prefs, err := a.Registry.UpdatePreferences(r.Context(), func(p repos.Preferences) repos.Preferences {
+			p.JobConcurrency = input.JobConcurrency
+			return p
+		})
+		if err != nil {
+			http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+			return
+		}
+		if a.ConcurrencyChanged != nil {
+			a.ConcurrencyChanged(prefs.Concurrency())
+		}
+		writeJSON(w, map[string]int{"job_concurrency": prefs.Concurrency()})
+	})
 	// Runs are shared only while one is in flight; a later request runs the
 	// checks again. That is deliberate: the endpoint is local, authenticated
 	// and user-triggered, so there is no cache.
+	var hookTrust singleflight.Group
+	mux.HandleFunc("GET /api/agent-hooks/codex", func(w http.ResponseWriter, r *http.Request) {
+		if a.HookTrust == nil {
+			writeJSON(w, map[string]bool{"available": false})
+			return
+		}
+		result := hookTrust.DoChan("codex", func() (any, error) {
+			ctx, cancel := context.WithTimeout(context.Background(), 2*agentplugins.StatusTimeout)
+			defer cancel()
+			return a.HookTrust(ctx), nil
+		})
+		select {
+		case <-r.Context().Done():
+			return
+		case res := <-result:
+			writeJSON(w, res.Val)
+		}
+	})
 	var diagnostics singleflight.Group
 	mux.HandleFunc("GET /api/diagnostics", func(w http.ResponseWriter, r *http.Request) {
 		body := map[string]any{"local": true, "generation_runner": a.Jobs != nil, "discovery": a.PRs != nil, "index": a.Index != nil, "report": nil}
@@ -367,6 +492,7 @@ func (a LocalAPI) Handler() *LocalHandler {
 	mux.HandleFunc("GET /api/sessions/{id}", document)
 	mux.HandleFunc("GET /api/patch", document)
 	mux.HandleFunc("GET /api/commits", document)
+	a.factsRoutes(mux, cache)
 	mux.HandleFunc("GET /api/attachments/{id}", func(w http.ResponseWriter, r *http.Request) {
 		c, key, n, ok := a.selector(w, r)
 		if !ok {
@@ -421,6 +547,11 @@ func apiError(w http.ResponseWriter, err error) {
 		status = 404
 	}
 	http.Error(w, http.StatusText(status), status)
+}
+
+// minutes is a time limit in whole minutes, rounded up.
+func minutes(d config.Duration) int {
+	return int((time.Duration(d) + time.Minute - 1) / time.Minute)
 }
 
 // RegisteredRepository resolves a registered clone ID, without allowing a

@@ -2,11 +2,12 @@ import pluralize from "pluralize";
 
 import {
   type CheckStatus,
+  checksHead,
   checkStatus,
   humanize,
   type IndexedCheck,
   repositoryLink,
-  type ReviewDocument,
+  type ReviewEvidence,
 } from "../review-document";
 import { StatusBlock } from "./editorial";
 import { formatDate, formatRelative } from "./format";
@@ -129,7 +130,7 @@ const CONCLUSION_TONES: Record<string, BadgeTone> = {
 /** The Details tab's Checks part: the state of CI on this head in one line, the
  *  failures in the open, and every run behind a disclosure, so a reader who
  *  wants to know what else ran does not have to leave the review. */
-export function ChecksPart({ document: supplied }: { document: ReviewDocument }) {
+export function ChecksPart({ document: supplied }: { document: ReviewEvidence }) {
   // Check links from another repository are dropped once, here, so the
   // failing-checks list and the full list cannot disagree about them.
   const document = {
@@ -143,20 +144,22 @@ export function ChecksPart({ document: supplied }: { document: ReviewDocument })
     },
   };
   const status = checkStatus(document);
+  const head = checksHead(document);
   const checks = document.index.checks
-    .filter((check) => check.head === (document.review.checks_head ?? document.review.head))
+    .filter((check) => check.head === head)
     .toSorted((left, right) => Number(right.required) - Number(left.required));
   return (
     <Part label="Checks">
       <div className="space-y-3">
         <CheckState
           status={status}
-          asOf={document.review.evidence_refreshed_at || document.review.generated_at}
+          asOf={
+            document.review.evidence_refreshed_at ||
+            ("generated_at" in document.review ? document.review.generated_at : undefined)
+          }
         />
-        {document.review.checks_head && document.review.checks_head !== document.review.head && (
-          <span className="block text-xs text-(--text-tertiary)">
-            Head {document.review.checks_head.slice(0, 7)}
-          </span>
+        {head !== document.review.head && (
+          <span className="block text-xs text-(--text-tertiary)">Head {head.slice(0, 7)}</span>
         )}
         <FailingChecks status={status} />
         {checks.length > 0 && (

@@ -1,3 +1,4 @@
+import { mockStateFetch } from "./ui-state-test-helper";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
@@ -71,7 +72,7 @@ beforeEach(() => {
   });
   vi.stubGlobal(
     "fetch",
-    vi.fn(async (path: string, init?: RequestInit) => {
+    mockStateFetch(async (path: string, init?: RequestInit) => {
       if (path.includes("api/prs/merge-options")) return Response.json(optionsAnswer);
       posts.push(JSON.parse(String(init?.body)));
       return mergeAnswer;
@@ -142,10 +143,20 @@ it("offers Merge on ready rows only and opens the dialog from the row", async ()
       />,
     ),
   );
-  const merges = Array.from(node.querySelectorAll("button")).filter((b) =>
-    b.getAttribute("aria-label")?.startsWith("Merge "),
-  );
-  expect(merges.map((b) => b.getAttribute("aria-label"))).toEqual(["Merge acme/demo #1"]);
-  await act(async () => merges[0]!.click());
+  const choices = () =>
+    Array.from(node.querySelectorAll<HTMLElement>('[role="menu"] [role^=menuitem]')).filter(
+      (item) => item.querySelector(".context-menu-label")?.textContent === "Merge…",
+    );
+  const openActions = (name: string) =>
+    act(async () =>
+      node.querySelector<HTMLButtonElement>(`button[aria-label="Actions for ${name}"]`)!.click(),
+    );
+  for (const name of ["acme/demo #2", "acme/demo #3"]) {
+    await openActions(name);
+    expect(choices()).toHaveLength(0);
+  }
+  await openActions("acme/demo #1");
+  expect(choices()).toHaveLength(1);
+  await act(async () => choices()[0]!.click());
   expect(node.querySelector("dialog")?.textContent).toContain("Merge pull request #1?");
 });

@@ -15,10 +15,12 @@ import (
 // a pull request's review threads while their count still matches
 // discovery's, and a head commit's failing checks. Threads resolved on GitHub
 // do not change what discovery's probe sees, so the panel reads them again
-// soon, when shown.
+// soon, when shown. All of a head's checks, whose runs finish meanwhile, are
+// kept only briefly.
 const (
-	DefaultThreadTTL = time.Minute
-	DefaultChecksTTL = 2 * time.Minute
+	DefaultThreadTTL    = time.Minute
+	DefaultChecksTTL    = 2 * time.Minute
+	DefaultAllChecksTTL = 20 * time.Second
 )
 
 // Cache keeps what the Inbox panel reads of a pull request, so moving through
@@ -28,12 +30,14 @@ const (
 // signed-in account's credential, so a change of account empties it
 // (ResetIdentity). It is safe for concurrent use; the zero value is ready.
 type Cache struct {
-	ThreadTTL, ChecksTTL time.Duration
-	Now                  func() time.Time
+	ThreadTTL, ChecksTTL, AllChecksTTL time.Duration
+	Now                                func() time.Time
 
 	mu      sync.Mutex
 	threads map[string]cached[Threads]
 	checks  map[string]cached[Checks]
+	// allChecks are all of a head's checks.
+	allChecks map[string]cached[CheckList]
 	// gen counts account changes, so a read that began before one is not
 	// stored.
 	gen uint64
@@ -64,7 +68,7 @@ func (c *Cache) now() time.Time {
 func (c *Cache) ResetIdentity() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	c.threads, c.checks = nil, nil
+	c.threads, c.checks, c.allChecks = nil, nil, nil
 	c.gen++
 }
 
@@ -168,7 +172,30 @@ func (c *Cache) storeChecks(key string, gen uint64, checks Checks) {
 	}
 }
 
-// rerun forgets the head's failing checks: some are running again.
+// cachedAllChecks returns the head's cached list of all its checks.
+func (c *Cache) cachedAllChecks(key string) (CheckList, bool) {
+	if c == nil {
+		return CheckList{}, false
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return fresh(c.allChecks, key, cmp.Or(c.AllChecksTTL, DefaultAllChecksTTL), c.now())
+}
+
+// storeAllChecks stores what was just read, unless the account changed since
+// the read began (gen).
+func (c *Cache) storeAllChecks(key string, gen uint64, checks CheckList) {
+	if c == nil {
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if gen == c.gen {
+		store(&c.allChecks, key, checks, cmp.Or(c.AllChecksTTL, DefaultAllChecksTTL), c.now())
+	}
+}
+
+// rerun forgets the head's checks: some are running again.
 func (c *Cache) rerun(key string) {
 	if c == nil {
 		return
@@ -176,4 +203,5 @@ func (c *Cache) rerun(key string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	delete(c.checks, key)
+	delete(c.allChecks, key)
 }

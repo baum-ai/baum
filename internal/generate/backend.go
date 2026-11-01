@@ -51,16 +51,16 @@ func DefaultBackendsFor(cfg config.Config) Backends {
 	env := cfg.AgentEnviron()
 	return Backends{
 		Claude: func(model string) CheckedBackend {
-			return withExplicitPath(&claude.Backend{Binary: claudePath, Model: model, Profile: claude.User, Env: env}, config.BackendClaude, claudePath)
+			return withExplicitPath(&claude.Backend{Binary: claudePath, Model: model, Profile: claude.User, Effort: cfg.Effort, Env: env}, config.BackendClaude, claudePath)
 		},
 		Codex: func(model string) CheckedBackend {
-			return withExplicitPath(&codex.Backend{Binary: codexPath, Model: model, Profile: codex.Local, Env: env}, config.BackendCodex, codexPath)
+			return withExplicitPath(&codex.Backend{Binary: codexPath, Model: model, Profile: codex.Local, Effort: cfg.Effort, Env: env}, config.BackendCodex, codexPath)
 		},
 		CursorAgent: func(model string) CheckedBackend {
 			return withExplicitPath(&cursor.Backend{Binary: cursorPath, Model: model, Env: env}, config.BackendCursorAgent, cursorPath)
 		},
 		Anthropic: func(model string) CheckedBackend {
-			return &anthropic.Backend{APIKey: cfg.AnthropicAPIKey, Model: model}
+			return &anthropic.Backend{APIKey: cfg.AnthropicAPIKey, Model: model, Effort: cfg.Effort}
 		},
 	}
 }
@@ -117,6 +117,9 @@ func (e explicitPath) Check(ctx context.Context) (string, error) {
 	return e.CheckedBackend.Check(ctx)
 }
 
+// ConcurrentCalls forwards the backend's agent.ConcurrentCaller.
+func (e explicitPath) ConcurrentCalls() bool { return ConcurrentCalls(e.CheckedBackend) }
+
 // Fix forwards a fix (agent.Fixer) to a backend that can make one.
 func (e explicitPath) Fix(ctx context.Context, request agent.Request) (agent.Result, error) {
 	fixer, ok := e.CheckedBackend.(agent.Fixer)
@@ -163,6 +166,42 @@ type Selected struct {
 // resolved here (anthropic.DefaultModel), so Selected.Model names it and the
 // run's cost at API prices can be worked out from it.
 func Select(ctx context.Context, requested config.Backend, model string, backends Backends, skipped io.Writer) (Selected, error) {
+	return selectFrom(ctx, requested, AutoOrder, model, backends, skipped)
+}
+
+// DesktopAutoOrder is the order in which auto tries the backends in the
+// desktop app and its daemon: Claude Code, then Codex. auto never spends money
+// through the Anthropic API there.
+var DesktopAutoOrder = []config.Backend{config.BackendClaude, config.BackendCodex}
+
+// DesktopBackend reports whether the desktop app and its daemon run jobs with
+// b: auto, claude and codex. The cursor-agent and anthropic backends stay
+// available to the baum command line only.
+func DesktopBackend(b config.Backend) bool {
+	return b.Desktop()
+}
+
+// ErrBackendNotOffered is a backend the desktop app does not run jobs with.
+var ErrBackendNotOffered = errors.New("the baum desktop app does not run jobs with this backend")
+
+// NotOfferedError reports a job whose backend, such as one set in config.toml,
+// the desktop app does not run. It never switches to another backend.
+func NotOfferedError(b config.Backend) error {
+	return fmt.Errorf("%w: %q cannot run reviews, fixes, chats or decision capture here; choose Claude Code or Codex in Settings, or set backend = \"auto\", \"claude\" or \"codex\" in the config file", ErrBackendNotOffered, b)
+}
+
+// SelectDesktop is Select for the desktop app and its daemon. It refuses a
+// known backend other than auto, claude and codex (ErrBackendNotOffered), and
+// auto tries DesktopAutoOrder only, so no job reaches cursor-agent or the
+// Anthropic API.
+func SelectDesktop(ctx context.Context, requested config.Backend, model string, backends Backends, skipped io.Writer) (Selected, error) {
+	if requested.Valid() && !DesktopBackend(requested) {
+		return Selected{}, &Error{Category: CategoryBackend, Err: NotOfferedError(requested)}
+	}
+	return selectFrom(ctx, requested, DesktopAutoOrder, model, backends, skipped)
+}
+
+func selectFrom(ctx context.Context, requested config.Backend, order []config.Backend, model string, backends Backends, skipped io.Writer) (Selected, error) {
 	try := func(name config.Backend, build func(string) CheckedBackend, model string) (Selected, error) {
 		if build == nil {
 			return Selected{}, fmt.Errorf("the %s backend is not built", name)
@@ -201,7 +240,7 @@ func Select(ctx context.Context, requested config.Backend, model string, backend
 		return explicit(requested, backends.CursorAgent)
 	case config.BackendAuto, "":
 		var reasons []string
-		for i, choice := range AutoOrder {
+		for i, choice := range order {
 			chosen := ""
 			if i == 0 {
 				chosen = model
@@ -209,12 +248,12 @@ func Select(ctx context.Context, requested config.Backend, model string, backend
 			selected, err := try(choice, backends.builder(choice), chosen)
 			if err == nil {
 				if i > 0 && model != "" && skipped != nil {
-					_, _ = fmt.Fprintf(skipped, "the model %q was meant for %s; %s uses its own default model\n", model, AutoOrder[0], choice)
+					_, _ = fmt.Fprintf(skipped, "the model %q was meant for %s; %s uses its own default model\n", model, order[0], choice)
 				}
 				return selected, nil
 			}
 			reasons = append(reasons, fmt.Sprintf("%s: %v", choice, err))
-			if skipped != nil && ctx.Err() == nil && i+1 < len(AutoOrder) {
+			if skipped != nil && ctx.Err() == nil && i+1 < len(order) {
 				_, _ = fmt.Fprintf(skipped, "%s skipped: %v\n", choice, err)
 			}
 		}

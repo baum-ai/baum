@@ -78,8 +78,15 @@ func TestUserProfileEnvironment(t *testing.T) {
 	if env["HOME"] != home || env["CLAUDE_CONFIG_DIR"] != "/user/claude-config" {
 		t.Errorf("HOME=%q CLAUDE_CONFIG_DIR=%q, want the user's", env["HOME"], env["CLAUDE_CONFIG_DIR"])
 	}
-	if env["CLAUDE_CODE_DISABLE_THINKING"] != "1" || env["DISABLE_AUTOUPDATER"] != "1" || env["CLAUDE_CODE_MAX_OUTPUT_TOKENS"] != "32000" {
+	if env["DISABLE_AUTOUPDATER"] != "1" || env["CLAUDE_CODE_MAX_OUTPUT_TOKENS"] != "32000" {
 		t.Errorf("fixed variables missing: %v", env)
+	}
+	// Thinking is left to Claude Code and the chosen effort.
+	if _, ok := env["CLAUDE_CODE_DISABLE_THINKING"]; ok {
+		t.Errorf("the User profile turned thinking off: %v", env)
+	}
+	if _, ok := env["MAX_THINKING_TOKENS"]; ok {
+		t.Errorf("the User profile capped thinking: %v", env)
 	}
 
 	dir = t.TempDir()
@@ -126,8 +133,15 @@ func TestIsolatedArgumentsAndEnvironmentAreStable(t *testing.T) {
 	if user := (&Backend{Model: "sonnet"}).args(agent.Request{MaxCalls: 7, Schema: []byte(`{"type":"object"}`)}); !slices.Equal(user, want) {
 		t.Errorf("the User profile's flags differ: %q", user)
 	}
-	if defaulted := (&Backend{}).args(agent.Request{MaxCalls: 7}); slices.Contains(defaulted, "--model") {
-		t.Errorf("an empty Model passed --model: %q", defaulted)
+	if defaulted := (&Backend{}).args(agent.Request{MaxCalls: 7}); slices.Contains(defaulted, "--model") || slices.Contains(defaulted, "--effort") {
+		t.Errorf("an empty Model or Effort passed its flag: %q", defaulted)
+	}
+	// A chosen effort reaches reviews, fixes and the model after --model.
+	effort := &Backend{Model: "sonnet", Effort: "high"}
+	for _, args := range [][]string{effort.args(agent.Request{MaxCalls: 7}), effort.fixArgs(agent.Request{MaxCalls: 7})} {
+		if i := slices.Index(args, "--effort"); i < 0 || args[i+1] != "high" {
+			t.Errorf("effort args = %q", args)
+		}
 	}
 	// A generic task gets its own system prompt, without review wording.
 	task := backend.args(agent.Request{MaxCalls: 7, Task: true})

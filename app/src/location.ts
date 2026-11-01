@@ -1,6 +1,6 @@
 import type { UrlState } from "@baum/viewer/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { appURL } from "./api";
+import { appURL, writeHistory } from "./api";
 
 /** The address's search parameters as the viewer's URL state. A write adds
  *  a history entry, or with `replace` takes the current one's place, so Back
@@ -11,8 +11,7 @@ export function useLocation() {
   const update = useCallback<UrlState["update"]>((patch, options) => {
     const next = patch(new URLSearchParams(current.current));
     current.current = next;
-    if (options?.replace) history.replaceState(null, "", appURL(`?${next}`));
-    else history.pushState(null, "", appURL(`?${next}`));
+    writeHistory(appURL(`?${next}`), options?.replace);
     setSearch(next);
   }, []);
   useEffect(() => {

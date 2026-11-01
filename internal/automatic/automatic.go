@@ -14,15 +14,14 @@ import (
 	"io"
 	"log/slog"
 	"os"
-	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
+	"github.com/baum-ai/baum/internal/appdb"
 	"github.com/baum-ai/baum/internal/discovery"
-	"github.com/baum-ai/baum/internal/generate"
 	"github.com/baum-ai/baum/internal/github"
 	"github.com/baum-ai/baum/internal/jobs"
 	"github.com/baum-ai/baum/internal/repos"
@@ -35,8 +34,12 @@ import (
 const NoticeUnavailable = "unavailable"
 
 // legacyNoticeDailyCap is the notice of the daily spending cap baum no longer
-// has.
-const legacyNoticeDailyCap = "daily_cap"
+// has; legacyNoticeCursorAgent is the one of the cursor-agent acknowledgement,
+// which the desktop app no longer asks for. Both are dropped on load.
+const (
+	legacyNoticeDailyCap    = "daily_cap"
+	legacyNoticeCursorAgent = "cursor_agent_acknowledgement_required"
+)
 
 // maxAttempts bounds retries of a head whose job could not be prepared
 // (GitHub or the clone unavailable); the next head triggers again.
@@ -67,7 +70,7 @@ type Queue interface {
 type Scheduler struct {
 	Registry Registry
 	Queue    Queue
-	// Path is the private JSON file recording what was already seen, so a
+	// Path is the application database recording what was already seen, so a
 	// restart neither forgets pending work nor treats old heads as new.
 	Path string
 	// Discover polls one repository's open pull requests; Trigger uses it.
@@ -318,7 +321,7 @@ func (s *Scheduler) load() *fileState {
 		return s.state
 	}
 	s.state = &fileState{Repositories: map[string]*repoState{}}
-	raw, err := os.ReadFile(s.Path)
+	raw, err := appdb.Read(s.Path, "state", "automatic")
 	if err == nil {
 		var loaded fileState
 		if err = json.Unmarshal(raw, &loaded); err == nil && loaded.Repositories != nil {
@@ -336,7 +339,7 @@ func (s *Scheduler) load() *fileState {
 		if r.Groups == nil {
 			r.Groups = map[string]*groupState{}
 		}
-		if r.Notice == legacyNoticeDailyCap {
+		if r.Notice == legacyNoticeDailyCap || r.Notice == legacyNoticeCursorAgent {
 			r.Notice = ""
 		}
 	}
@@ -346,10 +349,7 @@ func (s *Scheduler) load() *fileState {
 func (s *Scheduler) save() {
 	raw, err := json.Marshal(s.state)
 	if err == nil {
-		err = os.MkdirAll(filepath.Dir(s.Path), 0o700)
-	}
-	if err == nil {
-		err = generate.WriteFileAtomic(s.Path, raw)
+		err = appdb.Write(s.Path, "state", "automatic", raw)
 	}
 	if err != nil {
 		s.log().Warn("automatic generation state not saved", "error", err)

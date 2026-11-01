@@ -37,7 +37,18 @@ var errRegistry = errors.New("repository registry")
 
 // Lister reads the account's repositories from GitHub.
 type Lister interface {
-	ViewerRepositories(ctx context.Context, host string) ([]github.ViewerRepository, error)
+	ViewerRepositories(ctx context.Context, host string, first int, cursor *string) (github.ViewerRepositoryList, error)
+	SearchRepositories(ctx context.Context, host, query string, scope github.SearchScope, cursor *string) (github.ViewerRepositoryList, error)
+}
+
+type repositoryLookup struct {
+	list    github.ViewerRepositoryList
+	at      time.Time
+	running bool
+	err     error
+	cancel  context.CancelFunc
+	// scope is what a search started with; its later pages keep it.
+	scope github.SearchScope
 }
 
 // Registry is the part of the repository registry the service uses.
@@ -71,12 +82,14 @@ type Service struct {
 	Changed func()
 	Now     func() time.Time
 
-	mu      sync.Mutex
-	cache   []github.ViewerRepository
-	cached  time.Time
-	flight  singleflight.Group
-	clones  map[string]*cloneState
-	running sync.WaitGroup
+	mu       sync.Mutex
+	cache    *github.ViewerRepositoryList
+	cached   time.Time
+	topMore  *repositoryLookup
+	searches map[string]*repositoryLookup
+	flight   singleflight.Group
+	clones   map[string]*cloneState
+	running  sync.WaitGroup
 	// gen counts account changes; a listing started under an older one is not cached.
 	gen      uint64
 	stopping bool
@@ -103,6 +116,14 @@ func (s *Service) ctx() context.Context {
 func (s *Service) ResetIdentity() {
 	s.mu.Lock()
 	s.cache, s.cached = nil, time.Time{}
+	if s.topMore != nil {
+		s.topMore.cancel()
+		s.topMore = nil
+	}
+	for _, lookup := range s.searches {
+		lookup.cancel()
+	}
+	s.searches = nil
 	s.gen++
 	s.mu.Unlock()
 }
@@ -112,19 +133,25 @@ func (s *Service) Run(ctx context.Context) {
 	<-ctx.Done()
 	s.mu.Lock()
 	s.stopping = true
+	if s.topMore != nil {
+		s.topMore.cancel()
+	}
+	for _, lookup := range s.searches {
+		lookup.cancel()
+	}
 	s.mu.Unlock()
 	s.running.Wait()
 }
 
 // Item is one repository in the listing.
 type Item struct {
-	Repository       string     `json:"repository"`
-	Private          bool       `json:"private"`
-	Fork             bool       `json:"fork"`
-	PushedAt         *time.Time `json:"pushed_at"`
-	Description      string     `json:"description"`
-	OpenPullRequests int        `json:"open_pull_requests"`
-	Picked           bool       `json:"picked"`
+	Repository  string     `json:"repository"`
+	Private     bool       `json:"private"`
+	Top         bool       `json:"top"`
+	Fork        bool       `json:"fork"`
+	PushedAt    *time.Time `json:"pushed_at"`
+	Description string     `json:"description"`
+	Picked      bool       `json:"picked"`
 	// Clone is an available registered clone of a picked repository, or "".
 	// Clones are looked for only once a repository is picked.
 	Clone string `json:"clone"`
@@ -135,15 +162,28 @@ type Item struct {
 
 // Listing is the JSON of GET /api/github/repositories.
 type Listing struct {
-	FetchedAt    time.Time `json:"fetched_at"`
-	Repositories []Item    `json:"repositories"`
+	FetchedAt       time.Time `json:"fetched_at"`
+	TotalCount      int       `json:"total_count"`
+	Repositories    []Item    `json:"repositories"`
+	Searching       bool      `json:"searching,omitempty"`
+	SearchError     string    `json:"search_error,omitempty"`
+	TopRepositories []Item    `json:"top_repositories,omitempty"`
+	// HasMore says GitHub has another page for this query, which ?more=1 loads.
+	HasMore bool `json:"has_more,omitempty"`
 }
 
-func (s *Service) viewerRepositories(refresh bool) ([]github.ViewerRepository, time.Time, error) {
+// maxSearchResults is the most results GitHub search returns for one query.
+const maxSearchResults = 1000
+
+func (s *Service) viewerRepositories(refresh bool) (github.ViewerRepositoryList, time.Time, error) {
 	s.mu.Lock()
 	gen := s.gen
+	if refresh && s.topMore != nil {
+		s.topMore.cancel()
+		s.topMore = nil
+	}
 	if !refresh && s.cache != nil && s.now().Sub(s.cached) < CacheTTL {
-		list, at := s.cache, s.cached
+		list, at := *s.cache, s.cached
 		s.mu.Unlock()
 		return list, at, nil
 	}
@@ -151,49 +191,205 @@ func (s *Service) viewerRepositories(refresh bool) ([]github.ViewerRepository, t
 	// Requests asking together share one call, which one client leaving does
 	// not cancel.
 	type result struct {
-		list []github.ViewerRepository
+		list github.ViewerRepositoryList
 		at   time.Time
 	}
 	v, err, _ := s.flight.Do("list-"+strconv.FormatUint(gen, 10), func() (any, error) {
 		ctx, cancel := context.WithTimeout(s.ctx(), listTimeout)
 		defer cancel()
-		list, err := s.Lister.ViewerRepositories(ctx, config.GitHubHost)
+		list, err := s.Lister.ViewerRepositories(ctx, config.GitHubHost, github.InitialViewerRepositories, nil)
 		if err != nil {
 			return nil, err
 		}
-		if list == nil {
-			list = []github.ViewerRepository{}
+		if list.Repositories == nil {
+			list.Repositories = []github.ViewerRepository{}
 		}
 		at := s.now()
 		s.mu.Lock()
 		if s.gen == gen {
-			s.cache, s.cached = list, at
+			if s.topMore != nil {
+				s.topMore.cancel()
+				s.topMore = nil
+			}
+			shown := list
+			if list.NextCursor != nil && s.cache != nil {
+				// A reload keeps the earlier extra rows until the new
+				// additional page replaces them, so the list never shrinks to
+				// the first page and grows back.
+				shown.Repositories = mergeRepositories(list.Repositories, s.cache.Repositories)
+			}
+			s.cache, s.cached = &shown, at
+			if list.NextCursor != nil && !s.stopping {
+				moreCtx, cancelMore := context.WithTimeout(s.ctx(), listTimeout)
+				lookup := &repositoryLookup{list: list, running: true, cancel: cancelMore}
+				s.topMore = lookup
+				s.running.Add(1)
+				go s.loadMoreTopRepositories(moreCtx, lookup, list.NextCursor)
+			}
 		}
 		s.mu.Unlock()
 		return result{list, at}, nil
 	})
 	if err != nil {
-		return nil, time.Time{}, err
+		return github.ViewerRepositoryList{}, time.Time{}, err
 	}
 	r := v.(result)
 	return r.list, r.at, nil
 }
 
-// ranked orders repositories with open pull requests involving the account
-// first, most first, then by latest push.
-func ranked(list []github.ViewerRepository) []github.ViewerRepository {
-	out := append([]github.ViewerRepository(nil), list...)
-	sort.SliceStable(out, func(i, j int) bool {
-		a, b := out[i], out[j]
-		if a.OpenPullRequests != b.OpenPullRequests {
-			return a.OpenPullRequests > b.OpenPullRequests
+func (s *Service) loadMoreTopRepositories(ctx context.Context, lookup *repositoryLookup, cursor *string) {
+	defer s.running.Done()
+	defer lookup.cancel()
+	list, err := s.Lister.ViewerRepositories(ctx, config.GitHubHost, github.AdditionalViewerRepositories, cursor)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.topMore != lookup {
+		return
+	}
+	if err == nil && ctx.Err() != nil {
+		err = ctx.Err()
+	}
+	if err == nil {
+		// The rows this request continues, then the new rows; rows from an
+		// earlier listing that neither returned are dropped.
+		merged := mergeRepositories(lookup.list.Repositories, list.Repositories)
+		s.cache = &github.ViewerRepositoryList{Repositories: merged, TotalCount: list.TotalCount, Scope: lookup.list.Scope, NextCursor: list.NextCursor}
+		s.cached = s.now()
+	}
+	lookup.running, lookup.err = false, err
+}
+
+// mergeRepositories appends the rows of more that first lacks, keeping first's
+// order and first's copy of a repository both contain.
+func mergeRepositories(first, more []github.ViewerRepository) []github.ViewerRepository {
+	out := make([]github.ViewerRepository, 0, len(first)+len(more))
+	seen := map[string]bool{}
+	for _, batch := range [][]github.ViewerRepository{first, more} {
+		for _, r := range batch {
+			if !seen[r.Repository] {
+				seen[r.Repository] = true
+				out = append(out, r)
+			}
 		}
-		if !a.PushedAt.Equal(b.PushedAt) {
-			return a.PushedAt.After(b.PushedAt)
-		}
-		return a.Repository < b.Repository
-	})
+	}
 	return out
+}
+
+func (s *Service) searchRepositories(query string, refresh bool) (github.ViewerRepositoryList, time.Time, bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.stopping {
+		return github.ViewerRepositoryList{}, time.Time{}, false, context.Canceled
+	}
+	if s.searches == nil {
+		s.searches = map[string]*repositoryLookup{}
+	}
+	for key, lookup := range s.searches {
+		if !lookup.running && s.now().Sub(lookup.at) >= CacheTTL {
+			delete(s.searches, key)
+		}
+	}
+	lookup := s.searches[query]
+	if refresh || lookup == nil {
+		if lookup != nil {
+			lookup.cancel()
+		}
+		if len(s.searches) >= 64 {
+			var oldest string
+			for key, entry := range s.searches {
+				if oldest == "" || entry.at.Before(s.searches[oldest].at) {
+					oldest = key
+				}
+			}
+			s.searches[oldest].cancel()
+			delete(s.searches, oldest)
+		}
+		ctx, cancel := context.WithTimeout(s.ctx(), listTimeout)
+		lookup = &repositoryLookup{list: github.ViewerRepositoryList{Repositories: []github.ViewerRepository{}}, at: s.now(), running: true, cancel: cancel, scope: s.searchScope()}
+		s.searches[query] = lookup
+		s.running.Add(1)
+		go s.loadSearch(ctx, query, nil, lookup)
+	}
+	return lookup.list, lookup.at, lookup.running, lookup.err
+}
+
+// searchScope is what a search covers: the viewer's and its organizations'
+// repositories and the repositories it collaborates on. Owners of top
+// repositories are not added: the viewer may only have contributed to one of
+// their repositories. Top repositories still match from the cache. The caller
+// holds s.mu.
+func (s *Service) searchScope() github.SearchScope {
+	if s.cache == nil {
+		return github.SearchScope{}
+	}
+	return s.cache.Scope
+}
+
+// loadSearch loads the first page of a search, or with a cursor the next one,
+// which is appended to the rows already loaded.
+func (s *Service) loadSearch(ctx context.Context, query string, cursor *string, lookup *repositoryLookup) {
+	defer s.running.Done()
+	s.mu.Lock()
+	cancel, scope := lookup.cancel, lookup.scope
+	s.mu.Unlock()
+	defer cancel()
+	list, err := s.Lister.SearchRepositories(ctx, config.GitHubHost, query, scope, cursor)
+	if err == nil && ctx.Err() != nil {
+		list, err = github.ViewerRepositoryList{}, ctx.Err()
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.searches[query] != lookup {
+		return
+	}
+	lookup.err, lookup.running, lookup.at = err, false, s.now()
+	switch {
+	case err != nil && cursor != nil:
+		// The rows already loaded stay; a retry starts the search again.
+	case cursor != nil:
+		merged := mergeRepositories(lookup.list.Repositories, list.Repositories)
+		lookup.list = github.ViewerRepositoryList{Repositories: merged, TotalCount: list.TotalCount, NextCursor: list.NextCursor}
+	default:
+		lookup.list = list
+	}
+}
+
+// loadMore starts loading the next page of the top list (an empty query) or
+// of query's search, unless it has none or a page is already loading. It
+// reports whether a page is loading. The caller holds s.mu.
+func (s *Service) loadMore(query string) bool {
+	if s.stopping {
+		return false
+	}
+	if query == "" {
+		if s.topMore != nil && s.topMore.running {
+			return true
+		}
+		if s.cache == nil || s.cache.NextCursor == nil {
+			return false
+		}
+		ctx, cancel := context.WithTimeout(s.ctx(), listTimeout)
+		lookup := &repositoryLookup{list: *s.cache, running: true, cancel: cancel}
+		s.topMore = lookup
+		s.running.Add(1)
+		go s.loadMoreTopRepositories(ctx, lookup, s.cache.NextCursor)
+		return true
+	}
+	lookup := s.searches[query]
+	if lookup == nil {
+		return false
+	}
+	if lookup.running {
+		return true
+	}
+	if lookup.err != nil || lookup.list.NextCursor == nil {
+		return false
+	}
+	ctx, cancel := context.WithTimeout(s.ctx(), listTimeout)
+	lookup.running, lookup.cancel = true, cancel
+	s.running.Add(1)
+	go s.loadSearch(ctx, query, lookup.list.NextCursor, lookup)
+	return true
 }
 
 func matches(name string, terms []string) bool {
@@ -205,45 +401,152 @@ func matches(name string, terms []string) bool {
 	return true
 }
 
-// Listing builds the ranked, filtered listing.
-func (s *Service) Listing(ctx context.Context, query string, refresh bool) (Listing, error) {
-	list, at, err := s.viewerRepositories(refresh)
-	if err != nil {
+// Listing combines immediate cached top matches with a cached GitHub search.
+// more starts loading the query's next page.
+func (s *Service) Listing(ctx context.Context, query string, refresh, more bool) (Listing, error) {
+	query = strings.Join(strings.Fields(strings.ToLower(query)), " ")
+	s.mu.Lock()
+	gen := s.gen
+	s.mu.Unlock()
+	var list github.ViewerRepositoryList
+	var at time.Time
+	var err error
+	var searching bool
+	if query == "" {
+		list, at, err = s.viewerRepositories(refresh)
+	} else {
+		// A search is scoped to the owners the top list names, and ranks and
+		// answers from it, so a search that comes first loads its first page.
+		s.mu.Lock()
+		missing := s.cache == nil
+		s.mu.Unlock()
+		if missing {
+			_, _, err = s.viewerRepositories(false)
+		}
+		if err == nil {
+			list, at, searching, err = s.searchRepositories(query, refresh)
+		}
+	}
+	s.mu.Lock()
+	if gen != s.gen {
+		s.mu.Unlock()
+		return Listing{}, context.Canceled
+	}
+	if more && err == nil && s.loadMore(query) {
+		searching = true
+		if lookup := s.searches[query]; query != "" && lookup != nil {
+			list = lookup.list
+		}
+	}
+	var top github.ViewerRepositoryList
+	if s.cache != nil {
+		top = *s.cache
+	}
+	if s.topMore != nil {
+		searching = searching || s.topMore.running
+		if query == "" && err == nil {
+			err = s.topMore.err
+		}
+	}
+	s.mu.Unlock()
+	if query == "" && err != nil && len(top.Repositories) == 0 {
 		return Listing{}, err
 	}
-	picked, err := s.Registry.Repositories(ctx)
-	if err != nil {
-		return Listing{}, fmt.Errorf("%w: %w", errRegistry, err)
+	picked, registryErr := s.Registry.Repositories(ctx)
+	if registryErr != nil {
+		return Listing{}, fmt.Errorf("%w: %w", errRegistry, registryErr)
 	}
 	pickedSet := map[string]bool{}
 	registered := map[string]string{}
 	earlier := map[string][]string{}
 	for _, p := range picked {
 		name := strings.ToLower(p.Repository)
-		pickedSet[name] = true
-		earlier[name] = p.EarlierNames
+		pickedSet[name], earlier[name] = true, p.EarlierNames
 		for _, c := range p.Clones {
 			if c.Available && registered[name] == "" {
 				registered[name] = c.Path
 			}
 		}
 	}
-	terms := strings.Fields(strings.ToLower(query))
-	out := Listing{FetchedAt: at, Repositories: []Item{}}
-	for _, r := range ranked(list) {
-		if !matches(r.Repository, terms) {
-			continue
-		}
-		item := Item{Repository: r.Repository, Private: r.Private, Fork: r.Fork, Description: r.Description,
-			OpenPullRequests: r.OpenPullRequests, Picked: pickedSet[r.Repository]}
+	topSet := map[string]bool{}
+	for _, r := range top.Repositories {
+		topSet[r.Repository] = true
+	}
+	itemOf := func(r github.ViewerRepository) Item {
+		item := Item{Repository: r.Repository, Private: r.Private, Top: topSet[r.Repository], Fork: r.Fork, Description: r.Description, Picked: pickedSet[r.Repository], Clone: registered[r.Repository], EarlierNames: earlier[r.Repository]}
 		if !r.PushedAt.IsZero() {
 			pushed := r.PushedAt
 			item.PushedAt = &pushed
 		}
-		item.Clone, item.EarlierNames = registered[r.Repository], earlier[r.Repository]
-		out.Repositories = append(out.Repositories, item)
+		return item
+	}
+	terms := strings.Fields(query)
+	candidates := []github.ViewerRepository{}
+	for _, r := range top.Repositories {
+		if matches(r.Repository, terms) {
+			candidates = append(candidates, r)
+		}
+	}
+	if query != "" {
+		// Search rows first so their fresher metadata wins; sorting below
+		// decides the order.
+		candidates = mergeRepositories(list.Repositories, candidates)
+	}
+	if err != nil && len(candidates) == 0 {
+		return Listing{}, err
+	}
+	total, hasMore := top.TotalCount, top.NextCursor != nil
+	if query == "" && total == 0 {
+		total = list.TotalCount
+	}
+	if query != "" {
+		// Every match: the loaded ones, and the search results GitHub has not
+		// returned yet (it returns at most a thousand).
+		total, hasMore = len(candidates), list.NextCursor != nil
+		if rest := min(list.TotalCount, maxSearchResults) - len(list.Repositories); hasMore && rest > 0 {
+			total += rest
+		}
+	}
+	out := Listing{FetchedAt: at, TotalCount: total, Repositories: []Item{}, Searching: searching, HasMore: hasMore}
+	if err != nil {
+		out.SearchError = s.classify(err).message
+	}
+	for _, r := range candidates {
+		out.Repositories = append(out.Repositories, itemOf(r))
+	}
+	if query != "" {
+		for _, r := range top.Repositories {
+			out.TopRepositories = append(out.TopRepositories, itemOf(r))
+		}
+	}
+	if query != "" {
+		sort.SliceStable(out.Repositories, func(i, j int) bool { return repositoryBefore(out.Repositories[i], out.Repositories[j], query) })
 	}
 	return out, nil
+}
+
+func repositoryBefore(a, b Item, query string) bool {
+	exact := func(r Item) bool {
+		_, name, _ := strings.Cut(r.Repository, "/")
+		return query != "" && (r.Repository == query || name == query)
+	}
+	if ae, be := exact(a), exact(b); ae != be {
+		return ae
+	}
+	if a.Top != b.Top {
+		return a.Top
+	}
+	var ap, bp time.Time
+	if a.PushedAt != nil {
+		ap = *a.PushedAt
+	}
+	if b.PushedAt != nil {
+		bp = *b.PushedAt
+	}
+	if !ap.Equal(bp) {
+		return ap.After(bp)
+	}
+	return a.Repository < b.Repository
 }
 
 type apiFailure struct {
@@ -323,8 +626,8 @@ func fail(w http.ResponseWriter, status int, code, message string) {
 func (s *Service) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/github/repositories", func(w http.ResponseWriter, r *http.Request) {
-		refresh := r.URL.Query().Get("refresh")
-		listing, err := s.Listing(r.Context(), r.URL.Query().Get("query"), refresh == "1" || refresh == "true")
+		flag := func(name string) bool { v := r.URL.Query().Get(name); return v == "1" || v == "true" }
+		listing, err := s.Listing(r.Context(), r.URL.Query().Get("query"), flag("refresh"), flag("more"))
 		if err != nil {
 			if r.Context().Err() != nil {
 				return

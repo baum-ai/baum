@@ -32,6 +32,31 @@ type Prompts interface {
 	Instructions(ctx context.Context, backend string) (Prompt, error)
 }
 
+// StagedPrompts supplies the instructions of a staged review
+// (Generator.StagedReview).
+type StagedPrompts interface {
+	// StagedInstructions returns the staged review instructions for a
+	// backend. The loop ignores Version and Digest, as it does a Prompt's.
+	StagedInstructions(ctx context.Context, backend string) (StagedPrompt, error)
+}
+
+// StagedPrompt is one immutable set of staged review instructions for one
+// backend. Every stage's prompt starts with the same prefix, Shared followed
+// by the input bundle and the source excerpts; the stage's own instructions
+// (Outline, Details or Context, each ending with the backend's submit text)
+// and what it is given follow. Within a stage, its repairs reuse the cached
+// prefix. Across stages a provider probably caches nothing, since each
+// stage's schema (a StructuredOutput tool or --json-schema) comes before the
+// prompt in what it caches; the evaluation measures it. Digest identifies
+// all four texts together.
+type StagedPrompt struct {
+	Version, Digest string
+	Shared          string
+	Outline         string
+	Details         string
+	Context         string
+}
+
 // StaticPrompts is a fixed Prompts for tests and simple hosts: the prompt for
 // a backend by name, with the prompt under the empty name serving every other
 // backend.

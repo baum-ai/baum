@@ -64,7 +64,7 @@ bundle types to resolve anchors and carry history; `bundle` never imports
 | --- | --- |
 | `schema` | the canonical `baum.review/1` JSON Schema and its validator |
 | `bundle` | evidence types, source interfaces, diff index, checkout export, `REVIEW.md` loading, reference extraction, input redaction, trimming, digest |
-| `review` | document types, the strict, lenient and stored schema views, normalisation, validation with located findings, derived fields, version history, model-free refresh, output redaction, the tile catalogue |
+| `review` | document types, the strict, lenient and stored schema views, normalisation, validation with located findings, derived fields, version history, model-free refresh, a pull request's model-free facts, output redaction, the tile catalogue |
 | `agent` | the backend interface and its implementations, the prompt interface, the generate-and-repair loop, budgets |
 | `viewer` | the React components that render a document and its versions, and the standalone single-page app that `baum internal view` embeds |
 | `sessions`, `linkage` | session discovery and commit-to-session matching, used by `bundle` sources |
@@ -287,6 +287,75 @@ backoff, `sources` and the mapping onto the bundle.
 
 The stored contract stays strict; leniency exists only in derived views.
 
+A section's `details` state exists only in the stored schema. A host sets it
+on a section that lacks its details: `pending` while they are still being
+written (a live draft shown while a job runs) and `failed` when they could
+not be written after repairs (a published version keeps the outline). Such a
+section keeps its outline (`id`, `title`, `kind`, `hunks`, `assessment`,
+`derived`); its `summary` may be absent or null, its `attention` null and its
+`evidence`, `blocks` and tiles empty, and its risks are those the previous
+version recorded for it. Without the state a section still needs its summary.
+The model never writes the state: the strict authored contract and every
+schema derived from it for a model (`ModelSchema`, Codex's strict schema)
+leave it out and require an object summary, exactly as before the state
+existed, so an authored section that carries it is a validation finding.
+`pending` belongs to a live draft only: a host never publishes or saves a
+version with it, and turns any section still pending into `failed` first
+(`review.FailPendingDetails`). A section the next version drops keeps
+`failed` and turns `pending` into `failed`, since nothing will write its
+details; the viewer shows an obsolete section without details as
+"Details unavailable", with no retry. After a rollback to a release without
+the state, a desktop daemon fails stored validation and refresh of a local
+document that carries `details` or the `incomplete_sections` limitation;
+the hosted service never stores either, so a hosted rollback is unaffected.
+
+A staged review (`agent.Generator.StagedReview`) is written in parts, and
+`review` holds everything it validates them with, so no rule has a second
+copy:
+
+- **Stage schemas.** `OutlineSchema`, `DetailsSchema(kinds)` and
+  `ContextSchema` project the model schema (`ModelSchema`): the outline keeps
+  the document's `schema`, `summary` (every model-written field but
+  `context` and `review_minutes`), `relations` and, per section, `id`,
+  `title`, `kind`, `hunks` and `assessment`; the details are
+  `{"sections": [...]}` with each section's `id`, `summary`, `attention`,
+  `risks`, `evidence`, `blocks` and `tiles`; the context is
+  `{"context": ...}`. Each property is the model schema's own, rules naming
+  a dropped property go, and so do unreachable definitions.
+- **The staged contract**: the strict authored contract, except that a
+  section may carry the `details` state (with a null summary, a null
+  attention and no evidence, blocks or tiles) and the summary may lack its
+  context. `PrepareStaged` and `CompleteStaged` are `Prepare` and
+  `CompleteWithPrompt` under it; the one-pass contract is unchanged.
+- **Parts.** `PrepareOutline` keeps the outline fields, gives every section
+  pending details, applies the whole-document rules (schema, hunk and
+  section IDs, at most one mechanical section) plus one of its own (every
+  logical section with hunks has an assessment), and puts the previous
+  version's sections first in their order, as completion would.
+  `PrepareSectionDetails` merges one section's details into that outline and
+  validates the whole document, every other section still pending, so each
+  finding is the section's own. `PrepareContext` does the same for the
+  context. `AssembleStaged` builds a draft (sections not written are
+  `pending`, or `failed` once they failed) or the final document (no
+  `pending`, and the reading time set).
+- **Reuse.** `ReusableSectionDetails` returns, for each outline section
+  whose hunk IDs are those of the previous version's section with the same
+  ID, that section's previous details, when they were complete (no
+  `details` state): its summary, attention, active risks without their
+  lifecycle fields, evidence, blocks and tiles. A mitigated risk is left
+  out, so completion keeps it mitigated. The generator validates what it
+  reuses like model output and sends a section it rejects to the model.
+- **Reading time.** `ReviewMinutes` replaces the model's estimate in a
+  staged review: the words of the overview (text, attention, review
+  exchange, release note, breaking change), the context, and each section's
+  title, summary, attention, behaviour steps (title, text, before, after,
+  question), risks, evidence (claim, detail, expects) and decisions (title,
+  text, rationale, trigger, rejected alternative, evidence) at 200 words a
+  minute, plus the code lines it shows (code blocks, tile code excerpts and
+  the lines a behaviour step's first hunk anchor names) at 12 lines a
+  minute, rounded up and kept within 1 to 240. A one-pass review keeps the
+  model's estimate.
+
 ### Validation and derivation
 
 - Validation reports every finding in one pass, each located to the item it
@@ -301,7 +370,10 @@ The stored contract stays strict; leniency exists only in derived views.
   tiers, the index, agent reviews, the review exchange, each section's
   `review_score` and the document's `risk_score`. `risk_score` is the highest
   current section score, never an average, with floors set by active high and
-  critical risks.
+  critical risks. A current section without its details (`pending` or
+  `failed`) is scored by its assessment and the risks it holds, and makes
+  the document's score a lower bound with an `incomplete_sections`
+  limitation, since the risks its details would add are unknown.
 - A count the tool cannot establish is null, never zero.
 - `summary.context` (how the change fits into the codebase: a required
   `area` and optional `reached_by`, `contracts` and `related` parts, each
@@ -329,7 +401,12 @@ Given the previous version, `review` keeps sections stable:
 - each section's state (`new`, `changed`, `unchanged`, `stale`) is derived by
   comparing its hunk IDs with the previous version;
 - a risk the model omits becomes `mitigated`, and a risk that returns keeps
-  its `introduced_version`. A repair cannot drop a risk.
+  its `introduced_version`. A repair cannot drop a risk;
+- a section without its details (`pending` or `failed`) says nothing about
+  whether its risks were addressed, so, as in a stale section, the previous
+  version's risks are carried as they were recorded: an active one stays
+  active under its `introduced_version` and a mitigated one keeps its
+  `mitigated_version`.
 
 ### Stored documents
 
@@ -489,7 +566,8 @@ refuse a forced choice while thinking); claude runs `claude -p` with no tools
 but StructuredOutput, no settings, MCP servers or session persistence, and at
 most two turns so a reply the harness rejects is retried once; codex
 runs `codex exec --ephemeral --ignore-user-config` read-only with its shell
-tools disabled, low reasoning effort and the system prompt as its model
+tools disabled, the chosen reasoning effort (Codex's own when none) and the
+system prompt as its model
 instructions, in one turn, which a call to one of its remaining tools would
 extend by a request. Both CLIs run in an empty temporary directory with the prompt on
 stdin after `sessions.GenerationRunMarker`.
@@ -626,10 +704,22 @@ that ends without one is nudged twice before the run fails. The key and base
 URL come from the request's `Endpoint`, else the `Backend`'s own (the local
 host sets the key from `ANTHROPIC_API_KEY`). The default model is
 `claude-opus-5-5` at `medium` effort; another model is sent without an effort.
+A chosen effort (`Backend.Effort`) replaces both.
+
+The local app's reasoning effort is one of the preferences, per use case
+(`effort` for reviews, which chat follows, `fix_effort` with a fix agent of
+its own, and `decisions.effort` for data extraction): Default (empty) or
+`low`, `medium` or `high` (`config.Efforts`). It reaches the backends through
+`config.Config.Effort` and `generate.DefaultBackendsFor`: Claude Code as
+`--effort`, Codex as `-c model_reasoning_effort` and the Anthropic API as
+`output_config.effort`; cursor-agent has none. Default leaves it to the
+harness: local Claude Code runs (the User profile) think as Claude Code
+decides, while the Isolated profile of hosted and evaluation runs always sets
+`MAX_THINKING_TOKENS=0` and `CLAUDE_CODE_DISABLE_THINKING=1`.
 
 Every request sent is one call, charged before the next is made: a call the
-request's `MaxCalls` or `MaxTokens` cannot pay for is not sent, and
-`max_tokens` is the smaller of 32,000 and the tokens left. Usage is the API's
+request's `MaxCalls` or `MaxTokens` cannot pay for is not sent (zero is no
+limit), and `max_tokens` is the smaller of 32,000 and the tokens left. Usage is the API's
 per-call report in disjoint buckets (message_start's, updated by
 message_delta's cumulative counts), with the 1-hour share of cache writes
 (zero when unreported, since only the 5-minute TTL is requested), the speed
@@ -715,15 +805,29 @@ and fails for any other backend. A host may supply another implementation; the
 hosted service does, with its private prompts. `StaticPrompts` is a fixed
 implementation for tests and simple hosts. The prompt is per backend because
 each backend submits its result differently. `GroupPrompts` is the local
-review group's prompt (`group-review-public-v3`): the same text with
+review group's prompt (`group-review-public-v4`): the same text with
 `group-public-v1.md` inserted before the Submitting heading, which says how a
 group's bundle, per-member checkout and `members.json` differ and what a
 combined review covers (see "Review groups").
 
+A staged review takes its instructions through `StagedPrompts`, whose
+`StagedInstructions(ctx, backend)` returns a `StagedPrompt`: `Shared` and
+one text per stage (`Outline`, `Details`, `Context`), with a `Version` and a
+`Digest` covering all four. The module's `prompt.StagedPrompts`
+(`review-staged-public-v1`) embeds `review-shared-public-v1.md` (the stages
+and what each writes, so none repeats another, plus the ground rules,
+inputs, checks, anchors, writing and calibration of `review-public-v6.md`)
+and `review-outline-public-v1.md`, `review-details-public-v1.md` and
+`review-context-public-v1.md`, which carry the v6 rules for the parts each
+stage writes, name the stage's own schema file and end with a "Submitting"
+heading under which the backend's submit block goes, as for `Prompts`.
+
 A host can also pass `Run.Decorate`, which the loop applies to every document
 the model returns before masking and validation, to fill what the host
 decides and the model never writes: a review group's `stack` and each
-section's `pull_requests`.
+section's `pull_requests`. `Run.ModelSchema` adjusts the model schema a run
+offers: a review group's asks for `stack` with only its `title`, the group's
+name.
 
 The loop owns the rest of what a run sends:
 
@@ -844,6 +948,122 @@ exactly as the hosted worker does: `ReasonValidationRejected`, the document
 withheld and only its masked copy kept. They are for hosts to call, including
 the local CLI (not yet wired); today only the hosted worker calls them.
 
+### Staged review
+
+```go
+outcome, document, err := generator.StagedReview(ctx, agent.StagedRun{
+	Run: agent.Run{Bundle: b, EncodedBundle: encoded, Directory: dir,
+		TileKinds: kinds, Budgets: budgets},
+	Prompts: prompt.StagedPrompts{}, Progress: onProgress})
+completed, findings := validator.CompleteStaged(document, b, dir, outcome.Model, version, now)
+```
+
+`StagedReview` writes a review in three stages so a reader sees part of it
+sooner and a failure loses less. `Generate` is unchanged and still writes a
+review, and every review group, in one pass; `StagedReview` refuses
+`Run.Decorate`. Each stage is a `RunTask` task in the same run directory,
+labelled with its name (`Task.Label`), so its schema and rejected replies
+are `schema-outline.json`, `rejected-details-1.json` and so on, and the
+stage prompts name their own file. Every stage's prompt starts with the
+same prefix (the shared instructions, the bundle and the source excerpts),
+followed by the stage's instructions, the accepted outline (for the later
+stages) and, on a repair, the rejected part and its findings; a repair
+resends the prefix, which its stage's earlier call has cached, and nothing
+the stage did not write. Across stages the prefix probably does not hit the
+provider's cache: each stage's schema (the `StructuredOutput` tool, Claude
+Code's `--json-schema`, Codex's output schema) comes before the prompt in
+what the provider caches, and it differs per stage. The evaluation after
+the daemon wiring measures it; if it matters, the follow-up is one schema
+shared by the stages and a cache breakpoint after the prefix.
+
+The details and the context run at the same time only when the backend
+reports that its calls may share the run directory
+(`agent.ConcurrentCaller`): Claude Code's `User` profile (the schema goes on
+the command line), Codex's `Local` profile (a temporary schema directory per
+call) and the Anthropic API backend (HTTP and read-only tools). Claude
+Code's `Isolated` profile shares one `HOME` and config directory under the
+run directory, Codex's `Container` profile writes the output schema into the
+shared `CODEX_HOME`, and Cursor's per-workspace state is not known to be
+safe, so they run the details first and then the context, which is skipped
+when no section has its details. A host that wraps a backend must forward
+`ConcurrentCalls` for it to apply.
+
+1. **Outline**, first: the overview and each section's `id`, `title`,
+   `kind`, `hunks` and `assessment`, with little or no reading of files.
+   `review.PrepareOutline` validates it, and a repair resends only the
+   outline and its findings. A failed outline fails the run as `Generate`
+   fails (`ReasonValidationRejected` with the rejected outline, or the
+   error).
+2. **Section details**, once the outline is accepted. A section whose hunks
+   are unchanged since a previous version with complete details keeps those
+   (`review.ReusableSectionDetails`) and is not sent. The model writes the
+   rest in one call; each section is validated on its own
+   (`review.PrepareSectionDetails`), and a repair sends only the sections
+   still failing, each with its rejected details and its findings, and
+   cannot reactivate a risk the section's first details left out
+   (`review.PreserveSectionRiskOmissions`). A section still invalid after
+   `MaxRepairAttempts`, or never reached because the stage ended early (a
+   spent budget, a provider failure), is published with `details: "failed"`
+   and its outline. If no section ends with its details (none written and
+   none reused), the run fails as a one-pass run would; a regeneration that
+   reuses some sections succeeds even if every section sent fails.
+3. **Context**, with or after the details: `summary.context`, with
+   the reading the context rules ask for (`review.PrepareContext`). If it
+   fails, after its repairs or with any error, the document has no context
+   and the run still succeeds.
+
+The result is `review.AssembleStaged`'s final document (complete sections,
+failed ones without details, the context when written, and
+`summary.review_minutes` from `review.ReviewMinutes`, which no model
+writes), checked with `review.PrepareStaged`; it never holds `pending`. A
+host completes it with `CompleteStaged` where it completes `Generate`'s
+document with `CompleteWithPrompt`, after `RedactStagedOutput` (where it
+calls `RedactOutput`) and `RejectSecrets`: each stage's outcome carries its
+own findings, rejected part, model and diagnostics, and
+`RedactStagedOutput` masks them, and each stage's reason, as `RedactOutput`
+masks the run's. One identifier pass masks every reply of every stage
+before anything is built from it, so its
+counts cover the run; a secret masked in a closed value during the outline
+skips the later stages, since the host rejects the run anyway.
+
+`StagedRun.Progress` is told of each stage result as it lands (the outline
+accepted, each section's details written, reused or failed, the context
+written or failed) with `AssembleStaged`'s draft so far, in which sections
+not yet written are `pending`; calls come one at a time from the stages'
+goroutines. A host completes a draft with `CompleteStaged` to show it, and
+never stores one with `pending`.
+
+**Budgets.** The outline has a quarter of the run's calls and tokens (at
+least one of each). What it leaves goes two thirds to the details (at least
+one call while any remains) and the rest to the context, or all to the
+context when every section was reused, so the stages never spend more than
+the run's budgets together. `MaxProviderAttempts`, `MaxRepairAttempts`,
+`StallTimeout` and `ToolTimeout` apply per stage and per call as in
+`Generate`, and the host's wall clock covers the whole run. A stage whose
+share is spent fails with `GenerationBudgetExceededReason`, with the
+consequences above.
+
+**Outcome.** `StagedOutcome` embeds the run's `Outcome`, with the calls,
+tokens, attempts, repairs, usage, accounting, diagnostics (at most 512) and
+sessions of every stage summed, and has each stage's own `StageOutcome`:
+its outcome, with its reason when it failed even if the run went on, and
+for the details stage the sections written, reused and failed. Each stage
+records the backend session of its call; the details stage's is its first
+pass, the one that wrote most of the document, and it is the run's
+`SessionID` (the outline's when nothing was sent to the details stage).
+
+**Continuing a version.** A run given `StagedRun.Outline` (a saved version's
+outline, `review.StoredOutline`: its summary and the sections it wrote, not the
+stale ones it carried) writes no outline and no context: the outline is
+prepared as an outline reply, `StagedRun.Context` is kept when it still
+validates, and the details of every section `StagedRun.Reuse` (that version,
+refitted to the diff) holds complete are reused, so only the sections it
+published without their details are written, with every call and token of the
+run's budgets. The bundle's previous version stays the one before, which
+completion reconciles against. An outline that no longer validates fails the
+run before any call. The daemon's details retry is its only host (see
+"Persistent generation jobs").
+
 ### Tasks
 
 ```go
@@ -869,7 +1089,11 @@ pass), `ReasonValidationRejected` with the last rejected document after the
 last repair, or an error. `RunTask` logs sizes and counts only, never what the
 model wrote. A host masks the outcome with `RedactTaskOutput`, which is
 `RedactOutput` without a review contract: every string of the document, keys
-included, is free text, and none is a closed value.
+included, is free text, and none is a closed value. A task with a `Label`
+(lowercase letters, digits and dashes) writes `schema-<label>.json` and
+`rejected-<label>-N.json` instead (`TaskSchemaFile`), so tasks running in
+one directory at once, such as a staged review's stages, keep their own
+files; without one the names are unchanged.
 
 ## `decisions`
 
@@ -958,8 +1182,14 @@ through props and context:
 | header slots | no | not used | statistics, generation controls, approval state, a back link |
 | rail groups | no | Sessions and Commits, from `/api/sessions` (below) | changed files, linked sessions and commits, each listed in the rail with the host's pane |
 | version shown | no | not used | a callback with the versions on screen, for example to record that one was read |
+| details retry | no | not used | writes again the details of a current section whose `details` is `failed`; the section offers Retry only with it |
+| context pending | no | not used | says the current draft's context is still being written, so the Summary shows "Writing context…" while it has none |
 
 Optional seams default to absent, and the viewer renders the document alone.
+A section without its details (`details` `pending` or `failed`) shows its
+outline: its title, assessment and hunks under a live status, "Writing
+details…" or "Details unavailable", and read marks, approvals and discussion
+treat it as any section.
 The viewer never decides who can see a document; that is the host's job.
 
 The host preserves each hunk's rename source as optional
@@ -1437,8 +1667,16 @@ hold up another, and a build that fails is tried again on the next request.
 session card and conversation (`oss/viewer/src/transcript.ts`, in the hosted
 API's field names), with the hosted service's rules: a prompt is a top-level
 input of kind prompt or slash command from a human with text left once
-wrapper constructs are stripped; a nested session's activity counts toward
-the prompt whose tool call started it; activity under any other input is the
+wrapper constructs (and the lead of a message the desktop app sent,
+`prompttext.AppMessageLead`) are stripped, and not one the harness wrote under
+the human's name: Claude Code's `isMeta` lines without an origin (such as the
+line saying where a pasted image was saved) and another agent's
+`<agent-message>`, such as a subagent's report, whose replies and activity
+count toward the prompt before it. A system input, such as a subagent's report
+Claude Code marks `promptSource: "system"` or a task notification, likewise
+hands its replies and activity to the prompt before it, since the agent's
+answer to it is that prompt's turn going on; a nested session's activity counts
+toward the prompt whose tool call started it; activity under any other input is the
 session's and no prompt's (`unattributed`). `session` is the hosted session
 detail's shape: each prompt carries its last text replies (`replies`, a
 preview of each, with `replies_omitted` counting the earlier ones) and
@@ -1590,11 +1828,21 @@ format and the protocol constants have one definition on both sides.
    image URLs GitHub has already signed, and downloads the description images
    from them without credentials; `bundle` caches nothing, and writes the
    images only to the attachments archive `generate` reads;
-5. loads the previous local version, if any, and builds the bundle;
-6. runs the configured backend with the public prompt; tiles are off unless
-   enabled;
+5. loads the previous local version, if any, and builds the bundle, with the
+   previous version's hunk anchors refitted to the diff
+   (`review.FitPreviousHunkAnchors`, as the hosted builder does);
+6. runs the configured backend with the public staged prompt, in stages (see
+   "Staged review"): the outline, then the sections' details and the
+   context; tiles are off unless enabled;
 7. validates, derives and redacts the document, and stores it as the next
-   version.
+   version, with any section whose details failed `failed` and no context
+   when the context stage failed.
+
+The hidden `--one-pass` flag writes the review in one call with the one-pass
+public prompt instead, as before staged reviews, for evaluations that compare
+the two; the daemon never uses it. Every backend (claude, codex, cursor-agent
+and anthropic) runs either way from the command line; the daemon runs only claude
+and codex.
 
 `baum internal generate` is `internal/generate` (the pipeline) and
 `internal/cli/generate.go`. The CLI opens `internal/store`, loads the latest
@@ -1604,7 +1852,12 @@ run, it selects and checks the backend before assembling (`claude.Backend.Check`
 `codex.Backend.Check`, `cursor.Backend.Check`, `anthropic.Backend.Check`, which
 only needs the key; `auto` tries `generate.AutoOrder`: claude, then codex, then
 anthropic, and never cursor-agent, which runs only when named because it cannot
-be held to read-only as reliably), assembles with `Request.Checkout` and `Attachments`
+be held to read-only as reliably). The daemon, its chat, fix and decision calls
+use `generate.SelectDesktop` instead: only `auto`, `claude` and `codex` run, `auto`
+tries `generate.DesktopAutoOrder` (claude, then codex) and never reaches
+anthropic, and a job whose backend is `cursor-agent` or `anthropic` fails with
+`generate.ErrBackendNotOffered` rather than switching backends; the daemon's
+Diagnostics report (`doctor.Options.Desktop`) checks only claude and codex), assembles with `Request.Checkout` and `Attachments`
 written to temporary files outside the run directory, creates the run
 directory with `os.MkdirTemp("", agent.RunDirPrefix+"*")` and unpacks both
 archives into it with `bundle.UnpackCheckout` and `UnpackAttachments` under the
@@ -1612,7 +1865,7 @@ bundle's own caps, and runs `agent.Generator` with the `claude.User` or
 `codex.Local` profile, never `Isolated` or `Container` (a test guards this),
 with `cursor.Backend`, or with `anthropic.Backend` and the key from
 `ANTHROPIC_API_KEY`. The
-wall-clock budget is a `context.WithTimeout` around the loop, `pass_timeout`
+wall-clock budget (`review_timeout`) is a `context.WithTimeout` around the loop, `pass_timeout`
 bounds each backend call, and SIGINT and SIGTERM cancel the context so the
 backend's process group is killed and the run directory removed.
 
@@ -1627,11 +1880,15 @@ because the CLIs record the resolved cwd. The loop asks every call to persist
 its session. Each call, a repair included, is a fresh session that carries the
 whole context pack (a repair resends the bundle and the rejected document), so
 `Outcome.SessionID`, the session of the last successful call, is the one that
-produced the accepted document and is self-contained. A run that succeeds with a
+produced the accepted document and is self-contained. In a staged review every
+stage's calls are sessions of their own, all in `Outcome.Sessions`; the one
+kept is the details stage's first pass, which wrote most of the document and
+read the code for it, or the outline's when no section was sent to the details
+stage (`StagedOutcome.SessionID`). A run that succeeds with a
 session id records `store.Metadata.Session` (`backend`, `id`, `directory`,
 absent in older versions) and keeps the directory, after deleting the
-`rejected-N.json` files of the repairs (raw model output the chat does not
-need); a failed, rejected or cancelled run, a run without a session id, and a
+`rejected-*.json` files of the repairs, every stage's included (raw model
+output the chat does not need); a failed, rejected or cancelled run, a run without a session id, and a
 version the store refused remove it as before. A cache directory that cannot be
 created is a warning on the progress output, and the review then runs in a
 temporary directory without persisting anything.
@@ -1643,7 +1900,9 @@ dir>/<id>.jsonl`, or a Codex rollout in `$CODEX_HOME` (else `~/.codex`)
 `/sessions/YYYY/MM/DD/rollout-*-<id>.jsonl` whose `session_meta` records the run
 directory as cwd. `Outcome.Sessions` lists every id the calls reported.
 `reviewruns.RemoveSessions` deletes them: after a successful run, those of the
-calls that did not produce the accepted document; on any failure, rejection,
+calls that did not produce the accepted document (in a staged review, every
+session but the kept one: the outline's, the context's and the repairs');
+on any failure, rejection,
 missing id, refused store or interruption, all of them (Claude's whole project
 directory, which is unique to the run, and the Codex rollouts whose first line
 records that cwd); and when a kept directory is pruned, every session of it,
@@ -1677,7 +1936,12 @@ Cursor, the Anthropic API backend and hosted reviews are refused
 Sessions. The first turn forks the review's kept session (`ResumeSession` the
 review's id, `ForkSession`, `PersistSession`) in the review's run directory,
 so the agent starts with everything it read and the review's session stays
-untouched; the fork's new id becomes the conversation's session. Every later
+untouched; the fork's new id becomes the conversation's session. For a review
+written in stages that is the details stage's session, the one that read the
+code for the sections, or the outline's when the details stage sent nothing;
+the other stages' sessions were deleted when the version was stored, and a
+details retry keeps none, so the conversation forks the session of the run
+that wrote the version. Every later
 turn resumes the conversation's own session in the same directory, without
 forking. When the review kept no session, it is another harness's, or its run
 directory is gone, the turn seeds a new run directory under the review-runs
@@ -1740,10 +2004,11 @@ answer is masked with `agent.RedactTaskOutput` before it is checked further,
 stored or returned, and the log carries sizes and counts only. The question
 itself is the reviewer's own text: it is stored and served as typed, and
 masked only where it goes to an agent (the turn's prompt and a seeded
-`conversation.json`). A turn's budgets are half of a review's calls, tokens
-and wall clock, and each call is bounded by half of its `pass_timeout`
-(`generate.BoundPasses`), which fails the turn with the budget
-`pass_timeout` without a retry.
+`conversation.json`). A turn's time limit is `run_timeout`; its call and
+token budgets are half of a review's when the config file sets them, none
+otherwise. Each backend call can contain the agent's full tool loop, so its
+pass deadline is at least the turn's `run_timeout`; the run context enforces
+the time limit chosen in Settings.
 
 Storage and jobs. Conversations and turns live in the clone's review store
 (`versions.sqlite`, tables `conversations` and `turns`, keyed by the lowercased
@@ -1770,7 +2035,15 @@ the unpacked tree's paths as the known checkout paths) and
 `agent.RejectSecrets` rejects a run that masked a secret in a closed value; then
 `DocumentValidator.CompleteWithPrompt` derives the host-owned fields and records
 the model and prompt version, and `ValidateStored` checks the result strictly
-against the bundle. Failures are `*generate.Error` values of a category (input,
+against the bundle. A staged run masks with `agent.RedactStagedOutput` instead,
+which masks every stage's outcome too, then rejects secrets the same way, marks
+any section still pending as failed (`review.FailPendingDetails`) and completes
+with `CompleteStaged`; the version records the staged prompt's version and the
+digest of its texts as sent, whose shared part, which starts every stage's
+prompt, starts with `sessions.GenerationRunMarker`. The progress output names
+each stage's passes ("details, pass 2: the validator found problems") and, at
+the end, how many sections lack their details and whether the context is
+missing. Failures are `*generate.Error` values of a category (input,
 backend, budget, validation, interrupted, internal) that `cli.ExitCode` maps to
 exit codes 2, 3, 4, 5, 130 and 1. A failure to mask the output is internal, as
 the hosted worker reports it as a plain failure rather than a rejected
@@ -1925,9 +2198,23 @@ variables, so it may name a `GIT_` variable the allowlist drops. A fix passes
 it to `gitlocal.FixOptions.Env` for every git command in the checkout and the
 push, without the variables that would redirect git.
 
+## Local application persistence
+
+[`internal/appdb`](internal/appdb/README.md) owns the shared per-user
+`$XDG_STATE_HOME/baum/app.sqlite` (default `~/.local/state/baum/app.sqlite`).
+Repository settings, groups, decisions/features, jobs, scheduler state, inboxes,
+analytics/history and persistent discovery/pricing caches share it. Small JSON
+state documents use bucket/key rows; read-modify-write operations use SQLite
+transactions. Version 1 is the first release baseline; newer and unrecognized
+schemas are refused and pre-release files are not imported. The package README
+lists the stores and release-readiness checks. Clone review databases, OS
+credentials, optional config, runtime credentials/locks/spool/logs and actual
+agent working directories/transcripts remain independent.
+
 ## Explicit local repository registry
 
-`internal/repos` owns the private SQLite database beside `config.Path()` and
+`internal/repos` owns the repository tables in the shared private
+`app.sqlite` application database (`internal/appdb`) and
 reuses `gitlocal` and `github.RepositoryFromRemote` for offline clone discovery.
 The `clones` table keys canonical working-tree roots separately from the shared
 common git directory and normalized repository identity (host-qualified for Enterprise). The
@@ -1947,16 +2234,14 @@ an explicit `true`/`false`. The global preference is a master switch
 (`Settings.AutomaticEnabled`): off disables every repository, `true` included;
 on, only an explicit `false` disables one. The `preferences` table holds the
 global preferences as one JSON row: `automatic` (true until changed), the
-harness and model, `pull_requests` and `agent_env`; a field an older baum
-saved and this one dropped (`cursor_agent_acknowledged`) is ignored on read.
-`PRAGMA user_version` 1 marks the schema in which
-`null` exists: `Open` migrates an older file once, in a `BEGIN IMMEDIATE`
-transaction, turning the `automatic: false` every earlier registration stored
-into `null`, and keeping a stored `true` (only `baum internal repos add --automatic`
-could set it). `OpenReadOnly` reads an unmigrated file the same way without
-writing it. An older baum that registers a repository after the migration
-still stores `automatic: false`, which now reads as an explicit off: that
-repository stays off until changed in the app, which fails safe.
+review harness and model, the fix agent (`fix_backend`, `fix_model`), data
+extraction's (`decisions`: `enabled`, `backend`, `model`), `pull_requests`
+and `agent_env`; a field an older baum saved and this one dropped
+(`cursor_agent_acknowledged`) is ignored on read. The harnesses and models are
+global: a repository's `backend` and `model` an older baum stored are ignored
+on read and dropped on the next write.
+The shared application database owns schema versioning; pre-release registry
+files are not imported. `null` follows the global preference.
 `PUT /api/repos/{id}/settings` replaces the whole object and requires the
 `automatic` field, so removing it is an explicit `null`. A `daily_cap` an
 older baum stored is ignored on read, and one an older app sends is dropped
@@ -2025,7 +2310,7 @@ Claude Code's stored OAuth token, which is never refreshed, logged or stored.
 That is the one outbound host the feature adds. Results are cached five minutes,
 with at most one read a minute. See its [README](internal/planusage/README.md).
 `planusage.History` samples the plans every 15 minutes while the daemon runs and
-keeps 90 days of changed figures in `plan-usage-history.json`, for analytics.
+keeps 90 days of changed figures in the `state/plan-usage-history` document in `app.sqlite`, for analytics.
 
 ### Local analytics
 
@@ -2033,7 +2318,7 @@ keeps 90 days of changed figures in `plan-usage-history.json`, for analytics.
 (`uiserver.LocalAPI.Analytics`) for the app's Analytics page. Its parts, all
 started in `localApplication`:
 
-- `Index` keeps per-session aggregates in `analytics-index.json` in the state
+- `Index` keeps per-session aggregates in the `cache/analytics-index` document in `app.sqlite` in the state
   directory, for sessions whose working directory is inside a registered clone
   (`sessions/collector.FindSessions` per clone with its worktrees, then
   `sessions.Map` and a reduction that keeps no text). Entries are keyed by the
@@ -2046,13 +2331,34 @@ started in `localApplication`:
   the clones' commits by their `user.email` (`gitlocal.AuthoredCommits`) against
   the sessions' created commits, Entire checkpoints and co-author trailers.
 - baum's own work comes from the jobs queue and `Actions`, a ledger in
-  `analytics-actions.json` that the merge and update handlers' writers record
+  the `state/analytics-actions` document in `app.sqlite` that the merge and update handlers' writers record
   into when GitHub accepts a write (`Actions.RecordMerges`, `RecordUpdates`).
 - `Delivery` caches one GitHub search per picked repository
   (`github.AuthoredPullRequests`) for an hour; a request starts the search and
   answers `loading` rather than waiting.
 
 See its [README](internal/analytics/README.md).
+
+## Durable desktop reading state
+
+`internal/uistate` stores the Inbox's seen/cleared record and snoozes, and the
+walkthrough's seen stops and draft comments, in `app.sqlite`'s `ui` document
+bucket. The records survive changing loopback origins and fresh webviews;
+localStorage is used only for presentation choices. Walkthrough keys include
+repository, pull request and review version; one transaction retains the 40
+most recently saved records, using write order even if the wall clock moves
+backwards.
+
+`GET`/`PUT /api/ui-state/inbox` and
+`GET`/`PUT /api/ui-state/walkthrough?key=…` run inside the existing local
+Host/authentication/Origin/JSON boundary. Each value is a bounded typed record.
+Writes compare that record's revision inside an immediate transaction and
+return the current value on conflict. Client sequence high-water marks
+acknowledge retried writes without replaying an already committed append; the retry ledger is not served.
+The frontend shares a hydrated record, queues semantic changes and rebases
+conflicts without replacing unrelated fields. It never saves initial defaults
+before a successful read. Failed reads/writes keep unsaved text and offer Retry.
+Drafts remain local until the person explicitly submits a GitHub review.
 
 ## Authenticated local application host
 
@@ -2079,7 +2385,7 @@ The stream also carries `notice` events for the desktop app's notifications
 `review_finished`, `review_failed`, `review_automatic` (an automatic review
 finished), `review_requested`, `checks_failed`, `conflict`,
 `changes_requested`, `ready_to_merge`, `fix_pushed`, `fix_failed`,
-`session_permission` and `session_input`. The last two are an agent session
+`details_failed`, `session_permission` and `session_input`. The last two are an agent session
 that began waiting for the user's permission or answer (see "Live
 sessions"): `agent`, `session` (its id), `branch` and `message` (the
 tracker's cleaned, masked `waiting_message`) name it, `pr` is 0 when its
@@ -2089,7 +2395,8 @@ or superseded) and when a discovery snapshot shows a pull request newly
 review-requested from the user (a repository's first snapshot after the
 daemon starts is only a baseline). A fix job gives `fix_pushed` with the
 pushed commit's first seven characters in `commit`, or `fix_failed` with its
-`reason`, instead of a review notice. The four pull request kinds are
+`reason`, instead of a review notice; a details retry gives nothing when it
+completes and `details_failed` with its `reason` when it fails. The four pull request kinds are
 transitions of the user's own pull requests between two successive snapshots
 of one repository: checks became failing, the pull request became conflicting,
 the review decision became changes requested, or the merge state became
@@ -2188,8 +2495,8 @@ retry deadlines are shared by host and credential across repositories and
 service restarts. Discovery never sleeps through an exhausted budget.
 A failed or rate-limited refresh preserves the last complete inbox as stale;
 optional non-rate team or permission failures keep their fields unknown.
-Snapshots and minimal typed response fields are atomically replaced in private
-cache files, partitioned by host/credential fingerprint/repository. The index
+Snapshots and minimal typed response fields are atomically replaced in
+`cache/discovery/<hash>` application database documents, partitioned by host/credential fingerprint/repository. The index
 consumes these snapshots; missing PRs in an open-only snapshot are never treated
 as closed. Each pull keeps its head and base branches (`head_ref`,
 `base_ref`). Old cache formats drop
@@ -2250,7 +2557,7 @@ head_sha}`, repeats the checks above, re-reads the run list (the request never
 names a run) and posts `.../actions/runs/{id}/rerun-failed-jobs` for each. It
 answers `{rerun, refused}`: an error only when no run started. Errors are
 `{code, message}`: `head_moved`, `conflict`, `not_open` and `up_to_date` are
-`409`, `blocked`, `no_runs` and `fork` are `422`, `forbidden` is `403`,
+`409`, `blocked`, `no_runs`, `fork` and `no_clone` are `422`, `forbidden` is `403`,
 anything else `502`. After either write the daemon runs `Service.PollNow` and
 publishes an index change.
 
@@ -2273,8 +2580,10 @@ its headline cut to 200 characters (`excerpt`: `fix.Headline`, the first
 wholly bold line among the first four, else the first line of text, without
 HTML comments, tags, images, code blocks or Markdown markup, which the fix
 dialog's excerpts use too), the
-comment count, the first comment's `url` and `can_resolve`
-(`viewerCanResolve`). `POST /api/prs/resolve-thread` takes `{repository, pr,
+comment count, the first comment's `url`, `can_resolve`
+(`viewerCanResolve`) and `messages`: every comment read (the first 20; the
+fix addresses the first 10), each `{author, body, url}`, the body as text cut to
+4000 characters, untrusted. `POST /api/prs/resolve-thread` takes `{repository, pr,
 thread}`, reads the thread by its node id (`ThreadState`) and refuses one that
 is not on that pull request (`not_found`, `404`) or that the account cannot
 resolve (`forbidden`); a thread already resolved answers success without a
@@ -2295,6 +2604,26 @@ status's description, cut to 160 characters), `url` (`details_url`, else
 head's list for 2 minutes, forgets it when either re-run starts a run of that
 head, and is emptied with the threads on an account change.
 
+`GET /api/prs/checks?repository=&pr=&head_sha=` lists every check of
+`head_sha` (`fix.AllChecks`: check runs of their latest attempt and commit
+statuses, at most 100). It answers `{head_sha, checks}`, each check's `name`,
+`status` (`queued`, `in_progress` or `completed`; a pending commit status is
+`in_progress`), `conclusion` (the run's conclusion or the status's state, empty
+until completed), `title`, `url` and `job_id` (only for a failing GitHub
+Actions run, so `rerun-job` accepts it). Failing checks come first, then
+those not completed, each by name. The cache keeps a head's list for 20
+seconds, and a re-run forgets it.
+
+`GET /api/prs/conflicts?repository=&pr=` answers `{head_sha, base_ref,
+base_sha, files}`: the files in which the pull request's head conflicts with
+its base branch's current tip. The daemon reads the pull request from GitHub,
+then in the repository's first available clone fetches the head (when
+missing) and the base tip into `refs/baum/pull/<N>/` and runs `git merge-tree
+--write-tree --name-only -z` in the private mirror (`gitlocal.Repo.Conflicts`),
+which touches neither the working tree nor any branch; `files` is empty when
+the merge is clean. It needs git 2.38 or newer. Without an available clone with
+a remote naming the repository it answers `no_clone` (`422`).
+
 `POST /api/prs/rerun-job` takes `{repository, pr, head_sha, job_id}`,
 re-checks that the pull request is open, its head is `head_sha` and the
 account can push, re-reads the head's failing checks and refuses a `job_id`
@@ -2314,13 +2643,72 @@ snapshot: its entries have no `clone_id` and carry `needs_clone: true`, the
 same marker as any entry whose repository has no available clone. There is no
 store to read for it, so its rows are `no_review`.
 
+### Pull request facts
+
+A pull request with no saved review still shows what is known about it
+without a model. `GET /api/facts?clone=&pr=&head=` answers its facts
+(`review.Facts`, schema `baum.facts/1`): the stats, index (hunks, checks,
+comments, reports, threads, sessions), agent reviews and unassigned hunks a
+completed document derives, filled by the same code (`review.BuildFacts`
+over `bundleIndex`, `agentReviews`, `setValidation`, `countFindings` and
+`setReviewExchange`), with no version, sections or model-written text. Its
+bundle is assembled as generation's is, through the same GitHub client,
+clone (fetching a missing pull request commit) and local session stores,
+in facts mode (`assemble.Request.Facts`): no head/ or merge-base/ tree is
+exported and no description image is downloaded.
+
+`internal/facts` builds them only when a page asks, never in the
+background, and keeps the latest per clone, repository and pull request in
+memory; they are never written to a version store, and `/api/versions` and
+`/api/document` never see them. A request about the head the page shows is
+answered from memory until the background refresh's interval
+(`Service.RefreshInterval`, one minute) has passed since the last build, so
+a page that keeps asking reads GitHub at most once per interval; a new head
+builds at once, a head GitHub does not report yet stands for the interval,
+and concurrent requests for the pull request, whatever head they name, share
+one build that a request giving up does not cancel. A failed build stands for
+10 seconds, so a retry soon reads again, while facts built before for the
+same head still answer; a rate-limited one stands for the interval. While the host's rate limit is paused (`Service.Paused`
+of the background refresh) only facts already held for that head answer,
+else `503` with `{"code":"rate_limited","resume_at"}`; a build that is
+rate-limited extends the shared pause (`Service.Limited`). A pull request
+without a registered clone gets none (the selector is a clone ID).
+`/api/facts/sessions`, `/api/facts/sessions/{id}`, `/api/facts/patch` and
+`/api/facts/commits` serve what the version routes serve, through the same
+per-document viewer cache, for the facts last built, and never read GitHub.
+They take the `head` of the facts the page shows and answer `404` when the
+facts last built describe another, so a page is never answered for facts it
+was not shown.
+
 ### Persistent generation jobs
 
-`internal/jobs` serializes queue mutations in a private atomic JSON journal,
+`internal/jobs` serializes queue mutations in the `state/jobs` JSON document
+in the shared private `app.sqlite` application database,
 without duplicating review documents. `jobs.Open` takes an exclusive
-`internal/filelock` lock beside the journal (`jobs.json.lock`) and keeps it
+`internal/filelock` lock beside the database (`<database path>.jobs.lock.sqlite`) and keeps it
 until its workers stop, so two processes never run one queue; it waits up to
 10 s for a predecessor whose shutdown timed out and that is exiting.
+Reviews, fixes and feature builds share one lane, which runs up to
+`repos.MaxJobConcurrency` (4) jobs at once, oldest first; questions have their
+own lane (see the chat section). The `job_concurrency` preference lowers the
+limit (`PUT api/settings/job-concurrency`, 1–4), and `Queue.SetConcurrency`
+applies it to the running queue: lowering it stops no running job, it only
+holds new ones until fewer run. A job waits while another job of one of its
+pull requests (a group's members count) runs, and later jobs may start before
+it. The daemon's log (`Queue.SetLogger`) has a line when each job starts and
+one when it ends, with its state, reason, detail, calls, tokens and duration
+and, for a failure, the executor's error, which the job itself may keep no
+text of (a provider's error, an internal one).
+
+A run's time limit is its only bound by default: `budgets.review_timeout` (10
+minutes) for a review of a pull request or a group and `budgets.run_timeout`
+(30 minutes) for every other agent run, a fix, a question to a review's agent
+or a feature build. The preferences' `review_time_limit_minutes` and
+`run_time_limit_minutes` (`PUT api/settings/time-limits`, 1–240) replace the
+config file's (`Preferences.Resolve`). `max_calls` and `max_tokens` are zero,
+no limit, unless the config file sets them; `agent.Exceeds` and the backends
+treat a zero call or token budget as none, and Claude Code gets `--max-turns`
+only with a call budget.
 `Queue.Drain` refuses new jobs and reports true only when none is queued or
 running, under the mutex `Submit` checks, so a restart never cuts a started
 job short: one started during it gets `503` with `Retry-After` and is started
@@ -2341,6 +2729,16 @@ browser. A single item the daemon will not run (a fix's `blocked_reason`) is
 `Generate` is `Estimate` (a preparation of the items, the name historical)
 then `SubmitConfirmed`, which prepares again and refuses changed inputs;
 there is no estimate endpoint.
+Before any model call the executor rechecks a queued job (`Local.confirmed`).
+A changed head, group members or isolation warning stops it, and so does a
+changed GitHub account. A changed agent, model or limit does not: the run uses
+the settings current when it starts, as one started then would. The account
+is compared through `Prepared.account`, a hash of the credential partition
+kept in memory only; a job read back from the journal compares the whole
+`ConfigDigest`, which also covers the account. An automatic pull request
+review whose head moved is cancelled as `superseded` (the new head has its
+own run), and a group job whose group was deleted or whose stack dissolved is
+cancelled as `group_removed`.
 Fresh GitHub REST evidence authorizes the head and isolation warning; all
 preflight I/O happens outside the queue mutex so cancellation stays responsive.
 A job names a clone (`Item.Clone`). An item whose clone is unknown or
@@ -2353,6 +2751,66 @@ without running (`cancelled` when automatic, so its head is not used up;
 The runner has no subprocess invocation of baum itself. Only the agent
 backends and a fix's git commands run child processes, cancelled through their
 context.
+
+A single pull request's job, manual or automatic, writes its review in stages
+(`generate.Options.Staged`, see "Staged review"); a review group's stays one
+pass. While it runs, `generate.Options.OnDraft` hands the job each draft, the
+review so far masked (`RedactOutput`) and completed (`CompleteStaged`) as a
+version would be, with the sections not yet written `pending` and no context
+until the context stage lands. The queue keeps only the latest draft of each
+running job, in memory, counts them in the job's `draft` field (each draft is a
+`progress` event) and serves it at `GET /api/jobs/{id}/draft` as
+`{"draft": <count>, "document": …}`, under the same authentication as the rest
+of `/api/jobs`; a job without one, or ended, is `404`. A draft is never a
+version: it is not stored, listed or read through the document routes, and it
+goes with the job when the job ends, the `draft` count back to zero. A daemon
+restart interrupts the job, which runs again from its outline when it is
+started again, as any interrupted job does. When the stages settle the job
+publishes one version through `generate.Publish`, with any section still
+without its details `failed` and without a context when the context stage
+failed; the job fails only when the outline fails (or the run fails as a
+one-pass run would). The job then records what the version lacks:
+`failed_sections` (their IDs) and `context_failed`. The stages report their
+calls through the job's tracked backend from their own goroutines, so its
+counts are locked, and it forwards `agent.ConcurrentCaller`, as the pass
+timeout's and `backend_paths`' wrappers do, so the details and the context run
+at once where the backend allows it.
+
+A section's Retry on the latest saved version queues a `details` job
+(`jobs.KindDetails`, `{"clone", "pr", "kind": "details", "version"}`, single
+mode). It is prepared like the pull request's review, with the backend and
+model that wrote the version, and is refused (`409`, `blocked_reason`) with
+`head_changed` when the pull request's head is no longer the version's (the
+app offers to regenerate instead), `base_changed` when its base branch has
+moved from the version's base commit (likewise), `version_changed` when the version is not
+the latest, and `nothing_to_retry` when no section of it failed. It runs only
+the details stage, for every section of the version published without its
+details (`generate.Options.Continue`): the outline and context come from the
+stored version (`review.StoredOutline`), its complete sections are reused as
+they are, and the bundle is assembled again against the same head, base and
+merge base (anything else fails the job before a model call), with the
+version before it as the previous version, so completion reconciles risks and
+sections as it did. The document keeps the version's number, model, prompt
+version and generation time, and its metadata is unchanged. The write
+rebases on the version as it is then: the sections it wrote are spliced into
+the latest bytes by ID (`review.DocumentValidator.SpliceSections`), with the
+risk score, the reading time and the risk line counts taken from the
+completion, which derived them from the same sections, and the open agent
+findings per section counted again, so a refresh in the meantime keeps its
+newer checks, threads and sessions. The result is checked with
+`ValidateStored` and replaces the version in place with
+`store.Store.CompleteCurrent`, fenced like `RefreshCurrent` by the generation
+identity, the exact previous bytes and the version being the latest; a
+conflict reads and splices once more. A second conflict, a changed
+generation, or a newer version stands the job down, `cancelled` with reason
+`superseded`, and so does a moved head, base or replaced version when the job
+starts (`head_changed`, `base_changed`, `version_changed`). A review queued
+for the pull request at another head, manual or automatic, supersedes a
+queued or running retry at once (`cancelled`, `superseded`); a retry never
+makes the pull request busy or a head duplicate for the automatic scheduler.
+It never writes the outline or the context again, keeps no agent session, and
+a section that fails again stays `failed`. A failed retry's notice is
+`details_failed`; a completed one has none.
 
 `Queue.SubmitAutomatic` is how the automatic scheduler (see "Automatic
 generation") queues a job nobody confirmed. It prepares the item like a
@@ -2383,7 +2841,8 @@ live with that implementation; `internal/pricing` is a stateless import facade
 for local callers.
 A bounded HTTPS downloader refuses redirects, verifies the existing release
 signing key, rejects flattened lists and installs only newer full-format lists.
-An installed download is stored with its signature in the job state directory.
+An installed download is stored with its signature in the `cache/pricing`
+application database document.
 The daemon re-verifies and installs it before opening the queue, so jobs are
 priced with the newest verified list; an unverifiable file is ignored. A job
 records the version it was prepared with as provenance only: a different
@@ -2398,7 +2857,7 @@ runs like any other. Unknown actual usage remains null.
 
 `internal/inboxes` keeps the inboxes people define, saved filters over the
 desktop app's Up next queue listed under Inbox in the sidebar, in
-`inboxes.json` in the daemon's state directory. `/api/inboxes` serves the list
+the `state/inboxes` document in the shared `app.sqlite` application database. `/api/inboxes` serves the list
 (`GET`) and replaces it (`PUT`, guarded by a revision so two windows cannot
 overwrite each other). The daemon only stores them; the app matches the rules,
 including `no_bots` against the pull request's `author_bot` from discovery.
@@ -2406,15 +2865,16 @@ including `no_bots` against the pull request's `author_bot` from discovery.
 ### Review groups
 
 `internal/reviewgroups` keeps review groups, named sets of 2 to 8 open pull
-requests of one repository reviewed together, in `groups.sqlite` in the
-daemon's state directory (beside `jobs.json`), not in a clone. Their combined
+requests of one repository reviewed together, in the shared
+`app.sqlite` application database in the state directory, not in a clone. Their combined
 reviews are versions keyed by group ID in the same file, so they never collide
 with a member's own versions in its clone's `versions.sqlite`; deleting a
 group hides it and keeps every version. `/api/groups` serves the definitions
 (create, rename, set members, delete), each with its latest version's
 metadata, risk, the members that version covered and whether it is outdated
 (other members, or a member head in the review index that differs from the one
-reviewed), and a group's versions, documents and patches.
+reviewed), and a group's versions, documents and patches. A group's combined
+review is written in one pass, never in stages, so its job has no draft.
 
 Stacked pull requests are grouped by default. After every complete discovery
 snapshot `localApplication` passes the repository's open pull requests to
@@ -2422,16 +2882,35 @@ snapshot `localApplication` passes the repository's open pull requests to
 (`stacks.Plan`: pull requests by one author, each based on another's head
 branch, as chains or trees; see `stacks/README.md`) over the live stack groups
 and creates, updates or dissolves stack groups (`stack` true) of 2 to 8
-members. Pull requests in a person's group, or in a stack group the person
-deleted, take no part, and a person's rename or member change makes a stack
-group theirs.
+members. A new stack group is named after its bottom pull request's title
+until its first review names it (below). Pull requests in a person's group,
+or in a stack group the person deleted, take no part, and a person's rename
+or member change makes a stack group theirs.
 
 A job item names `{clone, group}` with `pr` 0, so pull request scheduling and
 notices, keyed by pull request, never match a group job; the queue's busy and
 duplicate checks key a group job by group ID and member heads. Preparation reads every member from GitHub like a pull request
 job (`Prepared.Members` holds each member's head, which the confirmation
 covers) and needs a saved review of each member in the clone's store, or
-answers `409 {"members_need_reviews": [...]}`. Execution passes
+answers `409 {"members_need_reviews": [...]}`. `Queue.Generate`, which starts
+what a person asked for, instead sets `Item.AwaitMembers`: preparation accepts
+members without a saved review of their current head (`Prepared.Awaiting`), and
+their own reviews are queued with the group's job, except members whose review
+is already queued or running in the group's clone. A group job does not start
+while any member has a review or a fix queued or running (`membersBusy`). When
+it starts and finds a member's head moved, often after a fix pushed, it does
+not fail: `requeueGroup` prepares it again at the new heads, queues reviews of
+the moved members that lack one of their new head (automatic ones for an
+automatic group), and puts the job back to waiting, at most
+`maxGroupRequeues` times (`Job.Requeued`). Only the heads may differ: the same
+members, the same GitHub account and no isolation confirmation the job lacks;
+otherwise, or past the limit, it fails with reason `members_changed`, and a
+person's cancel during the requeue stays final. GitHub can lag a push by
+seconds, so a preparation that does not show the move yet is read again a few
+times, while the job keeps its worker slot. A member whose new review fails
+leaves the group to read that member's previous saved review. If
+a member still has no saved review when it runs, it fails with reason
+`members_need_reviews`. Execution passes
 `generate.Options.Group` and publishes through `reviewgroups.Publisher`.
 `generate.Run` then assembles each member with the ordinary assembler (no
 description images, an equal share of the checkout budget), merges the
@@ -2440,11 +2919,16 @@ group's name and a body listing the members, every hunk once in member order,
 the union of the other evidence, one `FileComparison` per member, refitted to
 the caps), unpacks each checkout at `members/<number>/` with no top-level
 `head/`, writes `members.json` (each member's saved review in brief) and runs
-the group prompt. Its decorator sets `stack` (the group's name and each
-member's number, head and saved review version) and each section's
-`pull_requests` from the members whose hunks it lists, so the stored document
-is stack-shaped like a hosted stack review, with `review.pull_request` the
-lowest member. The group page reads patches from the member whose comparison
+the group prompt. The model names the group in `stack.title`. Its decorator
+sets `stack` (a title and each member's number, head and saved review
+version) and each section's `pull_requests` from the members whose hunks it
+lists, so the stored document is stack-shaped like a hosted stack review, with
+`review.pull_request` the lowest member. The title is the model's name, on
+one line and cut to 80 characters, for a stack group
+(`generate.Group.GeneratedName`), and the group's name otherwise or when the
+model wrote none. Storing the version renames a stack group to its title, in
+the same transaction and only while the group is still a stack group, so a
+person's rename is never written over. The group page reads patches from the member whose comparison
 changes the file and whose patch holds the cited hunk's range; it lists no
 linked sessions or commits.
 
@@ -2458,7 +2942,8 @@ reviews and shows in the same Jobs list. A fix starts alone, at once
 checks: preparation leaves `conflicts` false and reads no review threads, and
 any other `only` is refused);
 one in a batch is refused, and automatic generation never queues one. A review and a fix of one pull request
-neither supersede nor block each other, and a fix of a head does not count as
+are neither refused nor superseded by each other, though they never run at the
+same time (the queue starts no job while another of its pull request runs), and a fix of a head does not count as
 that head's review for the automatic scheduler.
 
 `jobs.Local` prepares a fix from fresh REST evidence (`internal/fix`):
@@ -2480,11 +2965,11 @@ cannot push, a backend that cannot
 fix, or nothing broken is the item's `blocked_reason` (`fork`,
 `no_push_access`, `unsupported_backend`, `nothing_to_fix`): the start answers
 `409` with it and nothing is queued, and the app says why where the person
-clicked. The budgets resolve as a review's. The harness and model are the
+clicked. The budgets resolve as a review's, with `run_timeout` as the time
+limit. The harness and model are the
 preferences' fix agent (`fix_backend` and `fix_model`, Claude Code or Codex,
 set with `PUT /api/automatic` or `baum reviews set --fix-backend`) when one
-is chosen, winning over a repository's review override
-(`Preferences.ResolveFix`), and otherwise the review's. Before running, the executor prepares
+is chosen (`Preferences.ResolveFix`), and otherwise the review's. Before running, the executor prepares
 again and refuses a changed head (`head_changed`) or changed fix inputs, then
 reads the failing checks' output and the last 200 lines of up to four GitHub
 Actions job logs (`RESTReader.Tail`, which follows the signed log redirect
@@ -2506,6 +2991,10 @@ records `commit`, `commit_url` and the agent's masked `summary`; a failed one
 a reason (`head_changed`, `threads_changed`, `no_remote`, `git`, `backend`,
 `budget`, `no_changes`, `conflicts_remain`, `history_rewritten`,
 `workflow_changed`, `push_rejected`, `push_failed`) and a bounded detail. A
+`budget` detail names the limit the agent reached (its time limit, in
+minutes, or its call or token budget); a `backend` one points to the daemon
+log, where `fix.Options.Logger` (the job's logger) has the agent's own error,
+which the job never keeps. A
 fix of review comments alone fails with `workflow_changed` when its commit
 changes a path under `.github/workflows/` or `.github/actions/`.
 
@@ -2547,7 +3036,7 @@ messages, reasoning, tool calls and tool output, taken from the harness's own
 event stream as it is already parsed (`agent.Request.Transcript`, entries of
 `agent.TranscriptEntry`; deliberately apart from `agent.Event`, which never
 holds text). The queue gives the executor `transcripts/<job id>.jsonl` beside
-`jobs.json`, created private (0700/0600), one `{"seq":N,...}` line per entry,
+`app.sqlite`, created private (0700/0600), one `{"seq":N,...}` line per entry,
 appended and flushed as each arrives. Title and text are masked with the bundle
 redactor and cut (1 KiB, 16 KiB); the file stops at 8 MiB with a final error
 entry, and only the 50 most recently written transcripts are kept. A tool
@@ -2598,7 +3087,24 @@ API, SSE and asset URLs relative to that path and routes with query strings on
 it. All data, auth exchange and SSE retain launch-cookie/Origin protection. Its PR host
 supplies the same `ReviewViewer` slots and URL/attachment seams as the hosted
 PR page, sourcing documents, immutable versions, patches, sessions and commits
-from registered local clones. The renderer stays in `viewer/`; the app owns
+from registered local clones. With no saved version, it passes the pull
+request's facts (see "Pull request facts") to the viewer's `facts` prop, whose
+Details and Activity tabs draw them with the document's parts
+(`FactsDetails`, `FactsActivity`), and fills the Sessions, Commits and Files
+changed slots from the facts' routes; the version menu, history and chat
+never see them. While a review of the pull request runs in stages, the page
+reads the job's draft (`GET /api/jobs/{id}/draft`, again on each change of
+its `draft` count): without a saved version it shows the draft as soon as the
+outline lands, sections still being written as "Writing details…" and the
+Summary's context as being written (`contextPending`), and the facts before
+that; with one it keeps the saved version, with the regeneration's status and
+a "View draft" toggle. A draft has no version menu, chat, walkthrough,
+approvals or read ticks. A saved version published without some sections'
+details or its context says so in a short notice, and the latest version's
+failed sections offer Retry (`onRetryDetails`), which queues a details job
+(see "Persistent generation jobs") whose sections read as being written while
+it runs; a pull request whose head moved is told to regenerate instead. The
+renderer stays in `viewer/`; the app owns
 only local inbox, jobs, confirmation and settings presentation. The common
 viewer build/freshness scripts include both embedded applications.
 
@@ -2631,7 +3137,8 @@ sooner, as a settling one is. Linked worktrees are deduplicated by common git di
 saved reviews use `refresh.Refresher` and `Store.RefreshCurrent`'s exact-byte CAS.
 `Service.RefreshNow` refreshes named PRs of one clone the same way outside
 that schedule (see "Refresh on hook events"), and its reads count as the
-last read; it shares the per-host rate pause with `Sync` in both directions.
+last read; it shares the per-host rate pause with `Sync` in both directions,
+as the PR page's facts do (`Service.Paused` and `Service.Limited`).
 
 Discovery's live freshness map uses its own short mutex; cached readers never
 wait behind a network poll. Disk-only startup remains stale. Minimized current
@@ -2881,7 +3388,7 @@ it and `Queue.SubmitAutomatic` decides each job.
   member GitHub shows moved on or turned draft before discovery does is
   retried a minute later. Groups a person made are never generated
   automatically.
-- **State.** `automatic.json` in the job state directory (0700) holds each
+- **State.** The `state/automatic` document in the application database holds each
   enabled repository's PRs (recorded head, request and draft flags,
   eligibility, pending head and trigger, last head handled, retried head,
   last stopped job put back), its stack groups (member heads handled,
@@ -3081,6 +3588,14 @@ socket serves, and runs it beside background refresh, one worker in all.
 
 ### Live sessions
 
+Codex's `PermissionRequest` runs before automatic review. The hook reads the
+latest rollout `turn_context` matching the payload's `turn_id`; when its
+`approvals_reviewer` is `auto_review`, the local event carries `auto_review`
+and the hook does not ask the app for a decision. The tracker ignores that
+permission event as a wait, so it sends no attention notification. Unknown
+context retains manual approval behavior. The read searches backwards through
+at most 64 MiB with bounded memory and skips oversized transcript lines.
+
 `internal/livesessions` tracks the agent sessions running on this machine
 from the agent hook events in the record, and serves them to the app. It adds
 to reading session files from disk (see "Session transcripts"), which stays
@@ -3186,7 +3701,10 @@ replace it.
   wrote to it: a prompt, a message the app sent (which Claude Code records as
   a peer's meta line), an answer to its question (`toolUseResult.answers`) or
   a message sent while it worked (a `queued_command` attachment, read from the
-  start of a line an image makes too long). Neither route runs on Windows.
+  start of a line an image makes too long), but not what the harness queues
+  the same way: a background task's `<task-notification>` or another agent's
+  `<agent-message>`, such as a subagent's report. Neither route runs on
+  Windows.
   A notification's `message` becomes
   `waiting_message`: format characters dropped, control characters and runs of
   spaces made one space, masked as transcripts are (`transcript.Renderer.Mask`,
@@ -3203,7 +3721,11 @@ replace it.
   resumed session: `started_at` restarts), and an event older than the end is
   ignored. A late-delivered older event never moves `last_activity_at` back,
   but an older start can move `started_at` earlier. A session silent for
-  `DropAfter` (2 hours) is dropped, an ended one `EndedFor` (24 hours) after
+  `DropAfter` (2 hours) is dropped, unless `Tracker.Alive` confirms its agent
+  still runs (a Claude Code session's process, as `FindClaude` finds it; no
+  other agent registers one), which `Sweep` asks again each time, so one
+  waiting hours for its user stays and one whose agent exited without its end
+  event goes within a minute. An ended one goes `EndedFor` (24 hours) after
   its end, so the Sessions page can list what ended recently. At most
   `MaxSessions` (200) are held: a new one evicts an ended session (the one
   that ended longest ago), else the least recently active, so a running session
@@ -3214,9 +3736,15 @@ replace it.
   record's directory when they change, and a rebuild loads them first and then
   applies the record's events over them; a rebuild also takes all events of a
   session that ended within `EndedFor`, not only those of the last two hours.
+  The file's `open` holds the sessions that had not ended, likewise without a
+  path: a rebuild restores one only when it was silent for `DropAfter`, which
+  the record's events then no longer reach, and `Alive` confirms its agent
+  still runs.
   An ended session waits for nothing, so the file holds no waiting fields,
   and files written before them load unchanged; a running session's wait is
-  rebuilt from the record's events, its message included.
+  rebuilt from the record's events, its message included. `last_prompt_at`
+  is the latest prompt event, which the Sessions page orders running sessions
+  by.
 - **Linkage.** Not a second linkage: `Resolver` uses what session linkage and
   discovery already have. The directory's repository is found with
   `gitlocal.Open` (so a subdirectory or a linked worktree is its clone), whose
@@ -3313,15 +3841,18 @@ replace it.
     `claude://code/continue?session=local_…` (`xdg-open`, `open`), then its
     window is raised as below. These are Claude desktop's internal files and
     link: a record it no longer writes reads as no session.
-  - In tmux (`TMUX` and `TMUX_PANE` recorded), on the server of the recorded
-    socket: the client attached to the pane's session used last, else the
-    client used last at all (`list-clients`), is switched to the session, and
+  - In tmux (`TMUX`, `TMUX_PANE` and a terminal device recorded), on the server
+    of the recorded socket: the client attached to the pane's session used
+    last, else the client used last at all (`list-clients`), is switched to the session, and
     the pane's window and the pane are selected. The chain from then on is the
     client's, read now, and the terminal device is the client's: the recorded
     variables describe the terminal the tmux server started in. No client
     attached says so. A pane whose `pane_tty` is not the recorded terminal
     device is not the session's (a terminal started from a tmux pane passes
     `TMUX` on to its own shells), and the session is treated as outside tmux.
+    A lookup with an empty session or pane terminal is treated as a missing pane
+    before any client is switched. Without a recorded terminal, inherited tmux
+    variables are ignored.
   - The terminal's tab, from the first match in the chain: kitty focuses the
     window whose program is the process below kitty (`kitten @ --to
     $KITTY_LISTEN_ON focus-window --match pid:…`), only when the recorded
@@ -3354,10 +3885,25 @@ replace it.
   - `session` when the tmux pane, the tab or the conversation was selected,
     `window` when only the window was raised. `Predict`, which the list's
     `focus` is, judges the same from the record without running anything: on
-    Linux nothing outside Hyprland and X11; `session` for tmux, a Claude
-    desktop process in the chain (`claude-desktop`, `Claude`), a kitty with
-    its socket, and on macOS iTerm2 or Terminal with a terminal device;
-    `window` otherwise.
+    Linux nothing outside Hyprland and X11; `session` for tmux with a recorded
+    terminal, a Claude desktop process in the chain (`claude-desktop`, `Claude`),
+    a kitty with its socket, and on macOS iTerm2 or Terminal with a terminal device;
+    `window` otherwise. Codex hooks whose chain contains only `codex`, `systemd`
+    or `launchd` and no terminal can belong to a shared app server with separate
+    TUI clients. They offer session focus. Focus matches the thread ID in terminal
+    titles (`tui.terminal_title` including `thread-id`): first Codex tmux panes
+    on the recorded server (`list-panes`), then kitty's tabs through its recorded
+    remote-control socket, iTerm2/Terminal tabs on macOS, or Hyprland/X11 window
+    titles. A failed tmux lookup falls through to native terminals, since its
+    variables may be inherited. A shortened ID needs at least 24 characters and
+    an ellipsis. Missing or ambiguous matches select nothing and explain why.
+    Connecting or updating Codex through baum also puts `thread-id` last in
+    its user terminal title via `internal/codexconfig`, preserving other
+    title items. When no terminal matches, Focus repairs an older user's
+    title setting and asks them to restart the TUI and resume the conversation.
+    Configuration errors leave the file unchanged; ambiguous matches and
+    terminal API failures do not change settings.
+    This selects an existing TUI; it never resumes a second conversation.
 - **Transcripts.** `GET /api/live-sessions/{agent}/{id}/transcript`
   (`Transcripts`, mounted beside the list by the same `LocalAPI.Live`
   provider) serves the transcript of a session the tracker lists, and only
@@ -3374,9 +3920,9 @@ replace it.
   session): the `rollout-*-<id>.jsonl` under `~/.codex/sessions` whose first
   line names that thread as a root. Only names are walked, so the rollouts
   Codex compresses as they age (`.jsonl.zst`, which a store scan rejects) do
-  not stop it; a Claude Code one
-  has no such lookup and is unavailable, as after a restart has only the
-  saved ended sessions. A Cursor session is read from Cursor's own database
+  not stop it; a Claude Code one is found by its id in the project folders
+  under `~/.claude/projects` (`<folder>/<id>.jsonl`), as a session read back
+  from `live-sessions.json` has no path. A Cursor session is read from Cursor's own database
   (`cursortranscript.DefaultStorePath`, a regular file) by its conversation
   id, since Cursor keeps no transcript file baum reads. The files are mapped
   with `sessions.Map`, as discovery maps them (a Codex root rollout without
@@ -3391,9 +3937,10 @@ replace it.
   dropped first, and a session the tracker no longer lists is dropped at the
   next request. A rebuild that fails (a line caught mid-write) keeps the last
   good transcript. The answer is `{"available":true,"version","live",
-  "transcript"}`, `version` a hash of the files' paths, sizes and times and
-  `transcript` the body `GET /api/sessions/{id}` answers, omitted when the
-  request's `?version=` is the current one; or `{"available":false,"live",
+  "transcript","images"?}`, `version` a hash of the files' paths, sizes and
+  times, `transcript` the body `GET /api/sessions/{id}` answers and `images`
+  the media types of the images pasted with each prompt, by its turn, both
+  omitted when the request's `?version=` is the current one; or `{"available":false,"live",
   "code":"transcript_unavailable","message"}` with why, in a sentence the app
   shows. The Timeline's `GET /api/timeline/sessions/{agent}:{id}/transcript`
   answers the same way for a captured session of a repository it serves,
@@ -3402,6 +3949,17 @@ replace it.
   store rules; `live` is false once the tracker does not list it. Its cache
   entries are kept until the least recently asked for makes room, not dropped
   with the tracker's list.
+- **Pasted images.** `GET /api/live-sessions/{agent}/{id}/transcript/images/
+  {turn}/{n}` serves the n-th image (from 0) pasted with a prompt of a session
+  the tracker lists, as it was pasted: images are not masked. Only PNG, JPEG,
+  GIF and WebP are served, with `nosniff` and a `default-src 'none'` policy;
+  anything else is 404. Each rebuild finds them in the session's own
+  transcript file (`findImages`): a Claude Code prompt's record holds them as
+  `image` blocks, found by the record's uuid the graph's vendor ids give the
+  prompt; a Codex prompt's record names only where the image was saved, so its
+  images are read from the user `response_item` of the turn the prompt opened
+  (`internal_chat_message_metadata_passthrough.turn_id`), as data URLs. A
+  request reads the file again for the one image it asks for.
 - **Stream.** The tracker publishes a `live` event with no data (like `index`,
   a notification the app answers by reading the endpoint) when what the app
   sees changes, at most once a second, and on a `reset` the app rereads like
@@ -3438,7 +3996,7 @@ their user, and send a running session a message, through their hooks (the
 hook side is in `hosted/baumcli`, rules in its
 [README](hosted/baumcli/README.md), "User-wide hooks"). Everything is held in
 the daemon's memory; only `Settings` (`codex_approvals`, default false) is
-saved, in `agent-requests.json` in the state directory.
+saved, in the `state/agent-requests` document in `app.sqlite`.
 
 - **Unattended sessions.** A Claude Code session nobody answers in a
   terminal is never held: the hook gives no decision at once when
@@ -3543,7 +4101,7 @@ saved, in `agent-requests.json` in the state directory.
 ### Decision capture
 
 `internal/decisionlog` extracts the decisions of the tracked sessions (see
-"Live sessions") into `<state>/decisions/decisions.sqlite`, with the published
+"Live sessions") into `<state>/app.sqlite`, with the published
 prompt (`decisions-public-v1`) and the `decisions` package's renderer,
 parser and validator. Its scheduler reads `Tracker.Sessions` every 30 seconds
 and keeps no per-session timers: a session that ended, or is not running and
@@ -3560,8 +4118,9 @@ store, symbolic links resolved, the mapped root session the event's), skips
 files over 64 MiB, baum's own generation runs and prompts over 272,000
 estimated tokens, and reuses, extends or replaces the session's head
 extraction as hosted extraction does. Its structured completion goes through
-the review backend's `agent.Completer` (default models `claude-haiku-5-5` and
-`gpt-6-luna`); cursor-agent has none. A model the price list cannot price
+the data extraction backend's `agent.Completer`, the reviews' unless the
+preferences choose another (`preferences.decisions.backend`; default models
+`claude-haiku-5-5` and `gpt-6-luna`); cursor-agent has none. A model the price list cannot price
 runs, reserved at 0, and every call is recorded in a ledger that throttles a session (5
 minutes apart, 10 after a failure, 12 a day unless it ended). The reply is masked before it is parsed; decisions keep
 their IDs across extractions and are marked obsolete, never deleted, when a
@@ -3598,7 +4157,7 @@ read). A first build (`FeatureWorker.Build`) lists a repository's whole
 history once (`FeatureWorker.ListHistory`), reads its paths, seeds a new
 `building` version from a feature taxonomy (`featureseed.go`), running
 feature discovery first when there is none newer than the version
-(`featurediscover.go`: the review backend and model through
+(`featurediscover.go`: the data extraction backend and model through
 `generate.RunTask`, `discover.PublicPrompt`, a head-only checkout of
 `refs/baum/default` and `discover.HistoryDigest`), and places the history
 in the version with the batch prompt (`assign.Public.RenderBatch`), its
@@ -3677,8 +4236,7 @@ and two files:
    `stopping` appears only while it shuts down, and `restart_pending` when an
    older daemon was kept because it is running jobs and will restart as this
    version once they finish (see Lifecycle). On failure it exits non-zero
-   with the reason on stderr. `--port` and `--concurrency` apply only when it
-   starts the daemon.
+   with the reason on stderr. `--port` applies only when it starts the daemon.
 2. `<state>/credential.json`, mode 0600 (Windows: current-user DACL), holds
    `{"url":"http://127.0.0.1:PORT/#token=<43 characters>"}`, the launch URL.
    Loading it runs the bootstrap page, which exchanges the fragment for the
@@ -3705,7 +4263,8 @@ and two files:
    from native plugin registries, with executable detection and installation/
    enablement separate from the agent's hook trust decision. It installs and
    removes `baum@baum` through native CLIs with `baum hooks install --user`
-   and `uninstall --user`. Native status queries have a 10-second bound and
+   and `uninstall --user`, and `update --user` refreshes the marketplace and
+   brings an installed plugin to its latest version. Native status queries have a 10-second bound and
    actions a 90-second total budget; the desktop resolves the login shell PATH for native plugin commands and allows
    240 seconds for PATH resolution, both agents and process overhead.
 5. `baum daemon stop` stops the daemon gracefully and waits for it to exit
@@ -3737,7 +4296,9 @@ Everything that knows where the daemon lives stays in Go. The shell owns the
 window, its navigation policy and the reconnect screen, the tray (job counts,
 pause of automatic generation, an icon that shows idle, running or attention),
 the window's close and quit behaviour and start at login; the daemon serves
-`app/` to it like any loopback client. Besides `ensure` and `stop`, the tray
+`app/` to it like any loopback client, including the PR page's facts before
+any review exists (see "Pull request facts") and the draft of a review being
+written in stages (see "Persistent generation jobs"). Besides `ensure` and `stop`, the tray
 reads `GET /api/jobs`, `/api/automatic` and `/api/diagnostics` and sets
 `PUT /api/automatic` with the launch token as a bearer, over the app API the
 window uses. It also owns first-run setup
@@ -3748,9 +4309,12 @@ stable path of the bundled binary; an AppImage and Windows run and link a
 copy in the app's data directory, which Windows adds to the user `PATH`;
 the password prompt only for root-owned system directories) and the
 native `baum@baum` marketplace plugins; after that the window opens the
-daemon's diagnostics page. `setup.json` records onboarding and the command
-links/copies it installed; agent registries own plugin installation and
-enablement. Plugin status/install/removal use the resolved login shell PATH,
+daemon's diagnostics page. The `setup` section of the native shell's
+`desktop.json` records onboarding and the command links/copies it installed;
+its other sections hold notification settings, zoom and failed updates.
+Section updates share one lock and atomic file replacement, and the file is
+readable before the daemon connects. Agent registries own plugin installation
+and enablement. Plugin status/install/removal use the resolved login shell PATH,
 with an inherited-PATH fallback warning if resolution fails. Command removal
 uses its saved command records; plugin removal targets only `baum@baum`. See [`desktop/README.md`](desktop/README.md).
 

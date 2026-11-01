@@ -8,8 +8,6 @@ export type Clone = {
   settings: {
     /** null follows the global automatic generation preference. */
     automatic: boolean | null;
-    backend: string | null;
-    model: string | null;
     /** Decision capture for this repository: false turns it off, null and
      *  true follow the global switches. Absent from an older daemon. */
     decisions?: boolean | null;
@@ -56,6 +54,13 @@ export type PR = GitHubState & {
   author_has_write: boolean | null;
   team_membership_known: boolean;
   head_ref?: string;
+  /** The branch it merges into; absent in data from an older daemon. */
+  base_ref?: string;
+  /** Lines added and deleted and files changed across the pull request, as
+   *  GitHub counts them; absent or zero in data from an older daemon. */
+  additions?: number;
+  deletions?: number;
+  changed_files?: number;
   /** Whether the signed-in account may push to the repository, which a fix
    *  needs; null or absent when GitHub did not say. */
   viewer_can_push?: boolean | null;
@@ -115,6 +120,12 @@ export type ReviewGroup = {
   members: number[];
   /** baum made the group for stacked pull requests, not a person. */
   stack?: boolean;
+  /**
+   * A stack group's members that are no longer open, ascending: still part of
+   * the stack, in place, but not reviewed. `unknown`: not open any more, and
+   * not yet seen whether it merged.
+   */
+  landed?: { number: number; state: "merged" | "closed" | "unknown" }[];
   created_at: string;
   updated_at: string;
   version_count: number;
@@ -176,7 +187,16 @@ export type Job = {
   updated_at?: string;
   /** "fix" for a fix of the pull request, "feature_build" for a
    * repository's first feature build (its `pr` is 0); absent for a review. */
-  kind?: "fix" | "feature_build" | "chat";
+  kind?: "fix" | "feature_build" | "chat" | "details";
+  /** While a review of one pull request is written in stages, how many drafts
+   *  the daemon holds so far; above 0 `api/jobs/{id}/draft` answers. */
+  draft?: number;
+  /** The sections the review was published without details for, and whether
+   *  without its context. */
+  failed_sections?: string[];
+  context_failed?: boolean;
+  /** A details job's saved version, the one it writes the details of. */
+  version?: number;
   fix?: FixInputs;
   /** The conversation turn a chat job answers. */
   chat?: { conversation: string; turn: number; version: number };
@@ -250,9 +270,16 @@ const jobReasons: Record<string, string> = {
   internal: "Something went wrong inside baum.",
   signing: "Git couldn't sign a commit, so the agent didn't run.",
   superseded: "A newer commit replaced it.",
+  version_changed: "A newer review replaced this version, so its details weren't written.",
+  nothing_to_retry: "Every section of this review already has its details.",
   // A job an older baum stopped for its daily spending cap, which is gone.
   daily_cap: "It stopped before it started.",
   draft: "The pull request became a draft.",
+  members_changed:
+    "The pull requests in the group kept changing while its review waited. Generate it again.",
+  group_removed: "The review group was deleted, or its stack dissolved, before its review ran.",
+  members_need_reviews:
+    "A pull request's own review failed or was cancelled, and the group review builds on it. Generate it again to retry.",
   fork: "The pull request's branch is in a fork, which baum never pushes to.",
   no_push_access: "Your GitHub account can't push to this repository.",
   nothing_to_fix:
@@ -283,9 +310,19 @@ const jobReasons: Record<string, string> = {
 /** A job's reason in words: a feature build's in its own, others' as
  *  reviews and fixes say them. */
 export function jobReasonText(reason: string, kind?: Job["kind"]): string {
+  if (kind === "details" && Object.hasOwn(detailsReasons, reason)) return detailsReasons[reason]!;
   if (kind === "feature_build" && Object.hasOwn(buildReasons, reason)) return buildReasons[reason]!;
   return jobReasons[reason] ?? reason.replaceAll("_", " ");
 }
+/** Why a retry of a review's details stopped or cannot run. */
+const detailsReasons: Record<string, string> = {
+  superseded:
+    "A newer review of this pull request replaced this retry, so its details weren't written.",
+  head_changed:
+    "This pull request has new commits since this review, so its details weren't written.",
+  base_changed:
+    "This pull request's base branch moved since this review, so its details weren't written.",
+};
 /** Why a feature build stopped or cannot run. None asks to confirm it again:
  *  where a build can be resumed, the page offers that itself. */
 const buildReasons: Record<string, string> = {
@@ -373,6 +410,8 @@ export type LiveSession = {
   state: "running" | "idle" | "ended";
   started_at: string;
   last_activity_at: string;
+  /** When the user last prompted it, absent before a prompt the daemon saw. */
+  last_prompt_at?: string;
   /** When an ended session ended; absent otherwise. */
   ended_at?: string;
   /** The normalised kind of the latest hook event. */
@@ -651,13 +690,18 @@ export type PullRequestDecisions = {
   sessions: (SessionDecisions & { title?: string; live: boolean })[];
   review_generated_at: string | null;
 };
-/** The global decision capture settings, from `api/settings`. */
+/** The global data extraction settings (decision capture and the feature
+ *  log), from `api/settings/decisions`. An empty `backend` follows the
+ *  reviews' harness; an empty `model` is the harness's default. */
 export type DecisionSettings = {
   enabled: boolean;
+  backend: string;
   model: string;
-  /** What the daemon makes of them (`api/settings/decisions` only): the
-   *  harness capture resolves to, its model, and whether `model` is ignored. */
-  backend?: string;
+  /** The reasoning effort; empty or absent is the agent's own. */
+  effort?: string;
+  /** What the daemon makes of them: the harness extraction resolves to, its
+   *  model, and whether `model` is ignored. */
+  effective_backend?: string;
   /** The harness's checks did not answer in time, so it is unknown. */
   backend_undetermined?: boolean;
   effective_model?: string;
@@ -671,7 +715,7 @@ const skipReasons: Record<string, string> = {
   over_token_cap: "The session is too long for one capture.",
   extraction_failed: "Capture failed three times; it tries again when the session changes.",
   backend_unsupported:
-    "Cursor Agent can't capture decisions. Choose Claude Code, Codex or the Anthropic API for reviews to capture them.",
+    "Decisions are captured with Claude Code or Codex only. Choose one of them for reviews or data extraction.",
   backend_unavailable: "No harness that can capture decisions is available on this computer.",
 };
 /** Why a session's decisions were not captured, in words. */
@@ -691,9 +735,57 @@ export function appBase(pathname = location.pathname): string {
 export function appURL(path = ""): string {
   return appBase() + path;
 }
+/** What the app keeps in each of its history entries: how many of its own
+ *  entries lie behind it (`depth`), the place it shows (`place`), and the
+ *  depth of the entry it was opened from (`back`), the last one that showed
+ *  another place. Moves within a place (a walkthrough step, the Ask panel)
+ *  keep their `back`, so going back leaves the place in one step. */
+type AppHistory = { depth: number; place: string; back?: number };
+
+/** The place an address shows: the pull request, group, job transcript or
+ *  session open in it, else its page and inbox. */
+function placeOf(search: URLSearchParams): string {
+  const detail = ["pr", "clone", "repository", "group", "job", "session"]
+    .map((key) => (search.get(key) ? `${key}=${search.get(key)}` : ""))
+    .filter(Boolean);
+  if (search.get("pr") || search.get("group") || search.get("job") || search.get("session"))
+    return detail.join("&");
+  return `page=${search.get("page") ?? "inbox"}&inbox=${search.get("inbox") ?? ""}`;
+}
+
+function currentHistory(): AppHistory {
+  const state = history.state as Partial<AppHistory> | null;
+  return typeof state?.depth === "number" && typeof state.place === "string"
+    ? (state as AppHistory)
+    : { depth: 0, place: placeOf(new URLSearchParams(location.search)) };
+}
+
+/** Adds a history entry for one of the app's addresses, or with `replace`
+ *  takes the current one's place, remembering where it was opened from. */
+export function writeHistory(href: string, replace = false) {
+  const current = currentHistory();
+  const place = placeOf(new URL(href, location.href).searchParams);
+  if (replace) {
+    history.replaceState({ ...current, place } satisfies AppHistory, "", href);
+    return;
+  }
+  const back = place === current.place ? current.back : current.depth;
+  history.pushState({ depth: current.depth + 1, place, back } satisfies AppHistory, "", href);
+}
+
+/** Goes back to the entry the current place was opened from, past any moves
+ *  within the place; false when this window opened on it, with nowhere to
+ *  go back to. */
+export function backToOpener(): boolean {
+  const { depth, back } = currentHistory();
+  if (back == null || back >= depth) return false;
+  history.go(back - depth);
+  return true;
+}
+
 /** Opens one of the app's own addresses in place, as a link in it does. */
 export function navigate(href: string) {
-  history.pushState(null, "", href);
+  writeHistory(href);
   dispatchEvent(new PopStateEvent("popstate"));
 }
 /** A fix job's transcript when it has one, else the job in the list. */
@@ -736,6 +828,7 @@ export async function request<T>(
       message?: string;
       needs_clone?: boolean;
       blocked_reason?: string;
+      isolation_required?: boolean;
     } = {};
     try {
       body = JSON.parse(text);
@@ -750,7 +843,11 @@ export async function request<T>(
         : body.blocked_reason
           ? jobReasonText(body.blocked_reason)
           : (body.message ?? `Local request failed (${response.status}): ${text.slice(0, 240)}`),
-      body.needs_clone ? "needs_clone" : (body.blocked_reason ?? body.code),
+      body.needs_clone
+        ? "needs_clone"
+        : body.isolation_required
+          ? "isolation_required"
+          : (body.blocked_reason ?? body.code),
       response.status,
     );
   }
@@ -878,6 +975,10 @@ export function isActiveJob(job: Job | undefined): boolean {
 export function reviewJob(entry: Entry, jobs: Job[]): Job | undefined {
   return prJob(entry, jobs, (job) => !job.kind);
 }
+/** The PR's latest retry of a review's details, an active one first. */
+export function detailsJob(entry: Entry, jobs: Job[]): Job | undefined {
+  return prJob(entry, jobs, (job) => job.kind === "details");
+}
 /** The PR's questions to the review's agent, oldest first. */
 export function chatJobs(entry: Pick<Entry, "pull_request">, jobs: Job[]): Job[] {
   return jobs.filter(
@@ -889,6 +990,7 @@ export function chatJobs(entry: Pick<Entry, "pull_request">, jobs: Job[]): Job[]
 }
 /** What a fix or chat job is called: the Jobs list and transcript page title. */
 export function jobName(job: Job): string {
+  if (job.kind === "details") return `Details of #${job.pr}`;
   return job.kind === "chat" ? `Question on #${job.pr}` : fixName(job.fix ?? {});
 }
 /** The PR's latest fix job, an active one first. */

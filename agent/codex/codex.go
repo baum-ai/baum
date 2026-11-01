@@ -61,6 +61,9 @@ type Backend struct {
 	// exec.LookPath and defaults to "codex".
 	Binary, Model string
 	Profile       Profile
+	// Effort is the model_reasoning_effort; empty
+	// leaves it to Codex.
+	Effort string
 	// Env are the user's agent variables (agent.WithUserEnv), for the Local
 	// profile only.
 	Env []string
@@ -72,6 +75,13 @@ type Backend struct {
 }
 
 func (*Backend) Name() string { return agent.BackendCodex }
+
+// ConcurrentCalls reports whether calls may run over one run directory at
+// once (agent.ConcurrentCaller): the Local profile writes each call's output
+// schema to a temporary directory of its own. The Container profile writes it
+// to CODEX_HOME under the run directory, shared by every call, so it runs
+// them one at a time.
+func (c *Backend) ConcurrentCalls() bool { return c.Profile == Local }
 
 func (c *Backend) Run(ctx context.Context, request agent.Request) (agent.Result, error) {
 	return c.run(ctx, request, false, nil)
@@ -109,10 +119,10 @@ func (c *Backend) run(ctx context.Context, request agent.Request, fix bool, extr
 	if request.WantsSession() && (c.Profile != Local || fix) {
 		return result, errors.New("codex: only a Local profile review or task can keep, resume or fork a session")
 	}
-	if request.MaxCalls < 1 {
+	if request.MaxCalls < 0 {
 		return result, errors.New(agent.GenerationBudgetExceededReason("model calls"))
 	}
-	if request.MaxTokens < 1 {
+	if request.MaxTokens < 0 {
 		return result, errors.New(agent.GenerationBudgetExceededReason("tokens"))
 	}
 	endpoint := request.Endpoint
@@ -187,6 +197,9 @@ func (c *Backend) run(ctx context.Context, request agent.Request, fix bool, extr
 		"--skip-git-repo-check")
 	args = append(args, fixConfig...)
 	args = append(args, extra...)
+	if c.Effort != "" {
+		args = append(args, "-c", "model_reasoning_effort="+strconv.Quote(c.Effort))
+	}
 	// An empty Model leaves the flag out so Codex uses its configured default.
 	if c.Model != "" {
 		args = append(args, "--model", c.Model)
@@ -390,10 +403,10 @@ func (c *Backend) run(ctx context.Context, request agent.Request, fix bool, extr
 			logInfo(request, "codex turn failed", "turn", result.Calls, "duration", since(turnStarted), "status", status)
 			err = agent.ProviderFailure("codex", status, refused)
 		}
-		if err == nil && result.Calls > request.MaxCalls {
+		if err == nil && agent.Exceeds(result.Calls, request.MaxCalls) {
 			err = errors.New(agent.GenerationBudgetExceededReason("model calls"))
 		}
-		if err != nil || result.Tokens > request.MaxTokens {
+		if err != nil || agent.Exceeds(result.Tokens, request.MaxTokens) {
 			if err == nil {
 				err = errors.New(agent.GenerationBudgetExceededReason("tokens"))
 			}

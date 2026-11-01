@@ -38,9 +38,24 @@ add its sources so the utilities its components use are generated:
 @source "<path to this package>/src";
 ```
 
-`viewer.css` defines the type scale, the colour ramps and semantic tokens
-with their dark variants (applied under `:root[data-theme="dark"]`), the
-categorical series, and the pane and skeleton animations. The sans-serif
+`viewer.css` defines the type scale and animations. It imports
+`src/theme.css`, which loads the default palette from `src/palette.css` and
+custom theme overrides. Dark variants apply under `:root[data-theme="dark"]`.
+Nineteen explicit base colors are shared by the two default modes:
+eight core UI colors, eight chart hues and three warm dashboard hues. Neutral ramps,
+status tints, interaction states, syntax colors and dark variants derive from
+those bases with `color-mix()`. Semantic token names describe their role;
+they are not additional independently chosen colors.
+Desktop screens import `theme.css` directly, without
+Tailwind's `@theme` rules. Stumpy is self-contained: its fixed artwork colors
+live in `src/components/stumpy-artwork.ts`, shared with the log mark and native
+icon generator. They do not depend on the UI palette or change with the theme.
+Fixed vendor logo colors live in `src/components/brand-artwork.ts` and do not
+participate in custom themes. Monochrome logos inherit the surrounding text
+color. The local app's palette check permits color definitions only in the
+default palette, `src/themes/*.css` and those two artwork modules. Other
+components use theme tokens.
+The sans-serif
 family comes from `--viewer-font-sans`; set it on `:root` to restyle the
 viewer. Without it the viewer uses baum's bundled type, declared once in
 `src/fonts/fonts.css`: Instrument Sans for text (`--font-text`, with a real
@@ -50,6 +65,74 @@ weight, Latin and Latin Extended, as woff2 with their SIL Open Font Licenses
 own screens all use it. The host's bundler resolves the files from
 `viewer.css`, and a browser downloads them only when a page renders in them,
 so a host that sets the variable never fetches them.
+
+### Custom color themes
+
+Edit `src/themes/custom.css` to customize the desktop app. It is loaded by the
+main app, setup, connecting and tray screens. Outside this repository, import
+`@baum/viewer/theme.css` for the same theme entry point without Tailwind.
+
+There are two levels of customization. Set a base color to recalculate its
+dependent shades, or set any derived token to replace just that result:
+
+```css
+/* In src/themes/custom.css; this file is already in the baum-theme layer. */
+:root {
+  --brand-green-600: #2574a9;
+  --brand-sand-100: #dbe8f4;
+
+  /* Direct exceptions to the default recipes. */
+  --surface-selected: color-mix(in srgb, var(--brand-green-600) 12%, var(--surface-page));
+  --border-focus: var(--brand-green-600);
+}
+
+:root[data-theme="dark"] {
+  --surface-page: #14202a;
+  --surface-card: var(--surface-page);
+  --text-secondary: #bdd0dd;
+}
+```
+
+`theme.css` orders the layers as `baum-palette`, then `baum-theme`. A custom
+declaration therefore wins over the defaults even when the default selector is
+more specific, such as the dark-mode selector. No `!important` is needed.
+Unlayered host styles intentionally take precedence over both layers. Keep
+component CSS from redeclaring palette tokens locally; consume the appropriate
+role, such as `--nav-hover`, instead.
+
+Put overrides on the document root. CSS variables resolve where they are
+defined: changing only a base on a child element does not recalculate recipes
+inherited from the root. Seed overrides affect every recipe using that seed;
+direct role overrides affect that role and aliases depending on it. For example,
+`--surface-page` and `--surface-card` are independent roles, so set both when
+they should share a custom fill. Changing `--paper-0` changes both defaults.
+
+Common roles are `--surface-page`, `--surface-card`, `--surface-canvas`,
+`--surface-popup`, `--text-primary`, `--text-secondary`, `--border-default`,
+`--border-focus`, `--action-primary`, `--action-primary-hover`, `--nav-hover`,
+`--nav-selected`, `--status-positive`, `--status-caution` and `--status-critical`.
+The full default file is the reference for derived roles and base dependencies.
+
+| Base tokens | What they control |
+| --- | --- |
+| `--color-ink`, `--color-paper`, `--color-shadow` | Neutral ramps, surfaces and shadows |
+| `--brand-forest`, `--brand-sand-100` | Canvas, navigation, links and selection tints |
+| `--brand-green-600`, `--color-critical` | Action green and status hues |
+| `--color-blue`, `--series-1` … `--series-8` | Syntax, chart and categorical hues |
+| `--series-caramel`, `--series-sage`, `--series-espresso` | The local Analytics charts' warm series |
+
+Dark mode uses different mixing recipes, so a seed can affect the two modes
+differently. Use mode-specific role overrides when the default recipe is not
+suitable for a custom theme.
+
+For multiple named themes, scope declarations to
+`:root[data-color-theme="ocean"]` and mode-specific exceptions to
+`:root[data-color-theme="ocean"][data-theme="dark"]`. Select the theme with
+`document.documentElement.dataset.colorTheme = "ocean"`. `data-theme` remains
+the light/dark mode managed by appearance preferences; it does not overwrite
+the separate theme identity. This CSS interface does not add a theme picker or
+persist custom theme selection. Stumpy, native artwork and vendor identities retain their fixed
+colors independently of the UI theme.
 
 ## Host seams
 
@@ -115,8 +198,9 @@ left out rather than shown empty or failed:
 | `versions`, `loadVersion` | the version menu: read an earlier version alone, or compare it with the current one. The loader should cache, as section panes reuse it for their "Since v1" links |
 | `history` | the host's own `useHistoryView` result, for a host whose requests follow the version being read; otherwise the viewer keeps its own |
 | `versionsFailed` | a retry for a version list that could not be loaded |
-| `header` | the head's live pull request facts (title, state, repository, branches, size, link), a back link, an approval state, a statistics line and the generation state; each falls back to what the document recorded. The head also states the document's `summary.review_minutes` as "~N min to review" beside the repository, and nothing when it is absent or null or the head has a `heading`. The change-kind tag sits beside the full page title, before its state and approval badges. `titleAside` adds a status beside the full page title. `heading` titles a review of something other than one pull request, such as a stack's: the document's own pull request number, link and state are then not shown |
+| `header` | the head's live pull request facts (title, state, repository, branches, size, link), a back link, an approval state, a statistics line and the generation state; each falls back to what the document recorded. The head also states the document's `summary.review_minutes` as "~N min to review" beside the repository, and nothing when it is absent or null or the head has a `heading`. The change-kind tag sits beside the full page title, before its state and approval badges. `titleAside` adds a status beside the full page title, and `actions` the host's page actions, such as a refresh, at the end of the title row. `heading` titles a review of something other than one pull request, such as a stack's: the document's own pull request number, link and state are then not shown |
 | `placeholder`, `asidePlaceholder`, `fallbackSections` | what the pane, the Details and Activity tabs and the rail show while a host has no document |
+| `facts` | a pull request's facts (`ReviewFacts`, schema `baum.facts/1`, checked with `parseReviewFacts`) while there is no document: Details shows their author, agents and change size (`FactsDetails`), Activity their checks, review exchange and linked sessions (`FactsActivity`), as a document's parts draw them, and their failing checks and open threads flag the tabs. They are never a version, and a document replaces them. The local app shows them for a pull request with no saved review |
 | `checks` | read marks or approvals beside each section and risk on the current version, whether each row counts as read (the rail's progress), and notices above and below the rail's rows |
 | `renderSectionAside` | a strip at the top of a section's pane on the current version, such as who approved it |
 | `renderSectionLabels` | labels at the end of a section's badges, in its pane and in the Changes overview, on whichever version is read, such as the pull requests a stack review's section covers |
@@ -130,6 +214,8 @@ left out rather than shown empty or failed:
 | `focusConversation` | puts the cursor in the conversation's text box when the reader asks to discuss the review |
 | `hunkPatches` | the hunk patch source for the section and risk panes |
 | `onVersionsShown` | called with the versions whose documents are on screen whenever that set changes, for example to record that a version was read |
+| `onRetryDetails` | a Retry beside "Details unavailable" on a section of the current version whose `details` is `failed` (below), called with the section's ID; the button reads "Retrying…" and is disabled from the click until a returned promise settles |
+| `contextPending` | the current document is a draft whose context the host is still writing: while it has no `summary.context`, the Summary's Context part says "Writing context…" in its place |
 
 CI uses the optional `review.checks_head`, falling back to `review.head` for
 older documents. Refreshing the current document can show latest-head checks
@@ -168,6 +254,16 @@ Older stacks without comparison history retain the original fallback.
 A document without a context,
 generated before it existed, shows no Context part. Stack reviews show theirs
 the same way.
+
+A section whose `details` is `pending` (a live draft whose details are still
+being written) or `failed` (they could not be written) keeps its outline.
+Its pane shows the title, badges and hunk counts as for any section, then a
+live status, "Writing details…" or "Details unavailable", its assessment's
+reasons and its hunks, then whatever it does hold, such as risks an earlier
+version recorded; a summary it holds shows above the status. The Changes
+overview gives its row the same status. `sectionDetails` reads the state: a
+section with no summary, or a state the viewer does not know, reads as
+failed. Read marks, approvals and discussion treat it as any section.
 
 Attention uses a flat callout with evidence directly below its risks. For a
 single referenced risk, its explanation replaces the overlapping attention
@@ -286,7 +382,19 @@ helpers the card uses) and what the host adds:
 - `renderAvatar`, the picture beside a person's prompt;
 - `modelLabel`, which names models (the id by default), and
   `restrictedNote`, the host's reason a restricted session shows only that
-  it is restricted (a neutral one by default).
+  it is restricted (a neutral one by default);
+- `layout`, `chat` (the default, as above) or `log`: a compact log read from
+  the left in one column. Each prompt sits under a rule in the host's
+  `--action-primary`, its number and time above it; the agent is named once
+  a turn, its messages before its last reply fold under "N progress updates",
+  and the reply is set as long text (`Markdown`'s `reading`). Notes are small
+  print, and runs of tool calls start folded. The desktop app's transcript
+  page uses it.
+
+A prompt can carry `images`, each a `src` the host serves and an `alt`: they
+show under its text as thumbnails that open full size in a dialog. Agent
+messages are marked `data-agent-text` (`progress` for the folded ones), for a
+host's keys that move a message at a time.
 
 Leaving one out turns its feature off: no "Agent activity" without
 `loadTurnActivity`, no subagent conversation without `loadSubagentActivity`,
@@ -502,11 +610,10 @@ up to it renders plain.
   only the grammars a page shows are fetched. The engine is shiki's JavaScript
   regex engine (no WebAssembly). The synchronous exports of `highlight.ts` do
   not load it.
-- **Colours** are CSS variables, `--syntax-*` in `viewer.css`, with light and
-  dark values at least 4.5:1 on the card and on the added and removed row
-  tints (the lowest is 4.5:1, for comments, constants and changed text in the
-  light theme on the removed-row tint). A host restyles the code by overriding
-  them.
+- **Colours** are CSS variables, `--syntax-*` in `src/palette.css`, derived from
+  the shared hue families for each theme. A host restyles the code by overriding
+  them. Changes to the bases or mixing recipes require contrast review on the
+  card and on added and removed row tints.
 - **Fallbacks.** Diffs over 3,000 lines or 200,000 characters
   (`MAX_HIGHLIGHT_LINES`, `MAX_HIGHLIGHT_CHARS`), unknown languages and any
   failure to load or run the highlighter render plain.
@@ -528,7 +635,13 @@ the highlighter adds no path for contributor markup.
 
 `Markdown` parses raw HTML into sanitized elements, as GitHub renders a
 comment. With `html={false}` it skips that step and raw HTML prints as the
-text it is, for prose that names tags rather than containing them.
+text it is, for prose that names tags rather than containing them. With
+`reading` it sets long text read on its own: headings in the heading font with
+more room above than below (a top-level one ruled off), body-size code spans
+that break after their slashes, grey list markers, lists spaced by depth, and
+tables with their cells at the top and a header on a fill. Code everywhere
+sits on `--code-fill`, a faint tint of the text that reads the same on any
+surface and in the dark theme.
 
 ## Schema and tile types
 
@@ -689,21 +802,18 @@ and no hosted API. A spec changes what one page sees with `page.route`
 (`serveDocument` and `serveSessions` in `e2e/fixtures.ts`), so specs stay
 parallel.
 
-| Spec | What it covers |
-| --- | --- |
-| `document.spec.ts` | the sample loads from the page's own origin with no console errors or foreign requests; a document read from a file; no file picker or upload; a failed load with Retry; a body that is not a `baum.review/1` document; a document that fails to render; the head's review time estimate, present, null and absent; the Summary's context, collapsed, expanded and absent |
-| `navigation.spec.ts` | the rail, the summary's jump links, the Changes and Risks overviews, deep links to a section or risk and Back, a stale link falling back to the summary, the phone bar and sheet |
-| `section.spec.ts` | a section's blocks (intent, behavior, decisions, table, code, diagram; entities drawn as nothing); hunk excerpts stored, read from `/api/patch` when left out, with no patch, and retried after a failure; the unsupported block fallback; tiles hidden until `?tiles=1`, then drawn, and an unsupported tile kind; description images drawing nothing without an attachment source |
-| `checks.spec.ts` | the Activity tab's checks (failing, blocking, green, an earlier head's checks ignored), verified, missing and pending evidence, the risk score and change size |
-| `sessions.spec.ts` | the Sessions and Commits groups with and without `/api/sessions` (document fallback with the server's reason, request failure, loading), a linked session's transcript and its failure and Retry, the Activity tab |
-| `theme.spec.ts` | light and dark follow the system, change while open, keep text readable, and colour highlighted code in each |
-| `untrusted.spec.ts` | hostile Markdown and HTML (`<script>`, `javascript:` links, `onerror`, `onclick`, `<iframe>`, `<form>`, `<svg>`) renders as inert text and runs nothing; plain-text fields and code excerpts show markup as written |
+The browser suite keeps the standalone host's integration seams: loading the
+built sample under its security policy, load/retry recovery, URL navigation with
+Back/Forward, the mobile rail, lazily fetched clone patches and transcripts, and
+hostile Markdown/HTML and diff text rendered safely. Component and unit tests
+cover block rendering, checks, context links, fallback states, themes and the
+selection/version decision matrices. Add a browser test only when the failure
+needs browser behavior or crosses a host seam; avoid rendering and copy checks
+already covered below that boundary.
 
 Fixtures are synthetic: the schema's example, `e2e/local-sessions.ts` for the
-local session answers, and documents the specs edit from the example. The app
-has no file picker, upload or drag and drop (see Standalone app), and draws no
-description images, as it supplies no `AttachmentUrlProvider`; the specs assert
-both. The hosted app's integration with the viewer stays covered by `ui/e2e`.
+local session answers, and documents the specs edit from the example. The
+hosted app's integration with the viewer stays covered by `ui/e2e`.
 
 Attachment resolvers may receive the rendered document as a second argument,
 so a host whose captures are version-scoped can serve each comparison pane’s

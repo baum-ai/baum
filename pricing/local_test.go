@@ -7,12 +7,13 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/baum-ai/baum/agent"
+	"github.com/baum-ai/baum/internal/appdb"
+	"github.com/baum-ai/baum/internal/appdb/appdbtest"
 )
 
 func TestRefreshedListSurvivesRestartOnlyWhileItsSignatureVerifies(t *testing.T) {
@@ -32,7 +33,7 @@ func TestRefreshedListSurvivesRestartOnlyWhileItsSignatureVerifies(t *testing.T)
 		_, _ = w.Write(data)
 	}))
 	defer server.Close()
-	dir := t.TempDir()
+	dir := appdbtest.TempDir(t)
 	if err = refresh(context.Background(), server.Client(), server.URL+"/prices.json", public, dir); err != nil {
 		t.Fatal(err)
 	}
@@ -51,8 +52,8 @@ func TestRefreshedListSurvivesRestartOnlyWhileItsSignatureVerifies(t *testing.T)
 	if err = loadPersisted(dir, other); err == nil || Version() != Embedded().Version() {
 		t.Fatalf("list trusted without a valid signature: %s %v", Version(), err)
 	}
-	path := filepath.Join(dir, persistedName)
-	raw, err := os.ReadFile(path)
+	path := filepath.Join(dir, "app.sqlite")
+	raw, err := appdb.Read(path, "cache", "pricing")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -64,13 +65,13 @@ func TestRefreshedListSurvivesRestartOnlyWhileItsSignatureVerifies(t *testing.T)
 	if raw, err = json.Marshal(stored); err != nil {
 		t.Fatal(err)
 	}
-	if err = os.WriteFile(path, raw, 0o600); err != nil {
+	if err = appdb.Write(path, "cache", "pricing", raw); err != nil {
 		t.Fatal(err)
 	}
 	if err = loadPersisted(dir, public); err == nil || Version() != Embedded().Version() {
 		t.Fatalf("tampered stored list installed: %s %v", Version(), err)
 	}
-	if err = loadPersisted(t.TempDir(), public); err != nil {
+	if err = loadPersisted(appdbtest.TempDir(t), public); err != nil {
 		t.Fatal("missing stored list is not an error", err)
 	}
 }

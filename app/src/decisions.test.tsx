@@ -1,3 +1,4 @@
+import { mockStateFetch } from "./ui-state-test-helper";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
@@ -53,7 +54,7 @@ beforeEach(() => {
   root = createRoot(node);
   vi.stubGlobal(
     "fetch",
-    vi.fn(async (path: string) => {
+    mockStateFetch(async (path: string) => {
       const key = path.replace("/s/test-ns/", "");
       return key in answers
         ? Response.json(answers[key])
@@ -95,7 +96,9 @@ it("shows a live session's decisions and rereads them on a decisions event", asy
   };
   await act(async () => render(2));
   expect(node.querySelector("details")).toBeNull();
-  expect(node.textContent).toContain("Decisions (0) · Cursor Agent can't capture decisions");
+  expect(node.textContent).toContain(
+    "Decisions (0) · Decisions are captured with Claude Code or Codex only",
+  );
 });
 
 it("draws nothing for a daemon without decision capture", async () => {

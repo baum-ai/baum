@@ -9,6 +9,7 @@ fn main() {
         "uninstall_command",
         "install_hooks",
         "uninstall_hooks",
+        "update_hooks",
         "choose_repository",
         "add_repository",
         "review_settings",

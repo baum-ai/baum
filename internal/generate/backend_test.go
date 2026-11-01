@@ -14,8 +14,12 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/baum-ai/baum/agent"
 	"github.com/baum-ai/baum/agent/anthropic"
+	"github.com/baum-ai/baum/agent/claude"
+	"github.com/baum-ai/baum/agent/codex"
 	"github.com/baum-ai/baum/internal/config"
 	"github.com/baum-ai/baum/internal/generate"
 	"github.com/baum-ai/baum/internal/generate/generatetest"
@@ -272,6 +276,29 @@ func TestAutoAppliesTheModelToClaudeOnly(t *testing.T) {
 	}
 }
 
+// The wrappers a host puts around a backend (a backend_paths entry, the
+// pass timeout) keep its answer to whether stage calls may run at once.
+func TestWrappersForwardConcurrentCalls(t *testing.T) {
+	paths := map[config.Backend]string{config.BackendClaude: "/opt/claude", config.BackendCodex: "/opt/codex", config.BackendCursorAgent: "/opt/cursor-agent"}
+	for _, cfg := range []config.Config{{}, {BackendPaths: paths}} {
+		backends := generate.DefaultBackendsFor(cfg)
+		for name, want := range map[string]bool{"claude": true, "codex": true, "cursor-agent": false} {
+			var backend agent.Backend
+			switch name {
+			case "claude":
+				backend = backends.Claude("")
+			case "codex":
+				backend = backends.Codex("")
+			default:
+				backend = backends.CursorAgent("")
+			}
+			if got := generate.ConcurrentCalls(generate.BoundPasses(backend, time.Minute)); got != want {
+				t.Errorf("%s (paths %v): concurrent calls %v", name, cfg.BackendPaths != nil, got)
+			}
+		}
+	}
+}
+
 func TestBackendPathsReplaceThePATHLookup(t *testing.T) {
 	t.Run("explicit path found without PATH", func(t *testing.T) {
 		fakeBinary(t, "other", `true`) // PATH holds no claude
@@ -317,4 +344,50 @@ func TestBackendPathsReplaceThePATHLookup(t *testing.T) {
 			t.Fatalf("err = %v", err)
 		}
 	})
+}
+
+// The chosen reasoning effort reaches every harness that takes one.
+func TestDefaultBackendsCarryTheEffort(t *testing.T) {
+	backends := generate.DefaultBackendsFor(config.Config{Effort: "high"})
+	if c := backends.Claude("m").(*claude.Backend); c.Effort != "high" {
+		t.Errorf("claude effort %q", c.Effort)
+	}
+	if c := backends.Codex("m").(*codex.Backend); c.Effort != "high" {
+		t.Errorf("codex effort %q", c.Effort)
+	}
+	if a := backends.Anthropic("m").(*anthropic.Backend); a.Effort != "high" {
+		t.Errorf("anthropic effort %q", a.Effort)
+	}
+}
+
+func TestSelectDesktopRunsClaudeAndCodexOnly(t *testing.T) {
+	claude := &generatetest.Backend{BackendName: "claude", CheckErr: errors.New("not installed")}
+	codex := &generatetest.Backend{BackendName: "codex", CheckErr: errors.New("not installed")}
+	backends := fakes(claude, codex)
+	backends.Anthropic = func(string) generate.CheckedBackend { return &generatetest.Backend{BackendName: "anthropic"} }
+	backends.CursorAgent = func(string) generate.CheckedBackend { return &generatetest.Backend{BackendName: "cursor-agent"} }
+	ctx := context.Background()
+	// auto never falls back to the Anthropic API; it names what it tried.
+	_, err := generate.SelectDesktop(ctx, config.BackendAuto, "", backends, nil)
+	if generate.CategoryOf(err) != generate.CategoryBackend || err == nil || strings.Contains(err.Error(), "anthropic") {
+		t.Fatalf("auto without claude or codex: %v", err)
+	}
+	codex.CheckErr = nil
+	if selected, err := generate.SelectDesktop(ctx, config.BackendAuto, "", backends, nil); err != nil || selected.Backend.Name() != "codex" {
+		t.Fatalf("auto: %v %v", selected, err)
+	}
+	// A requested cursor-agent or anthropic is refused, not replaced.
+	for _, backend := range []config.Backend{config.BackendCursorAgent, config.BackendAnthropic} {
+		_, err := generate.SelectDesktop(ctx, backend, "", backends, nil)
+		if !errors.Is(err, generate.ErrBackendNotOffered) || generate.CategoryOf(err) != generate.CategoryBackend || !strings.Contains(err.Error(), string(backend)) {
+			t.Errorf("%s: %v", backend, err)
+		}
+		// The command line still runs it.
+		if selected, err := generate.Select(ctx, backend, "", backends, nil); err != nil || selected.Backend.Name() != string(backend) {
+			t.Errorf("Select %s: %v %v", backend, selected, err)
+		}
+	}
+	if _, err := generate.SelectDesktop(ctx, "nope", "", backends, nil); err == nil || errors.Is(err, generate.ErrBackendNotOffered) {
+		t.Errorf("an unknown backend: %v", err)
+	}
 }

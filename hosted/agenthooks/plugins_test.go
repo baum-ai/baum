@@ -12,8 +12,9 @@ import (
 // carry. A hook change ships as a new version, which agents update to; 1.1.0
 // added the record-only events (Claude Code's notifications and every tool
 // call, Codex's permission requests), and 1.2.0 Claude Code's permission
-// requests, which the desktop app answers.
-const pluginVersion = "1.2.0"
+// requests, which the desktop app answers. Version 1.2.1 fixes Codex runtime
+// discovery by using its compatibility manifest.
+const pluginVersion = "1.2.1"
 
 // Read the shipped files, not generated fixtures: the OSS subtree is the
 // marketplace root after publication and must carry everything it references.
@@ -24,14 +25,18 @@ func TestMarketplacePluginsMatchUserWideHooks(t *testing.T) {
 			spec, _ := Lookup(agent)
 			settings, _ := LookupUserWide(agent)
 			plugin := filepath.Join(root, "plugins", "baum-"+agent)
-			manifestPath := filepath.Join(plugin, "plugin.json")
+			manifestPath := filepath.Join(plugin, ".codex-plugin", "plugin.json")
 			if agent == "claude-code" {
 				manifestPath = filepath.Join(plugin, ".claude-plugin", "plugin.json")
 			}
 			var manifest map[string]any
 			readPluginJSON(t, manifestPath, &manifest)
-			if agent == "codex" && manifest["$schema"] != "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json" {
-				t.Fatalf("Codex portable manifest must declare its format: %#v", manifest)
+			if agent == "codex" {
+				// Codex 0.166 installs a portable root manifest but omits its
+				// hooks at runtime. Keep the working compatibility layout.
+				if _, err := os.Stat(filepath.Join(plugin, "plugin.json")); !os.IsNotExist(err) {
+					t.Fatal("a portable root manifest would hide the Codex hook plugin")
+				}
 			}
 			if manifest["name"] != "baum" || manifest["version"] != pluginVersion || manifest["hooks"] != nil {
 				t.Fatalf("manifest = %#v", manifest)

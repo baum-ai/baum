@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/baum-ai/baum/agent"
+	"github.com/baum-ai/baum/internal/appdb/appdbtest"
 	"github.com/baum-ai/baum/internal/config"
 	"github.com/baum-ai/baum/internal/generate"
 	"github.com/baum-ai/baum/internal/generate/generatetest"
@@ -41,7 +42,7 @@ func registeredClone(t *testing.T) (*repos.Registry, repos.Clone) {
 			t.Fatal(string(out), e)
 		}
 	}
-	registry, e := repos.Open(filepath.Join(t.TempDir(), "repos.sqlite"))
+	registry, e := repos.Open(filepath.Join(appdbtest.TempDir(t), "repos.sqlite"))
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -153,7 +154,7 @@ func localRunner(registry *repos.Registry, headRepository, permission string, st
 	cfg.Backend = config.BackendClaude
 	cfg.Model = "claude-sonnet-4-5"
 	client := github.New(func(context.Context, string) (string, error) { return "fixture-token", nil }, github.Options{Transport: transportFunc(func(r *http.Request) (*http.Response, error) {
-		body := `{"state":"open","head":{"sha":"first","repo":{"full_name":"` + headRepository + `"}},"user":{"login":"author"}}`
+		body := `{"state":"open","head":{"sha":"first","repo":{"full_name":"` + headRepository + `"}},"base":{"sha":"base"},"user":{"login":"author"}}`
 		code := 200
 		if strings.HasSuffix(r.URL.Path, "/permission") {
 			code = status
@@ -218,7 +219,7 @@ func TestLocalPrepareUsesBackendPathsWithoutFallingBackToPATH(t *testing.T) {
 			t.Fatal(string(out), e)
 		}
 	}
-	registry, e := repos.Open(filepath.Join(t.TempDir(), "repos.sqlite"))
+	registry, e := repos.Open(filepath.Join(appdbtest.TempDir(t), "repos.sqlite"))
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -258,15 +259,15 @@ func TestLocalPrepareUsesBackendPathsWithoutFallingBackToPATH(t *testing.T) {
 }
 
 // The app's backend and model replace the config file's for every job, read
-// when the job is prepared; a repository's own model still wins.
+// when the job is prepared.
 func TestPreferencesChooseTheBackendAndModel(t *testing.T) {
 	ctx := context.Background()
 	registry, clone := registeredClone(t)
 	local := localRunner(registry, "owner/repo", "write", 200)
-	local.Backends.CursorAgent = func(string) generate.CheckedBackend {
-		return &generatetest.Backend{BackendName: agent.BackendCursorAgent, Version: "2026.10.16"}
+	local.Backends.Codex = func(string) generate.CheckedBackend {
+		return &generatetest.Backend{BackendName: agent.BackendCodex, Version: "0.166.0"}
 	}
-	backend, model := config.BackendCursorAgent, "app-model"
+	backend, model := config.BackendCodex, "app-model"
 	if _, e := registry.UpdatePreferences(ctx, func(p repos.Preferences) repos.Preferences {
 		p.Backend, p.Model = &backend, &model
 		return p
@@ -274,40 +275,59 @@ func TestPreferencesChooseTheBackendAndModel(t *testing.T) {
 		t.Fatal(e)
 	}
 	p, _, e := local.Prepare(ctx, Item{Clone: clone.ID, PR: 1})
-	if e != nil || p.Backend != agent.BackendCursorAgent || p.Model != "app-model" {
-		t.Fatalf("prepared = %+v, %v", p, e)
-	}
-	if _, e = registry.AddPatch(ctx, clone.Path, func(s repos.Settings) (repos.Settings, error) {
-		repository := "repository-model"
-		s.Model = &repository
-		return s, nil
-	}); e != nil {
-		t.Fatal(e)
-	}
-	if p, _, e = local.Prepare(ctx, Item{Clone: clone.ID, PR: 1}); e != nil || p.Model != "repository-model" {
+	if e != nil || p.Backend != agent.BackendCodex || p.Model != "app-model" {
 		t.Fatalf("prepared = %+v, %v", p, e)
 	}
 }
 
-// A cursor-agent job is not blocked, whatever its model is called, and its
-// recorded cost stays unknown: Cursor bills it through the user's
-// subscription, so no API price describes it.
-func TestCursorAgentJobsHaveNoListPrice(t *testing.T) {
+// A job's tracked backend keeps the backend's answer to whether a staged
+// review's calls may run at once.
+func TestTrackedBackendForwardsConcurrentCalls(t *testing.T) {
+	backends := generate.DefaultBackendsFor(config.Config{})
+	for backend, want := range map[agent.Backend]bool{backends.Claude(""): true, backends.CursorAgent(""): false, &generatetest.Backend{}: false} {
+		if got := (&trackedBackend{Backend: backend}).ConcurrentCalls(); got != want {
+			t.Errorf("%s: %v", backend.Name(), got)
+		}
+	}
+}
+
+// The desktop app does not run a job whose backend is cursor-agent or
+// anthropic, whether the config file or the app's preferences name it, and it
+// never switches to another backend. auto does not fall back to the Anthropic
+// API either.
+func TestDesktopRefusesCursorAgentAndAnthropicJobs(t *testing.T) {
 	ctx := context.Background()
 	registry, clone := registeredClone(t)
+	fake := func(name string) func(string) generate.CheckedBackend {
+		return func(string) generate.CheckedBackend {
+			return &generatetest.Backend{BackendName: name, Version: "1.0.0"}
+		}
+	}
+	for _, backend := range []config.Backend{config.BackendCursorAgent, config.BackendAnthropic} {
+		local := localRunner(registry, "owner/repo", "write", 200)
+		local.Backends.CursorAgent, local.Backends.Anthropic = fake(agent.BackendCursorAgent), fake(agent.BackendAnthropic)
+		local.Config.Backend = backend
+		if _, _, e := local.Prepare(ctx, Item{Clone: clone.ID, PR: 1}); !errors.Is(e, generate.ErrBackendNotOffered) {
+			t.Errorf("config file %s: err = %v", backend, e)
+		}
+	}
 	local := localRunner(registry, "owner/repo", "write", 200)
-	local.Config.Backend = config.BackendCursorAgent
-	local.Backends.CursorAgent = func(string) generate.CheckedBackend {
-		return &generatetest.Backend{BackendName: agent.BackendCursorAgent, Version: "2026.10.16"}
+	local.Backends = generate.Backends{
+		Claude: func(string) generate.CheckedBackend {
+			return &generatetest.Backend{CheckErr: errors.New("not installed")}
+		},
+		Anthropic: fake(agent.BackendAnthropic), CursorAgent: fake(agent.BackendCursorAgent),
 	}
-	p, _, e := local.Prepare(ctx, Item{Clone: clone.ID, PR: 1})
-	if e != nil {
-		t.Fatal(e)
+	local.Config.Backend = config.BackendAuto
+	if _, _, e := local.Prepare(ctx, Item{Clone: clone.ID, PR: 1}); e == nil || !strings.Contains(e.Error(), "no usable model backend") || strings.Contains(e.Error(), "anthropic") {
+		t.Errorf("auto without claude or codex: err = %v", e)
 	}
-	if p.Backend != agent.BackendCursorAgent || p.Model != "claude-sonnet-4-5" || p.BlockedReason != "" {
-		t.Fatalf("prepared = %+v", p)
-	}
+}
 
+// A cursor-agent run's recorded cost stays unknown: Cursor bills it through
+// the user's subscription, so no API price describes it.
+func TestCursorAgentRunsHaveNoListPrice(t *testing.T) {
+	ctx := context.Background()
 	var reports []Progress
 	run := func(context.Context, agent.Request, int) (agent.Result, error) {
 		return agent.Result{Model: "Claude 4.5 Sonnet", ModelSource: "cli_reported", Calls: 2, Tokens: 1500, Usage: agent.Usage{Input: 1000, Output: 300, CacheCreate: 200}}, nil
@@ -350,6 +370,28 @@ func TestJobRunsWhateverPriceListIsActive(t *testing.T) {
 	pricing.Install(newer)
 	if e = local.confirmed(ctx, stale); e != nil {
 		t.Fatalf("a job prepared with an older list was refused: %v", e)
+	}
+}
+
+// A queued job runs with the agent, model and limits current when it starts,
+// as one started then would; only the account it was prepared with binds it,
+// and a job read back from the journal, which does not keep the account,
+// compares its whole configuration.
+func TestQueuedJobRunsWithChangedSettingsButNotAnotherAccount(t *testing.T) {
+	registry, clone := registeredClone(t)
+	local := localRunner(registry, "owner/repo", "write", 200)
+	prepared, _, err := local.Prepare(context.Background(), Item{Clone: clone.ID, PR: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	older := prepared
+	older.ConfigDigest, older.Backend, older.Model = "older-settings", "codex", "older-model"
+	if err := local.confirmed(context.Background(), older); err != nil {
+		t.Fatalf("changed settings stopped a queued job: %v", err)
+	}
+	older.account = ""
+	if err := local.confirmed(context.Background(), older); err == nil {
+		t.Fatal("a journaled job ran without its configuration compared")
 	}
 }
 

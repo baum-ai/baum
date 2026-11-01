@@ -11,6 +11,7 @@ import {
   humanize,
   repositoryLink,
   type ReviewDocument,
+  type ReviewEvidence,
   reviewExchange,
   reviewExchangeFacts,
   type ReviewExchangeFacts,
@@ -74,7 +75,8 @@ export function ReviewExchange({
   document,
   onSelectSection,
 }: {
-  document: ReviewDocument;
+  /** A review, or a pull request's facts, whose findings name no section. */
+  document: ReviewEvidence;
   onSelectSection: (id: string) => void;
 }) {
   const events = reviewExchange(document);
@@ -86,7 +88,8 @@ export function ReviewExchange({
   const threads = reviewThreadStatus(document);
   const criticalOpen = hasOpenCritical(document);
   const sectionTitle = (id: string) =>
-    document.sections.find((section) => section.id === id)?.title ?? id;
+    ("sections" in document ? document.sections : []).find((section) => section.id === id)?.title ??
+    id;
 
   return (
     <Part
@@ -134,7 +137,7 @@ export function ReviewExchange({
 
 /** A finding's state is its thread's, and stays open while threads are not
  *  synced, so a critical count resolved since is not raised as an alarm. */
-const hasOpenCritical = (document: ReviewDocument) =>
+const hasOpenCritical = (document: ReviewEvidence) =>
   document.agent_reviews.some((review) =>
     review.findings.some((finding) => finding.severity === "must_fix" && finding.state === "open"),
   );
@@ -202,7 +205,7 @@ export function StackReviewExchange({
  *  it leads — its section in this review, or the member it came from. */
 type ThreadEntry = OpenThread & {
   key: string;
-  document: ReviewDocument;
+  document: ReviewEvidence;
   member?: ReactNode;
   section?: { title: string; select: () => void } | null;
 };
@@ -464,7 +467,7 @@ function ExchangeTimeline({
   sectionTitle,
   onSelectSection,
 }: {
-  document: ReviewDocument;
+  document: ReviewEvidence;
   events: ExchangeEvent[];
   sectionTitle: (id: string) => string;
   onSelectSection: (id: string) => void;
@@ -513,7 +516,7 @@ function ExchangeTimeline({
 
 /** One or more tools that posted without a finding, as a single muted line;
  *  several name themselves under it rather than taking a row each. */
-function QuietTurns({ document, events }: { document: ReviewDocument; events: ExchangeEvent[] }) {
+function QuietTurns({ document, events }: { document: ReviewEvidence; events: ExchangeEvent[] }) {
   const [first] = events;
   if (!first) return null;
   const names = [...new Set(events.map((event) => event.by))];
@@ -552,7 +555,7 @@ function Turn({
   sectionTitle,
   onSelectSection,
 }: {
-  document: ReviewDocument;
+  document: ReviewEvidence;
   event: ExchangeEvent;
   count: number;
   sectionTitle: (id: string) => string;
@@ -670,7 +673,7 @@ function TurnLine({
   url,
   children,
 }: {
-  document: ReviewDocument;
+  document: ReviewEvidence;
   by: string;
   at: string | null;
   url?: string;

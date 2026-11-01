@@ -1,3 +1,4 @@
+import { SavedStateNotice, useUIState } from "./ui-state";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { cn } from "@baum/viewer/components/classnames";
 import {
@@ -27,11 +28,9 @@ import { useShortcuts } from "./shortcuts";
 import {
   buildTour,
   commentedStops,
-  PROGRESS_EVENT,
-  loadProgress,
+  progressState,
   progressKey,
   reviewSubmission,
-  saveProgress,
   type Chapter,
   type Progress,
   type ReviewEvent,
@@ -39,6 +38,7 @@ import {
   type Tour,
 } from "./walkthrough-model";
 import "./walkthrough.css";
+import { PRIMARY, SECONDARY, SMALL } from "./action-classes";
 
 /** The overview a pull request opens on, or the tour it leads into. */
 export type WalkMode = "landing" | "tour";
@@ -70,6 +70,7 @@ export function Walkthrough({
   changed,
   actions,
   notices,
+  refresh,
   ask,
   toDraft = false,
   drafted,
@@ -88,6 +89,8 @@ export function Walkthrough({
   actions?: ReactNode;
   /** What is happening on it now, such as agents on its branch. */
   notices?: ReactNode;
+  /** The page's refresh button, at the head's end. */
+  refresh?: ReactNode;
   /** The Ask panel: whether it is open, toggling it, and asking about a part
    *  of the review. Absent, the walkthrough offers no questions. */
   ask?: { open: boolean; toggle: () => void; about: (focus: ChatFocus) => void };
@@ -98,42 +101,30 @@ export function Walkthrough({
 }) {
   const tour = useMemo(() => buildTour(document), [document]);
   const key = progressKey(document);
-  const [progress, setProgress] = useState<Progress>(() => loadProgress(key));
-  useEffect(() => {
-    saveProgress(key, progress);
-  }, [key, progress]);
-  // The stop whose comment is being edited and its note as it was when the
-  // editing began, to keep what the Ask panel adds to it meanwhile.
+  const saved = useUIState(progressState(key));
+  const progress = saved.value;
+  const setProgress = saved.update;
+  // Keep text typed in the open editor while the Ask panel appends or undoes.
   const editingRef = useRef<string | null>(null);
   const editBase = useRef("");
-  // The Ask panel adds an answer to the draft from outside this page.
   useEffect(() => {
-    const changed = (event: Event) => {
-      if ((event as CustomEvent<string>).detail !== key) return;
-      const next = loadProgress(key);
-      setProgress(next);
-      const id = editingRef.current;
-      if (id === null) return;
-      // Text appended to the stop's note since the editing began joins the
-      // text being edited, and text the panel takes back (Undo) leaves it.
-      const stored = next.notes[id] ?? "";
-      const base = editBase.current;
-      if (stored === base) return;
-      if (stored.startsWith(base)) {
-        editBase.current = stored;
-        const added = stored.slice(base.length).replace(/^\s+/, "");
-        setDraft((current) =>
-          current.trim() ? `${current.replace(/\s+$/, "")}\n\n${added}` : added,
-        );
-      } else if (base.startsWith(stored)) {
-        editBase.current = stored;
-        const removed = base.slice(stored.length).trim();
-        if (removed) setDraft((current) => withoutLast(current, removed));
-      }
-    };
-    window.addEventListener(PROGRESS_EVENT, changed);
-    return () => window.removeEventListener(PROGRESS_EVENT, changed);
-  }, [key]);
+    const id = editingRef.current;
+    if (id === null) return;
+    const stored = progress.notes[id] ?? "";
+    const base = editBase.current;
+    if (stored === base) return;
+    if (stored.startsWith(base)) {
+      editBase.current = stored;
+      const added = stored.slice(base.length).replace(/^\s+/, "");
+      setDraft((current) =>
+        current.trim() ? `${current.replace(/\s+$/, "")}\n\n${added}` : added,
+      );
+    } else if (base.startsWith(stored)) {
+      editBase.current = stored;
+      const removed = base.slice(stored.length).trim();
+      if (removed) setDraft((current) => withoutLast(current, removed));
+    }
+  }, [progress.notes]);
   const seen = useMemo(() => new Set(progress.seen), [progress.seen]);
   const commented = (stop: Stop) => Boolean(progress.notes[stop.id]?.trim());
   const done = (stop: Stop) => seen.has(stop.id) || commented(stop);
@@ -242,6 +233,7 @@ export function Walkthrough({
       event.preventDefault();
       return close();
     }
+    if (!saved.ready) return;
     if (mode === "landing") {
       // The overview's one move is into the tour; the page's own keys, such
       // as m to merge, stay with the page.
@@ -289,13 +281,23 @@ export function Walkthrough({
       : `${unseen.length} left`
     : "all looked at";
 
+  if (!saved.ready)
+    return (
+      <section aria-label="Walkthrough" className="walkthrough">
+        <SavedStateNotice state={saved} label="review draft" />
+        <button type="button" className={SECONDARY} onClick={close}>
+          Full review
+        </button>
+      </section>
+    );
+
   if (total === 0)
     return (
       <div className="walkthrough">
         <div className="local-review-empty">
           <h2>Nothing to walk through</h2>
           <p>This review has no logical sections with changes to look at.</p>
-          <button type="button" className="walk-secondary" onClick={close}>
+          <button type="button" className={SECONDARY} onClick={close}>
             Back to the full review
           </button>
         </div>
@@ -305,6 +307,7 @@ export function Walkthrough({
   if (mode === "landing")
     return (
       <section aria-label="Walkthrough" className="walkthrough">
+        <SavedStateNotice state={saved} label="review draft" />
         <div className="walk-landing">
           <Landing
             entry={entry}
@@ -316,6 +319,7 @@ export function Walkthrough({
             back={back}
             actions={actions}
             notices={notices}
+            refresh={refresh}
             ask={ask}
           />
         </div>
@@ -324,6 +328,7 @@ export function Walkthrough({
 
   return (
     <section aria-label="Walkthrough" className="walkthrough">
+      <SavedStateNotice state={saved} label="review draft" />
       <header className="walk-head">
         <div className="walk-head-inner">
           <div className="walk-head-text">
@@ -344,10 +349,11 @@ export function Walkthrough({
           </div>
           <div className="walk-head-actions">
             {ask ? <AskButton ask={ask} /> : null}
-            <button type="button" className="walk-secondary" onClick={close}>
+            <button type="button" className={SECONDARY} onClick={close}>
               Full review
               <kbd aria-hidden>v</kbd>
             </button>
+            {refresh}
           </div>
           <ChapterSteps tour={tour} page={page} done={done} commented={commented} open={open} />
         </div>
@@ -442,7 +448,7 @@ function AskButton({ ask }: { ask: { open: boolean; toggle: () => void } }) {
   return (
     <button
       type="button"
-      className="walk-secondary"
+      className={SECONDARY}
       aria-pressed={ask.open}
       aria-keyshortcuts="a"
       data-ask-button=""
@@ -579,6 +585,7 @@ function Landing({
   back,
   actions,
   notices,
+  refresh,
   ask,
 }: {
   entry: Entry;
@@ -590,6 +597,7 @@ function Landing({
   back: { href: string; label: string };
   actions?: ReactNode;
   notices?: ReactNode;
+  refresh?: ReactNode;
   ask?: { open: boolean; toggle: () => void };
 }) {
   const pr = entry.pull_request;
@@ -620,6 +628,7 @@ function Landing({
           {pr.draft ? " · Draft" : ""}
         </span>
         {tour.minutes ? <span className="walk-minutes">≈ {tour.minutes} min to review</span> : null}
+        {refresh}
       </div>
       <h1 id="walk-landing-title" className="walk-title">
         {pr.title}
@@ -646,17 +655,17 @@ function Landing({
       </div>
       {tour.intro ? <p className="walk-why">{tour.intro}</p> : null}
       <div className="walk-actions">
-        <button type="button" className="walk-primary" onClick={() => open(1)}>
+        <button type="button" className={PRIMARY} onClick={() => open(1)}>
           {started ? "Continue the review" : "Start the review"}
           <kbd aria-hidden>→</kbd>
         </button>
         {actions}
         {ask ? <AskButton ask={ask} /> : null}
-        <button type="button" className="walk-secondary" onClick={close}>
+        <button type="button" className={SECONDARY} onClick={close}>
           Full review
           <kbd aria-hidden>v</kbd>
         </button>
-        <a href={pr.url} target="_blank" rel="noreferrer" className="walk-secondary">
+        <a href={pr.url} target="_blank" rel="noreferrer" className={SECONDARY}>
           GitHub
           <ExternalLinkIcon size={12} />
         </a>
@@ -796,7 +805,7 @@ function ChapterPage({
   return (
     <article aria-labelledby={`walk-title-${chapter.id}`} className="walk-panel">
       <div className="walk-meta">
-        <span className={cn("walk-chip", chapter.level && `risk-${chapter.level}`)}>
+        <span className={cn("walk-chip walk-tag", chapter.level && `risk-${chapter.level}`)}>
           Chapter {page} of {tour.chapters.length}
         </span>
         <span className="walk-where">
@@ -857,11 +866,11 @@ function ChapterPage({
         </ol>
       </section>
       <div className="walk-actions walk-page-foot">
-        <button type="button" className="walk-primary" onClick={next}>
+        <button type="button" className={PRIMARY} onClick={next}>
           {following ? `Next: ${following.title}` : "Wrap up"}
           <kbd aria-hidden>→</kbd>
         </button>
-        <button type="button" className="walk-secondary" onClick={back}>
+        <button type="button" className={SECONDARY} onClick={back}>
           <ChevronLeftIcon size={14} />
           Back
         </button>
@@ -940,7 +949,7 @@ function Behaviour({
           {picked && !editing && !hasNote ? (
             <button
               type="button"
-              className="walk-small"
+              className={SMALL}
               onClick={(event) => {
                 event.stopPropagation();
                 startComment();
@@ -954,7 +963,7 @@ function Behaviour({
           {picked && ask ? (
             <button
               type="button"
-              className="walk-small"
+              className={SMALL}
               onClick={(event) => {
                 event.stopPropagation();
                 ask();
@@ -985,13 +994,13 @@ function Behaviour({
             <div className="walk-actions">
               <button
                 type="button"
-                className="walk-primary"
+                className={PRIMARY}
                 onClick={saveComment}
                 disabled={!draft.trim()}
               >
                 Save comment
               </button>
-              <button type="button" className="walk-secondary" onClick={cancelComment}>
+              <button type="button" className={SECONDARY} onClick={cancelComment}>
                 {hasNote ? "Cancel" : "Never mind"}
               </button>
             </div>
@@ -1003,10 +1012,10 @@ function Behaviour({
               <span className="walk-comment-where">Your comment on {target}</span>
               <p>{note}</p>
             </div>
-            <button type="button" className="walk-small" onClick={startComment}>
+            <button type="button" className={SMALL} onClick={startComment}>
               Edit
             </button>
-            <button type="button" className="walk-small" onClick={removeComment}>
+            <button type="button" className={SMALL} onClick={removeComment}>
               Remove
             </button>
           </div>
@@ -1034,7 +1043,7 @@ function WrapUp({
   return (
     <article aria-labelledby="walk-wrap-title" className="walk-panel">
       <div className="walk-meta">
-        <span className="walk-chip">Submit</span>
+        <span className="walk-chip walk-tag">Submit</span>
         <span className="walk-where">
           {seenCount} of {tour.stops.length} looked at ·{" "}
           {commentCount ? plural(commentCount, "comment") : "no comments"}
@@ -1192,7 +1201,7 @@ function Submit({
         <a href={sending.url} target="_blank" rel="noreferrer">
           Open it on GitHub <ExternalLinkIcon size={12} />
         </a>
-        <button type="button" className="walk-small" onClick={() => setSending({ state: "idle" })}>
+        <button type="button" className={SMALL} onClick={() => setSending({ state: "idle" })}>
           Write another
         </button>
       </div>
@@ -1251,7 +1260,7 @@ function Submit({
           {sending.code === "invalid_line" ? (
             <>
               {" "}
-              <button type="button" className="walk-small" onClick={() => void send(false)}>
+              <button type="button" className={SMALL} onClick={() => void send(false)}>
                 Put the comments in the review body instead
               </button>
             </>
@@ -1261,7 +1270,7 @@ function Submit({
       <div className="walk-actions">
         <button
           type="button"
-          className="walk-primary"
+          className={PRIMARY}
           onClick={() => void send(true)}
           disabled={sending.state === "sending" || seenCount === 0 || empty}
         >

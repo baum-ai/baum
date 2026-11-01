@@ -48,11 +48,12 @@ func resolvedRoot(root string) string {
 	return filepath.Clean(root)
 }
 
-// underRoot reports whether dir is, by its spelling, a run directory directly
-// under root.
+// underRoot resolves the parent of dir so aliases such as /var on macOS
+// and short Windows paths compare like the paths returned by Create. It
+// leaves dir itself unresolved so candidates can reject a final symlink.
 func underRoot(root, dir string) bool {
 	dir = filepath.Clean(dir)
-	return filepath.Dir(dir) == resolvedRoot(root) && strings.HasPrefix(filepath.Base(dir), agent.RunDirPrefix)
+	return resolvedRoot(filepath.Dir(dir)) == resolvedRoot(root) && strings.HasPrefix(filepath.Base(dir), agent.RunDirPrefix)
 }
 
 // RemoveSessions deletes the files the agent CLIs keep for the sessions they

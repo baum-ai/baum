@@ -1,3 +1,4 @@
+import { mockStateFetch, seedUIState } from "./ui-state-test-helper";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
@@ -118,7 +119,7 @@ beforeEach(() => {
   );
   vi.stubGlobal(
     "fetch",
-    vi.fn(async (path: string, init?: RequestInit) => {
+    mockStateFetch(async (path: string, init?: RequestInit) => {
       if (path.endsWith("api/inboxes")) {
         if (inboxesHold) await inboxesHold;
         if (inboxesFail) return new Response("no", { status: inboxesFail });
@@ -180,6 +181,16 @@ const byText = <T extends Element = HTMLElement>(selector: string, text: string 
     typeof text === "string" ? element.textContent === text : text.test(element.textContent ?? ""),
   ) as T | undefined;
 const button = (name: string | RegExp) => byText<HTMLButtonElement>("button", name)!;
+const openActions = (name: string) =>
+  click(node.querySelector(`button[aria-label="Actions for ${name}"]`));
+const choice = (label: string) =>
+  Array.from(node.querySelectorAll<HTMLElement>('[role="menu"] [role^=menuitem]')).find(
+    (item) => item.querySelector(".context-menu-label")?.textContent === label,
+  );
+const choices = () =>
+  Array.from(node.querySelectorAll<HTMLElement>('[role="menu"] [role^=menuitem]')).map(
+    (item) => item.querySelector(".context-menu-label")!.textContent,
+  );
 const link = (name: string | RegExp) => byText<HTMLAnchorElement>("a", name)!;
 const search = () => new URLSearchParams(location.search);
 const template = (name: string) =>
@@ -552,15 +563,12 @@ it("tags the preview's rows with the other inboxes and says what an empty one wa
 
 it("leaves snoozed pull requests out of the preview, as the queue does", async () => {
   const day = new Date();
-  localStorage.setItem(
-    "baum.inbox.v1",
-    JSON.stringify({
-      day: `${day.getFullYear()}-${day.getMonth() + 1}-${day.getDate()}`,
-      seen: {},
-      snoozed: { "acme/demo#3": Date.now() + 3600_000 },
-      held: {},
-    }),
-  );
+  seedUIState("api/ui-state/inbox", {
+    day: `${day.getFullYear()}-${day.getMonth() + 1}-${day.getDate()}`,
+    seen: {},
+    snoozed: { "acme/demo#3": Date.now() + 3600_000 },
+    held: {},
+  });
   await render("?page=inbox-edit&inbox=Acme");
   expect(previewTitles()).toEqual(["Change 1", "Change 2"]);
 });
@@ -601,14 +609,14 @@ it("lists the inboxes in order with their counts, sentences and controls", async
     "Reviews1 nowReviews I’m asked for in any repository, whatever the risk.",
     "Acme3 nowAnything waiting on me in my own repositories, whatever the risk.",
   ]);
-  const up = (name: string) =>
-    node.querySelector<HTMLButtonElement>(`[aria-label="Move ${name} up"]`)!;
-  const down = (name: string) =>
-    node.querySelector<HTMLButtonElement>(`[aria-label="Move ${name} down"]`)!;
-  expect(up("Reviews").disabled).toBe(true);
-  expect(down("Reviews").disabled).toBe(false);
-  expect(down("Acme").disabled).toBe(true);
-  expect(link("Edit")!.getAttribute("href")).toBe("/s/test-ns/?page=inbox-edit&inbox=Reviews");
+  // The first has nothing to move up to, the last nothing to move down to.
+  await openActions("Reviews");
+  expect(choices()).toEqual(["Edit…", "Move down", "Count in the Inbox badge"]);
+  await openActions("Acme");
+  expect(choices()).toEqual(["Edit…", "Move up", "Count in the Inbox badge"]);
+  expect(node.querySelector('[aria-label="Edit Reviews"]')!.getAttribute("href")).toBe(
+    "/s/test-ns/?page=inbox-edit&inbox=Reviews",
+  );
   expect(link("New inbox").getAttribute("href")).toBe("/s/test-ns/?page=inbox-new");
   expect(railLink("Manage inboxes").getAttribute("aria-current")).toBe("page");
   expect(railLink("Inbox").getAttribute("aria-current")).toBeNull();
@@ -617,7 +625,8 @@ it("lists the inboxes in order with their counts, sentences and controls", async
 
 it("reorders inboxes, saving the new order, and switches the badge", async () => {
   await render("?page=inboxes");
-  await click(node.querySelector('[aria-label="Move Acme up"]'));
+  await openActions("Acme");
+  await click(choice("Move up"));
   expect(puts).toHaveLength(1);
   expect(puts[0]!.inboxes.map((one) => one.id)).toEqual(["Acme", "Reviews"]);
   expect(
@@ -630,14 +639,17 @@ it("reorders inboxes, saving the new order, and switches the badge", async () =>
       (n) => n.textContent,
     ),
   ).toEqual(["Acme", "Reviews"]);
-  await click(node.querySelector('[aria-label="Move Acme down"]'));
+  await openActions("Acme");
+  await click(choice("Move down"));
   expect(puts[1]!.inboxes.map((one) => one.id)).toEqual(["Reviews", "Acme"]);
 
-  const badge = node.querySelector<HTMLInputElement>('input[role="switch"]')!;
-  expect(badge.labels![0]!.textContent).toBe("Count Reviews in the Inbox badge");
-  expect(badge.checked).toBe(true);
-  await click(badge);
+  await openActions("Reviews");
+  expect(choice("Count in the Inbox badge")!.getAttribute("aria-checked")).toBe("true");
+  await click(choice("Count in the Inbox badge"));
   expect(puts[2]!.inboxes[0]).toMatchObject({ id: "Reviews", badge: false });
+  expect(node.querySelector(".inbox-manage-row")!.textContent).toContain(
+    "· not counted in the badge",
+  );
 });
 
 it("says how many pull requests are in no inbox, or that every one is in some", async () => {

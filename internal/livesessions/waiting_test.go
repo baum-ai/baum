@@ -90,6 +90,27 @@ func TestEachWaitingReason(t *testing.T) {
 	})
 }
 
+func TestCodexAutoReviewDoesNotWaitOrAnnounce(t *testing.T) {
+	c := &clock{t0}
+	tr := newTracker(c, newLinker())
+	var told []Session
+	tr.Waiting = func(s Session) { told = append(told, s) }
+	apply(tr, codexEvent("c1", "user-prompt-submit", c.now))
+	c.advance(time.Minute)
+	review := codexEvent("c1", "permission-request", c.now)
+	review.Session.AutoReview = true
+	apply(tr, review)
+	if s := only(t, tr); s.State != StateRunning || s.WaitingReason != "" || len(told) != 0 {
+		t.Fatalf("auto review: session = %+v, announcements = %+v", s, told)
+	}
+	// The same session can use manual approvals on a later turn.
+	c.advance(time.Minute)
+	apply(tr, codexEvent("c1", "permission-request", c.now))
+	if s := only(t, tr); s.WaitingReason != WaitPermission || len(told) != 1 {
+		t.Fatalf("manual approval: session = %+v, announcements = %+v", s, told)
+	}
+}
+
 func TestAnInterruptedWaitWaitsForTheNextPrompt(t *testing.T) {
 	c := &clock{t0}
 	tr := newTracker(c, newLinker())

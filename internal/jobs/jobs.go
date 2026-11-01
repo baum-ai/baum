@@ -9,19 +9,24 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/baum-ai/baum/agent"
+	"github.com/baum-ai/baum/internal/appdb"
 	chatpkg "github.com/baum-ai/baum/internal/chat"
 	"github.com/baum-ai/baum/internal/filelock"
 	"github.com/baum-ai/baum/internal/fix"
 	"github.com/baum-ai/baum/internal/generate"
 	"github.com/baum-ai/baum/internal/privatefs"
+	"github.com/baum-ai/baum/internal/repos"
+	"github.com/baum-ai/baum/internal/reviewgroups"
 )
 
 type Item struct {
@@ -41,7 +46,26 @@ type Item struct {
 	// Only limits a fix to one of what it fixes: FixOnlyChecks fixes the
 	// failing checks and leaves conflicts and review comments alone.
 	Only string `json:"only,omitempty"`
+	// Version, on a details job (KindDetails), is the saved version whose
+	// failed sections it writes again.
+	Version int `json:"version,omitempty"`
+	// AwaitMembers, set by Generate on a group the person asked for, lets
+	// preparation accept members without a saved review of their current
+	// head: their reviews are queued with the group's (Prepared.Awaiting).
+	AwaitMembers bool `json:"-"`
 }
+
+// KindDetails is the Item.Kind of a retry of a saved version's failed
+// section details: only the details stage runs, for the sections of the
+// latest version, Version, that were published without their details,
+// against the same head and base, and the version is updated in place
+// (store.Store.CompleteCurrent). The pull request's head having moved, or a
+// newer version, makes it stand down: a new review supersedes it.
+const KindDetails = "details"
+
+// ErrSuperseded stands a details job down: the version it completes was
+// refreshed again or replaced while it ran. It ends cancelled as superseded.
+var ErrSuperseded = errors.New("the review changed while its details were written; nothing was saved")
 
 // KindFix is the Item.Kind of a fix: an agent with write access to a
 // temporary checkout of the pull request's branch resolves its merge
@@ -145,10 +169,13 @@ type Prepared struct {
 	Item
 	Repository string `json:"repository"`
 	HeadSHA    string `json:"head_sha"`
-	Backend    string `json:"backend"`
-	Model      string `json:"model"`
-	MaxTokens  int    `json:"max_tokens,omitempty"`
-	MaxCalls   int    `json:"max_calls,omitempty"`
+	// BaseSHA is the base branch's commit when a single pull request was
+	// prepared; a details job checks its version was written against it.
+	BaseSHA   string `json:"base_sha,omitempty"`
+	Backend   string `json:"backend"`
+	Model     string `json:"model"`
+	MaxTokens int    `json:"max_tokens,omitempty"`
+	MaxCalls  int    `json:"max_calls,omitempty"`
 	// RequiresIsolationConfirmation and BlockedReason say what holds the item
 	// back. Nothing about its price does: there is no cost estimate, since
 	// baum cannot price what a subscription bills, and an estimate_usd an
@@ -163,6 +190,10 @@ type Prepared struct {
 	// confirmation covers like a pull request's head.
 	GroupName string `json:"group_name,omitempty"`
 	Members   string `json:"members,omitempty"`
+	// Awaiting are the members a group job found without a saved review of
+	// their current head (only with Item.AwaitMembers): their reviews were
+	// queued with it.
+	Awaiting []int `json:"awaiting,omitempty"`
 	// RefuseDraft is set by the queue, never stored, on the inputs of an
 	// automatic job it executes: the executor refuses the run with
 	// NotAutomaticError{ReasonDraft} if GitHub now reports a draft.
@@ -178,6 +209,12 @@ type Prepared struct {
 	FixThreadsUntrusted int         `json:"fix_threads_untrusted,omitempty"`
 	// Chat is what a chat job (KindChat) answers.
 	Chat ChatInputs `json:"chat,omitzero"`
+	// account identifies the GitHub credential partition the job was
+	// prepared with, apart from the rest of ConfigDigest, so a changed agent,
+	// model or limit does not stop a queued run but a changed account does.
+	// It stays in memory: neither the journal nor the API carries it, and a
+	// job read back from the journal compares ConfigDigest whole.
+	account string
 }
 
 // sameConfirmedInputs reports whether two confirmations authorize the same
@@ -228,9 +265,21 @@ type Job struct {
 	ThreadOutcomes []fix.ThreadOutcome `json:"thread_outcomes,omitempty"`
 	// HasTranscript says a fix kept a transcript of its agent's run, which
 	// GET /api/jobs/{id}/transcript serves.
-	HasTranscript bool      `json:"has_transcript,omitempty"`
-	CreatedAt     time.Time `json:"created_at"`
-	UpdatedAt     time.Time `json:"updated_at"`
+	HasTranscript bool `json:"has_transcript,omitempty"`
+	// Requeued counts the times a group job went back to waiting because a
+	// member's head moved (maxGroupRequeues).
+	Requeued int `json:"requeued,omitempty"`
+	// Draft counts the drafts of a review written in stages while it runs:
+	// GET /api/jobs/{id}/draft serves the latest, which lives in memory only
+	// and is dropped, with this count, when the job ends. Zero has none.
+	Draft int `json:"draft,omitempty"`
+	// FailedSections are the sections a staged review published, or a
+	// details job left, without their details, and ContextFailed says the
+	// review was published without its codebase context.
+	FailedSections []string  `json:"failed_sections,omitempty"`
+	ContextFailed  bool      `json:"context_failed,omitempty"`
+	CreatedAt      time.Time `json:"created_at"`
+	UpdatedAt      time.Time `json:"updated_at"`
 }
 type Progress struct {
 	Accounting             *agent.Accounting
@@ -243,6 +292,17 @@ type Progress struct {
 	Threads                    []fix.ThreadOutcome
 	// HasTranscript is set once a fix's transcript file exists.
 	HasTranscript bool
+	// Backend and Model, when Backend is set, are the agent the run selected
+	// with the current settings, which replace the job's prepared ones.
+	Backend, Model string
+	// Draft, when set, is a staged review's latest draft (generate.Options.
+	// OnDraft), which the queue holds in memory until the job ends.
+	Draft []byte
+	// FailedSections and ContextFailed, once Gaps is set, are what the
+	// published review lacks (see Job).
+	Gaps           bool
+	FailedSections []string
+	ContextFailed  bool
 }
 type Executor interface {
 	Prepare(context.Context, Item) (Prepared, string, error)
@@ -256,8 +316,13 @@ type Queue struct {
 	executor    Executor
 	jobs        []Job
 	estimates   map[string]Estimate
-	cancels     map[string]context.CancelFunc
-	wake        chan struct{}
+	// superseded marks the running details retries a review of a newer head
+	// replaced: their cancellation ends them as superseded.
+	superseded map[string]bool
+	// drafts holds the latest draft of each running staged review, by job.
+	drafts  map[string][]byte
+	cancels map[string]context.CancelFunc
+	wake    chan struct{}
 	// chatWake wakes the chat lane's workers (KindChat).
 	chatWake chan struct{}
 	// chat stores and settles chat turns; nil refuses questions.
@@ -278,6 +343,11 @@ type Queue struct {
 	// gate, when set, answers whether an automatic job may run now (and
 	// under which daily cap); see SetAutomaticGate.
 	gate func(Job) Admission
+	// limit is how many jobs outside the chat lane run at once; see
+	// SetConcurrency.
+	limit int
+	// log records jobs starting and ending; see SetLogger.
+	log *slog.Logger
 }
 
 // ErrRestarting refuses a job while the daemon restarts as a newer version.
@@ -296,32 +366,19 @@ func id() string {
 	return hex.EncodeToString(b[:])
 }
 
-// Directory is the persistent state directory holding the default journal:
+// Directory is the persistent application state directory:
 // $XDG_STATE_HOME/baum, or ~/.local/state/baum.
 func Directory() (string, error) {
-	root := os.Getenv("XDG_STATE_HOME")
-	if !filepath.IsAbs(root) {
-		home, e := os.UserHomeDir()
-		if e != nil {
-			return "", e
-		}
-		root = filepath.Join(home, ".local", "state")
-	}
-	return filepath.Join(root, "baum"), nil
+	return appdb.Directory()
 }
 
-// DefaultPath is the queue file Open uses for an empty path: jobs.json in
-// Directory.
+// DefaultPath is the shared application database holding the queue document.
 func DefaultPath() (string, error) {
-	dir, e := Directory()
-	if e != nil {
-		return "", e
-	}
-	return filepath.Join(dir, "jobs.json"), nil
+	return appdb.Path()
 }
 
 func Open(path string, executor Executor, concurrency int, changed func(Job)) (*Queue, error) {
-	if executor == nil || concurrency < 1 || concurrency > 16 {
+	if executor == nil || !validConcurrency(concurrency) {
 		return nil, errors.New("invalid runner configuration")
 	}
 	if path == "" {
@@ -337,7 +394,7 @@ func Open(path string, executor Executor, concurrency int, changed func(Job)) (*
 	}
 	// One process owns a journal: two queues on one file would run confirmed
 	// jobs twice and overwrite each other's records.
-	lock, err := filelock.Wait(context.Background(), path+".lock", lockWait)
+	lock, err := filelock.Wait(context.Background(), filepath.Clean(path)+".jobs.lock.sqlite", lockWait)
 	if errors.Is(err, filelock.ErrLocked) {
 		return nil, errors.New("another baum process is running this job queue")
 	}
@@ -345,14 +402,14 @@ func Open(path string, executor Executor, concurrency int, changed func(Job)) (*
 		return nil, err
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	q := &Queue{path: path, transcripts: filepath.Join(filepath.Dir(path), "transcripts"), executor: executor, estimates: map[string]Estimate{}, cancels: map[string]context.CancelFunc{}, wake: make(chan struct{}, 1), chatWake: make(chan struct{}, 1), ctx: ctx, cancel: cancel, changed: changed, lock: lock}
+	q := &Queue{path: path, transcripts: filepath.Join(filepath.Dir(path), "transcripts"), executor: executor, estimates: map[string]Estimate{}, drafts: map[string][]byte{}, superseded: map[string]bool{}, cancels: map[string]context.CancelFunc{}, wake: make(chan struct{}, 1), chatWake: make(chan struct{}, 1), ctx: ctx, cancel: cancel, changed: changed, lock: lock, limit: concurrency}
 	opened := false
 	defer func() {
 		if !opened {
 			_ = lock.Release()
 		}
 	}()
-	raw, e := os.ReadFile(path)
+	raw, e := appdb.Read(path, "state", "jobs")
 	if e == nil {
 		if len(raw) > 32<<20 {
 			cancel()
@@ -377,12 +434,15 @@ func Open(path string, executor Executor, concurrency int, changed func(Job)) (*
 			q.jobs[i].Phase = "finished"
 			q.jobs[i].UpdatedAt = time.Now().UTC()
 		}
+		// A draft lived in the memory of the process that ran the job.
+		q.jobs[i].Draft = 0
 	}
 	if e = q.save(); e != nil {
 		cancel()
 		return nil, e
 	}
-	for range concurrency {
+	// Every worker a limit may need runs; limit decides how many take a job.
+	for range repos.MaxJobConcurrency {
 		q.wg.Add(1)
 		go q.worker(false)
 	}
@@ -402,10 +462,7 @@ func (q *Queue) save() error {
 	if e != nil {
 		return e
 	}
-	if e = os.MkdirAll(filepath.Dir(q.path), 0700); e != nil {
-		return e
-	}
-	return generate.WriteFileAtomic(q.path, raw)
+	return appdb.Write(q.path, "state", "jobs", raw)
 }
 func (q *Queue) signal() {
 	for _, wake := range []chan struct{}{q.wake, q.chatWake} {
@@ -416,6 +473,20 @@ func (q *Queue) signal() {
 	}
 }
 func (q *Queue) Close() { _ = q.Shutdown(context.Background()) }
+
+// SetConcurrency changes how many jobs outside the chat lane run at once.
+// Lowering it stops none: running jobs finish, and no new one starts until
+// fewer than n run.
+func (q *Queue) SetConcurrency(n int) error {
+	if !validConcurrency(n) {
+		return fmt.Errorf("concurrency must be between 1 and %d", repos.MaxJobConcurrency)
+	}
+	q.mu.Lock()
+	q.limit = n
+	q.mu.Unlock()
+	q.signal()
+	return nil
+}
 
 // Shutdown cancels running jobs, which are recorded as interrupted, and waits
 // for the workers until ctx ends. A job whose backend has not returned by then
@@ -481,6 +552,23 @@ func (q *Queue) List() []Job {
 	}
 	return out
 }
+
+// Draft is the latest draft of a running staged review and the count it is
+// (Job.Draft), or false when the job has none now.
+func (q *Queue) Draft(jobID string) ([]byte, int, bool) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	draft, ok := q.drafts[jobID]
+	if !ok {
+		return nil, 0, false
+	}
+	for _, j := range q.jobs {
+		if j.ID == jobID {
+			return draft, j.Draft, true
+		}
+	}
+	return nil, 0, false
+}
 func (q *Queue) Estimate(ctx context.Context, items []Item, mode string) (Estimate, error) {
 	return q.estimate(ctx, items, mode, false)
 }
@@ -491,15 +579,19 @@ func (q *Queue) estimate(ctx context.Context, items []Item, mode string, isolati
 	if len(items) < 1 || len(items) > 50 || (mode != "single" && mode != "batch") || (mode == "single" && len(items) != 1) {
 		return Estimate{}, errors.New("invalid generation selection")
 	}
-	// A fix or a feature build starts on its own.
-	if items[0].Kind != "" && (mode != "single" || (items[0].Kind != KindFix && items[0].Kind != KindFeatureBuild)) {
+	// A fix, a feature build or a retry of a version's details starts on its
+	// own.
+	if items[0].Kind != "" && (mode != "single" || (items[0].Kind != KindFix && items[0].Kind != KindFeatureBuild && items[0].Kind != KindDetails)) {
 		return Estimate{}, errors.New("invalid generation selection")
 	}
 	if items[0].Only != "" && (items[0].Kind != KindFix || items[0].Only != FixOnlyChecks) {
 		return Estimate{}, errors.New("invalid generation selection")
 	}
+	if (items[0].Kind == KindDetails) != (items[0].Version > 0) {
+		return Estimate{}, errors.New("invalid generation selection")
+	}
 	for _, item := range items[1:] {
-		if item.Kind != "" || item.Only != "" {
+		if item.Kind != "" || item.Only != "" || item.Version != 0 {
 			return Estimate{}, errors.New("invalid generation selection")
 		}
 	}
@@ -572,7 +664,15 @@ var ErrIsolationRequired = errors.New("isolation confirmation required")
 // needs their confirmation (isolation) first. Nothing about the price stops a
 // run. A single item the daemon will not run is a BlockedError with its
 // reason.
+//
+// A group's review builds on each member's own: members without a saved
+// review of their current head have theirs queued with the group's job,
+// which waits for them (membersBusy), whatever the person does meanwhile.
 func (q *Queue) Generate(ctx context.Context, items []Item, mode string, isolation bool) ([]Job, error) {
+	if mode == "single" && len(items) == 1 && items[0].Group != "" && items[0].Kind == "" {
+		items = []Item{items[0]}
+		items[0].AwaitMembers = true
+	}
 	e, err := q.estimate(ctx, items, mode, isolation)
 	if err != nil {
 		return nil, err
@@ -587,7 +687,175 @@ func (q *Queue) Generate(ctx context.Context, items []Item, mode string, isolati
 		q.forget(e.ID)
 		return nil, &BlockedError{e.Items[0].BlockedReason}
 	}
+	if group := e.Items[0]; len(group.Awaiting) > 0 {
+		// The group's isolation covers its members: confirmed for it, it is
+		// confirmed for their reviews.
+		if err := q.reviewMembers(ctx, group, false, isolation); err != nil {
+			q.forget(e.ID)
+			return nil, err
+		}
+	}
 	return q.SubmitConfirmed(ctx, e.ID, Confirmation{Estimate: true, Isolation: isolation})
+}
+
+// reviewMembers queues the reviews a group job awaits, except those of
+// members already queued or running. An automatic group's are automatic
+// reviews of the members' new heads.
+func (q *Queue) reviewMembers(ctx context.Context, group Prepared, automatic, isolation bool) error {
+	q.mu.Lock()
+	items := []Item{}
+	for _, number := range group.Awaiting {
+		if !q.reviewPending(group.Clone, number) {
+			items = append(items, Item{Clone: group.Clone, PR: number})
+		}
+	}
+	q.mu.Unlock()
+	if len(items) == 0 {
+		return nil
+	}
+	if automatic {
+		members, _ := groupMembers(group.Members)
+		for _, item := range items {
+			for _, m := range members {
+				if m.Number != item.PR {
+					continue
+				}
+				// Busy or already run for this head: nothing more to queue.
+				_, err := q.SubmitAutomatic(ctx, AutomaticRequest{Item: item, Repository: group.Repository, Head: m.Head, Trigger: TriggerNewHead})
+				if err != nil && !errors.Is(err, ErrBusy) && !errors.Is(err, ErrDuplicate) {
+					return err
+				}
+			}
+		}
+		return nil
+	}
+	e, err := q.estimate(ctx, items, "batch", isolation)
+	if err != nil {
+		return err
+	}
+	_, err = q.SubmitConfirmed(ctx, e.ID, Confirmation{Estimate: true, Isolation: isolation})
+	return err
+}
+
+// membersBusy reports whether a group's review waits for one of its
+// members: a review or a fix of it queued or running. A fix may push, and
+// the group's review reads each member's review of its current head. mu is
+// held.
+func (q *Queue) membersBusy(j Job) bool {
+	if j.Group == "" || j.Kind != "" {
+		return false
+	}
+	members, _ := groupMembers(j.Members)
+	for _, r := range q.jobs {
+		if r.Group == "" && r.Kind != KindChat && (r.State == "queued" || r.State == "running") && strings.EqualFold(r.Repository, j.Repository) && slices.ContainsFunc(members, func(m generate.GroupMember) bool { return m.Number == r.PR }) {
+			return true
+		}
+	}
+	return false
+}
+
+// maxGroupRequeues bounds how often a group job waits again for moved
+// members before it fails like any changed input.
+const maxGroupRequeues = 5
+
+// requeueGroup puts a group job whose member heads moved back to waiting,
+// at the new heads: the members without a review of their new head have one
+// queued first. It reports whether it did; otherwise the job fails, with
+// the returned error when there is one (a group removed meanwhile). GitHub
+// can lag a push by seconds, so a view without the move is read again a few
+// times.
+//
+// Only the heads may differ: the same members, the same GitHub account and,
+// for a person's group, the same isolation confirmation, so the person's
+// confirmation still covers the job.
+func (q *Queue) requeueGroup(ctx context.Context, j Job) (bool, error) {
+	if j.Requeued >= maxGroupRequeues {
+		return false, nil
+	}
+	item := j.Item
+	item.AwaitMembers = true
+	var p Prepared
+	for attempt := 0; ; attempt++ {
+		var err error
+		if p, _, err = q.executor.Prepare(ctx, item); err != nil {
+			return false, err
+		}
+		if p.Members != j.Members {
+			break
+		}
+		if attempt == 3 {
+			return false, nil
+		}
+		select {
+		case <-ctx.Done():
+			return false, nil
+		case <-time.After(groupRequeueWait):
+		}
+	}
+	sameAccount := p.ConfigDigest == j.ConfigDigest || (j.account != "" && p.account == j.account)
+	if !sameAccount || !sameMembers(p.Members, j.Members) {
+		return false, nil
+	}
+	// An automatic group never needs a confirmation, and a person's covered
+	// these pull requests.
+	if p.RequiresIsolationConfirmation && (j.Automatic || !j.RequiresIsolationConfirmation) {
+		return false, nil
+	}
+	if q.reviewMembers(ctx, p, j.Automatic, p.RequiresIsolationConfirmation) != nil {
+		return false, nil
+	}
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	// A person's cancel only cancels the run's context: it must stay final.
+	if ctx.Err() != nil {
+		return false, nil
+	}
+	for i := range q.jobs {
+		if q.jobs[i].ID != j.ID || q.jobs[i].State != "running" {
+			continue
+		}
+		old := q.jobs[i]
+		current := &q.jobs[i]
+		current.Prepared = p
+		current.State, current.Phase = "queued", "queued"
+		current.Requeued++
+		current.UpdatedAt = time.Now().UTC()
+		if q.save() != nil {
+			q.jobs[i] = old
+			return false, nil
+		}
+		return true, nil
+	}
+	return false, nil
+}
+
+// sameMembers reports whether two encodings of group member heads name the
+// same pull requests, whatever their heads.
+func sameMembers(a, b string) bool {
+	numbers := func(encoded string) []int {
+		members, _ := groupMembers(encoded)
+		out := make([]int, len(members))
+		for i, m := range members {
+			out[i] = m.Number
+		}
+		return out
+	}
+	return slices.Equal(numbers(a), numbers(b))
+}
+
+// groupRequeueWait is how long requeueGroup waits for GitHub to show a move.
+var groupRequeueWait = 10 * time.Second
+
+// reviewPending reports whether a pull request's own review is queued or
+// running in a clone. Only one in the group's clone counts: each clone has
+// its own review store, which the group's review reads. mu is held.
+func (q *Queue) reviewPending(clone string, number int) bool {
+	for _, j := range q.jobs {
+		if j.Kind == "" && j.Group == "" && j.PR == number && j.Clone == clone && (j.State == "queued" || j.State == "running") {
+			return true
+		}
+	}
+	return false
 }
 
 // forget drops an estimate nothing will submit.
@@ -646,6 +914,7 @@ func (q *Queue) SubmitConfirmed(ctx context.Context, estimateID string, c Confir
 	before := append([]Job(nil), q.jobs...)
 	out := []Job{}
 	changes := []Job{}
+	var stop []string
 	for _, p := range prepared {
 		existing := -1
 		for i, j := range q.jobs {
@@ -671,6 +940,10 @@ func (q *Queue) SubmitConfirmed(ctx context.Context, estimateID string, c Confir
 			j.UpdatedAt = time.Now().UTC()
 			changes = append(changes, *j)
 		}
+		if p.Kind == "" && p.Group == "" {
+			superseded, running := q.supersedeDetails(p.Repository, p.PR, p.HeadSHA)
+			changes, stop = append(changes, superseded...), append(stop, running...)
+		}
 		now := time.Now().UTC()
 		j := Job{ID: id(), Prepared: p, State: "queued", Phase: "queued", CreatedAt: now, UpdatedAt: now}
 		q.jobs = append(q.jobs, j)
@@ -681,6 +954,7 @@ func (q *Queue) SubmitConfirmed(ctx context.Context, estimateID string, c Confir
 		q.jobs = before
 		return nil, err
 	}
+	q.stopSuperseded(stop)
 	notifications = changes
 	delete(q.estimates, estimateID)
 	q.signal()
@@ -730,6 +1004,40 @@ func (q *Queue) Cancel(jobID string) (Job, error) {
 	return Job{}, os.ErrNotExist
 }
 
+// supersedeDetails cancels, as superseded, the queued retries of the pull
+// request's section details (KindDetails) at a head other than head, which a
+// review of head replaces, and returns them with the running ones, which
+// stopSuperseded stops once the caller has saved. The caller holds mu.
+func (q *Queue) supersedeDetails(repository string, pr int, head string) ([]Job, []string) {
+	var cancelled []Job
+	var running []string
+	for i := range q.jobs {
+		j := &q.jobs[i]
+		if j.Kind != KindDetails || !strings.EqualFold(j.Repository, repository) || j.PR != pr || j.HeadSHA == head {
+			continue
+		}
+		switch j.State {
+		case "queued":
+			j.State, j.Reason, j.Phase, j.UpdatedAt = "cancelled", "superseded", "finished", time.Now().UTC()
+			cancelled = append(cancelled, *j)
+		case "running":
+			running = append(running, j.ID)
+		}
+	}
+	return cancelled, running
+}
+
+// stopSuperseded cancels the running details retries supersedeDetails
+// named; the worker ends each as superseded. The caller holds mu.
+func (q *Queue) stopSuperseded(ids []string) {
+	for _, id := range ids {
+		if cancel := q.cancels[id]; cancel != nil {
+			q.superseded[id] = true
+			cancel()
+		}
+	}
+}
+
 // worker runs queued jobs of its lane: chat jobs (KindChat) when chat is
 // set, every other job otherwise.
 func (q *Queue) worker(chat bool) {
@@ -751,12 +1059,15 @@ func (q *Queue) worker(chat bool) {
 				return
 			}
 			i := -1
-			for n, j := range q.jobs {
-				// Without a gate an automatic job waits: the daemon installs it
-				// right after Open, and a journaled job must not start first.
-				if j.State == "queued" && (j.Kind == KindChat) == chat && (!j.Automatic || q.gate != nil) {
-					i = n
-					break
+			// Outside the chat lane a worker takes a job only below limit.
+			if chat || q.running() < q.limit {
+				for n, j := range q.jobs {
+					// Without a gate an automatic job waits: the daemon installs it
+					// right after Open, and a journaled job must not start first.
+					if j.State == "queued" && (j.Kind == KindChat) == chat && (!j.Automatic || q.gate != nil) && (chat || (!q.pullRunning(j) && !q.membersBusy(j))) {
+						i = n
+						break
+					}
 				}
 			}
 			if i < 0 {
@@ -781,7 +1092,9 @@ func (q *Queue) worker(chat bool) {
 			j := q.jobs[i]
 			ctx, cancel := context.WithCancel(context.WithValue(q.ctx, transcriptTargetKey{}, transcriptTarget{q.transcripts, j.ID}))
 			q.cancels[j.ID] = cancel
+			log, started := q.log, time.Now()
 			q.mu.Unlock()
+			logStarted(log, j)
 			q.signal()
 			q.notify(j)
 			inputs := j.Prepared
@@ -806,6 +1119,16 @@ func (q *Queue) worker(chat bool) {
 				if p.HasTranscript {
 					q.jobs[i].HasTranscript = true
 				}
+				if p.Backend != "" {
+					q.jobs[i].Backend, q.jobs[i].Model = p.Backend, p.Model
+				}
+				if p.Draft != nil {
+					q.drafts[j.ID] = p.Draft
+					q.jobs[i].Draft++
+				}
+				if p.Gaps {
+					q.jobs[i].FailedSections, q.jobs[i].ContextFailed = p.FailedSections, p.ContextFailed
+				}
 				q.jobs[i].UpdatedAt = time.Now().UTC()
 				// Save every reported usage update before publishing it. A crash
 				// may lose in-flight provider usage, never the reports we received.
@@ -819,6 +1142,23 @@ func (q *Queue) worker(chat bool) {
 				q.mu.Unlock()
 				q.notify(current)
 			})
+			// A member's head moved: the group waits for it instead of failing.
+			if err != nil && errors.Is(err, ErrHeadChanged) && j.Group != "" && j.Kind == "" && ctx.Err() == nil {
+				requeued, cause := q.requeueGroup(ctx, j)
+				if requeued {
+					q.mu.Lock()
+					cancel()
+					delete(q.cancels, j.ID)
+					result := q.jobs[i]
+					q.mu.Unlock()
+					q.notify(result)
+					q.signal()
+					continue
+				}
+				if cause != nil {
+					err = cause
+				}
+			}
 			q.mu.Lock()
 			current := &q.jobs[i]
 			current.ActualCostUSD = cost
@@ -828,10 +1168,29 @@ func (q *Queue) worker(chat bool) {
 			current.Phase = "finished"
 			current.UpdatedAt = time.Now().UTC()
 			current.State = "completed"
+			// The draft is never a version: it goes with the job.
+			delete(q.drafts, j.ID)
+			current.Draft = 0
 			var refused *NotAutomaticError
 			var fixErr *fix.Error
 			var stopped *StoppedError
+			var blocked *BlockedError
+			var members *MembersNeedReviewsError
 			switch {
+			case err != nil && errors.As(err, &members):
+				// A member's own review failed or was cancelled while the
+				// group waited for it.
+				current.State = "failed"
+				current.Reason = ReasonMembersNeedReviews
+				current.Detail = members.Error()
+			case err != nil && errors.Is(err, ErrSuperseded):
+				current.State = "cancelled"
+				current.Reason = "superseded"
+			case err != nil && current.Kind == KindDetails && errors.As(err, &blocked):
+				// The pull request moved, or its latest version changed, since
+				// the retry was asked for: nothing ran.
+				current.State = "cancelled"
+				current.Reason = blocked.Reason
 			case err != nil && errors.As(err, &stopped):
 				current.State = "failed"
 				current.Reason = stopped.Reason
@@ -843,6 +1202,20 @@ func (q *Queue) worker(chat bool) {
 				if len(current.Detail) > 500 {
 					current.Detail = strings.ToValidUTF8(current.Detail[:500], "") + "…"
 				}
+			case err != nil && current.Group != "" && errors.Is(err, reviewgroups.ErrNotFound):
+				// The group was deleted, or its stack dissolved, while it
+				// waited: there is nothing left to review.
+				current.State = "cancelled"
+				current.Reason = ReasonGroupRemoved
+			case err != nil && current.Group != "" && errors.Is(err, ErrHeadChanged):
+				// Its members kept moving, or changed, while it waited.
+				current.State = "failed"
+				current.Reason = ReasonMembersChanged
+			case err != nil && current.Automatic && current.Group == "" && errors.Is(err, ErrHeadChanged):
+				// A push (often a fix) moved the head while it waited: the
+				// new head has its own automatic run, so this is not news.
+				current.State = "cancelled"
+				current.Reason = "superseded"
 			case err != nil && current.Automatic && errors.As(err, &refused):
 				// The recheck found what automatic generation skips (a PR
 				// turned draft) before any model call.
@@ -878,19 +1251,73 @@ func (q *Queue) worker(chat bool) {
 					current.State = "interrupted"
 				}
 			}
+			if q.superseded[j.ID] {
+				delete(q.superseded, j.ID)
+				if current.State != "completed" {
+					current.State, current.Reason = "cancelled", "superseded"
+				}
+			}
 			cancel()
 			delete(q.cancels, j.ID)
 			saveErr := q.save()
 			result := *current
 			q.mu.Unlock()
+			logFinished(log, result, started, err)
 			q.settleChat(result)
 			q.notify(result)
 			if saveErr != nil {
+				// Another worker takes what this one's job held back.
+				q.signal()
 				return
 			}
 		}
 	}
 }
+
+func validConcurrency(n int) bool { return n >= 1 && n <= repos.MaxJobConcurrency }
+
+// pullRunning reports whether another job outside the chat lane runs for one
+// of j's pull requests, such as its fix beside its review or a group's review
+// beside a member's fix: j waits for it, so no two jobs fetch, read or push
+// one pull request's head at once. mu is held.
+func (q *Queue) pullRunning(j Job) bool {
+	pulls := j.pulls()
+	if len(pulls) == 0 {
+		return false
+	}
+	for _, r := range q.jobs {
+		if r.State == "running" && r.Kind != KindChat && r.Repository == j.Repository && slices.ContainsFunc(r.pulls(), func(n int) bool { return slices.Contains(pulls, n) }) {
+			return true
+		}
+	}
+	return false
+}
+
+// pulls are the pull requests a job reads or changes: its own, or a group's
+// members. A feature build has none.
+func (j Job) pulls() []int {
+	if j.PR != 0 {
+		return []int{j.PR}
+	}
+	members, _ := groupMembers(j.Members)
+	pulls := make([]int, len(members))
+	for i, m := range members {
+		pulls[i] = m.Number
+	}
+	return pulls
+}
+
+// running counts the jobs outside the chat lane that run; mu is held.
+func (q *Queue) running() int {
+	n := 0
+	for _, j := range q.jobs {
+		if j.State == "running" && j.Kind != KindChat {
+			n++
+		}
+	}
+	return n
+}
+
 func (q *Queue) notify(j Job) {
 	if q.changed != nil {
 		j.Accounting = j.Accounting.Clone()

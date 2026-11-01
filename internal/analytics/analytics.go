@@ -25,6 +25,11 @@ var Windows = []int{7, 30, 90}
 // reads.
 var Agents = []string{"claude_code", "codex", "cursor"}
 
+// FilterAgents are the agents the report offers as filter choices: the desktop
+// app offers Claude Code and Codex only. A Cursor session already recorded
+// still counts in the figures and still filters when a query names it.
+var FilterAgents = []string{"claude_code", "codex"}
+
 // Registry is what the report reads of the registered repositories;
 // *repos.Registry is one.
 type Registry interface {
@@ -45,6 +50,11 @@ type Service struct {
 	// Captures reads decision capture's ledger from since on; nil without
 	// decision capture.
 	Captures func(ctx context.Context, since time.Time) ([]decisionlog.LedgerEntry, error)
+	// Pulls reads the feature log's pull requests of a repository opened or
+	// merged from since on, and whether it listed the repository; nil
+	// without the decision store. Login is the person's GitHub login.
+	Pulls func(ctx context.Context, repository string, since time.Time) ([]decisionlog.FlowPull, bool, error)
+	Login func(ctx context.Context) string
 	// Location is the zone days and hours are counted in; nil is local.
 	Location *time.Location
 	Now      func() time.Time

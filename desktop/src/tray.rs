@@ -83,8 +83,7 @@ pub fn now() -> i64 {
 /// The tray menu for a view, in the order of the panel: what the daemon is
 /// doing and anything needing the user (a waiting session opens its
 /// transcript), the plan usage left when any can be read, then Open, pause
-/// or resume, start at login, Command Line and Hooks…, Quit, and Quit and
-/// stop.
+/// or resume, start at login, Quit, and Quit and stop.
 pub fn menu_spec(view: &View, login: bool, now: i64) -> Vec<Entry> {
     let separator = |id: &str| Entry {
         id: id.into(),
@@ -134,7 +133,6 @@ pub fn menu_spec(view: &View, login: bool, now: i64) -> Vec<Entry> {
         kind: Kind::Check(login),
         enabled: true,
     });
-    entries.push(Entry::item("setup", onboarding::MENU_LABEL, true));
     entries.push(separator("separator-2"));
     entries.push(Entry::item("quit", "Quit", true));
     entries.push(Entry::item(
@@ -506,7 +504,7 @@ enum Action {
     Session(String),
     Pause,
     Login,
-    /// "Command Line and Hooks…", in the tray and the window's menu bar.
+    /// "Command Line and Hooks…", in the window's menu bar.
     Setup,
     Quit,
     QuitStop,
@@ -519,7 +517,7 @@ fn route(id: &str) -> Action {
         "open" => Action::Open,
         "pause" => Action::Pause,
         "login" | MENU_LOGIN => Action::Login,
-        "setup" | onboarding::MENU_ID => Action::Setup,
+        onboarding::MENU_ID => Action::Setup,
         "quit" => Action::Quit,
         "quit-stop" => Action::QuitStop,
         _ if notifications::is_menu_id(id) => Action::Notification,
@@ -866,7 +864,7 @@ mod tests {
                 _ if id.starts_with(SESSION_PREFIX) => Action::Session(id[8..].to_string()),
                 "pause" => Action::Pause,
                 "login" | MENU_LOGIN => Action::Login,
-                "setup" | onboarding::MENU_ID => Action::Setup,
+                onboarding::MENU_ID => Action::Setup,
                 "quit" => Action::Quit,
                 "quit-stop" => Action::QuitStop,
                 _ if id.starts_with("notifications:") => Action::Notification,
@@ -875,6 +873,7 @@ mod tests {
             assert_eq!(action, expected, "{id}");
         }
         assert_eq!(route("unknown"), Action::Ignore);
+        assert_eq!(route("setup"), Action::Ignore);
         assert_eq!(route("session:"), Action::Ignore);
         assert_eq!(
             route("session:claude-code:a"),
@@ -906,7 +905,6 @@ mod tests {
                 "Open baum",
                 "Pause automatic reviews",
                 "Start at login",
-                "Command Line and Hooks…",
                 "Quit",
                 "Quit and stop background reviews"
             ]
@@ -920,7 +918,6 @@ mod tests {
                 "open",
                 "pause",
                 "login",
-                "setup",
                 "separator-2",
                 "quit",
                 "quit-stop"

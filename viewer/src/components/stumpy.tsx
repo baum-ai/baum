@@ -1,4 +1,5 @@
-import { type ReactNode, useEffect, useId, useRef } from "react";
+import { type ReactNode, type RefObject, useEffect, useId, useRef } from "react";
+import { STUMPY_ARTWORK as artwork } from "./stumpy-artwork";
 
 /** Stumpy, the log from the logo with a leaf and a face. The hosted
  *  application keeps the plain b as its mark, and there Stumpy only turns up
@@ -15,14 +16,21 @@ import { type ReactNode, useEffect, useId, useRef } from "react";
  *  Decorative: the copy beside it says what happened. */
 export type StumpyMood = "awake" | "dozing" | "pruned" | "fallen";
 
-const INK = "#1e120a";
-const SHINE = "#fff6e0";
-const STEM = "#2e7d3e";
+/** Something seasonal Stumpy wears `awake`, knocked off onto the ground
+ *  when `fallen`: sunglasses for summer, a witch's hat for autumn, a Santa
+ *  hat for winter. */
+export type StumpyAccessory = "sunglasses" | "witch" | "santa";
+
+const INK = artwork.ink;
+const SHINE = artwork.shine;
+const STEM = artwork.stem;
 
 export function Stumpy({
   mood = "awake",
   size = 96,
   followPointer = false,
+  eyesRef,
+  accessory,
   className,
 }: {
   mood?: StumpyMood;
@@ -30,6 +38,10 @@ export function Stumpy({
   /** The eyes glance towards the pointer. Only for `awake`, and held still
    *  for a reader who asks for reduced motion. */
   followPointer?: boolean;
+  /** Receives the `awake` eyes, for a caller that points them itself: a
+   *  `transform` of up to 4 units each way glances that way. */
+  eyesRef?: RefObject<SVGGElement | null>;
+  accessory?: StumpyAccessory;
   className?: string;
 }) {
   const id = useId().replace(/[^a-zA-Z0-9_-]/g, "");
@@ -76,7 +88,7 @@ export function Stumpy({
         cy="94"
         r="35.2"
         fill="none"
-        stroke="#4e2e16"
+        stroke={artwork.barkDark}
         strokeOpacity="0.35"
         strokeWidth="2"
       />
@@ -108,6 +120,81 @@ export function Stumpy({
     </>
   );
 
+  // The hat's shapes are drawn about its brim at (72, 50).
+  const wear = (place: string) =>
+    accessory === "witch" ? (
+      <g transform={`${place} translate(72 50) scale(1.18) translate(-72 -50)`}>
+        <path d="M51 49 C58 36 60 23 49 8 C65 14 77 30 93 49 Z" fill={`url(#${id}-witch)`} />
+        <path d="M53.5 41 L87 41 L91 46 L51.5 46 Z" fill={artwork.hatBand} />
+        <rect
+          x="66"
+          y="40.5"
+          width="9"
+          height="6"
+          rx="1"
+          fill="none"
+          stroke={artwork.hatStitch}
+          strokeWidth="1.6"
+        />
+        <ellipse cx="72" cy="50" rx="33" ry="6" fill={`url(#${id}-witch)`} />
+      </g>
+    ) : accessory === "santa" ? (
+      <g transform={`${place} translate(72 50) scale(1.12) translate(-72 -50)`}>
+        <path
+          d="M46 50 C47 42 49 37 52 34 C46 34 40 37 35 41 C38 29 48 17 66 13 C84 10 96 26 98 50 Z"
+          fill={`url(#${id}-santa)`}
+        />
+        <rect
+          x="42"
+          y="44"
+          width="60"
+          height="11"
+          rx="5.5"
+          fill={artwork.fur}
+          stroke={artwork.furEdge}
+        />
+        <circle cx="34" cy="43" r="6" fill={artwork.fur} stroke={artwork.furEdge} />
+      </g>
+    ) : null;
+  // The sunglasses are drawn over the eyes, about their bridge at (85, 83).
+  const lens = (cx: number) => (
+    <>
+      <path
+        d={`M${cx - 11} 77 H${cx + 11} Q${cx + 11.5} 87 ${cx + 5} 90.5 Q${cx} 92 ${cx - 5} 90.5 Q${cx - 11.5} 87 ${cx - 11} 77 Z`}
+        fill={`url(#${id}-shades)`}
+        stroke={INK}
+        strokeWidth="1.4"
+        strokeLinejoin="round"
+      />
+      <path
+        d={`M${cx - 6} 80 L${cx - 1} 80`}
+        stroke={artwork.white}
+        strokeOpacity="0.55"
+        strokeWidth="1.6"
+        strokeLinecap="round"
+      />
+    </>
+  );
+  const shades = (place: string) => (
+    <g transform={place}>
+      <g fill="none" stroke={INK} strokeWidth="2" strokeLinecap="round">
+        <path d="M83.5 79 Q84.85 76.5 86.2 79" />
+        <path d="M61.5 78 L49 76" />
+        <path d="M108.2 78 L111 76" />
+      </g>
+      {lens(72.5)}
+      {lens(97.2)}
+    </g>
+  );
+  // Hats sit on the crown of the log, tipped a little to the left so the
+  // leaf still peeks out to the right. Whatever Stumpy wears lands on the
+  // ground in front when it falls.
+  const worn = accessory === "sunglasses" ? shades("") : wear("translate(0 3) rotate(-10 72 50)");
+  const knockedOff =
+    accessory === "sunglasses"
+      ? shades("translate(122 140) rotate(-8) scale(0.6) translate(-85 -83)")
+      : wear("translate(54 88) rotate(14 72 50) translate(72 50) scale(0.55) translate(-72 -50)");
+
   let body: ReactNode;
   if (mood === "dozing") {
     body = (
@@ -118,11 +205,11 @@ export function Stumpy({
           <path d="M62.5 88 Q68 93.5 73.5 88" />
           <path d="M86.5 88 Q92 93.5 97.5 88" />
         </g>
-        <g fontFamily="var(--font-sans)" fontWeight="700">
-          <text x="118" y="64" fontSize="14" fill="#7a4a26">
+        <g fontFamily="var(--font-sans, sans-serif)" fontWeight="700">
+          <text x="118" y="64" fontSize="14" fill={artwork.bark}>
             z
           </text>
-          <text x="128" y="52" fontSize="10" fill="#a86b3c">
+          <text x="128" y="52" fontSize="10" fill={artwork.barkLight}>
             z
           </text>
         </g>
@@ -151,7 +238,7 @@ export function Stumpy({
   } else if (mood === "fallen") {
     body = (
       <>
-        <ellipse cx="84" cy="146" rx="46" ry="4" fill="#2a1d15" opacity="0.16" />
+        <ellipse cx="84" cy="146" rx="46" ry="4" fill={artwork.shadow} opacity="0.16" />
         <g transform="translate(6 9) rotate(-72 80 94)">
           {sprout}
           {log}
@@ -160,18 +247,30 @@ export function Stumpy({
             <path d="M101 80 L91 86 L101 92" />
           </g>
         </g>
+        {knockedOff}
       </>
     );
   } else {
     body = (
       <>
-        <ellipse cx="80" cy="149" rx="32" ry="4" fill="#2a1d15" opacity="0.18" />
+        <ellipse cx="80" cy="149" rx="32" ry="4" fill={artwork.shadow} opacity="0.18" />
         {sprout}
         {log}
-        <g ref={eyes}>
-          {eye(72.5, 83.4)}
-          {eye(97.2, 83.4)}
+        <g
+          ref={(group) => {
+            eyes.current = group;
+            if (eyesRef) eyesRef.current = group;
+          }}
+        >
+          {/* Glancing eyes would peek out from behind sunglasses. */}
+          {accessory === "sunglasses" ? null : (
+            <>
+              {eye(72.5, 83.4)}
+              {eye(97.2, 83.4)}
+            </>
+          )}
         </g>
+        {worn}
       </>
     );
   }
@@ -187,19 +286,37 @@ export function Stumpy({
     >
       <defs>
         <radialGradient id={`${id}-bark`} cx="0.3" cy="0.25" r="0.85">
-          <stop offset="0" stopColor="#a86b3c" />
-          <stop offset="0.6" stopColor="#7a4a26" />
-          <stop offset="1" stopColor="#4e2e16" />
+          <stop offset="0" stopColor={artwork.barkLight} />
+          <stop offset="0.6" stopColor={artwork.bark} />
+          <stop offset="1" stopColor={artwork.barkDark} />
         </radialGradient>
         <radialGradient id={`${id}-face`} cx="0.4" cy="0.35" r="0.75">
-          <stop offset="0" stopColor="#fff3da" />
-          <stop offset="0.7" stopColor="#f3d9ac" />
-          <stop offset="1" stopColor="#d9b27c" />
+          <stop offset="0" stopColor={artwork.faceLight} />
+          <stop offset="0.7" stopColor={artwork.face} />
+          <stop offset="1" stopColor={artwork.faceDark} />
         </radialGradient>
         <linearGradient id={`${id}-leaf`} x1="0" y1="0" x2="1" y2="1">
-          <stop offset="0" stopColor="#8ed07a" />
+          <stop offset="0" stopColor={artwork.leafLight} />
           <stop offset="1" stopColor={STEM} />
         </linearGradient>
+        {accessory === "sunglasses" ? (
+          <linearGradient id={`${id}-shades`} x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0" stopColor={artwork.glassesLight} />
+            <stop offset="1" stopColor={artwork.glassesDark} />
+          </linearGradient>
+        ) : null}
+        {accessory === "witch" ? (
+          <linearGradient id={`${id}-witch`} x1="0" y1="0" x2="1" y2="1">
+            <stop offset="0" stopColor={artwork.witchLight} />
+            <stop offset="1" stopColor={artwork.witchDark} />
+          </linearGradient>
+        ) : null}
+        {accessory === "santa" ? (
+          <linearGradient id={`${id}-santa`} x1="0" y1="0" x2="1" y2="1">
+            <stop offset="0" stopColor={artwork.santaLight} />
+            <stop offset="1" stopColor={artwork.santaDark} />
+          </linearGradient>
+        ) : null}
       </defs>
       {body}
     </svg>

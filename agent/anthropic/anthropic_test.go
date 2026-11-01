@@ -502,7 +502,7 @@ func TestBudgets(t *testing.T) {
 	})
 	t.Run("nothing left", func(t *testing.T) {
 		s := newStub(t)
-		for _, req := range []agent.Request{{MaxCalls: 0, MaxTokens: 10}, {MaxCalls: 1, MaxTokens: 0}} {
+		for _, req := range []agent.Request{{MaxCalls: -1, MaxTokens: 10}, {MaxCalls: 1, MaxTokens: -1}} {
 			req.Directory, req.Schema = runDir(t), testSchema
 			if _, err := s.backend().Run(context.Background(), req); err == nil || !strings.HasPrefix(err.Error(), agent.GenerationBudgetExceededReason("")) {
 				t.Errorf("err = %v", err)

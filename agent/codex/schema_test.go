@@ -8,13 +8,42 @@ import (
 	"testing"
 
 	"github.com/baum-ai/baum/review"
+	"github.com/baum-ai/baum/review/tilecatalogue"
 	"github.com/baum-ai/baum/schema"
 )
 
 // OpenAI strict structured outputs reject the lenient contract as written;
 // these are the rules the live API enforced on it.
 func TestCodexOutputSchemaMeetsStrictModeRules(t *testing.T) {
-	encoded, err := StrictSchema(schema.Document)
+	checkStrictMode(t, schema.Document)
+}
+
+// The schemas of a staged review's stages meet the same rules.
+func TestCodexStagedSchemasMeetStrictModeRules(t *testing.T) {
+	validator, err := review.NewDocumentValidator()
+	if err != nil {
+		t.Fatal(err)
+	}
+	outline, err := validator.OutlineSchema()
+	if err != nil {
+		t.Fatal(err)
+	}
+	details, err := validator.DetailsSchema(tilecatalogue.Kinds())
+	if err != nil {
+		t.Fatal(err)
+	}
+	context, err := validator.ContextSchema()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, schema := range [][]byte{outline, details, context} {
+		checkStrictMode(t, schema)
+	}
+}
+
+func checkStrictMode(t *testing.T, source []byte) {
+	t.Helper()
+	encoded, err := StrictSchema(source)
 	if err != nil {
 		t.Fatal(err)
 	}

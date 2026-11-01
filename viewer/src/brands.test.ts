@@ -1,12 +1,10 @@
-import { readFileSync } from "node:fs";
-
 import { describe, expect, it } from "vitest";
 
 import { type Brand, harnessBrand, modelBrand } from "./brands";
+import { BRAND_ARTWORK } from "./components/brand-artwork";
 
 describe("brand mark colours", () => {
-  it("defines a --brand-mark-* token for every brand", () => {
-    const css = readFileSync(new URL("./viewer.css", import.meta.url), "utf8");
+  it("defines an artwork color for every brand", () => {
     const brands = [
       "claude",
       "cursor",
@@ -16,7 +14,7 @@ describe("brand mark colours", () => {
       "openai",
       "pi",
     ] satisfies Brand[];
-    for (const brand of brands) expect(css).toContain(`--brand-mark-${brand}:`);
+    for (const brand of brands) expect(BRAND_ARTWORK[brand]).toBeTruthy();
   });
 });
 

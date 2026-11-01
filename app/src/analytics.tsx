@@ -1,3 +1,5 @@
+import { modelBrand, type Brand } from "@baum/viewer/brands";
+import { BrandMark } from "@baum/viewer/components/brand-logo";
 import { useEffect, useRef, useState, type ComponentType, type ReactNode } from "react";
 import {
   formatCompact,
@@ -9,24 +11,38 @@ import {
 import { Alert, Badge, Button, SegmentedControl } from "@baum/viewer/components/ui";
 import { MUTED } from "@baum/viewer/series";
 import { useUrlState, type ViewerLinkProps } from "@baum/viewer/navigation";
-import { agentName, appURL, jobReasonText, request } from "./api";
+import { agentName, appURL, request } from "./api";
 import {
   ColumnChart,
   Figure,
   Legend,
   StepChart,
+  TwoAxisChart,
+  niceMax,
   slot,
   type Column,
   type Series,
 } from "./analytics-charts";
-import claudeLogo from "./desktop/claude-code.svg";
-import codexLogo from "./desktop/codex.svg";
-import cursorLogo from "./desktop/cursor.svg";
 import { LoadingStatus } from "./nine-dots";
 import { lasted } from "./sessions";
-import { Notice, PageBar } from "./shell";
+import { Notice, PageBar, RefreshButton, useReread } from "./shell";
 import "./analytics.css";
 
+export type BaumWeek = {
+  reviews: number;
+  fixes_pushed: number;
+  threads_resolved: number;
+  merges: number | null;
+  branch_updates: number | null;
+  check_reruns: number | null;
+  decisions: number | null;
+};
+export type FlowCounts = {
+  opened: number;
+  opened_merged: number;
+  merged: number;
+  merge_seconds: number[];
+};
 export type Cost = { usd: number | null; incomplete: boolean; reasons: string[] };
 export type Row = {
   key: string;
@@ -76,7 +92,12 @@ export type Analytics = {
     cost: Cost;
     agent_share: number | null;
   };
-  daily: { date: string; agents: Record<string, { sessions: number; active_seconds: number }> }[];
+  daily: {
+    date: string;
+    agents: Record<string, { sessions: number; active_seconds: number }>;
+    /** Each session under its main model; absent from an older daemon. */
+    models?: Record<string, { sessions: number; active_seconds: number }>;
+  }[];
   hours: { hour: number; active_seconds: number }[];
   by_agent: Row[];
   by_model: ModelRow[];
@@ -102,6 +123,8 @@ export type Analytics = {
     available: boolean;
     reviews: number;
     group_reviews: number;
+    /** Absent from an older daemon. */
+    reviews_completed?: number;
     fixes: number;
     automatic: number;
     completed: number;
@@ -128,6 +151,9 @@ export type Analytics = {
       cost: Cost;
       failures: { reason: string; count: number }[];
     } | null;
+    /** The last seven days against the seven before; absent from an older
+     *  daemon. */
+    weeks?: { this: BaumWeek; previous: BaumWeek };
   };
   delivery: {
     status: "loading" | "ready" | "unavailable";
@@ -143,6 +169,16 @@ export type Analytics = {
     conflict_or_failing: number;
     conflict_or_failing_share: number | null;
   };
+  /** The pull request flow, from the feature log; absent from an older
+   *  daemon. */
+  flow?: {
+    available: boolean;
+    yours: boolean;
+    unlisted: string[];
+    /** Repositories whose pull requests could not be read. */
+    unread?: string[];
+    days: { date: string; mine: FlowCounts; team: FlowCounts }[];
+  };
   plan_usage: {
     available: boolean;
     series: {
@@ -156,19 +192,18 @@ export type Analytics = {
 };
 
 /** The agents in their fixed colour order: a filter never repaints one. */
-export const AGENTS = ["claude_code", "codex", "cursor"] as const;
-const agentLogos: Record<string, string> = {
-  claude_code: claudeLogo,
-  codex: codexLogo,
-  cursor: cursorLogo,
+export const AGENTS = ["claude_code", "codex"] as const;
+const agentLogos: Partial<Record<string, Brand>> = {
+  claude_code: "claude",
+  codex: "openai",
+  cursor: "cursor",
 };
 const agentColor = (agent: string) => {
   const i = AGENTS.indexOf(agent as (typeof AGENTS)[number]);
   return i < 0 ? MUTED : slot(i);
 };
 const agentSeries = (agents: readonly string[]): Series[] =>
-  agents.map((a) => ({ key: a, label: agentName(a), color: agentColor(a) }));
-
+  agents.map((a) => ({ key: a, label: agentName(a), color: agentColor(a), icon: agentLogos[a] }));
 export const WINDOWS = [7, 30, 90] as const;
 /** The window a URL asks for, or 30 days. */
 export function windowDays(raw: string | null): number {
@@ -233,7 +268,7 @@ function Agent({ agent }: { agent: string }) {
   const logo = agentLogos[agent];
   return (
     <span className="analytics-agent">
-      {logo ? <img src={logo} alt="" width="16" height="16" /> : null}
+      {logo ? <BrandMark brand={logo} size={16} /> : null}
       {agentName(agent)}
     </span>
   );
@@ -356,12 +391,50 @@ function Summary({ data }: { data: Analytics }) {
   );
 }
 
+/** The most models the activity chart names; the rest stack as Other. */
+const MODEL_SLOTS = 4;
+const OTHER = "\u0000other";
+
 function Activity({ data }: { data: Analytics }) {
   const [metric, setMetric] = useState<"sessions" | "active">("sessions");
-  const agents = AGENTS.filter((a) =>
+  const [by, setBy] = useState<"agent" | "model">("agent");
+  const value = (part?: { sessions: number; active_seconds: number }) =>
+    metric === "sessions" ? (part?.sessions ?? 0) : (part?.active_seconds ?? 0);
+  const withModels = data.daily.some((d) => d.models);
+  const byModel = by === "model" && withModels;
+  // The models with the most of the metric in the window, in that order.
+  const totals = new Map<string, number>();
+  for (const day of data.daily)
+    for (const [model, part] of Object.entries(day.models ?? {}))
+      totals.set(model, (totals.get(model) ?? 0) + value(part));
+  const ranked = [...totals].filter(([, n]) => n > 0).sort((a, b) => b[1] - a[1]);
+  const named = ranked.slice(0, ranked.length > MODEL_SLOTS ? MODEL_SLOTS - 1 : MODEL_SLOTS);
+  // The offered agents first, then any other recorded, such as earlier Cursor
+  // sessions, in a muted colour.
+  const recorded = new Set(data.daily.flatMap((d) => Object.keys(d.agents)));
+  const agents = [
+    ...AGENTS,
+    ...[...recorded].filter((a) => !(AGENTS as readonly string[]).includes(a)).sort(),
+  ].filter((a) =>
     data.daily.some((d) => (d.agents[a]?.sessions ?? 0) + (d.agents[a]?.active_seconds ?? 0) > 0),
   );
-  const series = agentSeries(agents.length ? agents : ["claude_code"]);
+  const series: Series[] = byModel
+    ? [
+        ...named.map(([model], i) => ({
+          key: model,
+          label: model,
+          color: slot(i),
+          icon: modelBrand(model) ?? undefined,
+        })),
+        ...(ranked.length > named.length ? [{ key: OTHER, label: "Other", color: MUTED }] : []),
+      ]
+    : agentSeries(agents.length ? agents : ["claude_code"]);
+  const modelValue = (day: Analytics["daily"][number], key: string) =>
+    key === OTHER
+      ? Object.entries(day.models ?? {})
+          .filter(([model]) => !named.some(([name]) => name === model))
+          .reduce((sum, [, part]) => sum + value(part), 0)
+      : value(day.models?.[key]);
   const every = data.daily.length <= 7 ? 1 : data.daily.length <= 30 ? 7 : 14;
   const last = data.daily.length - 1;
   const columns: Column[] = data.daily.map((day, i) => ({
@@ -369,12 +442,7 @@ function Activity({ data }: { data: Analytics }) {
     tick: (last - i) % every === 0 ? dayTick.format(localDate(day.date)) : "",
     title: dayTitle.format(localDate(day.date)),
     values: Object.fromEntries(
-      series.map((s) => [
-        s.key,
-        metric === "sessions"
-          ? (day.agents[s.key]?.sessions ?? 0)
-          : (day.agents[s.key]?.active_seconds ?? 0),
-      ]),
+      series.map((s) => [s.key, byModel ? modelValue(day, s.key) : value(day.agents[s.key])]),
     ),
   }));
   const format =
@@ -388,29 +456,42 @@ function Activity({ data }: { data: Analytics }) {
         metric === "sessions" ? "Sessions started each day" : "Time agents spent working each day"
       }
       actions={
-        <SegmentedControl
-          label="Show"
-          value={metric}
-          onChange={setMetric}
-          items={[
-            { value: "sessions", label: "Sessions" },
-            { value: "active", label: "Active time" },
-          ]}
-        />
+        <div className="analytics-switches">
+          {withModels ? (
+            <SegmentedControl
+              label="Split by"
+              value={by}
+              onChange={setBy}
+              items={[
+                { value: "agent", label: "Harness" },
+                { value: "model", label: "Model" },
+              ]}
+            />
+          ) : null}
+          <SegmentedControl
+            label="Show"
+            value={metric}
+            onChange={setMetric}
+            items={[
+              { value: "sessions", label: "Sessions" },
+              { value: "active", label: "Active time" },
+            ]}
+          />
+        </div>
       }
     >
       {empty ? (
         <div className="analytics-empty">
           <h3>No agent sessions in this window</h3>
           <p>
-            Claude Code, Codex and Cursor sessions whose working folder is inside one of your local
-            clones count here.
+            Claude Code and Codex sessions whose working folder is inside one of your local clones
+            count here, as do Cursor sessions recorded earlier.
           </p>
         </div>
       ) : (
         <>
           <ColumnChart
-            label={`${metric === "sessions" ? "Sessions" : "Active time"} per day by agent`}
+            label={`${metric === "sessions" ? "Sessions" : "Active time"} per day by ${byModel ? "model" : "agent"}`}
             columns={columns}
             series={series}
             format={format}
@@ -437,7 +518,7 @@ function Activity({ data }: { data: Analytics }) {
                       <th scope="row">{c.title}</th>
                       {series.map((s) => (
                         <td key={s.key} className="num">
-                          {format(c.values[s.key] ?? 0)}
+                          {c.values[s.key] === null ? "—" : format(c.values[s.key] ?? 0)}
                         </td>
                       ))}
                     </tr>
@@ -629,7 +710,15 @@ function Breakdown({ data }: { data: Analytics }) {
   );
 }
 
-function Stats({ items }: { items: { label: string; value: string | null; reason?: string }[] }) {
+type Stat = {
+  label: string;
+  value: string | null;
+  reason?: string;
+  /** This week's count and the week before's, shown beside the figure. */
+  trend?: { week: number; previous: number };
+};
+
+function Stats({ items }: { items: Stat[] }) {
   return (
     <dl className="analytics-stats">
       {items.map((item) => (
@@ -637,6 +726,7 @@ function Stats({ items }: { items: { label: string; value: string | null; reason
           <dt>{item.label}</dt>
           <dd>
             <Figure value={item.value} reason={item.reason} />
+            {item.trend ? <Trend {...item.trend} /> : null}
           </dd>
         </div>
       ))}
@@ -644,223 +734,80 @@ function Stats({ items }: { items: { label: string; value: string | null; reason
   );
 }
 
-function Commits({ data }: { data: Analytics }) {
-  const c = data.commits;
-  const parts: (Series & { value: number })[] = [
-    { key: "session", label: "Session recorded it", color: slot(0), value: c.by_session },
-    { key: "checkpoint", label: "Entire checkpoint", color: slot(1), value: c.by_checkpoint },
-    { key: "trailer", label: "Co-author trailer", color: slot(2), value: c.by_trailer },
-    {
-      key: "none",
-      label: "No agent evidence",
-      color: MUTED,
-      value: c.commits - c.agent_commits,
-    },
-  ];
+/** This week's count beside a figure, green when it beat the week before. */
+function Trend({ week, previous }: { week: number; previous: number }) {
+  const up = week > previous;
   return (
-    <Card
-      id="analytics-commits"
-      title="Agent-written commits"
-      detail="Your commits on your local branches in this window"
+    <span
+      className="analytics-trend"
+      data-up={up || undefined}
+      title={`${formatCount(week)} in the last 7 days, ${formatCount(previous)} in the 7 before`}
     >
-      {!c.available || c.commits === 0 ? (
-        <div className="analytics-empty">
-          <h3>{c.available ? "No commits of yours in this window" : "Commits not read"}</h3>
-          {(c.reasons.length
-            ? c.reasons
-            : ["Commit on a branch of a local clone to see it here."]
-          ).map((r) => (
-            <p key={r}>{r}</p>
-          ))}
-        </div>
-      ) : (
-        <>
-          <p className="analytics-headline">
-            <strong>{formatShare(c.share)}</strong>
-            <span>
-              {formatCount(c.agent_commits)} of {formatCount(c.commits)} commits had an agent
-              involved
-            </span>
-          </p>
-          <div
-            className="analytics-meter"
-            role="img"
-            aria-label={parts.map((p) => `${p.label}: ${p.value}`).join(", ")}
-          >
-            {parts
-              .filter((p) => p.value > 0)
-              .map((p) => (
-                <div
-                  key={p.key}
-                  title={`${p.label}: ${p.value}`}
-                  style={{ flexGrow: p.value, background: p.color }}
-                />
-              ))}
-          </div>
-          <ul className="analytics-legend" aria-label="Legend">
-            {parts.map((p) => (
-              <li key={p.key}>
-                <span
-                  aria-hidden="true"
-                  className="analytics-key-box"
-                  style={{ background: p.color }}
-                />
-                {p.label} <strong>{formatCount(p.value)}</strong>
-              </li>
-            ))}
-          </ul>
-          {c.by_repository.length > 1 ? (
-            <table className="analytics-table analytics-compact">
-              <tbody>
-                {c.by_repository.map((r) => (
-                  <tr key={r.repository}>
-                    <th scope="row">{r.repository}</th>
-                    <td className="num">
-                      {formatCount(r.agent_commits)} of {formatCount(r.commits)}
-                    </td>
-                    <td className="num">
-                      <Figure
-                        value={r.share === null ? null : formatShare(r.share)}
-                        reason="No commits."
-                      />
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          ) : null}
-          {c.reasons.map((r) => (
-            <p key={r} className="analytics-note">
-              {r}
-            </p>
-          ))}
-        </>
-      )}
-      <p className="analytics-note">
-        Each commit counts once, under its strongest evidence. File overlap is not used, so this is
-        a floor. It shows that an agent was involved, not that it caused the change.
-      </p>
-    </Card>
+      {up ? "↑ " : ""}
+      {formatCount(week)} this week
+      <span className="sr-only">, {formatCount(previous)} the 7 days before</span>
+    </span>
   );
 }
 
+/** What baum did for the person: what it generated, pushed, merged and
+ *  set off, never what failed (Jobs has that). */
 function BaumWork({ data }: { data: Analytics }) {
   const b = data.baum;
-  const runs = b.reviews + b.group_reviews + b.fixes;
-  const cost = costText(b.cost);
   const noLedger = "Recorded from this version of baum on.";
+  const trend = (key: keyof BaumWeek) => {
+    const week = b.weeks?.this[key];
+    const previous = b.weeks?.previous[key];
+    return week == null || previous == null ? undefined : { week, previous };
+  };
+  const items: Stat[] = [
+    {
+      label: "Reviews generated",
+      value: formatCount(b.reviews_completed ?? b.reviews + b.group_reviews),
+      trend: trend("reviews"),
+    },
+    { label: "Fixes pushed", value: formatCount(b.fixes_pushed), trend: trend("fixes_pushed") },
+    {
+      label: "Threads resolved",
+      value: formatCount(b.threads_resolved),
+      trend: trend("threads_resolved"),
+    },
+    {
+      label: "Merged through baum",
+      value: b.merges === null ? null : formatCount(b.merges),
+      reason: noLedger,
+      trend: trend("merges"),
+    },
+    {
+      label: "Branches updated",
+      value: b.branch_updates === null ? null : formatCount(b.branch_updates),
+      reason: noLedger,
+      trend: trend("branch_updates"),
+    },
+    {
+      label: "Checks re-run",
+      value: b.check_reruns === null ? null : formatCount(b.check_reruns),
+      reason: noLedger,
+      trend: trend("check_reruns"),
+    },
+    ...(b.decisions
+      ? [
+          {
+            label: "Decision capture runs",
+            value: formatCount(b.decisions.succeeded),
+            trend: trend("decisions"),
+          },
+        ]
+      : []),
+  ];
   return (
-    <Card
-      id="analytics-baum"
-      title="baum's work"
-      detail="Reviews and fixes baum ran on this computer"
-    >
-      {!b.available ? (
-        <p className="analytics-note">The jobs list is not available.</p>
-      ) : runs === 0 && b.decisions?.attempts ? (
-        <p className="analytics-note">No reviews or fixes in this window.</p>
-      ) : runs === 0 ? (
-        <div className="analytics-empty">
-          <h3>baum ran nothing in this window</h3>
-          <p>Reviews and fixes you start, or that start automatically, are counted here.</p>
-        </div>
+    <Card id="analytics-baum" title="baum's work" detail="What baum did for you">
+      {b.available ? (
+        <Stats items={items} />
       ) : (
-        <Stats
-          items={[
-            {
-              label: "Reviews",
-              value: `${formatCount(b.reviews)}${b.group_reviews ? ` + ${formatCount(b.group_reviews)} group` : ""}`,
-            },
-            { label: "Started automatically", value: formatCount(b.automatic) },
-            {
-              label: "Fixes pushed",
-              value: `${formatCount(b.fixes_pushed)} of ${formatCount(b.fixes)}`,
-            },
-            { label: "Review threads resolved", value: formatCount(b.threads_resolved) },
-            {
-              label: "At API prices",
-              value: b.cost.usd === null ? null : cost.text,
-              reason: cost.title,
-            },
-            { label: "Failed runs", value: formatCount(b.failed) },
-          ]}
-        />
+        <p className="analytics-note">The jobs list is not available.</p>
       )}
-      {b.failures.length ? (
-        <ul className="analytics-reasons" aria-label="Failures by reason">
-          {b.failures.map((f) => (
-            <li key={f.reason}>
-              <span>{jobReasonText(f.reason)}</span>
-              <strong>{formatCount(f.count)}</strong>
-            </li>
-          ))}
-        </ul>
-      ) : null}
-      {b.decisions ? <DecisionCapture decisions={b.decisions} /> : null}
-      <Stats
-        items={[
-          {
-            label: "Merges from baum",
-            value: b.merges === null ? null : formatCount(b.merges),
-            reason: noLedger,
-          },
-          {
-            label: "Branches updated",
-            value: b.branch_updates === null ? null : formatCount(b.branch_updates),
-            reason: noLedger,
-          },
-          {
-            label: "Checks re-run",
-            value: b.check_reruns === null ? null : formatCount(b.check_reruns),
-            reason: noLedger,
-          },
-        ]}
-      />
     </Card>
-  );
-}
-
-const captureFailures: Record<string, string> = {
-  timeout: "Timed out",
-  unusable_reply: "Reply could not be used",
-  call_failed: "Model call failed",
-};
-
-/** Decision capture's calls in the window, within baum's work. */
-function DecisionCapture({
-  decisions: d,
-}: {
-  decisions: NonNullable<Analytics["baum"]["decisions"]>;
-}) {
-  const cost = costText(d.cost);
-  return (
-    <div className="analytics-decisions">
-      <h3>Decision capture</h3>
-      <Stats
-        items={[
-          { label: "Capture calls", value: formatCount(d.attempts) },
-          { label: "Failed calls", value: formatCount(d.failed) },
-          ...(d.abandoned
-            ? [{ label: "Cut short by a stop", value: formatCount(d.abandoned) }]
-            : []),
-          {
-            label: "Capture spend",
-            value: d.cost.usd === null ? null : cost.text,
-            reason: d.attempts ? cost.title : "No capture calls in this window.",
-          },
-        ]}
-      />
-      {d.failures.length ? (
-        <ul className="analytics-reasons" aria-label="Failed decision captures by reason">
-          {d.failures.map((f) => (
-            <li key={f.reason}>
-              <span>{captureFailures[f.reason] ?? f.reason}</span>
-              <strong>{formatCount(f.count)}</strong>
-            </li>
-          ))}
-        </ul>
-      ) : null}
-    </div>
   );
 }
 
@@ -932,6 +879,140 @@ function Delivery({ data }: { data: Analytics }) {
         latest head now.
         {d.fetched_at ? ` Read from GitHub ${formatRelative(d.fetched_at)}.` : ""}
       </p>
+    </Card>
+  );
+}
+
+/** The window's days in the spans a chart of it draws: each day of a week,
+ *  else each week from the window's first day, the current one partial. */
+function spansOf(dates: string[]): string[][] {
+  const size = dates.length <= 7 ? 1 : 7;
+  const spans: string[][] = [];
+  for (let start = 0; start < dates.length; start += size)
+    spans.push(dates.slice(start, start + size));
+  return spans;
+}
+
+/** The middle value, or the mean of the two middle ones, as the daemon's
+ *  medians; null when there are none. */
+const median = (values: number[]) => {
+  const sorted = [...values].sort((a, b) => a - b);
+  const half = Math.floor(sorted.length / 2);
+  if (!sorted.length) return null;
+  return sorted.length % 2 ? sorted[half]! : (sorted[half - 1]! + sorted[half]!) / 2;
+};
+
+/** Pull requests created and shipped, the merge rate and the time to merge,
+ *  the person's own or the team's, as the hosted velocity charts draw them,
+ *  from the pull requests the Timeline's feature log keeps. */
+function Flow({ data }: { data: Analytics }) {
+  const flow = data.flow;
+  const [whose, setWhose] = useState<"mine" | "team">("mine");
+  if (!flow) return null;
+  const own = flow.yours ? whose : "team";
+  const byDay = new Map(flow.days.map((day) => [day.date, day[own]]));
+  const spans = spansOf(flow.days.map((day) => day.date));
+  const weekly = spans.some((span) => span.length > 1);
+  // A quarter's thirteen weeks name every other one, from the first.
+  const every = spans.length > 7 ? 2 : 1;
+  const sums = spans.map((span) => {
+    const counts = span.map((date) => byDay.get(date)!);
+    return {
+      opened: counts.reduce((n, c) => n + c.opened, 0),
+      openedMerged: counts.reduce((n, c) => n + c.opened_merged, 0),
+      merged: counts.reduce((n, c) => n + c.merged, 0),
+      seconds: counts.flatMap((c) => c.merge_seconds),
+    };
+  });
+  const columns = (values: (i: number) => Column["values"]): Column[] =>
+    spans.map((span, i) => {
+      const first = localDate(span[0]!);
+      return {
+        key: span[0]!,
+        tick: i % every === 0 ? dayTick.format(first) : "",
+        title: weekly
+          ? `${dayTick.format(first)} – ${dayTick.format(localDate(span[span.length - 1]!))}`
+          : dayTitle.format(first),
+        values: values(i),
+      };
+    });
+  const created = { key: "created", label: "Created", color: slot(0) };
+  const shipped = { key: "shipped", label: "Shipped", color: slot(1) };
+  const rate = { key: "rate", label: "Merge rate", color: slot(0) };
+  const wait = { key: "wait", label: "Median time to merge", color: slot(1) };
+  const waitTop = niceMax(Math.max(0, ...sums.map((sum) => median(sum.seconds) ?? 0)), 3600);
+  const per = weekly ? "week" : "day";
+  const empty = sums.every((sum) => sum.opened + sum.merged === 0);
+  return (
+    <Card
+      id="analytics-flow"
+      title="Pull requests"
+      detail={`Created and shipped each ${per}${own === "team" ? ", by everyone" : ", yours"}`}
+      actions={
+        flow.yours ? (
+          <SegmentedControl
+            label="Whose"
+            value={whose}
+            onChange={setWhose}
+            items={[
+              { value: "mine", label: "Yours" },
+              { value: "team", label: "Team" },
+            ]}
+          />
+        ) : null
+      }
+    >
+      {!flow.available ? (
+        <p className="analytics-note">
+          The Timeline keeps the pull requests these charts read; it is not available on this
+          computer.
+        </p>
+      ) : empty ? (
+        <div className="analytics-empty">
+          <h3>No pull requests in this window</h3>
+          <p>Pull requests created or merged in your picked repositories count here.</p>
+        </div>
+      ) : (
+        <>
+          <ColumnChart
+            label={`Pull requests created and shipped by ${per}`}
+            columns={columns((i) => ({ created: sums[i]!.opened, shipped: sums[i]!.merged }))}
+            series={[created, shipped]}
+            format={(v) => formatCount(v)}
+            grouped
+          />
+          <Legend series={[created, shipped]} />
+          <TwoAxisChart
+            label={`Merge rate and median time to merge by ${per}`}
+            axes={[
+              { series: rate, format: (v) => formatShare(v), top: 1 },
+              { series: wait, format: (v) => (v ? (waitText(v) ?? "—") : "0"), top: waitTop },
+            ]}
+            points={columns(() => ({})).map((column, i) => ({
+              key: column.key,
+              tick: column.tick,
+              title: column.title,
+              values: [
+                sums[i]!.opened ? sums[i]!.openedMerged / sums[i]!.opened : null,
+                median(sums[i]!.seconds),
+              ],
+            }))}
+          />
+          <Legend series={[rate, wait]} line />
+        </>
+      )}
+      {flow.unlisted.length ? (
+        <p className="analytics-note">
+          Not counted: {flow.unlisted.join(", ")}. The Timeline reads a repository's pull requests
+          once its decisions are on and it has a clone.
+        </p>
+      ) : null}
+      {flow.unread?.length ? (
+        <p className="analytics-note">
+          Could not read the pull requests of {flow.unread.join(", ")}. They are tried again on the
+          next refresh.
+        </p>
+      ) : null}
     </Card>
   );
 }
@@ -1084,18 +1165,16 @@ export function AnalyticsReport({
       <Summary data={data} />
       <Activity data={data} />
       <Breakdown data={data} />
-      <div className="analytics-pair">
-        <Commits data={data} />
-        <BaumWork data={data} />
-      </div>
+      <Flow data={data} />
       <div className="analytics-pair">
         <Delivery data={data} />
-        <PlanUsage data={data} />
+        <Hours data={data} />
       </div>
       <div className="analytics-pair">
-        <Hours data={data} />
+        <PlanUsage data={data} />
         <Longest data={data} />
       </div>
+      <BaumWork data={data} />
     </>
   );
 }
@@ -1119,10 +1198,12 @@ export function AnalyticsPage({ Link }: { Link: ComponentType<ViewerLinkProps> }
   const [error, setError] = useState("");
   const [unavailable, setUnavailable] = useState(false);
   const [attempt, setAttempt] = useState(0);
+  const reread = useReread();
   const query = `days=${days}${repo ? `&repo=${encodeURIComponent(repo)}` : ""}${agent ? `&agent=${agent}` : ""}`;
   const shown = useRef("");
   useEffect(() => {
     const abort = new AbortController();
+    const count = reread.count;
     let timer: ReturnType<typeof setTimeout> | undefined;
     const read = async () => {
       setLoading(true);
@@ -1143,7 +1224,10 @@ export function AnalyticsPage({ Link }: { Link: ComponentType<ViewerLinkProps> }
         if (abort.signal.aborted) return;
         setError(e instanceof Error ? e.message : "Local request failed.");
       } finally {
-        if (!abort.signal.aborted) setLoading(false);
+        if (!abort.signal.aborted) {
+          setLoading(false);
+          reread.settled(count);
+        }
       }
     };
     void read();
@@ -1151,7 +1235,7 @@ export function AnalyticsPage({ Link }: { Link: ComponentType<ViewerLinkProps> }
       abort.abort();
       clearTimeout(timer);
     };
-  }, [query, attempt]);
+  }, [query, attempt, reread.count]);
   const set = (key: string, value: string) =>
     url.update((current) => {
       if (value) current.set(key, value);
@@ -1165,6 +1249,7 @@ export function AnalyticsPage({ Link }: { Link: ComponentType<ViewerLinkProps> }
       <PageBar
         title="Analytics"
         detail="What your agents did, its cost at API prices and what you delivered"
+        actions={<RefreshButton refresh={reread.again} />}
       />
       <div className="local-filter-bar analytics-filters">
         <SegmentedControl

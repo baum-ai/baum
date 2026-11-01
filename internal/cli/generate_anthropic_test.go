@@ -19,7 +19,8 @@ import (
 // TestGenerateWithTheAnthropicBackend runs "baum internal generate --backend
 // anthropic" against a stub Messages API: the key comes from
 // ANTHROPIC_API_KEY, the default model is used, and the stored document is
-// the one the stub submitted, completed.
+// the one the stub submitted, completed. The stub answers with whole
+// documents, so the review runs in one pass (--one-pass).
 func TestGenerateWithTheAnthropicBackend(t *testing.T) {
 	_, stores := generateEnv(t)
 	const key = "sk-ant-api03-cli-test-KEY"
@@ -61,7 +62,7 @@ func TestGenerateWithTheAnthropicBackend(t *testing.T) {
 		}}
 	}
 
-	stdout, stderr, err := run(t, append([]string{"internal", "generate", "--pr", "7", "--backend", "anthropic"}, stores...)...)
+	stdout, stderr, err := run(t, append([]string{"internal", "generate", "--pr", "7", "--backend", "anthropic", "--one-pass"}, stores...)...)
 	if err != nil {
 		t.Fatalf("generate: %v\n%s", err, stderr)
 	}
@@ -90,7 +91,7 @@ func TestGenerateWithTheAnthropicBackend(t *testing.T) {
 
 	// auto falls back to it (neither CLI is built here) and says it bills
 	// the key.
-	_, stderr, err = run(t, append([]string{"internal", "generate", "--pr", "7", "--store", t.TempDir()}, stores...)...)
+	_, stderr, err = run(t, append([]string{"internal", "generate", "--pr", "7", "--one-pass", "--store", t.TempDir()}, stores...)...)
 	if err != nil {
 		t.Fatalf("auto: %v\n%s", err, stderr)
 	}

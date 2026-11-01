@@ -8,8 +8,43 @@ app and `../viewer` hot reload without rebuilding Go or Rust. See
 
 The desktop app's own screens are React too: `setup.html` mounts
 `src/desktop/setup.tsx` and `connecting.html` mounts `src/desktop/connecting.tsx`,
-with typed native IPC and the same Vite, TypeScript, lint and test pipeline. The
-multi-page production build emits every entry and assembles `../desktop/dist`
+with typed native IPC and the same Vite, TypeScript, lint and test pipeline. Setup,
+connecting and tray screens use the viewer palette that the local app uses,
+following the system's light or dark appearance.
+Setup has a decorative leaf banner just above its step label, using the
+transparent Discord artwork in both themes. Its width is capped so leaves stay
+visible on large screens, and it follows the form on tall windows. It is static,
+fades into the page and leaves the step controls in place.
+
+Desktop UI colors are defined in `../viewer/src/palette.css`. The inbox,
+walkthrough, sessions, settings and charts reuse its semantic tokens. Stumpy's
+fixed illustration colors live with the component in
+`../viewer/src/components/stumpy-artwork.ts`; the log mark and native icon
+generator reuse them. Fixed vendor logo colors live in
+`../viewer/src/components/brand-artwork.ts`. `pnpm lint` rejects color literals
+and Tailwind color utilities outside the UI palette,
+`../viewer/src/themes/*.css` and those two artwork modules.
+The default UI palette has nineteen explicit base colors shared by light and dark mode;
+its neutral ramps, status backgrounds and interaction shades are derived mixes.
+Custom colors go in `../viewer/src/themes/custom.css`, loaded by every desktop
+screen after the default palette in a higher-priority cascade layer. Override
+bases to recalculate shades, or any semantic token to replace a derived color.
+Put overrides on `:root`, with optional `:root[data-theme="dark"]` exceptions;
+components consume those values without redefining them. See
+[custom color themes](../viewer/README.md#custom-color-themes) for examples and
+named theme selection separate from the light/dark appearance preference.
+
+`pnpm lint:palette` runs the color rule by itself; `pnpm lint` and `pnpm check`
+include it, so the normal CI app check enforces it. It scans app sources, shared
+viewer components, bundled HTML, native sources/configuration and SVG icon
+templates. Hex colors, RGB/HSL and other literal color functions, named CSS
+colors, and Tailwind's fixed color utilities are rejected with file and line
+numbers. Palette variables, `currentColor`, `transparent` and derived mixes of
+palette variables are allowed. Only palette/theme definition files and the two
+specific artwork modules may define literal colors; tests and generated files
+are excluded. Inbox filter color names are persisted palette keys, not CSS colors.
+
+The multi-page production build emits every entry and assembles `../desktop/dist`
 for Tauri, where the connecting screen becomes `index.html`, the page the
 window opens on; it is taken out of the daemon's copy. Every loading state uses
 one component, `NineDots` or `LoadingStatus` in `src/nine-dots.tsx`, whose look
@@ -27,9 +62,28 @@ setup bundle. `pnpm test:desktop` exercises setup with mocked IPC; it needs a
 completed `pnpm build`. The proxy suite covers login, CSRF, event streaming and
 React/CSS hot reload for the daemon-served application.
 
-Setup and Repositories list the signed-in GitHub account's repositories, with
-search. Nothing is picked automatically: once the person picks a repository,
-the daemon looks for its local clone and the row says where it was found or
+Setup and the app's Add repositories use the same repository picker and daemon
+search. They first fetch eight top repositories, matching the visible rows, then
+fetch up to one hundred more from `topRepositories` in the background using the
+returned cursor. Archived repositories and duplicates are omitted. Cached top
+matches appear immediately as the person types, before the 250 ms debounce.
+The daemon makes a separate GitHub repository-search request, fetching up to
+one hundred results and caching each normalized query for five minutes. It never
+scans all accessible repositories. An empty search preserves GitHub's top
+repository order. Search results merge with cached top matches and sort
+by exact repository name or owner/name match, then top status, then latest push.
+While a request is pending, the picker refreshes every 300 ms; matching rows can
+be picked and onboarding continued immediately. Failed searches preserve cached
+matches and offer Try again. Older responses cannot replace newer results.
+The footer says how many more rows the list has ("12 more matches") and offers
+Show more, which adds twenty rows of the same list or search. When the loaded
+rows run out it asks the daemon for GitHub's next page (`more-list`), and while
+GitHub has more pages the count includes rows not loaded yet: the full
+accessible, non-archived total without a search, or every match of a search.
+Once more rows show, the results keep their eight-row height and scroll, so
+the page never moves. Nothing is picked
+automatically: once the person picks a repository, the daemon looks for its local
+clone and the row says where it was found or
 offers to choose or clone one. A picked repository can have
 no clone: its pull requests remain in Pull requests and link by repository and PR
 number. Its page says **Needs a local clone**, with **Choose folder** and
@@ -46,6 +100,25 @@ The picker explains local discovery and, on macOS, offers **Also look in
 Documents** after an explicit click. Later automatic attachments show a notice.
 Setup uses the native `repositories` relay; app pages use namespaced local HTTP.
 The relay permits only named repository actions and never exposes credentials.
+Desktop setup requires a GitHub connection and at least one picked repository
+before continuing or opening a later step from the rail. The GitHub step has no
+skip action. Adding the baum CLI to the terminal and connecting agent hooks
+remain optional; the app runs its own CLI to start the daemon.
+The onboarding agent picker offers Claude Code and Codex, with a note below
+the model explaining that the agent and model can be customised per task in Settings.
+Missing agent CLIs are marked Not installed and cannot be selected. A saved
+choice is kept only if detected; otherwise setup chooses an installed agent,
+preferring Claude Code. When neither is detected, setup shows official install
+guides and Check again, and waits for an agent before advancing to the final
+step. Rechecking selects a newly installed agent without reloading setup. A
+failed detection offers a retry rather than claiming nothing is installed.
+Its compact model row includes an effort selector for reviews, using the
+model-specific CLI levels documented in
+[desktop setup](../desktop/README.md#model-effort-choices). Default leaves the
+choice to the agent; unknown custom models offer Default only. Changing a model
+clears an effort it does not support. The native setup bridge saves the review
+model and effort. Fixes that follow reviews inherit their effort. Extraction
+preferences remain in Settings and are preserved when onboarding saves.
 
 The baum daemon serves this React single-page app from its embedded assets;
 the desktop app opens it from the launch URL in the daemon's
@@ -76,8 +149,28 @@ submitting a review from the walkthrough, a fix the person starts (with its
 replies on the review threads it addressed), and resolving a review thread the
 person chose are the app's only GitHub writes (see below).
 
-A pull request with a saved review opens on the walkthrough's overview
-(`src/walkthrough.tsx`): what matters about it on one page, with no list beside
+A pull request with no saved review still shows its facts (`useFacts` and
+`factsFilesSlot` in `src/facts.tsx`): what GitHub, the clone and the sessions
+on this machine say about it, with nothing a model wrote. Beside the page's
+own state (**Generate review**, queued, generating, failed or **Needs a local
+clone**, which gets no facts), the Details tab shows its author, agents and
+change size, the Activity tab its CI checks, review tools' findings and
+linked sessions, and the rail its Sessions, Commits and Files changed, each
+file's patch read when it is opened. The page asks `GET api/facts` with the
+head discovery shows, again at each index change; the daemon reads GitHub at
+most once per refresh interval for the same head and at once for a new one
+(see "Pull request facts" in ARCHITECTURE.md). Sessions, transcripts, commits
+and patches come from `api/facts/sessions`, `api/facts/commits` and
+`api/facts/patch`, read against the facts the page was shown (each names their
+head, and a newer build answers 404). Facts are no
+version: they are never in the version menu and there is no **Ask** or
+walkthrough for them. A rate limit or a failed read says so above the page,
+with **Retry**; a daemon that serves no facts shows the page as before. Once a
+review is saved the page shows it instead, as before.
+
+A pull request opens on the full review. Once a review is saved, its **Walk
+through** opens the walkthrough's overview (`src/walkthrough.tsx`,
+`?…&walk=landing`): what matters about it on one page, with no list beside
 it. It shows only what says something: the GitHub states that ask for something
 (as the inbox draws them, plus failing checks behind a conflict), unresolved
 threads, lines and files changed, the review time, the summary, the review's
@@ -86,36 +179,91 @@ their lines. Its actions are **Start the review**, the page's own fix, merge,
 update and re-run (and regenerate when the review is outdated), **Full review**
 (v) and GitHub; agents on the branch, a regeneration and a review that could not
 be read show beneath them. **Start the review** opens the tour, `?…&walk=tour`
-(or the retired `walk=all`), so a reload stays there. `walk=full`, or a link to a
-place in the review (`pane=…`), opens the full review, whose **Walk through**
-returns to the overview.
+(or the retired `walk=all`), so a reload stays there. **Full review** (v)
+clears `walk`; the retired `walk=full` also opens the full review.
 
-The Inbox's panel lists a fix's unresolved review threads under the row that
-counts them (`ReviewThreads` in `src/threads.tsx`), asked for with `GET
-api/prs/review-threads` and discovery's `unresolved` count when the panel shows
-the pull request and again when that count changes. The daemon answers from
-its cache while the count matches (see `prupdate.Cache`), so moving
-through the Inbox does not read GitHub each time. Each shows its first comment's
-headline (at most two lines), its author, its file and line linked to the thread on GitHub, whether
-it is outdated and how many comments it has. A thread the signed-in account
-may resolve (`can_resolve`) has a **Resolve** button that posts `api/prs/resolve-thread`
-at once, without a dialog, reads **Resolving…** meanwhile, and removes the thread
+Up next's list shows a review group or stack (`api/groups`) with a shown member
+as one row, in the section and at the place of its first member in the list
+(`withGroups` in `src/up-next.tsx`); its members leave their own rows and nest
+under it when it is opened (its chevron, or `Space`, which opens or closes it
+from the group and closes it from a member, back on the group). Each member says what it waits on, since it may belong to another
+section: what needs fixing ("Checks failing · Conflicts", "2 unresolved
+threads", "Changes requested"), "Ready to merge", or else its kind. A stack's
+member whose base branch is another open member's head (`stackBases`) is not
+ready to merge, whatever GitHub's merge state, while an open member lies under
+it: it waits, as "Waiting on #N", on the lowest of them, which merges first,
+and stays out of Ready to merge and Merge all. A stack's members stay out of **Merge all**, as a stack merges from its
+base up. The group's panel is laid out as a pull request's: the branch it
+merges into ("Stacked on main"), its members' lines, files and review times
+summed, a line when its review is missing or outdated, **Open the stack** (or group) as the default, the
+same risk card with the group review's main reason, What changed from the group
+review (`api/groups/<id>/document`: its summary and sections), and its members.
+Their list opens and closes from its head, which counts them, landed ones
+included ("7 pull requests"), and those merged (`landed`); it starts open. A
+stack's members run from its base up, its landed ones first, joined by a line,
+each with a dot and what it waits on ("#963 · Ready to merge", "Merged");
+picking one the queue lists previews it, and the others (landed, or needing
+nothing now) are shown as read.
+
+Under its title the panel shows the pull request's facts: its head branch and
+the base it merges into (`head_ref`, `base_ref`), its lines and files changed
+(`additions`, `deletions`, `changed_files` from discovery), baum's time to
+review (`review_minutes`) and a link to it on GitHub.
+The branches and a GitHub icon linking to the pull request sit on their own
+line above a compact row of counts and the review estimate, with field labels
+kept for screen readers.
+The panel's review summary and risk explanation render Markdown, including
+code, emphasis, links and lists; section titles use inline Markdown.
+
+The panel's rows that open to a detail (`BlockRow`) read it only once opened.
+A fix lists what blocks it under What needs fixing, opened: its unresolved
+review threads, its conflicting files and its failing checks. Any other pull
+request lists them under On GitHub, closed: its checks, its conflict and its
+unresolved threads.
+
+The unresolved review threads (`ReviewThreads` in `src/threads.tsx`) are asked
+for with `GET api/prs/review-threads` and discovery's `unresolved` count, and
+again when that count changes. The daemon answers from its cache while the
+count matches (see `prupdate.Cache`), so moving through the Inbox does not read
+GitHub each time. Each shows its first comment's headline (at most two lines),
+its author, its file and line linked to the thread on GitHub, whether it is
+outdated and how many comments it has. The headline opens the thread's
+conversation (`messages`, up to 20 comments, each body as plain text), with a
+link to the rest on GitHub. A thread the signed-in account may resolve
+(`can_resolve`) has a **Resolve** button that posts `api/prs/resolve-thread` at
+once, without a dialog, reads **Resolving…** meanwhile, and removes the thread
 from the list once GitHub confirms; a refusal is shown under the thread.
 
-Under "Checks failing" the panel lists the head's failing checks
-(`FailingChecks` in `src/checks.tsx`), asked for with `GET
-api/prs/failing-checks` and the head commit it shows (`head_sha`), again when
-that head changes. Each shows the check's name, its conclusion in words
-(`conclusionText`), its title when it has one and a **Details** link (`url`).
-A check with a `job_id` has **Retry** when discovery says the account can push
+The checks (`useChecks` and `PullRequestChecks` in `src/checks.tsx`) are asked
+for by their row as soon as the panel shows it, open or not, with `GET
+api/prs/checks` and the head commit the panel shows (`head_sha`), again when
+that head changes and every 20 seconds while any still runs; an older daemon's
+`api/prs/failing-checks` lists only the failing ones. They are listed failing
+first, then running, then passed, then skipped or neutral, each with its state
+icon, its name (a GitHub Actions job's after its workflow, as GitHub lists it:
+"Web CI / check"; the daemon reads the commit's workflow runs for it), its state in words (`conclusionText`), its title when it has one
+and a **Details** link (`url`). While any check fails, only the failing ones
+(and any retried from the list) show, the rest behind **Show N other checks**,
+which **Hide other checks** folds again; with none failing every check shows.
+The row's title carries a pill counting them out of them all (`checksCount`):
+red "1/9 failing" while any fails, else amber "2/9 running" while any runs,
+else green "9/9 passing", with the count by state (`checksSummary`) as its
+tooltip. A failing check with a
+`job_id` has **Retry** when discovery says the account can push
 (`viewer_can_push`): it posts `api/prs/rerun-job` at once, reads **Retrying…**,
-then shows "Re-running on GitHub"; a refusal is shown under the check. When the
-pull request offers a fix, the row has **Fix CI**, which starts at once a fix
-of the failing checks alone (`startFix(clone, pr, "checks")`, `"only":"checks"`
-on the item).
+then shows "Re-running on GitHub"; a refusal is shown under the check. The
+Checks failing row has no fix of its own: the panel's fix covers the checks.
+
+The conflicting files (`ConflictingFiles` in `src/conflicts.tsx`) are asked for
+with `GET api/prs/conflicts`. The daemon fetches the base branch's tip (and the
+head when missing) into the clone's `refs/baum/pull/<N>/` and merges them in
+memory with `git merge-tree --write-tree` (git 2.38 or newer), touching no
+working tree or branch. Without an available clone it answers `no_clone`, which
+the panel shows with a link to GitHub.
 The PR page's **Walk through** button (beside Regenerate, once a review is
-saved) opens the walkthrough (`src/walkthrough.tsx`): `?…&walk=tour` or
-`walk=all`, so a reload stays there, and **Full review** returns to the viewer.
+saved) opens the walkthrough's overview (`src/walkthrough.tsx`): `?…&walk=landing`,
+or `walk=tour` (`walk=all`) in the tour, so a reload stays there, and **Full
+review** returns to the viewer.
 `buildTour` (`src/walkthrough-model.ts`) turns the document into chapters, the
 logical sections with hunks in `sectionsInReviewOrder` (mechanical and obsolete
 sections are left out), and behaviours, one per behaviour step: its `title` (schema revision 2026-10-27.1), its
@@ -125,8 +273,7 @@ the first semicolon; a section without steps is one behaviour, its summary. A
 chapter carries its section's summary, its `intent` block (what the pull request
 and its sessions say the change is for), its risk reason and its open risks. A behaviour's code is the viewer's
 `HunkEvidence` for the step's hunk anchors, reading omitted excerpts through the
-page's patch source. The walkthrough is drawn as the inbox is, with the Up next
-design's `--un-*` colours (`src/walkthrough.css`). It is one guided tour, a
+page's patch source. The walkthrough and inbox use the shared palette (`src/walkthrough.css`). It is one guided tour, a
 page per chapter, in the overview's column: a row of steps under the header
 leads back to the overview, names each chapter (shortened to fit, with a dot per
 behaviour: looked at, commented or not yet) and ends at the wrap-up. A
@@ -137,8 +284,12 @@ wrap-up lists the behaviours not looked at and sends the review. j and k move
 the pick behaviour by behaviour, across chapters; → and ← move a chapter.
 Moving the pick off a behaviour, leaving its chapter or commenting on it marks it
 looked at; seen marks and
-drafts are kept in `localStorage` (`baum.walkthrough`) per repository, pull
-request and review version, the 40 most recent. Submitting posts
+drafts are kept by the daemon in `app.sqlite` per repository, pull
+request and review version, the 40 most recently saved. They survive browser
+storage clearing, a fresh window and a daemon restart. The app loads saved
+progress before writing; queued changes preserve unrelated concurrent edits.
+A failed read or save leaves drafts in the window and shows a retry action.
+Submitting posts
 `POST api/prs/review` with `{repository, pr, head_sha, event, body, comments}`:
 `head_sha` is the reviewed head, each comment `{path, line, side, start_line?,
 body}` sits on the step's anchored lines (or the hunk's first added line), and
@@ -158,13 +309,12 @@ comments** or a combination such as **Fix conflicts, CI and review comments**
 request is open, is not a fork,
 discovery says the signed-in account can push to the repository
 (`viewer_can_push`) and the repository has a local clone. The PR page puts the
-button first beside the version menu, Pull requests puts a small **Fix** in
-the row's actions, and the Inbox's card offers it as its action; `f` presses
-it on each. Any of them starts the fix at once, with no dialog and no cost
+button first beside the version menu, Pull requests offers it in the row's
+menu, and the Inbox's card offers it as its action; `f` presses it on each. Any of them starts the fix at once, with no dialog and no cost
 estimate: `fix` in `src/app.tsx` posts `POST api/jobs` with
 `{"items":[{"clone","pr","kind":"fix"}],"mode":"single"}` (`startFix`), and
-the button reads **Starting…** (in Pull requests' row actions, **Fixing…**)
-from the click (the app's `fixStarting` set) until the job arrives. The daemon checks GitHub again and runs it with the
+the button reads **Starting…** (in a Pull requests row, **Fixing…** beside
+its review) from the click (the app's `fixStarting` set) until the job arrives. The daemon checks GitHub again and runs it with the
 fix agent Settings chooses, else the review's harness and model. A fix it refuses answers `409` with
 `blocked_reason` (fork, no push access, unsupported harness, nothing to fix),
 which `request` turns into the reason in words (`jobReasonText`); the app
@@ -292,7 +442,7 @@ A queued or running turn shows its question, its status and the agent's live
 transcript (`useJobTranscript` and `EntryView` of `src/job-transcript.tsx`, tool
 calls collapsed) with **Cancel** (`POST api/jobs/{id}/cancel`). An answered turn
 draws `answer_markdown` with the viewer's `Markdown` component (raw HTML stays
-text), the cost when there is one, and the citations as `path:start–end`
+text) and the citations as `path:start–end`
 buttons. A citation inside one of the review's hunks opens that hunk's cited
 lines with `HunkEvidence` (an omitted excerpt is read through the page's patch
 source, `api/patch`); one outside the review's changes shows its path and lines
@@ -300,7 +450,7 @@ with a link to the file at the review's head on GitHub, because the daemon
 serves no file text other than patches. A turn that failed, was cancelled or was
 interrupted says why in words (`turnReasonText`: `validation`, `budget`,
 `backend`, `input`, `internal`, `needs_clone`, `unsupported_backend`,
-`cancelled`, `interrupted`), with its cost. Each answer has a
+`cancelled`, `interrupted`). The chat does not display costs. Each answer has a
 `data-answer-actions` slot (`AskPanel`'s `answerActions` prop) for the actions
 that follow an answer: `AnswerActions` (`src/answer-actions.tsx`), drawn only
 under answers of the newest review version. **Fix this** (boxed, emphasised
@@ -311,13 +461,14 @@ pull request runs. **Add as comment** writes the answer's markdown and one
 `path:start–end` line per citation into the walkthrough draft through
 `walkthrough-model.ts` (`appendToDraft`): after the comment of the stop the
 question's focus names (`draftTarget`), else after the review's overall comment
-(`Progress.note`). It only writes the draft, kept per review version in local
-storage, and calls no GitHub API: the draft is sent only with the review. The
+(`Progress.note`). It only writes the draft, kept per review version in the
+application database, and calls no GitHub API: the draft is sent only with the
+review. The
 confirmation, "Added to your review draft", offers **Undo** (`removeFromDraft`,
 which takes back what was added while it is still at the end of the draft) and
 **Open the draft**, which opens the walkthrough's Everything view and its Submit
-panel. A walkthrough that is open reads its progress again on the
-`PROGRESS_EVENT` the model sends. Chat jobs are not reviews or fixes: `reviewJob` and
+panel. An open walkthrough shares the same hydrated draft record. Chat jobs
+are not reviews or fixes: `reviewJob` and
 `fixJob` ignore them, `chatJobs` lists a pull request's, and the Jobs list and
 transcript page call one "Question on #<pr>". The key `a` is in the shortcuts
 sheet for the pull request page and the walkthrough.
@@ -335,9 +486,8 @@ Jobs. The daemon keeps the 50 newest transcripts; an older run's link finds
 "No transcript to show".
 
 Merging: a pull request whose Merge state is Ready (open, not a draft) shows a
-Merge button in the PR page header and, on hover or keyboard focus, in its
-Pull requests row's actions (always drawn on touch screens and below 72rem,
-where the columns fold), and as the Inbox card's action. It opens a confirmation dialog
+Merge button in the PR page header, **Merge…** in its Pull requests row's
+menu, and the Inbox card's action. It opens a confirmation dialog
 that reads `GET /api/prs/merge-options` for the repository's allowed methods
 (merge commit, squash, rebase), preselects GitHub's default for the user and
 offers only the allowed ones. "Merge pull request" posts `POST /api/prs/merge`
@@ -349,13 +499,51 @@ or 403 status and shows inline in the dialog, in words; on success the daemon
 records the merge and re-reads the repository's pull requests, so the lists
 drop it at once.
 
+Refreshing a page: the Inbox, Pull requests, Timeline, Sessions, Analytics,
+Repositories, Jobs, and a pull request's or review group's page end their bar
+(the Inbox its list's head; a pull request its walkthrough's head, or the full
+review's title row through the viewer's `actions` header slot) with a
+circular-arrow button (`RefreshButton` in `src/shell.tsx`). It reads what the
+page shows again: the pages of pull requests (the Inbox, Pull requests, a pull
+request or group) ask GitHub at once for their repositories' pull requests
+(`api/prs/refresh`, by the local clone where there is one) and then read the
+daemon again, one repository at a time and each such refresh after the one
+before it, unless pressed again (below). A page's latest refresh names the
+repositories that failed in an alert, if the page is still shown. The other
+pages read their own data again, and a page whose reads an effect makes
+(Timeline, Analytics) settles the refresh when the read made for it ends
+(`useReread`); the Timeline's lists count as read once the open tab's list
+holds a read at the refresh's revision. With the Repositories picker open, the
+refresh also reads the picker's list from GitHub again. Until the refresh
+settles, and on the Inbox and Pull requests while any refresh from GitHub runs
+and during the first read, the arrow becomes the nine-dots loader. Pressing it
+again meanwhile starts it again: the refresh under way is aborted, a refresh
+from GitHub drops every other one under way (on any page, as one that never
+answers holds the queue and the lists' loader) and goes first, and the daemon
+read starts afresh, so a read that never answers can always be retried. The
+app keeps the page's refresh above the page (`usePageRefresh`, keyed by the
+page shown), so a refresh under way survives a pull request switching between
+its walkthrough and full review, and each page's refresh runs and shows on its
+own: leaving a page and coming back while its refresh runs shows it running. A
+page registers its refresh also where it draws no button
+(`usePageRefreshAction`), as a pull request or group while its review loads,
+or a walkthrough with nothing to walk through; the key and the button press
+the latest registered, so the open Repositories picker's refresh takes the
+page's. `⌘R` (Ctrl+R elsewhere) is one of the app-wide keys and presses it, in
+text fields too; under a dialog it does nothing. It never reloads the app: a
+page with no refresh of its own, such as one still loading, reads all of the
+daemon's data again, restarting a read under way. `⇧⌘R` stays the browser's
+reload.
+
 Keyboard shortcuts (`src/shortcuts.tsx`, one key table that both the handling and
 the sheet read). Every page is reached from the keyboard. With the command key
 (⌘ on a Mac, Ctrl elsewhere): `1` to `8` open the sidebar's pages in its order
 (Inbox, Pull requests, Timeline, Sessions, Analytics, Repositories, Jobs,
 Settings; digits
 are read by their place on the keyboard, so layouts that shift them work),
-`,` opens Settings, and `K` opens **Go to** (`src/go-to.tsx`). Back and forward
+`,` opens Settings, `K` opens **Go to** (`src/go-to.tsx`) and `R` refreshes
+the page (above); letters are read by their place on a layout without Latin
+ones. Back and forward
 are `⌘[` and `⌘]` on a Mac and `Alt+←` and `Alt+→` elsewhere. These work in
 text fields too, but not under a dialog other than the sheet or Go to, which
 they close. Go to searches the pages, the pull requests (by title, repository,
@@ -365,13 +553,17 @@ the agent sessions, and, with a daemon that has inboxes, each inbox by its name
 query ranks first, `↑` and `↓` move, `Enter` opens and `Esc` closes. The sidebar
 draws each page's key while Alt is held and names it in the link's tooltip and
 `aria-keyshortcuts`. Tab moves nothing anywhere, dialogs included: the keys act
-on the selection, and a place that needs more gets its own keys. `Esc` gives up
-any focus a click left on a control.
+on the selection, and a place that needs more gets its own keys. `Esc` gives up any focus left on a control. On a pull request, a group, a job's
+transcript or a session, `Esc` and `u` go back to the page it was opened from
+(the Inbox, an inbox, Pull requests, a group), past moves within it (a
+walkthrough step, the Ask panel): each history entry the app adds records its
+place and the entry it was opened from (`writeHistory`, `backToOpener`). A window
+opened on the page itself goes to its list.
 
 On Pull requests, `j`/`↓` and `k`/`↑` move a row focus through the
 rows as drawn (group rows count; rows of collapsed buckets and collapsed groups
 are skipped), `Enter` or `o` opens the focused pull request or group, `x` toggles
-its selection, `Space` opens or closes its peek, `m` opens Merge and `f` starts the fix where the row offers them (Merge wins
+its selection, `Space` opens or closes its peek (on a group's row, shows or hides its pull requests), `m` opens Merge and `f` starts the fix where the row offers them (Merge wins
 where both could), `g` generates the pull request's review through the same path
 as the PR page's Generate (so the same confirmations and the instant "Starting"
 state), `t` opens its fix transcript, `r` refreshes from GitHub at once rather than after the polling backoff,
@@ -401,7 +593,12 @@ Repositories, a session or job transcript), with the current page's group
 first; `?` or `Esc` closes it. Key hints drawn
 on buttons (class `key-hint`) show only while Alt, Option on a Mac, is held:
 `useKeyHints` marks the document root then and clears it on release or when
-the window loses focus. The focused row has an
+the window loses focus. Every page also shows its own keys then, in one line
+along the foot of its panel (`KeyBar` in `src/shortcuts.tsx`): the keys of its
+group in the sheet that carry a short name, those sharing one together ("j k
+move"), then ⌘. for the row menu on a list, Go to and `?`. The bar reads the
+sheet's table, so it names only keys that work. The Inbox draws it at the foot
+of its list instead. The focused row has an
 accent bar and a faint fill, distinct from hover and selection; focus moves to
 the row's own link, so screen readers follow, and the row scrolls into view.
 Each list (Pull requests, Inbox, Sessions, Jobs, Repositories) keeps its
@@ -420,9 +617,9 @@ breakdown toggles are pressed buttons in a group), and its charts' bars take
 the focus for their tooltips.
 
 Update branch and Re-run checks (`src/unblock.tsx`) are secondary buttons in the
-PR page header beside Fix and Merge…, not in Pull requests: a row's actions
-hold one action (Merge on a ready row, else Fix) beside Peek, and a third
-button would crowd the column or wrap. `canUpdateBranch` offers the first
+PR page header beside Fix and Merge…, not in Pull requests: a row's menu
+holds the one action its state asks for (Merge on a ready row, else Fix), and
+the page is where the rest of a pull request's state is read. `canUpdateBranch` offers the first
 when discovery's `behind` is true (GitHub's `BEHIND`, never for a draft or a
 conflict), the pull request is open, not a fork, and `viewer_can_push` is true;
 `canRerunChecks` offers the second when `checks` is `failing`, the pull request
@@ -444,9 +641,7 @@ repository's pull requests.
 
 The Inbox (the app's root, `src/up-next.tsx`) is a split view: a list of
 what waits on the person, grouped by what they do about it, beside the panel
-of the selected pull request. The page follows the Up next design's own
-colours and sizes rather than the app's tokens and type scale (`--un-*` in
-`src/style.css`, mapped onto the app's dark tokens in dark mode); its list and
+of the selected pull request. The page uses the shared palette in both themes; its list and
 panel scroll on their own, and below 760px the list stacks above the panel.
 `upNext` places each open pull request in at most one kind, from discovery's
 flags only: **Review** (their review is requested), **Clone** (a requested
@@ -497,7 +692,8 @@ branch are counted at the foot of the panel.
 Snooze offers 1 hour, this afternoon (3 PM, while that is more than an hour
 away), tomorrow morning (9 AM) and **Until it changes**, which hides the pull
 request until its head moves. A snooze selects the next pull request and shows
-a toast with **Undo**; **Bring back** under Snoozed ends one early. Keys:
+a toast with **Undo**; **Bring back**, in a snoozed row's menu under Snoozed,
+ends one early. Keys:
 `j`/`↓` and `k`/`↑` move the selection, `Enter` opens, `m` merges a Merge, `f`
 starts a Fix item's fix (where its panel offers the button), `t` opens its fix
 transcript (Watch the agent, See what the agent did, or the last run's), `s` opens Snooze
@@ -512,9 +708,11 @@ reviewers, or their branch update did. Their own pull request that only stopped
 being mergeable (a push, checks running) waits uncleared, and nothing is
 cleared for a repository the latest read lists no open pull request of, since
 GitHub may only be unreachable; one that comes back is no longer cleared.
-Snoozes and today's record are kept in this browser's `localStorage`
-(`baum.inbox.v1`) and start again each day, snoozes excepted; nothing reaches
-the daemon. The sidebar's Inbox badge counts the queue without snoozed pull
+Snoozes and today's record are kept in the daemon's `app.sqlite`,
+independently of the browser origin, and start again each local day, snoozes
+excepted. Initial bookkeeping waits until saved state has loaded. Failed reads
+or saves show a retry action and preserve unsaved changes in the window. The
+sidebar's Inbox badge counts the queue without snoozed pull
 requests. It is not the desktop tray's waiting count, which counts only review
 requests and the person's blocked pull requests.
 
@@ -621,9 +819,11 @@ a label, with no key of its own, as Tab moves nothing in the app.
   over the last moments (no fade with reduced motion). An unknown id says "This inbox no longer
   exists" and links to Inbox.
 - **Manage** (`?page=inboxes`): the inboxes in the sidebar's order, each with
-  its colour dot, name, how many are in it now, sentence, up and down buttons
-  ("Move <name> up", disabled at the ends), a labelled badge switch and Edit; a
-  save sends the whole list in its new order. A tinted note says how many queue items
+  its colour dot, name (a link to edit it), how many are in it now ("not
+  counted in the badge" when it is left out), and sentence. Its menu holds
+  Edit…, Move up and Move down (each only where the inbox can move) and
+  **Count in the Inbox badge**, an on-or-off choice; a save sends the whole
+  list in its new order. A tinted note says how many queue items
   are in no inbox (they show only under Inbox and always count in its badge; in
   the caution tone), or that every one is in some (in the positive tone). With none, it leads to New inbox.
 
@@ -648,11 +848,12 @@ review decisions, head checks, merge state and the first 100 review threads;
 when more threads exist the unresolved count shows a lower bound (`N+`). The
 columns follow the hosted Focus view's labels, icons and tones and fold under
 the title below 72rem. The list is drawn as the Up next design's live table,
-in the Inbox's palette (`--un-*`) on the app's type scale. The page bar says
+with the shared palette on the app's type scale. The page bar says
 when the list last read the daemon ("Updated just now", then how long ago,
 with the exact time as a tooltip), with a turning mark while a refresh runs.
-A row's last cell holds its action and **Peek**, which wait for the pointer or
-keyboard focus in the wide table. Peek (or `Space` on the focused row) opens
+A row's menu (its ⋯, a right click or ⌘.) holds Peek, Merge… on a ready row
+or the fix it offers, the fix's transcript, Generate or Regenerate review,
+Select and Open on GitHub, each with its key. Peek (or `Space` on the focused row) opens
 the saved review under the row, read when first opened and again only for a
 new version: the summary (the row already shows the risk score), the first four sections in review order with their lines added
 and removed, and **Open the review**. Without a saved review it says why (no
@@ -697,7 +898,28 @@ while regeneration runs. A PR page uses the queue’s active job for that
 repository and PR across registered clones, showing queued/running progress
 and cancellation even before its first document exists. Duplicate generation
 controls stay disabled until that job finishes, and completion/cancellation
-updates the page through SSE. Repository settings share backend and model overrides across registered clones.
+updates the page through SSE.
+
+A review of one pull request is written in stages (outline, each section's
+details, then the codebase context), and the daemon holds a draft while the
+job runs (`Job.draft`, read from `GET api/jobs/{id}/draft`). A page with no
+saved version shows the draft in the viewer as soon as there is one, with
+sections still being written reading "Writing details…" and a notice that it
+is a draft; before that it keeps the facts view. A page with a saved version
+keeps it and offers **View draft** (a toggle, enabled once a draft exists)
+beside the generation status; it goes when the job ends. A draft is never a
+version: no version menu, Ask, Walk through, "Ask about this section" or
+retry, and nothing is read or written under its number. A version published
+without some sections' details or without its context says so in a notice
+("2 sections couldn't be written.", "The codebase context couldn't be
+written."; the context notice only when the job that wrote it recorded the
+failure, since older reviews have none). The latest saved version's failed
+sections have **Retry**, which queues a details job (`POST api/jobs` with
+`kind: "details"` and the version) that writes all its failed sections again
+and updates the same version in place; meanwhile they read "Writing details…".
+If the pull request has new commits (`head_changed`) the page says the details
+can't be retried and offers **Regenerate**; a details job that ends cancelled
+or failed shows why until dismissed. Repository settings, including automatic reviews, decision capture, backend and model overrides, are shared across registered clones.
 GitHub discovery and the latest saved review's free evidence refresh periodically
 while the local server runs, including PR heads/states, checks, conversation,
 bot reports and local session links. Cached data loads immediately; offline,
@@ -725,8 +947,15 @@ heading, member labels on sections, and above the review the members (state and
 their own review status, each linking to its page) with Rename, Add pull
 request, Remove (never below two members, nor above eight) and Delete group.
 Deleting never deletes saved reviews. Generating needs an available clone of
-the repository and a saved review of every member: members without one are
-named, and "Generate their reviews" queues them. A fork or an author without
+the repository, and the group review builds on a saved review of every member:
+Generate queues the reviews of members without a review of their current head
+with the group's (members already being reviewed are not queued again), and
+the group review starts after them even if the person leaves the page. It also
+waits while a member is being fixed, and when a member's head moves while it
+waits, it reviews that member again and then the group, at the new heads. Meanwhile the page says "Reviewing the pull requests first",
+the members' rows show a loader, and Cancel stops the group's job. If a
+member's review fails, the group's job fails with that reason and Try again
+starts over. A fork or an author without
 write access asks for the same confirmation as a pull request. An outdated
 group offers Regenerate. A pull request's page links the groups it belongs to,
 and the Jobs page labels a group job "Review group: <name>". Groups across
@@ -739,8 +968,11 @@ is; hovering "resets in" shows the exact date and time. A narrow window folds
 it to the lowest share left. Only
 plans the daemon could read show: a provider that is not installed, signed
 out or has not run yet is left out, and with neither readable (or a failed
-request) the box is not drawn. The desktop setup's review step shows the same
-meters, with "Unavailable: <reason>" for a provider it cannot read. Both ask
+request) the box is not drawn. Which plans show is a choice in Settings
+(below): by default only those of the backends baum uses. The desktop setup's
+review step shows every plan, whatever the choice (`?all=1`), so the harness
+can be chosen knowing what each has to spare, with "Unavailable: <reason>" for
+a provider it cannot read. Both ask
 `GET api/plan-usage?refresh=1` on mount and every five minutes (the daemon
 reads again at most once a minute), and work out "resets in" again every 30
 seconds between readings. Codex figures are live when Codex is signed in with
@@ -807,10 +1039,9 @@ the loaded list does not hold (further down, filtered out, archived or gone)
 shows above the list as the opened feature. With no features yet, the page
 explains that features appear as pull requests and sessions are placed and
 offers **Build feature history** (in a view of one repository) and All
-decisions. The feature build below belongs to a view of one repository; over
-several, each of them without a feature history has a line saying so that opens
-its own view. When the repository has features at all (whatever the filters),
-the page bar offers a quieter **Rebuild feature history**. Either starts a
+decisions. The feature build below belongs to a view of one repository. When
+the repository has features at all (whatever the filters), the kebab menu at the
+end of the filter bar offers a quieter **Rebuild feature history**. Either starts a
 `feature_build` job for the repository's clone at once, as every run the person
 asks for starts (`src/feature-build.tsx`, `POST api/jobs` with `kind:
 "feature_build"`): there is no dialog, no estimate and nothing about the price
@@ -828,7 +1059,9 @@ which starts it again at once; a building version with no reason and no job
 says that a build is in progress or stopped and offers Resume too, which goes
 on with the same version. A latest build that ended before it made a version
 shows "The last feature history build stopped before it made a version" with
-its reason and **Try again**, until a version newer than the job is current.
+its reason and **Try again**, until a version newer than the job is current or
+the person closes it; closed jobs are remembered in `localStorage`, so a later
+job shows again. One the person cancelled shows nothing.
 Feature builds' reasons have their own words, here and in Jobs (`jobReasonText`
 with the job's kind). A failed read of the build state keeps what was shown.
 The current features stay listed throughout, and the lists are read again when
@@ -839,22 +1072,32 @@ is off, and which picked repositories have their decisions turned off.
 The Analytics page (`?page=analytics&days=7|30|90&repo=&agent=`, `src/analytics.tsx`)
 reads `GET api/analytics` (see the daemon's [analytics README](../internal/analytics/README.md)).
 Its bar holds the window (7, 30 or 90 days, as a segmented control) and the
-repository and agent selects in the inbox's select style; all three live in the
-address. A new choice shows at once and the last report stays, faded, until the
-new one answers. Cards: summary tiles (sessions, active agent time, human prompts,
+repository and agent selects, bordered like the Timeline's filters; all three
+live in the address. The page uses the shared palette as the Inbox does, and
+its charts the hosted dashboard's warm series (forest, then `--data-caramel`,
+`--data-sage` and `--data-espresso` from `../viewer/src/palette.css`). A new
+choice shows at once and the last report stays, faded, until the new one
+answers. Cards: summary tiles (sessions, active agent time, human prompts,
 the cost at API prices, marked "Incomplete" when part is unpriced, and the
 agent-written share of commits); agent activity per day, sessions or active time
-stacked by agent, with a legend and a table behind "Show as a table"; a breakdown
+stacked by harness or by model (each session under its main model; the top
+four named, the rest as Other), with a legend that shows each harness's or
+model maker's logo and a table behind "Show as a table"; a breakdown
 by agent, model or repository (sessions, prompts, tool calls, failed share, active
-time, tokens, cost at API prices); agent-written commits by evidence; baum's
-work (reviews, fixes pushed, threads resolved, cost at API prices, failures by
-reason, merges,
-branch updates and re-runs from the app); delivery from GitHub ("Loading from
-GitHub…" for that card only while the daemon searches); plan usage over time per
-provider, with how often each window hit its limit; busiest hours; and the longest
-sessions. A figure that is unknown is "—" with its reason as a tooltip and to
+time, tokens, cost at API prices); pull requests, yours or the team's (one
+switch), created and shipped as bars side by side, then the merge rate and the
+median time to merge as lines on their own axes (left and right) beneath, by day over 7 days and by week otherwise, read
+from the pull requests the Timeline's feature log keeps (a repository it does
+not read, with decisions off or no clone, is named as not counted); delivery
+from GitHub ("Loading from GitHub…" for that card only while the daemon
+searches) beside the busiest hours; plan usage over time per provider, with
+how often each window hit its limit, beside the ten longest sessions, in a list that scrolls
+within its card; and baum's work, only what it
+did for the person (reviews that completed, fixes pushed, threads resolved, merges,
+branch updates and check re-runs from the app, decision capture runs that succeeded), its
+failures left to Jobs. A figure that is unknown is "—" with its reason as a tooltip and to
 screen readers, never 0; a floor reads "≥". Charts are HTML and inline SVG in the
-viewer's `--data-*` slots, agents in a fixed order (Claude Code, Codex, Cursor),
+viewer's `--data-*` slots, agents in a fixed order (Claude Code, Codex, then any other recorded, such as earlier Cursor sessions, in a muted colour; the agent filter offers Claude Code and Codex only),
 with tooltips on hover and focus. The page reads again every two seconds while
 the daemon is still indexing or searching GitHub, then every five minutes. An
 older daemon without the capability gets a note to update baum.
@@ -867,28 +1110,55 @@ straight to Connections. **General**, the default, offers System, Light and Dark
 themes and whether holding Alt/Option shows keyboard shortcut hints. Preferences
 are read and saved through `GET`/`PUT api/settings/appearance` (`theme`,
 `key_hints`), in the daemon’s SQLite registry, so they survive daemon restarts
-and loopback port changes. Saves report failures and keep the previous choice;
+and loopback port changes. **Plan usage** below them has a switch per plan
+(Claude Code, Codex) for whether it shows in the sidebar and the desktop tray.
+With no choice a plan shows when one of the backends baum uses is its own: the
+reviews', the fixes' and decision capture's (Auto counts the first plan it can
+read, Claude Code before Codex; the Anthropic API and Cursor have no plan). The
+row says which. Flipping a switch is the person's choice and stays as chosen
+when the backends change; "Use baum's default" gives it back. A change of backend reaches the
+sidebar at its next reading (within five minutes) and the tray at its next poll. It is read and
+saved through `GET`/`PUT api/settings/plan-usage` (`{provider, shown}`, `shown`
+null to clear), and the sidebar reads again at once. Saves report failures
+and keep the previous choice;
 returning to a window rereads the saved preferences. Orange or red markers
 beside section names identify issues needing attention. Fixes needs attention when it follows reviews whose
 harness cannot fix. **Reviews** holds
 the global review settings, one per row: whether reviews run automatically,
 for which pull requests (authored, requested, both, or all open pull requests
 in the repository), the harness and its model (a listed model or a custom
-name, saved when its field is left or Enter is pressed). Each change is saved
+name, saved when its field is left or Enter is pressed) and the reasoning
+effort (Default, which leaves it to the agent, Low, Medium or High; higher levels
+selected in onboarding remain visible). The harness is Claude Code or Codex
+only: the daemon refuses `cursor-agent` and `anthropic` (400 when saving, a
+failed job for one already in `config.toml`), and when neither is installed
+the section says so. Each change is saved
 at once, with "Saved" beside the title, through `PUT api/automatic`
-(`enabled`, `backend`, `model`, `pull_requests`), which the daemon keeps as
-app preferences over the config file; `GET api/settings` reports the
-effective harness and model. Each section sends all its choices and runs one
+(`enabled`, `backend`, `model`, `effort`, `pull_requests`), which the daemon
+keeps as app preferences over the config file; `GET api/settings` reports the
+effective harness, model and effort. Each section sends all its choices and runs one
 save at a time; changes made while one runs are sent together afterwards, so
 an older choice never lands after a newer one. A failed save shows the error
 and puts the control back. **Fixes** chooses the agent that fixes: "Same as reviews" (the
-default, which follows a repository's own review harness too) or Claude Code
-or Codex with a model, sent as `fix_backend` and `fix_model` (`""` returns to
-the reviews') and reported by `GET api/settings`. A chosen fix agent applies
+default) or Claude Code
+or Codex with a model and a reasoning effort, sent as `fix_backend`,
+`fix_model` and `fix_effort` (`""` returns to the reviews', effort included)
+and reported by `GET api/settings`. A chosen fix agent applies
 in every repository. **Connections** holds the GitHub connection and, in the
-desktop app, the Agent hooks card with installation, enablement and removal
-for each agent. **This computer** holds the diagnostics, the background
-daemon note, in the desktop app the Command line card (inline CLI install,
+desktop app, the Agent hooks card with installation, enablement, update
+(to the latest plugin, without removing it first; shown with the installed
+plugin version) and removal for each agent. **This computer** holds the diagnostics, the background
+daemon note, **Jobs at once** (how many reviews, fixes and feature builds run
+in parallel, 1–4 and 4 by default, saved with `PUT
+api/settings/job-concurrency` and reported as `job_concurrency` by `GET
+api/settings`; the daemon applies it at once, and lowering it lets running jobs
+finish), **Review time limit** (10 minutes by default) and **Fix time limit**
+(how long a fix, a question to a review's agent or a feature build may run, 30
+minutes by default), each chosen from 5 to 240 minutes, saved together with
+`PUT api/settings/time-limits` as `review_time_limit_minutes` and
+`run_time_limit_minutes`, reported by `GET api/settings` and applied to runs
+that start after the change (runs have no call or token limit unless the
+config file sets one), in the desktop app the Command line card (inline CLI install,
 update and removal) and Zoom, and the environment for agents. Home paths are
 displayed with `~`. **Environment for agents** (`AgentEnvSection`) edits
 variables set for every agent baum runs and for the git commands that commit
@@ -911,7 +1181,8 @@ an earlier name GitHub forwards to the repository, which the picker and
 Repositories rows then show (`earlier_names`); a folder of another repository
 shows the daemon's error naming that repository. Settings apply
 to the repository through `PUT api/repositories/{owner}/{name}/settings`, with
-automatic generation and harness/model overrides; there is no spending cap.
+automatic generation and decision capture only: the harnesses and models are
+global; there is no spending cap.
 Removing a repository unpicks it but leaves its files and saved
 reviews on disk. Change local clone offers the existing clone registrations and
 lets the person remove one or register another folder. Explicit unpicks are
@@ -942,6 +1213,9 @@ never a path; a session's transcript comes only when the Sessions page opens it
 (below). When a session ends the panel goes and the page reads its sessions
 from disk again, where the full session is. A daemon without the record serves
 none.
+The PR page keeps its linked sessions and commits visible during background
+refreshes, so their rows and an open transcript do not blink back to a loader.
+Switching pull requests or review versions loads the corresponding list.
 
 Decision capture (`GET api/decisions`, see the daemon's
 [decision capture README](../internal/decisionlog/README.md)) adds
@@ -957,16 +1231,20 @@ marking those made after that review was generated "Provisional", ended sessions
 tracker still holds included; it is not drawn while no session has decisions,
 a capture state or a capture in flight. Both read again on the `decisions`
 event, which carries no data (events within 250 ms make one read), and when
-the event stream opens or resets or the automatic switch changes. Settings' **Decision capture** section holds
-the switch, the decision log model (the harness's cheap default, or another
-of its models), read with `GET api/settings/decisions` and saved with `PUT
-api/settings/decisions` (`enabled`, `model`; the whole object). Only these two answer
-with what the daemon makes of them: the harness capture resolves to, its model
-and whether the saved model is ignored (unknown, with a note that capture
-does not run, when no harness resolves); the section reads them again when
-the review harness changes. A saved model it ignores is listed as
-"<model> (not used)" with a note naming the harness, so choosing the default
-clears it. When the harness cannot be resolved the section says so, apart
+the event stream opens or resets or the automatic switch changes. Settings' **Data extraction** section, in
+Reviews, holds the switch for decision capture and the feature log, the agent
+("Same as reviews", the default, or Claude Code, Codex or the Anthropic API)
+and the model (the harness's cheap default, or another of its models; a new
+agent starts over at its default) and the reasoning effort, one per row like
+the review settings and saved as they change, read with `GET
+api/settings/decisions` and saved with `PUT api/settings/decisions`
+(`enabled`, `backend`, `model`, `effort`; the whole object, `""` for the reviews' agent and the default model, which is saved as
+none so it follows the agent). Only these
+two answer with what the daemon makes of them: the harness extraction
+resolves to (`effective_backend`), its model and whether the saved model is
+ignored (unknown, with a note that extraction does not run, when no harness
+resolves); the section reads them again when the review harness changes. A saved model it ignores is shown with a note naming the harness, so
+choosing the default clears it. When the harness cannot be resolved the section says so, apart
 from a check that did not answer in time. A repository's dialog turns capture off for it (`decisions: false`; on sends
 `null`). The desktop setup's review step (which shows `auto` as the harness the daemon resolved, else
 its own guess) offers the decision log model beside the harness, reset to that
@@ -975,12 +1253,43 @@ the default is saved as none, so it follows the harness, and a saved model
 the daemon reports ignored (`baum internal reviews show`, with the harness it
 resolved) is shown the same way while that harness is chosen, and kept unless
 changed.
-Analytics shows decision capture's calls, failures by reason, calls cut short
-by a stop and spend under baum's work; an unknown cost stays unknown.
+Analytics counts the decisions captured under baum's work.
+
+Every list page draws its list one way: Pull requests, the Inbox's queue, Sessions,
+Jobs, Repositories and Manage inboxes. The page lies on the panel's warm paper
+(`--surface-card`), its sections are `ListSection`s (`src/list.tsx`: a heading with a dot
+in the section's tone, its name and count, folding where the list is long), and its
+rows are `list-row`s spanning the panel between hairlines, with no boxed panels. The
+row the keyboard is on, and the Inbox's selected pull request, take the same bar and
+fill. Jobs groups its jobs under Running now and Finished, newest first in each. The
+Timeline and Analytics keep their own layouts.
+
+A row carries no buttons. Its title opens it (a pull request, a job's pull
+request, a repository's settings, an inbox's editor), and everything else it
+offers is in its menu (`MenuButton` and `useContextMenu` in
+`src/context-menu.tsx`), opened three ways: the row's ⋯ at its end, a right
+click on the row, and ⌘. (Ctrl+. elsewhere) on the focused row. The ⋯ shows
+while the row is under the pointer, holds the keys or has its menu open, and
+always on a touch screen; it keeps its place while hidden, so nothing moves.
+It is a WAI-ARIA menu button: named "Actions for <row>", `aria-haspopup="menu"`,
+`aria-expanded` while open, and Enter, Space or ↓ open the menu on its first
+choice, ↑ on its last. In the menu ↑ and ↓ move and wrap, Home and End go to
+either end, a letter goes to the next choice starting with it, Enter chooses,
+and Escape or Tab close it with the keys back on the ⋯. An on-or-off choice is
+a `menuitemcheckbox` with its tick; what stops or removes something is in the
+critical tone, set apart below a separator. A row offers only what applies to
+it now, each choice with its key where it has one. Choices that open more
+(a path form for a clone, a job's usage, a pull request's peek) open it under
+the row. Pull requests: Peek, Merge… or the fix, the fix's transcript,
+Generate review, Select, Open on GitHub. Jobs: Open pull request, Watch or
+Transcript, Show usage, Cancel job. Repositories: Settings…, Change local
+clone… or, without a clone, Choose folder… and Clone it…. Manage inboxes:
+Edit…, Move up, Move down, Count in the Inbox badge. Snoozed: Bring back.
+Sessions: the session menu below.
 
 The Sessions page (`?page=sessions`) is a live feed of the same sessions, in three
-sections drawn as the Pull requests list (bucket headings with a dot and a count, then
-rows between hairlines, no panels). Each heading folds its section, as an inbox
+sections drawn as every list (headings with a dot and a count, then rows between
+hairlines, no panels). Each heading folds its section, as an inbox
 bucket's does; Ended recently starts folded, and the fold holds while the app runs.
 The keys move only through rows on show. The `live` event updates it and the sidebar count, and times
 tick every second. The daemon keeps ended sessions for 24 hours, across restarts, and
@@ -1000,8 +1309,8 @@ confirmed in a toast: the app's own (`src/toast.tsx`; any page raises one with
 goes after six seconds or when dismissed, is read out from one live region, and can
 carry an action such as Undo; a failure shows in the critical tone.
 
-A right click on a session's card opens the app's own menu (`src/context-menu.tsx`)
-in place of the browser's: Reply when the daemon offers it (`messageable`, with its
+A session card's ⋯, or a right click on the card, opens the app's own menu
+(`src/context-menu.tsx`) in place of the browser's: Reply when the daemon offers it (`messageable`, with its
 key r), Focus session or Show window when the daemon can bring the session forward
 (see below, key f), Open transcript, Peek (Space), Open pull request when it has one, and End session when the
 daemon offers it (`endable`). ⌘. (Ctrl+. elsewhere), anywhere in the app, opens
@@ -1046,14 +1355,15 @@ stays.
   only) can be ended from its right-click menu, which posts `.../end`; the card leaves
   when the session's end arrives. Neither shows on a card until asked. A daemon without `api/agent-requests`
   shows no requests.
-- "Running now" has one card per running session, including one silent for a while
+- "Running now" has one card per running session, ordered by the user's latest
+  prompt (`last_prompt_at`, else its start), newest first, so the agents' steps
+  do not reorder it, including one silent for a while
   whose tool call (a subagent, a long command) has not returned, or, from a daemon
   older than `quiet`, one quiet for a while ("Quiet for 12 min"): the agent, title, branch, pull request link, and the time
   since it started. From the session's `activity` it shows the opening of the agent's
   latest message on one line (its Markdown emphasis and code rendered), else, until
   the agent has said anything, the current step (the tool in its colour and its
-  target), either with a blinking caret while running, still under reduced motion;
-  and "N files touched" before the time;
+  target); and "N files touched" before the time;
   without `activity` it reads "Active 2 min ago". r on its focused row, a click on it, or "Reply when
   it finishes" in its right-click menu, opens "Send when it finishes" while no message is queued (Enter posts a
   message to `api/agent-messages`, Escape closes it); the daemon delivers it when the session's turn
@@ -1075,8 +1385,8 @@ while on, Codex hides its own approval prompt for up to 25 seconds while it wait
 answer from the app.
 
 A session the daemon can bring forward (its `focus`, absent once it ended) offers it
-in its right-click menu, with the key f on its focused card, and as a button before
-Back to sessions on its transcript page: "Focus session" when the daemon can select
+in its right-click menu, with the key f on its focused card, and as a button on
+its transcript page, with the key f there too: "Focus session" when the daemon can select
 its own tmux pane, terminal tab or Claude desktop conversation, "Show window" when
 only the window it runs in. It posts `api/live-sessions/{agent}/{id}/focus` (see
 "Live sessions" in ARCHITECTURE.md). What could not be done (a kitty without remote
@@ -1084,6 +1394,19 @@ control, a refused Automation permission) or why nothing could (the session's pr
 exited, no terminal attached to its tmux server) is a notice on the Sessions page; on
 the transcript page the button reads "Focusing…" until the daemon answers, and the
 note shows on its own line after the actions, a failure as an alert.
+
+Inherited tmux variables without a recorded terminal do not identify a session's
+pane. Codex's shared app server runs hooks separately from its terminal clients;
+baum locates those clients by the thread ID in their terminal titles.
+Connecting or updating Codex through baum automatically puts `thread-id` last
+in `tui.terminal_title`, preserving the user's other title items. If an older
+connection lacks it, Focus repairs the setting and asks the user to restart
+the Codex terminal session and resume their conversation. No manual config
+edit is needed. A unique matching tmux pane,
+kitty tab (with remote control), iTerm2 session, Terminal tab, Hyprland window or
+X11 window can then be selected. Shortened thread IDs need at least 24 characters;
+missing or ambiguous titles produce a notice without selecting another session.
+Sessions whose hooks still record their own terminal keep the existing focus path.
 
 A session in Needs you or Waiting for you is not listed again under Running now; a session idle only
 because it went silent, or with a reason this app does not know, stays there. Times
@@ -1100,15 +1423,28 @@ one's message for when it finishes, unless one is queued); a click on another
 card moves both there. A click on a card showing both, or its peek where it
 takes no reply, closes them; one showing only its peek (after Space or Escape
 in the box) gains its reply. Its link (the waiting card's title, else the agent's
-name), which j/k focus and Enter or o follow, opens its transcript. The transcript
-opens at `?page=sessions&session=<agent>:<id>`
-(`src/session-transcript.tsx`), titled with the session's title (else "Claude
-Code session"), with the agent's compaction summary, when it has one, closed above
-the transcript: the session's header (agent, working, waiting
-or ended, repository, branch, pull request, start and last activity) above its
-transcript, drawn with the viewer's `SessionCard` as a review's linked session
-is on the PR page, with the same "Local transcript; secrets and e-mail
-addresses masked." note. It reads
+name), which j/k focus and Enter or o follow, opens its transcript; a click on it
+peeks, as a click anywhere on the card does. For a pointer, Open transcript sits
+at the right of the reply's field, or beside the latest response in a peek
+without one, shown while the pointer is over the card or its peek.
+
+The transcript opens at `?page=sessions&session=<agent>:<id>`
+(`src/session-transcript.tsx`), on the Sessions page's paper. Its bar, titled
+with the session's title (else "Claude Code session") after a back chevron
+(Escape's hint while Alt is held), and two lines of small print under it stay
+at the top of the page while the transcript scrolls: the agent, its state,
+repository, branch, pull request and times, then its models, tokens, files read
+and edited, lines and tool calls. The agent's compaction summary, when it has
+one, is closed above the transcript. The transcript is read in one column held
+to a reading measure, drawn by the viewer's `SessionTranscript` in its `log`
+layout: each prompt under a rule in the app's accent, with the images pasted
+with it as thumbnails that open full size; the agent named once per turn; its
+messages on the way to its reply folded under "N progress updates"; its reply
+in full, set as long text (headings, quieter code, spaced lists and tables). j
+and k move a message at a time (prompts and replies, passing over the progress
+updates), Space shows all of the marked one or less again, and Enter opens it
+on its own, nearly the window's size, where j and k scroll it and Escape closes
+it. It reads
 `GET api/live-sessions/{agent}/{id}/transcript` (see "Live sessions" in
 ARCHITECTURE.md) when it opens, 500 ms after the last of a burst of `live`
 events, and every 3 seconds while the session works (15 while it waits for
@@ -1117,10 +1453,15 @@ events. Each read names the version shown, so an unchanged transcript costs a
 few bytes and draws nothing again; a new version keeps the turns the reader
 opened (the card's source carries the version as its `revision`, so an opened
 turn's activity is read again) and, when the reader is at the end of the page,
-keeps them there; a running session opens at its end. A transcript the daemon
+keeps them there; every session opens at its end, on its latest turn. A transcript the daemon
 does not serve says why (the agent named no transcript, it is outside the
 agent's session folder, the file is gone), and a failed read keeps what is
-shown. Back to sessions, `u` or Esc returns to the list.
+shown. The back chevron, `u` or Esc returns to the list. A reply bar stays at
+the foot of the panel, at the foot of the window while the transcript is short,
+while the session is not over: a reply to a session
+waiting at its prompt, as the Sessions page's Reply sends it, or a message for
+when a running session's turn ends, the queued message in its place once
+there is one. `r` focuses it.
 
 GitHub connection is available in Settings, the first-run
 diagnostics dialog and the desktop setup's first step, which share
@@ -1128,8 +1469,15 @@ diagnostics dialog and the desktop setup's first step, which share
 the daemon and, in the same click, opens the fixed
 `https://github.com/login/device` page in the browser and copies the code once
 the daemon returns it (a clipboard write given a promise, since by then the
-click no longer counts and the window has lost focus). The panel observes only safe local connection status;
-Go polls GitHub even after the window closes. Denial, expiry, network failures,
+click no longer counts and the window has lost focus). Desktop setup instead
+waits five seconds after the code is available before asking the native shell
+to open the browser, leaving time to read the code and clipboard confirmation.
+The launch does not wait for clipboard access; a failed copy offers manual
+copying. Cancelling or leaving the step cancels that pending launch.
+The panel observes only safe local connection status, every 300 ms while
+sign-in is pending and every 10 seconds once settled, with an immediate check
+when the window regains focus. Go polls GitHub at GitHub's required interval,
+even after the window closes. Denial, expiry, network failures,
 missing scopes, revoked authorization and locked credential stores have retry
 or reconnect controls. An explicit environment/config credential is shown
 separately from the saved desktop account and continues to take precedence.
@@ -1167,39 +1515,19 @@ the credential survives relaunches. A temporary fixture git clone and fake
 GitHub/model boundaries make the run offline and avoid personal session stores.
 Before the browser suite build its Linux test helper in `oss-test`:
 `CGO_ENABLED=0 go test -c ./internal/uiserver -o app/e2e/fixture`.
-The suite verifies bootstrap into the namespace (every app request stays under
-it; the cookie alone gets 401 on unprefixed `/api/...`), filtering, shared PR
-viewing and reloading a PR deep link, narrow layout, estimation,
-generation/progress and repository settings. The fixture also runs a live
-session tracker over a real hook event record, fed from a marker file in the
-state directory, and a test follows that session from the inbox and the PR page
-through running, idle and ended. A second marker, `live-transcript`, drives
-another session whose hooks name a Claude Code transcript the fixture writes
-under its home's `.claude/projects` (the marker's first line is the state, the
-others the prompts); a test opens it from the Sessions page, adds a turn
-without a hook event and sees it appear, its e-mail address masked, without a
-reload. A third, `live-needs`, also takes `permission` (a Claude Code
-permission prompt notification): a test sees that session move from Running now
-to Needs you, with its message and the caution badge, open its transcript, and
-leave Needs you once it works again. The fixture also runs the
-automatic generation scheduler, fed a discovery snapshot every quarter second;
-a second test writes `push-10` in the state directory to give PR 10 a new head
-and follows the automatic review it starts on the PR page and in the jobs list,
-then turns the global switch off and on. The fixture's fake GitHub also
-answers the update-branch and re-run calls: tests re-run PR 8's failed checks
-and update PR 11's branch from their pages, each writing a marker (`rerun-8`,
-`updated-11`) the fixture's discovery reads and the test removes again. Unit tests cover
-first-run/authorization, namespaced URLs and navigation, each review state,
-unknown costs, selection and filters, automatic settings and notices,
-and the automatic job labels. The fixture also writes two Claude Code sessions in
-the demo clone under its fake home, commits of the person's in the other clone,
-plan usage samples and GitHub's answer to the delivery search, and a test opens
-Analytics and checks the figures they make, at desktop and narrow widths. The
-fixture also serves a real inbox store (`inboxes.json` in its state directory), and
-`e2e/inboxes.spec.ts` makes an inbox from a template, changes a part of its
-sentence and sees the preview say what changed, switches its badge and sees the
-Inbox badge change, and deletes it from the sidebar with Undo. `e2e/inbox-screens.spec.ts`
-takes pictures of the inbox pages, light and dark, only with `INBOX_SCREENSHOTS=1`.
+The suite keeps browser/daemon integration for credential bootstrap in a fresh
+window, namespaced requests, saved review versions, automatic generation after
+a head push and its persisted settings, a live redacted transcript without a
+reload, merging a ready pull request, a walkthrough comment surviving reload and
+submission, agent questions with citations and saved answers, inbox edits and
+Undo through the real store, and a local feature's source transcript. Shared
+viewer behavior is covered by the standalone viewer and hosted UI suites;
+formatting, controls, filtering and state matrices belong in unit/component or
+Go handler tests. Keep browser stories focused on one risky workflow and avoid
+repeating them for themes or collecting screenshots on passing runs. The inbox
+fixture uses the `state/inboxes` document in its shared `app.sqlite`.
+`e2e/inbox-screens.spec.ts` takes pictures of the inbox pages, light and dark,
+only with `INBOX_SCREENSHOTS=1`.
 
 Generation usage is retained as provider-reported input, output, cache-read and
 cache-creation buckets, with available TTL, speed, prompt range and model-call
@@ -1218,13 +1546,12 @@ feature build some of whose calls could not be priced) is a lower bound, shown
 "≥" with a note. Pricing only reports: no budget, cap, confirmation or decision
 about a run reads it.
 
-GitHub browser scenarios use the real auth manager/controller and mocked GitHub
-HTTP and credential-store boundaries. The `github-auth-mode` marker selects
-pending, alice/bob approval, denial, expiry, network failure, insufficient scopes
-or locked persistence. Tests cover copy/open, background completion, reload,
-account replacement, disconnect with saved-review access, recovery and the local
-session/namespace/CSRF boundary. Waiting and narrow screenshots go to ignored
-`test-results/` for PR attachments.
+GitHub browser coverage uses the real auth manager/controller with mocked
+GitHub HTTP and credential-store boundaries. It checks device-page navigation,
+clipboard access, reload/background completion, saved-account replacement and
+use by generation, disconnect, and access to saved reviews. Denial, expiry,
+network/scope/persistence failures and the endpoint namespace/CSRF matrix stay
+in component and Go handler tests.
 
 Linked session evidence on an open review refreshes every 30 seconds without
 reloading the review document. Polling allows late transcript/checkpoint arrivals
@@ -1238,3 +1565,39 @@ notification message text or local paths for restart recovery.
 
 A session retains up to 32 timestamped Git work observations across branch
 changes; these are context associations, not asserted code contributions.
+
+## Durable reading state
+
+`GET` and `PUT api/ui-state/inbox` store the Inbox's local-day seen/cleared
+record, time snoozes and head-based snoozes. `GET` and
+`PUT api/ui-state/walkthrough?key=<repository>#<PR>@v<version>` store seen stops,
+per-stop draft comments and the overall comment. The key is URL encoded;
+`src/api.ts` keeps both routes under the authenticated session namespace.
+The backend contract is in [`internal/uistate`](../internal/uistate/README.md).
+
+Each record has its own revision. The window shares a hydrated record across
+the walkthrough and Ask panel, queues changes while a read or save is in
+flight, and rebases semantic changes on a conflict. A stable client/sequence
+mutation ID makes a retry safe even when a save committed but its response was lost. An Ask
+answer appends to the current draft; Undo removes only its suffix while no
+later text follows it. Neither operation sends the draft to GitHub.
+
+Sidebar folding and viewer panel/tab layout remain presentation preferences
+in browser storage. Durable inbox records and review drafts do not use or
+import legacy localStorage values.
+
+
+Codex hook readiness is separate from plugin installation. Onboarding and
+Settings show Connected only after Codex reports all baum hook definitions
+enabled and trusted. Untrusted or changed hooks show Needs approval in Codex
+with `/hooks` instructions; disabled, missing and unverified hooks have
+distinct states. Setup may still be finished with an unfinished connection.
+
+The bottom Settings link has a caution badge and an accessible description
+while Codex session reporting needs attention. Opening Settings shows the
+reason and Check again. The app reads `GET api/agent-hooks/codex` once on load,
+on window focus, after native Settings actions and every minute while visible.
+The warning clears after a successful ready result; a failed request retains
+the previous warning. Older daemons without this endpoint show no new global
+badge. Onboarding rechecks on focus or Check again. Checking never trusts a
+hook, restarts Codex or starts a conversation.

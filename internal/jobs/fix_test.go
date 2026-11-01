@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/baum-ai/baum/agent"
+	"github.com/baum-ai/baum/internal/appdb/appdbtest"
 	"github.com/baum-ai/baum/internal/config"
 	"github.com/baum-ai/baum/internal/fix"
 	"github.com/baum-ai/baum/internal/generate"
@@ -78,7 +79,7 @@ func newFixRepositories(t *testing.T) fixRepositories {
 	gitFor(t, clone, "remote", "set-url", "origin", "https://github.com/owner/repo.git")
 	gitFor(t, clone, "config", "url."+remote+".insteadOf", "https://github.com/owner/repo.git")
 	gitFor(t, clone, "remote", "add", "github", "https://github.com/owner/repo")
-	registry, err := repos.Open(filepath.Join(t.TempDir(), "repos.sqlite"))
+	registry, err := repos.Open(filepath.Join(appdbtest.TempDir(t), "repos.sqlite"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -240,7 +241,6 @@ func TestPrepareFixChecksForkPushAccessAndWhatIsBroken(t *testing.T) {
 		{"nothing broken", &fakeGitHub{headRepository: "owner/repo", push: true, mergeable: true}, agent.BackendClaude, fix.ReasonNothingToFix, FixInputs{HeadRef: "feature", BaseRef: "main"}},
 		{"fork", &fakeGitHub{headRepository: "someone/repo", push: true}, agent.BackendClaude, fix.ReasonFork, FixInputs{HeadRef: "feature", BaseRef: "main"}},
 		{"no push access", &fakeGitHub{headRepository: "owner/repo"}, agent.BackendClaude, fix.ReasonNoPushAccess, FixInputs{HeadRef: "feature", BaseRef: "main"}},
-		{"cursor-agent", &fakeGitHub{headRepository: "owner/repo", push: true}, agent.BackendCursorAgent, fix.ReasonUnsupportedBackend, FixInputs{HeadRef: "feature", BaseRef: "main"}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			g := test.github
@@ -497,9 +497,9 @@ func TestThreadFixStopsWhenTheThreadsChange(t *testing.T) {
 }
 
 // A fix agent chosen in the preferences runs the fix with its own harness and
-// model, over the review's backend and a repository's review override; with
-// none chosen the fix follows the reviews.
-func TestPrepareFixUsesTheFixAgentOverRepositoryReviewSettings(t *testing.T) {
+// model, over the review's backend and model; with none chosen the fix
+// follows the reviews.
+func TestPrepareFixUsesTheFixAgentOverTheReviewSettings(t *testing.T) {
 	r := newFixRepositories(t)
 	ctx := context.Background()
 	g := &fakeGitHub{headRepository: "owner/repo", push: true, head: r.head}
@@ -511,10 +511,10 @@ func TestPrepareFixUsesTheFixAgentOverRepositoryReviewSettings(t *testing.T) {
 		CursorAgent: func(string) generate.CheckedBackend { return claude },
 		Anthropic:   func(string) generate.CheckedBackend { return claude },
 	}
-	if _, e := r.registry.AddPatch(ctx, r.clone.Path, func(s repos.Settings) (repos.Settings, error) {
-		backend, model := config.BackendClaude, "repository-model"
-		s.Backend, s.Model = &backend, &model
-		return s, nil
+	if _, e := r.registry.UpdatePreferences(ctx, func(p repos.Preferences) repos.Preferences {
+		backend, model := config.BackendClaude, "review-model"
+		p.Backend, p.Model = &backend, &model
+		return p
 	}); e != nil {
 		t.Fatal(e)
 	}
@@ -526,7 +526,7 @@ func TestPrepareFixUsesTheFixAgentOverRepositoryReviewSettings(t *testing.T) {
 		}
 		return p
 	}
-	if p := prepare(); p.Backend != agent.BackendClaude || p.Model != "repository-model" {
+	if p := prepare(); p.Backend != agent.BackendClaude || p.Model != "review-model" {
 		t.Fatalf("same as reviews: %+v", p)
 	}
 	if _, e := r.registry.UpdatePreferences(ctx, func(p repos.Preferences) repos.Preferences {
