@@ -128,6 +128,8 @@ const badgeTones = {
   positive: "bg-(--status-positive-bg) text-(--status-positive)",
   caution: "bg-(--status-caution-bg) text-(--status-caution)",
   critical: "bg-(--status-critical-bg) text-(--status-critical)",
+  /** A merged pull request, in GitHub's purple. */
+  merged: "bg-(--status-merged-bg) text-(--status-merged)",
 };
 
 export type BadgeTone = keyof typeof badgeTones;

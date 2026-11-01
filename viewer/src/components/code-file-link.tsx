@@ -1,5 +1,6 @@
 import { createContext, type ReactNode, useContext } from "react";
 
+import type { Anchor, ResolvedAnchor, ReviewContextRef } from "../review-document";
 import { cn, FOCUS_RING } from "./classnames";
 import { ExternalLinkIcon } from "./icons";
 
@@ -25,6 +26,11 @@ export function ReviewFilesProvider({
   children: ReactNode;
 }) {
   return <ReviewFilesContext.Provider value={files}>{children}</ReviewFilesContext.Provider>;
+}
+
+/** The review workspace's file view, or null outside it. */
+export function useReviewFiles(): ReviewFiles | null {
+  return useContext(ReviewFilesContext);
 }
 
 /** A link to a file of the change. It opens the file view when the pull
@@ -71,4 +77,36 @@ export function CodeFileLink({
       <ExternalLinkIcon size={10} className="flex-none text-(--text-tertiary)" />
     </a>
   );
+}
+
+/** Opens the place a source chip names without leaving the app. `opens` says,
+ *  before any click, whether the chip stays in the app, so it can drop the
+ *  leaving mark; `open` is called on a click and returns false when it did
+ *  not handle the anchor, which then follows its link. `openRepositoryFile`,
+ *  present only when the host can show a file of the repository itself,
+ *  opens a context reference to a file the pull request does not change;
+ *  it returns false when it did not, and the chip then opens GitHub. */
+export type ReviewSources = {
+  opens: (anchor: Anchor) => boolean;
+  open: (anchor: Anchor, resolved: ResolvedAnchor) => boolean;
+  openRepositoryFile?: (reference: ReviewContextRef) => boolean;
+};
+
+const ReviewSourcesContext = createContext<ReviewSources | null>(null);
+
+/** Set by the review workspace so source chips for the host's own places (the
+ *  pull request's description, a listed commit, another pull request) open
+ *  there. Outside it, chips keep going to their URL. */
+export function ReviewSourcesProvider({
+  sources,
+  children,
+}: {
+  sources: ReviewSources | null;
+  children: ReactNode;
+}) {
+  return <ReviewSourcesContext.Provider value={sources}>{children}</ReviewSourcesContext.Provider>;
+}
+
+export function useReviewSources(): ReviewSources | null {
+  return useContext(ReviewSourcesContext);
 }

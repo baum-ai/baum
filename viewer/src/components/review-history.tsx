@@ -8,8 +8,12 @@ import { IconButton } from "./ui";
 
 import type { HistorySelection, useHistoryView } from "../use-review-version";
 
+/** One of a host's actions on the review, at the end of the version menu. */
+export type VersionAction = { label: string; onSelect: () => void; disabled?: boolean };
+
 /** A native popover keeps the version rows out of the pane's scroll clipping.
- * Each row has one version action and a separate comparison checkbox. */
+ * Each row has one version action and a separate comparison checkbox; a
+ * host's `actions` on the review follow under a rule. */
 export function HistoryMenu({
   label,
   currentVersion,
@@ -17,6 +21,7 @@ export function HistoryMenu({
   versions,
   value,
   onChange,
+  actions = [],
 }: {
   label: string;
   currentVersion: number;
@@ -24,6 +29,7 @@ export function HistoryMenu({
   versions: number[];
   value: HistorySelection | null;
   onChange: (value: HistorySelection | null) => void;
+  actions?: VersionAction[];
 }) {
   const id = useId();
   const trigger = useRef<HTMLButtonElement>(null);
@@ -119,6 +125,28 @@ export function HistoryMenu({
             </label>
           </div>
         ))}
+        {actions.length > 0 ? (
+          <div className="mt-1 border-t border-(--border-subtle) pt-1">
+            {actions.map((action) => (
+              <button
+                key={action.label}
+                type="button"
+                disabled={action.disabled}
+                className={cn(
+                  "flex w-full items-center gap-2 rounded-(--radius-sm) px-2 py-2 text-left hover:bg-(--surface-hover) disabled:cursor-default disabled:text-(--text-tertiary) disabled:hover:bg-transparent",
+                  FOCUS_RING,
+                )}
+                onClick={() => {
+                  popup.current?.hidePopover();
+                  action.onSelect();
+                }}
+              >
+                <span className="w-3.5" />
+                {action.label}
+              </button>
+            ))}
+          </div>
+        ) : null}
       </div>
     </>
   );
@@ -130,12 +158,15 @@ export function HistoryToolbar({
   versions,
   view,
   status,
+  actions,
   children,
 }: {
   currentVersion: number;
   currentLabel?: string;
   versions: number[];
   view: ReturnType<typeof useHistoryView>;
+  /** The host's actions on the review, at the end of the version menu. */
+  actions?: VersionAction[];
   /** Drawn right after the menu, such as how old the review is. */
   status?: ReactNode;
   children?: ReactNode;
@@ -149,6 +180,7 @@ export function HistoryToolbar({
         versions={versions}
         value={view.selection}
         onChange={view.setSelection}
+        actions={actions}
       />
       {view.selection && (
         <IconButton

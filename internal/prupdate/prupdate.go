@@ -350,11 +350,14 @@ type Thread struct {
 
 // ThreadComment is one comment of a review thread. Body is the reviewer's
 // text as plain text (fix.PlainText), untrusted, at most maxMessage
-// characters; the app shows it as text.
+// characters. Markdown is the same text as GitHub has it, for the app to
+// render as GitHub does, sanitised; it is left out of a comment longer than
+// maxMarkdown, which the app then shows as Body.
 type ThreadComment struct {
-	Author string `json:"author"`
-	Body   string `json:"body"`
-	URL    string `json:"url,omitempty"`
+	Author   string `json:"author"`
+	Body     string `json:"body"`
+	Markdown string `json:"markdown,omitempty"`
+	URL      string `json:"url,omitempty"`
 }
 
 // Threads lists a pull request's unresolved review threads.
@@ -366,8 +369,9 @@ type Threads struct {
 
 // Bounds on a thread's text, in characters.
 const (
-	maxExcerpt = 200
-	maxMessage = 4000
+	maxExcerpt  = 200
+	maxMessage  = 4000
+	maxMarkdown = 16000
 )
 
 // ReviewThreads returns the pull request's unresolved review threads, from
@@ -387,7 +391,7 @@ func (s Service) ReviewThreads(ctx context.Context, repository github.Repository
 		first := t.Comments[0]
 		messages := make([]ThreadComment, 0, len(t.Comments))
 		for _, c := range t.Comments {
-			messages = append(messages, ThreadComment{Author: c.Author, Body: boundedText(fix.PlainText(c.Body), maxMessage), URL: c.URL})
+			messages = append(messages, ThreadComment{Author: c.Author, Body: boundedText(fix.PlainText(c.Body), maxMessage), Markdown: markdown(c.Body), URL: c.URL})
 		}
 		out.Threads = append(out.Threads, Thread{ID: t.ID, Path: t.Path, Line: t.Line, Outdated: t.Outdated, Author: first.Author, Excerpt: excerpt(first.Body), Comments: max(t.Total, len(t.Comments)), URL: t.URL, Messages: messages, CanResolve: t.CanResolve})
 	}
@@ -405,6 +409,17 @@ func boundedText(text string, limit int) string {
 		text = strings.TrimSpace(string([]rune(text)[:limit-1])) + "…"
 	}
 	return text
+}
+
+// markdown is a comment's text as GitHub has it, with invalid UTF-8 dropped;
+// empty past maxMarkdown characters, where cutting it could leave a code
+// block or a disclosure open.
+func markdown(body string) string {
+	body = strings.ToValidUTF8(body, "")
+	if utf8.RuneCountInString(body) > maxMarkdown {
+		return ""
+	}
+	return body
 }
 
 // excerpt is a comment's headline (fix.Headline), at most maxExcerpt
@@ -673,4 +688,53 @@ func (s Service) Conflicts(ctx context.Context, repository github.Repository, nu
 		files = []string{}
 	}
 	return ConflictFiles{HeadSHA: pull.HeadSHA, BaseRef: pull.BaseRef, BaseSHA: base, Files: files}, nil
+}
+
+// DescriptionLimit bounds the description the app shows, in bytes.
+const DescriptionLimit = 64 << 10
+
+// Description is a pull request's description as GitHub holds it: Markdown,
+// untrusted, and empty when the author wrote none. URL is the pull request's
+// page.
+type Description struct {
+	Body string `json:"body"`
+	URL  string `json:"url"`
+}
+
+// Description reads the pull request's description, whatever its state, so a
+// review's citation of it can be read in the app. The body is cut at
+// DescriptionLimit and its invalid UTF-8 dropped.
+func (s Service) Description(ctx context.Context, repository github.Repository, number int) (Description, error) {
+	reader, err := s.Client.REST(ctx, repository)
+	if err != nil {
+		return Description{}, &Error{Failed, unreachable}
+	}
+	status, _, raw, err := reader.Read(ctx, fmt.Sprintf("%s/pulls/%d", repositoryPath(repository), number), "")
+	switch {
+	case err != nil:
+		return Description{}, &Error{Failed, unreachable}
+	case status == http.StatusNotFound:
+		return Description{}, &Error{NotFound, "GitHub could not show this pull request."}
+	case status != http.StatusOK:
+		return Description{}, &Error{Failed, fmt.Sprintf("GitHub could not show this pull request (HTTP %d).", status)}
+	}
+	var pull struct {
+		Body *string `json:"body"`
+		HTML string  `json:"html_url"`
+	}
+	if json.Unmarshal(raw, &pull) != nil {
+		return Description{}, &Error{Failed, "GitHub's answer for this pull request was not readable."}
+	}
+	body := strings.ToValidUTF8(strings.TrimSpace(deref(pull.Body)), "")
+	if len(body) > DescriptionLimit {
+		body = strings.ToValidUTF8(body[:DescriptionLimit], "") + "…"
+	}
+	return Description{Body: body, URL: pull.HTML}, nil
+}
+
+func deref(s *string) string {
+	if s == nil {
+		return ""
+	}
+	return *s
 }

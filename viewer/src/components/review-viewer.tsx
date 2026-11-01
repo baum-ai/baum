@@ -17,7 +17,10 @@ import {
   type LoadReviewVersion,
   type ReviewDocument,
   type ReviewFacts,
+  type Anchor,
   RISK_SCORE_MEANING,
+  type ResolvedAnchor,
+  type ReviewContextRef,
   reviewThreadStatus,
   reviewGeneration,
   type Section,
@@ -35,7 +38,7 @@ import { useReviewSelection } from "../use-review-selection";
 import { useHistoryView } from "../use-review-version";
 import { useSectionHistory } from "../use-section-history";
 import { cn, FOCUS_RING } from "./classnames";
-import { ReviewFilesProvider } from "./code-file-link";
+import { ReviewFilesProvider, ReviewSourcesProvider, type ReviewSources } from "./code-file-link";
 import { HunkPatchProvider, type HunkPatchSource } from "./hunk-evidence";
 import {
   ChecksIcon,
@@ -44,6 +47,7 @@ import {
   CloseIcon,
   CommitIcon,
   FilesIcon,
+  LightbulbIcon,
   RiskIcon,
   SectionIcon,
   SessionsIcon,
@@ -108,8 +112,18 @@ export type ReviewListState =
 
 export type ReviewListSlot = {
   state: ReviewListState;
+  /** Something in the group is happening now, marked on its rail row:
+   *  `live` for work in progress, `attention` for work waiting on the reader. */
+  indicator?: "live" | "attention";
   /** The pane for the whole list (`selected` null) or for one item. */
   renderPane: (selected: string | null, actions: ReviewViewerActions) => ReactNode;
+};
+
+/** A rail row a host fills with one pane of its own, such as the decisions
+ *  of the pull request's sessions; `count` is written at the row's end. */
+export type ReviewPaneSlot = {
+  count?: number;
+  renderPane: (actions: ReviewViewerActions) => ReactNode;
 };
 
 /** What a host's pane may ask the viewer to do. */
@@ -220,6 +234,8 @@ export type ReviewViewerProps<F extends ReviewFile = ReviewFile> = {
   files?: ReviewFilesSlot<F>;
   sessions?: ReviewListSlot;
   commits?: ReviewListSlot;
+  /** The decisions the pull request's sessions made, above Sessions. */
+  decisions?: ReviewPaneSlot;
   /** The side pane's first tab, such as a discussion. Absent, the side pane
    *  holds only the document's details and activity. */
   conversation?: (context: ReviewConversationContext) => ReactNode;
@@ -256,10 +272,36 @@ export type ReviewViewerProps<F extends ReviewFile = ReviewFile> = {
   /** The current document is a draft whose context the host is still
    *  writing: while it has none, the Summary says so in its place. */
   contextPending?: boolean;
+  /** Opens a source chip's place inside the host rather than leaving for its
+   *  URL. Called on a click with the anchor and what the viewer resolved it
+   *  to; return true when handled and the viewer cancels the navigation. The
+   *  viewer offers it the pull request's description (`pr_body`) and other
+   *  pull requests (`pr`), and shows those chips as in-app links; it handles a
+   *  commit of the Commits group itself, by selecting it. It never fetches
+   *  the description or builds a route. */
+  openSource?: (anchor: Anchor, resolved: ResolvedAnchor) => boolean;
+  /** Shows a file of the repository that the pull request does not change,
+   *  inside the host: the Summary's context chips call it for such a file
+   *  (never for a directory, and never for a changed file, which opens the
+   *  review's own file view) and drop their leaving mark when it is given.
+   *  Return false when not handled and the chip opens GitHub. */
+  openRepositoryFile?: (reference: ReviewContextRef) => boolean;
 };
 
-/** The places either side of the one being read, in reading order. */
-export type ReviewSteps = { previous: ReviewStep | null; next: ReviewStep | null };
+/** The places either side of the one being read, in reading order, and the
+ *  blocks either side within it (`item`: its attention, behaviors, risks,
+ *  cards), for the keys. */
+export type ReviewSteps = {
+  previous: ReviewStep | null;
+  next: ReviewStep | null;
+  item?: { previous: ReviewStep | null; next: ReviewStep | null };
+  /** The rail's rows either side of the selected one, as the rail shows them:
+   *  a folded group is one row, an open one each of its rows too. */
+  rail?: { previous: ReviewStep | null; next: ReviewStep | null };
+  /** Opens or closes the selected group (Changes, Files, Sessions, Commits)
+   *  in the rail; absent when the selection is not a group. */
+  toggleGroup?: () => void;
+};
 
 const NO_VERSIONS: number[] = [];
 const noVersion: LoadReviewVersion = async () => ({ status: "missing" });
@@ -373,6 +415,7 @@ function ReviewWorkspace<F extends ReviewFile>({
   files: filesSlot,
   sessions,
   commits,
+  decisions,
   conversation,
   detailsChecks,
   detailsFooter,
@@ -385,6 +428,8 @@ function ReviewWorkspace<F extends ReviewFile>({
   foldSidePane = false,
   onRetryDetails,
   contextPending = false,
+  openSource,
+  openRepositoryFile,
 }: ReviewViewerProps<F> & { view: HistoryView }) {
   const [requested, setSelection] = useReviewSelection();
   // A place whose group the host has not supplied reads as the Summary. The
@@ -393,15 +438,17 @@ function ReviewWorkspace<F extends ReviewFile>({
   // written to the history on the reader's behalf.
   const hasSessions = Boolean(sessions);
   const hasCommits = Boolean(commits);
+  const hasDecisions = Boolean(decisions);
   const hasFiles = Boolean(filesSlot);
   const selection = useMemo<Selection>(
     () =>
       ((requested.kind === "sessions" || requested.kind === "session") && !hasSessions) ||
       ((requested.kind === "commits" || requested.kind === "commit") && !hasCommits) ||
+      (requested.kind === "decisions" && !hasDecisions) ||
       ((requested.kind === "files" || requested.kind === "file") && !hasFiles)
         ? { kind: "summary" }
         : requested,
-    [requested, hasSessions, hasCommits, hasFiles],
+    [requested, hasSessions, hasCommits, hasDecisions, hasFiles],
   );
   // Tiles are not ready for readers yet, so they stay hidden unless the URL
   // asks for them with `?tiles=1`, which keeps them reachable while built.
@@ -735,7 +782,9 @@ function ReviewWorkspace<F extends ReviewFile>({
           ? `Commit: ${selectedCommit.label}`
           : selection.kind === "commits" || selection.kind === "commit"
             ? "Commits"
-            : filesSelected
+            : selection.kind === "decisions"
+              ? "Decisions"
+              : filesSelected
               ? "Files changed"
               : (selected?.label ?? "Summary");
   // What the pane's arrival is keyed on: the place, not the data behind it.
@@ -848,7 +897,127 @@ function ReviewWorkspace<F extends ReviewFile>({
           : -1;
   const previousStep = stepAt < 0 ? null : (steps[Math.ceil(stepAt) - 1] ?? null);
   const nextStep = stepAt < 0 ? null : (steps[Math.floor(stepAt) + 1] ?? null);
-  if (stepsRef) stepsRef.current = { previous: previousStep, next: nextStep };
+  // The blocks of the place being read (its attention, each behavior, risk
+  // or finding, a commit's or a session's card), which the keys move through:
+  // the next one is brought into view, marked and given the focus. A new place
+  // is drawn afresh, so it starts again from its first block.
+  const blockStep = (direction: 1 | -1): ReviewStep => ({
+    label: direction > 0 ? "Next item" : "Previous item",
+    go: () => {
+      const blocks = [
+        // In a session's transcript, its prompts and the agent's replies, as
+        // the transcript's own keys move through them.
+        ...(reviewPane.current?.querySelectorAll<HTMLElement>(
+          '[data-review-block], [data-message="human"], [data-agent-text]:not([data-agent-text="progress"])',
+        ) ?? []),
+        // A block holding blocks of its own (a session's card of decisions)
+        // is not a stop: the keys go through what it holds.
+      ].filter(
+        (block) =>
+          block.getClientRects().length > 0 &&
+          !block.querySelector('[data-review-block], [data-message="human"], [data-agent-text]'),
+      );
+      const at = blocks.findIndex((block) => block.hasAttribute("data-review-block-active"));
+      if (blocks.length === 0 || (at < 0 && direction < 0)) return;
+      const target = blocks[Math.max(0, Math.min(blocks.length - 1, at + direction))]!;
+      for (const block of blocks) block.removeAttribute("data-review-block-active");
+      target.setAttribute("data-review-block-active", "");
+      if (!target.hasAttribute("tabindex")) target.tabIndex = -1;
+      target.focus({ preventScroll: true });
+      const reduced = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? true;
+      target.scrollIntoView?.({ block: "nearest", behavior: reduced ? "auto" : "smooth" });
+    },
+  });
+  // The rail's rows in the order it shows them, for h and l: a folded group
+  // is one row, an open one is followed by each of its rows.
+  const listedItems = (state: ReviewListState | undefined) =>
+    state?.status === "ready" ? state.items : [];
+  const railRows: (ReviewStep & { key: string })[] = [
+    { key: "summary", label: "Summary", go: () => setSelection({ kind: "summary" }) },
+    { key: "changes", label: "Changes", go: () => setSelection({ kind: "changes" }) },
+    ...(open.changes
+      ? visibleSections.map((section) => ({
+          key: `section:${section.id}`,
+          label: section.label,
+          go: () => selectSection(section.id),
+        }))
+      : []),
+    ...(filesSlot && !comparing
+      ? [
+          { key: "files", label: "Files changed", go: () => setSelection({ kind: "files" }) },
+          ...(open.files
+            ? (fileList ?? []).map((file) => ({
+                key: `file:${file.id}`,
+                label: file.path,
+                go: () => openFile(file.id),
+              }))
+            : []),
+        ]
+      : []),
+    ...(decisions
+      ? [{ key: "decisions", label: "Decisions", go: () => setSelection({ kind: "decisions" }) }]
+      : []),
+    ...(sessionState
+      ? [
+          { key: "sessions", label: "Sessions", go: () => setSelection({ kind: "sessions" }) },
+          ...(open.sessions
+            ? listedItems(sessionState).map((item) => ({
+                key: `session:${item.id}`,
+                label: item.label,
+                go: () => setSelection({ kind: "session", id: item.id }),
+              }))
+            : []),
+        ]
+      : []),
+    ...(commitState
+      ? [
+          { key: "commits", label: "Commits", go: () => setSelection({ kind: "commits" }) },
+          ...(open.commits
+            ? listedItems(commitState).map((item) => ({
+                key: `commit:${item.id}`,
+                label: item.label,
+                go: () => setSelection({ kind: "commit", id: item.id }),
+              }))
+            : []),
+        ]
+      : []),
+  ];
+  const railKey =
+    selection.kind === "summary"
+      ? "summary"
+      : selection.kind === "changes" || selection.kind === "risks"
+        ? "changes"
+        : (selection.kind === "section" || selection.kind === "risk") && viewedId
+          ? `section:${viewedId}`
+          : selection.kind === "file"
+            ? `file:${selection.id}`
+            : selection.kind === "session"
+              ? `session:${selection.id}`
+              : selection.kind === "commit"
+                ? `commit:${selectedCommit?.id ?? selection.id}`
+                : selection.kind;
+  const railAt = railRows.findIndex((row) => row.key === railKey);
+  // Space on a selected group opens or closes it in the rail.
+  const foldable =
+    selection.kind === "changes" ||
+    selection.kind === "files" ||
+    selection.kind === "sessions" ||
+    selection.kind === "commits"
+      ? selection.kind
+      : null;
+  if (stepsRef)
+    stepsRef.current = {
+      previous: previousStep,
+      next: nextStep,
+      item: { previous: blockStep(-1), next: blockStep(1) },
+      rail: {
+        previous: railAt > 0 ? railRows[railAt - 1]! : null,
+        next: railAt >= 0 ? (railRows[railAt + 1] ?? null) : null,
+      },
+      toggleGroup: foldable
+        ? () => setFolded((current) => ({ ...current, [foldable]: !current[foldable] }))
+        : undefined,
+    };
   const navigatorIcon =
     selection.kind === "risk" || selection.kind === "risks"
       ? RiskIcon
@@ -860,7 +1029,9 @@ function ReviewWorkspace<F extends ReviewFile>({
             ? SessionsIcon
             : selection.kind === "commits" || selection.kind === "commit"
               ? CommitIcon
-              : SummaryIcon;
+              : selection.kind === "decisions"
+                ? LightbulbIcon
+                : SummaryIcon;
   const sectionIndex = viewedId
     ? visibleSections.findIndex((section) => section.id === viewedId)
     : -1;
@@ -890,6 +1061,28 @@ function ReviewWorkspace<F extends ReviewFile>({
         },
       }
     : null;
+  // A commit the Commits group lists is selected there; the host opens the
+  // description and other pull requests; anything else keeps its link.
+  const listedCommit = (sha: string) =>
+    commitState?.status === "ready"
+      ? commitState.items.find((item) => item.id.startsWith(sha) || sha.startsWith(item.id))
+      : undefined;
+  const reviewSources: ReviewSources = {
+    opens: (anchor) =>
+      anchor.type === "commit"
+        ? Boolean(listedCommit(anchor.sha))
+        : Boolean(openSource) && (anchor.type === "pr_body" || anchor.type === "pr"),
+    open: (anchor, resolved) => {
+      if (anchor.type === "commit") {
+        const item = listedCommit(anchor.sha);
+        if (!item) return false;
+        setSelection({ kind: "commit", id: item.id });
+        return true;
+      }
+      return openSource?.(anchor, resolved) ?? false;
+    },
+    openRepositoryFile,
+  };
   // The document the Details and Activity tabs describe: the version being
   // read, or the current one while two are compared.
   const barDocument = navigationDocument;
@@ -1013,6 +1206,7 @@ function ReviewWorkspace<F extends ReviewFile>({
 
   return (
     <ReviewFilesProvider files={reviewFiles}>
+      <ReviewSourcesProvider sources={reviewSources}>
       <div className="flex min-h-0 flex-1 flex-col gap-3">
         {/* Version selection, generation status and evidence age share one row.
           A review without history shows its version without a menu. */}
@@ -1022,6 +1216,7 @@ function ReviewWorkspace<F extends ReviewFile>({
             currentLabel={`Review v${document.review.version} · ${reviewGeneration(document, header?.generation).state === "current" ? "Current" : "Latest"}`}
             versions={versions}
             view={historyView}
+            actions={header?.versionActions}
             status={
               <ReviewFreshness
                 document={document}
@@ -1038,7 +1233,9 @@ function ReviewWorkspace<F extends ReviewFile>({
               </span>
             )}
             {header?.beside ? (
-              <div className="min-w-0 basis-full sm:basis-auto">{header.beside}</div>
+              // It takes the rest of the row, so a host can set its actions
+              // at the row's end, apart from the version and its status.
+              <div className="min-w-0 basis-full sm:flex-1 sm:basis-auto">{header.beside}</div>
             ) : null}
           </HistoryToolbar>
         ) : document ? (
@@ -1295,6 +1492,26 @@ function ReviewWorkspace<F extends ReviewFile>({
                 </>
               ) : null}
 
+              {decisions ? (
+                <SideNavButton
+                  label="Decisions"
+                  icon={LightbulbIcon}
+                  active={selection.kind === "decisions"}
+                  controls="review-section"
+                  aside={
+                    decisions.count === undefined ? undefined : (
+                      <span className="text-xs tabular-nums text-(--text-tertiary)">
+                        {decisions.count}
+                      </span>
+                    )
+                  }
+                  description={
+                    decisions.count === undefined ? undefined : `${decisions.count} decisions`
+                  }
+                  onSelect={() => setSelection({ kind: "decisions" })}
+                />
+              ) : null}
+
               {sessionState ? (
                 <>
                   <SideNavDisclosure
@@ -1302,6 +1519,7 @@ function ReviewWorkspace<F extends ReviewFile>({
                     icon={SessionsIcon}
                     tint="teal"
                     busy={sessionState.status === "loading"}
+                    indicator={sessions?.indicator}
                     expanded={open.sessions}
                     active={selection.kind === "sessions"}
                     count={sessionState.status === "ready" ? sessionState.items.length : undefined}
@@ -1380,6 +1598,8 @@ function ReviewWorkspace<F extends ReviewFile>({
                   )}
                 </>
               ) : null}
+
+
             </SideNavGroup>
             {checks?.footer ?? null}
           </nav>
@@ -1422,6 +1642,8 @@ function ReviewWorkspace<F extends ReviewFile>({
                 <PaneIn key={selectionKey}>
                   {commits.renderPane(selectedCommit ? selectedCommit.id : null, actions)}
                 </PaneIn>
+              ) : selection.kind === "decisions" && decisions ? (
+                <PaneIn key={selectionKey}>{decisions.renderPane(actions)}</PaneIn>
               ) : filesSelected && filesSlot ? (
                 comparing ? (
                   <Empty title="Files unavailable during comparison">
@@ -1619,6 +1841,7 @@ function ReviewWorkspace<F extends ReviewFile>({
           </section>
         </div>
       </div>
+      </ReviewSourcesProvider>
     </ReviewFilesProvider>
   );
 

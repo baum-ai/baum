@@ -1837,14 +1837,14 @@ export function resolveAnchor(document: ReviewDocument, anchor: Anchor): Resolve
       return { label: anchor.path, kind: "File" };
     case "commit":
       return {
-        label: shortSha(anchor.sha),
+        label: `From commit ${shortSha(anchor.sha)}`,
         href: `${repository}/commit/${anchor.sha}`,
         kind: "Commit",
       };
     case "pr": {
       const pr = index.prs.find((candidate) => candidate.number === anchor.number);
       return {
-        label: `#${anchor.number}`,
+        label: `From #${anchor.number}`,
         href: repositoryLink(document, pr?.url) ?? `${repository}/pull/${anchor.number}`,
         title: pr?.title,
         kind: "Pull request",
@@ -1852,7 +1852,9 @@ export function resolveAnchor(document: ReviewDocument, anchor: Anchor): Resolve
     }
     case "pr_body":
       return {
-        label: anchor.section ? `Description § ${anchor.section}` : "Description",
+        label: anchor.section
+          ? `From the PR description § ${anchor.section}`
+          : "From the PR description",
         href: pullRequestUrl(document),
         kind: "Pull request description",
       };
@@ -1861,7 +1863,7 @@ export function resolveAnchor(document: ReviewDocument, anchor: Anchor): Resolve
       if (!comment) return { label: `Comment ${anchor.id}`, kind: "Unresolved comment" };
       const kind = comment.kind === "review" ? "review" : "comment";
       return {
-        label: `${comment.author} ${kind}`,
+        label: `From ${comment.author}'s ${kind}`,
         href: repositoryLink(document, comment.url),
         title: comment.bot ? "Bot comment" : undefined,
         kind: "Pull request comment",

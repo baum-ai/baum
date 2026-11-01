@@ -17,14 +17,28 @@ import {
 import { inboxGroups } from "./inbox";
 import { forgetLastRows } from "./shortcuts";
 
+const rail = vi.hoisted(() => ({ commit: null as string | null }));
 vi.mock("@baum/viewer/components/review-viewer", () => ({
-  ReviewViewer: ({ document, header, placeholder, notices }: ReviewViewerProps) => (
+  ReviewViewer: ({
+    document,
+    header,
+    placeholder,
+    notices,
+    sessions,
+    commits,
+    decisions,
+  }: ReviewViewerProps) => (
     <div>
       <h1>{header?.heading}</h1>
       {header?.titleAside}
       {header?.beside}
       {notices}
       {document ? <p>{document.summary.text}</p> : placeholder}
+      {decisions ? <section aria-label="Decisions">{decisions.renderPane({} as never)}</section> : null}
+      {sessions ? <section aria-label="Sessions">{sessions.renderPane(null, {} as never)}</section> : null}
+      {commits ? (
+        <section aria-label="Commits">{commits.renderPane(rail.commit, {} as never)}</section>
+      ) : null}
     </div>
   ),
 }));
@@ -89,7 +103,11 @@ let root: Root, node: HTMLDivElement;
 let entries: Entry[], groups: ReviewGroup[], jobs: Job[];
 let requests: { path: string; method: string; body: unknown }[];
 let jobAnswer: () => Response;
+// Answers of the daemon's per-pull-request routes, by path and query.
+let answers: Record<string, unknown>;
 beforeEach(() => {
+  answers = {};
+  rail.commit = null;
   Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
   // Every open pull request; the default Inbox view hides other people's.
   history.replaceState(null, "", "/s/test-ns/?page=pulls&filter=all");
@@ -122,6 +140,7 @@ beforeEach(() => {
       const method = init?.method ?? "GET";
       const body = init?.body ? JSON.parse(String(init.body)) : undefined;
       requests.push({ path, method, body });
+      if (path in answers) return Response.json(answers[path]);
       if (method === "POST" && path === "api/groups")
         return Response.json(group([1, 2], { name: body.name }), { status: 201 });
       if (method === "PATCH" && path === "api/groups/g1") return Response.json(groups[0]);
@@ -343,6 +362,11 @@ it("shows a stack's merged and closed members first on its page, each marked as 
   ];
   history.replaceState(null, "", "/s/test-ns/?group=g2");
   await act(async () => root.render(<App />));
+  // The pull requests start folded under the title, counted with those landed.
+  const toggle = node.querySelector<HTMLButtonElement>(".local-group-toggle")!;
+  expect(toggle.getAttribute("aria-expanded")).toBe("false");
+  expect(node.querySelector("li.local-group-member")).toBeNull();
+  await act(async () => toggle.click());
   const rows = [...node.querySelectorAll("li.local-group-member")].map((li) => li.textContent);
   expect(rows).toHaveLength(5);
   expect(rows[0]).toContain("#1");
@@ -407,6 +431,8 @@ it("shows a group's members and manages them", async () => {
   history.replaceState(null, "", "/s/test-ns/?group=g1");
   await act(async () => root.render(<App />));
   expect(node.querySelector("h1")!.textContent).toBe("Auth rework");
+  expect(node.querySelector(".local-group-toggle")!.textContent).toBe("3 pull requests");
+  await act(async () => node.querySelector<HTMLButtonElement>(".local-group-toggle")!.click());
   expect(node.textContent).toContain("Change 7");
   expect(node.textContent).toContain("Review outdated");
   expect(node.textContent).toContain("#9");
@@ -439,6 +465,86 @@ it("names the review groups a pull request belongs to", async () => {
   groups = [group([7, 8])];
   history.replaceState(null, "", "/s/test-ns/?clone=clone&pr=7");
   await act(async () => root.render(<App />));
-  expect(node.textContent).toContain("In review group Auth rework");
-  expect(node.querySelector('a[href="/s/test-ns/?group=g1"]')).not.toBeNull();
+  // The group is a link on the line under the title, named by its kind.
+  const link = node.querySelector<HTMLAnchorElement>('a.local-group-link[href="/s/test-ns/?group=g1"]')!;
+  expect(link.textContent).toBe("GroupAuth rework");
+});
+
+const local = (sessions: object[], commits: object[]) => ({ available: true, sessions, commits });
+const commitOf = (oid: string, session: string, committedAt: string) => ({
+  oid,
+  subject: `Commit ${oid}`,
+  committed_at: committedAt,
+  links: [{ session, method: "commit_ref", confidence: 1 }],
+});
+
+it("shows Decisions, Sessions and Commits in a stack's rail, read through each member", async () => {
+  entries = [
+    { ...entry(7), status: "current", version_count: 1 },
+    { ...entry(8), status: "current", version_count: 1 },
+  ];
+  groups = [group([7, 8], { version_count: 1, stack: true })];
+  const shared = { id: "s-shared", vendor: "claude", title: "Shared session" };
+  answers = {
+    "api/sessions?clone=clone&pr=7": local(
+      [shared, { id: "s-seven", vendor: "claude", title: "Seven session" }],
+      [commitOf("b".repeat(40), "s-shared", "2026-10-26T12:00:00Z")],
+    ),
+    "api/sessions?clone=clone&pr=8": local(
+      [shared],
+      [
+        commitOf("a".repeat(40), "s-shared", "2026-10-26T11:00:00Z"),
+        commitOf("b".repeat(40), "s-shared", "2026-10-26T12:00:00Z"),
+      ],
+    ),
+    "api/decisions?repository=acme%2Fdemo&pr=7": {
+      review_generated_at: null,
+      sessions: [
+        {
+          agent: "claude",
+          session_id: "s-shared",
+          title: "Shared session",
+          live: false,
+          coverage: "extracted",
+          updated_at: null,
+          capturing: false,
+          decisions: [
+            {
+              decision_id: "d1",
+              title: "Use a queue",
+              summary: "Queue it",
+              category: "design",
+              who: "human",
+              decided_at: "2026-10-26T10:00:00Z",
+              files: [],
+            },
+          ],
+        },
+      ],
+    },
+    [`api/commit?clone=clone&pr=8&oid=${"a".repeat(40)}`]: {
+      body: "Body of a",
+      files: [{ path: "src/a.ts", status: "M", additions: 1, deletions: 0 }],
+    },
+  };
+  history.replaceState(null, "", "/s/test-ns/?group=g1");
+  await act(async () => root.render(<App />));
+  const sessions = node.querySelector('section[aria-label="Sessions"]')!;
+  expect(sessions.textContent).toContain("Seven session");
+  expect(sessions.textContent?.match(/Shared session/g)).toHaveLength(1);
+  const commits = node.querySelector('section[aria-label="Commits"]')!;
+  expect(commits.textContent).toContain("2 commits");
+  expect(commits.textContent!.indexOf(`Commit ${"a".repeat(40)}`)).toBeLessThan(
+    commits.textContent!.indexOf(`Commit ${"b".repeat(40)}`),
+  );
+  expect(node.querySelector('section[aria-label="Decisions"]')!.textContent).toContain(
+    "Use a queue",
+  );
+
+  // A commit opened alone reads its detail through the member that linked it.
+  rail.commit = "a".repeat(40);
+  await act(async () => root.render(<App />));
+  expect(requests.map((r) => r.path)).toContain(
+    `api/commit?clone=clone&pr=8&oid=${"a".repeat(40)}`,
+  );
 });

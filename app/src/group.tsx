@@ -1,10 +1,25 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useId,
+  useRef,
+  useState,
+  type FormEvent,
+} from "react";
 import { ReviewViewer, type ReviewSteps } from "@baum/viewer/components/review-viewer";
-import { StackIcon } from "@baum/viewer/components/icons";
+import { ChevronRightIcon, MergeIcon, StackIcon } from "@baum/viewer/components/icons";
+import { documentFilesSlot } from "./facts";
 import { Alert, Badge, Button, LiveDot } from "@baum/viewer/components/ui";
 import { useHistoryView } from "@baum/viewer/use-review-version";
 import { ViewerLink, useUrlState } from "@baum/viewer/navigation";
-import type { ReviewDocument, ReviewVersionState } from "@baum/viewer/review-document";
+import {
+  contextRefUrl,
+  type ReviewContextRef,
+  type ReviewDocument,
+  type ReviewVersionState,
+} from "@baum/viewer/review-document";
+import { RepositoryFileDialog } from "./repository-file";
 import {
   MAX_GROUP_MEMBERS,
   appURL,
@@ -19,6 +34,7 @@ import {
   type Clone,
   type Entry,
   type Job,
+  type LiveSession,
   type Provenance,
   type ReviewGroup,
 } from "./api";
@@ -27,8 +43,9 @@ import { CloneActions } from "./repositories";
 import { CancelJob, GenerationOutcome, ReviewJob } from "./review";
 import { useModal } from "./modal";
 import { Notice, PageBar, RefreshButton, type RefreshRun, usePageRefreshAction } from "./shell";
-import { useShortcuts } from "./shortcuts";
+import { openActiveBlock, toggleActiveBlock, useShortcuts } from "./shortcuts";
 import { LoadingStatus, NineDots } from "./nine-dots";
+import { liveForGroup, useGroupRail, type RailMember } from "./group-rail";
 
 const errorText = (error: unknown) =>
   error instanceof Error ? error.message : "Local request failed.";
@@ -184,6 +201,7 @@ export function GroupPage({
   jobs,
   clones,
   cloneFor,
+  live = [],
   revision,
   changed,
   refresh,
@@ -194,6 +212,8 @@ export function GroupPage({
   jobs: Job[];
   clones: Clone[];
   cloneFor: (entry: Entry) => string;
+  /** Sessions in progress, for the Sessions row. */
+  live?: LiveSession[];
   revision: number;
   changed: () => Promise<void>;
   /** Reads the group's repository from GitHub again, from the head's refresh. */
@@ -262,6 +282,20 @@ export function GroupPage({
     [group.id],
   );
   const history = useHistoryView(doc?.review.version, loadVersion);
+  // Decisions, Sessions and Commits come from the members' own saved reviews:
+  // the daemon has no group routes for them.
+  const railMembers: RailMember[] = [...landed, ...members].flatMap(({ number, entry }) => {
+    const cloneId = entry && entry.version_count > 0 ? cloneFor(entry) : "";
+    return cloneId ? [{ number, clone: cloneId }] : [];
+  });
+  const rail = useGroupRail({
+    repository: group.repository,
+    members: railMembers,
+    numbers: group.members,
+    running: liveForGroup(live, group.repository, group.members),
+    document: doc,
+    revision: `${group.version_count}:${group.updated_at}:${revision}`,
+  });
   useEffect(() => {
     if (group.version_count === 0) {
       setDoc(null);
@@ -310,6 +344,23 @@ export function GroupPage({
     };
   }, [group.id]);
 
+  // A file's whole diff for the Files pane: its hunks' patches joined; kept
+  // the same function while the document is, so an opened file is not read
+  // again.
+  const filePatches = useCallback(
+    async (path: string) => {
+      if (!doc) return null;
+      const parts = await Promise.all(
+        doc.index.hunks
+          .filter((hunk) => hunk.path === path)
+          .map((hunk) => patches(path, doc.review.version, hunk.id)),
+      );
+      const text = parts.filter((part): part is string => Boolean(part));
+      return text.length > 0 ? text.join("\n") : null;
+    },
+    [doc, patches],
+  );
+
   // Generation. A group review builds on each member's own review: the
   // daemon queues the reviews of members without one ahead of the group's,
   // which starts after them wherever the person goes.
@@ -343,6 +394,15 @@ export function GroupPage({
 
   // Managing the group.
   const [renaming, setRenaming] = useState(false);
+  // A repository file a context chip opened, with its GitHub link.
+  const [repositoryFile, setRepositoryFile] = useState<{
+    reference: ReviewContextRef;
+    href: string;
+  } | null>(null);
+  // The pull requests start folded under the title.
+  const [membersOpen, setMembersOpen] = useState(false);
+  const membersId = useId();
+  const mergedCount = landed.filter((member) => member.state === "merged").length;
   const [deleting, setDeleting] = useState(false);
   const [manageError, setManageError] = useState("");
   const [managing, setManaging] = useState(false);
@@ -409,8 +469,47 @@ export function GroupPage({
   // generates it again.
   const steps = useRef<ReviewSteps>(null);
   useShortcuts((event) => {
+    // Space opens or closes the fold of the block j and k are on.
+    if (
+      event.key === " " &&
+      !(event.target instanceof HTMLElement && event.target.closest("a, button, summary")) &&
+      toggleActiveBlock()
+    ) {
+      event.preventDefault();
+      return;
+    }
+    // Else Space opens or closes the selected group (Changes, Sessions,
+    // Commits, Files) in the rail.
+    if (
+      event.key === " " &&
+      !(event.target instanceof HTMLElement && event.target.closest("a, button, summary")) &&
+      steps.current?.toggleGroup
+    ) {
+      event.preventDefault();
+      steps.current.toggleGroup();
+      return;
+    }
+    // Enter opens the block j and k are on, such as a commit from the list.
+    if (
+      event.key === "Enter" &&
+      !(event.target instanceof HTMLElement && event.target.closest("a, button, summary, input, textarea")) &&
+      openActiveBlock()
+    ) {
+      event.preventDefault();
+      return;
+    }
     const step =
-      event.key === "j" ? steps.current?.next : event.key === "k" ? steps.current?.previous : null;
+      // As on a pull request's page: h and l (← →) between sections, j and k
+      // (↓ ↑) through the blocks of the one read.
+      event.key === "j" || event.key === "ArrowDown"
+        ? steps.current?.item?.next
+        : event.key === "k" || event.key === "ArrowUp"
+          ? steps.current?.item?.previous
+          : event.key === "l" || event.key === "ArrowRight"
+            ? (steps.current?.rail?.next ?? steps.current?.next)
+            : event.key === "h" || event.key === "ArrowLeft"
+              ? (steps.current?.rail?.previous ?? steps.current?.previous)
+              : null;
     if (step) {
       event.preventDefault();
       step.go();
@@ -423,12 +522,26 @@ export function GroupPage({
   return (
     <>
       <ReviewViewer
+        // A file a context chip names opens here, in a dialog over the page,
+        // read at the stack's head from the group's own file route.
+        openRepositoryFile={(reference) => {
+          if (!doc) return false;
+          setRepositoryFile({ reference, href: contextRefUrl(doc, reference.path) });
+          return true;
+        }}
         document={doc}
         history={history}
         versions={provenance.map((p) => p.version).filter((v) => v !== doc?.review.version)}
         loadVersion={loadVersion}
         versionsFailed={historyFailed ? { retry: () => setRetry((n) => n + 1) } : undefined}
         steps={steps}
+        // Every file of the stack's change, as GitHub's Files changed shows
+        // them: a file's diff is its hunks' patches, read when it is opened.
+        files={
+          doc
+            ? documentFilesSlot(doc.index.hunks, filePatches, "")
+            : undefined
+        }
         header={{
           heading: group.name,
           titleAside: group.stack ? (
@@ -443,10 +556,136 @@ export function GroupPage({
           ) : (
             <Badge size="compact">Review group</Badge>
           ),
+          // Its pull requests, folded to a line under the title until asked
+          // for, rather than a panel over the review.
           statistics: (
-            <p className="text-xs text-(--text-tertiary)">
-              {group.repository} · {group.members.length} pull requests reviewed together
-            </p>
+            <div className="local-group-fold">
+              <button
+                type="button"
+                className="local-group-toggle"
+                aria-expanded={membersOpen}
+                aria-controls={membersId}
+                onClick={() => setMembersOpen((open) => !open)}
+              >
+                <ChevronRightIcon size={12} className="local-group-toggle-chevron" />
+                <span>
+                  {group.members.length + landed.length} pull requests
+                  {mergedCount > 0 ? ` · ${mergedCount} merged` : ""}
+                </span>
+              </button>
+              {membersOpen ? (
+                <div id={membersId} className="local-group-fold-body">
+            <section aria-label="Group members" className="local-group-panel">
+              <header className="local-group-head">
+                {addable.length > 0 && group.members.length < MAX_GROUP_MEMBERS ? (
+                  <select
+                    aria-label="Add pull request"
+                    className="local-field local-group-add"
+                    value=""
+                    disabled={managing}
+                    onChange={(event) => {
+                      const number = Number(event.target.value);
+                      if (number) void change({ members: [...group.members, number] });
+                    }}
+                  >
+                    <option value="">{managing && removing === null ? "Adding…" : "Add…"}</option>
+                    {addable.map((e) => (
+                      <option key={e.pull_request.number} value={e.pull_request.number}>
+                        #{e.pull_request.number} {e.pull_request.title}
+                      </option>
+                    ))}
+                  </select>
+                ) : null}
+              </header>
+              <ul className="local-group-members">
+                {landed.map(({ number, state, entry }) => (
+                  <li key={`landed-${number}`} className="local-group-member" data-landed={state}>
+                    <span className="local-group-number">#{number}</span>
+                    <div className="local-group-member-title">
+                      {entry ? (
+                        <ViewerLink href={memberHref(entry)}>{entry.pull_request.title}</ViewerLink>
+                      ) : (
+                        <span className="text-(--text-tertiary)">Not in the inbox</span>
+                      )}
+                      <span className="local-group-member-state">
+                        {state === "merged" ? (
+                          <span className="local-merged">
+                            <MergeIcon size={13} className="flex-none" />
+                            Merged
+                          </span>
+                        ) : (
+                          <span>{landedLabel[state] ?? "No longer open"}</span>
+                        )}
+                      </span>
+                    </div>
+                  </li>
+                ))}
+                {members.map(({ number, entry }) => (
+                  <li key={number} className="local-group-member">
+                    <span className="local-group-number">#{number}</span>
+                    <div className="local-group-member-title">
+                      {entry ? (
+                        <ViewerLink href={memberHref(entry)}>{entry.pull_request.title}</ViewerLink>
+                      ) : (
+                        <span className="text-(--text-tertiary)">Not in the inbox</span>
+                      )}
+                      {entry ? (
+                        <span className="local-group-member-state">
+                          <PullRequestState entry={entry} />
+                          {entry.status === "generating" ? (
+                            <span className="inline-flex items-center gap-1.5 text-(--text-secondary)">
+                              <NineDots size={14} />
+                              {reviewStatus.generating}
+                            </span>
+                          ) : (
+                            <span>{reviewStatus[entry.status] ?? entry.status}</span>
+                          )}
+                        </span>
+                      ) : null}
+                    </div>
+                    {group.members.length > 2 ? (
+                      <button
+                        type="button"
+                        className="local-group-remove"
+                        aria-label={`Remove #${number}`}
+                        title="Remove from the group"
+                        disabled={managing}
+                        onClick={() => {
+                          setRemoving(number);
+                          void change({
+                            members: group.members.filter((n) => n !== number),
+                          }).finally(() => setRemoving(null));
+                        }}
+                      >
+                        {removing === number ? "Removing…" : "Remove"}
+                      </button>
+                    ) : null}
+                  </li>
+                ))}
+              </ul>
+              <footer className="local-group-foot">
+                <Button
+                  variant="secondary"
+                  size="tiny"
+                  disabled={managing}
+                  onClick={() => setRenaming(true)}
+                >
+                  Rename
+                </Button>
+                <Button
+                  variant="danger-outline"
+                  size="tiny"
+                  disabled={managing}
+                  onClick={() => setDeleting(true)}
+                >
+                  Delete group
+                </Button>
+              </footer>
+              {manageError ? <Alert>{manageError}</Alert> : null}
+            </section>
+                </div>
+              ) : null}
+            </div>
           ),
           back: { href: back.href, label: back.label },
           generation: { state: generationState, rewriting: generating && Boolean(doc) },
@@ -529,110 +768,6 @@ export function GroupPage({
         }
         notices={
           <>
-            <section aria-label="Group members" className="local-group-panel">
-              <header className="local-group-head">
-                <h2>
-                  Pull requests <span className="local-group-count">{group.members.length}</span>
-                </h2>
-                {addable.length > 0 && group.members.length < MAX_GROUP_MEMBERS ? (
-                  <select
-                    aria-label="Add pull request"
-                    className="local-field local-group-add"
-                    value=""
-                    disabled={managing}
-                    onChange={(event) => {
-                      const number = Number(event.target.value);
-                      if (number) void change({ members: [...group.members, number] });
-                    }}
-                  >
-                    <option value="">{managing && removing === null ? "Adding…" : "Add…"}</option>
-                    {addable.map((e) => (
-                      <option key={e.pull_request.number} value={e.pull_request.number}>
-                        #{e.pull_request.number} {e.pull_request.title}
-                      </option>
-                    ))}
-                  </select>
-                ) : null}
-              </header>
-              <ul className="local-group-members">
-                {landed.map(({ number, state, entry }) => (
-                  <li key={`landed-${number}`} className="local-group-member" data-landed={state}>
-                    <span className="local-group-number">#{number}</span>
-                    <div className="local-group-member-title">
-                      {entry ? (
-                        <ViewerLink href={memberHref(entry)}>{entry.pull_request.title}</ViewerLink>
-                      ) : (
-                        <span className="text-(--text-tertiary)">Not in the inbox</span>
-                      )}
-                      <span className="local-group-member-state">
-                        <span>{landedLabel[state] ?? "No longer open"}</span>
-                      </span>
-                    </div>
-                  </li>
-                ))}
-                {members.map(({ number, entry }) => (
-                  <li key={number} className="local-group-member">
-                    <span className="local-group-number">#{number}</span>
-                    <div className="local-group-member-title">
-                      {entry ? (
-                        <ViewerLink href={memberHref(entry)}>{entry.pull_request.title}</ViewerLink>
-                      ) : (
-                        <span className="text-(--text-tertiary)">Not in the inbox</span>
-                      )}
-                      {entry ? (
-                        <span className="local-group-member-state">
-                          <PullRequestState entry={entry} />
-                          {entry.status === "generating" ? (
-                            <span className="inline-flex items-center gap-1.5 text-(--text-secondary)">
-                              <NineDots size={14} />
-                              {reviewStatus.generating}
-                            </span>
-                          ) : (
-                            <span>{reviewStatus[entry.status] ?? entry.status}</span>
-                          )}
-                        </span>
-                      ) : null}
-                    </div>
-                    {group.members.length > 2 ? (
-                      <button
-                        type="button"
-                        className="local-group-remove"
-                        aria-label={`Remove #${number}`}
-                        title="Remove from the group"
-                        disabled={managing}
-                        onClick={() => {
-                          setRemoving(number);
-                          void change({
-                            members: group.members.filter((n) => n !== number),
-                          }).finally(() => setRemoving(null));
-                        }}
-                      >
-                        {removing === number ? "Removing…" : "Remove"}
-                      </button>
-                    ) : null}
-                  </li>
-                ))}
-              </ul>
-              <footer className="local-group-foot">
-                <Button
-                  variant="secondary"
-                  size="tiny"
-                  disabled={managing}
-                  onClick={() => setRenaming(true)}
-                >
-                  Rename
-                </Button>
-                <Button
-                  variant="danger-outline"
-                  size="tiny"
-                  disabled={managing}
-                  onClick={() => setDeleting(true)}
-                >
-                  Delete group
-                </Button>
-              </footer>
-              {manageError ? <Alert>{manageError}</Alert> : null}
-            </section>
             {group.outdated && group.version_count > 0 ? (
               <Notice
                 action={
@@ -691,7 +826,16 @@ export function GroupPage({
           ) : null
         }
         hunkPatches={patches}
+        {...rail}
       />
+      {repositoryFile && doc ? (
+        <RepositoryFileDialog
+          reference={repositoryFile.reference}
+          source={`api/groups/${encodeURIComponent(group.id)}/file?version=${doc.review.version}`}
+          href={repositoryFile.href}
+          close={() => setRepositoryFile(null)}
+        />
+      ) : null}
       {renaming ? (
         <NameDialog
           title="Rename review group"

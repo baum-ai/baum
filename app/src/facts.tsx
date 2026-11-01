@@ -80,8 +80,17 @@ export type FactsFile = ReviewFile & { additions: number; deletions: number };
 
 /** The facts' changed files, in the order their hunks are indexed. */
 export function factsFiles(facts: ReviewFacts): FactsFile[] {
+  return indexFiles(facts.index.hunks);
+}
+
+/** The changed files of an index of hunks (the facts', or a saved review's,
+ *  whose index holds every hunk of the change), in the order indexed, each
+ *  with its lines added and removed summed. */
+export function indexFiles(
+  hunks: readonly { path: string; old_path?: string; additions: number; deletions: number }[],
+): FactsFile[] {
   const files = new Map<string, FactsFile>();
-  for (const hunk of facts.index.hunks) {
+  for (const hunk of hunks) {
     const file = files.get(hunk.path) ?? {
       id: hunk.path,
       path: hunk.path,
@@ -109,12 +118,34 @@ export function factsFilesSlot(
   patches: FilePatchSource,
   pullRequestUrl: string,
 ): ReviewFilesSlot<FactsFile> {
-  const files = load.state === "ready" ? factsFiles(load.facts) : null;
+  return filesSlot(
+    load.state === "ready" ? factsFiles(load.facts) : null,
+    { loading: load.state === "loading", failed: load.state === "failed", retry },
+    patches,
+    pullRequestUrl ? `${pullRequestUrl}/files` : "",
+  );
+}
+
+/** The viewer's Files slot for a saved review, as GitHub's Files changed
+ *  shows a pull request: every file its index holds, folded, each diff read
+ *  when it is opened (`patches`). `href` is where a file's header links. */
+export function documentFilesSlot(
+  hunks: Parameters<typeof indexFiles>[0],
+  patches: FilePatchSource,
+  href: string,
+): ReviewFilesSlot<FactsFile> {
+  return filesSlot(indexFiles(hunks), { loading: false, failed: false, retry: () => {} }, patches, href);
+}
+
+function filesSlot(
+  files: FactsFile[] | null,
+  state: { loading: boolean; failed: boolean; retry: () => void },
+  patches: FilePatchSource,
+  href: string,
+): ReviewFilesSlot<FactsFile> {
   return {
     files,
-    loading: load.state === "loading",
-    failed: load.state === "failed",
-    retry,
+    ...state,
     tracksViewed: false,
     renderTree: ({ files, selected, onSelect }) => (
       <>
@@ -137,12 +168,7 @@ export function factsFilesSlot(
       </>
     ),
     renderFiles: ({ files, open }) => (
-      <FactsFilesPane
-        files={files}
-        open={open}
-        patches={patches}
-        href={`${pullRequestUrl}/files`}
-      />
+      <FactsFilesPane files={files} open={open} patches={patches} href={href} />
     ),
   };
 }

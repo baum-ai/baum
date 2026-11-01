@@ -931,3 +931,79 @@ describe("ReviewViewer with sections that lack their details", () => {
     expect(quiet.querySelector('section[aria-label="Context"]')).toBeNull();
   });
 });
+
+describe("source chips", () => {
+  const sha = "0123456789abcdef0123456789abcdef01234567";
+  function withSources() {
+    const document = structuredClone(current);
+    const section = document.sections.find((item) => item.id === "sec_retry")!;
+    section.summary!.anchors = [
+      { type: "pr_body", section: "Validation" },
+      { type: "pr", number: 9 },
+      { type: "commit", sha: sha.slice(0, 7) },
+      { type: "commit", sha: "ffffffffffffffffffffffffffffffffffffffff" },
+    ];
+    return { document, section };
+  }
+  const commits = {
+    state: {
+      status: "ready" as const,
+      items: [{ id: sha, label: "Add retries" }],
+    },
+    renderPane: (selected: string | null) => <div id="commits-probe">{selected ?? "all"}</div>,
+  };
+  const chip = (container: HTMLElement, text: string) =>
+    [...container.querySelectorAll<HTMLAnchorElement>("#review-section a")].find((link) =>
+      link.textContent?.startsWith(text),
+    )!;
+
+  it("hands the description and other pull requests to the host and cancels the link", async () => {
+    const { document, section } = withSources();
+    const openSource = vi.fn(() => true);
+    const container = await render(
+      <Host initial={`pane=section&section=${section.id}`}>
+        <ReviewViewer document={document} openSource={openSource} />
+      </Host>,
+    );
+    const body = chip(container, "From the PR description § Validation");
+    expect(body.target).toBe("");
+    expect(body.querySelector("svg")).toBeNull();
+    const click = new MouseEvent("click", { bubbles: true, cancelable: true });
+    await act(async () => body.dispatchEvent(click));
+    expect(click.defaultPrevented).toBe(true);
+    expect(openSource).toHaveBeenCalledWith(
+      { type: "pr_body", section: "Validation" },
+      expect.objectContaining({ label: "From the PR description § Validation" }),
+    );
+    await act(async () => chip(container, "From #9").click());
+    expect(openSource).toHaveBeenLastCalledWith(
+      { type: "pr", number: 9 },
+      expect.objectContaining({ label: "From #9" }),
+    );
+  });
+
+  it("keeps the description external without a host hook", async () => {
+    const { document, section } = withSources();
+    const container = await render(
+      <Host initial={`pane=section&section=${section.id}`}>
+        <ReviewViewer document={document} />
+      </Host>,
+    );
+    expect(chip(container, "From the PR description").target).toBe("_blank");
+  });
+
+  it("selects a listed commit and leaves an unlisted one external", async () => {
+    const { document, section } = withSources();
+    const container = await render(
+      <Host initial={`pane=section&section=${section.id}`}>
+        <ReviewViewer document={document} commits={commits} />
+      </Host>,
+    );
+    const unlisted = chip(container, "From commit fffffff");
+    expect(unlisted.target).toBe("_blank");
+    const listed = chip(container, "From commit 0123456");
+    expect(listed.target).toBe("");
+    await act(async () => listed.click());
+    expect(container.querySelector("#commits-probe")?.textContent).toBe(sha);
+  });
+});

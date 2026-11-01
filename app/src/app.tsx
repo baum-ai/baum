@@ -1180,6 +1180,7 @@ function Workspace({ url }: { url: UrlState }) {
                   jobs={jobs}
                   clones={clones}
                   cloneFor={cloneFor}
+                  live={live}
                   revision={revision}
                   changed={reload}
                   refresh={(press) =>

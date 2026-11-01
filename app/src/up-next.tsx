@@ -17,6 +17,7 @@ import {
   ChevronDownIcon,
   ChevronRightIcon,
   GitHubIcon,
+  MergeIcon,
   StackIcon,
 } from "@baum/viewer/components/icons";
 import { InlineMarkdown, Markdown } from "@baum/viewer/components/markdown";
@@ -164,11 +165,6 @@ function riskText(entry: Entry) {
   return `${entry.risk_score?.status === "lower_bound" ? "at least " : ""}${score} of 5`;
 }
 
-const REVIEW_WORDS: Record<string, string> = {
-  approved: "Approved",
-  changes_requested: "Changes requested",
-  commented: "Commented",
-};
 const CHECK_WORDS: Record<string, string> = {
   passing: "Checks passing",
   failing: "Checks failing",
@@ -1343,7 +1339,9 @@ function ListRow({
 
 /** A group's kind in words: "Stack of 3" or "Group of 2". */
 function groupName(group: ReviewGroup) {
-  return `${group.stack ? "Stack" : "Group"} of ${formatCount(group.members.length)}`;
+  // A stack's merged and closed members still count: it is the stack it was.
+  const size = group.members.length + (group.landed?.length ?? 0);
+  return `${group.stack ? "Stack" : "Group"} of ${formatCount(size)}`;
 }
 
 /** What a group's shown members wait on, in words: "1 to merge and 2 to fix". */
@@ -1517,20 +1515,9 @@ function blocks(row: Row, doc: ReviewDocument | null): PanelBlock[] {
   const changes = whatChanged(doc);
   const github = onGitHub(entry, row.item?.kind === "fix" && !row.job);
   if (row.job) return [...changes, ...github];
-  if (row.waiting)
-    return [
-      {
-        title: "Where it stands",
-        rows: [
-          { main: waitingOn(entry, row.base) },
-          ...(REVIEW_WORDS[entry.review] && entry.review !== "changes_requested"
-            ? [{ main: REVIEW_WORDS[entry.review]! }]
-            : []),
-        ],
-      },
-      ...github,
-      ...changes,
-    ];
+  // What a waiting pull request waits on is its panel's chip; On GitHub
+  // says the rest.
+  if (row.waiting) return [...github, ...changes];
   switch (row.item?.kind) {
     case "review":
     case "merge":
@@ -1575,20 +1562,8 @@ function blocks(row: Row, doc: ReviewDocument | null): PanelBlock[] {
         ...changes,
       ];
     case "update":
-      return [
-        {
-          title: "Where it stands",
-          rows: [
-            {
-              main: "Behind its base",
-              sub: "Updating merges the base into the branch on GitHub and reruns its checks.",
-            },
-            ...(REVIEW_WORDS[entry.review] ? [{ main: REVIEW_WORDS[entry.review]! }] : []),
-          ],
-        },
-        ...github,
-        ...changes,
-      ];
+      // Its sentence says it is behind and what updating does.
+      return [...github, ...changes];
     case "clone":
       return [
         {
@@ -1658,11 +1633,6 @@ function Panel({
   const who = pr.review_requested_from_me
     ? `${pr.author ?? "Someone"} asked for your review`
     : "Yours";
-  const github = (
-    <a href={pr.url} target="_blank" rel="noreferrer" className={cn("upnext-secondary", SECONDARY)}>
-      Open on GitHub
-    </a>
-  );
   // Opening the pull request is always the default; what the kind asks for
   // follows it. A merge or branch update opens its confirmation; a fix starts
   // at once.
@@ -1683,9 +1653,7 @@ function Panel({
             </kbd>
           ) : null}
         </Link>
-      ) : waiting ? (
-        github
-      ) : kind === "merge" ? (
+      ) : waiting ? null : kind === "merge" ? (
         <button type="button" className={cn("upnext-secondary", SECONDARY)} onClick={merge}>
           Merge
           <kbd aria-hidden="true" className="key-hint">
@@ -1714,9 +1682,7 @@ function Panel({
             </>
           )}
         </button>
-      ) : (
-        github
-      )}
+      ) : null}
     </>
   );
   const score = entry.risk_score?.score ?? null;
@@ -1728,7 +1694,7 @@ function Panel({
     <article className="upnext-panel" aria-labelledby="upnext-title">
       <div className="upnext-panel-meta">
         {waiting ? (
-          <span className="upnext-chip upnext-chip-waiting">Waiting</span>
+          <span className="upnext-chip upnext-chip-waiting">{waitingOn(entry, row.base)}</span>
         ) : (
           <span className={`upnext-chip upnext-chip-${kind}`}>{KINDS[kind].label}</span>
         )}
@@ -2253,7 +2219,8 @@ function GroupPanel({
             {plural(total, "pull request")}
           </button>
           {merged > 0 ? (
-            <Badge tone="positive" size="compact">
+            <Badge tone="merged" size="compact" className="gap-1">
+              <MergeIcon size={11} className="flex-none" />
               {formatCount(merged)} merged
             </Badge>
           ) : null}
@@ -2498,7 +2465,10 @@ export function MergeReadyDialog({
                 {merge.state === "checking" || merge.state === "merging" ? (
                   <NineDots size={14} />
                 ) : merge.state === "merged" ? (
-                  <span className="text-(--status-positive)">Merged</span>
+                  <span className="local-merged">
+                    <MergeIcon size={13} className="flex-none" />
+                    Merged
+                  </span>
                 ) : merge.state === "failed" ? (
                   <span className="text-(--status-critical)">Not merged</span>
                 ) : null}

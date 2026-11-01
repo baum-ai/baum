@@ -5,9 +5,10 @@ import {
   type ReviewDocument,
 } from "../review-document";
 import { cn, FOCUS_RING } from "./classnames";
-import { ChevronRightIcon } from "./icons";
+import { useReviewFiles, useReviewSources } from "./code-file-link";
+import { ChevronRightIcon, ExternalLinkIcon } from "./icons";
 import { Markdown } from "./markdown";
-import { CodeChip, PROSE } from "./review-parts";
+import { chipLinkClass, PROSE } from "./review-parts";
 import { Spinner } from "./ui";
 
 /** The context's parts in reading order, each with its label. */
@@ -74,33 +75,64 @@ export function ContextPart({
             Where this change sits in the codebase
           </span>
         </summary>
-        <div className="mt-3 space-y-4">
+        <dl className="mt-3 space-y-4">
           {parts.map(({ key, label, part }) => (
-            <div key={key} className="space-y-1.5">
-              <h4 className="text-base font-medium text-(--text-secondary)">{label}</h4>
-              <Markdown className={PROSE}>{part.text}</Markdown>
-              {part.refs.length > 0 && (
-                <ul className="flex flex-wrap gap-1.5" aria-label={`${label} files`}>
-                  {part.refs.map((ref, position) => (
-                    <li
-                      key={`${ref.path}-${ref.symbol}-${position}`}
-                      className="max-w-full min-w-0"
-                    >
-                      <ContextRefChip document={document} reference={ref} />
-                    </li>
-                  ))}
-                </ul>
-              )}
+            <div
+              key={key}
+              className="grid min-w-0 grid-cols-1 gap-x-3 gap-y-0.5 @md:grid-cols-[6.5rem_minmax(0,1fr)]"
+            >
+              <dt className="text-xs leading-[1.7rem] font-medium tracking-[0.06em] text-(--text-tertiary) uppercase">
+                {label}
+              </dt>
+              <dd className="m-0 min-w-0 space-y-2">
+                <Markdown className={PROSE}>{part.text}</Markdown>
+                {part.refs.length > 0 && (
+                  <ul className="flex flex-wrap gap-1.5" aria-label={`${label} files`}>
+                    {part.refs.map((ref, position) => (
+                      <li
+                        key={`${ref.path}-${ref.symbol}-${position}`}
+                        className="max-w-full min-w-0"
+                      >
+                        <ContextRefChip document={document} reference={ref} />
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </dd>
             </div>
           ))}
-        </div>
+        </dl>
       </details>
     </section>
   );
 }
 
-/** A file or directory the context rests on. It opens the review's file view
- *  when the pull request changes the file, and otherwise GitHub. */
+/** Whether a context reference names a directory rather than a file: it
+ *  ends in "/", another path the document cites lies under it, or its last
+ *  segment has no extension and no hunk of the change is that exact file.
+ *  An extensionless file cited only by the context (a Makefile) reads as a
+ *  directory too; it then keeps its GitHub link, which still works. */
+export function isContextDirectory(document: ReviewDocument, path: string): boolean {
+  if (path.endsWith("/")) return true;
+  const cited = new Set<string>();
+  for (const hunk of document.index.hunks) {
+    cited.add(hunk.path);
+    if (hunk.old_path) cited.add(hunk.old_path);
+  }
+  for (const part of Object.values(document.summary.context ?? {})) {
+    for (const ref of part?.refs ?? []) cited.add(ref.path);
+  }
+  const prefix = `${path}/`;
+  for (const candidate of cited) if (candidate.startsWith(prefix)) return true;
+  const name = path.slice(path.lastIndexOf("/") + 1);
+  return !name.includes(".") && !document.index.hunks.some((hunk) => hunk.path === path);
+}
+
+/** A file or directory the context rests on, as a compact chip: its symbol
+ *  first, as code, then the file's name; the folder is in its title. A file
+ *  opens in the host's dialog when it can show one (`openRepositoryFile`),
+ *  changed or not; else a changed file opens the review's file view, and
+ *  anything else, like a directory, GitHub. */
 function ContextRefChip({
   document,
   reference,
@@ -108,14 +140,89 @@ function ContextRefChip({
   document: ReviewDocument;
   reference: ReviewContextRef;
 }) {
-  const label = reference.symbol ? `${reference.path} · ${reference.symbol}` : reference.path;
+  const files = useReviewFiles();
+  const sources = useReviewSources();
+  const directory = isContextDirectory(document, reference.path);
+  const path = reference.path.replace(/\/+$/, "");
+  const href = contextRefUrl(document, path);
+  const title = reference.symbol ? `${reference.symbol} in ${path}` : path;
+  const label = <ContextRefLabel path={path} directory={directory} symbol={reference.symbol} />;
+  // A file opens as the file itself, in the host's dialog, whether or not the
+  // pull request changes it: context is about the code, not the diff, and
+  // the reader stays where they are. Without one, a changed file opens the
+  // review's file view.
+  const openRepositoryFile = sources?.openRepositoryFile;
+  if (!directory && openRepositoryFile) {
+    return (
+      <button
+        type="button"
+        title={title}
+        className={cn(chipLinkClass, "cursor-pointer text-left", FOCUS_RING)}
+        onClick={() => {
+          if (!openRepositoryFile({ path, symbol: reference.symbol })) {
+            window.open(href, "_blank", "noreferrer");
+          }
+        }}
+      >
+        {label}
+      </button>
+    );
+  }
+  if (files?.has(path)) {
+    return (
+      <button
+        type="button"
+        title={title}
+        className={cn(chipLinkClass, "cursor-pointer text-left", FOCUS_RING)}
+        onClick={() => files.open(path)}
+      >
+        {label}
+      </button>
+    );
+  }
   return (
-    <CodeChip
-      path={reference.path}
-      href={contextRefUrl(document, reference.path)}
-      title={reference.symbol ? `${reference.symbol} in ${reference.path}` : reference.path}
+    <a
+      href={href}
+      target="_blank"
+      rel="noreferrer"
+      title={title}
+      className={cn(chipLinkClass, FOCUS_RING)}
     >
-      <span className="min-w-0 truncate">{label}</span>
-    </CodeChip>
+      {label}
+      <ExternalLinkIcon size={10} className="flex-none text-(--text-tertiary)" />
+    </a>
+  );
+}
+
+/** "Symbol · name.go" on one line: the symbol first, as code, since it is
+ *  what the paragraph names, then the file's name in quiet text; the folder
+ *  is left to the chip's title. Without a symbol, the name alone. A
+ *  directory shows its last segment with a trailing "/". */
+function ContextRefLabel({
+  path,
+  directory,
+  symbol,
+}: {
+  path: string;
+  directory: boolean;
+  symbol: string | null;
+}) {
+  const name = `${path.slice(path.lastIndexOf("/") + 1)}${directory ? "/" : ""}`;
+  return (
+    <span className="flex min-w-0 items-baseline gap-1.5 whitespace-nowrap">
+      {symbol ? (
+        <>
+          <code className="min-w-[4ch] shrink truncate font-mono text-xs text-(--text-primary)">
+            {symbol}
+          </code>
+          <span aria-hidden className="flex-none text-(--text-tertiary)">
+            ·
+          </span>
+          <span className="min-w-[4ch] shrink-[2] truncate text-(--text-secondary)">{name}</span>
+        </>
+      ) : (
+        <span className="min-w-[4ch] shrink truncate text-(--text-primary)">{name}</span>
+      )}
+    </span>
   );
 }

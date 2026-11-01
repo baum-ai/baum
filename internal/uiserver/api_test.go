@@ -67,6 +67,7 @@ func TestLocalAPIRoutesPullRequestDetailsToUpdate(t *testing.T) {
 		"/api/prs/failing-checks",
 		"/api/prs/checks",
 		"/api/prs/conflicts",
+		"/api/prs/description",
 	}
 	for _, path := range paths {
 		w := httptest.NewRecorder()
@@ -77,6 +78,34 @@ func TestLocalAPIRoutesPullRequestDetailsToUpdate(t *testing.T) {
 	}
 	if strings.Join(reached, ",") != strings.Join(paths, ",") {
 		t.Fatalf("Update reached %v, want %v", reached, paths)
+	}
+}
+
+// Each route the viewer serves for a document is registered with the app's
+// router, or it is 404 there however the viewer answers it. A request without
+// a selector reaches the document handlers, which refuse it as a bad request.
+func TestLocalAPIRoutesCommitDetailsToTheDocument(t *testing.T) {
+	registry, err := repos.Open(filepath.Join(appdbtest.TempDir(t), "repos.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = registry.Close() }()
+	handler := LocalAPI{Registry: registry, Config: config.Default(), Facts: &fakeFacts{}}.Handler()
+	defer handler.Close()
+	for _, path := range []string{
+		"/api/commits",
+		"/api/commit",
+		"/api/commit-patch",
+		"/api/file",
+		"/api/facts/commits",
+		"/api/facts/commit",
+		"/api/facts/commit-patch",
+	} {
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, httptest.NewRequest("GET", "http://local"+path+"?oid=abc&path=a.go", nil))
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("GET %s: %d %s, want the document handler's 400", path, w.Code, w.Body.String())
+		}
 	}
 }
 

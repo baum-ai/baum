@@ -486,7 +486,15 @@ it("lists exactly the keys that work in the sheet", async () => {
   ]);
   expect(listed("A pull request or group")).toEqual([
     "j",
+    "↓",
     "k",
+    "↑",
+    "l",
+    "→",
+    "h",
+    "←",
+    "Space",
+    "Enter",
     "m",
     "f",
     "g",

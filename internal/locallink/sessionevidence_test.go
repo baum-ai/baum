@@ -127,6 +127,42 @@ func TestSessionEvidenceMetadata(t *testing.T) {
 	}
 }
 
+// A session its agent gave no title is named as the app's live sessions are:
+// a Codex session by its thread name in the index beside its rollouts, else by
+// the first line of its first prompt.
+func TestSessionEvidenceNamesUntitledSessions(t *testing.T) {
+	home := t.TempDir()
+	rollout := filepath.Join(home, "sessions", "2026", "11", "01", "rollout-thread-1.jsonl")
+	if err := os.MkdirAll(filepath.Dir(rollout), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	index := `{"id":"thread-1","thread_name":"Old name"}` + "\n" +
+		`{"id":"thread-2","thread_name":"Another thread"}` + "\n" +
+		`{"id":"thread-1","thread_name":"Fix CI for PR 994"}` + "\n"
+	if err := os.WriteFile(filepath.Join(home, "session_index.jsonl"), []byte(index), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	codex := func(thread string) sessions.Session {
+		s := evidenceTree()
+		s.Source, s.Vendor, s.Path = "codex", "codex", rollout
+		s.Graph.Sessions[0].Title = nil
+		s.Graph.VendorIDs = []session.VendorID{{OurID: "s-root", VendorIDKind: "thread_id", VendorID: thread}}
+		return s
+	}
+	if got := evidenceOf(t, codex("thread-1"), 10, 0).Title; got != "Fix CI for PR 994" {
+		t.Errorf("Codex title = %q, want its latest thread name", got)
+	}
+	if got := evidenceOf(t, codex("thread-3"), 10, 0).Title; got != "Start the widget" {
+		t.Errorf("unnamed Codex title = %q, want its first prompt", got)
+	}
+	untitled := evidenceTree()
+	untitled.Graph.Sessions[0].Title = nil
+	untitled.Graph.UserInputs[0].Text = "  Start the widget\nwith these details"
+	if got := evidenceOf(t, untitled, 10, 0).Title; got != "Start the widget" {
+		t.Errorf("untitled title = %q, want the first line of its first prompt", got)
+	}
+}
+
 // Only the top-level session's human prompts are prompts; what the sessions a
 // prompt spawned touched, at any depth, counts toward that prompt.
 func TestSessionEvidenceAttributesNestedSessionsToTheirRootPrompt(t *testing.T) {

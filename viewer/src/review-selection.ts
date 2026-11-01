@@ -1,8 +1,8 @@
 /** Where the reader is in the review pane: Summary, the Changes or Risks
  *  overview, one section or risk, the changed files (all folded, or one
  *  opened), the linked sessions
- *  (all of them, or one opened), or the pull request's commits (all, or one
- *  named by its sha). Kept in the URL rather than component
+ *  (all of them, or one opened), the pull request's commits (all, or one
+ *  named by its sha), or the decisions its sessions made. Kept in the URL rather than component
  *  state, the same way the pull request itself already is, so a section or
  *  risk can be reloaded, linked to someone else, and reached with Back. */
 export type Selection =
@@ -16,7 +16,8 @@ export type Selection =
   | { kind: "sessions" }
   | { kind: "session"; id: string }
   | { kind: "commits" }
-  | { kind: "commit"; id: string };
+  | { kind: "commit"; id: string }
+  | { kind: "decisions" };
 
 const PARAM = {
   pane: "pane",
@@ -62,6 +63,7 @@ export function readSelection(search: URLSearchParams): Selection {
     if (id) return { kind: "session", id };
   }
   if (pane === "commits") return { kind: "commits" };
+  if (pane === "decisions") return { kind: "decisions" };
   if (pane === "commit") {
     const id = search.get(PARAM.commit);
     if (id) return { kind: "commit", id };
@@ -87,7 +89,8 @@ export function withSelection(search: URLSearchParams, selection: Selection): UR
     selection.kind === "risks" ||
     selection.kind === "files" ||
     selection.kind === "sessions" ||
-    selection.kind === "commits"
+    selection.kind === "commits" ||
+    selection.kind === "decisions"
   ) {
     next.set(PARAM.pane, selection.kind);
   } else if (selection.kind === "section") {

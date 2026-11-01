@@ -88,6 +88,15 @@ func runView(cmd *cobra.Command, args []string) error {
 			Repository: review.Repository, Head: review.Head, Base: review.Base, MergeBase: review.MergeBase, Path: path,
 		})
 	}
+	opts.Commit = func(ctx context.Context, review viewserver.Review, oid string) (locallink.CommitDetail, error) {
+		return locallink.ReadCommit(ctx, locallink.CommitRequest{Repository: review.Repository, OID: oid})
+	}
+	opts.CommitPatch = func(ctx context.Context, review viewserver.Review, commit locallink.CommitDetail, file locallink.CommitFile) (locallink.PatchResult, error) {
+		return locallink.CommitPatch(ctx, locallink.CommitPatchRequest{Repository: review.Repository, Commit: commit, File: file})
+	}
+	opts.File = func(ctx context.Context, review viewserver.Review, path string) (locallink.FileResult, error) {
+		return locallink.ReadFile(ctx, locallink.FileRequest{Repository: review.Repository, Head: review.Head, Path: path})
+	}
 	if sample {
 		opts.Sample = true
 		opts.Document = schema.Example

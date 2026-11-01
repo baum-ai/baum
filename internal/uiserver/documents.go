@@ -84,6 +84,24 @@ func (c *documentCache) get(clone repos.Clone, document []byte) (*viewserver.Ser
 		}
 		defer func() { <-c.reads }()
 		return patcher.Patch(ctx, locallink.PatchRequest{Dir: clone.Path, Repository: v.Repository, Head: v.Head, Base: v.Base, MergeBase: v.MergeBase, Path: path})
+	}, Commit: func(ctx context.Context, v viewserver.Review, oid string) (locallink.CommitDetail, error) {
+		if !acquire(ctx, c.reads) {
+			return locallink.CommitDetail{}, ctx.Err()
+		}
+		defer func() { <-c.reads }()
+		return locallink.ReadCommit(ctx, locallink.CommitRequest{Dir: clone.Path, Repository: v.Repository, OID: oid})
+	}, CommitPatch: func(ctx context.Context, v viewserver.Review, commit locallink.CommitDetail, file locallink.CommitFile) (locallink.PatchResult, error) {
+		if !acquire(ctx, c.reads) {
+			return locallink.PatchResult{}, ctx.Err()
+		}
+		defer func() { <-c.reads }()
+		return locallink.CommitPatch(ctx, locallink.CommitPatchRequest{Dir: clone.Path, Repository: v.Repository, Commit: commit, File: file})
+	}, File: func(ctx context.Context, v viewserver.Review, path string) (locallink.FileResult, error) {
+		if !acquire(ctx, c.reads) {
+			return locallink.FileResult{}, ctx.Err()
+		}
+		defer func() { <-c.reads }()
+		return locallink.ReadFile(ctx, locallink.FileRequest{Dir: clone.Path, Repository: v.Repository, Head: v.Head, Path: path})
 	}})
 	if err != nil {
 		c.mu.Unlock()

@@ -21,7 +21,13 @@ import {
 } from "../src/navigation";
 import type { ReviewDocument } from "../src/review-document";
 import { createPatchSource } from "./local-patches";
-import { fetchSessions, sessionLists, type SessionsLoad } from "./local-sessions";
+import {
+  type CommitRouteReader,
+  createCommitLoaders,
+  fetchSessions,
+  sessionLists,
+  type SessionsLoad,
+} from "./local-sessions";
 import { SessionTranscript } from "./session-transcript";
 
 /** The standalone viewer: one review document, served by `baum internal view` from the
@@ -31,9 +37,20 @@ import { SessionTranscript } from "./session-transcript";
  *  groups; where it has none, the Sessions group lists the document's own. A
  *  linked session opened alone shows its transcript from
  *  `/api/sessions/{id}`, asked for only then. A code excerpt the document left
- *  out is read from `/api/patch`, when its evidence is opened. */
+ *  out is read from `/api/patch`, when its evidence is opened. A commit opened
+ *  alone shows its message and files from `/api/commit`, and each file's diff
+ *  from `/api/commit-patch` when it is opened. */
 
 const SCHEMA = "baum.review/1";
+
+const readCommitRoute: CommitRouteReader = async (route, params) => {
+  const response = await fetch(`/api/${route}?${new URLSearchParams(params)}`, {
+    cache: "no-store",
+  });
+  if (response.status === 404) return undefined;
+  if (!response.ok) throw new Error(`The ${route} request failed (${response.status}).`);
+  return response.json();
+};
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
@@ -309,7 +326,16 @@ export function App() {
         : undefined,
     [lists, linkedHere],
   );
-  const commits = useMemo(() => (lists?.commits ? commitsSlot(lists.commits) : undefined), [lists]);
+  // The server answers for the document it serves now, so a rewritten one
+  // starts with nothing read.
+  const commitLoaders = useMemo(
+    () => (document ? createCommitLoaders(readCommitRoute) : {}),
+    [document],
+  );
+  const commits = useMemo(
+    () => (lists?.commits ? commitsSlot(lists.commits, commitLoaders) : undefined),
+    [lists, commitLoaders],
+  );
   // The server reads patches for the document it serves now, and keeps none of
   // an earlier one, so a rewritten document starts with no patches fetched.
   const hunkPatches = useMemo(

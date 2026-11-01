@@ -146,6 +146,8 @@ A host connects it through props and context:
 | attachment URL | no | `AttachmentUrlProvider` resolves an attachment id to an address; without it `images` blocks draw nothing |
 | hunk patch source | no | `HunkPatchProvider` loads a file's patch for cited code whose stored excerpt was omitted, given its path, the review version and the cited hunk's id |
 | file opener | no | `ReviewFilesProvider` opens a cited file in the host's own diff view instead of following the link |
+| repository file opener | no | `openRepositoryFile({ path, symbol })` on `ReviewViewer`, carried with the source opener in `ReviewSourcesProvider` (`useReviewSources().openRepositoryFile`): called when a Summary context chip for a file is clicked, whether or not the pull request changes it; return true when handled, false to open GitHub instead. Given, those chips are buttons without the leaving mark. Without it, a changed file opens the review's file view; a directory keeps its GitHub link. The viewer never reads the file; the host does |
+| source opener | no | `openSource(anchor, resolved)` on `ReviewViewer`: called when a source chip for the pull request's description (`pr_body`) or another pull request (`pr`) is clicked; return true when handled and the viewer cancels the link to GitHub. Those chips then read as in-app links without the leaving mark. The viewer never fetches the description or builds a route; the host does. A commit chip needs no hook: when the commit is in the Commits group (matched by full sha or prefix) it selects it there, otherwise it links to GitHub. Comment, thread and check chips keep going to GitHub |
 | row actions | no | `checks` on `ReviewViewer`, or `renderCheck` on `ChangesOverview` and `RisksOverview`, puts a host's read mark or approval beside each row |
 | side pane, header slots and other features | no | the `ReviewViewer` slots below |
 | decision log links and sessions | for the decision log components | `pullRequestHref` and `openSession` props (see [Decision log](#decision-log)) |
@@ -196,6 +198,8 @@ left out rather than shown empty or failed:
 | Prop | What it adds |
 | --- | --- |
 | `versions`, `loadVersion` | the version menu: read an earlier version alone, or compare it with the current one. The loader should cache, as section panes reuse it for their "Since v1" links |
+| `header.versionActions` | the host's actions on the review itself, such as generating it again, listed under a rule at the end of the version menu; each may be `disabled` |
+| `header.subtitle` | drawn at the end of the line under the title, after the repository and the time to review, such as links to the stack the pull request is in |
 | `history` | the host's own `useHistoryView` result, for a host whose requests follow the version being read; otherwise the viewer keeps its own |
 | `versionsFailed` | a retry for a version list that could not be loaded |
 | `header` | the head's live pull request facts (title, state, repository, branches, size, link), a back link, an approval state, a statistics line and the generation state; each falls back to what the document recorded. The head also states the document's `summary.review_minutes` as "~N min to review" beside the repository, and nothing when it is absent or null or the head has a `heading`. The change-kind tag sits beside the full page title, before its state and approval badges. `titleAside` adds a status beside the full page title, and `actions` the host's page actions, such as a refresh, at the end of the title row. `heading` titles a review of something other than one pull request, such as a stack's: the document's own pull request number, link and state are then not shown |
@@ -207,6 +211,7 @@ left out rather than shown empty or failed:
 | `notices` | alerts at the top of the pane, such as a generation in progress |
 | `files` | a Files group: the host's tree in the rail, under a row that writes how many files changed, over a bar of how many are viewed, and its list of file diffs in the pane, with code links in the review opening the cited file there. `?pane=files` lists every file folded; `?pane=file&file=<id>` hands `renderFiles` that file to unfold and scroll to, whether the reader clicked it, followed a link or went Back. With `tracksViewed: false` the rail counts no progress through the files |
 | `sessions`, `commits` | rail groups listing the host's linked sessions and commits, each with the host's pane; `sessionsSlot` and `commitsSlot` build them from plain data (see below) |
+| `decisions` | one rail row above Sessions, **Decisions** with an optional `count`, opening the host's pane (`ReviewPaneSlot`, `?pane=decisions`); absent, the row is not drawn and a link to it reads as the Summary |
 | `conversation` | the side pane's first tab, given where the reader is (section, risk, version) and a way to open a file at a line. Without it the side pane holds only Details and Activity, and nothing is labelled as a conversation |
 | `detailsChecks` | the Checks part for the document the side pane describes, in place of the document's own checks, and whether it shows a failure (which flags the tab that holds it); null content leaves the part out. The part leads the Activity tab, or the Details tab when `hideActivity` is set. For checks gathered from elsewhere, such as a stack review's members |
 | `activityMembers` | a stack's member reviews for the Activity tab, for the document it describes: each with its number and a tag (such as a link to its page), whether some are still loading, and a note (such as which could not be read). Under the checks the tab then gathers the members' open review threads, each tagged with its member, their exchange figures summed with no full exchange, their sessions once each, and their decisions tagged with their member (optional `decisions` carries snapshot `items` and their `version` to keep text and links pinned to the stack snapshot when member evidence is live); an open thread in any member flags the tab |
@@ -234,10 +239,20 @@ hidden by default and can be revealed with “View obsolete changes.”
 The document's `summary.context` sits under the Summary's overview, after the
 breaking change and release note and before Intent and instructions, as a
 Context part that starts collapsed; the reviewer expands it. Each part it
-holds is labelled, in order Area, How it's reached, Contracts and Related
-code, with its Markdown text and its references as chips (the path, then
-`· symbol` when one is named). A chip opens the review's file view when the
-pull request changes the file, and otherwise GitHub at the reviewed head, or
+holds is a row: its label (Area, How it's reached, Contracts, Related code, in
+that order) in a small uppercase tertiary column beside its Markdown
+paragraph, and under the paragraph its references as compact one-line chips
+that wrap as a group. A chip shows the symbol first, as code, then `·` and
+the file's name in quiet text (the name alone when no symbol is named); a
+directory shows its last segment with a trailing `/`. The full path is the
+chip's title. A reference is a directory when it ends in `/`, another path the
+document cites (a hunk, another reference) lies under it, or its last segment
+has no extension and no hunk is that exact file (`isContextDirectory`; an
+extensionless file cited only by the context reads as a directory and keeps
+its GitHub link). A file's chip opens in the host when the host passes
+`openRepositoryFile` (a button, without the leaving mark), whether or not the
+pull request changes it; without it, a changed file opens the review's file
+view, and anything else, always a directory, opens GitHub at the reviewed head, or
 at the merge base for a file or directory the pull request deletes or renames
 away: every hunk on or under the path removes a file or moves it elsewhere.
 The host records rename sources in `index.hunks[].old_path`; older documents
@@ -271,6 +286,11 @@ summary. Category labels are omitted and lifecycle labels use quiet text
 (“Since v1”). Attention includes referenced high and critical risks only.
 Medium and low risks appear in Risks after Key decisions even when attention
 references them; a callout referencing only lower-tier risks is omitted.
+Evidence the attention references is listed only when it adds something to
+open or act on (failed, pending, skipped, observed or reported); missing,
+asserted and unavailable claims, which restate the attention, are left out.
+Under the attention, **Where to look** shows the changed lines and files its
+risks, decisions and evidence cite, each once, as source chips that open them.
 
 The Author pane groups models under their harness, in small text without a
 second icon. Only the first model is shown, followed by the number of additional
@@ -323,7 +343,33 @@ the method and confidence of each. Both open each other through
 `ReviewListSlot` the `sessions` and `commits` props take, with the rail's
 labels. `SessionList`'s `renderSession` (also an option of `sessionsSlot`)
 puts the host's own content under a session opened alone, such as its
-transcript.
+transcript. The pane is then headed by the session's title, with its agent,
+branch, start, duration and files edited on one line (the rail leads back to
+the list) and its linked commits as links under it, and draws no
+card for it. `SessionCard`'s `headless` draws a session open with no header of
+its own, for such a pane. A session whose outcome is unknown shows no outcome
+badge.
+
+`commitsSlot(state, { loadCommit, loadPatch })` (and `CommitList`'s
+`loaders`) gives a commit opened alone more than its list entry, read through
+the host and never fetched by the viewer. `loadCommit(oid)` resolves to the
+commit's `CommitDetailView` (its message body after the subject line, plain
+text, and its changed files: path, old path for a rename, status and line
+counts, null for a binary file), or null when the host cannot read it; a
+rejection is a failure. The pane then shows the totals ("+N −M across K
+files"), the body (pre-wrapped text, never markup), the linked sessions and a
+"Files changed" list, each file folded until it is opened. `loadPatch(oid,
+path)` reads an opened file's patch (from its first `@@` line, or null for no
+text diff), drawn with `CodeDiff` as the Files pane draws a file. Each read
+has a loading state, a failure with Retry and, for a null patch, "No diff to
+show"; without `loadPatch` the files are listed without diffs, and without
+`loadCommit` the pane looks as before. The list shows a commit's totals
+("+N −M · K files") once its detail has been read, never asking for it. Keep
+the loaders stable across renders: they key what is read.
+`createCommitLoaders(read)` (`@baum/viewer/local-sessions`) builds them over a
+host's reader of the daemon's `commit` and `commit-patch` routes, asking once
+per commit and per file and forgetting a failed read, and
+`parseCommitDetail` checks a `GET /api/commit` body.
 
 ### Session transcripts
 
@@ -415,6 +461,9 @@ short. The answer carries every prompt's replies and every prompt's activity,
 so the card is given only a `loadTurnActivity` that reads from it, and no
 cost format or avatar. `&turn=<n>` opens it at that prompt. See the "Local session linkage"
 and "Session transcripts" sections of `oss/ARCHITECTURE.md` for the contract.
+A commit opened alone (`?pane=commit&commit=<sha>`) reads its detail from
+`GET /api/commit` and each opened file's diff from `GET /api/commit-patch`
+(see "Local commits" there).
 
 Wherever a session's prompts are quoted (a linked session's prompts in the
 Activity tab, the prompts behind the Summary's intent), they are drawn with
@@ -677,6 +726,11 @@ page's own origin:
 - `GET /api/sessions` lists the sessions and commits linked on this machine,
   and `GET /api/sessions/{id}` one linked session's transcript, asked for
   only when that session is opened.
+- `GET /api/commit?oid=<sha>` returns a linked commit's message body and
+  changed files, and `GET /api/commit-patch?oid=<sha>&path=<path>` one of
+  those files' patch, as `/api/patch` answers; both are 404 for a commit
+  `/api/sessions` does not list or a file that commit did not change. The app
+  passes them to `commitsSlot` through `createCommitLoaders`.
 - `GET /api/patch?path=<path>` returns `{"patch": "<unified diff>"}` or
   `{"patch": null}` for a file the document cites, from the clone on this
   machine. The app passes `hunkPatches` to `ReviewViewer` (see `createPatchSource`
@@ -826,3 +880,12 @@ same public viewer components and uses the exported `local-sessions` and
 Review part headers wrap their controls below the label when space is tight;
 wide surface-filter strips scroll within their own bounded container so the
 Summary never widens a narrow page.
+
+## Source chips
+
+A judgment's sources read as chips that say what they are: "From the PR
+description" (with "§ <section>" when a heading is cited), "From commit
+<short sha>", "From #<number>" for another pull request, and "From <author>'s
+review" or "From <author>'s comment". A chip the host or the viewer opens
+stays in the app (see the source opener above); one that still leaves for
+GitHub carries the leaving mark.

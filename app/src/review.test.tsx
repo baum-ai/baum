@@ -20,6 +20,8 @@ vi.mock("@baum/viewer/components/review-viewer", () => ({
     notices,
     sessions,
     commits,
+    openSource,
+    openRepositoryFile,
   }: ReviewViewerProps) => (
     <div
       data-generation={header?.generation?.state}
@@ -29,6 +31,21 @@ vi.mock("@baum/viewer/components/review-viewer", () => ({
     >
       {header?.beside}
       {notices}
+      <button
+        type="button"
+        data-source="description"
+        onClick={() => openSource?.({ type: "pr_body", section: "Validation" }, { label: "", kind: "" })}
+      />
+      <button
+        type="button"
+        data-source="repository-file"
+        onClick={() => openRepositoryFile?.({ path: "queue/retry.go", symbol: "Backoff" })}
+      />
+      <button
+        type="button"
+        data-source="pull-request"
+        onClick={() => openSource?.({ type: "pr", number: 9 }, { label: "", kind: "" })}
+      />
       {document ? <p>{document.summary.text}</p> : placeholder}
       {sessions?.state.status === "ready"
         ? sessions.state.items.map((item) => (
@@ -391,6 +408,106 @@ it("keeps the PR page through queued, running and completed SSE states across cl
       (button) => button.textContent === "Regenerate review",
     )!.disabled,
   ).toBe(false);
+});
+it("opens the description a source chip cites in a panel, and another pull request in the app", async () => {
+  Object.defineProperty(HTMLDialogElement.prototype, "showModal", {
+    configurable: true,
+    value() {
+      this.open = true;
+    },
+  });
+  const original = vi.mocked(fetch).getMockImplementation()!;
+  vi.mocked(fetch).mockImplementation((...args) =>
+    String(args[0]).includes("api/prs/description")
+      ? Promise.resolve(
+          Response.json({
+            body: "## Intro\n\nHello\n\n## Validation\n\nRan the **suite**.",
+            url: "https://github.com/acme/demo/pull/7",
+          }),
+        )
+      : original(...args),
+  );
+  await render(job("completed"));
+  await act(async () =>
+    node.querySelector<HTMLButtonElement>('[data-source="description"]')!.click(),
+  );
+  const dialog = node.querySelector("dialog")!;
+  expect(dialog.textContent).toContain("Description of #7");
+  expect(dialog.querySelector("strong")?.textContent).toBe("suite");
+  expect(dialog.querySelector(".local-description-cited")?.textContent).toBe("Validation");
+  expect(
+    vi.mocked(fetch).mock.calls.some(([url]) =>
+      String(url).endsWith("api/prs/description?repository=acme%2Fdemo&pr=7"),
+    ),
+  ).toBe(true);
+  expect(dialog.querySelector<HTMLAnchorElement>("a[href*='github.com']")?.textContent).toContain(
+    "View on GitHub",
+  );
+  await act(async () => {
+    Array.from(dialog.querySelectorAll("button"))
+      .find((button) => button.textContent === "Close")!
+      .click();
+  });
+  expect(node.querySelector("dialog")).toBeNull();
+
+  await act(async () =>
+    node.querySelector<HTMLButtonElement>('[data-source="pull-request"]')!.click(),
+  );
+  expect(location.search).toBe("?clone=selected-clone&pr=9");
+});
+it("opens a file a context chip cites in a panel, marking its symbol's definition", async () => {
+  Object.defineProperty(HTMLDialogElement.prototype, "showModal", {
+    configurable: true,
+    value() {
+      this.open = true;
+    },
+  });
+  documentValue = structuredClone(example) as unknown as ReviewDocument;
+  const content = [
+    "package queue",
+    "",
+    "// Backoff is used by Retry.",
+    "func Retry() { Backoff(1) }",
+    "",
+    "func Backoff(attempt int) int {",
+    "\treturn attempt * 2",
+    "}",
+  ].join("\n");
+  const original = vi.mocked(fetch).getMockImplementation()!;
+  vi.mocked(fetch).mockImplementation((...args) =>
+    String(args[0]).includes("api/file?")
+      ? Promise.resolve(Response.json({ path: "queue/retry.go", content, truncated: false }))
+      : original(...args),
+  );
+  await render(job("completed"), 0, { ...entry, version_count: 1, status: "current" });
+  await act(async () =>
+    node.querySelector<HTMLButtonElement>('[data-source="repository-file"]')!.click(),
+  );
+  const dialog = node.querySelector("dialog")!;
+  expect(dialog.querySelector("h2")?.textContent).toBe("queue/retry.go");
+  expect(dialog.textContent).toContain("Backoff");
+  expect(
+    vi.mocked(fetch).mock.calls.some(([url]) =>
+      String(url).includes("api/file?clone=selected-clone&pr=7&path=queue%2Fretry.go"),
+    ),
+  ).toBe(true);
+  const lines = [...dialog.querySelectorAll(".local-file-line")];
+  expect(lines).toHaveLength(8);
+  // The definition is marked, not the earlier lines that only mention it.
+  const marked = dialog.querySelector(".local-file-line[data-marked]");
+  expect(marked?.querySelector(".local-file-number")?.textContent).toBe("6");
+  expect(marked?.querySelector(".local-file-text")?.textContent).toBe(
+    "func Backoff(attempt int) int {",
+  );
+  expect(dialog.querySelector<HTMLAnchorElement>("a[href*='github.com']")?.textContent).toContain(
+    "View on GitHub",
+  );
+  await act(async () => {
+    Array.from(dialog.querySelectorAll("button"))
+      .find((button) => button.textContent === "Close")!
+      .click();
+  });
+  expect(node.querySelector("dialog")).toBeNull();
 });
 it("offers Merge in the PR page header only for an open, ready pull request", async () => {
   await render(job("completed"));

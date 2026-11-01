@@ -1,6 +1,13 @@
-import { useState } from "react";
+import { useCallback, useState } from "react";
 import { formatCount, formatRelative } from "@baum/viewer/components/format";
-import { Alert, Button, LiveDot } from "@baum/viewer/components/ui";
+import { Alert, Button, IconButton, LiveDot } from "@baum/viewer/components/ui";
+import {
+  CloseIcon,
+  CircleCheckIcon,
+  CircleCrossIcon,
+  CircleDashedIcon,
+} from "@baum/viewer/components/icons";
+import { SMALL } from "./action-classes";
 import {
   appURL,
   fixName,
@@ -44,10 +51,19 @@ export function phaseText(job: Job) {
 
 /** The link to a fix's transcript: Watch while it runs. Nothing without one.
  *  `keyHint` draws `t` on it where that key opens it. */
-export function TranscriptLink({ job, keyHint = false }: { job: Job; keyHint?: boolean }) {
+export function TranscriptLink({
+  job,
+  keyHint = false,
+  boxed = false,
+}: {
+  job: Job;
+  keyHint?: boolean;
+  /** Drawn as a small button, as the one action of a notice. */
+  boxed?: boolean;
+}) {
   if (!job.has_transcript) return null;
   return (
-    <ViewerLink href={jobHref(job)}>
+    <ViewerLink href={jobHref(job)} className={boxed ? SMALL : undefined}>
       {isActiveJob(job) ? "Watch" : "Transcript"}
       {keyHint ? (
         <kbd aria-hidden="true" className="key-hint">
@@ -123,7 +139,16 @@ function threadPlace(thread: FixThread) {
 }
 
 /** A fix of the pull request on its page: running, pushed or failed. */
-export function FixNotice({ job, changed }: { job: Job; changed: () => Promise<void> }) {
+export function FixNotice({
+  job,
+  changed,
+  dismiss,
+}: {
+  job: Job;
+  changed: () => Promise<void>;
+  /** Hides a finished fix's notice; it stays in the fix runs. */
+  dismiss?: () => void;
+}) {
   const [error, setError] = useState("");
   const [cancelling, setCancelling] = useState(false);
   const name = fixName(job.fix ?? {});
@@ -157,10 +182,16 @@ export function FixNotice({ job, changed }: { job: Job; changed: () => Promise<v
         {error ? <Alert>{error}</Alert> : null}
       </section>
     );
+  const pushed = job.state === "completed" && !!job.commit;
+  const Icon = pushed ? CircleCheckIcon : job.state === "failed" ? CircleCrossIcon : CircleDashedIcon;
   return (
-    <section aria-label="Fix" className="local-job-outcome">
+    <section aria-label="Fix" className="local-job-outcome local-fix-notice">
+      <Icon
+        size={16}
+        className={`local-fix-notice-icon local-fix-notice-${pushed ? "pushed" : job.state}`}
+      />
       <div className="min-w-0 flex-1">
-        <p role="status" className="font-medium">
+        <p role="status" className="local-fix-notice-title">
           {job.state === "completed" && job.commit ? (
             <>
               {name}: pushed{" "}
@@ -183,9 +214,43 @@ export function FixNotice({ job, changed }: { job: Job; changed: () => Promise<v
         {job.reason ? <p>{jobReasonText(job.reason)}</p> : null}
         <FixDetails job={job} />
       </div>
-      <TranscriptLink job={job} keyHint />
+      <div className="local-fix-notice-actions">
+        <TranscriptLink job={job} keyHint boxed />
+        {dismiss ? (
+          <IconButton label={`Dismiss: ${name}`} onClick={dismiss}>
+            <CloseIcon size={14} />
+          </IconButton>
+        ) : null}
+      </div>
     </section>
   );
+}
+
+// The finished fixes whose notice the person dismissed, the latest few, kept
+// in this window's browser: a dismissed fix stays in the page's fix runs.
+const DISMISSED_KEY = "baum.pr.dismissed-fixes.v1";
+function readDismissed(): string[] {
+  try {
+    const ids = JSON.parse(localStorage.getItem(DISMISSED_KEY) ?? "[]");
+    return Array.isArray(ids) ? ids.filter((id): id is string => typeof id === "string") : [];
+  } catch {
+    return [];
+  }
+}
+
+/** The fix jobs whose notice was dismissed, and dismissing one. */
+export function useDismissedFixes(): [string[], (id: string) => void] {
+  const [ids, setIds] = useState(readDismissed);
+  const dismiss = useCallback((id: string) => {
+    const next = [...readDismissed().filter((known) => known !== id), id].slice(-50);
+    try {
+      localStorage.setItem(DISMISSED_KEY, JSON.stringify(next));
+    } catch {
+      // Dismissed until the page is opened again.
+    }
+    setIds(next);
+  }, []);
+  return [ids, dismiss];
 }
 
 /** What the agent said it did, what became of each review thread, and a

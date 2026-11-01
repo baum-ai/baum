@@ -63,18 +63,23 @@ export function SessionCard({
   formatCost,
   renderAvatar,
   layout,
+  headless = false,
   modelLabel = modelId,
   restrictedNote = "This session's prompts, metadata, usage, and activity are not shown here.",
 }: {
   session: TranscriptSession;
   defaultOpen: boolean;
   expand?: boolean;
+  /** Drawn open with no header of its own, for a page whose heading already
+   *  names the session, its agent, branch and times. */
+  headless?: boolean;
   meta?: ReactNode;
   focusTurn?: number;
   modelLabel?: (model: string) => string;
   restrictedNote?: ReactNode;
 } & TranscriptHostProps) {
-  const [open, setOpen] = useState(defaultOpen || expand);
+  const [toggled, setOpen] = useState(defaultOpen || expand);
+  const open = headless || toggled;
   const [detail, setDetail] = useState<TranscriptSession | "loading" | "failed" | null>(null);
   const duration = durationSeconds(session.started_at, session.ended_at);
   const full = detail && typeof detail !== "string" ? detail : session;
@@ -120,6 +125,7 @@ export function SessionCard({
 
   return (
     <section className="flex min-w-0 flex-col" data-session-id={session.run_id}>
+      {headless ? null : (
       <button
         type="button"
         aria-expanded={open}
@@ -197,8 +203,9 @@ export function SessionCard({
           )}
         </span>
       </button>
+      )}
 
-      {meta ? (
+      {meta && !headless ? (
         <div
           className={cn(
             "flex flex-wrap items-center gap-x-3 gap-y-1.5 px-5 py-2.5 text-base",
@@ -210,7 +217,11 @@ export function SessionCard({
       ) : null}
 
       {open ? (
-        <div className={layout === "log" ? "px-5 pt-3 pb-1" : "px-5 py-4"}>
+        <div
+          className={
+            headless ? "pt-1 pb-1" : layout === "log" ? "px-5 pt-3 pb-1" : "px-5 py-4"
+          }
+        >
           {/* Nothing of this session's own figures is on the card until they
               arrive: zeroes would read as measurements. */}
           {typeof detail === "string" && full.prompts.length === 0 ? (

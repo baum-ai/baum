@@ -687,8 +687,12 @@ export function TranscriptCard({
   live = false,
   title,
   focusTurn,
+  embedded = false,
 }: {
   transcript: LocalTranscript;
+  /** Inside a pane headed by the session (the PR page's): no card, header
+   *  or masking note of its own. */
+  embedded?: boolean;
   /** Changes with the transcript, so an opened turn's activity loads again. */
   version?: string;
   summary?: string;
@@ -700,6 +704,20 @@ export function TranscriptCard({
 }) {
   const source = useLocalSource(transcript, version);
   const session = shownSession(transcript, live, title);
+  if (embedded)
+    return (
+      <section aria-label="Transcript" className="local-transcript local-transcript-embedded">
+        {summary ? <CompactionSummary summary={summary} /> : null}
+        <SessionCard
+          defaultOpen={true}
+          session={session}
+          source={source}
+          focusTurn={focusTurn}
+          layout="log"
+          headless
+        />
+      </section>
+    );
   return (
     <section aria-label="Transcript" className="local-transcript">
       {summary ? <CompactionSummary summary={summary} /> : null}

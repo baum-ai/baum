@@ -290,6 +290,29 @@ export function useShortcuts(
   }, [allowSheet]);
 }
 
+/** Space on the block the keys are on (`data-review-block-active`, which j
+ *  and k move): presses its first fold, a disclosure button or a details
+ *  summary, as Space opens or closes a row elsewhere. False when the block
+ *  has none, or no block is marked. */
+export function toggleActiveBlock(): boolean {
+  const block = document.querySelector<HTMLElement>("[data-review-block-active]");
+  const fold = block?.querySelector<HTMLElement>("button[aria-expanded], summary");
+  if (!fold) return false;
+  fold.click();
+  return true;
+}
+
+/** Enter on the block the keys are on: presses what opens it
+ *  (`data-block-open`, such as a commit row's subject). False when the block
+ *  opens nothing, or no block is marked. */
+export function openActiveBlock(): boolean {
+  const block = document.querySelector<HTMLElement>("[data-review-block-active]");
+  const open = block?.querySelector<HTMLElement>("[data-block-open]");
+  if (!open) return false;
+  open.click();
+  return true;
+}
+
 /** Each list's last row, by the list's name, for as long as the app runs. */
 const lastRows = new Map<string, string>();
 /** Forgets every list's last row, as a fresh start of the app does. */
@@ -713,8 +736,16 @@ const GROUPS: { place: ShortcutsPlace; title: string; rows: Shortcut[] }[] = [
     place: "review",
     title: "A pull request or group",
     rows: [
-      { keys: ["j"], label: "Next section", short: "section" },
-      { keys: ["k"], label: "Previous section", short: "section" },
+      { keys: ["j", "ArrowDown"], label: "Next item in the section", short: "move" },
+      { keys: ["k", "ArrowUp"], label: "Previous item in the section", short: "move" },
+      { keys: ["l", "ArrowRight"], label: "Next place in the sidebar", short: "sidebar" },
+      { keys: ["h", "ArrowLeft"], label: "Previous place in the sidebar", short: "sidebar" },
+      {
+        keys: [" "],
+        label: "Open or close the item's details, or the selected group in the sidebar",
+        short: "expand",
+      },
+      { keys: ["Enter"], label: "Open the item, such as a commit in the list", short: "open" },
       { keys: ["m"], label: "Merge, where offered", short: "merge" },
       { keys: ["f"], label: "Fix, where offered", short: "fix" },
       { keys: ["g"], label: "Generate or regenerate the review", short: "generate" },
