@@ -1,32 +1,17 @@
 /* The Analytics page: cards of figures and charts on the page body, in the
    app's panel style. Every colour is a token, so dark mode follows. */
-/* On the Inbox's warm panel, its cards in the Inbox's card white. The
-   charts' series take the hosted dashboard's warm palette (its
-   `--data-cool-*`), ordered forest, caramel, sage, espresso so the first
-   three stay apart, not the categorical one's rose or plum. */
+/* On the panel's card, as the Inbox is. The charts' series take the hosted
+   dashboard's warm palette, ordered forest, caramel, sage, espresso so the
+   first three stay apart, not the categorical one's rose or plum. */
 .local-frame:has(.local-page-body.analytics) {
-  --text-primary: var(--un-ink);
-  --text-secondary: var(--un-ink-soft);
-  --text-tertiary: var(--un-muted);
-  --surface-card: var(--un-card);
-  --surface-wash: var(--un-hairline);
-  --border-default: var(--un-line-strong);
-  --border-subtle: var(--un-line);
-  --data-1: var(--accent-600);
-  --data-2: #a8803f;
-  --data-3: #7d8c62;
-  --data-4: #5c4636;
-  background: var(--un-panel);
+  --data-2: var(--data-caramel);
+  --data-3: var(--data-sage);
+  --data-4: var(--data-espresso);
+  background: var(--surface-card);
 }
 /* The switches' tracks in the sidebar's sand, as Settings draws them. */
 :root:not([data-theme="dark"]) .local-frame:has(.local-page-body.analytics) {
   --surface-sunken: var(--nav-hover);
-}
-:root[data-theme="dark"] .local-frame:has(.local-page-body.analytics) {
-  --data-1: #5f9a74;
-  --data-2: #e3c58c;
-  --data-3: #c9d4a6;
-  --data-4: #9a7a62;
 }
 .local-page-body.analytics {
   gap: 1rem;
@@ -367,11 +352,6 @@
   width: 10px;
   height: 10px;
   border-radius: 2px;
-}
-.analytics-key-icon {
-  flex: none;
-  width: 12px;
-  height: 12px;
 }
 .analytics-legend {
   display: flex;

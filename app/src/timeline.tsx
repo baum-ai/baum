@@ -662,7 +662,7 @@ function MoreMenu({ starting, onRebuild }: { starting: boolean; onRebuild: () =>
       <summary
         aria-label="More"
         className={cn(
-          "flex cursor-pointer list-none items-center rounded-(--radius-sm) p-1.5 text-(--un-ink-soft) group-open:bg-(--surface-hover) hover:bg-(--surface-hover) [&::-webkit-details-marker]:hidden",
+          "flex cursor-pointer list-none items-center rounded-(--radius-sm) p-1.5 text-(--text-secondary) group-open:bg-(--surface-hover) hover:bg-(--surface-hover) [&::-webkit-details-marker]:hidden",
           FOCUS_RING,
         )}
       >

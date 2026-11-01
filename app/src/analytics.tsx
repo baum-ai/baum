@@ -1,4 +1,4 @@
-import type { Brand } from "@baum/viewer/brands";
+import { modelBrand, type Brand } from "@baum/viewer/brands";
 import { BrandMark } from "@baum/viewer/components/brand-logo";
 import { useEffect, useRef, useState, type ComponentType, type ReactNode } from "react";
 import {
@@ -204,16 +204,6 @@ const agentColor = (agent: string) => {
 };
 const agentSeries = (agents: readonly string[]): Series[] =>
   agents.map((a) => ({ key: a, label: agentName(a), color: agentColor(a), icon: agentLogos[a] }));
-/** A model's maker's logo, read from its name: Claude's, OpenAI's under
- *  Codex, or Cursor's own. */
-export function modelLogo(model: string): string | undefined {
-  const name = model.toLowerCase();
-  if (name.startsWith("claude")) return claudeLogo;
-  if (/^(gpt|o\d|codex)/.test(name)) return codexLogo;
-  if (/^(cursor|composer)/.test(name)) return cursorLogo;
-  return undefined;
-}
-
 export const WINDOWS = [7, 30, 90] as const;
 /** The window a URL asks for, or 30 days. */
 export function windowDays(raw: string | null): number {
@@ -428,7 +418,7 @@ function Activity({ data }: { data: Analytics }) {
           key: model,
           label: model,
           color: slot(i),
-          icon: modelLogo(model),
+          icon: modelBrand(model) ?? undefined,
         })),
         ...(ranked.length > named.length ? [{ key: OTHER, label: "Other", color: MUTED }] : []),
       ]

@@ -14,7 +14,6 @@ import {
   waitText,
   windowDays,
   type Analytics,
-  modelLogo,
 } from "./analytics";
 import { niceMax } from "./analytics-charts";
 
@@ -334,10 +333,7 @@ it("splits activity by model on asking, and draws the pull request flow, yours o
   expect(node.querySelector('[aria-label="Sessions per day by model"]')).not.toBeNull();
   expect(node.textContent).toContain("claude-opus-4-1");
   // Each model wears its maker's logo in the legend.
-  expect(node.querySelectorAll(".analytics-legend img")).toHaveLength(2);
-  expect(modelLogo("gpt-5-codex")).toBe(modelLogo("o3"));
-  expect(modelLogo("gpt-5-codex")).not.toBe(modelLogo("claude-sonnet-4-5"));
-  expect(modelLogo("Unknown model")).toBeUndefined();
+  expect(node.querySelectorAll(".analytics-legend svg")).toHaveLength(2);
 });
 
 it("reads only a report", () => {

@@ -1,15 +1,15 @@
 import { useId, useState, type ReactNode } from "react";
+import type { Brand } from "@baum/viewer/brands";
+import { BrandMark } from "@baum/viewer/components/brand-logo";
 import { seriesColor } from "@baum/viewer/series";
 
 /** A series: its identity, the fixed colour slot it wears, its label and,
  *  for a harness or a model, its logo. */
-export type Series = { key: string; label: string; color: string; icon?: string };
+export type Series = { key: string; label: string; color: string; icon?: Brand };
 
 /** A series' logo beside its label, when it has one. */
 function Icon({ series }: { series: Series }) {
-  return series.icon ? (
-    <img src={series.icon} alt="" width={12} height={12} className="analytics-key-icon" />
-  ) : null;
+  return series.icon ? <BrandMark brand={series.icon} size={12} /> : null;
 }
 
 /** One column of a column chart: its axis label (or "" to leave the tick

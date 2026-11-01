@@ -1,40 +1,24 @@
 /* The Timeline page: the hosted Timeline's filter bar, tabs and body, in
    the app's panel. Every colour is a token, so dark mode follows. */
-/* Drawn on the Inbox's warm panel, its cards, opened and expanded features
-   and controls in the Inbox's card white, as its risk tile and buttons are.
-   The filter bar's chips keep their sand fill. */
+/* On the panel's card, as the Inbox is; an opened feature's pull requests
+   and sessions in the sunken sand of the Inbox's lists. */
 .local-frame:has(.timeline-page) {
-  background: var(--un-panel);
+  background: var(--surface-card);
 }
-.timeline-page {
-  --text-primary: var(--un-ink);
-  --text-secondary: var(--un-ink-soft);
-  --text-tertiary: var(--un-muted);
-  --surface-card: var(--un-card);
-  --surface-page: var(--un-panel);
-  --surface-sunken: var(--un-hairline);
-  --surface-wash: var(--un-card);
-  --border-default: var(--un-line-strong);
-  --border-subtle: var(--un-line);
-  --action-secondary-hover: var(--un-hover);
-}
-/* An opened feature's pull requests and sessions, in the page's sand on
-   its white. */
 .timeline-page [data-feature-group] {
-  --surface-card: var(--un-panel);
+  --surface-card: var(--surface-sunken);
 }
 /* The feature or decision the keys focused is tinted whole and marked with
    the lists' accent bar, so it stands apart from the row under the pointer;
    the bar replaces the ring. */
 .timeline-page :is(div, li):has(> [data-row-link]:focus-visible) {
   background: var(--surface-hover);
-  box-shadow: inset 3px 0 0 var(--un-ink);
+  box-shadow: inset 3px 0 0 var(--text-primary);
 }
 .timeline-page [data-row-link]:focus-visible {
   box-shadow: none;
 }
 .local-filter-bar.timeline-filters {
-  --surface-wash: var(--un-hairline);
   justify-content: flex-start;
   gap: 0.625rem;
   padding-top: 0.75rem;
