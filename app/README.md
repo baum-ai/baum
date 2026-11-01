@@ -116,13 +116,16 @@ preferring Claude Code. When neither is detected, setup shows official install
 guides and Check again, and waits for an agent before advancing to the final
 step. Rechecking selects a newly installed agent without reloading setup. A
 failed detection offers a retry rather than claiming nothing is installed.
-Its compact model row includes an effort selector for reviews, using the
-model-specific CLI levels documented in
+Onboarding sets two models: one for reviews and data extraction, and one for
+fixes, which defaults to Same as reviews. Each compact model row includes an
+effort selector, using the model-specific CLI levels documented in
 [desktop setup](../desktop/README.md#model-effort-choices). Default leaves the
 choice to the agent; unknown custom models offer Default only. Changing a model
-clears an effort it does not support. The native setup bridge saves the review
-model and effort. Fixes that follow reviews inherit their effort. Extraction
-preferences remain in Settings and are preserved when onboarding saves.
+clears an effort it does not support. A fix agent that is no longer installed
+falls back to Same as reviews. The native setup bridge saves the review and fix
+choices, and saves extraction as the review choice only when onboarding
+changes it, so an extraction setup made in Settings survives an untouched
+onboarding.
 
 The baum daemon serves this React single-page app from its embedded assets;
 the desktop app opens it from the launch URL in the daemon's

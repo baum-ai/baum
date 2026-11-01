@@ -8,7 +8,8 @@ import {
   detectedHarnesses,
   displayPath,
   withModel,
-  storedReviews,
+  setupSave,
+  shownFix,
   shownHarness,
   type Outcome,
   type ReviewSettings,
@@ -72,7 +73,7 @@ export function Setup() {
   const [error, setError] = useState("");
   const [pickedCount, setPickedCount] = useState(0);
   const [reviews, setReviews] = useState<ReviewSettings | null>(null);
-  const [savedReviews, setSavedReviews] = useState("");
+  const [savedReviews, setSavedReviews] = useState<ReviewSettings | null>(null);
   const [github, setGitHub] = useState(false);
   const working = useRef(false);
   const title = useRef<HTMLHeadingElement>(null);
@@ -111,17 +112,17 @@ export function Setup() {
         // "auto" picks and that harness's default model. They differ from what
         // is saved, so opening baum saves the explicit choice.
         const detected = detectedHarnesses(view.hooks.agents);
-        const backend =
-          view.hooks.error && detected.length === 0
-            ? settings.backend
-            : shownHarness(settings, detected);
-        const draft = { ...settings, backend };
+        const unknown = view.hooks.error && detected.length === 0;
+        const backend = unknown ? settings.backend : shownHarness(settings, detected);
+        const draft = unknown
+          ? { ...settings, backend }
+          : shownFix({ ...settings, backend }, detected);
         if (!backend || (settings.backend !== "auto" && settings.backend !== backend)) {
           draft.model = "";
           draft.effort = "";
         }
         setReviews(withModel(draft));
-        setSavedReviews(JSON.stringify(storedReviews(settings)));
+        setSavedReviews(settings);
       })
       .catch((cause) => {
         if (active) setError(String(cause));
@@ -134,10 +135,12 @@ export function Setup() {
     if (!view || (view.hooks.error && detectedHarnesses(view.hooks.agents).length === 0)) return;
     setReviews((current) => {
       if (!current) return current;
-      const backend = shownHarness(current, detectedHarnesses(view.hooks.agents));
+      const detected = detectedHarnesses(view.hooks.agents);
+      const backend = shownHarness(current, detected);
+      const next = shownFix(current, detected);
       return backend === current.backend
-        ? current
-        : withModel({ ...current, backend, model: "", effort: "" });
+        ? next
+        : withModel({ ...next, backend, model: "", effort: "" });
     });
   }, [view]);
   useEffect(() => {
@@ -213,20 +216,19 @@ export function Setup() {
   const done = view
     ? [githubReady, agentReady && !view.hooks.error, Boolean(command?.ok) && agentsDone][step]
     : false;
-  const reviewsChanged =
-    reviews !== null && JSON.stringify(storedReviews(reviews)) !== savedReviews;
-  const modelMissing = reviews !== null && !reviews.model.trim();
+  const modelMissing =
+    reviews !== null &&
+    (!reviews.model.trim() || (Boolean(reviews.fix_backend) && !reviews.fix_model?.trim()));
   async function finish() {
     if (!agentReady || modelMissing) return;
-    if (reviews && reviewsChanged) {
-      const outcome = await invoke<Outcome>("save_review_settings", {
-        settings: storedReviews(reviews),
-      });
+    const settings = reviews && savedReviews && setupSave(reviews, savedReviews);
+    if (settings) {
+      const outcome = await invoke<Outcome>("save_review_settings", { settings });
       if (!outcome.ok) {
         setError(outcome.lines.join("\n"));
         return;
       }
-      setSavedReviews(JSON.stringify(storedReviews(reviews)));
+      setSavedReviews({ ...savedReviews!, ...settings });
     }
     await invoke<void>("finish_setup");
   }

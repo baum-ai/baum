@@ -91,6 +91,11 @@ export function HarnessPicker({
   );
 }
 
+const effortNames: Record<string, string> = {
+  "review-effort": "Review reasoning effort",
+  "fix-effort": "Fix reasoning effort",
+};
+
 type EffortSelection = {
   value: string;
   onChange: (next: string) => void;
@@ -116,11 +121,7 @@ function EffortPicker({
           value={supportedEffort(backend, model, value)}
           disabled={disabled || levels.length === 0}
           onChange={(event) => onChange(event.target.value)}
-          aria-label={
-            id === "review-effort"
-              ? "Review reasoning effort"
-              : "Decision extraction reasoning effort"
-          }
+          aria-label={effortNames[id] ?? "Decision extraction reasoning effort"}
         >
           <option value="">Default</option>
           {levels.map((level) => (
@@ -214,7 +215,7 @@ export function ModelPicker({
       </div>
       {effort ? (
         <EffortPicker
-          id={id === "review-model" ? "review-effort" : "decisions-effort"}
+          id={id.replace(/-model$/, "-effort")}
           backend={backend}
           model={effort.model ?? value ?? ""}
           value={effort.value}
@@ -257,11 +258,19 @@ export function ReviewSettingsForm({
 }) {
   const update = (patch: Partial<ReviewSettings>) => {
     const next = { ...settings, ...patch };
-    onChange({ ...next, effort: supportedEffort(next.backend, next.model, next.effort) });
+    onChange({
+      ...next,
+      effort: supportedEffort(next.backend, next.model, next.effort),
+      fix_effort: next.fix_backend
+        ? supportedEffort(next.fix_backend, next.fix_model ?? "", next.fix_effort)
+        : "",
+    });
   };
+  const fix = settings.fix_backend || null;
   return (
     <div id="review-panel" className={`${className} review-card`}>
       <HarnessPicker
+        legend="Reviews and extraction"
         value={available.includes(settings.backend) ? settings.backend : null}
         disabled={disabled}
         available={available}
@@ -309,6 +318,35 @@ export function ReviewSettingsForm({
             effort={{ value: settings.effort ?? "", onChange: (effort) => update({ effort }) }}
             note="You can customise the agent and model per task in the app settings."
           />
+          <HarnessPicker
+            legend="Fixes"
+            inherit={{ label: "Same as reviews", detail: "Agent and model" }}
+            value={fix}
+            disabled={disabled}
+            available={available}
+            missingLabel={detectionError ? "Not detected" : "Not installed"}
+            onChange={(backend) =>
+              update({
+                fix_backend: backend ?? "",
+                fix_model: backend ? (modelPresets[backend]?.[0] ?? "") : "",
+                fix_effort: backend ? settings.fix_effort : "",
+              })
+            }
+          />
+          {fix ? (
+            <ModelPicker
+              key={fix}
+              id="fix-model"
+              backend={fix}
+              value={settings.fix_model ?? ""}
+              disabled={disabled}
+              onChange={(model) => update({ fix_model: model ?? "" })}
+              effort={{
+                value: settings.fix_effort ?? "",
+                onChange: (fix_effort) => update({ fix_effort }),
+              }}
+            />
+          ) : null}
           <div className="review-section">
             <label className="switch-row">
               <span>
