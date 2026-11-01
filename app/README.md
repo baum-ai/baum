@@ -559,8 +559,32 @@ the agent sessions, and, with a daemon that has inboxes, each inbox by its name
 (opening its queue) with **New inbox** and **Manage inboxes**: every word typed must match, a label that starts with the
 query ranks first, `↑` and `↓` move, `Enter` opens and `Esc` closes. The sidebar
 draws each page's key while Alt is held and names it in the link's tooltip and
-`aria-keyshortcuts`. Tab moves nothing anywhere, dialogs included: the keys act
-on the selection, and a place that needs more gets its own keys. `Esc` gives up any focus left on a control. On a pull request, a group, a job's
+`aria-keyshortcuts`.
+
+Tab (`useTabStops`) reaches every control without leaving the keys' model
+behind. On a page it moves by place: the sidebar is one stop, on the current
+page, where `↑` and `↓` move through its links, and so is each Analytics
+chart, whose bars they move through; all of a page's list rows are one stop,
+landing on the focused or selected row (else the first, which becomes the
+focused row), so `j`, `k`, `Enter` and the row's keys go on from there, and a row's other controls stay with its keys (`x`,
+⌘. for its ⋯) except a form opened in it, such as a repository's clone form in
+Settings, whose controls are stops; every other control (a page bar's, a
+detail pane's, a section heading's) is a stop of its own. Shift+Tab goes back,
+and both wrap. In a dialog Tab goes through each of its controls, a radio
+group as one, and stays inside it. A row's menu and the sidebar's inbox menu
+close on Tab, with the focus back on their ⋯. With focus on a link or button
+that Tab reached, `Enter` and `Space` press it; every other key still
+acts on the selection, and `Esc` brings the focus back to the selected row
+(or lets it go where there is none) instead of clearing the row. Rows keep
+their own `Enter` and `Space`, and Settings its own keys. Nothing changes for
+whoever never presses Tab: the sidebar's arrows, `Esc` back to the row and
+`Enter` and `Space` pressing a focused button apply only once Tab was
+pressed, until the pointer is next pressed, and a
+link or button clicked with the pointer gives up its focus
+(`usePointerBlurs`), so the next `j` or `k` paints no ring on it;
+rows, tabs, menus, dialogs and Settings keep a click's focus, being where the
+keys act. Rings show only for the keyboard (`:focus-visible`). `Esc` in a text
+field gives it up, as before. On a pull request, a group, a job's
 transcript or a session, `Esc` and `u` go back to the page it was opened from
 (the Inbox, an inbox, Pull requests, a group), past moves within it (a
 walkthrough step, the Ask panel): each history entry the app adds records its
@@ -618,10 +642,9 @@ and editable content (checkboxes and radios still pass them) and while any dialo
 is open. On a pull request or group page, `u`, or `Esc` with nothing focused,
 returns to the page it was opened from (the Inbox, or Pull requests with the
 filter kept); on a session's or job's transcript the same keys return to
-Sessions or Jobs. Settings and Analytics have no keys of their own beyond Tab:
-their controls are native fields and buttons (Analytics' window, chart and
-breakdown toggles are pressed buttons in a group), and its charts' bars take
-the focus for their tooltips.
+Sessions or Jobs. Analytics has no keys of its own beyond Tab: its controls
+are native buttons (its window, chart and breakdown toggles are pressed
+buttons in a group), and its charts' bars take the focus for their tooltips.
 
 Update branch and Re-run checks (`src/unblock.tsx`) are secondary buttons in the
 PR page header beside Fix and Merge…, not in Pull requests: a row's menu
@@ -637,7 +660,7 @@ the first names the two branches, the second lists the failed GitHub Actions
 workflow runs it will re-run and, under "Not re-runnable from baum", the
 failing checks of other apps; with no failed run it has nothing to confirm.
 Both dialogs put the focus on the confirm button once GitHub allows the write,
-so `Enter` confirms and `Esc` cancels without Tab. Confirming posts
+so `Enter` confirms and `Esc` cancels with no Tab needed. Confirming posts
 `POST /api/prs/update-branch` or `POST /api/prs/rerun-checks`
 with the head commit the page showed (labels turn to "Updating…" and
 "Re-running…" in the same frame), so a moved branch is refused in words
@@ -791,7 +814,7 @@ shows the read error with Retry. On New inbox and Manage inboxes the sidebar's
 current page is that entry alone, and Inbox is only the section (as when an
 inbox's row is selected); the edit page keeps the inbox's own row current.
 Every control is a real button, link or input with
-a label, with no key of its own, as Tab moves nothing in the app.
+a label, with no key of its own, reached with Tab.
 
 - **New inbox** (`?page=inbox-new`): "What should this inbox catch?" and six
   templates, each a button with a colour dot, name, sentence and how many

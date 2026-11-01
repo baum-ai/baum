@@ -11,9 +11,11 @@ import {
   MAC,
   moveFocus,
   ShortcutsSheet,
+  shouldIgnore,
   useCommandKeys,
   useRowFocus,
   useShortcuts,
+  useTabStops,
 } from "./shortcuts";
 import { rowKey, type Entry, type ReviewGroup } from "./api";
 import type { ReactNode } from "react";
@@ -307,6 +309,115 @@ it("clears the focus with Escape", async () => {
   await press("Escape", {}, document.activeElement!);
   expect(focused()).toBeNull();
   expect(document.activeElement).toBe(document.body);
+});
+
+function TabStops() {
+  useTabStops();
+  return null;
+}
+
+const renderWithTabStops = () =>
+  act(async () =>
+    root.render(
+      <>
+        <TabStops />
+        <Inbox
+          rows={rows}
+          cloneFor={() => "clone"}
+          selection={new Set()}
+          setSelection={handlers.setSelection}
+          Link={({ children, ...props }) => <a {...props}>{children}</a>}
+        />
+      </>,
+    ),
+  );
+
+it("makes the row Tab lands on the focused one, but not a row the pointer focused", async () => {
+  await renderWithTabStops();
+  const links = () => Array.from(node.querySelectorAll<HTMLElement>(".inbox-pr-title"));
+  // The pointer focusing a row's link selects nothing, as before.
+  await act(async () => {
+    window.dispatchEvent(new Event("pointerdown"));
+    links()[0]!.focus();
+  });
+  expect(focused()).toBeNull();
+  (document.activeElement as HTMLElement).blur();
+  await press("Tab");
+  await act(async () => links()[0]!.focus());
+  expect(focusedTitle()).toBe(links()[0]!.textContent);
+  // The row's keys act on it, and j goes on to the next.
+  await press("x", {}, document.activeElement!);
+  expect(handlers.setSelection).toHaveBeenCalled();
+  const first = focusedTitle();
+  await press("j", {}, document.activeElement!);
+  expect(focusedTitle()).not.toBe(first);
+});
+
+it("takes Escape from a button Tab reached back to the focused row, keeping it", async () => {
+  await renderWithTabStops();
+  await press("j");
+  const button = document.createElement("button");
+  node.append(button);
+  button.focus();
+  // Before any Tab, a focused button's Escape gives the row up as before.
+  await press("Escape", {}, button);
+  expect(focused()).toBeNull();
+  await press("j");
+  button.focus();
+  await press("Tab", {}, button);
+  button.focus();
+  await press("Escape", {}, button);
+  expect(focusedTitle()).toBe("Change 2");
+  expect(document.activeElement?.textContent).toBe("Change 2");
+  // On the row itself, Escape still gives the row up.
+  await press("Escape", {}, document.activeElement!);
+  expect(focused()).toBeNull();
+});
+
+it("passes Enter and Space on a focused button to the page until Tab is pressed", async () => {
+  await act(async () => root.render(<TabStops />));
+  const button = document.createElement("button");
+  const rowButton = document.createElement("button");
+  const row = document.createElement("div");
+  row.dataset.rowId = "1";
+  row.append(rowButton);
+  node.append(button, row);
+  const key = (k: string, target: Element) => {
+    const event = new KeyboardEvent("keydown", { key: k, bubbles: true });
+    Object.defineProperty(event, "target", { value: target });
+    return shouldIgnore(event);
+  };
+  expect(key("Enter", button)).toBe(false);
+  await press("Tab", {}, button);
+  expect(key("Enter", button)).toBe(true);
+  expect(key(" ", button)).toBe(true);
+  expect(key("j", button)).toBe(false);
+  // A row keeps its Enter and Space.
+  expect(key("Enter", rowButton)).toBe(false);
+  // The pointer puts them back.
+  await act(async () => {
+    window.dispatchEvent(new Event("pointerdown"));
+  });
+  expect(key("Enter", button)).toBe(false);
+});
+
+it("leaves Enter and Space on a button Tab reached to the button", async () => {
+  await renderWithTabStops();
+  await press("j");
+  const button = document.createElement("button");
+  node.append(button);
+  button.focus();
+  await press("Tab", {}, button);
+  button.focus();
+  const clicked = vi.fn((event: Event) => event.preventDefault());
+  node.addEventListener("click", clicked);
+  await press("Enter", {}, button);
+  await press(" ", {}, button);
+  expect(clicked).not.toHaveBeenCalled();
+  expect(handlers.setSelection).not.toHaveBeenCalled();
+  // The page's other keys still act on the row.
+  await press("j", {}, button);
+  expect(focusedTitle()).not.toBe("Change 2");
 });
 
 it("lists exactly the keys that work in the sheet", async () => {

@@ -114,7 +114,7 @@ const SECTION_CONTROLS = [
   "summary",
 ].join(", ");
 
-/** Settings' keys (`SETTINGS_SHORTCUTS`). Tab moves nothing in the app, so
+/** Settings' keys (`SETTINGS_SHORTCUTS`), beside Tab (`useTabStops`):
  *  the section list is the selection, as Up next's list is: j/↓ and k/↑ move
  *  it, 1 to 5 jump to a section, and Enter, l or → goes into the shown
  *  section. There j/↓ and k/↑ step through its controls, Enter or Space

@@ -129,7 +129,7 @@ export function Sidebar({
     );
   };
   return (
-    <aside className="local-rail">
+    <aside data-tab-region="" className="local-rail">
       <Link href={appURL()} className="local-rail-mark" title="Inbox">
         <Stumpy size={28} className="flex-none" />
         <Wordmark size="sidebar" className="local-rail-label" />
@@ -216,9 +216,10 @@ function InboxRows({
       close(!!menu.current?.contains(document.activeElement));
     };
     // Esc is the menu's alone while it is open: taken before the page's keys,
-    // whose Esc would clear the focus just given back to `⋯`.
+    // whose Esc would clear the focus just given back to `⋯`. Tab closes it
+    // the same way, as it does a row's menu.
     const escape = (event: KeyboardEvent) => {
-      if (event.key !== "Escape") return;
+      if (event.key !== "Escape" && event.key !== "Tab") return;
       event.preventDefault();
       event.stopPropagation();
       close(true);
