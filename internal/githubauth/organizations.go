@@ -39,10 +39,15 @@ type OrganizationAccess struct {
 func (m *Manager) Organizations(ctx context.Context, token string, refresh bool) (OrganizationAccess, error) {
 	key := sha256Sum(token)
 	m.orgsMu.Lock()
-	defer m.orgsMu.Unlock()
 	if !refresh && !m.orgsAt.IsZero() && m.orgsKey == key && m.now().Sub(m.orgsAt) < organizationsTTL {
-		return m.orgs, nil
+		out := m.orgs
+		m.orgsMu.Unlock()
+		return out, nil
 	}
+	m.orgsMu.Unlock()
+	// GitHub is asked without the lock: changedIdentity takes it while holding
+	// the manager gate, and must not wait on the network.
+	revision := m.Revision()
 	memberships, err := m.organizationLogins(ctx, token, "/user/memberships/orgs", true)
 	if err != nil {
 		return OrganizationAccess{}, err
@@ -62,7 +67,12 @@ func (m *Manager) Organizations(ctx context.Context, token string, refresh bool)
 		}
 	}
 	sort.Strings(out.Hidden)
-	m.orgs, m.orgsKey, m.orgsAt = out, key, m.now()
+	m.orgsMu.Lock()
+	defer m.orgsMu.Unlock()
+	// An account change while GitHub was being asked leaves the answer unsaved.
+	if m.Revision() == revision {
+		m.orgs, m.orgsKey, m.orgsAt = out, key, m.now()
+	}
 	return out, nil
 }
 

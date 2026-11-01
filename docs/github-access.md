@@ -38,5 +38,8 @@ its own sign-in, it does not check organizations and shows no banner.
 **Authorize baum on GitHub** link. It can appear right after you sign in, or
 later when baum next reads that organization.
 
-**Fix.** Open the link, choose **Authorize** next to the organization and
-complete its single sign-on, then choose **Check again** in baum.
+**Fix.** Open the link and authorize baum for the organization (GitHub shows
+an **Authorize** button for organizations that enforce SAML), complete its single
+sign-on, then choose **Check again** in baum. If GitHub's page offers no such
+button, open the organization's repository in your browser and follow GitHub's
+SSO prompt.

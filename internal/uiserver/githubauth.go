@@ -135,11 +135,17 @@ func (a *GitHubAuthentication) refreshOrganizations() {
 		return
 	}
 	a.orgsFetching = true
+	revision := a.manager.Revision()
 	go func() {
 		access, err := a.Organizations(a.ctx, false)
 		a.mu.Lock()
 		defer a.mu.Unlock()
 		a.orgsFetching = false
+		// An answer for the previous account is dropped.
+		if a.manager.Revision() != revision {
+			a.orgsAt = time.Time{}
+			return
+		}
 		a.orgsAt = time.Now()
 		a.setOrganizations(access, err)
 	}()
@@ -188,24 +194,33 @@ func (a *GitHubAuthentication) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/github-auth", func(w http.ResponseWriter, r *http.Request) { writeJSON(w, a.snapshot()) })
 	mux.HandleFunc("POST /api/github-auth/retry", func(w http.ResponseWriter, r *http.Request) {
-		if !a.lock(r.Context()) {
+		saved := func() bool {
+			if !a.lock(r.Context()) {
+				return false
+			}
+			defer a.unlock()
+			status, err := a.manager.Status(r.Context())
+			a.mu.Lock()
+			defer a.mu.Unlock()
+			if a.status.Pending == nil {
+				a.status.State, a.status.Login, a.status.Saved = status.State, status.Login, status.State == "connected"
+				a.setError(err)
+			}
+			return a.status.Saved
+		}
+		if r.Context().Err() != nil {
 			return
 		}
-		defer a.unlock()
-		status, err := a.manager.Status(r.Context())
-		a.mu.Lock()
-		if a.status.Pending == nil {
-			a.status.State, a.status.Login, a.status.Saved = status.State, status.Login, status.State == "connected"
-			a.setError(err)
-		}
-		saved := a.status.Saved
-		a.mu.Unlock()
-		if saved && a.Organizations != nil {
-			// "Check again" is how a person tells baum an owner approved it.
+		if saved() && a.Organizations != nil {
+			// "Check again" is how a person tells baum an owner approved it. GitHub
+			// is asked outside the operation gate so sign-in changes never wait on it.
+			revision := a.manager.Revision()
 			access, orgErr := a.Organizations(r.Context(), true)
 			a.mu.Lock()
-			a.orgsAt = time.Now()
-			a.setOrganizations(access, orgErr)
+			if a.manager.Revision() == revision {
+				a.orgsAt = time.Now()
+				a.setOrganizations(access, orgErr)
+			}
 			a.mu.Unlock()
 		}
 		writeJSON(w, a.snapshot())
