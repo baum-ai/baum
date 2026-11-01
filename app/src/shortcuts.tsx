@@ -42,7 +42,9 @@ export const VIEW_KEYS = { previous: ["h", "ArrowLeft"], next: ["l", "ArrowRight
 const UP_NEXT_SHORTCUTS: Shortcut[] = [
   { keys: ["j", "ArrowDown"], label: "Next pull request", short: "move" },
   { keys: ["k", "ArrowUp"], label: "Previous pull request", short: "move" },
-  { keys: ["Enter"], label: "Open the pull request", short: "act" },
+  { keys: ["Enter"], label: "Open the pull request or group", short: "act" },
+  { keys: ["l", "ArrowRight"], label: "Show a group's pull requests" },
+  { keys: ["h", "ArrowLeft"], label: "Hide a group's pull requests" },
   { keys: ["m"], label: "Merge, where offered", short: "merge" },
   { keys: ["f"], label: "Fix, where offered", short: "fix" },
   { keys: ["t"], label: TRANSCRIPT_LABEL },

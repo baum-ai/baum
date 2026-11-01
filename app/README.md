@@ -76,8 +76,9 @@ submitting a review from the walkthrough, a fix the person starts (with its
 replies on the review threads it addressed), and resolving a review thread the
 person chose are the app's only GitHub writes (see below).
 
-A pull request with a saved review opens on the walkthrough's overview
-(`src/walkthrough.tsx`): what matters about it on one page, with no list beside
+A pull request opens on the full review. Once a review is saved, its **Walk
+through** opens the walkthrough's overview (`src/walkthrough.tsx`,
+`?…&walk=landing`): what matters about it on one page, with no list beside
 it. It shows only what says something: the GitHub states that ask for something
 (as the inbox draws them, plus failing checks behind a conflict), unresolved
 threads, lines and files changed, the review time, the summary, the review's
@@ -86,36 +87,67 @@ their lines. Its actions are **Start the review**, the page's own fix, merge,
 update and re-run (and regenerate when the review is outdated), **Full review**
 (v) and GitHub; agents on the branch, a regeneration and a review that could not
 be read show beneath them. **Start the review** opens the tour, `?…&walk=tour`
-(or the retired `walk=all`), so a reload stays there. `walk=full`, or a link to a
-place in the review (`pane=…`), opens the full review, whose **Walk through**
-returns to the overview.
+(or the retired `walk=all`), so a reload stays there. **Full review** (v)
+clears `walk`; the retired `walk=full` also opens the full review.
 
-The Inbox's panel lists a fix's unresolved review threads under the row that
-counts them (`ReviewThreads` in `src/threads.tsx`), asked for with `GET
-api/prs/review-threads` and discovery's `unresolved` count when the panel shows
-the pull request and again when that count changes. The daemon answers from
-its cache while the count matches (see `prupdate.Cache`), so moving
-through the Inbox does not read GitHub each time. Each shows its first comment's
-headline (at most two lines), its author, its file and line linked to the thread on GitHub, whether
-it is outdated and how many comments it has. A thread the signed-in account
-may resolve (`can_resolve`) has a **Resolve** button that posts `api/prs/resolve-thread`
-at once, without a dialog, reads **Resolving…** meanwhile, and removes the thread
+Up next's list shows a review group or stack (`api/groups`) with a shown member
+as one row, in the section and at the place of its first member in the list
+(`withGroups` in `src/up-next.tsx`); its members leave their own rows and nest
+under it when it is opened (its chevron, `l`/`→`; `h`/`←` closes it from the
+group or a member). Each member names its kind, since it may belong to another
+section. A stack's members stay out of **Merge all**, as a stack merges from its
+base up. The group's panel shows its review's state and risk, its members'
+lines, files and review times summed, **Open the stack** (or group) as the
+default, and its members with what each waits on; picking one previews it.
+
+Under its title the panel shows the pull request's facts: its head branch and
+the base it merges into (`head_ref`, `base_ref`), its lines and files changed
+(`additions`, `deletions`, `changed_files` from discovery), baum's time to
+review (`review_minutes`) and a link to it on GitHub.
+
+The panel's rows that open to a detail (`BlockRow`) read it only once opened.
+A fix lists what blocks it under What needs fixing, opened: its unresolved
+review threads, its conflicting files and its failing checks. Any other pull
+request lists them under On GitHub, closed: its checks, its conflict and its
+unresolved threads.
+
+The unresolved review threads (`ReviewThreads` in `src/threads.tsx`) are asked
+for with `GET api/prs/review-threads` and discovery's `unresolved` count, and
+again when that count changes. The daemon answers from its cache while the
+count matches (see `prupdate.Cache`), so moving through the Inbox does not read
+GitHub each time. Each shows its first comment's headline (at most two lines),
+its author, its file and line linked to the thread on GitHub, whether it is
+outdated and how many comments it has. The headline opens the thread's
+conversation (`messages`, up to 20 comments, each body as plain text), with a
+link to the rest on GitHub. A thread the signed-in account may resolve
+(`can_resolve`) has a **Resolve** button that posts `api/prs/resolve-thread` at
+once, without a dialog, reads **Resolving…** meanwhile, and removes the thread
 from the list once GitHub confirms; a refusal is shown under the thread.
 
-Under "Checks failing" the panel lists the head's failing checks
-(`FailingChecks` in `src/checks.tsx`), asked for with `GET
-api/prs/failing-checks` and the head commit it shows (`head_sha`), again when
-that head changes. Each shows the check's name, its conclusion in words
-(`conclusionText`), its title when it has one and a **Details** link (`url`).
-A check with a `job_id` has **Retry** when discovery says the account can push
+The checks (`PullRequestChecks` in `src/checks.tsx`) are asked for with `GET
+api/prs/checks` and the head commit the panel shows (`head_sha`), again when
+that head changes and every 20 seconds while any still runs; an older daemon's
+`api/prs/failing-checks` lists only the failing ones. They are listed failing
+first, then running, then passed, then skipped or neutral, each with its state
+icon, its name, its state in words (`conclusionText`), its title when it has one
+and a **Details** link (`url`), above a count by state. A failing check with a
+`job_id` has **Retry** when discovery says the account can push
 (`viewer_can_push`): it posts `api/prs/rerun-job` at once, reads **Retrying…**,
-then shows "Re-running on GitHub"; a refusal is shown under the check. When the
-pull request offers a fix, the row has **Fix CI**, which starts at once a fix
-of the failing checks alone (`startFix(clone, pr, "checks")`, `"only":"checks"`
-on the item).
+then shows "Re-running on GitHub"; a refusal is shown under the check. When a
+fix's pull request offers one, the Checks failing row has **Fix CI**, which
+starts at once a fix of the failing checks alone (`startFix(clone, pr,
+"checks")`, `"only":"checks"` on the item).
+
+The conflicting files (`ConflictingFiles` in `src/conflicts.tsx`) are asked for
+with `GET api/prs/conflicts`. The daemon fetches the base branch's tip (and the
+head when missing) into the clone's `refs/baum/pull/<N>/` and merges them in
+memory with `git merge-tree --write-tree` (git 2.38 or newer), touching no
+working tree or branch. Without an available clone it answers `no_clone`, which
+the panel shows with a link to GitHub.
 The PR page's **Walk through** button (beside Regenerate, once a review is
-saved) opens the walkthrough (`src/walkthrough.tsx`): `?…&walk=tour` or
-`walk=all`, so a reload stays there, and **Full review** returns to the viewer.
+saved) opens the walkthrough's overview (`src/walkthrough.tsx`): `?…&walk=landing`,
+or `walk=tour` (`walk=all`) in the tour, so a reload stays there, and **Full
+review** returns to the viewer.
 `buildTour` (`src/walkthrough-model.ts`) turns the document into chapters, the
 logical sections with hunks in `sectionsInReviewOrder` (mechanical and obsolete
 sections are left out), and behaviours, one per behaviour step: its `title` (schema revision 2026-10-27.1), its
@@ -137,8 +169,12 @@ wrap-up lists the behaviours not looked at and sends the review. j and k move
 the pick behaviour by behaviour, across chapters; → and ← move a chapter.
 Moving the pick off a behaviour, leaving its chapter or commenting on it marks it
 looked at; seen marks and
-drafts are kept in `localStorage` (`baum.walkthrough`) per repository, pull
-request and review version, the 40 most recent. Submitting posts
+drafts are kept by the daemon in `app.sqlite` per repository, pull
+request and review version, the 40 most recently saved. They survive browser
+storage clearing, a fresh window and a daemon restart. The app loads saved
+progress before writing; queued changes preserve unrelated concurrent edits.
+A failed read or save leaves drafts in the window and shows a retry action.
+Submitting posts
 `POST api/prs/review` with `{repository, pr, head_sha, event, body, comments}`:
 `head_sha` is the reviewed head, each comment `{path, line, side, start_line?,
 body}` sits on the step's anchored lines (or the hunk's first added line), and
@@ -310,13 +346,14 @@ pull request runs. **Add as comment** writes the answer's markdown and one
 `path:start–end` line per citation into the walkthrough draft through
 `walkthrough-model.ts` (`appendToDraft`): after the comment of the stop the
 question's focus names (`draftTarget`), else after the review's overall comment
-(`Progress.note`). It only writes the draft, kept per review version in local
-storage, and calls no GitHub API: the draft is sent only with the review. The
+(`Progress.note`). It only writes the draft, kept per review version in the
+application database, and calls no GitHub API: the draft is sent only with the
+review. The
 confirmation, "Added to your review draft", offers **Undo** (`removeFromDraft`,
 which takes back what was added while it is still at the end of the draft) and
 **Open the draft**, which opens the walkthrough's Everything view and its Submit
-panel. A walkthrough that is open reads its progress again on the
-`PROGRESS_EVENT` the model sends. Chat jobs are not reviews or fixes: `reviewJob` and
+panel. An open walkthrough shares the same hydrated draft record. Chat jobs
+are not reviews or fixes: `reviewJob` and
 `fixJob` ignore them, `chatJobs` lists a pull request's, and the Jobs list and
 transcript page call one "Question on #<pr>". The key `a` is in the shortcuts
 sheet for the pull request page and the walkthrough.
@@ -540,9 +577,11 @@ reviewers, or their branch update did. Their own pull request that only stopped
 being mergeable (a push, checks running) waits uncleared, and nothing is
 cleared for a repository the latest read lists no open pull request of, since
 GitHub may only be unreachable; one that comes back is no longer cleared.
-Snoozes and today's record are kept in this browser's `localStorage`
-(`baum.inbox.v1`) and start again each day, snoozes excepted; nothing reaches
-the daemon. The sidebar's Inbox badge counts the queue without snoozed pull
+Snoozes and today's record are kept in the daemon's `app.sqlite`,
+independently of the browser origin, and start again each local day, snoozes
+excepted. Initial bookkeeping waits until saved state has loaded. Failed reads
+or saves show a retry action and preserve unsaved changes in the window. The
+sidebar's Inbox badge counts the queue without snoozed pull
 requests. It is not the desktop tray's waiting count, which counts only review
 requests and the person's blocked pull requests.
 
@@ -937,7 +976,13 @@ daemon note, **Jobs at once** (how many reviews, fixes and feature builds run
 in parallel, 1–4 and 4 by default, saved with `PUT
 api/settings/job-concurrency` and reported as `job_concurrency` by `GET
 api/settings`; the daemon applies it at once, and lowering it lets running jobs
-finish), in the desktop app the Command line card (inline CLI install,
+finish), **Review time limit** (10 minutes by default) and **Fix time limit**
+(how long a fix, a question to a review's agent or a feature build may run, 30
+minutes by default), each chosen from 5 to 240 minutes, saved together with
+`PUT api/settings/time-limits` as `review_time_limit_minutes` and
+`run_time_limit_minutes`, reported by `GET api/settings` and applied to runs
+that start after the change (runs have no call or token limit unless the
+config file sets one), in the desktop app the Command line card (inline CLI install,
 update and removal) and Zoom, and the environment for agents. Home paths are
 displayed with `~`. **Environment for agents** (`AgentEnvSection`) edits
 variables set for every agent baum runs and for the git commands that commit
@@ -1289,7 +1334,8 @@ Undo through the real store, and a local feature's source transcript. Shared
 viewer behavior is covered by the standalone viewer and hosted UI suites;
 formatting, controls, filtering and state matrices belong in unit/component or
 Go handler tests. Keep browser stories focused on one risky workflow and avoid
-repeating them for themes or collecting screenshots on passing runs.
+repeating them for themes or collecting screenshots on passing runs. The inbox
+fixture uses the `state/inboxes` document in its shared `app.sqlite`.
 `e2e/inbox-screens.spec.ts` takes pictures of the inbox pages, light and dark,
 only with `INBOX_SCREENSHOTS=1`.
 
@@ -1316,3 +1362,23 @@ clipboard access, reload/background completion, saved-account replacement and
 use by generation, disconnect, and access to saved reviews. Denial, expiry,
 network/scope/persistence failures and the endpoint namespace/CSRF matrix stay
 in component and Go handler tests.
+
+## Durable reading state
+
+`GET` and `PUT api/ui-state/inbox` store the Inbox's local-day seen/cleared
+record, time snoozes and head-based snoozes. `GET` and
+`PUT api/ui-state/walkthrough?key=<repository>#<PR>@v<version>` store seen stops,
+per-stop draft comments and the overall comment. The key is URL encoded;
+`src/api.ts` keeps both routes under the authenticated session namespace.
+The backend contract is in [`internal/uistate`](../internal/uistate/README.md).
+
+Each record has its own revision. The window shares a hydrated record across
+the walkthrough and Ask panel, queues changes while a read or save is in
+flight, and rebases semantic changes on a conflict. A stable client/sequence
+mutation ID makes a retry safe even when a save committed but its response was lost. An Ask
+answer appends to the current draft; Undo removes only its suffix while no
+later text follows it. Neither operation sends the draft to GitHub.
+
+Sidebar folding and viewer panel/tab layout remain presentation preferences
+in browser storage. Durable inbox records and review drafts do not use or
+import legacy localStorage values.

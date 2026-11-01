@@ -1,3 +1,4 @@
+import { SavedStateNotice } from "./ui-state";
 import { PreferencesProvider } from "./preferences";
 import { formatCount } from "@baum/viewer/components/format";
 import { UsageDetails } from "./usage";
@@ -677,7 +678,7 @@ function Workspace({ url }: { url: UrlState }) {
   // The shortcuts sheet lists the keys of where it was opened first.
   const shortcutsPlace: ShortcutsPlace = onList
     ? "pulls"
-    : selectedEntry && url.search.get("walk")
+    : selectedEntry && url.search.get("walk") && url.search.get("walk") !== "full"
       ? "walkthrough"
       : (page === "inbox" || page === "pulls") && (groupId || selectedEntry)
         ? "review"
@@ -917,6 +918,7 @@ function Workspace({ url }: { url: UrlState }) {
           ) : null}
         </div>
         <main className="local-main">
+          <SavedStateNotice state={inbox.persistence} label="inbox state" />
           {refreshError ? (
             <Alert>
               Couldn't refresh from GitHub: {refreshError}{" "}
@@ -1154,6 +1156,7 @@ function Workspace({ url }: { url: UrlState }) {
               changed={reload}
               refresh={refresh}
               refreshing={listBusy}
+              reviewGroups={groups}
               Link={LocalLink}
             />
           ) : (

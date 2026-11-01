@@ -1,3 +1,4 @@
+import { mockStateFetch } from "./ui-state-test-helper";
 import { act, useState, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
@@ -97,7 +98,7 @@ beforeEach(() => {
   });
   vi.stubGlobal(
     "fetch",
-    vi.fn(async (path: string) => {
+    mockStateFetch(async (path: string) => {
       requests.push(path);
       if (path.includes("api/document")) return Response.json(doc);
       return Response.json({ methods: ["MERGE"], default: "MERGE", head_sha: "head" });

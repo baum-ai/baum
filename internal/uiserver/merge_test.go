@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/baum-ai/baum/internal/appdb/appdbtest"
 	"github.com/baum-ai/baum/internal/github"
 	"github.com/baum-ai/baum/internal/repos"
 )
@@ -30,7 +31,7 @@ func (f *fakeMerger) MergePullRequest(_ context.Context, r github.Repository, nu
 }
 
 func TestMergeHandler(t *testing.T) {
-	registry, err := repos.Open(filepath.Join(t.TempDir(), "repos.sqlite"))
+	registry, err := repos.Open(filepath.Join(appdbtest.TempDir(t), "repos.sqlite"))
 	if err != nil {
 		t.Fatal(err)
 	}

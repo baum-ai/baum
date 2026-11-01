@@ -104,10 +104,14 @@ type Options struct {
 	Replies ThreadWriter
 	Agent   agent.Fixer
 	// Backend and Model name the agent in the commit message.
-	Backend, Model      string
+	Backend, Model string
+	// MaxCalls and MaxTokens bound the agent when set; zero is no limit.
+	// WallClock is its time limit, defaultWallClock when unset.
 	MaxCalls, MaxTokens int
 	WallClock           time.Duration
-	Logger              *slog.Logger
+	// Logger receives how the agent ended, its error included, which the
+	// job keeps no text of; nil logs nothing.
+	Logger *slog.Logger
 	// Directory holds the fixes' temporary directories; empty is
 	// DefaultDirectory.
 	Directory string
@@ -152,8 +156,19 @@ func DefaultDirectory() (string, error) {
 // fix removes it; no fix runs that long.
 const staleAfter = 24 * time.Hour
 
+// limitText is a time limit as a person reads it: "30 minutes".
+func limitText(d time.Duration) string {
+	if d%time.Minute != 0 {
+		return d.String()
+	}
+	if d == time.Minute {
+		return "1 minute"
+	}
+	return fmt.Sprintf("%d minutes", int(d/time.Minute))
+}
+
 // defaultWallClock bounds an agent run whose Options set no WallClock.
-const defaultWallClock = 45 * time.Minute
+const defaultWallClock = 30 * time.Minute
 
 // Run makes the fix: see the package documentation. A failure is an *Error,
 // except a cancellation, which is the context's error. The checkout is
@@ -233,9 +248,20 @@ func Run(ctx context.Context, o Options) (out Outcome, err error) {
 			wall = defaultWallClock
 		}
 		runCtx, cancel := context.WithTimeout(ctx, wall)
-		result, err := o.Agent.Fix(runCtx, agent.Request{Logger: o.Logger, Directory: checkout.Dir(), Scratch: scratch, Prompt: text, MaxCalls: o.MaxCalls, MaxTokens: o.MaxTokens, Transcript: o.Transcript})
+		// The agent's steps go to the transcript, not the log.
+		started := time.Now()
+		result, err := o.Agent.Fix(runCtx, agent.Request{Directory: checkout.Dir(), Scratch: scratch, Prompt: text, MaxCalls: o.MaxCalls, MaxTokens: o.MaxTokens, Transcript: o.Transcript})
 		timedOut := runCtx.Err() != nil
 		cancel()
+		if o.Logger != nil {
+			attrs := []any{"duration", time.Since(started).Round(time.Second), "time_limit", wall, "calls", result.Calls, "tokens", result.Tokens}
+			if err != nil {
+				// A provider's own error text is logged, never kept in the job.
+				o.Logger.Warn("fix agent failed", append(attrs, "timed_out", timedOut, "error", err)...)
+			} else {
+				o.Logger.Info("fix agent finished", attrs...)
+			}
+		}
 		out.Agent = &result
 		out.Summary = string(result.Document)
 		if len(o.Threads) > 0 {
@@ -245,14 +271,22 @@ func Run(ctx context.Context, o Options) (out Outcome, err error) {
 			if ctx.Err() != nil {
 				return out, ctx.Err()
 			}
-			// A provider's own error text is logged, never kept in the job.
-			if o.Logger != nil {
-				o.Logger.Warn("fix agent failed", "error", err)
+			if timedOut {
+				return out, fail(ReasonBudget, fmt.Errorf("the agent reached its time limit (%s) before it finished; raise it in Settings", limitText(wall)))
 			}
-			if timedOut || strings.HasPrefix(err.Error(), agent.GenerationBudgetExceededReason("")) {
-				return out, fail(ReasonBudget, errors.New("the agent reached its time, call or token limit before it finished"))
+			if spent, ok := strings.CutPrefix(err.Error(), agent.GenerationBudgetExceededReason("")); ok {
+				// Only the budget's name is kept: text after it may be the
+				// provider's.
+				limit := "call or token"
+				switch {
+				case strings.HasPrefix(spent, "model calls"):
+					limit = "model call"
+				case strings.HasPrefix(spent, "tokens"):
+					limit = "token"
+				}
+				return out, fail(ReasonBudget, fmt.Errorf("the agent reached its %s limit before it finished", limit))
 			}
-			return out, fail(ReasonBackend, errors.New("the agent or its provider failed before it finished"))
+			return out, fail(ReasonBackend, errors.New("the agent or its provider failed before it finished; the baum daemon log has the error"))
 		}
 	}
 	progress("committing")
@@ -307,10 +341,25 @@ func Run(ctx context.Context, o Options) (out Outcome, err error) {
 	return out, nil
 }
 
+// OpenForFetch opens the clone with the remote whose fetch URL, as configured
+// or as git rewrites it, names repository, origin first, as the registry files
+// a clone, for a read that only fetches: where it pushes does not matter. Its
+// error is an *Error; the reason is ReasonNoRemote when no remote names the
+// repository.
+func OpenForFetch(ctx context.Context, clone string, repository github.Repository) (*gitlocal.Repo, error) {
+	return openNamed(ctx, clone, repository, false)
+}
+
 // openForRemote opens the clone with the remote whose URL, as configured or
 // as git rewrites it, names repository, origin first, as the registry files a
-// clone.
+// clone, and that pushes only to it.
 func openForRemote(ctx context.Context, clone string, repository github.Repository) (*gitlocal.Repo, error) {
+	return openNamed(ctx, clone, repository, true)
+}
+
+// openNamed opens the clone with the remote naming repository, one that also
+// pushes only to it when push is set.
+func openNamed(ctx context.Context, clone string, repository github.Repository, push bool) (*gitlocal.Repo, error) {
 	repo, err := gitlocal.Open(ctx, clone, gitlocal.Options{})
 	if err != nil {
 		return nil, fail(ReasonGit, err)
@@ -329,18 +378,7 @@ func openForRemote(ctx context.Context, clone string, repository github.Reposito
 		// Every URL git pushes to must name the repository too, as configured
 		// or as rewritten, the same trust the fetch URL gets: a pushurl to a
 		// fork would otherwise take the fix and leave the pull request as it was.
-		configured, effective, err := repo.RemotePushURLs(ctx, remote.Name)
-		if err != nil || len(effective) == 0 || len(configured) != len(effective) {
-			continue
-		}
-		pushes := true
-		for i := range effective {
-			if !names(configured[i]) && !names(effective[i]) {
-				pushes = false
-				break
-			}
-		}
-		if !pushes {
+		if push && !pushesTo(ctx, repo, remote.Name, names) {
 			continue
 		}
 		if !names(remote.URL) {
@@ -365,6 +403,21 @@ func openForRemote(ctx context.Context, clone string, repository github.Reposito
 		return nil, fail(ReasonGit, err)
 	}
 	return repo, nil
+}
+
+// pushesTo reports whether every URL remote pushes to, as configured or as
+// rewritten, names the repository.
+func pushesTo(ctx context.Context, repo *gitlocal.Repo, remote string, names func(string) bool) bool {
+	configured, effective, err := repo.RemotePushURLs(ctx, remote)
+	if err != nil || len(effective) == 0 || len(configured) != len(effective) {
+		return false
+	}
+	for i := range effective {
+		if !names(configured[i]) && !names(effective[i]) {
+			return false
+		}
+	}
+	return true
 }
 
 func commitMessage(o Options) string {

@@ -111,6 +111,9 @@ func CanPush(ctx context.Context, r Reader, repository github.Repository) (bool,
 type Check struct {
 	Name       string `json:"name"`
 	Conclusion string `json:"conclusion"`
+	// Status is queued, in_progress or completed; AllChecks sets it, and
+	// Conclusion is then empty until the check completes.
+	Status string `json:"status,omitempty"`
 	// Title, Summary and Text are a check run's output; a commit status has
 	// its description in Summary.
 	Title   string `json:"title,omitempty"`
@@ -191,6 +194,74 @@ func FailingChecks(ctx context.Context, r Reader, repository github.Repository, 
 		}
 	}
 	return checks[:min(len(checks), maxChecks)], nil
+}
+
+// MaxAllChecks bounds how many checks AllChecks lists.
+const MaxAllChecks = 100
+
+// AllChecks lists every check run (their latest attempt) and commit status
+// of the head commit, passing or not, at most MaxAllChecks, with their output
+// bounded. A commit status that is pending is in_progress, and any other is
+// completed; JobID is set only for a failing GitHub Actions run, as in
+// FailingChecks.
+func AllChecks(ctx context.Context, r Reader, repository github.Repository, sha string) ([]Check, error) {
+	var checks []Check
+	path := repositoryPath(repository) + "/commits/" + url.PathEscape(sha)
+	for page := 1; len(checks) < MaxAllChecks; page++ {
+		var runs struct {
+			CheckRuns []struct {
+				ID         int64
+				Name       string
+				Status     string
+				Conclusion string
+				HTMLURL    string `json:"html_url"`
+				DetailsURL string `json:"details_url"`
+				App        *struct{ Slug string }
+				Output     struct{ Title, Summary string }
+			} `json:"check_runs"`
+		}
+		if err := readJSON(ctx, r, fmt.Sprintf("%s/check-runs?per_page=100&filter=latest&page=%d", path, page), &runs); err != nil {
+			return nil, fmt.Errorf("reading the checks: %w", err)
+		}
+		for _, run := range runs.CheckRuns {
+			check := Check{Name: bounded(run.Name, 256), Status: run.Status, Title: bounded(run.Output.Title, 512), Summary: bounded(run.Output.Summary, 512), URL: cmp.Or(run.DetailsURL, run.HTMLURL)}
+			// GitHub also reports waiting, requested and pending runs, which
+			// have not started.
+			if check.Status != "completed" && check.Status != "in_progress" {
+				check.Status = "queued"
+			}
+			if check.Status == "completed" {
+				check.Conclusion = run.Conclusion
+				if run.App != nil && run.App.Slug == "github-actions" && failing[run.Conclusion] {
+					check.JobID = run.ID
+				}
+			}
+			checks = append(checks, check)
+			if len(checks) == MaxAllChecks {
+				break
+			}
+		}
+		if len(runs.CheckRuns) < 100 {
+			break
+		}
+	}
+	var combined struct {
+		Statuses []struct {
+			Context, State, Description string
+			TargetURL                   string `json:"target_url"`
+		}
+	}
+	if err := readJSON(ctx, r, path+"/status?per_page=100", &combined); err != nil {
+		return nil, fmt.Errorf("reading the commit statuses: %w", err)
+	}
+	for _, status := range combined.Statuses {
+		check := Check{Name: bounded(status.Context, 256), Status: "completed", Conclusion: status.State, Summary: bounded(status.Description, 512), URL: status.TargetURL}
+		if status.State == "pending" {
+			check.Status, check.Conclusion = "in_progress", ""
+		}
+		checks = append(checks, check)
+	}
+	return checks[:min(len(checks), MaxAllChecks)], nil
 }
 
 // Logs reads the end of the job log of the first four failing GitHub

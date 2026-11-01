@@ -12,7 +12,7 @@ import (
 	"sync"
 	"unicode/utf8"
 
-	"github.com/baum-ai/baum/internal/generate"
+	"github.com/baum-ai/baum/internal/appdb"
 )
 
 // Limits and the allowed values of the enumerated fields.
@@ -82,23 +82,23 @@ type StaleError struct{ Current State }
 
 func (*StaleError) Error() string { return "The inboxes changed since they were read." }
 
-// UnreadableError reports a stored file that cannot be read. It is never
+// UnreadableError reports stored state that cannot be read. It is never
 // overwritten, so what it holds is not lost silently.
 type UnreadableError struct{ Err error }
 
-func (e *UnreadableError) Error() string { return "the inbox file cannot be read: " + e.Err.Error() }
+func (e *UnreadableError) Error() string { return "the inbox state cannot be read: " + e.Err.Error() }
 func (e *UnreadableError) Unwrap() error { return e.Err }
 
-// Store keeps the inboxes in one JSON file.
+// Store keeps inbox definitions in the application database.
 type Store struct {
 	path string
 	mu   sync.Mutex
 }
 
-// Open returns a store backed by path. The file is created by the first save.
+// Open returns a store backed by the application database at path.
 func Open(path string) *Store { return &Store{path: path} }
 
-// Read returns the stored state; a missing file is revision 0 with no inboxes.
+// Read returns stored state; a missing document is revision 0 with no inboxes.
 func (s *Store) Read() (State, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -106,12 +106,19 @@ func (s *Store) Read() (State, error) {
 }
 
 func (s *Store) read() (State, error) {
-	data, err := os.ReadFile(s.path)
+	data, err := appdb.Read(s.path, "state", "inboxes")
 	if errors.Is(err, os.ErrNotExist) {
 		return State{Inboxes: []Inbox{}}, nil
 	}
 	if err != nil {
 		return State{}, &UnreadableError{err}
+	}
+	return decode(data)
+}
+
+func decode(data []byte) (State, error) {
+	if data == nil {
+		return State{Inboxes: []Inbox{}}, nil
 	}
 	var state State
 	if err := json.Unmarshal(data, &state); err != nil {
@@ -131,30 +138,32 @@ func (s *Store) read() (State, error) {
 func (s *Store) Replace(revision int, inboxes []Inbox) (State, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	current, err := s.read()
-	if err != nil {
-		return State{}, err
+	var next State
+	read := false
+	err := appdb.Update(s.path, "state", "inboxes", func(raw []byte) ([]byte, error) {
+		read = true
+		current, err := decode(raw)
+		if err != nil {
+			return nil, err
+		}
+		if revision != current.Revision {
+			return nil, &StaleError{current}
+		}
+		known := map[string]bool{}
+		for _, inbox := range current.Inboxes {
+			known[inbox.ID] = true
+		}
+		clean, err := normalize(inboxes, known)
+		if err != nil {
+			return nil, err
+		}
+		next = State{Revision: current.Revision + 1, Inboxes: clean}
+		return json.Marshal(next)
+	})
+	if err != nil && !read {
+		return State{}, &UnreadableError{err}
 	}
-	if revision != current.Revision {
-		return State{}, &StaleError{current}
-	}
-	known := map[string]bool{}
-	for _, inbox := range current.Inboxes {
-		known[inbox.ID] = true
-	}
-	clean, err := normalize(inboxes, known)
-	if err != nil {
-		return State{}, err
-	}
-	next := State{Revision: current.Revision + 1, Inboxes: clean}
-	data, err := json.MarshalIndent(next, "", "  ")
-	if err != nil {
-		return State{}, err
-	}
-	if err := generate.WriteFileAtomic(s.path, append(data, '\n')); err != nil {
-		return State{}, err
-	}
-	return next, nil
+	return next, err
 }
 
 func newID() string {

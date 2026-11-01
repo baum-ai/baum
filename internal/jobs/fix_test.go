@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/baum-ai/baum/agent"
+	"github.com/baum-ai/baum/internal/appdb/appdbtest"
 	"github.com/baum-ai/baum/internal/config"
 	"github.com/baum-ai/baum/internal/fix"
 	"github.com/baum-ai/baum/internal/generate"
@@ -78,7 +79,7 @@ func newFixRepositories(t *testing.T) fixRepositories {
 	gitFor(t, clone, "remote", "set-url", "origin", "https://github.com/owner/repo.git")
 	gitFor(t, clone, "config", "url."+remote+".insteadOf", "https://github.com/owner/repo.git")
 	gitFor(t, clone, "remote", "add", "github", "https://github.com/owner/repo")
-	registry, err := repos.Open(filepath.Join(t.TempDir(), "repos.sqlite"))
+	registry, err := repos.Open(filepath.Join(appdbtest.TempDir(t), "repos.sqlite"))
 	if err != nil {
 		t.Fatal(err)
 	}

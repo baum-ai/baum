@@ -41,6 +41,29 @@ may start it, and it outlives the app: quitting the app leaves it running.
 
 A second launch focuses the existing window instead of opening another one.
 
+## Native settings
+
+The native shell keeps one `desktop.json` in its OS app-config directory
+(`~/.config/com.usebaum.desktop/` on Linux). It reads this file before
+connecting to the daemon:
+
+| Section | Holds |
+| --- | --- |
+| `setup` | first-run completion and installed CLI command records |
+| `notifications` | notification-kind toggles and the OS permission answer |
+| `window` | the page zoom level |
+| `updates` | versions whose automatic installation failed |
+
+Every change reads the latest document and replaces only its section, under
+one lock shared by all native threads. Setup completion and CLI records are
+updated independently within their section, so finishing setup while a command
+installation runs preserves both. A private temporary file is flushed and
+renamed into place; on Unix the saved file is mode 0600. Reads of a damaged
+file or section use safe defaults and log the problem; writes refuse damaged
+JSON or a malformed section instead of overwriting it. CLI install/removal
+also refuses unreadable setup records before changing a link. Separate
+pre-release settings files are not imported.
+
 ## First run: the baum command and the hooks
 
 First run uses a three-step setup in the landing page's sand, espresso and green
@@ -102,8 +125,8 @@ or add action. Displayed paths abbreviate the current home directory as
      Installation and enablement do not mean the user has trusted the hooks.
 
 Failed actions leave the user on the step with their output and a retry action.
-"Check again" rereads the installed state. Finishing records `setup.json`,
-attaches to the daemon and opens the inbox. If diagnostics find a problem,
+"Check again" rereads the installed state. Finishing records `desktop.json`'s
+setup section, attaches to the daemon and opens the inbox. If diagnostics find a problem,
 the inbox shows a notice linking to the fixes. Later, "Command Line and Hooks…"
 in the tray, or the menu bar on macOS, reopens the same steps, with removal controls for
 the command and each agent plugin. Settings also provides these controls inline, without reopening setup.
@@ -203,7 +226,7 @@ PATH resolution fails, the app uses its inherited PATH and displays the reason.
   up. A `baum` in a system `PATH` directory still comes first; the screen
   says so.
 
-`setup.json` is the user's file, so the app uses a record only when it has
+`desktop.json` is the user's file, so the app uses a setup record only when it has
 this shape (a link named `baum`, a backup named as above, an absolute target
 named `baum`), still blocks a package manager's baum and asks before
 replacing anything it did not itself link, and asks for a password to remove
@@ -211,12 +234,11 @@ a link only when the record names the baum the app runs now. Remove deletes only
 still points where the app put it (a link someone changed since is left
 alone, and the screen names a backup still beside it), and puts back a baum
 it had replaced; on Windows it takes the directory off the user `PATH`.
-`setup.json` lists every link the app made and has not removed: installing
-in a new place removes the earlier one, and one that cannot be removed (a
+`desktop.json`'s `setup.commands` lists every link the app made and has not
+removed: installing in a new place removes the earlier one, and one that cannot be removed (a
 cancelled password prompt) stays listed, shown on the screen, until Remove
 succeeds for it. Updating the app's own link keeps the backup of the baum it
-replaced, so Remove still puts that back. (A `setup.json` of the first
-release, with a single `command`, is read as a one-item list.)
+replaced, so Remove still puts that back.
 Hooks are removed with the bundled `baum hooks uninstall --user`, which
 removes only the native `baum@baum` plugin and leaves the marketplace and
 other plugins. Settings' Update runs the bundled `baum hooks update --user
@@ -446,12 +468,12 @@ title is not interpreted.
   report a macOS refusal, so a refusal there simply shows nothing. A refusal
   the platform does report is remembered and the app stops trying; switching a
   kind on again in the menu asks once more.
-- **Settings.** Each kind is on by default, and so is a kind added after
-  `notifications.json` was written. A "Notifications" submenu with one
-  check item per kind is in the macOS menu bar and in the tray menu. Linux and
+- **Settings.** Each kind is on by default; an unspecified kind stays on.
+  A "Notifications" submenu with one check item per kind is in the macOS
+  menu bar and in the tray menu. Linux and
   Windows windows have no menu bar, so there the tray holds them. The choices
-  and the permission answer are saved in `notifications.json` in the app's
-  config directory
+  and the permission answer are saved in `desktop.json`'s `notifications`
+  section in the app's config directory
   (`~/.config/com.usebaum.desktop/` on Linux). Those saved settings are the
   only copy of the state: a click on either menu flips them, then both menus
   are rebuilt or updated from them. Native menus need no page capability.
@@ -484,9 +506,9 @@ doing anything (`src/zoom.rs`).
   through `zoom_state` and `set_zoom`. It follows changes made by the shortcuts.
   It stays hidden when the app does not offer these commands, as when a
   different daemon's pages show in an older app.
-- **Saved.** The level is saved in `window.json` in the app's config
-  directory and applied when the window opens and whenever a page starts
-  loading. A missing, damaged or unknown level is 100%.
+- **Saved.** The level is saved in `desktop.json`'s `window` section in the
+  app's config directory and applied when the window opens and whenever a
+  page starts loading. A missing, damaged or unknown level is 100%.
 
 ## What pages may do
 
@@ -559,8 +581,9 @@ builds never check; `BAUM_DESKTOP_UPDATES=0` turns checks off.
   directory the user cannot write, an app on a read-only volume), only says
   that a new version exists, once per version and app start, and offers to
   open its release page. Updating it is the user's job, as with any package.
-  A version whose installation failed is remembered (`updates.json` in the
-  app's config directory) and from then on only announced this way.
+  A version whose installation failed is remembered (`desktop.json`'s
+  `updates` section in the app's config directory) and from then on only
+  announced this way.
 - Restarting the app does not stop the daemon. The first client to run the
   new `baum` replaces an older daemon, as after any upgrade.
 

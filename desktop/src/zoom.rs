@@ -3,9 +3,10 @@
 //! the daemon, the same way on X11, Wayland, Windows and macOS. Ctrl (Cmd on
 //! macOS) with `+`, `-` and `0` changes it on any page through `SCRIPT`, which
 //! the window injects into every page it loads; the desktop Settings page
-//! offers the levels too. The level is saved in `window.json` in the app's
-//! configuration directory.
+//! offers the levels too. The level is saved in the `window` section of
+//! `desktop.json` in the app's configuration directory.
 
+#[cfg(test)]
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -14,7 +15,7 @@ use std::sync::Mutex;
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager, Webview};
 
-const FILE: &str = "window.json";
+const SECTION: &str = "window";
 
 /// The levels the shortcuts step through and Settings offers.
 pub const LEVELS: [f64; 10] = [0.67, 0.75, 0.8, 0.9, 1.0, 1.1, 1.25, 1.5, 1.75, 2.0];
@@ -45,7 +46,7 @@ pub struct Zoom {
 
 impl Zoom {
     fn in_dir(dir: PathBuf) -> Zoom {
-        let path = dir.join(FILE);
+        let path = dir.join(crate::settings::FILE);
         Zoom {
             level: Mutex::new(load(&path)),
             path: Some(path),
@@ -90,26 +91,16 @@ impl Zoom {
 /// The saved level; a missing, damaged or unknown one is 100%, so a bad file
 /// never leaves the window unreadable.
 fn load(path: &Path) -> f64 {
-    let Ok(data) = fs::read(path) else {
-        return DEFAULT;
-    };
-    match serde_json::from_slice::<Saved>(&data) {
-        Ok(saved) if LEVELS.contains(&saved.zoom) => saved.zoom,
-        Ok(_) => DEFAULT,
-        Err(e) => {
-            eprintln!("baum desktop: window settings unreadable, using defaults: {e}");
-            DEFAULT
-        }
+    let saved: Saved = crate::settings::load(path, SECTION);
+    if LEVELS.contains(&saved.zoom) {
+        saved.zoom
+    } else {
+        DEFAULT
     }
 }
 
 fn save(path: &Path, zoom: f64) -> io::Result<()> {
-    if let Some(dir) = path.parent() {
-        fs::create_dir_all(dir)?;
-    }
-    let temporary = path.with_extension("json.tmp");
-    fs::write(&temporary, serde_json::to_vec_pretty(&Saved { zoom })?)?;
-    fs::rename(&temporary, path)
+    crate::settings::update(path, SECTION, |saved: &mut Saved| saved.zoom = zoom)
 }
 
 /// The level one step from `current` in `direction` (1 in, -1 out, 0 back to
@@ -225,10 +216,10 @@ mod tests {
 
     #[test]
     fn a_damaged_or_unknown_level_is_the_default() {
-        for (name, content) in [("damaged", "{"), ("unknown", r#"{"zoom":7}"#)] {
+        for (name, content) in [("damaged", "{"), ("unknown", r#"{"window":{"zoom":7}}"#)] {
             let dir = scratch(name);
             fs::create_dir_all(&dir).unwrap();
-            fs::write(dir.join(FILE), content).unwrap();
+            fs::write(dir.join(crate::settings::FILE), content).unwrap();
             assert_eq!(Zoom::in_dir(dir.clone()).level(), DEFAULT);
             let _ = fs::remove_dir_all(dir);
         }

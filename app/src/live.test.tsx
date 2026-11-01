@@ -1,3 +1,4 @@
+import { mockStateFetch } from "./ui-state-test-helper";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
@@ -94,7 +95,7 @@ beforeEach(() => {
   );
   vi.stubGlobal(
     "fetch",
-    vi.fn(async (path: string) =>
+    mockStateFetch(async (path: string) =>
       path === "/s/test-ns/api/live-sessions"
         ? liveFails
           ? new Response("failed", { status: 500 })

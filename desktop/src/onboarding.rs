@@ -7,10 +7,11 @@
 //! the daemon and opens its inbox. The menu item
 //! reopens the screen to see what is installed, update it or remove it.
 //!
-//! Whether setup ran and what the app installed live in `setup.json` in the
-//! app's configuration directory.
+//! Whether setup ran and what the app installed live in the `setup` section
+//! of `desktop.json` in the app's configuration directory.
 
 use std::ffi::OsStr;
+#[cfg(test)]
 use std::fs;
 use std::io::{BufRead, BufReader, Read};
 use std::path::{Path, PathBuf};
@@ -47,7 +48,6 @@ pub const SETUP_PERMISSIONS: &[&str] = &[
 ];
 /// The bundled connecting screen.
 const CONNECTING_PAGE: &str = "index.html";
-const STATE_FILE: &str = "setup.json";
 /// The menu item's id in the window's menu bar, and its label there and in
 /// the tray.
 pub const MENU_ID: &str = "command-line-and-hooks";
@@ -71,7 +71,7 @@ pub struct Setup {
     busy: Mutex<()>,
 }
 
-/// What `setup.json` holds.
+/// The `setup` section of `desktop.json`.
 #[derive(Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 struct Saved {
     /// The user finished first-run setup, whatever they chose.
@@ -82,37 +82,22 @@ struct Saved {
     /// prompt), so that Remove can try it again.
     #[serde(default)]
     commands: Vec<Record>,
-    /// Where `setup.json` files of the first release kept their one record;
-    /// read, moved into `commands` and not written again.
-    #[serde(default, skip_serializing)]
-    command: Option<Record>,
-}
-
-impl Saved {
-    fn migrate(mut self) -> Saved {
-        if let Some(record) = self.command.take()
-            && !self.commands.contains(&record)
-        {
-            self.commands.insert(0, record);
-        }
-        self
-    }
 }
 
 fn state_file(app: &AppHandle) -> Result<PathBuf, String> {
     app.path()
         .app_config_dir()
-        .map(|dir| dir.join(STATE_FILE))
+        .map(|dir| dir.join(crate::settings::FILE))
         .map_err(|e| format!("Cannot find the app's configuration directory: {e}"))
 }
 
 /// An unreadable file reads as a first run, which only shows setup again.
 fn load_from(path: &Path) -> Saved {
-    fs::read(path)
-        .ok()
-        .and_then(|data| serde_json::from_slice::<Saved>(&data).ok())
-        .map(Saved::migrate)
-        .unwrap_or_default()
+    crate::settings::load(path, "setup")
+}
+
+fn read_from(path: &Path) -> Result<Saved, String> {
+    crate::settings::read(path, "setup").map_err(|e| format!("Cannot read {}: {e}", path.display()))
 }
 
 /// After installing `new`, removes the app's other recorded links (`remove`
@@ -160,27 +145,18 @@ fn remove_all(
     (left, lines)
 }
 
-fn save_to(path: &Path, saved: &Saved) -> Result<(), String> {
-    let fail = |e: std::io::Error| format!("Cannot save {}: {e}", path.display());
-    let dir = path.parent().ok_or("The setup file has no directory.")?;
-    fs::create_dir_all(dir).map_err(fail)?;
-    let data = serde_json::to_vec_pretty(saved).map_err(|e| e.to_string())?;
-    let temporary = dir.join(format!(".{STATE_FILE}.{}", std::process::id()));
-    fs::write(&temporary, data).map_err(fail)?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(&temporary, fs::Permissions::from_mode(0o600)).map_err(fail)?;
-    }
-    fs::rename(&temporary, path).map_err(fail)
-}
-
 fn load(app: &AppHandle) -> Saved {
     state_file(app).map(|p| load_from(&p)).unwrap_or_default()
 }
 
-fn save(app: &AppHandle, saved: &Saved) -> Result<(), String> {
-    save_to(&state_file(app)?, saved)
+fn update(app: &AppHandle, change: impl FnOnce(&mut Saved)) -> Result<(), String> {
+    let path = state_file(app)?;
+    update_at(&path, change)
+}
+
+fn update_at(path: &Path, change: impl FnOnce(&mut Saved)) -> Result<(), String> {
+    crate::settings::update(path, "setup", change)
+        .map_err(|e| format!("Cannot save {}: {e}", path.display()))
 }
 
 /// Prepares setup when the app starts and returns the bundled page the
@@ -433,6 +409,7 @@ pub async fn install_command(app: AppHandle, replace: Option<PathBuf>) -> Result
     blocking(move || {
         let setup = app.state::<Setup>();
         let _busy = setup.busy.lock().unwrap_or_else(|p| p.into_inner());
+        let mut saved = read_from(&state_file(&app)?)?;
         let cli = cli()?;
         let status = command_status(&app, &cli);
         if status.installed {
@@ -447,7 +424,6 @@ pub async fn install_command(app: AppHandle, replace: Option<PathBuf>) -> Result
                 .unwrap_or_else(|| "The baum command cannot be installed.".into()));
         };
         let record = install::install(&plan, &target, replace.as_deref(), &SystemPrompt)?;
-        let mut saved = load(&app);
         let mut lines = installed_lines(&plan, &record);
         // Links the app made elsewhere earlier (a baum earlier on the PATH
         // hid them) are removed, and stay recorded if that fails.
@@ -456,8 +432,7 @@ pub async fn install_command(app: AppHandle, replace: Option<PathBuf>) -> Result
             install::uninstall(r, Some(target.as_path()), &home, &SystemPrompt)
         });
         lines.extend(removed);
-        saved.commands = kept;
-        save(&app, &saved)?;
+        update(&app, |saved| saved.commands = kept)?;
         Ok(Outcome { ok: true, lines })
     })
     .await
@@ -490,7 +465,7 @@ pub async fn uninstall_command(app: AppHandle) -> Result<Outcome, String> {
     blocking(move || {
         let setup = app.state::<Setup>();
         let _busy = setup.busy.lock().unwrap_or_else(|p| p.into_inner());
-        let mut saved = load(&app);
+        let mut saved = read_from(&state_file(&app)?)?;
         if saved.commands.is_empty() {
             return Ok(Outcome {
                 ok: true,
@@ -504,8 +479,7 @@ pub async fn uninstall_command(app: AppHandle) -> Result<Outcome, String> {
             install::uninstall(r, current.as_deref(), &home, &SystemPrompt)
         });
         let ok = left.is_empty();
-        saved.commands = left;
-        save(&app, &saved)?;
+        update(&app, |saved| saved.commands = left)?;
         Ok(Outcome { ok, lines })
     })
     .await
@@ -879,12 +853,7 @@ mod repository_relay_tests {
 /// to the connecting screen and attaches to the daemon, opening its inbox.
 #[tauri::command]
 pub fn finish_setup(app: AppHandle) -> Result<(), String> {
-    let mut saved = load(&app);
-    let first = !saved.onboarded;
-    if first {
-        saved.onboarded = true;
-        save(&app, &saved)?;
-    }
+    update(&app, |saved| saved.onboarded = true)?;
     let setup = app.state::<Setup>();
     setup.open.store(false, Ordering::SeqCst);
     if let Some(window) = app.get_webview_window(crate::MAIN) {
@@ -1001,15 +970,18 @@ mod tests {
 
     #[test]
     fn first_run_state_round_trips() {
-        let path = temp_dir("state").join("config/setup.json");
+        let path = temp_dir("state").join("config").join(crate::settings::FILE);
         assert_eq!(load_from(&path), Saved::default());
         let saved = Saved {
             onboarded: true,
             commands: vec![record("/home/user/.local/bin/baum")],
-            command: None,
         };
-        save_to(&path, &saved).unwrap();
-        assert_eq!(load_from(&path), saved);
+        update_at(&path, |current| *current = saved).unwrap();
+        assert!(load_from(&path).onboarded);
+        assert_eq!(
+            load_from(&path).commands,
+            vec![record("/home/user/.local/bin/baum")]
+        );
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
@@ -1029,28 +1001,33 @@ mod tests {
         }
     }
 
-    /// A setup.json of the first release, with one `command`, reads as a
-    /// list and is written back as one.
     #[test]
-    fn an_older_setup_file_is_migrated() {
-        let path = temp_dir("migrate").join("setup.json");
-        fs::write(
-            &path,
-            r#"{"onboarded":true,"command":{"link":"/usr/local/bin/baum","target":"/Applications/baum.app/Contents/MacOS/baum","backup":"/usr/local/bin/baum.replaced-by-baum-app","admin":true}}"#,
-        )
-        .unwrap();
+    fn finishing_setup_and_recording_commands_keep_each_other() {
+        let path = temp_dir("concurrent-setup").join(crate::settings::FILE);
+        std::thread::scope(|scope| {
+            scope.spawn(|| update_at(&path, |saved| saved.onboarded = true).unwrap());
+            scope.spawn(|| {
+                update_at(&path, |saved| {
+                    saved.commands = vec![record("/home/user/.local/bin/baum")]
+                })
+                .unwrap()
+            });
+        });
         let saved = load_from(&path);
-        assert!(saved.onboarded && saved.command.is_none());
-        assert_eq!(saved.commands.len(), 1);
-        assert_eq!(saved.commands[0].link, PathBuf::from("/usr/local/bin/baum"));
-        assert!(saved.commands[0].admin && saved.commands[0].backup.is_some());
-        save_to(&path, &saved).unwrap();
-        let written = fs::read_to_string(&path).unwrap();
-        assert!(
-            written.contains("\"commands\"") && !written.contains("\"command\""),
-            "{written}"
-        );
-        assert_eq!(load_from(&path), saved);
+        assert!(saved.onboarded);
+        assert_eq!(saved.commands, vec![record("/home/user/.local/bin/baum")]);
+    }
+
+    #[test]
+    fn a_damaged_setup_file_cannot_be_replaced() {
+        let path = temp_dir("corrupt-setup").join(crate::settings::FILE);
+        for setup in ["[]", "null", "true", r#""bad""#] {
+            let data = format!(r#"{{"setup":{setup},"notifications":{{"permission":"denied"}}}}"#);
+            fs::write(&path, &data).unwrap();
+            assert!(read_from(&path).is_err());
+            assert!(update_at(&path, |saved| saved.onboarded = true).is_err());
+            assert_eq!(fs::read_to_string(&path).unwrap(), data);
+        }
     }
 
     /// An earlier link that cannot be removed (a cancelled password prompt)

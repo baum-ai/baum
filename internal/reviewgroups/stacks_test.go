@@ -2,8 +2,6 @@ package reviewgroups
 
 import (
 	"context"
-	"database/sql"
-	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -119,26 +117,5 @@ func TestSyncStacksLeavesOutStacksPastMaxMembers(t *testing.T) {
 	}
 	if changed, err := s.SyncStacks(context.Background(), "acme/demo", prs); err != nil || changed {
 		t.Fatalf("a stack of %d: %v %v", len(prs), changed, err)
-	}
-}
-
-func TestOpenAddsTheStackColumn(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "groups.sqlite")
-	db, err := sql.Open("sqlite", path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := db.Exec(`CREATE TABLE groups(id TEXT PRIMARY KEY, repository TEXT NOT NULL, name TEXT NOT NULL, members TEXT NOT NULL, created INTEGER NOT NULL, updated INTEGER NOT NULL, deleted INTEGER NOT NULL DEFAULT 0);
-INSERT INTO groups(id,repository,name,members,created,updated) VALUES('old','acme/demo','Old','[1,2]',1,1);`); err != nil {
-		t.Fatal(err)
-	}
-	_ = db.Close()
-	s, err := Open(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = s.Close() }()
-	if g, err := s.Get(context.Background(), "old"); err != nil || g.Stack || !slices.Equal(g.Members, []int{1, 2}) {
-		t.Fatalf("old group %+v %v", g, err)
 	}
 }

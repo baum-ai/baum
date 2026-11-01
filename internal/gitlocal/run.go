@@ -181,6 +181,9 @@ type runSpec struct {
 	timeout time.Duration
 	// config are extra -c settings, applied before the subcommand.
 	config []string
+	// keepOutput returns stdout along with the error of a command that
+	// exits non-zero, for one whose exit status is an answer.
+	keepOutput bool
 }
 
 // run executes git without a shell, under a timeout, with stdout and stderr
@@ -214,7 +217,11 @@ func run(ctx context.Context, spec runSpec, args ...string) ([]byte, error) {
 		if ctxErr := ctx.Err(); ctxErr != nil && !errors.Is(err, ctxErr) {
 			err = fmt.Errorf("%w: %w", err, ctxErr)
 		}
-		return nil, &Error{Command: args[0], Stderr: sanitize(stderr.buf.Bytes()), Err: err}
+		var kept []byte
+		if spec.keepOutput {
+			kept = stdout.buf.Bytes()
+		}
+		return kept, &Error{Command: args[0], Stderr: sanitize(stderr.buf.Bytes()), Err: err}
 	}
 	return stdout.buf.Bytes(), nil
 }

@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/baum-ai/baum/internal/appdb/appdbtest"
 	"github.com/baum-ai/baum/internal/github"
 	"github.com/baum-ai/baum/internal/prupdate"
 	"github.com/baum-ai/baum/internal/repos"
@@ -34,6 +35,16 @@ func (f *fakeUpdater) RerunJob(_ context.Context, r github.Repository, number in
 func (f *fakeUpdater) FailingChecks(_ context.Context, _ github.Repository, _ int, head string) (prupdate.Checks, error) {
 	f.calls = append(f.calls, "checks "+head)
 	return prupdate.Checks{HeadSHA: "abc", Checks: []prupdate.FailingCheck{{Name: "test", Conclusion: "failure", Title: "2 tests failed", URL: "u", JobID: 21}}}, f.err
+}
+
+func (f *fakeUpdater) AllChecks(_ context.Context, _ github.Repository, _ int, head string) (prupdate.CheckList, error) {
+	f.calls = append(f.calls, "all checks "+head)
+	return prupdate.CheckList{HeadSHA: "abc", Checks: []prupdate.CheckStatus{{Name: "build", Status: "in_progress"}, {Name: "test", Status: "completed", Conclusion: "failure", JobID: 21}}}, f.err
+}
+
+func (f *fakeUpdater) Conflicts(_ context.Context, r github.Repository, number int) (prupdate.ConflictFiles, error) {
+	f.calls = append(f.calls, fmt.Sprintf("conflicts %s#%d", r, number))
+	return prupdate.ConflictFiles{HeadSHA: "abc", BaseRef: "main", BaseSHA: "def", Files: []string{"a.go"}}, f.err
 }
 
 func (f *fakeUpdater) ResolveThread(_ context.Context, r github.Repository, number int, id string) error {
@@ -69,7 +80,7 @@ func (f *fakeUpdater) RerunFailedChecks(_ context.Context, r github.Repository, 
 }
 
 func TestUpdateHandler(t *testing.T) {
-	registry, err := repos.Open(filepath.Join(t.TempDir(), "repos.sqlite"))
+	registry, err := repos.Open(filepath.Join(appdbtest.TempDir(t), "repos.sqlite"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -145,7 +156,7 @@ func TestUpdateHandler(t *testing.T) {
 }
 
 func TestUpdateHandlerReviewThreads(t *testing.T) {
-	registry, err := repos.Open(filepath.Join(t.TempDir(), "repos.sqlite"))
+	registry, err := repos.Open(filepath.Join(appdbtest.TempDir(t), "repos.sqlite"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -174,6 +185,28 @@ func TestUpdateHandlerReviewThreads(t *testing.T) {
 	if w := do("GET", "/api/prs/failing-checks?repository=acme/bare&pr=7&head_sha=abc", ""); w.Code != 200 || !strings.Contains(w.Body.String(), `"title":"2 tests failed"`) || strings.Join(updater.calls, ",") != "checks abc" {
 		t.Fatalf("failing checks: %d %s %v", w.Code, w.Body.String(), updater.calls)
 	}
+	updater.calls = nil
+	if w := do("GET", "/api/prs/checks?repository=acme/bare&pr=7&head_sha=abc", ""); w.Code != 200 || w.Body.String() != `{"head_sha":"abc","checks":[{"name":"build","status":"in_progress","conclusion":""},{"name":"test","status":"completed","conclusion":"failure","job_id":21}]}`+"\n" || strings.Join(updater.calls, ",") != "all checks abc" {
+		t.Fatalf("all checks: %d %s %v", w.Code, w.Body.String(), updater.calls)
+	}
+	updater.calls = nil
+	if w := do("GET", "/api/prs/conflicts?repository=acme/bare&pr=7", ""); w.Code != 200 || w.Body.String() != `{"head_sha":"abc","base_ref":"main","base_sha":"def","files":["a.go"]}`+"\n" || strings.Join(updater.calls, ",") != "conflicts acme/bare#7" {
+		t.Fatalf("conflicts: %d %s %v", w.Code, w.Body.String(), updater.calls)
+	}
+	for _, path := range []string{"/api/prs/checks", "/api/prs/conflicts"} {
+		if w := do("GET", path+"?repository=acme/other&pr=7", ""); w.Code != 404 {
+			t.Fatalf("%s unpicked: %d", path, w.Code)
+		}
+		if w := do("GET", path+"?repository=acme/bare", ""); w.Code != 400 {
+			t.Fatalf("%s missing pr: %d", path, w.Code)
+		}
+	}
+	updater.err = &prupdate.Error{Code: prupdate.NoClone, Message: "baum has no local clone of this repository to compare the branches in."}
+	if w := do("GET", "/api/prs/conflicts?repository=acme/bare&pr=7", ""); w.Code != 422 || w.Body.String() != `{"code":"no_clone","message":"baum has no local clone of this repository to compare the branches in."}`+"\n" {
+		t.Fatalf("no clone: %d %s", w.Code, w.Body.String())
+	}
+	updater.err = nil
+	updater.calls = nil
 	if w := do("GET", "/api/prs/failing-checks?repository=acme/other&pr=7", ""); w.Code != 404 {
 		t.Fatalf("unpicked checks: %d", w.Code)
 	}

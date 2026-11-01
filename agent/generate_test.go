@@ -301,11 +301,27 @@ func TestGenerateBudgets(t *testing.T) {
 			t.Fatalf("the failure lost the rejected document or the findings: %+v", outcome)
 		}
 	})
-	t.Run("no calls or tokens left", func(t *testing.T) {
+	t.Run("no calls left for a retry", func(t *testing.T) {
 		generator, run, backend := loopFixture(t, nil)
-		run.Budgets.MaxCalls = 0
-		if _, _, err := generator.Generate(context.Background(), run); err == nil || err.Error() != GenerationBudgetExceededReason("model calls") || len(backend.calls) != 0 {
+		run.Budgets.MaxCalls = 1
+		backend.run = func(context.Context, Request, int) (Result, error) {
+			return Result{Calls: 1, Tokens: 10}, errors.New("provider unavailable")
+		}
+		if _, _, err := generator.Generate(context.Background(), run); err == nil || err.Error() != GenerationBudgetExceededReason("model calls") || len(backend.calls) != 1 {
 			t.Fatalf("%v calls=%d", err, len(backend.calls))
+		}
+	})
+	t.Run("zero calls and tokens are no limit", func(t *testing.T) {
+		generator, run, backend := loopFixture(t, nil)
+		run.Budgets.MaxCalls, run.Budgets.MaxTokens = 0, 0
+		backend.run = func(context.Context, Request, int) (Result, error) {
+			return Result{Document: authoredFixture(), Model: "fixture-model", Calls: 500, Tokens: 10_000_000}, nil
+		}
+		if _, document, err := generator.Generate(context.Background(), run); err != nil || len(document) == 0 {
+			t.Fatal(err)
+		}
+		if request := backend.calls[0]; request.MaxCalls != 0 || request.MaxTokens != 0 {
+			t.Fatalf("an unbounded run bounded its request: %+v", request)
 		}
 	})
 }

@@ -4560,12 +4560,6 @@ kbd.key-hint {
   color: var(--un-muted);
   font-size: 13.5px;
 }
-.upnext-minutes {
-  margin-left: auto;
-  color: var(--un-ink-soft);
-  font-size: 13.5px;
-  white-space: nowrap;
-}
 .upnext-chip {
   flex: none;
   padding: 2px 8px;
@@ -4865,6 +4859,170 @@ kbd.key-hint {
 .upnext-page .upnext-thread-resolve:disabled {
   cursor: progress;
   opacity: 0.7;
+}
+/* A row that opens to its detail: the checks, the conflicting files, the
+   threads, or a thread's conversation. */
+.upnext-chevron {
+  flex: none;
+  color: var(--un-muted);
+  transition: transform 0.15s ease-out;
+}
+[aria-expanded="true"] > .upnext-chevron {
+  transform: rotate(90deg);
+}
+@media (prefers-reduced-motion: reduce) {
+  .upnext-chevron {
+    transition: none;
+  }
+}
+.upnext-page :is(.upnext-detail-toggle, .upnext-thread-toggle, .upnext-member-pick) {
+  display: flex;
+  flex: 1;
+  align-items: flex-start;
+  gap: 8px;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+}
+.upnext-page :is(.upnext-detail-toggle, .upnext-thread-toggle) .upnext-chevron {
+  margin-top: 4px;
+}
+.upnext-page
+  :is(.upnext-detail-toggle, .upnext-member-pick):hover
+  .upnext-block-text
+  > :first-child,
+.upnext-page .upnext-thread-toggle:hover .upnext-thread-excerpt {
+  text-decoration: underline;
+}
+.upnext-detail-body {
+  flex-basis: 100%;
+  min-width: 0;
+}
+.upnext-check-icon {
+  flex: none;
+  align-self: center;
+}
+.upnext-check-failing {
+  color: var(--status-critical);
+}
+.upnext-check-running {
+  color: var(--status-caution);
+}
+.upnext-check-passing {
+  color: var(--status-positive);
+}
+.upnext-check-other {
+  color: var(--un-muted);
+}
+.upnext-conflict-file {
+  overflow-wrap: anywhere;
+}
+.upnext-block .upnext-thread-messages {
+  margin: 6px 0 2px;
+  padding: 0 0 0 12px;
+  border-left: 2px solid var(--un-hairline);
+  list-style: none;
+}
+.upnext-block .upnext-thread-messages li {
+  display: block;
+  padding: 6px 0;
+  border-top: 0;
+}
+.upnext-thread-author {
+  font-size: 13px;
+  font-weight: 600;
+}
+.upnext-thread-body {
+  margin: 2px 0 0;
+  color: var(--un-ink-soft);
+  font-size: 13.5px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+/* The facts under the title: branches, size, time to review, GitHub. */
+.upnext-facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 24px;
+  margin: 0;
+  font-size: 13.5px;
+}
+.upnext-facts > div {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.upnext-facts dt {
+  color: var(--un-muted);
+  font-size: 12px;
+}
+.upnext-facts dd {
+  margin: 0;
+  color: var(--un-ink);
+}
+.upnext-branches {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  color: var(--un-muted);
+}
+.upnext-panel code {
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 12px;
+}
+.upnext-branches code {
+  overflow: hidden;
+  max-width: 260px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: var(--surface-wash);
+  color: var(--un-ink);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* A review group's row and its members nested under it. */
+.upnext-group-line {
+  display: flex;
+  align-items: center;
+}
+.upnext-page .upnext-group-toggle {
+  display: flex;
+  width: 22px;
+  height: 22px;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  margin-left: calc(1.5rem - 3px);
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+}
+.upnext-page .upnext-group-toggle:hover {
+  background: var(--surface-hover);
+}
+/* Beside its toggle, the row takes the rest of the line, not all of it. */
+.upnext-group-line .upnext-row {
+  flex: 1;
+  width: auto;
+  min-width: 0;
+  padding-left: 7px;
+}
+.upnext-member .upnext-row {
+  padding-left: 3rem;
+}
+.upnext-stack-icon {
+  display: inline;
+  margin-right: 5px;
+  color: var(--un-muted);
+  vertical-align: -2px;
 }
 .upnext-block-more {
   margin: 0;
