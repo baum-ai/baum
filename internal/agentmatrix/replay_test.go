@@ -108,7 +108,7 @@ func (m *matrix) checkReplay() {
 		if err != nil {
 			return []byte(err.Error()), 0
 		}
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 		body, _ := io.ReadAll(resp.Body)
 		return body, resp.StatusCode
 	}
