@@ -107,6 +107,9 @@ func (s *Store) SyncStacks(ctx context.Context, repository string, prs []discove
 	}
 	stored := make([]stacks.StoredStack, len(live))
 	byID := map[string]Group{}
+	// The saved state of each member that is no longer open, for a new group
+	// split from a stored one.
+	savedState := map[int]string{}
 	for i, g := range live {
 		byID[g.ID] = g
 		stored[i] = stacks.StoredStack{ID: g.ID, CreatedAt: g.CreatedAt}
@@ -126,6 +129,7 @@ func (s *Store) SyncStacks(ctx context.Context, repository string, prs []discove
 			// rule keeps a chain a merge retargeted.
 			if _, open := candidates[number]; !open && !claimed[number] && (entry.HeadRef != "" || entry.BaseRef != "") {
 				candidates[number] = stacks.Candidate{Number: number, Merged: landedState(observed[number], entry.State) != StateClosed, BaseRef: entry.BaseRef, HeadRef: entry.HeadRef, Author: entry.Author}
+				savedState[number] = entry.State
 			}
 		}
 	}
@@ -137,11 +141,18 @@ func (s *Store) SyncStacks(ctx context.Context, repository string, prs []discove
 		var name string
 		var entries []chainEntry
 		for _, member := range stack.Members {
-			members = append(members, member.Number)
+			entry := entryOf(member.Number, member.Parent, candidates)
+			// Only open pull requests are members; one that merged or closed
+			// keeps its place in the chain as landed, as an update does.
+			if candidates[member.Number].Open {
+				members = append(members, member.Number)
+			} else {
+				entry.State = landedState(observed[member.Number], savedState[member.Number])
+			}
 			if member.Parent == nil {
 				name = stackName(pulls[member.Number])
 			}
-			entries = append(entries, entryOf(member.Number, member.Parent, candidates))
+			entries = append(entries, entry)
 		}
 		if members, err = cleanMembers(members); err != nil {
 			continue
