@@ -158,23 +158,26 @@ test("a page's refresh still shows running after visiting another page", async (
   await expect(sessionsRefresh).not.toHaveAttribute("aria-busy", "true");
 });
 
-test("the refresh key reads the open repository picker from GitHub again", async ({ page }) => {
+test("the refresh key and button read the open repository picker from GitHub again", async ({
+  page,
+}) => {
   const pressRefresh = await probeRefreshKey(page);
   await open(page, "?page=repositories");
   await page.getByRole("button", { name: "Add repositories", exact: true }).click();
   const picker = page.getByRole("region", { name: "Choose GitHub repositories" });
   await expect(picker.getByRole("checkbox", { name: "Pick acme/demo", exact: true })).toBeVisible();
-  const asked = page.waitForRequest(
-    (request) =>
-      new URL(request.url()).pathname.endsWith("/api/github/repositories") &&
-      new URL(request.url()).searchParams.get("refresh") === "1",
-  );
-  // Only the page behind the picker reads the index.
-  const behind = page.waitForRequest((request) =>
-    new URL(request.url()).pathname.endsWith("/api/index"),
-  );
+  // Only a refresh asks GitHub for the list again rather than its cache.
+  const fromGitHub = () =>
+    page.waitForRequest(
+      (request) =>
+        new URL(request.url()).pathname.endsWith("/api/github/repositories") &&
+        new URL(request.url()).searchParams.get("refresh") === "1",
+    );
+  const byKey = fromGitHub();
   await pressRefresh();
-  await asked;
-  await behind;
+  await byKey;
+  const byButton = fromGitHub();
+  await page.getByRole("button", { name: "Refresh", exact: true }).click();
+  await byButton;
   await expect(picker.getByRole("checkbox", { name: "Pick acme/demo", exact: true })).toBeVisible();
 });

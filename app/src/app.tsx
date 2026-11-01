@@ -636,6 +636,8 @@ function Workspace({ url }: { url: UrlState }) {
     if (press.restart) for (const other of refreshesRunning.current) other.abort();
     const abort = new AbortController();
     press.signal.addEventListener("abort", () => abort.abort(), { once: true });
+    // A press superseded before its refresh started does not run.
+    if (press.signal.aborted) abort.abort();
     const { signal } = abort;
     const dropped = new Promise<void>((resolve) =>
       signal.addEventListener("abort", () => resolve(), { once: true }),

@@ -489,31 +489,32 @@ page shows again: the pages of pull requests (the Inbox, Pull requests, a pull
 request or group) ask GitHub at once for their repositories' pull requests
 (`api/prs/refresh`, by the local clone where there is one) and then read the
 daemon again, one repository at a time and each such refresh after the one
-before it, unless pressed again (below). A page's latest refresh names the repositories that failed in an
-alert, if the page is still shown. The other pages read their own data
-again, and a page whose reads an effect makes (Timeline, Analytics) settles
-the refresh when the read made for it ends (`useReread`); the Timeline's
-lists count as read once the open tab's list holds a read at the refresh's
-revision. With the Repositories picker open, the refresh also reads the
-picker's list from GitHub again. Until the refresh settles, and on the Inbox
-and Pull requests while any refresh from GitHub runs and during the first
-read, the arrow becomes the nine-dots loader. Pressing it again meanwhile
-starts it again: the refresh under way is aborted, a refresh from GitHub drops
-every other one under way (on any page, as one that never answers holds the
-queue and the lists' loader) and goes first, and the daemon read starts
-afresh, so a read that never answers can always be retried. The app keeps the page's refresh above the
-page (`usePageRefresh`, keyed by the page shown), so a refresh under way
-survives a pull request switching between its walkthrough and full review,
-and each page's refresh runs and shows on its own: leaving a page and coming
-back while its refresh runs shows it running. A page registers its refresh
-also where it draws no button (`usePageRefreshAction`), as a pull request or
-group while its review loads, or a walkthrough with nothing to walk through;
-the key and the button press the latest registered, so the open Repositories
-picker's refresh takes the page's. `⌘R` (Ctrl+R elsewhere) is one of the app-wide keys and presses
-it, in text fields too; under a dialog it does nothing. It never reloads the
-app: a page with no refresh of its own, such as one still loading, reads all
-of the daemon's data again, restarting a read under way. `⇧⌘R` stays the
-browser's reload.
+before it, unless pressed again (below). A page's latest refresh names the
+repositories that failed in an alert, if the page is still shown. The other
+pages read their own data again, and a page whose reads an effect makes
+(Timeline, Analytics) settles the refresh when the read made for it ends
+(`useReread`); the Timeline's lists count as read once the open tab's list
+holds a read at the refresh's revision. With the Repositories picker open, the
+refresh also reads the picker's list from GitHub again. Until the refresh
+settles, and on the Inbox and Pull requests while any refresh from GitHub runs
+and during the first read, the arrow becomes the nine-dots loader. Pressing it
+again meanwhile starts it again: the refresh under way is aborted, a refresh
+from GitHub drops every other one under way (on any page, as one that never
+answers holds the queue and the lists' loader) and goes first, and the daemon
+read starts afresh, so a read that never answers can always be retried. The
+app keeps the page's refresh above the page (`usePageRefresh`, keyed by the
+page shown), so a refresh under way survives a pull request switching between
+its walkthrough and full review, and each page's refresh runs and shows on its
+own: leaving a page and coming back while its refresh runs shows it running. A
+page registers its refresh also where it draws no button
+(`usePageRefreshAction`), as a pull request or group while its review loads,
+or a walkthrough with nothing to walk through; the key and the button press
+the latest registered, so the open Repositories picker's refresh takes the
+page's. `⌘R` (Ctrl+R elsewhere) is one of the app-wide keys and presses it, in
+text fields too; under a dialog it does nothing. It never reloads the app: a
+page with no refresh of its own, such as one still loading, reads all of the
+daemon's data again, restarting a read under way. `⇧⌘R` stays the browser's
+reload.
 
 Keyboard shortcuts (`src/shortcuts.tsx`, one key table that both the handling and
 the sheet read). Every page is reached from the keyboard. With the command key
