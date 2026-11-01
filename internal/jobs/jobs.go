@@ -628,7 +628,7 @@ func (q *Queue) reviewMembers(ctx context.Context, group Prepared, isolation boo
 	q.mu.Lock()
 	items := []Item{}
 	for _, number := range group.Awaiting {
-		if !q.reviewPending(group.Repository, number) {
+		if !q.reviewPending(group.Clone, number) {
 			items = append(items, Item{Clone: group.Clone, PR: number})
 		}
 	}
@@ -645,10 +645,11 @@ func (q *Queue) reviewMembers(ctx context.Context, group Prepared, isolation boo
 }
 
 // reviewPending reports whether a pull request's own review is queued or
-// running; mu is held.
-func (q *Queue) reviewPending(repository string, number int) bool {
+// running in a clone. Only one in the group's clone counts: each clone has
+// its own review store, which the group's review reads. mu is held.
+func (q *Queue) reviewPending(clone string, number int) bool {
 	for _, j := range q.jobs {
-		if j.Kind == "" && j.Group == "" && j.PR == number && strings.EqualFold(j.Repository, repository) && (j.State == "queued" || j.State == "running") {
+		if j.Kind == "" && j.Group == "" && j.PR == number && j.Clone == clone && (j.State == "queued" || j.State == "running") {
 			return true
 		}
 	}
