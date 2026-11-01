@@ -1490,7 +1490,11 @@ function whatChanged(doc: ReviewDocument | null): PanelBlock[] {
  *  is read, without one, or when the read fails. */
 function useGroupDocument(group: ReviewGroup | undefined) {
   const [doc, setDoc] = useState<{ id: string; doc: ReviewDocument } | null>(null);
-  const id = group && group.version_count > 0 ? `${group.id}@${group.updated_at}` : "";
+  // A new version leaves `updated_at` alone, so its count is in the key too.
+  const id =
+    group && group.version_count > 0
+      ? `${group.id}@${group.version_count}@${group.updated_at}`
+      : "";
   useEffect(() => {
     if (!id || !group) return;
     const abort = new AbortController();
