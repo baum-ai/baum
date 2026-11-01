@@ -16,6 +16,7 @@ import {
   checkStatus,
   type LoadReviewVersion,
   type ReviewDocument,
+  type ReviewFacts,
   RISK_SCORE_MEANING,
   reviewThreadStatus,
   reviewGeneration,
@@ -50,7 +51,13 @@ import {
   TeamChatIcon,
 } from "./icons";
 import { PaneDivider } from "./pane-divider";
-import { type ActivityMembers, ReviewActivity, ReviewDetails } from "./review-details";
+import {
+  type ActivityMembers,
+  FactsActivity,
+  FactsDetails,
+  ReviewActivity,
+  ReviewDetails,
+} from "./review-details";
 import { ChangesOverview } from "./review-groups";
 import {
   REVIEW_BAR_PX,
@@ -191,6 +198,11 @@ export type ReviewViewerProps<F extends ReviewFile = ReviewFile> = {
   placeholder?: ReactNode;
   /** The Details and Activity tabs' content while there is no document. */
   asidePlaceholder?: ReactNode;
+  /** The pull request's facts while there is no document: the Details and
+   *  Activity tabs show them in place of `asidePlaceholder`, and their
+   *  failing checks and open threads flag the tabs. They are never a
+   *  version: the version menu, history and sections ignore them. */
+  facts?: ReviewFacts | null;
   /** Rail rows to list while there is no document. */
   fallbackSections?: { id: string; label: string }[];
   checks?: ReviewChecks;
@@ -238,6 +250,12 @@ export type ReviewViewerProps<F extends ReviewFile = ReviewFile> = {
   /** Folds the side pane to its strip while true, whatever the reader chose,
    *  for a host that shares the width with a pane of its own. */
   foldSidePane?: boolean;
+  /** Asks the host to write again the details of a section of the current
+   *  version whose details failed; the section then offers a Retry. */
+  onRetryDetails?: (sectionId: string) => void | Promise<unknown>;
+  /** The current document is a draft whose context the host is still
+   *  writing: while it has none, the Summary says so in its place. */
+  contextPending?: boolean;
 };
 
 /** The places either side of the one being read, in reading order. */
@@ -346,6 +364,7 @@ function ReviewWorkspace<F extends ReviewFile>({
   header,
   placeholder,
   asidePlaceholder,
+  facts = null,
   fallbackSections,
   checks,
   renderSectionAside,
@@ -364,6 +383,8 @@ function ReviewWorkspace<F extends ReviewFile>({
   onVersionsShown,
   steps: stepsRef,
   foldSidePane = false,
+  onRetryDetails,
+  contextPending = false,
 }: ReviewViewerProps<F> & { view: HistoryView }) {
   const [requested, setSelection] = useReviewSelection();
   // A place whose group the host has not supplied reads as the Summary. The
@@ -876,16 +897,23 @@ function ReviewWorkspace<F extends ReviewFile>({
   const barChecks = barDocument && detailsChecks ? detailsChecks(barDocument) : null;
   // CI leads the Activity tab, with the review threads: what still needs the
   // author. Without that tab it stays at the head of Details.
+  // Facts stand in for a document only while there is none.
+  const barFacts = barDocument ? null : facts;
   const checksFailing = barChecks
     ? barChecks.failing
-    : Boolean(barDocument && checkStatus(barDocument).state === "failing");
+    : Boolean(
+        (barDocument && checkStatus(barDocument).state === "failing") ||
+          (barFacts && checkStatus(barFacts).state === "failing"),
+      );
   const barMembers = barDocument && activityMembers ? activityMembers(barDocument) : undefined;
   const threadsOpen = (
     barMembers
       ? barMembers.members.map((member) => member.document)
       : barDocument
         ? [barDocument]
-        : []
+        : barFacts
+          ? [barFacts]
+          : []
   ).some((shown) => (reviewThreadStatus(shown)?.open.length ?? 0) > 0);
   const barTabs: { value: ConversationTab; label: string; icon: ReactNode; tone?: "critical" }[] = [
     ...(conversation ? [{ value: "chat" as const, label: "Chat", icon: <TeamChatIcon /> }] : []),
@@ -1530,6 +1558,8 @@ function ReviewWorkspace<F extends ReviewFile>({
                         footer={detailsFooter?.(barDocument)}
                       />
                     </>
+                  ) : barFacts ? (
+                    <FactsDetails facts={barFacts} checks={hideActivity ? undefined : null} />
                   ) : (
                     barPlaceholder
                   )
@@ -1564,6 +1594,21 @@ function ReviewWorkspace<F extends ReviewFile>({
                           }
                         />
                       </>
+                    ) : barFacts ? (
+                      <FactsActivity
+                        facts={barFacts}
+                        onSelectSession={
+                          sessions
+                            ? (id) => {
+                                setFolded((current) => ({ ...current, sessions: false }));
+                                setSelection({ kind: "session", id });
+                              }
+                            : undefined
+                        }
+                        onViewSessions={
+                          sessions ? () => navigateFromSummary("sessions") : undefined
+                        }
+                      />
                     ) : (
                       barPlaceholder
                     )
@@ -1603,6 +1648,7 @@ function ReviewWorkspace<F extends ReviewFile>({
           document={snapshot}
           onSelectSection={selectSection}
           onNavigate={historical ? undefined : navigateFromSummary}
+          contextPending={!historical && contextPending}
         />
       );
     }
@@ -1625,6 +1671,7 @@ function ReviewWorkspace<F extends ReviewFile>({
           idPrefix={historical ? `history-v${snapshot.review.version}-` : ""}
           showTiles={showTiles}
           labels={renderSectionLabels?.(section, snapshot)}
+          onRetryDetails={historical ? undefined : onRetryDetails}
         />
       </HunkPatchProvider>
     );

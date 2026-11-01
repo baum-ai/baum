@@ -204,7 +204,7 @@ export function CommitLink({
   sha,
   className,
 }: {
-  document: ReviewDocument;
+  document: { review: { repository: string } };
   sha: string;
   className?: string;
 }) {

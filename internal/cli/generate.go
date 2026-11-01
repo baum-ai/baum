@@ -50,6 +50,11 @@ stdout or to the file given with -o. The previous local version supplies
 section and risk history. --store overrides the local store directory. A
 document that cannot be made valid is never written.
 
+The review is written in stages: first its outline (the overview and the
+sections), then each section's details and the codebase context. A section
+whose details cannot be written is stored without them, and a context that
+cannot be written is left out; only an outline that fails fails the run.
+
 The pull request is --pr, or the one for the current branch; the repository is
 --repo, or the one the clone's origin remote names. It checks nothing out and
 does not touch your working tree, index or branches. A head or base commit the
@@ -68,8 +73,9 @@ read-only ask mode with its sandbox enabled, but Cursor cannot be confined as
 tightly as the others, so auto never picks it; see SECURITY.md.
 
 Progress goes to stderr; stdout holds only the document. Budgets come from the
-config file: run_timeout (the whole run), pass_timeout (each model call),
-max_calls and max_tokens. --model names a model of one backend, so with
+config file: review_timeout (the whole run, 10m by default), pass_timeout (each
+model call), and max_calls and max_tokens, which are unlimited unless set.
+--model names a model of one backend, so with
 --backend auto it applies to claude only; if auto falls back to codex or
 anthropic, that backend uses its own default model and stderr says why the
 earlier ones were skipped. The anthropic backend's default model
@@ -105,11 +111,14 @@ written); 130 interrupted.`,
 	cmd.Flags().String("bundle-out", "", "also write the exact bundle the agent was given to this file, for debugging")
 	cmd.Flags().String("diagnostics", "", "write the run's redacted outcome (usage, repairs, findings, bounded events) to this file, also when the run fails")
 	cmd.Flags().Bool("keep-run-dir", false, "keep the agent's run directory and print its path (it may hold unmasked-in-part rejected documents and read-only trees)")
+	// --one-pass runs the review in one pass, as before staged reviews, for
+	// evaluations that compare the two; the daemon never uses it.
+	cmd.Flags().Bool("one-pass", false, "write the review in one pass instead of in stages (for evaluations)")
 	cmd.Flags().StringArray("previous-path", nil, "directory the repository used to live at (repeatable)")
 	cmd.Flags().String("claude-dir", "", "Claude Code projects directory (default ~/.claude/projects)")
 	cmd.Flags().String("codex-dir", "", "Codex sessions directory (default ~/.codex/sessions)")
 	cmd.Flags().StringArray("cursor-store", nil, "Cursor state.vscdb file or directory holding one (repeatable)")
-	for _, hidden := range []string{"claude-dir", "codex-dir", "cursor-store"} {
+	for _, hidden := range []string{"claude-dir", "codex-dir", "cursor-store", "one-pass"} {
 		_ = cmd.Flags().MarkHidden(hidden)
 	}
 	return cmd
@@ -144,6 +153,7 @@ func doGenerate(cmd *cobra.Command, started *bool) (runErr error) {
 	bundleOut, _ := flags.GetString("bundle-out")
 	diagnostics, _ := flags.GetString("diagnostics")
 	keepRunDir, _ := flags.GetBool("keep-run-dir")
+	onePass, _ := flags.GetBool("one-pass")
 	stores := sessions.Options{}
 	stores.PreviousPaths, _ = flags.GetStringArray("previous-path")
 	stores.ClaudeProjectsDir, _ = flags.GetString("claude-dir")
@@ -172,12 +182,12 @@ func doGenerate(cmd *cobra.Command, started *bool) (runErr error) {
 	if err != nil {
 		return input(err)
 	}
-	budgets := agent.Budgets{
-		WallClock: time.Duration(cfg.Budgets.RunTimeout), MaxCalls: cfg.Budgets.MaxCalls, MaxTokens: cfg.Budgets.MaxTokens,
-		MaxProviderAttempts: maxProviderAttempts, MaxRepairAttempts: maxRepairAttempts,
+	if err := cfg.Budgets.Validate(); err != nil {
+		return input(err)
 	}
-	if budgets.WallClock <= 0 || budgets.MaxCalls <= 0 || budgets.MaxTokens <= 0 {
-		return input(errors.New("the budgets run_timeout, max_calls and max_tokens must be positive"))
+	budgets := agent.Budgets{
+		WallClock: time.Duration(cfg.Budgets.ReviewTimeout), MaxCalls: cfg.Budgets.MaxCalls, MaxTokens: cfg.Budgets.MaxTokens,
+		MaxProviderAttempts: maxProviderAttempts, MaxRepairAttempts: maxRepairAttempts,
 	}
 
 	// Ctrl-C cancels the work, which kills the backend's process group and
@@ -242,7 +252,7 @@ func doGenerate(cmd *cobra.Command, started *bool) (runErr error) {
 		Request:   assemble.Request{Repository: target.Repository, Number: target.Number, Limits: assemble.LimitsFrom(caps)},
 		Backend:   selected.Backend, BackendVersion: selected.Version, Model: selected.Model,
 		Budgets: budgets, PassTimeout: time.Duration(cfg.Budgets.PassTimeout),
-		Progress: stderr, KeepRunDir: keepRunDir, BundleOut: bundleOut, DiagnosticsOut: diagnostics,
+		Staged: !onePass, Progress: stderr, KeepRunDir: keepRunDir, BundleOut: bundleOut, DiagnosticsOut: diagnostics,
 	}, nil)
 	if err != nil {
 		return err

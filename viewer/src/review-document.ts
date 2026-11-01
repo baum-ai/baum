@@ -214,8 +214,15 @@ export type RiskScore = {
   status: "assessed" | "lower_bound" | "not_assessed";
   score: RiskScoreLevel | null;
   reasons: { section: string; risk: string | null; text: string }[];
-  limitations: { kind: "unassessed_sections" | "omitted_source" | string; count: number }[];
+  limitations: {
+    kind: "unassessed_sections" | "incomplete_sections" | "omitted_source" | string;
+    count: number;
+  }[];
 };
+
+/** Why a section lacks its details: they are still being written (a live
+ *  draft) or could not be written (a published version keeps the outline). */
+export type SectionDetailsState = "pending" | "failed";
 
 export type Section = {
   tiles?: unknown[];
@@ -226,7 +233,11 @@ export type Section = {
   /** The stack members the section covers; only on a stack review, and each
    *  is one of its `stack.members`. */
   pull_requests?: number[];
-  summary: { text: string; anchors: Anchor[] };
+  /** Set by the host, never the model, on a section that lacks its details;
+   *  absent on a complete one. Read it with `sectionDetails`. */
+  details?: SectionDetailsState;
+  /** Absent or null only on a section that lacks its details. */
+  summary?: { text: string; anchors: Anchor[] } | null;
   attention: Attention;
   risks: Risk[];
   evidence: Evidence[];
@@ -540,6 +551,81 @@ export type ReviewDocument = {
   };
 };
 
+export const FACTS_SCHEMA = "baum.facts/1";
+
+/** A pull request's facts (`baum.facts/1`), which the local app shows while
+ *  it has no saved review: what a review document derives from the pull
+ *  request alone, its change size, checks, sessions, conversation, threads,
+ *  hunks and the agent reviews posted on it, filled by the same code.
+ *
+ *  It is deliberately not a `ReviewDocument`: it has no version, no sections
+ *  and nothing a model wrote, so it cannot be read, listed or asked about as
+ *  a version. */
+export type ReviewFacts = {
+  schema: typeof FACTS_SCHEMA;
+  review: {
+    repository: string;
+    pull_request: number;
+    pr_state: PullRequestState;
+    head: string;
+    base: string;
+    merge_base: string;
+    merged_commit: string | null;
+    /** When the facts were read. */
+    evidence_refreshed_at: string;
+    sources: Record<string, boolean | number>;
+    truncated: string[];
+  };
+  summary: {
+    title: string;
+    author: ReviewDocument["summary"]["author"];
+    authorship: Pick<
+      ReviewDocument["summary"]["authorship"],
+      "observed_sessions" | "observed_vendors" | "observed_models"
+    >;
+    /** The exchange's derived figures; a model writes its summary. */
+    review_exchange: {
+      reviews: number;
+      back_and_forths: number | null;
+      critical_issues_found: number | null;
+      changes_after_open: { commits: number; lines_added: number; lines_removed: number } | null;
+    };
+  };
+  /** A document's stats less those sections decide. */
+  stats: Omit<ReviewDocument["stats"], "sections" | "risk_loc">;
+  /** Their findings name no section, as there are none. */
+  agent_reviews: AgentReview[];
+  /** Every hunk, as no section covers any. */
+  unassigned_hunks: string[];
+  index: ReviewDocument["index"];
+};
+
+/** A review or a pull request's facts: what the parts that show either read. */
+export type ReviewEvidence = ReviewDocument | ReviewFacts;
+
+/** The facts the daemon answered, or null when the answer is not facts. */
+export function parseReviewFacts(value: unknown): ReviewFacts | null {
+  if (typeof value !== "object" || value === null) return null;
+  const facts = value as Partial<ReviewFacts>;
+  return facts.schema === FACTS_SCHEMA &&
+    typeof facts.review?.repository === "string" &&
+    typeof facts.review.head === "string" &&
+    typeof facts.summary === "object" &&
+    typeof facts.stats === "object" &&
+    Array.isArray(facts.agent_reviews) &&
+    Array.isArray(facts.index?.hunks) &&
+    Array.isArray(facts.index.checks) &&
+    Array.isArray(facts.index.sessions)
+    ? (facts as ReviewFacts)
+    : null;
+}
+
+/** The head whose checks the index counts: the latest synchronized CI head a
+ *  refresh recorded, else the reviewed one. */
+export function checksHead(document: ReviewEvidence): string {
+  return ("checks_head" in document.review && document.review.checks_head) || document.review.head;
+}
+
 /** What kind of risk this is, in one word, for the places that lead with it.
  *
  *  Every risk carries a category, but the schema neither constrains it nor is
@@ -841,6 +927,18 @@ export function riskScoreTone(score: RiskScoreLevel): Tone {
   return score <= 2 ? "positive" : reviewScoreTone(score);
 }
 
+/** Whether a section has its details, or why not. A section without a
+ *  summary, or with a state this viewer does not know, reads as failed: what
+ *  it holds is its outline. So does an obsolete one still marked pending:
+ *  nothing writes the details of a section the review dropped. */
+export function sectionDetails(
+  section: Pick<Section, "details" | "summary"> & { derived?: Pick<Section["derived"], "state"> },
+): "complete" | SectionDetailsState {
+  if (section.details === "pending" && section.derived?.state !== "stale") return "pending";
+  if (section.details !== undefined || !section.summary) return "failed";
+  return "complete";
+}
+
 export type RiskScoreView =
   | { assessed: false; legacy: boolean; limitations: string[] }
   | {
@@ -863,9 +961,11 @@ export function riskScoreView(
   const limitations = stored.limitations.map(({ kind, count }) =>
     kind === "unassessed_sections"
       ? `${pluralize("section", count, true)} not assessed`
-      : kind === "omitted_source"
-        ? `${pluralize("changed file", count, true)} unreadable`
-        : `${humanize(kind)} (${count})`,
+      : kind === "incomplete_sections"
+        ? `${pluralize("section", count, true)} without details`
+        : kind === "omitted_source"
+          ? `${pluralize("changed file", count, true)} unreadable`
+          : `${humanize(kind)} (${count})`,
   );
   if (stored.status === "not_assessed" || stored.score === null) {
     return { assessed: false, legacy: false, limitations };
@@ -950,10 +1050,9 @@ export type CheckStatus = {
  *  on its own, so treating it as still running shows a green light that is
  *  never coming. A head whose checks all skipped is inconclusive rather than
  *  passing, because nothing on it actually succeeded. */
-export function checkStatus(document: ReviewDocument): CheckStatus {
-  const checks = document.index.checks.filter(
-    (check) => check.head === (document.review.checks_head ?? document.review.head),
-  );
+export function checkStatus(document: ReviewEvidence): CheckStatus {
+  const head = checksHead(document);
+  const checks = document.index.checks.filter((check) => check.head === head);
   // A failing check's link is kept only when it points into this pull
   // request's repository, so the summary never opens someone else's run.
   const failed = checks
@@ -1122,7 +1221,7 @@ export type ExchangeEvent = {
  *  sits directly under the review that raised it rather than claiming a place
  *  on the clock. Human replies on the diff are kept: leaving them out would
  *  show an exchange between agents that in fact had a person in it. */
-export function reviewExchange(document: ReviewDocument): ExchangeEvent[] {
+export function reviewExchange(document: ReviewEvidence): ExchangeEvent[] {
   const comment = (id: number) =>
     document.index.comments.find((candidate) => candidate.id === id) ?? null;
   // A review names the comment it was posted as either directly or through the
@@ -1354,7 +1453,7 @@ export type ReviewExchangeFacts = {
  *  An older document states it as a plain string, which is read as the summary
  *  it was rather than as a missing field: the shape changed, the meaning did
  *  not. */
-export function reviewExchangeFacts(document: ReviewDocument): ReviewExchangeFacts | null {
+export function reviewExchangeFacts(document: ReviewEvidence): ReviewExchangeFacts | null {
   const stated = document.summary.review_exchange;
   if (!stated) return null;
   if (typeof stated === "string") {
@@ -1379,7 +1478,8 @@ export function reviewExchangeFacts(document: ReviewDocument): ReviewExchangeFac
           deletions: changes.lines_removed ?? 0,
         }
       : null,
-    summary: stated.summary ?? null,
+    // Facts state the figures alone: a model writes the summary.
+    summary: ("summary" in stated ? stated.summary : null) ?? null,
     counted: true,
   };
 }
@@ -1431,7 +1531,7 @@ const SEVERITY_RANK: Record<FindingSeverity, number> = { must_fix: 0, should_fix
  *  every finding, each group in index order. An outdated thread nobody
  *  resolved is still open, as it is on GitHub. Without synced threads the
  *  status is unknown rather than all clear. */
-export function reviewThreadStatus(document: ReviewDocument): ReviewThreadStatus | null {
+export function reviewThreadStatus(document: ReviewEvidence): ReviewThreadStatus | null {
   if (document.review.sources.review_threads !== true) return null;
   const raised = new Map<string, { finding: Finding; tool: string }>();
   for (const review of document.agent_reviews) {
@@ -1597,7 +1697,7 @@ const GITHUB_UPLOADS = new Set(["assets", "files"]);
  *  instead. GitHub uploads (`GITHUB_UPLOADS`) belong to no repository and are
  *  kept. Other http(s) links are left alone; any other scheme is dropped. */
 export function repositoryLink(
-  document: ReviewDocument,
+  document: { review: { repository: string } },
   url: string | undefined,
 ): string | undefined {
   if (!url) return undefined;

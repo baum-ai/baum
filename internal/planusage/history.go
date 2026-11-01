@@ -3,11 +3,11 @@ package planusage
 import (
 	"context"
 	"encoding/json"
-	"os"
-	"path/filepath"
 	"slices"
 	"sync"
 	"time"
+
+	"github.com/baum-ai/baum/internal/appdb"
 )
 
 const (
@@ -31,7 +31,7 @@ type Sample struct {
 	ResetsAt    *time.Time `json:"resets_at,omitempty"`
 }
 
-// History samples the plans periodically and keeps the readings in one file,
+// History samples the plans periodically and keeps readings in the application database,
 // for the analytics page's plan usage over time. Only figures are kept: no
 // token, account or plan name. A reading is stored when its figure changed,
 // when its window reset, or an hour after the last stored one; older than
@@ -138,7 +138,7 @@ func (h *History) load() {
 		return
 	}
 	h.loaded = true
-	raw, err := os.ReadFile(h.Path)
+	raw, err := appdb.Read(h.Path, "state", "plan-usage-history")
 	if err != nil {
 		return
 	}
@@ -161,21 +161,5 @@ func (h *History) save() error {
 	if err != nil {
 		return err
 	}
-	dir := filepath.Dir(h.Path)
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return err
-	}
-	f, err := os.CreateTemp(dir, ".plan-usage-*")
-	if err != nil {
-		return err
-	}
-	defer func() { _ = os.Remove(f.Name()) }()
-	if _, err := f.Write(raw); err != nil {
-		_ = f.Close()
-		return err
-	}
-	if err := f.Close(); err != nil {
-		return err
-	}
-	return os.Rename(f.Name(), h.Path)
+	return appdb.Write(h.Path, "state", "plan-usage-history", raw)
 }

@@ -19,7 +19,6 @@ import {
   backTo,
   automaticLabel,
   generateGroup,
-  generateReviews,
   groupDocumentRequest,
   groupJob,
   isActiveJob,
@@ -34,9 +33,9 @@ import {
 import { PullRequestState } from "./inbox";
 import { CloneActions } from "./repositories";
 import { CancelJob, GenerationOutcome, ReviewJob } from "./review";
-import { Notice, PageBar } from "./shell";
+import { Notice, PageBar, RefreshButton, type RefreshRun, usePageRefreshAction } from "./shell";
 import { useShortcuts } from "./shortcuts";
-import { LoadingStatus } from "./nine-dots";
+import { LoadingStatus, NineDots } from "./nine-dots";
 
 const errorText = (error: unknown) =>
   error instanceof Error ? error.message : "Local request failed.";
@@ -53,6 +52,22 @@ function numberList(numbers: number[]) {
   return named.length > 1
     ? `${named.slice(0, -1).join(", ")} and ${named[named.length - 1]}`
     : (named[0] ?? "");
+}
+
+/** What a stack group says of a member that is no longer open. */
+const landedLabel: Record<string, string> = {
+  merged: "Merged",
+  closed: "Closed",
+  unknown: "No longer open",
+};
+
+/** What a group review waits for while its members' reviews run. */
+function waitingText(numbers: number[]) {
+  return `A group review builds on each pull request's own review. ${numberList(numbers)} ${
+    numbers.length === 1 ? "is" : "are"
+  } being reviewed first; the group review starts when ${
+    numbers.length === 1 ? "it finishes" : "they finish"
+  }.`;
 }
 
 /** A native dialog that opens modally when it mounts; its parent unmounts it. */
@@ -186,6 +201,7 @@ export function GroupPage({
   cloneFor,
   revision,
   changed,
+  refresh,
 }: {
   group: ReviewGroup;
   /** The inbox's entries, with generating ones marked. */
@@ -195,7 +211,11 @@ export function GroupPage({
   cloneFor: (entry: Entry) => string;
   revision: number;
   changed: () => Promise<void>;
+  /** Reads the group's repository from GitHub again, from the head's refresh. */
+  refresh?: (run: RefreshRun) => Promise<unknown>;
 }) {
+  // The refresh key works before the head and its button are drawn.
+  usePageRefreshAction(refresh);
   const url = useUrlState();
   const back = backTo(url.search);
   const job = groupJob(group, jobs);
@@ -210,12 +230,23 @@ export function GroupPage({
         same.find((e) => e.pull_request.number === number),
     };
   });
+  const landed = (group.landed ?? []).map(({ number, state }) => ({
+    number,
+    state,
+    entry: entries.find(
+      (e) =>
+        sameRepository(e.pull_request.repository, group.repository) &&
+        e.pull_request.number === number,
+    ),
+  }));
   const memberHref = (entry: Entry) => {
     const cloneId = cloneFor(entry);
     return appURL(
       `?${back.prefix}${cloneId ? `clone=${encodeURIComponent(cloneId)}` : `repository=${encodeURIComponent(entry.pull_request.repository)}`}&pr=${entry.pull_request.number}`,
     );
   };
+  // Member reviews still running: a group review cannot start before them.
+  const reviewing = members.filter((m) => m.entry?.status === "generating").map((m) => m.number);
   const addable = [
     ...new Map(
       entries
@@ -294,11 +325,14 @@ export function GroupPage({
     };
   }, [group.id]);
 
-  // Generation.
+  // Generation. A group review builds on each member's own review: the
+  // daemon queues the reviews of members without one ahead of the group's,
+  // which starts after them wherever the person goes.
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-  const [missing, setMissing] = useState<number[]>([]);
-  const [confirming, setConfirming] = useState<"group" | "members" | null>(null);
+  const [confirming, setConfirming] = useState(false);
+  // The group's job is queued behind its members' own reviews.
+  const waiting = generating && job?.state === "queued" && reviewing.length > 0;
   const needsClone =
     "Needs a local clone. Choose a folder or clone the repository in Repositories.";
   const generate = async (confirm = false) => {
@@ -307,46 +341,15 @@ export function GroupPage({
     setError("");
     try {
       const answer = await generateGroup(clone.id, group.id, confirm);
-      if (answer === "isolation") {
-        setConfirming("group");
-        return;
-      }
-      setConfirming(null);
+      setConfirming(answer === "isolation");
       if (answer === "needs_clone") setError(needsClone);
-      else if (typeof answer === "object") setMissing(answer.missing);
-      else {
-        setMissing([]);
-        await changed();
-      }
+      else if (typeof answer === "object")
+        setError(
+          `${numberList(answer.missing)} ${answer.missing.length === 1 ? "has" : "have"} no review yet.`,
+        );
+      else if (answer === "queued") await changed();
     } catch (e) {
-      setConfirming(null);
-      setError(errorText(e));
-    } finally {
-      setBusy(false);
-    }
-  };
-  const generateMembers = async (confirm = false) => {
-    if (!clone) return;
-    setBusy(true);
-    setError("");
-    try {
-      const answer = await generateReviews(
-        missing.map((pr) => ({ clone: clone.id, pr })),
-        "batch",
-        confirm,
-      );
-      if (answer === "isolation") {
-        setConfirming("members");
-        return;
-      }
-      setConfirming(null);
-      if (answer === "needs_clone") setError(needsClone);
-      else {
-        setMissing([]);
-        await changed();
-      }
-    } catch (e) {
-      setConfirming(null);
+      setConfirming(false);
       setError(errorText(e));
     } finally {
       setBusy(false);
@@ -405,13 +408,15 @@ export function GroupPage({
       disabled={generating || busy || !clone}
       onClick={() => void generate()}
     >
-      {generating
-        ? job?.state === "queued"
-          ? "Review queued"
-          : "Generating review…"
-        : busy
-          ? "Starting…"
-          : "Regenerate"}
+      {waiting
+        ? "Reviewing pull requests…"
+        : generating
+          ? job?.state === "queued"
+            ? "Review queued"
+            : "Generating review…"
+          : busy
+            ? "Starting…"
+            : "Regenerate"}
     </Button>
   );
   const saved = provenance.find((p) => p.version === doc?.review.version);
@@ -461,6 +466,9 @@ export function GroupPage({
           back: { href: back.href, label: back.label },
           generation: { state: generationState, rewriting: generating && Boolean(doc) },
           beside: doc ? regenerate : null,
+          actions: refresh ? (
+            <RefreshButton refresh={refresh} label="Refresh from GitHub" />
+          ) : undefined,
         }}
         placeholder={
           !clone ? (
@@ -468,6 +476,13 @@ export function GroupPage({
               <h2>Needs a local clone</h2>
               <CloneActions repository={group.repository} changed={changed} />
             </div>
+          ) : waiting ? (
+            <section aria-label="Review generation" className="local-review-empty">
+              <LiveDot />
+              <h2 role="status">Reviewing the pull requests first</h2>
+              <p>{waitingText(reviewing)}</p>
+              {job ? <CancelJob job={job} changed={changed} /> : null}
+            </section>
           ) : generating ? (
             <section aria-label="Review generation" className="local-review-empty">
               <LiveDot />
@@ -479,6 +494,19 @@ export function GroupPage({
                 it is ready.
               </p>
               {job ? <CancelJob job={job} changed={changed} /> : null}
+            </section>
+          ) : group.version_count === 0 && reviewing.length > 0 ? (
+            <section aria-label="Member review generation" className="local-review-empty">
+              <LiveDot />
+              <h2 role="status">Reviewing the pull requests</h2>
+              <p>
+                A group review builds on each pull request's own review. {numberList(reviewing)}{" "}
+                {reviewing.length === 1 ? "is" : "are"} being reviewed. Generate now and the group
+                review starts when {reviewing.length === 1 ? "it finishes" : "they finish"}.
+              </p>
+              <Button size="compact" disabled={busy} onClick={() => void generate()}>
+                {busy ? "Starting…" : "Generate review"}
+              </Button>
             </section>
           ) : failed && group.version_count > 0 ? (
             <div className="local-review-empty">
@@ -542,6 +570,21 @@ export function GroupPage({
                 ) : null}
               </header>
               <ul className="local-group-members">
+                {landed.map(({ number, state, entry }) => (
+                  <li key={`landed-${number}`} className="local-group-member" data-landed={state}>
+                    <span className="local-group-number">#{number}</span>
+                    <div className="local-group-member-title">
+                      {entry ? (
+                        <ViewerLink href={memberHref(entry)}>{entry.pull_request.title}</ViewerLink>
+                      ) : (
+                        <span className="text-(--text-tertiary)">Not in the inbox</span>
+                      )}
+                      <span className="local-group-member-state">
+                        <span>{landedLabel[state] ?? "No longer open"}</span>
+                      </span>
+                    </div>
+                  </li>
+                ))}
                 {members.map(({ number, entry }) => (
                   <li key={number} className="local-group-member">
                     <span className="local-group-number">#{number}</span>
@@ -554,7 +597,14 @@ export function GroupPage({
                       {entry ? (
                         <span className="local-group-member-state">
                           <PullRequestState entry={entry} />
-                          <span>{reviewStatus[entry.status] ?? entry.status}</span>
+                          {entry.status === "generating" ? (
+                            <span className="inline-flex items-center gap-1.5 text-(--text-secondary)">
+                              <NineDots size={14} />
+                              {reviewStatus.generating}
+                            </span>
+                          ) : (
+                            <span>{reviewStatus[entry.status] ?? entry.status}</span>
+                          )}
                         </span>
                       ) : null}
                     </div>
@@ -620,23 +670,7 @@ export function GroupPage({
                 <CloneActions repository={group.repository} changed={changed} />
               </Notice>
             ) : null}
-            {missing.length > 0 ? (
-              <Notice
-                action={
-                  <Button
-                    variant="secondary"
-                    size="compact"
-                    disabled={busy}
-                    onClick={() => void generateMembers()}
-                  >
-                    {busy ? "Starting…" : "Generate their reviews"}
-                  </Button>
-                }
-              >
-                A group review builds on each member's own review. {numberList(missing)}{" "}
-                {missing.length === 1 ? "has" : "have"} no review yet.
-              </Notice>
-            ) : null}
+            {waiting && doc ? <Notice>{waitingText(reviewing)}</Notice> : null}
             {error ? <Alert>{error}</Alert> : null}
             {job && generating && doc ? (
               <ReviewJob key={job.id} job={job} changed={changed} />
@@ -701,8 +735,8 @@ export function GroupPage({
           title="Review code from outside your team?"
           action={busy ? "Starting…" : "Generate anyway"}
           pending={busy}
-          close={() => setConfirming(null)}
-          confirm={() => void (confirming === "group" ? generate(true) : generateMembers(true))}
+          close={() => setConfirming(false)}
+          confirm={() => void generate(true)}
         >
           One of these pull requests comes from a fork or from an author without write access.
           Generating the review runs your agent on its code. Only continue if you trust it, or if

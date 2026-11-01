@@ -6,13 +6,25 @@ import {
   commandAction,
   forgetLastRows,
   INBOX_SHORTCUTS,
+  KeyBar,
   listKeys,
+  MAC,
   moveFocus,
   ShortcutsSheet,
+  useCommandKeys,
   useRowFocus,
   useShortcuts,
 } from "./shortcuts";
 import { rowKey, type Entry, type ReviewGroup } from "./api";
+import type { ReactNode } from "react";
+import {
+  PageRefreshProvider,
+  RefreshButton,
+  type RefreshRun,
+  usePageRefresh,
+  usePageRefreshAction,
+  useReread,
+} from "./shell";
 
 const entry = (number: number, patch: Partial<Entry> = {}, mine = true): Entry => ({
   pull_request: {
@@ -315,6 +327,7 @@ it("lists exactly the keys that work in the sheet", async () => {
     "Sessions",
     "Jobs",
     "Repositories",
+    "Timeline",
     "Settings",
     "A session or job transcript",
   ]);
@@ -322,6 +335,7 @@ it("lists exactly the keys that work in the sheet", async () => {
   expect(listed("Anywhere")).toEqual([
     "Ctrl+K",
     "Ctrl+.",
+    "Ctrl+R",
     "Ctrl+N",
     "Ctrl+P",
     "Ctrl+1",
@@ -338,7 +352,7 @@ it("lists exactly the keys that work in the sheet", async () => {
     "Alt",
     "Esc",
   ]);
-  expect(listed("Inbox")).toEqual(["j", "↓", "k", "↑", "Enter", "m", "f", "t", "s", "u"]);
+  expect(listed("Inbox")).toEqual(["j", "↓", "k", "↑", "Enter", "Space", "m", "f", "t", "s", "u"]);
   expect(listed("Pull requests")).toEqual([
     "j",
     "↓",
@@ -375,7 +389,16 @@ it("lists exactly the keys that work in the sheet", async () => {
   expect(listed("Sessions")).toEqual([...list, "p", "r", "f", "Space", "1–9"]);
   expect(listed("Jobs")).toEqual([...list, "t"]);
   expect(listed("Repositories")).toEqual([...list, "a", "/"]);
-  expect(listed("A session or job transcript")).toEqual(["u", "Esc"]);
+  expect(listed("A session or job transcript")).toEqual([
+    "u",
+    "Esc",
+    "j",
+    "k",
+    "Space",
+    "Enter",
+    "f",
+    "r",
+  ]);
   expect(INBOX_SHORTCUTS.flatMap((s) => s.keys)).toEqual([
     "j",
     "ArrowDown",
@@ -404,6 +427,7 @@ it("lists the keys of where the sheet was opened first", async () => {
     "Sessions",
     "Jobs",
     "Repositories",
+    "Timeline",
     "Settings",
     "A session or job transcript",
   ]);
@@ -438,6 +462,9 @@ it("reads the app-wide keys with the platform's command key", () => {
     page: "settings",
   });
   expect(commandAction(key({ ctrlKey: true, key: "k" }), false)).toEqual({ kind: "go-to" });
+  expect(commandAction(key({ ctrlKey: true, key: "л", code: "KeyK" }), false)).toEqual({
+    kind: "go-to",
+  });
   expect(commandAction(key({ metaKey: true, key: "K" }), true)).toEqual({ kind: "go-to" });
   // Back and forward: ⌘[ and ⌘] on a Mac, Alt with the arrows elsewhere.
   expect(commandAction(key({ metaKey: true, key: "[" }), true)).toEqual({ kind: "back" });
@@ -527,4 +554,285 @@ it("moves within a list", () => {
   expect(moveFocus(["a", "b"], "gone", 1)).toBe("a");
   expect(moveFocus(["a", "b"], "b", 1)).toBe("b");
   expect(moveFocus(["a", "b"], "b", -1)).toBe("a");
+});
+
+it("reads the refresh key with the platform's command key, leaving Shift to the browser", () => {
+  const key = (patch: Partial<KeyboardEvent>) => ({
+    key: "r",
+    code: "KeyR",
+    ctrlKey: false,
+    metaKey: false,
+    altKey: false,
+    shiftKey: false,
+    ...patch,
+  });
+  const refresh = { kind: "refresh" };
+  expect(commandAction(key({ ctrlKey: true }), false)).toEqual(refresh);
+  expect(commandAction(key({ metaKey: true, key: "R" }), true)).toEqual(refresh);
+  expect(commandAction(key({ metaKey: true }), false)).toBeNull();
+  expect(commandAction(key({ ctrlKey: true }), true)).toBeNull();
+  expect(commandAction(key({ ctrlKey: true, shiftKey: true }), false)).toBeNull();
+  expect(commandAction(key({}), false)).toBeNull();
+  // By its place on a layout without Latin letters, but Dvorak's P, where
+  // QWERTY's R is, stays P.
+  expect(commandAction(key({ ctrlKey: true, key: "к" }), false)).toEqual(refresh);
+  expect(commandAction(key({ ctrlKey: true, key: "p" }), false)).toBeNull();
+});
+
+/** A page as the app holds one: its refresh, and ⌘R pressing it. */
+function RefreshPage({
+  scope = "page",
+  fallback = () => Promise.resolve(),
+  children,
+}: {
+  scope?: string;
+  fallback?: (run: RefreshRun) => Promise<unknown>;
+  children: ReactNode;
+}) {
+  const page = usePageRefresh(scope, fallback);
+  useCommandKeys((action) => (action.kind === "refresh" ? page.press() : undefined));
+  return <PageRefreshProvider value={page}>{children}</PageRefreshProvider>;
+}
+
+const pressRefreshKey = () => {
+  const event = new KeyboardEvent("keydown", { key: "r", ctrlKey: true, cancelable: true });
+  act(() => {
+    window.dispatchEvent(event);
+  });
+  return event;
+};
+
+/** A refresh that settles only when told, with the presses it was given. */
+function heldRefresh() {
+  const runs: RefreshRun[] = [];
+  const settles: (() => void)[] = [];
+  const refresh = vi.fn(
+    (run: RefreshRun) =>
+      new Promise<void>((resolve) => {
+        runs.push(run);
+        settles.push(resolve);
+      }),
+  );
+  return { refresh, runs, settle: (index = settles.length - 1) => settles[index]!() };
+}
+
+it("refreshes from its button and the refresh key, with the loader until it settles", async () => {
+  const { refresh, runs, settle } = heldRefresh();
+  await act(async () =>
+    root.render(
+      <RefreshPage>
+        <RefreshButton refresh={refresh} />
+      </RefreshPage>,
+    ),
+  );
+  const button = node.querySelector<HTMLButtonElement>("button")!;
+  expect(button.getAttribute("aria-keyshortcuts")).toBe("Control+R");
+  expect(button.querySelector(".nine-dots")).toBeNull();
+  // The key never reloads the app.
+  expect(pressRefreshKey().defaultPrevented).toBe(true);
+  await act(async () => {});
+  expect(refresh).toHaveBeenCalledTimes(1);
+  expect(runs[0]!.restart).toBe(false);
+  expect(runs[0]!.current()).toBe(true);
+  expect(button.getAttribute("aria-busy")).toBe("true");
+  expect(button.querySelector(".nine-dots")).not.toBeNull();
+  await act(async () => settle());
+  expect(button.getAttribute("aria-busy")).toBeNull();
+  expect(button.querySelector(".nine-dots")).toBeNull();
+  expect(runs[0]!.current()).toBe(false);
+  act(() => button.click());
+  await act(async () => {});
+  expect(refresh).toHaveBeenCalledTimes(2);
+  await act(async () => settle());
+  // A dialog keeps the key from refreshing under it, or reloading the app.
+  const dialog = document.createElement("dialog");
+  dialog.setAttribute("open", "");
+  document.body.append(dialog);
+  expect(pressRefreshKey().defaultPrevented).toBe(true);
+  await act(async () => {});
+  expect(refresh).toHaveBeenCalledTimes(2);
+  dialog.remove();
+});
+
+it("starts a refresh under way again, dropping the one that may never answer", async () => {
+  const { refresh, runs, settle } = heldRefresh();
+  await act(async () =>
+    root.render(
+      <RefreshPage>
+        <RefreshButton refresh={refresh} />
+      </RefreshPage>,
+    ),
+  );
+  const button = node.querySelector<HTMLButtonElement>("button")!;
+  pressRefreshKey();
+  await act(async () => {});
+  pressRefreshKey();
+  await act(async () => {});
+  expect(refresh).toHaveBeenCalledTimes(2);
+  expect(runs[0]!.signal.aborted).toBe(true);
+  expect(runs[0]!.current()).toBe(false);
+  expect(runs[1]!.restart).toBe(true);
+  expect(runs[1]!.current()).toBe(true);
+  // The dropped one settling late does not end the new one.
+  await act(async () => settle(0));
+  expect(button.getAttribute("aria-busy")).toBe("true");
+  // The button starts it again as the key does.
+  act(() => button.click());
+  await act(async () => {});
+  expect(refresh).toHaveBeenCalledTimes(3);
+  expect(runs[1]!.signal.aborted).toBe(true);
+  await act(async () => settle(2));
+  expect(button.getAttribute("aria-busy")).toBeNull();
+});
+
+it("keeps a refresh under way when the page draws its button again", async () => {
+  const { refresh, settle } = heldRefresh();
+  const draw = (key: string) =>
+    act(async () =>
+      root.render(
+        <RefreshPage>
+          <RefreshButton key={key} refresh={refresh} />
+        </RefreshPage>,
+      ),
+    );
+  await draw("walkthrough");
+  pressRefreshKey();
+  await act(async () => {});
+  await draw("full review");
+  const button = node.querySelector<HTMLButtonElement>("button")!;
+  expect(button.getAttribute("aria-busy")).toBe("true");
+  await act(async () => settle());
+  expect(button.getAttribute("aria-busy")).toBeNull();
+  expect(refresh).toHaveBeenCalledTimes(1);
+});
+
+it("shows the loader while the page reads by itself, and a press starts the read again", async () => {
+  const { refresh, runs, settle } = heldRefresh();
+  await act(async () =>
+    root.render(
+      <RefreshPage>
+        <RefreshButton refresh={refresh} busy />
+      </RefreshPage>,
+    ),
+  );
+  const button = node.querySelector<HTMLButtonElement>("button")!;
+  expect(button.querySelector(".nine-dots")).not.toBeNull();
+  act(() => button.click());
+  await act(async () => {});
+  expect(refresh).toHaveBeenCalledTimes(1);
+  expect(runs[0]!.restart).toBe(true);
+  await act(async () => settle());
+});
+
+it("shows each page's refresh on its own page", async () => {
+  const a = heldRefresh();
+  const b = heldRefresh();
+  const draw = (scope: "a" | "b") =>
+    act(async () =>
+      root.render(
+        <RefreshPage scope={scope}>
+          <RefreshButton key={scope} refresh={scope === "a" ? a.refresh : b.refresh} />
+        </RefreshPage>,
+      ),
+    );
+  const busy = () => node.querySelector("button")!.getAttribute("aria-busy");
+  await draw("a");
+  pressRefreshKey();
+  await act(async () => {});
+  await draw("b");
+  expect(busy()).toBeNull();
+  // A's refresh is not current while B shows, and B's does not end it.
+  expect(a.runs[0]!.current()).toBe(false);
+  pressRefreshKey();
+  await act(async () => {});
+  expect(a.runs[0]!.signal.aborted).toBe(false);
+  expect(b.runs[0]!.restart).toBe(false);
+  await act(async () => b.settle());
+  await draw("a");
+  expect(busy()).toBe("true");
+  expect(a.runs[0]!.current()).toBe(true);
+  await act(async () => a.settle());
+  expect(busy()).toBeNull();
+});
+
+it("refreshes a page without a button with what the page registered, else the fallback", async () => {
+  const fallback = heldRefresh();
+  await act(async () => root.render(<RefreshPage fallback={fallback.refresh}>{null}</RefreshPage>));
+  expect(pressRefreshKey().defaultPrevented).toBe(true);
+  await act(async () => {});
+  expect(fallback.refresh).toHaveBeenCalledTimes(1);
+  await act(async () => fallback.settle());
+  const own = heldRefresh();
+  function Loading() {
+    usePageRefreshAction(own.refresh);
+    return <p>Loading…</p>;
+  }
+  await act(async () =>
+    root.render(
+      <RefreshPage fallback={fallback.refresh}>
+        <Loading />
+      </RefreshPage>,
+    ),
+  );
+  pressRefreshKey();
+  await act(async () => {});
+  expect(own.refresh).toHaveBeenCalledTimes(1);
+  expect(fallback.refresh).toHaveBeenCalledTimes(1);
+  await act(async () => own.settle());
+});
+
+it("settles a reread with its own read, or when the page goes", async () => {
+  let reread: ReturnType<typeof useReread> | undefined;
+  function Page() {
+    reread = useReread();
+    return null;
+  }
+  await act(async () => root.render(<Page />));
+  const done = vi.fn();
+  let pending!: Promise<void>;
+  act(() => {
+    pending = reread!.again().then(done);
+  });
+  // A read made before the refresh does not end it.
+  await act(async () => reread!.settled(0));
+  expect(done).not.toHaveBeenCalled();
+  await act(async () => reread!.settled(reread!.count));
+  expect(done).toHaveBeenCalledTimes(1);
+  act(() => {
+    pending = reread!.again().then(done);
+  });
+  await act(async () => root.render(null));
+  await pending;
+  expect(done).toHaveBeenCalledTimes(2);
+});
+
+it("draws a place's key bar from the sheet's table, keys sharing a name together", async () => {
+  const bar = async (place: Parameters<typeof KeyBar>[0]["place"]) => {
+    await act(async () => root.render(<KeyBar place={place} />));
+    return [...node.querySelectorAll(".key-bar > span")].map((item) => item.textContent);
+  };
+  const command = MAC ? "⌘" : "Ctrl+";
+  expect(await bar("jobs")).toEqual([
+    "jk move",
+    "↵ open",
+    "t transcript",
+    `${command}. actions`,
+    `${command}K go to`,
+    "? all keys",
+  ]);
+  // The Inbox's bar is what its foot always said; Settings has no row menu.
+  expect(await bar("inbox")).toEqual([
+    "jk move",
+    "↵ act",
+    "m merge",
+    "f fix",
+    "s snooze",
+    "u undo",
+    `${command}K go to`,
+    "? all keys",
+  ]);
+  expect(await bar("settings")).not.toContain(`${command}. actions`);
+  // It shows only while Alt is held, and is for the eye alone.
+  expect(node.querySelector(".key-bar")!.classList.contains("key-hint")).toBe(true);
+  expect(node.querySelector(".key-bar")!.getAttribute("aria-hidden")).toBe("true");
 });

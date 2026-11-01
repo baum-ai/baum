@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/baum-ai/baum/internal/appdb/appdbtest"
 	"github.com/baum-ai/baum/internal/daemon"
 	"github.com/baum-ai/baum/internal/hookevents"
 	"github.com/baum-ai/baum/internal/livesessions"
@@ -32,7 +33,7 @@ func newStore(t *testing.T) (*Store, *atomic.Int32) {
 	return &Store{
 		Mask:     func(s string) string { return strings.ReplaceAll(s, "sekrit", "[masked]") },
 		Notify:   func() { notified.Add(1) },
-		StateDir: t.TempDir(),
+		Database: filepath.Join(appdbtest.TempDir(t), "app.sqlite"),
 		Sessions: sessions{
 			"claude-code/s1": {State: livesessions.StateRunning},
 			"claude-code/s2": {State: livesessions.StateIdle, WaitingReason: livesessions.WaitTurnFinished},
@@ -303,7 +304,7 @@ func TestCodexRequestsNeedTheSettingAndTimeOut(t *testing.T) {
 		t.Fatal(err)
 	}
 	// A new store reads the saved setting.
-	if (&Store{StateDir: s.StateDir}).Settings() != (Settings{CodexApprovals: true}) {
+	if (&Store{Database: s.Database}).Settings() != (Settings{CodexApprovals: true}) {
 		t.Fatal("the setting was not saved")
 	}
 	start = time.Now()
@@ -330,6 +331,8 @@ func TestCodexRequestsNeedTheSettingAndTimeOut(t *testing.T) {
 
 func TestMessages(t *testing.T) {
 	s, _ := newStore(t)
+	now := time.Now()
+	s.Now = func() time.Time { return now }
 	for _, id := range []string{"s2", "s3", "unknown"} {
 		if err := s.Queue(AgentClaudeCode, id, "hi"); !errors.Is(err, ErrNotRunning) {
 			t.Fatalf("%s: %v", id, err)
@@ -347,6 +350,7 @@ func TestMessages(t *testing.T) {
 	if err := s.Queue(AgentClaudeCode, "s1", "use the sekrit"); err != nil {
 		t.Fatal(err)
 	}
+	now = now.Add(time.Second)
 	if err := s.Queue(AgentCodex, "c1", "codex too"); err != nil {
 		t.Fatal(err)
 	}
@@ -367,7 +371,8 @@ func TestMessages(t *testing.T) {
 	if err := s.Queue(AgentClaudeCode, "s1", "bye"); err != nil {
 		t.Fatal(err)
 	}
-	s.Observe(hookevents.Event{Kind: hookevents.KindAgent, Agent: AgentClaudeCode, Name: "session-end", Time: time.Now(), Session: &hookevents.Session{ID: "s1"}})
+	now = now.Add(time.Second)
+	s.Observe(hookevents.Event{Kind: hookevents.KindAgent, Agent: AgentClaudeCode, Name: "session-end", Time: now, Session: &hookevents.Session{ID: "s1"}})
 	if _, ok := s.TakeMessage(AgentClaudeCode, "s1"); ok {
 		t.Fatal("an ended session kept its message")
 	}
@@ -572,7 +577,7 @@ func TestHandler(t *testing.T) {
 	if w := do("PUT", "/api/agent-requests/settings", `{"codex_approvals":true}`); w.Code != http.StatusOK || strings.TrimSpace(w.Body.String()) != `{"codex_approvals":true}` {
 		t.Fatalf("settings: %d %s", w.Code, w.Body.String())
 	}
-	if _, err := os.Stat(filepath.Join(s.StateDir, SettingsFile)); err != nil {
+	if _, err := os.Stat(s.Database); err != nil {
 		t.Fatal(err)
 	}
 	if w := do("PUT", "/api/agent-requests/settings", `{}`); w.Code != http.StatusBadRequest {

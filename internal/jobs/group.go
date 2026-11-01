@@ -27,6 +27,19 @@ func (e *MembersNeedReviewsError) Error() string {
 	return "a group review needs a saved review of every member; generate one for " + strings.Join(numbers, ", ") + " first"
 }
 
+// ReasonMembersNeedReviews is a group job's failure when a member it waited
+// for still has no saved review: that member's own review failed or was
+// cancelled.
+const ReasonMembersNeedReviews = "members_need_reviews"
+
+// ReasonMembersChanged fails a group job whose members kept moving, or
+// changed, while it waited, so it could not wait for them again.
+const ReasonMembersChanged = "members_changed"
+
+// ReasonGroupRemoved cancels a group job whose group was deleted or whose
+// stack dissolved before it ran.
+const ReasonGroupRemoved = "group_removed"
+
 // ErrGroupsUnavailable is a group job on a runner without a group store.
 var ErrGroupsUnavailable = errors.New("review groups are not available")
 
@@ -36,12 +49,15 @@ var ErrGroupsUnavailable = errors.New("review groups are not available")
 type groupInputs struct {
 	pull
 	name, members string
+	// awaiting, with Item.AwaitMembers, are the members without a saved
+	// review of their current head.
+	awaiting []int
 }
 
 // prepareGroup reads every member of the group from GitHub, as a pull
 // request job reads its pull request, and checks that each has a saved
-// review in the clone's store.
-func (l *Local) prepareGroup(ctx context.Context, c repos.Clone, reader *github.RESTReader, repository github.Repository, id string) (groupInputs, error) {
+// review in the clone's store, unless await accepts members without one.
+func (l *Local) prepareGroup(ctx context.Context, c repos.Clone, reader *github.RESTReader, repository github.Repository, id string, await bool) (groupInputs, error) {
 	if l.Groups == nil {
 		return groupInputs{}, ErrGroupsUnavailable
 	}
@@ -70,14 +86,22 @@ func (l *Local) prepareGroup(ctx context.Context, c repos.Clone, reader *github.
 		out.Untrusted = out.Untrusted || pr.Untrusted
 		out.Draft = out.Draft || pr.Draft
 		parts = append(parts, strconv.Itoa(number)+"@"+pr.Head)
-		if _, err := versions.Latest(ctx, store.Key{Repository: c.Repository, Number: number}); errors.Is(err, store.ErrNotFound) {
+		latest, err := versions.Latest(ctx, store.Key{Repository: c.Repository, Number: number})
+		switch {
+		case errors.Is(err, store.ErrNotFound):
 			missing = append(missing, number)
-		} else if err != nil {
+			out.awaiting = append(out.awaiting, number)
+		case err != nil:
 			return groupInputs{}, err
+		case latest.Metadata.Head != pr.Head:
+			out.awaiting = append(out.awaiting, number)
 		}
 	}
-	if len(missing) > 0 {
+	if len(missing) > 0 && !await {
 		return groupInputs{}, &MembersNeedReviewsError{Numbers: missing}
+	}
+	if !await {
+		out.awaiting = nil
 	}
 	out.members = strings.Join(parts, ",")
 	return out, nil
@@ -132,5 +156,5 @@ func (l *Local) groupRequest(ctx context.Context, p Prepared, versions *store.St
 	if err != nil {
 		return nil, err
 	}
-	return &generate.Group{Name: group.Name, Members: members, MemberReviews: file}, nil
+	return &generate.Group{Name: group.Name, GeneratedName: group.Stack, Members: members, MemberReviews: file}, nil
 }

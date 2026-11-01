@@ -125,6 +125,58 @@ func TestStaleSectionRisksKeepTheirRecordedState(t *testing.T) {
 	checkEqual(t, nil, second["mitigated_version"])
 }
 
+// A section whose details are still being written, or failed, says nothing
+// about whether its risks were addressed, even with its hunks current: the
+// previous version's risks are carried as they were recorded, an active one
+// still active under its introduced version, rather than read as mitigated.
+func TestSectionWithoutDetailsKeepsThePreviousRisks(t *testing.T) {
+	prior := historySection("a", testHunk, "rsk_active", "rsk_gone")
+	risks := prior["risks"].([]any)
+	active, gone := risks[0].(map[string]any), risks[1].(map[string]any)
+	active["state"], active["introduced_version"], active["mitigated_version"] = "active", float64(2), nil
+	gone["state"], gone["introduced_version"], gone["mitigated_version"] = "mitigated", float64(1), float64(2)
+	content, err := json.Marshal(prior)
+	checkNoError(t, err)
+	previous := &bundlepkg.PreviousVersion{Version: 3, Sections: []bundlepkg.PreviousSection{{ID: "sec_a", Content: content}}}
+	type risk struct {
+		ID                string `json:"id"`
+		Text              string `json:"text"`
+		State             string `json:"state"`
+		IntroducedVersion int    `json:"introduced_version"`
+		MitigatedVersion  *int   `json:"mitigated_version"`
+	}
+	reconciled := func(details string) []risk {
+		t.Helper()
+		outline := historySection("a", testHunk)
+		outline["summary"] = nil
+		if details != "" {
+			outline["details"] = details
+		}
+		document, err := reconcileAuthoredHistory(historyCandidate(t, []any{outline}), previous, nil, nil, true)
+		checkNoError(t, err)
+		var decoded struct {
+			Sections []struct {
+				Risks []risk `json:"risks"`
+			} `json:"sections"`
+		}
+		checkNoError(t, json.Unmarshal(document, &decoded))
+		checkEqual(t, 1, len(decoded.Sections))
+		return decoded.Sections[0].Risks
+	}
+	two := 2
+	for _, details := range []string{sectionDetailsPending, sectionDetailsFailed} {
+		t.Run(details, func(t *testing.T) {
+			checkEqual(t, []risk{
+				{ID: "rsk_active", Text: "A concrete risk.", State: "active", IntroducedVersion: 2},
+				{ID: "rsk_gone", Text: "A concrete risk.", State: "mitigated", IntroducedVersion: 1, MitigatedVersion: &two},
+			}, reconciled(details))
+		})
+	}
+	// A complete section that leaves the risk out has mitigated it.
+	four := 4
+	checkEqual(t, risk{ID: "rsk_active", Text: "A concrete risk.", State: "mitigated", IntroducedVersion: 2, MitigatedVersion: &four}, reconciled("")[0])
+}
+
 // Restoring an omitted previous section early leaves completion's history
 // reconciliation unchanged: the restored section is stale, so its risks keep
 // their recorded state, while a risk omitted from a section the model wrote

@@ -1,19 +1,31 @@
 import {
+  createContext,
+  useCallback,
+  useContext,
   useEffect,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
   type ComponentType,
   type ReactNode,
+  type RefObject,
 } from "react";
 import { Wordmark } from "@baum/viewer/components/editorial";
+import { ChevronDownIcon, RefreshIcon } from "@baum/viewer/components/icons";
 import { Stumpy } from "@baum/viewer/components/stumpy";
 import type { ViewerLinkProps } from "@baum/viewer/navigation";
 import { appURL } from "./api";
 import type { Inbox } from "./inboxes";
 import { PAGES, type Page } from "./pages";
 import { PlanUsageRail } from "./plan-usage";
-import { pageKeyLabel, pageKeyShortcut } from "./shortcuts";
+import { NineDots } from "./nine-dots";
+import {
+  pageKeyLabel,
+  pageKeyShortcut,
+  REFRESH_KEY_LABEL,
+  REFRESH_KEY_SHORTCUT,
+} from "./shortcuts";
 
 /** The inboxes nested under Inbox, with what changes them. Absent when the
  *  daemon is older and has none. */
@@ -56,6 +68,7 @@ export function Sidebar({
   runningSessions,
   needsYou,
   problems,
+  settingsWarning,
   inboxes,
   Link,
 }: {
@@ -68,6 +81,7 @@ export function Sidebar({
    *  in the caution tone, while there are any. */
   needsYou: number;
   problems: number;
+  settingsWarning?: string | null;
   inboxes?: RailInboxes;
   Link: ComponentType<ViewerLinkProps>;
 }) {
@@ -80,7 +94,10 @@ export function Sidebar({
       tone: needsYou > 0 ? "caution" : undefined,
     },
     jobs: { badge: activeJobs > 0 ? activeJobs : null },
-    settings: { badge: problems > 0 ? problems : null, tone: "warn" },
+    settings: {
+      badge: problems > 0 ? problems + (settingsWarning ? 1 : 0) : settingsWarning ? "!" : null,
+      tone: problems > 0 ? "warn" : "caution",
+    },
   };
   const link = ({ page: target, label, href, icon: Icon }: (typeof PAGES)[number]) => {
     const { badge, tone } = badges[target] ?? {};
@@ -88,7 +105,8 @@ export function Sidebar({
       <Link
         key={target}
         href={href()}
-        title={`${label} (${pageKeyLabel(target)})`}
+        title={`${label} (${pageKeyLabel(target)})${target === "settings" && settingsWarning ? ": " + settingsWarning : ""}`}
+        aria-description={target === "settings" ? (settingsWarning ?? undefined) : undefined}
         aria-current={
           page === target && !(target === "inbox" && (inboxes?.selected || inboxes?.elsewhere))
             ? "page"
@@ -137,7 +155,7 @@ export function Sidebar({
                     }
                   }}
                 >
-                  ▾
+                  <ChevronDownIcon size={14} />
                 </button>
               </div>
               <div id="local-rail-inboxes" hidden={fold}>
@@ -315,19 +333,177 @@ export function PageBar({
   title,
   detail,
   actions,
+  back,
 }: {
   title: ReactNode;
   detail?: ReactNode;
   actions?: ReactNode;
+  /** The way back to where the page was opened from, before its name. */
+  back?: ReactNode;
 }) {
   return (
     <header className="local-page-bar">
+      {back}
       <div className="local-page-title">
         <h1>{title}</h1>
         {detail ? <p>{detail}</p> : null}
       </div>
       {actions ? <div className="local-page-actions">{actions}</div> : null}
     </header>
+  );
+}
+
+/** One press of a page's refresh. `signal` aborts when the page's refresh
+ *  is pressed again; `restart` says this press replaces a refresh or a read
+ *  of the page's own under way, which may never answer; `current` says
+ *  whether it is still the page's latest and the page is still shown. */
+export type RefreshRun = { signal: AbortSignal; restart: boolean; current: () => boolean };
+/** What a page's refresh button says refreshing the page does. */
+type Refresh = { refresh: (run: RefreshRun) => Promise<unknown>; busy: boolean };
+type PageRefresh = {
+  /** Makes a refresh the page's until the cleanup it returns runs; of
+   *  several, the one registered last. */
+  register: (button: RefObject<Refresh>) => () => void;
+  /** Refreshes the page with its latest registered refresh, else the app's
+   *  own; a press while one is under way starts it again. */
+  press: () => void;
+  /** A refresh of this page is under way. */
+  pending: boolean;
+};
+const PageRefreshContext = createContext<PageRefresh | null>(null);
+export const PageRefreshProvider = PageRefreshContext.Provider;
+
+/** The page's refresh, kept above the page so that its key (⌘R) has one
+ *  place to go and a refresh under way outlives the button, as when a pull
+ *  request's walkthrough gives way to its full review. `scope` names the
+ *  page shown: each page's refresh runs and shows on its own. A page that
+ *  registers none, as one still loading, refreshes with `fallback`. */
+export function usePageRefresh(
+  scope: string,
+  fallback: (run: RefreshRun) => Promise<unknown>,
+): PageRefresh {
+  const buttons = useRef<RefObject<Refresh>[]>([]);
+  const running = useRef(new Map<string, AbortController>());
+  const [pending, setPending] = useState<ReadonlySet<string>>(new Set());
+  const shown = useRef(scope);
+  shown.current = scope;
+  const latestFallback = useRef(fallback);
+  latestFallback.current = fallback;
+  const register = useCallback((ref: RefObject<Refresh>) => {
+    buttons.current.push(ref);
+    return () => {
+      buttons.current = buttons.current.filter((each) => each !== ref);
+    };
+  }, []);
+  const press = useCallback(() => {
+    const page = buttons.current.at(-1)?.current;
+    const at = shown.current;
+    const before = running.current.get(at);
+    before?.abort();
+    const controller = new AbortController();
+    running.current.set(at, controller);
+    setPending((now) => new Set(now).add(at));
+    const run: RefreshRun = {
+      signal: controller.signal,
+      restart: Boolean(before) || Boolean(page?.busy),
+      current: () => running.current.get(at) === controller && shown.current === at,
+    };
+    const done = () => {
+      if (running.current.get(at) !== controller) return;
+      running.current.delete(at);
+      setPending((now) => new Set([...now].filter((each) => each !== at)));
+    };
+    // The page reports its own failures.
+    void Promise.resolve()
+      .then(() => (page ? page.refresh(run) : latestFallback.current(run)))
+      .then(done, done);
+  }, []);
+  return useMemo(
+    () => ({ register, press, pending: pending.has(scope) }),
+    [register, press, pending, scope],
+  );
+}
+
+/** Makes `refresh` the page's while the caller is drawn, for the refresh key
+ *  on a page that does not show the button, as one still loading; a refresh
+ *  registered later, such as a button drawn after or an open picker's, takes
+ *  over until it goes, for the button too. Gives what presses the page's
+ *  refresh and whether one is under way. */
+export function usePageRefreshAction(
+  refresh: ((run: RefreshRun) => Promise<unknown>) | undefined,
+  busy = false,
+) {
+  const page = useContext(PageRefreshContext);
+  const self = useRef<Refresh>({ refresh: refresh ?? (() => Promise.resolve()), busy });
+  useEffect(() => {
+    if (refresh) self.current = { refresh, busy };
+  });
+  const register = page?.register;
+  const registered = Boolean(refresh);
+  useEffect(() => (registered ? register?.(self) : undefined), [register, registered]);
+  return { press: () => page?.press(), pending: Boolean(page?.pending) };
+}
+
+/** A refresh for a page whose reads an effect makes: `again` changes `count`,
+ *  which the effect reads on, and settles once a read made at that count or
+ *  later calls `settled` with its count, or when the page goes. */
+export function useReread() {
+  const [count, setCount] = useState(0);
+  const asked = useRef(0);
+  const waiting = useRef<{ count: number; resolve: () => void }[]>([]);
+  const again = useCallback(
+    () =>
+      new Promise<void>((resolve) => {
+        asked.current += 1;
+        waiting.current.push({ count: asked.current, resolve });
+        setCount(asked.current);
+      }),
+    [],
+  );
+  const settled = useCallback((read: number) => {
+    waiting.current = waiting.current.filter((each) => {
+      if (each.count > read) return true;
+      each.resolve();
+      return false;
+    });
+  }, []);
+  useEffect(
+    () => () => {
+      for (const each of waiting.current.splice(0)) each.resolve();
+    },
+    [],
+  );
+  return { count, again, settled };
+}
+
+/** The page's refresh, the last of its bar's actions: reads what the page
+ *  shows again, with the loader in place of the arrow until `refresh`
+ *  settles or while `busy` (a read the page started itself). The refresh key
+ *  (⌘R, Ctrl+R elsewhere) presses it; pressing it again starts it again. */
+export function RefreshButton({
+  refresh,
+  busy = false,
+  label = "Refresh",
+}: {
+  refresh: (run: RefreshRun) => Promise<unknown>;
+  busy?: boolean;
+  label?: string;
+}) {
+  const page = usePageRefreshAction(refresh, busy);
+  const shown = busy || page.pending;
+  return (
+    <button
+      type="button"
+      aria-label={label}
+      title={`${label} (${REFRESH_KEY_LABEL})`}
+      aria-keyshortcuts={REFRESH_KEY_SHORTCUT}
+      aria-busy={shown || undefined}
+      aria-disabled={shown || undefined}
+      onClick={page.press}
+      className="local-icon-button local-refresh"
+    >
+      {shown ? <NineDots size={16} /> : <RefreshIcon size={16} />}
+    </button>
   );
 }
 

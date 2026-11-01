@@ -8,7 +8,10 @@ import (
 
 // RiskRubricVersion names the rules riskScore applies. A change to the scale,
 // the floors or what counts as a limitation needs a new version, so a stored
-// score always says which rules produced it.
+// score always says which rules produced it. A limitation that applies only
+// to input no earlier document could hold (incomplete_sections: a section
+// without its details) changes no score the version already produced, so it
+// keeps the version.
 const RiskRubricVersion = "risk-v1"
 
 const maxRiskScoreReasons = 3
@@ -23,9 +26,12 @@ var riskFloors = map[string]int{"high": 4, "critical": 5}
 // active high or critical risks set a floor. Obsolete sections and mitigated
 // risks take no part. Because the score is a maximum, anything the review
 // could not rate can only hide a higher one, so incomplete input makes the
-// score a lower bound rather than withholding it.
+// score a lower bound rather than withholding it. A section whose details are
+// still being written or could not be written is rated by its assessment and
+// the risks it holds, but the risks its details would add are unknown, so it
+// makes the score a lower bound too.
 func riskScore(sections []documentSection, diff []bundlepkg.Hunk) *documentRiskScore {
-	score, unassessed := 0, 0
+	score, unassessed, incomplete := 0, 0, 0
 	var top []*documentSection
 	raise := func(level int) {
 		if level > score {
@@ -39,6 +45,9 @@ func riskScore(sections []documentSection, diff []bundlepkg.Hunk) *documentRiskS
 		}
 		level, _ := sectionReviewScore(section)
 		raise(level)
+		if section.Details != "" {
+			incomplete++
+		}
 		switch {
 		case section.Kind == "mechanical":
 		case section.Assessment == nil:
@@ -78,6 +87,9 @@ func riskScore(sections []documentSection, diff []bundlepkg.Hunk) *documentRiskS
 	limitations := []documentRiskLimitation{}
 	if unassessed > 0 {
 		limitations = append(limitations, documentRiskLimitation{Kind: "unassessed_sections", Count: unassessed})
+	}
+	if incomplete > 0 {
+		limitations = append(limitations, documentRiskLimitation{Kind: "incomplete_sections", Count: incomplete})
 	}
 	// A file the checkout left out was unreadable to the review. A patch cut
 	// for size is not: the full file is still in the checkout. Generated and

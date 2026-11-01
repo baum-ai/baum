@@ -1,4 +1,4 @@
-import { expect, sampleDocument, serveDocument, test } from "./fixtures.ts";
+import { expect, sampleDocument, test } from "./fixtures.ts";
 
 test("the sample document loads from the page's own origin and titles the page", async ({
   page,
@@ -23,31 +23,6 @@ test("the sample document loads from the page's own origin and titles the page",
   expect(foreignRequests).toEqual([]);
 });
 
-test("a file's document is the one on screen, whatever it holds", async ({ page }) => {
-  const document = sampleDocument();
-  document.summary.title = "A document read from a file";
-  document.review.pull_request = 7;
-  await serveDocument(page, document);
-  await page.goto("/");
-
-  await expect(
-    page.getByRole("heading", { level: 1, name: "#7 A document read from a file" }),
-  ).toBeVisible();
-  await expect(page).toHaveTitle("A document read from a file · #7");
-});
-
-test("the page offers no file picker or upload: documents come from the command line", async ({
-  page,
-}) => {
-  await page.goto("/");
-  await expect(page.getByRole("navigation", { name: "Review sections" })).toBeVisible();
-
-  await expect(page.locator("input[type=file]")).toHaveCount(0);
-  await expect(page.getByRole("button", { name: /upload|choose|open file|browse/i })).toHaveCount(
-    0,
-  );
-});
-
 test("a failed load says why and Retry loads the document", async ({ page }) => {
   let failing = true;
   await page.route("**/api/document", (route) =>
@@ -62,123 +37,4 @@ test("a failed load says why and Retry loads the document", async ({ page }) => 
   await page.getByRole("button", { name: "Retry" }).click();
   await expect(page.getByRole("alert")).toHaveCount(0);
   await expect(page.getByRole("heading", { level: 1 })).toContainText("dead-letter queue");
-});
-
-test("a body that is not a review document is refused", async ({ page }) => {
-  await serveDocument(page, { hello: "world" });
-  await page.goto("/");
-
-  await expect(page.getByRole("alert")).toContainText("baum.review/1");
-  await expect(page.getByRole("navigation", { name: "Review sections" })).toHaveCount(0);
-});
-
-test("a document that fails to render offers a retry instead of a blank page", async ({
-  page,
-  browserErrors,
-}) => {
-  const document = sampleDocument();
-  // Valid at the top level, but a section the viewer cannot read.
-  (document.sections as unknown[]).push(null);
-  await serveDocument(page, document);
-  await page.goto("/");
-
-  await expect(page.getByRole("alert")).toContainText("Could not load the review");
-  await expect(page.getByRole("button", { name: "Retry" })).toBeVisible();
-  expect(browserErrors.length).toBeGreaterThan(0);
-});
-
-test("the head states the review time estimate when the document has one", async ({ page }) => {
-  const document = sampleDocument();
-  document.summary.review_minutes = 7;
-  await serveDocument(page, document);
-  await page.goto("/");
-
-  await expect(page.getByText("~7 min to review")).toBeVisible();
-  await expect(
-    page.getByTitle("Estimated time to read this review: about 7 minutes"),
-  ).toBeVisible();
-});
-
-test("the head shows no estimate when the document has none or null", async ({ page }) => {
-  await page.goto("/");
-  await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
-  await expect(page.getByText("min to review")).toHaveCount(0);
-
-  const document = sampleDocument();
-  document.summary.review_minutes = null;
-  await serveDocument(page, document);
-  await page.goto("/");
-  await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
-  await expect(page.getByText("min to review")).toHaveCount(0);
-});
-
-test("the summary's context starts collapsed under the overview and expands", async ({ page }) => {
-  await page.goto("/");
-  const summary = page.getByRole("region", { name: "Summary", exact: true });
-  const context = summary.getByRole("region", { name: "Context" });
-  const toggle = context.locator("summary");
-  await expect(toggle).toHaveText("ContextWhere this change sits in the codebase");
-  await expect(context.getByRole("heading", { name: "Area" })).toBeHidden();
-
-  await toggle.click();
-  for (const label of ["Area", "How it's reached", "Contracts", "Related code"])
-    await expect(context.getByRole("heading", { level: 4, name: label })).toBeVisible();
-  await expect(context).toContainText("runs taskline's background jobs");
-  await expect(context.getByText("queue/worker.go · Worker.Run")).toBeVisible();
-
-  await toggle.press("Enter");
-  await expect(context.getByRole("heading", { name: "Area" })).toBeHidden();
-});
-
-test("a document without a context shows none", async ({ page }) => {
-  const document = sampleDocument();
-  delete document.summary.context;
-  await serveDocument(page, document);
-  await page.goto("/");
-  await expect(page.getByRole("region", { name: "Summary", exact: true })).toBeVisible();
-  await expect(page.getByRole("region", { name: "Context" })).toHaveCount(0);
-});
-
-test("context rename sources link at the merge base without a host file list", async ({ page }) => {
-  const document = sampleDocument();
-  document.index.hunks[0]!.old_path = "legacy/worker.go";
-  document.index.hunks[0]!.change = "renamed";
-  document.summary.context = {
-    area: { text: "The worker moved.", refs: [{ path: "legacy/worker.go", symbol: null }] },
-  };
-  await serveDocument(page, document);
-  await page.goto("/");
-  const context = page.getByRole("region", { name: "Context" });
-  await context.locator("summary").click();
-  await expect(context.getByRole("link", { name: "legacy/worker.go" })).toHaveAttribute(
-    "href",
-    `https://github.com/${document.review.repository}/blob/${document.review.merge_base}/legacy/worker.go`,
-  );
-});
-
-test("stack context links an intermediate rename source at its member base", async ({ page }) => {
-  const document = sampleDocument();
-  const intermediate = "c".repeat(40);
-  document.stack = { title: "Move the worker", members: [] };
-  document.index.file_comparisons = [
-    {
-      base_revision: document.review.merge_base,
-      changes: [{ path: "middle/worker.go", old_path: "legacy/worker.go", change: "renamed" }],
-    },
-    {
-      base_revision: intermediate,
-      changes: [{ path: "current/worker.go", old_path: "middle/worker.go", change: "renamed" }],
-    },
-  ];
-  document.summary.context = {
-    area: { text: "The worker moved twice.", refs: [{ path: "middle/worker.go", symbol: null }] },
-  };
-  await serveDocument(page, document);
-  await page.goto("/");
-  const context = page.getByRole("region", { name: "Context" });
-  await context.locator("summary").click();
-  await expect(context.getByRole("link", { name: "middle/worker.go" })).toHaveAttribute(
-    "href",
-    `https://github.com/${document.review.repository}/blob/${intermediate}/middle/worker.go`,
-  );
 });

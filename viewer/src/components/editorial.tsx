@@ -1,6 +1,7 @@
 import { type ReactNode, useId } from "react";
 
 import { cn } from "./classnames";
+import { STUMPY_ARTWORK as artwork } from "./stumpy-artwork";
 
 /** The editorial chrome shared by the public pages: type scale, rules, shell. */
 /** `w-full` keeps the shell full-bleed when it is a flex child, not just a block child. */
@@ -50,14 +51,14 @@ export function LogoMark({ size = 20, className }: { size?: number; className?: 
     >
       <defs>
         <radialGradient id={`${id}-bark`} cx="0.3" cy="0.25" r="0.85">
-          <stop offset="0" stopColor="#a86b3c" />
-          <stop offset="0.6" stopColor="#7a4a26" />
-          <stop offset="1" stopColor="#4e2e16" />
+          <stop offset="0" stopColor={artwork.barkLight} />
+          <stop offset="0.6" stopColor={artwork.bark} />
+          <stop offset="1" stopColor={artwork.barkDark} />
         </radialGradient>
         <radialGradient id={`${id}-face`} cx="0.4" cy="0.35" r="0.75">
-          <stop offset="0" stopColor="#fff3da" />
-          <stop offset="0.7" stopColor="#f3d9ac" />
-          <stop offset="1" stopColor="#d9b27c" />
+          <stop offset="0" stopColor={artwork.faceLight} />
+          <stop offset="0.7" stopColor={artwork.face} />
+          <stop offset="1" stopColor={artwork.faceDark} />
         </radialGradient>
       </defs>
       <g fill="none" stroke="var(--logo-halo, transparent)" strokeWidth="9">

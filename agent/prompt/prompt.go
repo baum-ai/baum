@@ -21,6 +21,23 @@
 // trailing heading, sets Version to Version and Digest to the sha256 of the
 // joined Body. The repair wording stays in agent.RepairText and the tile
 // guidance in tilecatalogue, so neither belongs in these files.
+//
+// A staged review (agent.Generator.StagedReview, StagedPrompts) has four
+// more, derived from review-public-v6.md:
+//
+//	review-shared-public-v1.md   what every stage shares: the stages and what
+//	                             each writes, the ground rules, the inputs,
+//	                             checking a change, anchors, writing and
+//	                             calibration; with the bundle and the source
+//	                             excerpts, the prefix of every stage's prompt
+//	review-outline-public-v1.md  the overview and the sections' outline
+//	review-details-public-v1.md  the sections' details
+//	review-context-public-v1.md  the summary's codebase context
+//
+// Each stage file ends with a "## Submitting" heading, under which the
+// backend's stage submit block goes (submit-stage-claude.md,
+// submit-stage-codex.md, submit-stage-cursor.md, with {part} replaced by what
+// the stage returns), and names its schema file (agent.TaskSchemaFile).
 package prompt
 
 import (
@@ -46,7 +63,7 @@ var submitClaude string
 
 // GroupVersion is the prompt version of a review group's combined review.
 // Change it with the text of group-public-v1.md or review-public-v6.md.
-const GroupVersion = "group-review-public-v3"
+const GroupVersion = "group-review-public-v4"
 
 //go:embed group-public-v1.md
 var groupPublic string
@@ -94,6 +111,75 @@ func (GroupPrompts) Instructions(_ context.Context, backend string) (agent.Promp
 	}
 	shared := strings.TrimSuffix(reviewPublic, submitting)
 	return composed(GroupVersion, shared+groupPublic+submitting+"\n"+submit), nil
+}
+
+// StagedVersion is the prompt version of a staged review. Change it with the
+// text of any review-*-public-v1.md file of the staged review.
+const StagedVersion = "review-staged-public-v1"
+
+//go:embed review-shared-public-v1.md
+var stagedShared string
+
+//go:embed review-outline-public-v1.md
+var stagedOutline string
+
+//go:embed review-details-public-v1.md
+var stagedDetails string
+
+//go:embed review-context-public-v1.md
+var stagedContext string
+
+//go:embed submit-stage-claude.md
+var submitStageClaude string
+
+//go:embed submit-stage-codex.md
+var submitStageCodex string
+
+//go:embed submit-stage-cursor.md
+var submitStageCursor string
+
+// What each stage returns, in its submit block.
+const (
+	outlinePart = "the outline"
+	detailsPart = "the section details"
+	contextPart = "the context"
+)
+
+// StagedPrompts implements agent.StagedPrompts with this module's public
+// staged review prompts.
+type StagedPrompts struct{}
+
+var _ agent.StagedPrompts = StagedPrompts{}
+
+// StagedInstructions returns the staged review prompts for a backend: the
+// shared text, and each stage's text with the backend's stage submit block
+// appended, naming what the stage returns, as Prompts appends the submit
+// block for a review written in one pass. Digest is the sha256 of the four
+// texts, each followed by a NUL byte. Any other backend is an error.
+func (StagedPrompts) StagedInstructions(_ context.Context, backend string) (agent.StagedPrompt, error) {
+	var submit string
+	switch backend {
+	case agent.BackendClaude, agent.BackendAnthropic:
+		submit = submitStageClaude
+	case agent.BackendCodex:
+		submit = submitStageCodex
+	case agent.BackendCursorAgent:
+		submit = submitStageCursor
+	default:
+		return agent.StagedPrompt{}, fmt.Errorf("no public staged review prompt for backend %q", backend)
+	}
+	block := func(part string) string { return "\n" + strings.ReplaceAll(submit, "{part}", part) }
+	staged := agent.StagedPrompt{
+		Version: StagedVersion, Shared: stagedShared,
+		Outline: stagedOutline + block(outlinePart), Details: stagedDetails + block(detailsPart), Context: stagedContext + block(contextPart),
+	}
+	digest := sha256.New()
+	for _, text := range []string{staged.Shared, staged.Outline, staged.Details, staged.Context} {
+		digest.Write([]byte(text))
+		digest.Write([]byte{0})
+	}
+	staged.Digest = hex.EncodeToString(digest.Sum(nil))
+	return staged, nil
 }
 
 func submitBlock(backend string) (string, error) {

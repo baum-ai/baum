@@ -56,6 +56,10 @@ type Backend struct {
 	// exec.LookPath and defaults to "claude".
 	Binary, Model string
 	Profile       Profile
+	// Effort is the --effort level; empty leaves it to
+	// Claude Code. The User profile leaves thinking to Claude Code, while the
+	// Isolated profile always runs without thinking.
+	Effort string
 	// DefaultEndpoint is a provider key and base URL used when the request has
 	// no Endpoint of its own. The hosted review agent never sets it: its runs
 	// bring a model proxy endpoint. Local prompt evaluation sets it because it
@@ -72,6 +76,13 @@ type Backend struct {
 }
 
 func (*Backend) Name() string { return agent.BackendClaude }
+
+// ConcurrentCalls reports whether calls may run over one run directory at
+// once (agent.ConcurrentCaller): the User profile passes the schema on the
+// command line and writes nothing per call, as the user running Claude Code
+// twice would. The Isolated profile shares one HOME and CLAUDE_CONFIG_DIR
+// under the run directory between its calls, so it runs them one at a time.
+func (c *Backend) ConcurrentCalls() bool { return c.Profile == User }
 
 func (c *Backend) Run(ctx context.Context, request agent.Request) (agent.Result, error) {
 	return c.run(ctx, request, c.args(request), nil, false)
@@ -100,10 +111,10 @@ func (c *Backend) run(ctx context.Context, request agent.Request, args, env []st
 	if request.WantsSession() && (c.Profile != User || fix) {
 		return result, errors.New("claude: only a User profile review or task can keep, resume or fork a session")
 	}
-	if request.MaxCalls < 1 {
+	if request.MaxCalls < 0 {
 		return result, errors.New(agent.GenerationBudgetExceededReason("model calls"))
 	}
-	if request.MaxTokens < 1 {
+	if request.MaxTokens < 0 {
 		return result, errors.New(agent.GenerationBudgetExceededReason("tokens"))
 	}
 	endpoint := cmp.Or(request.Endpoint, c.DefaultEndpoint)
@@ -497,11 +508,11 @@ func (c *Backend) run(ctx context.Context, request agent.Request, args, env []st
 			record(agent.Event{Kind: "document", Bytes: len(result.Document)})
 			completed = true
 		}
-		if result.Calls > request.MaxCalls {
+		if agent.Exceeds(result.Calls, request.MaxCalls) {
 			err = errors.New(agent.GenerationBudgetExceededReason("model calls"))
 			break
 		}
-		if result.Tokens > request.MaxTokens {
+		if agent.Exceeds(result.Tokens, request.MaxTokens) {
 			err = errors.New(agent.GenerationBudgetExceededReason("tokens"))
 			break
 		}

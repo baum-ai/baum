@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-update-hooks"
+description = "Enables the update_hooks command without any pre-configured scope."
+commands.allow = ["update_hooks"]
+
+[[permission]]
+identifier = "deny-update-hooks"
+description = "Denies the update_hooks command without any pre-configured scope."
+commands.deny = ["update_hooks"]

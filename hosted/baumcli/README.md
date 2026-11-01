@@ -165,9 +165,18 @@ handshake, in [`apiclient`](../apiclient).
   marketplace and installs/enables `baum@baum` through Claude Code or Codex's
   native CLI, for executable agents on `PATH` or those named with `--agent`.
   `uninstall --user` removes that user plugin through the native CLI, leaving
-  the marketplace and other plugins. No raw hook settings are edited and no
+  the marketplace and other plugins. `update --user` refreshes the marketplace
+  and brings an installed plugin to its latest version (installing again
+  keeps the installed version). Without `--agent` it updates the agents with the
+  plugin enabled (and reports agents whose status failed); a named agent
+  without it, or with it disabled, is an error. No raw hook settings are edited and no
   migration markers or compatibility cleanup are maintained. Installation
   downloads from GitHub; it needs no baum sign-in and calls no baum server.
+- Codex plugin installation and updates also prepare its terminal title for
+  Focus, preserving other title items and reporting when running terminal
+  sessions need restarting. Existing connections are repaired when Focus
+  cannot locate their terminal. See
+  [Codex focus configuration](../../internal/codexconfig/README.md).
 - [`agentplugins`](../agentplugins/README.md) owns the native commands. Claude
   uses user-scope plugin install/list/uninstall; Codex uses plugin add/list/
   remove. Successful commands are verified with native list JSON. A missing
@@ -177,7 +186,10 @@ handshake, in [`apiclient`](../apiclient).
   processes where supported. One failing agent does not stop the other.
 - `baum hooks status --user [--json]` reads native registries without changing
   them. It reports detection of the CLI, plugin ID, installation, enablement
-  and version separately; installed and enabled never imply trusted. A config
+  and version separately. Installed, enabled Codex plugins also include
+  `trust.state`, read through Codex's effective hook inventory. Only a
+  trusted result means every required baum hook is present, enabled and
+  approved; an unavailable check reports unknown. A config
   directory alone is not an executable agent. The desktop setup screen uses
   these commands, shows disabled plugins separately and offers installation/
   enablement. It allows both agents' action budgets plus process overhead.
@@ -256,12 +268,16 @@ handshake, in [`apiclient`](../apiclient).
   message whose answer the daemon could not write is queued again.
 - `--check --user` succeeds only when all of these hold, in this order:
   1. the working directory is inside a Git worktree (found by its `.git`,
-     without starting git) whose Entire is enabled as Entire reads it: a
-     `.entire/settings.json` or `settings.local.json` enables it unless an
-     `enabled` key says otherwise, the local key wins, and invalid JSON
-     disables it. Elsewhere the hook would only hand an event to an Entire
-     that ignores it, and its session-start bootstrap would put Git hooks in a
-     repository that never asked for them;
+     without starting git) whose Entire is enabled as Entire reads it, or a
+     baum daemon ever ran for the user: a `.entire/settings.json` or
+     `settings.local.json` enables Entire unless an `enabled` key says
+     otherwise, the local key wins, and invalid JSON disables it. Without
+     Entire and without a daemon the hook would only hand an event to an
+     Entire that ignores it, and its session-start bootstrap would put Git
+     hooks in a repository that never asked for them. Without Entire but with
+     a daemon the hook passes (after rule 2) and only records the event, even
+     for a logged-in user: no Entire, no bootstrap. The desktop app's live
+     sessions need only those events;
   2. no other hook the agent runs for the event calls `entire hooks AGENT
      EVENT` (the committed dispatcher and Entire's own command both do, so the
      text is searched for that; a file over 1 MiB or

@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/baum-ai/baum/agent"
+	"github.com/baum-ai/baum/internal/appdb"
 	"github.com/baum-ai/baum/internal/discovery"
 	"github.com/baum-ai/baum/internal/github"
 	"github.com/baum-ai/baum/internal/jobs"
@@ -656,6 +657,26 @@ func TestHandlerSavesReviewChoices(t *testing.T) {
 	if o, _ := h.scheduler.Overview(context.Background()); o.PullRequests != "both" {
 		t.Fatalf("%+v", o)
 	}
+	// The reviews' and fixes' reasoning efforts; empty is the agent's own.
+	for _, body := range []string{`{"effort":"extreme"}`, `{"fix_effort":"high"}`} {
+		if code := put(h.scheduler, body); code != 400 {
+			t.Fatalf("%s: %d", body, code)
+		}
+	}
+	if code := put(h.scheduler, `{"effort":" High ","fix_backend":"codex","fix_effort":"low"}`); code != 200 {
+		t.Fatal(code)
+	}
+	prefs, _ = h.registry.Preferences(context.Background())
+	if prefs.Effort == nil || *prefs.Effort != "high" || prefs.FixEffort == nil || *prefs.FixEffort != "low" {
+		t.Fatalf("%+v", prefs)
+	}
+	if code := put(h.scheduler, `{"effort":"","fix_backend":""}`); code != 200 {
+		t.Fatal(code)
+	}
+	prefs, _ = h.registry.Preferences(context.Background())
+	if prefs.Effort != nil || prefs.FixEffort != nil || prefs.FixBackend != nil {
+		t.Fatalf("after clearing %+v", prefs)
+	}
 }
 
 // Drafts get no automatic review; marking one ready for review is a trigger
@@ -874,7 +895,7 @@ func TestAnOldDailyCapPauseIsIgnored(t *testing.T) {
 	h := newHarness(t)
 	h.observe(pr{number: 1, head: "a1", authored: true})
 	h.observe(pr{number: 1, head: "a2", authored: true})
-	raw, err := os.ReadFile(h.scheduler.Path)
+	raw, err := appdb.Read(h.scheduler.Path, "state", "automatic")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -888,7 +909,7 @@ func TestAnOldDailyCapPauseIsIgnored(t *testing.T) {
 	if raw, err = json.Marshal(state); err != nil {
 		t.Fatal(err)
 	}
-	if err = os.WriteFile(h.scheduler.Path, raw, 0o600); err != nil {
+	if err = appdb.Write(h.scheduler.Path, "state", "automatic", raw); err != nil {
 		t.Fatal(err)
 	}
 	h.restart()

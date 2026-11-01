@@ -217,6 +217,38 @@ func TestPlanKeepsTheStackWhenTheBottomMergesAndTheNextIsRetargeted(t *testing.T
 	m.expect("s1", map[int]int{1: 0, 2: 1, 3: 2, 4: 1}, false)
 }
 
+// A merged member stays in its original position, whatever happens to the
+// open ones: not recomputed from the open pull requests alone.
+func TestPlanKeepsMergedMembersInPositionWhileTheRestIsOpen(t *testing.T) {
+	m := newMemory(t)
+	a, b, c := open(1, "main", "feat-a"), open(2, "feat-a", "feat-b"), open(3, "feat-b", "feat-c")
+	m.recompute(a, b, c)
+	// The bottom two merge, one after the other, each followed by GitHub's
+	// retarget; the last open pull request is still in the stack.
+	m.recompute(merged(a), retarget(b, "main"), c)
+	m.recompute(merged(a), merged(retarget(b, "main")), retarget(c, "main"))
+	m.expectStacks(1)
+	m.expect("s1", map[int]int{1: 0, 2: 1, 3: 2}, false)
+	// A pull request on top of the open one joins; the merged ones stay.
+	m.recompute(merged(a), merged(retarget(b, "main")), retarget(c, "main"), open(4, "feat-c", "feat-d"))
+	m.expect("s1", map[int]int{1: 0, 2: 1, 3: 2, 4: 3}, false)
+}
+
+// A member closed without merging stays in its place like a merged one; the
+// stack ends only when no member is open.
+func TestPlanKeepsAMemberClosedWithoutMergingInPlace(t *testing.T) {
+	a, b, c := open(1, "main", "feat-a"), open(2, "feat-a", "feat-b"), open(3, "feat-a", "feat-c")
+	m := newMemory(t)
+	m.recompute(a, b, c)
+	m.recompute(a, closed(b), c)
+	m.expectStacks(1)
+	m.expect("s1", map[int]int{1: 0, 2: 1, 3: 1}, false)
+
+	// The last open member closing ends the stack, which keeps its members.
+	m.recompute(closed(a), closed(b), closed(c))
+	m.expect("s1", map[int]int{1: 0, 2: 1, 3: 1}, true)
+}
+
 func TestPlanKeepsTheStackWhenAMergeRetargetsSeveralDescendants(t *testing.T) {
 	for _, descendantFirst := range []bool{false, true} {
 		t.Run(fmt.Sprintf("descendantFirst=%t", descendantFirst), func(t *testing.T) {

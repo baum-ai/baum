@@ -71,6 +71,8 @@ export type ReviewHeaderSlots = {
   /** Drawn beside the version menu, or on its own line under it on a
    *  narrow screen, such as where the pull request sits in a stack. */
   beside?: ReactNode;
+  /** The host's page actions, such as a refresh, at the title row's end. */
+  actions?: ReactNode;
   generation?: GenerationView;
 };
 
@@ -332,6 +334,9 @@ export function ReviewHeader({
               <span aria-label="Review approval state">{slots.approval}</span>
             ) : null}
             {!document && number !== undefined ? <Badge tone="info">Preview</Badge> : null}
+            {slots.actions ? (
+              <div className="ml-auto flex flex-none items-center gap-2">{slots.actions}</div>
+            ) : null}
           </div>
           <div className="flex flex-wrap items-center gap-2 pt-2 text-base text-(--text-secondary)">
             {repositoryFullName ? <span>{repositoryFullName}</span> : null}

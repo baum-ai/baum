@@ -232,6 +232,23 @@ func TestAnAnswerOrAMessageSentMidTurnIsTheLatestPrompt(t *testing.T) {
 	}
 }
 
+// A background task's notification and a subagent's report are queued as a
+// mid-turn message is, but nobody typed them.
+func TestTheHarnessQueuedMessagesAreNotTheLatestPrompt(t *testing.T) {
+	f := newTranscriptFixture(t)
+	for i, text := range []string{
+		"<task-notification>\n<task-id>a1</task-id>\n<status>completed</status>\n</task-notification>",
+		"<agent-message from=\"a1\">\n[Subagent hand-back] The report follows:\n  Done.\n</agent-message>",
+	} {
+		content, _ := json.Marshal([]map[string]string{{"type": "text", "text": text}})
+		appendLines(t, f.path, fmt.Sprintf(`{"type":"attachment","timestamp":"2026-10-29T18:0%d:00.000Z","sessionId":"s1","attachment":{"type":"queued_command","prompt":%s}}`, i, content))
+		f.clock.advance(TitleRecheckEvery)
+		if a := activities(t, f)["claude-code/s1"]; a == nil || !strings.HasPrefix(a.LastPrompt, "Connect to") {
+			t.Fatalf("after %q: %+v", text, a)
+		}
+	}
+}
+
 func TestAWorkingSessionIsReadAgainWithinASecond(t *testing.T) {
 	f := newTranscriptFixture(t)
 	activities(t, f)

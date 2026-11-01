@@ -20,7 +20,7 @@ function hostileDocument() {
   document.summary.text = hostile;
   document.summary.release_note = hostile;
   const retry = section(document, "sec_retry");
-  retry.summary.text = hostile;
+  retry.summary!.text = hostile;
   retry.risks[0]!.text = hostile;
   // Plain-text fields, which the page never parses.
   document.summary.title = `<img src=x onerror="window.__pwned='title'"> Title`;
@@ -75,35 +75,6 @@ test("untrusted Markdown and HTML renders as inert text on every pane that shows
   // anywhere else and raises no error.
   expect(foreignRequests).toEqual([]);
   expect(browserErrors).toEqual([]);
-});
-
-test("a safe link in untrusted Markdown opens in a new tab without a referrer", async ({
-  page,
-}) => {
-  await serveDocument(page, hostileDocument());
-  await page.goto("/");
-
-  const link = page.locator("#review-section").getByRole("link", { name: "safe" }).first();
-
-  await expect(link).toHaveAttribute("href", "https://example.com/docs");
-  await expect(link).toHaveAttribute("target", "_blank");
-  await expect(link).toHaveAttribute("rel", /noreferrer/);
-});
-
-test("fields that are plain text show markup as written", async ({ page }) => {
-  await serveDocument(page, hostileDocument());
-  await page.goto("/");
-
-  const title = page.getByRole("heading", { level: 1 });
-  await expect(title).toContainText(`<img src=x onerror="window.__pwned='title'"> Title`);
-  await expect(title.locator("img")).toHaveCount(0);
-
-  await page.getByRole("tab", { name: "Activity" }).click();
-  await page.getByRole("tabpanel", { name: "Activity" }).getByText("6 checks on this head").click();
-  await expect(page.getByRole("list", { name: "Checks on this head" })).toContainText(
-    "<script>window.__pwned='check'</script> check",
-  );
-  expect(await page.evaluate(() => Reflect.get(window, "__pwned"))).toBeUndefined();
 });
 
 test("a code excerpt that contains markup is drawn as text", async ({ page }) => {

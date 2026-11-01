@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/baum-ai/baum/agent"
+	"github.com/baum-ai/baum/internal/appdb/appdbtest"
 	"github.com/baum-ai/baum/internal/assemble/assembletest"
 	"github.com/baum-ai/baum/internal/chat"
 	"github.com/baum-ai/baum/internal/config"
@@ -94,8 +95,8 @@ func (a *Agent) Default(request agent.Request) agent.Result {
 // empty directories.
 func New(t *testing.T, o Options) *Fixture {
 	t.Helper()
-	t.Setenv("CLAUDE_CONFIG_DIR", t.TempDir())
-	t.Setenv("CODEX_HOME", t.TempDir())
+	t.Setenv("CLAUDE_CONFIG_DIR", appdbtest.TempDir(t))
+	t.Setenv("CODEX_HOME", appdbtest.TempDir(t))
 	ctx := context.Background()
 	backend := o.Backend
 	if backend == "" {
@@ -107,7 +108,7 @@ func New(t *testing.T, o Options) *Fixture {
 	if out, err := remote.CombinedOutput(); err != nil {
 		t.Fatal(string(out), err)
 	}
-	registry, err := repos.Open(filepath.Join(t.TempDir(), "repos.sqlite"))
+	registry, err := repos.Open(filepath.Join(appdbtest.TempDir(t), "repos.sqlite"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -116,7 +117,7 @@ func New(t *testing.T, o Options) *Fixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	root := filepath.Join(t.TempDir(), "review-runs")
+	root := filepath.Join(appdbtest.TempDir(t), "review-runs")
 	t.Cleanup(func() { chmodTree(root) })
 	dir, err := reviewruns.Create(root)
 	if err != nil {

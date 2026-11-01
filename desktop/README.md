@@ -41,21 +41,54 @@ may start it, and it outlives the app: quitting the app leaves it running.
 
 A second launch focuses the existing window instead of opening another one.
 
+## Native settings
+
+The native shell keeps one `desktop.json` in its OS app-config directory
+(`~/.config/com.usebaum.desktop/` on Linux). It reads this file before
+connecting to the daemon:
+
+| Section | Holds |
+| --- | --- |
+| `setup` | first-run completion and installed CLI command records |
+| `notifications` | notification-kind toggles and the OS permission answer |
+| `window` | the page zoom level |
+| `updates` | versions whose automatic installation failed |
+
+Every change reads the latest document and replaces only its section, under
+one lock shared by all native threads. Setup completion and CLI records are
+updated independently within their section, so finishing setup while a command
+installation runs preserves both. A private temporary file is flushed and
+renamed into place; on Unix the saved file is mode 0600. Reads of a damaged
+file or section use safe defaults and log the problem; writes refuse damaged
+JSON or a malformed section instead of overwriting it. CLI install/removal
+also refuses unreadable setup records before changing a link. Separate
+pre-release settings files are not imported.
+
 ## First run: the baum command and the hooks
 
-First run uses a three-step setup in the landing page's sand, espresso and green
+First run uses a three-step setup with the local app's shared light and dark
 palette, set like every screen of the app in its bundled type: Instrument
 Sans for text and Manrope for headings, both under the SIL Open Font License
 (`../viewer/src/fonts/`). Studio Feixen, the website's font, is licensed for the
 web only and is never bundled in the app. The screen is a typed React entry in
 `../app/src/desktop/`, built alongside the local application by its Vite build.
+Its rail uses the app sidebar's canvas and Stumpy mark. UI colors come from
+`../viewer/src/palette.css`; Stumpy's fixed colors live with the illustration in
+`../viewer/src/components/stumpy-artwork.ts`. Native SVG icon templates reuse
+both sources, resolved by `scripts/prepare-icons.mjs` before rasterization.
+Setup, connecting and tray screens follow the system's appearance, including
+changes while they are open; the app's saved theme preference applies to its
+daemon-served pages.
 Vite writes the daemon assets to `../internal/localapp/dist` and assembles the
 native assets in `dist/`, where the connecting screen is `index.html`. Tauri embeds
 `dist/` so setup stays on its local origin with the existing native permissions;
 daemon-served pages may open the native folder picker (below) or manage
-the bundled CLI and agent hooks directly in Settings. Each step is optional and has Back
-and Continue controls; changes happen only when the user selects an install
-or add action. Displayed paths abbreviate the current home directory as
+the bundled CLI and agent hooks directly in Settings. The GitHub step requires a
+connection and at least one picked repository before Continue or the later steps
+in the rail become available. Adding the CLI to the user's PATH and connecting
+agent hooks remain optional. The app runs its own CLI to start the daemon.
+Steps have Back and Continue controls. Changes
+happen only when the user selects an install or add action. Displayed paths abbreviate the current home directory as
 `~`; actions still use the full path:
 
 1. Connect GitHub and pick repositories.
@@ -63,12 +96,35 @@ or add action. Displayed paths abbreviate the current home directory as
      step reaches the daemon's GitHub sign-in through the setup screen's
      `github_connection` command, which relays status, start, cancel and retry
      over the tray's loopback client; disconnecting stays in Settings. Signing
-     in opens GitHub's device page in the default browser and copies the code
-     in the same click. The daemon runs the device flow and keeps the
-     credential, so the screen never holds a token.
-   - Below it, pick GitHub repositories from the signed-in account. The list
-     shows the first eight and any picked ones; search finds the rest. Rows show
-     GitHub details only and nothing is picked on its own. Once a repository
+     in displays and copies the code, then waits five seconds before opening
+     GitHub's device page in the default browser so the code and clipboard
+     confirmation stay visible. During the delay, the browser control is disabled
+     and shows the shared loading animation beside "Opening GitHub…"; launching
+     restores the "Open GitHub" link at the same width.
+     The status distinguishes preparing sign-in, opening the browser and waiting
+     for GitHub confirmation, with the shared loader while waiting. It explains
+     that confirmation can take a few seconds and shows "Connected as…" once
+     sign-in is confirmed, while repositories load separately.
+     Cancelling or leaving the step cancels the pending browser launch.
+     The daemon runs the device flow and keeps the credential, so the screen
+     never holds a token.
+   - Below it, pick GitHub repositories from the signed-in account. The first
+     request fetches eight top repositories, then a background request fetches up
+     to one hundred more using the returned `topRepositories` cursor. The list
+     shows the first eight and any picked ones; archived repositories are omitted.
+     Setup and the app's Add repositories share the picker. Cached top matches
+     appear immediately while typing. GitHub repository search runs separately
+     after a 250 ms debounce, with results cached per query for five minutes.
+     An empty search preserves GitHub's top repository order. Search results
+     sort by exact name or owner/name match first, then top status, then
+     latest push. A pending or failed search leaves cached matches pickable, so
+     the person can continue setup immediately; failures offer a retry. The picker
+     refreshes every 300 ms while background requests are pending. The footer
+     says how many more repositories or matches there are and offers Show
+     more, which adds twenty rows of the same list (asking GitHub for its next
+     page once the loaded rows run out); the list then keeps its height and
+     scrolls.
+     Rows show GitHub details only and nothing is picked on its own. Once a repository
      is picked, baum looks for its clone in folders agents worked in and common
      code folders, with the nine-dots loader while it looks, then shows the
      clone it found or says none was found. A picked repository without a
@@ -82,14 +138,23 @@ or add action. Displayed paths abbreviate the current home directory as
      actions to the daemon. It cannot provide arbitrary HTTP routes or see a
      GitHub token. Explicit folder attachment may file a fork under its
      upstream repository when a remote matches it.
-2. Set up reviews: the harness (automatic, Claude Code, Codex, Cursor Agent or
-   the Anthropic API), its model (the harness default, a listed model or a
-   custom one), whether reviews run automatically and, if so, for which pull
-   requests (authored, requested, both, or all open pull requests). The
+2. Select your agent: Claude Code or Codex (initially resolved from automatic
+   selection or the installed agents). Missing CLIs are marked Not installed
+   and cannot be selected; a saved missing agent falls back to an installed
+   one, preferring Claude Code. When neither is detected, official installation
+   guides and Check again replace the model controls. Continue and the final
+   step in the rail wait for an installed agent; rechecking selects one as
+   soon as it is detected. Detection errors show retry guidance.
+   A compact row pairs the review model
+   with its reasoning effort. The review
+   effort also applies to fixes that follow reviews. A model can be a preset or
+   a custom name. Choose whether reviews run automatically and, if so, for which
+   pull requests (authored, requested, both, or all open pull requests). The
    screen reads them with `baum internal reviews show` and saves changes with
    `baum internal reviews set` when the user opens baum at the end of setup.
    They are stored as app preferences in the repository registry, which the
-   daemon rereads for every job.
+   daemon rereads for every job. The native bridge forwards the review `effort`
+   CLI flag. Extraction preferences remain in Settings; setup leaves them intact.
 3. Install the CLI and connect agents.
    - Install the bundled `baum` command onto the login shell's `PATH` (below).
      The step states in one line where baum will be installed, or which other
@@ -99,14 +164,40 @@ or add action. Displayed paths abbreviate the current home directory as
      --agent codex`. The screen explains reviewing trust with `/hooks`. The
      Claude Code plugin is installed separately with `--agent claude-code`.
      Both use the native agent CLI to fetch the public marketplace.
-     Installation and enablement do not mean the user has trusted the hooks.
+     Codex status additionally checks its effective hook inventory. Connected
+     requires every baum hook to be present, enabled and trusted; untrusted or
+     modified definitions show Needs approval in Codex. Missing, disabled and
+     unavailable checks are distinct. Returning from Codex or Check again
+     refreshes approval, without granting it. The person can finish setup with
+     an unfinished connection; the app keeps a warning beside Settings.
 
+### Model effort choices
+
+The onboarding selectors use CLI capabilities, checked on 2026-10-31 against
+[Claude Code's model configuration](https://code.claude.com/docs/en/model-config#adjust-effort-level)
+and the Codex 0.166 model catalogue. Codex accepts the effort advertised by each
+model through [`model_reasoning_effort`](https://learn.chatgpt.com/docs/config-file/config-reference#model_reasoning_effort).
+
+| Models | Effort levels |
+| --- | --- |
+| Claude Haiku 5.5, Sonnet 5.5 and Opus 5.5 | Low, Medium, High, Extra high, Max |
+| GPT-6 Luna | Low, Medium, High, Extra high, Max |
+| GPT-6.1 Sol, GPT-6.1 Terra and GPT-6 Astra | Low, Medium, High, Extra high, Max, Ultra |
+
+Every selector also offers Default, which leaves the effort to the agent.
+Ultra enables Codex's automatic task delegation. Unknown custom models offer
+Default only. Changing a model preserves a supported effort and resets an
+unsupported one to Default. API-only levels are not offered by the CLI picker.
+
+Open baum uses the app's CLI independently of the command on the user's PATH.
+Installing that command and connecting agent hooks remain optional.
 Failed actions leave the user on the step with their output and a retry action.
-"Check again" rereads the installed state. Finishing records `setup.json`,
-attaches to the daemon and opens the inbox. If diagnostics find a problem,
-the inbox shows a notice linking to the fixes. Later, "Command Line and Hooks…"
-in the tray, or the menu bar on macOS, reopens the same steps, with removal controls for
-the command and each agent plugin. Settings also provides these controls inline, without reopening setup.
+"Check again" rereads the installed state. Finishing records `desktop.json`'s
+setup section, attaches to the daemon and opens the inbox. If diagnostics find a problem,
+the inbox shows a notice linking to the fixes. Setup points to Settings to finish
+later, with inline controls for the command and each agent plugin.
+"Command Line and Hooks…" in the window's menu bar also reopens the same steps;
+the tray menu omits it.
 
 Setup, Diagnostics and Settings offer GitHub device sign-in: copy the code and open
 GitHub in the default browser. The daemon completes sign-in independently of
@@ -120,8 +211,9 @@ first `baum` on it (the one hooks run) with its version. On Unix, the login
 shell’s PATH comes first and inherited PATH directories are appended without
 duplicates, preserving tools available to the process that launched the app.
 `baum hooks status --user --json` reads each agent's native plugin registry, reporting
-plugin ID, installation and enablement separately. Disabled plugins offer an
-Enable action; trust must be reviewed in the agent. Each native action has a
+plugin ID, installation and enablement separately, plus Codex's hook trust
+state. The native bridge preserves this state for onboarding and Settings.
+Disabled plugins offer an Enable action; approval still belongs to Codex. Each native action has a
 90-second bound and status queries have 10 seconds. The desktop gives both
 agents, login PATH resolution and process overhead a 240-second total budget.
 Status, install and removal run with the resolved login shell PATH so agents
@@ -203,7 +295,7 @@ PATH resolution fails, the app uses its inherited PATH and displays the reason.
   up. A `baum` in a system `PATH` directory still comes first; the screen
   says so.
 
-`setup.json` is the user's file, so the app uses a record only when it has
+`desktop.json` is the user's file, so the app uses a setup record only when it has
 this shape (a link named `baum`, a backup named as above, an absolute target
 named `baum`), still blocks a package manager's baum and asks before
 replacing anything it did not itself link, and asks for a password to remove
@@ -211,15 +303,17 @@ a link only when the record names the baum the app runs now. Remove deletes only
 still points where the app put it (a link someone changed since is left
 alone, and the screen names a backup still beside it), and puts back a baum
 it had replaced; on Windows it takes the directory off the user `PATH`.
-`setup.json` lists every link the app made and has not removed: installing
-in a new place removes the earlier one, and one that cannot be removed (a
+`desktop.json`'s `setup.commands` lists every link the app made and has not
+removed: installing in a new place removes the earlier one, and one that cannot be removed (a
 cancelled password prompt) stays listed, shown on the screen, until Remove
 succeeds for it. Updating the app's own link keeps the backup of the baum it
-replaced, so Remove still puts that back. (A `setup.json` of the first
-release, with a single `command`, is read as a one-item list.)
+replaced, so Remove still puts that back.
 Hooks are removed with the bundled `baum hooks uninstall --user`, which
 removes only the native `baum@baum` plugin and leaves the marketplace and
-other plugins.
+other plugins. Settings' Update runs the bundled `baum hooks update --user
+--agent AGENT`, which refreshes the marketplace and brings the installed
+plugin to its latest version, so new hooks arrive without removing and
+connecting the agent again.
 
 ### Restarts into the app's baum
 
@@ -261,11 +355,12 @@ The daemon outlives the app, so the app's presence is a tray icon.
   anything needing attention; each agent session asking for a permission or
   an answer (clicking one opens its transcript); "Plan usage left" with a
   line per readable plan window ("Claude Code · 5-hour: 62% left · resets in
-  3 h"); Open baum; Pause or Resume automatic reviews; Start at login; Command
-  Line and Hooks… (see "First run"); a Notifications submenu (see
+  3 h"); Open baum; Pause or Resume automatic reviews; Start at login;
+  a Notifications submenu (see
   "Notifications"); Quit; Quit and stop background reviews. Plan usage shows
-  only the plans the daemon could read, and nothing when it can read neither
-  Claude Code nor Codex. The menu is rebuilt whenever a "resets in" text would
+  only the plans the daemon could read and the person has not hidden in
+  Settings (by default those of the backends baum uses), and nothing when
+  none remain. The menu is rebuilt whenever a "resets in" text would
   read differently, which the 3–10 s polls check.
 - **Tray panel (macOS and Windows):** a left click on the icon opens a small
   borderless window under the icon (above it, on a bottom taskbar), drawn
@@ -392,6 +487,7 @@ daemon serves are not involved.
 | --- | --- |
 | Review finished, with the review's risk score | `notice` `review_finished` |
 | Review failed, with its failure category | `notice` `review_failed` |
+| Couldn't write the missing section details (a retry failed), with its failure category; under Review failed | `notice` `details_failed` |
 | Review requested from me | `notice` `review_requested` |
 | Review generated automatically | `notice` `review_automatic` |
 | My pull request: checks failing | `notice` `checks_failed` |
@@ -443,12 +539,12 @@ title is not interpreted.
   report a macOS refusal, so a refusal there simply shows nothing. A refusal
   the platform does report is remembered and the app stops trying; switching a
   kind on again in the menu asks once more.
-- **Settings.** Each kind is on by default, and so is a kind added after
-  `notifications.json` was written. A "Notifications" submenu with one
-  check item per kind is in the macOS menu bar and in the tray menu. Linux and
+- **Settings.** Each kind is on by default; an unspecified kind stays on.
+  A "Notifications" submenu with one check item per kind is in the macOS
+  menu bar and in the tray menu. Linux and
   Windows windows have no menu bar, so there the tray holds them. The choices
-  and the permission answer are saved in `notifications.json` in the app's
-  config directory
+  and the permission answer are saved in `desktop.json`'s `notifications`
+  section in the app's config directory
   (`~/.config/com.usebaum.desktop/` on Linux). Those saved settings are the
   only copy of the state: a click on either menu flips them, then both menus
   are rebuilt or updated from them. Native menus need no page capability.
@@ -481,9 +577,9 @@ doing anything (`src/zoom.rs`).
   through `zoom_state` and `set_zoom`. It follows changes made by the shortcuts.
   It stays hidden when the app does not offer these commands, as when a
   different daemon's pages show in an older app.
-- **Saved.** The level is saved in `window.json` in the app's config
-  directory and applied when the window opens and whenever a page starts
-  loading. A missing, damaged or unknown level is 100%.
+- **Saved.** The level is saved in `desktop.json`'s `window` section in the
+  app's config directory and applied when the window opens and whenever a
+  page starts loading. A missing, damaged or unknown level is 100%.
 
 ## What pages may do
 
@@ -512,8 +608,8 @@ doing anything (`src/zoom.rs`).
   for the zoom shortcuts. Every change they make runs in the
   Rust side and only when the user requests it in setup or Settings;
   replacing a different baum also requires the confirmed path. Daemon pages
-  share `setup_state`, the four CLI and hook install/removal commands and
-  `choose_repository`. GitHub connection, repository registration, review
+  share `setup_state`, the four CLI and hook install/removal commands,
+  `update_hooks` and `choose_repository`. GitHub connection, repository registration, review
   settings and finishing setup remain restricted to the bundled setup screen.
 - The opener plugin is used only from Rust, to open links in the browser. Its
   click script (`open_js_links_on_click`) is off: it would call the plugin from
@@ -556,8 +652,9 @@ builds never check; `BAUM_DESKTOP_UPDATES=0` turns checks off.
   directory the user cannot write, an app on a read-only volume), only says
   that a new version exists, once per version and app start, and offers to
   open its release page. Updating it is the user's job, as with any package.
-  A version whose installation failed is remembered (`updates.json` in the
-  app's config directory) and from then on only announced this way.
+  A version whose installation failed is remembered (`desktop.json`'s
+  `updates` section in the app's config directory) and from then on only
+  announced this way.
 - Restarting the app does not stop the daemon. The first client to run the
   new `baum` replaces an older daemon, as after any upgrade.
 
@@ -578,7 +675,7 @@ just desktop::bundle        # the release's Linux deb and AppImage in target/rel
 just desktop::updater-test  # updater manifest checks reject tampered releases
 just desktop::run           # run the app on this Wayland session's display
 just desktop::dev           # native host app, with Vite hot reload in Docker
-just desktop::icons         # regenerate icons/ from icons/source.svg
+just desktop::icons         # resolve palette tokens and regenerate native icons
 ```
 
 `run` starts the container's own daemon in the container's home directory,
@@ -883,5 +980,6 @@ tools installed after the app or the agent started are found.
 
 The onboarding browser regression runs against the compiled React bundle
 mounted through `ui-test`: `pnpm --dir /oss/app test:desktop` after building the app. It uses mocked native
-IPC and checks separate agent actions, retries, multiple repositories, back/skip,
+IPC and checks required GitHub sign-in and repository selection, separate agent
+actions, retries, multiple repositories, back navigation,
 completion and the minimum window width. Screenshots go to a temporary directory, or `ONBOARDING_SCREENSHOT_DIR` when set.

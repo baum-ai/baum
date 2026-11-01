@@ -225,7 +225,8 @@ export function FeatureItem({
   // Opened into a panel beside the timeline: the entry carries the selection.
   const selected = expanded && panelElsewhere !== undefined;
   return (
-    <li ref={itemRef} data-feature={feature.id} className={TIMELINE_ROW}>
+    // A row the app's keys move through, opened by its button.
+    <li ref={itemRef} data-feature={feature.id} data-row-id={feature.id} className={TIMELINE_ROW}>
       <TimelineDate day={day} />
       <TimelineRail>
         <span
@@ -240,7 +241,8 @@ export function FeatureItem({
       <div className="min-w-0 pb-3">
         <div
           className={cn(
-            "min-w-0 overflow-hidden rounded-(--radius-lg) border shadow-(--shadow-card)",
+            // Hovering the feature tints the whole tile, its key decisions too.
+            "min-w-0 overflow-hidden rounded-(--radius-lg) border shadow-(--shadow-card) has-[>button:hover]:bg-(--surface-hover)",
             selected
               ? "border-(--action-accent) bg-(--surface-selected) ring-1 ring-(--action-accent)"
               : expanded
@@ -251,11 +253,12 @@ export function FeatureItem({
           <button
             type="button"
             id={`${id}-button`}
+            data-row-link=""
             aria-expanded={expanded}
             aria-controls={panelElsewhere ?? `${id}-panel`}
             onClick={onToggle}
             className={cn(
-              "flex w-full cursor-pointer items-start gap-2.5 px-4 pt-4 text-left hover:bg-(--surface-hover) sm:px-5",
+              "flex w-full cursor-pointer items-start gap-2.5 px-4 pt-4 text-left sm:px-5",
               keys.length > 0 ? "pb-2" : "pb-4",
               FOCUS_RING,
             )}

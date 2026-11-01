@@ -14,6 +14,10 @@ const (
 // named budget.
 func GenerationBudgetExceededReason(name string) string { return "generation budget exceeded: " + name }
 
+// Exceeds reports whether used is over limit, a call or token budget where
+// zero is no limit.
+func Exceeds(used, limit int) bool { return limit > 0 && used > limit }
+
 // ProviderRejectedReason is the reason of a run the model provider refused in
 // a way a retry cannot change. status is the fixed word of the refusal:
 // authentication_error, invalid_request, refusal or context_window_exceeded.

@@ -1,9 +1,22 @@
-import { cpSync, mkdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, mkdirSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { defineConfig, type Plugin } from "vite";
 import tailwindcss from "@tailwindcss/vite";
 import react from "@vitejs/plugin-react";
 import { desktopDevelopment } from "./vite.development.ts";
+
+// A recursive cpSync fails with EACCES on its first subdirectory when the
+// destination is a Docker Desktop (macOS) bind mount; copying file by file
+// does not.
+function copyDirectory(source: string, destination: string) {
+  mkdirSync(destination, { recursive: true });
+  for (const entry of readdirSync(source, { withFileTypes: true })) {
+    const from = join(source, entry.name);
+    const to = join(destination, entry.name);
+    if (entry.isDirectory()) copyDirectory(from, to);
+    else copyFileSync(from, to);
+  }
+}
 
 // The same build supplies the daemon app and Tauri's own screens: setup, the
 // tray panel, and the connecting screen the window opens on, which becomes
@@ -20,8 +33,7 @@ function desktopBundle(): Plugin {
     closeBundle() {
       const destination = resolve(import.meta.dirname, "../desktop/dist");
       rmSync(destination, { recursive: true, force: true });
-      mkdirSync(destination, { recursive: true });
-      cpSync(output, destination, { recursive: true });
+      copyDirectory(output, destination);
       renameSync(join(destination, "connecting.html"), join(destination, "index.html"));
       rmSync(join(output, "connecting.html"));
       rmSync(join(output, "tray.html"));

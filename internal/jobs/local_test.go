@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/baum-ai/baum/agent"
+	"github.com/baum-ai/baum/internal/appdb/appdbtest"
 	"github.com/baum-ai/baum/internal/config"
 	"github.com/baum-ai/baum/internal/generate"
 	"github.com/baum-ai/baum/internal/generate/generatetest"
@@ -41,7 +42,7 @@ func registeredClone(t *testing.T) (*repos.Registry, repos.Clone) {
 			t.Fatal(string(out), e)
 		}
 	}
-	registry, e := repos.Open(filepath.Join(t.TempDir(), "repos.sqlite"))
+	registry, e := repos.Open(filepath.Join(appdbtest.TempDir(t), "repos.sqlite"))
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -153,7 +154,7 @@ func localRunner(registry *repos.Registry, headRepository, permission string, st
 	cfg.Backend = config.BackendClaude
 	cfg.Model = "claude-sonnet-4-5"
 	client := github.New(func(context.Context, string) (string, error) { return "fixture-token", nil }, github.Options{Transport: transportFunc(func(r *http.Request) (*http.Response, error) {
-		body := `{"state":"open","head":{"sha":"first","repo":{"full_name":"` + headRepository + `"}},"user":{"login":"author"}}`
+		body := `{"state":"open","head":{"sha":"first","repo":{"full_name":"` + headRepository + `"}},"base":{"sha":"base"},"user":{"login":"author"}}`
 		code := 200
 		if strings.HasSuffix(r.URL.Path, "/permission") {
 			code = status
@@ -218,7 +219,7 @@ func TestLocalPrepareUsesBackendPathsWithoutFallingBackToPATH(t *testing.T) {
 			t.Fatal(string(out), e)
 		}
 	}
-	registry, e := repos.Open(filepath.Join(t.TempDir(), "repos.sqlite"))
+	registry, e := repos.Open(filepath.Join(appdbtest.TempDir(t), "repos.sqlite"))
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -258,7 +259,7 @@ func TestLocalPrepareUsesBackendPathsWithoutFallingBackToPATH(t *testing.T) {
 }
 
 // The app's backend and model replace the config file's for every job, read
-// when the job is prepared; a repository's own model still wins.
+// when the job is prepared.
 func TestPreferencesChooseTheBackendAndModel(t *testing.T) {
 	ctx := context.Background()
 	registry, clone := registeredClone(t)
@@ -277,15 +278,16 @@ func TestPreferencesChooseTheBackendAndModel(t *testing.T) {
 	if e != nil || p.Backend != agent.BackendCursorAgent || p.Model != "app-model" {
 		t.Fatalf("prepared = %+v, %v", p, e)
 	}
-	if _, e = registry.AddPatch(ctx, clone.Path, func(s repos.Settings) (repos.Settings, error) {
-		repository := "repository-model"
-		s.Model = &repository
-		return s, nil
-	}); e != nil {
-		t.Fatal(e)
-	}
-	if p, _, e = local.Prepare(ctx, Item{Clone: clone.ID, PR: 1}); e != nil || p.Model != "repository-model" {
-		t.Fatalf("prepared = %+v, %v", p, e)
+}
+
+// A job's tracked backend keeps the backend's answer to whether a staged
+// review's calls may run at once.
+func TestTrackedBackendForwardsConcurrentCalls(t *testing.T) {
+	backends := generate.DefaultBackendsFor(config.Config{})
+	for backend, want := range map[agent.Backend]bool{backends.Claude(""): true, backends.CursorAgent(""): false, &generatetest.Backend{}: false} {
+		if got := (&trackedBackend{Backend: backend}).ConcurrentCalls(); got != want {
+			t.Errorf("%s: %v", backend.Name(), got)
+		}
 	}
 }
 
@@ -350,6 +352,28 @@ func TestJobRunsWhateverPriceListIsActive(t *testing.T) {
 	pricing.Install(newer)
 	if e = local.confirmed(ctx, stale); e != nil {
 		t.Fatalf("a job prepared with an older list was refused: %v", e)
+	}
+}
+
+// A queued job runs with the agent, model and limits current when it starts,
+// as one started then would; only the account it was prepared with binds it,
+// and a job read back from the journal, which does not keep the account,
+// compares its whole configuration.
+func TestQueuedJobRunsWithChangedSettingsButNotAnotherAccount(t *testing.T) {
+	registry, clone := registeredClone(t)
+	local := localRunner(registry, "owner/repo", "write", 200)
+	prepared, _, err := local.Prepare(context.Background(), Item{Clone: clone.ID, PR: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	older := prepared
+	older.ConfigDigest, older.Backend, older.Model = "older-settings", "codex", "older-model"
+	if err := local.confirmed(context.Background(), older); err != nil {
+		t.Fatalf("changed settings stopped a queued job: %v", err)
+	}
+	older.account = ""
+	if err := local.confirmed(context.Background(), older); err == nil {
+		t.Fatal("a journaled job ran without its configuration compared")
 	}
 }
 

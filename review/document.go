@@ -34,14 +34,22 @@ type DocumentValidator struct {
 	Schema   []byte
 	Revision string
 	strict   map[string]any
-	resolved *jsonschema.Resolved
-	section  *jsonschema.Resolved
-	// rest is the authored contract with the sections' content left
-	// unchecked, so document-level violations are reported even when every
-	// section has its own.
-	rest  *jsonschema.Resolved
-	full  *jsonschema.Resolved
-	items *sectionItemSchemas
+	authored authoredView
+	// staged is the authored contract of a document a staged generator
+	// assembles (stagedContract): a section may lack its details and the
+	// summary its context.
+	staged authoredView
+	full   *jsonschema.Resolved
+	items  *sectionItemSchemas
+}
+
+// authoredView is one authored contract with its resolved schemas: the whole
+// document, a section on its own, and the rest, which is the contract with
+// the sections' content left unchecked, so document-level violations are
+// reported even when every section has its own.
+type authoredView struct {
+	tree                    map[string]any
+	resolved, section, rest *jsonschema.Resolved
 }
 
 // Contract returns a copy of the strict authored schema as a decoded tree, with
@@ -117,49 +125,21 @@ func newDocumentValidator() (*DocumentValidator, error) {
 		}
 	}
 	defs["section"].(map[string]any)["allOf"] = authoredRules
+	omitSectionDetails(defs["section"].(map[string]any))
 	risks := defs["section"].(map[string]any)["properties"].(map[string]any)["risks"].(map[string]any)["items"].(map[string]any)
 	omitProperties(risks, "state", "introduced_version", "mitigated_version")
 	delete(risks, "allOf")
-	encoded, err := json.Marshal(contract)
+	authored, err := resolveAuthoredView(contract)
 	if err != nil {
 		return nil, err
 	}
-	var schema jsonschema.Schema
-	if err := json.Unmarshal(encoded, &schema); err != nil {
-		return nil, err
-	}
-	resolved, err := schema.Resolve(nil)
+	stagedTree, err := stagedContract(contract)
 	if err != nil {
 		return nil, err
 	}
-	sectionContract, err := json.Marshal(map[string]any{"$ref": "#/$defs/section", "$defs": defs})
+	staged, err := resolveAuthoredView(stagedTree)
 	if err != nil {
-		return nil, err
-	}
-	var sectionSchema jsonschema.Schema
-	if err := json.Unmarshal(sectionContract, &sectionSchema); err != nil {
-		return nil, err
-	}
-	section, err := sectionSchema.Resolve(nil)
-	if err != nil {
-		return nil, err
-	}
-	var restContract map[string]any
-	if err := json.Unmarshal(encoded, &restContract); err != nil {
-		return nil, err
-	}
-	restContract["properties"].(map[string]any)["sections"] = map[string]any{"type": "array"}
-	restEncoded, err := json.Marshal(restContract)
-	if err != nil {
-		return nil, err
-	}
-	var restSchema jsonschema.Schema
-	if err := json.Unmarshal(restEncoded, &restSchema); err != nil {
-		return nil, err
-	}
-	rest, err := restSchema.Resolve(nil)
-	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("staged review contract: %w", err)
 	}
 	lenient, err := lenientContract(contract)
 	if err != nil {
@@ -181,14 +161,61 @@ func newDocumentValidator() (*DocumentValidator, error) {
 		return nil, err
 	}
 	revision := defs["schemaRevision"].(map[string]any)["const"].(string)
-	return &DocumentValidator{Schema: modelSchema, Revision: revision, strict: contract, resolved: resolved, section: section, rest: rest, full: full, items: items}, nil
+	return &DocumentValidator{Schema: modelSchema, Revision: revision, strict: contract, authored: authored, staged: staged, full: full, items: items}, nil
+}
+
+// resolveAuthoredView resolves an authored contract as a whole, a section of
+// it on its own, and the rest of it with the sections' content unchecked.
+func resolveAuthoredView(contract map[string]any) (authoredView, error) {
+	resolve := func(tree map[string]any) (*jsonschema.Resolved, error) {
+		encoded, err := json.Marshal(tree)
+		if err != nil {
+			return nil, err
+		}
+		var schema jsonschema.Schema
+		if err := json.Unmarshal(encoded, &schema); err != nil {
+			return nil, err
+		}
+		return schema.Resolve(nil)
+	}
+	resolved, err := resolve(contract)
+	if err != nil {
+		return authoredView{}, err
+	}
+	section, err := resolve(map[string]any{"$ref": "#/$defs/section", "$defs": contract["$defs"]})
+	if err != nil {
+		return authoredView{}, err
+	}
+	rest, err := cloneTree(contract)
+	if err != nil {
+		return authoredView{}, err
+	}
+	rest["properties"].(map[string]any)["sections"] = map[string]any{"type": "array"}
+	resolvedRest, err := resolve(rest)
+	if err != nil {
+		return authoredView{}, err
+	}
+	return authoredView{tree: contract, resolved: resolved, section: section, rest: resolvedRest}, nil
+}
+
+// cloneTree deep-copies a decoded JSON object.
+func cloneTree(tree map[string]any) (map[string]any, error) {
+	encoded, err := json.Marshal(tree)
+	if err != nil {
+		return nil, err
+	}
+	var clone map[string]any
+	if err := json.Unmarshal(encoded, &clone); err != nil {
+		return nil, err
+	}
+	return clone, nil
 }
 
 // schemaFindings locates a schema violation. The library reports only the
 // first violation it meets, so each section is checked on its own and the rest
 // of the document separately; a repair then sees every failing section and
 // any document-level problem at once instead of one per pass.
-func (v *DocumentValidator) schemaFindings(document []byte, err error) []string {
+func (v *DocumentValidator) schemaFindings(view authoredView, document []byte, err error) []string {
 	var outline struct {
 		Sections []json.RawMessage `json:"sections"`
 	}
@@ -202,7 +229,7 @@ func (v *DocumentValidator) schemaFindings(document []byte, err error) []string 
 		if json.Unmarshal(raw, &section) != nil {
 			return []string{err.Error()}
 		}
-		if sectionErr := v.section.Validate(section); sectionErr != nil {
+		if sectionErr := view.section.Validate(section); sectionErr != nil {
 			var named struct {
 				ID any `json:"id"`
 			}
@@ -213,14 +240,14 @@ func (v *DocumentValidator) schemaFindings(document []byte, err error) []string 
 			}
 			location := fmt.Sprintf("section %d (%s)", i+1, id)
 			object, _ := section.(map[string]any)
-			if located := v.items.findings(location, object, v.section); len(located) > 0 {
+			if located := v.items.findings(location, object, view.section); len(located) > 0 {
 				findings = append(findings, located...)
 			} else {
 				findings = append(findings, location+": "+conciseSchemaError(sectionErr))
 			}
 		}
 	}
-	if restErr := v.rest.Validate(value); restErr != nil {
+	if restErr := view.rest.Validate(value); restErr != nil {
 		findings = append(findings, conciseSchemaError(restErr))
 	}
 	if len(findings) == 0 {
@@ -299,6 +326,27 @@ func requireAuthoredContext(summary map[string]any) {
 	}
 }
 
+// omitSectionDetails removes a section's details state from the authored
+// contract. The host records it on a section whose details are still being
+// written or could not be written, which then may lack its summary; the model
+// writes every section whole, so an authored section has no details and always
+// an object summary, exactly as before the state existed.
+func omitSectionDetails(section map[string]any) {
+	omitProperties(section, "details")
+	section["properties"].(map[string]any)["summary"].(map[string]any)["type"] = "object"
+	required := section["required"].([]any)
+	section["required"] = slices.Insert(required, slices.Index(required, any("hunks"))+1, any("summary"))
+	var rules []any
+	for _, rule := range section["allOf"].([]any) {
+		condition, _ := rule.(map[string]any)["if"].(map[string]any)
+		without, _ := condition["not"].(map[string]any)
+		if !containsString(stringSlice(without["required"]), "details") {
+			rules = append(rules, rule)
+		}
+	}
+	section["allOf"] = rules
+}
+
 func omitProperties(schema map[string]any, keys ...string) {
 	props := schema["properties"].(map[string]any)
 	for _, key := range keys {
@@ -317,11 +365,15 @@ func omitProperties(schema map[string]any, keys ...string) {
 // document's semantic rules, and returns every finding in one pass, or "" when
 // it is valid.
 func (v *DocumentValidator) Validate(document []byte, bundle *bundlepkg.Bundle) string {
+	return v.validate(v.authored, document, bundle)
+}
+
+func (v *DocumentValidator) validate(view authoredView, document []byte, bundle *bundlepkg.Bundle) string {
 	var value any
 	if err := json.Unmarshal(document, &value); err != nil {
 		return "output is not a JSON document"
 	}
-	if err := v.resolved.Validate(value); err != nil {
+	if err := view.resolved.Validate(value); err != nil {
 		return err.Error()
 	}
 	var doc struct {
@@ -612,21 +664,25 @@ func walkJSON(value any, visit func(map[string]any)) {
 
 // Unresolved evidence remains visible as a model assertion; it cannot claim verification.
 func (v *DocumentValidator) Prepare(document []byte, bundle *bundlepkg.Bundle, directory string) ([]byte, string) {
+	return v.prepare(v.authored, document, bundle, directory)
+}
+
+func (v *DocumentValidator) prepare(view authoredView, document []byte, bundle *bundlepkg.Bundle, directory string) ([]byte, string) {
 	var value any
 	if err := json.Unmarshal(document, &value); err != nil {
 		return document, "output is not a JSON document"
 	}
 	// The model wrote against the lenient contract; everything the host
 	// can decide for it is decided here, before the strict contract applies.
-	value, derived := normalizeAuthored(value, v.strict, bundle, directory)
+	value, derived := normalizeAuthored(value, view.tree, bundle, directory)
 	if normalized, err := json.Marshal(value); err == nil {
 		document = normalized
 	}
-	if err := v.resolved.Validate(value); err != nil {
+	if err := view.resolved.Validate(value); err != nil {
 		// The schema-dependent checks assume a well-formed document. The
 		// partition rules do not, and they are the findings most often left
 		// for a further repair, so they are reported alongside the schema ones.
-		findings := v.schemaFindings(document, err)
+		findings := v.schemaFindings(view, document, err)
 		var outline struct {
 			Sections []sectionOutline `json:"sections"`
 		}
@@ -661,9 +717,22 @@ func (v *DocumentValidator) Prepare(document []byte, bundle *bundlepkg.Bundle, d
 	if err != nil {
 		return encoded, err.Error()
 	}
+	reconciledValue, err := decodeObject(reconciled, "reconciled review")
+	if err != nil {
+		return encoded, err.Error()
+	}
 	findings := derived
-	if semantic := v.Validate(reconciled, bundle); semantic != "" {
-		findings = append(findings, semantic)
+	// The authored candidate passed v.resolved above. Reconciliation also
+	// carries trusted previous sections, which may have failed details and a
+	// null summary; those are valid stored sections, not model-authored ones.
+	attachments := make(map[string]bool, len(bundle.Attachments))
+	for _, attachment := range bundle.Attachments {
+		attachments[attachment.ID] = true
+	}
+	if semantic, err := ruleFindings(reconciledValue, restored.Stack, restored.Sections, bundle, attachments); err != nil {
+		findings = append(findings, err.Error())
+	} else {
+		findings = append(findings, semantic...)
 	}
 	findings = append(findings, validateTileSources(restored.Sections, bundle, directory)...)
 	return encoded, strings.Join(findings, "\n")
@@ -828,7 +897,11 @@ func (v *DocumentValidator) Complete(document []byte, b *bundlepkg.Bundle, direc
 // prompt: promptVersion is recorded as generator.prompt_version, and an empty
 // one records nothing. The model's output never sets it.
 func (v *DocumentValidator) CompleteWithPrompt(document []byte, b *bundlepkg.Bundle, directory string, model, promptVersion string, now time.Time) ([]byte, string) {
-	document, findings := v.Prepare(document, b, directory)
+	return v.complete(v.authored, document, b, directory, model, promptVersion, now)
+}
+
+func (v *DocumentValidator) complete(view authoredView, document []byte, b *bundlepkg.Bundle, directory string, model, promptVersion string, now time.Time) ([]byte, string) {
+	document, findings := v.prepare(view, document, b, directory)
 	if findings != "" {
 		return nil, findings
 	}
@@ -846,50 +919,17 @@ func (v *DocumentValidator) CompleteWithPrompt(document []byte, b *bundlepkg.Bun
 	for i := range doc.Sections {
 		normalizeEvidence(doc.Sections[i].Evidence, b, directory)
 	}
-	index := documentIndex{FileComparisons: b.FileComparisons, Hunks: []documentHunk{}, Checks: []documentCheck{}, Reports: []documentReport{}, Comments: []documentComment{}, Threads: threadIndex(b), Sessions: []documentSession{}, PRs: json.RawMessage("[]")}
+	index, checkCounts, vendors, models := bundleIndex(b)
 	hunks := map[string]bundlepkg.Hunk{}
 	hunksByPath := map[string][]string{}
-	files := map[string]bool{}
-	additions, deletions := 0, 0
 	for _, h := range b.Diff {
 		hunks[h.ID] = h
 		hunksByPath[h.Path] = append(hunksByPath[h.Path], h.ID)
-		files[h.Path] = true
-		additions += h.Additions
-		deletions += h.Deletions
-		item := documentHunk{ID: h.ID, Path: h.Path, OldPath: h.OldPath, Change: h.Change, Role: h.Role, NewRange: []int{h.StartLine, h.LineCount}, Additions: h.Additions, Deletions: h.Deletions, Diff: indexedHunkDiff(h)}
-		if h.DiffURL != "" {
-			item.GitHubURL = &h.DiffURL
-		}
-		index.Hunks = append(index.Hunks, item)
 	}
-	checks, checkCounts := checkIndex(b, b.PullRequest.HeadSHA)
-	index.Checks = checks
-	for _, a := range b.Attachments {
-		index.Attachments = append(index.Attachments, documentAttachment{ID: a.ID, Alt: a.Alt, Heading: a.Heading, Position: a.Position, ContentType: a.ContentType, Width: a.Width, Height: a.Height, SourceURL: a.SourceURL})
-	}
-	for _, c := range b.Conversation {
-		if c.CreatedAt == nil {
-			continue
-		}
-		kind := c.Kind
-		if kind == "comment" {
-			kind = "issue"
-		}
-		index.Comments = append(index.Comments, documentComment{ID: jsonString(c.ID), Kind: kind, Author: c.AuthorLogin, Bot: c.Bot, CreatedAt: c.CreatedAt.UTC().Format(time.RFC3339Nano)})
-		if c.BotReport {
-			index.Reports = append(index.Reports, documentReport{ID: c.ID, Tool: c.BotTool, Marker: "baum", Comment: jsonString(c.ID), Summary: c.Body})
-		}
-	}
-	sessions, vendors, models := sessionIndex(b)
-	index.Sessions = sessions
+	files, additions, deletions := diffTotals(b)
 	summary := &doc.Summary
 	summary.Title = b.PullRequest.Title
-	association := b.PullRequest.AuthorAssociation
-	if association == "" {
-		association = "NONE"
-	}
-	summary.Author = documentAuthor{Login: b.PullRequest.AuthorLogin, Association: association, Bot: b.PullRequest.AuthorBot}
+	summary.Author = bundleAuthor(b)
 	authorship := &summary.Authorship
 	authorship.ObservedSessions, authorship.ObservedVendors, authorship.ObservedModels = len(b.Sessions), sortedKeys(vendors), sortedKeys(models)
 	notes := append([]string{}, b.Truncated...)
@@ -906,23 +946,11 @@ func (v *DocumentValidator) CompleteWithPrompt(document []byte, b *bundlepkg.Bun
 	if previous > 0 {
 		previousVersion = &previous
 	}
-	state := b.PullRequest.State
-	if b.PullRequest.MergedSHA != "" {
-		state = "merged"
-	} else if b.PullRequest.Draft {
-		state = "draft"
-	}
-	var merged, reviewMD *string
+	state, merged := bundlePRState(b)
+	var reviewMD *string
 	reviewMDChanged := b.ReviewConfig != nil && b.ReviewConfig.ChangedInPullRequest
-	if b.PullRequest.MergedSHA != "" {
-		merged = &b.PullRequest.MergedSHA
-	}
 	if b.ReviewConfig != nil && b.ReviewConfig.Present {
 		reviewMD = &b.ReviewConfig.Digest
-	}
-	specLinks := false
-	for _, r := range b.References {
-		specLinks = specLinks || r.Kind == "spec" || r.Kind == "spec_assertion"
 	}
 	doc.Review = documentReview{
 		Repository: b.Repository, PullRequest: b.PullRequest.Number, PRState: state,
@@ -931,7 +959,7 @@ func (v *DocumentValidator) CompleteWithPrompt(document []byte, b *bundlepkg.Bun
 		GenerationState: "current", GeneratedAt: now.UTC().Format(time.RFC3339Nano), EvidenceRefreshedAt: now.UTC().Format(time.RFC3339Nano),
 		Relations: doc.Relations,
 		Generator: documentReviewGenerator{Model: model, ReviewMD: reviewMD, ReviewMDChanged: reviewMDChanged, Truncated: notes, SchemaRevision: v.Revision, PromptVersion: promptVersion},
-		Sources:   documentReviewSources{Diff: b.Sources["diff"], Sessions: len(b.Sessions), Checks: len(b.Checks), ReviewThreads: b.Sources["review_threads"], SpecLinks: specLinks, ReviewMD: reviewMD != nil},
+		Sources:   bundleSources(b),
 	}
 	tiers := []string{"mechanical", "unrated", "low", "medium", "high", "critical"}
 	rank := func(tier string) int { return slices.Index(tiers, tier) }
@@ -1076,7 +1104,7 @@ func (v *DocumentValidator) CompleteWithPrompt(document []byte, b *bundlepkg.Bun
 		}
 		riskLOC[tier] += lines
 	}
-	doc.Stats = documentStats{Sections: len(doc.Sections), Files: len(files), Hunks: len(b.Diff), Additions: additions, Deletions: deletions, RoleLOC: roleLOC, RiskLOC: riskLOC, Checks: checkCounts}
+	doc.Stats = documentStats{Sections: len(doc.Sections), Files: files, Hunks: len(b.Diff), Additions: additions, Deletions: deletions, RoleLOC: roleLOC, RiskLOC: riskLOC, Checks: checkCounts}
 	summary.RiskScore = riskScore(doc.Sections, b.Diff)
 	doc.Index, doc.AgentReviews, doc.UnassignedHunks = index, agentReviews(b, doc.Sections, doc.Review.Head), unassigned
 	setValidation(&doc.reviewDocument, b)
@@ -1089,6 +1117,82 @@ func (v *DocumentValidator) CompleteWithPrompt(document []byte, b *bundlepkg.Bun
 		return nil, err.Error()
 	}
 	return encoded, ""
+}
+
+// bundleIndex indexes the bundle's evidence as a document carries it, with
+// the counts of the head's checks and the vendors and models of its sessions.
+func bundleIndex(b *bundlepkg.Bundle) (documentIndex, documentStatsChecks, map[string]bool, map[string]bool) {
+	index := documentIndex{FileComparisons: b.FileComparisons, Hunks: []documentHunk{}, Checks: []documentCheck{}, Reports: []documentReport{}, Comments: []documentComment{}, Threads: threadIndex(b), Sessions: []documentSession{}, PRs: json.RawMessage("[]")}
+	for _, h := range b.Diff {
+		item := documentHunk{ID: h.ID, Path: h.Path, OldPath: h.OldPath, Change: h.Change, Role: h.Role, NewRange: []int{h.StartLine, h.LineCount}, Additions: h.Additions, Deletions: h.Deletions, Diff: indexedHunkDiff(h)}
+		if h.DiffURL != "" {
+			item.GitHubURL = &h.DiffURL
+		}
+		index.Hunks = append(index.Hunks, item)
+	}
+	checks, checkCounts := checkIndex(b, b.PullRequest.HeadSHA)
+	index.Checks = checks
+	for _, a := range b.Attachments {
+		index.Attachments = append(index.Attachments, documentAttachment{ID: a.ID, Alt: a.Alt, Heading: a.Heading, Position: a.Position, ContentType: a.ContentType, Width: a.Width, Height: a.Height, SourceURL: a.SourceURL})
+	}
+	for _, c := range b.Conversation {
+		if c.CreatedAt == nil {
+			continue
+		}
+		kind := c.Kind
+		if kind == "comment" {
+			kind = "issue"
+		}
+		index.Comments = append(index.Comments, documentComment{ID: jsonString(c.ID), Kind: kind, Author: c.AuthorLogin, Bot: c.Bot, CreatedAt: c.CreatedAt.UTC().Format(time.RFC3339Nano)})
+		if c.BotReport {
+			index.Reports = append(index.Reports, documentReport{ID: c.ID, Tool: c.BotTool, Marker: "baum", Comment: jsonString(c.ID), Summary: c.Body})
+		}
+	}
+	sessions, vendors, models := sessionIndex(b)
+	index.Sessions = sessions
+	return index, checkCounts, vendors, models
+}
+
+// diffTotals counts the files the diff changes and its added and deleted lines.
+func diffTotals(b *bundlepkg.Bundle) (files, additions, deletions int) {
+	paths := map[string]bool{}
+	for _, h := range b.Diff {
+		paths[h.Path] = true
+		additions += h.Additions
+		deletions += h.Deletions
+	}
+	return len(paths), additions, deletions
+}
+
+func bundleAuthor(b *bundlepkg.Bundle) documentAuthor {
+	association := b.PullRequest.AuthorAssociation
+	if association == "" {
+		association = "NONE"
+	}
+	return documentAuthor{Login: b.PullRequest.AuthorLogin, Association: association, Bot: b.PullRequest.AuthorBot}
+}
+
+// bundlePRState is the pull request's state in the document's vocabulary,
+// and its merge commit once merged.
+func bundlePRState(b *bundlepkg.Bundle) (string, *string) {
+	switch {
+	case b.PullRequest.MergedSHA != "":
+		return "merged", &b.PullRequest.MergedSHA
+	case b.PullRequest.Draft:
+		return "draft", nil
+	}
+	return b.PullRequest.State, nil
+}
+
+// bundleSources are the document's sources as the bundle supplies them;
+// agent reviews and session validation are counted once derived.
+func bundleSources(b *bundlepkg.Bundle) documentReviewSources {
+	specLinks := false
+	for _, r := range b.References {
+		specLinks = specLinks || r.Kind == "spec" || r.Kind == "spec_assertion"
+	}
+	reviewMD := b.ReviewConfig != nil && b.ReviewConfig.Present
+	return documentReviewSources{Diff: b.Sources["diff"], Sessions: len(b.Sessions), Checks: len(b.Checks), ReviewThreads: b.Sources["review_threads"], SpecLinks: specLinks, ReviewMD: reviewMD}
 }
 
 // indexedHunkDiff turns the authoritative, redacted bundle patch into the

@@ -3,6 +3,7 @@ package uiserver_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -12,12 +13,14 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"syscall"
 	"testing"
 	"time"
 
 	"github.com/baum-ai/baum/agent"
 	"github.com/baum-ai/baum/internal/analytics"
+	"github.com/baum-ai/baum/internal/appdb/appdbtest"
 	"github.com/baum-ai/baum/internal/assemble/assembletest"
 	"github.com/baum-ai/baum/internal/automatic"
 	"github.com/baum-ai/baum/internal/chat"
@@ -46,6 +49,7 @@ import (
 	"github.com/baum-ai/baum/internal/store"
 	"github.com/baum-ai/baum/internal/transcript"
 	"github.com/baum-ai/baum/internal/uiserver"
+	"github.com/baum-ai/baum/internal/uistate"
 )
 
 // browserDiscovery serves fixed pull requests. Once pushed reports true (the
@@ -105,8 +109,28 @@ func (d browserDiscovery) PollNow(ctx context.Context, repository github.Reposit
 // still use the production local repository service.
 type browserRepositoryLister struct{}
 
-func (browserRepositoryLister) ViewerRepositories(context.Context, string) ([]github.ViewerRepository, error) {
-	return []github.ViewerRepository{{Repository: "acme/demo", Description: "A registered local repository", OpenPullRequests: 4}, {Repository: "acme/other", Description: "Another registered clone"}, {Repository: "acme/missing", Description: "A repository waiting for its local clone"}, {Repository: "acme/clone-me", Description: "Clone a repository from setup"}, {Repository: "acme/renamed", Description: "A repository renamed on GitHub"}}, nil
+func (browserRepositoryLister) ViewerRepositories(_ context.Context, _ string, _ int, cursor *string) (github.ViewerRepositoryList, error) {
+	if cursor != nil {
+		return github.ViewerRepositoryList{Repositories: []github.ViewerRepository{{Repository: "acme/top-extra", Description: "A prefetched top repository"}}, TotalCount: 7}, nil
+	}
+	next := "after-first"
+	return github.ViewerRepositoryList{Repositories: []github.ViewerRepository{{Repository: "acme/demo", Description: "A registered local repository"}, {Repository: "acme/other", Description: "Another registered clone"}, {Repository: "acme/missing", Description: "A repository waiting for its local clone"}, {Repository: "acme/clone-me", Description: "Clone a repository from setup"}, {Repository: "acme/renamed", Description: "A repository renamed on GitHub"}}, TotalCount: 7, NextCursor: &next}, nil
+}
+
+func (browserRepositoryLister) SearchRepositories(ctx context.Context, _, _ string, _ github.SearchScope, _ *string) (github.ViewerRepositoryList, error) {
+	// Cached top matches must be usable before the browser releases GitHub search.
+	ticker := time.NewTicker(20 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		if _, err := os.Stat(filepath.Join(os.Getenv("BAUM_APP_STATE_DIR"), "repository-search-release")); err == nil {
+			return github.ViewerRepositoryList{Repositories: []github.ViewerRepository{{Repository: "acme/search-only", Description: "A GitHub search result outside the top list"}}, TotalCount: 1}, nil
+		}
+		select {
+		case <-ctx.Done():
+			return github.ViewerRepositoryList{}, ctx.Err()
+		case <-ticker.C:
+		}
+	}
 }
 
 // browserDiagnostics is a fixed report: no machine is inspected.
@@ -242,7 +266,7 @@ func TestLocalAppBrowserFixture(t *testing.T) {
 	}
 	t.Setenv("GITHUB_TOKEN", "")
 	t.Setenv("GH_TOKEN", "")
-	home := t.TempDir()
+	home := appdbtest.TempDir(t)
 	if err := os.Chmod(home, 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -252,7 +276,7 @@ func TestLocalAppBrowserFixture(t *testing.T) {
 	t.Setenv("XDG_DATA_HOME", filepath.Join(home, "data"))
 	repo := assembletest.NewRepo(t, assembletest.Options{})
 	assembletest.Git(t, repo.Dir, "remote", "add", "origin", "https://github.com/acme/demo")
-	registry, err := repos.Open(filepath.Join(home, "repos.sqlite"))
+	registry, err := repos.Open(filepath.Join(home, "app.sqlite"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -270,7 +294,7 @@ func TestLocalAppBrowserFixture(t *testing.T) {
 	// the other, and plan usage samples.
 	writeAnalyticsSessions(t, home, repo.Dir)
 	commitRecently(t, other.Dir)
-	writePlanHistory(t, filepath.Join(home, "plan-usage-history.json"))
+	writePlanHistory(t, filepath.Join(home, "app.sqlite"))
 	if _, err := registry.Pick(context.Background(), "acme/missing", nil); err != nil {
 		t.Fatal(err)
 	}
@@ -477,14 +501,53 @@ func TestLocalAppBrowserFixture(t *testing.T) {
 		b, _ := json.Marshal(body)
 		return &http.Response{StatusCode: status, Header: http.Header{"Content-Type": []string{"application/json"}}, Body: io.NopCloser(strings.NewReader(string(b)))}, nil
 	})})
-	backend := &generatetest.Backend{Version: "fixture", RunFunc: func(ctx context.Context, r agent.Request, _ int) (agent.Result, error) {
+	// Reviews are written in stages, each taking its time. The first review of
+	// pull request 8 loses one section's details and its context, so the page
+	// shows a published version with gaps; its retry, a later run, writes them.
+	var gapMu sync.Mutex
+	gappedDir := ""
+	gapped := func(r agent.Request, stage string) bool {
+		var b struct {
+			PullRequest struct {
+				Number int `json:"number"`
+			} `json:"pull_request"`
+		}
+		raw, err := os.ReadFile(filepath.Join(r.Directory, "bundle.json"))
+		if err != nil || json.Unmarshal(raw, &b) != nil || b.PullRequest.Number != 8 {
+			return false
+		}
+		gapMu.Lock()
+		defer gapMu.Unlock()
+		if gappedDir == "" && stage == agent.StageOutline {
+			gappedDir = r.Directory
+		}
+		return r.Directory == gappedDir
+	}
+	backend := &generatetest.Backend{Version: "fixture", RunFunc: func(ctx context.Context, r agent.Request, n int) (agent.Result, error) {
+		stage := generatetest.Stage(r)
+		delay := map[string]time.Duration{agent.StageOutline: time.Second, agent.StageDetails: 1500 * time.Millisecond, agent.StageContext: 500 * time.Millisecond}[stage]
+		if stage == "" {
+			delay = 3 * time.Second
+		}
 		select {
 		case <-ctx.Done():
 			return agent.Result{}, ctx.Err()
-		case <-time.After(3 * time.Second):
+		case <-time.After(delay):
 		}
-		document, e := generatetest.Document(r.Directory, nil)
-		return agent.Result{Document: document, Model: cfg.Model, Calls: 1, Tokens: 100, Usage: agent.Usage{Input: 60, Output: 40, CacheRead: 900}}, e
+		var answer generatetest.Answer
+		if gapped(r, stage) {
+			withoutRest := generatetest.WithoutSection("sec_rest")
+			answer = func(stage string, request agent.Request) (agent.Result, error, bool) {
+				if stage == agent.StageContext {
+					return agent.Result{Calls: 1}, errors.New("unavailable"), true
+				}
+				return withoutRest(stage, request)
+			}
+		}
+		result, e := generatetest.StagedReplies(answer)(ctx, r, n)
+		result.Model, result.Calls, result.Tokens = cfg.Model, 1, 100
+		result.Usage = agent.Usage{Input: 60, Output: 40, CacheRead: 900}
+		return result, e
 	}}
 	// Questions to the review's agent are answered at once by a scripted agent,
 	// which cites lines of docs/guide.md, a file of the review's own hunks.
@@ -533,17 +596,17 @@ func TestLocalAppBrowserFixture(t *testing.T) {
 			return daemon.App{}, err
 		}
 		decided.Changed = func() { _ = server.Publish("decisions", struct{}{}) }
-		scheduler := &automatic.Scheduler{Registry: registry, Path: filepath.Join(home, "automatic.json"), Discover: disc.Poll, Interval: 500 * time.Millisecond,
+		scheduler := &automatic.Scheduler{Registry: registry, Path: filepath.Join(home, "app.sqlite"), Discover: disc.Poll, Interval: 500 * time.Millisecond,
 			Notify: func(status automatic.Status) { _ = server.Publish("automatic", status) }}
 		// Review groups generate through the same fake backend: a group of
 		// pull requests with saved reviews (PR 7, and any the browser
 		// generates first) gets a combined review.
-		groups, err := reviewgroups.Open(filepath.Join(home, "groups.sqlite"))
+		groups, err := reviewgroups.Open(filepath.Join(home, "app.sqlite"))
 		if err != nil {
 			_ = events.Close()
 			return daemon.App{}, err
 		}
-		runner, err := jobs.Open(filepath.Join(home, "jobs.json"), &jobs.Local{Registry: registry, Groups: groups, Config: cfg, Client: client, FixDirectory: filepath.Join(home, "fixes"), Features: fixtureBuilder{}, Chat: chats, Backends: generate.Backends{Claude: func(string) generate.CheckedBackend { return fixtureFixer{backend} }}}, 1, func(job jobs.Job) {
+		runner, err := jobs.Open(filepath.Join(home, "app.sqlite"), &jobs.Local{Registry: registry, Groups: groups, Config: cfg, Client: client, FixDirectory: filepath.Join(home, "fixes"), Features: fixtureBuilder{}, Chat: chats, Backends: generate.Backends{Claude: func(string) generate.CheckedBackend { return fixtureFixer{backend} }}}, 1, func(job jobs.Job) {
 			_ = server.Publish("progress", map[string]any{"job": job})
 			_ = server.Publish("index", map[string]any{})
 			if event, ok := jobs.ChatEvent(job); ok {
@@ -566,11 +629,12 @@ func TestLocalAppBrowserFixture(t *testing.T) {
 			return scheduler.BeginIdentityChange()
 		})
 		changed := func() { scheduler.Wake(); _ = server.Publish("index", struct{}{}) }
-		actions := &analytics.Actions{Path: filepath.Join(home, "analytics-actions.json")}
-		sessionIndex := &analytics.Index{Path: filepath.Join(home, "analytics-index.json"), Clones: registry}
+		actions := &analytics.Actions{Path: filepath.Join(home, "app.sqlite")}
+		sessionIndex := &analytics.Index{Path: filepath.Join(home, "app.sqlite"), Clones: registry}
 		insights := &analytics.Service{Registry: registry, Index: sessionIndex, Jobs: runner.List, Actions: actions,
-			Plans:    &planusage.History{Path: filepath.Join(home, "plan-usage-history.json"), Service: &planusage.Service{Sources: []planusage.Source{fixedPlans{}}}},
-			Delivery: &analytics.Delivery{Search: client}, Captures: decided.Ledger}
+			Plans:    &planusage.History{Path: filepath.Join(home, "app.sqlite"), Service: &planusage.Service{Sources: []planusage.Source{fixedPlans{}}}},
+			Delivery: &analytics.Delivery{Search: client}, Captures: decided.Ledger,
+			Pulls: browserFlow, Login: func(context.Context) string { return "me" }}
 		finder := &clonefind.Service{Registry: registry, Options: clonefind.Options{Home: home}, Changed: changed}
 		repositoryService := &githubrepos.Service{Registry: registry, Lister: browserRepositoryLister{}, Home: home, Context: appCtx, Changed: changed, Clone: func(ctx context.Context, opts gitlocal.CloneOptions) error {
 			if err := os.MkdirAll(filepath.Dir(opts.Dir), 0700); err != nil {
@@ -588,7 +652,8 @@ func TestLocalAppBrowserFixture(t *testing.T) {
 			}
 			return "", github.ErrNotFound
 		}, PlanUsage: browserPlanUsage, Analytics: insights.Handler(), Timeline: timeline.Handler(),
-			Inboxes:   (&inboxes.API{Store: inboxes.Open(filepath.Join(home, "inboxes.json"))}).Handler(),
+			UIState:   (&uistate.Store{Path: filepath.Join(home, "app.sqlite")}).Handler(),
+			Inboxes:   (&inboxes.API{Store: inboxes.Open(filepath.Join(home, "app.sqlite"))}).Handler(),
 			Groups:    (&reviewgroups.API{Store: groups, Registry: registry, Index: index.Build, Changed: func() { _ = server.Publish("index", struct{}{}) }}).Handler(),
 			Decisions: browserDecisionsAPI(decided, registry, live),
 			DecisionModel: func(ctx context.Context, prefs repos.Preferences) uiserver.DecisionModel {
@@ -641,3 +706,30 @@ var browserPlanUsage = http.HandlerFunc(func(w http.ResponseWriter, _ *http.Requ
 {"provider":"codex","available":true,"plan":"pro","windows":[{"name":"weekly","used_percent":93,"resets_at":%q}],"fetched_at":%q}]}`,
 		at(3*time.Hour), at(52*time.Hour), at(0), at(30*time.Hour), at(-20*time.Minute))
 })
+
+// browserFlow is the feature log's pull requests of acme/demo for the
+// Analytics flow: over the last few weeks, the person's and a teammate's,
+// some merged.
+func browserFlow(_ context.Context, repository string, _ time.Time) ([]decisionlog.FlowPull, bool, error) {
+	if repository != "acme/demo" {
+		return nil, false, nil
+	}
+	now := time.Now()
+	var pulls []decisionlog.FlowPull
+	for i := range 24 {
+		created := now.Add(-time.Duration(i*26+3) * time.Hour)
+		author := "me"
+		if i%3 != 0 {
+			author = "ada"
+		}
+		p := decisionlog.FlowPull{Author: author, CreatedAt: created}
+		if i%4 != 1 {
+			merged := created.Add(time.Duration(2+i%5*7) * time.Hour)
+			if merged.Before(now) {
+				p.MergedAt = &merged
+			}
+		}
+		pulls = append(pulls, p)
+	}
+	return pulls, true, nil
+}

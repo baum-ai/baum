@@ -10,6 +10,7 @@ import {
   implementsGroups,
   type IndexedSession,
   type ReviewDocument,
+  type ReviewFacts,
   reviewDecisions,
   type SectionDecision,
   riskSegments,
@@ -139,27 +140,126 @@ export function ReviewDetails({
             </ul>
           </div>
         )}
-        {roles.length > 0 && (
-          <div className="mt-3 space-y-1.5">
-            <p className="text-xs font-semibold tracking-[0.1em] text-(--text-tertiary) uppercase">
-              By role
-            </p>
-            {/* The same list shape as the risk legend above it, so the two
-                breakdowns of the same lines read as a pair. */}
-            <ul className="flex flex-wrap gap-x-4 gap-y-1 text-base text-(--text-secondary)">
-              {roles.map(([role, lines]) => (
-                <li key={role} className="flex items-center gap-1.5">
-                  {humanize(role)}
-                  <span className="tabular-nums text-(--text-tertiary)">
-                    {lines!.toLocaleString("en-US")}
-                  </span>
-                </li>
-              ))}
-            </ul>
-          </div>
-        )}
+        <RoleLines roles={roles} />
       </Part>
       {footer}
+    </div>
+  );
+}
+
+/** The changed lines by hunk role, under the change size. */
+function RoleLines({ roles }: { roles: [string, number | undefined][] }) {
+  if (roles.length === 0) return null;
+  return (
+    <div className="mt-3 space-y-1.5">
+      <p className="text-xs font-semibold tracking-[0.1em] text-(--text-tertiary) uppercase">
+        By role
+      </p>
+      {/* The same list shape as the risk legend above it, so the two
+          breakdowns of the same lines read as a pair. */}
+      <ul className="flex flex-wrap gap-x-4 gap-y-1 text-base text-(--text-secondary)">
+        {roles.map(([role, lines]) => (
+          <li key={role} className="flex items-center gap-1.5">
+            {humanize(role)}
+            <span className="tabular-nums text-(--text-tertiary)">
+              {lines!.toLocaleString("en-US")}
+            </span>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+/** The Details tab of a pull request with no review yet, from its facts:
+ *  who wrote it and with what, and how big it is, as a review's Details
+ *  shows them, with whether CI passed when the Activity tab does not show
+ *  it. Nothing here is a model's: no sections, risk or implements. */
+export function FactsDetails({
+  facts,
+  checks,
+}: {
+  facts: ReviewFacts;
+  /** Replaces the Checks part; null leaves it out. */
+  checks?: ReactNode;
+}) {
+  const { summary, stats } = facts;
+  const roles = Object.entries(stats.role_loc).filter(([, lines]) => lines && lines > 0);
+  return (
+    <div className="space-y-7">
+      {checks === undefined ? <ChecksPart document={facts} /> : checks}
+
+      <Part label="Author">
+        <Facts
+          items={[
+            {
+              label: "Author",
+              value: `${summary.author.login} · ${humanize(summary.author.association.toLowerCase())}${
+                summary.author.bot ? " · bot" : ""
+              }`,
+            },
+            {
+              label: "Agents",
+              value:
+                summary.authorship.observed_sessions === 0 ? (
+                  "None"
+                ) : (
+                  <ObservedLine
+                    vendors={summary.authorship.observed_vendors}
+                    models={summary.authorship.observed_models ?? []}
+                    sessions={facts.index.sessions}
+                  />
+                ),
+            },
+          ]}
+        />
+      </Part>
+
+      <Part label="Change size">
+        <Figures
+          items={[
+            { label: "Files", value: stats.files },
+            { label: "Hunks", value: stats.hunks },
+            {
+              label: "Lines",
+              value: <Lines additions={stats.additions} deletions={stats.deletions} />,
+            },
+          ]}
+        />
+        <RoleLines roles={roles} />
+      </Part>
+    </div>
+  );
+}
+
+/** The Activity tab of a pull request with no review yet, from its facts:
+ *  whether CI passed, the review tools' findings and back and forth, and the
+ *  coding sessions behind it. */
+export function FactsActivity({
+  facts,
+  checks,
+  onSelectSession,
+  onViewSessions,
+}: {
+  facts: ReviewFacts;
+  /** Replaces the Checks part; null leaves it out. */
+  checks?: ReactNode;
+  onSelectSession?: (id: string) => void;
+  onViewSessions?: () => void;
+}) {
+  return (
+    <div className="space-y-7">
+      {checks === undefined ? <ChecksPart document={facts} /> : checks}
+
+      {/* The facts' findings name no section, so there is none to open. */}
+      <ReviewExchange document={facts} onSelectSection={() => {}} />
+
+      <LinkedSessions
+        sessions={facts.index.sessions}
+        empty="No coding session is linked to this pull request."
+        onSelectSession={onSelectSession}
+        onViewSessions={onViewSessions}
+      />
     </div>
   );
 }

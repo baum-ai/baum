@@ -1,8 +1,11 @@
+import { BrandMark } from "@baum/viewer/components/brand-logo";
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { invoke } from "./native";
 import {
   describeAgent,
+  agentConnected,
   describeCommand,
+  detectedHarnesses,
   displayPath,
   withModel,
   storedReviews,
@@ -15,10 +18,9 @@ import { ReviewSettingsForm } from "./reviews";
 import { PlanUsage } from "../plan-usage";
 import { GitHubStep } from "./github-step";
 import { RepositoryPicker, setupRepositoryCall } from "../repositories";
-import logo from "./logo.svg";
-import codexLogo from "./codex.svg";
-import claudeLogo from "./claude-code.svg";
+import { Stumpy } from "@baum/viewer/components/stumpy";
 import { LoadingStatus, NineDots } from "../nine-dots";
+import onboardingLeaves from "./onboarding-leaves.png";
 
 const steps = [
   [
@@ -28,10 +30,10 @@ const steps = [
     "Account and repositories",
   ],
   [
-    "Set up reviews",
-    "Choose what writes your reviews, which pull requests baum reviews on its own and the model that captures your sessions' decisions.",
-    "Set up reviews",
-    "Harness, models and automation",
+    "Select your agent",
+    "Choose the agent and models baum uses to review pull requests, make fixes and extract decisions from your sessions.",
+    "Select your agent",
+    "Reviews, fixes and decisions",
   ],
   [
     "Connect your agents",
@@ -46,7 +48,7 @@ const agents = [
   {
     id: "codex",
     name: "Codex",
-    logo: codexLogo,
+    brand: "openai" as const,
     about: "Reports Codex sessions to baum.",
     hint: (
       <>
@@ -57,18 +59,11 @@ const agents = [
   {
     id: "claude-code",
     name: "Claude Code",
-    logo: claudeLogo,
+    brand: "claude" as const,
     about: "Reports Claude Code sessions to baum.",
     hint: <>Approve the hooks in Claude Code.</>,
   },
 ];
-
-/** The harness "auto" runs first: Claude Code when installed, else Codex. */
-function autoBackend(view: SetupView | null) {
-  const detected = (id: string) => view?.hooks.agents.some((a) => a.agent === id && a.detected);
-  if (detected("claude-code")) return "claude";
-  return detected("codex") ? "codex" : "claude";
-}
 
 export function Setup() {
   const [view, setView] = useState<SetupView | null>(null);
@@ -78,9 +73,6 @@ export function Setup() {
   const [pickedCount, setPickedCount] = useState(0);
   const [reviews, setReviews] = useState<ReviewSettings | null>(null);
   const [savedReviews, setSavedReviews] = useState("");
-  // The saved decision model when the daemon reports capture ignores it, and
-  // the harness shown for that report.
-  const [unusedModel, setUnusedModel] = useState<{ model: string; backend: string } | null>(null);
   const [github, setGitHub] = useState(false);
   const working = useRef(false);
   const title = useRef<HTMLHeadingElement>(null);
@@ -118,15 +110,17 @@ export function Setup() {
         // "auto" and an unset model have no choice on screen: show the harness
         // "auto" picks and that harness's default model. They differ from what
         // is saved, so opening baum saves the explicit choice.
-        const backend = shownHarness(settings, autoBackend(view));
-        setReviews(withModel({ ...settings, backend }));
-        // The daemon resolved the harness it ignores the model with.
-        if (
-          settings.decisions_model_ignored &&
-          settings.decisions_model &&
-          settings.decisions_backend
-        )
-          setUnusedModel({ model: settings.decisions_model, backend: settings.decisions_backend });
+        const detected = detectedHarnesses(view.hooks.agents);
+        const backend =
+          view.hooks.error && detected.length === 0
+            ? settings.backend
+            : shownHarness(settings, detected);
+        const draft = { ...settings, backend };
+        if (!backend || (settings.backend !== "auto" && settings.backend !== backend)) {
+          draft.model = "";
+          draft.effort = "";
+        }
+        setReviews(withModel(draft));
         setSavedReviews(JSON.stringify(storedReviews(settings)));
       })
       .catch((cause) => {
@@ -137,8 +131,36 @@ export function Setup() {
     };
   }, [step, reviews, view]);
   useEffect(() => {
+    if (!view || (view.hooks.error && detectedHarnesses(view.hooks.agents).length === 0)) return;
+    setReviews((current) => {
+      if (!current) return current;
+      const backend = shownHarness(current, detectedHarnesses(view.hooks.agents));
+      return backend === current.backend
+        ? current
+        : withModel({ ...current, backend, model: "", effort: "" });
+    });
+  }, [view]);
+  useEffect(() => {
     if (view) title.current?.focus();
   }, [step, Boolean(view)]);
+
+  useEffect(() => {
+    if (step !== last) return;
+    let checking = false;
+    const focus = async () => {
+      if (working.current || checking) return;
+      checking = true;
+      try {
+        await refresh();
+      } catch {
+        /* Check again remains available. */
+      } finally {
+        checking = false;
+      }
+    };
+    window.addEventListener("focus", focus);
+    return () => window.removeEventListener("focus", focus);
+  }, [step, refresh]);
 
   async function run(id: string, action: () => Promise<void>) {
     if (working.current) return;
@@ -184,26 +206,18 @@ export function Setup() {
   }
   const command = view ? describeCommand(view.command) : null;
   const agentsDone =
-    view !== null &&
-    view.hooks.agents.length > 0 &&
-    view.hooks.agents.every((a) => a.installed && a.enabled && !a.error);
+    view !== null && view.hooks.agents.length > 0 && view.hooks.agents.every(agentConnected);
+  const githubReady = github && pickedCount > 0;
+  const available = view ? detectedHarnesses(view.hooks.agents) : [];
+  const agentReady = reviews !== null && available.includes(reviews.backend);
   const done = view
-    ? [github && pickedCount > 0, true, Boolean(command?.ok) && agentsDone][step]
+    ? [githubReady, agentReady && !view.hooks.error, Boolean(command?.ok) && agentsDone][step]
     : false;
-  // A default decision model is saved as none, so it follows the harness.
   const reviewsChanged =
     reviews !== null && JSON.stringify(storedReviews(reviews)) !== savedReviews;
-  // A custom model needs a name, both to leave the review step and to finish.
-  const modelMissing =
-    (step === reviewStep || step === last) && reviews !== null && !reviews.model.trim();
-  const started = view
-    ? [
-        github || pickedCount > 0,
-        true,
-        Boolean(command?.ok) || view.hooks.agents.some((a) => a.installed),
-      ][step]
-    : false;
+  const modelMissing = reviews !== null && !reviews.model.trim();
   async function finish() {
+    if (!agentReady || modelMissing) return;
     if (reviews && reviewsChanged) {
       const outcome = await invoke<Outcome>("save_review_settings", {
         settings: storedReviews(reviews),
@@ -217,6 +231,8 @@ export function Setup() {
     await invoke<void>("finish_setup");
   }
   function navigate(next: number) {
+    if (next > 0 && !githubReady) return;
+    if (next > reviewStep && (!agentReady || modelMissing)) return;
     setError("");
     setStep(next);
   }
@@ -225,7 +241,7 @@ export function Setup() {
     <main className="onboarding">
       <aside className="setup-rail">
         <div className="wordmark">
-          <img src={logo} alt="" width="40" height="40" />
+          <Stumpy size={44} />
           baum
         </div>
         <ol className="step-list" aria-label="Setup progress">
@@ -239,7 +255,12 @@ export function Setup() {
               <button
                 type="button"
                 className="step-link"
-                disabled={busy || !view}
+                disabled={
+                  busy ||
+                  !view ||
+                  (index > 0 && !githubReady) ||
+                  (index > reviewStep && (!agentReady || modelMissing))
+                }
                 onClick={() => navigate(index)}
               >
                 <span className="step-number">{index < step ? "✓" : index + 1}</span>
@@ -253,6 +274,9 @@ export function Setup() {
         </ol>
       </aside>
       <section className="setup-content">
+        <div className="setup-banner" aria-hidden="true">
+          <img src={onboardingLeaves} alt="" />
+        </div>
         <header>
           <p id="step-label" className="eyebrow">
             STEP {step + 1} OF {steps.length}
@@ -296,12 +320,10 @@ export function Setup() {
                   settings={reviews}
                   disabled={busy}
                   onChange={setReviews}
-                  decisions
-                  unusedDecisionModel={
-                    unusedModel?.backend === reviews.backend ? unusedModel.model : undefined
-                  }
+                  available={available}
+                  detectionError={view.hooks.error}
                 />
-                <PlanUsage className="setup-card" />
+                <PlanUsage className="setup-card" all />
               </>
             )}
             {step === reviewStep && !reviews && !error && (
@@ -360,20 +382,14 @@ export function Setup() {
                 </li>
                 {agents.map((definition) => {
                   const agent = view.hooks.agents.find((a) => a.agent === definition.id);
-                  const connected = agent?.installed && agent.enabled && !agent.error;
+                  const connected = agent ? agentConnected(agent) : false;
                   const state = agent
                     ? describeAgent(agent)
                     : `${definition.name} status unavailable. Check again to retry.`;
                   const verb = agent?.installed ? "Enable" : "Connect";
                   return (
                     <li className="agent-row" key={definition.id}>
-                      <img
-                        className="agent-logo"
-                        src={definition.logo}
-                        alt=""
-                        width="24"
-                        height="24"
-                      />
+                      <BrandMark brand={definition.brand} size={44} className="agent-logo" />
                       <div className="agent-info">
                         <h2>{definition.name}</h2>
                         <p id={`${definition.id}-state`} className={connected ? "ok" : undefined}>
@@ -381,7 +397,11 @@ export function Setup() {
                         </p>
                         {agent?.installed && !agent.error && (
                           <p id={`${definition.id}-hint`} className="agent-hint">
-                            {definition.hint}
+                            {definition.id === "codex" && connected
+                              ? "Codex hooks are approved."
+                              : agent.trust?.state === "hooks_disabled"
+                                ? "Run codex features enable hooks, then start a new conversation."
+                                : definition.hint}
                           </p>
                         )}
                       </div>
@@ -400,7 +420,7 @@ export function Setup() {
                           )}
                         {agent?.detected &&
                           !agent.error &&
-                          !connected &&
+                          (!agent.installed || !agent.enabled) &&
                           button(
                             `${definition.id}-install`,
                             verb,
@@ -435,23 +455,19 @@ export function Setup() {
             {step > 0 && button("back", "← Back", () => navigate(step - 1), "quiet")}
             {button(
               "continue",
-              step === last ? "Open baum →" : started ? "Continue →" : "Skip →",
+              step === last ? "Open baum →" : "Continue →",
               () => {
                 if (!view) return;
                 if (step < last) navigate(step + 1);
                 else void run("continue", finish);
               },
-              "secondary",
+              "",
               undefined,
-              modelMissing,
+              (step >= reviewStep && (!agentReady || modelMissing)) || (step === 0 && !githubReady),
             )}
           </div>
-          {!done && (
-            <p id="skip-note">
-              {step === 0
-                ? "You can connect GitHub and add repositories later in Settings."
-                : "You can finish setup later from the app menu."}
-            </p>
+          {step > 0 && !done && (step !== reviewStep || agentReady) && (
+            <p id="skip-note">You can finish setup later from the settings.</p>
           )}
         </footer>
       </section>

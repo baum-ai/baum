@@ -8,9 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net/url"
 	"os"
-	"path/filepath"
 	"slices"
 	"strings"
 	"time"
@@ -18,7 +16,7 @@ import (
 	_ "modernc.org/sqlite"
 
 	"github.com/baum-ai/baum/decisions"
-	"github.com/baum-ai/baum/internal/privatefs"
+	"github.com/baum-ai/baum/internal/appdb"
 )
 
 // Coverage of a session.
@@ -65,11 +63,11 @@ CREATE TABLE IF NOT EXISTS capture_attempt(
   backend TEXT NOT NULL, model TEXT NOT NULL, mode TEXT NOT NULL, started_at INTEGER NOT NULL, settled_at INTEGER,
   state TEXT NOT NULL, reason TEXT NOT NULL DEFAULT '', reserved_usd REAL NOT NULL, cost_usd REAL,
   input_tokens INTEGER NOT NULL DEFAULT 0, cached_input_tokens INTEGER NOT NULL DEFAULT 0, output_tokens INTEGER NOT NULL DEFAULT 0,
-  rejections INTEGER NOT NULL DEFAULT 0);
+  rejections INTEGER NOT NULL DEFAULT 0, stage TEXT NOT NULL DEFAULT 'capture', item TEXT);
 CREATE INDEX IF NOT EXISTS capture_attempt_session ON capture_attempt(agent, session_id, started_at);
 CREATE INDEX IF NOT EXISTS capture_attempt_started ON capture_attempt(started_at);`
 
-// Store is decisions.sqlite: the sessions' coverage and head extraction, the
+// Store keeps the sessions' coverage and head extraction, the
 // decision log and the ledger of model calls.
 type Store struct {
 	db  *sql.DB
@@ -103,29 +101,12 @@ func Open(path string, o OpenOptions) (*Store, error) {
 	if o.ReadOnly {
 		return openReadOnly(path)
 	}
-	if err := privatefs.MkdirAll(filepath.Dir(path)); err != nil {
-		return nil, err
-	}
-	file, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o600)
-	if err != nil {
-		return nil, err
-	}
-	err = file.Chmod(0o600)
-	if closeErr := file.Close(); err == nil {
-		err = closeErr
-	}
-	if err != nil {
-		return nil, err
-	}
-	db, err := openDB(path, false)
+	db, err := appdb.Open(path, false)
 	if err != nil {
 		return nil, err
 	}
 	s := &Store{db: db, now: time.Now}
 	_, err = db.Exec(schema + featureSchema)
-	if err == nil {
-		err = migrate(context.Background(), db)
-	}
 	if err == nil {
 		err = migrateSearch(context.Background(), db)
 	}
@@ -139,50 +120,27 @@ func Open(path string, o OpenOptions) (*Store, error) {
 	return s, nil
 }
 
-// openDB opens the database file at path, read-only when asked, waiting for
-// a writer's lock rather than failing.
-func openDB(path string, readOnly bool) (*sql.DB, error) {
-	absolute, err := filepath.Abs(path)
-	if err != nil {
-		return nil, err
-	}
-	uriPath := filepath.ToSlash(absolute)
-	if !strings.HasPrefix(uriPath, "/") {
-		uriPath = "/" + uriPath
-	}
-	query := "_pragma=busy_timeout(10000)"
-	if readOnly {
-		query += "&mode=ro"
-	}
-	db, err := sql.Open("sqlite", (&url.URL{Scheme: "file", Path: uriPath}).String()+"?"+query)
-	if err != nil {
-		return nil, err
-	}
-	db.SetMaxOpenConns(1)
-	return db, nil
-}
-
 // openReadOnly opens an existing store read-only, or an empty one in memory
 // when there is none.
 func openReadOnly(path string) (*Store, error) {
-	if _, err := os.Stat(path); err == nil {
-		db, err := openDB(path, true)
-		if err != nil {
-			return nil, err
+	db, err := appdb.Open(path, true)
+	if err == nil {
+		var tables int
+		err = db.QueryRow("SELECT count(*) FROM sqlite_master WHERE name='capture_session'").Scan(&tables)
+		if err == nil && tables > 0 {
+			return &Store{db: db, now: time.Now}, nil
 		}
-		return &Store{db: db, now: time.Now}, nil
-	} else if !errors.Is(err, os.ErrNotExist) {
+		_ = db.Close()
+	}
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return nil, err
 	}
-	db, err := sql.Open("sqlite", "file::memory:")
+	db, err = sql.Open("sqlite", "file::memory:")
 	if err != nil {
 		return nil, err
 	}
 	db.SetMaxOpenConns(1)
 	_, err = db.Exec(schema + featureSchema)
-	if err == nil {
-		err = migrate(context.Background(), db)
-	}
 	if err == nil {
 		err = migrateSearch(context.Background(), db)
 	}

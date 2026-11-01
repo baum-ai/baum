@@ -2,6 +2,7 @@
 //! kinds are on (all, by default) and what the operating system answered when
 //! the app first asked to notify. Nothing here is secret.
 
+#[cfg(test)]
 use std::fs;
 use std::io;
 use std::path::PathBuf;
@@ -10,7 +11,7 @@ use serde::{Deserialize, Serialize};
 
 use super::toast::Kind;
 
-const FILE: &str = "notifications.json";
+const SECTION: &str = "notifications";
 
 /// What the operating system lets the app do.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -100,8 +101,6 @@ impl Kinds {
 pub struct Settings {
     pub kinds: Kinds,
     pub permission: Permission,
-    // An older file's cap_reached kind and announced keys, from the daily
-    // cap baum no longer has, are ignored.
 }
 
 /// Where the settings live; `None` keeps them in memory only.
@@ -113,7 +112,7 @@ pub struct Store {
 impl Store {
     pub fn in_dir(dir: PathBuf) -> Store {
         Store {
-            path: Some(dir.join(FILE)),
+            path: Some(dir.join(crate::settings::FILE)),
         }
     }
 
@@ -128,25 +127,16 @@ impl Store {
         let Some(path) = &self.path else {
             return Settings::default();
         };
-        match fs::read(path) {
-            Ok(data) => serde_json::from_slice(&data).unwrap_or_else(|e| {
-                eprintln!("baum desktop: notification settings unreadable, using defaults: {e}");
-                Settings::default()
-            }),
-            Err(_) => Settings::default(),
-        }
+        crate::settings::load(path, SECTION)
     }
 
     pub fn save(&self, settings: &Settings) -> io::Result<()> {
         let Some(path) = &self.path else {
             return Ok(());
         };
-        if let Some(dir) = path.parent() {
-            fs::create_dir_all(dir)?;
-        }
-        let temporary = path.with_extension("json.tmp");
-        fs::write(&temporary, serde_json::to_vec_pretty(settings)?)?;
-        fs::rename(&temporary, path)
+        crate::settings::update(path, SECTION, |current: &mut Settings| {
+            *current = settings.clone()
+        })
     }
 }
 
@@ -182,13 +172,17 @@ mod tests {
     }
 
     #[test]
-    fn a_new_kind_missing_from_an_old_file_is_on() {
-        let dir = scratch("old");
+    fn unspecified_kinds_are_on() {
+        let dir = scratch("unspecified");
         fs::create_dir_all(&dir).unwrap();
-        fs::write(dir.join(FILE), r#"{"kinds":{"failed":false}}"#).unwrap();
+        fs::write(
+            dir.join(crate::settings::FILE),
+            r#"{"notifications":{"kinds":{"failed":false}}}"#,
+        )
+        .unwrap();
         let settings = Store::in_dir(dir.clone()).load();
         assert!(!settings.kinds.failed && settings.kinds.finished && settings.kinds.automatic);
-        // The kinds added after this file was written are on.
+        // The other kinds keep their defaults.
         assert!(
             [
                 Kind::ChecksFailed,
@@ -207,28 +201,17 @@ mod tests {
     }
 
     #[test]
-    fn a_file_from_before_the_session_kinds_keeps_its_choices() {
-        let dir = scratch("before-sessions");
-        fs::create_dir_all(&dir).unwrap();
-        // Every kind the previous release had, one of them off.
-        fs::write(
-            dir.join(FILE),
-            r#"{"kinds":{"finished":true,"failed":true,"requested":true,"cap_reached":true,"automatic":true,"checks_failed":true,"conflict":false,"changes_requested":true,"ready_to_merge":true,"fix_pushed":true,"fix_failed":true},"permission":"granted","announced":["cap:acme/widgets:2026-10-21T00:00:00Z"]}"#,
-        )
-        .unwrap();
-        let settings = Store::in_dir(dir.clone()).load();
-        assert!(!settings.kinds.conflict && settings.kinds.fix_failed);
-        assert!(settings.kinds.session_permission && settings.kinds.session_input);
-        assert_eq!(settings.permission, Permission::Granted);
-        let _ = fs::remove_dir_all(dir);
-    }
-
-    #[test]
     fn a_damaged_file_is_the_defaults() {
         let dir = scratch("damaged");
         fs::create_dir_all(&dir).unwrap();
-        fs::write(dir.join(FILE), "{").unwrap();
-        assert_eq!(Store::in_dir(dir.clone()).load(), Settings::default());
+        fs::write(dir.join(crate::settings::FILE), "{").unwrap();
+        let store = Store::in_dir(dir.clone());
+        assert_eq!(store.load(), Settings::default());
+        assert!(store.save(&Settings::default()).is_err());
+        assert_eq!(
+            fs::read_to_string(dir.join(crate::settings::FILE)).unwrap(),
+            "{"
+        );
         let _ = fs::remove_dir_all(dir);
     }
 }
