@@ -14,7 +14,7 @@ import {
   type ViewerLinkProps,
 } from "@baum/viewer/navigation";
 import { CloneActions, type FoundClones } from "./repositories";
-import { GroupMissing, GroupPage, NameDialog } from "./group";
+import { ConfirmDialog, GroupMissing, GroupPage, NameDialog } from "./group";
 import { Inbox, UpdatedAgo } from "./inbox";
 import { ListSection } from "./list";
 import {
@@ -24,9 +24,9 @@ import {
   ManageInboxesPage,
   NewInboxPage,
   newInboxHref,
-  RailLinks,
 } from "./inbox-pages";
 import {
+  freeName,
   fromQuery,
   inboxBadgeCount,
   matches,
@@ -37,14 +37,15 @@ import {
   type Inbox as SavedInbox,
 } from "./inboxes";
 import { UpNextPage, useUpNext } from "./up-next";
-import { FilterBar, FilterButton } from "./filter-menu";
+import { FilterBar, FilterButton, SaveButton, type SaveOption } from "./filter-menu";
 import {
   matchesQuery,
   MAX_TABS,
-  parseQuery,
+  queryProblem,
   quote,
   usePageFilter,
   useSavedTabs,
+  type SavedTab,
 } from "./pr-filter";
 import {
   onBody,
@@ -131,17 +132,37 @@ import { FixDetails, type FixChat } from "./fix";
 import { JobPage } from "./job-transcript";
 import { useLocation } from "./location";
 import { SMALL } from "./action-classes";
-import { cn } from "@baum/viewer/components/classnames";
 
-/** Pull requests' views, in the order of their tabs and of `h` and `l`. */
+/** A saved tab's name as the daemon keeps it: trimmed as it trims, control
+ *  characters too, at most 40 characters; "" when nothing is left. */
+function tabName(text: string) {
+  return text
+    .replace(/\p{Cc}/gu, " ")
+    .trim()
+    .slice(0, 40)
+    .trim();
+}
+/** Pull requests' own tabs: Open first, Closed last, saved tabs between. */
 const VIEWS = [
-  ["inbox", "For you"],
-  ["requested", "Requested"],
-  ["mine", "Mine"],
-  ["other", "Others"],
-  ["no_review", "Not reviewed"],
-  ["history", "Saved history"],
+  ["open", "Open"],
+  ["history", "Closed"],
 ] as const;
+const PULLS_TAB_KEY = "baum.pulls.tab.v1";
+/** The Pull requests tab last shown in this window's browser, if any. */
+function lastPullsTab(): string | null {
+  try {
+    return localStorage.getItem(PULLS_TAB_KEY);
+  } catch {
+    return null;
+  }
+}
+function rememberPullsTab(tab: string) {
+  try {
+    localStorage.setItem(PULLS_TAB_KEY, tab);
+  } catch {
+    // Without storage the page opens on Open.
+  }
+}
 function LocalLink({ href, onClick, ...props }: ViewerLinkProps) {
   return (
     <a
@@ -467,27 +488,63 @@ function Workspace({ url }: { url: UrlState }) {
     e.clone_id ??
     clones.find((c) => c.repository === e.pull_request.repository && c.available)?.id ??
     "";
-  const filter = url.search.get("filter") ?? "inbox";
-  const pullsFilter = usePageFilter("pulls");
+  // Pull requests opens on the tab last shown when the address names none.
+  const filter = url.search.get("filter") ?? lastPullsTab() ?? "open";
+  useEffect(() => {
+    if (url.search.get("page") === "pulls") rememberPullsTab(filter);
+  }, [url.search.get("page"), filter]);
   const savedTabs = useSavedTabs();
-  // A saved tab (`filter=tab:<id>`) is a view with a filter of its own; one
-  // that is gone opens For you.
+  // A saved tab (`filter=tab:<id>`) is a view with a query of its own; one
+  // that is gone opens Open.
   const savedTab = savedTabs.tabs.find((tab) => `tab:${tab.id}` === filter);
-  const view = savedTab?.view ?? (filter.startsWith("tab:") ? "inbox" : filter);
-  const pullsQuery = savedTab ? savedTab.query : pullsFilter.query;
+  // The page's filter. On a saved tab it starts as the tab's query, and a
+  // change is a draft that narrows the tab until Update tab saves it (kept
+  // per tab; none kept is the saved query).
+  const pullsFilter = usePageFilter(savedTab ? `tab:${savedTab.id}` : "pulls");
+  const viewFilter = usePageFilter("pulls");
+  const savedQuery = savedTab?.query ?? "";
+  const pullsQuery = pullsFilter.query || savedQuery;
+  const pullsDirty = pullsFilter.query !== "" && pullsFilter.query !== savedQuery;
   const setPullsQuery = (query: string) => {
-    if (query === pullsQuery || parseQuery(query).error) return;
+    if (query === pullsQuery || queryProblem(query)) return;
     setSelection(new Set());
-    if (savedTab) savedTabs.setQuery(savedTab.id, query);
-    else pullsFilter.set(query);
+    pullsFilter.set(savedTab && query === savedQuery ? "" : query);
   };
-  const [writingPulls, setWritingPulls] = useState(false);
-  const [writePullsRequest, setWritePullsRequest] = useState(0);
-  // The tabs in order, the views and then the saved ones, as h and l walk them.
-  const tabKeys = [
-    ...VIEWS.map(([value]) => value as string),
-    ...savedTabs.tabs.map((tab) => `tab:${tab.id}`),
+  // A saved tab's name changes while it is edited (Edit in its right-click
+  // menu), at the filter menu's foot; `name` is the draft.
+  const [editingTab, setEditingTab] = useState<{ id: string; name: string } | null>(null);
+  const editing = savedTab && editingTab?.id === savedTab.id ? editingTab : null;
+  const [deletingTab, setDeletingTab] = useState<SavedTab | null>(null);
+  const tabMenu = useContextMenu();
+  const openTab = (key: string) => {
+    setSelection(new Set());
+    setNamingTab(null);
+    setEditingTab(null);
+    url.update((current) => {
+      current.set("filter", key);
+      return current;
+    });
+  };
+  const deleteTab = (tab: SavedTab) => {
+    savedTabs.remove(tab.id);
+    if (savedTab?.id === tab.id) openTab(tab.view);
+  };
+  const tabActions = (tab: SavedTab): MenuItem[] => [
+    {
+      label: "Edit…",
+      onSelect: () => {
+        if (savedTab?.id !== tab.id) openTab(`tab:${tab.id}`);
+        setEditingTab({ id: tab.id, name: tab.name });
+        setOpenPullsMenu(true);
+      },
+    },
+    { label: "Delete…", danger: true, onSelect: () => setDeletingTab(tab) },
   ];
+  const view = savedTab?.view ?? (VIEWS.some(([value]) => value === filter) ? filter : "open");
+  // Asks the filter menu to open, as a saved tab's Edit does.
+  const [openPullsMenu, setOpenPullsMenu] = useState(false);
+  // The tabs in order, as h and l walk them: Open, the saved ones, Closed.
+  const tabKeys = ["open", ...savedTabs.tabs.map((tab) => `tab:${tab.id}`), "history"];
   const activeTab = savedTab ? `tab:${savedTab.id}` : view;
   // Until the saved tabs are read, a tab's filter is not known to edit.
   const tabsPending = filter.startsWith("tab:") && !savedTabs.ready;
@@ -499,7 +556,7 @@ function Workspace({ url }: { url: UrlState }) {
   useEffect(() => {
     if (!linkedRepo || !pullsFilter.ready) return;
     setSelection(new Set());
-    pullsFilter.set(`repo:${quote(linkedRepo)}`);
+    pullsFilter.set(`repo=${quote(linkedRepo)}`);
     url.update((current) => {
       current.delete("repo");
       return current;
@@ -513,6 +570,29 @@ function Workspace({ url }: { url: UrlState }) {
   const filteredPulls = (view: string, query: string) =>
     filtered(indexedEntries, view).filter((e) => matchesQuery(query, e));
   const rows = filteredPulls(view, pullsQuery);
+  // Saving the filter: into the saved tab shown, or as a new tab (named next).
+  const changed = savedTab ? pullsDirty : pullsFilter.query !== "";
+  const tabSaves: SaveOption[] =
+    !changed || queryProblem(pullsQuery) || editing
+      ? []
+      : [
+          ...(savedTab
+            ? [
+                {
+                  label: "Update tab",
+                  onSelect: () => {
+                    savedTabs.setQuery(savedTab.id, pullsQuery);
+                    pullsFilter.set("");
+                  },
+                },
+              ]
+            : []),
+          ...(savedTabs.ready && savedTabs.tabs.length < MAX_TABS
+            ? [{ label: "Create tab", onSelect: () => setNamingTab("") }]
+            : []),
+        ];
+  // What the filter's values and counts come from: the view before it.
+  const filterBase = filtered(indexedEntries, view);
   const repositories = Array.from(
     new Set([
       ...picked.map((r) => r.repository),
@@ -582,6 +662,13 @@ function Workspace({ url }: { url: UrlState }) {
   // Undo reads the list as it is then, not as it was at the delete.
   const currentInboxes = useRef(inboxes.inboxes);
   currentInboxes.current = inboxes.inboxes;
+  // An inbox to delete once the person confirms, and what follows it.
+  const [deletingInbox, setDeletingInbox] = useState<{
+    inbox: SavedInbox;
+    after?: () => void;
+  } | null>(null);
+  const askRemoveInbox = (inbox: SavedInbox, after?: () => void) =>
+    setDeletingInbox({ inbox, after });
   const removeInbox = (target: SavedInbox) => {
     const before = inboxes.inboxes;
     const at = before.findIndex((candidate) => candidate.id === target.id);
@@ -912,8 +999,11 @@ function Workspace({ url }: { url: UrlState }) {
   // The Inbox's filter as an inbox of its own, opened to be named.
   const saveAsInbox =
     inboxes.status === "ready" && inboxes.inboxes.length < MAX_INBOXES
-      ? (query: string) => {
-          const made = fromQuery(query, inboxes.inboxes);
+      ? (query: string, base?: SavedInbox) => {
+          // From an inbox: a copy of it, named so no other inbox has the name.
+          const made = base
+            ? { ...base, id: newInboxId(), name: freeName(base.name, inboxes.inboxes), query }
+            : fromQuery(query, inboxes.inboxes);
           inboxes.save([...inboxes.inboxes, made]);
           setFreshInbox(made.id);
           navigate(editInboxHref(made.id));
@@ -1014,17 +1104,10 @@ function Workspace({ url }: { url: UrlState }) {
                 ),
                 selected: selectedInbox?.id ?? null,
                 elsewhere: page === "inbox-new" || page === "inboxes",
-                toggleBadge: (target) =>
-                  inboxes.save(
-                    inboxes.inboxes.map((candidate) =>
-                      candidate.id === target.id
-                        ? { ...candidate, badge: !candidate.badge }
-                        : candidate,
-                    ),
-                  ),
-                remove: removeInbox,
+                remove: askRemoveInbox,
                 edit: (target) => navigate(editInboxHref(target.id)),
-                footer: <RailLinks page={page} Link={LocalLink} />,
+                create: () => navigate(newInboxHref()),
+                manage: () => navigate(manageInboxesHref()),
               }
             : undefined
         }
@@ -1234,7 +1317,7 @@ function Workspace({ url }: { url: UrlState }) {
               {...inboxPageProps}
               id={url.search.get("inbox") ?? ""}
               fresh={freshInbox === url.search.get("inbox")}
-              remove={removeInbox}
+              remove={askRemoveInbox}
             />
           ) : page === "inboxes" ? (
             <ManageInboxesPage {...inboxPageProps} />
@@ -1354,17 +1437,7 @@ function Workspace({ url }: { url: UrlState }) {
               inbox={inbox}
               inboxes={inboxes.inboxes}
               selected={selectedInbox}
-              headerAction={
-                selectedInbox ? (
-                  <LocalLink
-                    href={editInboxHref(selectedInbox.id)}
-                    className={cn("inbox-edit-link", SMALL)}
-                  >
-                    Edit
-                  </LocalLink>
-                ) : undefined
-              }
-              login={github?.login}
+              onEdit={selectedInbox ? () => navigate(editInboxHref(selectedInbox.id)) : undefined}
               // Until a read succeeds there is nothing to say an empty inbox about.
               loading={revision === 0}
               hasRepositories={hasRepositories}
@@ -1376,6 +1449,16 @@ function Workspace({ url }: { url: UrlState }) {
               refreshing={listBusy}
               reviewGroups={groups}
               saveAsInbox={saveAsInbox}
+              updateInbox={
+                selectedInbox && inboxes.status === "ready"
+                  ? (patch) =>
+                      inboxes.save(
+                        inboxes.inboxes.map((one) =>
+                          one.id === selectedInbox.id ? { ...one, ...patch } : one,
+                        ),
+                      )
+                  : undefined
+              }
               entries={indexedEntries}
               Link={LocalLink}
             />
@@ -1402,134 +1485,154 @@ function Workspace({ url }: { url: UrlState }) {
               <div className="local-filter-bar">
                 <div role="group" aria-label="Show" className="local-tabs">
                   {[
-                    ...VIEWS.map(([value, label]) => ({
-                      key: value as string,
-                      label: label as string,
-                      count: filteredPulls(value, pullsFilter.query).length,
-                    })),
+                    {
+                      key: "open",
+                      label: "Open",
+                      count: filteredPulls("open", viewFilter.query).length,
+                    },
                     ...savedTabs.tabs.map((tab) => ({
                       key: `tab:${tab.id}`,
                       label: tab.name,
                       count: filteredPulls(tab.view, tab.query).length,
+                      tab,
                     })),
-                  ].map(({ key, label, count }) => (
-                    <button
-                      key={key}
-                      type="button"
-                      aria-pressed={key === activeTab}
-                      className={count === 0 ? "local-tab empty" : "local-tab"}
-                      onClick={() => {
-                        setSelection(new Set());
-                        setNamingTab(null);
-                        url.update((current) => {
-                          current.set("filter", key);
-                          return current;
-                        });
-                      }}
-                    >
-                      {label}
-                      <span className="local-tab-count">{formatCount(count)}</span>
-                    </button>
-                  ))}
+                    // Closed stays last, after the saved tabs.
+                    {
+                      key: "history",
+                      label: "Closed",
+                      count: filteredPulls("history", viewFilter.query).length,
+                    },
+                  ].map(
+                    ({
+                      key,
+                      label,
+                      count,
+                      tab,
+                    }: {
+                      key: string;
+                      label: string;
+                      count: number;
+                      tab?: SavedTab;
+                    }) => (
+                      <button
+                        key={key}
+                        type="button"
+                        aria-pressed={key === activeTab}
+                        className={count === 0 ? "local-tab empty" : "local-tab"}
+                        onClick={() => openTab(key)}
+                        onContextMenu={
+                          tab
+                            ? (event) => tabMenu.open(event, tabActions(tab), tab.name)
+                            : undefined
+                        }
+                      >
+                        {label}
+                        <span className="local-tab-count">{formatCount(count)}</span>
+                      </button>
+                    ),
+                  )}
                 </div>
+                {tabMenu.menu}
                 {tabsPending ? null : (
                   <FilterButton
                     query={pullsQuery}
                     onChange={setPullsQuery}
-                    entries={filtered(indexedEntries, view)}
-                    onWrite={() => {
-                      setWritingPulls(true);
-                      setWritePullsRequest((n) => n + 1);
+                    entries={filterBase}
+                    active={pullsQuery !== ""}
+                    openRequest={openPullsMenu}
+                    onOpened={() => setOpenPullsMenu(false)}
+                    onClosed={() => {
+                      setEditingTab(null);
+                      setNamingTab(null);
                     }}
+                    footer={
+                      <>
+                        <FilterBar
+                          key={editing ? `${activeTab}:edit` : activeTab}
+                          query={pullsQuery}
+                          onChange={setPullsQuery}
+                          entries={filterBase}
+                          actions={
+                            editing ? (
+                              <form
+                                className="local-tab-name"
+                                onSubmit={(event) => {
+                                  event.preventDefault();
+                                  const name = tabName(editing.name);
+                                  if (!name) return;
+                                  if (name !== savedTab!.name) savedTabs.rename(savedTab!.id, name);
+                                  setEditingTab(null);
+                                }}
+                              >
+                                <input
+                                  aria-label="Tab name"
+                                  className="local-field filter-bar-name"
+                                  maxLength={40}
+                                  value={editing.name}
+                                  onChange={(event) =>
+                                    setEditingTab({ id: savedTab!.id, name: event.target.value })
+                                  }
+                                />
+                                <Button size="tiny" type="submit" disabled={!tabName(editing.name)}>
+                                  Done
+                                </Button>
+                              </form>
+                            ) : namingTab !== null ? (
+                              <form
+                                className="local-tab-name"
+                                onSubmit={(event) => {
+                                  event.preventDefault();
+                                  const name = tabName(namingTab);
+                                  if (!name) return;
+                                  const id = newInboxId();
+                                  // From a saved tab, the new one holds its query and the filter.
+                                  savedTabs.add(
+                                    savedTab
+                                      ? { id, name, view: savedTab.view, query: pullsQuery }
+                                      : { id, name, view, query: pullsQuery },
+                                    savedTab ? `tab:${savedTab.id}` : "pulls",
+                                  );
+                                  setNamingTab(null);
+                                  openTab(`tab:${id}`);
+                                }}
+                              >
+                                <input
+                                  aria-label="Tab name"
+                                  className="local-field filter-bar-name"
+                                  // biome-ignore lint/a11y/noAutofocus: asked for by Create tab
+                                  autoFocus
+                                  maxLength={40}
+                                  value={namingTab}
+                                  onChange={(event) => setNamingTab(event.target.value)}
+                                  onKeyDown={(event) => {
+                                    if (event.key === "Escape") {
+                                      event.preventDefault();
+                                      setNamingTab(null);
+                                    }
+                                  }}
+                                />
+                                <Button size="tiny" type="submit" disabled={!tabName(namingTab)}>
+                                  Save
+                                </Button>
+                              </form>
+                            ) : (
+                              <SaveButton options={tabSaves} />
+                            )
+                          }
+                        />
+                        {pullsFilter.error ? (
+                          <p role="alert" className="upnext-filter-error">
+                            {pullsFilter.error}{" "}
+                            <button type="button" onClick={() => void pullsFilter.retry()}>
+                              Retry
+                            </button>
+                          </p>
+                        ) : null}
+                      </>
+                    }
                   />
                 )}
               </div>
-              {!tabsPending && (pullsQuery || writingPulls || savedTab) ? (
-                <div className="local-pulls-filter">
-                  <FilterBar
-                    key={activeTab}
-                    query={pullsQuery}
-                    onChange={(next) => {
-                      // Once typed in, the bar stays until Clear, even emptied.
-                      setWritingPulls(true);
-                      setPullsQuery(next);
-                    }}
-                    entries={filtered(indexedEntries, view)}
-                    focus={writePullsRequest}
-                    onClose={() => setWritingPulls(false)}
-                    actions={
-                      savedTab ? (
-                        <Button
-                          size="tiny"
-                          variant="secondary"
-                          onClick={() => {
-                            savedTabs.remove(savedTab.id);
-                            url.update((current) => {
-                              current.set("filter", savedTab.view);
-                              return current;
-                            });
-                          }}
-                        >
-                          Delete tab
-                        </Button>
-                      ) : namingTab !== null ? (
-                        <form
-                          className="local-tab-name"
-                          onSubmit={(event) => {
-                            event.preventDefault();
-                            // Trimmed as the daemon trims, control characters too.
-                            const name = namingTab
-                              .replace(/\p{Cc}/gu, " ")
-                              .trim()
-                              .slice(0, 40)
-                              .trim();
-                            if (!name) return;
-                            const id = newInboxId();
-                            savedTabs.add({ id, name, view, query: pullsQuery }, "pulls");
-                            setNamingTab(null);
-                            url.update((current) => {
-                              current.set("filter", `tab:${id}`);
-                              return current;
-                            });
-                          }}
-                        >
-                          <input
-                            aria-label="Tab name"
-                            className="local-field filter-bar-name"
-                            // biome-ignore lint/a11y/noAutofocus: asked for by Save as tab
-                            autoFocus
-                            maxLength={40}
-                            value={namingTab}
-                            onChange={(event) => setNamingTab(event.target.value)}
-                            onKeyDown={(event) => {
-                              if (event.key === "Escape") setNamingTab(null);
-                            }}
-                          />
-                          <Button size="tiny" type="submit" disabled={!namingTab.trim()}>
-                            Save
-                          </Button>
-                        </form>
-                      ) : pullsQuery &&
-                        !parseQuery(pullsQuery).error &&
-                        VIEWS.some(([value]) => value === view) &&
-                        savedTabs.ready &&
-                        savedTabs.tabs.length < MAX_TABS ? (
-                        <Button size="tiny" variant="secondary" onClick={() => setNamingTab("")}>
-                          Save as tab
-                        </Button>
-                      ) : null
-                    }
-                  />
-                  {pullsFilter.error ? (
-                    <p role="alert" className="upnext-filter-error">
-                      {pullsFilter.error}{" "}
-                      <button type="button" onClick={() => void pullsFilter.retry()}>
-                        Retry
-                      </button>
-                    </p>
-                  ) : null}
-                </div>
-              ) : null}
               <div className="local-page-body">
                 {/* A cache older than the poll interval is normal; only a failed refresh
                     or a spent GitHub allowance is worth a word. */}
@@ -1552,11 +1655,7 @@ function Workspace({ url }: { url: UrlState }) {
                   <LoadingStatus block>Loading local inbox…</LoadingStatus>
                 ) : rows.length === 0 && !(error && revision === 0) ? (
                   <div className="local-empty">
-                    <h2>
-                      {view === "inbox" && hasRepositories && !pullsQuery
-                        ? "Nothing is waiting on you"
-                        : "No pull requests here"}
-                    </h2>
+                    <h2>No pull requests here</h2>
                     <p>
                       {!hasRepositories ? (
                         <>
@@ -1566,8 +1665,6 @@ function Workspace({ url }: { url: UrlState }) {
                         </>
                       ) : pullsQuery ? (
                         "Nothing in this view matches the filter."
-                      ) : view === "inbox" ? (
-                        "No pull request asks for your review and none of yours is open. Others has the rest of your repositories' pull requests."
                       ) : view === "history" ? (
                         "Reviews saved for pull requests that are closed, merged or no longer listed show here."
                       ) : (
@@ -1638,6 +1735,39 @@ function Workspace({ url }: { url: UrlState }) {
             <Alert>
               Couldn't start the fix of #{fixError.number}: {fixError.text}
             </Alert>
+          ) : null}
+          {deletingTab ? (
+            <ConfirmDialog
+              title={`Delete the ${deletingTab.name} tab?`}
+              action="Delete tab"
+              pending={false}
+              close={() => setDeletingTab(null)}
+              confirm={() => {
+                const tab = deletingTab;
+                setDeletingTab(null);
+                deleteTab(tab);
+              }}
+            >
+              Only this tab goes. Its pull requests and their reviews stay, under Open or Closed.
+            </ConfirmDialog>
+          ) : null}
+          {deletingInbox ? (
+            <ConfirmDialog
+              title={`Delete ${deletingInbox.inbox.name}?`}
+              action="Delete inbox"
+              pending={false}
+              close={() => setDeletingInbox(null)}
+              confirm={() => {
+                const { inbox: target, after } = deletingInbox;
+                setDeletingInbox(null);
+                removeInbox(target);
+                // After the dialog has handed the focus back, so it lands here.
+                setTimeout(() => after?.());
+              }}
+            >
+              Only this view goes. Its pull requests, reviews and snoozes stay, and they still show
+              in Inbox.
+            </ConfirmDialog>
           ) : null}
           {inboxToast ? (
             <div role="status" className="upnext-toast inbox-toast">

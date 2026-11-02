@@ -1,6 +1,6 @@
 import { uiState, useUIState } from "./ui-state";
-import { FilterBar, FilterButton } from "./filter-menu";
-import { matchesQuery, parseQuery, usePageFilter } from "./pr-filter";
+import { FilterBar, FilterButton, SaveButton, type SaveOption } from "./filter-menu";
+import { matchesQuery, queryProblem, usePageFilter } from "./pr-filter";
 import {
   Fragment,
   useEffect,
@@ -54,7 +54,15 @@ import {
   type ReviewGroup,
 } from "./api";
 import { phaseText, type FixState } from "./fix";
-import { inboxesOf, matches, sentence, type Inbox } from "./inboxes";
+import {
+  COLOR_NAMES,
+  foldedQuery,
+  INBOX_COLORS,
+  inboxesOf,
+  nameProblem,
+  type Inbox,
+} from "./inboxes";
+import { useDisclosure } from "@baum/viewer/components/use-disclosure";
 import { MenuButton, useContextMenu, type MenuItem } from "./context-menu";
 import { ListSection, type ListTone } from "./list";
 import { useNow } from "./live";
@@ -696,6 +704,109 @@ export function InboxTag({ inbox }: { inbox: Inbox }) {
   return <span className={`upnext-tag inbox-${inbox.color}`}>{inbox.name}</span>;
 }
 
+/** An inbox's colour and name at the head of its queue, each changed in
+ *  place: the dot opens the six colours, and the name becomes a field (Enter
+ *  or leaving it saves, Esc keeps the old name). */
+function InboxHeadEdit({
+  inbox,
+  inboxes,
+  update,
+}: {
+  inbox: Inbox;
+  inboxes: Inbox[];
+  update: (patch: Partial<Inbox>) => void;
+}) {
+  const colours = useDisclosure();
+  const [draft, setDraft] = useState<string | null>(null);
+  const [problem, setProblem] = useState("");
+  const commit = () => {
+    if (draft === null) return;
+    const name = draft.trim();
+    const why = name === inbox.name ? "" : nameProblem(name, inboxes, inbox.id);
+    if (why) {
+      setProblem(why);
+      return;
+    }
+    setDraft(null);
+    setProblem("");
+    if (name !== inbox.name) update({ name });
+  };
+  return (
+    <>
+      <details {...colours.detailsProps} className="inbox-head-colour">
+        <summary
+          aria-label={`Colour: ${COLOR_NAMES[inbox.color]}`}
+          title="Change the colour"
+          className="inbox-head-dot"
+        >
+          <span aria-hidden="true" className="inbox-dot inbox-dot-large" />
+        </summary>
+        {colours.open ? (
+          <div role="radiogroup" aria-label="Colour" className="inbox-swatches inbox-head-swatches">
+            {INBOX_COLORS.map((color) => (
+              <button
+                key={color}
+                type="button"
+                role="radio"
+                aria-checked={inbox.color === color}
+                aria-label={COLOR_NAMES[color]}
+                title={COLOR_NAMES[color]}
+                className={`inbox-swatch inbox-${color}`}
+                onClick={() => {
+                  colours.close();
+                  if (inbox.color !== color) update({ color });
+                }}
+              />
+            ))}
+          </div>
+        ) : null}
+      </details>
+      {draft === null ? (
+        <h1>
+          <button
+            type="button"
+            className="inbox-head-name"
+            title="Rename"
+            onClick={() => setDraft(inbox.name)}
+          >
+            {inbox.name}
+          </button>
+        </h1>
+      ) : (
+        <span className="inbox-head-rename">
+          <input
+            aria-label="Inbox name"
+            className="local-field"
+            // biome-ignore lint/a11y/noAutofocus: the name was clicked to be typed
+            autoFocus
+            maxLength={40}
+            value={draft}
+            aria-invalid={problem ? true : undefined}
+            onChange={(event) => {
+              setDraft(event.target.value);
+              setProblem("");
+            }}
+            onBlur={commit}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") commit();
+              else if (event.key === "Escape") {
+                event.preventDefault();
+                setDraft(null);
+                setProblem("");
+              }
+            }}
+          />
+          {problem ? (
+            <span role="alert" className="inbox-head-problem">
+              {problem}
+            </span>
+          ) : null}
+        </span>
+      )}
+    </>
+  );
+}
+
 /** The inbox: what waits on the person, grouped by what they do about it, and
  *  the selected pull request's panel beside it. In one of the person's inboxes
  *  (`selected`) it lists only what matches that inbox; what was done today and
@@ -704,8 +815,7 @@ export function UpNextPage({
   inbox: all,
   inboxes = [],
   selected: scope = null,
-  login,
-  headerAction,
+  onEdit,
   loading,
   hasRepositories,
   cloneFor,
@@ -717,6 +827,7 @@ export function UpNextPage({
   reviewGroups = [],
   entries = [],
   saveAsInbox,
+  updateInbox,
   Link,
 }: {
   inbox: UpNextState;
@@ -729,10 +840,8 @@ export function UpNextPage({
   reviewGroups?: ReviewGroup[];
   /** The inbox whose queue this is; none for the Inbox. */
   selected?: Inbox | null;
-  /** The signed-in GitHub account, for "my own repositories". */
-  login?: string;
-  /** Shown beside an inbox's name: where its Edit link goes. */
-  headerAction?: ReactNode;
+  /** Opens the inbox's edit page, from a right click on its head. */
+  onEdit?: () => void;
   loading: boolean;
   hasRepositories: boolean;
   cloneFor: (entry: Entry) => string;
@@ -746,8 +855,13 @@ export function UpNextPage({
   refresh?: (run: RefreshRun) => Promise<unknown>;
   /** A read of every repository is under way, the first or a refresh. */
   refreshing?: boolean;
-  /** Makes a new inbox of the page's filter; offered in the Inbox (all). */
-  saveAsInbox?: (query: string) => void;
+  /** Makes a new inbox catching what the page shows with its filter: from
+   *  the inbox shown (`base`) with its query and the filter, or else anything
+   *  waiting that matches the filter. */
+  saveAsInbox?: (query: string, base?: Inbox) => void;
+  /** Changes the inbox shown: its query (the page's filter added), name or
+   *  colour. */
+  updateInbox?: (patch: Partial<Inbox>) => void;
   Link: ComponentType<ViewerLinkProps>;
 }) {
   const [merging, setMerging] = useState<Entry | null>(null);
@@ -762,27 +876,30 @@ export function UpNextPage({
   const list = useRef<HTMLDivElement>(null);
   const detail = useRef<HTMLDivElement>(null);
   // The page's filter narrows what it shows, on top of its inbox.
+  // The page's filter. In a saved inbox it starts as the inbox's own query,
+  // and a change is a draft that narrows the queue until Update inbox saves it
+  // (kept per inbox; none kept is the saved query).
   const quick = usePageFilter(scope ? `inbox:${scope.id}` : "inbox");
-  const filtering = quick.query !== "";
-  // The bar shows with a filter in force, or once the menu asks to type one.
-  const [writing, setWriting] = useState(false);
-  // Grows each time the menu asks to type, which focuses the bar.
-  const [writeRequest, setWriteRequest] = useState(0);
-  const inInbox = (item: { kind: UpNextKind; entry: Entry }) => !scope || matches(scope, item);
+  const saved = scope ? foldedQuery(scope) : "";
+  const query = quick.query || saved;
+  const setQuery = (next: string) => quick.set(scope && next === saved ? "" : next);
+  const dirty = quick.query !== "" && quick.query !== saved;
+  const filtering = scope ? dirty : quick.query !== "";
   const inScope = (item: { kind: UpNextKind; entry: Entry }) =>
-    inInbox(item) && matchesQuery(quick.query, item.entry);
+    matchesQuery(query, item.entry, item.kind);
   const queue = all.queue.filter(inScope);
   const snoozed = all.snoozed.filter(inScope);
   const fixing = all.fixing.filter(({ entry }) => inScope({ kind: "fix", entry }));
   // Done today and what waits on others are the Inbox's alone.
   const cleared = scope ? [] : all.cleared;
-  const waiting = scope ? [] : all.waiting.filter((entry) => matchesQuery(quick.query, entry));
-  // What the filter's counts and values come from: the page before it.
-  const unfiltered = [
-    ...all.queue.filter(inInbox).map((item) => item.entry),
-    ...all.fixing.filter(({ entry }) => inInbox({ kind: "fix", entry })).map(({ entry }) => entry),
-    ...(scope ? [] : all.waiting),
-  ];
+  const waiting = scope ? [] : all.waiting.filter((entry) => matchesQuery(query, entry));
+  // What the filter's counts and values come from: the whole queue, each
+  // pull request with what it waits for.
+  const kinds = new Map<Entry, UpNextKind>([
+    ...all.queue.map((item): [Entry, UpNextKind] => [item.entry, item.kind]),
+    ...all.fixing.map(({ entry }): [Entry, UpNextKind] => [entry, "fix"]),
+  ]);
+  const unfiltered = [...kinds.keys(), ...(scope ? [] : all.waiting)];
   const inbox = { ...all, queue, snoozed, fixing, cleared, waiting };
   const { now } = all;
   // Those an agent is fixing are listed under Hand to an agent.
@@ -1024,50 +1141,55 @@ export function UpNextPage({
     },
   ];
   const alsoIn = (row: Row) => rowInboxes(row, inboxes).filter((other) => other.id !== scope?.id);
+  const saveOptions: SaveOption[] =
+    !filtering || queryProblem(query)
+      ? []
+      : [
+          ...(scope && updateInbox
+            ? [
+                {
+                  label: "Update inbox",
+                  onSelect: () => {
+                    updateInbox({ query });
+                    quick.set("");
+                  },
+                },
+              ]
+            : []),
+          ...(saveAsInbox
+            ? [{ label: "Create inbox", onSelect: () => saveAsInbox(query, scope ?? undefined) }]
+            : []),
+        ];
   const filterButton = (
     <FilterButton
-      query={quick.query}
-      onChange={quick.set}
+      query={query}
+      onChange={setQuery}
       entries={unfiltered}
-      onWrite={() => {
-        setWriting(true);
-        setWriteRequest((n) => n + 1);
-      }}
+      kindOf={(entry) => kinds.get(entry)}
+      inbox
+      footer={
+        <>
+          <FilterBar
+            // A page's text is its own: moving to another inbox starts afresh.
+            key={scope?.id ?? "inbox"}
+            query={query}
+            onChange={setQuery}
+            entries={unfiltered}
+            inbox
+            actions={<SaveButton options={saveOptions} />}
+          />
+          {quick.error ? (
+            <p role="alert" className="upnext-filter-error">
+              {quick.error}{" "}
+              <button type="button" onClick={() => void quick.retry()}>
+                Retry
+              </button>
+            </p>
+          ) : null}
+        </>
+      }
     />
   );
-  const filterBar =
-    filtering || writing ? (
-      <div className="upnext-filter">
-        <FilterBar
-          // A page's text is its own: moving to another inbox starts afresh.
-          key={scope?.id ?? "inbox"}
-          query={quick.query}
-          onChange={(next) => {
-            // Once typed in, the bar stays until Clear, even emptied.
-            setWriting(true);
-            quick.set(next);
-          }}
-          entries={unfiltered}
-          focus={writeRequest}
-          onClose={() => setWriting(false)}
-          actions={
-            !scope && saveAsInbox && filtering && !parseQuery(quick.query).error ? (
-              <Button size="tiny" variant="secondary" onClick={() => saveAsInbox(quick.query)}>
-                Save as inbox
-              </Button>
-            ) : null
-          }
-        />
-        {quick.error ? (
-          <p role="alert" className="upnext-filter-error">
-            {quick.error}{" "}
-            <button type="button" onClick={() => void quick.retry()}>
-              Retry
-            </button>
-          </p>
-        ) : null}
-      </div>
-    ) : null;
   return (
     <>
       <div className="upnext-page">
@@ -1075,16 +1197,25 @@ export function UpNextPage({
           <header className="upnext-list-head">
             {scope ? (
               <>
-                <div className={`upnext-list-title inbox-${scope.color}`}>
-                  <span aria-hidden="true" className="inbox-dot inbox-dot-large" />
-                  <h1>{scope.name}</h1>
-                  {headerAction}
+                <div
+                  className={`upnext-list-title inbox-${scope.color}`}
+                  onContextMenu={(event) =>
+                    onEdit &&
+                    actionsMenu.open(event, [{ label: "Edit…", onSelect: onEdit }], scope.name)
+                  }
+                >
+                  {updateInbox ? (
+                    <InboxHeadEdit inbox={scope} inboxes={inboxes} update={updateInbox} />
+                  ) : (
+                    <>
+                      <span aria-hidden="true" className="inbox-dot inbox-dot-large" />
+                      <h1>{scope.name}</h1>
+                    </>
+                  )}
                   {filterButton}
                   {refreshButton}
                 </div>
-                <p>{sentence(scope, login)}</p>
                 <p className="upnext-list-summary">{summary}</p>
-                {filterBar}
               </>
             ) : (
               <>
@@ -1104,7 +1235,6 @@ export function UpNextPage({
                 >
                   <div style={{ width: `${total ? (100 * cleared.length) / total : 0}%` }} />
                 </div>
-                {filterBar}
               </>
             )}
           </header>

@@ -7,6 +7,7 @@ async function clearFilters(page: Page) {
   try {
     if (!page.url().includes("/s/")) return;
     await page.evaluate(async () => {
+      localStorage.removeItem("baum.pulls.tab.v1");
       const read = await fetch("api/ui-state/filters", { cache: "no-store" });
       if (!read.ok) return;
       const { revision } = (await read.json()) as { revision: number };
@@ -44,7 +45,7 @@ const shot = async (page: Page, name: string) => {
   await page.emulateMedia({ colorScheme: "light" });
 };
 
-test("narrows the Inbox from the filter menu and as typed, and saves it as an inbox", async ({
+test("filters the Inbox from the menu and as typed, saves an inbox, and edits a saved one", async ({
   page,
 }) => {
   const errors: string[] = [];
@@ -52,107 +53,194 @@ test("narrows the Inbox from the filter menu and as typed, and saves it as an in
   await page.goto(await launchURL());
   const rows = page.locator(".upnext-list button.upnext-row");
   const requested = rows.filter({ hasText: "Reuse the existing PR page" });
+  const conflicted = rows.filter({ hasText: "A pull request without a review" });
   await expect(rows.first()).toBeVisible({ timeout: 15000 });
   await expect(requested).toHaveCount(1);
 
   // The menu lists the fields; a field's values open beside it.
   const filter = page.locator("summary.filter-menu-button");
+  const panel = page.locator(".filter-menu-panel");
   await filter.click();
   await page.getByRole("option", { name: /^Author/ }).hover();
   await page.getByRole("listbox", { name: "Author" }).getByRole("option", { name: /^Me/ }).click();
+  await expect(requested).toHaveCount(0);
+  // The query is at the menu's foot, and only there.
+  const bar = panel.getByRole("combobox", { name: "Filter pull requests" });
+  await expect(bar).toHaveValue("author=@me");
   await shot(page, "1-inbox-menu");
-  await expect(requested).toHaveCount(0);
-  const bar = page.getByRole("combobox", { name: "Filter pull requests" });
-  await expect(bar).toHaveValue("author:@me");
+  // The panel stays on screen.
+  const box = (await panel.boundingBox())!;
+  expect(box.x).toBeGreaterThanOrEqual(0);
+  expect(box.x + box.width).toBeLessThanOrEqual(page.viewportSize()!.width);
+
+  // Closed, the icon is lit and no query line shows; a reload keeps it.
+  await page.keyboard.press("Escape");
+  await page.keyboard.press("Escape");
+  await expect(panel).toHaveCount(0);
   await expect(filter).toHaveAccessibleName("Filter, in force");
-
-  // Closed, the bar holds the query; a reload keeps it.
-  await page.keyboard.press("Escape");
-  await page.keyboard.press("Escape");
-  await shot(page, "2-inbox-bar");
+  await expect(page.locator(".upnext-list-head .filter-bar")).toHaveCount(0);
+  await shot(page, "2-inbox-lit");
   await page.reload();
-  await expect(bar).toHaveValue("author:@me");
   await expect(requested).toHaveCount(0);
 
-  // Typed, it suggests the fields, then their values.
+  // Typed, it suggests a field, then its operators, then its values.
+  await filter.click();
   await bar.fill("");
   await bar.pressSequentially("revi");
-  await expect(page.getByRole("option", { name: /^review:\s*Review$/ })).toBeVisible();
+  await expect(page.getByRole("option", { name: /^review\s*Review$/ })).toBeVisible();
   await page.keyboard.press("Tab");
-  await expect(bar).toHaveValue("review:");
-  await page.getByRole("option", { name: /^review:approved/ }).click();
-  await expect(bar).toHaveValue("review:approved ");
+  await expect(bar).toHaveValue("review");
+  await expect(page.getByRole("option", { name: /^review!=\s*is not$/ })).toBeVisible();
+  await page.keyboard.press("Tab");
+  await expect(bar).toHaveValue("review=");
+  await page.getByRole("option", { name: /^review=approved/ }).click();
+  await expect(bar).toHaveValue("review=approved ");
   await shot(page, "3-inbox-suggestions");
   await expect(requested).toHaveCount(1);
-  await expect(rows.filter({ hasText: "A pull request without a review" })).toHaveCount(0);
+  await expect(conflicted).toHaveCount(0);
   // One that does not read says why and keeps the last filter.
   await bar.pressSequentially("OR");
   await expect(
     page.getByText("Not applied: The query ends where a filter should follow."),
   ).toBeVisible();
   await expect(requested).toHaveCount(1);
-  await bar.pressSequentially(" is:conflict");
-  await expect(rows.filter({ hasText: "A pull request without a review" })).toHaveCount(1);
+  await bar.pressSequentially(" is=conflict");
+  await expect(conflicted).toHaveCount(1);
 
-  // Save as inbox makes an inbox with the same query.
-  await page.getByRole("button", { name: "Save as inbox" }).click();
+  // Create inbox makes an inbox with the same query.
+  await panel.getByRole("button", { name: "Create inbox" }).click();
   await expect(page).toHaveURL(/page=inbox-edit&inbox=[0-9a-f]{32}/);
   await expect(page.getByLabel("Name")).toHaveValue("Filtered");
-  await expect(page.getByRole("combobox", { name: "Filter pull requests" })).toHaveValue(
-    "review:approved OR is:conflict",
-  );
+  const edited = page.locator(".inbox-query textarea");
+  await expect(edited).toHaveValue("review=approved OR is=conflict");
   await shot(page, "4-saved-inbox-edit");
 
-  // Back in the Inbox, Clear shows everything again.
-  await page.getByRole("link", { name: "Inbox", exact: true }).first().click();
-  await page.locator(".filter-bar").getByRole("button", { name: "Clear", exact: true }).click();
-  await expect(bar).toHaveCount(0);
-  await expect(rows.filter({ hasText: "A pull request without a review" })).toHaveCount(1);
+  // In the saved inbox the icon is lit and the menu starts from its query.
+  await page.getByRole("link", { name: /^← Filtered/ }).click();
+  await expect(page.locator(".upnext-list-title h1")).toHaveText("Filtered");
+  await expect(filter).toHaveAccessibleName("Filter, in force");
+  await filter.click();
+  await expect(bar).toHaveValue("review=approved OR is=conflict");
+  // A change is a draft until Update inbox saves it.
+  await bar.fill("(review=approved OR is=conflict) is!=conflict");
+  await page.keyboard.press("Enter");
+  await expect(conflicted).toHaveCount(0);
+  await expect(panel.locator(".filter-save-main")).toHaveText("Update inbox");
+  await panel.locator("summary.filter-save-arrow").click();
+  await expect(page.getByRole("menuitem", { name: "Create inbox" })).toBeVisible();
+  await shot(page, "5-inbox-update");
+  await panel.locator(".filter-save-main").click();
+  await page.keyboard.press("Escape");
+  await page.locator(".upnext-list-title h1").click({ button: "right" });
+  await page.getByRole("menuitem", { name: "Edit…" }).click();
+  await expect(edited).toHaveValue("(review=approved OR is=conflict) is!=conflict");
+
+  // Its name and colour change in the queue's head.
+  await page.getByRole("link", { name: /^← Filtered/ }).click();
+  await page.locator(".upnext-list-title h1 button").click();
+  await page.getByLabel("Inbox name").fill("Approved");
+  await page.keyboard.press("Enter");
+  await expect(page.locator(".upnext-list-title h1")).toHaveText("Approved");
+  await page.locator("summary.inbox-head-dot").click();
+  await page.getByRole("radio", { name: "Green" }).click();
+  await expect(page.locator(".upnext-list-title")).toHaveClass(/inbox-green/);
+  const sidebar = page.getByRole("navigation", { name: "Main" });
+  await expect(sidebar.getByRole("link", { name: /^Approved/ })).toBeVisible();
+
+  // A right click on it in the sidebar offers Edit and Delete.
+  await sidebar.getByRole("link", { name: /^Approved/ }).click({ button: "right" });
+  await expect(page.locator(".local-rail-menu button")).toHaveText(["Edit inbox", "Delete inbox"]);
+  await page.keyboard.press("Escape");
   expect(errors).toEqual([]);
 });
 
-test("filters Pull requests with the keys, saves a tab, and reads a repository from a link", async ({
+test("filters Pull requests, saves and edits a tab, and reads a repository from a link", async ({
   page,
 }) => {
   await page.goto(await launchURL());
   await expect(page.locator(".upnext-list button.upnext-row").first()).toBeVisible({
     timeout: 15000,
   });
-  await page.goto(page.url().replace(/\?.*$/, "") + "?page=pulls&filter=mine");
+  await page.goto(page.url().replace(/\?.*$/, "") + "?page=pulls");
+  const tabs = page.getByRole("group", { name: "Show" }).getByRole("button");
+  await expect(tabs).toHaveText([/^Open/, /^Closed/]);
+  await expect(tabs.first()).toHaveAttribute("aria-pressed", "true");
   await expect(page.getByText("An automatically reviewed change")).toBeVisible();
   await expect(page.getByText("A pull request without a review")).toBeVisible();
 
-  await page.locator("summary.filter-menu-button").click();
+  const filter = page.locator("summary.filter-menu-button");
+  const panel = page.locator(".filter-menu-panel");
+  const bar = panel.getByRole("combobox", { name: "Filter pull requests" });
+  await filter.click();
   await page.getByRole("combobox", { name: "Add filter" }).fill("assig");
   await page.keyboard.press("Enter");
   await page.keyboard.press("Enter");
-  await shot(page, "5-pull-requests-menu");
+  await shot(page, "6-pull-requests-menu");
+  const box = (await panel.boundingBox())!;
+  expect(box.x + box.width).toBeLessThanOrEqual(page.viewportSize()!.width);
   await expect(page.getByText("A pull request without a review")).toHaveCount(0);
   await expect(page.getByText("An automatically reviewed change")).toBeVisible();
-  await page.keyboard.press("Escape");
-  await page.keyboard.press("Escape");
-  const bar = page.getByRole("combobox", { name: "Filter pull requests" });
-  await expect(bar).toHaveValue("assignee:@me");
+  await expect(bar).toHaveValue("assignee=@me");
 
-  // Saved as a tab, the filter moves into it and stays across a reload.
-  await page.getByRole("button", { name: "Save as tab" }).click();
+  // Saved as a tab, it sits between Open and Closed.
+  await panel.getByRole("button", { name: "Create tab" }).click();
   await page.getByLabel("Tab name").fill("Assigned");
   await page.keyboard.press("Enter");
   const tab = page.getByRole("button", { name: /^Assigned/ });
   await expect(tab).toHaveAttribute("aria-pressed", "true");
+  await expect(tabs).toHaveText([/^Open/, /^Assigned/, /^Closed/]);
   await expect(page).toHaveURL(/filter=tab%3A[0-9a-f]{32}|filter=tab:[0-9a-f]{32}/);
-  await shot(page, "6-pull-requests-tab");
-  await page.reload();
+  await page.keyboard.press("Escape");
+  await expect(filter).toHaveAccessibleName("Filter, in force");
+  await shot(page, "7-pull-requests-tab");
+
+  // Back from another page, the tab last shown opens.
+  const sidebar = page.getByRole("navigation", { name: "Main" });
+  await page.locator(".local-rail").getByRole("link", { name: /^Jobs/ }).click();
+  await sidebar.getByRole("link", { name: /^Pull requests/ }).click();
   await expect(tab).toHaveAttribute("aria-pressed", "true");
-  await expect(bar).toHaveValue("assignee:@me");
   await expect(page.getByText("A pull request without a review")).toHaveCount(0);
-  await page.getByRole("button", { name: "Delete tab" }).click();
-  await expect(tab).toHaveCount(0);
+
+  // The menu starts from the tab's query, its values ticked; a change is a
+  // draft until Update tab.
+  await filter.click();
+  await expect(bar).toHaveValue("assignee=@me");
+  await page.getByRole("option", { name: /^Assignee/ }).hover();
+  await expect(
+    page.getByRole("listbox", { name: "Assignee" }).getByRole("option", { name: /^Me/ }),
+  ).toHaveAttribute("aria-selected", "true");
+  await bar.fill("assignee=@me automatically");
+  await page.keyboard.press("Enter");
+  await panel.locator(".filter-save-main").click();
+  await page.keyboard.press("Escape");
+
+  // Edit and Delete are in the tab's right-click menu.
+  await tab.click({ button: "right" });
+  await page.getByRole("menuitem", { name: "Edit…" }).click();
+  await expect(bar).toHaveValue("assignee=@me automatically");
+  await page.getByLabel("Tab name").fill("Mine assigned");
+  await page.getByRole("button", { name: "Done" }).click();
+  const renamed = page.getByRole("button", { name: /^Mine assigned/ });
+  await expect(renamed).toHaveAttribute("aria-pressed", "true");
+  await page.keyboard.press("Escape");
+  await renamed.click({ button: "right" });
+  await page.getByRole("menuitem", { name: "Delete…" }).click();
+  await expect(page.getByRole("dialog")).toContainText("Only this tab goes.");
+  await page.getByRole("dialog").getByRole("button", { name: "Delete tab" }).click();
+  await expect(renamed).toHaveCount(0);
   await expect(page.getByText("A pull request without a review")).toBeVisible();
 
   // An older link's repository becomes the page's filter.
-  await page.goto(page.url().replace(/\?.*$/, "") + "?page=pulls&filter=all&repo=acme/missing");
-  await expect(bar).toHaveValue("repo:acme/missing");
+  await page.goto(page.url().replace(/\?.*$/, "") + "?page=pulls&filter=open&repo=acme/missing");
   await expect(page).not.toHaveURL(/repo=/);
   await expect(page.getByText("A pull request without a review")).toHaveCount(0);
+  await filter.click();
+  await expect(bar).toHaveValue("repo=acme/missing");
+
+  // The menu picks an operator, then values with it.
+  await page.getByRole("option", { name: /^State/ }).hover();
+  const state = page.getByRole("listbox", { name: "State" });
+  await state.getByRole("radio", { name: "is not" }).click();
+  await state.getByRole("option", { name: /^Draft/ }).click();
+  await expect(bar).toHaveValue("repo=acme/missing is!=draft");
 });

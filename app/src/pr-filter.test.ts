@@ -5,6 +5,7 @@ import {
   matchesQuery,
   ownerOf,
   parseQuery,
+  queryProblem,
   quote,
   suggest,
   toggleValue,
@@ -64,6 +65,18 @@ it("compares risk, and an unscored pull request passes only risk:none", () => {
   expect(passes("risk:none", scored(1))).toBe(false);
   expect(passes("risk:None", entry())).toBe(true);
   expect(passes("author:@Me", entry({ authored_by_me: true }))).toBe(true);
+  // The operator is part of the term: risk>=3 and risk:>=3 read the same.
+  expect(passes("risk>=3", scored(4))).toBe(true);
+  expect(passes("risk<=2", scored(3))).toBe(false);
+  expect(passes("risk!=none", scored(1))).toBe(true);
+});
+
+it("reads = and : alike, and != as not any of the values", () => {
+  expect(passes("review=approved", entry({}, { review: "approved" }))).toBe(true);
+  expect(passes("review!=approved", entry({}, { review: "approved" }))).toBe(false);
+  expect(passes("review!=approved,none", entry({}, { review: "changes_requested" }))).toBe(true);
+  expect(passes("is!=draft", entry({ draft: true }))).toBe(false);
+  expect(passes("-is=draft", entry({ draft: true }))).toBe(false);
 });
 
 it("combines terms with AND, OR, NOT, - and parentheses", () => {
@@ -89,45 +102,55 @@ it("looks for other words and phrases in the title, repository and number", () =
 
 it("says why a query does not read, and then narrows nothing", () => {
   for (const [query, problem] of [
-    ["colour:red", 'Unknown filter "colour:"'],
-    ["review:maybe", "review: takes approved, changes_requested, none."],
-    ["risk:7", "risk: takes"],
-    ["assignee:sam", "assignee: takes @me."],
-    ["repo:", "repo: needs a value."],
+    ["colour:red", 'Unknown filter "colour"'],
+    ["review=maybe", "review takes approved, changes_requested, none."],
+    ["review>=approved", "review takes = or !=."],
+    ["risk=7", "risk takes 1 to 5, or none."],
+    ["risk>=none", "risk compares only scores"],
+    ["assignee=sam", "assignee takes @me."],
+    ["repo=", "repo= needs a value."],
     ["(is:draft", "A parenthesis is not closed."],
     ["is:draft)", "A closing parenthesis has no opening one."],
     ["is:draft OR", "The query ends where a filter should follow."],
     ["OR is:draft", "OR needs a filter before it."],
-    ["a".repeat(501), "A filter is at most 500 characters."],
   ] as const) {
     expect(parseQuery(query).error).toContain(problem);
     expect(matchesQuery(query, entry())).toBe(true);
   }
   expect(parseQuery("   ")).toEqual({ expr: null, error: "" });
+  // Too long to save, though it still reads and matches.
+  expect(queryProblem("a".repeat(501))).toBe("A filter is at most 500 characters.");
+  expect(parseQuery("a".repeat(501)).error).toBe("");
 });
 
 it("adds a picked value to the field's term, takes it out again, and wraps an OR", () => {
-  expect(toggleValue("", "review", "approved")).toBe("review:approved");
-  expect(toggleValue("review:approved flaky", "review", "none")).toBe("review:approved,none flaky");
-  expect(toggleValue("review:approved,none flaky", "review", "approved")).toBe("review:none flaky");
-  expect(toggleValue("review:none flaky", "review", "none")).toBe("flaky");
-  expect(toggleValue("is:draft OR checks:failing", "repo", "acme/demo")).toBe(
-    "(is:draft OR checks:failing) repo:acme/demo",
+  expect(toggleValue("", "review", "approved")).toBe("review=approved");
+  expect(toggleValue("review:approved flaky", "review", "none")).toBe("review=approved,none flaky");
+  expect(toggleValue("review=approved,none flaky", "review", "approved")).toBe("review=none flaky");
+  expect(toggleValue("review=none flaky", "review", "none")).toBe("flaky");
+  expect(toggleValue("is=draft OR checks=failing", "repo", "acme/demo")).toBe(
+    "(is=draft OR checks=failing) repo=acme/demo",
   );
+  // Each operator is a term of its own.
+  expect(toggleValue("is=draft", "is", "bot", "!=")).toBe("is=draft is!=bot");
+  expect(toggleValue("is!=bot,draft", "is", "bot", "!=")).toBe("is!=draft");
+  expect(toggleValue("", "risk", "3", ">=")).toBe("risk>=3");
   // A term under NOT is not the field's choice: a new one is added.
-  expect(toggleValue("-is:draft", "is", "conflict")).toBe("-is:draft is:conflict");
-  expect(toggleValue("", "base", "release 1")).toBe('base:"release 1"');
-  expect(hasValue("review:approved,none", "review", "None")).toBe(true);
-  expect(hasValue("-review:approved", "review", "approved")).toBe(false);
-  expect(hasValue("review:approved OR is:draft", "review", "approved")).toBe(false);
-  expect(withText("is:draft", "login test")).toBe('is:draft "login test"');
+  expect(toggleValue("-is=draft", "is", "conflict")).toBe("-is=draft is=conflict");
+  expect(toggleValue("", "base", "release 1")).toBe('base="release 1"');
+  expect(hasValue("review=approved,none", "review", "None")).toBe(true);
+  expect(hasValue("review!=approved", "review", "approved")).toBe(false);
+  expect(hasValue("review!=approved", "review", "approved", "!=")).toBe(true);
+  expect(hasValue("-review=approved", "review", "approved")).toBe(false);
+  expect(hasValue("review=approved OR is=draft", "review", "approved")).toBe(false);
+  expect(withText("is=draft", "login test")).toBe('is=draft "login test"');
   expect(quote("a,b")).toBe('"a,b"');
   // The term that holds the value loses it, and parentheses left empty go.
-  expect(toggleValue("is:draft is:bot", "is", "bot")).toBe("is:draft");
-  expect(toggleValue("(review:approved) flaky", "review", "approved")).toBe("flaky");
-  expect(toggleValue("((review:approved)) flaky", "review", "approved")).toBe("flaky");
-  expect(toggleValue("review:approved AND flaky", "review", "approved")).toBe("flaky");
-  expect(toggleValue("flaky AND review:approved", "review", "approved")).toBe("flaky");
+  expect(toggleValue("is=draft is=bot", "is", "bot")).toBe("is=draft");
+  expect(toggleValue("(review=approved) flaky", "review", "approved")).toBe("flaky");
+  expect(toggleValue("((review=approved)) flaky", "review", "approved")).toBe("flaky");
+  expect(toggleValue("review=approved AND flaky", "review", "approved")).toBe("flaky");
+  expect(toggleValue("flaky AND review=approved", "review", "approved")).toBe("flaky");
   // Typed text that would read as syntax is quoted.
   expect(withText("", "OR")).toBe('"OR"');
   expect(withText("", "-wip")).toBe('"-wip"');
@@ -135,30 +158,41 @@ it("adds a picked value to the field's term, takes it out again, and wraps an OR
   expect(passes(withText("", "-wip"), entry({ title: "-wip: draft" }))).toBe(true);
 });
 
-it("suggests fields, then their values, then the operators", () => {
+it("suggests a field, then its operators, then its values", () => {
   const entries = [entry(), entry({ repository: "acme/web", number: 2 })];
   const labels = (query: string, caret = query.length) =>
     suggest(query, caret, entries).map((one) => one.label);
-  expect(labels("re")).toEqual(["repo:", "review:", "review-requested:"]);
-  expect(labels("-re")).toEqual(["-repo:", "-review:", "-review-requested:"]);
-  expect(labels("repo:")).toEqual(["repo:acme/demo", "repo:acme/web"]);
-  expect(labels("repo:we")).toEqual(["repo:acme/web"]);
-  expect(labels("review:approved,")).toEqual(["review:changes_requested", "review:none"]);
-  expect(labels("is:draft O")).toEqual(["OR"]);
+  expect(labels("re")).toEqual(["repo", "review", "review-requested"]);
+  expect(labels("-re")).toEqual(["-repo", "-review", "-review-requested"]);
+  // A field typed whole offers its operators, then the longer fields.
+  expect(labels("review")).toEqual(["review=", "review!=", "review-requested"]);
+  expect(labels("risk")).toEqual(["risk=", "risk!=", "risk>=", "risk<=", "risk>", "risk<"]);
+  expect(labels("review!")).toEqual(["review!="]);
+  expect(labels("repo=")).toEqual(["repo=acme/demo", "repo=acme/web"]);
+  expect(labels("repo!=we")).toEqual(["repo!=acme/web"]);
+  expect(labels("repo:")).toEqual(["repo=", "repo!="]);
+  expect(labels("review=approved,")).toEqual(["review=changes_requested", "review=none"]);
+  // Comparisons offer scores only; risk> may still become risk>=.
+  expect(labels("risk>=")).toEqual(["risk>=5", "risk>=4", "risk>=3", "risk>=2", "risk>=1"]);
+  expect(labels("risk>")[0]).toBe("risk>=");
+  expect(labels("review>=")).toEqual([]);
+  expect(labels("is=draft O")).toEqual(["OR"]);
   expect(labels("N")).toEqual(["NOT"]);
-  expect(labels("is:draft ").slice(-3)).toEqual(["AND", "OR", "NOT"]);
+  expect(labels("is=draft ").slice(-3)).toEqual(["AND", "OR", "NOT"]);
   expect(labels("")).not.toContain("OR");
-  expect(labels("colour:")).toEqual([]);
+  expect(labels("colour=")).toEqual([]);
   // Inside a word, nothing: taking one would drop the rest of the word.
-  expect(labels("review:approved,none", 10)).toEqual([]);
+  expect(labels("review=approved,none", 10)).toEqual([]);
   // At a word's start, nothing either: a field would join onto it.
-  expect(labels("repo:x is:draft", 7)).toEqual([]);
-  expect(labels("is:draft")).toEqual([]);
+  expect(labels("repo=x is=draft", 7)).toEqual([]);
+  expect(labels("is=draft")).toEqual([]);
   // Taking a value replaces the word at the caret and leaves a space after it.
-  const [value] = suggest("is:draft repo:we checks:none", 16, entries);
-  expect(value).toMatchObject({ query: "is:draft repo:acme/web checks:none", caret: 23 });
+  const [value] = suggest("is=draft repo=we checks=none", 16, entries);
+  expect(value).toMatchObject({ query: "is=draft repo=acme/web checks=none", caret: 23 });
   const [field] = suggest("che", 3, entries);
-  expect(field).toMatchObject({ query: "checks:", caret: 7, field: true });
+  expect(field).toMatchObject({ query: "checks", caret: 6, field: true });
+  const [op] = suggest("checks", 6, entries);
+  expect(op).toMatchObject({ query: "checks=", caret: 7, field: true });
 });
 
 it("finds the owner of an Enterprise repository", () => {

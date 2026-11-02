@@ -28,9 +28,9 @@ var ErrUnreadable = errors.New("saved UI state is unreadable")
 var clientKey = regexp.MustCompile(`^[A-Za-z0-9_-]{12,64}$`)
 var mutationKey = regexp.MustCompile(`^([A-Za-z0-9_-]{12,64}):([1-9][0-9]{0,15})$`)
 var dayKey = regexp.MustCompile(`^[0-9]{4}-[0-9]{1,2}-[0-9]{1,2}$`)
-var filterPage = regexp.MustCompile(`^(inbox|pulls|inbox:[0-9a-f]{32})$`)
+var filterPage = regexp.MustCompile(`^(inbox|pulls|(inbox|tab):[0-9a-f]{32})$`)
 var tabID = regexp.MustCompile(`^[0-9a-f]{32}$`)
-var tabView = regexp.MustCompile(`^(inbox|requested|mine|other|no_review|history)$`)
+var tabView = regexp.MustCompile(`^(open|history)$`)
 var reviewKey = regexp.MustCompile(`^[A-Za-z0-9._-]+(?:/[A-Za-z0-9._-]+){1,2}#[1-9][0-9]*@v[1-9][0-9]*$`)
 
 type Record struct {

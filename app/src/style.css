@@ -4747,9 +4747,6 @@ kbd.key-hint {
 .upnext-list-title > .local-refresh {
   margin: -6px -8px -6px auto;
 }
-.upnext-list-title > .inbox-edit-link + .local-refresh {
-  margin-left: 0;
-}
 .upnext-list-head h1 {
   margin: 0;
   font-size: var(--text-lg);
@@ -6215,9 +6212,6 @@ a.upnext-done-text:hover {
   outline: none;
   box-shadow: var(--focus-ring);
 }
-.inbox-edit-link {
-  margin-left: auto;
-}
 .inbox-page {
   max-width: 64rem;
   align-content: start;
@@ -6745,17 +6739,6 @@ a.upnext-done-text:hover {
   background: var(--status-positive-bg);
   color: var(--status-positive);
 }
-.local-rail-extra {
-  color: var(--text-tertiary);
-}
-.local-rail-plus {
-  display: inline-flex;
-  flex: none;
-  justify-content: center;
-  width: 8px;
-  font-size: var(--text-base);
-  line-height: 1;
-}
 @media (max-width: 900px) {
   .inbox-edit {
     grid-template-columns: minmax(0, 1fr);
@@ -6824,4 +6807,66 @@ dialog.local-file-dialog {
 .local-file-text {
   padding-right: 1rem;
   white-space: pre;
+}
+/* An inbox's head: its dot opens the colours, its name renames in place. */
+.inbox-head-colour {
+  position: relative;
+}
+.inbox-head-dot {
+  display: grid;
+  place-items: center;
+  width: 1.5rem;
+  height: 1.5rem;
+  border-radius: var(--radius-sm);
+  list-style: none;
+  cursor: pointer;
+}
+.inbox-head-dot::-webkit-details-marker {
+  display: none;
+}
+.inbox-head-dot:hover {
+  background: var(--surface-hover);
+}
+.inbox-head-dot:focus-visible,
+.inbox-head-name:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+.inbox-head-swatches {
+  position: absolute;
+  top: calc(100% + 0.3rem);
+  left: 0;
+  z-index: 30;
+  padding: 0.5rem;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  background: var(--surface-card);
+  box-shadow: var(--shadow-overlay);
+}
+.inbox-head-name {
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  padding: 0 0.2rem;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: text;
+}
+.inbox-head-name:hover {
+  background: var(--surface-hover);
+}
+.inbox-head-rename {
+  display: grid;
+  flex: 1;
+  min-width: 0;
+  gap: 0.2rem;
+}
+.inbox-head-problem {
+  color: var(--status-critical);
+  font-size: var(--text-xs);
 }

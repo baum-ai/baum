@@ -60,7 +60,7 @@ func TestPersistenceAndRevisionAcrossInstances(t *testing.T) {
 }
 func TestFiltersArePerPageQueriesAndSavedTabs(t *testing.T) {
 	s := store(t)
-	tab := `{"id":"0123456789abcdef0123456789abcdef","name":"Failing","view":"inbox","query":"checks:failing"}`
+	tab := `{"id":"0123456789abcdef0123456789abcdef","name":"Failing","view":"open","query":"checks:failing"}`
 	value := `{"pages":{"inbox":"repo:acme/app -is:draft","pulls":"(review:approved OR risk:4)","inbox:0123456789abcdef0123456789abcdef":"org:acme"},"tabs":[` + tab + `]}`
 	save(t, s, "filters", "", 0, "mutation-00000001", value)
 	if got, err := (&Store{Path: s.Path}).Read("filters", ""); err != nil || string(got.Value) != value {
@@ -75,7 +75,7 @@ func TestFiltersArePerPageQueriesAndSavedTabs(t *testing.T) {
 		"tab id":     `{"pages":{},"tabs":[` + strings.Replace(tab, "0123", "XYZ0", 1) + `]}`,
 		"tab twice":  `{"pages":{},"tabs":[` + tab + `,` + tab + `]}`,
 		"tab name":   `{"pages":{},"tabs":[` + strings.Replace(tab, "Failing", " ", 1) + `]}`,
-		"tab view":   `{"pages":{},"tabs":[` + strings.Replace(tab, `"inbox"`, `"timeline"`, 1) + `]}`,
+		"tab view":   `{"pages":{},"tabs":[` + strings.Replace(tab, `"open"`, `"timeline"`, 1) + `]}`,
 	} {
 		if _, err := s.Replace("filters", "", 1, "mutation-00000002:1", json.RawMessage(bad)); !errors.Is(err, ErrInvalid) {
 			t.Errorf("%s: %v", name, err)

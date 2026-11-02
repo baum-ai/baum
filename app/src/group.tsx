@@ -137,7 +137,8 @@ export function NameDialog({
     </dialog>
   );
 }
-function ConfirmDialog({
+/** Asks before an action that cannot simply be taken back. */
+export function ConfirmDialog({
   title,
   children,
   action,

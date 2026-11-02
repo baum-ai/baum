@@ -1,10 +1,18 @@
 import { useRef, useState } from "react";
 import { LocalRequestError, request, type Entry } from "./api";
 import type { UpNextKind } from "./up-next";
-import { matchesQuery } from "./pr-filter";
+import { andQuery, matchesQuery, quote } from "./pr-filter";
 
 export const INBOX_COLORS = ["blue", "green", "red", "amber", "purple", "grey"] as const;
 export type InboxColor = (typeof INBOX_COLORS)[number];
+export const COLOR_NAMES: Record<InboxColor, string> = {
+  blue: "Blue",
+  green: "Green",
+  red: "Red",
+  amber: "Amber",
+  purple: "Purple",
+  grey: "Grey",
+};
 export type InboxWhat = "any" | "review" | "merge" | "agent" | "mine";
 
 /** A saved filter over the queue, as the daemon stores it (see its
@@ -34,7 +42,8 @@ function parseInbox(raw: unknown): Inbox | null {
   const value = raw as Record<string, unknown> | null;
   if (!value || typeof value !== "object" || !isString(value.id) || !isString(value.name))
     return null;
-  return {
+  // Its parts read as one query from here on, and save so.
+  return folded({
     id: value.id,
     name: value.name,
     color: INBOX_COLORS.includes(value.color as InboxColor) ? (value.color as InboxColor) : "grey",
@@ -47,7 +56,7 @@ function parseInbox(raw: unknown): Inbox | null {
     query: typeof value.query === "string" ? value.query : "",
     no_bots: value.no_bots === true,
     badge: value.badge !== false,
-  };
+  });
 }
 
 /** An older daemon answers 404 or `available: false`: no inboxes at all, not
@@ -80,32 +89,40 @@ export async function readInboxes(
  *  now is one of kind `fix`. */
 export type Matchable = { kind: UpNextKind; entry: Entry };
 
-const WHAT: Record<InboxWhat, (kind: UpNextKind, entry: Entry) => boolean> = {
-  any: () => true,
-  review: (kind) => kind === "review" || kind === "clone",
-  merge: (kind) => kind === "merge",
-  agent: (kind) => kind === "fix" || kind === "update",
-  mine: (_, entry) => entry.pull_request.authored_by_me,
-};
+/** An inbox's parts as one query: what it holds (`waiting=` or, for the
+ *  person's own, `author=@me`), owners (`org=`), risk (`risk>=`),
+ *  repositories (`repo=`) and bots (`is!=bot`), then its own query. */
+export function foldedQuery(inbox: Inbox): string {
+  const parts = [
+    inbox.what === "mine"
+      ? "author=@me"
+      : inbox.what !== "any"
+        ? `waiting=${inbox.what === "agent" ? "agent" : inbox.what}`
+        : "",
+    inbox.owners.length ? `org=${inbox.owners.map(quote).join(",")}` : "",
+    inbox.risk !== "any" ? `risk>=${inbox.risk}` : "",
+    inbox.repositories.length ? `repo=${inbox.repositories.map(quote).join(",")}` : "",
+    inbox.no_bots ? "is!=bot" : "",
+  ].filter(Boolean);
+  return andQuery(parts.join(" "), inbox.query);
+}
+
+/** The inbox with its parts folded into its query, which alone then says
+ *  what it holds. */
+export function folded(inbox: Inbox): Inbox {
+  return {
+    ...inbox,
+    what: "any",
+    owners: [],
+    risk: "any",
+    repositories: [],
+    no_bots: false,
+    query: foldedQuery(inbox),
+  };
+}
 
 export function matches(inbox: Inbox, { kind, entry }: Matchable): boolean {
-  const pr = entry.pull_request;
-  if (!(WHAT[inbox.what] ?? WHAT.any)(kind, entry)) return false;
-  const repository = pr.repository.toLowerCase();
-  const owner = repository.split("/")[0];
-  if (inbox.owners.length > 0 && !inbox.owners.some((o) => o.toLowerCase() === owner)) return false;
-  if (inbox.risk !== "any") {
-    // A pull request with no score yet is never riskier than a threshold.
-    const score = entry.risk_score?.score;
-    if (typeof score !== "number" || score < Number(inbox.risk)) return false;
-  }
-  if (
-    inbox.repositories.length > 0 &&
-    !inbox.repositories.some((r) => r.toLowerCase() === repository)
-  )
-    return false;
-  if (inbox.no_bots && pr.author_bot) return false;
-  return matchesQuery(inbox.query, entry);
+  return matchesQuery(foldedQuery(inbox), entry, kind);
 }
 
 /** Every inbox the item is in, in the sidebar's order. */
@@ -172,9 +189,7 @@ export function sentence(inbox: Inbox, login?: string): string {
             ? inbox.repositories[0]
             : `${inbox.repositories.length} repositories`
         }`;
-  const text = `${what} ${where}, ${risk}${only}${inbox.no_bots ? ", without bots" : ""}${
-    inbox.query ? `, matching ${inbox.query}` : ""
-  }`;
+  const text = `${what} ${where}, ${risk}${only}${inbox.no_bots ? ", without bots" : ""}`;
   return `${text.charAt(0).toUpperCase()}${text.slice(1)}.`;
 }
 

@@ -91,9 +91,6 @@ it("matches its query on top of the rest", () => {
   expect(matches(inbox({ what: "review", query: "checks:failing" }), failing)).toBe(false);
   // A query that does not read narrows nothing.
   expect(matches(inbox({ query: "checks:" }), failing)).toBe(true);
-  expect(sentence(inbox({ query: "checks:failing" }))).toBe(
-    "Anything waiting on me in any repository, whatever the risk, matching checks:failing.",
-  );
 });
 
 it("says what an inbox holds", () => {
@@ -294,11 +291,11 @@ it("reads a malformed entry defensively and drops one without an id or name", ()
       id: "b",
       name: "B",
       color: "red",
-      what: "merge",
-      owners: ["acme"],
+      what: "any",
+      owners: [],
       risk: "any",
       repositories: [],
-      query: "",
+      query: "waiting=merge org=acme",
       no_bots: false,
       badge: false,
     },

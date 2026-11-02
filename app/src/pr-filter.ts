@@ -2,10 +2,12 @@ import type { Entry } from "./api";
 import { uiState, useUIState } from "./ui-state";
 
 /** A filter over pull requests, written like a GitHub search:
- *  `repo:acme/app -is:draft (review:approved OR risk:>=4) flaky`.
+ *  `repo=acme/app is!=draft (review=approved OR risk>=4) flaky`.
  *
- *  - `key:value` keeps the pull requests whose field has the value, and
- *    `key:a,b` either value; `-key:value` or `NOT` leaves them out.
+ *  - A term is a field, an operator and a value: `key=value` keeps the pull
+ *    requests whose field has the value (`key:value` reads the same), and
+ *    `key=a,b` either value; `key!=value` leaves them out, as do `-` and
+ *    `NOT` before any term; risk also compares (`risk>=3`, `<`, `<=`, `>`).
  *  - Terms next to each other must all hold (`AND` may be written); `OR`
  *    takes either side and binds looser than `AND`; parentheses group.
  *  - Any other word, or a "quoted phrase", is looked for in the title, the
@@ -15,19 +17,39 @@ import { uiState, useUIState } from "./ui-state";
 export type Expr =
   | { kind: "and" | "or"; items: Expr[] }
   | { kind: "not"; item: Expr }
-  | { kind: "term"; key: string; values: string[]; start: number; end: number }
+  | { kind: "term"; key: string; op: Op; values: string[]; start: number; end: number }
   | { kind: "text"; text: string };
 
 export type Option = { value: string; label: string };
+
+/** How a term compares its field with its values. */
+export type Op = "=" | "!=" | ">=" | "<=" | ">" | "<";
+/** Each operator in words, as the menu and the suggestions name it. */
+export const OP_LABELS: Record<Op, string> = {
+  "=": "is",
+  "!=": "is not",
+  ">=": "≥",
+  "<=": "≤",
+  ">": ">",
+  "<": "<",
+};
+const EQUALITY: Op[] = ["=", "!="];
+const COMPARISONS: Op[] = ["=", "!=", ">=", "<=", ">", "<"];
 
 type Field = {
   key: string;
   label: string;
   /** The values to offer, given the page's pull requests. */
   values: (entries: Entry[]) => Option[];
-  /** Why a typed value is not one the field takes, or "". */
-  check?: (value: string) => string;
-  test: (value: string, entry: Entry) => boolean;
+  /** The operators it takes, `=` and `!=` unless it says. */
+  ops?: Op[];
+  /** Why a typed value is not one the field takes with the operator, or "". */
+  check?: (value: string, op: Op) => string;
+  /** Whether the pull request's field is the value, or for a comparison
+   *  passes it; `kind` is what it waits for in an inbox's queue. */
+  test: (value: string, entry: Entry, op: Op, kind?: string) => boolean;
+  /** Only an inbox's queue knows it (`kind`): offered there alone. */
+  inboxOnly?: boolean;
 };
 
 const same = (a: string | undefined, b: string) => (a ?? "").toLowerCase() === b.toLowerCase();
@@ -45,12 +67,7 @@ export function ownerOf(repository: string): string {
 }
 
 /** A field that takes only the listed values. */
-function listed(
-  key: string,
-  label: string,
-  options: Option[],
-  test: (value: string, entry: Entry) => boolean,
-): Field {
+function listed(key: string, label: string, options: Option[], test: Field["test"]): Field {
   return {
     key,
     label,
@@ -58,7 +75,7 @@ function listed(
     check: (value) =>
       options.some((one) => same(one.value, value))
         ? ""
-        : `${key}: takes ${options.map((one) => one.value).join(", ")}.`,
+        : `${key} takes ${options.map((one) => one.value).join(", ")}.`,
     test,
   };
 }
@@ -70,6 +87,12 @@ const IS: Record<string, [string, (entry: Entry) => boolean]> = {
   blocked: ["Blocked", (e) => e.merge === "blocked"],
   behind: ["Behind its base", (e) => e.pull_request.behind === true],
   bot: ["By a bot", (e) => e.pull_request.author_bot === true],
+};
+/** What a queue item waits for, by its kind: the inbox's "what". */
+const WAITING: Record<string, [string, (kind: string) => boolean]> = {
+  review: ["My review", (kind) => kind === "review" || kind === "clone"],
+  merge: ["Merging", (kind) => kind === "merge"],
+  agent: ["An agent's fix", (kind) => kind === "fix" || kind === "update"],
 };
 const REVIEW: Record<string, [string, (entry: Entry) => boolean]> = {
   approved: ["Approved", (e) => e.review === "approved"],
@@ -92,16 +115,13 @@ const fromTable = (key: string, label: string, table: typeof IS) =>
 const me = (key: string, label: string, test: (entry: Entry) => boolean) =>
   listed(key, label, [{ value: "@me", label: "Me" }], (_, entry) => test(entry));
 
-const RISK = /^(>=|<=|>|<)?([1-5])$/;
-/** Whether the score passes a risk value such as `>=3`; a pull request with
- *  no score yet passes only `none`. */
-function riskTest(value: string, entry: Entry): boolean {
+/** Whether the score compares with a risk value as the operator asks; a pull
+ *  request with no score yet is only `none`, and passes no comparison. */
+function riskTest(value: string, entry: Entry, op: Op): boolean {
   const score = entry.risk_score?.score;
-  value = value.toLowerCase();
-  if (value === "none") return typeof score !== "number";
-  const [, op = "", digit] = RISK.exec(value) ?? [];
-  if (!digit || typeof score !== "number") return false;
-  const n = Number(digit);
+  if (same(value, "none")) return typeof score !== "number";
+  if (!/^[1-5]$/.test(value) || typeof score !== "number") return false;
+  const n = Number(value);
   return op === ">="
     ? score >= n
     : op === "<="
@@ -148,18 +168,28 @@ export const FIELDS: Field[] = [
   fromTable("checks", "Checks", CHECKS),
   fromTable("is", "State", IS),
   {
+    ...listed(
+      "waiting",
+      "Waiting for",
+      Object.entries(WAITING).map(([value, [text]]) => ({ value, label: text })),
+      (value, _entry, _op, kind) => !!kind && WAITING[value.toLowerCase()]?.[1](kind) === true,
+    ),
+    inboxOnly: true,
+  },
+  {
     key: "risk",
     label: "Risk",
+    ops: COMPARISONS,
     values: () => [
-      { value: ">=4", label: "4 or 5" },
-      { value: ">=3", label: "3 or more" },
-      ...[5, 4, 3, 2, 1].map((n) => ({ value: String(n), label: `Exactly ${n}` })),
+      ...[5, 4, 3, 2, 1].map((n) => ({ value: String(n), label: String(n) })),
       { value: "none", label: "Not scored yet" },
     ],
-    check: (value) =>
-      same(value, "none") || RISK.test(value)
+    check: (value, op) =>
+      /^[1-5]$/.test(value) || (same(value, "none") && EQUALITY.includes(op))
         ? ""
-        : "risk: takes 1 to 5, >=3, <4 and so on, or none.",
+        : same(value, "none")
+          ? "risk compares only scores: none takes = or !=."
+          : "risk takes 1 to 5, or none.",
     test: riskTest,
   },
   {
@@ -211,15 +241,26 @@ function tokenize(query: string): Token[] {
   return out;
 }
 
-/** A word's key and values when it is `key:value,…` (before any quote). */
+/** A field, an operator and what follows: `review!=a,b`. `:` is `=`, and
+ *  `risk:>=3` reads as `risk>=3`. */
+const TERM = /^([A-Za-z][A-Za-z-]*)(!=|>=|<=|=|:|>|<)(.*)$/s;
+
+/** A word's key, operator and values when it is a term (before any quote). */
 function splitTerm(query: string, token: Extract<Token, { kind: "word" }>) {
   const raw = query.slice(token.start, token.end).replace(/^-/, "");
-  const colon = raw.indexOf(":");
-  if (colon <= 0 || raw.slice(0, colon).includes('"')) return null;
+  const match = TERM.exec(raw);
+  if (!match) return null;
+  let op = (match[2] === ":" ? "=" : match[2]) as Op;
+  let rest = match[3]!;
+  const compared = /^(>=|<=|>|<)/.exec(rest);
+  if (match[2] === ":" && compared) {
+    op = compared[1] as Op;
+    rest = rest.slice(op.length);
+  }
   const values: string[] = [];
   let current = "";
   let inQuote = false;
-  for (const c of raw.slice(colon + 1)) {
+  for (const c of rest) {
     if (c === '"') inQuote = !inQuote;
     else if (c === "," && !inQuote) {
       values.push(current);
@@ -227,14 +268,12 @@ function splitTerm(query: string, token: Extract<Token, { kind: "word" }>) {
     } else current += c;
   }
   values.push(current);
-  return { key: raw.slice(0, colon).toLowerCase(), values };
+  return { key: match[1]!.toLowerCase(), op, values };
 }
 
 export type Parsed = { expr: Expr | null; error: string };
 
 function parse(query: string): Parsed {
-  if (query.length > MAX_QUERY)
-    return { expr: null, error: `A filter is at most ${MAX_QUERY} characters.` };
   const tokens = tokenize(query);
   let at = 0;
   const fail = (error: string): never => {
@@ -257,16 +296,18 @@ function parse(query: string): Parsed {
     let expr: Expr;
     if (term) {
       const field = fieldOf(term.key);
-      if (!field)
-        fail(`Unknown filter "${term.key}:". Try ${FIELDS.map((f) => `${f.key}:`).join(", ")}.`);
-      if (term.values.some((v) => v.trim() === "")) fail(`${term.key}: needs a value.`);
+      if (!field) fail(`Unknown filter "${term.key}". Try ${FIELDS.map((f) => f.key).join(", ")}.`);
+      const ops = field!.ops ?? EQUALITY;
+      if (!ops.includes(term.op)) fail(`${field!.key} takes ${ops.join(" or ")}.`);
+      if (term.values.some((v) => v.trim() === "")) fail(`${field!.key}${term.op} needs a value.`);
       for (const value of term.values) {
-        const problem = field!.check?.(value);
+        const problem = field!.check?.(value, term.op);
         if (problem) fail(problem);
       }
       expr = {
         kind: "term",
         key: field!.key,
+        op: term.op,
         values: term.values,
         start: token.start,
         end: token.end,
@@ -317,17 +358,20 @@ export function parseQuery(query: string): Parsed {
   return out;
 }
 
-function test(expr: Expr, entry: Entry): boolean {
+function test(expr: Expr, entry: Entry, kind?: string): boolean {
   switch (expr.kind) {
     case "and":
-      return expr.items.every((one) => test(one, entry));
+      return expr.items.every((one) => test(one, entry, kind));
     case "or":
-      return expr.items.some((one) => test(one, entry));
+      return expr.items.some((one) => test(one, entry, kind));
     case "not":
-      return !test(expr.item, entry);
+      return !test(expr.item, entry, kind);
     case "term": {
       const field = fieldOf(expr.key);
-      return !!field && expr.values.some((value) => field.test(value, entry));
+      if (!field) return false;
+      if (expr.op === "!=")
+        return !expr.values.some((value) => field.test(value, entry, "=", kind));
+      return expr.values.some((value) => field.test(value, entry, expr.op, kind));
     }
     case "text": {
       const pr = entry.pull_request;
@@ -342,11 +386,26 @@ function test(expr: Expr, entry: Entry): boolean {
   }
 }
 
-/** Whether the pull request passes the query. A query that cannot be read
- *  narrows nothing; the filter bar says why. */
-export function matchesQuery(query: string, entry: Entry): boolean {
+/** Why the query cannot be saved: it does not read, or is longer than the
+ *  daemon keeps. "" when it can. */
+export function queryProblem(query: string): string {
+  return (
+    parseQuery(query).error ||
+    (query.length > MAX_QUERY ? `A filter is at most ${MAX_QUERY} characters.` : "")
+  );
+}
+
+/** Whether the pull request passes the query; `kind` is what it waits for
+ *  in an inbox's queue (none elsewhere, where `waiting` holds for nothing). A
+ *  query that cannot be read narrows nothing; the filter bar says why. */
+export function matchesQuery(query: string, entry: Entry, kind?: string): boolean {
   const { expr } = parseQuery(query);
-  return !expr || test(expr, entry);
+  return !expr || test(expr, entry, kind);
+}
+
+/** The fields a page offers: `waiting` only where queue items have a kind. */
+export function fieldsFor(inbox = false) {
+  return FIELDS.filter((field) => inbox || !field.inboxOnly);
 }
 
 /** A value as the query writes it, quoted when it would not read back. */
@@ -361,10 +420,11 @@ function topTerms(query: string) {
   return items.filter((one): one is Extract<Expr, { kind: "term" }> => one.kind === "term");
 }
 
-/** Whether the query requires the value of the field, as the menu ticks it. */
-export function hasValue(query: string, key: string, value: string): boolean {
+/** Whether the query requires the field to compare so with the value, as
+ *  the menu ticks it. */
+export function hasValue(query: string, key: string, value: string, op: Op = "="): boolean {
   return topTerms(query).some(
-    (term) => term.key === key && term.values.some((one) => same(one, value)),
+    (term) => term.key === key && term.op === op && term.values.some((one) => same(one, value)),
   );
 }
 
@@ -376,17 +436,18 @@ const tidy = tidyQuery;
 export const MAX_QUERY = 500;
 
 /** The query with the value required, or no longer required: a term of the
- *  field that must hold gains or loses it as one more choice (`review:a,b`);
- *  otherwise a term is added, around a query with OR in parentheses. */
-export function toggleValue(query: string, key: string, value: string): string {
-  const terms = topTerms(query).filter((one) => one.key === key);
+ *  field and operator that must hold gains or loses it as one more choice
+ *  (`review=a,b`); otherwise a term is added, around a query with OR in
+ *  parentheses. */
+export function toggleValue(query: string, key: string, value: string, op: Op = "="): string {
+  const terms = topTerms(query).filter((one) => one.key === key && one.op === op);
   const term = terms.find((one) => one.values.some((v) => same(v, value))) ?? terms[0];
   const { expr, error } = parseQuery(query);
   if (term) {
     const values = term.values.some((one) => same(one, value))
       ? term.values.filter((one) => !same(one, value))
       : [...term.values, value];
-    const text = values.length ? `${key}:${values.map(quote).join(",")}` : "";
+    const text = values.length ? `${key}${op}${values.map(quote).join(",")}` : "";
     let before = query.slice(0, term.start);
     let after = query.slice(term.end);
     if (!text) {
@@ -402,7 +463,19 @@ export function toggleValue(query: string, key: string, value: string): string {
     return tidy(`${before}${text}${after}`);
   }
   const base = !error && expr?.kind === "or" ? `(${query.trim()})` : query.trim();
-  return tidy(`${base} ${key}:${quote(value)}`);
+  return tidy(`${base} ${key}${op}${quote(value)}`);
+}
+
+/** Both queries must hold: the second added to the first, each in
+ *  parentheses when it has an OR of its own. */
+export function andQuery(first: string, second: string): string {
+  const wrap = (query: string) => {
+    const { expr, error } = parseQuery(query);
+    return !error && expr?.kind === "or" ? `(${query.trim()})` : query.trim();
+  };
+  const parts = [first, second].filter((one) => one.trim());
+  // One alone needs no parentheses.
+  return tidy(parts.length > 1 ? parts.map(wrap).join(" ") : (parts[0] ?? ""));
 }
 
 /** The query with a phrase looked for, as typed in the menu's search. */
@@ -426,7 +499,12 @@ export type Suggestion = {
 
 /** What to offer at the caret: the values of the field being typed, or the
  *  fields and operators that start with the word being typed. */
-export function suggest(query: string, caret: number, entries: Entry[]): Suggestion[] {
+export function suggest(
+  query: string,
+  caret: number,
+  entries: Entry[],
+  inbox = false,
+): Suggestion[] {
   const token = tokenize(query).find(
     (one) => one.kind === "word" && one.start < caret && caret <= one.end,
   ) as Extract<Token, { kind: "word" }> | undefined;
@@ -447,30 +525,57 @@ export function suggest(query: string, caret: number, entries: Entry[]): Suggest
   };
   const negated = typed.startsWith("-");
   const body = negated ? typed.slice(1) : typed;
-  const colon = body.indexOf(":");
-  if (colon > 0) {
-    const field = fieldOf(body.slice(0, colon));
-    if (!field) return [];
-    const head = body.slice(0, colon + 1);
-    const listedValues = body.slice(colon + 1).split(",");
+  const sign = negated ? "-" : "";
+  const term = TERM.exec(body);
+  // `risk:` waits for its comparison like `risk`, and `review!` for its `=`.
+  const field = fieldOf((term?.[1] ?? /^([A-Za-z][A-Za-z-]*)!?$/.exec(body)?.[1]) || "");
+  const ops = field?.ops ?? EQUALITY;
+  const opRow = (op: Op): Suggestion => ({
+    ...take(`${sign}${field!.key}${op}`, false),
+    label: `${sign}${field!.key}${op}`,
+    detail: OP_LABELS[op],
+    field: true,
+  });
+  // A field with `!` or `:` alone: its operators come next, as they do above
+  // the other fields when it is typed whole.
+  if (field && /^[^!:=<>]+(!|:)$/.test(body))
+    return (body.endsWith("!") ? ops.filter((op) => op === "!=") : ops).map(opRow);
+  const whole = field && body.toLowerCase() === field.key ? ops.map(opRow) : [];
+  if (term && field) {
+    let op = (term[2] === ":" ? "=" : term[2]) as Op;
+    let rest = term[3]!;
+    // `risk>` may still become `risk>=`.
+    const longer =
+      (op === ">" || op === "<") && rest === "" && ops.includes(`${op}=` as Op)
+        ? [opRow(`${op}=` as Op)]
+        : [];
+    if (term[2] === ":" && /^(>=|<=|>|<)/.test(rest)) {
+      op = /^(>=|<=|>|<)/.exec(rest)![1] as Op;
+      rest = rest.slice(op.length);
+    }
+    if (!ops.includes(op)) return [];
+    const listedValues = rest.split(",");
     const partial = (listedValues.pop() ?? "").replace(/^"/, "").toLowerCase();
-    const prefix = `${negated ? "-" : ""}${head}${listedValues.map(quote).join(",")}${listedValues.length ? "," : ""}`;
-    return field
+    const prefix = `${sign}${field.key}${op}${listedValues.map(quote).join(",")}${listedValues.length ? "," : ""}`;
+    const values = field
       .values(entries)
       .filter(
         (one) =>
           !listedValues.some((v) => same(v, one.value)) &&
           // A value typed whole has nothing left to complete.
           !same(one.value, partial) &&
+          !field.check?.(one.value, op) &&
           (one.value.toLowerCase().includes(partial) || one.label.toLowerCase().includes(partial)),
       )
       .slice(0, 50)
       .map((one) => ({
         ...take(`${prefix}${quote(one.value)}`),
-        label: `${negated ? "-" : ""}${field.key}:${one.value}`,
+        label: `${sign}${field.key}${op}${one.value}`,
         detail: one.label === one.value ? undefined : one.label,
       }));
+    return [...longer, ...values];
   }
+  if (term) return [];
   const word = body.toLowerCase();
   // Upper case starts an operator: the fields are written in lower case.
   const before = tokenize(query.slice(0, start)).at(-1);
@@ -484,24 +589,27 @@ export function suggest(query: string, caret: number, entries: Entry[]): Suggest
           (word ? op.toLowerCase().startsWith(word) : afterOperand),
       ).map((op) => ({ ...take(op), label: op, detail: OPERATOR_HELP[op] }));
   if (operators.length > 0 && body !== word) return operators;
-  const fields = FIELDS.filter(
-    (field) =>
-      field.key.startsWith(word) ||
-      (word &&
-        field.label
-          .toLowerCase()
-          .split(" ")
-          .some((one) => one.startsWith(word))),
-  )
+  const fields = fieldsFor(inbox)
+    .filter(
+      (one) =>
+        // The field typed whole offers its operators instead.
+        (whole.length === 0 || one !== field) &&
+        (one.key.startsWith(word) ||
+          (!!word &&
+            one.label
+              .toLowerCase()
+              .split(" ")
+              .some((part) => part.startsWith(word)))),
+    )
     // The shortest key first, so the word typed whole is the one Tab takes.
     .sort((a, b) => (word ? a.key.length - b.key.length : 0))
     .map((field) => ({
-      ...take(`${negated ? "-" : ""}${field.key}:`, false),
-      label: `${negated ? "-" : ""}${field.key}:`,
+      ...take(`${sign}${field.key}`, false),
+      label: `${sign}${field.key}`,
       detail: negated ? `Not ${field.label.toLowerCase()}` : field.label,
       field: true,
     }));
-  return [...fields, ...operators];
+  return [...whole, ...fields, ...operators];
 }
 
 const OPERATOR_HELP: Record<(typeof OPERATORS)[number], string> = {
@@ -547,7 +655,7 @@ export function usePageFilter(page: FilterPage) {
     retry: saved.retry,
     set(next: string) {
       const text = tidy(next);
-      if (text === query || parseQuery(text).error) return;
+      if (text === query || queryProblem(text)) return;
       saved.update((value) => {
         const current = readable(value);
         // Changed pages move to the end, so the oldest are dropped first.
@@ -581,10 +689,12 @@ export function useSavedTabs() {
         return { pages, tabs: [...current.tabs, tab].slice(0, MAX_TABS) };
       }),
     remove: (id: string) => change((tabs) => tabs.filter((one) => one.id !== id)),
+    rename: (id: string, name: string) =>
+      change((tabs) => tabs.map((one) => (one.id === id ? { ...one, name } : one))),
     setQuery: (id: string, query: string) => {
       const text = tidy(query);
       const tab = readable(saved.value).tabs.find((one) => one.id === id);
-      if (!tab || tab.query === text || parseQuery(text).error) return;
+      if (!tab || tab.query === text || queryProblem(text)) return;
       change((tabs) => tabs.map((one) => (one.id === id ? { ...one, query: text } : one)));
     },
   };

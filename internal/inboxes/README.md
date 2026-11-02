@@ -18,7 +18,7 @@ later step.
 | `owners` | GitHub owner logins (organization or user), at most 50; empty means any |
 | `risk` | `any`, `3`, `4` (strings) |
 | `repositories` | `owner/name`, at most 50; empty means every repository that matches |
-| `query` | a filter query the app parses and matches, trimmed, one line of at most 500 characters; empty (or missing) for none |
+| `query` | a filter query the app parses and matches, trimmed, one line of at most 500 characters; empty (or missing) for none. The app reads `what`, `owners`, `risk`, `repositories` and `no_bots` as part of it and saves them folded in, leaving those fields at their plain values |
 | `no_bots` | leave out pull requests by bot authors (`author_bot` in discovery) |
 | `badge` | show a count badge in the sidebar |
 
