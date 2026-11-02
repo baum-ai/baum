@@ -37,6 +37,7 @@ pub const SETUP_PERMISSIONS: &[&str] = &[
     "allow-uninstall-command",
     "allow-install-hooks",
     "allow-uninstall-hooks",
+    "allow-update-hooks",
     "allow-choose-repository",
     "allow-add-repository",
     "allow-review-settings",
@@ -309,6 +310,9 @@ pub struct AgentHooks {
     name: String,
     #[serde(default)]
     detected: bool,
+    /// Whether the detected CLI is signed in; absent when baum could not tell.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    signed_in: Option<bool>,
     plugin: String,
     #[serde(default)]
     installed: bool,

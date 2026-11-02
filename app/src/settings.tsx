@@ -47,6 +47,7 @@ import { messages as githubMessages } from "./github-auth";
 import { CodexHookWarning, type useCodexHookTrust } from "./codex-hooks";
 import { DiagnosticsSection } from "./diagnostics";
 import { invoke } from "./desktop/native";
+import { withCode } from "./desktop/code-terms";
 import { Notice, PageBar, PanelHeader, RefreshButton } from "./shell";
 import { listKeys, MAC, onBody, pageModifier, useRowFocus, useShortcuts } from "./shortcuts";
 import {
@@ -57,7 +58,7 @@ import {
   CloseIcon,
   PlusIcon,
 } from "@baum/viewer/components/icons";
-import { DecisionsDisclosure, harnesses, harnessName } from "./desktop/reviews";
+import { DecisionsDisclosure, harnesses, harnessName, signIn } from "./desktop/reviews";
 import { effortLabels } from "./model-effort";
 import {
   describeCommand,
@@ -65,11 +66,14 @@ import {
   agentConnected,
   agentUpdatable,
   agentHookNote,
+  agentNeedsAction,
   displayPath,
   type SetupView,
   type Outcome,
   decisionModelDefaults,
   detectedHarnesses,
+  signedOutHarnesses,
+  modelName,
   modelPresets,
   withModel,
   type PullRequests,
@@ -385,6 +389,7 @@ function AgentSelect({
   options,
   same,
   disabled,
+  signedOut = [],
   onChange,
 }: {
   id: string;
@@ -392,6 +397,8 @@ function AgentSelect({
   options: string[];
   same?: string;
   disabled?: boolean;
+  /** Harnesses the desktop app found signed out, labelled so. */
+  signedOut?: readonly string[];
   onChange: (next: string) => void;
 }) {
   // A saved harness the app no longer offers, such as a retired backend from
@@ -414,9 +421,19 @@ function AgentSelect({
       {options.map((option) => (
         <option key={option} value={option}>
           {harnessName(option)}
+          {signedOut.includes(option) ? " (not signed in)" : ""}
         </option>
       ))}
     </select>
+  );
+}
+
+/** Why `work` will fail while `backend` is signed out, and how to sign in. */
+function SignedOutCaution({ backend, work }: { backend: string; work: string }) {
+  return (
+    <span className="settings-caution">
+      {harnessName(backend)} isn't signed in, so {work} will fail. {signIn[backend]}.
+    </span>
   );
 }
 
@@ -461,7 +478,7 @@ function ModelField({
       >
         {presets.map((model) => (
           <option key={model} value={model}>
-            {model}
+            {modelName(model)}
           </option>
         ))}
         <option value={CUSTOM}>Custom…</option>
@@ -529,12 +546,15 @@ function ReviewsSection({
   defaults,
   changed,
   available,
+  signedOut = [],
 }: {
   automatic: Automatic;
   defaults: ReviewDefaults;
   changed: () => Promise<void>;
   /** The agents found on this computer; undefined when the app cannot tell. */
   available?: readonly string[];
+  /** Harnesses the desktop app found signed out. */
+  signedOut?: readonly string[];
 }) {
   const saved: ReviewSettings & { effort: string } = {
     ...withModel({
@@ -617,12 +637,19 @@ function ReviewsSection({
         <SettingRow
           label="Agent that writes reviews"
           htmlFor="review-agent"
-          detail={harness ? `Uses ${harness.detail.replace(/^Your/, "your")}.` : null}
+          detail={
+            signedOut.includes(draft.backend) ? (
+              <SignedOutCaution backend={draft.backend} work="reviews" />
+            ) : harness ? (
+              `Uses ${harness.detail.replace(/^Your/, "your")}.`
+            ) : null
+          }
         >
           <AgentSelect
             id="review-agent"
             value={draft.backend}
             options={harnesses.map((h) => h.id)}
+            signedOut={signedOut}
             onChange={(backend) => change({ backend, model: modelPresets[backend]?.[0] ?? "" })}
           />
         </SettingRow>
@@ -654,9 +681,12 @@ function ReviewsSection({
 function FixesSection({
   defaults,
   changed,
+  signedOut = [],
 }: {
   defaults: ReviewDefaults;
   changed: () => Promise<void>;
+  /** Harnesses the desktop app found signed out. */
+  signedOut?: readonly string[];
 }) {
   const review = shownBackend(defaults.backend);
   const savedBackend = defaults.fix_backend ?? "";
@@ -695,6 +725,8 @@ function FixesSection({
                 Reviews use {harnessName(review)}, which can't fix pull requests. Choose Claude Code
                 or Codex to fix them.
               </span>
+            ) : signedOut.includes(draft.backend || review) ? (
+              <SignedOutCaution backend={draft.backend || review} work="fixes" />
             ) : (
               <>
                 {draft.backend ? "" : `Now ${reviewAgent}. `}It works with write access to a
@@ -708,6 +740,7 @@ function FixesSection({
             value={draft.backend}
             options={fixHarnesses}
             same="Same as reviews"
+            signedOut={signedOut}
             onChange={(backend) =>
               change({
                 backend,
@@ -800,12 +833,15 @@ function useDesktopSetup(onChanged?: () => Promise<void>) {
 }
 type DesktopSetup = ReturnType<typeof useDesktopSetup>;
 
-function connectedState(label: string, connected: boolean) {
+function connectedState(label: string, connected: boolean, attention = false) {
+  const tone = connected
+    ? "text-(--status-positive)"
+    : attention
+      ? "text-(--status-caution)"
+      : "text-(--text-tertiary)";
   return (
-    <span
-      className={`inline-flex items-center gap-1.5 text-xs ${connected ? "text-(--status-positive)" : "text-(--text-tertiary)"}`}
-    >
-      {connected ? <CheckIcon size={14} /> : null}
+    <span className={`inline-flex items-center gap-1.5 text-xs ${tone}`}>
+      {connected ? <CheckIcon size={14} /> : attention ? <Dot tone="caution" /> : null}
       {label}
     </span>
   );
@@ -842,7 +878,11 @@ function AgentHooksPanel({ setup }: { setup: DesktopSetup }) {
               <div className="min-w-0 space-y-1">
                 <div className="flex flex-wrap items-center gap-3">
                   <h3 className="text-base font-medium">{agent.name}</h3>
-                  {connectedState(describeAgent(agent) || "Not connected", agentConnected(agent))}
+                  {connectedState(
+                    describeAgent(agent) || "Not connected",
+                    agentConnected(agent),
+                    agentNeedsAction(agent),
+                  )}
                   {agent.installed && agent.version ? (
                     <span className="text-xs text-(--text-tertiary)">Plugin {agent.version}</span>
                   ) : null}
@@ -851,7 +891,9 @@ function AgentHooksPanel({ setup }: { setup: DesktopSetup }) {
                   <p className="text-xs text-(--text-secondary)">{display(describeAgent(agent))}</p>
                 ) : null}
                 {agent.installed ? (
-                  <p className="text-xs text-(--text-tertiary)">{agentHookNote(agent)}</p>
+                  <p className="text-xs text-(--text-tertiary)">
+                    {withCode(agentHookNote(agent), ["/hooks"])}
+                  </p>
                 ) : null}
               </div>
             </div>
@@ -922,7 +964,9 @@ function CommandLinePanel({ setup }: { setup: DesktopSetup }) {
               : null}
           </div>
           {command ? (
-            <p className="break-all text-xs text-(--text-secondary)">{display(command.state)}</p>
+            <p className="break-all text-xs text-(--text-secondary)">
+              {withCode(display(command.state), [command.path && display(command.path)])}
+            </p>
           ) : (
             <p role="status" className="text-xs text-(--text-secondary)">
               Checking installation…
@@ -1017,6 +1061,8 @@ export function SettingsPage({
   codexTrust?: ReturnType<typeof useCodexHookTrust>;
 }) {
   const setup = useDesktopSetup(codexTrust?.recheck);
+  // Only the desktop app can ask the agent CLIs whether they are signed in.
+  const signedOut = setup.desktop && setup.view ? signedOutHarnesses(setup.view.hooks.agents) : [];
   const gh = githubHealth(github);
   const hooks = setup.desktop ? hooksHealth(setup.view) : null;
   const fix = defaults ? fixSummary(defaults) : null;
@@ -1143,16 +1189,21 @@ export function SettingsPage({
                       ? detectedHarnesses(setup.view.hooks.agents)
                       : undefined
                   }
+                  signedOut={signedOut}
                 />
                 {/* A new review harness changes what capture resolves to. */}
-                <DecisionSettingsSection key={defaults.backend} defaults={defaults} />
+                <DecisionSettingsSection
+                  key={defaults.backend}
+                  defaults={defaults}
+                  signedOut={signedOut}
+                />
               </>
             ) : (
               loading
             )
           ) : section === "fixes" ? (
             defaults ? (
-              <FixesSection defaults={defaults} changed={changed} />
+              <FixesSection defaults={defaults} changed={changed} signedOut={signedOut} />
             ) : (
               loading
             )
@@ -1449,7 +1500,14 @@ function ZoomSection() {
 
 /** Data extraction, decision capture and the feature log: the switch, the
  *  agent and the model, saved as they change like the review settings. */
-function DecisionSettingsSection({ defaults }: { defaults: ReviewDefaults }) {
+function DecisionSettingsSection({
+  defaults,
+  signedOut = [],
+}: {
+  defaults: ReviewDefaults;
+  /** Harnesses the desktop app found signed out. */
+  signedOut?: readonly string[];
+}) {
   const [saved, setSaved] = useState<DecisionSettings | null>(null);
   const [loadError, setLoadError] = useState("");
   const load = () =>
@@ -1533,6 +1591,8 @@ function DecisionSettingsSection({ defaults }: { defaults: ReviewDefaults }) {
                   extraction does not run.
                 </span>
               )
+            ) : signedOut.includes(backend) && !off ? (
+              <SignedOutCaution backend={backend} work="extraction" />
             ) : draft.backend ? null : (
               `Now ${harnessName(backend)}.`
             )
@@ -1543,6 +1603,7 @@ function DecisionSettingsSection({ defaults }: { defaults: ReviewDefaults }) {
             value={draft.backend}
             options={extractionHarnesses}
             same="Same as reviews"
+            signedOut={signedOut}
             disabled={off}
             // A new harness lists other models, so the model starts over.
             onChange={(next) => change({ backend: next, model: "" })}

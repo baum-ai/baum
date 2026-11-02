@@ -12,6 +12,8 @@ import (
 	"github.com/spf13/cobra"
 	"golang.org/x/mod/semver"
 
+	"github.com/baum-ai/baum/agent/claude"
+	"github.com/baum-ai/baum/agent/codex"
 	"github.com/baum-ai/baum/hosted/agentplugins"
 	"github.com/baum-ai/baum/internal/codexconfig"
 	"github.com/baum-ai/baum/plugins"
@@ -67,9 +69,12 @@ Without --agent, uses ` + defaults + `.`, Args: cobra.NoArgs,
 }
 
 type userHooksStatus struct {
-	Agent     string `json:"agent"`
-	Name      string `json:"name"`
-	Detected  bool   `json:"detected"`
+	Agent    string `json:"agent"`
+	Name     string `json:"name"`
+	Detected bool   `json:"detected"`
+	// SignedIn is whether the detected CLI is signed in, as runs would find
+	// it; nil when it was not asked or could not say.
+	SignedIn  *bool  `json:"signed_in,omitempty"`
 	Plugin    string `json:"plugin"`
 	Installed bool   `json:"installed"`
 	Enabled   bool   `json:"enabled"`
@@ -127,9 +132,12 @@ func userHooksStatuses(ctx context.Context) []userHooksStatus {
 	client := agentplugins.New()
 	for _, agent := range agentplugins.Agents() {
 		s := userHooksStatus{Agent: agent, Name: agentDisplayName(agent), Plugin: agentplugins.Plugin}
-		_, err := lookPath(agentplugins.Binary(agent))
+		binary, err := lookPath(agentplugins.Binary(agent))
 		s.Detected = err == nil
 		if s.Detected {
+			if signedIn, known := agentSignedIn(ctx, agent, binary); known {
+				s.SignedIn = &signedIn
+			}
 			status, err := client.Status(ctx, agent)
 			if err != nil {
 				s.Error = err.Error()
@@ -278,6 +286,19 @@ func detectedUserHookAgents() []string {
 		}
 	}
 	return agents
+}
+
+// agentSignedIn asks a detected agent CLI whether it is signed in; known is
+// false for an agent baum does not run jobs with or an answer it could not
+// read. A variable, so tests do not run the CLIs.
+var agentSignedIn = func(ctx context.Context, agent, binary string) (signedIn, known bool) {
+	switch agent {
+	case "claude-code":
+		return claude.SignedIn(ctx, binary)
+	case "codex":
+		return codex.SignedIn(ctx, binary)
+	}
+	return false, false
 }
 
 func agentDisplayName(slug string) string {

@@ -422,6 +422,7 @@ mod tests {
                 "allow-uninstall-command",
                 "allow-install-hooks",
                 "allow-uninstall-hooks",
+                "allow-update-hooks",
                 "allow-choose-repository",
                 "allow-add-repository",
                 "allow-review-settings",

@@ -3,6 +3,7 @@ import {
   describeCommand,
   detectedHarnesses,
   displayPath,
+  signedOutHarnesses,
   repositoryPath,
   shownHarness,
   setupSave,
@@ -34,6 +35,9 @@ it("keeps a replacement's real path separate from its displayed text", () => {
   });
   expect(displayPath(command.state, "/home/user")).toContain("~/.local/bin/baum");
   expect(command.replace).toBe(found.path);
+  const installed = describeCommand({ installed: true, found, record: {} });
+  expect(installed.state).toBe(`Installed at ${found.path}`);
+  expect(installed.path).toBe(found.path);
 });
 
 it("keeps a chosen decision model out of onboarding saves", () => {
@@ -150,6 +154,22 @@ it("detects agent CLIs independently of whether their baum hooks are connected",
   expect(detectedHarnesses([])).toEqual([]);
 });
 
+it("lists detected agents that report no sign-in, not those that could not say", () => {
+  const base = { installed: false, enabled: false, plugin: "baum@baum", detected: true };
+  expect(
+    signedOutHarnesses([
+      { ...base, agent: "codex", name: "Codex", signed_in: false },
+      { ...base, agent: "claude-code", name: "Claude Code" },
+    ]),
+  ).toEqual(["codex"]);
+  expect(
+    signedOutHarnesses([
+      { ...base, agent: "codex", name: "Codex", signed_in: true },
+      { ...base, agent: "claude-code", name: "Claude Code", detected: false, signed_in: false },
+    ]),
+  ).toEqual([]);
+});
+
 it("keeps the decision model of an extraction harness Settings chose", () => {
   const own = {
     backend: "claude",
@@ -227,6 +247,23 @@ it("only calls Codex connected when its hooks are enabled and trusted", async ()
   expect(agentConnected({ ...codex, trust: { state: "trusted" } })).toBe(true);
   expect(agentConnected({ ...codex, enabled: false, trust: { state: "trusted" } })).toBe(false);
   expect(agentConnected({ ...codex, agent: "claude-code" })).toBe(true);
+});
+
+it("tells a status from the action that resolves it", async () => {
+  const { agentHookNote, agentNeedsAction, describeAgent } = await import("./setup-model");
+  const agent = { detected: true, installed: true, enabled: true, plugin: "baum@baum" };
+  const missing = { ...agent, agent: "codex", name: "Codex", trust: { state: "missing" as const } };
+  expect(describeAgent(missing)).toBe("Some baum hooks are missing");
+  expect(agentHookNote(missing)).toBe(
+    "Update adds the missing hooks. Then approve them with /hooks in Codex.",
+  );
+  expect(agentNeedsAction(missing)).toBe(true);
+  const untrusted = { ...missing, trust: { state: "untrusted" as const } };
+  expect(agentHookNote(untrusted)).toBe("Review hook trust with /hooks in Codex.");
+  const claude = { ...agent, agent: "claude-code", name: "Claude Code", update_available: true };
+  expect(describeAgent(claude)).toBe("Connected · update available");
+  expect(agentNeedsAction(claude)).toBe(false);
+  expect(agentNeedsAction({ ...claude, installed: false })).toBe(false);
 });
 
 it("calls Claude Code connected unless its settings stop baum's hooks", async () => {

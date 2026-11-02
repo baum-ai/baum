@@ -752,7 +752,10 @@ text, event or log line holds the key.
 The `claude` and `codex` backends classify a failed call by the provider's
 HTTP status where the harness reports one (`agent.HTTPErrorStatus`): Claude
 Code's `api_error_status` on its failed `result`, and the status Codex names in
-a failed turn's message (`unexpected status NNN`). A Codex 400 carries only the
+a failed turn's message (`unexpected status NNN`). Claude Code that is not
+signed in sends no request: its synthetic assistant message carries `"error":
+"authentication_failed"` and its result has `is_error` and no status, so that
+class alone makes the failure an `authentication_error` refusal. A Codex 400 carries only the
 response body, whose structured fields classify it (`"type":
 "invalid_request_error"`, `"code": "invalid_json_schema"`), as `last status:
 429` does an exhausted rate limit; only such an OpenAI-shaped 400 refuses, and
@@ -3380,7 +3383,10 @@ branch. Phases are `reading checks`, `reading review comments`, `fetching`,
 records `commit`, `commit_url` and the agent's masked `summary`; a failed one
 a reason (`head_changed`, `threads_changed`, `no_remote`, `git`, `backend`,
 `budget`, `no_changes`, `conflicts_remain`, `history_rewritten`,
-`workflow_changed`, `push_rejected`, `push_failed`) and a bounded detail. A
+`workflow_changed`, `push_rejected`, `push_failed`, `signed_out`) and a
+bounded detail. `signed_out` is an agent failure whose provider refused its
+sign-in (`agent.SignInRejected`); review and chat jobs report the same reason
+in place of `backend`. A
 `budget` detail names the limit the agent reached (its time limit, in
 minutes, or its call or token budget); a `backend` one points to the daemon
 log, where `fix.Options.Logger` (the job's logger) has the agent's own error,
@@ -4651,7 +4657,7 @@ and two files:
    `baum` being the first executable `baum` on that `PATH` (relative entries
    skipped), with its links resolved and its `--version` (5 s timeout; its
    own version when it is this executable). `baum hooks status --user --json`
-   prints `{"agents":[{"agent","name","detected","plugin","installed","enabled","version","error"}]}`
+   prints `{"agents":[{"agent","name","detected","signed_in","plugin","installed","enabled","version","error"}]}`
    from native plugin registries, with executable detection and installation/
    enablement separate from the agent's hook trust decision. It installs and
    removes `baum@baum` through native CLIs with `baum hooks install --user`

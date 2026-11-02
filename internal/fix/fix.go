@@ -51,6 +51,7 @@ const (
 	ReasonGit              = "git"
 	ReasonSigning          = "signing"
 	ReasonBackend          = "backend"
+	ReasonSignedOut        = "signed_out"
 	ReasonBudget           = "budget"
 	ReasonNoChanges        = "no_changes"
 	ReasonConflictsRemain  = "conflicts_remain"
@@ -285,6 +286,9 @@ func Run(ctx context.Context, o Options) (out Outcome, err error) {
 					limit = "token"
 				}
 				return out, fail(ReasonBudget, fmt.Errorf("the agent reached its %s limit before it finished", limit))
+			}
+			if agent.SignInRejected(err) {
+				return out, fail(ReasonSignedOut, errors.New("the agent is not signed in, or its provider refused its sign-in"))
 			}
 			return out, fail(ReasonBackend, errors.New("the agent or its provider failed before it finished; the baum daemon log has the error"))
 		}
