@@ -881,10 +881,16 @@ export function UpNextPage({
   // (kept per inbox; none kept is the saved query).
   const quick = usePageFilter(scope ? `inbox:${scope.id}` : "inbox");
   const saved = scope ? foldedQuery(scope) : "";
-  const query = quick.query || saved;
-  const setQuery = (next: string) => quick.set(scope && next === saved ? "" : next);
-  const dirty = quick.query !== "" && quick.query !== saved;
+  const query = scope ? (quick.draft ?? saved) : quick.query;
+  // In a saved inbox "" is a draft that shows everything; its own query is none.
+  const setQuery = (next: string) =>
+    !scope ? quick.set(next) : next === saved ? quick.reset() : quick.keep(next);
+  const dirty = scope ? quick.draft !== undefined && quick.draft !== saved : false;
   const filtering = scope ? dirty : quick.query !== "";
+  // Once the inbox holds the draft (Update inbox saved it), it is no draft.
+  useEffect(() => {
+    if (scope && quick.draft !== undefined && quick.draft === saved) quick.reset();
+  }, [saved, quick.draft]);
   const inScope = (item: { kind: UpNextKind; entry: Entry }) =>
     matchesQuery(query, item.entry, item.kind);
   const queue = all.queue.filter(inScope);
@@ -1149,17 +1155,20 @@ export function UpNextPage({
             ? [
                 {
                   label: "Update inbox",
-                  onSelect: () => {
-                    updateInbox({ query });
-                    quick.set("");
-                  },
+                  // The draft goes once the inbox holds it, so a failed save keeps it.
+                  onSelect: () => updateInbox({ query }),
                 },
               ]
             : []),
           ...(saveAsInbox
             ? [{ label: "Create inbox", onSelect: () => saveAsInbox(query, scope ?? undefined) }]
             : []),
+          ...(scope ? [{ label: "Discard changes", onSelect: () => quick.reset() }] : []),
         ];
+  // What the filter hides: of the inbox's own, in a saved inbox.
+  const hidden = scope
+    ? unfiltered.filter((entry) => matchesQuery(saved, entry, kinds.get(entry))).length
+    : unfiltered.length;
   const filterButton = (
     <FilterButton
       query={query}
@@ -1431,10 +1440,12 @@ export function UpNextPage({
             <div className="upnext-zero">
               <h2>Nothing matches the filter</h2>
               <p>
-                {formatCount(unfiltered.length)} pull{" "}
-                {unfiltered.length === 1 ? "request is" : "requests are"} hidden by it.
+                {formatCount(hidden)} pull {hidden === 1 ? "request is" : "requests are"} hidden by
+                it.
               </p>
-              <Button onClick={() => quick.set("")}>Clear the filter</Button>
+              <Button onClick={() => (scope ? quick.reset() : quick.set(""))}>
+                {scope ? "Discard the changes" : "Clear the filter"}
+              </Button>
             </div>
           ) : (
             <Zero inbox={inbox} scoped={!!scope} hasRepositories={hasRepositories} Link={Link} />

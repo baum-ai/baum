@@ -5,7 +5,7 @@ import { cn, FOCUS_RING } from "./classnames";
  *  like one. */
 
 export type ActionOptions = {
-  variant?: "primary" | "secondary" | "ghost" | "danger-outline" | "tag";
+  variant?: "primary" | "secondary" | "ghost" | "danger" | "danger-outline" | "tag";
   size?: "tiny" | "compact" | "standard" | "large";
   grow?: boolean;
 };
@@ -29,6 +29,9 @@ const actionVariants = {
   // border, no fill, and it only takes on weight when the pointer is over it.
   ghost:
     "font-normal text-(--text-tertiary) hover:bg-(--action-secondary-hover) hover:text-(--text-primary) hover:no-underline",
+  // Confirms removing something, as a dialog's last word: filled red.
+  danger:
+    "bg-(--status-critical) text-(--text-inverse) hover:bg-(--status-critical) hover:text-(--text-inverse) hover:no-underline",
   "danger-outline":
     "border border-(--border-default) bg-transparent px-[18px] whitespace-nowrap text-(--status-critical) hover:bg-(--surface-hover)",
   // An action that reads as a tag beside the thing it acts on: a quiet pill

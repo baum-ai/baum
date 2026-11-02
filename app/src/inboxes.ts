@@ -1,7 +1,7 @@
 import { useRef, useState } from "react";
 import { LocalRequestError, request, type Entry } from "./api";
 import type { UpNextKind } from "./up-next";
-import { andQuery, matchesQuery, quote } from "./pr-filter";
+import { andQuery, matchesQuery, parseQuery, queryProblem, quote } from "./pr-filter";
 
 export const INBOX_COLORS = ["blue", "green", "red", "amber", "purple", "grey"] as const;
 export type InboxColor = (typeof INBOX_COLORS)[number];
@@ -104,12 +104,16 @@ export function foldedQuery(inbox: Inbox): string {
     inbox.repositories.length ? `repo=${inbox.repositories.map(quote).join(",")}` : "",
     inbox.no_bots ? "is!=bot" : "",
   ].filter(Boolean);
-  return andQuery(parts.join(" "), inbox.query);
+  // A query that does not read narrows nothing, and must not undo the parts.
+  return andQuery(parts.join(" "), parseQuery(inbox.query).error ? "" : inbox.query);
 }
 
 /** The inbox with its parts folded into its query, which alone then says
- *  what it holds. */
+ *  what it holds. One whose parts would not fit the daemon's limit, or whose
+ *  query does not read, stays as it is and still matches by `foldedQuery`. */
 export function folded(inbox: Inbox): Inbox {
+  const query = foldedQuery(inbox);
+  if (query === inbox.query || queryProblem(query) || queryProblem(inbox.query)) return inbox;
   return {
     ...inbox,
     what: "any",
@@ -117,7 +121,7 @@ export function folded(inbox: Inbox): Inbox {
     risk: "any",
     repositories: [],
     no_bots: false,
-    query: foldedQuery(inbox),
+    query,
   };
 }
 
@@ -239,6 +243,8 @@ export function ownersOf(repositories: string[], login?: string): string[] {
 /** What a new inbox starts from. */
 export type Template = Pick<Inbox, "color" | "what" | "risk" | "owners" | "badge"> & {
   name: string;
+  /** What its tile says, in place of the sentence its parts make. */
+  description?: string;
 };
 
 /** The six starting points. `owners` is every owner of the person's
@@ -246,25 +252,37 @@ export type Template = Pick<Inbox, "color" | "what" | "risk" | "owners" | "badge
 export function templates(owners: string[], login?: string): Template[] {
   const base = { what: "any", risk: "any", owners: [] as string[], badge: true } as const;
   return [
+    {
+      ...base,
+      name: "Custom",
+      color: "blue",
+      description: "Start from nothing and set the filters yourself.",
+    },
     { ...base, name: "Urgent", color: "red", risk: "4" },
     { ...base, name: "Work", color: "blue", owners },
     { ...base, name: "Personal", color: "green", owners: login ? [login] : [], badge: false },
-    { ...base, name: "Needs my review", color: "purple", what: "review" },
     { ...base, name: "Quick merges", color: "amber", what: "merge" },
     { ...base, name: "For an agent", color: "grey", what: "agent" },
   ];
 }
 
-/** A template as an inbox of its own, named so no other inbox has the name. */
-export function fromTemplate(template: Template, inboxes: Inbox[], id = newInboxId()): Inbox {
+/** A template as an inbox of its parts, as its tile describes it. */
+export function templateInbox(template: Template, inboxes: Inbox[], id = newInboxId()): Inbox {
+  const { description: _, ...parts } = template;
   return {
     id,
-    ...template,
+    ...parts,
     name: freeName(template.name, inboxes),
     repositories: [],
     query: "",
     no_bots: false,
   };
+}
+
+/** A template as an inbox of its own, named so no other inbox has the name,
+ *  its parts one query. */
+export function fromTemplate(template: Template, inboxes: Inbox[], id = newInboxId()): Inbox {
+  return folded(templateInbox(template, inboxes, id));
 }
 
 /** A page's filter as an inbox of its own: anything waiting that matches it,
@@ -287,50 +305,6 @@ export function fromQuery(query: string, inboxes: Inbox[]): Inbox {
 /** How many of `items` the inbox holds. */
 export function countOf(inbox: Inbox, items: Matchable[]): number {
   return items.filter((item) => matches(inbox, item)).length;
-}
-
-export type Choice = { key: string; label: string; patch: Partial<Inbox>; on: boolean };
-
-const sameSet = (a: string[], b: string[]) =>
-  a.length === b.length && a.every((x) => b.some((y) => y.toLowerCase() === x.toLowerCase()));
-
-/** The options of each part of the sentence, marking the one in force. */
-export function choices(
-  inbox: Inbox,
-  owners: string[],
-  login?: string,
-): { what: Choice[]; where: Choice[]; risk: Choice[] } {
-  const what: Choice[] = (
-    [
-      ["any", "Anything waiting on me"],
-      ["review", "Reviews I’m asked for"],
-      ["merge", "Things ready to merge"],
-      ["agent", "Things an agent can fix"],
-      ["mine", "My own pull requests"],
-    ] as const
-  ).map(([key, label]) => ({ key, label, patch: { what: key }, on: inbox.what === key }));
-  const sets: { key: string; label: string; owners: string[] }[] = [
-    { key: "any", label: "Any repository", owners: [] },
-    ...(login ? [{ key: "own", label: "My own repositories", owners: [login] }] : []),
-    ...owners.map((owner) => ({ key: `owner:${owner}`, label: owner, owners: [owner] })),
-  ];
-  // Owners the list does not offer: several at once, or one no longer there.
-  if (!sets.some((set) => sameSet(set.owners, inbox.owners)))
-    sets.push({ key: "set", label: joinOr(inbox.owners), owners: inbox.owners });
-  const where: Choice[] = sets.map((set) => ({
-    key: set.key,
-    label: set.label,
-    patch: { owners: set.owners },
-    on: sameSet(set.owners, inbox.owners),
-  }));
-  const risk: Choice[] = (
-    [
-      ["any", "Any risk"],
-      ["3", "Risk 3 or more"],
-      ["4", "Risk 4 or 5"],
-    ] as const
-  ).map(([key, label]) => ({ key, label, patch: { risk: key }, on: inbox.risk === key }));
-  return { what, where, risk };
 }
 
 type SaverIO = {

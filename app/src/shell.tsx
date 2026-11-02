@@ -278,7 +278,7 @@ function InboxRows({
             key={inbox.id}
             ref={open === inbox.id ? menu : undefined}
             className={`local-rail-inbox inbox-${inbox.color}`}
-            // A right click opens the same menu as its ⋯: Edit, the badge, Delete.
+            // A right click opens the same menu as its ⋯: Edit and Delete.
             onContextMenu={(event) => {
               event.preventDefault();
               setOpen(inbox.id);

@@ -388,11 +388,24 @@ function test(expr: Expr, entry: Entry, kind?: string): boolean {
 
 /** Why the query cannot be saved: it does not read, or is longer than the
  *  daemon keeps. "" when it can. */
-export function queryProblem(query: string): string {
+export function queryProblem(query: string, inbox = true): string {
   return (
     parseQuery(query).error ||
-    (query.length > MAX_QUERY ? `A filter is at most ${MAX_QUERY} characters.` : "")
+    (query.length > MAX_QUERY ? `A filter is at most ${MAX_QUERY} characters.` : "") ||
+    (!inbox && usesInboxOnly(query) ? "waiting works only in an inbox's queue." : "")
   );
+}
+
+/** Whether the query names a field only an inbox's queue knows. */
+function usesInboxOnly(query: string): boolean {
+  const walk = (expr: Expr | null): boolean =>
+    !!expr &&
+    (expr.kind === "and" || expr.kind === "or"
+      ? expr.items.some(walk)
+      : expr.kind === "not"
+        ? walk(expr.item)
+        : expr.kind === "term" && !!fieldOf(expr.key)?.inboxOnly);
+  return walk(parseQuery(query).expr);
 }
 
 /** Whether the pull request passes the query; `kind` is what it waits for
@@ -647,24 +660,42 @@ function readable(value: Partial<Filters>): Filters {
 /** Each page's filter, remembered in the daemon (`ui/filters`). */
 export function usePageFilter(page: FilterPage) {
   const saved = useUIState(filters());
-  const query = readable(saved.value).pages[page] ?? "";
+  const stored = readable(saved.value).pages[page];
+  const inbox = page.startsWith("inbox");
+  /** Keeps the page's filter, or with null none. A saved inbox's or tab's
+   *  draft can be "" (everything), which is not the same as no draft. */
+  const write = (text: string | null) =>
+    saved.update((value) => {
+      const current = readable(value);
+      // Changed pages move to the end, so the oldest are dropped first.
+      const { [page]: _, ...rest } = current.pages;
+      const pages = text === null ? rest : { ...rest, [page]: text };
+      const keys = Object.keys(pages);
+      for (const key of keys.slice(0, Math.max(0, keys.length - KEEP_PAGES))) delete pages[key];
+      return { ...current, pages };
+    });
   return {
-    query,
+    query: stored ?? "",
+    /** What is kept for the page, undefined when nothing is. */
+    draft: stored,
     ready: saved.ready,
     error: saved.error,
     retry: saved.retry,
+    /** Keeps the filter; "" keeps none. */
     set(next: string) {
       const text = tidy(next);
-      if (text === query || queryProblem(text)) return;
-      saved.update((value) => {
-        const current = readable(value);
-        // Changed pages move to the end, so the oldest are dropped first.
-        const { [page]: _, ...rest } = current.pages;
-        const pages = text ? { ...rest, [page]: text } : rest;
-        const keys = Object.keys(pages);
-        for (const key of keys.slice(0, Math.max(0, keys.length - KEEP_PAGES))) delete pages[key];
-        return { ...current, pages };
-      });
+      if (text === (stored ?? "") || queryProblem(text, inbox)) return;
+      write(text || null);
+    },
+    /** Keeps the filter even when "": a draft that shows everything. */
+    keep(next: string) {
+      const text = tidy(next);
+      if (text === stored || queryProblem(text, inbox)) return;
+      write(text);
+    },
+    /** Keeps nothing for the page. */
+    reset() {
+      if (stored !== undefined) write(null);
     },
   };
 }
@@ -694,7 +725,7 @@ export function useSavedTabs() {
     setQuery: (id: string, query: string) => {
       const text = tidy(query);
       const tab = readable(saved.value).tabs.find((one) => one.id === id);
-      if (!tab || tab.query === text || queryProblem(text)) return;
+      if (!tab || tab.query === text || queryProblem(text, false)) return;
       change((tabs) => tabs.map((one) => (one.id === id ? { ...one, query: text } : one)));
     },
   };

@@ -316,6 +316,8 @@ function Workspace({ url }: { url: UrlState }) {
   const inboxes = useInboxes();
   // The inbox just made from a template, whose page says so.
   const [freshInbox, setFreshInbox] = useState<string | null>(null);
+  // An inbox started from a template, not saved until its edit page's Save.
+  const [draftInbox, setDraftInbox] = useState<SavedInbox | null>(null);
   // Deleting an inbox says so on any page, with a way back.
   const [inboxToast, setInboxToast] = useState<{
     id: number;
@@ -503,12 +505,16 @@ function Workspace({ url }: { url: UrlState }) {
   const pullsFilter = usePageFilter(savedTab ? `tab:${savedTab.id}` : "pulls");
   const viewFilter = usePageFilter("pulls");
   const savedQuery = savedTab?.query ?? "";
-  const pullsQuery = pullsFilter.query || savedQuery;
-  const pullsDirty = pullsFilter.query !== "" && pullsFilter.query !== savedQuery;
+  const pullsQuery = savedTab ? (pullsFilter.draft ?? savedQuery) : pullsFilter.query;
+  const pullsDirty =
+    !!savedTab && pullsFilter.draft !== undefined && pullsFilter.draft !== savedQuery;
   const setPullsQuery = (query: string) => {
-    if (query === pullsQuery || queryProblem(query)) return;
+    if (query === pullsQuery || queryProblem(query, false)) return;
     setSelection(new Set());
-    pullsFilter.set(savedTab && query === savedQuery ? "" : query);
+    // On a saved tab "" is a draft that shows everything; its own query is none.
+    if (!savedTab) pullsFilter.set(query);
+    else if (query === savedQuery) pullsFilter.reset();
+    else pullsFilter.keep(query);
   };
   // A saved tab's name changes while it is edited (Edit in its right-click
   // menu), at the filter menu's foot; `name` is the draft.
@@ -573,7 +579,7 @@ function Workspace({ url }: { url: UrlState }) {
   // Saving the filter: into the saved tab shown, or as a new tab (named next).
   const changed = savedTab ? pullsDirty : pullsFilter.query !== "";
   const tabSaves: SaveOption[] =
-    !changed || queryProblem(pullsQuery) || editing
+    !changed || queryProblem(pullsQuery, false) || editing
       ? []
       : [
           ...(savedTab
@@ -582,11 +588,12 @@ function Workspace({ url }: { url: UrlState }) {
                   label: "Update tab",
                   onSelect: () => {
                     savedTabs.setQuery(savedTab.id, pullsQuery);
-                    pullsFilter.set("");
+                    pullsFilter.reset();
                   },
                 },
               ]
             : []),
+          ...(savedTab ? [{ label: "Discard changes", onSelect: () => pullsFilter.reset() }] : []),
           ...(savedTabs.ready && savedTabs.tabs.length < MAX_TABS
             ? [{ label: "Create tab", onSelect: () => setNamingTab("") }]
             : []),
@@ -694,7 +701,8 @@ function Workspace({ url }: { url: UrlState }) {
   }, [inboxToast?.id]);
   useEffect(() => {
     if (freshInbox && page !== "inbox-edit") setFreshInbox(null);
-  }, [freshInbox, page]);
+    if (draftInbox && page !== "inbox-edit") setDraftInbox(null);
+  }, [freshInbox, draftInbox, page]);
   // The pages that show the diagnostics run them themselves.
   // The diagnostics dialog runs them itself while it is open.
   const diagnostics = useDiagnosticProblems(page !== "diagnostics");
@@ -1311,13 +1319,21 @@ function Workspace({ url }: { url: UrlState }) {
           ) : inboxWaiting ? (
             inboxWaiting
           ) : page === "inbox-new" ? (
-            <NewInboxPage {...inboxPageProps} created={setFreshInbox} />
+            <NewInboxPage
+              {...inboxPageProps}
+              start={(inbox) => {
+                setDraftInbox(inbox);
+                navigate(editInboxHref(inbox.id));
+              }}
+            />
           ) : page === "inbox-edit" ? (
             <EditInboxPage
               {...inboxPageProps}
               id={url.search.get("inbox") ?? ""}
               fresh={freshInbox === url.search.get("inbox")}
               remove={askRemoveInbox}
+              draft={draftInbox}
+              setDraft={setDraftInbox}
             />
           ) : page === "inboxes" ? (
             <ManageInboxesPage {...inboxPageProps} />
@@ -1740,8 +1756,19 @@ function Workspace({ url }: { url: UrlState }) {
             <ConfirmDialog
               title={`Delete the ${deletingTab.name} tab?`}
               action="Delete tab"
+              danger
               pending={false}
-              close={() => setDeletingTab(null)}
+              close={() => {
+                setDeletingTab(null);
+                // Back to the tab its menu was opened on.
+                const name = deletingTab.name;
+                setTimeout(() => {
+                  if (document.activeElement !== document.body) return;
+                  [...document.querySelectorAll<HTMLElement>('[aria-label="Show"] button')]
+                    .find((one) => one.textContent?.startsWith(name))
+                    ?.focus();
+                });
+              }}
               confirm={() => {
                 const tab = deletingTab;
                 setDeletingTab(null);
@@ -1755,8 +1782,19 @@ function Workspace({ url }: { url: UrlState }) {
             <ConfirmDialog
               title={`Delete ${deletingInbox.inbox.name}?`}
               action="Delete inbox"
+              danger
               pending={false}
-              close={() => setDeletingInbox(null)}
+              close={() => {
+                setDeletingInbox(null);
+                // Back where it was asked from, or the inbox's ⋯ when that menu has gone.
+                const name = deletingInbox.inbox.name;
+                setTimeout(() => {
+                  if (document.activeElement !== document.body) return;
+                  document
+                    .querySelector<HTMLElement>(`[aria-label="More for ${CSS.escape(name)}"]`)
+                    ?.focus();
+                });
+              }}
               confirm={() => {
                 const { inbox: target, after } = deletingInbox;
                 setDeletingInbox(null);

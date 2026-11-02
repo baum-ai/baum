@@ -889,14 +889,15 @@ inboxes scroll within the sidebar, so with many inboxes plan usage, Jobs and
 Settings stay in view; a row's menu is placed against the window, under its row
 or above it near the bottom, and closes when the sidebar scrolls. Each row links
 to `?inbox=<id>`, is the current page when selected (then Inbox is not), and
-shows a dot, the name and how many unsnoozed items match, none when 0. The `⋯`
-button opens a short list of buttons, focused on the first, to leave the inbox
-out of the Inbox badge (its count is then muted, and says so to screen readers)
-or count it, and **Delete inbox**. Esc, a click elsewhere or choosing closes it
-and returns focus to the `⋯` button (after a delete, to the neighbouring inbox,
-or Inbox); focus never drops to the page. The menu's first button is **Edit inbox**,
-which opens the inbox's edit page. Delete toasts "Deleted <name>. Its
-pull requests stay in Inbox." with **Undo**, which puts back only that inbox,
+shows a dot, the name and how many unsnoozed items match, none when 0 (muted,
+and said so to screen readers, when the inbox is left out of the badge). The
+`⋯` button, or a right click on the row, opens a short list of buttons,
+focused on the first: **Edit inbox**, which opens the inbox's edit page, and
+**Delete inbox**. Esc, a click elsewhere or choosing closes it and returns
+focus to the `⋯` button (after a delete, to the neighbouring inbox, or Inbox;
+after a cancelled one, to the `⋯`); focus never drops to the page. Delete first
+asks (only the view goes), then toasts "Deleted <name>. Its pull requests stay
+in Inbox." with **Undo**, which puts back only that inbox,
 with its id so links to it still work, into the list as it is then, at its old
 place (or the end), so a change made while the toast was up is kept; an inbox
 with that id already there is left alone. The chevron is labelled "Inboxes",
@@ -979,8 +980,10 @@ Inbox's filter stays as it was. In a saved inbox the menu starts from the
 inbox's own query, its values ticked; a change is a draft that narrows the
 queue (kept per inbox) until the save, as GitHub's merge button: **Update
 inbox** gives the inbox the query, and the arrow beside it offers **Create
-inbox**, a copy of the inbox with it (both only while the draft differs).
-**Clear** there goes back to the saved query. With nothing matching, the
+inbox**, a copy of the inbox with it, and **Discard changes** (all only while
+the draft differs; the draft goes once the inbox holds it, so a failed save
+keeps it). **Clear** there empties the draft, which then shows the whole queue.
+`waiting=` is refused outside an inbox's queue. With nothing matching, the
 queue's panel says "Nothing matches the filter", how many it hides, and
 **Clear the filter**. Each page keeps its own filter or draft (`inbox`,
 `inbox:<id>`, `pulls` or a saved tab's `tab:<id>`) in the daemon's
@@ -1007,16 +1010,19 @@ a label, with no key of its own, reached with Tab.
 
 - **New inbox** (`?page=inbox-new`): "What should this inbox catch?" and six
   templates, each a button with a colour dot, name, sentence and how many
-  unsnoozed pull requests it would show now. Urgent (red) is any repository at
-  risk 4 or 5; Work (blue) is every owner of the person's repositories except
-  their login (empty when there is none); Personal (green) is the login's own
-  repositories with the badge off; Needs my review (purple), Quick merges
-  (amber) and For an agent (grey) pick that kind. A name another inbox has
-  becomes "Urgent 2", "Urgent 3"… Picking one appends it to the list with an id
-  the app makes in the daemon's shape (so its page opens at once), and opens its
-  edit page with "Created and added to the sidebar. Adjust anything below.", its
-  Name input focused. At
-  20 inboxes the templates are disabled, with a line saying so.
+  unsnoozed pull requests it would show now. Custom (blue) has no filter and
+  says "Start from nothing and set the filters yourself.";
+  Urgent (red) is any repository at risk 4 or 5; Work (blue) is every owner of
+  the person's repositories except their login (empty when there is none);
+  Personal (green) is the login's own repositories with the badge off; Quick
+  merges (amber) and For an agent (grey) pick that kind. A name another inbox
+  has becomes "Urgent 2", "Urgent 3"… Picking one saves nothing: it opens the
+  edit page, titled New inbox, on an inbox not saved yet ("Not saved yet.
+  Adjust anything below, then Save.", its Name input focused, "← New inbox"
+  back), whose changes stay in the page; **Save**, in Delete inbox's place,
+  appends it to the list with an id the app makes in the daemon's shape and
+  opens its queue. Leaving the page drops it. At 20 inboxes the templates are
+  disabled, with a line saying so.
 - **Edit** (`?page=inbox-edit&inbox=<id>`): "← <name>" back to its queue, a
   "Saved" mark after each save the daemon accepted, and "Changes save as you
   make them". The name is an input saved on blur or Enter; a blank or
@@ -1039,9 +1045,7 @@ the page and empty otherwise, the removed rows struck through and fading out
   counted in the badge" when it is left out). Its menu holds
   Edit…, Move up and Move down (each only where the inbox can move) and
   **Count in the Inbox badge**, an on-or-off choice; a save sends the whole
-  list in its new order. A tinted note says how many queue items
-  are in no inbox (they show only under Inbox and always count in its badge; in
-  the caution tone), or that every one is in some (in the positive tone). With none, it leads to New inbox.
+  list in its new order. With none, it leads to New inbox.
 
 Pull requests (`?page=pulls`, `src/inbox.tsx`) lists every open pull request
 of the picked repositories, with or without a local clone, with Risk,

@@ -169,7 +169,7 @@ export function FilterButton({
           ).length,
     );
   // Added only when the query still reads with it.
-  const addable = (text: string) => !queryProblem(withText(query, text));
+  const addable = (text: string) => !queryProblem(withText(query, text), inbox);
 
   const openSub = (field: Field, row: HTMLElement | null, keys: boolean, hover = false) => {
     const box = panel.current?.getBoundingClientRect();
@@ -473,13 +473,13 @@ export function FilterBar({
     [],
   );
 
-  const error = queryProblem(text);
+  const error = queryProblem(text, inbox);
   const options = state.open ? suggest(text, caret, entries, inbox).slice(0, 12) : [];
   const apply = (next: string, now = false) => {
     clearTimeout(timer.current);
     pending.current = null;
     const tidy = tidyQuery(next);
-    if (tidy === query || queryProblem(tidy)) return;
+    if (tidy === query || queryProblem(tidy, inbox)) return;
     const send = () => {
       pending.current = null;
       onChange(tidy);
@@ -514,7 +514,6 @@ export function FilterBar({
   return (
     <div className="filter-bar">
       <div role="search" className="filter-bar-field">
-        <FilterIcon size={14} className="filter-bar-icon" />
         <label htmlFor={id} className="sr-only">
           Filter pull requests
         </label>
@@ -628,7 +627,7 @@ export function SaveButton({ options }: { options: SaveOption[] }) {
       <button
         type="button"
         className={`${SMALL_PRIMARY} filter-save-main`}
-        onMouseDown={(event) => event.preventDefault()}
+        // Taken on click, after the query's box has given up its last edit.
         onClick={first.onSelect}
       >
         {first.label}

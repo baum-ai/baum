@@ -300,7 +300,6 @@ it("reads a malformed entry defensively and drops one without an id or name", ()
       badge: false,
     },
   ]);
-  // Matching and the sentence cope with what it returns.
-  expect(() => sentence(list!.inboxes[0]!)).not.toThrow();
+  // Matching copes with what it returns.
   expect(matches(list!.inboxes[0]!, item("review"))).toBe(true);
 });

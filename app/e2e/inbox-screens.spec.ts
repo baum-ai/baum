@@ -19,11 +19,12 @@ test("pictures of the inbox pages", async ({ page }) => {
   const sidebar = page.getByRole("navigation", { name: "Main" });
 
   // Four inboxes from templates; the last is left with its badge off.
-  for (const name of [/^Needs my review/, /^Quick merges/, /^For an agent/, /^Personal/]) {
+  for (const name of [/^Custom/, /^Quick merges/, /^For an agent/, /^Personal/]) {
     await sidebar.getByRole("link", { name: /^Inbox/ }).click({ button: "right" });
     await page.getByRole("menuitem", { name: "New inbox…" }).click();
     await page.getByRole("button", { name }).click();
     await expect(page).toHaveURL(/page=inbox-edit/);
+    await page.getByRole("button", { name: "Save", exact: true }).click();
   }
   const shot = (name: string, scheme: string) =>
     page.screenshot({
@@ -36,15 +37,15 @@ test("pictures of the inbox pages", async ({ page }) => {
     // The sidebar with its nested inboxes and a row's menu.
     await page.goto(await launchURL());
     await expect(page.locator("button.upnext-row").first()).toBeVisible({ timeout: 15000 });
-    const row = sidebar.getByRole("link", { name: /^Needs my review/ });
+    const row = sidebar.getByRole("link", { name: /^Custom/ });
     await row.hover();
-    await page.getByRole("button", { name: "More for Needs my review" }).click();
+    await page.getByRole("button", { name: "More for Custom" }).click();
     await shot("1-sidebar-menu", scheme);
     await page.keyboard.press("Escape");
 
     // An inbox's queue.
     await row.click();
-    await expect(page.locator(".upnext-list-title h1")).toHaveText("Needs my review");
+    await expect(page.locator(".upnext-list-title h1")).toHaveText("Custom");
     await shot("2-queue", scheme);
 
     // New inbox.

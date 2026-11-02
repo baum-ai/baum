@@ -3,6 +3,8 @@ import type { ViewerLinkProps } from "@baum/viewer/navigation";
 import { appURL } from "./api";
 import {
   COLOR_NAMES,
+  sentence,
+  templateInbox,
   countOf,
   fromTemplate,
   inboxesOf,
@@ -11,7 +13,6 @@ import {
   MAX_INBOXES,
   nameProblem,
   ownersOf,
-  sentence,
   templates,
   type Inbox,
 } from "./inboxes";
@@ -20,7 +21,7 @@ import { FilterBar, FilterButton } from "./filter-menu";
 import { PageBar } from "./shell";
 import { SettingRow } from "./settings";
 import { GROUPS, InboxTag, type UpNextItem } from "./up-next";
-import { DANGER, SECONDARY } from "./action-classes";
+import { DANGER, PRIMARY, SECONDARY } from "./action-classes";
 
 /** What the three inbox pages share: the person's inboxes and the unsnoozed
  *  queue they are matched against, the same items the sidebar counts. */
@@ -61,8 +62,6 @@ function useSavedMark(saves: number) {
   );
 }
 
-const plural = (n: number, one: string, many: string) => (n === 1 ? one : many);
-
 /** A pull request a bit of the page names: its title and where it is. */
 function prLine(item: UpNextItem) {
   const pr = item.entry.pull_request;
@@ -76,11 +75,12 @@ export function NewInboxPage({
   items,
   login,
   repositories,
-  save,
-  go,
-  created,
+  start,
   Link,
-}: InboxPageProps & { created: (id: string) => void }) {
+}: InboxPageProps & {
+  /** Opens a template as an inbox not saved yet, on its edit page. */
+  start: (inbox: Inbox) => void;
+}) {
   const owners = ownersOf(repositories, login);
   const full = inboxes.length >= MAX_INBOXES;
   return (
@@ -108,19 +108,17 @@ export function NewInboxPage({
                   type="button"
                   disabled={full}
                   className={`inbox-template inbox-${template.color}`}
-                  onClick={() => {
-                    const inbox = fromTemplate(template, inboxes);
-                    save([...inboxes, inbox]);
-                    created(inbox.id);
-                    go(editInboxHref(inbox.id));
-                  }}
+                  onClick={() => start(fromTemplate(template, inboxes))}
                 >
                   <span className="inbox-template-head">
                     <span aria-hidden="true" className="inbox-dot" />
                     <span className="inbox-template-name">{made.name}</span>
                     <span className="inbox-template-count">{count} now</span>
                   </span>
-                  <span className="inbox-template-sentence">{sentence(made, login)}</span>
+                  <span className="inbox-template-sentence">
+                    {template.description ??
+                      sentence(templateInbox(template, inboxes, "preview"), login)}
+                  </span>
                 </button>
               </li>
             );
@@ -142,17 +140,24 @@ export function EditInboxPage({
   id,
   fresh,
   remove,
+  draft,
+  setDraft,
   ...page
 }: InboxPageProps & {
   /** The id in the address. */
   id: string;
-  /** Just created from a template. */
+  /** Just created. */
   fresh: boolean;
   /** Deletes the inbox once confirmed, then runs `after`. */
   remove: (inbox: Inbox, after?: () => void) => void;
+  /** An inbox started from a template on New inbox, not saved until Save. */
+  draft: Inbox | null;
+  setDraft: (inbox: Inbox | null) => void;
 }) {
   const { inboxes, Link } = page;
-  const inbox = inboxes.find((one) => one.id === id);
+  const saved = inboxes.find((one) => one.id === id);
+  const unsaved = !saved && draft?.id === id ? draft : null;
+  const inbox = saved ?? unsaved;
   if (!inbox)
     return (
       <section>
@@ -167,13 +172,23 @@ export function EditInboxPage({
         </div>
       </section>
     );
-  return <EditInbox key={inbox.id} inbox={inbox} fresh={fresh} remove={remove} {...page} />;
+  return (
+    <EditInbox
+      key={inbox.id}
+      inbox={inbox}
+      fresh={fresh || !!unsaved}
+      remove={remove}
+      keepDraft={unsaved ? setDraft : undefined}
+      {...page}
+    />
+  );
 }
 
 function EditInbox({
   inbox,
   fresh,
   remove,
+  keepDraft,
   inboxes,
   items,
   saves,
@@ -184,6 +199,8 @@ function EditInbox({
   inbox: Inbox;
   fresh: boolean;
   remove: (inbox: Inbox, after?: () => void) => void;
+  /** Takes each change while the inbox is not saved yet; Save then adds it. */
+  keepDraft?: (inbox: Inbox | null) => void;
 }) {
   const saved = useSavedMark(saves);
   const ids = useId();
@@ -208,7 +225,8 @@ function EditInbox({
   /** Saves a change, and notes what it added to and took out of the preview. */
   const change = (patch: Partial<Inbox>) => {
     const next = { ...inbox, ...patch };
-    save(inboxes.map((one) => (one.id === inbox.id ? next : one)));
+    if (keepDraft) keepDraft(next);
+    else save(inboxes.map((one) => (one.id === inbox.id ? next : one)));
     const was = new Set(mine.map((item) => item.key));
     const after = items.filter((item) => matches(next, item));
     const now = new Set(after.map((item) => item.key));
@@ -240,13 +258,27 @@ function EditInbox({
 
   return (
     <section>
-      <PageBar title="Edit inbox" detail="Changes save as you make them" actions={saved} />
+      <PageBar
+        title={keepDraft ? "New inbox" : "Edit inbox"}
+        detail={keepDraft ? "Save adds it to the sidebar" : "Changes save as you make them"}
+        actions={keepDraft ? null : saved}
+      />
       <div className="local-page-body inbox-page inbox-edit">
-        <Link href={appURL(`?inbox=${encodeURIComponent(inbox.id)}`)} className="inbox-back">
-          ← {inbox.name}
-        </Link>
+        {keepDraft ? (
+          <Link href={newInboxHref()} className="inbox-back">
+            ← New inbox
+          </Link>
+        ) : (
+          <Link href={appURL(`?inbox=${encodeURIComponent(inbox.id)}`)} className="inbox-back">
+            ← {inbox.name}
+          </Link>
+        )}
         <div className={`inbox-form inbox-${inbox.color} local-panel`}>
-          {fresh ? (
+          {keepDraft ? (
+            <p role="status" className="inbox-fresh">
+              Not saved yet. Adjust anything below, then Save.
+            </p>
+          ) : fresh ? (
             <p role="status" className="inbox-fresh">
               Created and added to the sidebar. Adjust anything below.
             </p>
@@ -341,26 +373,46 @@ function EditInbox({
               />
             </SettingRow>
           </div>
-          <div className="inbox-block inbox-delete">
-            <p className="settings-row-detail">
-              Deleting an inbox leaves its pull requests in Inbox.
-            </p>
-            <button
-              type="button"
-              className={DANGER}
-              onClick={() =>
-                remove(inbox, () => {
-                  go(appURL());
-                  // The button goes with the page: focus lands on Inbox.
-                  document
-                    .querySelector<HTMLElement>(`.local-rail a.local-rail-link[href="${appURL()}"]`)
-                    ?.focus();
-                })
-              }
-            >
-              Delete inbox
-            </button>
-          </div>
+          {keepDraft ? (
+            <div className="inbox-block inbox-delete">
+              <p className="settings-row-detail">Nothing is saved until you save it.</p>
+              <button
+                type="button"
+                className={PRIMARY}
+                disabled={!!nameProblem(inbox.name, inboxes, inbox.id)}
+                onClick={() => {
+                  save([...inboxes, inbox]);
+                  keepDraft(null);
+                  go(appURL(`?inbox=${encodeURIComponent(inbox.id)}`));
+                }}
+              >
+                Save
+              </button>
+            </div>
+          ) : (
+            <div className="inbox-block inbox-delete">
+              <p className="settings-row-detail">
+                Deleting an inbox leaves its pull requests in Inbox.
+              </p>
+              <button
+                type="button"
+                className={DANGER}
+                onClick={() =>
+                  remove(inbox, () => {
+                    go(appURL());
+                    // The button goes with the page: focus lands on Inbox.
+                    document
+                      .querySelector<HTMLElement>(
+                        `.local-rail a.local-rail-link[href="${appURL()}"]`,
+                      )
+                      ?.focus();
+                  })
+                }
+              >
+                Delete inbox
+              </button>
+            </div>
+          )}
         </div>
         <aside aria-label="Preview" className="inbox-preview local-panel">
           <div className="inbox-preview-head">
@@ -448,7 +500,6 @@ export function ManageInboxesPage({ inboxes, items, saves, save, go, Link }: Inb
     });
     return choices;
   };
-  const uncovered = items.filter((item) => inboxesOf(item, inboxes).length === 0).length;
   const newLink = (
     <Link href={newInboxHref()} className={SECONDARY}>
       New inbox
@@ -505,13 +556,6 @@ export function ManageInboxesPage({ inboxes, items, saves, save, go, Link }: Inb
                 </li>
               ))}
             </ul>
-            <div className="local-list-note">
-              <p className={`inbox-coverage ${uncovered > 0 ? "caution" : "ok"}`}>
-                {uncovered > 0
-                  ? `${uncovered} ${plural(uncovered, "pull request isn’t", "pull requests aren’t")} in any inbox right now. ${plural(uncovered, "It shows", "They show")} only under Inbox and always ${plural(uncovered, "counts", "count")} in its badge.`
-                  : "Every open pull request is in at least one inbox."}
-              </p>
-            </div>
           </>
         )}
       </div>

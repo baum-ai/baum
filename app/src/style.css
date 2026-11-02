@@ -6204,11 +6204,8 @@ a.upnext-done-text:hover {
 /* The inbox pages: New inbox, an inbox's edit page and Manage inboxes. They
    are settings-like pages in the app's own tokens; each inbox's colour is its
    `--inbox`. */
-.inbox-chip:focus-visible,
-.inbox-part:focus-visible,
 .inbox-template:focus-visible,
-.inbox-swatch:focus-visible,
-.inbox-disclosure:focus-visible {
+.inbox-swatch:focus-visible {
   outline: none;
   box-shadow: var(--focus-ring);
 }
@@ -6474,118 +6471,6 @@ a.upnext-done-text:hover {
     0 0 0 2px var(--surface-card),
     0 0 0 4px var(--inbox);
 }
-.inbox-sentence {
-  margin: 0;
-  font-size: var(--text-base);
-  line-height: 2;
-}
-.inbox-part {
-  padding: 0 0.1rem;
-  border: 0;
-  border-radius: var(--radius-xs);
-  background: transparent;
-  color: var(--text-primary);
-  font: inherit;
-  font-weight: 600;
-  text-decoration: underline;
-  text-decoration-color: var(--border-focus);
-  text-decoration-thickness: 2px;
-  text-underline-offset: 5px;
-  cursor: pointer;
-}
-.inbox-part:hover,
-.inbox-part[aria-expanded="true"] {
-  background: var(--surface-selected);
-}
-.inbox-choices {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.5rem;
-  margin-top: 0.4rem;
-}
-.inbox-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.5rem;
-  min-height: 2rem;
-  padding: 0.25rem 0.7rem;
-  border: 1px solid var(--border-default);
-  border-radius: var(--radius-md);
-  background: var(--surface-card);
-  box-shadow: var(--shadow-raised);
-  color: var(--text-primary);
-  font: inherit;
-  font-size: var(--text-base);
-  font-weight: 500;
-  cursor: pointer;
-}
-.inbox-chip:hover {
-  background: var(--action-secondary-hover);
-}
-.inbox-chip:active {
-  box-shadow: none;
-  transform: translateY(1px);
-}
-.inbox-chip[aria-pressed="true"] {
-  border-color: var(--text-primary);
-  background: var(--surface-selected);
-}
-.inbox-chip-count {
-  color: var(--text-secondary);
-  font-size: var(--text-xs);
-  font-variant-numeric: tabular-nums;
-}
-.inbox-disclosure {
-  justify-self: start;
-  padding: 0.2rem 0;
-  border: 0;
-  background: none;
-  color: var(--text-secondary);
-  font: inherit;
-  font-size: var(--text-base);
-  cursor: pointer;
-}
-.inbox-disclosure::after {
-  content: " ›";
-}
-.inbox-disclosure[aria-expanded="true"]::after {
-  content: " ⌄";
-}
-.inbox-disclosure:hover {
-  color: var(--text-primary);
-}
-.inbox-fine {
-  display: grid;
-  gap: 1rem;
-}
-.inbox-fine-title {
-  margin: 0;
-  padding: 0;
-  font-size: var(--text-base);
-  font-weight: 600;
-}
-.inbox-fine-title span {
-  color: var(--text-secondary);
-  font-weight: 400;
-}
-.inbox-leave-out {
-  display: grid;
-  gap: 0.4rem;
-  min-width: 0;
-  margin: 0;
-  padding: 0;
-  border: 0;
-}
-.inbox-check {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  font-size: var(--text-base);
-  cursor: pointer;
-}
-.inbox-check-note {
-  color: var(--text-secondary);
-}
 .inbox-badge-block {
   margin: 0;
 }
@@ -6721,23 +6606,6 @@ a.upnext-done-text:hover {
   color: var(--text-secondary);
   font-size: var(--text-xs);
   font-variant-numeric: tabular-nums;
-}
-.inbox-coverage {
-  margin: 0;
-  padding: 0.6rem 0.85rem;
-  border: 1px solid transparent;
-  border-radius: var(--radius-md);
-  font-size: var(--text-base);
-}
-.inbox-coverage.caution {
-  border-color: color-mix(in srgb, var(--status-caution) 35%, transparent);
-  background: var(--status-caution-bg);
-  color: var(--status-caution);
-}
-.inbox-coverage.ok {
-  border-color: color-mix(in srgb, var(--status-positive) 35%, transparent);
-  background: var(--status-positive-bg);
-  color: var(--status-positive);
 }
 @media (max-width: 900px) {
   .inbox-edit {

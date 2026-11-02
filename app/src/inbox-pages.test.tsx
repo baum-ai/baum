@@ -228,10 +228,10 @@ it("lists the six templates with their sentence and how many pull requests each 
     "Start from one of these. You can change anything afterwards.",
   );
   expect(Array.from(node.querySelectorAll(".inbox-template")).map((t) => t.textContent)).toEqual([
+    "Custom4 nowStart from nothing and set the filters yourself.",
     "Urgent1 nowAnything waiting on me in any repository, when risk is 4 or 5.",
     "Work1 nowAnything waiting on me in other, whatever the risk.",
     "Personal3 nowAnything waiting on me in my own repositories, whatever the risk.",
-    "Needs my review1 nowReviews I’m asked for in any repository, whatever the risk.",
     "Quick merges2 nowThings ready to merge in any repository, whatever the risk.",
     "For an agent1 nowThings an agent can fix in any repository, whatever the risk.",
   ]);
@@ -239,7 +239,6 @@ it("lists the six templates with their sentence and how many pull requests each 
   expect(node.textContent).toContain(
     "A pull request can sit in more than one inbox. Inbox at the top always shows everything.",
   );
-  // The sidebar keeps Inbox as its section; only New inbox is the current page.
   // The sidebar keeps Inbox as its section, and has no New inbox entry.
   expect(railLink("Inbox").getAttribute("aria-current")).toBeNull();
   expect(railLink("New inbox")).toBeUndefined();
@@ -252,59 +251,76 @@ it("focuses the name once a template's page shows", async () => {
   expect(document.activeElement).toBe(nameInput());
 });
 
-it("makes Work from the owners of the person's repositories except their login", async () => {
+// Opens a template and saves it, as its page's Save does.
+const saveTemplate = async (name: string) => {
+  await render("?page=inbox-new");
+  await click(template(name));
+  await click(button("Save"));
+};
+
+it("opens a template unsaved, and Save adds it, from the owners of the person's repositories except their login", async () => {
   await render("?page=inbox-new");
   await click(template("Work"));
+  // Nothing is saved yet: the page says so and offers Save, not Delete.
+  expect(puts).toHaveLength(0);
+  expect(search().get("page")).toBe("inbox-edit");
+  expect(node.querySelector("h1")!.textContent).toBe("New inbox");
+  expect(node.querySelector(".inbox-fresh")!.textContent).toBe(
+    "Not saved yet. Adjust anything below, then Save.",
+  );
+  expect(byText("button", "Delete inbox")).toBeUndefined();
+  expect(railLink("Work")).toBeUndefined();
+  expect(node.querySelector<HTMLTextAreaElement>(".inbox-query textarea")!.value).toBe("org=other");
+  await click(button("Save"));
   expect(puts).toHaveLength(1);
   const made = puts[0]!.inboxes;
-  // Appended at the end, with an id of the daemon's shape.
+  // Appended at the end, with an id of the daemon's shape, its parts one query.
   expect(made.map((one) => one.name)).toEqual(["Reviews", "Acme", "Work"]);
   expect(made[2]).toMatchObject({
     name: "Work",
     color: "blue",
     what: "any",
-    owners: ["other"],
-    risk: "any",
-    repositories: [],
-    no_bots: false,
+    owners: [],
+    query: "org=other",
     badge: true,
   });
   expect(made[2]!.id).toMatch(/^[0-9a-f]{32}$/);
-  // It opens its page, says so, and is in the sidebar.
-  expect(search().get("page")).toBe("inbox-edit");
+  // Saved, it opens its queue and is in the sidebar.
   expect(search().get("inbox")).toBe(made[2]!.id);
-  expect(node.querySelector(".inbox-fresh")!.textContent).toBe(
-    "Created and added to the sidebar. Adjust anything below.",
-  );
   expect(railLink("Work")).toBeDefined();
 });
 
-it("makes Personal from the login with the badge off, and the others as their sentence says", async () => {
+it("keeps changes made before Save, and leaving drops the unsaved inbox", async () => {
   await render("?page=inbox-new");
-  await click(template("Personal"));
+  await click(template("Custom"));
+  await type(nameInput(), "Mine only");
+  await blur(nameInput());
+  expect(puts).toHaveLength(0);
+  await click(button("Save"));
+  expect(puts[0]!.inboxes.at(-1)).toMatchObject({ name: "Mine only", query: "" });
+  await render("?page=inbox-new");
+  await click(template("Urgent"));
+  await click(link("← New inbox"));
+  expect(search().get("page")).toBe("inbox-new");
+  expect(puts).toHaveLength(1);
+});
+
+it("makes Personal from the login with the badge off, and the others as their query says", async () => {
+  await saveTemplate("Personal");
   expect(puts[0]!.inboxes[2]).toMatchObject({
     name: "Personal",
     color: "green",
-    owners: ["acme"],
+    query: "org=acme",
     badge: false,
   });
-  await render("?page=inbox-new");
-  await click(template("Urgent"));
-  expect(puts[1]!.inboxes.at(-1)).toMatchObject({
-    color: "red",
-    what: "any",
-    owners: [],
-    risk: "4",
-  });
-  await render("?page=inbox-new");
-  await click(template("Needs my review"));
-  expect(puts[2]!.inboxes.at(-1)).toMatchObject({ color: "purple", what: "review", badge: true });
-  await render("?page=inbox-new");
-  await click(template("Quick merges"));
-  expect(puts[3]!.inboxes.at(-1)).toMatchObject({ color: "amber", what: "merge" });
-  await render("?page=inbox-new");
-  await click(template("For an agent"));
-  expect(puts[4]!.inboxes.at(-1)).toMatchObject({ color: "grey", what: "agent" });
+  await saveTemplate("Urgent");
+  expect(puts[1]!.inboxes.at(-1)).toMatchObject({ color: "red", query: "risk>=4" });
+  await saveTemplate("Quick merges");
+  expect(puts[2]!.inboxes.at(-1)).toMatchObject({ color: "amber", query: "waiting=merge" });
+  await saveTemplate("For an agent");
+  expect(puts[3]!.inboxes.at(-1)).toMatchObject({ color: "grey", query: "waiting=agent" });
+  await saveTemplate("Custom");
+  expect(puts[4]!.inboxes.at(-1)).toMatchObject({ name: "Custom", query: "" });
 });
 
 it("numbers the name of a template another inbox already has", async () => {
@@ -312,6 +328,7 @@ it("numbers the name of a template another inbox already has", async () => {
   await render("?page=inbox-new");
   expect(template("Urgent 3")).toBeDefined();
   await click(template("Urgent 3"));
+  await click(button("Save"));
   expect(puts[0]!.inboxes.map((one) => one.name)).toEqual(["Urgent", "urgent 2", "Urgent 3"]);
 });
 
@@ -609,21 +626,6 @@ it("reorders inboxes, saving the new order, and switches the badge", async () =>
   expect(node.querySelector(".inbox-manage-row")!.textContent).toContain(
     "· not counted in the badge",
   );
-});
-
-it("says how many pull requests are in no inbox, or that every one is in some", async () => {
-  daemon = { revision: 1, inboxes: [reviews] };
-  await render("?page=inboxes");
-  expect(node.querySelector(".inbox-coverage")!.textContent).toBe(
-    "3 pull requests aren’t in any inbox right now. They show only under Inbox and always count in its badge.",
-  );
-  expect(node.querySelector(".inbox-coverage")!.classList.contains("caution")).toBe(true);
-  daemon = { revision: 1, inboxes: [reviews, inbox("Rest", {})] };
-  await render("?page=inboxes");
-  expect(node.querySelector(".inbox-coverage")!.textContent).toBe(
-    "Every open pull request is in at least one inbox.",
-  );
-  expect(node.querySelector(".inbox-coverage")!.classList.contains("ok")).toBe(true);
 });
 
 it("leads to New inbox when there are no inboxes", async () => {
