@@ -46,6 +46,7 @@ const MENU_LOGIN: &str = "menu-login";
 const IDLE_ICON: &[u8] = include_bytes!("../icons/tray/idle.png");
 const RUNNING_ICON: &[u8] = include_bytes!("../icons/tray/running.png");
 const ATTENTION_ICON: &[u8] = include_bytes!("../icons/tray/attention.png");
+const INBOX_ICON: &[u8] = include_bytes!("../icons/tray/inbox.png");
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum Kind {
@@ -455,6 +456,7 @@ fn icon(state: Icon) -> Result<Image<'static>, String> {
         Icon::Idle => IDLE_ICON,
         Icon::Running => RUNNING_ICON,
         Icon::Attention => ATTENTION_ICON,
+        Icon::Inbox => INBOX_ICON,
     };
     Image::from_bytes(bytes).map_err(|e| e.to_string())
 }
@@ -932,7 +934,7 @@ mod tests {
         let spec = menu_spec(&view(observed.clone()), false, NOW);
         assert_eq!(spec[0].text, "Idle");
         assert_eq!(spec[1].id, "waiting");
-        assert_eq!(spec[1].text, "3 pull requests waiting on you");
+        assert_eq!(spec[1].text, "3 pull requests in your Inbox");
         assert!(!spec[1].enabled);
         for waiting in [Some(0), None] {
             observed.waiting = waiting;

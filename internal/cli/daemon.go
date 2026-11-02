@@ -42,6 +42,7 @@ import (
 	"github.com/baum-ai/baum/internal/gitlocal"
 	"github.com/baum-ai/baum/internal/hookevents"
 	"github.com/baum-ai/baum/internal/hookrefresh"
+	"github.com/baum-ai/baum/internal/inboxcount"
 	"github.com/baum-ai/baum/internal/inboxes"
 	"github.com/baum-ai/baum/internal/jobs"
 	"github.com/baum-ai/baum/internal/livesessions"
@@ -660,8 +661,14 @@ func localApplication(paths daemon.Paths, log *slog.Logger) func(context.Context
 			return "", false
 		}
 		groupsAPI := &reviewgroups.API{Store: groups, Registry: registry, Index: index.Snapshot, Changed: changed}
-		api := uiserver.LocalAPI{GitHubAuth: githubConnection.Handler(), Registry: registry, Config: cfg, PRs: uiserver.DiscoveryHandler(registry, discover, changed), Index: index.Handler(), Jobs: queue.Handler(), Chat: uiserver.ChatHandler(registry, queue), Background: worker.Handler(), Automatic: scheduler.Handler(), Live: liveAPI, AgentRequests: requestsAPI, Clones: clones.Handler(), GitHubRepositories: pickList.Handler(), CurrentName: currentName(githubClient), PlanUsage: plans.Handler(), Analytics: insights.Handler(), Timeline: timeline, Merge: uiserver.MergeHandler(registry, actions.RecordMerges(githubClient), mergedPullRequest, changed), Review: uiserver.ReviewHandler(registry, githubClient, changed), Update: uiserver.UpdateHandler(registry, actions.RecordUpdates(prupdate.Service{Client: githubClient, Cache: panelCache, Counted: countedThreads, Clone: availableClone}), refreshRepository, changed), Changed: settingsChanged,
-			UIState:   (&uistate.Store{Path: database}).Handler(),
+		uiState := &uistate.Store{Path: database}
+		// The desktop app's badge and tray count what the app's Inbox lists.
+		inboxCount := &inboxcount.Service{Index: index.Snapshot, Jobs: queue.List, Groups: groups.List, Snoozes: func() (json.RawMessage, error) {
+			record, err := uiState.Read("inbox", "")
+			return record.Value, err
+		}}
+		api := uiserver.LocalAPI{GitHubAuth: githubConnection.Handler(), Registry: registry, Config: cfg, PRs: uiserver.DiscoveryHandler(registry, discover, changed), Index: inboxCount.Handler(index.Handler()), Jobs: queue.Handler(), Chat: uiserver.ChatHandler(registry, queue), Background: worker.Handler(), Automatic: scheduler.Handler(), Live: liveAPI, AgentRequests: requestsAPI, Clones: clones.Handler(), GitHubRepositories: pickList.Handler(), CurrentName: currentName(githubClient), PlanUsage: plans.Handler(), Analytics: insights.Handler(), Timeline: timeline, Merge: uiserver.MergeHandler(registry, actions.RecordMerges(githubClient), mergedPullRequest, changed), Review: uiserver.ReviewHandler(registry, githubClient, changed), Update: uiserver.UpdateHandler(registry, actions.RecordUpdates(prupdate.Service{Client: githubClient, Cache: panelCache, Counted: countedThreads, Clone: availableClone}), refreshRepository, changed), Changed: settingsChanged,
+			UIState:   uiState.Handler(),
 			Inboxes:   (&inboxes.API{Store: inboxes.Open(database), Changed: changed}).Handler(),
 			Groups:    groupsAPI.Handler(),
 			Decisions: decisionsAPI, Facts: pageFacts, Log: log,

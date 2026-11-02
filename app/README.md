@@ -873,8 +873,9 @@ independently of the browser origin, and start again each local day, snoozes
 excepted. Initial bookkeeping waits until saved state has loaded. Failed reads
 or saves show a retry action and preserve unsaved changes in the window. The
 sidebar's Inbox badge counts the queue without snoozed pull
-requests. It is not the desktop tray's waiting count, which counts only review
-requests and the person's blocked pull requests.
+requests. The daemon counts the same queue for the desktop tray and dock badge
+(`internal/inboxcount`), so a change to these rules belongs there too; it does
+not yet apply inboxes left out of the badge.
 
 **Inboxes** are saved filters over this same queue, defined in the daemon (see
 its [inboxes README](../internal/inboxes/README.md)) and matched here

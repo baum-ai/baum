@@ -2723,12 +2723,15 @@ error messages.
 A client that wants no history sends a `Last-Event-ID` beyond the latest
 event: it gets a `reset` and then only new events.
 
-`GET /api/index` also carries `waiting`, the number of open pull requests
-waiting on the user: those review-requested from them plus their own with
-changes requested, failing checks or a conflict, each counted once. It is the
-set the app's Pull requests list shows under "Review requested" and "Needs changes".
-`GET /api/index?view=waiting` answers `{"waiting":N}` alone, which is what the
-desktop app polls for its tray text and dock badge.
+`GET /api/index?view=waiting` answers `{"waiting":N}`, the number of pull
+requests in the app's Inbox, which is what the desktop app polls for its tray
+icon, tray text and dock badge. `internal/inboxcount` counts it on each request
+from the cached index, the job queue, the stack groups and the saved `inbox`
+ui-state, with the app's queue rules: each open pull request asking for the
+user's review, and each of their own with something to fix, merge or update
+and no fix running, once across clones, less stacked pull requests that must
+wait to merge and snoozed ones. It does not apply saved inboxes that leave
+the badge, so with such an inbox it can be higher than the app's badge.
 
 Version image copies use an additive `attachments` table keyed by repository,
 PR, immutable version and attachment ID, committed atomically by `Store.Put`.
@@ -2768,9 +2771,9 @@ run's outcome afterwards is only a warning, and the lease later expires.
 
 `Service.Build` is uncached: each call probes every clone with git, reads the
 discovery cache and opens every store. The daemon reads it through one
-`reviewindex.Cache`, shared by `GET /api/index` (all views; `view=waiting`
-is the cached snapshot's count, and the `history` filter works on a per-request
-copy), notices and review groups. Concurrent readers share one build, which
+`reviewindex.Cache`, shared by `GET /api/index` (all views; the `history`
+filter works on a per-request copy), the Inbox count, notices and review
+groups. Concurrent readers share one build, which
 runs under the daemon's context, so a reader that gives up does not fail the
 others; a failed build is not kept. A generation counter invalidates: every
 in-process change that publishes an `index` event (the daemon's `changed`,

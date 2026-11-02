@@ -27,7 +27,7 @@ function color(name, seen = new Set()) {
 mkdirSync(join(desktop, "target"), { recursive: true });
 for (const [input, output] of [
   ["icons/source.svg", "icon-source.svg"],
-  ...["idle", "running", "attention"].map((state) => [
+  ...["idle", "running", "attention", "inbox"].map((state) => [
     `icons/tray/${state}.svg`,
     `tray-${state}.svg`,
   ]),

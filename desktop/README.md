@@ -403,16 +403,14 @@ The daemon outlives the app, so the app's presence is a tray icon.
   click keeps the full menu. Linux tray hosts
   report no clicks, so Linux has the menu only. The panel is the bundled
   `tray.html`, created hidden at startup.
-- **Waiting on you.** While some pull requests wait on the user (review
-  requested from them, or their own with changes requested, failing checks or
-  a conflict, the "Review requested" and "Needs changes" groups of the app's
-  Pull requests),
-  the menu shows a disabled line such as "3 pull requests waiting on you", the
-  tooltip appends it, and the dock badge (macOS; any other platform whose
-  window badge Tauri supports, ignored silently elsewhere) shows the count.
-  Zero, an unknown count and a daemon that is not running clear all three. The
-  daemon counts them: `GET /api/index?view=waiting`, polled with the other
-  tray requests.
+- **Inbox.** While the app's Inbox lists some pull requests, the menu shows a
+  disabled line such as "3 pull requests in your Inbox", the tooltip appends
+  it, the dock badge (macOS; any other platform whose window badge Tauri
+  supports, ignored silently elsewhere) shows the count, and an otherwise idle
+  icon shows the Inbox dot. Zero, an unknown count and a daemon that is not
+  running clear all of them. The daemon counts the Inbox as the app does,
+  except that saved inboxes left out of the app's badge still count:
+  `GET /api/index?view=waiting`, polled with the other tray requests.
 - **Quit** ends the app only. Background refresh and automatic generation
   continue in the daemon.
 - **Quit and stop background reviews** runs the bundled `baum daemon stop`, so
@@ -433,6 +431,9 @@ The daemon outlives the app, so the app's presence is a tray icon.
 | Idle | Nothing running or queued, nothing new to look at. |
 | Running | A review is running or queued. |
 | Attention | A review failed, a diagnostics check reports a problem, or the daemon is not running. |
+| Inbox | Otherwise idle, with pull requests in the Inbox (an amber dot). |
+
+Attention outranks Running, which outranks Inbox.
 
 Attention for the first two clears when the window is opened or focused and
 returns for something new (a failure found when the app first looks at the
