@@ -10,6 +10,7 @@ import (
 	"github.com/baum-ai/baum/internal/locallink"
 	"github.com/baum-ai/baum/internal/repos"
 	"github.com/baum-ai/baum/internal/viewserver"
+	"github.com/baum-ai/baum/sessions"
 )
 
 const maxCachedDocuments = 16
@@ -27,6 +28,8 @@ type documentCache struct {
 	closed          bool
 	requests, reads chan struct{}
 	resolve         func(context.Context, locallink.Request) (locallink.Result, error)
+	// sessions are the session stores linking reads; zero reads the defaults.
+	sessions sessions.Options
 	// patch is shared by every document, so versions of a pull request that
 	// compare the same commits share a read that is running.
 	patch func(context.Context, locallink.PatchRequest) (locallink.PatchResult, error)
@@ -82,7 +85,7 @@ func (c *documentCache) get(clone repos.Clone, document []byte) (*viewserver.Ser
 			return locallink.Result{}, ctx.Err()
 		}
 		defer func() { <-c.reads }()
-		return c.resolve(ctx, locallink.Request{Dir: clone.Path, Repository: v.Repository, Head: v.Head, Base: v.Base, MergeBase: v.MergeBase})
+		return c.resolve(ctx, locallink.Request{Dir: clone.Path, Repository: v.Repository, Head: v.Head, Base: v.Base, MergeBase: v.MergeBase, Sessions: c.sessions})
 	}, Patch: func(ctx context.Context, v viewserver.Review, path string) (locallink.PatchResult, error) {
 		if !acquire(ctx, c.reads) {
 			return locallink.PatchResult{}, ctx.Err()

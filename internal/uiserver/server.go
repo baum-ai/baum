@@ -32,6 +32,10 @@ type Options struct {
 	// under the session namespace, after authentication, with the namespace
 	// prefix stripped. Nil serves a minimal status page.
 	App http.Handler
+	// Sample serves the API under /s/<namespace>/sample/, the sample project
+	// the tour shows when there is no local data yet; the app's files are the
+	// same. Nil leaves those paths unserved.
+	Sample http.Handler
 }
 
 type Server struct {
@@ -219,6 +223,14 @@ func (s *Server) Handler() http.Handler {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}
+		api := s.opts.API
+		if rest, ok := strings.CutPrefix(path, "/sample/"); ok && inApp {
+			if s.opts.Sample == nil {
+				http.NotFound(w, r)
+				return
+			}
+			path, api = "/"+rest, s.opts.Sample
+		}
 		r = r.Clone(r.Context())
 		// Providers never see the namespace, so they cannot echo or log it.
 		r.URL.Path, r.URL.RawPath = path, ""
@@ -236,11 +248,11 @@ func (s *Server) Handler() http.Handler {
 			}
 		}
 		if strings.HasPrefix(path, "/api/") {
-			if s.opts.API == nil {
+			if api == nil {
 				http.NotFound(w, r)
 				return
 			}
-			s.opts.API.ServeHTTP(w, r)
+			api.ServeHTTP(w, r)
 			return
 		}
 		if !inApp || (r.Method != "GET" && r.Method != "HEAD") {

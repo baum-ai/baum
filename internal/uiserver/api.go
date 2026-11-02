@@ -21,6 +21,7 @@ import (
 	"github.com/baum-ai/baum/internal/repos"
 	"github.com/baum-ai/baum/internal/store"
 	"github.com/baum-ai/baum/internal/viewserver"
+	"github.com/baum-ai/baum/sessions"
 )
 
 // LocalAPI composes the existing local services. It never selects a filesystem
@@ -84,6 +85,9 @@ type LocalAPI struct {
 	// Timeline serves /api/timeline/: the features and decisions of the
 	// local decision log (internal/decisionlog).
 	Timeline http.Handler
+	// Sessions are the session stores a pull request page's linked sessions
+	// are read from; the zero value reads this computer's default stores.
+	Sessions sessions.Options
 	// Facts builds what GET /api/facts answers: a pull request's facts for
 	// its page while it has no saved review (internal/facts). Without it the
 	// route reports the capability unavailable.
@@ -144,6 +148,7 @@ func (h *LocalHandler) InvalidateSessions() { h.documents.invalidateSessions() }
 func (h *LocalHandler) Close() { h.documents.close() }
 func (a LocalAPI) Handler() *LocalHandler {
 	cache := newDocumentCache()
+	cache.sessions = a.Sessions
 	mux := http.NewServeMux()
 	registry := a.Registry.HandlerWith(a.CurrentName)
 	mutate := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

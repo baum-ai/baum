@@ -151,6 +151,19 @@ path at the namespace root and changes only the query string (`?page=jobs`,
 `?clone=…&pr=…`), so a reload or a copied link opens the same view and the
 server needs no fallback route.
 
+The tour's sample project is served under `sample/` within the namespace
+(`internal/sampleapp`), and `appBase()` keeps that segment, so the whole app
+runs on it unchanged. The tour moves there, with a reload, for its first run
+and later when the person's own index has no pull requests, and back when it
+closes. There `SampleGuard`
+(`src/sample.tsx`) turns the daemon's refusal of a change (its
+`X-Baum-Sample: refused` header) into a toast and holds back links out of the
+app; elsewhere it does nothing. Its pull request pages link the sample's own
+sessions, from its home folder (`LocalAPI.Sessions`), never this computer's,
+with the decisions captured from them. In the sample the tour's Inbox stop
+picks the person's own pull request, written with their agent, so Next opens
+that one.
+
 The PR page reuses the same `@baum/viewer` `ReviewViewer`, header, section/risk
 navigation, version menu/comparison, Markdown/code renderers, session cards,
 commit panes, tokens and system theme as the current hosted PR page. Its host

@@ -45,8 +45,9 @@ export function desktopDevelopment(directory: string, daemonHost?: string): Plug
       server.httpServer?.once("close", () => proxy.close());
       server.middlewares.use((request, response, next) => {
         const pathname = new URL(request.url ?? "/", "http://127.0.0.1").pathname;
-        // App pages and modules use Vite; only bootstrap and API use Go.
-        if (!/^\/(?:$|launch\.js$|api\/|s\/[^/]+\/api\/)/.test(pathname)) {
+        // App pages and modules use Vite; only bootstrap and API use Go,
+        // the tour's sample project's API under `sample/` too.
+        if (!/^\/(?:$|launch\.js$|api\/|s\/[^/]+\/(?:sample\/)?api\/)/.test(pathname)) {
           next();
           return;
         }

@@ -80,6 +80,7 @@ import { useCodexHookTrust } from "./codex-hooks";
 import { useDiagnosticProblems } from "./diagnostics";
 import { RepositoriesPage, SettingsPage, settingsSection, type ReviewDefaults } from "./settings";
 import { asksYou, SessionsPage, transcriptHref } from "./sessions";
+import { SampleGuard } from "./sample";
 import { ToastProvider } from "./toast";
 import { MenuButton, useActionsKey, useContextMenu, type MenuItem } from "./context-menu";
 import { SessionTranscriptPage } from "./session-transcript";
@@ -278,6 +279,7 @@ function Application() {
   return (
     <UrlStateProvider value={url}>
       <ToastProvider>
+        <SampleGuard />
         <ViewerLinkProvider link={LocalLink}>
           {auth === "ready" ? (
             <Workspace url={url} />
@@ -337,7 +339,7 @@ function Workspace({ url }: { url: UrlState }) {
   );
   const [shortcuts, setShortcuts] = useState(false);
   const [goingTo, setGoingTo] = useState(false);
-  const tour = useTour(url.search.has("tour"));
+  const tour = useTour(url.search.has("tour"), loading ? undefined : snapshot.entries.length > 0);
   const [rates, setRates] = useState<
     {
       repository: string;

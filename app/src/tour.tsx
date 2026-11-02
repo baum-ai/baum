@@ -2,9 +2,10 @@ import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "re
 import { CloseIcon } from "@baum/viewer/components/icons";
 import { Stumpy } from "@baum/viewer/components/stumpy";
 import { Button } from "@baum/viewer/components/ui";
-import { appURL, navigate } from "./api";
+import { appURL, inSample, navigate, ownBase } from "./api";
 import { PRIMARY, SECONDARY, SMALL } from "./action-classes";
 import { PAGES } from "./pages";
+import { SAMPLE_PULL_REQUEST } from "./sample";
 import { COMMAND } from "./shortcuts";
 import { uiState, useUIState } from "./ui-state";
 import "./tour.css";
@@ -12,20 +13,56 @@ import "./tour.css";
 /** Whether the tour is open: once on this computer's first launch, kept by
  *  the daemon since the app's address can change, and again whenever Go to
  *  asks for it (`?tour=1`). Closing it clears that request, so asking again
- *  opens it. */
-export function useTour(asked: boolean) {
+ *  opens it.
+ *
+ *  The first tour always runs in the sample project; a later one runs on the
+ *  person's own pull requests when they have any, and else in the sample too.
+ *  Closing it leaves the sample again. */
+export function useTour(asked: boolean, pullRequests: boolean | undefined) {
   const saved = useUIState(uiState("api/ui-state/tour", () => ({ seen: false })));
-  const firstRun = saved.ready && !saved.error && !saved.value.seen;
+  const firstRun = saved.ready && !saved.error && !saved.value.seen && !closedHere();
   const [open, setOpen] = useState(false);
+  const [leaving, setLeaving] = useState(false);
+  const askedFirst = useRef(asked);
   useEffect(() => {
-    if (firstRun || asked) setOpen(true);
-  }, [firstRun, asked]);
+    // The sample is only for the tour: a reload of it without one goes home.
+    if (inSample() && !askedFirst.current) location.replace(ownBase());
+  }, []);
+  useEffect(() => {
+    if (!firstRun && !asked) return;
+    if (inSample()) return setOpen(true);
+    // Until the saved state says whether this is the first tour, wait.
+    if (!saved.ready && !saved.error) return;
+    if (firstRun || pullRequests === false) location.replace(`${ownBase()}sample/?tour=1`);
+    else if (pullRequests) setOpen(true);
+  }, [firstRun, asked, pullRequests, saved.ready, saved.error]);
+  // Leaving the sample reloads the page, so the tour's state is saved first;
+  // a save that fails still leaves, and the tour shows again on a later
+  // launch, but not in this window, which remembers the close.
+  useEffect(() => {
+    if (leaving && ((saved.value.seen && !saved.saving) || saved.error)) location.assign(ownBase());
+  }, [leaving, saved.value.seen, saved.saving, saved.error]);
   const close = () => {
     if (!saved.value.seen) saved.update(() => ({ seen: true }));
+    try {
+      sessionStorage.setItem(CLOSED, "1");
+    } catch {}
     setOpen(false);
-    if (asked) navigate(appURL());
+    if (inSample()) setLeaving(true);
+    else if (asked) navigate(appURL());
   };
   return { open, close };
+}
+
+/** That the tour was closed in this window, so a save of that which failed
+ *  does not bring it straight back. */
+const CLOSED = "baum-tour-closed";
+function closedHere() {
+  try {
+    return sessionStorage.getItem(CLOSED) === "1";
+  } catch {
+    return false;
+  }
 }
 
 /** A button named in the copy, drawn as the button it names. */
@@ -43,108 +80,66 @@ type Stop = {
   at?: string;
   /** Next clicks this, as the reader would, rather than going to an address. */
   follow?: string;
+  /** Clicked once when it shows, to pick what the stop is about. */
+  select?: string;
+  /** The opening card: larger, centred, with Stumpy. */
+  welcome?: boolean;
 };
 
 const STOPS: Stop[] = [
   {
-    title: "Welcome to baum",
-    body: "A quick look around. Most of your day is the Inbox and a pull request.",
+    title: "You're all set!",
+    body: (
+      <>
+        Welcome to baum. Press <kbd>?</kbd> anytime to see how to navigate the app. Let's start with
+        a little tour{inSample() ? ", in a sample project." : "."}
+      </>
+    ),
     at: href("inbox"),
+    welcome: true,
   },
   {
     title: "Your Inbox",
-    body: "What waits on you, grouped by what to do: review, merge or hand to an agent.",
-    target: ".upnext-list",
-    at: href("inbox"),
-  },
-  {
-    title: "Why it's here",
     body: (
       <>
-        Who's waiting, what changed and how risky it is. <B>Open</B> takes you to the full review.
-      </>
-    ),
-    target: ".upnext-panel",
-    at: href("inbox"),
-  },
-  {
-    title: "Use the keys",
-    body: (
-      <>
-        <kbd>j</kbd> <kbd>k</kbd> move, <kbd>Enter</kbd> opens, <kbd>?</kbd> lists every key.
+        {inSample() ? "This sample project's pull requests" : "Pull requests"} waiting on you,
+        grouped by what to do: review, merge or hand to an agent.
       </>
     ),
     target: ".upnext-list",
-    at: href("inbox"),
-  },
-  {
-    title: "Open a pull request",
-    body: "Next opens this one.",
-    target: ".upnext-panel .upnext-primary",
     at: href("inbox"),
     follow: ".upnext-panel .upnext-primary",
+    // In the sample, the person's own pull request, written with their agent.
+    select: inSample() ? `[data-row="${SAMPLE_PULL_REQUEST}"] .upnext-row` : undefined,
   },
   {
-    title: "Start with the summary",
-    body: "What it does and its riskiest part, before any diff.",
-    target: "#review-section",
-    at: "review",
-  },
-  {
-    title: "Changes, riskiest first",
-    body: "Each cites its lines and the agent session that wrote them.",
-    // In a narrow window the list is a sheet, and its button stands for it.
-    target: "#review-rail, [aria-controls=review-rail]",
-    at: "review",
-  },
-  {
-    title: "Act on it",
+    title: "A pull request's review",
     body: (
       <>
-        <B>Ask</B> questions about the change, <B>Merge…</B> when it's ready. The version menu
-        regenerates the review after new commits.
+        What the change does and its riskiest part come first, then each change, riskiest first,
+        with its lines. <B>Ask</B> about it, or <B>Merge…</B> when it's ready.
       </>
     ),
-    target: "[data-tour=review-actions]",
+    // The whole page but the app's sidebar, the review's Details too.
+    target: ".local-main",
     at: "review",
   },
   {
     title: "Timeline",
-    body: "Each feature you're building: its status, people and pull requests.",
+    body: "Each feature you're building, read from your agent sessions: its status, the people on it and its pull requests. All decisions shows the choices behind the code.",
     target: ".local-main",
     at: href("timeline"),
-  },
-  {
-    title: "Decisions",
-    body: "The decisions behind the code, why they were made and the prompt behind each.",
-    target: ".local-main",
-    at: `${href("timeline")}&tab=all`,
   },
   {
     title: "Sessions",
     body: (
       <>
-        Every agent session on this computer. <B>Focus session</B> jumps straight back into a
-        running one.
+        Every agent session on this computer, running, waiting or ended. <B>Focus session</B> jumps
+        back into a running one. Take this tour again from Go to (<kbd>{COMMAND}K</kbd>).
       </>
     ),
     target: ".local-main",
     at: href("sessions"),
-  },
-  {
-    title: "Analytics",
-    body: "Usage, cost and what landed, from your sessions.",
-    target: ".local-main",
-    at: href("analytics"),
-  },
-  {
-    title: "That's the tour",
-    body: (
-      <>
-        Take it again from Go to (<kbd>{COMMAND}K</kbd>).
-      </>
-    ),
-    at: href("inbox"),
   },
 ];
 
@@ -165,9 +160,9 @@ function place(target: DOMRect | null, width: number, height: number) {
   return { left: vw - width - 2 * GAP, top: vh - height - 2 * GAP };
 }
 
-/** The app's first-run tour: a small card that steps through the Inbox and
- *  a pull request, then the Timeline, Sessions and Analytics, pointing at
- *  each. It goes to each page itself. Finishing or skipping it is remembered
+/** The app's first-run tour: a welcome, then a small card that steps
+ *  through the Inbox, a pull request's review, the Timeline and Sessions,
+ *  pointing at each. It goes to each page itself. Finishing or skipping it is remembered
  *  on this computer. */
 export function Tour({ close }: { close: () => void }) {
   const [index, setIndex] = useState(0);
@@ -192,14 +187,29 @@ export function Tour({ close }: { close: () => void }) {
 
   // Follow the target as the page loads, scrolls and resizes.
   useEffect(() => {
+    let selected = false;
     const measure = () => {
+      const pick =
+        !selected && stop.select ? document.querySelector<HTMLElement>(stop.select) : null;
+      if (pick) {
+        pick.click();
+        selected = true;
+        next.current?.focus({ preventScroll: true });
+      }
       if (stop.at === "review" && new URLSearchParams(location.search).has("pr"))
         review.current = `${location.pathname}${location.search}`;
-      // The first match on screen: a narrow window hides some targets.
-      const box =
-        [...(stop.target ? document.querySelectorAll(stop.target) : [])]
-          .map((element) => element.getBoundingClientRect())
-          .find((found) => found.width && found.height) ?? null;
+      // Every match on screen, together: a narrow window hides some targets.
+      const shown = [...(stop.target ? document.querySelectorAll(stop.target) : [])]
+        .map((element) => element.getBoundingClientRect())
+        .filter((found) => found.width && found.height);
+      const box = shown.length
+        ? new DOMRect(
+            Math.min(...shown.map((r) => r.left)),
+            Math.min(...shown.map((r) => r.top)),
+            Math.max(...shown.map((r) => r.right)) - Math.min(...shown.map((r) => r.left)),
+            Math.max(...shown.map((r) => r.bottom)) - Math.min(...shown.map((r) => r.top)),
+          )
+        : null;
       setRect((old) =>
         old &&
         box &&
@@ -220,6 +230,39 @@ export function Tour({ close }: { close: () => void }) {
   }, [rect, index]);
   useEffect(() => next.current?.focus({ preventScroll: true }), [index]);
 
+  // ← and → step between the cards, Enter presses Next or Done and Escape
+  // closes the tour, wherever the focus is, ahead of the page's own keys. A
+  // text field, the card's other buttons and dialogs keep theirs. They are
+  // the tour's alone, so the key list leaves them out.
+  const step = useRef<(key: string) => void>(() => {});
+  step.current = (key) => {
+    if (key === "Escape") close();
+    else if (key === "ArrowLeft") {
+      if (index > 0) go(index - 1);
+    } else if (!last) go(index + 1);
+    // Enter on the last card is Done; → stays there.
+    else if (key === "Enter") close();
+  };
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (!["ArrowLeft", "ArrowRight", "Enter", "Escape"].includes(event.key)) return;
+      if (event.metaKey || event.ctrlKey || event.altKey || event.shiftKey || event.isComposing)
+        return;
+      const target = event.target instanceof Element ? event.target : null;
+      if (target?.closest("input, textarea, select, [contenteditable]")) return;
+      // A dialog over the tour, as Merge… or the key list, keeps its keys.
+      const dialog = target?.closest("dialog, [role=dialog]");
+      if (dialog && dialog !== card.current) return;
+      const button = target?.closest("button, a[href]");
+      if (event.key === "Enter" && button && button !== next.current) return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      step.current(event.key);
+    };
+    addEventListener("keydown", onKeyDown, true);
+    return () => removeEventListener("keydown", onKeyDown, true);
+  }, []);
+
   // The target may be taller than the window; the spotlight keeps to it.
   const spot = rect && {
     left: rect.left - 4,
@@ -234,13 +277,12 @@ export function Tour({ close }: { close: () => void }) {
         ref={card}
         role="dialog"
         aria-labelledby="tour-title"
-        className="tour-card"
+        className={stop.welcome ? "tour-card tour-welcome" : "tour-card"}
         style={position}
-        // Enter and Space press the tour's buttons and Escape closes it; every
-        // other key reaches the page, so the keys it teaches work.
+        // Enter and Space press the tour's buttons; every other key reaches
+        // the page, so the keys it teaches work.
         onKeyDown={(event) => {
-          if (event.key === "Escape") close();
-          if (["Escape", "Enter", " "].includes(event.key)) event.stopPropagation();
+          if (["Enter", " "].includes(event.key)) event.stopPropagation();
         }}
       >
         <Button
@@ -252,37 +294,59 @@ export function Tour({ close }: { close: () => void }) {
         >
           <CloseIcon size={14} />
         </Button>
-        <div className="tour-head">
-          <Stumpy size={28} />
-          <h2 id="tour-title">{stop.title}</h2>
-        </div>
-        <p>{stop.body}</p>
-        <div className="tour-foot">
-          <span className="tour-count">
-            {index + 1} of {STOPS.length}
-          </span>
-          {last ? null : index > 0 ? (
-            <button type="button" className={SECONDARY} onClick={() => go(index - 1)}>
-              Back
+        {stop.welcome ? (
+          <div className="tour-band" aria-hidden="true">
+            {LEAVES.map((leaf) => (
+              <svg key={leaf.left} className="tour-leaf" viewBox="2 -31 21 19" style={leaf}>
+                <path d="M3 -18 C7 -30 22 -30 21 -22 C20 -15 9 -13 3 -18 Z" />
+              </svg>
+            ))}
+            <span className="tour-stumpy">
+              <Stumpy size={150} followPointer />
+            </span>
+          </div>
+        ) : null}
+        <div className={stop.welcome ? "tour-welcome-body" : undefined}>
+          <div className="tour-head">
+            {stop.welcome ? null : <Stumpy size={28} />}
+            <h2 id="tour-title">{stop.title}</h2>
+          </div>
+          <p>{stop.body}</p>
+          <div className="tour-foot">
+            <span className="tour-count">
+              {index + 1} of {STOPS.length}
+            </span>
+            {index > 0 ? (
+              <button type="button" className={SECONDARY} onClick={() => go(index - 1)}>
+                Back
+              </button>
+            ) : (
+              <button type="button" className={SECONDARY} onClick={close}>
+                Skip
+              </button>
+            )}
+            <button
+              ref={next}
+              type="button"
+              className={PRIMARY}
+              onClick={() => (last ? close() : go(index + 1))}
+            >
+              {stop.welcome ? "Start the tour" : last ? "Done" : "Next"}
             </button>
-          ) : (
-            <button type="button" className={SECONDARY} onClick={close}>
-              Skip
-            </button>
-          )}
-          <button
-            ref={next}
-            type="button"
-            className={PRIMARY}
-            onClick={() => (last ? close() : go(index + 1))}
-          >
-            {index === 0 ? "Start" : last ? "Done" : "Next"}
-          </button>
+          </div>
         </div>
       </div>
     </div>
   );
 }
+
+/** Leaves drifting around Stumpy on the welcome card. */
+const LEAVES = [
+  { left: "12%", top: "16%", transform: "rotate(-20deg)" },
+  { left: "80%", top: "22%", transform: "rotate(30deg) scale(0.8)" },
+  { left: "20%", top: "64%", transform: "rotate(50deg) scale(0.7)" },
+  { left: "74%", top: "68%", transform: "rotate(-35deg) scale(0.95)" },
+];
 
 /** Go to's entry that starts the tour again. */
 export const TOUR_HREF = () => appURL("?tour=1");
