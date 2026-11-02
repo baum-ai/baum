@@ -212,8 +212,16 @@ export function Setup() {
   const githubReady = github && pickedCount > 0;
   const available = view ? detectedHarnesses(view.hooks.agents) : [];
   const agentReady = reviews !== null && available.includes(reviews.backend);
+  const selectedSignedOut =
+    view !== null &&
+    reviews !== null &&
+    signedOutHarnesses(view.hooks.agents).includes(reviews.backend);
   const done = view
-    ? [githubReady, agentReady && !view.hooks.error, Boolean(command?.ok) && agentsDone][step]
+    ? [
+        githubReady,
+        agentReady && !view.hooks.error && !selectedSignedOut,
+        Boolean(command?.ok) && agentsDone,
+      ][step]
     : false;
   const modelMissing =
     reviews !== null &&
