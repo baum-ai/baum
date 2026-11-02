@@ -224,9 +224,7 @@ const railLink = (name: string) =>
 it("lists the six templates with their sentence and how many pull requests each would show", async () => {
   await render("?page=inbox-new");
   expect(node.querySelector("h1")!.textContent).toBe("What should this inbox catch?");
-  expect(node.textContent).toContain(
-    "Start from one of these. You can change anything afterwards.",
-  );
+  expect(node.textContent).not.toContain("Start from one of these");
   expect(Array.from(node.querySelectorAll(".inbox-template")).map((t) => t.textContent)).toEqual([
     "Custom4 nowStart from nothing and set the filters yourself.",
     "Urgent1 nowAnything waiting on me in any repository, when risk is 4 or 5.",

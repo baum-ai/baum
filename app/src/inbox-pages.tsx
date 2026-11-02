@@ -85,10 +85,7 @@ export function NewInboxPage({
   const full = inboxes.length >= MAX_INBOXES;
   return (
     <section>
-      <PageBar
-        title="What should this inbox catch?"
-        detail="Start from one of these. You can change anything afterwards."
-      />
+      <PageBar title="What should this inbox catch?" />
       <div className="local-page-body inbox-page">
         <Link href={appURL()} className="inbox-back">
           ← Inbox
