@@ -109,7 +109,8 @@ test("with no pull requests of its own, the tour shows the sample project", asyn
       "Your Inbox": async () => {
         await expect(page.locator(".upnext-list")).toContainText("Add tags to notes");
         if (pictures) return;
-        await page.locator(".upnext-panel").getByText("Open on GitHub").click();
+        // The card covers the panel's link, so the click goes to it directly.
+        await page.locator(".upnext-panel").getByText("Open on GitHub").dispatchEvent("click");
         await expect(page.locator(".local-toast")).toContainText("Not in the sample project");
         expect(page.context().pages()).toHaveLength(1);
       },

@@ -19,7 +19,7 @@ import "./tour.css";
  *  Closing it leaves the sample again. */
 export function useTour(asked: boolean, pullRequests: boolean | undefined) {
   const saved = useUIState(uiState("api/ui-state/tour", () => ({ seen: false })));
-  const firstRun = saved.ready && !saved.error && !saved.value.seen;
+  const firstRun = saved.ready && !saved.error && !saved.value.seen && !closedHere();
   const [open, setOpen] = useState(false);
   const [leaving, setLeaving] = useState(false);
   const askedFirst = useRef(asked);
@@ -36,17 +36,32 @@ export function useTour(asked: boolean, pullRequests: boolean | undefined) {
     else if (pullRequests) setOpen(true);
   }, [firstRun, asked, pullRequests, saved.ready, saved.error]);
   // Leaving the sample reloads the page, so the tour's state is saved first;
-  // a save that fails still leaves, and the tour shows again next time.
+  // a save that fails still leaves, and the tour shows again on a later
+  // launch, but not in this window, which remembers the close.
   useEffect(() => {
     if (leaving && ((saved.value.seen && !saved.saving) || saved.error)) location.assign(ownBase());
   }, [leaving, saved.value.seen, saved.saving, saved.error]);
   const close = () => {
     if (!saved.value.seen) saved.update(() => ({ seen: true }));
+    try {
+      sessionStorage.setItem(CLOSED, "1");
+    } catch {}
     setOpen(false);
     if (inSample()) setLeaving(true);
     else if (asked) navigate(appURL());
   };
   return { open, close };
+}
+
+/** That the tour was closed in this window, so a save of that which failed
+ *  does not bring it straight back. */
+const CLOSED = "baum-tour-closed";
+function closedHere() {
+  try {
+    return sessionStorage.getItem(CLOSED) === "1";
+  } catch {
+    return false;
+  }
 }
 
 /** A button named in the copy, drawn as the button it names. */
@@ -183,7 +198,7 @@ export function Tour({ close }: { close: () => void }) {
 
   // ← and → step between the cards and Enter presses Next or Done, wherever the focus is,
   // ahead of the page's own keys. A text field and the card's other buttons
-  // keep theirs. They are the tour's alone, so the key list leaves them out.
+  // and dialogs keep theirs. They are the tour's alone, so the key list leaves them out.
   const step = useRef<(key: string) => void>(() => {});
   step.current = (key) => {
     if (key === "ArrowLeft") {
@@ -199,6 +214,9 @@ export function Tour({ close }: { close: () => void }) {
         return;
       const target = event.target instanceof Element ? event.target : null;
       if (target?.closest("input, textarea, select, [contenteditable]")) return;
+      // A dialog over the tour, as Merge… or the key list, keeps its keys.
+      const dialog = target?.closest("dialog, [role=dialog]");
+      if (dialog && dialog !== card.current) return;
       const button = target?.closest("button, a[href]");
       if (event.key === "Enter" && button && button !== next.current) return;
       event.preventDefault();
