@@ -186,9 +186,12 @@ handshake, in [`apiclient`](../apiclient).
   processes where supported. One failing agent does not stop the other.
 - `baum hooks status --user [--json]` reads native registries without changing
   them. It reports detection of the CLI, plugin ID, installation, enablement
-  and version separately, with `latest`, the plugin version this baum shipped
-  with (the marketplace has at least that one), and `update_available` when the
-  installed version is older. Installed, enabled Codex plugins also include
+  and version separately, and `signed_in` for a detected Claude Code or Codex:
+  the answer of `claude auth status --json` or `codex login status`, run with
+  the environment a job gets, so a provider key in baum's own environment does
+  not count (absent when the CLI could not say). It also reports `latest`, the
+  plugin version this baum shipped with (the marketplace has at least that
+  one), and `update_available` when the installed version is older. Installed, enabled Codex plugins also include
   `trust.state`, read through Codex's effective hook inventory; Claude Code
   plugins include the settings-based state from `agentplugins.ClaudeHooks`. Only a
   trusted result means every required baum hook is present, enabled and

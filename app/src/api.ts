@@ -268,6 +268,8 @@ const jobReasons: Record<string, string> = {
   input:
     "baum couldn't gather what the review needs: the pull request, its commits in your clone, or GitHub.",
   backend: "The agent couldn't run, or its provider was unavailable.",
+  signed_out:
+    "The agent isn't signed in, or its sign-in expired. Sign in to Claude Code with /login or to Codex with codex login in a terminal, then try again.",
   budget: "The run reached its time or size limit before it finished.",
   validation: "The agent's review didn't pass baum's checks, even after repairs.",
   interrupted: "The run stopped before it finished.",

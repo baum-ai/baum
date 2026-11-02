@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/baum-ai/baum/agent"
 	"github.com/baum-ai/baum/internal/appdb"
 	"github.com/baum-ai/baum/internal/assemble/assembletest"
 	"github.com/baum-ai/baum/internal/chat"
@@ -204,6 +205,7 @@ func TestChatFailureReasons(t *testing.T) {
 		ReasonNeedsClone: chat.ErrNeedsClone,
 		"budget":         &generate.Error{Category: generate.CategoryBudget, Err: errors.New("generation budget exceeded: tokens")},
 		"backend":        &generate.Error{Category: generate.CategoryBackend, Err: errors.New("the model provider was unavailable")},
+		ReasonSignedOut:  &generate.Error{Category: generate.CategoryBackend, Err: errors.New(agent.ProviderRejectedReason("authentication_error") + ": claude code reported the provider's refusal")},
 		"validation":     &generate.Error{Category: generate.CategoryValidation, Err: errors.New("no")},
 		"internal":       errors.New("disk full"),
 	} {

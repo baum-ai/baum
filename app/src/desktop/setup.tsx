@@ -5,8 +5,11 @@ import {
   describeAgent,
   agentConnected,
   agentHookNote,
+  agentNeedsAction,
+  agentUpdatable,
   describeCommand,
   detectedHarnesses,
+  signedOutHarnesses,
   displayPath,
   withModel,
   setupSave,
@@ -17,6 +20,7 @@ import {
   type SetupView,
 } from "./setup-model";
 import { ReviewSettingsForm } from "./reviews";
+import { withCode } from "./code-terms";
 import { PlanUsage } from "../plan-usage";
 import { GitHubStep } from "./github-step";
 import { RepositoryPicker, setupRepositoryCall } from "../repositories";
@@ -32,9 +36,9 @@ const steps = [
     "Account and repositories",
   ],
   [
-    "Select your agent",
-    "Choose the agent and models baum uses to review pull requests, make fixes and extract decisions from your sessions.",
-    "Select your agent",
+    "Configure your agents",
+    "Choose which agents baum runs, and when.",
+    "Configure your agents",
     "Reviews, fixes and decisions",
   ],
   [
@@ -52,18 +56,12 @@ const agents = [
     name: "Codex",
     brand: "openai" as const,
     about: "Reports Codex sessions to baum.",
-    hint: (
-      <>
-        Open <code>/hooks</code> in Codex to trust the hooks.
-      </>
-    ),
   },
   {
     id: "claude-code",
     name: "Claude Code",
     brand: "claude" as const,
     about: "Reports Claude Code sessions to baum.",
-    hint: <>Approve the hooks in Claude Code.</>,
   },
 ];
 
@@ -324,8 +322,15 @@ export function Setup() {
                   disabled={busy}
                   onChange={setReviews}
                   available={available}
+                  signedOut={signedOutHarnesses(view.hooks.agents)}
                   detectionError={view.hooks.error}
                 />
+                {available.length > 0 && (
+                  <p id="review-customise" className="repo-note">
+                    You can customise the agent and model per task in Settings, and automatic
+                    reviews per repository.
+                  </p>
+                )}
                 <PlanUsage className="setup-card" all />
               </>
             )}
@@ -346,7 +351,7 @@ export function Setup() {
                   <div className="agent-info">
                     <h2>baum CLI</h2>
                     <p id="command-state" className={command.ok ? "ok" : undefined}>
-                      {display(command.state)}
+                      {withCode(display(command.state), [command.path && display(command.path)])}
                     </p>
                     {!command.ok && (
                       <p className="agent-hint">Agent hooks report to baum through this command.</p>
@@ -394,21 +399,27 @@ export function Setup() {
                     <li className="agent-row" key={definition.id}>
                       <BrandMark brand={definition.brand} size={44} className="agent-logo" />
                       <div className="agent-info">
-                        <h2>{definition.name}</h2>
-                        <p id={`${definition.id}-state`} className={connected ? "ok" : undefined}>
+                        <h2>
+                          {definition.name}
+                          {agent?.installed && agent.version && (
+                            <span className="agent-version">Plugin {agent.version}</span>
+                          )}
+                        </h2>
+                        <p
+                          id={`${definition.id}-state`}
+                          className={
+                            connected
+                              ? "ok"
+                              : agent && agentNeedsAction(agent)
+                                ? "attention"
+                                : undefined
+                          }
+                        >
                           {display(state || definition.about)}
                         </p>
-                        {agent?.installed && !agent.error && (
+                        {agent?.installed && (
                           <p id={`${definition.id}-hint`} className="agent-hint">
-                            {definition.id === "codex"
-                              ? connected
-                                ? "Codex hooks are approved."
-                                : agent.trust?.state === "hooks_disabled"
-                                  ? "Run codex features enable hooks, then start a new conversation."
-                                  : definition.hint
-                              : agent.trust && agent.trust.state !== "ready"
-                                ? agentHookNote(agent)
-                                : definition.hint}
+                            {withCode(agentHookNote(agent), ["/hooks"])}
                           </p>
                         )}
                       </div>
@@ -437,6 +448,18 @@ export function Setup() {
                               ),
                             "secondary compact",
                             `${verb} ${definition.name}`,
+                          )}
+                        {agent &&
+                          agentUpdatable(agent) &&
+                          button(
+                            `${definition.id}-update`,
+                            "Update",
+                            () =>
+                              void run(`${definition.id}-update`, () =>
+                                change("update_hooks", { agent: definition.id }),
+                              ),
+                            "secondary compact",
+                            `Update ${definition.name} hooks`,
                           )}
                       </div>
                     </li>
@@ -474,7 +497,7 @@ export function Setup() {
             )}
           </div>
           {step > 0 && !done && (step !== reviewStep || agentReady) && (
-            <p id="skip-note">You can finish setup later from the settings.</p>
+            <p id="skip-note">You can finish setup later in Settings.</p>
           )}
         </footer>
       </section>

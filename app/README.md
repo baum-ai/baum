@@ -108,9 +108,13 @@ Desktop setup requires a GitHub connection and at least one picked repository
 before continuing or opening a later step from the rail. The GitHub step has no
 skip action. Adding the baum CLI to the terminal and connecting agent hooks
 remain optional; the app runs its own CLI to start the daemon.
-The onboarding agent picker offers Claude Code and Codex, with a note below
-the model explaining that the agent and model can be customised per task in Settings.
-Missing agent CLIs are marked Not installed and cannot be selected. A saved
+The onboarding agent picker offers Claude Code and Codex. A line under
+Reviews and extraction and under Fixes says what each agent does, and a single
+note below the card explains that the agent and model can be customised per
+task in Settings, and automatic reviews per repository.
+Missing agent CLIs are marked Not installed and cannot be selected; one that
+reports no sign-in (`signed_in` false from `baum hooks status`) is marked Not
+signed in, stays selectable and says how to sign in. A saved
 choice is kept only if detected; otherwise setup chooses an installed agent,
 preferring Claude Code. When neither is detected, setup shows official install
 guides and Check again, and waits for an agent before advancing to the final
@@ -120,7 +124,7 @@ Onboarding sets two models: one for reviews and data extraction, and one for
 fixes, which defaults to Same as reviews. Each compact model row includes an
 effort selector, using the model-specific CLI levels documented in
 [desktop setup](../desktop/README.md#model-effort-choices). Default leaves the
-choice to the agent; unknown custom models offer Default only. Changing a model
+choice to the agent; other and custom models offer Low to Max. Changing a model
 clears an effort it does not support. A fix agent that is no longer installed
 falls back to Same as reviews. The native setup bridge saves the review and fix
 choices, and saves extraction as the review choice only when onboarding
@@ -1291,7 +1295,10 @@ default) or Claude Code
 or Codex with a model and a reasoning effort, sent as `fix_backend`,
 `fix_model` and `fix_effort` (`""` returns to the reviews', effort included)
 and reported by `GET api/settings`. A chosen fix agent applies
-in every repository. **Connections** holds the GitHub connection and, in the
+in every repository. In the desktop app, the agent selects of Reviews, Fixes
+and Data extraction label a CLI that reports no sign-in "(not signed in)",
+and while the agent a section uses is one, its row says that section's jobs
+will fail and how to sign in. **Connections** holds the GitHub connection and, in the
 desktop app, the Agent hooks card with installation, enablement, update
 (to the latest plugin, without removing it first; shown with the installed
 plugin version) and removal for each agent. **This computer** holds the diagnostics, the background

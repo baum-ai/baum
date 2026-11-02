@@ -1700,6 +1700,55 @@ it("shows a diagnostics error with a retry that recovers", async () => {
   expect(node.textContent).toContain("Fix: Connect GitHub in baum Settings.");
 });
 
+it("marks signed-out agents in desktop Settings and says how to sign in", async () => {
+  history.replaceState(null, "", "/s/test-ns/?page=settings&section=reviews");
+  stubDiagnostics(async () => Response.json({ local: true, report: diagnosticsReport }));
+  stubAutomatic();
+  const agent = { detected: true, installed: true, enabled: true, plugin: "baum@baum" };
+  const view = {
+    first_run: false,
+    command: {
+      installed: true,
+      target: "/app/baum",
+      plan: { link: "/home/user/bin/baum", on_path: true, admin: false },
+    },
+    hooks: {
+      agents: [
+        { ...agent, agent: "codex", name: "Codex", signed_in: false },
+        { ...agent, agent: "claude-code", name: "Claude Code", signed_in: true },
+      ],
+    },
+  };
+  const invoke = vi.fn(async (command: string) =>
+    command === "setup_state" ? view : { ok: true, lines: [] },
+  );
+  Object.defineProperty(window, "__TAURI_INTERNALS__", { configurable: true, value: { invoke } });
+  try {
+    await act(async () => root.render(<App />));
+    const reviews = () => node.querySelector('[aria-labelledby="settings-reviews-heading"]')!;
+    const select = node.querySelector<HTMLSelectElement>("#review-agent")!;
+    expect([...select.options].map((o) => o.textContent)).toEqual([
+      "Claude Code",
+      "Codex (not signed in)",
+    ]);
+    expect(reviews().querySelector(".settings-caution")).toBeNull();
+    await choose(select, "codex");
+    expect(reviews().textContent).toContain(
+      "Codex isn't signed in, so reviews will fail. Run codex login in a terminal.",
+    );
+    // A fix agent of its own gets the same warning.
+    await act(async () =>
+      node.querySelector<HTMLButtonElement>('button[data-section="fixes"]')!.click(),
+    );
+    const fixes = () => node.querySelector('[aria-labelledby="settings-fixes-heading"]')!;
+    expect(fixes().querySelector(".settings-caution")).toBeNull();
+    await choose(node.querySelector<HTMLSelectElement>("#fix-agent")!, "codex");
+    expect(fixes().textContent).toContain("Codex isn't signed in, so fixes will fail.");
+  } finally {
+    Reflect.deleteProperty(window, "__TAURI_INTERNALS__");
+  }
+});
+
 it("manages CLI and hooks inline in desktop Settings", async () => {
   history.replaceState(null, "", "/s/test-ns/?page=settings");
   const view = {
