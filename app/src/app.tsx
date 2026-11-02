@@ -1338,6 +1338,7 @@ function Workspace({ url }: { url: UrlState }) {
                     </div>
                   ) : null}
                   <SessionsPage
+                    peekKey={url.search.get("peek")}
                     sessions={live}
                     requests={agentRequests}
                     Link={LocalLink}

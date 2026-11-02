@@ -74,7 +74,7 @@ import { useDisclosure } from "@baum/viewer/components/use-disclosure";
 import { MenuButton, useContextMenu, type MenuItem } from "./context-menu";
 import { ListSection, type ListTone } from "./list";
 import { useNow } from "./live";
-import { transcriptHref } from "./sessions";
+import { peekHref } from "./sessions";
 import {
   canMerge,
   defaultMergeMethod,
@@ -2062,16 +2062,16 @@ function Panel({
           <LiveDot className="text-(--status-positive)" />
           {/* Each opens on Sessions with that session selected. */}
           {item.working.length === 1 ? (
-            <Link href={transcriptHref(item.working[0]!)}>
+            <Link href={peekHref(item.working[0]!)}>
               1 agent session working on its branch right now
             </Link>
           ) : (
             <span>
               {plural(item.working.length, "agent session")} working on its branch right now:{" "}
               {item.working.map((session, index) => (
-                <Fragment key={transcriptHref(session)}>
+                <Fragment key={peekHref(session)}>
                   {index > 0 ? " · " : ""}
-                  <Link href={transcriptHref(session)}>{agentName(session.agent)}</Link>
+                  <Link href={peekHref(session)}>{agentName(session.agent)}</Link>
                 </Fragment>
               ))}
             </span>

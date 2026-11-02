@@ -1061,7 +1061,7 @@ it("lists a review group as one row that opens to its members", async () => {
   expect(list()).toEqual(["Change 1", "Payments stack", "Change 4"]);
 });
 
-it("links the agent sessions working on the pull request to Sessions, each selected", async () => {
+it("links the agent sessions working on the pull request to their cards on Sessions, opened", async () => {
   liveList = [
     {
       agent: "claude-code",
@@ -1078,7 +1078,13 @@ it("links the agent sessions working on the pull request to Sessions, each selec
   expect(shown()).toBe("Change 1");
   const link = panel().querySelector<HTMLAnchorElement>(".upnext-agents a")!;
   expect(link.textContent).toBe("1 agent session working on its branch right now");
-  expect(link.getAttribute("href")).toBe("/s/test-ns/?page=sessions&session=claude-code%3As1");
+  expect(link.getAttribute("href")).toBe("/s/test-ns/?page=sessions&peek=claude-code%3As1");
   await act(async () => link.click());
-  expect(new URLSearchParams(location.search).get("session")).toBe("claude-code:s1");
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  });
+  // Sessions shows the list with that session's card open, not its transcript.
+  expect(new URLSearchParams(location.search).get("session")).toBeNull();
+  expect(node.querySelector('[data-row-id="claude-code:s1"]')).not.toBeNull();
+  expect(node.querySelector(".local-feed-peek-row")).not.toBeNull();
 });
