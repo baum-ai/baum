@@ -15,6 +15,9 @@ itself extract a covered session again: covered is decided by the transcript
 fingerprint, so the new prompt applies when the transcript next changes or the
 session is forced.
 
+`baum decisions` uses the registry's prompts when a registry exists, else the
+published prompt.
+
 ## Gate
 
 A session is captured only when all of these hold, read for every capture:

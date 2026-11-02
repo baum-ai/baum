@@ -273,6 +273,18 @@ func Run(ctx context.Context, o Options) (result Result, err error) {
 			return result, fail(CategoryBackend, err)
 		}
 		promptVersion, promptDigest = instructions.Version, instructions.Digest
+		// The sections a continuation writes must come from the prompts the
+		// version was written with: its metadata keeps theirs. A version
+		// saved without a digest only continues under built-in prompts.
+		if saved := o.Continue; saved != nil {
+			changed := saved.Metadata.PromptDigest != promptDigest
+			if saved.Metadata.PromptDigest == "" {
+				changed = strings.HasSuffix(promptVersion, prompt.CustomSuffix)
+			}
+			if changed {
+				return result, fail(CategoryInput, errors.New("the review prompts changed since this review was written; regenerate the review to use them"))
+			}
+		}
 	} else {
 		instructions, err := prompts.Instructions(ctx, o.Backend.Name())
 		if err != nil {
