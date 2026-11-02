@@ -113,6 +113,7 @@ beforeEach(() => {
   history.replaceState(null, "", "/s/test-ns/?page=timeline");
   localStorage.clear();
   requests.length = 0;
+  clones = { "acme/demo": "clone-1" };
   answers = {
     "api/timeline/repositories": { repositories: [{ repository: "acme/demo" }] },
     "api/timeline/features": { features: [feature], next_cursor: null, order: "newest" },
@@ -136,7 +137,8 @@ beforeEach(() => {
       if (init?.body) bodies.push(JSON.parse(String(init.body)));
       const key = path.replace("/s/test-ns/", "").split("?")[0]!;
       const answer = answers[key];
-      if (typeof answer === "function") return (answer as () => Promise<Response>)();
+      if (typeof answer === "function")
+        return (answer as (init?: RequestInit) => Promise<Response>)(init);
       return key in answers ? Response.json(answer) : new Response("missing", { status: 404 });
     }),
   );
@@ -147,6 +149,7 @@ afterEach(async () => {
   vi.unstubAllGlobals();
 });
 
+let clones: Record<string, string> = {};
 let current = new URLSearchParams();
 let jobsChanged = 0;
 function Harness({
@@ -168,7 +171,7 @@ function Harness({
         <TimelinePage
           revision={revision}
           jobs={jobs}
-          cloneOf={(repository) => (repository === "acme/demo" ? "clone-1" : null)}
+          cloneOf={(repository) => clones[repository] ?? null}
           jobsChanged={() => jobsChanged++}
         />
       </UrlStateProvider>
@@ -671,6 +674,108 @@ it("offers a quieter rebuild when the repository has features, whatever the filt
     node.querySelector('summary[aria-label="More"]')?.parentElement?.querySelector("button")
       ?.textContent,
   ).toBe("Rebuild feature history");
+});
+
+const rebuildItem = () =>
+  node.querySelector('summary[aria-label="More"]')?.parentElement?.querySelector("button");
+const twoRepositories = () => {
+  answers["api/timeline/repositories"] = {
+    repositories: [{ repository: "acme/demo" }, { repository: "acme/other" }],
+  };
+};
+
+it("rebuilds every repository shown that has a clone, from the menu over several", async () => {
+  twoRepositories();
+  answers["api/jobs"] = { jobs: [buildJob("queued", 0)] };
+  bodies.length = 0;
+  jobsChanged = 0;
+  await show();
+  const item = rebuildItem()!;
+  expect(item.disabled).toBe(false);
+  expect(item.textContent).toContain("For 1 of 2 repositories; the others need a local clone");
+  await act(async () => item.click());
+  await act(async () => {});
+  expect(bodies).toEqual([
+    { items: [{ clone: "clone-1", pr: 0, kind: "feature_build" }], mode: "single" },
+  ]);
+  expect(jobsChanged).toBe(1);
+});
+
+it("starts the others when the daemon refuses one, naming the refused repository", async () => {
+  twoRepositories();
+  clones["acme/other"] = "clone-2";
+  answers["api/jobs"] = async (init?: RequestInit) =>
+    String(init?.body).includes("clone-2")
+      ? Response.json({ blocked_reason: "backend_unavailable" }, { status: 409 })
+      : Response.json({ jobs: [buildJob("queued", 0)] });
+  bodies.length = 0;
+  jobsChanged = 0;
+  await show();
+  expect(rebuildItem()!.textContent).toBe("Rebuild feature history");
+  await act(async () => rebuildItem()!.click());
+  await act(async () => {});
+  expect(bodies).toHaveLength(2);
+  expect(jobsChanged).toBe(1);
+  expect(node.textContent).toContain(
+    "Couldn't start the feature build: acme/other: The model backend is not available on this computer.",
+  );
+});
+
+it("keeps the menu while a build runs, with the rebuild disabled and saying why", async () => {
+  twoRepositories();
+  await act(async () =>
+    root.render(<Harness initial="page=timeline" jobs={[buildJob("running")]} />),
+  );
+  await act(async () => {});
+  await act(async () => {});
+  const item = rebuildItem()!;
+  expect(item.disabled).toBe(true);
+  expect(item.title).toBe("A feature build is running for acme/demo. Rebuild when it finishes.");
+  expect(item.textContent).toContain("A feature build is running for acme/demo.");
+});
+
+it("keeps one repository's menu while its rebuild runs, disabled", async () => {
+  answers["api/timeline/build"] = { building: null, has_features: true };
+  await act(async () =>
+    root.render(<Harness initial="page=timeline" jobs={[buildJob("running")]} />),
+  );
+  await act(async () => {});
+  await act(async () => {});
+  const item = rebuildItem()!;
+  expect(item.disabled).toBe(true);
+  expect(item.title).toBe("A feature build is running. Rebuild when it finishes.");
+});
+
+it("reads the lists again when any repository's build finishes over several", async () => {
+  twoRepositories();
+  clones["acme/other"] = "clone-2";
+  const other = { ...buildJob("running"), id: "job-2", clone: "clone-2", repository: "acme/other" };
+  await act(async () =>
+    root.render(<Harness initial="page=timeline" jobs={[buildJob("running")]} />),
+  );
+  await act(async () => {});
+  await act(async () => {});
+  requests.length = 0;
+  // acme/demo finishes as acme/other's starts: still one running.
+  await act(async () =>
+    root.render(
+      <Harness
+        initial="page=timeline"
+        jobs={[buildJob("completed"), { ...other, state: "queued" }]}
+      />,
+    ),
+  );
+  await act(async () => {});
+  expect(requests).toContain("/s/test-ns/api/timeline/features");
+});
+
+it("disables the rebuild over several repositories when none has a clone", async () => {
+  twoRepositories();
+  clones = {};
+  await show();
+  const item = rebuildItem()!;
+  expect(item.disabled).toBe(true);
+  expect(item.title).toBe("None of these repositories has a local clone");
 });
 
 const button = (label: string, within: ParentNode = node) =>

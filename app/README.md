@@ -1184,13 +1184,19 @@ the loaded list does not hold (further down, filtered out, archived or gone)
 shows above the list as the opened feature. With no features yet, the page
 explains that features appear as pull requests and sessions are placed and
 offers **Build feature history** (in a view of one repository) and All
-decisions. The feature build below belongs to a view of one repository. When
-the repository has features at all (whatever the filters), the kebab menu at the
-end of the filter bar offers a quieter **Rebuild feature history**. Either starts a
-`feature_build` job for the repository's clone at once, as every run the person
+decisions. The feature build below belongs to a view of one repository. The
+kebab menu at the end of the filter bar offers a quieter **Rebuild feature
+history**: over several repositories always, over one when it has features at
+all (whatever the filters). Over several it starts one build for each
+repository with a local clone, and says for how many of them when some have
+none; a start the daemon refuses names its repository and the others still
+start. While a build of any repository shown runs, the item is disabled and
+says so on hover, as it does when no repository shown has a clone. Either
+starts a `feature_build` job for each clone at once, as every run the person
 asks for starts (`src/feature-build.tsx`, `POST api/jobs` with `kind:
-"feature_build"`): there is no dialog, no estimate and nothing about the price
-stops it. The build places the merged and open pull requests of the
+"feature_build"`, one request per repository): there is no dialog, no estimate
+and nothing about the price stops it. A rebuild of a repository whose build
+stopped resumes it, as **Resume build** does. The build places the merged and open pull requests of the
 repository's whole history, discovering its features first when it has none
 newer, and the weekly consolidation pass takes the new features right after
 they become current. The button reads "Starting…" while the request is under
@@ -1210,7 +1216,7 @@ job shows again. One the person cancelled shows nothing.
 Feature builds' reasons have their own words, here and in Jobs (`jobReasonText`
 with the job's kind). A failed read of the build state keeps what was shown.
 The current features stay listed throughout, and the lists are read again when
-the build finishes. Without a local clone the build buttons are disabled. The
+a build finishes. Without a local clone the build buttons are disabled. The
 page also says when the daemon has no decision store, when the decisions switch
 is off, and which picked repositories have their decisions turned off.
 
