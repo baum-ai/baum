@@ -54,10 +54,20 @@ icons:
 dev: frontend (sidecar host_target)
     sh {{ source_directory() }}/scripts/dev.sh
 
-# Run the app on this Wayland display, with the container's own home and daemon
+# Run the app on this Wayland display, else this X11 display (which must let
+# local containers in: xhost +local:), with the container's own home and daemon
 run: frontend sidecar
-    BAUM_OP_RUN=0 {{ dev_compose }} run --build --rm --no-deps \
-        -v "$XDG_RUNTIME_DIR/$WAYLAND_DISPLAY:/tmp/wayland-0" \
-        -e XDG_RUNTIME_DIR=/tmp -e WAYLAND_DISPLAY=wayland-0 -e GDK_BACKEND=wayland \
+    #!/usr/bin/env sh
+    set -eu
+    if [ -n "${WAYLAND_DISPLAY:-}" ]; then
+        set -- -v "$XDG_RUNTIME_DIR/$WAYLAND_DISPLAY:/tmp/wayland-0" \
+            -e XDG_RUNTIME_DIR=/tmp -e WAYLAND_DISPLAY=wayland-0 -e GDK_BACKEND=wayland
+    elif [ -n "${DISPLAY:-}" ]; then
+        set -- -v /tmp/.X11-unix:/tmp/.X11-unix -e "DISPLAY=$DISPLAY" -e GDK_BACKEND=x11
+    else
+        echo "desktop::run needs a Wayland or X11 display" >&2
+        exit 1
+    fi
+    BAUM_OP_RUN=0 {{ dev_compose }} run --build --rm --no-deps "$@" \
         -e WEBKIT_DISABLE_DMABUF_RENDERER=1 \
         desktop-test cargo run --locked
