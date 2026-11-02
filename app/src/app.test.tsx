@@ -1664,6 +1664,8 @@ it("manages CLI and hooks inline in desktop Settings", async () => {
           enabled: true,
           plugin: "baum@baum",
           version: "1.0.0",
+          latest: "1.2.1",
+          update_available: true,
         },
       ],
     },
@@ -1698,7 +1700,7 @@ it("manages CLI and hooks inline in desktop Settings", async () => {
         .click(),
     );
     expect(invoke).toHaveBeenCalledWith("update_hooks", { agent: "claude-code" });
-    // It stays to update again later, labelled as before.
+    // While the refreshed status still offers a newer plugin, it stays, labelled as before.
     expect(node.querySelector('button[aria-label="Update Claude Code hooks"]')!.textContent).toBe(
       "Update",
     );
@@ -1709,6 +1711,55 @@ it("manages CLI and hooks inline in desktop Settings", async () => {
     await click("Install baum CLI");
     expect(invoke).toHaveBeenCalledWith("install_command", {});
     expect(location.search).toBe("?page=settings&section=computer");
+  } finally {
+    Reflect.deleteProperty(window, "__TAURI_INTERNALS__");
+  }
+});
+
+it("opens agent hooks from the Codex warning in desktop Settings", async () => {
+  history.replaceState(null, "", "/s/test-ns/?page=settings&section=reviews");
+  const original = vi.mocked(fetch).getMockImplementation()!;
+  vi.stubGlobal(
+    "fetch",
+    vi.fn((path: string) =>
+      path.endsWith("/api/agent-hooks/codex")
+        ? Promise.resolve(Response.json({ state: "missing" }))
+        : original(path),
+    ),
+  );
+  const agent = { detected: true, installed: true, enabled: true, plugin: "baum@baum" };
+  const view = {
+    first_run: false,
+    command: { installed: true },
+    hooks: {
+      agents: [
+        { ...agent, agent: "claude-code", name: "Claude Code", version: "1.2.1", latest: "1.2.1" },
+        // The plugin is current, but Codex reports hooks missing.
+        {
+          ...agent,
+          agent: "codex",
+          name: "Codex",
+          version: "1.2.1",
+          latest: "1.2.1",
+          trust: { state: "missing" },
+        },
+      ],
+    },
+  };
+  const invoke = vi.fn(async () => view);
+  Object.defineProperty(window, "__TAURI_INTERNALS__", { configurable: true, value: { invoke } });
+  try {
+    await act(async () => root.render(<App />));
+    const open = [...node.querySelectorAll(".local-notice button")].find(
+      (b) => b.textContent === "Open agent hooks",
+    ) as HTMLButtonElement;
+    expect(open).toBeTruthy();
+    await act(async () => open.click());
+    expect(location.search).toBe("?page=settings&section=connections");
+    expect(node.querySelector("#hooks-heading")).not.toBeNull();
+    // Update shows only where it would change something.
+    expect(node.querySelector('button[aria-label="Update Claude Code hooks"]')).toBeNull();
+    expect(node.querySelector('button[aria-label="Update Codex hooks"]')).not.toBeNull();
   } finally {
     Reflect.deleteProperty(window, "__TAURI_INTERNALS__");
   }
@@ -1928,6 +1979,8 @@ it("warns beside Settings until Codex hooks are trusted and rechecks on focus", 
   expect(settings().getAttribute("title")).toContain("Codex hooks need approval");
   await act(async () => settings().click());
   expect(node.querySelector(".settings-content")?.textContent).toContain("Open /hooks in Codex");
+  // Outside the desktop app there is no agent hooks panel to open.
+  expect(node.querySelector(".settings-content")?.textContent).not.toContain("Open agent hooks");
   unavailable = true;
   await act(async () => window.dispatchEvent(new Event("focus")));
   expect(settings().querySelector(".local-rail-badge")).not.toBeNull();

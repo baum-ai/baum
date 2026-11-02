@@ -186,8 +186,11 @@ handshake, in [`apiclient`](../apiclient).
   processes where supported. One failing agent does not stop the other.
 - `baum hooks status --user [--json]` reads native registries without changing
   them. It reports detection of the CLI, plugin ID, installation, enablement
-  and version separately. Installed, enabled Codex plugins also include
-  `trust.state`, read through Codex's effective hook inventory. Only a
+  and version separately, with `latest`, the plugin version this baum shipped
+  with (the marketplace has at least that one), and `update_available` when the
+  installed version is older. Installed, enabled Codex plugins also include
+  `trust.state`, read through Codex's effective hook inventory; Claude Code
+  plugins include the settings-based state from `agentplugins.ClaudeHooks`. Only a
   trusted result means every required baum hook is present, enabled and
   approved; an unavailable check reports unknown. A config
   directory alone is not an executable agent. The desktop setup screen uses

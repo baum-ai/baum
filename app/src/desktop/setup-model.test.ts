@@ -228,3 +228,27 @@ it("only calls Codex connected when its hooks are enabled and trusted", async ()
   expect(agentConnected({ ...codex, enabled: false, trust: { state: "trusted" } })).toBe(false);
   expect(agentConnected({ ...codex, agent: "claude-code" })).toBe(true);
 });
+
+it("calls Claude Code connected unless its settings stop baum's hooks", async () => {
+  const { agentConnected, describeAgent, agentHookNote } = await import("./setup-model");
+  const claude = {
+    agent: "claude-code",
+    name: "Claude Code",
+    detected: true,
+    installed: true,
+    enabled: true,
+    plugin: "baum@baum",
+  } as const;
+  const ready = { ...claude, trust: { state: "ready" as const } };
+  expect(agentConnected(ready)).toBe(true);
+  expect(describeAgent(ready)).toBe("Connected");
+  expect(agentHookNote(ready)).toBe("Hooks run in folders you trust in Claude Code.");
+  const off = { ...claude, trust: { state: "hooks_disabled" as const } };
+  expect(agentConnected(off)).toBe(false);
+  expect(describeAgent(off)).toBe("Hooks turned off in Claude Code");
+  expect(agentHookNote(off)).toContain("disableAllHooks");
+  const managed = { ...claude, trust: { state: "managed_only" as const } };
+  expect(describeAgent(managed)).toBe("Blocked by your organization");
+  const unknown = { ...claude, trust: { state: "unknown" as const } };
+  expect(describeAgent(unknown)).toBe("Claude Code settings could not be read");
+});
