@@ -711,16 +711,14 @@ just desktop::sidecar       # build binaries/baum-<target triple>; pass a triple
 just desktop::build         # Linux bundle (deb by default) in target/release/bundle
 just desktop::bundle        # the release's Linux deb and AppImage in target/release-bundles
 just desktop::updater-test  # updater manifest checks reject tampered releases
-just desktop::run           # run the app on this Wayland or X11 session's display
+just desktop::run           # run the app on this Wayland session's display
 just desktop::dev           # native host app, with Vite hot reload in Docker
 just desktop::icons         # resolve palette tokens and regenerate native icons
 ```
 
-`run` starts the container's own daemon in the container's home directory, not
-yours, so it always opens first-run setup. It uses the Wayland display when
-there is one, else the X11 display; on X11, let local containers use the display
-first (`xhost +local:`, and `xhost -local:` to take it back). Set
-`BAUM_DESKTOP_BAUM` to run a different `baum` binary than the bundled one.
+`run` starts the container's own daemon in the container's home directory,
+not yours. Set `BAUM_DESKTOP_BAUM` to run a different `baum` binary than the
+bundled one.
 
 For UI work and host integration, use `just desktop::dev` on macOS, or on Linux
 in a Wayland or X11 session. Vite, dependencies and generated frontend code stay in
