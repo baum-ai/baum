@@ -274,6 +274,15 @@ export function GroupPage({
     [group.id],
   );
   const history = useHistoryView(doc?.review.version, loadVersion);
+  // The document on screen: an earlier version read alone, else the latest.
+  // Its files, their patches and the files its chips open belong to it.
+  const viewedVersion =
+    history.selection && !history.selection.compare ? history.selection.version : undefined;
+  const viewedDocument = viewedVersion
+    ? history.state?.status === "ready"
+      ? history.state.document
+      : null
+    : doc;
   // Decisions, Sessions and Commits come from the members' own saved reviews:
   // the daemon has no group routes for them.
   const railMembers: RailMember[] = [...landed, ...members].flatMap(({ number, entry }) => {
@@ -336,21 +345,23 @@ export function GroupPage({
     };
   }, [group.id]);
 
-  // A file's whole diff for the Files pane: its hunks' patches joined; kept
-  // the same function while the document is, so an opened file is not read
-  // again.
+  // A file's whole diff for the Files pane, for the version on screen. Each
+  // hunk names the member whose comparison changes the file, and the daemon
+  // answers that member's whole file patch, so hunks of one member share a
+  // patch: each distinct patch is shown once. Kept the same function while
+  // the document is, so an opened file is not read again.
   const filePatches = useCallback(
     async (path: string) => {
-      if (!doc) return null;
+      if (!viewedDocument) return null;
       const parts = await Promise.all(
-        doc.index.hunks
+        viewedDocument.index.hunks
           .filter((hunk) => hunk.path === path)
-          .map((hunk) => patches(path, doc.review.version, hunk.id)),
+          .map((hunk) => patches(path, viewedDocument.review.version, hunk.id)),
       );
-      const text = parts.filter((part): part is string => Boolean(part));
+      const text = [...new Set(parts.filter((part): part is string => Boolean(part)))];
       return text.length > 0 ? text.join("\n") : null;
     },
-    [doc, patches],
+    [viewedDocument, patches],
   );
 
   // Generation. A group review builds on each member's own review: the
@@ -389,6 +400,7 @@ export function GroupPage({
   // A repository file a context chip opened, with its GitHub link.
   const [repositoryFile, setRepositoryFile] = useState<{
     reference: ReviewContextRef;
+    version: number;
     href: string;
   } | null>(null);
   // The pull requests start folded under the title.
@@ -520,8 +532,12 @@ export function GroupPage({
         // A file a context chip names opens here, in a dialog over the page,
         // read at the stack's head from the group's own file route.
         openRepositoryFile={(reference) => {
-          if (!doc) return false;
-          setRepositoryFile({ reference, href: contextRefUrl(doc, reference.path) });
+          if (!viewedDocument) return false;
+          setRepositoryFile({
+            reference,
+            version: viewedDocument.review.version,
+            href: contextRefUrl(viewedDocument, reference.path),
+          });
           return true;
         }}
         document={doc}
@@ -532,7 +548,11 @@ export function GroupPage({
         steps={steps}
         // Every file of the stack's change, as GitHub's Files changed shows
         // them: a file's diff is its hunks' patches, read when it is opened.
-        files={doc ? documentFilesSlot(doc.index.hunks, filePatches, "") : undefined}
+        files={
+          viewedDocument
+            ? documentFilesSlot(viewedDocument.index.hunks, filePatches, "")
+            : undefined
+        }
         header={{
           heading: group.name,
           titleAside: group.stack ? (
@@ -829,10 +849,10 @@ export function GroupPage({
         hunkPatches={patches}
         {...rail}
       />
-      {repositoryFile && doc ? (
+      {repositoryFile ? (
         <RepositoryFileDialog
           reference={repositoryFile.reference}
-          source={`api/groups/${encodeURIComponent(group.id)}/file?version=${doc.review.version}`}
+          source={`api/groups/${encodeURIComponent(group.id)}/file?version=${repositoryFile.version}`}
           href={repositoryFile.href}
           close={() => setRepositoryFile(null)}
         />

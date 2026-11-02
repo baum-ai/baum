@@ -17,7 +17,7 @@ import {
 import { inboxGroups } from "./inbox";
 import { forgetLastRows } from "./shortcuts";
 
-const rail = vi.hoisted(() => ({ commit: null as string | null }));
+const rail = vi.hoisted(() => ({ commit: null as string | null, file: null as string | null }));
 vi.mock("@baum/viewer/components/review-viewer", () => ({
   ReviewViewer: ({
     document,
@@ -27,6 +27,7 @@ vi.mock("@baum/viewer/components/review-viewer", () => ({
     sessions,
     commits,
     decisions,
+    files,
   }: ReviewViewerProps) => (
     <div>
       <h1>{header?.heading}</h1>
@@ -44,6 +45,18 @@ vi.mock("@baum/viewer/components/review-viewer", () => ({
       ) : null}
       {commits ? (
         <section aria-label="Commits">{commits.renderPane(rail.commit, {} as never)}</section>
+      ) : null}
+      {files?.files ? (
+        <section aria-label="Files">
+          <ul>
+            {files.files.map((file) => (
+              <li key={file.id}>{file.path}</li>
+            ))}
+          </ul>
+          {rail.file
+            ? files.renderFiles({ files: files.files, open: { id: rail.file, at: 0 } } as never)
+            : null}
+        </section>
       ) : null}
     </div>
   ),
@@ -114,6 +127,7 @@ let answers: Record<string, unknown>;
 beforeEach(() => {
   answers = {};
   rail.commit = null;
+  rail.file = null;
   Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
   // Every open pull request; the default Inbox view hides other people's.
   history.replaceState(null, "", "/s/test-ns/?page=pulls&filter=all");
@@ -554,5 +568,49 @@ it("shows Decisions, Sessions and Commits in a stack's rail, read through each m
   await act(async () => root.render(<App />));
   expect(requests.map((r) => r.path)).toContain(
     `api/commit?clone=clone&pr=8&oid=${"a".repeat(40)}`,
+  );
+});
+
+it("shows a stack member's file patch once however many of its hunks the review cites", async () => {
+  entries = [{ ...entry(7), status: "current", version_count: 1 }];
+  groups = [group([7], { version_count: 1, stack: true })];
+  const patch = "@@ -1,1 +1,1 @@\n-old line\n+only once\n";
+  // The daemon answers the member's whole file patch for each cited hunk.
+  for (const hunk of example.index.hunks.filter((h) => h.path === "queue/store.go"))
+    answers[`api/groups/g1/patch?version=3&path=queue%2Fstore.go&hunk=${hunk.id}`] = { patch };
+  rail.file = "queue/store.go";
+  history.replaceState(null, "", "/s/test-ns/?group=g1");
+  await act(async () => root.render(<App />));
+  const files = node.querySelector('section[aria-label="Files"]')!;
+  expect(files.textContent?.match(/only once/g)).toHaveLength(1);
+});
+
+it("lists and reads a stack's files for the earlier version on screen", async () => {
+  entries = [{ ...entry(7), status: "current", version_count: 2 }];
+  groups = [group([7], { version_count: 2, stack: true })];
+  const earlier = {
+    ...example,
+    review: { ...example.review, version: 2 },
+    index: {
+      ...example.index,
+      hunks: example.index.hunks
+        .filter((h) => h.path === "queue/store.go")
+        .map((h) => ({ ...h, path: "queue/earlier.go" })),
+    },
+  };
+  answers["api/groups/g1/document?version=2"] = earlier;
+  answers["api/groups/g1/versions"] = [{ version: 2 }, { version: 3 }];
+  rail.file = "queue/earlier.go";
+  history.replaceState(null, "", "/s/test-ns/?group=g1&review=2");
+  await act(async () => root.render(<App />));
+  const files = node.querySelector('section[aria-label="Files"]')!;
+  expect(Array.from(files.querySelectorAll("li"), (li) => li.textContent)).toEqual([
+    "queue/earlier.go",
+  ]);
+  expect(
+    requests.filter((r) => r.path.startsWith("api/groups/g1/patch")).map((r) => r.path),
+  ).toSatisfy(
+    (paths: string[]) =>
+      paths.length > 0 && paths.every((path) => path.includes("version=2&path=queue%2Fearlier.go")),
   );
 });
