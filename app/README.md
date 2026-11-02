@@ -52,7 +52,11 @@ lives only in `src/nine-dots.css`. A page that reads something says which of fou
 (`src/page-state.tsx`): waiting for its first read, that read failed (`Couldn't load jobs`,
 with the daemon's message and one Retry, never an empty page or an endless wait), empty, or its
 content. A failed later read keeps the content shown and says so in a banner. Native dialogs
-open through `useModal` (`src/modal.ts`), which gives the focus back to what opened them. Every screen uses baum's bundled type from the
+open through `useModal` (`src/modal.ts`), which gives the focus back to what opened them.
+Dialog and panel dismissals use the viewer's `CloseButton`; confirmation actions
+keep their Cancel buttons until finished. The keyboard shortcuts dialog keeps
+its title and close control visible while the list scrolls.
+Every screen uses baum's bundled type from the
 viewer (`../viewer/src/fonts/fonts.css`), Instrument Sans for text and Manrope for
 headings, through its `--font-text` and `--font-heading` tokens. Both fonts are
 under the SIL Open Font License, listed in the third-party notices. Fonts and
@@ -1632,8 +1636,8 @@ waiting at its prompt, as the Sessions page's Reply sends it, or a message for
 when a running session's turn ends, the queued message in its place once
 there is one. `r` focuses it.
 
-GitHub connection is available in Settings, the first-run
-diagnostics dialog and the desktop setup's first step, which share
+GitHub connection is available in Settings' Connections section and the
+desktop setup's first step, which share
 `src/github-auth.ts`. Sign in with GitHub starts device authorization through
 the daemon and, in the same click, opens the fixed
 `https://github.com/login/device` page in the browser and copies the code once
@@ -1658,9 +1662,12 @@ Diagnostics (`GET api/diagnostics`, the `baum internal doctor` report) open
 in a dialog from Settings' "Check this computer" button, which shows how many
 problems they found. `?page=diagnostics` opens Settings with the dialog open;
 the bootstrap page can carry `page=diagnostics` from the launch URL's
-fragment. Desktop setup opens the inbox instead. Each warning and problem
-shows its fix. The app runs the diagnostics once when it opens and, while they
-find a problem, shows a notice on every page linking to them; the dialog
+fragment. Desktop setup opens the inbox instead. The dialog groups the
+checks into needs attention, working and details, and shows this user's home
+directory, which the response's `home` names, as `~`. Each warning and
+problem shows its fix. Copy puts the report on the clipboard as Markdown for a
+GitHub issue, with the same `~` paths. The app runs the diagnostics once when it opens and,
+while they find a problem, shows a notice on every page linking to them; the dialog
 updates it when it runs the checks again. GitHub discovery shows a note only
 when a refresh failed or the request allowance is used up; a cache that is
 merely older than the poll interval is normal and says nothing.

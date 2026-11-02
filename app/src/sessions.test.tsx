@@ -537,7 +537,6 @@ it("toggles Codex approvals in Settings, and hides the toggle without the route"
           diagnosticsOpen={false}
           setDiagnosticsOpen={() => {}}
           onDiagnostics={() => {}}
-          authRevision={0}
           authChanged={() => {}}
         />,
       ),

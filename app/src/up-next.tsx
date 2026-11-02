@@ -22,7 +22,7 @@ import {
 } from "@baum/viewer/components/icons";
 import { InlineMarkdown, Markdown } from "@baum/viewer/components/markdown";
 import { Lines } from "@baum/viewer/components/review-parts";
-import { Alert, Badge, Button, LiveDot } from "@baum/viewer/components/ui";
+import { Alert, Badge, Button, CloseButton, LiveDot } from "@baum/viewer/components/ui";
 import type { ViewerLinkProps } from "@baum/viewer/navigation";
 import {
   RISK_SCORE_MEANING,
@@ -2433,9 +2433,12 @@ export function MergeReadyDialog({
       onClose={close}
       aria-labelledby="merge-ready-title"
     >
-      <h2 id="merge-ready-title" className="text-lg font-semibold">
-        Merge {formatCount(entries.length)} ready pull requests?
-      </h2>
+      <div className="flex items-start justify-between gap-3">
+        <h2 id="merge-ready-title" className="text-lg font-semibold">
+          Merge {formatCount(entries.length)} ready pull requests?
+        </h2>
+        {finished ? <CloseButton ref={closeButton} onClick={close} /> : null}
+      </div>
       <p className="my-3 text-(--text-secondary)">
         Each merges with GitHub's default method for you in its repository, and only at the commit
         shown here.
@@ -2480,11 +2483,11 @@ export function MergeReadyDialog({
       {finished && merges.some((merge) => merge.state === "failed") ? (
         <Alert>Some pull requests were not merged; the reasons are beside them.</Alert>
       ) : null}
-      <div className="mt-4 flex justify-end gap-2">
-        <Button ref={closeButton} variant="ghost" size="compact" disabled={running} onClick={close}>
-          {finished ? "Close" : "Cancel"}
-        </Button>
-        {finished ? null : (
+      {finished ? null : (
+        <div className="mt-4 flex justify-end gap-2">
+          <Button variant="ghost" size="compact" disabled={running} onClick={close}>
+            Cancel
+          </Button>
           <Button
             size="compact"
             disabled={checking || running || mergeable.length === 0}
@@ -2499,8 +2502,8 @@ export function MergeReadyDialog({
               `Merge ${formatCount(mergeable.length)} ${mergeable.length === 1 ? "pull request" : "pull requests"}`
             )}
           </Button>
-        )}
-      </div>
+        </div>
+      )}
     </dialog>
   );
 }

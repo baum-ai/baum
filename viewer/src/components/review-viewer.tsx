@@ -44,7 +44,6 @@ import {
   ChecksIcon,
   ChevronLeftIcon,
   ChevronRightIcon,
-  CloseIcon,
   CommitIcon,
   FilesIcon,
   LightbulbIcon,
@@ -78,7 +77,16 @@ import { ReviewSummary, type SummaryDestination } from "./review-summary";
 import { SideNavButton, SideNavDisclosure, SideNavGroup, SideNavNest } from "./side-nav";
 import { Empty, Failed, Skeleton } from "./states";
 import { tabPanelProps } from "./tabs";
-import { Alert, Badge, Button, CardHeader, IconButton, SegmentedControl, Spinner } from "./ui";
+import {
+  Alert,
+  Badge,
+  Button,
+  CardHeader,
+  CloseButton,
+  IconButton,
+  SegmentedControl,
+  Spinner,
+} from "./ui";
 
 /** The history view a host drives itself, when it needs the version being
  *  read for its own requests: the return of `useHistoryView`. */
@@ -1164,13 +1172,11 @@ function ReviewWorkspace<F extends ReviewFile>({
         </IconButton>
       </span>
       <span className="box-content flex h-9 flex-none items-center border-b border-(--border-subtle) xl:hidden">
-        <IconButton
+        <CloseButton
           label={`Close ${asideLabel.toLowerCase()}`}
           className="h-9 w-9"
           onClick={closeSheet}
-        >
-          <CloseIcon />
-        </IconButton>
+        />
       </span>
     </div>
   );
@@ -1324,9 +1330,7 @@ function ReviewWorkspace<F extends ReviewFile>({
               )}
             >
               <div className="absolute top-1 right-2 xl:hidden">
-                <IconButton label="Close sections" className="h-10 w-10" onClick={closeSheet}>
-                  <CloseIcon />
-                </IconButton>
+                <CloseButton label="Close sections" className="h-10 w-10" onClick={closeSheet} />
               </div>
               <SideNavGroup label="Review">
                 <SideNavButton

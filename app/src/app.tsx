@@ -229,7 +229,6 @@ function Workspace({ url }: { url: UrlState }) {
   // When the latest read of the daemon completed, for Pull requests' bar.
   const [updatedAt, setUpdatedAt] = useState<number | null>(null);
   const [revision, setRevision] = useState(0);
-  const [authRevision, setAuthRevision] = useState(0);
   const [selection, setSelection] = useState(new Set<string>());
   const [generating, setGenerating] = useState(false);
   // The pull requests whose review request is on its way to the daemon: they
@@ -448,7 +447,6 @@ function Workspace({ url }: { url: UrlState }) {
     };
   }, [reload, reloadLive]);
   const authChanged = () => {
-    setAuthRevision((n) => n + 1);
     void reload();
   };
   const cloneFor = (e: Entry) =>
@@ -1051,7 +1049,6 @@ function Workspace({ url }: { url: UrlState }) {
             />
           ) : page === "settings" || page === "diagnostics" ? (
             <SettingsPage
-              authRevision={authRevision}
               authChanged={authChanged}
               automatic={automatic}
               defaults={defaults}

@@ -734,14 +734,74 @@ it("lists diagnostics problems first with status text and fixes", async () => {
   await act(async () => root.render(<App />));
   const text = node.textContent ?? "";
   expect(text).toContain("Diagnostics");
-  expect(text).toContain("Overall: Problem. 1 problem found.");
+  expect(text).toContain("Overall: Problem. 1 problem found");
   for (const word of ["OK", "Warning", "Problem"]) expect(text).toContain(word);
   expect(text).toContain("Fix: Connect GitHub in baum Settings.");
   expect(text).toContain("Fix: Upgrade gh.");
   expect(text).toContain("/usr/bin/git");
   expect(text).toContain("2.40.0");
-  const checks = [...node.querySelectorAll("li h3")].map((h) => h.textContent);
+  const checks = [...node.querySelectorAll("li h4")].map((h) => h.textContent);
   expect(checks).toEqual(["GitHub token", "GitHub CLI", "git"]);
+});
+it("opens diagnostics on its title and copies the report as Markdown", async () => {
+  history.replaceState(null, "", "/s/test-ns/?page=diagnostics");
+  stubDiagnostics(async () =>
+    Response.json({ local: true, home: "/usr", report: diagnosticsReport }),
+  );
+  const writeText = vi.fn(async (_: string) => {});
+  Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });
+  // The first-run tour takes the focus afterwards here, so watch the calls.
+  const focus = vi.spyOn(HTMLElement.prototype, "focus");
+  await act(async () => root.render(<App />));
+  const title = node.querySelector("#diagnostics-dialog-title");
+  expect(focus.mock.contexts).toContain(title);
+  focus.mockRestore();
+  const copy = [...node.querySelectorAll("button")].find((b) => b.textContent === "Copy")!;
+  await act(async () => copy.click());
+  expect(writeText).toHaveBeenCalledWith(
+    [
+      "### baum diagnostics",
+      "",
+      "**Overall:** Problem. 1 problem found",
+      "",
+      "- **GitHub token** (Problem): No token found.",
+      "  - Fix: Connect GitHub in baum Settings.",
+      "  - Source: none",
+      "- **GitHub CLI** (Warning): gh is old.",
+      "  - Fix: Upgrade gh.",
+      "  - Version: 2.40.0",
+      "- **git** (OK): git is available.",
+      "  - Path: `~/bin/git`",
+      "",
+    ].join("\n"),
+  );
+  expect(copy.textContent).toBe("Copied");
+});
+it("shows the home directory in diagnostics paths as ~", async () => {
+  history.replaceState(null, "", "/s/test-ns/?page=diagnostics");
+  stubDiagnostics(async () =>
+    Response.json({
+      local: true,
+      home: "/home/ada",
+      report: {
+        status: "ok",
+        checks: [
+          {
+            id: "baum",
+            label: "baum command",
+            status: "ok",
+            detail: "hooks run this baum (/home/ada/bin/baum)",
+            path: "/home/ada/.local/bin/baum",
+          },
+        ],
+      },
+    }),
+  );
+  await act(async () => root.render(<App />));
+  const text = node.textContent ?? "";
+  expect(text).toContain("hooks run this baum (~/bin/baum)");
+  expect(text).toContain("~/.local/bin/baum");
+  expect(text).not.toContain("/home/ada");
 });
 it("shows diagnostics loading, then re-runs on Check again and disables it meanwhile", async () => {
   history.replaceState(null, "", "/s/test-ns/?page=diagnostics");
@@ -805,7 +865,7 @@ it("opens the diagnostics page from its address", async () => {
   );
   await act(async () => root.render(<App />));
   expect(node.textContent).toContain("Check this computer");
-  expect(node.textContent).toContain("Overall: Problem. 1 problem found.");
+  expect(node.textContent).toContain("Overall: Problem. 1 problem found");
   expect(node.textContent).not.toContain("Show the fixes");
   expect(calls.count).toBe(1);
 });

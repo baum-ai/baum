@@ -4,9 +4,9 @@ import type { Block, IndexedAttachment, ReviewDocument } from "../review-documen
 import { layoutImages, sectionImageHeight, viewerImageWidth } from "../review-image-layout";
 import { useAttachmentUrl } from "../host";
 import { cn, FOCUS_RING } from "./classnames";
-import { CloseIcon, ExternalLinkIcon } from "./icons";
+import { ExternalLinkIcon } from "./icons";
 import { AnchorChips, Part } from "./review-parts";
-import { Button, IconButton } from "./ui";
+import { Button, CloseButton } from "./ui";
 
 type ImagesBlock = Extract<Block, { kind: "images" }>;
 
@@ -246,9 +246,11 @@ export function ReviewImages({
                   Open original
                   <ExternalLinkIcon size={10} />
                 </a>
-                <IconButton label="Close image" autoFocus onClick={() => dialog.current?.close()}>
-                  <CloseIcon size={14} />
-                </IconButton>
+                <CloseButton
+                  label="Close image"
+                  autoFocus
+                  onClick={() => dialog.current?.close()}
+                />
               </div>
             </div>
             <img

@@ -399,6 +399,8 @@ export type Diagnostics = {
   generation_runner: boolean;
   discovery: boolean;
   index: boolean;
+  /** This user's home directory, which the app shows as ~ in the report. */
+  home?: string;
   report: DiagnosticReport | null;
 };
 /** Why a session waits on its user: it asks to run a tool, it asked a

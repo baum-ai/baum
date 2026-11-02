@@ -1,7 +1,7 @@
 import { usePreferences, type PageModifier } from "./preferences";
 import { useModal } from "./modal";
 import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
-import { Button } from "@baum/viewer/components/ui";
+import { CloseButton } from "@baum/viewer/components/ui";
 import { PAGES, type Page } from "./pages";
 
 export type InboxAction =
@@ -925,7 +925,7 @@ export function ShortcutsSheet({
   const title = useRef<HTMLHeadingElement>(null);
   useEffect(() => {
     // The list scrolls; it opens at its top, on the current page's keys,
-    // rather than on Close at its foot.
+    // rather than on its close control.
     title.current?.focus({ preventScroll: true });
     if (dialog.current) dialog.current.scrollTop = 0;
   }, []);
@@ -942,35 +942,35 @@ export function ShortcutsSheet({
       aria-labelledby="shortcuts-title"
       className="shortcuts-sheet"
     >
-      <h2
-        ref={title}
-        id="shortcuts-title"
-        tabIndex={-1}
-        className="text-lg font-semibold outline-none"
-      >
-        Keyboard shortcuts
-      </h2>
-      {ordered.map((group) => (
-        <section key={group.place} aria-label={group.title} className="shortcuts-group">
-          <h3>{group.title}</h3>
-          <dl className="shortcuts-list">
-            {group.rows.map((row) => (
-              <div key={row.keys.join()}>
-                <dt>
-                  {row.keys.map((key) => (
-                    <kbd key={key}>{KEY_NAMES[key] ?? key}</kbd>
-                  ))}
-                </dt>
-                <dd>{row.label}</dd>
-              </div>
-            ))}
-          </dl>
-        </section>
-      ))}
-      <div className="mt-4 flex justify-end">
-        <Button size="compact" onClick={close}>
-          Close
-        </Button>
+      <div className="local-dialog-head shortcuts-head">
+        <h2
+          ref={title}
+          id="shortcuts-title"
+          tabIndex={-1}
+          className="text-lg font-semibold outline-none"
+        >
+          Keyboard shortcuts
+        </h2>
+        <CloseButton onClick={close} />
+      </div>
+      <div className="shortcuts-body">
+        {ordered.map((group) => (
+          <section key={group.place} aria-label={group.title} className="shortcuts-group">
+            <h3>{group.title}</h3>
+            <dl className="shortcuts-list">
+              {group.rows.map((row) => (
+                <div key={row.keys.join()}>
+                  <dt>
+                    {row.keys.map((key) => (
+                      <kbd key={key}>{KEY_NAMES[key] ?? key}</kbd>
+                    ))}
+                  </dt>
+                  <dd>{row.label}</dd>
+                </div>
+              ))}
+            </dl>
+          </section>
+        ))}
       </div>
     </dialog>
   );

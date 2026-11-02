@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import { HunkEvidence, HunkPatchProvider } from "@baum/viewer/components/hunk-evidence";
 import type { HunkPatchSource } from "@baum/viewer/components/hunk-evidence";
 import { Markdown } from "@baum/viewer/components/markdown";
-import { Alert, Button, LiveDot } from "@baum/viewer/components/ui";
+import { Alert, Button, CloseButton, LiveDot } from "@baum/viewer/components/ui";
 import type { Anchor, ReviewDocument } from "@baum/viewer/review-document";
 import {
   askChat,
@@ -513,9 +513,7 @@ export function AskPanel({
     >
       <header className="ask-head">
         <h2>Ask about this review</h2>
-        <Button variant="secondary" size="compact" onClick={close} aria-keyshortcuts="Escape">
-          Close
-        </Button>
+        <CloseButton onClick={close} aria-keyshortcuts="Escape" />
       </header>
       {conversations.length > 0 ? (
         <nav aria-label="Conversations" className="ask-convos">

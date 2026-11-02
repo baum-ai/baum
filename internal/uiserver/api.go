@@ -8,6 +8,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 	"sync"
@@ -395,6 +396,10 @@ func (a LocalAPI) Handler() *LocalHandler {
 	var diagnostics singleflight.Group
 	mux.HandleFunc("GET /api/diagnostics", func(w http.ResponseWriter, r *http.Request) {
 		body := map[string]any{"local": true, "generation_runner": a.Jobs != nil, "discovery": a.PRs != nil, "index": a.Index != nil, "report": nil}
+		// The report's paths are this user's; the app shows the home directory as ~.
+		if home, err := os.UserHomeDir(); err == nil {
+			body["home"] = home
+		}
 		if a.Diagnostics != nil {
 			timeout := a.DiagnosticsTimeout
 			if timeout <= 0 {

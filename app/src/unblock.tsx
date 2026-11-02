@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { Alert, Button } from "@baum/viewer/components/ui";
+import { Alert, Button, CloseButton } from "@baum/viewer/components/ui";
 import { request, type Entry } from "./api";
 import { useModal } from "./modal";
 import { LoadingStatus, NineDots } from "./nine-dots";
@@ -159,9 +159,14 @@ function UnblockDialog<Options extends { head_sha: string }, Result>({
       }}
       aria-labelledby={titleId}
     >
-      <h2 id={titleId} className="text-lg font-semibold">
-        {title} #{pr.number}?
-      </h2>
+      <div className="flex items-start justify-between gap-3">
+        <h2 id={titleId} className="text-lg font-semibold">
+          {title} #{pr.number}?
+        </h2>
+        {outcome ? (
+          <CloseButton ref={closeButton} onClick={close} aria-keyshortcuts="Escape" />
+        ) : null}
+      </div>
       <p className="my-3 text-(--text-secondary)">
         {pr.title} · {pr.repository}
       </p>
@@ -171,14 +176,14 @@ function UnblockDialog<Options extends { head_sha: string }, Result>({
       {why ? <Alert>{why}</Alert> : null}
       {outcome?.problem ? <Alert>{outcome.problem}</Alert> : null}
       {error ? <Alert>{error}</Alert> : null}
-      <div className="mt-4 flex justify-end gap-2">
-        <Button ref={closeButton} variant="ghost" size="compact" disabled={busy} onClick={close}>
-          {outcome ? "Close" : "Cancel"}
-          <kbd aria-hidden="true" className="key-hint">
-            Esc
-          </kbd>
-        </Button>
-        {outcome ? null : (
+      {outcome ? null : (
+        <div className="mt-4 flex justify-end gap-2">
+          <Button variant="ghost" size="compact" disabled={busy} onClick={close}>
+            Cancel
+            <kbd aria-hidden="true" className="key-hint">
+              Esc
+            </kbd>
+          </Button>
           <Button
             ref={confirm}
             size="compact"
@@ -199,8 +204,8 @@ function UnblockDialog<Options extends { head_sha: string }, Result>({
               </>
             )}
           </Button>
-        )}
-      </div>
+        </div>
+      )}
     </dialog>
   );
 }

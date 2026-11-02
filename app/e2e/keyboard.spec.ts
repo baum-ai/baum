@@ -134,6 +134,14 @@ test("Tab stays inside a dialog and goes through its controls", async ({ page })
   const sheet = page.getByRole("dialog", { name: "Keyboard shortcuts" });
   await expect(sheet).toBeVisible();
   const close = sheet.getByRole("button", { name: "Close", exact: true });
+  const heading = sheet.getByRole("heading", { name: "Keyboard shortcuts", exact: true });
+  const headingTop = (await heading.boundingBox())!.y;
+  await sheet.evaluate((element) => {
+    element.scrollTop = element.scrollHeight;
+  });
+  await expect.poll(() => sheet.evaluate((element) => element.scrollTop)).toBeGreaterThan(0);
+  await expect.poll(async () => (await heading.boundingBox())!.y).toBeCloseTo(headingTop, 0);
+  await expect(close).toBeInViewport();
   await page.keyboard.press("Tab");
   await expect(close).toBeFocused();
   // Its only control: Tab and Shift+Tab stay on it.
