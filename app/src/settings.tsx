@@ -51,6 +51,8 @@ import {
   describeCommand,
   describeAgent,
   agentConnected,
+  agentUpdatable,
+  agentHookNote,
   displayPath,
   type SetupView,
   type Outcome,
@@ -808,6 +810,11 @@ function AgentHooksPanel({ setup }: { setup: DesktopSetup }) {
           icon={<SessionsIcon size={20} />}
           title="Agent hooks"
           detail="Connect your coding agents so baum can follow their work."
+          actions={
+            <Button disabled={busy} size="tiny" variant="ghost" onClick={() => void run()}>
+              {doing === "refresh" && busy ? "Checking…" : "Check again"}
+            </Button>
+          }
         />
         {view?.hooks.agents.map((agent) => (
           <div
@@ -832,13 +839,7 @@ function AgentHooksPanel({ setup }: { setup: DesktopSetup }) {
                   <p className="text-xs text-(--text-secondary)">{display(describeAgent(agent))}</p>
                 ) : null}
                 {agent.installed ? (
-                  <p className="text-xs text-(--text-tertiary)">
-                    {agent.agent === "codex"
-                      ? agent.trust?.state === "trusted"
-                        ? "Codex hooks are approved."
-                        : "Review hook trust with /hooks in Codex."
-                      : "Review plugin trust in Claude Code."}
-                  </p>
+                  <p className="text-xs text-(--text-tertiary)">{agentHookNote(agent)}</p>
                 ) : null}
               </div>
             </div>
@@ -857,7 +858,7 @@ function AgentHooksPanel({ setup }: { setup: DesktopSetup }) {
                     : `${agent.installed ? "Enable" : "Connect"} ${agent.name}`}
                 </Button>
               ) : null}
-              {agent.detected && !agent.error && agent.installed && agent.enabled ? (
+              {agentUpdatable(agent) ? (
                 <Button
                   disabled={busy}
                   size="compact"
@@ -882,14 +883,6 @@ function AgentHooksPanel({ setup }: { setup: DesktopSetup }) {
             </div>
           </div>
         ))}
-        <footer className="flex flex-wrap items-center justify-between gap-3 border-t border-(--border-subtle) px-5 py-3">
-          <p className="text-xs text-(--text-tertiary)">
-            Installed something new? Refresh to check its status.
-          </p>
-          <Button disabled={busy} size="compact" variant="secondary" onClick={() => void run()}>
-            {doing === "refresh" && busy ? "Checking…" : "Check again"}
-          </Button>
-        </footer>
       </section>
       {view?.hooks.error ? <Alert>{display(view.hooks.error)}</Alert> : null}
     </>
@@ -1059,6 +1052,13 @@ export function SettingsPage({
     section,
     setSection,
   );
+  // Set by the Codex warning's button; the panel scrolls into view once shown.
+  const [showHooks, setShowHooks] = useState(false);
+  useEffect(() => {
+    if (!showHooks || section !== "connections") return;
+    document.getElementById("hooks-heading")?.scrollIntoView?.({ block: "start" });
+    setShowHooks(false);
+  }, [showHooks, section]);
   const loading = <LoadingStatus block>Reading your review settings…</LoadingStatus>;
   return (
     <section className="settings-page">
@@ -1106,7 +1106,17 @@ export function SettingsPage({
           ))}
         </nav>
         <div ref={keys.content} className="settings-content" onFocus={keys.onFocus}>
-          <CodexHookWarning check={codexTrust} />
+          <CodexHookWarning
+            check={codexTrust}
+            open={
+              setup.desktop
+                ? () => {
+                    setSection("connections");
+                    setShowHooks(true);
+                  }
+                : undefined
+            }
+          />
           {section === "general" ? (
             <GeneralSection />
           ) : section === "reviews" ? (

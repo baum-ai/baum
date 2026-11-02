@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Button } from "@baum/viewer/components/ui";
 import { request } from "./api";
 import { Notice } from "./shell";
 
@@ -77,19 +76,31 @@ export function useCodexHookTrust() {
   return { status, warning: codexHookWarning(status), checking, recheck };
 }
 
-export function CodexHookWarning({ check }: { check?: ReturnType<typeof useCodexHookTrust> }) {
+/** `open` shows the setting that fixes the warning, when the page has it. */
+export function CodexHookWarning({
+  check,
+  open,
+}: {
+  check?: ReturnType<typeof useCodexHookTrust>;
+  open?: () => void;
+}) {
   if (!check?.warning) return null;
   return (
-    <Notice>
-      <span>{check.warning}</span>{" "}
-      <Button
-        variant="secondary"
-        size="compact"
-        disabled={check.checking}
-        onClick={() => void check.recheck()}
-      >
-        {check.checking ? "Checking…" : "Check again"}
-      </Button>
+    <Notice
+      action={
+        <>
+          {open ? (
+            <button type="button" onClick={open}>
+              Open agent hooks
+            </button>
+          ) : null}
+          <button type="button" disabled={check.checking} onClick={() => void check.recheck()}>
+            {check.checking ? "Checking…" : "Check again"}
+          </button>
+        </>
+      }
+    >
+      {check.warning}
     </Notice>
   );
 }

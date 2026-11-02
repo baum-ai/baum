@@ -328,7 +328,8 @@ removes only the native `baum@baum` plugin and leaves the marketplace and
 other plugins. Settings' Update runs the bundled `baum hooks update --user
 --agent AGENT`, which refreshes the marketplace and brings the installed
 plugin to its latest version, so new hooks arrive without removing and
-connecting the agent again.
+connecting the agent again. Update shows only when status reports
+`update_available`, or when Codex reports baum hooks missing.
 
 ### Restarts into the app's baum
 

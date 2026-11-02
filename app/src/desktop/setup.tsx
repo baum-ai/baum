@@ -4,6 +4,7 @@ import { invoke } from "./native";
 import {
   describeAgent,
   agentConnected,
+  agentHookNote,
   describeCommand,
   detectedHarnesses,
   displayPath,
@@ -399,10 +400,14 @@ export function Setup() {
                         </p>
                         {agent?.installed && !agent.error && (
                           <p id={`${definition.id}-hint`} className="agent-hint">
-                            {definition.id === "codex" && connected
-                              ? "Codex hooks are approved."
-                              : agent.trust?.state === "hooks_disabled"
-                                ? "Run codex features enable hooks, then start a new conversation."
+                            {definition.id === "codex"
+                              ? connected
+                                ? "Codex hooks are approved."
+                                : agent.trust?.state === "hooks_disabled"
+                                  ? "Run codex features enable hooks, then start a new conversation."
+                                  : definition.hint
+                              : agent.trust && agent.trust.state !== "ready"
+                                ? agentHookNote(agent)
                                 : definition.hint}
                           </p>
                         )}
