@@ -72,7 +72,7 @@ func writeReviews(ctx context.Context, p project, commonDir string, now time.Tim
 		if err != nil {
 			return fmt.Errorf("sample review of #%d: %w", pr.number, err)
 		}
-		document, findings := validator.Complete(authored, &b, "", "sample", now.Add(-pr.updated+time.Hour/2))
+		document, findings := validator.Complete(authored, &b, "", "sample", now.Add(-time.Hour))
 		if findings != "" {
 			return fmt.Errorf("sample review of #%d: %s", pr.number, findings)
 		}
@@ -84,9 +84,10 @@ func writeReviews(ctx context.Context, p project, commonDir string, now time.Tim
 	return nil
 }
 
-var placeholder = regexp.MustCompile(`^@(commit(\d+)|([^#]+)(?:#(\d+))?)$`)
+var placeholder = regexp.MustCompile(`^@(commit(\d+)|([\w./-]+)(?:#(\d+))?)$`)
 
-// resolve replaces a sample review's placeholders: in a list, "@path"
+// resolve replaces a sample review's placeholders, a whole string of "@"
+// and a path or commit with no spaces: in a list, "@path"
 // becomes every hunk of the file; anywhere else, its first. A group's count
 // becomes the number of its hunks.
 func resolve(raw []byte, hunks []bundle.Hunk, commits []string) ([]byte, error) {
@@ -209,7 +210,7 @@ func activity(p project, pr pull, now time.Time) ([]bundle.ConversationItem, []b
 	switch pr.number {
 	case tags.number:
 		shas := p.commits[pr.number]
-		queryLine, indexLine := 25, 12
+		indexLine := 12
 		conversation := []bundle.ConversationItem{
 			{ID: "PRR_sample_codex", Kind: "review", AuthorLogin: "chatgpt-codex-connector", Bot: true, BotTool: "codex", State: "commented",
 				Commit: shas[1], CreatedAt: at(28 * time.Hour), Body: "Here are some automated review suggestions for this pull request."},
@@ -229,7 +230,8 @@ func activity(p project, pr pull, now time.Time) ([]bundle.ConversationItem, []b
 				Body: "Add is the only writer today, and its comment says that whatever removes or reorders notes must update the index too."},
 		}
 		threads := []bundle.Thread{
-			{ID: "PRRT_sample_query", Path: "tags.go", Line: &queryLine, Resolved: true},
+			// The fix rewrote the lines it was left on.
+			{ID: "PRRT_sample_query", Path: "tags.go", Resolved: true, Outdated: true},
 			{ID: "PRRT_sample_index", Path: "store.go", Line: &indexLine, Resolved: true},
 		}
 		return conversation, threads
