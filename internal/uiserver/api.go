@@ -320,6 +320,14 @@ func (a LocalAPI) Handler() *LocalHandler {
 	mux.HandleFunc("PUT /api/settings/plan-usage", a.putPlanUsageSettings)
 	mux.HandleFunc("GET /api/settings/decisions", a.getDecisionSettings)
 	mux.HandleFunc("PUT /api/settings/decisions", a.putDecisionSettings)
+	// Custom prompts; a run resolves them when it starts, so no change
+	// notification is needed.
+	mux.HandleFunc("GET /api/settings/prompts", func(w http.ResponseWriter, r *http.Request) {
+		a.Registry.ServePrompts(w, r, repos.GlobalPrompts)
+	})
+	mux.HandleFunc("PUT /api/settings/prompts/{id}", func(w http.ResponseWriter, r *http.Request) {
+		a.Registry.ServePromptPut(w, r, repos.GlobalPrompts, r.PathValue("id"))
+	})
 	// The app's agent environment replaces the config file's; an empty one
 	// goes back to the file's.
 	mux.HandleFunc("PUT /api/settings/agent-env", func(w http.ResponseWriter, r *http.Request) {

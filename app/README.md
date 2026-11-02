@@ -1560,6 +1560,21 @@ the default is saved as none, so it follows the harness, and a saved model
 the daemon reports ignored (`baum internal reviews show`, with the harness it
 resolved) is shown the same way while that harness is chosen, and kept unless
 changed.
+
+Custom prompts (the review, fix and extraction prompts) are read with `GET
+api/settings/prompts` and, for a picked repository, `GET
+api/repositories/{owner}/{name}/prompts`: `{"prompts": [...]}`, one entry per
+catalogue prompt in catalogue order (`id`, `title`, `group`, `used_by`,
+`default_text`, `default_version`, `custom_text` and `based_on` (null unless
+this scope has its own text), `outdated`, `safety_rules`, `missing_safety_rules`
+for the text in force in that scope). A repository entry adds `source`
+(`repository`, `global` or `default`) and `inherited_text`. `PUT
+api/settings/prompts/{id}` and `PUT api/repositories/{owner}/{name}/prompts/{id}`
+take `{"text": string|null}` (null or `""` resets, to the built-in or the global
+text) and answer the updated entry. Errors are `{"message"}`: 400 for a text
+that fails validation or a malformed body, 404 for an unknown id or a
+repository that is not picked, 413 for a body over about twice the 64 KiB text
+limit.
 Analytics counts the decisions captured under baum's work.
 
 Every list page draws its list one way: Pull requests, the Inbox's queue, Sessions,
