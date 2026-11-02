@@ -1,4 +1,3 @@
-import { NO_CRITERIA } from "./pr-filter";
 import { expect, it, vi } from "vitest";
 import { LocalRequestError, type Entry } from "./api";
 import {
@@ -18,7 +17,10 @@ const inbox = (overrides: Partial<Inbox> = {}): Inbox => ({
   name: "Inbox one",
   color: "blue",
   what: "any",
-  ...NO_CRITERIA,
+  owners: [],
+  risk: "any",
+  repositories: [],
+  query: "",
   no_bots: false,
   badge: true,
   ...overrides,
@@ -78,6 +80,20 @@ it("leaves out bots when asked", () => {
   expect(matches(inbox({ no_bots: true }), item("merge", { author_bot: false }))).toBe(true);
   expect(matches(inbox({ no_bots: true }), item("merge"))).toBe(true);
   expect(matches(inbox({ no_bots: false }), item("merge", { author_bot: true }))).toBe(true);
+});
+
+it("matches its query on top of the rest", () => {
+  const plain = item("merge", { draft: false });
+  const failing = { ...plain, entry: { ...plain.entry, checks: "failing" as const } };
+  expect(matches(inbox({ query: "checks:failing" }), failing)).toBe(true);
+  expect(matches(inbox({ query: "checks:failing -is:draft" }), failing)).toBe(true);
+  expect(matches(inbox({ query: "checks:passing" }), failing)).toBe(false);
+  expect(matches(inbox({ what: "review", query: "checks:failing" }), failing)).toBe(false);
+  // A query that does not read narrows nothing.
+  expect(matches(inbox({ query: "checks:" }), failing)).toBe(true);
+  expect(sentence(inbox({ query: "checks:failing" }))).toBe(
+    "Anything waiting on me in any repository, whatever the risk, matching checks:failing.",
+  );
 });
 
 it("says what an inbox holds", () => {
@@ -267,7 +283,10 @@ it("reads a malformed entry defensively and drops one without an id or name", ()
       name: "A",
       color: "grey",
       what: "any",
-      ...NO_CRITERIA,
+      owners: [],
+      risk: "any",
+      repositories: [],
+      query: "",
       no_bots: false,
       badge: true,
     },
@@ -276,8 +295,10 @@ it("reads a malformed entry defensively and drops one without an id or name", ()
       name: "B",
       color: "red",
       what: "merge",
-      ...NO_CRITERIA,
       owners: ["acme"],
+      risk: "any",
+      repositories: [],
+      query: "",
       no_bots: false,
       badge: false,
     },

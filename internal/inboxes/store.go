@@ -10,6 +10,7 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+	"unicode"
 	"unicode/utf8"
 
 	"github.com/baum-ai/baum/internal/appdb"
@@ -21,20 +22,16 @@ const (
 	MaxNameLength   = 40
 	MaxOwners       = 50
 	MaxRepositories = 50
+	MaxQueryLength  = 500
 )
 
 var (
-	whats       = []string{"any", "review", "merge", "agent", "mine"}
-	risks       = []string{"any", "3", "4"}
-	colors      = []string{"blue", "green", "red", "amber", "purple", "grey"}
-	involvement = []string{"assigned", "requested", "authored"}
-	reviews     = []string{"approved", "changes_requested", "none"}
-	checks      = []string{"passing", "failing", "running"}
-	merges      = []string{"ready", "conflict"}
+	whats  = []string{"any", "review", "merge", "agent", "mine"}
+	risks  = []string{"any", "3", "4"}
+	colors = []string{"blue", "green", "red", "amber", "purple", "grey"}
 
-	ownerPattern = regexp.MustCompile(`^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$`)
-	// A GitHub Enterprise repository carries its host: host/owner/name.
-	repositoryPattern = regexp.MustCompile(`^(?:[A-Za-z0-9](?:[A-Za-z0-9.-]{0,251}[A-Za-z0-9])?(?::[0-9]{1,5})?/)?[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?/[A-Za-z0-9._-]{1,100}$`)
+	ownerPattern      = regexp.MustCompile(`^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$`)
+	repositoryPattern = regexp.MustCompile(`^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?/[A-Za-z0-9._-]{1,100}$`)
 	// idPattern is the shape of newID.
 	idPattern = regexp.MustCompile(`^[0-9a-f]{32}$`)
 )
@@ -50,29 +47,19 @@ const (
 	CodeUnreadable     = "inboxes_unreadable"
 )
 
-// Criteria narrow pull requests. Saved inboxes and the app's quick filters
-// share them; every list is empty for any, and a list's values combine with or.
-type Criteria struct {
-	Owners       []string `json:"owners"`
-	Risk         string   `json:"risk"`
-	Repositories []string `json:"repositories"`
-	Involvement  []string `json:"involvement"`
-	NoDrafts     bool     `json:"no_drafts"`
-	Review       []string `json:"review"`
-	Checks       []string `json:"checks"`
-	Merge        []string `json:"merge"`
-}
-
 // Inbox is a saved filter over the app's Up next queue. The daemon stores it
 // and never evaluates it.
 type Inbox struct {
-	ID    string `json:"id"`
-	Name  string `json:"name"`
-	Color string `json:"color"`
-	What  string `json:"what"`
-	Criteria
-	NoBots bool `json:"no_bots"`
-	Badge  bool `json:"badge"`
+	ID           string   `json:"id"`
+	Name         string   `json:"name"`
+	Color        string   `json:"color"`
+	What         string   `json:"what"`
+	Owners       []string `json:"owners"`
+	Risk         string   `json:"risk"`
+	Repositories []string `json:"repositories"`
+	Query        string   `json:"query"`
+	NoBots       bool     `json:"no_bots"`
+	Badge        bool     `json:"badge"`
 }
 
 // State is the stored list and the revision it is at.
@@ -146,10 +133,6 @@ func decode(data []byte) (State, error) {
 	if state.Inboxes == nil {
 		state.Inboxes = []Inbox{}
 	}
-	// Inboxes saved before a list existed read it as empty.
-	for i := range state.Inboxes {
-		state.Inboxes[i].fill()
-	}
 	return state, nil
 }
 
@@ -216,8 +199,19 @@ func normalize(in []Inbox, known map[string]bool) ([]Inbox, error) {
 		if !oneOf(inbox.What, whats) {
 			return nil, invalid(CodeInvalidInbox, "Inbox %q: what must be one of %s.", inbox.Name, strings.Join(whats, ", "))
 		}
-		if err := inbox.Clean(fmt.Sprintf("Inbox %q", inbox.Name)); err != nil {
+		if !oneOf(inbox.Risk, risks) {
+			return nil, invalid(CodeInvalidInbox, "Inbox %q: risk must be one of %s.", inbox.Name, strings.Join(risks, ", "))
+		}
+		var err error
+		if inbox.Owners, err = cleanList(inbox.Owners, MaxOwners, ownerPattern, inbox.Name, "owners", "a GitHub user or organization login"); err != nil {
 			return nil, err
+		}
+		if inbox.Repositories, err = cleanList(inbox.Repositories, MaxRepositories, repositoryPattern, inbox.Name, "repositories", "owner/name"); err != nil {
+			return nil, err
+		}
+		inbox.Query = strings.TrimSpace(inbox.Query)
+		if !ValidQuery(inbox.Query) {
+			return nil, invalid(CodeInvalidInbox, "Inbox %q: the query must be one line of at most %d characters.", inbox.Name, MaxQueryLength)
 		}
 		// An id the list no longer holds is kept when it has the daemon's
 		// shape: it is an inbox deleted and brought back by Undo, whose links
@@ -237,44 +231,14 @@ func normalize(in []Inbox, known map[string]bool) ([]Inbox, error) {
 	return out, nil
 }
 
-// Clean checks the criteria and normalizes their lists in place; subject
-// names what holds them in an error's message.
-func (c *Criteria) Clean(subject string) error {
-	if !oneOf(c.Risk, risks) {
-		return invalid(CodeInvalidInbox, "%s: risk must be one of %s.", subject, strings.Join(risks, ", "))
+// ValidQuery reports whether a filter query is one line of valid UTF-8 text
+// of at most MaxQueryLength characters. The daemon never parses it: the app
+// does.
+func ValidQuery(query string) bool {
+	if !utf8.ValidString(query) || utf8.RuneCountInString(query) > MaxQueryLength {
+		return false
 	}
-	var err error
-	if c.Owners, err = cleanList(c.Owners, MaxOwners, ownerPattern, subject, "owners", "a GitHub user or organization login"); err != nil {
-		return err
-	}
-	if c.Repositories, err = cleanList(c.Repositories, MaxRepositories, repositoryPattern, subject, "repositories", "owner/name"); err != nil {
-		return err
-	}
-	for _, list := range []struct {
-		values  *[]string
-		field   string
-		allowed []string
-	}{{&c.Involvement, "involvement", involvement}, {&c.Review, "review", reviews}, {&c.Checks, "checks", checks}, {&c.Merge, "merge", merges}} {
-		out := []string{}
-		for _, v := range *list.values {
-			if !oneOf(v, list.allowed) {
-				return invalid(CodeInvalidInbox, "%s: %s must be among %s.", subject, list.field, strings.Join(list.allowed, ", "))
-			}
-			if !oneOf(v, out) {
-				out = append(out, v)
-			}
-		}
-		*list.values = out
-	}
-	return nil
-}
-
-func (c *Criteria) fill() {
-	for _, list := range []*[]string{&c.Owners, &c.Repositories, &c.Involvement, &c.Review, &c.Checks, &c.Merge} {
-		if *list == nil {
-			*list = []string{}
-		}
-	}
+	return strings.IndexFunc(query, unicode.IsControl) < 0
 }
 
 func oneOf(v string, allowed []string) bool {
@@ -288,16 +252,16 @@ func oneOf(v string, allowed []string) bool {
 
 // cleanList trims the entries, rejects ones that do not match pattern and
 // drops repeats ignoring case, keeping the first spelling.
-func cleanList(in []string, max int, pattern *regexp.Regexp, subject, field, shape string) ([]string, error) {
+func cleanList(in []string, max int, pattern *regexp.Regexp, inbox, field, shape string) ([]string, error) {
 	if len(in) > max {
-		return nil, invalid(CodeInvalidInbox, "%s: at most %d %s are allowed.", subject, max, field)
+		return nil, invalid(CodeInvalidInbox, "Inbox %q: at most %d %s are allowed.", inbox, max, field)
 	}
 	out := make([]string, 0, len(in))
 	seen := map[string]bool{}
 	for _, v := range in {
 		v = strings.TrimSpace(v)
 		if !pattern.MatchString(v) || strings.HasSuffix(v, "/.") || strings.HasSuffix(v, "/..") {
-			return nil, invalid(CodeInvalidInbox, "%s: %q in %s is not %s.", subject, v, field, shape)
+			return nil, invalid(CodeInvalidInbox, "Inbox %q: %q in %s is not %s.", inbox, v, field, shape)
 		}
 		if key := strings.ToLower(v); !seen[key] {
 			seen[key] = true

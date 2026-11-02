@@ -1,11 +1,10 @@
-import { mockStateFetch, savedUIState, seedUIState } from "./ui-state-test-helper";
+import { mockStateFetch, seedUIState } from "./ui-state-test-helper";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { App } from "./app";
 import type { Entry } from "./api";
 import { MAX_INBOXES, type Inbox } from "./inboxes";
-import { NO_CRITERIA } from "./pr-filter";
 
 const entry = (
   number: number,
@@ -76,7 +75,10 @@ const inbox = (id: string, overrides: Partial<Inbox>): Inbox => ({
   name: id,
   color: "blue",
   what: "any",
-  ...NO_CRITERIA,
+  owners: [],
+  risk: "any",
+  repositories: [],
+  query: "",
   no_bots: false,
   badge: true,
   ...overrides,
@@ -517,7 +519,7 @@ it("toggles repositories and leaving out bots, and the badge", async () => {
 
   const bots = node.querySelector<HTMLInputElement>('.inbox-leave-out input[type="checkbox"]')!;
   expect(node.querySelector(".inbox-leave-out")!.textContent).toBe(
-    "Leave outBots· Renovate, DependabotDrafts",
+    "Leave outBots· Renovate, Dependabot",
   );
   await click(bots);
   expect(puts[2]!.inboxes[1]!.no_bots).toBe(true);
@@ -532,15 +534,6 @@ it("toggles repositories and leaving out bots, and the badge", async () => {
   expect(node.textContent).toContain(
     "Left out of the badge, so it never nags. It still shows here and in Inbox.",
   );
-
-  const state = (name: string) =>
-    Array.from(node.querySelectorAll<HTMLButtonElement>(".inbox-fine .inbox-chip")).find((c) =>
-      c.textContent?.startsWith(name),
-    )!;
-  await click(state("Created by me"));
-  expect(puts[5]!.inboxes[1]!.involvement).toEqual(["authored"]);
-  await click(state("Checks failing"));
-  expect(puts[6]!.inboxes[1]!.checks).toEqual(["failing"]);
 });
 
 it("opens fine-tune with what is already set, and a bot filter changes the preview", async () => {
@@ -786,111 +779,4 @@ it("falls back to Inbox for a daemon that says it has no inboxes", async () => {
   await render("?page=inboxes");
   expect(node.querySelector(".upnext-list-head h1")!.textContent).toBe("Up next");
   expect(node.querySelector('[role="alert"]')).toBeNull();
-});
-
-// --- Quick filter ------------------------------------------------------------
-
-const queueTitles = () =>
-  Array.from(node.querySelectorAll(".upnext-list .upnext-row-title")).map((t) => t.textContent);
-// Opens the filter menu when it is closed.
-const openMenu = async () => {
-  const menu = node.querySelector<HTMLDetailsElement>("details.filter-menu")!;
-  if (!menu.open) await click(menu.querySelector("summary"));
-  // jsdom reports the toggle a task later.
-  await act(settle);
-};
-const option = async (name: string) => {
-  await openMenu();
-  return Array.from(node.querySelectorAll<HTMLLabelElement>(".filter-menu-option"))
-    .find((label) => label.querySelector("span")?.textContent === name)!
-    .querySelector("input")!;
-};
-const savedFilter = (page: string) =>
-  (savedUIState("api/ui-state/filters") as { pages: Record<string, { owners: string[] }> } | null)
-    ?.pages[page];
-
-it("narrows the Inbox with the filter menu, remembers it and clears it from its chip", async () => {
-  await render();
-  expect(queueTitles()).toEqual(["Change 1", "Change 3", "Change 4", "Change 2"]);
-  await click(await option("other"));
-  expect(queueTitles()).toEqual(["Change 4"]);
-  expect(savedFilter("inbox")?.owners).toEqual(["other"]);
-  expect(node.querySelector("summary.filter-menu-button")!.getAttribute("aria-label")).toBe(
-    "Filter, 1 in force",
-  );
-  // A saved inbox keeps a filter of its own.
-  await render("?inbox=Reviews");
-  expect(node.querySelector(".filter-menu-chips")).toBeNull();
-  await render();
-  expect(queueTitles()).toEqual(["Change 4"]);
-  await click(node.querySelector('button[aria-label="Remove other"]'));
-  expect(queueTitles()).toEqual(["Change 1", "Change 3", "Change 4", "Change 2"]);
-  expect(savedFilter("inbox")).toBeUndefined();
-});
-
-it("ticks one repository of an owner, and says when nothing matches", async () => {
-  await render();
-  await click(await option("acme"));
-  await click(await option("demo"));
-  // Clearing the only repository of a whole owner clears the owner.
-  expect(savedFilter("inbox")).toBeUndefined();
-  await click(await option("Assigned to me"));
-  expect(queueTitles()).toEqual([]);
-  expect(node.textContent).toContain("Nothing matches the filter");
-  await click(button("Clear the filter"));
-  expect(queueTitles()).toHaveLength(4);
-});
-
-it("saves the Inbox's filter as an inbox and opens it to be named", async () => {
-  await render();
-  await click(await option("Created by me"));
-  await click(await option("Checks failing"));
-  await click(button("Save as inbox…"));
-  const made = puts.at(-1)!.inboxes.at(-1)!;
-  expect(made).toMatchObject({
-    name: "Filtered",
-    what: "any",
-    involvement: ["authored"],
-    checks: ["failing"],
-  });
-  expect(search().get("page")).toBe("inbox-edit");
-  expect(search().get("inbox")).toBe(made.id);
-  // A saved inbox's own filter only narrows it.
-  await render(`?inbox=${made.id}`);
-  await openMenu();
-  expect(node.querySelector(".filter-menu-panel")).not.toBeNull();
-  expect(button("Save as inbox…")).toBeUndefined();
-});
-
-it("filters Pull requests, and a link naming a repository becomes its filter", async () => {
-  await render("?page=pulls&filter=all&repo=other/thing");
-  expect(search().get("repo")).toBeNull();
-  expect(
-    Array.from(node.querySelectorAll(".filter-menu-chips li > span")).map((s) => s.textContent),
-  ).toEqual(["other/thing"]);
-  expect(node.textContent).toContain("Change 4");
-  expect(node.textContent).not.toContain("Change 1");
-  expect(node.querySelector(".local-repo-filter")).toBeNull();
-  await click(node.querySelector('button[aria-label="Remove other/thing"]'));
-  expect(node.textContent).toContain("Change 1");
-});
-
-it("leaves another page's repo= alone, and a repository the daemon would refuse unsaved", async () => {
-  await render("?page=analytics&repo=acme/demo");
-  expect(search().get("repo")).toBe("acme/demo");
-  expect(savedUIState("api/ui-state/filters")).toBeNull();
-  await render("?page=pulls&filter=all&repo=foo");
-  expect(search().get("repo")).toBeNull();
-  expect(savedUIState("api/ui-state/filters")).toBeNull();
-});
-
-it("does not say nothing matches while a waiting pull request does", async () => {
-  entries = [
-    ...fixture(),
-    entry(5, "solo/x", { authored_by_me: true, draft: true }, { merge: "draft" }),
-  ];
-  await render();
-  await click(await option("solo"));
-  expect(node.textContent).toContain("Change 5");
-  expect(node.textContent).not.toContain("Nothing matches the filter");
 });

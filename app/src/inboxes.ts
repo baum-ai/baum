@@ -1,7 +1,7 @@
 import { useRef, useState } from "react";
 import { LocalRequestError, request, type Entry } from "./api";
 import type { UpNextKind } from "./up-next";
-import { matchesCriteria, NO_CRITERIA, ownerOf, parseCriteria, type Criteria } from "./pr-filter";
+import { matchesQuery } from "./pr-filter";
 
 export const INBOX_COLORS = ["blue", "green", "red", "amber", "purple", "grey"] as const;
 export type InboxColor = (typeof INBOX_COLORS)[number];
@@ -9,17 +9,23 @@ export type InboxWhat = "any" | "review" | "merge" | "agent" | "mine";
 
 /** A saved filter over the queue, as the daemon stores it (see its
  *  `internal/inboxes` README). Matching lives here, not in the daemon. */
-export type Inbox = Criteria & {
+export type Inbox = {
   id: string;
   name: string;
   color: InboxColor;
   what: InboxWhat;
+  owners: string[];
+  risk: "any" | "3" | "4";
+  repositories: string[];
+  /** A filter query on top of the rest (see `pr-filter.ts`); "" for none. */
+  query: string;
   no_bots: boolean;
   badge: boolean;
 };
 export type InboxList = { revision: number; inboxes: Inbox[] };
 
 const isString = (value: unknown): value is string => typeof value === "string";
+const strings = (value: unknown) => (Array.isArray(value) ? value.filter(isString) : []);
 
 /** One entry as the page can rely on it: a missing list is empty and an
  *  unknown colour, `what` or risk is the plain one. Null without a string id
@@ -35,7 +41,10 @@ function parseInbox(raw: unknown): Inbox | null {
     what: (["any", "review", "merge", "agent", "mine"] as const).includes(value.what as InboxWhat)
       ? (value.what as InboxWhat)
       : "any",
-    ...parseCriteria(value),
+    owners: strings(value.owners),
+    risk: value.risk === "3" || value.risk === "4" ? value.risk : "any",
+    repositories: strings(value.repositories),
+    query: typeof value.query === "string" ? value.query : "",
     no_bots: value.no_bots === true,
     badge: value.badge !== false,
   };
@@ -80,9 +89,23 @@ const WHAT: Record<InboxWhat, (kind: UpNextKind, entry: Entry) => boolean> = {
 };
 
 export function matches(inbox: Inbox, { kind, entry }: Matchable): boolean {
+  const pr = entry.pull_request;
   if (!(WHAT[inbox.what] ?? WHAT.any)(kind, entry)) return false;
-  if (!matchesCriteria(inbox, entry)) return false;
-  return !(inbox.no_bots && entry.pull_request.author_bot);
+  const repository = pr.repository.toLowerCase();
+  const owner = repository.split("/")[0];
+  if (inbox.owners.length > 0 && !inbox.owners.some((o) => o.toLowerCase() === owner)) return false;
+  if (inbox.risk !== "any") {
+    // A pull request with no score yet is never riskier than a threshold.
+    const score = entry.risk_score?.score;
+    if (typeof score !== "number" || score < Number(inbox.risk)) return false;
+  }
+  if (
+    inbox.repositories.length > 0 &&
+    !inbox.repositories.some((r) => r.toLowerCase() === repository)
+  )
+    return false;
+  if (inbox.no_bots && pr.author_bot) return false;
+  return matchesQuery(inbox.query, entry);
 }
 
 /** Every inbox the item is in, in the sidebar's order. */
@@ -137,31 +160,6 @@ export function sentenceParts(inbox: Inbox, login?: string) {
   };
 }
 
-const STATE_WORDS: Record<string, string> = {
-  assigned: "assigned to me",
-  requested: "asking for my review",
-  authored: "created by me",
-  approved: "approved",
-  changes_requested: "with changes requested",
-  none: "without a review decision",
-  passing: "with checks passing",
-  failing: "with checks failing",
-  running: "with checks running",
-  ready: "ready to merge",
-  conflict: "with a conflict",
-};
-
-/** The pull request parts of a sentence, each led by a comma: ", assigned to
- *  me or created by me, with checks failing, without drafts". */
-function stateWords(inbox: Inbox): string {
-  return [inbox.involvement, inbox.review, inbox.checks, inbox.merge]
-    .filter((list) => list.length > 0)
-    .map((list: string[]) => joinOr(list.map((key) => STATE_WORDS[key] ?? key)))
-    .concat(inbox.no_drafts ? ["without drafts"] : [])
-    .map((part) => `, ${part}`)
-    .join("");
-}
-
 /** What the inbox holds, in a sentence: "Anything waiting on me in any
  *  repository, whatever the risk." */
 export function sentence(inbox: Inbox, login?: string): string {
@@ -174,7 +172,9 @@ export function sentence(inbox: Inbox, login?: string): string {
             ? inbox.repositories[0]
             : `${inbox.repositories.length} repositories`
         }`;
-  const text = `${what} ${where}, ${risk}${only}${stateWords(inbox)}${inbox.no_bots ? ", without bots" : ""}`;
+  const text = `${what} ${where}, ${risk}${only}${inbox.no_bots ? ", without bots" : ""}${
+    inbox.query ? `, matching ${inbox.query}` : ""
+  }`;
   return `${text.charAt(0).toUpperCase()}${text.slice(1)}.`;
 }
 
@@ -209,12 +209,12 @@ export function freeName(name: string, inboxes: Inbox[]): string {
   return candidate;
 }
 
-/** The owners of `repositories` ("owner/name" or "host/owner/name"), without the person's own
+/** The owners of `repositories` ("owner/name"), without the person's own
  *  login, in alphabetical order, spelled as first met. */
 export function ownersOf(repositories: string[], login?: string): string[] {
   const seen = new Map<string, string>();
   for (const repository of repositories) {
-    const owner = ownerOf(repository);
+    const owner = repository.split("/")[0] ?? "";
     const key = owner.toLowerCase();
     if (owner && key !== login?.toLowerCase() && !seen.has(key)) seen.set(key, owner);
   }
@@ -243,23 +243,27 @@ export function templates(owners: string[], login?: string): Template[] {
 /** A template as an inbox of its own, named so no other inbox has the name. */
 export function fromTemplate(template: Template, inboxes: Inbox[], id = newInboxId()): Inbox {
   return {
-    ...NO_CRITERIA,
     id,
     ...template,
     name: freeName(template.name, inboxes),
+    repositories: [],
+    query: "",
     no_bots: false,
   };
 }
 
-/** A quick filter as an inbox of its own: anything waiting that matches it,
+/** A page's filter as an inbox of its own: anything waiting that matches it,
  *  named so no other inbox has the name. */
-export function fromCriteria(criteria: Criteria, inboxes: Inbox[]): Inbox {
+export function fromQuery(query: string, inboxes: Inbox[]): Inbox {
   return {
-    ...criteria,
     id: newInboxId(),
     name: freeName("Filtered", inboxes),
     color: "blue",
     what: "any",
+    owners: [],
+    risk: "any",
+    repositories: [],
+    query,
     no_bots: false,
     badge: true,
   };

@@ -1,6 +1,6 @@
 import { uiState, useUIState } from "./ui-state";
-import { FilterMenu } from "./filter-menu";
-import { chips, matchesCriteria, NO_CRITERIA, usePageFilter, type Criteria } from "./pr-filter";
+import { FilterBar, FilterButton } from "./filter-menu";
+import { matchesQuery, parseQuery, usePageFilter } from "./pr-filter";
 import {
   Fragment,
   useEffect,
@@ -720,7 +720,6 @@ export function UpNextPage({
   refreshing = false,
   reviewGroups = [],
   entries = [],
-  repositories = [],
   saveAsInbox,
   Link,
 }: {
@@ -751,10 +750,8 @@ export function UpNextPage({
   refresh?: (run: RefreshRun) => Promise<unknown>;
   /** A read of every repository is under way, the first or a refresh. */
   refreshing?: boolean;
-  /** The picked repositories, offered by the filter with or without a pull request. */
-  repositories?: string[];
-  /** Makes a new inbox of the quick filter; offered in the Inbox (all). */
-  saveAsInbox?: (criteria: Criteria) => void;
+  /** Makes a new inbox of the page's filter; offered in the Inbox (all). */
+  saveAsInbox?: (query: string) => void;
   Link: ComponentType<ViewerLinkProps>;
 }) {
   const [merging, setMerging] = useState<Entry | null>(null);
@@ -768,21 +765,23 @@ export function UpNextPage({
   const [toast, setToast] = useState<{ id: number; text: string; undo?: () => void } | null>(null);
   const list = useRef<HTMLDivElement>(null);
   const detail = useRef<HTMLDivElement>(null);
-  // The quick filter narrows what the page shows, on top of its inbox.
+  // The page's filter narrows what it shows, on top of its inbox.
   const quick = usePageFilter(scope ? `inbox:${scope.id}` : "inbox");
-  const filtering = chips(quick.criteria).length > 0;
+  const filtering = quick.query !== "";
+  // The bar shows with a filter in force, or once the menu asks to type one.
+  const [writing, setWriting] = useState(false);
+  // Grows each time the menu asks to type, which focuses the bar.
+  const [writeRequest, setWriteRequest] = useState(0);
   const inInbox = (item: { kind: UpNextKind; entry: Entry }) => !scope || matches(scope, item);
   const inScope = (item: { kind: UpNextKind; entry: Entry }) =>
-    inInbox(item) && matchesCriteria(quick.criteria, item.entry);
+    inInbox(item) && matchesQuery(quick.query, item.entry);
   const queue = all.queue.filter(inScope);
   const snoozed = all.snoozed.filter(inScope);
   const fixing = all.fixing.filter(({ entry }) => inScope({ kind: "fix", entry }));
   // Done today and what waits on others are the Inbox's alone.
   const cleared = scope ? [] : all.cleared;
-  const waiting = scope
-    ? []
-    : all.waiting.filter((entry) => matchesCriteria(quick.criteria, entry));
-  // What the filter's counts and repositories come from: the page before it.
+  const waiting = scope ? [] : all.waiting.filter((entry) => matchesQuery(quick.query, entry));
+  // What the filter's counts and values come from: the page before it.
   const unfiltered = [
     ...all.queue.filter(inInbox).map((item) => item.entry),
     ...all.fixing.filter(({ entry }) => inInbox({ kind: "fix", entry })).map(({ entry }) => entry),
@@ -1029,19 +1028,50 @@ export function UpNextPage({
     },
   ];
   const alsoIn = (row: Row) => rowInboxes(row, inboxes).filter((other) => other.id !== scope?.id);
-  const filterMenu = (
-    <div className="upnext-filter">
-      <FilterMenu
-        criteria={quick.criteria}
-        onChange={quick.set}
-        entries={unfiltered}
-        repositories={repositories}
-        onSave={!scope && saveAsInbox ? () => saveAsInbox(quick.criteria) : undefined}
-        error={quick.error}
-        retry={() => void quick.retry()}
-      />
-    </div>
+  const filterButton = (
+    <FilterButton
+      query={quick.query}
+      onChange={quick.set}
+      entries={unfiltered}
+      onWrite={() => {
+        setWriting(true);
+        setWriteRequest((n) => n + 1);
+      }}
+    />
   );
+  const filterBar =
+    filtering || writing ? (
+      <div className="upnext-filter">
+        <FilterBar
+          // A page's text is its own: moving to another inbox starts afresh.
+          key={scope?.id ?? "inbox"}
+          query={quick.query}
+          onChange={(next) => {
+            // Once typed in, the bar stays until Clear, even emptied.
+            setWriting(true);
+            quick.set(next);
+          }}
+          entries={unfiltered}
+          focus={writeRequest}
+          onClose={() => setWriting(false)}
+          actions={
+            !scope && saveAsInbox && filtering && !parseQuery(quick.query).error ? (
+              <Button size="tiny" variant="secondary" onClick={() => saveAsInbox(quick.query)}>
+                Save as inbox
+              </Button>
+            ) : null
+          }
+        />
+        {quick.error ? (
+          <p role="alert" className="upnext-filter-error">
+            {quick.error}{" "}
+            <button type="button" onClick={() => void quick.retry()}>
+              Retry
+            </button>
+          </p>
+        ) : null}
+      </div>
+    ) : null;
   return (
     <>
       <div className="upnext-page">
@@ -1053,16 +1083,18 @@ export function UpNextPage({
                   <span aria-hidden="true" className="inbox-dot inbox-dot-large" />
                   <h1>{scope.name}</h1>
                   {headerAction}
+                  {filterButton}
                   {refreshButton}
                 </div>
                 <p>{sentence(scope, login)}</p>
                 <p className="upnext-list-summary">{summary}</p>
-                {filterMenu}
+                {filterBar}
               </>
             ) : (
               <>
                 <div className="upnext-list-heading">
                   <h1>Up next</h1>
+                  {filterButton}
                   {refreshButton}
                 </div>
                 <p>{summary}</p>
@@ -1076,7 +1108,7 @@ export function UpNextPage({
                 >
                   <div style={{ width: `${total ? (100 * cleared.length) / total : 0}%` }} />
                 </div>
-                {filterMenu}
+                {filterBar}
               </>
             )}
           </header>
@@ -1276,7 +1308,7 @@ export function UpNextPage({
                 {formatCount(unfiltered.length)} pull{" "}
                 {unfiltered.length === 1 ? "request is" : "requests are"} hidden by it.
               </p>
-              <Button onClick={() => quick.set(NO_CRITERIA)}>Clear the filter</Button>
+              <Button onClick={() => quick.set("")}>Clear the filter</Button>
             </div>
           ) : (
             <Zero inbox={inbox} scoped={!!scope} hasRepositories={hasRepositories} Link={Link} />

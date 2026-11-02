@@ -755,14 +755,8 @@ Update items and the pull requests a fix agent is working on now; or the
 person's own), owners (the repository's owner, ignoring case; none means any),
 risk (3 or more, or 4 or more, from the baum review's score; a pull request with
 no score yet never matches a risk filter, and "at least N" counts as N),
-repositories (none means any; with owners too, a repository must be in
-both), involvement (assigned to the person, asking
-for their review or created by them), GitHub's review decision, checks and
-merge state (ready or conflicting), whether drafts and whether bots are left
-out. Each of those lists matches any of its values, and none picked means any.
-Assigned comes from the first 20 assignees discovery reads; an assigned pull
-request is in the queue only for another reason (a review request or the
-person's own), so involvement only narrows it. A pull request can
+repositories (none means any), whether bots are left out and a filter query
+(see below; empty for none, and one that does not read narrows nothing). A pull request can
 be in several inboxes. An inbox's queue is `?inbox=<id>` on the app root (an
 unknown id shows the Inbox): the same page, with only the matching items, the
 same groups, order, panel, keys, snoozes and **Merge all N** (which counts only
@@ -808,38 +802,59 @@ until a read succeeds, and later saves still go out. Entries the daemon sends
 are read defensively (missing lists are empty, unknown values the plain ones,
 entries without an id and name dropped).
 
-**The quick filter** narrows the Inbox, each inbox's queue and Pull requests
-without changing a saved inbox (`src/filter-menu.tsx`, matched by
-`src/pr-filter.ts` with the same criteria and rules as an inbox). In the
-Inbox it sits below the progress bar, in an inbox's queue below its summary,
-and in Pull requests at the end of the views. The Filter button, with the
-number of parts in force, opens a menu (Esc or a click elsewhere closes it):
-organizations with their repositories nested under them (the picked
-repositories, those of the page's pull requests and any the filter names; an
-Enterprise repository's organization is its owner, whatever the host; ticking an
-organization is all of its repositories; clearing one of them keeps the
-others; nothing ticked is all of them; a search box shows once there are more
-than four organizations),
-then Involvement (Assigned to me, Review requested, Created by me), Review
-(Approved, Changes requested, No decision yet), Checks (passing, failing,
-running), State (Ready to merge, Has a conflict, Hide drafts) and Risk (any,
-3 or more, 4 or 5). Each option counts the pull requests the page would show
-with it alone in its section, and the foot says how many of the page's are
-shown, with **Clear all**. Organizations picked whole are saved as owners, so their
-later repositories come in too; once an organization is picked only in part,
-the picked repositories are saved by name, at most 50 (past that the menu
-says to pick whole organizations instead and changes nothing). Beside the
-button a chip names each part in force (an organization while all of its
-repositories are in) with a × that removes it, then **Clear all**, and a
-failed save says so with **Retry**. With nothing matching, the queue's panel
-says "Nothing matches the filter", how many it hides, and **Clear the filter**.
-Each page keeps its own filter (`inbox`, `inbox:<id>` or `pulls`) in the
-daemon's `ui/filters` document (see the [uistate README](../internal/uistate/README.md)),
-across windows and restarts. In the Inbox (all) the menu also offers **Save as
-inbox…**, which appends an inbox named "Filtered" (or "Filtered 2"…) that
-catches anything waiting and matching the filter, and opens its edit page as
-New inbox does; it is not offered at 20 inboxes or with an older daemon. The
-Inbox's filter stays as it was.
+**The filter** narrows the Inbox, each inbox's queue and Pull requests without
+changing a saved inbox. It is a query written like a GitHub search, parsed and
+matched in `src/pr-filter.ts`:
+
+| Write | Keeps pull requests |
+| --- | --- |
+| `repo:acme/app`, `repo:app` | in the repository (whole name, or the part after the owner) |
+| `org:acme` | whose repository's owner is acme (an Enterprise one's too) |
+| `author:@me`, `author:sam` | by the person, or by that login |
+| `assignee:@me`, `review-requested:@me` | assigned to the person (first 20 assignees), asking for their review |
+| `review:approved`, `changes_requested`, `none` | with GitHub's review decision (none: neither) |
+| `checks:passing`, `failing`, `running`, `none` | with that state of checks |
+| `is:draft`, `mergeable`, `conflict`, `blocked`, `behind`, `bot` | drafts, GitHub's merge state, behind their base, by a bot |
+| `risk:4`, `risk:>=3`, `risk:<3`, `risk:none` | by the baum review's score; without a score only `risk:none` |
+| `base:main` | merging into the branch |
+| any other word, or a "quoted phrase" | with it in the title or repository, or that `#number` |
+
+Keys and values ignore case. `key:a,b` takes either value, `-key:a` or `NOT`
+leaves it out, terms side by side must all hold (`AND` may be written), `OR`
+takes either side and binds looser than `AND`, and parentheses group. A query
+that does not read leaves the last one in force, and the bar says why
+("Not applied: …").
+
+The filter icon (`FilterButton`, `src/filter-menu.tsx`) sits left of the
+refresh in the Inbox's and an inbox's head, and at the end of Pull requests'
+views. Its menu, as Linear's: an "Add filter…" box over the fields (Repository,
+Organization, Author, Assignee, Review requested, Review, Checks, State, Risk,
+Base branch); pointing at one, or Enter or → on it, opens its values beside the
+menu (or in its place when neither side has room), each ticked while the query
+requires it and counted by how many of the page's pull requests it would leave.
+Picking a value adds it to the field's term as one more choice, or takes it
+out, and adds a term when there is none (around a query with `OR`, in
+parentheses); the menu stays open. Typed text also lists matching values of
+every field, then adds the text itself (a phrase to look for, or a query that
+reads); **Write a query…** opens the bar. Esc or ← steps out of the values,
+then closes the menu.
+
+The bar (`FilterBar`) shows under the head while a filter is in force, or once
+asked for; it holds the query as text and stays until **Clear**. As it is
+typed it suggests the fields that start with the word at the caret (`-` for
+not), then the field's values, and `AND`, `OR` and `NOT`; the arrows move
+through them, Enter or a click takes one, Tab takes the highlighted or first,
+and Esc closes them, then leaves the box. Each edit that reads applies a
+moment after the last key, and at Enter or leaving the box. In the Inbox (all)
+the bar offers **Save as inbox**, which appends an inbox named "Filtered" (or
+"Filtered 2"…) that catches anything waiting and matching the query, and opens
+its edit page as New inbox does; it is not offered at 20 inboxes or with an
+older daemon, and the Inbox's filter stays as it was. With nothing matching,
+the queue's panel says "Nothing matches the filter", how many it hides, and
+**Clear the filter**. Each page keeps its own filter (`inbox`, `inbox:<id>` or
+`pulls`) in the daemon's `ui/filters` document (see the
+[uistate README](../internal/uistate/README.md)), across windows and restarts;
+a failed save says so with **Retry**.
 
 Inboxes are made and changed on three pages that sit under Inbox in the sidebar
 but are not sidebar pages of their own, so they have no number key and ⌘1 still
@@ -877,12 +892,11 @@ a label, with no key of its own, reached with Tab.
   options as buttons, each with how many pull requests it would show, and
   picking one saves. Where offers any repository, the person's own, each other
   owner of their repositories and, when the inbox holds a set the list lacks,
-  that set. Fine-tune holds repository chips (the owners' repositories; none
-  picked means all that match above), chips for Involvement, Review, Checks and
-  State, each with how many pull requests it alone would show (none picked
-  means any), and "Leave out: Bots" (`no_bots`) and Drafts (`no_drafts`). The
-  inbox's sentence elsewhere adds the picked states ("…, assigned to me or
-  created by me, with checks failing, without drafts."). A switch counts the inbox in the
+  that set. Fine-tune holds repository chips (none picked means all that match
+  above), Matching (the inbox's query in the filter bar, saved a moment after
+  each edit that reads) and "Leave out: Bots" (`no_bots`); it opens by itself
+  when any of them is set. With a query the inbox's sentence ends ", matching
+  <query>". A switch counts the inbox in the
   Inbox badge. **Delete inbox** is the sidebar's delete with Undo, then goes to
   Inbox with focus on the sidebar's Inbox link. The right-hand preview is "Would show right now" with the same
   unsnoozed queue items and `matches` as the queue, grouped like it, each row
@@ -945,15 +959,19 @@ history. The list opens on the For you view (`filter=inbox`), which holds only
 what is the person's to check now: pull requests asking for their review and their own.
 Everyone else's open pull requests are under Others, so Other pull requests
 appears only there; Requested, Mine, Not reviewed and Saved history are the
-other views, and a view with nothing in it is dimmed. The quick filter (see
-below) sits at the end of the views and narrows every view and its count; a
-link to Pull requests with `repo=` from before it (Analytics and Timeline keep
-their own `repo=`), once the saved filters are read, replaces
-the page filter's organizations and repositories with that repository (a value
-the daemon would refuse is dropped instead), and the address drops `repo=`.
+other views, and a view with nothing in it is dimmed. The filter (see above)
+narrows the views and their counts, and its bar shows under them. **Save as
+tab** in the bar (on one of those views, with a query that reads) asks for a
+name and saves a tab of that view and query after the views
+(`filter=tab:<id>`, at most 20, in `ui/filters`); the query moves into the tab,
+so the view's own filter is cleared. On a saved tab the bar edits the tab's
+query and offers **Delete tab**, which returns to its view; an unknown tab
+opens For you. A link to Pull requests with `repo=` (Analytics and Timeline
+keep their own `repo=`), once the saved filters are read, replaces the page's
+filter with `repo:<that repository>`, and the address drops `repo=`.
 Collapsing keeps selections, and Select all selects only currently expanded
-visible rows. Requested, authored, outdated, no-review, repository and
-saved-history filters do not discard cached reviews. Unknown team membership
+visible rows. The views, the filter and saved tabs do not discard cached
+reviews. Unknown team membership
 remains explicit. Refresh events share the active read and queue one follow-up,
 so a completed inbox snapshot is shown even while more updates arrive.
 Cached discovery keeps the inbox readable when refresh fails;

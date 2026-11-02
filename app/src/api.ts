@@ -802,10 +802,8 @@ export function jobHref(job: Job) {
 export function backTo(search: URLSearchParams): { href: string; label: string; prefix: string } {
   if (search.get("page") !== "pulls") return { href: appURL(), label: "Inbox", prefix: "" };
   const back = new URLSearchParams({ page: "pulls" });
-  for (const key of ["filter", "repo"]) {
-    const value = search.get(key);
-    if (value) back.set(key, value);
-  }
+  const filter = search.get("filter");
+  if (filter) back.set("filter", filter);
   return { href: appURL(`?${back}`), label: "Pull requests", prefix: "page=pulls&" };
 }
 /** Requests `path`, relative to the namespace, as `api/repos`. */
@@ -944,12 +942,11 @@ export function rowKey(row: Entry) {
 /** The inbox view holds what is the person's to check now: pull requests
  *  asking for their review and their own. Everyone else's are under "other";
  *  "all" is every open pull request. */
-export function filtered(entries: Entry[], filter: string, repository: string) {
+export function filtered(entries: Entry[], filter: string) {
   const yours = (e: Entry) =>
     e.pull_request.review_requested_from_me || e.pull_request.authored_by_me;
   return entries.filter(
     (e) =>
-      (!repository || e.pull_request.repository === repository) &&
       (filter === "history" ? e.historical : !e.historical) &&
       (filter === "inbox"
         ? yours(e)

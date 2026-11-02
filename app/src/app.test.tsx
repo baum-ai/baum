@@ -422,14 +422,13 @@ it.each([
     else expect(node.textContent).not.toContain("showing cached data");
   },
 );
-it("filters by requested, authored, review state, repository and saved history", () => {
+it("filters by requested, authored, review state and saved history", () => {
   const rows = [entry(1, "outdated"), entry(2), entry(3, "current", true)];
-  expect(filtered(rows, "requested", "").map((e) => e.pull_request.number)).toEqual([1]);
-  expect(filtered(rows, "mine", "").map((e) => e.pull_request.number)).toEqual([2]);
-  expect(filtered(rows, "outdated", "").length).toBe(1);
-  expect(filtered(rows, "no_review", "").length).toBe(1);
-  expect(filtered(rows, "all", "other/repo")).toEqual([]);
-  expect(filtered(rows, "history", "").map((e) => e.pull_request.number)).toEqual([3]);
+  expect(filtered(rows, "requested").map((e) => e.pull_request.number)).toEqual([1]);
+  expect(filtered(rows, "mine").map((e) => e.pull_request.number)).toEqual([2]);
+  expect(filtered(rows, "outdated").length).toBe(1);
+  expect(filtered(rows, "no_review").length).toBe(1);
+  expect(filtered(rows, "history").map((e) => e.pull_request.number)).toEqual([3]);
   expect(cost(null)).toBe("—");
   expect(cost(0)).toBe("$0.0000");
 });

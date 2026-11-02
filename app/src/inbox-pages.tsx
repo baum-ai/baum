@@ -1,4 +1,3 @@
-import { CHECKS, INVOLVEMENT, MERGES, ownerOf, REVIEWS, toggled } from "./pr-filter";
 import { useEffect, useId, useRef, useState, type ComponentType, type ReactNode } from "react";
 import type { ViewerLinkProps } from "@baum/viewer/navigation";
 import { appURL } from "./api";
@@ -20,6 +19,7 @@ import {
   type InboxColor,
 } from "./inboxes";
 import { MenuButton, useContextMenu, type MenuItem } from "./context-menu";
+import { FilterBar } from "./filter-menu";
 import { PageBar } from "./shell";
 import { SettingRow } from "./settings";
 import { GROUPS, InboxTag, type UpNextItem } from "./up-next";
@@ -227,7 +227,9 @@ function EditInbox({
   const [draft, setDraft] = useState(inbox.name);
   const [nameError, setNameError] = useState("");
   const [open, setOpen] = useState<"what" | "where" | "risk" | null>(null);
-  const [fine, setFine] = useState(inbox.repositories.length > 0 || inbox.no_bots);
+  const [fine, setFine] = useState(
+    inbox.repositories.length > 0 || inbox.no_bots || inbox.query !== "",
+  );
   const [diff, setDiff] = useState<Diff | null>(null);
   const nameField = useRef<HTMLInputElement>(null);
   // A new inbox opens with its name to type over.
@@ -297,40 +299,8 @@ function EditInbox({
       </div>
     ) : null;
 
-  // Only the owners' repositories, so a pick narrows what matches above.
-  const ownRepositories = repositories.filter(
-    (r) =>
-      inbox.owners.length === 0 ||
-      inbox.owners.some((o) => o.toLowerCase() === ownerOf(r).toLowerCase()),
-  );
-  const repositoryChips = Array.from(new Set([...ownRepositories, ...inbox.repositories])).sort(
+  const repositoryChips = Array.from(new Set([...repositories, ...inbox.repositories])).sort(
     (a, b) => a.localeCompare(b),
-  );
-  const stateList = <K extends "involvement" | "review" | "checks" | "merge">(
-    field: K,
-    title: string,
-    options: [Inbox[K][number], string][],
-  ) => (
-    <div role="group" aria-labelledby={`${ids}-${field}`}>
-      <h3 id={`${ids}-${field}`} className="inbox-fine-title">
-        {title}
-        <span> · none picked means any</span>
-      </h3>
-      <div className="inbox-choices">
-        {options.map(([value, label]) => {
-          const list = inbox[field] as string[];
-          return (
-            <Chip
-              key={value}
-              label={label}
-              on={list.includes(value)}
-              count={countOf({ ...inbox, [field]: [value] }, items)}
-              onClick={() => change({ [field]: toggled(list, value) })}
-            />
-          );
-        })}
-      </div>
-    </div>
   );
   const toggleRepository = (repository: string) =>
     change({
@@ -454,10 +424,17 @@ function EditInbox({
                     ) : null}
                   </div>
                 </div>
-                {stateList("involvement", "Involvement", INVOLVEMENT)}
-                {stateList("review", "Review", REVIEWS)}
-                {stateList("checks", "Checks", CHECKS)}
-                {stateList("merge", "State", MERGES)}
+                <div role="group" aria-labelledby={`${ids}-query`}>
+                  <h3 id={`${ids}-query`} className="inbox-fine-title">
+                    Matching
+                    <span> · a filter, as typed on the Inbox</span>
+                  </h3>
+                  <FilterBar
+                    query={inbox.query}
+                    onChange={(query) => change({ query })}
+                    entries={items.map((item) => item.entry)}
+                  />
+                </div>
                 <fieldset className="inbox-leave-out">
                   <legend className="inbox-fine-title">Leave out</legend>
                   <label className="inbox-check">
@@ -468,14 +445,6 @@ function EditInbox({
                     />
                     <span>Bots</span>
                     <span className="inbox-check-note">· Renovate, Dependabot</span>
-                  </label>
-                  <label className="inbox-check">
-                    <input
-                      type="checkbox"
-                      checked={inbox.no_drafts}
-                      onChange={(event) => change({ no_drafts: event.target.checked })}
-                    />
-                    <span>Drafts</span>
                   </label>
                 </fieldset>
               </div>
