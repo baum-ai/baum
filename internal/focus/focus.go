@@ -12,7 +12,7 @@
 //  3. selects the terminal's tab: kitty through its remote control, iTerm2
 //     and Terminal through AppleScript, by the tab's terminal device;
 //  4. raises the window: hyprctl on Hyprland, xdotool or wmctrl on X11, the
-//     application bundle on macOS.
+//     the application's own process, else its bundle, on macOS.
 //
 // It supports Linux and macOS. Other Wayland compositors than Hyprland have no
 // way for one program to raise another's window, so Predict offers nothing
@@ -587,8 +587,18 @@ func (f *Focuser) raise(ctx context.Context, chain []hookevents.Process, env map
 // runs from iTerm2's support folder, outside the application bundle.
 const iTermBundle = "com.googlecode.iterm2"
 
-// raiseApp activates the application whose bundle holds the executable of
-// the nearest process in chain inside one, or iTerm2 for its server.
+// activateScript activates the application whose process id is its argument,
+// with all its windows, and prints true when it did. It names the process,
+// not the bundle: of two instances of one application, as of kitty started
+// twice, open -a activates either.
+const activateScript = `function run(argv) {
+	ObjC.import("AppKit");
+	const app = $.NSRunningApplication.runningApplicationWithProcessIdentifier(Number(argv[0]));
+	return !app.isNil() && app.activateWithOptions($.NSApplicationActivateAllWindows);
+}`
+
+// raiseApp activates the nearest process in chain whose executable is inside
+// an application bundle, else that bundle, or iTerm2 for its server.
 func (f *Focuser) raiseApp(ctx context.Context, chain []hookevents.Process) (bool, string) {
 	for _, p := range chain {
 		args := []string{"-b", iTermBundle}
@@ -596,6 +606,10 @@ func (f *Focuser) raiseApp(ctx context.Context, chain []hookevents.Process) (boo
 			app := appBundle(f.executable(p.PID))
 			if app == "" {
 				continue
+			}
+			out, err := f.run(ctx, nil, "osascript", "-l", "JavaScript", "-e", activateScript, strconv.Itoa(p.PID))
+			if err == nil && strings.TrimSpace(string(out)) == "true" {
+				return true, ""
 			}
 			args = []string{"-a", app}
 		}
