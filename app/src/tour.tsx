@@ -5,6 +5,7 @@ import { Button } from "@baum/viewer/components/ui";
 import { appURL, inSample, navigate, ownBase } from "./api";
 import { PRIMARY, SECONDARY, SMALL } from "./action-classes";
 import { PAGES } from "./pages";
+import { SAMPLE_PULL_REQUEST } from "./sample";
 import { COMMAND } from "./shortcuts";
 import { uiState, useUIState } from "./ui-state";
 import "./tour.css";
@@ -97,7 +98,7 @@ const STOPS: Stop[] = [
     at: href("inbox"),
     follow: ".upnext-panel .upnext-primary",
     // In the sample, the person's own pull request, written with their agent.
-    select: inSample() ? '[data-row="example/notes#12"] .upnext-row' : undefined,
+    select: inSample() ? `[data-row="${SAMPLE_PULL_REQUEST}"] .upnext-row` : undefined,
   },
   {
     title: "A pull request's review",

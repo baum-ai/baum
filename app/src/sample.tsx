@@ -2,6 +2,10 @@ import { useEffect } from "react";
 import { inSample } from "./api";
 import { useToast } from "./toast";
 
+/** The sample's pull request the tour opens, as the Inbox keys its row: the
+ *  person's own, written with their agent (#12 in internal/sampleapp). */
+export const SAMPLE_PULL_REQUEST = "example/notes#12";
+
 /** In the tour's sample project the daemon refuses whatever would change
  *  something, marking the answer; this says so in a toast. Links out of the
  *  app are held back too, since the sample's pull requests and repositories
