@@ -156,11 +156,11 @@ it("keeps API, event and navigation URLs under the session namespace", async () 
   await act(async () => rail("Pull requests").click());
   await act(async () => {
     [...node.querySelectorAll<HTMLButtonElement>('[aria-label="Show"] button')]
-      .find((button) => button.textContent?.startsWith("Mine"))!
+      .find((button) => button.textContent?.startsWith("Closed"))!
       .click();
   });
   expect(location.pathname).toBe("/s/test-ns/");
-  expect(location.search).toBe("?page=pulls&filter=mine");
+  expect(location.search).toBe("?page=pulls&filter=history");
 });
 it("says it is loading, not empty, until the first read of jobs and repositories finishes", async () => {
   const original = vi.mocked(fetch).getMockImplementation()!;
@@ -422,14 +422,10 @@ it.each([
     else expect(node.textContent).not.toContain("showing cached data");
   },
 );
-it("filters by requested, authored, review state, repository and saved history", () => {
+it("splits the pull requests into Open and Closed", () => {
   const rows = [entry(1, "outdated"), entry(2), entry(3, "current", true)];
-  expect(filtered(rows, "requested", "").map((e) => e.pull_request.number)).toEqual([1]);
-  expect(filtered(rows, "mine", "").map((e) => e.pull_request.number)).toEqual([2]);
-  expect(filtered(rows, "outdated", "").length).toBe(1);
-  expect(filtered(rows, "no_review", "").length).toBe(1);
-  expect(filtered(rows, "all", "other/repo")).toEqual([]);
-  expect(filtered(rows, "history", "").map((e) => e.pull_request.number)).toEqual([3]);
+  expect(filtered(rows, "open").map((e) => e.pull_request.number)).toEqual([1, 2]);
+  expect(filtered(rows, "history").map((e) => e.pull_request.number)).toEqual([3]);
   expect(cost(null)).toBe("—");
   expect(cost(0)).toBe("$0.0000");
 });
@@ -568,34 +564,29 @@ it("groups requested PRs first, splits the person's own by what they need, and k
     ["history", [5, 4]],
   ]);
 });
-it("opens Pull requests on For you, with only review requests and the person's own, and the rest under Others", async () => {
+it("opens Pull requests on Open, with Closed last, and comes back to the tab last shown", async () => {
+  localStorage.clear();
   history.replaceState(null, "", "/s/test-ns/?page=pulls");
   entries = [entry(1), entry(2), entry(3)];
   await act(async () => root.render(<App />));
   const titles = () =>
-    Array.from(node.querySelectorAll(".inbox-pr-title")).map((link) => link.textContent);
-  expect(titles()).toEqual(["Change 1", "Change 2"]);
-  const tab = (name: string) =>
-    Array.from(node.querySelectorAll<HTMLButtonElement>('[aria-label="Show"] button')).find(
-      (button) => button.textContent?.startsWith(name),
-    )!;
-  expect(tab("For you").getAttribute("aria-pressed")).toBe("true");
-  expect(tab("Others").textContent).toBe("Others1");
-  await act(async () => tab("Others").click());
-  expect(titles()).toEqual(["Change 3"]);
-  entries = [entry(3)];
-  const original = vi.mocked(fetch).getMockImplementation()!;
-  vi.mocked(fetch).mockImplementation((...args) =>
-    String(args[0]) === "/s/test-ns/api/repos"
-      ? Promise.resolve(Response.json([{ id: "clone", repository: "acme/demo", path: "/c" }]))
-      : original(...args),
-  );
+    Array.from(node.querySelectorAll(".inbox-pr-title"))
+      .map((link) => link.textContent)
+      .sort();
+  expect(titles()).toEqual(["Change 1", "Change 2", "Change 3"]);
+  const tabs = () =>
+    Array.from(node.querySelectorAll<HTMLButtonElement>('[aria-label="Show"] button'));
+  expect(tabs().map((one) => one.textContent)).toEqual(["Open3", "Closed0"]);
+  expect(tabs()[0]!.getAttribute("aria-pressed")).toBe("true");
+  await act(async () => tabs()[1]!.click());
+  expect(location.search).toBe("?page=pulls&filter=history");
+  // Back from another page without a tab named, Closed shows again.
   history.replaceState(null, "", "/s/test-ns/?page=pulls");
   await act(async () => root.unmount());
   root = createRoot(node);
   await act(async () => root.render(<App />));
-  expect(node.textContent).toContain("Nothing is waiting on you");
-  expect(tab("For you").className).toContain("empty");
+  expect(tabs()[1]!.getAttribute("aria-pressed")).toBe("true");
+  localStorage.clear();
 });
 it("keeps collapsed selections and selects only expanded visible rows", async () => {
   entries = [entry(1), entry(2), entry(3)];
@@ -1479,7 +1470,9 @@ it("offers GitHub repositories only, with no local folder fallback", async () =>
   );
   await act(async () => root.render(<App />));
   await act(async () =>
-    [...node.querySelectorAll("button")].find((b) => b.textContent === "Add repositories")!.click(),
+    [...node.querySelectorAll("button")]
+      .find((b) => b.textContent?.startsWith("Add repositories"))!
+      .click(),
   );
   expect(node.querySelector(".repository-picker")).not.toBeNull();
   expect(node.textContent).not.toContain("local folder");
@@ -1536,6 +1529,63 @@ it("shows a repository set to On as paused while the global switch is off", asyn
   expect(region.textContent).toContain(
     "Automatic reviews are paused by the global switch, although this repository is set to On.",
   );
+});
+it("shows a job's pull request title, when it started and how long it took", async () => {
+  history.replaceState(null, "", "/s/test-ns/?page=jobs");
+  entries = [entry(1)];
+  const original = vi.mocked(fetch).getMockImplementation()!;
+  vi.mocked(fetch).mockImplementation((...args) =>
+    String(args[0]) === "/s/test-ns/api/jobs"
+      ? Promise.resolve(
+          Response.json({
+            jobs: [
+              {
+                id: "done",
+                clone: "clone",
+                repository: "acme/demo",
+                pr: 1,
+                state: "completed",
+                phase: "finished",
+                calls: 3,
+                tokens: 10,
+                repairs: 1,
+                actual_cost_usd: null,
+                created_at: "2026-10-20T10:00:00Z",
+                started_at: "2026-10-20T10:01:00Z",
+                updated_at: "2026-10-20T10:05:30Z",
+              },
+              {
+                id: "gone",
+                clone: "clone",
+                repository: "acme/demo",
+                pr: 9,
+                state: "cancelled",
+                phase: "finished",
+                calls: 0,
+                tokens: 0,
+                repairs: 0,
+                actual_cost_usd: null,
+                created_at: "2026-10-20T10:00:00Z",
+                updated_at: "2026-10-20T10:02:00Z",
+              },
+            ],
+          }),
+        )
+      : original(...args),
+  );
+  await act(async () => root.render(<App />));
+  const done = node.querySelector("#job-done")!;
+  expect(done.querySelector(".local-job-type")!.textContent).toBe("Review");
+  expect(done.querySelector(".local-job-repository")!.textContent).toBe("acme/demo");
+  expect(done.querySelector(".local-job-title")!.textContent).toBe("#1 Change 1");
+  expect(done.querySelector(".local-job-timing")!.textContent).toMatch(/^Started .+Took 4m 30s$/);
+  expect(done.textContent).not.toContain("calls");
+  // A job of a pull request baum no longer lists shows its number; one
+  // cancelled in the queue never ran.
+  const gone = node.querySelector("#job-gone")!;
+  expect(gone.querySelector(".local-job-title")!.textContent).toBe("#9");
+  expect(gone.querySelector(".local-job-timing")!.textContent).toMatch(/^Queued /);
+  expect(gone.querySelector(".local-job-timing")!.textContent).not.toContain("Took");
 });
 it("marks automatically started jobs in the jobs list", async () => {
   history.replaceState(null, "", "/s/test-ns/?page=jobs");
@@ -1616,7 +1666,11 @@ it("names a feature build by its repository in the jobs list", async () => {
   );
   await act(async () => root.render(<App />));
   const row = node.querySelector("#job-build")!;
-  expect(row.querySelector(".local-job-title")!.textContent).toBe("Feature build · acme/demo");
+  expect(row.querySelector(".local-job-type")!.textContent).toBe("Feature build");
+  expect(row.querySelector(".local-job-title")!.textContent).toBe("acme/demo");
+  expect(row.querySelector(".local-job-title")!.getAttribute("href")).toBe(
+    "/s/test-ns/?page=jobs&job=build",
+  );
   expect(row.textContent).not.toContain("#0");
 });
 it("shows a diagnostics error with a retry that recovers", async () => {
@@ -1635,6 +1689,55 @@ it("shows a diagnostics error with a retry that recovers", async () => {
   expect(calls.count).toBe(2);
   expect(node.textContent).not.toContain("boom");
   expect(node.textContent).toContain("Fix: Connect GitHub in baum Settings.");
+});
+
+it("marks signed-out agents in desktop Settings and says how to sign in", async () => {
+  history.replaceState(null, "", "/s/test-ns/?page=settings&section=reviews");
+  stubDiagnostics(async () => Response.json({ local: true, report: diagnosticsReport }));
+  stubAutomatic();
+  const agent = { detected: true, installed: true, enabled: true, plugin: "baum@baum" };
+  const view = {
+    first_run: false,
+    command: {
+      installed: true,
+      target: "/app/baum",
+      plan: { link: "/home/user/bin/baum", on_path: true, admin: false },
+    },
+    hooks: {
+      agents: [
+        { ...agent, agent: "codex", name: "Codex", signed_in: false },
+        { ...agent, agent: "claude-code", name: "Claude Code", signed_in: true },
+      ],
+    },
+  };
+  const invoke = vi.fn(async (command: string) =>
+    command === "setup_state" ? view : { ok: true, lines: [] },
+  );
+  Object.defineProperty(window, "__TAURI_INTERNALS__", { configurable: true, value: { invoke } });
+  try {
+    await act(async () => root.render(<App />));
+    const reviews = () => node.querySelector('[aria-labelledby="settings-reviews-heading"]')!;
+    const select = node.querySelector<HTMLSelectElement>("#review-agent")!;
+    expect([...select.options].map((o) => o.textContent)).toEqual([
+      "Claude Code",
+      "Codex (not signed in)",
+    ]);
+    expect(reviews().querySelector(".settings-caution")).toBeNull();
+    await choose(select, "codex");
+    expect(reviews().textContent).toContain(
+      "Codex isn't signed in, so reviews will fail. Run codex login in a terminal.",
+    );
+    // A fix agent of its own gets the same warning.
+    await act(async () =>
+      node.querySelector<HTMLButtonElement>('button[data-section="fixes"]')!.click(),
+    );
+    const fixes = () => node.querySelector('[aria-labelledby="settings-fixes-heading"]')!;
+    expect(fixes().querySelector(".settings-caution")).toBeNull();
+    await choose(node.querySelector<HTMLSelectElement>("#fix-agent")!, "codex");
+    expect(fixes().textContent).toContain("Codex isn't signed in, so fixes will fail.");
+  } finally {
+    Reflect.deleteProperty(window, "__TAURI_INTERNALS__");
+  }
 });
 
 it("manages CLI and hooks inline in desktop Settings", async () => {
@@ -1664,6 +1767,8 @@ it("manages CLI and hooks inline in desktop Settings", async () => {
           enabled: true,
           plugin: "baum@baum",
           version: "1.0.0",
+          latest: "1.2.1",
+          update_available: true,
         },
       ],
     },
@@ -1698,7 +1803,7 @@ it("manages CLI and hooks inline in desktop Settings", async () => {
         .click(),
     );
     expect(invoke).toHaveBeenCalledWith("update_hooks", { agent: "claude-code" });
-    // It stays to update again later, labelled as before.
+    // While the refreshed status still offers a newer plugin, it stays, labelled as before.
     expect(node.querySelector('button[aria-label="Update Claude Code hooks"]')!.textContent).toBe(
       "Update",
     );
@@ -1709,6 +1814,55 @@ it("manages CLI and hooks inline in desktop Settings", async () => {
     await click("Install baum CLI");
     expect(invoke).toHaveBeenCalledWith("install_command", {});
     expect(location.search).toBe("?page=settings&section=computer");
+  } finally {
+    Reflect.deleteProperty(window, "__TAURI_INTERNALS__");
+  }
+});
+
+it("opens agent hooks from the Codex warning in desktop Settings", async () => {
+  history.replaceState(null, "", "/s/test-ns/?page=settings&section=reviews");
+  const original = vi.mocked(fetch).getMockImplementation()!;
+  vi.stubGlobal(
+    "fetch",
+    vi.fn((path: string) =>
+      path.endsWith("/api/agent-hooks/codex")
+        ? Promise.resolve(Response.json({ state: "missing" }))
+        : original(path),
+    ),
+  );
+  const agent = { detected: true, installed: true, enabled: true, plugin: "baum@baum" };
+  const view = {
+    first_run: false,
+    command: { installed: true },
+    hooks: {
+      agents: [
+        { ...agent, agent: "claude-code", name: "Claude Code", version: "1.2.1", latest: "1.2.1" },
+        // The plugin is current, but Codex reports hooks missing.
+        {
+          ...agent,
+          agent: "codex",
+          name: "Codex",
+          version: "1.2.1",
+          latest: "1.2.1",
+          trust: { state: "missing" },
+        },
+      ],
+    },
+  };
+  const invoke = vi.fn(async () => view);
+  Object.defineProperty(window, "__TAURI_INTERNALS__", { configurable: true, value: { invoke } });
+  try {
+    await act(async () => root.render(<App />));
+    const open = [...node.querySelectorAll(".local-notice button")].find(
+      (b) => b.textContent === "Open agent hooks",
+    ) as HTMLButtonElement;
+    expect(open).toBeTruthy();
+    await act(async () => open.click());
+    expect(location.search).toBe("?page=settings&section=connections");
+    expect(node.querySelector("#hooks-heading")).not.toBeNull();
+    // Update shows only where it would change something.
+    expect(node.querySelector('button[aria-label="Update Claude Code hooks"]')).toBeNull();
+    expect(node.querySelector('button[aria-label="Update Codex hooks"]')).not.toBeNull();
   } finally {
     Reflect.deleteProperty(window, "__TAURI_INTERNALS__");
   }
@@ -1928,6 +2082,8 @@ it("warns beside Settings until Codex hooks are trusted and rechecks on focus", 
   expect(settings().getAttribute("title")).toContain("Codex hooks need approval");
   await act(async () => settings().click());
   expect(node.querySelector(".settings-content")?.textContent).toContain("Open /hooks in Codex");
+  // Outside the desktop app there is no agent hooks panel to open.
+  expect(node.querySelector(".settings-content")?.textContent).not.toContain("Open agent hooks");
   unavailable = true;
   await act(async () => window.dispatchEvent(new Event("focus")));
   expect(settings().querySelector(".local-rail-badge")).not.toBeNull();

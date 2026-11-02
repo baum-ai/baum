@@ -12,6 +12,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/baum-ai/baum/bundle"
 	"github.com/baum-ai/baum/internal/appdb/appdbtest"
 	"github.com/baum-ai/baum/internal/config"
 	"github.com/baum-ai/baum/internal/repos"
@@ -67,6 +68,7 @@ func TestLocalAPIRoutesPullRequestDetailsToUpdate(t *testing.T) {
 		"/api/prs/failing-checks",
 		"/api/prs/checks",
 		"/api/prs/conflicts",
+		"/api/prs/description",
 	}
 	for _, path := range paths {
 		w := httptest.NewRecorder()
@@ -77,6 +79,34 @@ func TestLocalAPIRoutesPullRequestDetailsToUpdate(t *testing.T) {
 	}
 	if strings.Join(reached, ",") != strings.Join(paths, ",") {
 		t.Fatalf("Update reached %v, want %v", reached, paths)
+	}
+}
+
+// Each route the viewer serves for a document is registered with the app's
+// router, or it is 404 there however the viewer answers it. A request without
+// a selector reaches the document handlers, which refuse it as a bad request.
+func TestLocalAPIRoutesCommitDetailsToTheDocument(t *testing.T) {
+	registry, err := repos.Open(filepath.Join(appdbtest.TempDir(t), "repos.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = registry.Close() }()
+	handler := LocalAPI{Registry: registry, Config: config.Default(), Facts: &fakeFacts{}}.Handler()
+	defer handler.Close()
+	for _, path := range []string{
+		"/api/commits",
+		"/api/commit",
+		"/api/commit-patch",
+		"/api/file",
+		"/api/facts/commits",
+		"/api/facts/commit",
+		"/api/facts/commit-patch",
+	} {
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, httptest.NewRequest("GET", "http://local"+path+"?oid=abc&path=a.go", nil))
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("GET %s: %d %s, want the document handler's 400", path, w.Code, w.Body.String())
+		}
 	}
 }
 
@@ -105,7 +135,7 @@ func TestLocalAPISelectorsAndSecretFreeSettings(t *testing.T) {
 	}
 	const id = "att_0123456789abcdef0123456789abcdef"
 	png, _ := base64.StdEncoding.DecodeString("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==")
-	document := []byte(fmt.Sprintf(`{"review":{"repository":"owner/repo","pull_request":7,"version":1},"index":{"attachments":[{"id":%q}]}}`, id))
+	document := []byte(fmt.Sprintf(`{"review":{"repository":"owner/repo","pull_request":7,"version":1},"index":{"attachments":[{"id":%q}],"hunks":[{"id":"h_000000000001","path":"a.go","new_range":[3,1],"github_url":"diff-storedR3","diff":{"header":"@@ -3 +3 @@","lines":[]}}]}}`, id))
 	if err = versions.Put(ctx, store.Key{Repository: "owner/repo", Number: 7}, store.Version{}, store.Version{Metadata: store.Metadata{Version: 1}, Document: document, Attachments: []store.Attachment{{ID: id, ContentType: "image/png", Bytes: png}}}); err != nil {
 		t.Fatal(err)
 	}
@@ -130,6 +160,11 @@ func TestLocalAPISelectorsAndSecretFreeSettings(t *testing.T) {
 			}
 			if strings.HasPrefix(tt.path, "/api/attachments/"+id) && w.Header().Get("Content-Type") != "image/png" {
 				t.Fatal("wrong media type")
+			}
+			// The store kept the hunk without its evidence; the document is
+			// served with the derived fragment.
+			if tt.path == "/api/document"+selector && !strings.Contains(w.Body.String(), `"new_range":[3,1],"github_url":"`+bundle.HunkDiffURL("a.go", 3)+`"}]`) {
+				t.Fatalf("document served as %s", w.Body.String())
 			}
 		})
 	}

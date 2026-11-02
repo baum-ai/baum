@@ -464,7 +464,9 @@ export function RepositoryPicker({
           "organization_access" in listing ? listing.organization_access : undefined,
         );
         if ("top_repositories" in listing && Array.isArray(listing.top_repositories)) {
-          setTopList(listing.top_repositories);
+          setTopList(
+            listing.top_repositories.map((r) => ({ ...r, picked: picked.has(r.repository) })),
+          );
         } else if (!search) {
           setTopList(
             listing.repositories.map((r) => ({
@@ -670,11 +672,14 @@ export function RepositoryPicker({
                     aria-label={`Pick ${row.repository}`}
                     onChange={(e) => {
                       const pick = e.target.checked;
-                      setList((previous) =>
+                      const mark = (previous: RepositoryItem[]) =>
                         previous.map((r) =>
                           r.repository === row.repository ? { ...r, picked: pick } : r,
-                        ),
-                      );
+                        );
+                      setList(mark);
+                      // Rows shown from the cached top list while a search
+                      // runs need the same update, or the box flips back.
+                      setTopList(mark);
                       void action(row.repository, () =>
                         call(pick ? "pick" : "unpick", { repository: row.repository }),
                       );

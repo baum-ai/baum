@@ -115,8 +115,8 @@ func TestNativePluginLifecycleCommandsAndVerification(t *testing.T) {
 			install := []string{"plugin", "add", Plugin, "--json"}
 			remove := []string{"plugin", "remove", Plugin, "--json"}
 			if agent == "claude-code" {
-				install = []string{"plugin", "install", Plugin, "--scope", "user", "--json"}
-				remove = []string{"plugin", "uninstall", Plugin, "--scope", "user", "--json"}
+				install = []string{"plugin", "install", Plugin, "--scope", "user"}
+				remove = []string{"plugin", "uninstall", Plugin, "--scope", "user"}
 			}
 			if !reflect.DeepEqual(calls[0], []string{"plugin", "marketplace", "add", Marketplace}) || !reflect.DeepEqual(calls[1], install) {
 				t.Fatalf("install calls=%v", calls)
@@ -201,7 +201,7 @@ func TestUpdateRefreshesMarketplaceThenPlugin(t *testing.T) {
 			}
 			want := [][]string{{"plugin", "marketplace", "upgrade", "baum"}, {"plugin", "add", Plugin, "--json"}}
 			if agent == "claude-code" {
-				want = [][]string{{"plugin", "marketplace", "update", "baum"}, {"plugin", "update", Plugin, "--scope", "user", "--json"}}
+				want = [][]string{{"plugin", "marketplace", "update", "baum"}, {"plugin", "update", Plugin, "--scope", "user"}}
 			}
 			if !reflect.DeepEqual(calls, want) {
 				t.Fatalf("calls=%v", calls)

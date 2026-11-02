@@ -57,7 +57,7 @@ func TestDoctorExitsNonZeroOnAProblemAndPrintsTheFix(t *testing.T) {
 func TestDoctorExitsZeroWithWarningsOnly(t *testing.T) {
 	bin := doctorMachine(t)
 	fakeTool(t, bin, "git", `echo "git version 2.43.0"`)
-	fakeTool(t, bin, "claude", `echo "2.1.7 (Claude Code)"`)
+	fakeTool(t, bin, "claude", `echo "2.1.296 (Claude Code)"`)
 	t.Setenv("GITHUB_TOKEN", "ghp_PLANTEDclitoken0000000000000000000000")
 	stdout, _, err := run(t, "internal", "doctor", "--offline")
 	if err != nil || ExitCode(err) != 0 {

@@ -206,30 +206,37 @@ function closeBuild(id: string): string[] {
 
 export const NO_CLONE = "Needs a local clone of the repository";
 
-/** Starts the repository's feature build at once, as every run the person
- *  asks for starts: no dialog, no estimate. One the daemon will not run says
- *  why in the build's own words. */
-export function useFeatureBuildStart(clone: string | null, started: () => void) {
+/** A repository whose feature build can run: it has a local clone. */
+export type BuildTarget = { repository: string; clone: string };
+
+/** Starts the repositories' feature builds at once, one job each, as every
+ *  run the person asks for starts: no dialog, no estimate. One the daemon
+ *  will not run says why in the build's own words, naming its repository
+ *  when there are several; the others still start. */
+export function useFeatureBuildStart(targets: BuildTarget[], started: () => void) {
   const [starting, setStarting] = useState(false);
   const [error, setError] = useState("");
   const start = async () => {
-    if (!clone || starting) return;
+    if (targets.length === 0 || starting) return;
     setStarting(true);
     setError("");
-    try {
-      await startFeatureBuild(clone);
-      started();
-    } catch (e) {
-      setError(
+    const results = await Promise.allSettled(
+      targets.map((target) => startFeatureBuild(target.clone)),
+    );
+    if (results.some((result) => result.status === "fulfilled")) started();
+    const errors = results.flatMap((result, i) => {
+      if (result.status === "fulfilled") return [];
+      const e = result.reason;
+      const text =
         e instanceof LocalRequestError && e.code && e.status === 409
           ? buildReasonText(e.code)
           : e instanceof Error
             ? e.message
-            : "Local request failed.",
-      );
-    } finally {
-      setStarting(false);
-    }
+            : "Local request failed.";
+      return [targets.length > 1 ? `${targets[i]!.repository}: ${text}` : text];
+    });
+    setError(errors.join(" "));
+    setStarting(false);
   };
   return { start, starting, error };
 }

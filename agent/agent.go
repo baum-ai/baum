@@ -99,6 +99,11 @@ type Request struct {
 	// Transcript, when set, receives each step of the run as the person
 	// watching sees it (see TranscriptEntry); nil when none is kept.
 	Transcript func(TranscriptEntry)
+	// Stage and Pass name a task's call (Generator.RunTask): the task's
+	// Label, empty for a one-pass review, and 1 for its first pass, more for
+	// each validation repair. Zero outside a task.
+	Stage string
+	Pass  int
 	// PersistSession keeps the CLI's session instead of discarding it, so the
 	// result's SessionID can be resumed later. Only a local Claude Code or
 	// Codex run supports it; the hosted profiles, Cursor and the Anthropic API
@@ -148,7 +153,9 @@ func (r Request) ValidateSession() error {
 // its output in Text. A consumer merges them by ID.
 type TranscriptEntry struct {
 	Time time.Time `json:"time"`
-	// Kind is "message", "reasoning", "tool" or "error".
+	// Kind is "message", "reasoning", "tool", "error", or "call": the host's
+	// mark of one model call of a run that makes several, by ID like a tool,
+	// with its name in Title.
 	Kind string `json:"kind"`
 	// ID, Tool, Title and Status are a tool entry's: the harness's id, the
 	// tool ("command", "file_change", "Read", ...), its command line or name
@@ -159,6 +166,9 @@ type TranscriptEntry struct {
 	Status string `json:"status,omitempty"`
 	// Text is a message's or reasoning's text, or a finished tool's output.
 	Text string `json:"text,omitempty"`
+	// Call, set by the host, names the call of a run of several the entry
+	// belongs to, as its "call" entry's Title does.
+	Call string `json:"call,omitempty"`
 }
 
 // Emit sends an entry to Transcript, stamped with the time unless it has one.

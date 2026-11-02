@@ -383,9 +383,15 @@ func TestUnpricedBackendRuns(t *testing.T) {
 	if err != nil || len(jobs) != 1 || jobs[0].Backend != agent.BackendCursorAgent {
 		t.Fatalf("jobs = %+v, err = %v", jobs, err)
 	}
+	if jobs[0].StartedAt != nil {
+		t.Fatalf("a queued job has a start: %v", jobs[0].StartedAt)
+	}
 	<-f.started
 	close(f.release)
-	waitState(t, q, jobs[0].ID, "completed")
+	done := waitState(t, q, jobs[0].ID, "completed")
+	if done.StartedAt == nil || done.StartedAt.Before(done.CreatedAt) || done.UpdatedAt.Before(*done.StartedAt) {
+		t.Fatalf("started = %v, created = %v, updated = %v", done.StartedAt, done.CreatedAt, done.UpdatedAt)
+	}
 
 	// The fork rules still apply: isolation is confirmed separately, and a
 	// batch leaves the fork out.

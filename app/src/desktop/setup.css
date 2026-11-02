@@ -491,6 +491,25 @@ input {
 .agent-info p.ok::before {
   content: "✓ ";
 }
+/* Installed but blocked on something the person can do. */
+.agent-info p.attention {
+  color: var(--status-caution);
+}
+.agent-info p.attention::before {
+  content: "";
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  margin: 0 8px 1px 2px;
+  border-radius: 50%;
+  background: currentColor;
+}
+.agent-info h2 .agent-version {
+  font-size: var(--text-xs);
+  font-weight: 400;
+  letter-spacing: 0;
+  color: var(--text-tertiary);
+}
 .agent-info p.github-waiting {
   display: flex;
   align-items: center;

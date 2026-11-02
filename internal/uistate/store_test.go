@@ -41,8 +41,12 @@ func TestPersistenceAndRevisionAcrossInstances(t *testing.T) {
 	}
 	save(t, s, "walkthrough", key, 0, "mutation-00000001", draft)
 	save(t, s, "inbox", "", 0, "mutation-00000002", inbox)
+	save(t, s, "tour", "", 0, "mutation-00000004", `{"seen":true}`)
+	if _, err := s.Replace("tour", "", 1, "mutation-00000004:2", json.RawMessage(`{}`)); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("tour without seen: %v", err)
+	}
 	reopened := &Store{Path: s.Path}
-	for _, test := range []struct{ kind, key, value string }{{"walkthrough", key, draft}, {"inbox", "", inbox}} {
+	for _, test := range []struct{ kind, key, value string }{{"walkthrough", key, draft}, {"inbox", "", inbox}, {"tour", "", `{"seen":true}`}} {
 		got, err := reopened.Read(test.kind, test.key)
 		if err != nil || got.Revision != 1 || string(got.Value) != test.value {
 			t.Fatalf("reopen: %+v %v", got, err)
@@ -53,6 +57,39 @@ func TestPersistenceAndRevisionAcrossInstances(t *testing.T) {
 	if !errors.As(err, &stale) || stale.Current.Revision != 1 {
 		t.Fatalf("stale: %v", err)
 	}
+}
+func TestFiltersArePerPageQueriesAndSavedTabs(t *testing.T) {
+	s := store(t)
+	tab := `{"id":"0123456789abcdef0123456789abcdef","name":"Failing","view":"open","query":"checks:failing"}`
+	value := `{"pages":{"inbox":"repo:acme/app -is:draft","pulls":"(review:approved OR risk:4)","inbox:0123456789abcdef0123456789abcdef":"org:acme"},"tabs":[` + tab + `]}`
+	save(t, s, "filters", "", 0, "mutation-00000001", value)
+	if got, err := (&Store{Path: s.Path}).Read("filters", ""); err != nil || string(got.Value) != value {
+		t.Fatalf("reopen: %+v %v", got, err)
+	}
+	for name, bad := range map[string]string{
+		"no pages":   `{}`,
+		"page key":   `{"pages":{"timeline":"org:acme"}}`,
+		"null page":  `{"pages":{"inbox":null}}`,
+		"long query": `{"pages":{"inbox":"` + strings.Repeat("a", 501) + `"}}`,
+		"two lines":  `{"pages":{"inbox":"org:acme\nrisk:4"}}`,
+		"tab id":     `{"pages":{},"tabs":[` + strings.Replace(tab, "0123", "XYZ0", 1) + `]}`,
+		"tab twice":  `{"pages":{},"tabs":[` + tab + `,` + tab + `]}`,
+		"tab name":   `{"pages":{},"tabs":[` + strings.Replace(tab, "Failing", " ", 1) + `]}`,
+		"tab view":   `{"pages":{},"tabs":[` + strings.Replace(tab, `"open"`, `"timeline"`, 1) + `]}`,
+	} {
+		if _, err := s.Replace("filters", "", 1, "mutation-00000002:1", json.RawMessage(bad)); !errors.Is(err, ErrInvalid) {
+			t.Errorf("%s: %v", name, err)
+		}
+	}
+	// A stored document in another shape reads as none, and a save at its
+	// revision replaces it.
+	if err := appdb.Write(s.Path, "ui", "filters", []byte(`{"revision":1,"value":{"pages":{"inbox":{"owners":[]}}}}`)); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := s.Read("filters", ""); err != nil || string(got.Value) != "null" || got.Revision != 1 {
+		t.Fatalf("older shape: %+v %v", got, err)
+	}
+	save(t, s, "filters", "", 1, "mutation-00000003", `{"pages":{}}`)
 }
 func TestCommittedMutationRetryDoesNotOverwriteLaterChanges(t *testing.T) {
 	s := store(t)

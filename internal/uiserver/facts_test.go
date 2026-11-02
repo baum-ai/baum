@@ -67,8 +67,9 @@ func TestFactsAreServedBesideVersionsAndNeverAsOne(t *testing.T) {
 	facts := &fakeFacts{document: []byte(`{"schema":"baum.facts/1","review":{"repository":"owner/repo","pull_request":7,"head":"aaaaaaaa","base":"bbbbbbbb","merge_base":"bbbbbbbb"},"index":{"hunks":[{"id":"h_1","path":"main.go"}]}}`)}
 	handler := LocalAPI{Registry: registry, Config: config.Default(), Facts: facts}.Handler()
 	defer handler.Close()
+	const linked = "cccccccccccccccccccccccccccccccccccccccc"
 	handler.documents.resolve = func(context.Context, locallink.Request) (locallink.Result, error) {
-		return locallink.Result{Available: true}, nil
+		return locallink.Result{Available: true, Commits: []locallink.Commit{{OID: linked, Subject: "A change", Links: []locallink.Link{}}}}, nil
 	}
 	get := func(path string) *httptest.ResponseRecorder {
 		w := httptest.NewRecorder()
@@ -103,6 +104,17 @@ func TestFactsAreServedBesideVersionsAndNeverAsOne(t *testing.T) {
 	}
 	if w := get("/api/facts/patch?" + selector + "&path=other.go"); w.Code != 404 {
 		t.Errorf("patch of a file the facts do not change: %d", w.Code)
+	}
+	// A linked commit is read from the clone, which lacks it here; any other
+	// commit is not answered for.
+	if w := get("/api/facts/commit?" + selector + "&oid=" + linked); w.Code != 200 || !strings.Contains(w.Body.String(), `"files":null`) {
+		t.Errorf("commit: %d %s", w.Code, w.Body.String())
+	}
+	if w := get("/api/facts/commit?" + selector + "&oid=dddddddddddddddddddddddddddddddddddddddd"); w.Code != 404 {
+		t.Errorf("an unlinked commit: %d %s", w.Code, w.Body.String())
+	}
+	if w := get("/api/facts/commit-patch?" + selector + "&oid=" + linked + "&path=main.go"); w.Code != 404 {
+		t.Errorf("a patch of a commit the clone cannot read: %d %s", w.Code, w.Body.String())
 	}
 	// A page names the head of the facts it shows; facts of another head
 	// never answer it.

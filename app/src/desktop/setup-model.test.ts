@@ -3,12 +3,17 @@ import {
   describeCommand,
   detectedHarnesses,
   displayPath,
+  signedOutHarnesses,
   repositoryPath,
   shownHarness,
+  setupSave,
+  shownFix,
   storedReviews,
   withModel,
   withEfforts,
 } from "./setup-model";
+
+const followsReviews = { fix_backend: "", fix_model: "", fix_effort: "" };
 
 it("abbreviates only the current home and expands repository input for native actions", () => {
   expect(displayPath("Install /home/user/.local/bin/baum", "/home/user")).toBe(
@@ -30,6 +35,9 @@ it("keeps a replacement's real path separate from its displayed text", () => {
   });
   expect(displayPath(command.state, "/home/user")).toContain("~/.local/bin/baum");
   expect(command.replace).toBe(found.path);
+  const installed = describeCommand({ installed: true, found, record: {} });
+  expect(installed.state).toBe(`Installed at ${found.path}`);
+  expect(installed.path).toBe(found.path);
 });
 
 it("keeps a chosen decision model out of onboarding saves", () => {
@@ -44,7 +52,10 @@ it("keeps a chosen decision model out of onboarding saves", () => {
   expect(withModel({ ...base, decisions_model: "claude-haiku-5-5" }).decisions_model).toBe(
     "claude-haiku-5-5",
   );
-  expect(storedReviews({ ...base, decisions_model: "gpt-6-luna" })).toEqual(base);
+  expect(storedReviews({ ...base, decisions_model: "gpt-6-luna" })).toEqual({
+    ...base,
+    ...followsReviews,
+  });
   expect(
     storedReviews({
       ...base,
@@ -52,7 +63,49 @@ it("keeps a chosen decision model out of onboarding saves", () => {
       decisions_effective_model: "gpt-6-sol",
       decisions_model_ignored: false,
     }),
-  ).toEqual(base);
+  ).toEqual({ ...base, ...followsReviews });
+});
+
+it("saves fixes and gives extraction the review choice only when setup changes it", () => {
+  const saved = {
+    backend: "auto",
+    model: "",
+    effort: "",
+    automatic: true,
+    pull_requests: "both" as const,
+    ...followsReviews,
+    decisions_chosen_backend: "anthropic",
+    decisions_model: "claude-sonnet-5-5",
+    decisions_effort: "low",
+  };
+  const shown = withModel({ ...saved, backend: "codex" });
+  // Luna is the harness's default decision model, so extraction follows it.
+  expect(setupSave(shown, saved)).toMatchObject({
+    backend: "codex",
+    model: "gpt-6-luna",
+    decisions_model: "",
+    decisions_effort: "",
+  });
+  const chosen = { ...shown, model: "gpt-6.1-sol", effort: "high" };
+  expect(setupSave(chosen, saved)).toMatchObject({
+    decisions_model: "gpt-6.1-sol",
+    decisions_effort: "high",
+  });
+  // Unchanged settings save nothing; a fix change alone leaves extraction be.
+  expect(setupSave(chosen, chosen)).toBeNull();
+  const fixes = withModel({ ...chosen, fix_backend: "claude", fix_model: "", fix_effort: "max" });
+  expect(fixes).toMatchObject({ fix_model: "claude-haiku-5-5", fix_effort: "max" });
+  const fixOnly = setupSave(fixes, chosen);
+  expect(fixOnly).toMatchObject({
+    fix_backend: "claude",
+    fix_model: "claude-haiku-5-5",
+    fix_effort: "max",
+  });
+  expect(fixOnly).not.toHaveProperty("decisions_model");
+  // Following the reviews again clears the fixes' own model and effort.
+  expect(storedReviews({ ...fixes, fix_backend: "" })).toMatchObject(followsReviews);
+  expect(shownFix(fixes, ["codex"])).toMatchObject(followsReviews);
+  expect(shownFix(fixes, ["claude"])).toBe(fixes);
 });
 
 it("shows the resolved harness only when installed and limits setup to Claude Code and Codex", () => {
@@ -101,6 +154,22 @@ it("detects agent CLIs independently of whether their baum hooks are connected",
   expect(detectedHarnesses([])).toEqual([]);
 });
 
+it("lists detected agents that report no sign-in, not those that could not say", () => {
+  const base = { installed: false, enabled: false, plugin: "baum@baum", detected: true };
+  expect(
+    signedOutHarnesses([
+      { ...base, agent: "codex", name: "Codex", signed_in: false },
+      { ...base, agent: "claude-code", name: "Claude Code" },
+    ]),
+  ).toEqual(["codex"]);
+  expect(
+    signedOutHarnesses([
+      { ...base, agent: "codex", name: "Codex", signed_in: true },
+      { ...base, agent: "claude-code", name: "Claude Code", detected: false, signed_in: false },
+    ]),
+  ).toEqual([]);
+});
+
 it("keeps the decision model of an extraction harness Settings chose", () => {
   const own = {
     backend: "claude",
@@ -115,6 +184,7 @@ it("keeps the decision model of an extraction harness Settings chose", () => {
     model: "claude-opus-5-5",
     automatic: true,
     pull_requests: "both",
+    ...followsReviews,
   });
   expect(storedReviews({ ...own, decisions_model: "gpt-6.1-sol" })).not.toHaveProperty(
     "decisions_model",
@@ -140,6 +210,7 @@ it("resets an effort unsupported by a new model without filling an empty custom 
     effort: "ultra",
     automatic: true,
     pull_requests: "both",
+    ...followsReviews,
   });
 });
 
@@ -176,4 +247,45 @@ it("only calls Codex connected when its hooks are enabled and trusted", async ()
   expect(agentConnected({ ...codex, trust: { state: "trusted" } })).toBe(true);
   expect(agentConnected({ ...codex, enabled: false, trust: { state: "trusted" } })).toBe(false);
   expect(agentConnected({ ...codex, agent: "claude-code" })).toBe(true);
+});
+
+it("tells a status from the action that resolves it", async () => {
+  const { agentHookNote, agentNeedsAction, describeAgent } = await import("./setup-model");
+  const agent = { detected: true, installed: true, enabled: true, plugin: "baum@baum" };
+  const missing = { ...agent, agent: "codex", name: "Codex", trust: { state: "missing" as const } };
+  expect(describeAgent(missing)).toBe("Some baum hooks are missing");
+  expect(agentHookNote(missing)).toBe(
+    "Update adds the missing hooks. Then approve them with /hooks in Codex.",
+  );
+  expect(agentNeedsAction(missing)).toBe(true);
+  const untrusted = { ...missing, trust: { state: "untrusted" as const } };
+  expect(agentHookNote(untrusted)).toBe("Review hook trust with /hooks in Codex.");
+  const claude = { ...agent, agent: "claude-code", name: "Claude Code", update_available: true };
+  expect(describeAgent(claude)).toBe("Connected · update available");
+  expect(agentNeedsAction(claude)).toBe(false);
+  expect(agentNeedsAction({ ...claude, installed: false })).toBe(false);
+});
+
+it("calls Claude Code connected unless its settings stop baum's hooks", async () => {
+  const { agentConnected, describeAgent, agentHookNote } = await import("./setup-model");
+  const claude = {
+    agent: "claude-code",
+    name: "Claude Code",
+    detected: true,
+    installed: true,
+    enabled: true,
+    plugin: "baum@baum",
+  } as const;
+  const ready = { ...claude, trust: { state: "ready" as const } };
+  expect(agentConnected(ready)).toBe(true);
+  expect(describeAgent(ready)).toBe("Connected");
+  expect(agentHookNote(ready)).toBe("Hooks run in folders you trust in Claude Code.");
+  const off = { ...claude, trust: { state: "hooks_disabled" as const } };
+  expect(agentConnected(off)).toBe(false);
+  expect(describeAgent(off)).toBe("Hooks turned off in Claude Code");
+  expect(agentHookNote(off)).toContain("disableAllHooks");
+  const managed = { ...claude, trust: { state: "managed_only" as const } };
+  expect(describeAgent(managed)).toBe("Blocked by your organization");
+  const unknown = { ...claude, trust: { state: "unknown" as const } };
+  expect(describeAgent(unknown)).toBe("Claude Code settings could not be read");
 });

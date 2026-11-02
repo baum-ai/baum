@@ -448,12 +448,16 @@ describe("sessions and commits", () => {
     sessionsMock.mockImplementation(async () => respond(local));
     window.history.replaceState(null, "", `/?pane=session&session=${SESSION}`);
     await mount();
-    expect(pane()).toContain("1 of 1 session");
+    expect(container.querySelector("#review-section h2")?.textContent).toBe(
+      "Wire the retry budget",
+    );
     expect(pane()).toContain("Wire the retry budget");
 
     window.history.pushState(null, "", `/?pane=commit&commit=${OID_ONE}`);
     await act(async () => void window.dispatchEvent(new PopStateEvent("popstate")));
-    expect(pane()).toContain("1 of 2 commits");
+    expect(container.querySelector(`#commit-${OID_ONE} > p`)?.textContent).toBe(
+      "Add the retry budget",
+    );
     expect(pane()).toContain("Add the retry budget");
     expect(pane()).toContain("95% confidence");
 
@@ -603,7 +607,7 @@ describe("sessions and commits", () => {
     expect(container.querySelector('[aria-label="Loading commits"]')).not.toBeNull();
 
     await act(async () => pending.resolve(respond(local)));
-    expect(pane()).toContain("1 of 2 commits");
+    expect(container.querySelector(`#commit-${OID_TWO} > p`)?.textContent).toBe("Tidy the docs");
     expect(pane()).toContain("Tidy the docs");
   });
 
@@ -638,13 +642,17 @@ describe("sessions and commits", () => {
     sessionsMock.mockImplementation(async () => respond(local));
     window.history.replaceState(null, "", `/?pane=commit&commit=${OID_ONE}`);
     await mount();
-    expect(pane()).toContain("1 of 2 commits");
+    expect(container.querySelector(`#commit-${OID_ONE} > p`)?.textContent).toBe(
+      "Add the retry budget",
+    );
 
     sessionsMock.mockImplementation(async () => respond({ error: "boom" }, 500));
     await act(async () => source().emit("document"));
     expect(sessionsMock).toHaveBeenCalledTimes(2);
     expect(railText()).toContain("Commits2");
-    expect(pane()).toContain("1 of 2 commits");
+    expect(container.querySelector(`#commit-${OID_ONE} > p`)?.textContent).toBe(
+      "Add the retry budget",
+    );
     expect(pane()).not.toContain("recorded in the review");
 
     // A real answer that says unavailable still drops to the fallback.
@@ -905,7 +913,7 @@ describe("sessions and commits", () => {
       );
       expect(search()).toBe(`pane=session&session=${SESSION}&turn=2`);
 
-      await press("All sessions");
+      await openGroup("Sessions");
       expect(search()).toBe("pane=sessions");
     });
 

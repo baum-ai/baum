@@ -1,4 +1,4 @@
-import { cost, type Accounting } from "./api";
+import { cost, type Accounting, type Usage } from "./api";
 import { formatCount } from "@baum/viewer/components/format";
 const reasons: Record<string, string> = {
   metadata_pending_redaction: "Model metadata will appear after its secret masking finishes.",
@@ -13,78 +13,167 @@ const reasons: Record<string, string> = {
   billed_by_cursor_subscription: "Billed by your Cursor subscription; baum can't price it.",
   unpriced_calls: "Some calls could not be priced; the cost is at least the amount shown.",
 };
-export function UsageDetails({
-  accounting,
-  charged,
-  amount,
-  reason,
-}: {
+function promptRange(usage: Usage) {
+  return usage.MinPrompt == null || usage.MaxPrompt == null
+    ? null
+    : `${formatCount(usage.MinPrompt)}–${formatCount(usage.MaxPrompt)}`;
+}
+function Stat({ label, value }: { label: string; value: string }) {
+  return (
+    <div>
+      <dt>{label}</dt>
+      <dd>{value}</dd>
+    </div>
+  );
+}
+type UsageProps = {
   accounting?: Accounting;
   charged: number | undefined;
   amount: number | null;
   reason?: string;
-}) {
+};
+/** The figures: cost, budget and processed tokens, then the provider's
+ *  buckets when it reported them. */
+function Figures({ accounting, charged, amount, reason }: UsageProps) {
   const usage = accounting?.usage;
   return (
-    <div className="text-xs space-y-1">
-      <p>
-        Charged-token budget counter {formatCount(charged)} · At API prices{" "}
-        {reason === "unpriced_calls" && amount != null ? "≥ " : ""}
-        {cost(amount)}
-      </p>
+    <>
+      <Stat
+        label="At API prices"
+        value={
+          amount == null ? "Unknown" : `${reason === "unpriced_calls" ? "≥ " : ""}${cost(amount)}`
+        }
+      />
+      <Stat label="Budget tokens" value={formatCount(charged)} />
+      {usage ? (
+        <Stat
+          label={usage.Unreported ? "Processed (partial)" : "Processed tokens"}
+          value={formatCount(usage.Input + usage.Output + usage.CacheRead + usage.CacheCreate)}
+        />
+      ) : null}
+    </>
+  );
+}
+function Buckets({ usage }: { usage: Usage }) {
+  return (
+    <>
+      <Stat label="Input" value={formatCount(usage.Input)} />
+      <Stat label="Output" value={formatCount(usage.Output)} />
+      <Stat label="Cache reads" value={formatCount(usage.CacheRead)} />
+      <Stat label="Cache writes" value={formatCount(usage.CacheCreate)} />
+    </>
+  );
+}
+/** What qualifies the figures: why a cost is unknown or a lower bound, how
+ *  cache reads count, what else the provider reported, and each attempt. */
+function Notes({ accounting, amount, reason }: UsageProps) {
+  const usage = accounting?.usage;
+  const note =
+    amount == null
+      ? (reasons[reason ?? ""] ?? "Exact pricing is unavailable for this record.")
+      : reason === "unpriced_calls"
+        ? reasons.unpriced_calls
+        : null;
+  // Only what the provider reported; unknown extras are left out rather than listed.
+  const extras = usage
+    ? [
+        usage.Speed ? `Speed ${usage.Speed}` : "",
+        usage.CacheCreate1h == null
+          ? ""
+          : `1-hour cache writes ${formatCount(usage.CacheCreate1h)}`,
+        promptRange(usage) ? `Prompts ${promptRange(usage)} tokens` : "",
+      ].filter(Boolean)
+    : [];
+  return (
+    <>
+      {note ? <p>{note}</p> : null}
       {usage ? (
         <>
           <p>
-            {usage.Unreported ? "Partial provider usage" : "Provider-reported usage"}: Input{" "}
-            {formatCount(usage.Input)} · Output {formatCount(usage.Output)} · Cache reads{" "}
-            {formatCount(usage.CacheRead)} · Cache creation {formatCount(usage.CacheCreate)}
+            Cache reads are billed separately and don't count toward budget tokens.
+            {usage.Unreported ? " The provider reported only part of the usage." : ""}
           </p>
-          <p>
-            {usage.Unreported ? "Reported processed subtotal" : "Total processed tokens"}{" "}
-            {formatCount(usage.Input + usage.Output + usage.CacheRead + usage.CacheCreate)}. Cache
-            reads are billed separately and excluded from the charged-token budget counter.
-          </p>
-          <p>
-            Cache creation at 1-hour TTL:{" "}
-            {usage.CacheCreate1h == null ? "Unknown" : formatCount(usage.CacheCreate1h)} · Speed:{" "}
-            {usage.Speed ?? "Unknown"} · Prompt range:{" "}
-            {usage.MinPrompt == null || usage.MaxPrompt == null
-              ? "Unknown"
-              : `${formatCount(usage.MinPrompt)}–${formatCount(usage.MaxPrompt)}`}
-          </p>
-          <details>
-            <summary>Model attempts ({accounting.attempts.length})</summary>
-            {accounting.attempts.map((a, i) => (
-              <p key={i}>
-                Attempt {i + 1}: {a.model || "Model not reported"}
-                {a.model_source === "configured" ? " (configured; actual model not reported)" : ""}
-                {a.failed ? " (failed)" : ""} · Input {formatCount(a.usage.Input)} · Output{" "}
-                {formatCount(a.usage.Output)} · Cache reads {formatCount(a.usage.CacheRead)} · Cache
-                creation {formatCount(a.usage.CacheCreate)}
-                {a.usage.Unreported ? " · Usage incomplete" : ""}
-                {" · Speed: "}
-                {a.usage.Speed ?? "Unknown"}
-                {" · 1-hour cache creation: "}
-                {formatCount(a.usage.CacheCreate1h)}
-                {" · Prompt range: "}
-                {a.usage.MinPrompt == null || a.usage.MaxPrompt == null
-                  ? "Unknown"
-                  : `${formatCount(a.usage.MinPrompt)}–${formatCount(a.usage.MaxPrompt)}`}
-              </p>
-            ))}
-          </details>
+          {extras.length ? <p>{extras.join(" · ")}</p> : null}
         </>
       ) : (
         <p>Provider token breakdown unavailable for this record.</p>
       )}
-      {amount == null ? (
-        <p>
-          Cost at API prices unknown:{" "}
-          {reasons[reason ?? ""] ?? "Exact pricing is unavailable for this record."}
-        </p>
-      ) : reason === "unpriced_calls" ? (
-        <p>{reasons.unpriced_calls}</p>
+      {accounting?.attempts.length ? <Attempts accounting={accounting} /> : null}
+    </>
+  );
+}
+function Attempts({ accounting }: { accounting: Accounting }) {
+  return (
+    <details className="local-usage-attempts">
+      <summary>
+        {accounting.attempts.length}{" "}
+        {accounting.attempts.length === 1 ? "model attempt" : "model attempts"}
+      </summary>
+      <table>
+        <thead>
+          <tr>
+            <th>Model</th>
+            <th>Input</th>
+            <th>Output</th>
+            <th>Cache reads</th>
+            <th>Cache writes</th>
+          </tr>
+        </thead>
+        <tbody>
+          {accounting.attempts.map((a, i) => (
+            <tr key={i}>
+              <td>
+                {a.model || "Not reported"}
+                {a.model_source === "configured" ? " (configured)" : ""}
+                {a.failed ? " · failed" : ""}
+                {a.usage.Unreported ? " · incomplete" : ""}
+              </td>
+              <td>{formatCount(a.usage.Input)}</td>
+              <td>{formatCount(a.usage.Output)}</td>
+              <td>{formatCount(a.usage.CacheRead)}</td>
+              <td>{formatCount(a.usage.CacheCreate)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </details>
+  );
+}
+export function UsageDetails(props: UsageProps) {
+  const usage = props.accounting?.usage;
+  return (
+    <div className="local-usage">
+      <dl className="local-usage-totals">
+        <Figures {...props} />
+      </dl>
+      {usage ? (
+        <dl className="local-usage-buckets">
+          <Buckets usage={usage} />
+        </dl>
       ) : null}
+      <Notes {...props} />
     </div>
+  );
+}
+/** A job page's usage: every figure on one line under the page's title, what
+ *  qualifies them folded below. */
+export function UsageBar(props: UsageProps) {
+  const usage = props.accounting?.usage;
+  return (
+    <section aria-label="Usage" className="local-usage local-usage-bar">
+      <dl>
+        <Figures {...props} />
+        {usage ? (
+          <>
+            <span aria-hidden="true" className="local-usage-divider" />
+            <Buckets usage={usage} />
+          </>
+        ) : null}
+      </dl>
+      <details className="local-usage-more">
+        <summary>About these figures</summary>
+        <Notes {...props} />
+      </details>
+    </section>
   );
 }

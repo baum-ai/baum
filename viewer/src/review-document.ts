@@ -1758,6 +1758,27 @@ function encodeSegments(value: string): string {
   return value.split("/").map(encodeURIComponent).join("/");
 }
 
+/** Whether a context reference names a directory rather than a file: it
+ *  ends in "/", another path the document cites lies under it, or its last
+ *  segment has no extension and no hunk of the change is that exact file.
+ *  An extensionless file cited only by the context (a Makefile) reads as a
+ *  directory too; it then keeps its GitHub link, which still works. */
+export function isContextDirectory(document: ReviewDocument, path: string): boolean {
+  if (path.endsWith("/")) return true;
+  const cited = new Set<string>();
+  for (const hunk of document.index.hunks) {
+    cited.add(hunk.path);
+    if (hunk.old_path) cited.add(hunk.old_path);
+  }
+  for (const part of Object.values(document.summary.context ?? {})) {
+    for (const ref of part?.refs ?? []) cited.add(ref.path);
+  }
+  const prefix = `${path}/`;
+  for (const candidate of cited) if (candidate.startsWith(prefix)) return true;
+  const name = path.slice(path.lastIndexOf("/") + 1);
+  return !name.includes(".") && !document.index.hunks.some((hunk) => hunk.path === path);
+}
+
 /** Where a context reference reads on GitHub: at head, or at the merge base
  *  when every indexed change on or under it removes or renames a file away.
  *  Stack file comparisons preserve member boundaries and source revisions,
@@ -1837,14 +1858,14 @@ export function resolveAnchor(document: ReviewDocument, anchor: Anchor): Resolve
       return { label: anchor.path, kind: "File" };
     case "commit":
       return {
-        label: shortSha(anchor.sha),
+        label: `From commit ${shortSha(anchor.sha)}`,
         href: `${repository}/commit/${anchor.sha}`,
         kind: "Commit",
       };
     case "pr": {
       const pr = index.prs.find((candidate) => candidate.number === anchor.number);
       return {
-        label: `#${anchor.number}`,
+        label: `From #${anchor.number}`,
         href: repositoryLink(document, pr?.url) ?? `${repository}/pull/${anchor.number}`,
         title: pr?.title,
         kind: "Pull request",
@@ -1852,7 +1873,9 @@ export function resolveAnchor(document: ReviewDocument, anchor: Anchor): Resolve
     }
     case "pr_body":
       return {
-        label: anchor.section ? `Description § ${anchor.section}` : "Description",
+        label: anchor.section
+          ? `From the PR description § ${anchor.section}`
+          : "From the PR description",
         href: pullRequestUrl(document),
         kind: "Pull request description",
       };
@@ -1861,7 +1884,7 @@ export function resolveAnchor(document: ReviewDocument, anchor: Anchor): Resolve
       if (!comment) return { label: `Comment ${anchor.id}`, kind: "Unresolved comment" };
       const kind = comment.kind === "review" ? "review" : "comment";
       return {
-        label: `${comment.author} ${kind}`,
+        label: `From ${comment.author}'s ${kind}`,
         href: repositoryLink(document, comment.url),
         title: comment.bot ? "Bot comment" : undefined,
         kind: "Pull request comment",

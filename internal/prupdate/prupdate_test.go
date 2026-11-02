@@ -30,6 +30,8 @@ type fakeGitHub struct {
 	mergeableState string
 	mergeable      string
 	canPush        bool
+	// body is the pull request's description.
+	body string
 	// updateStatus and updateBody answer the update-branch call.
 	updateStatus int
 	updateBody   string
@@ -101,7 +103,8 @@ func (f *fakeGitHub) client() *github.Client {
 			if mergeable == "" {
 				mergeable = "true"
 			}
-			return answer(200, fmt.Sprintf(`{"title":"T","state":%q,"draft":false,"mergeable":%s,"mergeable_state":%q,"head":{"sha":%q,"ref":"feature","repo":{"full_name":"acme/app"}},"base":{"ref":"main","repo":{"full_name":"acme/app"}}}`, state, mergeable, f.mergeableState, f.head))
+			body, _ := json.Marshal(f.body)
+			return answer(200, fmt.Sprintf(`{"title":"T","state":%q,"body":%s,"html_url":"https://github.com/acme/app/pull/7","draft":false,"mergeable":%s,"mergeable_state":%q,"head":{"sha":%q,"ref":"feature","repo":{"full_name":"acme/app"}},"base":{"ref":"main","repo":{"full_name":"acme/app"}}}`, state, body, mergeable, f.mergeableState, f.head))
 		case path == "/repos/acme/app":
 			return answer(200, fmt.Sprintf(`{"permissions":{"push":%v}}`, f.canPush))
 		case strings.HasSuffix(path, "/actions/runs"):
@@ -263,8 +266,8 @@ func TestReviewThreadsListsTheUnresolvedOnes(t *testing.T) {
 	}
 	first, second := got.Threads[0], got.Threads[1]
 	wantFirst := Thread{ID: "RT_1", Path: "a.go", Line: 12, Author: "alice", Excerpt: "Rename this.", Comments: 3, URL: "https://github.com/acme/app/pull/7#discussion_r1", CanResolve: true, Messages: []ThreadComment{
-		{Author: "alice", Body: "Rename this.\nIt reads badly.", URL: "https://github.com/acme/app/pull/7#discussion_r1"},
-		{Author: "me", Body: "ok", URL: "https://github.com/acme/app/pull/7#discussion_r2"},
+		{Author: "alice", Body: "Rename this.\nIt reads badly.", Markdown: "\n  Rename this.\nIt reads badly.", URL: "https://github.com/acme/app/pull/7#discussion_r1"},
+		{Author: "me", Body: "ok", Markdown: "ok", URL: "https://github.com/acme/app/pull/7#discussion_r2"},
 	}}
 	if !reflect.DeepEqual(first, wantFirst) {
 		t.Fatalf("first %+v, want %+v", first, wantFirst)
@@ -473,18 +476,27 @@ func TestFailingChecks(t *testing.T) {
 }
 
 // A comment longer than the bound is cut with an ellipsis.
+// A comment's plain text is cut at maxMessage; its Markdown, which cutting
+// could leave open mid-block, is kept whole or, past maxMarkdown, left out.
 func TestReviewThreadMessagesAreBounded(t *testing.T) {
 	long := strings.Repeat("x", 5000)
+	huge := strings.Repeat("y", maxMarkdown+1)
 	fake := fakeGitHub{graphql: func(string, map[string]any) string {
 		return `{"data":{"repository":{"pullRequest":{"headRefOid":"abc","reviewThreads":{"pageInfo":{"hasNextPage":false},"nodes":[
-			{"id":"RT_1","path":"a.go","line":1,"isResolved":false,"comments":{"totalCount":1,"nodes":[{"state":"SUBMITTED","body":"` + long + `","author":{"__typename":"User","login":"alice"}}]}}]}}}}}`
+			{"id":"RT_1","path":"a.go","line":1,"isResolved":false,"comments":{"totalCount":2,"nodes":[
+				{"state":"SUBMITTED","body":"` + long + `","author":{"__typename":"User","login":"alice"}},
+				{"state":"SUBMITTED","body":"` + huge + `","author":{"__typename":"User","login":"bob"}}]}}]}}}}}`
 	}}
 	got, err := Service{Client: fake.client()}.ReviewThreads(context.Background(), repo, 7, -1)
 	if err != nil || len(got.Threads) != 1 {
 		t.Fatalf("threads %+v, %v", got, err)
 	}
-	if body := got.Threads[0].Messages[0].Body; body != strings.Repeat("x", maxMessage-1)+"…" {
+	messages := got.Threads[0].Messages
+	if body := messages[0].Body; body != strings.Repeat("x", maxMessage-1)+"…" {
 		t.Fatalf("message of %d characters", len([]rune(body)))
+	}
+	if messages[0].Markdown != long || messages[1].Markdown != "" {
+		t.Fatalf("markdown of %d and %d characters", len(messages[0].Markdown), len(messages[1].Markdown))
 	}
 }
 
@@ -619,4 +631,32 @@ func TestRerunJob(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestDescription(t *testing.T) {
+	ctx := context.Background()
+	// A closed pull request's description is still readable.
+	fake := fakeGitHub{head: "abc", state: "closed", body: "## Validation\n\nRan it.\n"}
+	got, err := Service{Client: fake.client()}.Description(ctx, repo, 7)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Body != "## Validation\n\nRan it." || got.URL != "https://github.com/acme/app/pull/7" {
+		t.Fatalf("description = %+v", got)
+	}
+
+	empty := fakeGitHub{head: "abc"}
+	got, err = Service{Client: empty.client()}.Description(ctx, repo, 7)
+	if err != nil || got.Body != "" {
+		t.Fatalf("empty description = %+v, %v", got, err)
+	}
+
+	long := fakeGitHub{head: "abc", body: strings.Repeat("x", DescriptionLimit+100)}
+	got, err = Service{Client: long.client()}.Description(ctx, repo, 7)
+	if err != nil || len(got.Body) > DescriptionLimit+len("…") || !strings.HasSuffix(got.Body, "…") {
+		t.Fatalf("long description = %d bytes, %v", len(got.Body), err)
+	}
+
+	_, err = Service{Client: empty.client()}.Description(ctx, repo, 8)
+	code(t, err, NotFound)
 }

@@ -103,7 +103,7 @@ const fixtures: Record<string, { block: unknown; shows: string[] }> = {
       items: [{ attachment: "att_0123456789abcdef", caption: "Images caption" }],
       source: [{ type: "pr_body", section: null }],
     },
-    shows: ["Images caption", 'src="/attachments/att_0123456789abcdef"', "Description"],
+    shows: ["Images caption", 'src="/attachments/att_0123456789abcdef"', "From the PR description"],
   },
   repro: {
     block: { kind: "repro", steps: ["Reproduce step one"], source },
@@ -246,7 +246,7 @@ describe("images blocks", () => {
       '<figcaption class="text-base text-(--text-tertiary)">The picker, open</figcaption>',
     );
     expect(html).toContain('width="640" height="480"');
-    expect(html).toContain("Description § Screenshots");
+    expect(html).toContain("From the PR description § Screenshots");
     // Only the stored copy is loaded, never the description's own address.
     expect(html).not.toContain("user-attachments");
   });

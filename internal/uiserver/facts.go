@@ -15,9 +15,10 @@ import (
 //
 //   - GET /api/facts?clone=&pr=&head= answers the facts (review.Facts) at the
 //     head the page shows, built when due (internal/facts).
-//   - GET /api/facts/sessions, /api/facts/sessions/{id}, /api/facts/patch and
-//     /api/facts/commits answer what /api/sessions, /api/patch and
-//     /api/commits answer for a version, for the facts last built: they never
+//   - GET /api/facts/sessions, /api/facts/sessions/{id}, /api/facts/patch,
+//     /api/facts/commits, /api/facts/commit and /api/facts/commit-patch answer
+//     what /api/sessions, /api/patch, /api/commits, /api/commit and
+//     /api/commit-patch answer for a version, for the facts last built: they never
 //     read GitHub, and are 404 before the facts are, or when an optional
 //     head= names another head than the facts describe.
 //
@@ -92,6 +93,8 @@ func (a LocalAPI) factsRoutes(mux *http.ServeMux, cache *documentCache) {
 	mux.HandleFunc("GET /api/facts/sessions/{id}", local)
 	mux.HandleFunc("GET /api/facts/patch", local)
 	mux.HandleFunc("GET /api/facts/commits", local)
+	mux.HandleFunc("GET /api/facts/commit", local)
+	mux.HandleFunc("GET /api/facts/commit-patch", local)
 }
 
 func factsError(w http.ResponseWriter, status int, code, message string, resume time.Time) {

@@ -1,16 +1,19 @@
 package automatic
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/baum-ai/baum/internal/config"
 	"github.com/baum-ai/baum/internal/repos"
 )
 
-// Handler serves GET and PUT /api/automatic. Like the registry handler it
+// Handler serves GET and PUT /api/automatic and POST
+// /api/automatic/catch-up (CatchUp). Like the registry handler it
 // does not authenticate: mount it only behind the daemon's authenticated,
 // Host/Origin-checked middleware.
 func (s *Scheduler) Handler() http.Handler {
@@ -121,6 +124,19 @@ func (s *Scheduler) Handler() http.Handler {
 			s.notify(o.Repositories)
 		}
 		write(w, r)
+	})
+	// Desktop setup asks for this once, when it finishes. The polls can take
+	// a while, so it answers at once and the catch-up does not end with the
+	// request.
+	mux.HandleFunc("POST /api/automatic/catch-up", func(w http.ResponseWriter, r *http.Request) {
+		go func() {
+			ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), 10*time.Minute)
+			defer cancel()
+			if err := s.CatchUp(ctx, SetupCatchUp); err != nil {
+				s.log().Warn("setup catch-up failed", "error", err)
+			}
+		}()
+		w.WriteHeader(http.StatusAccepted)
 	})
 	return mux
 }

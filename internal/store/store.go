@@ -3,6 +3,12 @@
 // the previous version under the same write lock so concurrent generations
 // cannot fork history. A refresh replaces the latest document only while its
 // exact bytes are unchanged, so concurrent refreshes cannot lose each other.
+// Triggers keep the index projection of each latest document in the summaries
+// table current in the writer's own transaction; see Snapshot.
+//
+// A stored document holds no hunk evidence: Put removes every indexed hunk's
+// patch text and GitHub fragment (review.StripHunkEvidence), which the clone
+// and the hunk's path and range give back when the document is read.
 package store
 
 import (
@@ -23,6 +29,7 @@ import (
 	_ "modernc.org/sqlite"
 
 	"github.com/baum-ai/baum/agent"
+	"github.com/baum-ai/baum/review"
 )
 
 var ErrNotFound = errors.New("no stored review version; run baum internal generate first")
@@ -102,25 +109,12 @@ func Open(commonDir, override string, write bool) (*Store, error) {
 	if override != "" {
 		return openRoot(override, write)
 	}
-	common, err := filepath.Abs(commonDir)
+	roots, err := Roots(commonDir)
 	if err != nil {
 		return nil, err
 	}
-	if resolved, err := filepath.EvalSymlinks(common); err == nil {
-		common = resolved
-	}
-	local := filepath.Join(common, "baum", "reviews")
-	data := os.Getenv("XDG_DATA_HOME")
-	if data == "" || !filepath.IsAbs(data) {
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return nil, err
-		}
-		data = filepath.Join(home, ".local", "share")
-	}
-	sum := sha256.Sum256([]byte(common))
-	fallback := filepath.Join(data, "baum", "reviews", hex.EncodeToString(sum[:]))
-	for _, root := range []string{local, fallback} {
+	local, fallback := roots[0], roots[1]
+	for _, root := range roots {
 		if _, err := os.Stat(filepath.Join(root, "versions.sqlite")); err == nil {
 			return openRoot(root, write)
 		} else if !errors.Is(err, os.ErrNotExist) {
@@ -139,6 +133,29 @@ func Open(commonDir, override string, write bool) (*Store, error) {
 	}
 	return openRoot(fallback, true)
 }
+
+// Roots are the roots Open chooses between for a clone's common directory,
+// in its order: the clone-local one, then the per-user data fallback.
+func Roots(commonDir string) ([]string, error) {
+	common, err := filepath.Abs(commonDir)
+	if err != nil {
+		return nil, err
+	}
+	if resolved, err := filepath.EvalSymlinks(common); err == nil {
+		common = resolved
+	}
+	data := os.Getenv("XDG_DATA_HOME")
+	if data == "" || !filepath.IsAbs(data) {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return nil, err
+		}
+		data = filepath.Join(home, ".local", "share")
+	}
+	sum := sha256.Sum256([]byte(common))
+	return []string{filepath.Join(common, "baum", "reviews"), filepath.Join(data, "baum", "reviews", hex.EncodeToString(sum[:]))}, nil
+}
+
 func openRoot(root string, write bool) (*Store, error) {
 	root, err := filepath.Abs(root)
 	if err != nil {
@@ -165,6 +182,9 @@ func openRoot(root string, write bool) (*Store, error) {
 	}
 	defer db.Close()
 	_, err = db.Exec(`CREATE TABLE IF NOT EXISTS versions (repository TEXT NOT NULL, pr INTEGER NOT NULL, version INTEGER NOT NULL, metadata BLOB NOT NULL, document BLOB NOT NULL, PRIMARY KEY(repository,pr,version)); CREATE TABLE IF NOT EXISTS runs (id INTEGER PRIMARY KEY AUTOINCREMENT, repository TEXT NOT NULL, pr INTEGER NOT NULL, state TEXT NOT NULL, reason TEXT NOT NULL, started INTEGER NOT NULL, expires INTEGER NOT NULL, finished INTEGER NOT NULL); CREATE INDEX IF NOT EXISTS runs_by_pr ON runs(repository,pr,id);`)
+	if err == nil {
+		err = setupSummaries(context.Background(), db)
+	}
 	if err == nil {
 		_, err = db.Exec(chatSchema)
 	}
@@ -260,8 +280,53 @@ func (s *Store) Versions(ctx context.Context, k Key) ([]Metadata, error) {
 	return out, rows.Err()
 }
 
+// Commits are the commits a stored version recorded.
+type Commits struct {
+	Key       Key
+	Version   int
+	Head      string
+	Base      string
+	MergeBase string
+}
+
+// Commits lists the recorded commits of every stored version of every pull
+// request, without reading documents. A root with no database is ErrNotFound.
+func (s *Store) Commits(ctx context.Context) ([]Commits, error) {
+	db, err := s.database(false)
+	if err != nil {
+		return nil, err
+	}
+	defer db.Close()
+	rows, err := db.QueryContext(ctx, `SELECT repository,pr,version,metadata FROM versions ORDER BY repository,pr,version`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Commits
+	for rows.Next() {
+		var c Commits
+		var raw []byte
+		if err := rows.Scan(&c.Key.Repository, &c.Key.Number, &c.Version, &raw); err != nil {
+			return nil, err
+		}
+		var m struct {
+			Head      string `json:"head"`
+			Base      string `json:"base"`
+			MergeBase string `json:"merge_base"`
+		}
+		if err := json.Unmarshal(raw, &m); err != nil {
+			return nil, err
+		}
+		c.Head, c.Base, c.MergeBase = m.Head, m.Base, m.MergeBase
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+
 // Put appends v only while previous is still the latest version; the zero
-// Version means no history. A refresh of previous during generation replaces
+// Version means no history. The document is stored without hunk evidence
+// (review.StripHunkEvidence), so the stored bytes differ from v.Document when
+// it carries any. A refresh of previous during generation replaces
 // only its live facts in place, so it does not reject the generated version:
 // the next refresh brings the new version's live facts up to date.
 // A failed or cancelled transaction leaves every published version untouched.
@@ -286,6 +351,10 @@ func (s *Store) Put(ctx context.Context, k Key, previous Version, v Version) err
 	if err := validateAttachments(v); err != nil {
 		return err
 	}
+	document, _, err := review.StripHunkEvidence(v.Document)
+	if err != nil {
+		return err
+	}
 	metadata, err := json.Marshal(v.Metadata)
 	if err != nil {
 		return err
@@ -302,7 +371,7 @@ func (s *Store) Put(ctx context.Context, k Key, previous Version, v Version) err
 		return err
 	}
 	defer func() { _ = tx.Rollback() }()
-	result, err := tx.ExecContext(ctx, `INSERT INTO versions(repository,pr,version,metadata,document) SELECT ?,?,?,?,? WHERE COALESCE((SELECT MAX(version) FROM versions WHERE repository=? AND pr=?),0)=?`, k.repository(), k.Number, v.Metadata.Version, metadata, []byte(v.Document), k.repository(), k.Number, expected)
+	result, err := tx.ExecContext(ctx, `INSERT INTO versions(repository,pr,version,metadata,document) SELECT ?,?,?,?,? WHERE COALESCE((SELECT MAX(version) FROM versions WHERE repository=? AND pr=?),0)=?`, k.repository(), k.Number, v.Metadata.Version, metadata, document, k.repository(), k.Number, expected)
 	if err != nil {
 		return err
 	}
@@ -320,6 +389,9 @@ func (s *Store) Put(ctx context.Context, k Key, previous Version, v Version) err
 }
 
 // RefreshCurrent replaces only the latest document, preserving its metadata.
+// A document stored without hunk evidence is replaced without it; one stored
+// with it, before Put removed it, is replaced as given, so no write takes the
+// evidence away from a version saved with it.
 // Both the version and exact previous bytes fence concurrent generation and
 // refresh. A running generation does not block it: live facts refresh
 // independently, and the generated version still publishes over it.
@@ -362,12 +434,24 @@ func (s *Store) replaceCurrent(ctx context.Context, k Key, previous Version, doc
 	if before != after || !strings.EqualFold(after.Review.Repository, k.documentRepository()) || after.Review.PullRequest != k.Number || after.Review.Version != previous.Metadata.Version {
 		return fmt.Errorf("%s changed generation identity", what)
 	}
+	if _, carried, err := review.StripHunkEvidence(previous.Document); err != nil {
+		return err
+	} else if !carried {
+		if document, _, err = review.StripHunkEvidence(document); err != nil {
+			return err
+		}
+	}
 	db, err := s.database(true)
 	if err != nil {
 		return err
 	}
 	defer db.Close()
-	result, err := db.ExecContext(ctx, `UPDATE versions SET document=? WHERE repository=? AND pr=? AND version=? AND document=? AND version=(SELECT MAX(version) FROM versions WHERE repository=? AND pr=?)`, document, k.repository(), k.Number, previous.Metadata.Version, []byte(previous.Document), k.repository(), k.Number)
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	result, err := tx.ExecContext(ctx, `UPDATE versions SET document=? WHERE repository=? AND pr=? AND version=? AND document=? AND version=(SELECT MAX(version) FROM versions WHERE repository=? AND pr=?)`, document, k.repository(), k.Number, previous.Metadata.Version, []byte(previous.Document), k.repository(), k.Number)
 	if err != nil {
 		return err
 	}
@@ -378,5 +462,5 @@ func (s *Store) replaceCurrent(ctx context.Context, k Key, previous Version, doc
 	if n != 1 {
 		return fmt.Errorf("%w; %s again using the latest document", ErrConflict, again)
 	}
-	return nil
+	return tx.Commit()
 }

@@ -1,5 +1,13 @@
 import { uiState, useUIState } from "./ui-state";
 import {
+  FilterBar,
+  FilterButton,
+  FilterSaveError,
+  SaveButton,
+  type SaveOption,
+} from "./filter-menu";
+import { matchesQuery, queryProblem, useFilterDraft } from "./pr-filter";
+import {
   Fragment,
   useEffect,
   useId,
@@ -17,6 +25,7 @@ import {
   ChevronDownIcon,
   ChevronRightIcon,
   GitHubIcon,
+  MergeIcon,
   StackIcon,
 } from "@baum/viewer/components/icons";
 import { InlineMarkdown, Markdown } from "@baum/viewer/components/markdown";
@@ -37,6 +46,7 @@ import {
   fixLabel,
   isActiveJob,
   jobHref,
+  agentName,
   jobReasonText,
   joinAnd,
   liveFor,
@@ -51,10 +61,21 @@ import {
   type ReviewGroup,
 } from "./api";
 import { phaseText, type FixState } from "./fix";
-import { inboxesOf, matches, sentence, type Inbox } from "./inboxes";
+import {
+  COLOR_NAMES,
+  foldedQuery,
+  INBOX_COLORS,
+  withQuery,
+  inboxesOf,
+  nameProblem,
+  type Inbox,
+  type InboxColor,
+} from "./inboxes";
+import { useDisclosure } from "@baum/viewer/components/use-disclosure";
 import { MenuButton, useContextMenu, type MenuItem } from "./context-menu";
 import { ListSection, type ListTone } from "./list";
 import { useNow } from "./live";
+import { peekHref } from "./sessions";
 import {
   canMerge,
   defaultMergeMethod,
@@ -89,8 +110,8 @@ export type UpNextItem = {
   why: string;
   /** The reading estimate of a review; null when there is none. */
   minutes: number | null;
-  /** Agent sessions working on its branch now. */
-  working: number;
+  /** The agent sessions working on its branch now. */
+  working: LiveSession[];
   /** The latest fix of a pull request in the queue as a fix, when it failed. */
   failedFix?: Job;
 };
@@ -164,11 +185,6 @@ function riskText(entry: Entry) {
   return `${entry.risk_score?.status === "lower_bound" ? "at least " : ""}${score} of 5`;
 }
 
-const REVIEW_WORDS: Record<string, string> = {
-  approved: "Approved",
-  changes_requested: "Changes requested",
-  commented: "Commented",
-};
 const CHECK_WORDS: Record<string, string> = {
   passing: "Checks passing",
   failing: "Checks failing",
@@ -309,12 +325,12 @@ export function upNext(
       continue;
     }
     const last = kind === "fix" ? fixJob(entry, jobs) : undefined;
-    const working = liveFor(live, entry.pull_request).filter((s) => s.state === "running").length;
+    const working = liveFor(live, entry.pull_request).filter((s) => s.state === "running");
     items.push({
       key,
       kind,
       entry,
-      why: why(kind, entry, working),
+      why: why(kind, entry, working.length),
       minutes: kind === "review" ? (entry.review_minutes ?? null) : null,
       working,
       ...(last?.state === "failed" ? { failedFix: last } : {}),
@@ -698,6 +714,132 @@ export function InboxTag({ inbox }: { inbox: Inbox }) {
   return <span className={`upnext-tag inbox-${inbox.color}`}>{inbox.name}</span>;
 }
 
+/** The six inbox colours as a radio group; `pick` hears each click. */
+export function ColourSwatches({
+  color: current,
+  pick,
+  className,
+}: {
+  color: InboxColor;
+  pick: (color: InboxColor) => void;
+  className?: string;
+}) {
+  return (
+    <div
+      role="radiogroup"
+      aria-label="Colour"
+      className={className ? `inbox-swatches ${className}` : "inbox-swatches"}
+    >
+      {INBOX_COLORS.map((color) => (
+        <button
+          key={color}
+          type="button"
+          role="radio"
+          aria-checked={current === color}
+          aria-label={COLOR_NAMES[color]}
+          title={COLOR_NAMES[color]}
+          className={`inbox-swatch inbox-${color}`}
+          onClick={() => pick(color)}
+        />
+      ))}
+    </div>
+  );
+}
+
+/** An inbox's colour and name at the head of its queue, each changed in
+ *  place: the dot opens the six colours, and the name becomes a field (Enter
+ *  or leaving it saves, Esc keeps the old name). */
+function InboxHeadEdit({
+  inbox,
+  inboxes,
+  update,
+}: {
+  inbox: Inbox;
+  inboxes: Inbox[];
+  update: (patch: Partial<Inbox>) => void;
+}) {
+  const colours = useDisclosure();
+  const [draft, setDraft] = useState<string | null>(null);
+  const [problem, setProblem] = useState("");
+  const commit = () => {
+    if (draft === null) return;
+    const name = draft.trim();
+    const why = name === inbox.name ? "" : nameProblem(name, inboxes, inbox.id);
+    if (why) {
+      setProblem(why);
+      return;
+    }
+    setDraft(null);
+    setProblem("");
+    if (name !== inbox.name) update({ name });
+  };
+  return (
+    <>
+      <details {...colours.detailsProps} className="inbox-head-colour">
+        <summary
+          aria-label={`Colour: ${COLOR_NAMES[inbox.color]}`}
+          title="Change the colour"
+          className="inbox-head-dot"
+        >
+          <span aria-hidden="true" className="inbox-dot inbox-dot-large" />
+        </summary>
+        {colours.open ? (
+          <ColourSwatches
+            color={inbox.color}
+            className="inbox-head-swatches"
+            pick={(color) => {
+              colours.close();
+              if (color !== inbox.color) update({ color });
+            }}
+          />
+        ) : null}
+      </details>
+      {draft === null ? (
+        <h1>
+          <button
+            type="button"
+            className="inbox-head-name"
+            title="Rename"
+            onClick={() => setDraft(inbox.name)}
+          >
+            {inbox.name}
+          </button>
+        </h1>
+      ) : (
+        <span className="inbox-head-rename">
+          <input
+            aria-label="Inbox name"
+            className="local-field"
+            // biome-ignore lint/a11y/noAutofocus: the name was clicked to be typed
+            autoFocus
+            maxLength={40}
+            value={draft}
+            aria-invalid={problem ? true : undefined}
+            onChange={(event) => {
+              setDraft(event.target.value);
+              setProblem("");
+            }}
+            onBlur={commit}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") commit();
+              else if (event.key === "Escape") {
+                event.preventDefault();
+                setDraft(null);
+                setProblem("");
+              }
+            }}
+          />
+          {problem ? (
+            <span role="alert" className="inbox-head-problem">
+              {problem}
+            </span>
+          ) : null}
+        </span>
+      )}
+    </>
+  );
+}
+
 /** The inbox: what waits on the person, grouped by what they do about it, and
  *  the selected pull request's panel beside it. In one of the person's inboxes
  *  (`selected`) it lists only what matches that inbox; what was done today and
@@ -706,8 +848,7 @@ export function UpNextPage({
   inbox: all,
   inboxes = [],
   selected: scope = null,
-  login,
-  headerAction,
+  onEdit,
   loading,
   hasRepositories,
   cloneFor,
@@ -718,6 +859,9 @@ export function UpNextPage({
   refreshing = false,
   reviewGroups = [],
   entries = [],
+  saveAsInbox,
+  updateInbox,
+  inboxSaves = 0,
   Link,
 }: {
   inbox: UpNextState;
@@ -730,10 +874,8 @@ export function UpNextPage({
   reviewGroups?: ReviewGroup[];
   /** The inbox whose queue this is; none for the Inbox. */
   selected?: Inbox | null;
-  /** The signed-in GitHub account, for "my own repositories". */
-  login?: string;
-  /** Shown beside an inbox's name: where its Edit link goes. */
-  headerAction?: ReactNode;
+  /** Opens the inbox's edit page, from a right click on its head. */
+  onEdit?: () => void;
   loading: boolean;
   hasRepositories: boolean;
   cloneFor: (entry: Entry) => string;
@@ -747,6 +889,15 @@ export function UpNextPage({
   refresh?: (run: RefreshRun) => Promise<unknown>;
   /** A read of every repository is under way, the first or a refresh. */
   refreshing?: boolean;
+  /** Makes a new inbox catching what the page shows with its filter: from
+   *  the inbox shown (`base`) with its query and the filter, or else anything
+   *  waiting that matches the filter. */
+  saveAsInbox?: (query: string, base?: Inbox) => void;
+  /** Changes the inbox shown: its query (the page's filter added), name or
+   *  colour. */
+  updateInbox?: (patch: Partial<Inbox>) => void;
+  /** How many inbox saves the daemon has accepted. */
+  inboxSaves?: number;
   Link: ComponentType<ViewerLinkProps>;
 }) {
   const [merging, setMerging] = useState<Entry | null>(null);
@@ -760,13 +911,33 @@ export function UpNextPage({
   const [toast, setToast] = useState<{ id: number; text: string; undo?: () => void } | null>(null);
   const list = useRef<HTMLDivElement>(null);
   const detail = useRef<HTMLDivElement>(null);
-  const inScope = (item: { kind: UpNextKind; entry: Entry }) => !scope || matches(scope, item);
+  // The page's filter narrows what it shows, on top of its inbox.
+  // The page's filter. In a saved inbox it starts as the inbox's own query,
+  // and a change is a draft that narrows the queue until Update inbox saves it
+  // (kept per inbox; none kept is the saved query).
+  const saved = scope ? foldedQuery(scope) : "";
+  const quick = useFilterDraft(
+    scope ? `inbox:${scope.id}` : "inbox",
+    scope ? saved : null,
+    inboxSaves,
+  );
+  const { query, set: setQuery } = quick;
+  const filtering = scope ? quick.dirty : query !== "";
+  const inScope = (item: { kind: UpNextKind; entry: Entry }) =>
+    matchesQuery(query, item.entry, item.kind);
   const queue = all.queue.filter(inScope);
   const snoozed = all.snoozed.filter(inScope);
   const fixing = all.fixing.filter(({ entry }) => inScope({ kind: "fix", entry }));
   // Done today and what waits on others are the Inbox's alone.
   const cleared = scope ? [] : all.cleared;
-  const waiting = scope ? [] : all.waiting;
+  const waiting = scope ? [] : all.waiting.filter((entry) => matchesQuery(query, entry));
+  // What the filter's counts and values come from: the whole queue, each
+  // pull request with what it waits for.
+  const kinds = new Map<Entry, UpNextKind>([
+    ...all.queue.map((item): [Entry, UpNextKind] => [item.entry, item.kind]),
+    ...all.fixing.map(({ entry }): [Entry, UpNextKind] => [entry, "fix"]),
+  ]);
+  const unfiltered = [...kinds.keys(), ...(scope ? [] : all.waiting)];
   const inbox = { ...all, queue, snoozed, fixing, cleared, waiting };
   const { now } = all;
   // Those an agent is fixing are listed under Hand to an agent.
@@ -1008,6 +1179,51 @@ export function UpNextPage({
     },
   ];
   const alsoIn = (row: Row) => rowInboxes(row, inboxes).filter((other) => other.id !== scope?.id);
+  const saveOptions: SaveOption[] =
+    !filtering || queryProblem(query)
+      ? []
+      : [
+          ...(scope && updateInbox
+            ? [
+                {
+                  label: "Update inbox",
+                  // The draft goes once the inbox holds it, so a failed save keeps it.
+                  onSelect: () => updateInbox(withQuery(scope, query)),
+                },
+              ]
+            : []),
+          ...(saveAsInbox
+            ? [{ label: "Create inbox", onSelect: () => saveAsInbox(query, scope ?? undefined) }]
+            : []),
+          ...(scope ? [{ label: "Discard changes", onSelect: () => quick.reset() }] : []),
+        ];
+  // What the filter hides: of the inbox's own, in a saved inbox.
+  const hidden = scope
+    ? unfiltered.filter((entry) => matchesQuery(saved, entry, kinds.get(entry))).length
+    : unfiltered.length;
+  const filterButton = (
+    <FilterButton
+      query={query}
+      onChange={setQuery}
+      entries={unfiltered}
+      kindOf={(entry) => kinds.get(entry)}
+      inbox
+      footer={
+        <>
+          <FilterBar
+            // A page's text is its own: moving to another inbox starts afresh.
+            key={scope?.id ?? "inbox"}
+            query={query}
+            onChange={setQuery}
+            entries={unfiltered}
+            inbox
+            actions={<SaveButton options={saveOptions} />}
+          />
+          <FilterSaveError error={quick.error} retry={quick.retry} />
+        </>
+      }
+    />
+  );
   return (
     <>
       <div className="upnext-page">
@@ -1015,19 +1231,31 @@ export function UpNextPage({
           <header className="upnext-list-head">
             {scope ? (
               <>
-                <div className={`upnext-list-title inbox-${scope.color}`}>
-                  <span aria-hidden="true" className="inbox-dot inbox-dot-large" />
-                  <h1>{scope.name}</h1>
-                  {headerAction}
+                <div
+                  className={`upnext-list-title inbox-${scope.color}`}
+                  onContextMenu={(event) =>
+                    onEdit &&
+                    actionsMenu.open(event, [{ label: "Edit…", onSelect: onEdit }], scope.name)
+                  }
+                >
+                  {updateInbox ? (
+                    <InboxHeadEdit inbox={scope} inboxes={inboxes} update={updateInbox} />
+                  ) : (
+                    <>
+                      <span aria-hidden="true" className="inbox-dot inbox-dot-large" />
+                      <h1>{scope.name}</h1>
+                    </>
+                  )}
+                  {filterButton}
                   {refreshButton}
                 </div>
-                <p>{sentence(scope, login)}</p>
                 <p className="upnext-list-summary">{summary}</p>
               </>
             ) : (
               <>
                 <div className="upnext-list-heading">
                   <h1>Up next</h1>
+                  {filterButton}
                   {refreshButton}
                 </div>
                 <p>{summary}</p>
@@ -1230,6 +1458,20 @@ export function UpNextPage({
               }}
               Link={Link}
             />
+          ) : filtering &&
+            hidden > 0 &&
+            // Waiting rows are never selected, so the lists say what is left.
+            queue.length + fixing.length + waiting.length + snoozed.length === 0 ? (
+            <div className="upnext-zero">
+              <h2>Nothing matches the filter</h2>
+              <p>
+                {formatCount(hidden)} pull {hidden === 1 ? "request is" : "requests are"} hidden by
+                it.
+              </p>
+              <Button onClick={() => quick.reset()}>
+                {scope ? "Discard the changes" : "Clear the filter"}
+              </Button>
+            </div>
           ) : (
             <Zero inbox={inbox} scoped={!!scope} hasRepositories={hasRepositories} Link={Link} />
           )}
@@ -1343,7 +1585,9 @@ function ListRow({
 
 /** A group's kind in words: "Stack of 3" or "Group of 2". */
 function groupName(group: ReviewGroup) {
-  return `${group.stack ? "Stack" : "Group"} of ${formatCount(group.members.length)}`;
+  // A stack's merged and closed members still count: it is the stack it was.
+  const size = group.members.length + (group.landed?.length ?? 0);
+  return `${group.stack ? "Stack" : "Group"} of ${formatCount(size)}`;
 }
 
 /** What a group's shown members wait on, in words: "1 to merge and 2 to fix". */
@@ -1517,20 +1761,9 @@ function blocks(row: Row, doc: ReviewDocument | null): PanelBlock[] {
   const changes = whatChanged(doc);
   const github = onGitHub(entry, row.item?.kind === "fix" && !row.job);
   if (row.job) return [...changes, ...github];
-  if (row.waiting)
-    return [
-      {
-        title: "Where it stands",
-        rows: [
-          { main: waitingOn(entry, row.base) },
-          ...(REVIEW_WORDS[entry.review] && entry.review !== "changes_requested"
-            ? [{ main: REVIEW_WORDS[entry.review]! }]
-            : []),
-        ],
-      },
-      ...github,
-      ...changes,
-    ];
+  // What a waiting pull request waits on is its panel's chip; On GitHub
+  // says the rest.
+  if (row.waiting) return [...github, ...changes];
   switch (row.item?.kind) {
     case "review":
     case "merge":
@@ -1575,20 +1808,8 @@ function blocks(row: Row, doc: ReviewDocument | null): PanelBlock[] {
         ...changes,
       ];
     case "update":
-      return [
-        {
-          title: "Where it stands",
-          rows: [
-            {
-              main: "Behind its base",
-              sub: "Updating merges the base into the branch on GitHub and reruns its checks.",
-            },
-            ...(REVIEW_WORDS[entry.review] ? [{ main: REVIEW_WORDS[entry.review]! }] : []),
-          ],
-        },
-        ...github,
-        ...changes,
-      ];
+      // Its sentence says it is behind and what updating does.
+      return [...github, ...changes];
     case "clone":
       return [
         {
@@ -1658,11 +1879,6 @@ function Panel({
   const who = pr.review_requested_from_me
     ? `${pr.author ?? "Someone"} asked for your review`
     : "Yours";
-  const github = (
-    <a href={pr.url} target="_blank" rel="noreferrer" className={cn("upnext-secondary", SECONDARY)}>
-      Open on GitHub
-    </a>
-  );
   // Opening the pull request is always the default; what the kind asks for
   // follows it. A merge or branch update opens its confirmation; a fix starts
   // at once.
@@ -1683,9 +1899,7 @@ function Panel({
             </kbd>
           ) : null}
         </Link>
-      ) : waiting ? (
-        github
-      ) : kind === "merge" ? (
+      ) : waiting ? null : kind === "merge" ? (
         <button type="button" className={cn("upnext-secondary", SECONDARY)} onClick={merge}>
           Merge
           <kbd aria-hidden="true" className="key-hint">
@@ -1714,9 +1928,7 @@ function Panel({
             </>
           )}
         </button>
-      ) : (
-        github
-      )}
+      ) : null}
     </>
   );
   const score = entry.risk_score?.score ?? null;
@@ -1728,7 +1940,7 @@ function Panel({
     <article className="upnext-panel" aria-labelledby="upnext-title">
       <div className="upnext-panel-meta">
         {waiting ? (
-          <span className="upnext-chip upnext-chip-waiting">Waiting</span>
+          <span className="upnext-chip upnext-chip-waiting">{waitingOn(entry, row.base)}</span>
         ) : (
           <span className={`upnext-chip upnext-chip-${kind}`}>{KINDS[kind].label}</span>
         )}
@@ -1844,10 +2056,25 @@ function Panel({
           {block.more ? <p className="upnext-block-more">{block.more}</p> : null}
         </section>
       ))}
-      {item && item.working > 0 ? (
+      {item && item.working.length > 0 ? (
         <p className="upnext-agents">
           <LiveDot className="text-(--status-positive)" />
-          {plural(item.working, "agent session")} working on its branch right now
+          {/* Each opens on Sessions with that session selected. */}
+          {item.working.length === 1 ? (
+            <Link href={peekHref(item.working[0]!)}>
+              1 agent session working on its branch right now
+            </Link>
+          ) : (
+            <span>
+              {plural(item.working.length, "agent session")} working on its branch right now:{" "}
+              {item.working.map((session, index) => (
+                <Fragment key={peekHref(session)}>
+                  {index > 0 ? " · " : ""}
+                  <Link href={peekHref(session)}>{agentName(session.agent)}</Link>
+                </Fragment>
+              ))}
+            </span>
+          )}
         </p>
       ) : null}
     </article>
@@ -2253,7 +2480,8 @@ function GroupPanel({
             {plural(total, "pull request")}
           </button>
           {merged > 0 ? (
-            <Badge tone="positive" size="compact">
+            <Badge tone="merged" size="compact" className="gap-1">
+              <MergeIcon size={11} className="flex-none" />
               {formatCount(merged)} merged
             </Badge>
           ) : null}
@@ -2498,7 +2726,10 @@ export function MergeReadyDialog({
                 {merge.state === "checking" || merge.state === "merging" ? (
                   <NineDots size={14} />
                 ) : merge.state === "merged" ? (
-                  <span className="text-(--status-positive)">Merged</span>
+                  <span className="local-merged">
+                    <MergeIcon size={13} className="flex-none" />
+                    Merged
+                  </span>
                 ) : merge.state === "failed" ? (
                   <span className="text-(--status-critical)">Not merged</span>
                 ) : null}

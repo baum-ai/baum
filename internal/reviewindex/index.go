@@ -66,39 +66,29 @@ type Problem struct {
 type Snapshot struct {
 	Entries  []Entry   `json:"entries"`
 	Problems []Problem `json:"problems"`
-	// Waiting is the number of open pull requests waiting on the user: those
-	// asking for their review and their own that need changes. It counts the
-	// same pull requests as the app inbox's "Review requested" and "Needs
-	// changes" groups, so the desktop app's badge matches what the inbox shows.
-	Waiting int `json:"waiting"`
-}
-
-// NeedsChanges reports whether one of the user's own pull requests has
-// changes requested, failing checks or a merge conflict.
-func (e Entry) NeedsChanges() bool {
-	return e.PullRequest.AuthoredByMe && (e.Review == "changes_requested" || e.Checks == "failing" || e.Merge == "conflict")
-}
-
-// waiting counts the pull requests that wait on the user, once each even
-// when several clones of a repository list the same one.
-func waiting(entries []Entry) int {
-	type key struct {
-		repository string
-		number     int
-	}
-	seen := map[key]bool{}
-	for _, e := range entries {
-		if e.Historical || strings.EqualFold(e.PullRequest.State, "CLOSED") || strings.EqualFold(e.PullRequest.State, "MERGED") {
-			continue
-		}
-		if e.PullRequest.ReviewRequestedFromMe || e.NeedsChanges() {
-			seen[key{strings.ToLower(e.PullRequest.Repository), e.PullRequest.Number}] = true
-		}
-	}
-	return len(seen)
 }
 
 func (s *Service) Build(ctx context.Context) (Snapshot, error) {
+	out, _, err := s.build(ctx, time.Now())
+	return out, err
+}
+
+// build also returns the earliest instant after now at which building again
+// could give another snapshot with nothing written: a run lease expiring, a
+// discovery snapshot reaching its next poll, or an observation turning stale.
+// It is zero when there is none.
+func (s *Service) build(ctx context.Context, now time.Time) (Snapshot, time.Time, error) {
+	var next time.Time
+	changeAt := func(t time.Time) {
+		if t.After(now) && (next.IsZero() || t.Before(next)) {
+			next = t
+		}
+	}
+	out, err := s.assemble(ctx, changeAt)
+	return out, next, err
+}
+
+func (s *Service) assemble(ctx context.Context, changeAt func(time.Time)) (Snapshot, error) {
 	out := Snapshot{Entries: []Entry{}, Problems: []Problem{}}
 	picked, err := s.Registry.Repositories(ctx)
 	if err != nil {
@@ -135,6 +125,9 @@ func (s *Service) Build(ctx context.Context) (Snapshot, error) {
 		}
 		snapshot, err := s.Discovery.Cached(ctx, parsed)
 		stale[repository] = err != nil || snapshot.Stale
+		if !stale[repository] {
+			changeAt(snapshot.NextPoll)
+		}
 		discoveryFetched[repository] = snapshot.FetchedAt
 		if err != nil && ctx.Err() != nil {
 			return out, ctx.Err()
@@ -210,6 +203,7 @@ func (s *Service) Build(ctx context.Context) (Snapshot, error) {
 				switch summary.Run.State {
 				case "generating":
 					entry.Status = "generating"
+					changeAt(summary.Run.Expires)
 				case "failed":
 					entry.Status = "failed"
 					entry.FailureReason = summary.Run.Reason
@@ -266,6 +260,8 @@ func (s *Service) Build(ctx context.Context) (Snapshot, error) {
 			entry.PullRequest.State = value.State
 			entry.PullRequest.Draft = value.Draft
 			entry.Stale = stale[key.Repository] || time.Since(value.FetchedAt) > 2*time.Minute
+			// Stale once strictly more than two minutes have passed.
+			changeAt(value.FetchedAt.Add(2*time.Minute + time.Nanosecond))
 			switch value.Checks {
 			case "success", "passing":
 				entry.Checks = "passing"
@@ -299,13 +295,16 @@ func (s *Service) Build(ctx context.Context) (Snapshot, error) {
 		}
 		return a.CloneID < b.CloneID
 	})
-	out.Waiting = waiting(out.Entries)
 	return out, nil
 }
 
-// Handler serves GET /api/index, or with view=waiting only the waiting count. The host must apply its launch authentication
+// Handler serves GET /api/index. The host must apply its launch authentication
 // and Host/Origin checks before routing here. history=1 includes saved-only rows.
-func (s *Service) Handler() http.Handler {
+func (s *Service) Handler() http.Handler { return handler(s.Build) }
+
+// handler serves the snapshots read returns, which it must not mutate: a
+// cache shares them between requests.
+func handler(read func(context.Context) (Snapshot, error)) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/api/index" {
 			http.NotFound(w, r)
@@ -316,18 +315,11 @@ func (s *Service) Handler() http.Handler {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
-		snapshot, err := s.Build(r.Context())
+		snapshot, err := read(r.Context())
 		if err != nil {
 			if !errors.Is(err, context.Canceled) {
 				http.Error(w, "index unavailable", http.StatusInternalServerError)
 			}
-			return
-		}
-		// The desktop app's badge polls only the count.
-		if r.URL.Query().Get("view") == "waiting" {
-			w.Header().Set("Content-Type", "application/json")
-			w.Header().Set("Cache-Control", "no-store")
-			_ = json.NewEncoder(w).Encode(map[string]int{"waiting": snapshot.Waiting})
 			return
 		}
 		if r.URL.Query().Get("history") != "1" {

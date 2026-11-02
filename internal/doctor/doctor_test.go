@@ -250,17 +250,17 @@ func TestClaudeAndCodexMissing(t *testing.T) {
 func TestClaudePresentIsPickedByAuto(t *testing.T) {
 	m := newMachine(t)
 	m.git()
-	claudePath := m.claude("2.1.7")
+	claudePath := m.claude("2.1.296")
 	report := run(t, Options{})
 	c := find(t, report, "claude")
 	wantStatus(t, c, StatusOK)
-	if c.Path != claudePath || c.Version != "2.1.7" || c.Source != "PATH" {
+	if c.Path != claudePath || c.Version != "2.1.296" || c.Source != "PATH" {
 		t.Errorf("%+v", c)
 	}
 	auto := find(t, report, "backend-auto")
 	wantStatus(t, auto, StatusOK)
 	wantContains(t, "auto", auto.Detail, "picks claude")
-	if auto.Version != "2.1.7" {
+	if auto.Version != "2.1.296" {
 		t.Errorf("auto version = %q", auto.Version)
 	}
 	wantStatus(t, find(t, report, "codex"), StatusWarning)
@@ -284,7 +284,7 @@ func TestCodexPresentIsPickedWhenClaudeIsMissing(t *testing.T) {
 func TestClaudeBeatsCodexWhenBothAreUsable(t *testing.T) {
 	m := newMachine(t)
 	m.git()
-	m.claude("2.1.7")
+	m.claude("2.1.296")
 	m.codex("0.162.1")
 	report := run(t, Options{})
 	wantStatus(t, find(t, report, "claude"), StatusOK)
@@ -326,7 +326,7 @@ func TestCodexSandboxFailureIsReported(t *testing.T) {
 func TestConfiguredBackendThatCannotRunIsAProblem(t *testing.T) {
 	m := newMachine(t)
 	m.git()
-	m.claude("2.1.7")
+	m.claude("2.1.296")
 	t.Setenv("BAUM_BACKEND", "codex")
 	report := run(t, Options{})
 	wantStatus(t, find(t, report, "codex"), StatusProblem)
@@ -341,7 +341,7 @@ func TestConfiguredCursorAgentBackend(t *testing.T) {
 	t.Run("installed", func(t *testing.T) {
 		m := newMachine(t)
 		m.git()
-		m.claude("2.1.7")
+		m.claude("2.1.296")
 		m.cursorAgent()
 		t.Setenv("BAUM_BACKEND", "cursor-agent")
 		c := find(t, run(t, Options{}), "backend-configured")
@@ -351,7 +351,7 @@ func TestConfiguredCursorAgentBackend(t *testing.T) {
 	t.Run("missing", func(t *testing.T) {
 		m := newMachine(t)
 		m.git()
-		m.claude("2.1.7")
+		m.claude("2.1.296")
 		t.Setenv("BAUM_BACKEND", "cursor-agent")
 		report := run(t, Options{})
 		// Asked for, a missing cursor-agent is a problem, not information.
@@ -366,7 +366,7 @@ func TestConfiguredAnthropicBackend(t *testing.T) {
 	t.Run("without a key", func(t *testing.T) {
 		m := newMachine(t)
 		m.git()
-		m.claude("2.1.7")
+		m.claude("2.1.296")
 		t.Setenv("BAUM_BACKEND", "anthropic")
 		report := run(t, Options{})
 		configured := find(t, report, "backend-configured")
@@ -419,7 +419,7 @@ func TestConfiguredBackendThatRunsIsOK(t *testing.T) {
 func TestExplicitBackendPathPointingAtAMissingFile(t *testing.T) {
 	m := newMachine(t)
 	m.git()
-	m.claude("2.1.7") // on PATH, and must not be used instead
+	m.claude("2.1.296") // on PATH, and must not be used instead
 	missing := filepath.Join(t.TempDir(), "no-such-claude")
 	cfgPath := m.writeConfig("[backend_paths]\nclaude = '" + missing + "'\n")
 	report := run(t, Options{})
@@ -649,7 +649,7 @@ func TestEnterpriseTokenFromTheEnvironmentIsFound(t *testing.T) {
 func TestNoSecretAppearsInTheReport(t *testing.T) {
 	m := newMachine(t)
 	m.git()
-	m.claude("2.1.7")
+	m.claude("2.1.296")
 	m.install("gh", `echo "gh version 2.40.1"`)
 	t.Setenv("GITHUB_TOKEN", plantedEnvToken)
 	t.Setenv("GH_TOKEN", plantedGHToken)
@@ -926,7 +926,7 @@ func TestPathEntries(t *testing.T) {
 func TestOverallStatus(t *testing.T) {
 	m := newMachine(t)
 	m.git()
-	m.claude("2.1.7")
+	m.claude("2.1.296")
 	t.Setenv("GITHUB_TOKEN", plantedEnvToken)
 	report := run(t, Options{})
 	if report.Problems() != 0 || report.Status != StatusWarning {
@@ -967,7 +967,7 @@ func TestDesktopReportOffersOnlyClaudeAndCodex(t *testing.T) {
 	if strings.Contains(auto.Detail+auto.Fix, "ANTHROPIC") {
 		t.Errorf("auto mentions the Anthropic API: %+v", auto)
 	}
-	m.claude("2.1.7")
+	m.claude("2.1.296")
 	auto = find(t, run(t, Options{Desktop: true}), "backend-auto")
 	wantStatus(t, auto, StatusOK)
 	wantContains(t, "auto detail", auto.Detail, "auto picks claude")
@@ -977,7 +977,7 @@ func TestDesktopReportRefusesAConfiguredCursorAgentOrAnthropic(t *testing.T) {
 	for _, backend := range []string{"cursor-agent", "anthropic"} {
 		m := newMachine(t)
 		m.git()
-		m.claude("2.1.7")
+		m.claude("2.1.296")
 		m.cursorAgent()
 		t.Setenv("BAUM_BACKEND", backend)
 		configured := find(t, run(t, Options{Desktop: true}), "backend-configured")

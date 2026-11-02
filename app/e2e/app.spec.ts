@@ -286,8 +286,10 @@ test("walks through a review, comments on a behaviour and submits the review", a
   await page.goto(await launchURL());
   await page.getByRole("link", { name: "Pull requests", exact: true }).first().click();
   await page.getByRole("link", { name: /Reuse the existing PR page/ }).click();
-  await page.getByRole("button", { name: "Walk through", exact: true }).click();
-  await expect(page).toHaveURL(/walk=landing/);
+  // The PR page has no Walk through button for now; the walkthrough still
+  // opens from its address.
+  await expect(page).toHaveURL(/pr=/);
+  await page.goto(`${page.url()}&walk=landing`);
   const walk = page.getByRole("region", { name: "Walkthrough" });
   await expect(walk.getByText("The tour · riskiest first")).toBeVisible();
   await walk.getByRole("button", { name: "Start the review", exact: true }).click();
@@ -374,18 +376,12 @@ test("asks the review's agent a question and reads the lines its answer cites", 
   await expect(panel.getByText("Started without the review's own context.")).toBeVisible();
   // The citation opens the lines it names, from the review's own hunk.
   await panel.getByRole("button", { name: "docs/guide.md:3–6" }).click();
-  await expect(panel.getByText("A job that fails more often than its retry budget")).toBeVisible();
+  await expect(panel.getByText("guide line six", { exact: true })).toBeVisible();
   // A reload keeps the panel open and the conversation.
   await page.reload();
   await expect(panel.getByLabel("Question 1").getByText("Why is the delay capped?")).toBeVisible();
-  // Asking about a section puts it above the box, and a second question
-  // goes to the same conversation.
-  await page
-    .getByRole("navigation", { name: "Review sections" })
-    .getByRole("button", { name: "Retry policy and backoff" })
-    .click();
-  await page.getByRole("button", { name: "Ask about this section", exact: true }).click();
-  await expect(panel.locator(".ask-focus")).toContainText("About");
+  // A second question goes to the same conversation.
+  await panel.locator("textarea").click();
   await page.keyboard.type("Is this safe on retry?");
   await page.keyboard.press("Enter");
   await expect(panel.getByText("Is this safe on retry?")).toBeVisible();

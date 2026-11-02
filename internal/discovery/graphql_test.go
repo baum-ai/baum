@@ -126,6 +126,10 @@ func TestGraphQLStateMappingsAndUnknown(t *testing.T) {
 		{`{"mergeable":"MERGEABLE","mergeStateStatus":"UNSTABLE","commits":{"nodes":[{"commit":{"statusCheckRollup":{"state":"FAILURE"}}}]}}`, "", "failing", "blocked", -1, false},
 		{`{"reviewDecision":"CHANGES_REQUESTED","commits":{"nodes":[{"commit":{"statusCheckRollup":{"state":"FAILURE"}}}]},"mergeable":"CONFLICTING"}`, "changes_requested", "failing", "conflict", -1, false},
 		{`{"latestOpinionatedReviews":{"nodes":[{"state":"APPROVED"}]},"commits":{"nodes":[{"commit":{"statusCheckRollup":{"state":"PENDING"}}}]},"mergeStateStatus":"BLOCKED"}`, "approved", "running", "blocked", -1, false},
+		// A check that already failed fails the checks while the others run.
+		{`{"commits":{"nodes":[{"commit":{"statusCheckRollup":{"state":"PENDING","contexts":{"checkRunCountsByState":[{"state":"IN_PROGRESS","count":3},{"state":"FAILURE","count":1}]}}}}]}}`, "", "failing", "", -1, false},
+		{`{"commits":{"nodes":[{"commit":{"statusCheckRollup":{"state":"PENDING","contexts":{"checkRunCountsByState":[{"state":"SUCCESS","count":2}],"statusContextCountsByState":[{"state":"ERROR","count":1}]}}}}]}}`, "", "failing", "", -1, false},
+		{`{"commits":{"nodes":[{"commit":{"statusCheckRollup":{"state":"PENDING","contexts":{"checkRunCountsByState":[{"state":"SUCCESS","count":2},{"state":"IN_PROGRESS","count":1},{"state":"FAILURE","count":0}]}}}}]}}`, "", "running", "", -1, false},
 		{`{"latestOpinionatedReviews":{"nodes":[{"state":"APPROVED"},{"state":"CHANGES_REQUESTED"}]},"commits":{"nodes":[{"commit":{"statusCheckRollup":{"state":"ERROR"}}}]},"mergeStateStatus":"BEHIND"}`, "changes_requested", "failing", "blocked", -1, false},
 		{`{"latestOpinionatedReviews":{"nodes":[]},"reviewThreads":{"nodes":[]}}`, "unreviewed", "", "", 0, false},
 		{`{"latestOpinionatedReviews":{"nodes":[{"state":"APPROVED"}],"pageInfo":{"hasNextPage":true}},"commits":{"nodes":[{"commit":{"statusCheckRollup":{"state":"FUTURE"}}}]},"mergeable":"UNKNOWN","mergeStateStatus":"UNKNOWN"}`, "", "", "", -1, false},

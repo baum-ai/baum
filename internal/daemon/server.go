@@ -52,6 +52,9 @@ type App struct {
 	API http.Handler
 	// Assets serves the browser application under the session namespace.
 	Assets http.Handler
+	// Sample serves the API of the sample project the tour shows when there
+	// is no local data yet, under /s/<namespace>/sample/.
+	Sample http.Handler
 	// Run does background work until its context ends.
 	Run func(ctx context.Context)
 	// Shutdown stops work that must be recorded when it is cut short (the
@@ -172,8 +175,8 @@ func Run(ctx context.Context, opts Options) error {
 			return err
 		}
 	}
-	var api, assets swapHandler
-	server, err := uiserver.New(uiserver.Options{API: &api, App: &assets})
+	var api, assets, sample swapHandler
+	server, err := uiserver.New(uiserver.Options{API: &api, App: &assets, Sample: &sample})
 	if err != nil {
 		return err
 	}
@@ -198,6 +201,7 @@ func Run(ctx context.Context, opts Options) error {
 	}
 	api.set(app.API)
 	assets.set(app.Assets)
+	sample.set(app.Sample)
 	if _, err = server.Listen(opts.Port); err != nil {
 		shutdownApp()
 		return err

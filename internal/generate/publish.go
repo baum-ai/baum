@@ -25,7 +25,8 @@ type Versions interface {
 // Publish runs the same validation/repair pipeline for CLI and queued jobs and
 // atomically appends only a completed document to the version store. Once the
 // version is stored the call succeeds: the version is already visible, so a
-// failure to record the run's outcome afterwards is a warning on o.Progress.
+// failure to record the run's outcome, or of o.Stored, afterwards is a
+// warning on o.Progress.
 func Publish(ctx context.Context, versions Versions, key store.Key, o Options, cost func(Result) *float64) (result Result, err error) {
 	defer func() {
 		if err != nil && o.DiagnosticsOut != "" {
@@ -118,5 +119,10 @@ func Publish(ctx context.Context, versions Versions, key store.Key, o Options, c
 		return result, fmt.Errorf("store generated version: %w", err)
 	}
 	published = true
+	if o.Stored != nil {
+		if e := o.Stored(ctx, key, result.Metadata); e != nil && o.Progress != nil {
+			_, _ = fmt.Fprintf(o.Progress, "warning: keep the version's commits in the clone: %v\n", e)
+		}
+	}
 	return result, nil
 }

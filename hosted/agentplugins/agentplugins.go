@@ -166,7 +166,7 @@ func (c *Client) Install(ctx context.Context, agent string) (Status, error) {
 	}
 	args := []string{"plugin", "add", Plugin, "--json"}
 	if agent == "claude-code" {
-		args = []string{"plugin", "install", Plugin, "--scope", "user", "--json"}
+		args = []string{"plugin", "install", Plugin, "--scope", "user"}
 	}
 	if _, err := c.command(ctx, agent, args...); err != nil {
 		return Status{}, err
@@ -196,7 +196,7 @@ func (c *Client) Update(ctx context.Context, agent string) (string, Status, erro
 	update := []string{"plugin", "add", Plugin, "--json"}
 	if agent == "claude-code" {
 		refresh = []string{"plugin", "marketplace", "update", marketplaceName}
-		update = []string{"plugin", "update", Plugin, "--scope", "user", "--json"}
+		update = []string{"plugin", "update", Plugin, "--scope", "user"}
 	}
 	for _, args := range [][]string{refresh, update} {
 		if _, err := c.command(ctx, agent, args...); err != nil {
@@ -230,7 +230,7 @@ func (c *Client) Uninstall(ctx context.Context, agent string) (Status, error) {
 	}
 	args := []string{"plugin", "remove", Plugin, "--json"}
 	if agent == "claude-code" {
-		args = []string{"plugin", "uninstall", Plugin, "--scope", "user", "--json"}
+		args = []string{"plugin", "uninstall", Plugin, "--scope", "user"}
 	}
 	if _, err := c.command(ctx, agent, args...); err != nil {
 		return status, err

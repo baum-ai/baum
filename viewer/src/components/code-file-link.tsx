@@ -1,19 +1,20 @@
-import { createContext, type ReactNode, useContext } from "react";
+import { type ReactNode, useContext } from "react";
 
 import { cn, FOCUS_RING } from "./classnames";
 import { ExternalLinkIcon } from "./icons";
+import {
+  ReviewFilesContext,
+  ReviewSourcesContext,
+  type ReviewFiles,
+  type ReviewSources,
+} from "./review-contexts";
+
+export type { ReviewSources } from "./review-contexts";
 
 /** Opens one of the pull request's files in the review's own file view, at a
  *  line when one is given. Returns false for a path the pull request does not
  *  change, which has no file view to open. */
 export type OpenReviewFile = (path: string, line?: number) => boolean;
-
-type ReviewFiles = {
-  has: (path: string) => boolean;
-  open: OpenReviewFile;
-};
-
-const ReviewFilesContext = createContext<ReviewFiles | null>(null);
 
 /** Set by the review workspace so every code link in the panes under it opens
  *  the file here rather than on GitHub. Outside it, links keep going to GitHub. */
@@ -71,4 +72,17 @@ export function CodeFileLink({
       <ExternalLinkIcon size={10} className="flex-none text-(--text-tertiary)" />
     </a>
   );
+}
+
+/** Set by the review workspace so source chips for the host's own places (the
+ *  pull request's description, a listed commit, another pull request) open
+ *  there. Outside it, chips keep going to their URL. */
+export function ReviewSourcesProvider({
+  sources,
+  children,
+}: {
+  sources: ReviewSources | null;
+  children: ReactNode;
+}) {
+  return <ReviewSourcesContext.Provider value={sources}>{children}</ReviewSourcesContext.Provider>;
 }

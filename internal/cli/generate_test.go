@@ -343,8 +343,11 @@ func TestGenerationStoresHistoryAndFeedsPreviousToTheNextRun(t *testing.T) {
 	}
 	key.Repository = identity.Review.Repository
 	stored, err := versions.Get(context.Background(), key, 1)
-	if err != nil || string(stored.Document)+"\n" != first {
-		t.Fatalf("version one replaced: %v", err)
+	// The store keeps version one without its hunks' evidence; what the
+	// command printed keeps it.
+	firstStored, _, stripErr := review.StripHunkEvidence([]byte(strings.TrimSuffix(first, "\n")))
+	if err != nil || stripErr != nil || string(stored.Document) != string(firstStored) {
+		t.Fatalf("version one replaced: %v %v", err, stripErr)
 	}
 	metadata, err := versions.Versions(context.Background(), key)
 	if err != nil || len(metadata) != 2 {

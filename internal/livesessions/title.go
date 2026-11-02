@@ -20,6 +20,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"github.com/baum-ai/baum/sessions/codextranscript"
 	"github.com/baum-ai/baum/sessions/collector/model"
 	"github.com/baum-ai/baum/sessions/cursortranscript"
 )
@@ -472,7 +473,7 @@ func (s *describeSource) read(id string, scan *scanState) error {
 		return readClaude(s.transcript, scan.offset, min(s.size, scan.offset+scanPass), scan)
 	case AgentCodex:
 		if s.index != "" {
-			if name, err := codexThreadName(s.index, id); err == nil {
+			if name, err := codextranscript.ThreadName(s.index, id); err == nil {
 				s.name = name
 			}
 		}
@@ -813,30 +814,6 @@ func codexCompaction(line []byte) string {
 			}
 		}
 	}
-}
-
-// codexThreadName is the last name Codex's index gives the thread id.
-func codexThreadName(path, id string) (string, error) {
-	info, err := os.Stat(path)
-	if err != nil {
-		return "", err
-	}
-	needle := []byte(`"` + id + `"`)
-	var name string
-	var scan scanState
-	err = eachLine(path, 0, min(info.Size(), scanPass), &scan, func(line []byte, whole bool) {
-		if !whole || !bytes.Contains(line, needle) {
-			return
-		}
-		var v struct {
-			ID         string `json:"id"`
-			ThreadName string `json:"thread_name"`
-		}
-		if json.Unmarshal(line, &v) == nil && v.ID == id && strings.TrimSpace(v.ThreadName) != "" {
-			name = v.ThreadName
-		}
-	})
-	return name, err
 }
 
 // eachLine calls fn with each whole line of the file between from and to,

@@ -37,6 +37,7 @@ pub const SETUP_PERMISSIONS: &[&str] = &[
     "allow-uninstall-command",
     "allow-install-hooks",
     "allow-uninstall-hooks",
+    "allow-update-hooks",
     "allow-choose-repository",
     "allow-add-repository",
     "allow-review-settings",
@@ -309,6 +310,9 @@ pub struct AgentHooks {
     name: String,
     #[serde(default)]
     detected: bool,
+    /// Whether the detected CLI is signed in; absent when baum could not tell.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    signed_in: Option<bool>,
     plugin: String,
     #[serde(default)]
     installed: bool,
@@ -316,6 +320,12 @@ pub struct AgentHooks {
     enabled: bool,
     #[serde(default)]
     version: Option<String>,
+    /// The plugin version the bundled baum shipped with, and whether the
+    /// installed version is older, so Settings offers Update only then.
+    #[serde(default)]
+    latest: Option<String>,
+    #[serde(default)]
+    update_available: bool,
     #[serde(default)]
     error: Option<String>,
 }
@@ -595,11 +605,19 @@ pub struct ReviewSettings {
     effort: String,
     automatic: bool,
     pull_requests: String,
-    /// Extraction preferences are read only during setup; edited in Settings.
+    /// The fixes' agent, model and effort; an empty agent follows reviews.
     #[serde(default)]
-    decisions_model: String,
+    fix_backend: String,
     #[serde(default)]
-    decisions_effort: String,
+    fix_model: String,
+    #[serde(default)]
+    fix_effort: String,
+    /// The extraction model and effort. Setup sends them only when it
+    /// changes the review choice, which extraction then follows.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    decisions_model: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    decisions_effort: Option<String>,
     /// The data extraction harness Settings chose, empty while it follows
     /// the reviews'; read only, never saved.
     #[serde(default)]
@@ -631,6 +649,30 @@ pub async fn review_settings() -> Result<ReviewSettings, String> {
     .await
 }
 
+/// The `reviews set` flags for setup's choices. Extraction, when sent,
+/// follows the reviews' harness.
+fn review_set_args(settings: &ReviewSettings) -> Vec<String> {
+    // `--flag=value` keeps a value starting with `-` from reading as a flag.
+    let mut args = vec![
+        format!("--backend={}", settings.backend),
+        format!("--model={}", settings.model),
+        format!("--effort={}", settings.effort),
+        format!("--automatic={}", settings.automatic),
+        format!("--pull-requests={}", settings.pull_requests),
+        format!("--fix-backend={}", settings.fix_backend),
+    ];
+    if !settings.fix_backend.is_empty() {
+        args.push(format!("--fix-model={}", settings.fix_model));
+        args.push(format!("--fix-effort={}", settings.fix_effort));
+    }
+    if let (Some(model), Some(effort)) = (&settings.decisions_model, &settings.decisions_effort) {
+        args.push("--decisions-backend=".into());
+        args.push(format!("--decisions-model={model}"));
+        args.push(format!("--decisions-effort={effort}"));
+    }
+    args
+}
+
 /// Saves the review settings; the CLI validates every value.
 #[tauri::command]
 pub async fn save_review_settings(
@@ -640,14 +682,7 @@ pub async fn save_review_settings(
     blocking(move || {
         let setup = app.state::<Setup>();
         let _busy = setup.busy.lock().unwrap_or_else(|p| p.into_inner());
-        // `--flag=value` keeps a value starting with `-` from reading as a flag.
-        let args = [
-            format!("--backend={}", settings.backend),
-            format!("--model={}", settings.model),
-            format!("--effort={}", settings.effort),
-            format!("--automatic={}", settings.automatic),
-            format!("--pull-requests={}", settings.pull_requests),
-        ];
+        let args = review_set_args(&settings);
         let mut command = vec!["internal", "reviews", "set"];
         command.extend(args.iter().map(String::as_str));
         let out = run(&cli()?, &command, LOGIN_PATH_TIMEOUT)?;
@@ -877,7 +912,11 @@ mod repository_relay_tests {
 /// to the connecting screen and attaches to the daemon, opening its inbox.
 #[tauri::command]
 pub fn finish_setup(app: AppHandle) -> Result<(), String> {
+    let first = !load(&app).onboarded;
     update(&app, |saved| saved.onboarded = true)?;
+    if first {
+        catch_up(&app);
+    }
     let setup = app.state::<Setup>();
     setup.open.store(false, Ordering::SeqCst);
     if let Some(window) = app.get_webview_window(crate::MAIN) {
@@ -885,6 +924,20 @@ pub fn finish_setup(app: AppHandle) -> Result<(), String> {
     }
     crate::connect(&app, crate::Attach::First);
     Ok(())
+}
+
+/// Asks the daemon setup used to review the latest pull requests now, in the
+/// background, so reviews run while the tour shows. Best effort: without it
+/// automatic reviews start with the next push or review request.
+fn catch_up(app: &AppHandle) {
+    let Some(launch) = crate::tray::launch(app) else {
+        return;
+    };
+    thread::spawn(move || {
+        if let Err(error) = crate::client::catch_up(&launch) {
+            eprintln!("baum desktop: reviews of the open pull requests were not queued: {error}");
+        }
+    });
 }
 
 struct Output {
@@ -990,6 +1043,29 @@ mod tests {
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
         dir
+    }
+
+    #[test]
+    fn review_settings_send_fixes_and_changed_extraction() {
+        let settings = |json: &str| serde_json::from_str::<ReviewSettings>(json).unwrap();
+        let base = r#""backend":"codex","model":"gpt-6.1-sol","effort":"high","automatic":true,"pull_requests":"all""#;
+        assert_eq!(
+            review_set_args(&settings(&format!("{{{base}}}")))[5..],
+            ["--fix-backend="]
+        );
+        assert_eq!(
+            review_set_args(&settings(&format!(
+                r#"{{{base},"fix_backend":"claude","fix_model":"claude-opus-5-5","fix_effort":"max","decisions_model":"gpt-6.1-sol","decisions_effort":"high"}}"#
+            )))[5..],
+            [
+                "--fix-backend=claude",
+                "--fix-model=claude-opus-5-5",
+                "--fix-effort=max",
+                "--decisions-backend=",
+                "--decisions-model=gpt-6.1-sol",
+                "--decisions-effort=high",
+            ]
+        );
     }
 
     #[test]

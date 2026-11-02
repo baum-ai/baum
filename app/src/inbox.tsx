@@ -54,7 +54,15 @@ import { ListSection, type ListTone } from "./list";
 import { LiveBadge, useNow } from "./live";
 import { LoadingStatus, NineDots } from "./nine-dots";
 import { canMerge, MergeDialog } from "./merge";
-import { inboxAction, moveFocus, onBody, useFocusRow, useLastRow, useShortcuts } from "./shortcuts";
+import {
+  inboxAction,
+  moveFocus,
+  onBody,
+  returnsToRow,
+  useFocusRow,
+  useLastRow,
+  useShortcuts,
+} from "./shortcuts";
 import { MergeReadyDialog, useSavedReview, type SavedReviews } from "./up-next";
 import { SMALL } from "./action-classes";
 
@@ -253,6 +261,8 @@ export function Inbox({
     if (event.key === "Escape") {
       if (!focusedKey) return;
       event.preventDefault();
+      const link = rowLink(focusedKey);
+      if (returnsToRow(link)) return link?.focus({ preventScroll: true });
       setFocusedId(null);
       if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
       return;

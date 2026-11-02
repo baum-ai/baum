@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -204,6 +205,50 @@ func TestProgressWithholdsProviderStringsUntilRedaction(t *testing.T) {
 	}
 }
 
+func TestReviewTranscriptMarksEachCall(t *testing.T) {
+	var reports []Progress
+	var kept []agent.TranscriptEntry
+	b := &trackedBackend{Backend: &generatetest.Backend{RunFunc: func(_ context.Context, r agent.Request, _ int) (agent.Result, error) {
+		r.Emit(agent.TranscriptEntry{Kind: "message", Text: "Reading the diff."})
+		r.Emit(agent.TranscriptEntry{Kind: "tool", ID: "item_0"})
+		if r.Pass > 1 {
+			return agent.Result{}, errors.New("provider down")
+		}
+		return agent.Result{Calls: 1, Tokens: 10}, nil
+	}}, progress: func(p Progress) { reports = append(reports, p) }, transcript: func(e agent.TranscriptEntry) { kept = append(kept, e) }}
+	if _, err := b.Run(context.Background(), agent.Request{Stage: agent.StageOutline, Pass: 1}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := b.Run(context.Background(), agent.Request{Stage: agent.StageDetails, Pass: 2}); err == nil {
+		t.Fatal("the failed call succeeded")
+	}
+	var got []string
+	for _, e := range kept {
+		got = append(got, e.Kind+"|"+e.ID+"|"+e.Title+"|"+e.Status+"|"+e.Call)
+	}
+	want := []string{
+		"call|call-1|Outline|running|Outline",
+		"message||||Outline",
+		"tool|call-1/item_0|||Outline",
+		"call|call-1||completed|Outline",
+		"call|call-2|Details · repair 1|running|Details · repair 1",
+		"message||||Details · repair 1",
+		"tool|call-2/item_0|||Details · repair 1",
+		"call|call-2||failed|Details · repair 1",
+	}
+	if !slices.Equal(got, want) {
+		t.Fatalf("transcript =\n%s\nwant\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
+	}
+	if !reports[len(reports)-1].HasTranscript {
+		t.Fatalf("progress does not say the review has a transcript: %+v", reports[len(reports)-1])
+	}
+	// A review without a transcript target marks nothing.
+	plain := &trackedBackend{Backend: b.Backend, progress: func(Progress) {}}
+	if _, err := plain.Run(context.Background(), agent.Request{Pass: 1}); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // TestLocalPrepareUsesBackendPathsWithoutFallingBackToPATH gives the runner a
 // config naming a claude that is not there while a working claude is on PATH.
 func TestLocalPrepareUsesBackendPathsWithoutFallingBackToPATH(t *testing.T) {
@@ -229,7 +274,7 @@ func TestLocalPrepareUsesBackendPathsWithoutFallingBackToPATH(t *testing.T) {
 		t.Fatal(e)
 	}
 	bin := t.TempDir()
-	if e := os.WriteFile(filepath.Join(bin, "claude"), []byte("#!/bin/sh\necho \"2.1.7 (Claude Code)\"\n"), 0o755); e != nil {
+	if e := os.WriteFile(filepath.Join(bin, "claude"), []byte("#!/bin/sh\necho \"2.1.296 (Claude Code)\"\n"), 0o755); e != nil {
 		t.Fatal(e)
 	}
 	gitPath, e := exec.LookPath("git")

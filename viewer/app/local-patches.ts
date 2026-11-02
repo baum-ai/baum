@@ -11,16 +11,19 @@ export function parsePatchAnswer(body: unknown): string | null {
   return typeof body.patch === "string" && body.patch !== "" ? body.patch : null;
 }
 
-/** Reads one file's patch. Everything that means "there is no patch here" — a
- *  null patch, a path the server does not know, a body that is no answer —
- *  resolves to null, which keeps the excerpt's link to the source. A request
- *  that fails or is answered with a server error rejects, so opening the
- *  excerpt again tries again. */
+/** Reads one file's patch, of the served document or, given `version`, of
+ *  that saved version of its pull request. Everything that means "there is no
+ *  patch here" — a null patch, a path or version the server does not know, a
+ *  body that is no answer — resolves to null, which keeps the excerpt's link
+ *  to the source. A request that fails or is answered with a server error
+ *  rejects, so opening the excerpt again tries again. */
 export async function fetchPatch(
   path: string,
   fetcher: typeof fetch = (...args) => fetch(...args),
+  version?: number,
 ): Promise<string | null> {
-  const response = await fetcher(`/api/patch?path=${encodeURIComponent(path)}`, {
+  const versionQuery = version === undefined ? "" : `&version=${version}`;
+  const response = await fetcher(`/api/patch?path=${encodeURIComponent(path)}${versionQuery}`, {
     cache: "no-store",
   });
   if (response.status === 404) return null;
@@ -32,21 +35,24 @@ export async function fetchPatch(
   }
 }
 
-/** The patches of one document, which is at `version`. The server keeps only
- *  the current document's files, so another version's has none. Each path is
- *  requested once; a failed request is forgotten and asked again the next time. */
+/** The patches of one document, which is at `version`, and of the other saved
+ *  versions of its pull request, each read between that version's own
+ *  commits. The document's own are asked for without a version, so a server
+ *  that has no saved versions, such as one serving a file, answers them. Each
+ *  version's path is requested once; a failed request is forgotten and asked
+ *  again the next time. */
 export function createPatchSource(version: number, fetcher?: typeof fetch): HunkPatchSource {
   const patches = new Map<string, Promise<string | null>>();
   return (path, requested) => {
-    if (requested !== version) return Promise.resolve(null);
-    let request = patches.get(path);
+    const key = `${requested}:${path}`;
+    let request = patches.get(key);
     if (!request) {
-      request = fetchPatch(path, fetcher);
+      request = fetchPatch(path, fetcher, requested === version ? undefined : requested);
       const started = request;
       started.catch(() => {
-        if (patches.get(path) === started) patches.delete(path);
+        if (patches.get(key) === started) patches.delete(key);
       });
-      patches.set(path, request);
+      patches.set(key, request);
     }
     return request;
   };

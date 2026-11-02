@@ -8,7 +8,8 @@
 // id, when the session started and was last active, a normalised event kind,
 // why and since when it waits on its user, with the short message a Claude
 // Code notification showed (masked like a transcript), and the repository,
-// branch and pull request the session's working directory links to. The
+// branch and pull request the session's working directory links to, else the
+// one its agent's latest commit or push reaches (work.go). The
 // working directory itself, the transcript path and the terminal the hooks
 // say the session runs in (processes, terminal device and terminal
 // variables, which Focus uses to bring it forward) stay inside the tracker
@@ -132,12 +133,14 @@ const (
 
 // WorkObservation is recorded Git context, not proof of code contribution.
 type WorkObservation struct {
-	At         time.Time `json:"at"`
-	Repository string    `json:"repository"`
-	Branch     string    `json:"branch,omitempty"`
-	HeadSHA    string    `json:"head_sha,omitempty"`
-	Upstream   string    `json:"upstream,omitempty"`
-	PR         int       `json:"pr,omitempty"`
+	At                 time.Time `json:"at"`
+	HeadRepository     string    `json:"head_repository,omitempty"`
+	UpstreamRepository string    `json:"upstream_repository,omitempty"`
+	Repository         string    `json:"repository"`
+	Branch             string    `json:"branch,omitempty"`
+	HeadSHA            string    `json:"head_sha,omitempty"`
+	Upstream           string    `json:"upstream,omitempty"`
+	PR                 int       `json:"pr,omitempty"`
 }
 
 type WorkHistory struct {
@@ -177,13 +180,15 @@ type Session struct {
 	Branch     string    `json:"branch,omitempty"`
 	// PR is the pull request whose head is Branch, 0 when there is none
 	// (yet) or it cannot be told.
-	PR          int          `json:"pr,omitempty"`
-	HeadSHA     string       `json:"head_sha,omitempty"`
-	Upstream    string       `json:"upstream,omitempty"`
-	LinkMethod  string       `json:"link_method,omitempty"`
-	LinkStatus  string       `json:"link_status,omitempty"`
-	ObservedAt  time.Time    `json:"observed_at,omitzero"`
-	WorkHistory *WorkHistory `json:"work_history,omitempty"`
+	PR                 int          `json:"pr,omitempty"`
+	HeadSHA            string       `json:"head_sha,omitempty"`
+	Upstream           string       `json:"upstream,omitempty"`
+	HeadRepository     string       `json:"head_repository,omitempty"`
+	UpstreamRepository string       `json:"upstream_repository,omitempty"`
+	LinkMethod         string       `json:"link_method,omitempty"`
+	LinkStatus         string       `json:"link_status,omitempty"`
+	ObservedAt         time.Time    `json:"observed_at,omitzero"`
+	WorkHistory        *WorkHistory `json:"work_history,omitempty"`
 }
 
 // Link is where a working directory belongs.
@@ -194,8 +199,9 @@ type Link struct {
 	// Branch is the branch checked out, empty when detached.
 	Branch string
 	// PR is the pull request of Branch, 0 when none is known.
-	PR                                int
-	HeadSHA, Upstream, Method, Status string
+	PR                                 int
+	HeadSHA, Upstream, Method, Status  string
+	HeadRepository, UpstreamRepository string
 }
 
 // Linker links a hook's working directory to a repository, branch and pull
@@ -291,6 +297,9 @@ type entry struct {
 	// terminalAt; nil until one did. Focus reads it.
 	terminal   *hookevents.Terminal
 	terminalAt time.Time
+	// work is what the session's agent committed and pushed, oldest first,
+	// at most maxWork of it (see work.go).
+	work []workItem
 	// announced is the last wait handed to Waiting, or skipped.
 	announced waitKey
 	ended     bool
@@ -493,7 +502,7 @@ func (t *Tracker) Run(ctx context.Context) {
 	if buffer <= 0 {
 		buffer = 256
 	}
-	events, cancel, dropped := t.Source.SubscribeCounted(buffer, matchAgent)
+	events, cancel, dropped := t.Source.SubscribeCounted(buffer, matchTracked)
 	defer cancel()
 	t.dropped = dropped
 	t.Rebuild(ctx)
@@ -567,7 +576,8 @@ func (t *Tracker) logger() *slog.Logger {
 // events are the record's agent events of the sessions that can still be
 // tracked, in the order of their time (a spooled event is recorded after later
 // ones): those within DropAfter, and all of a session that ended within
-// EndedFor.
+// EndedFor; and the commits and pushes within EndedFor, which apply to the
+// session whose agent made them.
 func (t *Tracker) events() ([]hookevents.Event, error) {
 	records, err := t.Source.Recent(0)
 	if err != nil {
@@ -584,6 +594,9 @@ func (t *Tracker) events() ([]hookevents.Event, error) {
 	events := make([]hookevents.Event, 0, len(records))
 	for _, record := range records {
 		e := record.Event
+		if matchWork(e) && now.Sub(e.Time) <= EndedFor {
+			events = append(events, e)
+		}
 		if !matchAgent(e) {
 			continue
 		}
@@ -663,15 +676,15 @@ func (t *Tracker) Reconcile(ctx context.Context) bool {
 }
 
 func (e *entry) setLink(link Link, now time.Time) {
-	if e.Repository != link.Repository || e.Branch != link.Branch || e.HeadSHA != link.HeadSHA || e.Upstream != link.Upstream || e.ObservedAt.IsZero() {
+	if e.Repository != link.Repository || e.Branch != link.Branch || e.HeadSHA != link.HeadSHA || e.Upstream != link.Upstream || e.HeadRepository != link.HeadRepository || e.UpstreamRepository != link.UpstreamRepository || e.ObservedAt.IsZero() {
 		e.ObservedAt = now
 	}
-	if e.WorkHistory == nil || e.Repository != link.Repository || e.Branch != link.Branch || e.HeadSHA != link.HeadSHA || e.Upstream != link.Upstream || e.PR != link.PR {
+	if e.WorkHistory == nil || e.Repository != link.Repository || e.Branch != link.Branch || e.HeadSHA != link.HeadSHA || e.Upstream != link.Upstream || e.HeadRepository != link.HeadRepository || e.UpstreamRepository != link.UpstreamRepository || e.PR != link.PR {
 		var history []WorkObservation
 		if e.WorkHistory != nil {
 			history = slices.Clone(e.WorkHistory.Entries)
 		}
-		observation := WorkObservation{At: e.ObservedAt, Repository: link.Repository, Branch: link.Branch, HeadSHA: link.HeadSHA, Upstream: link.Upstream, PR: link.PR}
+		observation := WorkObservation{At: e.ObservedAt, Repository: link.Repository, Branch: link.Branch, HeadSHA: link.HeadSHA, Upstream: link.Upstream, PR: link.PR, HeadRepository: link.HeadRepository, UpstreamRepository: link.UpstreamRepository}
 		if len(history) > 0 && history[len(history)-1].At.Equal(observation.At) {
 			history[len(history)-1] = observation
 		} else {
@@ -684,6 +697,7 @@ func (e *entry) setLink(link Link, now time.Time) {
 	}
 	e.Repository, e.Branch, e.PR = link.Repository, link.Branch, link.PR
 	e.HeadSHA, e.Upstream = link.HeadSHA, link.Upstream
+	e.HeadRepository, e.UpstreamRepository = link.HeadRepository, link.UpstreamRepository
 	e.LinkMethod, e.LinkStatus = link.Method, link.Status
 	e.linkedAt = now
 	e.stale = false
@@ -833,12 +847,13 @@ func (t *Tracker) ResolvePending(ctx context.Context) bool {
 		cwd      string
 		ended    bool
 		snapshot Session
+		work     []workItem
 	}
 	t.mu.Lock()
 	var todo []request
 	for k := range t.pending {
 		if s := t.sessions[k]; s != nil {
-			todo = append(todo, request{k: k, s: s, cwd: s.cwd, ended: s.ended, snapshot: s.Session})
+			todo = append(todo, request{k: k, s: s, cwd: s.cwd, ended: s.ended, snapshot: s.Session, work: slices.Clone(s.work)})
 		} else {
 			delete(t.pending, k)
 		}
@@ -863,6 +878,7 @@ func (t *Tracker) ResolvePending(ctx context.Context) bool {
 				link = Link{Repository: link.Repository, Status: "unknown_history"}
 			}
 		}
+		read := t.readWork(ctx, r.work, ok && link.PR == 0 && link.Status != "ambiguous")
 		now := t.now()
 		t.mu.Lock()
 		delete(t.pending, r.k)
@@ -873,9 +889,10 @@ func (t *Tracker) ResolvePending(ctx context.Context) bool {
 				continue
 			}
 			before, existed := t.view(r.k, now)
+			unread := r.s.storeWork(read)
 			switch {
 			case ok:
-				r.s.setLink(link, now)
+				r.s.setLink(withWork(link, r.s.work), now)
 				r.s.unlinked = false
 				// A new session's wait is announced once it is shown.
 				t.announceLocked(r.k, now)
@@ -890,6 +907,10 @@ func (t *Tracker) ResolvePending(ctx context.Context) bool {
 			after, exists := t.view(r.k, now)
 			if significant(before, after, existed, exists) {
 				changed = true
+			}
+			if unread && t.sessions[r.k] == r.s {
+				// A commit or push recorded during the lookup.
+				t.queue(r.k)
 			}
 		}
 		announcements = append(announcements, t.takeAnnouncementsLocked()...)
@@ -940,19 +961,18 @@ func significant(before, after Session, existed, exists bool) bool {
 // applyLocked applies e once, and reports whether the change is worth a
 // notification.
 func (t *Tracker) applyLocked(e hookevents.Event, now time.Time) bool {
+	if matchWork(e) {
+		// A commit or push changes what is seen only once looked up.
+		if !e.Time.IsZero() && t.firstLocked(e.ID) {
+			t.applyWorkLocked(e, now)
+		}
+		return false
+	}
 	if !matchAgent(e) || e.Session == nil || e.Session.ID == "" || e.Agent == "" || e.Time.IsZero() {
 		return false
 	}
-	if e.ID != "" {
-		if t.seen[e.ID] {
-			return false
-		}
-		t.seen[e.ID] = true
-		t.order = append(t.order, e.ID)
-		if len(t.order) > rememberedEvents {
-			delete(t.seen, t.order[0])
-			t.order = t.order[1:]
-		}
+	if !t.firstLocked(e.ID) {
+		return false
 	}
 	k := key{e.Agent, e.Session.ID}
 	before, existed := t.view(k, now)
@@ -960,6 +980,24 @@ func (t *Tracker) applyLocked(e hookevents.Event, now time.Time) bool {
 	t.announceLocked(k, now)
 	after, exists := t.view(k, now)
 	return significant(before, after, existed, exists)
+}
+
+// firstLocked reports whether the event id was not applied yet, and
+// remembers it; an event without one always applies.
+func (t *Tracker) firstLocked(id string) bool {
+	if id == "" {
+		return true
+	}
+	if t.seen[id] {
+		return false
+	}
+	t.seen[id] = true
+	t.order = append(t.order, id)
+	if len(t.order) > rememberedEvents {
+		delete(t.seen, t.order[0])
+		t.order = t.order[1:]
+	}
+	return true
 }
 
 // applyEvent is the state machine.
@@ -1217,10 +1255,12 @@ func (t *Tracker) Terminal(agent, id string) (*hookevents.Terminal, bool) {
 
 // persisted is the sessions' file: identifiers and times, no paths or
 // notification message text. Sessions are the ended ones; Open the others,
-// which an older daemon ignores.
+// which an older daemon ignores; Work the commits and pushes looked up of
+// each, keyed by agent and id (savedKey).
 type persisted struct {
-	Sessions []Session `json:"sessions"`
-	Open     []Session `json:"open,omitempty"`
+	Sessions []Session              `json:"sessions"`
+	Open     []Session              `json:"open,omitempty"`
+	Work     map[string][]savedWork `json:"work,omitempty"`
 }
 
 // persist writes live and ended observations to StateDir when they changed
@@ -1234,15 +1274,20 @@ func (t *Tracker) persist() {
 	t.mu.Lock()
 	now := t.now()
 	var ended, open []Session
-	for _, s := range t.sessions {
+	work := map[string][]savedWork{}
+	for k, s := range t.sessions {
 		snapshot := s.Session
 		snapshot.WaitingMessage = ""
 		switch {
 		case s.unlinked || s.expired(now):
+			continue
 		case s.ended:
 			ended = append(ended, snapshot)
 		default:
 			open = append(open, snapshot)
+		}
+		if saved := s.savedWork(); len(saved) > 0 {
+			work[savedKey(k)] = saved
 		}
 	}
 	t.mu.Unlock()
@@ -1252,7 +1297,7 @@ func (t *Tracker) persist() {
 	slices.SortFunc(open, func(a, b Session) int {
 		return cmp.Or(a.LastActivityAt.Compare(b.LastActivityAt), cmp.Compare(a.Agent, b.Agent), cmp.Compare(a.ID, b.ID))
 	})
-	data, err := json.Marshal(persisted{Sessions: ended, Open: open})
+	data, err := json.Marshal(persisted{Sessions: ended, Open: open, Work: work})
 	if err != nil || bytes.Equal(data, t.saved) {
 		return
 	}
@@ -1290,7 +1335,8 @@ func (t *Tracker) loadSavedLocked(now time.Time) {
 		if ended {
 			s.State = StateEnded
 		}
-		t.sessions[key{s.Agent, s.ID}] = &entry{Session: s, ended: ended, endedAt: s.EndedAt, linkedAt: now}
+		k := key{s.Agent, s.ID}
+		t.sessions[k] = &entry{Session: s, ended: ended, endedAt: s.EndedAt, linkedAt: now, work: restoredWork(saved.Work[savedKey(k)])}
 	}
 	for _, s := range saved.Open {
 		k := key{s.Agent, s.ID}
@@ -1301,7 +1347,7 @@ func (t *Tracker) loadSavedLocked(now time.Time) {
 		if silent && (t.Alive == nil || !t.Alive(s.Agent, s.ID)) {
 			continue
 		}
-		e := &entry{Session: s, linkedAt: now}
+		e := &entry{Session: s, linkedAt: now, work: restoredWork(saved.Work[savedKey(k)])}
 		if silent {
 			e.aliveAt = now
 		}

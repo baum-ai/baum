@@ -320,7 +320,7 @@ describe("resolveAnchor", () => {
       title: "Success, required",
     });
     expect(resolve({ type: "pr_comment", id: 7 })).toMatchObject({
-      label: "cursor review",
+      label: "From cursor's review",
       title: "Bot comment",
     });
     expect(resolve({ type: "review_thread", id: "T1" })).toMatchObject({
@@ -328,7 +328,7 @@ describe("resolveAnchor", () => {
     });
     expect(resolve({ type: "pr", number: 9 }).href).toBe("https://github.com/acme/widgets/pull/9");
     expect(resolve({ type: "pr_body", section: "Validation" })).toMatchObject({
-      label: "Description § Validation",
+      label: "From the PR description § Validation",
       href: "https://github.com/acme/widgets/pull/42",
     });
   });

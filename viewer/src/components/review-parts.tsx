@@ -23,7 +23,9 @@ import {
   type Tone,
 } from "../review-document";
 import { cn, FOCUS_RING } from "./classnames";
+import { chipClass, chipLinkClass } from "./chip-classes";
 import { CodeFileLink } from "./code-file-link";
+import { useReviewSources } from "./review-contexts";
 import { CheckIcon, ExternalLinkIcon } from "./icons";
 import { InlineMarkdown } from "./markdown";
 import { Badge } from "./ui";
@@ -384,15 +386,6 @@ export function DecisionContext({
   );
 }
 
-const chipClass = cn(
-  "inline-flex max-w-full min-w-0 items-center gap-1 rounded-(--radius-sm) border border-(--border-subtle) bg-(--surface-sunken) px-1.5 py-0.5 text-xs leading-[1.4] text-(--text-secondary)",
-);
-
-const chipLinkClass = cn(
-  chipClass,
-  "hover:border-(--border-default) hover:text-(--text-primary) hover:no-underline",
-);
-
 /** A chip for a file of the repository. It opens the review's file view when
  *  the pull request changes the file, and otherwise `href`, marked as leaving. */
 export function CodeChip({
@@ -417,7 +410,8 @@ export function CodeChip({
 
 /** The sources behind a judgment, as chips. A chip for code opens the file in
  *  the review's file view; one with a URL opens GitHub in a new tab at the
- *  comment or check; one without — a prompt, an issue key, a spec assertion —
+ *  comment or check, except a source the host opens itself (the description,
+ *  a listed commit, another pull request), which stays in the app; one without — a prompt, an issue key, a spec assertion —
  *  carries its detail in a tooltip and stays inline. */
 export function AnchorChips({
   document,
@@ -428,6 +422,7 @@ export function AnchorChips({
   anchors: Anchor[] | undefined;
   className?: string;
 }) {
+  const sources = useReviewSources();
   if (!anchors?.length) return null;
   return (
     <ul className={cn("flex flex-wrap gap-1.5", className)} aria-label="Sources">
@@ -442,6 +437,17 @@ export function AnchorChips({
               <CodeChip path={file.path} line={file.line} href={resolved.href} title={title}>
                 {label}
               </CodeChip>
+            ) : sources?.opens(anchor) ? (
+              <a
+                href={resolved.href}
+                title={title}
+                className={cn(chipLinkClass, "cursor-pointer", FOCUS_RING)}
+                onClick={(event) => {
+                  if (sources.open(anchor, resolved)) event.preventDefault();
+                }}
+              >
+                {label}
+              </a>
             ) : resolved.href ? (
               <a
                 href={resolved.href}
@@ -449,6 +455,9 @@ export function AnchorChips({
                 rel="noreferrer"
                 title={title}
                 className={cn(chipLinkClass, FOCUS_RING)}
+                onClick={(event) => {
+                  if (sources?.open(anchor, resolved)) event.preventDefault();
+                }}
               >
                 {label}
                 <ExternalLinkIcon size={10} className="flex-none text-(--text-tertiary)" />
@@ -481,8 +490,11 @@ export function Item({
   return (
     <li
       id={id}
+      // A block the review's keys move through, lightly filled while it is
+      // the one.
+      data-review-block=""
       className={cn(
-        "rounded-(--radius-md) border border-(--border-subtle) bg-(--surface-card) px-3 text-base scroll-mt-4 target:border-(--border-focus)",
+        "rounded-(--radius-md) border border-(--border-subtle) bg-(--surface-card) px-3 text-base scroll-mt-4 outline-none target:border-(--border-focus) data-[review-block-active]:bg-(--surface-wash)",
         compact ? "py-2" : "py-2.5",
         className,
       )}

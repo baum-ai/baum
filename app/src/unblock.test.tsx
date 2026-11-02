@@ -147,7 +147,7 @@ it("confirms an update with the branches named, then sends the head the page sho
   expect(node.textContent).not.toContain("Cancel");
 });
 
-it("confirms from the keyboard with Enter, since Tab moves nothing", async () => {
+it("confirms from the keyboard with Enter, with no Tab needed", async () => {
   optionsAnswer = updateOptions;
   writeAnswer = Response.json({ updating: true });
   await act(async () =>

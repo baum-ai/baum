@@ -10,18 +10,27 @@ import (
 	"regexp"
 	"sort"
 	"strconv"
+	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/baum-ai/baum/internal/appdb"
+	"github.com/baum-ai/baum/internal/inboxes"
 )
 
 const KeepWalkthroughs = 40
+
+// MaxTabs is how many saved Pull requests tabs the filters document holds.
+const MaxTabs = 20
 
 var ErrInvalid = errors.New("invalid saved UI state")
 var ErrUnreadable = errors.New("saved UI state is unreadable")
 var clientKey = regexp.MustCompile(`^[A-Za-z0-9_-]{12,64}$`)
 var mutationKey = regexp.MustCompile(`^([A-Za-z0-9_-]{12,64}):([1-9][0-9]{0,15})$`)
 var dayKey = regexp.MustCompile(`^[0-9]{4}-[0-9]{1,2}-[0-9]{1,2}$`)
+var filterPage = regexp.MustCompile(`^(inbox|pulls|(inbox|tab):[0-9a-f]{32})$`)
+var tabID = regexp.MustCompile(`^[0-9a-f]{32}$`)
+var tabView = regexp.MustCompile(`^(open|history)$`)
 var reviewKey = regexp.MustCompile(`^[A-Za-z0-9._-]+(?:/[A-Za-z0-9._-]+){1,2}#[1-9][0-9]*@v[1-9][0-9]*$`)
 
 type Record struct {
@@ -43,7 +52,7 @@ type Store struct {
 }
 
 func valid(kind, key string) bool {
-	return kind == "inbox" && key == "" || kind == "walkthrough" && len(key) <= 300 && reviewKey.MatchString(key)
+	return (kind == "inbox" || kind == "tour" || kind == "filters") && key == "" || kind == "walkthrough" && len(key) <= 300 && reviewKey.MatchString(key)
 }
 func empty() Record { return Record{Value: json.RawMessage("null")} }
 func decode(raw []byte, kind, key string) (Record, error) {
@@ -73,6 +82,12 @@ func decode(raw []byte, kind, key string) (Record, error) {
 		return Record{}, ErrUnreadable
 	}
 	if validRecord(kind, record) != nil {
+		// Filters are only how pages were last narrowed: a document in an
+		// older shape reads as none, and the next save replaces it.
+		if kind == "filters" {
+			record.Value = json.RawMessage("null")
+			return record, nil
+		}
 		return Record{}, ErrUnreadable
 	}
 	return record, nil
@@ -132,7 +147,7 @@ func (s *Store) Replace(kind, key string, revision int, mutation string, value j
 		}
 		clients[client] = sequence
 		next = Record{Revision: revision + 1, Value: value, Clients: clients}
-		if kind == "inbox" {
+		if kind != "walkthrough" {
 			return json.Marshal(next)
 		}
 		records := map[string]retained{}
@@ -234,6 +249,39 @@ func validate(kind string, raw []byte) error {
 			if id == "" || len(id) > 256 || note == nil || len(*note) > 64<<10 {
 				return ErrInvalid
 			}
+		}
+	case "filters":
+		var value struct {
+			Pages *map[string]*string `json:"pages"`
+			Tabs  []struct {
+				ID    string `json:"id"`
+				Name  string `json:"name"`
+				View  string `json:"view"`
+				Query string `json:"query"`
+			} `json:"tabs"`
+		}
+		if json.Unmarshal(raw, &value) != nil || value.Pages == nil || len(*value.Pages) > 64 || len(value.Tabs) > MaxTabs {
+			return ErrInvalid
+		}
+		for page, query := range *value.Pages {
+			if !filterPage.MatchString(page) || query == nil || !inboxes.ValidQuery(*query) {
+				return ErrInvalid
+			}
+		}
+		ids := map[string]bool{}
+		for _, tab := range value.Tabs {
+			name := strings.TrimSpace(tab.Name)
+			if !tabID.MatchString(tab.ID) || ids[tab.ID] || name == "" || name != tab.Name || utf8.RuneCountInString(name) > 40 || !tabView.MatchString(tab.View) || !inboxes.ValidQuery(tab.Query) {
+				return ErrInvalid
+			}
+			ids[tab.ID] = true
+		}
+	case "tour":
+		var value struct {
+			Seen *bool `json:"seen"`
+		}
+		if json.Unmarshal(raw, &value) != nil || value.Seen == nil {
+			return ErrInvalid
 		}
 	default:
 		return ErrInvalid

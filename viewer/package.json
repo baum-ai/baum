@@ -11,6 +11,7 @@
   "exports": {
     "./agent-names": "./src/agent-names.ts",
     "./brands": "./src/brands.ts",
+    "./combobox": "./src/combobox.ts",
     "./components/actions": "./src/components/actions.ts",
     "./components/avatar": "./src/components/avatar.tsx",
     "./components/brand-logo": "./src/components/brand-logo.tsx",

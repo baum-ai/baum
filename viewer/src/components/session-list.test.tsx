@@ -129,6 +129,17 @@ describe("SessionList", () => {
 
     render({ status: "ready", sessions }, "unknown", transcript);
     expect(container.querySelector('[data-testid="extra"]')).toBeNull();
+    act(() => root?.unmount());
+
+    // With the host's view of it, the session heads the pane, its linked
+    // commits stay, and no card repeats what that view says.
+    render({ status: "ready", sessions }, "s1", transcript);
+    expect(container.querySelector("h2, h3")?.textContent).toBe("Wire the retry budget");
+    expect(container.querySelector("#session-s1")).toBeNull();
+    expect(container.querySelector('[aria-label="Linked commits"]')?.textContent).toContain(
+      "Add the budget",
+    );
+    expect(container.querySelector('[data-testid="extra"]')?.textContent).toBe("s1 transcript");
   });
 
   it("says nothing is linked when the list is empty", () => {

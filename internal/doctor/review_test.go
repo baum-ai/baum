@@ -45,7 +45,7 @@ func TestToolsDoNotReceiveSecretsFromTheEnvironment(t *testing.T) {
 	envFile := func(name string) string { return filepath.Join(dir, name+".env") }
 	m.install("git", recordEnv(envFile("git"), "git version 2.43.0"))
 	m.install("gh", recordEnv(envFile("gh"), "gh version 2.40.1"))
-	m.install("claude", recordEnv(envFile("claude"), "2.1.7 (Claude Code)"))
+	m.install("claude", recordEnv(envFile("claude"), "2.1.296 (Claude Code)"))
 	m.install("cursor-agent", recordEnv(envFile("cursor-agent"), "2025.01.01"))
 	// A codex that records its environment on every call.
 	m.install("codex", `/usr/bin/env >> '`+envFile("codex")+`'
@@ -491,7 +491,7 @@ func TestNoHomeMeansNoConfigFileIsRead(t *testing.T) {
 func TestFileBackendIsNormalisedWhenOnlyTheEnvironmentBreaksTheLoad(t *testing.T) {
 	m := newMachine(t)
 	m.git()
-	m.claude("2.1.7")
+	m.claude("2.1.296")
 	m.writeConfig("backend = 'Claude'\n")
 	t.Setenv("BAUM_BACKEND", "gpt")
 	report := run(t, Options{})

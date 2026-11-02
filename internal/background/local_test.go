@@ -87,6 +87,12 @@ func savedReview(t *testing.T) fixture {
 	if err := versions.Put(ctx, key, store.Version{}, saved); err != nil {
 		t.Fatal(err)
 	}
+	// The store keeps the document without its hunks' evidence.
+	stored, err := versions.Latest(ctx, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	saved.Document = stored.Document
 	return fixture{versions: versions, key: key, clone: repos.Clone{Repository: key.Repository, Path: dir, CommonDir: common}, saved: saved, head: head, doc: doc}
 }
 

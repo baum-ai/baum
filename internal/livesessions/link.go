@@ -107,32 +107,74 @@ func (r *Resolver) Link(ctx context.Context, cwd string) (Link, bool) {
 }
 
 func (r *Resolver) link(ctx context.Context, cwd string) (Link, bool) {
-	clones := r.registered(ctx)
-	if len(clones) == 0 {
-		return Link{}, false
-	}
-	repo, err := gitlocal.Open(ctx, cwd, gitlocal.Options{CommandTimeout: gitTimeout})
-	if err != nil {
+	repo, repository, ok := r.open(ctx, cwd)
+	if !ok {
 		return Link{}, false
 	}
 	defer func() { _ = repo.Close() }()
+	return r.resolve(ctx, repository, prlink.Local(ctx, repo, repository))
+}
+
+// open opens the working tree dir when its git directory is an available
+// registered clone's, and names the clone's repository in lower case.
+func (r *Resolver) open(ctx context.Context, dir string) (*gitlocal.Repo, string, bool) {
+	clones := r.registered(ctx)
+	if len(clones) == 0 {
+		return nil, "", false
+	}
+	repo, err := gitlocal.Open(ctx, dir, gitlocal.Options{CommandTimeout: gitTimeout})
+	if err != nil {
+		return nil, "", false
+	}
 	common, err := filepath.EvalSymlinks(repo.CommonDir())
+	if err == nil {
+		for _, clone := range clones {
+			if clone.Available && clone.CommonDir == common {
+				return repo, strings.ToLower(clone.Repository), true
+			}
+		}
+	}
+	_ = repo.Close()
+	return nil, "", false
+}
+
+// LinkCommit implements WorkLinker: the commit head made on branch in the
+// working tree dir, with the remotes the clone has (prlink.At), not what dir
+// has checked out since. It runs git and never fetches.
+func (r *Resolver) LinkCommit(ctx context.Context, dir, branch, head string) (Link, bool) {
+	if !filepath.IsAbs(dir) {
+		return Link{}, false
+	}
+	repo, repository, ok := r.open(ctx, dir)
+	if !ok {
+		return Link{}, false
+	}
+	defer func() { _ = repo.Close() }()
+	return r.resolve(ctx, repository, prlink.At(ctx, repo, repository, branch, head))
+}
+
+// LinkPush implements WorkLinker: the pushed branch and commit, in the
+// repository the remote's push URL names (a fork's own branch is another
+// branch), as refresh on hook events reads a push. It runs git and never
+// fetches.
+func (r *Resolver) LinkPush(ctx context.Context, dir, remote, branch, head string) (Link, bool) {
+	if !filepath.IsAbs(dir) {
+		return Link{}, false
+	}
+	repo, repository, ok := r.open(ctx, dir)
+	if !ok {
+		return Link{}, false
+	}
+	defer func() { _ = repo.Close() }()
+	url, err := repo.RemotePushURL(ctx, remote)
+	if err != nil || url == "" {
+		return Link{}, false
+	}
+	pushed, err := github.RepositoryFromRemote(url)
 	if err != nil {
 		return Link{}, false
 	}
-	var clone *repos.Clone
-	for i := range clones {
-		if clones[i].Available && clones[i].CommonDir == common {
-			clone = &clones[i]
-			break
-		}
-	}
-	if clone == nil {
-		return Link{}, false
-	}
-	link := Link{Repository: strings.ToLower(clone.Repository)}
-	work := prlink.Local(ctx, repo, link.Repository)
-	return r.resolve(ctx, link.Repository, work)
+	return r.resolve(ctx, repository, prlink.Work{Repository: strings.ToLower(pushed.String()), Branch: branch, Head: head})
 }
 
 // Relink uses recorded branch, upstream and HEAD evidence, never the checkout.
@@ -140,11 +182,11 @@ func (r *Resolver) Relink(ctx context.Context, s Session) (Link, bool) {
 	if s.LinkStatus == "unknown_history" {
 		return Link{Repository: s.Repository, Status: "unknown_history"}, true
 	}
-	return r.resolve(ctx, s.Repository, prlink.Work{Branch: s.Branch, Upstream: s.Upstream, Head: s.HeadSHA})
+	return r.resolve(ctx, s.Repository, prlink.Work{Branch: s.Branch, Upstream: s.Upstream, Head: s.HeadSHA, Repository: s.HeadRepository, UpstreamRepository: s.UpstreamRepository})
 }
 
 func (r *Resolver) resolve(ctx context.Context, repository string, work prlink.Work) (Link, bool) {
-	link := Link{Repository: repository, Branch: work.Branch, HeadSHA: work.Head, Upstream: work.Upstream, Status: "unavailable"}
+	link := Link{Repository: repository, Branch: work.Branch, HeadSHA: work.Head, Upstream: work.Upstream, Status: "unavailable", HeadRepository: work.Repository, UpstreamRepository: work.UpstreamRepository}
 	if r.Discovery == nil {
 		return link, true
 	}

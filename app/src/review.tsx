@@ -7,20 +7,36 @@ import {
   useRef,
   useState,
 } from "react";
-import { ReviewViewer, type ReviewSteps } from "@baum/viewer/components/review-viewer";
+import {
+  ReviewViewer,
+  type ReviewListSlot,
+  type ReviewSteps,
+} from "@baum/viewer/components/review-viewer";
 import { sessionsSlot, commitsSlot } from "@baum/viewer/components/list-slots";
-import { SessionCard } from "@baum/viewer/components/session-card";
 import { Alert, Button, LiveDot } from "@baum/viewer/components/ui";
-import { SparkleIcon, WarningIcon } from "@baum/viewer/components/icons";
+import {
+  ChevronDownIcon,
+  SparkleIcon,
+  StackIcon,
+  WarningIcon,
+} from "@baum/viewer/components/icons";
+import { type MenuItem, useContextMenu } from "./context-menu";
 import { useHistoryView } from "@baum/viewer/use-review-version";
 import { AttachmentUrlProvider } from "@baum/viewer/host";
 import { ViewerLink, useUrlState } from "@baum/viewer/navigation";
 import {
+  contextRefUrl,
   sectionDetails,
+  type ReviewContextRef,
   type ReviewDocument,
   type ReviewVersionState,
 } from "@baum/viewer/review-document";
-import { parseSessionsAnswer, sessionLists, type SessionsLoad } from "@baum/viewer/local-sessions";
+import {
+  createCommitLoaders,
+  parseSessionsAnswer,
+  sessionLists,
+  type SessionsLoad,
+} from "@baum/viewer/local-sessions";
 import { parseTranscript, type LocalTranscript } from "@baum/viewer/local-transcript";
 import {
   appURL,
@@ -43,32 +59,67 @@ import {
   type LiveSession,
   type Provenance,
 } from "./api";
-import { FixNotice, FixRuns, type FixState, type FixChat } from "./fix";
+import { FixNotice, FixRuns, type FixState, type FixChat, useDismissedFixes } from "./fix";
 import { CloneActions } from "./repositories";
 import { useModal } from "./modal";
 import { Notice, RefreshButton, type RefreshRun, usePageRefreshAction } from "./shell";
 import { LiveSessions } from "./sessions";
-import { PullRequestDecisionsList } from "./decisions";
+import { TranscriptCard } from "./session-transcript";
+import { withCommitRows } from "./commit-rows";
+import {
+  PullRequestDecisionsList,
+  PullRequestDecisionsPane,
+  usePullRequestDecisions,
+} from "./decisions";
 import { LoadingStatus } from "./nine-dots";
+import { DescriptionDialog } from "./description";
+import { RepositoryFileDialog } from "./repository-file";
 import { canMerge, MergeDialog } from "./merge";
-import { useShortcuts } from "./shortcuts";
+import { openActiveBlock, toggleActiveBlock, useShortcuts } from "./shortcuts";
 import { PullRequestState, pullRequestStates } from "./inbox";
 import { canRerunChecks, canUpdateBranch, RerunChecksDialog, UpdateBranchDialog } from "./unblock";
 import { Walkthrough, type WalkMode } from "./walkthrough";
 import { buildTour } from "./walkthrough-model";
 import { AnswerActions } from "./answer-actions";
-import { AskPanel, sectionFocus } from "./chat";
-import { factsFilesSlot, factsQuery, useFacts } from "./facts";
+import { AskPanel } from "./chat";
+import { documentFilesSlot, factsFilesSlot, factsQuery, useFacts } from "./facts";
 import { SECONDARY } from "./action-classes";
-function Transcript({
+
+/** `commitsSlot`'s loaders over the daemon's commit routes under `route`
+ *  (`api` for a saved version, `api/facts` for the facts), with the page's
+ *  `query`, as `Transcript` reads a session. A 404 (a commit or file the
+ *  daemon does not answer for) is no detail or no diff. */
+function localCommitLoaders(route: string, query: string) {
+  return routedCommitLoaders(route, () => query);
+}
+
+/** `localCommitLoaders` where the query follows the commit: a stack's page
+ *  reads each commit through the member whose review linked it. */
+export function routedCommitLoaders(route: string, queryFor: (oid: string) => string) {
+  return createCommitLoaders(async (name, params) => {
+    try {
+      return await request<unknown>(
+        `${route}/${name}?${queryFor(params.oid ?? "")}&${new URLSearchParams(params)}`,
+      );
+    } catch (error) {
+      if (error instanceof LocalRequestError && error.status === 404) return undefined;
+      throw error;
+    }
+  });
+}
+
+export function Transcript({
   id,
   query,
   route = "api/sessions",
+  title,
 }: {
   id: string;
   query: string;
   /** Where the pull request's sessions are read: a version's, or its facts'. */
   route?: string;
+  /** The listed session's title, for a transcript that holds none. */
+  title?: string;
 }) {
   const [load, setLoad] = useState<LocalTranscript | null>(null);
   const [error, setError] = useState(false);
@@ -95,19 +146,30 @@ function Transcript({
       </Alert>
     );
   if (!load) return <LoadingStatus block>Reading redacted local transcript…</LoadingStatus>;
-  return (
-    <>
-      <p>
-        Local transcript; secrets and e-mail addresses masked.
-        {load.truncated ? " Some content was omitted." : ""}
-      </p>
-      <SessionCard
-        defaultOpen={true}
-        session={load.session}
-        source={{ loadTurnActivity: (_run, turn) => Promise.resolve(load.activity[turn]!) }}
-      />
-    </>
-  );
+  // Drawn as the Sessions page draws a session, not as a chat.
+  return <TranscriptCard transcript={load} title={title} embedded />;
+}
+
+/** The pull request's Sessions group with the sessions running on it now:
+ *  marked on its rail row (amber while one waits on the reader), and listed
+ *  at the top of the whole list's pane, above the sessions linked to it. */
+export function withRunning(slot: ReviewListSlot, running: LiveSession[]): ReviewListSlot {
+  if (running.length === 0) return slot;
+  return {
+    ...slot,
+    indicator: running.some((s) => s.state !== "running" && s.waiting_reason)
+      ? "attention"
+      : "live",
+    renderPane: (selected, actions) =>
+      selected === null ? (
+        <>
+          <LiveSessions sessions={running} Link={ViewerLink} />
+          {slot.renderPane(selected, actions)}
+        </>
+      ) : (
+        slot.renderPane(selected, actions)
+      ),
+  };
 }
 /** Whether the window matches a media query, as it changes. */
 function useMedia(query: string) {
@@ -158,7 +220,7 @@ export function LocalReview({
   /** Agent sessions in progress; those of this pull request are listed. */
   live?: LiveSession[];
   /** The review groups this pull request belongs to. */
-  groups?: { id: string; name: string }[];
+  groups?: { id: string; name: string; stack?: boolean }[];
   /** Starts the fix at once; absent when the pull request has no clone. */
   fix?: (chat?: FixChat) => void;
   /** The fix asked for here: starting, or why it did not start. */
@@ -203,6 +265,15 @@ export function LocalReview({
     });
   // The part of the review the next question is about.
   const [askFocus, setAskFocus] = useState<ChatFocus | null>(null);
+  // The pull request's description, opened from a source chip that cites it.
+  const [description, setDescription] = useState<{ section?: string } | null>(null);
+  // A repository file a context chip opened, with the selector and GitHub
+  // link of the version it was opened from.
+  const [repositoryFile, setRepositoryFile] = useState<{
+    reference: ReviewContextRef;
+    source: string;
+    href: string;
+  } | null>(null);
   // An answer's Open the draft asks the walkthrough for its wrap-up page.
   const [toDraft, setToDraft] = useState(false);
   // Below 72rem the panel overlays the review, which is then inert behind it.
@@ -226,8 +297,12 @@ export function LocalReview({
   const fixStarting = fixState.starting && !fixing;
   // A finished fix stays on the page while it concerns the head shown: the
   // one it started from, or the commit it pushed.
+  // A finished fix's notice the person dismissed joins the fix runs below.
+  const [dismissedFixes, dismissFix] = useDismissedFixes();
   const showFix =
-    !!fixJob && (fixing || fixJob.head_sha === pr.head_sha || fixJob.commit === pr.head_sha);
+    !!fixJob &&
+    (fixing || fixJob.head_sha === pr.head_sha || fixJob.commit === pr.head_sha) &&
+    (fixing || !dismissedFixes.includes(fixJob.id));
   // The runs the notice does not show stay one fold away, transcripts and all.
   const earlierRuns = fixRuns.filter((run) => !showFix || run.id !== fixJob?.id);
   const watchable = [fixJob, ...fixRuns].find((run) => run?.has_transcript);
@@ -257,6 +332,13 @@ export function LocalReview({
           ? entry.status
           : undefined;
   const [doc, setDoc] = useState<ReviewDocument | null>(null);
+  // The decisions of its sessions, in their own pane beside Sessions and
+  // Commits rather than above the review.
+  const decisions = usePullRequestDecisions(
+    pr.repository,
+    pr.number,
+    `${ended}:${doc?.review.version ?? 0}`,
+  );
   // Where an answer's comment lands when it is added to the draft.
   const tour = useMemo(() => (doc ? buildTour(doc) : null), [doc]);
   const [failed, setFailed] = useState(false);
@@ -283,8 +365,52 @@ export function LocalReview({
     }
     // The tour has keys of its own; the overview leaves the page's to it.
     if (walkMode === "tour" && doc && !showingDraft) return;
+    // Space opens or closes the fold of the block j and k are on; on a
+    // focused button or link it still presses that.
+    if (
+      event.key === " " &&
+      !(event.target instanceof HTMLElement && event.target.closest("a, button, summary")) &&
+      toggleActiveBlock()
+    ) {
+      event.preventDefault();
+      return;
+    }
+    // Else Space opens or closes the selected group (Changes, Sessions,
+    // Commits, Files) in the rail.
+    if (
+      event.key === " " &&
+      !(event.target instanceof HTMLElement && event.target.closest("a, button, summary")) &&
+      steps.current?.toggleGroup
+    ) {
+      event.preventDefault();
+      steps.current.toggleGroup();
+      return;
+    }
+    // Enter opens the block j and k are on, such as a commit from the list.
+    if (
+      event.key === "Enter" &&
+      !(
+        event.target instanceof HTMLElement &&
+        event.target.closest("a, button, summary, input, textarea")
+      ) &&
+      openActiveBlock()
+    ) {
+      event.preventDefault();
+      return;
+    }
+    // h and l (← →) move to the previous and next section, as the navigator
+    // does; j and k (↓ ↑) through the blocks of the one read.
+    const key = event.key;
     const step =
-      event.key === "j" ? steps.current?.next : event.key === "k" ? steps.current?.previous : null;
+      key === "j" || key === "ArrowDown"
+        ? steps.current?.item?.next
+        : key === "k" || key === "ArrowUp"
+          ? steps.current?.item?.previous
+          : key === "l" || key === "ArrowRight"
+            ? (steps.current?.rail?.next ?? steps.current?.next)
+            : key === "h" || key === "ArrowLeft"
+              ? (steps.current?.rail?.previous ?? steps.current?.previous)
+              : null;
     if (step) {
       event.preventDefault();
       step.go();
@@ -326,11 +452,9 @@ export function LocalReview({
   // never a version: nothing is saved, listed or asked about until published.
   const draftCount = isActiveJob(job) ? (job?.draft ?? 0) : 0;
   const [draft, setDraft] = useState<ReviewDocument | null>(null);
-  const [viewDraft, setViewDraft] = useState(false);
   useEffect(() => {
     if (!job || draftCount === 0) {
       setDraft(null);
-      setViewDraft(false);
       return;
     }
     const abort = new AbortController();
@@ -350,8 +474,8 @@ export function LocalReview({
     return () => abort.abort();
   }, [job?.id, draftCount]);
   // A page without a review shows the draft as soon as there is one; one with
-  // a saved version keeps it until the reader asks for the draft.
-  const showingDraft = draft !== null && (viewDraft || (!doc && entry.version_count === 0));
+  // a saved version keeps showing that version until the new one is saved.
+  const showingDraft = draft !== null && !doc && entry.version_count === 0;
   // The failed sections of the latest saved version, which a retry writes
   // again; they read as being written while that job runs.
   const failedSections = useMemo(
@@ -466,18 +590,6 @@ export function LocalReview({
       ) : null}
     </>
   );
-  const viewDraftButton =
-    doc && isActiveJob(job) ? (
-      <Button
-        variant="secondary"
-        size="compact"
-        aria-pressed={showingDraft}
-        disabled={!draft}
-        onClick={() => setViewDraft((on) => !on)}
-      >
-        View draft
-      </Button>
-    ) : null;
   const sessionsVersion = viewedDocument?.review.version;
   useEffect(() => {
     const abort = new AbortController();
@@ -607,6 +719,12 @@ export function LocalReview({
       return pending;
     };
   }, [factsSelector, factsHead, factsBase, factsMergeBase]);
+  const factsCommits = useMemo(
+    () => localCommitLoaders("api/facts", factsSelector),
+    // A new comparison base is another document, whose commits are read anew.
+    [factsSelector, factsBase, factsMergeBase],
+  );
+  const versionCommits = useMemo(() => localCommitLoaders("api", query), [query]);
   const factsMode = !doc && wantsFacts && facts.state !== "unavailable";
   const lists = viewedDocument
     ? sessionLists(
@@ -641,6 +759,13 @@ export function LocalReview({
       return pending;
     };
   }, [clone, pr.number]);
+  // A file's whole diff for the Files pane, for the version on screen; kept
+  // the same function while it is, so an opened file is not read again.
+  const filesVersion = viewedDocument?.review.version ?? 0;
+  const filePatches = useCallback(
+    (path: string) => patches(path, filesVersion),
+    [patches, filesVersion],
+  );
   const attachments = useMemo(
     () => (id: string, document?: ReviewDocument) =>
       appURL(
@@ -705,7 +830,6 @@ export function LocalReview({
                         Re-run checks
                       </button>
                     ) : null}
-                    {viewDraftButton}
                     {entry.status === "outdated" || generating ? (
                       <button
                         type="button"
@@ -724,7 +848,12 @@ export function LocalReview({
                       <Alert>Couldn't start the fix: {fixState.error}</Alert>
                     ) : null}
                     {showFix && fixJob ? (
-                      <FixNotice key={fixJob.id} job={fixJob} changed={changed} />
+                      <FixNotice
+                        key={fixJob.id}
+                        job={fixJob}
+                        changed={changed}
+                        dismiss={fixing ? undefined : () => dismissFix(fixJob.id)}
+                      />
                     ) : null}
                     <PullRequestDecisionsList
                       repository={pr.repository}
@@ -753,6 +882,39 @@ export function LocalReview({
             ) : (
               <ReviewViewer
                 document={shownDocument}
+                openSource={(anchor) => {
+                  // The description and other pull requests of this repository
+                  // open here; the chip's link to GitHub is the fallback.
+                  if (anchor.type === "pr_body") {
+                    setDescription({ section: anchor.section ?? undefined });
+                    return true;
+                  }
+                  if (anchor.type === "pr") {
+                    navigate(
+                      appURL(
+                        `?${clone ? `clone=${encodeURIComponent(clone)}` : `repository=${encodeURIComponent(pr.repository)}`}&pr=${anchor.number}`,
+                      ),
+                    );
+                    return true;
+                  }
+                  return false;
+                }}
+                openRepositoryFile={
+                  // A draft is no saved version, so the daemon has no
+                  // document to read its files for; its chips keep GitHub.
+                  showingDraft
+                    ? undefined
+                    : (reference) => {
+                        const document = viewedDocument ?? shownDocument;
+                        if (!document) return false;
+                        setRepositoryFile({
+                          reference,
+                          source: `api/file?${query}`,
+                          href: contextRefUrl(document, reference.path),
+                        });
+                        return true;
+                      }
+                }
                 history={showingDraft ? undefined : history}
                 versions={showingDraft ? [] : versions.filter((v) => v !== doc?.review.version)}
                 loadVersion={showingDraft ? undefined : loadVersion}
@@ -780,6 +942,44 @@ export function LocalReview({
                   back: { href: back.href, label: back.label },
                   generation: { state: generationState, rewriting: generating && Boolean(doc) },
                   actions: refreshButton,
+                  // The stacks and groups it belongs to, under the title with its
+                  // other facts rather than as a notice over the review.
+                  subtitle:
+                    groups.length > 0 ? (
+                      <>
+                        {groups.map((group) => (
+                          <ViewerLink
+                            key={group.id}
+                            href={appURL(`?${back.prefix}group=${encodeURIComponent(group.id)}`)}
+                            className="local-group-link"
+                            title={`Open the ${group.stack ? "stack" : "group"}`}
+                          >
+                            <StackIcon size={14} className="flex-none" />
+                            <span className="local-group-link-kind">
+                              {group.stack ? "Stack" : "Group"}
+                            </span>
+                            <span className="local-group-link-name">{group.name}</span>
+                          </ViewerLink>
+                        ))}
+                      </>
+                    ) : undefined,
+                  // Generating the review again is about the review, so it sits
+                  // with its versions.
+                  versionActions: doc
+                    ? [
+                        {
+                          label: generating
+                            ? starting
+                              ? "Starting review…"
+                              : job?.state === "queued"
+                                ? "Review queued"
+                                : "Generating review…"
+                            : "Regenerate review",
+                          onSelect: generate,
+                          disabled: generating || entry.needs_clone,
+                        },
+                      ]
+                    : undefined,
                   // Without a review, the button in the page's middle generates it.
                   // The GitHub state leads, so a reader sees why a fix, a re-run or an
                   // update is offered; a fix comes first of those, re-running checks
@@ -791,83 +991,52 @@ export function LocalReview({
                     canMerge(entry) ||
                     canRerunChecks(entry) ||
                     canUpdateBranch(entry) ? (
-                      <div className="flex flex-wrap items-center gap-2">
-                        <span className="mr-2 empty:hidden">
-                          <PullRequestState entry={entry} />
-                        </span>
-                        {fix && fixLabelText ? (
-                          <Button
-                            variant="secondary"
-                            size="compact"
-                            disabled={fixing || fixStarting}
-                            onClick={() => fix()}
-                            className="gap-1.5"
-                          >
-                            <SparkleIcon size={14} className="flex-none text-(--status-critical)" />
-                            {fixing ? "Fixing…" : fixStarting ? "Starting…" : fixLabelText}
-                          </Button>
+                      // The pull request's state stays by the version and its age,
+                      // holding its remedies (a fix, re-running the checks, updating
+                      // the branch) in its menu; Ask and Merge stay at the row's end.
+                      <div
+                        data-tour="review-actions"
+                        className="flex flex-wrap items-center gap-x-4 gap-y-2"
+                      >
+                        <StatusMenu
+                          entry={entry}
+                          items={[
+                            ...(fix && fixLabelText && !fixing && !fixStarting
+                              ? [{ label: fixLabelText, onSelect: () => fix() }]
+                              : []),
+                            ...(canRerunChecks(entry)
+                              ? [{ label: "Re-run checks", onSelect: () => setRerunning(true) }]
+                              : []),
+                            ...(canUpdateBranch(entry)
+                              ? [{ label: "Update branch", onSelect: () => setUpdating(true) }]
+                              : []),
+                          ]}
+                        />
+                        {fixing || fixStarting ? (
+                          <span className="inline-flex items-center gap-1.5 text-xs text-(--text-secondary)">
+                            <LiveDot />
+                            {fixing ? "Fixing" : "Starting the fix"}
+                          </span>
                         ) : null}
-                        {canRerunChecks(entry) ? (
-                          <Button
-                            variant="secondary"
-                            size="compact"
-                            onClick={() => setRerunning(true)}
-                          >
-                            Re-run checks
-                          </Button>
-                        ) : null}
-                        {canUpdateBranch(entry) ? (
-                          <Button
-                            variant="secondary"
-                            size="compact"
-                            onClick={() => setUpdating(true)}
-                          >
-                            Update branch
-                          </Button>
-                        ) : null}
-                        {doc ? (
-                          <Button
-                            variant="secondary"
-                            size="compact"
-                            disabled={generating || entry.needs_clone}
-                            onClick={generate}
-                          >
-                            {generating
-                              ? starting
-                                ? "Starting review…"
-                                : job?.state === "queued"
-                                  ? "Review queued"
-                                  : "Generating review…"
-                              : "Regenerate review"}
-                          </Button>
-                        ) : null}
-                        {viewDraftButton}
-                        {doc && !showingDraft ? (
-                          <Button
-                            variant="secondary"
-                            size="compact"
-                            aria-pressed={askOpen}
-                            aria-keyshortcuts="a"
-                            data-ask-button=""
-                            onClick={() => (askOpen ? closeAsk() : setAsk(true))}
-                          >
-                            Ask
-                          </Button>
-                        ) : null}
-                        {doc && !showingDraft ? (
-                          <Button
-                            variant="secondary"
-                            size="compact"
-                            onClick={() => setWalk("landing")}
-                          >
-                            Walk through
-                          </Button>
-                        ) : null}
-                        {canMerge(entry) ? (
-                          <Button size="compact" onClick={() => setMerging(true)}>
-                            Merge…
-                          </Button>
-                        ) : null}
+                        <div className="ml-auto flex flex-wrap items-center gap-2">
+                          {doc && !showingDraft ? (
+                            <Button
+                              variant="secondary"
+                              size="compact"
+                              aria-pressed={askOpen}
+                              aria-keyshortcuts="a"
+                              data-ask-button=""
+                              onClick={() => (askOpen ? closeAsk() : setAsk(true))}
+                            >
+                              Ask
+                            </Button>
+                          ) : null}
+                          {canMerge(entry) ? (
+                            <Button size="compact" onClick={() => setMerging(true)}>
+                              Merge…
+                            </Button>
+                          ) : null}
+                        </div>
                       </div>
                     ) : null,
                 }}
@@ -931,32 +1100,18 @@ export function LocalReview({
                 )}
                 notices={
                   <>
-                    {groups.map((group) => (
-                      <Notice key={group.id}>
-                        In review group{" "}
-                        <ViewerLink
-                          href={appURL(`?${back.prefix}group=${encodeURIComponent(group.id)}`)}
-                        >
-                          {group.name}
-                        </ViewerLink>
-                      </Notice>
-                    ))}
                     {fixState.error ? (
                       <Alert>Couldn't start the fix: {fixState.error}</Alert>
                     ) : null}
                     {showFix && fixJob ? (
-                      <FixNotice key={fixJob.id} job={fixJob} changed={changed} />
-                    ) : null}
-                    <FixRuns runs={earlierRuns} earlier={showFix} />
-                    {doc || failed || entry.version_count === 0 ? (
-                      <PullRequestDecisionsList
-                        repository={pr.repository}
-                        number={pr.number}
-                        live={running}
-                        revision={`${ended}:${doc?.review.version ?? 0}`}
+                      <FixNotice
+                        key={fixJob.id}
+                        job={fixJob}
+                        changed={changed}
+                        dismiss={fixing ? undefined : () => dismissFix(fixJob.id)}
                       />
                     ) : null}
-                    <LiveSessions sessions={running} Link={ViewerLink} />
+                    <FixRuns runs={earlierRuns} earlier={showFix} />
                     {factsMode && facts.state === "failed" ? (
                       <Alert>
                         {facts.rateLimited
@@ -978,7 +1133,7 @@ export function LocalReview({
                       </Notice>
                     ) : null}
                     {job && isActiveJob(job) && (doc || showingDraft) ? (
-                      <ReviewJob key={job.id} job={job} changed={changed} />
+                      <ReviewJob key={job.id} job={job} changed={changed} saved={Boolean(doc)} />
                     ) : job && doc && job.state !== "completed" ? (
                       <div className="local-job-outcome">
                         <GenerationOutcome job={job} compact />
@@ -990,7 +1145,8 @@ export function LocalReview({
                         <Button onClick={() => setRetry((n) => n + 1)}>Retry review</Button>
                       </Alert>
                     ) : null}
-                    {generating && doc && !showingDraft ? (
+                    {/* The job's own card says so, once there is one. */}
+                    {generating && doc && !showingDraft && !(job && isActiveJob(job)) ? (
                       <Notice>
                         A new review is being generated. This saved version remains available while
                         it runs.
@@ -1001,50 +1157,68 @@ export function LocalReview({
                   </>
                 }
                 sessions={
-                  lists && !(showingDraft && doc)
-                    ? sessionsSlot(lists.sessions, {
-                        renderSession: (session) =>
-                          viewedDocument ? (
-                            <Transcript id={session.id} query={query} />
-                          ) : (
-                            <Transcript
-                              id={session.id}
-                              query={factsSelector}
-                              route="api/facts/sessions"
-                            />
-                          ),
-                      })
+                  (lists && !(showingDraft && doc)) || running.length > 0
+                    ? withRunning(
+                        sessionsSlot(
+                          lists && !(showingDraft && doc)
+                            ? lists.sessions
+                            : { status: "ready", sessions: [] },
+                          {
+                            renderSession: (session) =>
+                              viewedDocument ? (
+                                <Transcript
+                                  id={session.id}
+                                  query={query}
+                                  title={session.title ?? undefined}
+                                />
+                              ) : (
+                                <Transcript
+                                  id={session.id}
+                                  query={factsSelector}
+                                  route="api/facts/sessions"
+                                  title={session.title ?? undefined}
+                                />
+                              ),
+                          },
+                        ),
+                        running,
+                      )
                     : undefined
                 }
                 commits={
-                  lists?.commits && !(showingDraft && doc) ? commitsSlot(lists.commits) : undefined
+                  lists?.commits && !(showingDraft && doc)
+                    ? withCommitRows(
+                        commitsSlot(lists.commits, viewedDocument ? versionCommits : factsCommits),
+                        lists.commits,
+                      )
+                    : undefined
+                }
+                decisions={
+                  decisions
+                    ? {
+                        count: decisions.total,
+                        renderPane: () => (
+                          <PullRequestDecisionsPane read={decisions} live={running} heading />
+                        ),
+                      }
+                    : undefined
                 }
                 facts={shownFacts}
                 files={
                   factsMode
                     ? factsFilesSlot(facts, () => setFactsRetry((n) => n + 1), factsPatches, pr.url)
-                    : undefined
+                    : viewedDocument && !showingDraft
+                      ? // Every file of the change, as GitHub's Files changed shows them,
+                        // each diff read for the version on screen.
+                        documentFilesSlot(
+                          viewedDocument.index.hunks,
+                          filePatches,
+                          `${pr.url}/files`,
+                        )
+                      : undefined
                 }
                 hunkPatches={
                   showingDraft ? (doc ? undefined : (path: string) => factsPatches(path)) : patches
-                }
-                renderSectionAside={
-                  doc && !showingDraft
-                    ? (id) => (
-                        <div className="ask-aside">
-                          <Button
-                            variant="secondary"
-                            size="compact"
-                            onClick={() => {
-                              const focus = sectionFocus(doc, id);
-                              if (focus) askAbout(focus);
-                            }}
-                          >
-                            Ask about this section
-                          </Button>
-                        </div>
-                      )
-                    : undefined
                 }
               />
             )}
@@ -1091,6 +1265,22 @@ export function LocalReview({
             </>
           ) : null}
         </div>
+        {description ? (
+          <DescriptionDialog
+            repository={pr.repository}
+            number={pr.number}
+            section={description.section}
+            close={() => setDescription(null)}
+          />
+        ) : null}
+        {repositoryFile ? (
+          <RepositoryFileDialog
+            reference={repositoryFile.reference}
+            source={repositoryFile.source}
+            href={repositoryFile.href}
+            close={() => setRepositoryFile(null)}
+          />
+        ) : null}
         {merging ? (
           <MergeDialog entry={entry} close={() => setMerging(false)} merged={changed} />
         ) : null}
@@ -1149,6 +1339,40 @@ class ReviewBoundary extends Component<{ children: ReactNode }, { failed: boolea
 /** Where the review being read came from, at the foot of its Details: the
  *  harness and model, and the job that generated it while the jobs list
  *  still has it. */
+/** The pull request's GitHub state beside the version, as a menu of what can
+ *  be done about it (`items`): a fix, re-running its checks, updating its
+ *  branch. Without any it is the state alone, as text. */
+function StatusMenu({ entry, items }: { entry: Entry; items: MenuItem[] }) {
+  const menu = useContextMenu();
+  const ref = useRef<HTMLButtonElement>(null);
+  if (pullRequestStates(entry).length === 0) return null;
+  if (items.length === 0) return <PullRequestState entry={entry} />;
+  const open = menu.anchor !== null && menu.anchor === ref.current;
+  return (
+    <>
+      <button
+        ref={ref}
+        type="button"
+        className="local-status-menu"
+        aria-haspopup="menu"
+        aria-expanded={open}
+        aria-controls={open ? menu.id : undefined}
+        onClick={(event) => {
+          // A click on the open menu's own button closes it, as the row menus do.
+          const button = event.currentTarget;
+          if (button.dataset.closing !== undefined) delete button.dataset.closing;
+          else menu.openFrom(button, items, "Pull request actions");
+        }}
+        onPointerLeave={(event) => delete event.currentTarget.dataset.closing}
+      >
+        <PullRequestState entry={entry} />
+        <ChevronDownIcon size={12} className="flex-none text-(--text-tertiary)" />
+      </button>
+      {menu.menu}
+    </>
+  );
+}
+
 function GeneratedBy({
   saved,
   entry,
@@ -1246,7 +1470,16 @@ export function CancelJob({ job, changed }: { job: Job; changed: () => Promise<v
   );
 }
 /** A new version being generated above the review the reader is on. */
-export function ReviewJob({ job, changed }: { job: Job; changed: () => Promise<void> }) {
+export function ReviewJob({
+  job,
+  changed,
+  saved = true,
+}: {
+  job: Job;
+  changed: () => Promise<void>;
+  /** A saved version stays readable while this one is written. */
+  saved?: boolean;
+}) {
   const started = automaticLabel(job);
   return (
     <section aria-label="Review generation" className="local-job-outcome">
@@ -1254,11 +1487,18 @@ export function ReviewJob({ job, changed }: { job: Job; changed: () => Promise<v
       <div className="min-w-0 flex-1">
         <p role="status" className="font-medium">
           {job.state === "queued" ? "New version queued" : "Generating a new version"}
-          {job.state === "running" && job.phase ? (
+          {/* The title already says it generates; another phase is news. */}
+          {job.state === "running" && job.phase && job.phase !== "generating" ? (
             <span className="font-normal text-(--text-tertiary)"> · {job.phase}</span>
           ) : null}
         </p>
-        {started ? <p className="text-(--text-tertiary)">{started}</p> : null}
+        {started || saved ? (
+          <p className="text-(--text-tertiary)">
+            {[started, saved ? "The saved version stays available while it runs." : ""]
+              .filter(Boolean)
+              .join(". ")}
+          </p>
+        ) : null}
       </div>
       <CancelJob job={job} changed={changed} />
     </section>

@@ -2,7 +2,9 @@
 
 `agentplugins` registers the public `baum-ai/baum` marketplace and installs
 `baum@baum` through Claude Code or Codex's native CLI. It never edits hook
-settings or keeps migration markers. Native list JSON reports installation,
+settings or keeps migration markers. Claude Code's install, uninstall and
+update commands run without `--json`, which baum does not read and which
+Claude Code 2.1.248 refuses. Native list JSON reports installation,
 enablement and version separately. A separate Codex `hooks/list` query
 establishes readiness of the current baum hook definitions.
 
@@ -60,8 +62,23 @@ Cancellation stops the private server and its descendants on Unix; stderr and
 raw protocol errors are discarded because they can include other plugins'
 commands or configuration. No hook is executed and no approval is written.
 
+## Claude Code hook readiness
+
+Claude Code has no per-hook approval: an enabled plugin's hooks run in any
+folder the user trusted. `ClaudeHooks` reads what can still stop them: the
+user's `settings.json` (under `CLAUDE_CONFIG_DIR`, default `~/.claude`) and the
+file-based managed settings, `managed-settings.json` then
+`managed-settings.d/*.json` in name order. It reports hooks_disabled when
+`disableAllHooks` is on (a managed value wins over the user's), managed_only
+when managed `allowManagedHooksOnly` is on and managed `enabledPlugins` does
+not force-enable baum, unknown when a file exists but cannot be read, and
+otherwise ready. Managed settings from MDM or the claude.ai console are not
+files, so ready cannot rule them out. Folder trust and project settings are
+per repository and are not checked.
+
 `baum hooks status --user --json` includes `trust.state` for installed,
-enabled Codex plugins. Desktop onboarding preserves it and the app polls the
+enabled Codex plugins, and the Claude Code state above for installed, enabled
+Claude Code plugins. Desktop onboarding preserves it and the app polls the
 local `GET /api/agent-hooks/codex` status endpoint for its Settings warning.
 
 The shipped plugin uses `.codex-plugin/plugin.json`. A portable-schema

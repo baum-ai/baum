@@ -18,7 +18,7 @@ import (
 	"github.com/baum-ai/baum/internal/privatefs"
 )
 
-// A fix job's transcript is what its agent said and did, kept in
+// A fix's, question's or review's transcript is what its agent said and did, kept in
 // transcripts/<job id>.jsonl beside the journal, one {"seq":N,...entry} line
 // per agent.TranscriptEntry, so the app can show the run live. It is local
 // only and masked like the job's summary, but it is the model's own text and
@@ -28,7 +28,7 @@ const (
 	maxTranscriptTitle = 1 << 10
 	// maxTranscriptBytes is where a transcript stops growing.
 	maxTranscriptBytes = 8 << 20
-	// keepTranscripts is how many fixes' transcripts are kept.
+	// keepTranscripts is how many jobs' transcripts are kept.
 	keepTranscripts = 50
 	// redactInput bounds what the redactor reads: far above what is kept.
 	redactInput = 256 << 10

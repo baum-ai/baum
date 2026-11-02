@@ -18,6 +18,7 @@ later step.
 | `owners` | GitHub owner logins (organization or user), at most 50; empty means any |
 | `risk` | `any`, `3`, `4` (strings) |
 | `repositories` | `owner/name`, at most 50; empty means every repository that matches |
+| `query` | a filter query the app parses and matches, trimmed, one line of at most 500 characters; empty (or missing) for none. The app reads `what`, `owners`, `risk`, `repositories` and `no_bots` as part of it and saves them folded in, leaving those fields at their plain values |
 | `no_bots` | leave out pull requests by bot authors (`author_bot` in discovery) |
 | `badge` | show a count badge in the sidebar |
 
@@ -58,7 +59,7 @@ changes nothing.
 | Status | Code | Meaning |
 | --- | --- | --- |
 | 400 | `invalid_request` | the body is not one JSON object of the expected shape, has no `revision`, or is over 256 KB |
-| 400 | `invalid_inbox` | a field is out of range: an id the daemon did not assign, name length, color, what, risk, owner or repository shape, or too many owners or repositories |
+| 400 | `invalid_inbox` | a field is out of range: an id the daemon did not assign, name length, color, what, risk, owner or repository shape, too many owners or repositories, or a query that is too long or has more than one line |
 | 400 | `too_many_inboxes` | more than 20 inboxes |
 | 400 | `duplicate_name` | two names equal ignoring case |
 | 400 | `duplicate_id` | the same id twice |

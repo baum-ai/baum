@@ -31,6 +31,12 @@ func Capture() *hookevents.Terminal {
 	return terminal
 }
 
+// Ancestors are the running hook's ancestors, its parent first: what ties a
+// Git hook to the agent session whose command ran it.
+func Ancestors() []hookevents.Process {
+	return ancestors(os.Getppid())
+}
+
 // ancestors are pid and its ancestors up to, not including, the first
 // process (pid 1), at most maxAncestors of them.
 func ancestors(pid int) []hookevents.Process {

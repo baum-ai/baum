@@ -20,11 +20,14 @@ function filePatch(document: ReviewDocument): string {
 }
 
 /** Stores the retry policy's hunk without its excerpt, as a document whose
- *  generation input was capped does, and opens the section. */
-async function withoutExcerpt(page: Page) {
+ *  generation input was capped does, and opens the section. With `stored`,
+ *  every hunk is kept as the local store keeps it: without its excerpt and
+ *  without its GitHub fragment. */
+async function withoutExcerpt(page: Page, stored = false) {
   const document = sampleDocument();
   for (const hunk of document.index.hunks) {
-    if (hunk.id === hunkId) delete (hunk as { diff?: unknown }).diff;
+    if (stored || hunk.id === hunkId) delete (hunk as { diff?: unknown }).diff;
+    if (stored) delete (hunk as { github_url?: unknown }).github_url;
   }
   await serveDocument(page, document);
   await page.goto(retry);
@@ -55,4 +58,16 @@ test("an excerpt the document left out is read from the local clone when opened"
   await expect(evidence).toContainText("patched func (p RetryPolicy) Delay(attempt int)");
   await expect(evidence).not.toContainText("Excerpt unavailable");
   expect(asked).toEqual(["queue/retry.go"]);
+});
+
+test("a hunk the local store kept without its excerpt and fragment opens from the clone", async ({
+  page,
+}) => {
+  const patch = filePatch(sampleDocument());
+  await page.route("**/api/patch?*", (route) => route.fulfill({ json: { patch } }));
+  const evidence = await withoutExcerpt(page, true);
+  await evidence.locator("summary").click();
+
+  await expect(evidence).toContainText("patched func (p RetryPolicy) Delay(attempt int)");
+  await expect(evidence).not.toContainText("Excerpt unavailable");
 });
