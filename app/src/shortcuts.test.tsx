@@ -979,7 +979,7 @@ it("draws a place's key bar from the sheet's table, keys sharing a name together
     "t transcript",
     `${command}. actions`,
     `${command}K go to`,
-    "? all keys",
+    "? help",
   ]);
   // The Inbox's bar is what its foot always said; Settings has no row menu.
   expect(await bar("inbox")).toEqual([
@@ -990,7 +990,7 @@ it("draws a place's key bar from the sheet's table, keys sharing a name together
     "s snooze",
     "u undo",
     `${command}K go to`,
-    "? all keys",
+    "? help",
   ]);
   expect(await bar("settings")).not.toContain(`${command}. actions`);
   // It shows only while Alt is held, and is for the eye alone.

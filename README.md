@@ -111,10 +111,12 @@ installed yourself.
 
 baum sends no telemetry or crash reports, so an issue is how we hear about a
 problem. [Open one on GitHub](https://github.com/baum-ai/baum/issues/new/choose)
-(bug report or feature request). In the desktop app, **Report a problem**
-(Help menu, tray menu, and Diagnostics) opens the bug report in your browser
-with the version, OS and a redacted Diagnostics summary filled in; you review
-it there and nothing is sent until you submit it. From the command line, paste
+(bug report or feature request). In the desktop app, **Report a problem** (the
+sidebar's `?` menu and Diagnostics) lets you describe the problem and choose
+whether to attach nothing, only the versions, or a redacted Diagnostics
+summary, with a preview, then opens the bug report in your browser; the Help
+and tray menus open it with the version, OS and summary filled in. You review
+the form there and nothing is sent until you submit it. From the command line, paste
 `baum internal doctor --offline` after checking it for private paths. Report
 security vulnerabilities privately as described in [SECURITY.md](SECURITY.md),
 never in a public issue.

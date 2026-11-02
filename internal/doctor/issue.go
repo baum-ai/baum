@@ -159,9 +159,57 @@ func (r Report) PublicSummary(home string) string {
 	return strings.Join(lines, "\n")
 }
 
+// PublicVersions is the versions-only summary: per check that found a
+// version, its label and that version, scrubbed (see Scrub). It names no
+// paths and no details. The per-clone store checks are left out, as in
+// PublicSummary.
+func (r Report) PublicVersions(home string) string {
+	var lines []string
+	for _, c := range r.Checks {
+		if c.Version == "" || strings.HasPrefix(c.ID, "store-") {
+			continue
+		}
+		label := c.Label
+		if strings.HasPrefix(c.ID, "github-token-") && c.ID != "github-token-"+"github.com" {
+			label = "GitHub token: other host"
+		}
+		lines = append(lines, "- "+label+": "+clip(Scrub(strings.Join(strings.Fields(c.Version), " "), home)))
+	}
+	return strings.Join(lines, "\n")
+}
+
+// IssueParts is what the app's "Report a problem" dialog may attach to a new
+// issue, each part already scrubbed: the version and OS fields, and the
+// diagnostics field at either level the person can choose. The dialog builds
+// the link itself, so its preview is exactly what the link carries.
+type IssueParts struct {
+	Version     string `json:"version"`
+	OS          string `json:"os"`
+	Versions    string `json:"versions"`
+	Diagnostics string `json:"diagnostics"`
+	// MaxURL is the longest link GitHub is sure to answer with the form.
+	MaxURL int `json:"max_url"`
+	// TruncationNote ends a diagnostics field that lost lines to fit MaxURL.
+	TruncationNote string `json:"truncation_note"`
+}
+
+// PublicIssueParts is the report's IssueParts.
+func (r Report) PublicIssueParts(info IssueInfo) IssueParts {
+	return IssueParts{
+		Version:        clipTo(Scrub(info.Version, info.Home), 100),
+		OS:             clipTo(Scrub(info.OS, info.Home), 100),
+		Versions:       r.PublicVersions(info.Home),
+		Diagnostics:    r.PublicSummary(info.Home),
+		MaxURL:         maxIssueURL,
+		TruncationNote: truncationNote,
+	}
+}
+
 // IssueURL is a link that opens the public repository's new bug report with
 // the version, OS and the report's PublicSummary filled in. The summary loses
 // whole lines from its end, with a note, until the link fits maxIssueURL.
+// The tray and the window menu open it; the app's dialog builds its own from
+// PublicIssueParts.
 func IssueURL(r Report, info IssueInfo) string {
 	build := func(summary string) string {
 		q := url.Values{}

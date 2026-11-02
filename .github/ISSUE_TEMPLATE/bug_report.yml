@@ -9,39 +9,35 @@ body:
 
         This issue is public. Check everything you paste for anything private. For a security vulnerability, follow [SECURITY.md](https://github.com/baum-ai/baum/blob/main/SECURITY.md) instead.
 
-        In the desktop app, **Report a problem** (Help menu, tray menu or Diagnostics) opens this form with the version, OS and a redacted Diagnostics summary filled in.
-  - type: input
-    id: version
-    attributes:
-      label: baum version
-      description: Shown by `baum --version`, or in the desktop app's About window.
-    validations:
-      required: true
-  - type: input
-    id: os
-    attributes:
-      label: Operating system
-      description: For example macOS 15 arm64, Windows 11, Ubuntu 24.04 amd64.
-    validations:
-      required: true
-  - type: input
-    id: harness
-    attributes:
-      label: Coding agent harness and version
-      description: Claude Code, Codex or Cursor Agent, with the version from `claude --version`, `codex --version` or `cursor-agent --version`. Write "none" if you do not use one.
+        In the desktop app, **Report a problem** (the sidebar's ? menu, Diagnostics, the Help menu or the tray menu) opens this form with what you wrote and, if you chose to attach them, the versions or a redacted Diagnostics summary filled in.
   - type: textarea
-    id: steps
+    id: description
     attributes:
-      label: Steps to reproduce
+      label: What happened
       description: What you did, what you expected and what happened instead.
       placeholder: |
         1. ...
         2. ...
     validations:
       required: true
+  - type: input
+    id: version
+    attributes:
+      label: baum version
+      description: Shown by `baum --version`, or in the desktop app's About window. It helps us reproduce the problem.
+  - type: input
+    id: os
+    attributes:
+      label: Operating system
+      description: For example macOS 15 arm64, Windows 11, Ubuntu 24.04 amd64.
+  - type: input
+    id: harness
+    attributes:
+      label: Coding agent harness and version
+      description: Claude Code, Codex or Cursor Agent, with the version from `claude --version`, `codex --version` or `cursor-agent --version`. Write "none" if you do not use one.
   - type: textarea
     id: diagnostics
     attributes:
       label: Diagnostics
-      description: The desktop app's Report a problem fills this in. Otherwise paste the output of `baum internal doctor --offline`, after checking it for private paths, names and anything secret. It reports where a token was found, never the token.
+      description: The desktop app's Report a problem fills this in if you choose to attach it. Otherwise paste the output of `baum internal doctor --offline`, after checking it for private paths, names and anything secret. It reports where a token was found, never the token.
       render: text

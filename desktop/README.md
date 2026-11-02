@@ -473,10 +473,18 @@ refuses any other menu id).
 
 ## Report a problem
 
-The app sends no telemetry or crash reports, so **Report a problem…** (the
-tray menu, the macOS window menu's Help, and Diagnostics' button in the app)
-opens a new bug report in the public repository (`baum-ai/baum`) in the default
-browser. The daemon builds the link in its `/api/diagnostics` answer
+The app sends no telemetry or crash reports, so **Report a problem…** opens a
+new bug report in the public repository (`baum-ai/baum`) in the default
+browser. In the app (the sidebar's `?` menu and Diagnostics' button) it first
+opens a dialog (`src/report-problem.tsx` in the local app) where the user
+writes what happened and chooses what to attach: **Nothing**, **Versions
+only** (baum's version, the OS and each tool's version, no paths or details)
+or **All diagnostics** (the summary below), with a preview of exactly what
+the link carries. The dialog builds the link from the redacted parts in the
+`/api/diagnostics` answer (`report_issue`, `doctor.Report.PublicIssueParts`)
+and fits it the same way. The tray menu and the macOS window menu's Help open
+the link directly, with the whole summary. The daemon builds that link in its
+`/api/diagnostics` answer
 (`report_issue_url`) with the version, OS and a redacted summary of the
 Diagnostics report (`doctor.Report.PublicSummary`): home directories become
 `~`, secret-shaped values and e-mail addresses are masked, and the

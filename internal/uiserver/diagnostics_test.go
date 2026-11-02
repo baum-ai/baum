@@ -74,10 +74,15 @@ func TestDiagnosticsOffersARedactedIssueLink(t *testing.T) {
 	s := diagnosticsServer(t, LocalAPI{Version: "1.2.3", Diagnostics: func(context.Context) doctor.Report { return report }})
 	w := request(t, s, "GET", "/api/diagnostics", "", "", "", "Bearer "+s.launch, "")
 	var body struct {
-		URL string `json:"report_issue_url"`
+		URL   string            `json:"report_issue_url"`
+		Parts doctor.IssueParts `json:"report_issue"`
 	}
 	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
 		t.Fatal(err)
+	}
+	if body.Parts.Version != "1.2.3" || body.Parts.OS == "" || body.Parts.MaxURL == 0 ||
+		strings.Contains(body.Parts.Diagnostics, "ghp_") || !strings.Contains(body.Parts.Diagnostics, "[redacted]") {
+		t.Fatalf("parts = %+v", body.Parts)
 	}
 	if !strings.HasPrefix(body.URL, "https://github.com/baum-ai/baum/issues/new?") || !strings.Contains(body.URL, "version=1.2.3") {
 		t.Fatalf("url = %q", body.URL)

@@ -95,6 +95,7 @@ import {
   Sidebar,
   usePageRefresh,
 } from "./shell";
+import { ReportProblemDialog } from "./report-problem";
 import {
   agentName,
   appBase,
@@ -338,6 +339,9 @@ function Workspace({ url }: { url: UrlState }) {
     null,
   );
   const [shortcuts, setShortcuts] = useState(false);
+  // Opens the sidebar's help menu while its `?` button is mounted.
+  const openHelp = useRef<(() => void) | null>(null);
+  const [reporting, setReporting] = useState(false);
   const [goingTo, setGoingTo] = useState(false);
   const tour = useTour(url.search.has("tour"), loading ? undefined : snapshot.entries.length > 0);
   const [rates, setRates] = useState<
@@ -1097,7 +1101,12 @@ function Workspace({ url }: { url: UrlState }) {
     (event) => {
       if (event.key === "?") {
         event.preventDefault();
-        setShortcuts((open) => !open);
+        // `?` opens the help menu on Show shortcuts, so Enter shows the
+        // sheet; with the sheet open it hides it, and without the sidebar's
+        // button it shows the sheet.
+        if (shortcuts) setShortcuts(false);
+        else if (openHelp.current) openHelp.current();
+        else setShortcuts(true);
       } else if (
         onList &&
         (VIEW_KEYS.previous.includes(event.key) || VIEW_KEYS.next.includes(event.key))
@@ -1182,6 +1191,11 @@ function Workspace({ url }: { url: UrlState }) {
         needsYou={asksYou(live).length}
         problems={diagnostics.problems}
         settingsWarning={codexTrust.warning}
+        help={{
+          shortcuts: () => setShortcuts(true),
+          report: () => setReporting(true),
+          opener: openHelp,
+        }}
         Link={LocalLink}
       />
       <div className="local-frame">
@@ -1843,6 +1857,7 @@ function Workspace({ url }: { url: UrlState }) {
           {shortcuts ? (
             <ShortcutsSheet current={shortcutsPlace} close={() => setShortcuts(false)} />
           ) : null}
+          {reporting ? <ReportProblemDialog close={() => setReporting(false)} /> : null}
           {goingTo ? (
             <GoTo items={goToItems()} go={navigate} close={() => setGoingTo(false)} />
           ) : null}

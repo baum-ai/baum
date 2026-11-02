@@ -439,11 +439,15 @@ func (a LocalAPI) Handler() *LocalHandler {
 				body["report"] = res.Val
 				if report, ok := res.Val.(doctor.Report); ok {
 					home, _ := os.UserHomeDir()
-					body["report_issue_url"] = doctor.IssueURL(report, doctor.IssueInfo{
+					info := doctor.IssueInfo{
 						Version: cmp.Or(a.Version, "unknown"),
 						OS:      runtime.GOOS + "/" + runtime.GOARCH,
 						Home:    home,
-					})
+					}
+					// The tray and window menu open the link; the app's
+					// Report a problem dialog builds its own from the parts.
+					body["report_issue_url"] = doctor.IssueURL(report, info)
+					body["report_issue"] = report.PublicIssueParts(info)
 				}
 			}
 		}
