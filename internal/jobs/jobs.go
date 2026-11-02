@@ -263,7 +263,7 @@ type Job struct {
 	// ThreadOutcomes is what became of each review thread a fix addressed
 	// (FixThreads), once its push succeeded.
 	ThreadOutcomes []fix.ThreadOutcome `json:"thread_outcomes,omitempty"`
-	// HasTranscript says a fix kept a transcript of its agent's run, which
+	// HasTranscript says the job kept a transcript of its agent's run, which
 	// GET /api/jobs/{id}/transcript serves.
 	HasTranscript bool `json:"has_transcript,omitempty"`
 	// Requeued counts the times a group job went back to waiting because a
@@ -279,7 +279,10 @@ type Job struct {
 	FailedSections []string  `json:"failed_sections,omitempty"`
 	ContextFailed  bool      `json:"context_failed,omitempty"`
 	CreatedAt      time.Time `json:"created_at"`
-	UpdatedAt      time.Time `json:"updated_at"`
+	// StartedAt is when the job first left the queue to run; a requeue keeps
+	// it. Jobs saved before it was recorded, and those that never ran, have none.
+	StartedAt *time.Time `json:"started_at,omitempty"`
+	UpdatedAt time.Time  `json:"updated_at"`
 }
 type Progress struct {
 	Accounting             *agent.Accounting
@@ -290,7 +293,7 @@ type Progress struct {
 	// Job).
 	Commit, CommitURL, Summary string
 	Threads                    []fix.ThreadOutcome
-	// HasTranscript is set once a fix's transcript file exists.
+	// HasTranscript is set once the job's transcript file exists.
 	HasTranscript bool
 	// Backend and Model, when Backend is set, are the agent the run selected
 	// with the current settings, which replace the job's prepared ones.
@@ -1084,6 +1087,10 @@ func (q *Queue) worker(chat bool) {
 			q.jobs[i].State = "running"
 			q.jobs[i].Phase = "preparing"
 			q.jobs[i].UpdatedAt = time.Now().UTC()
+			if q.jobs[i].StartedAt == nil {
+				started := q.jobs[i].UpdatedAt
+				q.jobs[i].StartedAt = &started
+			}
 			if e := q.save(); e != nil {
 				q.jobs[i] = old
 				q.mu.Unlock()

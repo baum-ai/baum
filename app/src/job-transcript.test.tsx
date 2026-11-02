@@ -3,7 +3,14 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { Job } from "./api";
-import { groupEntries, JobTranscript, mergeEntries, type TranscriptEntry } from "./job-transcript";
+import {
+  groupEntries,
+  JobPage,
+  JobTranscript,
+  mergeEntries,
+  type TranscriptEntry,
+} from "./job-transcript";
+import type { ViewerLinkProps } from "@baum/viewer/navigation";
 
 const job = (overrides: Partial<Job> = {}): Job => ({
   id: "fix-1",
@@ -208,4 +215,129 @@ it("stops reading when it is closed", async () => {
   const calls = fetched.mock.calls.length;
   await wait(1200);
   expect(fetched.mock.calls.length).toBe(calls);
+});
+
+const Link = ({ href, children, className }: ViewerLinkProps) => (
+  <a href={href} className={className}>
+    {children}
+  </a>
+);
+
+it("opens an older review's page with all it keeps, saying it has no transcript", async () => {
+  const fetched = vi.fn();
+  vi.stubGlobal("fetch", fetched);
+  const review = job({
+    id: "review-1",
+    kind: undefined,
+    has_transcript: false,
+    state: "completed",
+    phase: "finished",
+    pr: 1025,
+    calls: 4,
+    repairs: 1,
+    tokens: 258_699,
+    backend: "claude",
+    model: "opus",
+    head_sha: "0123456789",
+    automatic: true,
+    trigger: "new_head",
+    created_at: "2026-10-20T10:00:00Z",
+    started_at: "2026-10-20T10:01:00Z",
+    updated_at: "2026-10-20T10:05:30Z",
+  });
+  await act(async () =>
+    root.render(<JobPage job={review} title="Add hooks" loading={false} Link={Link} />),
+  );
+  const text = node.textContent ?? "";
+  expect(text).toContain("Review completed");
+  const facts = node.querySelector(".local-job-facts")!;
+  expect(facts.querySelector("a")!.textContent).toBe("#1025 Add hooks");
+  expect(facts.querySelector("a")!.getAttribute("href")).toBe("/s/test-ns/?clone=clone&pr=1025");
+  expect(node.querySelector(".local-job-head-meta")!.textContent).toMatch(
+    /^Started automatically because new commits were pushed · Ran 4m 30s, finished /,
+  );
+  expect(facts.textContent).toContain("Run time4m 30s");
+  expect(facts.textContent).toContain("Agentclaude");
+  expect(facts.textContent).toContain("Modelopus");
+  expect(facts.textContent).toContain("4 (1 repair)");
+  expect(facts.textContent).toContain("0123456");
+  expect(node.querySelector("[aria-label='Usage']")!.textContent).toContain("258,699");
+  expect(text).toContain("No transcript was kept for this job.");
+  expect(fetched).not.toHaveBeenCalled();
+});
+
+it("shows a fix's thread replies open on its page", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () => Response.json({ entries: [], next: 0, more: false, done: true })),
+  );
+  const fix = job({
+    state: "completed",
+    phase: "finished",
+    thread_outcomes: [{ ref: "t1", outcome: "resolved", summary: "Renamed it." }],
+  });
+  await act(async () => root.render(<JobPage job={fix} loading={false} Link={Link} />));
+  const threads = node.querySelector("[aria-label='Review threads']")!;
+  expect(threads.querySelector("h2")!.textContent).toBe("Replied and resolved 1 of 1 thread");
+  expect(threads.textContent).toContain("Renamed it.");
+});
+
+it("marks each of a review's calls and names the call of interleaved steps", async () => {
+  vi.stubGlobal(
+    "fetch",
+    mockStateFetch(async () =>
+      Response.json({
+        entries: [
+          entry(1, {
+            kind: "call",
+            id: "call-1",
+            title: "Outline",
+            status: "running",
+            call: "Outline",
+          }),
+          entry(2, { kind: "tool", id: "a", tool: "Read", status: "completed", call: "Outline" }),
+          entry(3, { kind: "call", id: "call-1", status: "completed", call: "Outline" }),
+          entry(4, {
+            kind: "call",
+            id: "call-2",
+            title: "Details",
+            status: "running",
+            call: "Details",
+          }),
+          entry(5, {
+            kind: "call",
+            id: "call-3",
+            title: "Codebase context",
+            status: "running",
+            call: "Codebase context",
+          }),
+          entry(6, { kind: "tool", id: "b", tool: "Grep", status: "completed", call: "Details" }),
+          entry(7, {
+            kind: "tool",
+            id: "c",
+            tool: "Glob",
+            status: "completed",
+            call: "Codebase context",
+          }),
+        ],
+        next: 7,
+        more: false,
+        done: true,
+      }),
+    ),
+  );
+  await act(async () =>
+    root.render(<JobTranscript job={job({ kind: undefined, state: "running" })} />),
+  );
+  await wait(20);
+  const calls = [...node.querySelectorAll(".local-job-call strong")].map((s) => s.textContent);
+  expect(calls).toEqual(["Outline", "Details", "Codebase context"]);
+  // The finished call kept its title and took its status.
+  expect(node.querySelector(".local-job-call .local-tool-done")).not.toBeNull();
+  // Tools of calls running at once stay apart, each named.
+  expect(node.querySelectorAll(".local-job-tools")).toHaveLength(3);
+  expect([...node.querySelectorAll(".local-job-call-tag")].map((t) => t.textContent)).toEqual([
+    "Details",
+    "Codebase context",
+  ]);
 });
