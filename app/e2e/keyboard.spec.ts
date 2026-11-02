@@ -130,7 +130,10 @@ test("Tab on Settings reaches its controls past the sidebar", async ({ page }) =
 test("Tab stays inside a dialog and goes through its controls", async ({ page }) => {
   await page.goto(await launchURL());
   await expect(page.locator("button.upnext-row").first()).toBeVisible();
+  // `?` opens the help menu on Show shortcuts; Enter shows the sheet.
   await page.keyboard.press("?");
+  await expect(page.getByRole("menuitem", { name: "Show shortcuts" })).toBeFocused();
+  await page.keyboard.press("Enter");
   const sheet = page.getByRole("dialog", { name: "Keyboard shortcuts" });
   await expect(sheet).toBeVisible();
   const close = sheet.getByRole("button", { name: "Close", exact: true });

@@ -155,7 +155,8 @@ body {
   min-width: 0;
 }
 .local-rail-fold,
-.local-rail-more {
+.local-rail-more,
+.local-rail-help {
   display: flex;
   flex: none;
   align-items: center;
@@ -177,13 +178,23 @@ body {
 .local-rail-fold[aria-expanded="false"] svg {
   transform: rotate(-90deg);
 }
+/* The help menu's `?` beside Settings, always shown. */
+.local-rail-help {
+  width: 1.75rem;
+  height: 2.25rem;
+  font-size: var(--text-base);
+  font-weight: 600;
+}
 .local-rail-fold:hover,
 .local-rail-more:hover,
-.local-rail-more[aria-expanded="true"] {
+.local-rail-more[aria-expanded="true"],
+.local-rail-help:hover,
+.local-rail-help[aria-expanded="true"] {
   background: var(--nav-hover);
   color: var(--text-primary);
 }
-.local-rail-more:active {
+.local-rail-more:active,
+.local-rail-help:active {
   transform: translateY(1px);
 }
 .local-rail-inboxes {
@@ -401,6 +412,15 @@ body {
   .local-rail-fold,
   .local-rail-inboxes {
     display: none;
+  }
+  /* The `?` stays, under the Settings glyph. */
+  .local-rail-help-row {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .local-rail-help {
+    width: auto;
+    height: 1.75rem;
   }
   /* Folded, the box keeps only the lowest share left. */
   .plan-rail {
@@ -624,6 +644,7 @@ body {
   .row-menu-button,
   .local-rail-more,
   .local-rail-fold,
+  .local-rail-help,
   .local-toast-close,
   .upnext-group-toggle,
   .local-tab
@@ -1347,6 +1368,59 @@ select.local-field {
 .merge-methods small {
   display: block;
   color: var(--text-tertiary);
+}
+/* Report a problem: what happened, what to attach and a preview of it. */
+dialog.report-problem {
+  max-height: calc(100vh - 4rem);
+  overflow-y: auto;
+}
+.report-problem-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  margin-top: 1rem;
+  color: var(--text-secondary);
+  font-size: var(--text-xs);
+  font-weight: 500;
+}
+.report-problem-text {
+  min-height: 7rem;
+  padding: 0.5rem 0.625rem;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  background: var(--surface-card);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: var(--text-base);
+  font-weight: 400;
+  line-height: 1.5;
+  resize: vertical;
+}
+.report-problem-text:focus-visible {
+  outline: none;
+  border-color: var(--border-strong);
+  box-shadow: var(--focus-ring);
+}
+.report-problem-preview {
+  max-height: 10rem;
+  margin: 0;
+  overflow: auto;
+  padding: 0.5rem 0.625rem;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--surface-wash);
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  font-weight: 400;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.report-problem-note {
+  margin: 0;
+  color: var(--text-tertiary);
+  font-weight: 400;
 }
 .inbox-activity {
   display: inline-flex;

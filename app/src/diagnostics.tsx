@@ -1,7 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Alert, Badge, type BadgeTone, Button } from "@baum/viewer/components/ui";
-import { request, type DiagnosticCheck, type DiagnosticReport, type Diagnostics } from "./api";
+import {
+  request,
+  type DiagnosticCheck,
+  type DiagnosticReport,
+  type Diagnostics,
+  type IssueParts,
+} from "./api";
 import { LoadingStatus } from "./nine-dots";
+import { ReportProblemDialog } from "./report-problem";
 
 const statusText: Record<DiagnosticCheck["status"], string> = {
   ok: "OK",
@@ -68,6 +75,8 @@ export function DiagnosticsSection({
   onReport?: (report: DiagnosticReport | null) => void;
 } = {}) {
   const [report, setReport] = useState<DiagnosticReport | null | undefined>();
+  const [issueParts, setIssueParts] = useState<IssueParts | null>(null);
+  const [reporting, setReporting] = useState(false);
   const [error, setError] = useState("");
   const [running, setRunning] = useState(true);
   const sequence = useRef(0);
@@ -84,6 +93,7 @@ export function DiagnosticsSection({
       const body = await request<Diagnostics>("api/diagnostics");
       if (mine === sequence.current) {
         setReport(body.report);
+        setIssueParts(body.report_issue ?? null);
         reported.current?.(body.report);
       }
     } catch (e) {
@@ -110,13 +120,24 @@ export function DiagnosticsSection({
         <h2 id="diagnostics-heading" className="text-lg">
           Diagnostics
         </h2>
-        <Button variant="secondary" disabled={running} onClick={() => void run()}>
-          {running ? "Checking…" : "Check again"}
-        </Button>
+        <div className="flex flex-wrap gap-2">
+          <Button variant="secondary" onClick={() => setReporting(true)}>
+            Report a problem
+          </Button>
+          <Button variant="secondary" disabled={running} onClick={() => void run()}>
+            {running ? "Checking…" : "Check again"}
+          </Button>
+        </div>
       </div>
       <p className="text-xs">
-        Which tools and credentials baum found on this computer, never their values.
+        Which tools and credentials baum found on this computer, never their values. “Report a
+        problem” lets you describe it and choose how much of a redacted summary of this report to
+        attach, then opens a new GitHub issue in your browser; nothing is sent until you submit it
+        there.
       </p>
+      {reporting ? (
+        <ReportProblemDialog parts={issueParts} close={() => setReporting(false)} />
+      ) : null}
       {error ? (
         <Alert>
           {error}{" "}
