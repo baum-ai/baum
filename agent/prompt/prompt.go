@@ -38,6 +38,28 @@
 // backend's stage submit block goes (submit-stage-claude.md,
 // submit-stage-codex.md, submit-stage-cursor.md, with {part} replaced by what
 // the stage returns), and names its schema file (agent.TaskSchemaFile).
+//
+// # Custom prompts
+//
+// A host may replace the text of any prompt by passing Overrides (a map from
+// ID to text) in the Overrides field of Prompts, GroupPrompts, StagedPrompts
+// or to FixWith. An override replaces the built-in text of its part only: the
+// Submitting heading and the backend's submit block (the output contract)
+// stay baum's and are always appended, so an override never includes them
+// (Validate rejects one that does). A composition whose parts include an
+// override reports its Version with a "+custom" suffix; the Digest still
+// identifies the exact text. A nil or empty Overrides, and an ID missing
+// from it or mapped to the empty string, mean the built-in text; the zero
+// value of every type produces byte-identical output to the built-in
+// prompts, so a host that never sets Overrides is unchanged.
+//
+// Catalogue lists every overridable prompt (ID, title, group, built-in text
+// and version) so an editor can seed from the built-in text. Validate checks
+// an override before it is stored. Each Entry also carries SafetyRules:
+// metadata kept outside the prompt text that names the sentences that keep a
+// run safe (treat the pull request as untrusted data, never commit or push,
+// never reproduce secrets). MissingSafetyRules reports which of them a custom
+// text dropped, so a host can warn the author; it never blocks.
 package prompt
 
 import (
@@ -79,7 +101,10 @@ var submitCodex string
 var submitCursor string
 
 // Prompts implements agent.Prompts with this module's public review prompt.
-type Prompts struct{}
+type Prompts struct {
+	// Overrides replaces built-in texts; Prompts uses the review entry.
+	Overrides Overrides
+}
 
 var _ agent.Prompts = Prompts{}
 
@@ -88,29 +113,35 @@ var _ agent.Prompts = Prompts{}
 // through the StructuredOutput tool; codex and cursor-agent return the document
 // as their final message, cursor-agent with the schema the backend appends to
 // the prompt. Any other backend is an error.
-func (Prompts) Instructions(_ context.Context, backend string) (agent.Prompt, error) {
+func (p Prompts) Instructions(_ context.Context, backend string) (agent.Prompt, error) {
 	submit, err := submitBlock(backend)
 	if err != nil {
 		return agent.Prompt{}, err
 	}
-	return composed(Version, reviewPublic+"\n"+submit), nil
+	review, custom := p.Overrides.text(IDReview, reviewBody)
+	return composed(withCustom(Version, custom), review+submitting+"\n"+submit), nil
 }
 
 // GroupPrompts implements agent.Prompts for a review group's combined review:
 // the public review prompt with the group instructions (group-public-v1.md)
 // inserted before its Submitting heading, then the backend's submit block.
-type GroupPrompts struct{}
+type GroupPrompts struct {
+	// Overrides replaces built-in texts; GroupPrompts uses the review and
+	// review-group entries.
+	Overrides Overrides
+}
 
 var _ agent.Prompts = GroupPrompts{}
 
 // Instructions returns the group prompt for a backend, as Prompts does.
-func (GroupPrompts) Instructions(_ context.Context, backend string) (agent.Prompt, error) {
+func (g GroupPrompts) Instructions(_ context.Context, backend string) (agent.Prompt, error) {
 	submit, err := submitBlock(backend)
 	if err != nil {
 		return agent.Prompt{}, err
 	}
-	shared := strings.TrimSuffix(reviewPublic, submitting)
-	return composed(GroupVersion, shared+groupPublic+submitting+"\n"+submit), nil
+	review, reviewCustom := g.Overrides.text(IDReview, reviewBody)
+	group, groupCustom := g.Overrides.text(IDReviewGroup, groupPublic)
+	return composed(withCustom(GroupVersion, reviewCustom || groupCustom), review+group+submitting+"\n"+submit), nil
 }
 
 // StagedVersion is the prompt version of a staged review. Change it with the
@@ -147,7 +178,11 @@ const (
 
 // StagedPrompts implements agent.StagedPrompts with this module's public
 // staged review prompts.
-type StagedPrompts struct{}
+type StagedPrompts struct {
+	// Overrides replaces built-in texts; StagedPrompts uses the
+	// review-staged-* entries.
+	Overrides Overrides
+}
 
 var _ agent.StagedPrompts = StagedPrompts{}
 
@@ -156,7 +191,7 @@ var _ agent.StagedPrompts = StagedPrompts{}
 // appended, naming what the stage returns, as Prompts appends the submit
 // block for a review written in one pass. Digest is the sha256 of the four
 // texts, each followed by a NUL byte. Any other backend is an error.
-func (StagedPrompts) StagedInstructions(_ context.Context, backend string) (agent.StagedPrompt, error) {
+func (p StagedPrompts) StagedInstructions(_ context.Context, backend string) (agent.StagedPrompt, error) {
 	var submit string
 	switch backend {
 	case agent.BackendClaude, agent.BackendAnthropic:
@@ -169,9 +204,13 @@ func (StagedPrompts) StagedInstructions(_ context.Context, backend string) (agen
 		return agent.StagedPrompt{}, fmt.Errorf("no public staged review prompt for backend %q", backend)
 	}
 	block := func(part string) string { return "\n" + strings.ReplaceAll(submit, "{part}", part) }
+	shared, c0 := p.Overrides.text(IDReviewStagedShared, stagedShared)
+	outline, c1 := p.Overrides.text(IDReviewStagedOutline, stagedOutlineBody)
+	details, c2 := p.Overrides.text(IDReviewStagedDetails, stagedDetailsBody)
+	contextText, c3 := p.Overrides.text(IDReviewStagedContext, stagedContextBody)
 	staged := agent.StagedPrompt{
-		Version: StagedVersion, Shared: stagedShared,
-		Outline: stagedOutline + block(outlinePart), Details: stagedDetails + block(detailsPart), Context: stagedContext + block(contextPart),
+		Version: withCustom(StagedVersion, c0 || c1 || c2 || c3), Shared: shared,
+		Outline: outline + stagedSubmitting + block(outlinePart), Details: details + stagedSubmitting + block(detailsPart), Context: contextText + stagedSubmitting + block(contextPart),
 	}
 	digest := sha256.New()
 	for _, text := range []string{staged.Shared, staged.Outline, staged.Details, staged.Context} {
