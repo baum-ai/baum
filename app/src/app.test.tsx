@@ -1479,7 +1479,9 @@ it("offers GitHub repositories only, with no local folder fallback", async () =>
   );
   await act(async () => root.render(<App />));
   await act(async () =>
-    [...node.querySelectorAll("button")].find((b) => b.textContent === "Add repositories")!.click(),
+    [...node.querySelectorAll("button")]
+      .find((b) => b.textContent?.startsWith("Add repositories"))!
+      .click(),
   );
   expect(node.querySelector(".repository-picker")).not.toBeNull();
   expect(node.textContent).not.toContain("local folder");

@@ -1,3 +1,4 @@
+import { Avatar } from "@baum/viewer/components/avatar";
 import { BrandMark } from "@baum/viewer/components/brand-logo";
 import { usePreferences, type PageModifier } from "./preferences";
 import { PlanUsageSettings } from "./plan-usage-settings";
@@ -9,15 +10,25 @@ import {
   type FormEvent,
   type ReactNode,
 } from "react";
-import { Alert, Button, SegmentedControl } from "@baum/viewer/components/ui";
+import { Alert, Badge, Button, LiveDot, SegmentedControl } from "@baum/viewer/components/ui";
+import {
+  formatCount,
+  formatDateTime,
+  formatRelative,
+  githubAvatarURL,
+} from "@baum/viewer/components/format";
 import {
   automaticNotice,
+  isActiveJob,
+  sameRepository,
   parseAgentRequests,
   request,
   saveAgentSettings,
   type Automatic,
   type AutomaticStatus,
   type Clone,
+  type Entry,
+  type Job,
   type GitHubConnection,
   type Repository,
   type DiagnosticReport,
@@ -30,6 +41,7 @@ import {
   useCloneActions,
 } from "./repositories";
 import { MenuButton, useContextMenu, type MenuItem } from "./context-menu";
+import { ListSection } from "./list";
 import { GitHubConnectionSection } from "./github-connection";
 import { messages as githubMessages } from "./github-auth";
 import { CodexHookWarning, type useCodexHookTrust } from "./codex-hooks";
@@ -1853,12 +1865,19 @@ export function RepositoriesPage({
   repositories,
   loading = false,
   automatic,
+  entries = [],
+  jobs = [],
   changed,
 }: {
   repositories: Repository[];
   /** Whether the first read of the repositories is still running. */
   loading?: boolean;
   automatic: Automatic | null;
+  /** The pull requests the app knows, for each repository's open count and
+   *  latest review. */
+  entries?: Entry[];
+  /** The jobs, for the reviews running in each repository. */
+  jobs?: Job[];
   /** Reads everything again; a refresh pressed again restarts the read. */
   changed: (how?: { restart?: boolean }) => Promise<void>;
 }) {
@@ -1866,9 +1885,15 @@ export function RepositoriesPage({
   const [error, setError] = useState("");
   // The keyboard moves through the repositories as through any list, onto
   // each one's Settings; `a` opens or closes the picker and `/` searches it.
-  const rows = useRowFocus<HTMLUListElement>(
+  // One section per owner, in the order the owners first appear.
+  const owners = new Map<string, Repository[]>();
+  for (const repository of repositories) {
+    const owner = repository.repository.split("/")[0] ?? "";
+    owners.set(owner, [...(owners.get(owner) ?? []), repository]);
+  }
+  const rows = useRowFocus<HTMLDivElement>(
     "settings-repositories",
-    repositories.map((r) => r.repository),
+    [...owners.values()].flat().map((r) => r.repository),
   );
   const page = useRef<HTMLElement>(null);
   const menu = useContextMenu();
@@ -1902,6 +1927,9 @@ export function RepositoriesPage({
           <>
             <Button size="compact" onClick={() => setAdding(!adding)}>
               {adding ? "Done" : "Add repositories"}
+              <kbd aria-hidden="true" className="key-hint">
+                a
+              </kbd>
             </Button>
             <RefreshButton refresh={(run) => changed({ restart: run.restart })} />
           </>
@@ -1931,21 +1959,35 @@ export function RepositoriesPage({
         ) : null}
         {menu.menu}
         {repositories.length > 0 ? (
-          <ul ref={rows.list} className="list">
-            {repositories.map((repository) => (
-              <RepositoryRow
-                key={repository.repository}
-                menu={menu}
-                focused={rows.focused === repository.repository}
-                repository={repository}
-                automatic={automatic}
-                changed={changed}
-                remove={() =>
-                  action(() => request(`api/repositories/${repository.repository}`, {}, "DELETE"))
+          <div ref={rows.list}>
+            {[...owners].map(([owner, owned]) => (
+              <ListSection
+                key={owner}
+                title={owner}
+                count={owned.length}
+                icon={
+                  <Avatar src={githubAvatarURL(owner, 32)} name={owner} size={16} shape="square" />
                 }
-              />
+              >
+                {owned.map((repository) => (
+                  <RepositoryRow
+                    key={repository.repository}
+                    menu={menu}
+                    focused={rows.focused === repository.repository}
+                    repository={repository}
+                    activity={repositoryActivity(repository.repository, entries, jobs)}
+                    automatic={automatic}
+                    changed={changed}
+                    remove={() =>
+                      action(() =>
+                        request(`api/repositories/${repository.repository}`, {}, "DELETE"),
+                      )
+                    }
+                  />
+                ))}
+              </ListSection>
             ))}
-          </ul>
+          </div>
         ) : null}
       </div>
     </section>
@@ -2069,10 +2111,36 @@ function RepositorySettings({
   );
 }
 
+/** What a repository has going on: its open pull requests, when baum last
+ *  reviewed one of them, and how many reviews are running now. */
+type RepositoryActivity = { open: number; reviewed: string | null; running: number };
+
+function repositoryActivity(repository: string, entries: Entry[], jobs: Job[]): RepositoryActivity {
+  const own = entries.filter((e) => sameRepository(e.pull_request.repository, repository));
+  const reviewed = own
+    .map((e) => e.latest?.generated_at)
+    .filter((at): at is string => !!at)
+    .sort()
+    .at(-1);
+  return {
+    // The index lists a pull request once per clone store, so count each
+    // pull request once however many registered clones see it.
+    open: new Set(own.filter((e) => !e.historical).map((e) => e.pull_request.number)).size,
+    reviewed: reviewed ?? null,
+    running: jobs.filter(
+      (job) => !job.kind && isActiveJob(job) && sameRepository(job.repository, repository),
+    ).length,
+  };
+}
+
+/** A clone's path with the home folder written as `~`. */
+const homePath = (path: string) => path.replace(/^\/(?:Users|home)\/[^/]+(?=\/|$)/, "~");
+
 /** One registered repository: what it does at a glance, and its settings in a
  *  dialog. */
 function RepositoryRow({
   repository,
+  activity,
   menu,
   focused,
   automatic,
@@ -2080,6 +2148,7 @@ function RepositoryRow({
   remove,
 }: {
   repository: Repository;
+  activity: RepositoryActivity;
   /** The list's menu, which the row's ⋯ and a right click open. */
   menu: ReturnType<typeof useContextMenu>;
   focused: boolean;
@@ -2100,12 +2169,10 @@ function RepositoryRow({
       available: false,
       settings: repository.settings,
     };
+  const name = clone.repository.split("/").slice(1).join("/");
   const status = automatic?.repositories.find(
     (item) => item.repository === clone.repository.toLowerCase(),
   );
-  const summary = [
-    status ? (status.enabled ? "Automatic reviews on" : "Automatic reviews off") : null,
-  ].filter(Boolean);
   // A repository without a clone is offered one from its menu; what that
   // starts (a path form, a running clone) shows under the row.
   const cloneActions = useCloneActions({ repository: repository.repository, changed });
@@ -2142,12 +2209,12 @@ function RepositoryRow({
             aria-label={`Settings for ${clone.repository}`}
             onClick={() => setOpen(true)}
           >
-            {clone.repository}
+            {name}
           </button>
         </h3>
         {clone.available ? (
           <p className="truncate" title={clone.path}>
-            {clone.path}
+            {homePath(clone.path)}
           </p>
         ) : (
           <p className="local-repo-missing">
@@ -2161,8 +2228,35 @@ function RepositoryRow({
         {clone.available && repository.earlier_names?.length ? (
           <p className="repository-warning">{earlierNamesWarning(repository.earlier_names)}</p>
         ) : null}
-        <p className="local-repo-summary">{summary.join(" · ")}</p>
       </div>
+      <span className="local-repo-state">
+        {activity.running ? (
+          <>
+            <LiveDot className="text-(--status-positive)" />
+            {activity.running === 1 ? "Reviewing" : `Reviewing ${formatCount(activity.running)}`}
+          </>
+        ) : status?.pending ? (
+          `${formatCount(status.pending)} waiting`
+        ) : status && !status.enabled ? (
+          // Only the exception is marked: automatic reviews are on by default.
+          <Badge size="compact">
+            {clone.settings.automatic === false
+              ? "Automatic reviews off"
+              : "Automatic reviews paused"}
+          </Badge>
+        ) : null}
+      </span>
+      <span className="local-repo-figure">
+        {activity.open === 0
+          ? "No open PRs"
+          : `${formatCount(activity.open)} open ${activity.open === 1 ? "PR" : "PRs"}`}
+      </span>
+      <span
+        className="local-repo-figure"
+        title={activity.reviewed ? formatDateTime(activity.reviewed) : undefined}
+      >
+        {activity.reviewed ? `Reviewed ${formatRelative(activity.reviewed)}` : "Not reviewed yet"}
+      </span>
       <div className="local-repo-actions">
         <MenuButton label={clone.repository} items={actions} menu={menu} />
       </div>

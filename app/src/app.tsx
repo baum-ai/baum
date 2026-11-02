@@ -1045,6 +1045,8 @@ function Workspace({ url }: { url: UrlState }) {
               repositories={picked}
               loading={loading}
               automatic={automatic}
+              entries={snapshot.entries}
+              jobs={jobs}
               changed={reload}
             />
           ) : page === "settings" || page === "diagnostics" ? (
