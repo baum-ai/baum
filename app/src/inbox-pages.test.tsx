@@ -883,3 +883,14 @@ it("leaves another page's repo= alone, and a repository the daemon would refuse 
   expect(search().get("repo")).toBeNull();
   expect(savedUIState("api/ui-state/filters")).toBeNull();
 });
+
+it("does not say nothing matches while a waiting pull request does", async () => {
+  entries = [
+    ...fixture(),
+    entry(5, "solo/x", { authored_by_me: true, draft: true }, { merge: "draft" }),
+  ];
+  await render();
+  await click(await option("solo"));
+  expect(node.textContent).toContain("Change 5");
+  expect(node.textContent).not.toContain("Nothing matches the filter");
+});

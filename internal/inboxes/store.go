@@ -148,7 +148,7 @@ func decode(data []byte) (State, error) {
 	}
 	// Inboxes saved before a list existed read it as empty.
 	for i := range state.Inboxes {
-		state.Inboxes[i].Criteria.fill()
+		state.Inboxes[i].fill()
 	}
 	return state, nil
 }
@@ -216,7 +216,7 @@ func normalize(in []Inbox, known map[string]bool) ([]Inbox, error) {
 		if !oneOf(inbox.What, whats) {
 			return nil, invalid(CodeInvalidInbox, "Inbox %q: what must be one of %s.", inbox.Name, strings.Join(whats, ", "))
 		}
-		if err := inbox.Criteria.Clean(fmt.Sprintf("Inbox %q", inbox.Name)); err != nil {
+		if err := inbox.Clean(fmt.Sprintf("Inbox %q", inbox.Name)); err != nil {
 			return nil, err
 		}
 		// An id the list no longer holds is kept when it has the daemon's

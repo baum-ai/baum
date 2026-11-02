@@ -1266,7 +1266,10 @@ export function UpNextPage({
               }}
               Link={Link}
             />
-          ) : filtering && unfiltered.length > 0 ? (
+          ) : filtering &&
+            unfiltered.length > 0 &&
+            // Waiting rows are never selected, so the lists say what is left.
+            queue.length + fixing.length + waiting.length + snoozed.length === 0 ? (
             <div className="upnext-zero">
               <h2>Nothing matches the filter</h2>
               <p>
