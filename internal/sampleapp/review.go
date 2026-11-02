@@ -2,78 +2,30 @@ package sampleapp
 
 import (
 	"context"
+	"embed"
 	"encoding/json"
-	"errors"
 	"fmt"
+	"regexp"
+	"strconv"
 	"time"
 
 	"github.com/baum-ai/baum/bundle"
+	"github.com/baum-ai/baum/internal/github"
 	"github.com/baum-ai/baum/internal/gitlocal"
 	"github.com/baum-ai/baum/internal/store"
 	"github.com/baum-ai/baum/review"
 )
 
-// section is one section of a sample review, as a model would write it:
-// the files it covers stand for their hunks.
-type section struct {
-	id, title, summary, intent string
-	files                      []string
-	level                      int
-	reason                     string
-	risk                       *risk
-	behavior                   []string
-	test                       string
-}
+// The sample reviews, written as a model writes them: reviews/<number>.json.
+// In them "@path" stands for the hunks of a changed file ("@path#2" for its
+// second one) and "@commitN" for the pull request's Nth commit; the hunks'
+// IDs and the commits' SHAs are only known once the project is written.
+//
+//go:embed reviews/*.json
+var authoredReviews embed.FS
 
-type risk struct{ tier, category, text string }
-
-// reviewed is a sample review: the pull request and what the review says.
-type reviewed struct {
-	pr             pull
-	summary, kind  string
-	releaseNote    string
-	area, attended string
-	sections       []section
-}
-
-var reviews = []reviewed{
-	{pr: tags, kind: "feature",
-		summary:     "Notes gain tags, cleaned when a note is saved, and the store can list the notes that carry one.",
-		releaseNote: "Notes can be tagged and filtered by tag.",
-		area:        "The notes library's model and in-memory store.",
-		attended:    "ByTag reads every note on each call.",
-		sections: []section{
-			{id: "sec_tags", title: "Tags on notes", files: []string{"note.go", "store.go"}, level: 2,
-				summary:  "Each note carries a list of tags, which Add cleans before saving: trimmed, lowercased and without empty or repeated tags.",
-				intent:   "Tags should behave the same however people type them, so \"Work\" and \" work\" are one tag.",
-				reason:   "A note saved with only blank tags ends up with none, without an error.",
-				risk:     &risk{"low", "data_integrity", "Blank tags are dropped silently, so a typo in an importer would go unnoticed"},
-				behavior: []string{"Add trims and lowercases every tag of the note", "Repeated and empty tags are dropped before the note is stored"}},
-			{id: "sec_filter", title: "Filter notes by tag", files: []string{"tags.go"}, level: 3,
-				summary:  "CleanTags holds the cleaning rules, and ByTag returns the notes with a tag, newest first, cleaning the tag it is asked for the same way.",
-				intent:   "People should be able to see just the notes for one topic.",
-				reason:   "ByTag scans every note on each call.",
-				risk:     &risk{"medium", "performance", "ByTag reads every note on each call, so filtering gets slower as the list grows"},
-				behavior: []string{"ByTag(\"Work\") finds notes tagged work", "Results keep the list's newest-first order"},
-				test:     "tags_test.go"},
-			{id: "sec_docs", title: "Tests and README", files: []string{"tags_test.go", "README.md"}, level: 1,
-				summary: "Tests cover cleaning and filtering, and the README shows tags in its example.",
-				reason:  "Tests and documentation only."},
-		}},
-	{pr: accents, kind: "feature",
-		summary:     "Search ignores accents as well as case, so \"cafe\" finds \"Café\".",
-		releaseNote: "Search matches words with or without accents.",
-		area:        "The notes library's search.",
-		sections: []section{
-			{id: "sec_fold", title: "Search ignores accents", files: []string{"search.go", "search_test.go"}, level: 2,
-				summary:  "Search folds the query and each note with a small table of accented Latin letters before comparing them.",
-				intent:   "Searching should find a note however its words were accented.",
-				reason:   "Only the letters in the table are folded.",
-				risk:     &risk{"low", "behavior", "Letters outside the table, such as ø or ł, still have to match exactly"},
-				behavior: []string{"\"cafe\" finds a note titled \"Café\"", "Case is still ignored"},
-				test:     "search_test.go"},
-		}},
-}
+// reviews are the pull requests with a sample review.
+var reviews = []pull{tags, accents}
 
 // writeReviews saves a review of each reviewed pull request into the
 // clone's store, finished the way generated reviews are.
@@ -91,8 +43,8 @@ func writeReviews(ctx context.Context, p project, commonDir string, now time.Tim
 	if err != nil {
 		return err
 	}
-	for _, r := range reviews {
-		head := p.heads[r.pr.number]
+	for _, pr := range reviews {
+		head := p.heads[pr.number]
 		comparison, err := repo.Compare(ctx, p.main, head)
 		if err != nil {
 			return err
@@ -101,90 +53,200 @@ func writeReviews(ctx context.Context, p project, commonDir string, now time.Tim
 		if err != nil {
 			return err
 		}
-		opened := now.Add(-r.pr.opened)
-		b := bundle.Bundle{Repository: repository, Diff: hunks, Sources: bundle.Sources{"diff": true},
-			PullRequest: bundle.PullRequest{Number: r.pr.number, State: "open", Title: r.pr.title, Body: r.pr.body,
-				AuthorLogin: r.pr.author.login, AuthorAssociation: "MEMBER", BaseRef: "main", BaseSHA: p.main,
-				HeadRef: r.pr.branch, HeadSHA: head, MergeBaseSHA: comparison.MergeBaseOID, OpenedAt: &opened}}
-		authored, err := r.authored(hunks, head)
+		opened := now.Add(-pr.opened)
+		b := bundle.Bundle{Repository: repository, Diff: hunks, Sources: bundle.Sources{"diff": true,
+			github.SourcePullRequest: true, github.SourceRequestedReviewers: true, github.SourceCommits: true, github.SourceComments: true,
+			github.SourceReviews: true, github.SourceReviewThreads: true, github.SourceChecks: true, github.SourceRequiredChecks: true},
+			PullRequest: bundle.PullRequest{Number: pr.number, State: "open", Title: pr.title, Body: pr.body,
+				AuthorLogin: pr.author.login, AuthorAssociation: "MEMBER", BaseRef: "main", BaseSHA: p.main,
+				HeadRef: pr.branch, HeadSHA: head, MergeBaseSHA: comparison.MergeBaseOID, OpenedAt: &opened,
+				RequestedReviewers: requested(pr), Commits: commits(p, pr, now)},
+			Checks: checks(head, now)}
+		b.Conversation, b.Threads = activity(p, pr, now)
+		b.Sessions = wroteIt(pr, now)
+		raw, err := authoredReviews.ReadFile("reviews/" + strconv.Itoa(pr.number) + ".json")
 		if err != nil {
 			return err
 		}
-		document, findings := validator.Complete(authored, &b, "", "sample", now.Add(-r.pr.updated+time.Hour/2))
+		authored, err := resolve(raw, hunks, p.commits[pr.number])
+		if err != nil {
+			return fmt.Errorf("sample review of #%d: %w", pr.number, err)
+		}
+		document, findings := validator.Complete(authored, &b, "", "sample", now.Add(-pr.updated+time.Hour/2))
 		if findings != "" {
-			return fmt.Errorf("sample review of #%d: %s", r.pr.number, findings)
+			return fmt.Errorf("sample review of #%d: %s", pr.number, findings)
 		}
 		version := store.Version{Metadata: store.Metadata{Version: 1, Head: head, GeneratedAt: now.UTC().Format(time.RFC3339), Backend: "claude", Model: "sample"}, Document: document}
-		if err := versions.Put(ctx, store.Key{Repository: repository, Number: r.pr.number}, store.Version{}, version); err != nil {
+		if err := versions.Put(ctx, store.Key{Repository: repository, Number: pr.number}, store.Version{}, version); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-// authored writes the review as the model writes it.
-func (r reviewed) authored(hunks []bundle.Hunk, head string) ([]byte, error) {
+var placeholder = regexp.MustCompile(`^@(commit(\d+)|([^#]+)(?:#(\d+))?)$`)
+
+// resolve replaces a sample review's placeholders: in a list, "@path"
+// becomes every hunk of the file; anywhere else, its first. A group's count
+// becomes the number of its hunks.
+func resolve(raw []byte, hunks []bundle.Hunk, commits []string) ([]byte, error) {
 	byPath := map[string][]string{}
 	for _, h := range hunks {
 		byPath[h.Path] = append(byPath[h.Path], h.ID)
 	}
-	anchor := func(id string) map[string]any { return map[string]any{"type": "hunk", "id": id} }
-	var sections []any
-	for _, s := range r.sections {
-		var ids []string
-		for _, file := range s.files {
-			ids = append(ids, byPath[file]...)
+	var problem error
+	lookup := func(text string) ([]string, bool) {
+		m := placeholder.FindStringSubmatch(text)
+		if m == nil {
+			return nil, false
+		}
+		if m[2] != "" {
+			n, _ := strconv.Atoi(m[2])
+			if n < 1 || n > len(commits) {
+				problem = fmt.Errorf("%s: no such commit", text)
+				return nil, true
+			}
+			return []string{commits[n-1]}, true
+		}
+		ids := byPath[m[3]]
+		if m[4] != "" {
+			n, _ := strconv.Atoi(m[4])
+			if n < 1 || n > len(ids) {
+				problem = fmt.Errorf("%s: no such hunk", text)
+				return nil, true
+			}
+			ids = ids[n-1 : n]
 		}
 		if len(ids) == 0 {
-			return nil, errors.New("sample section " + s.id + " covers no hunk")
+			problem = fmt.Errorf("%s: the file has no hunk", text)
 		}
-		first := []any{anchor(ids[0])}
-		blocks := []any{}
-		if s.intent != "" {
-			blocks = append(blocks, map[string]any{"kind": "intent", "text": s.intent, "anchors": []any{map[string]any{"type": "commit", "sha": head}}})
-		}
-		if len(s.behavior) > 0 {
-			var steps []any
-			for i, text := range s.behavior {
-				steps = append(steps, map[string]any{"id": fmt.Sprintf("beh_%s_%d", s.id[4:], i+1), "text": text, "anchors": first, "evidence": []any{}})
-			}
-			blocks = append(blocks, map[string]any{"kind": "behavior", "steps": steps})
-		}
-		risks, evidence := []any{}, []any{}
-		var attention any
-		if s.risk != nil {
-			id := "rsk_" + s.id[4:]
-			risks = append(risks, map[string]any{"id": id, "tier": s.risk.tier, "category": s.risk.category, "source": "model", "text": s.risk.text, "finding": nil, "anchors": first})
-			if s.risk.tier == "medium" {
-				attention = map[string]any{"text": s.risk.text + ".", "refs": []any{id}}
-			}
-		}
-		if s.test != "" && len(byPath[s.test]) > 0 {
-			evidence = append(evidence, map[string]any{"id": "ev_" + s.id[4:], "kind": "test", "claim": "Unit tests cover the change.", "status": "asserted", "source": "model",
-				"anchors": []any{anchor(byPath[s.test][0])}, "detail": nil})
-		}
-		factors := []any{}
-		sections = append(sections, map[string]any{
-			"id": s.id, "title": s.title, "kind": "logical", "hunks": ids,
-			"summary":    map[string]any{"text": s.summary, "anchors": first},
-			"attention":  attention,
-			"assessment": map[string]any{"level": s.level, "factors": factors, "reasons": []any{map[string]any{"text": s.reason, "anchors": first}}},
-			"risks":      risks, "evidence": evidence, "blocks": blocks,
-		})
+		return ids, true
 	}
-	var attention any
-	if r.attended != "" {
-		attention = map[string]any{"text": r.attended, "refs": []any{"rsk_filter"}}
+	var walk func(any) any
+	walk = func(value any) any {
+		switch v := value.(type) {
+		case string:
+			if ids, ok := lookup(v); ok && len(ids) > 0 {
+				return ids[0]
+			}
+		case []any:
+			var out []any
+			for _, item := range v {
+				if text, ok := item.(string); ok {
+					if ids, ok := lookup(text); ok {
+						for _, id := range ids {
+							out = append(out, id)
+						}
+						continue
+					}
+				}
+				out = append(out, walk(item))
+			}
+			if out == nil {
+				out = []any{}
+			}
+			return out
+		case map[string]any:
+			for key, item := range v {
+				v[key] = walk(item)
+			}
+			if listed, ok := v["hunks"].([]any); ok && v["count"] != nil {
+				v["count"] = len(listed)
+			}
+		}
+		return value
 	}
-	return json.Marshal(map[string]any{
-		"schema": "baum.review/1",
-		"summary": map[string]any{
-			"text": r.summary, "review_exchange": map[string]any{"summary": "No reviews yet."},
-			"context":     map[string]any{"area": map[string]any{"text": r.area, "refs": []any{map[string]any{"path": hunks[0].Path, "symbol": nil}}}},
-			"change_kind": r.kind, "implements": []any{}, "release_note": r.releaseNote, "breaking_change": nil, "attention": attention,
-			"authorship": map[string]any{"declared": "ai_assisted", "declared_tools": []any{}, "anchors": []any{}},
-		},
-		"relations": []any{},
-		"sections":  sections,
-	})
+	var document any
+	if err := json.Unmarshal(raw, &document); err != nil {
+		return nil, err
+	}
+	document = walk(document)
+	if problem != nil {
+		return nil, problem
+	}
+	return json.Marshal(document)
+}
+
+// requested is who a pull request asks for a review: the person, on their
+// teammates' pull requests.
+func requested(pr pull) []string {
+	if pr.author.login == me {
+		return []string{}
+	}
+	return []string{me}
+}
+
+// commits are a pull request's commits as GitHub lists them.
+func commits(p project, pr pull, now time.Time) []bundle.Commit {
+	var listed []bundle.Commit
+	for i, c := range pr.commits {
+		at := now.Add(-c.ago)
+		sha := p.commits[pr.number][i]
+		added, removed := p.lines[sha][0], p.lines[sha][1]
+		listed = append(listed, bundle.Commit{SHA: sha, Subject: c.message, CommittedAt: &at, Additions: &added, Deletions: &removed})
+	}
+	return listed
+}
+
+// checks are the CI runs on a reviewed head, which pass: the same test and
+// lint runs the sample's GitHub answers with.
+func checks(head string, now time.Time) []bundle.Check {
+	yes := true
+	started, done := now.Add(-4*time.Hour), now.Add(-4*time.Hour+3*time.Minute)
+	check := func(id, name string) bundle.Check {
+		return bundle.Check{HeadSHA: head, ID: "check_run:" + id, Name: name, Kind: "check_run", Conclusion: "success", Status: "completed",
+			Required: &yes, StartedAt: &started, CompletedAt: &done}
+	}
+	return []bundle.Check{check("1", "test"), check("2", "lint")}
+}
+
+// activity is what was said on a reviewed pull request: on tags, an
+// automated review whose finding a later commit fixed and a teammate's
+// question, both answered and resolved; on accents, an approval.
+func activity(p project, pr pull, now time.Time) ([]bundle.ConversationItem, []bundle.Thread) {
+	at := func(ago time.Duration) *time.Time { t := now.Add(-ago); return &t }
+	yes := true
+	switch pr.number {
+	case tags.number:
+		shas := p.commits[pr.number]
+		queryLine, indexLine := 25, 12
+		conversation := []bundle.ConversationItem{
+			{ID: "PRR_sample_codex", Kind: "review", AuthorLogin: "chatgpt-codex-connector", Bot: true, BotTool: "codex", State: "commented",
+				Commit: shas[1], CreatedAt: at(28 * time.Hour), Body: "Here are some automated review suggestions for this pull request."},
+			{ID: "PRRC_sample_query", Kind: "review_comment", AuthorLogin: "chatgpt-codex-connector", Bot: true, BotTool: "codex",
+				Review: "PRR_sample_codex", Path: "tags.go", Thread: "PRRT_sample_query", ThreadRoot: true, Resolved: &yes, CreatedAt: at(28 * time.Hour),
+				Body: "**<sub><sub>![P2 Badge](https://img.shields.io/badge/P2-yellow?style=flat)</sub></sub>  Clean the tag ByTag is asked for like saved tags**\n\nByTag lowercases the tag but does not trim it, so `ByTag(\" work\")` finds nothing although Add saved the note under `work`."},
+			{ID: "PRRC_sample_query_reply", Kind: "review_comment", AuthorLogin: alex.login, AuthorAssociation: "MEMBER", Path: "tags.go",
+				Thread: "PRRT_sample_query", Resolved: &yes, CreatedAt: at(20 * time.Hour),
+				Body: "Fixed in " + shas[2][:7] + ": ByTag now looks the tag up through cleanTag, which CleanTags uses too."},
+			{ID: "PRR_sample_riley", Kind: "review", AuthorLogin: riley.login, AuthorAssociation: "MEMBER", State: "commented",
+				Commit: shas[2], CreatedAt: at(18 * time.Hour), Body: "Reads well. One question about the index."},
+			{ID: "PRRC_sample_index", Kind: "review_comment", AuthorLogin: riley.login, AuthorAssociation: "MEMBER", Review: "PRR_sample_riley",
+				Path: "store.go", Thread: "PRRT_sample_index", ThreadRoot: true, Resolved: &yes, CreatedAt: at(18 * time.Hour),
+				Body: "The index holds positions in notes. What keeps it right once notes can be removed?"},
+			{ID: "PRRC_sample_index_reply", Kind: "review_comment", AuthorLogin: alex.login, AuthorAssociation: "MEMBER", Path: "store.go",
+				Thread: "PRRT_sample_index", Resolved: &yes, CreatedAt: at(17 * time.Hour),
+				Body: "Add is the only writer today, and its comment says that whatever removes or reorders notes must update the index too."},
+		}
+		threads := []bundle.Thread{
+			{ID: "PRRT_sample_query", Path: "tags.go", Line: &queryLine, Resolved: true},
+			{ID: "PRRT_sample_index", Path: "store.go", Line: &indexLine, Resolved: true},
+		}
+		return conversation, threads
+	case accents.number:
+		return []bundle.ConversationItem{
+			{ID: "PRR_sample_accents", Kind: "review", AuthorLogin: riley.login, AuthorAssociation: "MEMBER", State: "approved",
+				Commit: p.heads[pr.number], CreatedAt: at(2 * time.Hour),
+				Body: "Works for everything I tried. Letters like ø can come later, in their own issue."},
+		}, []bundle.Thread{}
+	}
+	return []bundle.ConversationItem{}, []bundle.Thread{}
+}
+
+// wroteIt is the agent session that wrote a pull request, as the review
+// sees it: each sample pull request was written with Claude Code.
+func wroteIt(pr pull, now time.Time) []bundle.Session {
+	first, last := now.Add(-pr.commits[0].ago-time.Hour), now.Add(-pr.commits[len(pr.commits)-1].ago)
+	return []bundle.Session{{RootSessionID: fmt.Sprintf("00000000-0000-4000-8000-%012d", pr.number), Vendor: "claude_code",
+		Models: []string{"claude-opus-5-5"}, Title: pr.title, Branch: pr.branch, StartedAt: &first, EndedAt: &last}}
 }

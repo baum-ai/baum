@@ -133,7 +133,7 @@ func (g gitHub) graphQL(r *http.Request) any {
 	switch {
 	case strings.Contains(query.Query, "query PullRequest("):
 		return repo(map[string]any{"nameWithOwner": repository, "pullRequest": map[string]any{"number": pr.Number, "state": "OPEN", "isDraft": false,
-			"title": pr.Title, "body": "", "bodyHTML": "", "createdAt": time.Now().Add(-day).UTC().Format(time.RFC3339),
+			"title": pr.Title, "body": describe(pr.Number), "bodyHTML": "", "createdAt": time.Now().Add(-day).UTC().Format(time.RFC3339),
 			"author": map[string]any{"login": pr.Author, "__typename": "User"}, "authorAssociation": "MEMBER",
 			"baseRefName": "main", "baseRefOid": g.p.main, "headRefName": pr.HeadRef, "headRefOid": pr.HeadSHA, "merged": false}})
 	case strings.Contains(query.Query, "query MergeOptions("):
@@ -171,4 +171,14 @@ func respond(r *http.Request, status int, body any) (*http.Response, error) {
 		return nil, err
 	}
 	return &http.Response{StatusCode: status, Header: http.Header{"Content-Type": []string{"application/json"}}, Body: io.NopCloser(strings.NewReader(string(raw))), Request: r}, nil
+}
+
+// describe is a pull request's description.
+func describe(number int) string {
+	for _, pl := range openPulls {
+		if pl.number == number {
+			return pl.body
+		}
+	}
+	return ""
 }

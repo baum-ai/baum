@@ -70,7 +70,7 @@ func TestWorkspaceServesEveryPage(t *testing.T) {
 		Sections []struct{ ID string } `json:"sections"`
 	}
 	get("api/document?clone="+clone+"&pr=12", &document)
-	if len(document.Sections) != 3 {
+	if len(document.Sections) != 5 {
 		t.Fatalf("review of #12 has %d sections", len(document.Sections))
 	}
 	var patch struct{ Patch string }

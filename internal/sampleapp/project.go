@@ -168,9 +168,22 @@ func (s *Store) List() []Note {
 // The open pull requests, each a branch from main after pull request 9.
 var (
 	tags = pull{number: 12, branch: "tags", title: "Add tags to notes", author: alex, opened: 2 * day, updated: 5 * time.Hour,
-		body: "Notes can carry tags, and the list can be filtered by one. Tags are cleaned when a note is saved.",
+		body: `Closes NOTES-8.
+
+Notes can carry tags, and the store and the command line can list the notes with one.
+
+- Tags are cleaned once, when a note is saved: trimmed, lowercased, without blanks or repeats.
+- ` + "`Store.ByTag`" + ` reads a tag index that ` + "`Add`" + ` keeps, instead of scanning every note.
+- ` + "`notes -tag work`" + ` lists only the notes tagged work.
+
+## Testing
+
+- ` + "`go test ./...`" + ` passes.
+- BenchmarkByTag with 10,000 notes: 2.9 ms per call before the index, 0.03 ms after.
+
+Written with Claude Code.`,
 		commits: []commit{
-			{alex, 2 * day, "Add tags to notes", map[string]string{
+			{alex, 2 * day, "Add tags to notes, with an index for ByTag", map[string]string{
 				"note.go": `package notes
 
 import "time"
@@ -188,6 +201,7 @@ type Note struct {
 
 import (
 	"slices"
+	"sort"
 	"strings"
 )
 
@@ -203,15 +217,14 @@ func CleanTags(tags []string) []string {
 	return clean
 }
 
-// ByTag returns the notes that carry tag, newest first.
+// ByTag returns the notes that carry tag, newest first. It reads the tag
+// index Add keeps rather than every note.
 func (s *Store) ByTag(tag string) []Note {
-	tag = strings.ToLower(strings.TrimSpace(tag))
 	var found []Note
-	for _, n := range s.List() {
-		if slices.Contains(n.Tags, tag) {
-			found = append(found, n)
-		}
+	for _, i := range s.byTag[strings.ToLower(tag)] {
+		found = append(found, s.notes[i])
 	}
+	sort.Slice(found, func(i, j int) bool { return found[i].Created.After(found[j].Created) })
 	return found
 }
 `,
@@ -219,17 +232,26 @@ func (s *Store) ByTag(tag string) []Note {
 
 import "sort"
 
-// Store keeps notes in memory.
+// Store keeps notes in memory, with an index of where each tag's notes are.
 type Store struct {
 	notes  []Note
 	nextID int
+	byTag  map[string][]int
 }
 
-// Add saves a note, with its tags cleaned, and returns it with its ID.
+// Add saves a note, with its tags cleaned, and returns it with its ID. Add
+// is the only writer of the tag index: code that removes or reorders notes
+// must update it too.
 func (s *Store) Add(n Note) Note {
 	s.nextID++
 	n.ID = s.nextID
 	n.Tags = CleanTags(n.Tags)
+	if s.byTag == nil {
+		s.byTag = map[string][]int{}
+	}
+	for _, tag := range n.Tags {
+		s.byTag[tag] = append(s.byTag[tag], len(s.notes))
+	}
 	s.notes = append(s.notes, n)
 	return n
 }
@@ -241,12 +263,92 @@ func (s *Store) List() []Note {
 	return list
 }
 `}},
+			{alex, 30 * time.Hour, "List the notes with a tag from the command line", map[string]string{
+				"cmd/notes/main.go": `// Command notes lists the notes saved in a file, newest first, or only
+// those with a tag.
+package main
+
+import (
+	"encoding/json"
+	"flag"
+	"fmt"
+	"os"
+
+	"example.com/notes"
+)
+
+func main() {
+	file := flag.String("file", "notes.json", "the file the notes are saved in")
+	tag := flag.String("tag", "", "list only the notes with this tag")
+	flag.Parse()
+
+	raw, err := os.ReadFile(*file)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "notes:", err)
+		os.Exit(1)
+	}
+	var saved []notes.Note
+	if err := json.Unmarshal(raw, &saved); err != nil {
+		fmt.Fprintf(os.Stderr, "notes: %s is not a notes file: %v\n", *file, err)
+		os.Exit(1)
+	}
+	var s notes.Store
+	for _, n := range saved {
+		s.Add(n)
+	}
+	list := s.List()
+	if *tag != "" {
+		list = s.ByTag(*tag)
+	}
+	for _, n := range list {
+		fmt.Printf("%s  %s\n", n.Created.Format("2006-01-02"), n.Title)
+	}
+}
+`}},
+			{alex, 20 * time.Hour, "Clean the tag ByTag is asked for as saved tags are", map[string]string{
+				"tags.go": `package notes
+
+import (
+	"slices"
+	"sort"
+	"strings"
+)
+
+// CleanTags trims and lowercases tags and drops empty and repeated ones.
+func CleanTags(tags []string) []string {
+	var clean []string
+	for _, tag := range tags {
+		tag = cleanTag(tag)
+		if tag != "" && !slices.Contains(clean, tag) {
+			clean = append(clean, tag)
+		}
+	}
+	return clean
+}
+
+// cleanTag is how every tag is written and looked up: trimmed and
+// lowercased.
+func cleanTag(tag string) string { return strings.ToLower(strings.TrimSpace(tag)) }
+
+// ByTag returns the notes that carry tag, newest first. It reads the tag
+// index Add keeps rather than every note.
+func (s *Store) ByTag(tag string) []Note {
+	var found []Note
+	for _, i := range s.byTag[cleanTag(tag)] {
+		found = append(found, s.notes[i])
+	}
+	sort.Slice(found, func(i, j int) bool { return found[i].Created.After(found[j].Created) })
+	return found
+}
+`}},
 			{alex, 5 * time.Hour, "Test tags and mention them in the README", map[string]string{
 				"tags_test.go": `package notes
 
 import (
+	"fmt"
 	"slices"
 	"testing"
+	"time"
 )
 
 func TestCleanTags(t *testing.T) {
@@ -256,12 +358,33 @@ func TestCleanTags(t *testing.T) {
 	}
 }
 
-func TestByTag(t *testing.T) {
+func TestByTagNewestFirst(t *testing.T) {
 	var s Store
-	s.Add(Note{Title: "Plan", Tags: []string{"Work"}})
-	s.Add(Note{Title: "Shopping", Tags: []string{"home"}})
-	if got := s.ByTag("work"); len(got) != 1 || got[0].Title != "Plan" {
+	day := time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)
+	s.Add(Note{Title: "Plan", Tags: []string{"work"}, Created: day})
+	s.Add(Note{Title: "Shopping", Tags: []string{"home"}, Created: day})
+	s.Add(Note{Title: "Review", Tags: []string{"Work"}, Created: day.Add(time.Hour)})
+	got := s.ByTag("work")
+	if len(got) != 2 || got[0].Title != "Review" || got[1].Title != "Plan" {
 		t.Fatalf("ByTag(work) = %v", got)
+	}
+}
+
+func TestByTagCleansTheTag(t *testing.T) {
+	var s Store
+	s.Add(Note{Title: "Plan", Tags: []string{"work"}})
+	if got := s.ByTag("  Work "); len(got) != 1 {
+		t.Fatalf("ByTag(\"  Work \") found %d notes, want 1", len(got))
+	}
+}
+
+func BenchmarkByTag(b *testing.B) {
+	var s Store
+	for i := range 10000 {
+		s.Add(Note{Title: fmt.Sprint(i), Tags: []string{fmt.Sprint("tag", i%50)}})
+	}
+	for b.Loop() {
+		s.ByTag("tag7")
 	}
 }
 `,
@@ -277,8 +400,14 @@ found := s.Search("milk")
 home := s.ByTag("home")
 ` + "```" + `
 
-Tags are trimmed and lowercased when a note is saved, so "Home" and "home"
-are the same tag.
+Tags are trimmed and lowercased when a note is saved, so "Home" and " home"
+are the same tag, and ` + "`ByTag`" + ` cleans the tag it is asked for the same way.
+
+The ` + "`notes`" + ` command lists the notes saved in a file:
+
+` + "```sh" + `
+notes -file notes.json -tag home
+` + "```" + `
 `}},
 		}}
 	accents = pull{number: 14, branch: "search-accents", title: "Match search without accents", author: sam, opened: day, updated: 3 * time.Hour,
@@ -350,6 +479,10 @@ type project struct {
 	// main is main's head; heads are each pull request's.
 	main  string
 	heads map[int]string
+	// commits are each pull request's commits, oldest first, and lines
+	// each commit's added and removed lines.
+	commits map[int][]string
+	lines   map[string][2]int
 	// worktrees are where the person's agent sessions work, by branch.
 	worktrees map[string]string
 }
@@ -357,7 +490,7 @@ type project struct {
 // writeProject writes the sample project's history into dir, with a
 // worktree beside it for each branch the person's sessions work on.
 func writeProject(ctx context.Context, dir string, now time.Time) (project, error) {
-	p := project{dir: dir, heads: map[int]string{}, worktrees: map[string]string{}}
+	p := project{dir: dir, heads: map[int]string{}, commits: map[int][]string{}, lines: map[string][2]int{}, worktrees: map[string]string{}}
 	git := func(at time.Time, who person, args ...string) (string, error) {
 		cmd := exec.CommandContext(ctx, "git", args...)
 		cmd.Dir = dir
@@ -375,6 +508,9 @@ func writeProject(ctx context.Context, dir string, now time.Time) (project, erro
 	write := func(c commit) (string, error) {
 		for name, text := range c.files {
 			path := filepath.Join(dir, name)
+			if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+				return "", err
+			}
 			if err := os.WriteFile(path, []byte(text), 0o600); err != nil {
 				return "", err
 			}
@@ -386,7 +522,23 @@ func writeProject(ctx context.Context, dir string, now time.Time) (project, erro
 		if _, err := git(at, c.author, "commit", "-q", "-m", c.message); err != nil {
 			return "", err
 		}
-		return git(at, c.author, "rev-parse", "HEAD")
+		head, err := git(at, c.author, "rev-parse", "HEAD")
+		if err != nil {
+			return "", err
+		}
+		stat, err := git(at, c.author, "show", "--numstat", "--format=", "HEAD")
+		if err != nil {
+			return "", err
+		}
+		var lines [2]int
+		for _, row := range strings.Split(stat, "\n") {
+			var added, removed int
+			if _, err := fmt.Sscanf(row, "%d\t%d", &added, &removed); err == nil {
+				lines[0], lines[1] = lines[0]+added, lines[1]+removed
+			}
+		}
+		p.lines[head] = lines
+		return head, nil
 	}
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return p, err
@@ -418,6 +570,7 @@ func writeProject(ctx context.Context, dir string, now time.Time) (project, erro
 				return p, err
 			}
 			p.heads[pr.number] = head
+			p.commits[pr.number] = append(p.commits[pr.number], head)
 		}
 	}
 	if _, err := git(now, sam, "checkout", "-q", "main"); err != nil {
