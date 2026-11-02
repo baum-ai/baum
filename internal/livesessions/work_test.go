@@ -9,20 +9,29 @@ import (
 	"github.com/baum-ai/baum/internal/hookevents"
 )
 
-// workLinker links directories, pushes and recorded work: the cwd of every
-// session below is the main checkout, on main, with no pull request.
+// workLinker links directories, commits, pushes and recorded work: the cwd of
+// every session below is the main checkout, on main, with no pull request.
 type workLinker struct {
 	*linker
-	// pushes are the pull requests of the branches pushed, as the discovery
-	// cache knows them; a branch missing has none yet.
+	// pushes are the pull requests of the branches, as the discovery cache
+	// knows them; a branch missing has none yet.
 	pushes map[string]int
 }
 
 func newWorkLinker() *workLinker {
 	l := newLinker()
 	l.links["/work/main"] = Link{Repository: "acme/demo", Branch: "main", Status: "unmatched"}
-	l.links["/work/trees/fix"] = Link{Repository: "acme/demo", Branch: "fix", PR: 12, Method: "branch", Status: "resolved"}
-	return &workLinker{linker: l, pushes: map[string]int{}}
+	// The worktree an agent committed in, checked out on another branch
+	// since: a commit links to the branch it was made on.
+	l.links["/work/trees/fix"] = Link{Repository: "acme/demo", Branch: "later", PR: 99, Method: "branch", Status: "resolved"}
+	return &workLinker{linker: l, pushes: map[string]int{"fix": 12}}
+}
+
+func (l *workLinker) LinkCommit(_ context.Context, dir, branch, head string) (Link, bool) {
+	if !strings.HasPrefix(dir, "/work/") {
+		return Link{}, false
+	}
+	return l.Relink(context.Background(), Session{Repository: "acme/demo", Branch: branch, HeadSHA: head})
 }
 
 func (l *workLinker) LinkPush(_ context.Context, dir, remote, branch, head string) (Link, bool) {
@@ -67,12 +76,22 @@ func gitHook(name, dir string, at time.Time, agent hookevents.Process, lines ...
 	return e
 }
 
+// commit is a post-commit run in dir by a command of the agent process, of a
+// commit on branch.
+func commit(dir, branch string, at time.Time, agent hookevents.Process) hookevents.Event {
+	e := gitHook("post-commit", dir, at, agent)
+	e.Git = &hookevents.Git{Head: pushed, Branch: branch}
+	return e
+}
+
 func pushOf(branch string) string {
 	return "refs/heads/" + branch + " " + pushed + " refs/heads/" + branch + " " + strings.Repeat("0", 40)
 }
 
-// An agent that commits in another worktree of the clone links to that
-// worktree's pull request, though its own directory has none.
+// An agent that commits in another worktree of the clone links to the pull
+// request of the branch it committed on, though its own directory has none
+// and the worktree has checked out another branch since. A commit whose hook
+// could not read it links nothing.
 func TestSessionLinksToThePullRequestOfItsCommit(t *testing.T) {
 	c := &clock{t0}
 	tr := newTracker(c, newWorkLinker())
@@ -80,7 +99,11 @@ func TestSessionLinksToThePullRequestOfItsCommit(t *testing.T) {
 	if s := only(t, tr); s.PR != 0 || s.Branch != "main" {
 		t.Fatalf("before the commit: %+v", s)
 	}
-	if !apply(tr, gitHook("post-commit", "/work/trees/fix", t0.Add(time.Minute), claude)) {
+	apply(tr, gitHook("post-commit", "/work/trees/fix", t0.Add(30*time.Second), claude))
+	if s := only(t, tr); s.PR != 0 {
+		t.Fatalf("a commit without its branch and head linked: %+v", s)
+	}
+	if !apply(tr, commit("/work/trees/fix", "fix", t0.Add(time.Minute), claude)) {
 		t.Fatal("the commit's pull request was not announced")
 	}
 	if s := only(t, tr); s.PR != 12 || s.Branch != "fix" || s.LinkMethod != MethodCommit {

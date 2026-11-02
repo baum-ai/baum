@@ -71,6 +71,14 @@ func newHooksCommand(stdout, stderr io.Writer) *cobra.Command {
 					event.Terminal = &hookevents.Terminal{Processes: processes}
 				}
 			}
+			if args[0] == "post-commit" {
+				if head, branch := captureCommit(cmd.Context()); head != "" {
+					if event.Git == nil {
+						event.Git = &hookevents.Git{}
+					}
+					event.Git.Head, event.Git.Branch = head, branch
+				}
+			}
 			event.Exit = exitStatus(err)
 			sendHookEvent(cmd.Context(), event)
 			return err

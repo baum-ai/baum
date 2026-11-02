@@ -171,6 +171,11 @@ type Git struct {
 	// Lines are what Git wrote to the hook's standard input: the refs a
 	// pre-push sends, the commits a post-rewrite replaced.
 	Lines []string `json:"lines,omitempty"`
+	// Head and Branch are a post-commit's: the commit it follows and the
+	// branch it was made on, empty when detached, read as the hook ran, so
+	// the commit links to its branch whatever the checkout does next.
+	Head   string `json:"head,omitempty"`
+	Branch string `json:"branch,omitempty"`
 }
 
 // Push is one branch a pre-push hook names.
@@ -315,6 +320,7 @@ func (e *Event) fields() []*string {
 		for i := range g.Args {
 			fields = append(fields, &g.Args[i])
 		}
+		fields = append(fields, &g.Head, &g.Branch)
 	}
 	return fields
 }

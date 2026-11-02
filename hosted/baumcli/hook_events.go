@@ -9,6 +9,7 @@ import (
 	"io"
 	"maps"
 	"os"
+	"os/exec"
 	"strings"
 	"sync"
 	"time"
@@ -248,6 +249,33 @@ var captureTerminal = focus.Capture
 
 // captureAncestors is a seam for tests: the processes a Git hook ran under.
 var captureAncestors = focus.Ancestors
+
+// captureCommit is a seam for tests: the commit a post-commit hook follows and
+// the branch it was made on.
+var captureCommit = commitCheckout
+
+// commitReadTimeout bounds reading the commit a post-commit hook follows.
+const commitReadTimeout = 2 * time.Second
+
+// commitCheckout reads, with one git run, the commit HEAD names and the branch
+// checked out, "" when detached; both "" when git cannot tell.
+func commitCheckout(ctx context.Context) (head, branch string) {
+	ctx, cancel := context.WithTimeout(ctx, commitReadTimeout)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, "git", "rev-parse", "HEAD", "--symbolic-full-name", "HEAD").Output()
+	if err != nil {
+		return "", ""
+	}
+	fields := strings.Fields(string(out))
+	if len(fields) != 2 {
+		return "", ""
+	}
+	branch, _ = strings.CutPrefix(fields[1], "refs/heads/")
+	if branch == fields[1] {
+		branch = ""
+	}
+	return fields[0], branch
+}
 
 // tiesToSession reports the Git hooks whose events carry the hook's ancestors
 // (Terminal.Processes, nothing else of the terminal), so the daemon can tell

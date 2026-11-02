@@ -4,6 +4,7 @@ package baumcli
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"maps"
@@ -198,7 +199,9 @@ func TestGitHookEventNamesItsAncestorsOnCommitAndPush(t *testing.T) {
 	captureAncestors = func() []hookevents.Process {
 		return []hookevents.Process{{PID: 9, Start: "1", Name: "git"}, {PID: 7, Start: "9", Name: "claude"}}
 	}
-	t.Cleanup(func() { captureAncestors = old })
+	oldCommit := captureCommit
+	captureCommit = func(context.Context) (string, string) { return strings.Repeat("c", 40), "fix" }
+	t.Cleanup(func() { captureAncestors, captureCommit = old, oldCommit })
 	for _, args := range [][]string{{"post-commit"}, {"pre-push", "origin", "https://github.com/acme/demo.git"}, {"commit-msg", "message-file"}} {
 		if _, _, err := runCLIWithInput(t, "", append([]string{"hooks", "git"}, args...)...); err != nil {
 			t.Fatalf("%s: %v", args[0], err)
@@ -209,9 +212,36 @@ func TestGitHookEventNamesItsAncestorsOnCommitAndPush(t *testing.T) {
 	for _, e := range events {
 		named[e.Name] = e.Terminal != nil && len(e.Terminal.Processes) == 2 && e.Terminal.Processes[1].Name == "claude" &&
 			e.Terminal.TTY == "" && len(e.Terminal.Env) == 0
+		// A commit says which it is and its branch, as the hook read them.
+		recorded := e.Git != nil && e.Git.Head == strings.Repeat("c", 40) && e.Git.Branch == "fix"
+		if recorded != (e.Name == "post-commit") {
+			t.Errorf("%s: git = %+v", e.Name, e.Git)
+		}
 	}
 	if want := map[string]bool{"post-commit": true, "pre-push": true, "commit-msg": false}; !maps.Equal(named, want) {
 		t.Errorf("named = %v, want %v", named, want)
+	}
+}
+
+// The commit a post-commit hook follows is read with one git run: the commit
+// and the branch, none when detached.
+func TestCommitCheckoutReadsTheCommitAndItsBranch(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	for _, args := range [][]string{{"init", "-q", "-b", "fix"}, {"-c", "user.name=t", "-c", "user.email=t@example.test", "-c", "commit.gpgsign=false", "commit", "-q", "--allow-empty", "-m", "first"}} {
+		if out, err := exec.Command("git", args...).CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	head, branch := commitCheckout(context.Background())
+	if len(head) != 40 || branch != "fix" {
+		t.Fatalf("commit %q on %q", head, branch)
+	}
+	if out, err := exec.Command("git", "checkout", "-q", "--detach").CombinedOutput(); err != nil {
+		t.Fatalf("detach: %v\n%s", err, out)
+	}
+	if detached, branch := commitCheckout(context.Background()); detached != head || branch != "" {
+		t.Fatalf("detached: commit %q on %q", detached, branch)
 	}
 }
 

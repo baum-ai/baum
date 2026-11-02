@@ -35,11 +35,11 @@ type workItem struct {
 	// StateFile, which keeps no paths.
 	dir    string
 	pushed bool
-	// remote, branch and head are a push's; empty for a commit.
+	// remote is a push's; branch and head are the branch and commit pushed,
+	// or the commit made and the branch it was made on, as the hook read them.
 	remote, branch, head string
-	// link is what the item was found to be once read: a commit's directory
-	// as it was checked out just after the commit, a push's branch and commit.
-	// Its Repository is empty when it links to no registered clone.
+	// link is what the item was found to be once read, with the clone's
+	// remotes; its Repository is empty when it links to no registered clone.
 	link Link
 	read bool
 }
@@ -48,9 +48,14 @@ func (w workItem) same(o workItem) bool {
 	return w.id != "" && w.id == o.id && w.branch == o.branch
 }
 
-// WorkLinker links the pushes of a session's agent; *Resolver is one. A
-// Linker that is not one links commits alone.
+// WorkLinker links the commits and pushes of a session's agent; *Resolver is
+// one. With a Linker that is not one, they link nothing.
 type WorkLinker interface {
+	// LinkCommit links the commit head made on branch ("" when detached) in
+	// the working tree dir, from what the hook recorded rather than what dir
+	// has checked out now, and reports false when dir is in no registered
+	// clone.
+	LinkCommit(ctx context.Context, dir, branch, head string) (Link, bool)
 	// LinkPush links a push from the working tree dir through remote, of
 	// head to branch, and reports false when dir is in no registered clone.
 	LinkPush(ctx context.Context, dir, remote, branch, head string) (Link, bool)
@@ -127,7 +132,12 @@ func (t *Tracker) applyWorkLocked(e hookevents.Event, now time.Time) {
 			items = append(items, workItem{id: e.ID, at: at, dir: e.Dir, pushed: true, remote: e.Git.Args[0], branch: p.Branch, head: p.New})
 		}
 	} else {
-		items = []workItem{{id: e.ID, at: at, dir: e.Dir}}
+		// A commit whose hook could not read it says nothing: the directory's
+		// checkout later may be another branch's.
+		if e.Git == nil || e.Git.Head == "" {
+			return
+		}
+		items = []workItem{{id: e.ID, at: at, dir: e.Dir, branch: e.Git.Branch, head: e.Git.Head}}
 	}
 	added := false
 	for _, item := range items {
@@ -161,10 +171,12 @@ func (t *Tracker) readWork(ctx context.Context, work []workItem, fallback bool) 
 		}
 		var link Link
 		var ok bool
-		if !w.pushed {
-			link, ok = t.Linker.Link(ctx, w.dir)
-		} else if pushes, supported := t.Linker.(WorkLinker); supported {
-			link, ok = pushes.LinkPush(ctx, w.dir, w.remote, w.branch, w.head)
+		if linker, supported := t.Linker.(WorkLinker); supported {
+			if w.pushed {
+				link, ok = linker.LinkPush(ctx, w.dir, w.remote, w.branch, w.head)
+			} else {
+				link, ok = linker.LinkCommit(ctx, w.dir, w.branch, w.head)
+			}
 		}
 		if ctx.Err() != nil {
 			return out
@@ -259,13 +271,9 @@ func restoredWork(saved []savedWork) []workItem {
 		if w.Repository == "" {
 			continue
 		}
-		item := workItem{id: w.ID, at: w.At, pushed: w.Push, read: true, link: Link{Repository: w.Repository, Branch: w.Branch, HeadSHA: w.HeadSHA, Upstream: w.Upstream, PR: w.PR, HeadRepository: w.HeadRepository, UpstreamRepository: w.UpstreamRepository}}
-		if w.Push {
-			// A push is named by its event and branch, so the replayed event
-			// does not add it again.
-			item.branch = w.Branch
-		}
-		out = append(out, item)
+		// An item is named by its event and branch, so the replayed event does
+		// not add it again.
+		out = append(out, workItem{id: w.ID, at: w.At, pushed: w.Push, branch: w.Branch, head: w.HeadSHA, read: true, link: Link{Repository: w.Repository, Branch: w.Branch, HeadSHA: w.HeadSHA, Upstream: w.Upstream, PR: w.PR, HeadRepository: w.HeadRepository, UpstreamRepository: w.UpstreamRepository}})
 	}
 	if len(out) > maxWork {
 		out = out[len(out)-maxWork:]

@@ -3854,7 +3854,10 @@ endpoint.
   time on macOS) and `name`, at most 24 (see "Focus" under "Live sessions").
   Git's `post-commit` and `pre-push` carry `terminal` with `processes` alone
   (`focus.Ancestors`), so live sessions can tell which agent committed or
-  pushed (see "Linkage" under "Live sessions").
+  pushed, and a `post-commit` carries `git.head` and `git.branch` (empty when
+  detached), the commit and the branch it was made on, read with one `git
+  rev-parse` as the hook ran (see "Commits and pushes" under "Live
+  sessions").
   `Event.Bound` cuts fields at character boundaries and keeps only
   `TerminalEnv`, then trims Git lines, drops `terminal` and halves the longest
   fields until the escaped encoding fits one control line. The daemon ignores fields it does not know and records
@@ -4171,10 +4174,13 @@ replace it.
   the nearest of them (the parent its own start and prompt events recorded,
   matched by `pid` and `start`) made the commit or push; a process two open
   sessions name is neither's, and Git run by no session's agent belongs to
-  none. A commit is looked up like a directory, at once, since its branch is
-  what that worktree has checked out just after it; a push (`LinkPush`) is the
-  pushed branch and commit in the repository the remote's push URL names, as
-  refresh on hook events reads a push. When the session's directory links to
+  none. A commit (`LinkCommit`) is the commit and branch its hook recorded,
+  with the clone's remotes and the branch's upstream (`prlink.At`), never what
+  the worktree has checked out by the time the daemon looks, so a branch
+  switched or a worktree reused right after does not move it; a commit without
+  them (a hook that could not read them) is ignored. A push (`LinkPush`) is
+  the pushed branch and commit in the repository the remote's push URL names,
+  as refresh on hook events reads a push. When the session's directory links to
   no pull request (and not to several), the session takes the repository,
   branch and pull request of its latest commit or push that has one, with
   `link_method` `commit` or `push`; each later lookup checks the cache again,

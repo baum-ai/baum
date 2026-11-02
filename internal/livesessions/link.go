@@ -138,6 +138,21 @@ func (r *Resolver) open(ctx context.Context, dir string) (*gitlocal.Repo, string
 	return nil, "", false
 }
 
+// LinkCommit implements WorkLinker: the commit head made on branch in the
+// working tree dir, with the remotes the clone has (prlink.At), not what dir
+// has checked out since. It runs git and never fetches.
+func (r *Resolver) LinkCommit(ctx context.Context, dir, branch, head string) (Link, bool) {
+	if !filepath.IsAbs(dir) {
+		return Link{}, false
+	}
+	repo, repository, ok := r.open(ctx, dir)
+	if !ok {
+		return Link{}, false
+	}
+	defer func() { _ = repo.Close() }()
+	return r.resolve(ctx, repository, prlink.At(ctx, repo, repository, branch, head))
+}
+
 // LinkPush implements WorkLinker: the pushed branch and commit, in the
 // repository the remote's push URL names (a fork's own branch is another
 // branch), as refresh on hook events reads a push. It runs git and never
