@@ -209,3 +209,44 @@ func TestResolverSkipsUnavailableClonesAndRemembersMisses(t *testing.T) {
 		t.Fatalf("after the miss expired: %+v %v", got, ok)
 	}
 }
+
+// A commit links to the branch it was made on, as its hook recorded it, though
+// the worktree has checked out another branch since; a push to the branch it
+// names, in the repository its remote pushes to.
+func TestResolverLinksRecordedCommitsAndPushes(t *testing.T) {
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	clone := filepath.Join(root, "demo")
+	if err := os.MkdirAll(clone, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	git(t, clone, "init", "-q", "-b", "main")
+	git(t, clone, "remote", "add", "origin", "https://github.com/acme/demo.git")
+	git(t, clone, "remote", "add", "fork", "https://github.com/someone/demo.git")
+	git(t, clone, "commit", "-q", "--allow-empty", "-m", "first")
+	git(t, clone, "checkout", "-q", "-b", "fix")
+	git(t, clone, "checkout", "-q", "main")
+	r := &Resolver{
+		Registry: registry{[]repos.Clone{{ID: "c", Path: clone, CommonDir: filepath.Join(clone, ".git"), Repository: "acme/demo", Available: true}}},
+		Discovery: &cache{prs: []discovery.PullRequest{
+			{Number: 12, HeadRef: "fix"},
+			{Number: 13, HeadRef: "topic", HeadRepository: "someone/demo", Fork: true},
+		}},
+	}
+	ctx := context.Background()
+	head := strings.Repeat("c", 40)
+	if link, ok := r.LinkCommit(ctx, clone, "fix", head); !ok || link.PR != 12 || link.Branch != "fix" || link.HeadSHA != head {
+		t.Errorf("commit = %+v, %t", link, ok)
+	}
+	if link, ok := r.LinkPush(ctx, clone, "fork", "topic", head); !ok || link.PR != 13 || link.HeadRepository != "someone/demo" {
+		t.Errorf("push to the fork = %+v, %t", link, ok)
+	}
+	if link, ok := r.LinkPush(ctx, clone, "origin", "topic", head); !ok || link.PR != 0 {
+		t.Errorf("push of a fork's branch name to origin = %+v, %t", link, ok)
+	}
+	if _, ok := r.LinkCommit(ctx, filepath.Join(root, "gone"), "fix", head); ok {
+		t.Error("a directory in no clone linked")
+	}
+}

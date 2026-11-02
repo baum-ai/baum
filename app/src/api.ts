@@ -449,7 +449,9 @@ export type LiveSession = {
     | "stale"
     | "unavailable"
     | "unknown_history";
-  link_method?: "branch" | "upstream" | "head";
+  /** How `pr` was found: from the session's directory (`branch`, `upstream`,
+   *  `head`), or from its agent's latest commit or push elsewhere. */
+  link_method?: "branch" | "upstream" | "head" | "commit" | "push";
   head_sha?: string;
   upstream?: string;
   observed_at?: string;

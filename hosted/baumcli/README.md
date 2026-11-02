@@ -363,7 +363,11 @@ handshake, in [`apiclient`](../apiclient).
   kitty, iTerm2 and Terminal identifiers and the display), never the rest of
   the environment. A Git event keeps the
   hook's arguments and the lines Git writes to `pre-push` and `post-rewrite`
-  (refs and commits), but never a pre-push remote URL, which can carry
+  (refs and commits), and a `post-commit` or `pre-push` event the hook's
+  ancestors alone (no terminal or variables), so the daemon can tell which
+  agent session committed or pushed; a `post-commit` also keeps the commit and
+  its branch, read with one `git rev-parse` (at most two seconds); never a
+  pre-push remote URL, which can carry
   credentials: the remote name is kept only when it differs from the URL and
   reads as neither a URL nor an scp-style address (a push to a URL passes the
   URL as both). Every event names its working directory, exit status and

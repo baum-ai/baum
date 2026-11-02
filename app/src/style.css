@@ -2956,6 +2956,18 @@ a.local-session-pr:hover {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* Beside the branch, the pull request reads as its quiet companion, not as
+ * part of the title. */
+.local-feed-head > .local-session-pr {
+  flex: none;
+  margin-left: -0.25rem;
+  color: var(--text-tertiary);
+  font-size: var(--text-xs);
+  white-space: nowrap;
+}
+.local-feed-head > a.local-session-pr:hover {
+  color: var(--text-primary);
+}
 .local-feed-branch {
   min-width: 0;
   overflow: hidden;

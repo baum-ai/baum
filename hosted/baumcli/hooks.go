@@ -66,6 +66,19 @@ func newHooksCommand(stdout, stderr io.Writer) *cobra.Command {
 			err := runEntireGitHook(cmd, hosted, args, entireArgs, input, stdout, stderr)
 			event := newHookEvent(hookevents.KindGit, "", args[0], started)
 			event.Git = gitHookEvent(args, input.payload())
+			if tiesToSession(args[0]) {
+				if processes := captureAncestors(); len(processes) > 0 {
+					event.Terminal = &hookevents.Terminal{Processes: processes}
+				}
+			}
+			if args[0] == "post-commit" {
+				if head, branch := captureCommit(cmd.Context()); head != "" {
+					if event.Git == nil {
+						event.Git = &hookevents.Git{}
+					}
+					event.Git.Head, event.Git.Branch = head, branch
+				}
+			}
 			event.Exit = exitStatus(err)
 			sendHookEvent(cmd.Context(), event)
 			return err
