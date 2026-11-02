@@ -115,6 +115,9 @@ type Options struct {
 	PassTimeout time.Duration
 	// TileKinds is the tile allow-list; empty offers no tiles.
 	TileKinds []string
+	// PromptSource is recorded in the stored metadata as store.Metadata's
+	// PromptSource; the host that chose the prompts sets it.
+	PromptSource string
 	// Prompts defaults to this module's public prompt.
 	Prompts agent.Prompts
 	// Staged writes a single pull request's review in stages
@@ -512,7 +515,7 @@ func Run(ctx context.Context, o Options) (result Result, err error) {
 	}
 	result.Metadata = store.Metadata{Accounting: outcome.Accounting, Version: stored.Review.Version, Head: assembled.Head, Base: assembled.Base, MergeBase: assembled.MergeBase, BundleDigest: b.Digest,
 		Backend: o.Backend.Name(), BackendVersion: o.BackendVersion, Model: stored.Review.Generator.Model, Schema: stored.Schema,
-		SchemaRevision: stored.Review.Generator.SchemaRevision, PromptVersion: stored.Review.Generator.PromptVersion, PromptDigest: promptDigest,
+		SchemaRevision: stored.Review.Generator.SchemaRevision, PromptVersion: stored.Review.Generator.PromptVersion, PromptDigest: promptDigest, PromptSource: o.PromptSource,
 		Policy: stored.Review.Generator.ReviewMD, GeneratedAt: stored.Review.GeneratedAt, Elapsed: time.Since(started), Calls: outcome.Calls, Tokens: outcome.Tokens}
 	if o.Continue != nil {
 		// The version keeps the provenance of the run that wrote it.

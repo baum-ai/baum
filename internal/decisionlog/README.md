@@ -3,10 +3,17 @@
 The daemon extracts the decisions of the coding-agent sessions running on this
 machine and keeps them in the shared private
 [`<state>/app.sqlite`](../appdb/README.md) application database
-(directory 0700, file 0600). Extraction uses the published
-prompt (`decisions.NewPublicExtractor`, `decisions-public-v1`) and the
-`decisions` package's renderer, parser and citation validator, so a local
-extraction follows the same rules as a hosted one.
+(directory 0700, file 0600). Extraction uses the extraction prompt resolved
+for the session's repository (the repository's custom prompt, else the global
+one, else the published prompt, `decisions.NewPublicExtractor`,
+`decisions-public-v1`) and the `decisions` package's renderer, parser and
+citation validator, so a local extraction follows the same rules as a hosted
+one. A custom prompt is recorded as a `+custom` prompt version. The prompt is
+read for every capture, and a failed read fails the capture rather than
+sending the published prompt in its place. Changing the prompt does not by
+itself extract a covered session again: covered is decided by the transcript
+fingerprint, so the new prompt applies when the transcript next changes or the
+session is forced.
 
 ## Gate
 

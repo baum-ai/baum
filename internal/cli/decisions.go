@@ -10,6 +10,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/baum-ai/baum/agent/prompt"
 	"github.com/baum-ai/baum/internal/appdb"
 	"github.com/baum-ai/baum/internal/config"
 	"github.com/baum-ai/baum/internal/decisionlog"
@@ -100,6 +101,10 @@ type defaultRegistry struct{}
 
 func (defaultRegistry) Preferences(context.Context) (repos.Preferences, error) {
 	return repos.DefaultPreferences(), nil
+}
+
+func (defaultRegistry) ResolvePrompts(context.Context, string) (prompt.Overrides, map[prompt.ID]repos.PromptSource, error) {
+	return nil, nil, nil
 }
 
 func (defaultRegistry) RepositorySettings(context.Context, string) (repos.Settings, bool, error) {

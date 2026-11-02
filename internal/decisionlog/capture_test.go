@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/baum-ai/baum/agent"
+	"github.com/baum-ai/baum/agent/prompt"
 	"github.com/baum-ai/baum/decisions"
 	"github.com/baum-ai/baum/internal/config"
 	"github.com/baum-ai/baum/internal/generate"
@@ -46,6 +47,7 @@ type fakeBackend struct {
 	hang    bool
 	calls   int
 	users   []string
+	systems []string
 	fail    error
 	summary string
 	onCall  func()
@@ -70,6 +72,7 @@ var turnPattern = regexp.MustCompile(`## Turn (\d+)`)
 func (f *fakeBackend) Complete(ctx context.Context, request agent.CompleteRequest) (agent.Completion, error) {
 	f.calls++
 	f.users = append(f.users, request.User)
+	f.systems = append(f.systems, request.System)
 	if f.onCall != nil {
 		f.onCall()
 	}
@@ -99,6 +102,25 @@ type fakeRegistry struct {
 	prefs    repos.Preferences
 	settings repos.Settings
 	picked   bool
+	// prompts are the overrides of the repository named by the key; the key
+	// "" is the global scope, which every repository falls back to.
+	prompts map[string]prompt.Overrides
+	// promptErr fails ResolvePrompts.
+	promptErr error
+}
+
+func (r *fakeRegistry) ResolvePrompts(_ context.Context, repository string) (prompt.Overrides, map[prompt.ID]repos.PromptSource, error) {
+	if r.promptErr != nil {
+		return nil, nil, r.promptErr
+	}
+	overrides := prompt.Overrides{}
+	for id, text := range r.prompts[""] {
+		overrides[id] = text
+	}
+	for id, text := range r.prompts[repository] {
+		overrides[id] = text
+	}
+	return overrides, nil, nil
 }
 
 func (r *fakeRegistry) Preferences(context.Context) (repos.Preferences, error) { return r.prefs, nil }
@@ -746,5 +768,59 @@ func TestEffectiveModelResolvesAsCaptureDoes(t *testing.T) {
 	hanging.Claude = func(string) generate.CheckedBackend { return &fakeBackend{name: agent.BackendClaude, hang: true} }
 	if got := EffectiveModel(ctx, config.Config{Backend: config.BackendAuto}, saved, hanging, nil); got != (Effective{Undetermined: true}) {
 		t.Errorf("a hanging check: %+v", got)
+	}
+}
+
+func TestCaptureUsesTheRepositorysExtractionPrompt(t *testing.T) {
+	const custom = "Extract decisions the custom way."
+	f := newFixture(t)
+	f.registry.prompts = map[string]prompt.Overrides{"o/r": {prompt.IDExtraction: custom}}
+	f.capture(t, Options{})
+	if len(f.backend.systems) != 1 || f.backend.systems[0] != custom {
+		t.Fatalf("system prompts %q", f.backend.systems)
+	}
+	row, _, _ := f.store.Session(context.Background(), "claude-code", "s1")
+	if !strings.Contains(row.PromptVersion, "+custom") {
+		t.Fatalf("prompt version %q", row.PromptVersion)
+	}
+
+	// A session in another repository gets the built-in prompt.
+	f.target = Target{Agent: "claude-code", ID: "s2", Path: f.path, Repository: "o/other", Branch: "feature"}
+	write(t, filepath.Join(f.home, ".claude", "projects", "-work-demo", "s2.jsonl"), claudeTurn("s2", 1, "Use SQLite.", "Done."))
+	f.target.Path = filepath.Join(f.home, ".claude", "projects", "-work-demo", "s2.jsonl")
+	f.capture(t, Options{})
+	if f.backend.systems[1] == custom {
+		t.Fatal("another repository used the repository's prompt")
+	}
+	row, _, _ = f.store.Session(context.Background(), "claude-code", "s2")
+	if strings.Contains(row.PromptVersion, "+custom") {
+		t.Fatalf("prompt version %q", row.PromptVersion)
+	}
+}
+
+func TestCaptureUsesTheGlobalExtractionPromptForOtherRepositories(t *testing.T) {
+	f := newFixture(t)
+	f.registry.prompts = map[string]prompt.Overrides{"": {prompt.IDExtraction: "Global extraction."}}
+	f.capture(t, Options{})
+	if f.backend.systems[0] != "Global extraction." {
+		t.Fatalf("system prompts %q", f.backend.systems)
+	}
+}
+
+func TestChangingTheExtractionPromptDoesNotReextractACoveredSession(t *testing.T) {
+	f := newFixture(t)
+	f.capture(t, Options{})
+	f.registry.prompts = map[string]prompt.Overrides{"o/r": {prompt.IDExtraction: "Changed."}}
+	f.later(MinInterval)
+	if report := f.capture(t, Options{}); report.Outcome != OutcomeUnchanged || f.backend.calls != 1 {
+		t.Fatalf("%+v calls=%d", report, f.backend.calls)
+	}
+}
+
+func TestCaptureFailsWhenThePromptsCannotBeResolved(t *testing.T) {
+	f := newFixture(t)
+	f.registry.promptErr = errors.New("registry unreadable")
+	if _, err := f.capturer.Capture(context.Background(), f.target, Options{}); err == nil || f.backend.calls != 0 {
+		t.Fatalf("err=%v calls=%d", err, f.backend.calls)
 	}
 }

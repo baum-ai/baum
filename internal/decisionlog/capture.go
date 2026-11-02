@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/baum-ai/baum/agent/prompt"
 	"github.com/baum-ai/baum/bundle"
 	"github.com/baum-ai/baum/decisions"
 	"github.com/baum-ai/baum/internal/config"
@@ -74,6 +75,8 @@ const CallTimeout = 10 * time.Minute
 type Registry interface {
 	Preferences(context.Context) (repos.Preferences, error)
 	RepositorySettings(ctx context.Context, repository string) (repos.Settings, bool, error)
+	// ResolvePrompts gives the prompt overrides in effect for a repository.
+	ResolvePrompts(ctx context.Context, repository string) (prompt.Overrides, map[prompt.ID]repos.PromptSource, error)
 }
 
 // Capturer captures one session at a time (README.md, "Capture").
@@ -89,7 +92,9 @@ type Capturer struct {
 	Home string
 	// CursorStore is Cursor's database; empty is its default.
 	CursorStore string
-	// Extractor is nil for the published prompt's.
+	// Extractor, when set, is used for every capture. When nil, each capture
+	// uses the extraction prompt resolved for the session's repository
+	// (repository, then global, then the published prompt).
 	Extractor *decisions.Extractor
 	// Prices is nil for pricing.Active.
 	Prices func() *pricing.List
@@ -102,6 +107,9 @@ type Capturer struct {
 
 	// locate is livesessions.Locate unless a test replaces it.
 	locate func(home, cursorStore, agent, id, path string) (livesessions.Location, error)
+
+	extractorsMu sync.Mutex
+	extractors   map[string]*decisions.Extractor
 
 	once     sync.Once
 	redactor *bundle.Redactor
@@ -202,14 +210,37 @@ func covered(row Session, fingerprint string, day time.Time) bool {
 	return row.Coverage == CoverageExtracted || !transient[row.SkipReason] || !row.UpdatedAt.Before(day)
 }
 
+// extractorFor is the extractor of a capture: Extractor when set, else one
+// for the extraction prompt resolved for the repository, kept by its text.
+// A failed resolution fails the capture rather than sending the built-in
+// prompt in place of one the user chose.
+func (c *Capturer) extractorFor(ctx context.Context, repository string) (*decisions.Extractor, error) {
+	if c.Extractor != nil {
+		return c.Extractor, nil
+	}
+	overrides, _, err := c.Registry.ResolvePrompts(ctx, repository)
+	if err != nil {
+		return nil, fmt.Errorf("resolving the extraction prompt: %w", err)
+	}
+	system := overrides[prompt.IDExtraction]
+	c.extractorsMu.Lock()
+	defer c.extractorsMu.Unlock()
+	if extractor, ok := c.extractors[system]; ok {
+		return extractor, nil
+	}
+	if c.extractors == nil {
+		c.extractors = map[string]*decisions.Extractor{}
+	}
+	extractor := decisions.NewExtractorWith(system)
+	c.extractors[system] = extractor
+	return extractor, nil
+}
+
 // Capture runs the pipeline for one session. An error is one the store or the
 // registry returned, or a failed call; what was skipped is in the report.
 func (c *Capturer) Capture(ctx context.Context, t Target, o Options) (Report, error) {
 	c.once.Do(func() {
 		c.redactor, c.initErr = bundle.NewRedactor()
-		if c.Extractor == nil {
-			c.Extractor = newExtractor()
-		}
 	})
 	if c.initErr != nil {
 		return Report{}, c.initErr
@@ -355,14 +386,18 @@ func (c *Capturer) Capture(ctx context.Context, t Target, o Options) (Report, er
 		report.Mode = "extend"
 	}
 
-	report.Tokens = c.Extractor.EstimateTokens(rendered, options)
-	report.MaxTokens = c.Extractor.MaxTokens(rendered, options)
+	extractor, err := c.extractorFor(ctx, t.Repository)
+	if err != nil {
+		return report, err
+	}
+	report.Tokens = extractor.EstimateTokens(rendered, options)
+	report.MaxTokens = extractor.MaxTokens(rendered, options)
 	if report.Tokens > MaxInputTokens {
 		return skip(ReasonOverTokenCap)
 	}
 
 	extraction := Extraction{Meta: meta, ContentHash: hash, PrefixHash: decisions.PrefixHash(rendered),
-		PromptVersion: c.Extractor.PromptVersion(), TurnTimes: turnTimes(graph)}
+		PromptVersion: extractor.PromptVersion(), TurnTimes: turnTimes(graph)}
 	if len(rendered.Turns) == 0 {
 		// No turns, no call: the existing decisions stand.
 		report.Outcome = OutcomeExtracted
@@ -394,7 +429,7 @@ func (c *Capturer) Capture(ctx context.Context, t Target, o Options) (Report, er
 	if reason != "" {
 		return skip(reason)
 	}
-	result, callErr := c.Extractor.Extract(ctx, model, rendered, options)
+	result, callErr := extractor.Extract(ctx, model, rendered, options)
 	if model.called {
 		_ = debugFile(o.DebugDir, "user.txt", []byte(model.user))
 		_ = debugFile(o.DebugDir, "reply.json", model.raw)

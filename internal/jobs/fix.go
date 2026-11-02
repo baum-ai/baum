@@ -277,11 +277,17 @@ func (l *Local) executeFix(ctx context.Context, p Prepared, progress func(Progre
 	if len(unconfirmed) > 0 {
 		return nil, &fix.Error{Reason: fix.ReasonNoRemote, Err: fmt.Errorf("GitHub did not confirm that %s still leads to %s; point the clone's remote at %s", strings.Join(unconfirmed, ", "), c.Repository, c.Repository)}
 	}
+	// A failed read must not silently run the built-in prompt in place of the
+	// one the user chose.
+	overrides, _, e := l.Registry.ResolvePrompts(ctx, c.Repository)
+	if e != nil {
+		return nil, fmt.Errorf("resolving the prompts: %w", e)
+	}
 	list := pricing.Active()
 	out, err := fix.Run(ctx, fix.Options{ID: id(), Clone: c.Path, Repository: repository, Number: p.PR, Title: pr.Title,
 		HeadRef: p.Fix.HeadRef, HeadSHA: p.HeadSHA, BaseRef: p.Fix.BaseRef, Conflicts: p.Fix.Conflicts, Checks: p.Fix.Checks, Evidence: evidence,
 		Threads: threads, Chat: conversation, Replies: l.Client, Agent: fixer, Backend: selected.Backend.Name(), Model: selected.Model, MaxCalls: cfg.Budgets.MaxCalls, MaxTokens: cfg.Budgets.MaxTokens,
-		WallClock: time.Duration(cfg.Budgets.RunTimeout), Directory: l.FixDirectory, Env: cfg.AgentEnviron(), Transcript: transcript, Logger: jobLogger(ctx, l.Log, p),
+		WallClock: time.Duration(cfg.Budgets.RunTimeout), Directory: l.FixDirectory, Env: cfg.AgentEnviron(), Transcript: transcript, Prompts: overrides, Logger: jobLogger(ctx, l.Log, p),
 		Progress: func(phase string) { progress(Progress{Phase: phase, HasTranscript: hasTranscript}) }})
 	report := Progress{Phase: "finishing", HasTranscript: hasTranscript}
 	var cost *float64

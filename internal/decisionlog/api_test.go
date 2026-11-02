@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/baum-ai/baum/agent/prompt"
 	"github.com/baum-ai/baum/decisions"
 	"github.com/baum-ai/baum/internal/livesessions"
 	"github.com/baum-ai/baum/internal/locallink"
@@ -189,6 +190,9 @@ type perRepository struct {
 
 func (r perRepository) Preferences(context.Context) (repos.Preferences, error) {
 	return repos.DefaultPreferences(), r.err
+}
+func (r perRepository) ResolvePrompts(context.Context, string) (prompt.Overrides, map[prompt.ID]repos.PromptSource, error) {
+	return nil, nil, nil
 }
 func (r perRepository) RepositorySettings(_ context.Context, repository string) (repos.Settings, bool, error) {
 	off := !r.off[repository]
