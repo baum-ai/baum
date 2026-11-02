@@ -1,0 +1,16 @@
+# agent  version  support  note        (chosen 2026-11-01; see README.md)
+# support: supported = baum's declared floor or newer; below = older than the floor, expected to be refused with an upgrade message.
+claude-code 2.1.316 supported latest and next dist-tags
+claude-code 2.1.309 supported stable dist-tag
+claude-code 2.1.280 supported 2026-09-22
+claude-code 2.1.259 supported 2026-09-02
+claude-code 2.1.248 supported baum's declared floor, 2026-08-27 (first with --restricted)
+claude-code 2.1.247 below one release under the floor (lacks --restricted)
+claude-code 2.1.222 below 2026-08-04
+claude-code 2.1.198 below 2026-07-01
+codex 0.166.0 supported latest, 2026-10-29
+codex 0.162.1 supported 2026-10-09
+codex 0.159.3 supported 2026-09-30
+codex 0.156.1 supported baum's declared floor, 2026-09-23
+codex 0.152.1 below 2026-09-01
+codex 0.149.1 below 2026-08-24

@@ -213,7 +213,15 @@ it("shows running and recently ended sessions on the Sessions page, updated by t
   liveBody = {
     sessions: [
       session(),
-      session({ session_id: "s2", state: "idle", agent: "codex", pr: undefined, branch: "wip" }),
+      // Started earlier, so it follows s1 however the milliseconds fall.
+      session({
+        session_id: "s2",
+        state: "idle",
+        agent: "codex",
+        pr: undefined,
+        branch: "wip",
+        started_at: new Date(Date.now() - 6 * 60_000).toISOString(),
+      }),
       session({
         session_id: "s3",
         state: "ended",

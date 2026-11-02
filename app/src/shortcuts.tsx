@@ -107,7 +107,7 @@ const KEY_NAMES: Record<string, string> = {
   " ": "Space",
 };
 /** The app's command modifier as drawn: ⌘ on a Mac, Ctrl elsewhere. */
-const COMMAND = MAC ? "⌘" : "Ctrl+";
+export const COMMAND = MAC ? "⌘" : "Ctrl+";
 
 /** A page's key as drawn on its sidebar link and in the sheet: "⌘2". */
 export function pageKeyLabel(page: Page) {

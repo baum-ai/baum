@@ -111,6 +111,15 @@ are capability requirements; update the agent if these controls are missing.
 Codex supports manually installed/Git marketplace lifecycle-hook plugins;
 they are not eligible for OpenAI's universal public plugin directory.
 
+## Supported agent versions
+
+baum runs reviews, fixes and chat through Claude Code 2.1.248 or newer and
+Codex 0.156.1 or newer, and refuses older ones with an upgrade message
+(`baum internal doctor` shows it). Claude Code 2.1.247 and older do not accept
+`--restricted`. The plugin commands need `claude plugin list --json`, which the
+oldest 2.1 releases lack. The [agent version matrix](../scripts/agent-matrix/README.md)
+checks the declared floors and several newer releases of each agent.
+
 ## Manual installation and trust
 
 Install baum on `PATH`, then add the marketplace and install the plugin.

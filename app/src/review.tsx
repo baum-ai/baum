@@ -994,7 +994,10 @@ export function LocalReview({
                       // The pull request's state stays by the version and its age,
                       // holding its remedies (a fix, re-running the checks, updating
                       // the branch) in its menu; Ask and Merge stay at the row's end.
-                      <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+                      <div
+                        data-tour="review-actions"
+                        className="flex flex-wrap items-center gap-x-4 gap-y-2"
+                      >
                         <StatusMenu
                           entry={entry}
                           items={[

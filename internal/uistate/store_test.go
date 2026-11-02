@@ -41,8 +41,12 @@ func TestPersistenceAndRevisionAcrossInstances(t *testing.T) {
 	}
 	save(t, s, "walkthrough", key, 0, "mutation-00000001", draft)
 	save(t, s, "inbox", "", 0, "mutation-00000002", inbox)
+	save(t, s, "tour", "", 0, "mutation-00000004", `{"seen":true}`)
+	if _, err := s.Replace("tour", "", 1, "mutation-00000004:2", json.RawMessage(`{}`)); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("tour without seen: %v", err)
+	}
 	reopened := &Store{Path: s.Path}
-	for _, test := range []struct{ kind, key, value string }{{"walkthrough", key, draft}, {"inbox", "", inbox}} {
+	for _, test := range []struct{ kind, key, value string }{{"walkthrough", key, draft}, {"inbox", "", inbox}, {"tour", "", `{"seen":true}`}} {
 		got, err := reopened.Read(test.kind, test.key)
 		if err != nil || got.Revision != 1 || string(got.Value) != test.value {
 			t.Fatalf("reopen: %+v %v", got, err)

@@ -4296,7 +4296,14 @@ dialog.go-to {
 /* One key, wherever a key is shown outside a menu: inside a button, in a
    page's key bar, in the shortcuts sheet and the walkthrough. A menu lists its
    keys as plain grey text instead, as a desktop menu does. */
-:is(kbd.key-hint, .key-bar kbd, .shortcuts-sheet kbd, .walkthrough kbd, .upnext-page kbd) {
+:is(
+  kbd.key-hint,
+  .key-bar kbd,
+  .shortcuts-sheet kbd,
+  .walkthrough kbd,
+  .upnext-page kbd,
+  .tour kbd
+) {
   padding: 1px 5px;
   border: 1px solid currentColor;
   border-radius: var(--radius-xs);
