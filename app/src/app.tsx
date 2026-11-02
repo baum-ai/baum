@@ -28,6 +28,7 @@ import {
 import {
   freeName,
   fromQuery,
+  withQuery,
   inboxBadgeCount,
   matches,
   MAX_INBOXES,
@@ -1062,7 +1063,10 @@ function Workspace({ url }: { url: UrlState }) {
       ? (query: string, base?: SavedInbox) => {
           // From an inbox: a copy of it, named so no other inbox has the name.
           const made = base
-            ? { ...base, id: newInboxId(), name: freeName(base.name, inboxes.inboxes), query }
+            ? withQuery(
+                { ...base, id: newInboxId(), name: freeName(base.name, inboxes.inboxes) },
+                query,
+              )
             : fromQuery(query, inboxes.inboxes);
           inboxes.save([...inboxes.inboxes, made]);
           setFreshInbox(made.id);
@@ -1587,6 +1591,7 @@ function Workspace({ url }: { url: UrlState }) {
                       <button
                         key={key}
                         type="button"
+                        data-tab={key}
                         aria-pressed={key === activeTab}
                         className={count === 0 ? "local-tab empty" : "local-tab"}
                         onClick={() => openTab(key)}
@@ -1774,12 +1779,10 @@ function Workspace({ url }: { url: UrlState }) {
               close={() => {
                 setDeletingTab(null);
                 // Back to the tab its menu was opened on.
-                const name = deletingTab.name;
+                const key = `tab:${deletingTab.id}`;
                 setTimeout(() => {
                   if (document.activeElement !== document.body) return;
-                  [...document.querySelectorAll<HTMLElement>('[aria-label="Show"] button')]
-                    .find((one) => one.textContent?.startsWith(name))
-                    ?.focus();
+                  document.querySelector<HTMLElement>(`[data-tab="${CSS.escape(key)}"]`)?.focus();
                 });
               }}
               confirm={() => {

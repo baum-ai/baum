@@ -1559,6 +1559,19 @@ export function SessionsPage({
     if (!peekKey || opened.current === peekKey) return;
     const s = sessions.find((x) => sessionKey(x) === peekKey);
     if (!s) return;
+    // A collapsed section opens first, so the card is there to open.
+    const holds = (w: Waiting) => waitingKey(w) === peekKey;
+    const section: Section = asking.some(holds)
+      ? "needs"
+      : idle.some(holds)
+        ? "waiting"
+        : s.state === "ended"
+          ? "ended"
+          : "running";
+    if (collapsed[section]) {
+      toggle(section);
+      return;
+    }
     opened.current = peekKey;
     rows.setFocused(peekKey);
     setPeeking(peekKey);
@@ -1566,7 +1579,7 @@ export function SessionsPage({
     document
       .querySelector(`[data-row-id="${CSS.escape(peekKey)}"]`)
       ?.scrollIntoView?.({ block: "nearest" });
-  }, [peekKey, sessions]);
+  }, [peekKey, sessions, collapsed]);
   useShortcuts((event) => {
     // Escape closes a peek before it clears the row.
     if (event.key === "Escape" && peeking) {

@@ -125,6 +125,19 @@ export function folded(inbox: Inbox): Inbox {
   };
 }
 
+/** The inbox holding only `query`, its parts cleared: the query says it all. */
+export function withQuery(inbox: Inbox, query: string): Inbox {
+  return {
+    ...inbox,
+    what: "any",
+    owners: [],
+    risk: "any",
+    repositories: [],
+    no_bots: false,
+    query,
+  };
+}
+
 export function matches(inbox: Inbox, { kind, entry }: Matchable): boolean {
   return matchesQuery(foldedQuery(inbox), entry, kind);
 }

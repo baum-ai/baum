@@ -303,6 +303,29 @@ it("keeps changes made before Save, and leaving drops the unsaved inbox", async 
   expect(puts).toHaveLength(1);
 });
 
+it("checks the name as typed on Save, and keeps the unsaved inbox when the save is refused", async () => {
+  await render("?page=inbox-new");
+  await click(template("Urgent"));
+  await type(nameInput(), "Acme");
+  await click(button("Save"));
+  // Taken: nothing is saved and it says why.
+  expect(puts).toHaveLength(0);
+  expect(node.querySelector(".inbox-name-error")!.textContent).toBe(
+    "Another inbox already has that name.",
+  );
+  await type(nameInput(), "Hot");
+  inboxesFail = 500;
+  await click(button("Save"));
+  // Refused: still the unsaved inbox, to save again.
+  expect(search().get("page")).toBe("inbox-edit");
+  expect(node.querySelector("h1")!.textContent).toBe("New inbox");
+  expect(nameInput().value).toBe("Hot");
+  inboxesFail = null;
+  await click(button("Save"));
+  expect(puts.at(-1)!.inboxes.at(-1)).toMatchObject({ name: "Hot", query: "risk>=4" });
+  expect(search().get("inbox")).toBe(puts.at(-1)!.inboxes.at(-1)!.id);
+});
+
 it("makes Personal from the login with the badge off, and the others as their query says", async () => {
   await saveTemplate("Personal");
   expect(puts[0]!.inboxes[2]).toMatchObject({

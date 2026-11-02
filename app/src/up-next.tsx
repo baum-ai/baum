@@ -65,6 +65,7 @@ import {
   COLOR_NAMES,
   foldedQuery,
   INBOX_COLORS,
+  withQuery,
   inboxesOf,
   nameProblem,
   type Inbox,
@@ -713,7 +714,7 @@ export function InboxTag({ inbox }: { inbox: Inbox }) {
   return <span className={`upnext-tag inbox-${inbox.color}`}>{inbox.name}</span>;
 }
 
-/** The six inbox colours as a radio group; `pick` hears a new one. */
+/** The six inbox colours as a radio group; `pick` hears each click. */
 export function ColourSwatches({
   color: current,
   pick,
@@ -738,9 +739,7 @@ export function ColourSwatches({
           aria-label={COLOR_NAMES[color]}
           title={COLOR_NAMES[color]}
           className={`inbox-swatch inbox-${color}`}
-          onClick={() => {
-            if (current !== color) pick(color);
-          }}
+          onClick={() => pick(color)}
         />
       ))}
     </div>
@@ -790,7 +789,7 @@ function InboxHeadEdit({
             className="inbox-head-swatches"
             pick={(color) => {
               colours.close();
-              update({ color });
+              if (color !== inbox.color) update({ color });
             }}
           />
         ) : null}
@@ -1189,7 +1188,7 @@ export function UpNextPage({
                 {
                   label: "Update inbox",
                   // The draft goes once the inbox holds it, so a failed save keeps it.
-                  onSelect: () => updateInbox({ query }),
+                  onSelect: () => updateInbox(withQuery(scope, query)),
                 },
               ]
             : []),
@@ -1460,7 +1459,7 @@ export function UpNextPage({
               Link={Link}
             />
           ) : filtering &&
-            unfiltered.length > 0 &&
+            hidden > 0 &&
             // Waiting rows are never selected, so the lists say what is left.
             queue.length + fixing.length + waiting.length + snoozed.length === 0 ? (
             <div className="upnext-zero">

@@ -301,7 +301,16 @@ export function FilterButton({
   ) : null;
 
   return (
-    <details {...detailsProps} className="filter-menu">
+    <details
+      {...detailsProps}
+      className="filter-menu"
+      // Tab past its last control (or before its first) leaves the menu,
+      // which then closes, as a pointer elsewhere does.
+      onBlur={(event) => {
+        const next = event.relatedTarget as Node | null;
+        if (next && !event.currentTarget.contains(next)) close();
+      }}
+    >
       <summary
         aria-label={lit ? "Filter, in force" : "Filter"}
         title={lit ? `Filter: ${query}` : "Filter"}

@@ -152,6 +152,15 @@ export function EditInboxPage({
   const { inboxes, Link } = page;
   const saved = inboxes.find((one) => one.id === id);
   const unsaved = !saved && draft?.id === id ? draft : null;
+  // A Save of an inbox not saved yet goes to its queue once the daemon has
+  // it; one refused leaves the draft here to try again.
+  const [saving, setSaving] = useState<number | null>(null);
+  useEffect(() => {
+    if (saving === null || page.saves <= saving) return;
+    setSaving(null);
+    setDraft(null);
+    page.go(appURL(`?inbox=${encodeURIComponent(id)}`));
+  }, [page.saves]);
   const inbox = saved ?? unsaved;
   if (!inbox)
     return (
@@ -174,6 +183,11 @@ export function EditInboxPage({
       fresh={fresh || !!unsaved}
       remove={remove}
       keepDraft={unsaved ? setDraft : undefined}
+      saveDraft={(made) => {
+        setDraft(made);
+        page.save([...inboxes, made]);
+        setSaving(page.saves);
+      }}
       {...page}
     />
   );
@@ -184,6 +198,7 @@ function EditInbox({
   fresh,
   remove,
   keepDraft,
+  saveDraft,
   inboxes,
   items,
   saves,
@@ -196,6 +211,8 @@ function EditInbox({
   remove: (inbox: Inbox, after?: () => void) => void;
   /** Takes each change while the inbox is not saved yet; Save then adds it. */
   keepDraft?: (inbox: Inbox | null) => void;
+  /** Adds the inbox not saved yet. */
+  saveDraft?: (inbox: Inbox) => void;
 }) {
   const saved = useSavedMark(saves);
   const ids = useId();
@@ -306,7 +323,12 @@ function EditInbox({
                   }
                 }}
               />
-              <ColourSwatches color={inbox.color} pick={(color) => change({ color })} />
+              <ColourSwatches
+                color={inbox.color}
+                pick={(color) => {
+                  if (color !== inbox.color) change({ color });
+                }}
+              />
             </div>
             {nameError ? (
               <p id={`${ids}-name-error`} role="alert" className="inbox-name-error">
@@ -359,11 +381,11 @@ function EditInbox({
               <button
                 type="button"
                 className={PRIMARY}
-                disabled={!!nameProblem(inbox.name, inboxes, inbox.id)}
                 onClick={() => {
-                  save([...inboxes, inbox]);
-                  keepDraft(null);
-                  go(appURL(`?inbox=${encodeURIComponent(inbox.id)}`));
+                  // The name as typed, checked as leaving its field would.
+                  const problem = nameProblem(draft, inboxes, inbox.id);
+                  setNameError(problem);
+                  if (!problem) saveDraft?.({ ...inbox, name: draft.trim() });
                 }}
               >
                 Save

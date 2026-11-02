@@ -977,8 +977,9 @@ after the last key, and at Enter or leaving the box; one longer than 500
 characters is not applied and says so.
 
 In the Inbox (all) the save is **Create inbox**, which appends an inbox named
-"Filtered" (or "Filtered 2"…) holding the query and opens its edit page as New
-inbox does; it is not offered at 20 inboxes or with an older daemon, and the
+"Filtered" (or "Filtered 2"…) holding the query, saved at once, and opens its
+edit page ("Created and added to the sidebar. Adjust anything below."); it is
+not offered at 20 inboxes or with an older daemon, and the
 Inbox's filter stays as it was. In a saved inbox the menu starts from the
 inbox's own query, its values ticked; a change is a draft that narrows the
 queue (kept per inbox) until the save, as GitHub's merge button: **Update
@@ -986,9 +987,10 @@ inbox** gives the inbox the query, and the arrow beside it offers **Create
 inbox**, a copy of the inbox with it, and **Discard changes** (all only while
 the draft differs; the draft goes once the inbox holds it, so a failed save
 keeps it). **Clear** there empties the draft, which then shows the whole queue.
-`waiting=` is refused outside an inbox's queue. With nothing matching, the
-queue's panel says "Nothing matches the filter", how many it hides, and
-**Clear the filter**. Each page keeps its own filter or draft (`inbox`,
+`waiting=` is refused outside an inbox's queue. With nothing matching while
+the filter hides something, the queue's panel says "Nothing matches the
+filter", how many it hides, and **Clear the filter** (in a saved inbox,
+**Discard the changes**). Tabbing out of the menu closes it. Each page keeps its own filter or draft (`inbox`,
 `inbox:<id>`, `pulls` or a saved tab's `tab:<id>`) in the daemon's
 `ui/filters` document (see the [uistate README](../internal/uistate/README.md)),
 across windows and restarts; a failed save says so with **Retry**.
@@ -1023,8 +1025,10 @@ a label, with no key of its own, reached with Tab.
   edit page, titled New inbox, on an inbox not saved yet ("Not saved yet.
   Adjust anything below, then Save.", its Name input focused, "← New inbox"
   back), whose changes stay in the page; **Save**, in Delete inbox's place,
-  appends it to the list with an id the app makes in the daemon's shape and
-  opens its queue. Leaving the page drops it. At 20 inboxes the templates are
+  checks the name as typed, appends the inbox to the list with an id the app
+  makes in the daemon's shape and, once the daemon has it, opens its queue (a
+  refused save leaves the unsaved inbox on the page). Leaving the inbox pages
+  drops it. At 20 inboxes the templates are
   disabled, with a line saying so.
 - **Edit** (`?page=inbox-edit&inbox=<id>`): "← <name>" back to its queue, a
   "Saved" mark after each save the daemon accepted, and "Changes save as you
