@@ -196,12 +196,14 @@ export function Tour({ close }: { close: () => void }) {
   }, [rect, index]);
   useEffect(() => next.current?.focus({ preventScroll: true }), [index]);
 
-  // ← and → step between the cards and Enter presses Next or Done, wherever the focus is,
-  // ahead of the page's own keys. A text field and the card's other buttons
-  // and dialogs keep theirs. They are the tour's alone, so the key list leaves them out.
+  // ← and → step between the cards, Enter presses Next or Done and Escape
+  // closes the tour, wherever the focus is, ahead of the page's own keys. A
+  // text field, the card's other buttons and dialogs keep theirs. They are
+  // the tour's alone, so the key list leaves them out.
   const step = useRef<(key: string) => void>(() => {});
   step.current = (key) => {
-    if (key === "ArrowLeft") {
+    if (key === "Escape") close();
+    else if (key === "ArrowLeft") {
       if (index > 0) go(index - 1);
     } else if (!last) go(index + 1);
     // Enter on the last card is Done; → stays there.
@@ -209,7 +211,7 @@ export function Tour({ close }: { close: () => void }) {
   };
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
-      if (!["ArrowLeft", "ArrowRight", "Enter"].includes(event.key)) return;
+      if (!["ArrowLeft", "ArrowRight", "Enter", "Escape"].includes(event.key)) return;
       if (event.metaKey || event.ctrlKey || event.altKey || event.shiftKey || event.isComposing)
         return;
       const target = event.target instanceof Element ? event.target : null;
@@ -243,11 +245,10 @@ export function Tour({ close }: { close: () => void }) {
         aria-labelledby="tour-title"
         className="tour-card"
         style={position}
-        // Enter and Space press the tour's buttons and Escape closes it; every
-        // other key reaches the page, so the keys it teaches work.
+        // Enter and Space press the tour's buttons; every other key reaches
+        // the page, so the keys it teaches work.
         onKeyDown={(event) => {
-          if (event.key === "Escape") close();
-          if (["Escape", "Enter", " "].includes(event.key)) event.stopPropagation();
+          if (["Enter", " "].includes(event.key)) event.stopPropagation();
         }}
       >
         <Button

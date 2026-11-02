@@ -159,7 +159,11 @@ test("the tour shows on the first launch only, and Go to opens it again", async 
       await page.keyboard.press("Enter");
       await expect(card).toContainText("Your Inbox");
       await expect(page).not.toHaveURL(/\/sample\//);
-      await card.getByRole("button", { name: replay ? "Close the tour" : "Skip" }).click();
+      // The second time Escape closes it, wherever the focus is.
+      if (replay) {
+        await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+        await page.keyboard.press("Escape");
+      } else await card.getByRole("button", { name: "Skip" }).click();
       await expect(card).toHaveCount(0);
       await expect(page).not.toHaveURL(/[?&]tour=/);
     }
