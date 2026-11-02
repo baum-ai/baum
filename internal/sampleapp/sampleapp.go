@@ -44,6 +44,8 @@ import (
 	"github.com/baum-ai/baum/internal/transcript"
 	"github.com/baum-ai/baum/internal/uiserver"
 	"github.com/baum-ai/baum/internal/uistate"
+	"github.com/baum-ai/baum/sessions"
+	"github.com/baum-ai/baum/sessions/vendors"
 )
 
 // Refused marks the answer to a request the sample project refuses, in its
@@ -134,6 +136,9 @@ func (w *Workspace) build(ctx context.Context, now time.Time) (http.Handler, err
 	if err != nil {
 		return nil, fmt.Errorf("writing the project: %w", err)
 	}
+	if err := writeCheckpoints(ctx, p, now); err != nil {
+		return nil, fmt.Errorf("writing the checkpoints: %w", err)
+	}
 	registry, err := repos.Open(appDB)
 	if err != nil {
 		return nil, err
@@ -158,6 +163,9 @@ func (w *Workspace) build(ctx context.Context, now time.Time) (http.Handler, err
 	w.closers = append(w.closers, func() { _ = decided.Close() })
 	if err := writeSessions(ctx, p, home, appDB, events, decided, now); err != nil {
 		return nil, fmt.Errorf("writing the sessions: %w", err)
+	}
+	if err := writeTeammateDecisions(ctx, decided, now); err != nil {
+		return nil, fmt.Errorf("writing the teammate's decisions: %w", err)
 	}
 	if err := decided.SeedSample(ctx, repository, listedPulls(p, now), summaries, features(now)); err != nil {
 		return nil, fmt.Errorf("writing the features: %w", err)
@@ -205,6 +213,8 @@ func (w *Workspace) build(ctx context.Context, now time.Time) (http.Handler, err
 	uiState := &uistate.Store{Path: appDB}
 	quiet := func() {}
 	api := uiserver.LocalAPI{Registry: registry, Config: cfg, Changed: quiet,
+		// A pull request's sessions are the sample's, never this computer's.
+		Sessions:   sessions.Options{Sources: []vendors.Slug{vendors.ClaudeCode}, ClaudeProjectsDir: filepath.Join(home, ".claude", "projects")},
 		PRs:        uiserver.DiscoveryHandler(registry, disc, nil),
 		Index:      index.Handler(),
 		Jobs:       queue.Handler(),

@@ -559,12 +559,18 @@ func writeProject(ctx context.Context, dir string, now time.Time) (project, erro
 			return p, err
 		}
 		p.main, p.heads[newestFirst.number] = head, head
+		p.commits[newestFirst.number] = append(p.commits[newestFirst.number], head)
 	}
 	for _, pr := range openPulls {
 		if _, err := git(now, sam, "checkout", "-q", "-b", pr.branch, "main"); err != nil {
 			return p, err
 		}
-		for _, c := range pr.commits {
+		for i, c := range pr.commits {
+			// A teammate's commits name the Entire checkpoint of the session
+			// that made them.
+			if checkpointed(pr) {
+				c.message += "\n\nEntire-Checkpoint: " + checkpointID(pr, i)
+			}
 			head, err := write(c)
 			if err != nil {
 				return p, err

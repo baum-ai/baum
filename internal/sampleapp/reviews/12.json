@@ -210,6 +210,11 @@
               "type": "issue",
               "system": "linear",
               "key": "NOTES-8"
+            },
+            {
+              "type": "prompt",
+              "session": "a1e70c11-0000-4000-8000-000000000012",
+              "index": 1
             }
           ]
         },
@@ -542,6 +547,11 @@
             },
             {
               "type": "pr_body"
+            },
+            {
+              "type": "prompt",
+              "session": "a1e70c11-0000-4000-8000-000000000013",
+              "index": 1
             }
           ]
         },

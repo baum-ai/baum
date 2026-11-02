@@ -245,10 +245,31 @@ func activity(p project, pr pull, now time.Time) ([]bundle.ConversationItem, []b
 	return []bundle.ConversationItem{}, []bundle.Thread{}
 }
 
-// wroteIt is the agent session that wrote a pull request, as the review
-// sees it: each sample pull request was written with Claude Code.
+// wroteIt are the agent sessions that wrote a pull request, as its review
+// sees them: Alex's from the Entire checkpoints, Sam's from this computer.
 func wroteIt(pr pull, now time.Time) []bundle.Session {
-	first, last := now.Add(-pr.commits[0].ago-time.Hour), now.Add(-pr.commits[len(pr.commits)-1].ago)
-	return []bundle.Session{{RootSessionID: fmt.Sprintf("00000000-0000-4000-8000-%012d", pr.number), Vendor: "claude_code",
-		Models: []string{"claude-opus-5-5"}, Title: pr.title, Branch: pr.branch, StartedAt: &first, EndedAt: &last}}
+	session := func(id, title, model string, prompts []string, at func(int) time.Time, end time.Time) bundle.Session {
+		start := at(0)
+		s := bundle.Session{RootSessionID: id, Vendor: "claude_code", Models: []string{model}, Title: title, Branch: pr.branch,
+			StartedAt: &start, EndedAt: &end, Outcome: "committed"}
+		for i, text := range prompts {
+			sent := at(i)
+			s.Prompts = append(s.Prompts, bundle.Prompt{At: &sent, Index: i + 1, ID: fmt.Sprintf("p%d", i+1), Text: text})
+		}
+		return s
+	}
+	var wrote []bundle.Session
+	for _, t := range teammateSessions {
+		if t.pr.number == pr.number {
+			_, end := t.span(now)
+			wrote = append(wrote, session(t.id, t.title, teammateModel, t.prompts, func(i int) time.Time { return t.turnAt(i, now) }, end))
+		}
+	}
+	for _, a := range agentSessions {
+		if a.pr == pr.number {
+			times := a.turnTimes(now)
+			wrote = append(wrote, session(a.id, a.title, a.model, a.prompts, func(i int) time.Time { return times[i+1] }, times[len(a.prompts)].Add(3*time.Minute)))
+		}
+	}
+	return wrote
 }

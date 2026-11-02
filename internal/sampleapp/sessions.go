@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -105,7 +106,7 @@ func (s agentSession) turnTimes(now time.Time) map[int]time.Time {
 // from them and its ledger, and a plan usage history.
 func writeSessions(ctx context.Context, p project, home, appDB string, events *hookevents.Store, decided *decisionlog.Store, now time.Time) error {
 	for _, s := range agentSessions {
-		path, err := writeTranscript(home, s, s.cwd(p), now)
+		path, err := writeTranscript(home, s, p, now)
 		if err != nil {
 			return err
 		}
@@ -155,8 +156,12 @@ func writeSessions(ctx context.Context, p project, home, appDB string, events *h
 }
 
 // writeTranscript writes a Claude Code transcript of the session: its
-// title, then each prompt answered after running the tests once.
-func writeTranscript(home string, s agentSession, cwd string, now time.Time) (string, error) {
+// title, then each prompt answered after running the tests once. A session
+// on a pull request edits its files first and commits them last, so the
+// pull request's page links it.
+func writeTranscript(home string, s agentSession, p project, now time.Time) (string, error) {
+	cwd := s.cwd(p)
+	pr, onPull := pullNumbered(s.pr)
 	var lines strings.Builder
 	add := func(v map[string]any) {
 		v["sessionId"], v["cwd"], v["gitBranch"], v["isSidechain"], v["version"] = s.id, cwd, s.branch, false, "2.1.220"
@@ -174,14 +179,36 @@ func writeTranscript(home string, s agentSession, cwd string, now time.Time) (st
 		usage := map[string]any{"input_tokens": 1800 + 400*i, "output_tokens": 350 + 90*i, "cache_creation_input_tokens": 0, "cache_read_input_tokens": 12000 + 3000*i}
 		add(map[string]any{"type": "user", "uuid": "u" + n, "parentUuid": parent, "timestamp": at(0), "promptId": "p" + n, "promptSource": "typed", "origin": map[string]any{"kind": "human"},
 			"message": map[string]any{"role": "user", "content": prompt}})
+		uses := []any{map[string]any{"type": "tool_use", "id": "tool-" + n, "name": "Bash", "input": map[string]any{"command": "go test ./..."}}}
+		results := []any{map[string]any{"type": "tool_result", "tool_use_id": "tool-" + n, "content": "ok  \texample.com/notes\t0.012s"}}
+		if onPull && i == 0 {
+			var edits, edited []any
+			for j, file := range pullFiles(pr) {
+				tool := fmt.Sprintf("edit-%s-%d", n, j)
+				edits = append(edits, map[string]any{"type": "tool_use", "id": tool, "name": "Edit",
+					"input": map[string]any{"file_path": filepath.Join(cwd, file), "old_string": "", "new_string": pullText(pr, file)}})
+				edited = append(edited, map[string]any{"type": "tool_result", "tool_use_id": tool, "content": "The file " + filepath.Join(cwd, file) + " has been updated."})
+			}
+			uses, results = append(edits, uses...), append(edited, results...)
+		}
 		add(map[string]any{"type": "assistant", "uuid": "a" + n, "parentUuid": "u" + n, "timestamp": at(time.Minute), "requestId": "req-a" + n,
-			"message": map[string]any{"id": "msg-a" + n, "role": "assistant", "model": s.model, "stop_reason": "tool_use", "usage": usage,
-				"content": []any{map[string]any{"type": "tool_use", "id": "tool-" + n, "name": "Bash", "input": map[string]any{"command": "go test ./..."}}}}})
+			"message": map[string]any{"id": "msg-a" + n, "role": "assistant", "model": s.model, "stop_reason": "tool_use", "usage": usage, "content": uses}})
 		add(map[string]any{"type": "user", "uuid": "r" + n, "parentUuid": "a" + n, "timestamp": at(2 * time.Minute), "promptId": "p" + n, "sourceToolAssistantUUID": "a" + n,
-			"message": map[string]any{"role": "user", "content": []any{map[string]any{"type": "tool_result", "tool_use_id": "tool-" + n, "content": "ok  \texample.com/notes\t0.012s"}}}})
-		add(map[string]any{"type": "assistant", "uuid": "b" + n, "parentUuid": "r" + n, "timestamp": at(3 * time.Minute), "requestId": "req-b" + n,
+			"message": map[string]any{"role": "user", "content": results}})
+		last, answer := "r"+n, reply(prompt)
+		if onPull && i == len(s.prompts)-1 {
+			head, message := p.heads[pr.number], pr.commits[len(pr.commits)-1].message
+			add(map[string]any{"type": "assistant", "uuid": "c" + n, "parentUuid": last, "timestamp": at(2*time.Minute + 30*time.Second), "requestId": "req-c" + n,
+				"message": map[string]any{"id": "msg-c" + n, "role": "assistant", "model": s.model, "stop_reason": "tool_use", "usage": usage,
+					"content": []any{map[string]any{"type": "tool_use", "id": "commit-" + n, "name": "Bash", "input": map[string]any{"command": "git commit -am " + quote(message)}}}}})
+			add(map[string]any{"type": "user", "uuid": "k" + n, "parentUuid": "c" + n, "timestamp": at(2*time.Minute + 40*time.Second), "promptId": "p" + n, "sourceToolAssistantUUID": "c" + n,
+				"message": map[string]any{"role": "user", "content": []any{map[string]any{"type": "tool_result", "tool_use_id": "commit-" + n,
+					"content": fmt.Sprintf("[%s %s] %s", pr.branch, head[:7], message)}}}})
+			last, answer = "k"+n, "Done and committed as "+head[:7]+". The tests pass."
+		}
+		add(map[string]any{"type": "assistant", "uuid": "b" + n, "parentUuid": last, "timestamp": at(3 * time.Minute), "requestId": "req-b" + n,
 			"message": map[string]any{"id": "msg-b" + n, "role": "assistant", "model": s.model, "stop_reason": "end_turn", "usage": usage,
-				"content": []any{map[string]any{"type": "text", "text": reply(prompt)}}}})
+				"content": []any{map[string]any{"type": "text", "text": answer}}}})
 		parent = "b" + n
 	}
 	path := filepath.Join(home, ".claude", "projects", claudecode.EncodeProjectDir(cwd), s.id+".jsonl")
@@ -197,4 +224,38 @@ func reply(prompt string) string {
 		return "Here is what I found, and the smallest change that would do it. The tests pass as they are."
 	}
 	return "Done. The tests pass."
+}
+
+// pullNumbered is the sample pull request numbered n.
+func pullNumbered(n int) (pull, bool) {
+	for _, pl := range append([]pull{newestFirst}, openPulls...) {
+		if pl.number == n {
+			return pl, true
+		}
+	}
+	return pull{}, false
+}
+
+// pullFiles are the files a pull request's commits write.
+func pullFiles(pr pull) []string {
+	var files []string
+	for _, c := range pr.commits {
+		for _, file := range changedFiles(c) {
+			if !slices.Contains(files, file) {
+				files = append(files, file)
+			}
+		}
+	}
+	return files
+}
+
+// pullText is a file as a pull request's last commit to write it left it.
+func pullText(pr pull, file string) string {
+	text := ""
+	for _, c := range pr.commits {
+		if written, ok := c.files[file]; ok {
+			text = written
+		}
+	}
+	return text
 }

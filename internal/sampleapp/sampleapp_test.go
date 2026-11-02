@@ -78,6 +78,28 @@ func TestWorkspaceServesEveryPage(t *testing.T) {
 	if !strings.Contains(patch.Patch, "func CleanTags") {
 		t.Fatalf("patch of tags.go = %q", patch.Patch)
 	}
+	// The pull request the tour opens links its author's sessions, from the
+	// Entire checkpoints its commits name, and their decisions.
+	var linked struct {
+		Sessions []struct{ ID string }
+		Commits  []struct{ Links []struct{ Session string } }
+	}
+	get("api/sessions?clone="+clone+"&pr=12", &linked)
+	if len(linked.Sessions) != 2 {
+		t.Fatalf("#12 links %d sessions: %+v", len(linked.Sessions), linked)
+	}
+	for _, c := range linked.Commits {
+		if len(c.Links) == 0 {
+			t.Fatalf("a commit of #12 links no session: %+v", linked.Commits)
+		}
+	}
+	var captured struct {
+		Sessions []struct{ Decisions []struct{ Title string } }
+	}
+	get("api/decisions?repository="+repo+"&pr=12", &captured)
+	if len(captured.Sessions) != 2 || len(captured.Sessions[0].Decisions) == 0 {
+		t.Fatalf("decisions of #12 = %+v", captured)
+	}
 
 	var features struct {
 		Features []struct{ Title string } `json:"features"`

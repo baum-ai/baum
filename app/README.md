@@ -154,7 +154,10 @@ and later when the person's own index has no pull requests, and back when it
 closes. There `SampleGuard`
 (`src/sample.tsx`) turns the daemon's refusal of a change (its
 `X-Baum-Sample: refused` header) into a toast and holds back links out of the
-app; elsewhere it does nothing.
+app; elsewhere it does nothing. Its pull request pages link the sample's own
+sessions (`LocalAPI.Sessions`), never this computer's: the person's from its
+home folder and a teammate's from the Entire checkpoints the commits name, with
+the decisions captured from them.
 
 The PR page reuses the same `@baum/viewer` `ReviewViewer`, header, section/risk
 navigation, version menu/comparison, Markdown/code renderers, session cards,
