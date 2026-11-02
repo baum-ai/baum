@@ -110,7 +110,10 @@ test("with no pull requests of its own, the tour shows the sample project", asyn
         await expect(page.locator(".upnext-list")).toContainText("Add tags to notes");
         if (pictures) return;
         // The card covers the panel's link, so the click goes to it directly.
-        await page.locator(".upnext-panel").getByText("Open on GitHub").dispatchEvent("click");
+        await page
+          .locator(".upnext-panel")
+          .getByRole("link", { name: /^Open .* on GitHub$/ })
+          .dispatchEvent("click");
         await expect(page.locator(".local-toast")).toContainText("Not in the sample project");
         expect(page.context().pages()).toHaveLength(1);
       },
@@ -118,7 +121,8 @@ test("with no pull requests of its own, the tour shows the sample project", asyn
         ? {}
         : {
             "A pull request's review": async () => {
-              await page.getByRole("button", { name: "Regenerate review" }).click();
+              await page.getByRole("button", { name: "Review version", exact: true }).click();
+              await page.getByRole("button", { name: "Regenerate review", exact: true }).click();
               await expect(page.locator(".local-toast")).toContainText("Not in the sample project");
             },
           }),

@@ -189,6 +189,7 @@ func (a LocalAPI) Handler() *LocalHandler {
 	mux.Handle("POST /api/prs/resolve-thread", update)
 	mux.Handle("GET /api/prs/failing-checks", update)
 	mux.Handle("GET /api/prs/checks", update)
+	mux.Handle("GET /api/prs/description", update)
 	mux.Handle("GET /api/prs/conflicts", update)
 	mux.Handle("POST /api/prs/rerun-job", update)
 	mux.Handle("/api/prs", provider(a.PRs, "discovery_unavailable"))
@@ -498,6 +499,9 @@ func (a LocalAPI) Handler() *LocalHandler {
 	mux.HandleFunc("GET /api/sessions/{id}", document)
 	mux.HandleFunc("GET /api/patch", document)
 	mux.HandleFunc("GET /api/commits", document)
+	mux.HandleFunc("GET /api/commit", document)
+	mux.HandleFunc("GET /api/commit-patch", document)
+	mux.HandleFunc("GET /api/file", document)
 	a.factsRoutes(mux, cache)
 	mux.HandleFunc("GET /api/attachments/{id}", func(w http.ResponseWriter, r *http.Request) {
 		c, key, n, ok := a.selector(w, r)

@@ -2,7 +2,7 @@ import { type ReactNode, useId } from "react";
 import { cn, FOCUS_RING } from "./classnames";
 import { CARD_LABEL } from "./editorial";
 import { ChevronDownIcon, type IconProps } from "./icons";
-import { Spinner } from "./ui";
+import { LiveDot, Spinner } from "./ui";
 
 /** The rows of a vertical navigation rail, such as the review rail beside a
  *  pull request. A rail inside a page only reads as navigation if its rows are
@@ -154,6 +154,7 @@ export function SideNavDisclosure({
   count,
   tint,
   busy = false,
+  indicator,
   list,
   controls,
   onSelect,
@@ -163,6 +164,9 @@ export function SideNavDisclosure({
   tint?: RowTint;
   /** The group's contents are being fetched or refreshed right now. */
   busy?: boolean;
+  /** Something in the group is happening now: `live` for work in progress,
+   *  `attention` for work waiting on the reader. A pulsing dot by the label. */
+  indicator?: "live" | "attention";
   expanded: boolean;
   /** Whether the pane is showing this group. Said as `aria-pressed`, the way
    *  every other row of this rail says it: two vocabularies for one selection
@@ -213,6 +217,19 @@ export function SideNavDisclosure({
       />
       <Icon className={glyphClass(state, tint)} />
       <Label>{label}</Label>
+      {indicator ? (
+        <span
+          role="img"
+          aria-label={indicator === "attention" ? "Needs you" : "In progress"}
+          className="inline-flex flex-none"
+        >
+          <LiveDot
+            className={
+              indicator === "attention" ? "text-(--status-caution)" : "text-(--status-positive)"
+            }
+          />
+        </span>
+      ) : null}
       {busy ? <Spinner size={11} className="text-(--text-tertiary)" /> : null}
       {trailing ? (
         <span aria-hidden className="flex-none text-xs tabular-nums text-(--text-tertiary)">

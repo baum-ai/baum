@@ -1,4 +1,5 @@
 import { type ReactNode, useEffect, useRef, useState } from "react";
+import type { VersionAction } from "./review-history";
 
 import { ViewerLink } from "../navigation";
 import {
@@ -14,7 +15,7 @@ import {
 } from "../review-document";
 import { cn, FOCUS_RING } from "./classnames";
 import { formatDate, formatLinesCompact, formatRelative } from "./format";
-import { BranchIcon, ChevronLeftIcon, GitHubIcon } from "./icons";
+import { BranchIcon, ChevronLeftIcon, GitHubIcon, MergeIcon } from "./icons";
 import { ChangeKindTag, Lines, RiskScoreBadge } from "./review-parts";
 import { Badge, LiveDot } from "./ui";
 
@@ -68,13 +69,29 @@ export type ReviewHeaderSlots = {
   approval?: ReactNode;
   /** The pull request's figures, drawn as the head's last line. */
   statistics?: ReactNode;
+  /** Drawn at the end of the line under the title, after the repository and
+   *  the time to review, such as the stack the pull request is in. */
+  subtitle?: ReactNode;
   /** Drawn beside the version menu, or on its own line under it on a
    *  narrow screen, such as where the pull request sits in a stack. */
   beside?: ReactNode;
   /** The host's page actions, such as a refresh, at the title row's end. */
   actions?: ReactNode;
+  /** What the host can do to the review itself, such as generating it again,
+   *  listed at the end of the version menu. */
+  versionActions?: VersionAction[];
   generation?: GenerationView;
 };
+
+/** The mark before a pull request's state: GitHub's merge icon once merged,
+ *  else a dot. */
+function StateMark({ state }: { state: string }) {
+  return state === "merged" ? (
+    <MergeIcon size={12} className="mr-1 flex-none" />
+  ) : (
+    <span aria-hidden className="mr-1.5 h-1.5 w-1.5 rounded-full bg-current" />
+  );
+}
 
 function Dot() {
   return (
@@ -265,8 +282,11 @@ export function ReviewHeader({
             </ViewerLink>
           ) : null}
           {state ? (
-            <Badge tone={pullRequestStateTone(state)} className="flex-none">
-              <span aria-hidden className="mr-1.5 h-1.5 w-1.5 rounded-full bg-current" />
+            <Badge
+              tone={state === "merged" ? "merged" : pullRequestStateTone(state)}
+              className="flex-none"
+            >
+              <StateMark state={state} />
               {humanize(state)}
             </Badge>
           ) : null}
@@ -325,8 +345,8 @@ export function ReviewHeader({
             ) : null}
             {slots.titleAside}
             {state ? (
-              <Badge tone={pullRequestStateTone(state)}>
-                <span aria-hidden className="mr-1.5 h-1.5 w-1.5 rounded-full bg-current" />
+              <Badge tone={state === "merged" ? "merged" : pullRequestStateTone(state)}>
+                <StateMark state={state} />
                 {humanize(state)}
               </Badge>
             ) : null}
@@ -377,6 +397,12 @@ export function ReviewHeader({
               >
                 <GitHubIcon size={16} />
               </a>
+            ) : null}
+            {slots.subtitle ? (
+              <span className="flex min-w-0 flex-wrap items-center gap-2">
+                <Dot />
+                {slots.subtitle}
+              </span>
             ) : null}
           </div>
           {/* One line on a phone: the branches shrink to an ellipsis rather

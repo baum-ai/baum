@@ -598,7 +598,16 @@ func localApplication(paths daemon.Paths, log *slog.Logger) func(context.Context
 				log.Warn("earlier repository names not rechecked", "error", err)
 			}
 		}()
-		refreshRepository := func(ctx context.Context, repo github.Repository) { _, _ = discover.PollNow(ctx, repo) }
+		// The re-read of a busy repository takes seconds and may wait behind
+		// a background poll, so it runs after the write has answered and
+		// tells the app when it lands.
+		refreshRepository := func(_ context.Context, repo github.Repository) {
+			go func() {
+				if _, err := discover.PollNow(ctx, repo); err == nil {
+					changed()
+				}
+			}()
+		}
 		// GitHub accepted the merge: the inbox shows it merged without
 		// waiting for the background refresh to read it.
 		mergedPullRequest := func(ctx context.Context, repo github.Repository, number int, head string) {

@@ -76,6 +76,7 @@ describe("withSelection", () => {
       { kind: "session" as const, id: "run_1" },
       { kind: "commits" as const },
       { kind: "commit" as const, id: "abc123" },
+      { kind: "decisions" as const },
     ]) {
       const written = withSelection(base, selection);
       expect(written.get("repo")).toBe("widgets");

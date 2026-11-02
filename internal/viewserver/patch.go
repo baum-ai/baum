@@ -45,7 +45,8 @@ var errNotCited = errors.New("not a cited path of that version")
 // patchCache holds the answers for one document, by the range and path they
 // were read for, so versions of the pull request that compare the same
 // commits share them. A document that is rewritten gets a new cache, so
-// nothing answered for the old one is served.
+// nothing answered for the old one is served. Commit and file reads
+// use separate caches with the same sharing mechanism.
 type patchCache struct {
 	mu   sync.Mutex
 	jobs map[string]*patchJob
@@ -56,7 +57,9 @@ type patchCache struct {
 type patchJob struct {
 	done chan struct{}
 	body []byte
-	err  error
+	// detail is the commit a GET /api/commit answer is about.
+	detail locallink.CommitDetail
+	err    error
 }
 
 // patchVersion is what /api/patch reads of a saved version: the commits it
@@ -246,7 +249,21 @@ func encodePatch(result locallink.PatchResult) ([]byte, error) {
 // commits share it; an answer that can change when the clone is fixed is not
 // kept, and neither is a failure.
 func (s *Server) patch(ctx context.Context, cache *patchCache, review Review, file string) ([]byte, error) {
-	key := patchKey(review, file)
+	job, err := s.shared(ctx, cache, patchKey(review, file), func() (*patchJob, bool, error) {
+		body, keep, err := s.computePatch(review, file)
+		return &patchJob{body: body}, keep, err
+	})
+	if err != nil {
+		return nil, err
+	}
+	return job.body, nil
+}
+
+// shared runs compute for key in cache once at a time: requests that arrive
+// while it runs wait for it, and its answer is kept for later ones when
+// compute reports keep. A failure is never kept. The computation outlives the
+// request that started it, up to the server's life.
+func (s *Server) shared(ctx context.Context, cache *patchCache, key string, compute func() (*patchJob, bool, error)) (*patchJob, error) {
 	cache.mu.Lock()
 	job := cache.jobs[key]
 	start := job == nil
@@ -268,10 +285,14 @@ func (s *Server) patch(ctx context.Context, cache *patchCache, review Review, fi
 	if start {
 		go func() {
 			defer s.compute.Done()
-			// keep is false whenever err is set, so a failure is never kept.
-			keep := false
-			job.body, keep, job.err = s.computePatch(review, file)
-			if !keep {
+			answer, keep, err := compute()
+			if err == nil && answer != nil {
+				job.body, job.detail = answer.body, answer.detail
+			} else if err == nil {
+				err = errors.New("no answer")
+			}
+			job.err = err
+			if !keep || err != nil {
 				cache.mu.Lock()
 				if cache.jobs[key] == job {
 					delete(cache.jobs, key)
@@ -283,7 +304,10 @@ func (s *Server) patch(ctx context.Context, cache *patchCache, review Review, fi
 	}
 	select {
 	case <-job.done:
-		return job.body, job.err
+		if job.err != nil {
+			return nil, job.err
+		}
+		return job, nil
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	case <-s.done:
@@ -291,11 +315,9 @@ func (s *Server) patch(ctx context.Context, cache *patchCache, review Review, fi
 	}
 }
 
-func (s *Server) computePatch(review Review, file string) ([]byte, bool, error) {
-	if s.opts.Patch == nil || s.opts.Sample {
-		body, err := encodePatch(locallink.PatchResult{Code: locallink.CodeError})
-		return body, false, err
-	}
+// withSlot runs read with one of the maxConcurrentPatches slots and a context
+// bounded by patchTimeout and the server's life.
+func (s *Server) withSlot(read func(ctx context.Context) error) error {
 	ctx, cancel := context.WithTimeout(s.life, patchTimeout)
 	defer cancel()
 	select {
@@ -303,11 +325,24 @@ func (s *Server) computePatch(review Review, file string) ([]byte, bool, error) 
 		defer func() { <-s.patchSlots }()
 	case <-ctx.Done():
 		if s.life.Err() != nil {
-			return nil, false, errStopping
+			return errStopping
 		}
-		return nil, false, ctx.Err()
+		return ctx.Err()
 	}
-	result, err := s.opts.Patch(ctx, review, file)
+	return read(ctx)
+}
+
+func (s *Server) computePatch(review Review, file string) ([]byte, bool, error) {
+	if s.opts.Patch == nil || s.opts.Sample {
+		body, err := encodePatch(locallink.PatchResult{Code: locallink.CodeError})
+		return body, false, err
+	}
+	var result locallink.PatchResult
+	err := s.withSlot(func(ctx context.Context) error {
+		var err error
+		result, err = s.opts.Patch(ctx, review, file)
+		return err
+	})
 	if err != nil {
 		return nil, false, err
 	}

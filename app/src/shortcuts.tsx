@@ -1,4 +1,4 @@
-import { usePreferences } from "./preferences";
+import { usePreferences, type PageModifier } from "./preferences";
 import { useModal } from "./modal";
 import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
 import { Button } from "@baum/viewer/components/ui";
@@ -109,14 +109,31 @@ const KEY_NAMES: Record<string, string> = {
 /** The app's command modifier as drawn: ⌘ on a Mac, Ctrl elsewhere. */
 export const COMMAND = MAC ? "⌘" : "Ctrl+";
 
+/** The modifier the sidebar's page keys use: the one chosen in Settings, or
+ *  the platform's command key. The Meta key is offered only on a Mac, where
+ *  it is Command; elsewhere a saved one falls back to Ctrl. */
+export function pageModifier(saved: PageModifier, mac = MAC): Exclude<PageModifier, ""> {
+  if (saved === "ctrl" || saved === "alt" || (saved === "meta" && mac)) return saved;
+  return mac ? "meta" : "ctrl";
+}
+
+/** Each modifier as drawn and for `aria-keyshortcuts`. */
+export const MODIFIER_KEYS: Record<Exclude<PageModifier, "">, { label: string; aria: string }> = {
+  meta: { label: MAC ? "⌘" : "Meta+", aria: "Meta" },
+  ctrl: { label: MAC ? "⌃" : "Ctrl+", aria: "Control" },
+  alt: { label: MAC ? "⌥" : "Alt+", aria: "Alt" },
+};
+
 /** A page's key as drawn on its sidebar link and in the sheet: "⌘2". */
-export function pageKeyLabel(page: Page) {
-  return `${COMMAND}${PAGES.findIndex((item) => item.page === page) + 1}`;
+export function pageKeyLabel(page: Page, modifier: PageModifier = "") {
+  const { label } = MODIFIER_KEYS[pageModifier(modifier)];
+  return `${label}${PAGES.findIndex((item) => item.page === page) + 1}`;
 }
 
 /** A page's key for `aria-keyshortcuts`: "Meta+2" or "Control+2". */
-export function pageKeyShortcut(page: Page) {
-  return `${MAC ? "Meta" : "Control"}+${PAGES.findIndex((item) => item.page === page) + 1}`;
+export function pageKeyShortcut(page: Page, modifier: PageModifier = "") {
+  const { aria } = MODIFIER_KEYS[pageModifier(modifier)];
+  return `${aria}+${PAGES.findIndex((item) => item.page === page) + 1}`;
 }
 
 /** What a key with the command modifier asks of the whole app. */
@@ -127,8 +144,8 @@ export type CommandAction =
   | { kind: "go-to" }
   | { kind: "refresh" };
 
-/** The app-wide key a keydown is, if any: ⌘1 to ⌘8 (Ctrl elsewhere) for the
- *  sidebar's pages, ⌘, for Settings, ⌘K for Go to, ⌘R for the page's
+/** The app-wide key a keydown is, if any: ⌘1 to ⌘8 (Ctrl elsewhere, or the
+ *  modifier chosen in Settings) for the sidebar's pages, ⌘, for Settings, ⌘K for Go to, ⌘R for the page's
  *  refresh (⇧⌘R stays the browser's reload), and ⌘[ and ⌘] on a Mac or
  *  Alt+← and Alt+→ elsewhere for back and forward. Digits are read by their
  *  place on the keyboard, so a layout that shifts them still works, and
@@ -136,19 +153,20 @@ export type CommandAction =
 export function commandAction(
   event: Pick<KeyboardEvent, "key" | "code" | "ctrlKey" | "metaKey" | "altKey" | "shiftKey">,
   mac = MAC,
+  pages: PageModifier = "",
 ): CommandAction | null {
+  const digit = /^(?:Digit|Numpad)([1-9])$/.exec(event.code)?.[1];
+  if (digit) {
+    if (!onlyModifier(event, pageModifier(pages, mac))) return null;
+    const item = PAGES[Number(digit) - 1];
+    return item ? { kind: "page", page: item.page } : null;
+  }
   if (!mac && event.altKey && !event.ctrlKey && !event.metaKey && !event.shiftKey) {
     if (event.key === "ArrowLeft") return { kind: "back" };
     if (event.key === "ArrowRight") return { kind: "forward" };
     return null;
   }
-  const command = mac ? event.metaKey && !event.ctrlKey : event.ctrlKey && !event.metaKey;
-  if (!command || event.altKey || event.shiftKey) return null;
-  const digit = /^(?:Digit|Numpad)([1-9])$/.exec(event.code)?.[1];
-  if (digit) {
-    const item = PAGES[Number(digit) - 1];
-    return item ? { kind: "page", page: item.page } : null;
-  }
+  if (!onlyModifier(event, mac ? "meta" : "ctrl")) return null;
   if (event.key === ",") return { kind: "page", page: "settings" };
   // A letter by itself, or by its place on a layout without Latin letters.
   const typed = event.key?.toLowerCase() ?? "";
@@ -160,6 +178,19 @@ export function commandAction(
   if (mac && (event.key === "[" || event.code === "BracketLeft")) return { kind: "back" };
   if (mac && (event.key === "]" || event.code === "BracketRight")) return { kind: "forward" };
   return null;
+}
+
+/** Whether `modifier` is the only modifier held. */
+function onlyModifier(
+  event: Pick<KeyboardEvent, "ctrlKey" | "metaKey" | "altKey" | "shiftKey">,
+  modifier: Exclude<PageModifier, "">,
+) {
+  return (
+    event.metaKey === (modifier === "meta") &&
+    event.ctrlKey === (modifier === "ctrl") &&
+    event.altKey === (modifier === "alt") &&
+    !event.shiftKey
+  );
 }
 
 /** The page refresh key as drawn and for `aria-keyshortcuts`: ⌘R on a Mac,
@@ -200,14 +231,17 @@ export function useReadlineArrows() {
  *  or Go to, which the handler closes. A handler that returns false leaves
  *  the key to the browser. */
 export function useCommandKeys(handler: (action: CommandAction) => boolean | void) {
+  const { preferences } = usePreferences();
   const latest = useRef(handler);
+  const pages = useRef(preferences.page_modifier);
   useEffect(() => {
     latest.current = handler;
+    pages.current = preferences.page_modifier;
   });
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.defaultPrevented || event.isComposing) return;
-      const action = commandAction(event);
+      const action = commandAction(event, MAC, pages.current);
       if (!action) return;
       if (document.querySelector("dialog[open]:not([data-shortcuts-sheet]):not([data-go-to])")) {
         // Reloading the app would lose the dialog.
@@ -288,6 +322,29 @@ export function useShortcuts(
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [allowSheet]);
+}
+
+/** Space on the block the keys are on (`data-review-block-active`, which j
+ *  and k move): presses its first fold, a disclosure button or a details
+ *  summary, as Space opens or closes a row elsewhere. False when the block
+ *  has none, or no block is marked. */
+export function toggleActiveBlock(): boolean {
+  const block = document.querySelector<HTMLElement>("[data-review-block-active]");
+  const fold = block?.querySelector<HTMLElement>("button[aria-expanded], summary");
+  if (!fold) return false;
+  fold.click();
+  return true;
+}
+
+/** Enter on the block the keys are on: presses what opens it
+ *  (`data-block-open`, such as a commit row's subject). False when the block
+ *  opens nothing, or no block is marked. */
+export function openActiveBlock(): boolean {
+  const block = document.querySelector<HTMLElement>("[data-review-block-active]");
+  const open = block?.querySelector<HTMLElement>("[data-block-open]");
+  if (!open) return false;
+  open.click();
+  return true;
 }
 
 /** Each list's last row, by the list's name, for as long as the app runs. */
@@ -674,135 +731,149 @@ export function onBody(event: KeyboardEvent) {
 const back: Shortcut = { keys: ["u", "Escape"], label: "Back to the list", short: "back" };
 /** Every key of the app, grouped by where it works: the table the shortcuts
  *  sheet lists and each page's key bar reads. */
-const GROUPS: { place: ShortcutsPlace; title: string; rows: Shortcut[] }[] = [
-  {
-    place: "anywhere",
-    title: "Anywhere",
-    rows: [
-      { keys: [`${COMMAND}K`], label: "Go to a page, pull request or session" },
-      { keys: [`${COMMAND}.`], label: "Actions for the focused row, as a right click" },
-      { keys: [REFRESH_KEY_LABEL], label: "Refresh the page" },
-      {
-        keys: MAC ? ["⌃N", "⌃P"] : ["Ctrl+N", "Ctrl+P"],
-        label: "Down, up in any list or menu, as ↓ and ↑",
-      },
-      ...PAGES.map((item) => ({ keys: [pageKeyLabel(item.page)], label: item.label })),
-      MAC
-        ? { keys: ["⌘[", "⌘]"], label: "Back, forward" }
-        : { keys: ["Alt+←", "Alt+→"], label: "Back, forward" },
-      { keys: ["?"], label: "Show or hide this list" },
-      {
-        keys: [MAC ? "⌥ Option" : "Alt"],
-        label: "Hold to show the page's keys and those on buttons",
-      },
-      { keys: ["Escape"], label: "Close this list" },
-    ],
-  },
-  { place: "inbox", title: "Inbox", rows: UP_NEXT_SHORTCUTS },
-  {
-    place: "pulls",
-    title: "Pull requests",
-    rows: [
-      ...INBOX_SHORTCUTS,
-      { keys: ["Escape"], label: "Clear the row focus" },
-      { keys: VIEW_KEYS.previous, label: "Previous view", short: "views" },
-      { keys: VIEW_KEYS.next, label: "Next view", short: "views" },
-    ],
-  },
-  {
-    place: "review",
-    title: "A pull request or group",
-    rows: [
-      { keys: ["j"], label: "Next section", short: "section" },
-      { keys: ["k"], label: "Previous section", short: "section" },
-      { keys: ["m"], label: "Merge, where offered", short: "merge" },
-      { keys: ["f"], label: "Fix, where offered", short: "fix" },
-      { keys: ["g"], label: "Generate or regenerate the review", short: "generate" },
-      { keys: ["t"], label: TRANSCRIPT_LABEL },
-      {
-        keys: ["a"],
-        label: "Ask the review's agent a question; Esc in the panel closes it",
-        short: "ask",
-      },
-      back,
-    ],
-  },
-  { place: "walkthrough", title: "Walkthrough", rows: WALKTHROUGH_SHORTCUTS },
-  {
-    place: "sessions",
-    title: "Sessions",
-    rows: [
-      ...LIST_SHORTCUTS,
-      { keys: ["p"], label: "Open the session's pull request" },
-      { keys: ["r"], label: "Reply to the session; Enter sends it", short: "reply" },
-      {
-        keys: ["f"],
-        label: "Bring the session's terminal or window forward, where offered",
-        short: "focus",
-      },
-      { keys: [" "], label: "Peek at the session below its row", short: "peek" },
-      {
-        keys: ["1–9"],
-        label: "Answer the focused question or permission; Enter submits several",
-        short: "answer",
-      },
-    ],
-  },
-  {
-    place: "jobs",
-    title: "Jobs",
-    rows: [
-      ...LIST_SHORTCUTS,
-      {
-        keys: ["t"],
-        label: "Watch the fix agent or read its transcript, where there is one",
-        short: "transcript",
-      },
-    ],
-  },
-  {
-    place: "repositories",
-    title: "Repositories",
-    rows: [
-      ...LIST_SHORTCUTS.map((row) =>
+function shortcutGroups(
+  pages: PageModifier,
+): { place: ShortcutsPlace; title: string; rows: Shortcut[] }[] {
+  return [
+    {
+      place: "anywhere",
+      title: "Anywhere",
+      rows: [
+        { keys: [`${COMMAND}K`], label: "Go to a page, pull request or session" },
+        { keys: [`${COMMAND}.`], label: "Actions for the focused row, as a right click" },
+        { keys: [REFRESH_KEY_LABEL], label: "Refresh the page" },
+        {
+          keys: MAC ? ["⌃N", "⌃P"] : ["Ctrl+N", "Ctrl+P"],
+          label: "Down, up in any list or menu, as ↓ and ↑",
+        },
+        ...PAGES.map((item) => ({ keys: [pageKeyLabel(item.page, pages)], label: item.label })),
+        MAC
+          ? { keys: ["⌘[", "⌘]"], label: "Back, forward" }
+          : { keys: ["Alt+←", "Alt+→"], label: "Back, forward" },
+        { keys: ["?"], label: "Show or hide this list" },
+        {
+          keys: [MAC ? "⌥ Option" : "Alt"],
+          label: "Hold to show the page's keys and those on buttons",
+        },
+        { keys: ["Escape"], label: "Close this list" },
+      ],
+    },
+    { place: "inbox", title: "Inbox", rows: UP_NEXT_SHORTCUTS },
+    {
+      place: "pulls",
+      title: "Pull requests",
+      rows: [
+        ...INBOX_SHORTCUTS,
+        { keys: ["Escape"], label: "Clear the row focus" },
+        { keys: VIEW_KEYS.previous, label: "Previous view", short: "views" },
+        { keys: VIEW_KEYS.next, label: "Next view", short: "views" },
+      ],
+    },
+    {
+      place: "review",
+      title: "A pull request or group",
+      rows: [
+        { keys: ["j", "ArrowDown"], label: "Next item in the section", short: "move" },
+        { keys: ["k", "ArrowUp"], label: "Previous item in the section", short: "move" },
+        { keys: ["l", "ArrowRight"], label: "Next place in the sidebar", short: "sidebar" },
+        { keys: ["h", "ArrowLeft"], label: "Previous place in the sidebar", short: "sidebar" },
+        {
+          keys: [" "],
+          label: "Open or close the item's details, or the selected group in the sidebar",
+          short: "expand",
+        },
+        { keys: ["Enter"], label: "Open the item, such as a commit in the list", short: "open" },
+        { keys: ["m"], label: "Merge, where offered", short: "merge" },
+        { keys: ["f"], label: "Fix, where offered", short: "fix" },
+        { keys: ["g"], label: "Generate or regenerate the review", short: "generate" },
+        { keys: ["t"], label: TRANSCRIPT_LABEL },
+        {
+          keys: ["a"],
+          label: "Ask the review's agent a question; Esc in the panel closes it",
+          short: "ask",
+        },
+        back,
+      ],
+    },
+    { place: "walkthrough", title: "Walkthrough", rows: WALKTHROUGH_SHORTCUTS },
+    {
+      place: "sessions",
+      title: "Sessions",
+      rows: [
+        ...LIST_SHORTCUTS,
+        { keys: ["p"], label: "Open the session's pull request" },
+        { keys: ["r"], label: "Reply to the session; Enter sends it", short: "reply" },
+        {
+          keys: ["f"],
+          label: "Bring the session's terminal or window forward, where offered",
+          short: "focus",
+        },
+        { keys: [" "], label: "Peek at the session below its row", short: "peek" },
+        {
+          keys: ["1–9"],
+          label: "Answer the focused question or permission; Enter submits several",
+          short: "answer",
+        },
+      ],
+    },
+    {
+      place: "jobs",
+      title: "Jobs",
+      rows: [
+        ...LIST_SHORTCUTS,
+        {
+          keys: ["t"],
+          label: "Watch the fix agent or read its transcript, where there is one",
+          short: "transcript",
+        },
+      ],
+    },
+    {
+      place: "repositories",
+      title: "Repositories",
+      rows: [
+        ...LIST_SHORTCUTS.map((row) =>
+          row.keys.includes("Enter")
+            ? { ...row, label: "Open the repository's settings", short: "settings" }
+            : row,
+        ),
+        { keys: ["a"], label: "Add repositories, or finish adding", short: "add" },
+        { keys: ["/"], label: "Search GitHub repositories while adding", short: "search" },
+      ],
+    },
+    {
+      place: "timeline",
+      title: "Timeline",
+      rows: LIST_SHORTCUTS.map((row) =>
         row.keys.includes("Enter")
-          ? { ...row, label: "Open the repository's settings", short: "settings" }
+          ? { ...row, label: "Open or close the feature or decision" }
           : row,
       ),
-      { keys: ["a"], label: "Add repositories, or finish adding", short: "add" },
-      { keys: ["/"], label: "Search GitHub repositories while adding", short: "search" },
-    ],
-  },
-  {
-    place: "timeline",
-    title: "Timeline",
-    rows: LIST_SHORTCUTS.map((row) =>
-      row.keys.includes("Enter") ? { ...row, label: "Open or close the feature or decision" } : row,
-    ),
-  },
-  { place: "settings", title: "Settings", rows: SETTINGS_SHORTCUTS },
-  {
-    place: "page",
-    title: "A session or job transcript",
-    rows: [
-      back,
-      { keys: ["j"], label: "Next message of a session's transcript", short: "next" },
-      { keys: ["k"], label: "Previous message", short: "previous" },
-      { keys: [" "], label: "Show all of the message, or less again", short: "show all" },
-      { keys: ["Enter"], label: "Open the message on its own", short: "open" },
-      {
-        keys: ["f"],
-        label: "Bring the session's terminal or window forward, where offered",
-        short: "focus",
-      },
-      {
-        keys: ["r"],
-        label: "Reply to the session, or write a message for when its turn ends",
-        short: "reply",
-      },
-    ],
-  },
-];
+    },
+    { place: "settings", title: "Settings", rows: SETTINGS_SHORTCUTS },
+    {
+      place: "page",
+      title: "A session or job transcript",
+      rows: [
+        back,
+        { keys: ["j"], label: "Next message of a session's transcript", short: "next" },
+        { keys: ["k"], label: "Previous message", short: "previous" },
+        { keys: [" "], label: "Show all of the message, or less again", short: "show all" },
+        { keys: ["Enter"], label: "Open the message on its own", short: "open" },
+        {
+          keys: ["f"],
+          label: "Bring the session's terminal or window forward, where offered",
+          short: "focus",
+        },
+        {
+          keys: ["r"],
+          label: "Reply to the session, or write a message for when its turn ends",
+          short: "reply",
+        },
+      ],
+    },
+  ];
+}
 
 /** Where a row menu opens with ⌘.: the lists. */
 const LISTS: ShortcutsPlace[] = ["pulls", "sessions", "jobs", "repositories"];
@@ -814,7 +885,8 @@ const LISTS: ShortcutsPlace[] = ["pulls", "sessions", "jobs", "repositories"];
  *  the sheet. It is drawn for the eye; the sheet (`?`) says the same aloud. */
 export function KeyBar({ place, className }: { place: ShortcutsPlace; className?: string }) {
   const items: { keys: string[]; short: string }[] = [];
-  for (const row of GROUPS.find((group) => group.place === place)?.rows ?? []) {
+  // Page keys have no `short`, so the bar does not depend on their modifier.
+  for (const row of shortcutGroups("").find((group) => group.place === place)?.rows ?? []) {
     if (!row.short) continue;
     const last = items.at(-1);
     if (last?.short === row.short) last.keys.push(row.keys[0]!);
@@ -857,9 +929,10 @@ export function ShortcutsSheet({
     title.current?.focus({ preventScroll: true });
     if (dialog.current) dialog.current.scrollTop = 0;
   }, []);
+  const groups = shortcutGroups(usePreferences().preferences.page_modifier);
   const ordered = [
-    ...GROUPS.filter((group) => group.place === current),
-    ...GROUPS.filter((group) => group.place !== current),
+    ...groups.filter((group) => group.place === current),
+    ...groups.filter((group) => group.place !== current),
   ];
   return (
     <dialog

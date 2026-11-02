@@ -316,6 +316,12 @@ pub struct AgentHooks {
     enabled: bool,
     #[serde(default)]
     version: Option<String>,
+    /// The plugin version the bundled baum shipped with, and whether the
+    /// installed version is older, so Settings offers Update only then.
+    #[serde(default)]
+    latest: Option<String>,
+    #[serde(default)]
+    update_available: bool,
     #[serde(default)]
     error: Option<String>,
 }

@@ -27,8 +27,18 @@ export type Agent = {
   enabled: boolean;
   plugin: string;
   version?: string | null;
-  trust?: CodexHookTrust | null;
+  /** The plugin version the bundled baum shipped with. */
+  latest?: string | null;
+  /** The installed version is older than `latest`. */
+  update_available?: boolean;
+  trust?: CodexHookTrust | ClaudeHookState | null;
   error?: string | null;
+};
+/** What stops Claude Code running an enabled plugin's hooks. It has no
+ *  per-hook approval, so only settings can: `ready` means none of the files
+ *  baum can read does. */
+export type ClaudeHookState = {
+  state: "ready" | "hooks_disabled" | "managed_only" | "unknown";
 };
 export type SetupView = {
   first_run: boolean;
@@ -119,8 +129,41 @@ export function agentConnected(agent: Agent) {
     agent.installed &&
     agent.enabled &&
     !agent.error &&
-    (agent.agent !== "codex" || agent.trust?.state === "trusted")
+    (agent.agent === "codex"
+      ? agent.trust?.state === "trusted"
+      : !agent.trust || agent.trust.state === "ready")
   );
+}
+
+/** Whether Update would change anything: a newer plugin, or Codex hooks
+ *  missing from an installed plugin. */
+export function agentUpdatable(agent: Agent) {
+  return (
+    agent.detected &&
+    !agent.error &&
+    agent.installed &&
+    agent.enabled &&
+    (!!agent.update_available || (agent.agent === "codex" && agent.trust?.state === "missing"))
+  );
+}
+
+/** The line under an installed agent: how its hooks come to run, or how to
+ *  unblock them. */
+export function agentHookNote(agent: Agent) {
+  if (agent.agent === "codex")
+    return agent.trust?.state === "trusted"
+      ? "Codex hooks are approved."
+      : "Review hook trust with /hooks in Codex.";
+  switch (agent.trust?.state) {
+    case "hooks_disabled":
+      return "disableAllHooks is on in your Claude Code settings. Turn it off, then check again.";
+    case "managed_only":
+      return "Managed settings allow only managed hooks. Ask your administrator to enable baum@baum in them.";
+    case "unknown":
+      return "A Claude Code settings file isn't valid JSON or can't be read. Fix it, then check again.";
+    default:
+      return "Hooks run in folders you trust in Claude Code.";
+  }
 }
 
 export function describeAgent(agent: Agent) {
@@ -139,6 +182,16 @@ export function describeAgent(agent: Agent) {
           return "Update Codex hooks";
         default:
           return "Hook approval could not be verified";
+      }
+    }
+    if (agent.agent === "claude-code" && !agentConnected(agent)) {
+      switch (agent.trust?.state) {
+        case "hooks_disabled":
+          return "Hooks turned off in Claude Code";
+        case "managed_only":
+          return "Blocked by your organization";
+        default:
+          return "Claude Code settings could not be read";
       }
     }
     return "Connected";
