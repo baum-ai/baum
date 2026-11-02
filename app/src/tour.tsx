@@ -108,7 +108,8 @@ const STOPS: Stop[] = [
         with its lines. <B>Ask</B> about it, or <B>Merge…</B> when it's ready.
       </>
     ),
-    target: "#review-section",
+    // The review and its Details sidebar.
+    target: "#review-section, #review-aside",
     at: "review",
   },
   {
@@ -184,11 +185,18 @@ export function Tour({ close }: { close: () => void }) {
       }
       if (stop.at === "review" && new URLSearchParams(location.search).has("pr"))
         review.current = `${location.pathname}${location.search}`;
-      // The first match on screen: a narrow window hides some targets.
-      const box =
-        [...(stop.target ? document.querySelectorAll(stop.target) : [])]
-          .map((element) => element.getBoundingClientRect())
-          .find((found) => found.width && found.height) ?? null;
+      // Every match on screen, together: a narrow window hides some targets.
+      const shown = [...(stop.target ? document.querySelectorAll(stop.target) : [])]
+        .map((element) => element.getBoundingClientRect())
+        .filter((found) => found.width && found.height);
+      const box = shown.length
+        ? new DOMRect(
+            Math.min(...shown.map((r) => r.left)),
+            Math.min(...shown.map((r) => r.top)),
+            Math.max(...shown.map((r) => r.right)) - Math.min(...shown.map((r) => r.left)),
+            Math.max(...shown.map((r) => r.bottom)) - Math.min(...shown.map((r) => r.top)),
+          )
+        : null;
       setRect((old) =>
         old &&
         box &&
@@ -282,7 +290,7 @@ export function Tour({ close }: { close: () => void }) {
           <span className="tour-count">
             {index + 1} of {STOPS.length}
           </span>
-          {last ? null : index > 0 ? (
+          {index > 0 ? (
             <button type="button" className={SECONDARY} onClick={() => go(index - 1)}>
               Back
             </button>

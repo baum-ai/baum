@@ -39,6 +39,21 @@ async function walk(
     await expect(tour).toBeInViewport();
     // Every stop points at what it talks about.
     await expect(page.locator(".tour-spot"), titles.at(-1)).toBeVisible();
+    // The review's stop takes in its Details sidebar, where one is shown.
+    const aside = page.locator("#review-aside");
+    if (titles.at(-1) === "A pull request's review" && (await aside.isVisible())) {
+      await expect
+        .poll(async () => {
+          const [spot, side] = await Promise.all([
+            page.locator(".tour-spot").boundingBox(),
+            aside.boundingBox(),
+          ]);
+          return !!spot && !!side && spot.x + spot.width >= side.x + side.width;
+        })
+        .toBe(true);
+    }
+    // Every stop but the first goes back.
+    if (stop > 1) await expect(tour.getByRole("button", { name: "Back" })).toBeVisible();
     if (pictures && name) {
       await page.waitForTimeout(400);
       await page.screenshot({
