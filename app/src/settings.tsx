@@ -1,5 +1,5 @@
 import { BrandMark } from "@baum/viewer/components/brand-logo";
-import { usePreferences } from "./preferences";
+import { usePreferences, type PageModifier } from "./preferences";
 import { PlanUsageSettings } from "./plan-usage-settings";
 import {
   useEffect,
@@ -36,7 +36,7 @@ import { CodexHookWarning, type useCodexHookTrust } from "./codex-hooks";
 import { DiagnosticsSection } from "./diagnostics";
 import { invoke } from "./desktop/native";
 import { Notice, PageBar, PanelHeader, RefreshButton } from "./shell";
-import { listKeys, onBody, useRowFocus, useShortcuts } from "./shortcuts";
+import { listKeys, MAC, onBody, pageModifier, useRowFocus, useShortcuts } from "./shortcuts";
 import {
   TerminalIcon,
   SessionsIcon,
@@ -2327,9 +2327,26 @@ function GeneralSection() {
           </select>
         </SettingRow>
         <SettingRow
-          label="Show keyboard shortcuts with Alt/Option"
+          label="Page shortcut modifier"
+          htmlFor="page-modifier"
+          detail="The key held with 1 to 8 to open the sidebar's pages."
+        >
+          <select
+            id="page-modifier"
+            disabled={!ready}
+            className="local-field settings-select"
+            value={pageModifier(preferences.page_modifier)}
+            onChange={(event) => update({ page_modifier: event.target.value as PageModifier })}
+          >
+            {MAC ? <option value="meta">⌘ Command</option> : null}
+            <option value="ctrl">{MAC ? "⌃ Control" : "Ctrl"}</option>
+            <option value="alt">{MAC ? "⌥ Option" : "Alt"}</option>
+          </select>
+        </SettingRow>
+        <SettingRow
+          label={`Show keyboard shortcuts with ${MAC ? "Option" : "Alt"}`}
           htmlFor="keyboard-hints"
-          detail="Hold Alt (Option on Mac) to show shortcut hints."
+          detail={`Hold ${MAC ? "Option" : "Alt"} to show shortcut hints.`}
         >
           <input
             id="keyboard-hints"

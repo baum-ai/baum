@@ -611,6 +611,9 @@ reload.
 Keyboard shortcuts (`src/shortcuts.tsx`, one key table that both the handling and
 the sheet read). Every page is reached from the keyboard. With the command key
 (⌘ on a Mac, Ctrl elsewhere): `1` to `8` open the sidebar's pages in its order
+(their modifier can be changed in Settings › General: Command, Control or
+Option on a Mac, Ctrl or Alt elsewhere; the sidebar, its tooltips and the sheet
+show the chosen one, and the other app-wide keys keep the command key)
 (Inbox, Pull requests, Timeline, Sessions, Analytics, Repositories, Jobs,
 Settings; digits
 are read by their place on the keyboard, so layouts that shift them work),
@@ -1234,9 +1237,11 @@ stands and a dot when it needs attention; at narrow widths the list becomes
 a scrolling strip above the section. The section is in the address, so a
 reload or Back keeps it, and the GitHub notice's **Open settings** goes
 straight to Connections. **General**, the default, offers System, Light and Dark
-themes and whether holding Alt/Option shows keyboard shortcut hints. Preferences
+themes, the modifier held with `1` to `8` for the sidebar's pages, and whether
+holding Option (Alt elsewhere) shows keyboard shortcut hints; each names only
+the platform's key. Preferences
 are read and saved through `GET`/`PUT api/settings/appearance` (`theme`,
-`key_hints`), in the daemon’s SQLite registry, so they survive daemon restarts
+`key_hints`, `page_modifier`), in the daemon’s SQLite registry, so they survive daemon restarts
 and loopback port changes. **Plan usage** below them has a switch per plan
 (Claude Code, Codex) for whether it shows in the sidebar and the desktop tray.
 With no choice a plan shows when one of the backends baum uses is its own: the

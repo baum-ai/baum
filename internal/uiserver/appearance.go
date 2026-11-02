@@ -9,8 +9,9 @@ import (
 )
 
 type appearanceSettings struct {
-	Theme    string `json:"theme"`
-	KeyHints bool   `json:"key_hints"`
+	Theme        string `json:"theme"`
+	KeyHints     bool   `json:"key_hints"`
+	PageModifier string `json:"page_modifier"`
 }
 
 func appearanceOf(p repos.Preferences) appearanceSettings {
@@ -18,7 +19,11 @@ func appearanceOf(p repos.Preferences) appearanceSettings {
 	if theme == "" {
 		theme = "system"
 	}
-	return appearanceSettings{Theme: theme, KeyHints: p.Appearance.KeyHints == nil || *p.Appearance.KeyHints}
+	return appearanceSettings{
+		Theme:        theme,
+		KeyHints:     p.Appearance.KeyHints == nil || *p.Appearance.KeyHints,
+		PageModifier: p.Appearance.PageModifier,
+	}
 }
 
 func (a LocalAPI) getAppearance(w http.ResponseWriter, r *http.Request) {
@@ -32,8 +37,9 @@ func (a LocalAPI) getAppearance(w http.ResponseWriter, r *http.Request) {
 
 func (a LocalAPI) putAppearance(w http.ResponseWriter, r *http.Request) {
 	var input struct {
-		Theme    *string `json:"theme"`
-		KeyHints *bool   `json:"key_hints"`
+		Theme        *string `json:"theme"`
+		KeyHints     *bool   `json:"key_hints"`
+		PageModifier *string `json:"page_modifier"`
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, 4096)
 	d := json.NewDecoder(r.Body)
@@ -46,12 +52,20 @@ func (a LocalAPI) putAppearance(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "theme must be system, light or dark", http.StatusBadRequest)
 		return
 	}
+	if input.PageModifier != nil && *input.PageModifier != "" && *input.PageModifier != "meta" &&
+		*input.PageModifier != "ctrl" && *input.PageModifier != "alt" {
+		http.Error(w, "page_modifier must be empty, meta, ctrl or alt", http.StatusBadRequest)
+		return
+	}
 	prefs, err := a.Registry.UpdatePreferences(r.Context(), func(p repos.Preferences) repos.Preferences {
 		if input.Theme != nil {
 			p.Appearance.Theme = *input.Theme
 		}
 		if input.KeyHints != nil {
 			p.Appearance.KeyHints = input.KeyHints
+		}
+		if input.PageModifier != nil {
+			p.Appearance.PageModifier = *input.PageModifier
 		}
 		return p
 	})

@@ -10,6 +10,8 @@ import {
   listKeys,
   MAC,
   moveFocus,
+  pageKeyShortcut,
+  pageModifier,
   ShortcutsSheet,
   shouldIgnore,
   useCommandKeys,
@@ -602,6 +604,46 @@ it("reads the app-wide keys with the platform's command key", () => {
   ).toBeNull();
   expect(commandAction(key({ metaKey: true, key: "[" }), false)).toBeNull();
   expect(commandAction(key({ key: "k" }), false)).toBeNull();
+});
+
+it("opens the sidebar's pages with the modifier chosen in Settings", () => {
+  const key = (patch: Partial<KeyboardEvent>) => ({
+    key: "",
+    code: "",
+    ctrlKey: false,
+    metaKey: false,
+    altKey: false,
+    shiftKey: false,
+    ...patch,
+  });
+  const inbox = { kind: "page", page: "inbox" };
+  // Option on a Mac types "¡", but the digit is read by its place.
+  expect(commandAction(key({ altKey: true, key: "¡", code: "Digit1" }), true, "alt")).toEqual(
+    inbox,
+  );
+  expect(commandAction(key({ metaKey: true, key: "1", code: "Digit1" }), true, "alt")).toBeNull();
+  expect(commandAction(key({ ctrlKey: true, key: "1", code: "Digit1" }), true, "ctrl")).toEqual(
+    inbox,
+  );
+  expect(commandAction(key({ altKey: true, key: "1", code: "Digit1" }), false, "alt")).toEqual(
+    inbox,
+  );
+  // The other app-wide keys keep the command key, and Alt's arrows stay back and forward.
+  expect(commandAction(key({ metaKey: true, key: "k" }), true, "alt")).toEqual({ kind: "go-to" });
+  expect(commandAction(key({ altKey: true, key: "ArrowLeft" }), false, "alt")).toEqual({
+    kind: "back",
+  });
+  expect(
+    commandAction(key({ altKey: true, metaKey: true, key: "1", code: "Digit1" }), true, "alt"),
+  ).toBeNull();
+  // Meta is Command, offered only on a Mac; elsewhere a saved one is Ctrl.
+  expect(pageModifier("", true)).toBe("meta");
+  expect(pageModifier("", false)).toBe("ctrl");
+  expect(pageModifier("meta", false)).toBe("ctrl");
+  expect(commandAction(key({ ctrlKey: true, key: "1", code: "Digit1" }), false, "meta")).toEqual(
+    inbox,
+  );
+  expect(pageKeyShortcut("pulls", "alt")).toBe("Alt+2");
 });
 
 const opened = vi.fn();
