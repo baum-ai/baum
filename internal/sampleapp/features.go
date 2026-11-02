@@ -23,11 +23,10 @@ func features(now time.Time) []decisionlog.SampleFeature {
 	session := func(i int) string { return agentSessions[i].id }
 	return []decisionlog.SampleFeature{
 		{ID: "feature-search", Title: "Search", Updated: now.Add(-40 * time.Minute),
-			Description: "Find notes by the words in their title or text, whatever their case or accents.",
-			Digest:      "Search matches words with or without accents, with a short explanation in the README.",
-			Pulls:       []int{accents.number, readme.number},
-			KeyDecisions: []decisionlog.SampleDecisionRef{{ID: "dec-table", Agent: "claude-code", Session: session(2), Turn: 2},
-				{ID: "dec-readme", Agent: "claude-code", Session: session(1), Turn: 1}}},
+			Description:  "Find notes by the words in their title or text, whatever their case or accents.",
+			Digest:       "Search matches words with or without accents, with a short explanation in the README.",
+			Pulls:        []int{accents.number, readme.number},
+			KeyDecisions: []decisionlog.SampleDecisionRef{{ID: "dec-readme", Agent: "claude-code", Session: session(1), Turn: 1}}},
 		{ID: "feature-order", Title: "Note order", Updated: now.Add(-20 * time.Minute),
 			Description: "Which notes come first in the list.",
 			Digest:      "The list shows the newest notes first and is moving to the most recently edited.",
@@ -37,8 +36,10 @@ func features(now time.Time) []decisionlog.SampleFeature {
 		{ID: "feature-tags", Title: "Tags", Updated: now.Add(-5 * time.Hour),
 			Description: "Label notes and list the notes with one label.",
 			Digest:      "Notes carry tags, cleaned when saved, and can be filtered by one.",
-			Pulls:       []int{tags.number}, Sessions: []string{session(3)},
-			KeyDecisions: []decisionlog.SampleDecisionRef{{ID: "dec-clean", Agent: "claude-code", Session: session(3), Turn: 2}}},
+			Pulls:       []int{tags.number}, Sessions: []string{session(3), session(2)},
+			KeyDecisions: []decisionlog.SampleDecisionRef{{ID: "dec-clean", Agent: "claude-code", Session: session(3), Turn: 2},
+				{ID: "dec-tags-index", Agent: "claude-code", Session: session(3), Turn: 3},
+				{ID: "dec-tags-one-rule", Agent: "claude-code", Session: session(2), Turn: 1}}},
 	}
 }
 

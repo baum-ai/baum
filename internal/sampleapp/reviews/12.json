@@ -3,7 +3,7 @@
   "summary": {
     "text": "Notes gain tags, cleaned once when a note is saved. The store keeps an index of where each tag's notes are, so ByTag reads only those notes instead of scanning the list, and a new notes command lists the notes with a tag. After an automated review, ByTag cleans the tag it is asked for the same way saved tags are cleaned.",
     "review_exchange": {
-      "summary": "Codex found that `ByTag` lowercased the tag it was asked for but did not trim it, so `ByTag(\" work\")` missed notes saved as `work`; the third commit fixed it and the thread is resolved. Riley asked who keeps the tag index in step with the notes, and Alex pointed to `Add`'s comment: it is the only writer. Nothing is left open."
+      "summary": "Codex found that `ByTag` lowercased the tag it was asked for but did not trim it, so `ByTag(\" work\")` missed notes saved as `work`; the third commit fixed it and the thread is resolved. Riley asked who keeps the tag index in step with the notes, and Sam pointed to `Add`'s comment: it is the only writer. Nothing is left open."
     },
     "context": {
       "area": {
@@ -213,7 +213,7 @@
             },
             {
               "type": "prompt",
-              "session": "a1e70c11-0000-4000-8000-000000000012",
+              "session": "5a3c1e70-0000-4000-8000-000000000004",
               "index": 1
             }
           ]
@@ -550,7 +550,7 @@
             },
             {
               "type": "prompt",
-              "session": "a1e70c11-0000-4000-8000-000000000013",
+              "session": "5a3c1e70-0000-4000-8000-000000000003",
               "index": 1
             }
           ]

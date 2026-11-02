@@ -136,9 +136,6 @@ func (w *Workspace) build(ctx context.Context, now time.Time) (http.Handler, err
 	if err != nil {
 		return nil, fmt.Errorf("writing the project: %w", err)
 	}
-	if err := writeCheckpoints(ctx, p, now); err != nil {
-		return nil, fmt.Errorf("writing the checkpoints: %w", err)
-	}
 	registry, err := repos.Open(appDB)
 	if err != nil {
 		return nil, err
@@ -163,9 +160,6 @@ func (w *Workspace) build(ctx context.Context, now time.Time) (http.Handler, err
 	w.closers = append(w.closers, func() { _ = decided.Close() })
 	if err := writeSessions(ctx, p, home, appDB, events, decided, now); err != nil {
 		return nil, fmt.Errorf("writing the sessions: %w", err)
-	}
-	if err := writeTeammateDecisions(ctx, decided, now); err != nil {
-		return nil, fmt.Errorf("writing the teammate's decisions: %w", err)
 	}
 	if err := decided.SeedSample(ctx, repository, listedPulls(p, now), summaries, features(now)); err != nil {
 		return nil, fmt.Errorf("writing the features: %w", err)

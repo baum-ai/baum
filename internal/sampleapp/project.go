@@ -167,7 +167,7 @@ func (s *Store) List() []Note {
 
 // The open pull requests, each a branch from main after pull request 9.
 var (
-	tags = pull{number: 12, branch: "tags", title: "Add tags to notes", author: alex, opened: 2 * day, updated: 5 * time.Hour,
+	tags = pull{number: 12, branch: "tags", title: "Add tags to notes", author: sam, opened: 2 * day, updated: 5 * time.Hour,
 		body: `Closes NOTES-8.
 
 Notes can carry tags, and the store and the command line can list the notes with one.
@@ -183,7 +183,7 @@ Notes can carry tags, and the store and the command line can list the notes with
 
 Written with Claude Code.`,
 		commits: []commit{
-			{alex, 2 * day, "Add tags to notes, with an index for ByTag", map[string]string{
+			{sam, 2*day + 2*time.Hour + 45*time.Minute, "Add tags to notes, with an index for ByTag", map[string]string{
 				"note.go": `package notes
 
 import "time"
@@ -263,7 +263,7 @@ func (s *Store) List() []Note {
 	return list
 }
 `}},
-			{alex, 30 * time.Hour, "List the notes with a tag from the command line", map[string]string{
+			{sam, 2*day + 2*time.Hour + 39*time.Minute, "List the notes with a tag from the command line", map[string]string{
 				"cmd/notes/main.go": `// Command notes lists the notes saved in a file, newest first, or only
 // those with a tag.
 package main
@@ -305,7 +305,7 @@ func main() {
 	}
 }
 `}},
-			{alex, 20 * time.Hour, "Clean the tag ByTag is asked for as saved tags are", map[string]string{
+			{sam, 5*time.Hour + 27*time.Minute, "Clean the tag ByTag is asked for as saved tags are", map[string]string{
 				"tags.go": `package notes
 
 import (
@@ -341,7 +341,7 @@ func (s *Store) ByTag(tag string) []Note {
 	return found
 }
 `}},
-			{alex, 5 * time.Hour, "Test tags and mention them in the README", map[string]string{
+			{sam, 5*time.Hour + 15*time.Minute, "Test tags and mention them in the README", map[string]string{
 				"tags_test.go": `package notes
 
 import (
@@ -410,9 +410,9 @@ notes -file notes.json -tag home
 ` + "```" + `
 `}},
 		}}
-	accents = pull{number: 14, branch: "search-accents", title: "Match search without accents", author: sam, opened: day, updated: 3 * time.Hour,
+	accents = pull{number: 14, branch: "search-accents", title: "Match search without accents", author: alex, opened: day, updated: 3 * time.Hour,
 		body: "Searching for \"cafe\" now finds notes that say \"café\".",
-		commits: []commit{{sam, 26 * time.Hour, "Match search without accents", map[string]string{
+		commits: []commit{{alex, 26 * time.Hour, "Match search without accents", map[string]string{
 			"search.go": `package notes
 
 import "strings"
@@ -565,12 +565,7 @@ func writeProject(ctx context.Context, dir string, now time.Time) (project, erro
 		if _, err := git(now, sam, "checkout", "-q", "-b", pr.branch, "main"); err != nil {
 			return p, err
 		}
-		for i, c := range pr.commits {
-			// A teammate's commits name the Entire checkpoint of the session
-			// that made them.
-			if checkpointed(pr) {
-				c.message += "\n\nEntire-Checkpoint: " + checkpointID(pr, i)
-			}
+		for _, c := range pr.commits {
 			head, err := write(c)
 			if err != nil {
 				return p, err

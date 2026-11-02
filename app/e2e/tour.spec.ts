@@ -107,7 +107,8 @@ test("with no pull requests of its own, the tour shows the sample project", asyn
       // and what would change something says it cannot, and nothing changes.
       // The pictures leave those out, as the notice stays on the pages after.
       "Your Inbox": async () => {
-        await expect(page.locator(".upnext-list")).toContainText("Add tags to notes");
+        // The tour picks the person's own pull request, written with their agent.
+        await expect(page.locator(".upnext-panel")).toContainText("Add tags to notes");
         if (pictures) return;
         // The card covers the panel's link, so the click goes to it directly.
         await page

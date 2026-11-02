@@ -203,7 +203,8 @@ func checks(head string, now time.Time) []bundle.Check {
 
 // activity is what was said on a reviewed pull request: on tags, an
 // automated review whose finding a later commit fixed and a teammate's
-// question, both answered and resolved; on accents, an approval.
+// question, both answered by the person and resolved; on accents, an
+// approval.
 func activity(p project, pr pull, now time.Time) ([]bundle.ConversationItem, []bundle.Thread) {
 	at := func(ago time.Duration) *time.Time { t := now.Add(-ago); return &t }
 	yes := true
@@ -213,20 +214,20 @@ func activity(p project, pr pull, now time.Time) ([]bundle.ConversationItem, []b
 		indexLine := 12
 		conversation := []bundle.ConversationItem{
 			{ID: "PRR_sample_codex", Kind: "review", AuthorLogin: "chatgpt-codex-connector", Bot: true, BotTool: "codex", State: "commented",
-				Commit: shas[1], CreatedAt: at(28 * time.Hour), Body: "Here are some automated review suggestions for this pull request."},
+				Commit: shas[1], CreatedAt: at(47 * time.Hour), Body: "Here are some automated review suggestions for this pull request."},
 			{ID: "PRRC_sample_query", Kind: "review_comment", AuthorLogin: "chatgpt-codex-connector", Bot: true, BotTool: "codex",
-				Review: "PRR_sample_codex", Path: "tags.go", Thread: "PRRT_sample_query", ThreadRoot: true, Resolved: &yes, CreatedAt: at(28 * time.Hour),
+				Review: "PRR_sample_codex", Path: "tags.go", Thread: "PRRT_sample_query", ThreadRoot: true, Resolved: &yes, CreatedAt: at(47 * time.Hour),
 				Body: "**<sub><sub>![P2 Badge](https://img.shields.io/badge/P2-yellow?style=flat)</sub></sub>  Clean the tag ByTag is asked for like saved tags**\n\nByTag lowercases the tag but does not trim it, so `ByTag(\" work\")` finds nothing although Add saved the note under `work`."},
-			{ID: "PRRC_sample_query_reply", Kind: "review_comment", AuthorLogin: alex.login, AuthorAssociation: "MEMBER", Path: "tags.go",
-				Thread: "PRRT_sample_query", Resolved: &yes, CreatedAt: at(20 * time.Hour),
+			{ID: "PRRC_sample_query_reply", Kind: "review_comment", AuthorLogin: sam.login, AuthorAssociation: "MEMBER", Path: "tags.go",
+				Thread: "PRRT_sample_query", Resolved: &yes, CreatedAt: at(5*time.Hour + 25*time.Minute),
 				Body: "Fixed in " + shas[2][:7] + ": ByTag now looks the tag up through cleanTag, which CleanTags uses too."},
 			{ID: "PRR_sample_riley", Kind: "review", AuthorLogin: riley.login, AuthorAssociation: "MEMBER", State: "commented",
-				Commit: shas[2], CreatedAt: at(18 * time.Hour), Body: "Reads well. One question about the index."},
+				Commit: shas[3], CreatedAt: at(4*time.Hour + 30*time.Minute), Body: "Reads well. One question about the index."},
 			{ID: "PRRC_sample_index", Kind: "review_comment", AuthorLogin: riley.login, AuthorAssociation: "MEMBER", Review: "PRR_sample_riley",
-				Path: "store.go", Thread: "PRRT_sample_index", ThreadRoot: true, Resolved: &yes, CreatedAt: at(18 * time.Hour),
+				Path: "store.go", Thread: "PRRT_sample_index", ThreadRoot: true, Resolved: &yes, CreatedAt: at(4*time.Hour + 30*time.Minute),
 				Body: "The index holds positions in notes. What keeps it right once notes can be removed?"},
-			{ID: "PRRC_sample_index_reply", Kind: "review_comment", AuthorLogin: alex.login, AuthorAssociation: "MEMBER", Path: "store.go",
-				Thread: "PRRT_sample_index", Resolved: &yes, CreatedAt: at(17 * time.Hour),
+			{ID: "PRRC_sample_index_reply", Kind: "review_comment", AuthorLogin: sam.login, AuthorAssociation: "MEMBER", Path: "store.go",
+				Thread: "PRRT_sample_index", Resolved: &yes, CreatedAt: at(4 * time.Hour),
 				Body: "Add is the only writer today, and its comment says that whatever removes or reorders notes must update the index too."},
 		}
 		threads := []bundle.Thread{
@@ -245,31 +246,23 @@ func activity(p project, pr pull, now time.Time) ([]bundle.ConversationItem, []b
 	return []bundle.ConversationItem{}, []bundle.Thread{}
 }
 
-// wroteIt are the agent sessions that wrote a pull request, as its review
-// sees them: Alex's from the Entire checkpoints, Sam's from this computer.
+// wroteIt are the person's agent sessions that wrote a pull request, as its
+// review sees them.
 func wroteIt(pr pull, now time.Time) []bundle.Session {
-	session := func(id, title, model string, prompts []string, at func(int) time.Time, end time.Time) bundle.Session {
-		start := at(0)
-		s := bundle.Session{RootSessionID: id, Vendor: "claude_code", Models: []string{model}, Title: title, Branch: pr.branch,
+	var wrote []bundle.Session
+	for _, a := range agentSessions {
+		if a.pr != pr.number {
+			continue
+		}
+		times := a.turnTimes(now)
+		start, end := times[1], times[len(a.prompts)].Add(3*time.Minute)
+		s := bundle.Session{RootSessionID: a.id, Vendor: "claude_code", Models: []string{a.model}, Title: a.title, Branch: pr.branch,
 			StartedAt: &start, EndedAt: &end, Outcome: "committed"}
-		for i, text := range prompts {
-			sent := at(i)
+		for i, text := range a.prompts {
+			sent := times[i+1]
 			s.Prompts = append(s.Prompts, bundle.Prompt{At: &sent, Index: i + 1, ID: fmt.Sprintf("p%d", i+1), Text: text})
 		}
-		return s
-	}
-	var wrote []bundle.Session
-	for _, t := range teammateSessions {
-		if t.pr.number == pr.number {
-			_, end := t.span(now)
-			wrote = append(wrote, session(t.id, t.title, teammateModel, t.prompts, func(i int) time.Time { return t.turnAt(i, now) }, end))
-		}
-	}
-	for _, a := range agentSessions {
-		if a.pr == pr.number {
-			times := a.turnTimes(now)
-			wrote = append(wrote, session(a.id, a.title, a.model, a.prompts, func(i int) time.Time { return times[i+1] }, times[len(a.prompts)].Add(3*time.Minute)))
-		}
+		wrote = append(wrote, s)
 	}
 	return wrote
 }

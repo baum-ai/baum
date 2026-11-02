@@ -21,7 +21,9 @@ import (
 // agentSession is one of the person's Claude Code sessions on the sample
 // project: what was asked, where it worked and what it decided. live is
 // how the Sessions page sees it now: "running", "idle", "ended" or "" for
-// one that ended long ago.
+// one that ended long ago. A session on a pull request writes its files and
+// commits them: leadsTo is the commit (by its place in the pull request)
+// each prompt works toward, and without it the last prompt commits the head.
 type agentSession struct {
 	id, title, branch string
 	pr                int
@@ -29,7 +31,16 @@ type agentSession struct {
 	model             string
 	live              string
 	prompts           []string
+	leadsTo           []int
 	decided           []decisions.Decision
+}
+
+// commitFor is the commit, by its place in pr, prompt i works toward.
+func (s agentSession) commitFor(pr pull, i int) int {
+	if s.leadsTo == nil {
+		return len(pr.commits) - 1
+	}
+	return s.leadsTo[i]
 }
 
 func decision(id, title, summary, rationale string, category decisions.Category, who decisions.Who, turn int, files ...string) decisions.Decision {
@@ -54,22 +65,39 @@ var agentSessions = []agentSession{
 			decision("dec-readme", "Keep the README to one example per feature", "Each feature gets one short example rather than a full reference.",
 				"The library is small enough to read.", decisions.CategoryScope, decisions.WhoApproved, 1, "README.md"),
 		}},
-	{id: "5a3c1e70-0000-4000-8000-000000000003", title: "Match search without accents", branch: accents.branch, pr: accents.number,
-		ago: 3 * time.Hour, model: "claude-opus-4-1", live: "ended",
-		prompts: []string{"Make search ignore accents, so cafe finds Café.",
-			"Use a small table of letters instead of a Unicode library.", "Add a test for it."},
+	{id: "5a3c1e70-0000-4000-8000-000000000003", title: "Fix ByTag after review", branch: tags.branch, pr: tags.number,
+		ago: 5*time.Hour + 30*time.Minute, model: "claude-opus-4-1", live: "ended",
+		prompts: []string{"Codex says ByTag doesn't trim the tag it's asked for, so ByTag(\" work\") finds nothing. Fix it.",
+			"Add tests for cleaning, the order ByTag returns and the case Codex found, and a benchmark with 10,000 notes.",
+			"Mention tags and the command in the README."},
+		leadsTo: []int{2, 3, 3},
 		decided: []decisions.Decision{
-			{ID: "dec-table", Title: "Fold accents with a small table", Summary: "Search maps accented Latin letters to plain ones with a fixed table.",
-				Rationale: "It covers the notes people write without adding a dependency.", RejectedAlternative: "Unicode normalisation with golang.org/x/text",
-				Category: decisions.CategoryDependency, Who: decisions.WhoHuman, Turns: []int{2}, Files: []string{"search.go"}},
-			decision("dec-fold", "Ignore case and accents in one step", "One fold function lowercases and strips accents, for the query and the notes alike.",
-				"", decisions.CategoryImplementation, decisions.WhoAgent, 1, "search.go"),
+			decision("dec-tags-one-rule", "One cleaning rule for saving and asking", "cleanTag is the single rule: CleanTags uses it when a note is saved and ByTag when a tag is looked up.",
+				"Two copies of the rule had already drifted apart once.", decisions.CategoryBehavior, decisions.WhoAgent, 1, "tags.go"),
+			decision("dec-tags-benchmark", "Measure ByTag before and after the index", "BenchmarkByTag lists one tag among 10,000 notes, to show what the index saves.",
+				"The index is only worth its upkeep if it is measurably faster.", decisions.CategoryScope, decisions.WhoHuman, 2, "tags_test.go"),
 		}},
-	{id: "5a3c1e70-0000-4000-8000-000000000004", title: "Plan tags for notes", branch: "main", ago: 2*day + 3*time.Hour, model: "claude-sonnet-4-5",
-		prompts: []string{"How could notes have tags? Sketch the smallest change.", "Clean tags when a note is saved rather than when it is read."},
+	{id: "5a3c1e70-0000-4000-8000-000000000004", title: "Add tags to notes", branch: tags.branch, pr: tags.number, ago: 2*day + 3*time.Hour, model: "claude-opus-4-1",
+		prompts: []string{"Notes need tags (NOTES-8). Add a Tags field, and a way to list the notes with one tag.",
+			"Clean tags once, when a note is saved: trim them, lowercase them, and drop blanks and repeats.",
+			"ByTag shouldn't scan every note. Keep an index from each tag to its notes.",
+			"Add a small notes command that lists a JSON file's notes, with -tag to filter."},
+		leadsTo: []int{0, 0, 0, 1},
 		decided: []decisions.Decision{
-			decision("dec-clean", "Clean tags when a note is saved", "Tags are trimmed and lowercased once, on Add, so every read sees clean tags.",
-				"Reads then never need to clean anything.", decisions.CategoryArchitecture, decisions.WhoHuman, 2, "store.go"),
+			{ID: "dec-clean", Title: "Clean tags once, when a note is saved",
+				Summary:   "Add trims and lowercases tags and drops blank and repeated ones, so every read sees clean tags.",
+				Rationale: "Notes are read far more often than they are written, and one place for the rule keeps it consistent.", RejectedAlternative: "Cleaning tags on every read",
+				Category: decisions.CategoryArchitecture, Who: decisions.WhoHuman, Turns: []int{2}, Files: []string{"store.go", "tags.go"}},
+			{ID: "dec-tags-index", Title: "Keep a tag index instead of scanning",
+				Summary:   "The store maps each tag to the positions of its notes, filled by Add, so ByTag reads only the notes it returns.",
+				Rationale: "Scanning every note made ByTag slower as the list grew.", RejectedAlternative: "Scanning every note on each call",
+				Category: decisions.CategoryImplementation, Who: decisions.WhoHuman, Turns: []int{3}, Files: []string{"store.go", "tags.go"}},
+			decision("dec-tags-index-positions", "Index positions, with Add as the only writer",
+				"The index holds positions in the note list, and Add is the only code that changes either, as its comment says.",
+				"Positions keep the index small; nothing removes or reorders notes yet.", decisions.CategoryImplementation, decisions.WhoAgent, 3, "store.go"),
+			decision("dec-tags-cli-file", "The command reads notes from a JSON file",
+				"notes -file reads a JSON list of notes and prints them newest first, or only those with -tag.",
+				"The library keeps notes in memory only, so a file is the simplest thing the command can list.", decisions.CategoryInterface, decisions.WhoApproved, 4, "cmd/notes/main.go"),
 		}},
 	{id: "5a3c1e70-0000-4000-8000-000000000005", title: "Tidy the search code", branch: "main", ago: 4*day + 2*time.Hour, model: "claude-sonnet-4-5",
 		prompts: []string{"Tidy search.go without changing what it does.", "Run the tests."}},
@@ -181,12 +209,20 @@ func writeTranscript(home string, s agentSession, p project, now time.Time) (str
 			"message": map[string]any{"role": "user", "content": prompt}})
 		uses := []any{map[string]any{"type": "tool_use", "id": "tool-" + n, "name": "Bash", "input": map[string]any{"command": "go test ./..."}}}
 		results := []any{map[string]any{"type": "tool_result", "tool_use_id": "tool-" + n, "content": "ok  \texample.com/notes\t0.012s"}}
-		if onPull && i == 0 {
+		// The first prompt toward a commit writes its files, the last commits them.
+		if onPull && (i == 0 || s.commitFor(pr, i) != s.commitFor(pr, i-1)) {
+			made := pr.commits[s.commitFor(pr, i)]
+			if s.leadsTo == nil {
+				made = commit{files: map[string]string{}}
+				for _, file := range pullFiles(pr) {
+					made.files[file] = pullText(pr, file)
+				}
+			}
 			var edits, edited []any
-			for j, file := range pullFiles(pr) {
+			for j, file := range changedFiles(made) {
 				tool := fmt.Sprintf("edit-%s-%d", n, j)
 				edits = append(edits, map[string]any{"type": "tool_use", "id": tool, "name": "Edit",
-					"input": map[string]any{"file_path": filepath.Join(cwd, file), "old_string": "", "new_string": pullText(pr, file)}})
+					"input": map[string]any{"file_path": filepath.Join(cwd, file), "old_string": "", "new_string": made.files[file]}})
 				edited = append(edited, map[string]any{"type": "tool_result", "tool_use_id": tool, "content": "The file " + filepath.Join(cwd, file) + " has been updated."})
 			}
 			uses, results = append(edits, uses...), append(edited, results...)
@@ -196,8 +232,9 @@ func writeTranscript(home string, s agentSession, p project, now time.Time) (str
 		add(map[string]any{"type": "user", "uuid": "r" + n, "parentUuid": "a" + n, "timestamp": at(2 * time.Minute), "promptId": "p" + n, "sourceToolAssistantUUID": "a" + n,
 			"message": map[string]any{"role": "user", "content": results}})
 		last, answer := "r"+n, reply(prompt)
-		if onPull && i == len(s.prompts)-1 {
-			head, message := p.heads[pr.number], pr.commits[len(pr.commits)-1].message
+		if onPull && (i == len(s.prompts)-1 || s.commitFor(pr, i) != s.commitFor(pr, i+1)) {
+			made := s.commitFor(pr, i)
+			head, message := p.commits[pr.number][made], pr.commits[made].message
 			add(map[string]any{"type": "assistant", "uuid": "c" + n, "parentUuid": last, "timestamp": at(2*time.Minute + 30*time.Second), "requestId": "req-c" + n,
 				"message": map[string]any{"id": "msg-c" + n, "role": "assistant", "model": s.model, "stop_reason": "tool_use", "usage": usage,
 					"content": []any{map[string]any{"type": "tool_use", "id": "commit-" + n, "name": "Bash", "input": map[string]any{"command": "git commit -am " + quote(message)}}}}})
@@ -259,3 +296,15 @@ func pullText(pr pull, file string) string {
 	}
 	return text
 }
+
+// changedFiles are the files a commit writes, in a stable order.
+func changedFiles(c commit) []string {
+	var files []string
+	for name := range c.files {
+		files = append(files, name)
+	}
+	slices.Sort(files)
+	return files
+}
+
+func quote(s string) string { raw, _ := json.Marshal(s); return string(raw) }

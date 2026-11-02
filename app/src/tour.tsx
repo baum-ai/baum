@@ -79,6 +79,8 @@ type Stop = {
   at?: string;
   /** Next clicks this, as the reader would, rather than going to an address. */
   follow?: string;
+  /** Clicked once when it shows, to pick what the stop is about. */
+  select?: string;
 };
 
 const STOPS: Stop[] = [
@@ -94,6 +96,8 @@ const STOPS: Stop[] = [
     target: ".upnext-list",
     at: href("inbox"),
     follow: ".upnext-panel .upnext-primary",
+    // In the sample, the person's own pull request, written with their agent.
+    select: inSample() ? '[data-row="example/notes#12"] .upnext-row' : undefined,
   },
   {
     title: "A pull request's review",
@@ -168,7 +172,15 @@ export function Tour({ close }: { close: () => void }) {
 
   // Follow the target as the page loads, scrolls and resizes.
   useEffect(() => {
+    let selected = false;
     const measure = () => {
+      const pick =
+        !selected && stop.select ? document.querySelector<HTMLElement>(stop.select) : null;
+      if (pick) {
+        pick.click();
+        selected = true;
+        next.current?.focus({ preventScroll: true });
+      }
       if (stop.at === "review" && new URLSearchParams(location.search).has("pr"))
         review.current = `${location.pathname}${location.search}`;
       // The first match on screen: a narrow window hides some targets.
