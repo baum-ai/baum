@@ -201,7 +201,7 @@ func TestUserProfileRefusesUnreadableVersion(t *testing.T) {
 }
 
 func TestUserProfileMapsUnknownOptionToUpgrade(t *testing.T) {
-	script := fakeClaude(t, "2.1.5 (Claude Code)", "echo \"error: unknown option '--restricted'\" >&2\nexit 1\n")
+	script := fakeClaude(t, "2.1.296 (Claude Code)", "echo \"error: unknown option '--restricted'\" >&2\nexit 1\n")
 	_, err := (&Backend{Binary: script}).Run(context.Background(), request(t.TempDir(), nil))
 	if err == nil || !strings.Contains(err.Error(), "upgrade Claude Code to "+minimumVersion) || !strings.Contains(err.Error(), "unknown option") {
 		t.Fatalf("error %v", err)
@@ -214,12 +214,12 @@ func TestUserProfileMapsUnknownOptionToUpgrade(t *testing.T) {
 }
 
 func TestUnrelatedUnknownErrorIsNotMappedToUpgrade(t *testing.T) {
-	script := fakeClaude(t, "2.1.5 (Claude Code)", "echo 'Error: Unknown error' >&2\nexit 1\n")
+	script := fakeClaude(t, "2.1.296 (Claude Code)", "echo 'Error: Unknown error' >&2\nexit 1\n")
 	_, err := (&Backend{Binary: script}).Run(context.Background(), request(t.TempDir(), nil))
 	if err == nil || strings.Contains(err.Error(), "upgrade Claude Code") || !strings.HasPrefix(err.Error(), "claude code failed: ") {
 		t.Fatalf("error %v", err)
 	}
-	script = fakeClaude(t, "2.1.5 (Claude Code)", "echo \"error: unknown argument 'x'\" >&2\nexit 1\n")
+	script = fakeClaude(t, "2.1.296 (Claude Code)", "echo \"error: unknown argument 'x'\" >&2\nexit 1\n")
 	_, err = (&Backend{Binary: script}).Run(context.Background(), request(t.TempDir(), nil))
 	if err == nil || !strings.Contains(err.Error(), "upgrade Claude Code") {
 		t.Fatalf("error %v", err)

@@ -23,6 +23,8 @@ type HeadingProps = {
   toggle?: () => void;
   /** A control at the heading's end, such as a batch action. */
   action?: ReactNode;
+  /** Drawn in place of the dot, such as an owner's avatar. */
+  icon?: ReactNode;
 };
 
 /** A list section's heading, as every list in the app draws one: a chevron
@@ -36,6 +38,7 @@ export function ListHeading({
   collapsed = false,
   toggle,
   action,
+  icon,
   controls,
 }: HeadingProps & { controls?: string }) {
   const label = (
@@ -43,7 +46,7 @@ export function ListHeading({
       {toggle ? (
         <ChevronRightIcon size={12} className={cn("list-heading-chevron", !collapsed && "open")} />
       ) : null}
-      <span aria-hidden="true" className={cn("list-heading-dot", LIST_TONES[tone])} />
+      {icon ?? <span aria-hidden="true" className={cn("list-heading-dot", LIST_TONES[tone])} />}
       <span>{title}</span>
       {count ? (
         <>

@@ -217,6 +217,41 @@ func TestBrowserCookieStaysInNamespace(t *testing.T) {
 		}
 	}
 }
+
+// The sample project is served under sample/ in the namespace, behind the
+// same cookie: its API by its own handler, its files by the app's.
+func TestSampleUnderNamespace(t *testing.T) {
+	answer := func(name string) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _, _ = io.WriteString(w, name+" "+r.URL.Path) })
+	}
+	s, err := New(Options{API: answer("own"), App: answer("app"), Sample: answer("sample")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.origin = "http://127.0.0.1:1"
+	cookie := "baum_ui=" + s.session
+	for _, tt := range []struct {
+		path, cookie, body string
+		status             int
+	}{
+		{path: s.appPath() + "sample/api/index", cookie: cookie, body: "sample /api/index", status: 200},
+		{path: s.appPath() + "sample/assets/index.js", cookie: cookie, body: "app /assets/index.js", status: 200},
+		{path: s.appPath() + "api/index", cookie: cookie, body: "own /api/index", status: 200},
+		{path: s.appPath() + "sample/api/index", status: 401},
+		{path: "/sample/api/index", cookie: cookie, status: 401},
+	} {
+		r := httptest.NewRequest("GET", s.origin+tt.path, nil)
+		if tt.cookie != "" {
+			r.Header.Set("Cookie", tt.cookie)
+		}
+		w := httptest.NewRecorder()
+		s.Handler().ServeHTTP(w, r)
+		if w.Code != tt.status || (tt.body != "" && w.Body.String() != tt.body) {
+			t.Fatal(tt.path, w.Code, w.Body.String())
+		}
+	}
+}
+
 func TestAppHandlerUnderNamespace(t *testing.T) {
 	s, err := New(Options{App: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _, _ = io.WriteString(w, "app "+r.URL.Path) })})
 	if err != nil {

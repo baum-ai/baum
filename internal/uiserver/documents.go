@@ -10,6 +10,7 @@ import (
 	"github.com/baum-ai/baum/internal/locallink"
 	"github.com/baum-ai/baum/internal/repos"
 	"github.com/baum-ai/baum/internal/viewserver"
+	"github.com/baum-ai/baum/sessions"
 )
 
 const maxCachedDocuments = 16
@@ -27,10 +28,18 @@ type documentCache struct {
 	closed          bool
 	requests, reads chan struct{}
 	resolve         func(context.Context, locallink.Request) (locallink.Result, error)
+	// sessions are the session stores linking reads; zero reads the defaults.
+	sessions sessions.Options
+	// patch is shared by every document, so versions of a pull request that
+	// compare the same commits share a read that is running.
+	patch func(context.Context, locallink.PatchRequest) (locallink.PatchResult, error)
+	// patcher answers patch; close closes the clones it keeps open.
+	patcher *locallink.Patcher
 }
 
 func newDocumentCache() *documentCache {
-	return &documentCache{entries: map[string]*cachedDocument{}, requests: make(chan struct{}, maxLocalReads), reads: make(chan struct{}, maxLocalReads), resolve: locallink.Resolve}
+	patcher := new(locallink.Patcher)
+	return &documentCache{entries: map[string]*cachedDocument{}, requests: make(chan struct{}, maxLocalReads), reads: make(chan struct{}, maxLocalReads), resolve: locallink.Resolve, patch: patcher.Patch, patcher: patcher}
 }
 func acquire(ctx context.Context, slots chan struct{}) bool {
 	select {
@@ -71,19 +80,36 @@ func (c *documentCache) get(clone repos.Clone, document []byte) (*viewserver.Ser
 		old = c.entries[oldestKey].server
 		delete(c.entries, oldestKey)
 	}
-	patcher := new(locallink.Patcher)
 	server, err := viewserver.New(viewserver.Options{Document: document, Sessions: func(ctx context.Context, v viewserver.Review) (locallink.Result, error) {
 		if !acquire(ctx, c.reads) {
 			return locallink.Result{}, ctx.Err()
 		}
 		defer func() { <-c.reads }()
-		return c.resolve(ctx, locallink.Request{Dir: clone.Path, Repository: v.Repository, Head: v.Head, Base: v.Base, MergeBase: v.MergeBase})
+		return c.resolve(ctx, locallink.Request{Dir: clone.Path, Repository: v.Repository, Head: v.Head, Base: v.Base, MergeBase: v.MergeBase, Sessions: c.sessions})
 	}, Patch: func(ctx context.Context, v viewserver.Review, path string) (locallink.PatchResult, error) {
 		if !acquire(ctx, c.reads) {
 			return locallink.PatchResult{}, ctx.Err()
 		}
 		defer func() { <-c.reads }()
-		return patcher.Patch(ctx, locallink.PatchRequest{Dir: clone.Path, Repository: v.Repository, Head: v.Head, Base: v.Base, MergeBase: v.MergeBase, Path: path})
+		return c.patch(ctx, locallink.PatchRequest{Dir: clone.Path, Repository: v.Repository, Head: v.Head, Base: v.Base, MergeBase: v.MergeBase, Path: path})
+	}, Commit: func(ctx context.Context, v viewserver.Review, oid string) (locallink.CommitDetail, error) {
+		if !acquire(ctx, c.reads) {
+			return locallink.CommitDetail{}, ctx.Err()
+		}
+		defer func() { <-c.reads }()
+		return locallink.ReadCommit(ctx, locallink.CommitRequest{Dir: clone.Path, Repository: v.Repository, OID: oid})
+	}, CommitPatch: func(ctx context.Context, v viewserver.Review, commit locallink.CommitDetail, file locallink.CommitFile) (locallink.PatchResult, error) {
+		if !acquire(ctx, c.reads) {
+			return locallink.PatchResult{}, ctx.Err()
+		}
+		defer func() { <-c.reads }()
+		return locallink.CommitPatch(ctx, locallink.CommitPatchRequest{Dir: clone.Path, Repository: v.Repository, Commit: commit, File: file})
+	}, File: func(ctx context.Context, v viewserver.Review, path string) (locallink.FileResult, error) {
+		if !acquire(ctx, c.reads) {
+			return locallink.FileResult{}, ctx.Err()
+		}
+		defer func() { <-c.reads }()
+		return locallink.ReadFile(ctx, locallink.FileRequest{Dir: clone.Path, Repository: v.Repository, Head: v.Head, Path: path})
 	}})
 	if err != nil {
 		c.mu.Unlock()
@@ -110,6 +136,7 @@ func (c *documentCache) close() {
 	for _, entry := range entries {
 		entry.server.Close()
 	}
+	c.patcher.Close()
 }
 
 func (c *documentCache) invalidateSessions() {

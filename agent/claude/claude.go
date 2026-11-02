@@ -301,6 +301,9 @@ func (c *Backend) run(ctx context.Context, request agent.Request, args, env []st
 		total()
 	}
 	completed := false
+	// apiError is the class of the latest assistant message Claude Code wrote
+	// in place of a model's answer.
+	apiError := ""
 	toolsSeen := map[string]string{}
 	titles := map[string]string{}
 	done := make(chan struct{})
@@ -331,7 +334,11 @@ func (c *Backend) run(ctx context.Context, request agent.Request, args, env []st
 			// APIErrorStatus is the HTTP status of the provider response
 			// a failed result ended on, when it ended on one.
 			APIErrorStatus int `json:"api_error_status"`
-			Message        struct {
+			// APIError is the class of an assistant message Claude Code
+			// wrote for a request it could not send or the provider failed,
+			// such as authentication_failed when it is not signed in.
+			APIError string `json:"error"`
+			Message  struct {
 				ID, Model string
 				Content   []struct {
 					Type, ID, Name string
@@ -457,6 +464,7 @@ func (c *Backend) run(ctx context.Context, request agent.Request, args, env []st
 				break
 			}
 			observe(event.Message.ID, event.Message.Usage, true)
+			apiError = event.APIError
 			result.Model = event.Message.Model
 			calls[event.Message.ID].model = event.Message.Model
 			if event.Message.StopReason != "" {
@@ -488,6 +496,11 @@ func (c *Backend) run(ctx context.Context, request agent.Request, args, env []st
 				refused := status != ""
 				switch {
 				case refused:
+				case apiError == "authentication_failed":
+					// Not signed in: Claude Code ends at once without a
+					// request, so the result has no status, and only its
+					// structured class says why.
+					status, refused = "authentication_error", true
 				case event.APIErrorStatus != 0:
 					status = "error"
 				default:

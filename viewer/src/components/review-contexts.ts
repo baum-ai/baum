@@ -1,0 +1,40 @@
+import { createContext, useContext } from "react";
+
+import type { Anchor, ResolvedAnchor, ReviewContextRef } from "../review-document";
+import type { OpenReviewFile } from "./code-file-link";
+
+// The review workspace's openers, shared by the panes under it: kept apart
+// from the components that provide them, so those files export components
+// only, as fast refresh needs.
+
+export type ReviewFiles = {
+  has: (path: string) => boolean;
+  open: OpenReviewFile;
+};
+
+export const ReviewFilesContext = createContext<ReviewFiles | null>(null);
+
+/** The review workspace's file view, or null outside it. */
+export function useReviewFiles(): ReviewFiles | null {
+  return useContext(ReviewFilesContext);
+}
+
+/** Opens the place a source chip names without leaving the app. `opens` says,
+ *  before any click, whether the chip stays in the app, so it can drop the
+ *  leaving mark; `open` is called on a click and returns false when it did
+ *  not handle the anchor, which then follows its link. `openRepositoryFile`,
+ *  present only when the host can show a file of the repository itself,
+ *  opens a context reference to a file the pull request does not change;
+ *  it returns false when it did not, and the chip then opens GitHub. */
+export type ReviewSources = {
+  opens: (anchor: Anchor) => boolean;
+  open: (anchor: Anchor, resolved: ResolvedAnchor) => boolean;
+  openRepositoryFile?: (reference: ReviewContextRef) => boolean;
+};
+
+export const ReviewSourcesContext = createContext<ReviewSources | null>(null);
+
+/** The workspace's openers for source chips, or null outside it. */
+export function useReviewSources(): ReviewSources | null {
+  return useContext(ReviewSourcesContext);
+}

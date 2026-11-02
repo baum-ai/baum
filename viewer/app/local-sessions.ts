@@ -1,5 +1,11 @@
 import { harnessName } from "../src/agent-names";
-import type { CommitListState, CommitView } from "../src/components/commit-list";
+import type {
+  CommitDetailView,
+  CommitFileView,
+  CommitListState,
+  CommitLoaders,
+  CommitView,
+} from "../src/components/commit-list";
 import type { SessionListState, SessionView } from "../src/components/session-list";
 import type { ReviewDocument } from "../src/review-document";
 
@@ -108,6 +114,83 @@ function parseCommit(value: unknown): LocalCommit | null {
     author: text(value.author),
     committedAt: text(value.committed_at),
     links,
+  };
+}
+
+/** A count of lines: null when left out, undefined when it is not a count. */
+function lineCount(n: unknown): number | null | undefined {
+  if (n === undefined || n === null) return null;
+  return typeof n === "number" && Number.isInteger(n) && n >= 0 ? n : undefined;
+}
+
+function parseCommitFile(value: unknown): CommitFileView | null {
+  if (!isRecord(value) || typeof value.path !== "string" || value.path === "") return null;
+  if (typeof value.status !== "string" || !isOptionalText(value.old_path)) return null;
+  const additions = lineCount(value.additions);
+  const deletions = lineCount(value.deletions);
+  if (additions === undefined || deletions === undefined) return null;
+  // A binary file has neither count.
+  const binary = additions === null || deletions === null;
+  return {
+    path: value.path,
+    oldPath: text(value.old_path) ?? null,
+    status: value.status,
+    additions: binary ? null : additions,
+    deletions: binary ? null : deletions,
+  };
+}
+
+/** The detail in a `GET /api/commit` response body: the commit's message
+ *  body and changed files. Null when the daemon could not read the commit
+ *  (it answers `"files": null` and a `code`) or the body is not an answer. */
+export function parseCommitDetail(body: unknown): CommitDetailView | null {
+  if (!isRecord(body) || !Array.isArray(body.files) || !isOptionalText(body.body)) return null;
+  const files = body.files.map(parseCommitFile);
+  if (files.includes(null)) return null;
+  return {
+    body: typeof body.body === "string" ? body.body : "",
+    files: firsts(files as CommitFileView[], (file) => file.path),
+  };
+}
+
+/** Reads one of the daemon's commit routes, `GET /api/commit` or
+ *  `GET /api/commit-patch`, with `params` added to the host's own query.
+ *  It resolves to the response body, to undefined for a 404, and rejects on
+ *  any other failure. */
+export type CommitRouteReader = (
+  route: "commit" | "commit-patch",
+  params: Record<string, string>,
+) => Promise<unknown>;
+
+/** The answer cached under key, else start's, kept while it holds: a
+ *  failed read is forgotten, so the next asks again. */
+function once<T>(cache: Map<string, Promise<T>>, key: string, start: () => Promise<T>) {
+  let pending = cache.get(key);
+  if (!pending) {
+    const started = start();
+    started.catch(() => {
+      if (cache.get(key) === started) cache.delete(key);
+    });
+    cache.set(key, started);
+    pending = started;
+  }
+  return pending;
+}
+
+/** `commitsSlot`'s loaders over a host's reader. Each commit and each file is
+ *  read once; a failed read is forgotten, so a retry asks again. A commit or
+ *  file the daemon does not answer for (404) has no detail or no diff. */
+export function createCommitLoaders(read: CommitRouteReader): Required<CommitLoaders> {
+  const commits = new Map<string, Promise<CommitDetailView | null>>();
+  const patches = new Map<string, Promise<string | null>>();
+  return {
+    loadCommit: (oid) => once(commits, oid, () => read("commit", { oid }).then(parseCommitDetail)),
+    loadPatch: (oid, path) =>
+      once(patches, `${oid}\n${path}`, () =>
+        read("commit-patch", { oid, path }).then((body) =>
+          isRecord(body) && typeof body.patch === "string" && body.patch !== "" ? body.patch : null,
+        ),
+      ),
   };
 }
 

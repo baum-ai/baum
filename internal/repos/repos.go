@@ -78,6 +78,9 @@ type DecisionPreferences struct {
 type AppearancePreferences struct {
 	Theme    string `json:"theme,omitempty"`
 	KeyHints *bool  `json:"key_hints,omitempty"`
+	// PageModifier is the key held with 1 to 8 to open the sidebar's pages:
+	// "meta", "ctrl" or "alt"; empty is the platform's command key.
+	PageModifier string `json:"page_modifier,omitempty"`
 }
 
 // PlanUsagePreferences are the plans the person chose to show or hide in plan
@@ -949,7 +952,7 @@ func (r *Registry) Pick(ctx context.Context, repository string, settings *Settin
 	if e = tx.Commit(); e != nil {
 		return Repository{}, e
 	}
-	list, e := r.repositories(ctx, identity)
+	list, e := r.repositories(ctx, identity, r.clones)
 	if e != nil {
 		return Repository{}, e
 	}
@@ -988,10 +991,16 @@ func (r *Registry) Unpick(ctx context.Context, repository string) error {
 // Repositories lists every picked repository by identity, with its clones
 // probed for availability as List does.
 func (r *Registry) Repositories(ctx context.Context) ([]Repository, error) {
-	return r.repositories(ctx, "")
+	return r.repositories(ctx, "", r.clones)
 }
 
-func (r *Registry) repositories(ctx context.Context, only string) ([]Repository, error) {
+// RepositoryRows is Repositories without probing the clones: Available is
+// false throughout. It runs no git.
+func (r *Registry) RepositoryRows(ctx context.Context) ([]Repository, error) {
+	return r.repositories(ctx, "", r.cloneRows)
+}
+
+func (r *Registry) repositories(ctx context.Context, only string, listClones func(context.Context, string) ([]Clone, error)) ([]Repository, error) {
 	result := []Repository{}
 	if r.noSchema {
 		return result, nil
@@ -1027,7 +1036,7 @@ func (r *Registry) repositories(ctx context.Context, only string) ([]Repository,
 	if e != nil {
 		return nil, e
 	}
-	clones, e := r.clones(ctx, only)
+	clones, e := listClones(ctx, only)
 	if e != nil {
 		return nil, e
 	}

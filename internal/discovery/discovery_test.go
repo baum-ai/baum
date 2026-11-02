@@ -63,7 +63,10 @@ func (f *fixture) roundTrip(r *http.Request) (*http.Response, error) {
 				return nil, err
 			}
 		}
-		var rows []apiPR
+		var rows []struct {
+			apiPR
+			Assignees []actor `json:"assignees"`
+		}
 		if err := json.Unmarshal([]byte(f.pages[fmt.Sprintf("/repos/acme/app/pulls?state=open&per_page=100&page=%d", page)]), &rows); err != nil {
 			return nil, err
 		}
@@ -80,7 +83,7 @@ func (f *fixture) roundTrip(r *http.Request) (*http.Response, error) {
 			for _, team := range pr.RequestedTeams {
 				requests = append(requests, map[string]any{"requestedReviewer": map[string]any{"__typename": "Team", "databaseId": team.ID}})
 			}
-			nodes = append(nodes, map[string]any{"number": pr.Number, "title": pr.Title, "isDraft": pr.Draft, "author": pr.User, "headRefOid": pr.Head.SHA, "headRefName": pr.Head.Ref, "baseRefName": pr.Base.Ref, "headRepository": head, "baseRepository": map[string]any{"databaseId": pr.Base.Repo.ID, "nameWithOwner": pr.Base.Repo.FullName}, "reviewRequests": map[string]any{"nodes": requests}})
+			nodes = append(nodes, map[string]any{"number": pr.Number, "title": pr.Title, "isDraft": pr.Draft, "author": pr.User, "headRefOid": pr.Head.SHA, "headRefName": pr.Head.Ref, "baseRefName": pr.Base.Ref, "headRepository": head, "baseRepository": map[string]any{"databaseId": pr.Base.Repo.ID, "nameWithOwner": pr.Base.Repo.FullName}, "reviewRequests": map[string]any{"nodes": requests}, "assignees": map[string]any{"nodes": pr.Assignees}})
 		}
 		encoded, _ := json.Marshal(map[string]any{"data": map[string]any{"viewer": map[string]any{"login": "viewer"}, "rateLimit": map[string]any{"cost": 1, "remaining": 4900, "resetAt": "2033-05-18T03:33:20Z"}, "repository": map[string]any{"viewerPermission": "WRITE", "pullRequests": map[string]any{"nodes": nodes, "pageInfo": map[string]any{"hasNextPage": len(rows) == 100, "endCursor": fmt.Sprintf("page-%d", page+1)}}}}})
 		body = string(encoded)
@@ -115,7 +118,7 @@ func recordedFixture() *fixture {
 		"/repos/acme/app/pulls?state=open&per_page=100&page=1": `[
  {"number":1,"title":"My draft","html_url":"https://github.com/acme/app/pull/1","draft":true,"user":{"login":"VIEWER"},"head":{"sha":"head1","ref":"my-draft","repo":{"id":1,"full_name":"acme/app"}},"base":{"ref":"main","repo":{"id":1,"full_name":"acme/app"}},"requested_reviewers":[]},
  {"number":2,"title":"Team request","user":{"login":"writer"},"head":{"sha":"head2","repo":{"id":2,"full_name":"fork/app"}},"base":{"repo":{"id":1,"full_name":"acme/app"}},"requested_teams":[{"id":42}]},
- {"number":3,"title":"Direct request","user":{"login":"reader"},"head":{"sha":"head3","repo":null},"base":{"repo":{"id":1,"full_name":"acme/app"}},"requested_reviewers":[{"login":"viewer"}]},
+ {"number":3,"title":"Direct request","user":{"login":"reader"},"head":{"sha":"head3","repo":null},"base":{"repo":{"id":1,"full_name":"acme/app"}},"requested_reviewers":[{"login":"viewer"}],"assignees":[{"login":"someone"},{"login":"Viewer"}]},
  {"number":4,"title":"Unknown permissions","user":{"login":"unknown","__typename":"Bot"},"head":{"sha":"head4","repo":{"id":1,"full_name":"acme/app"}},"base":{"repo":{"id":1,"full_name":"acme/app"}}}
  ]`,
 		"/repos/acme/app/collaborators/VIEWER/permission": `{"permission":"admin"}`,
@@ -153,6 +156,9 @@ func TestFlagsAndPrivateOfflineCache(t *testing.T) {
 	}
 	if !prs[2].ReviewRequestedFromMe || !prs[2].Fork || prs[2].AuthorHasWrite == nil || *prs[2].AuthorHasWrite {
 		t.Fatalf("direct/read flags %#v", prs[2])
+	}
+	if !prs[2].AssignedToMe || prs[0].AssignedToMe || prs[1].AssignedToMe || prs[3].AssignedToMe {
+		t.Fatalf("assigned flags %#v", prs)
 	}
 	if prs[3].AuthorHasWrite != nil {
 		t.Fatal("unreadable permission treated as known")

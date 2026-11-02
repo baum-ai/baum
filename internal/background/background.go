@@ -53,7 +53,11 @@ type Service struct {
 	// error. The daemon passes them to its automatic generation scheduler
 	// (internal/automatic), which alone decides whether to queue a job; this
 	// service never enqueues or invokes generation itself.
-	Discovered  func(context.Context, discovery.Snapshot)
+	Discovered func(context.Context, discovery.Snapshot)
+	// Retain reconciles a clone's retained review refs with its stores and
+	// reports whether a bound left work for another pass (Retention.Retain);
+	// nil skips it. Sync calls it per common git directory, see retainDue.
+	Retain      func(context.Context, repos.Clone) (bool, error)
 	Changed     func()
 	Now         func() time.Time
 	Interval    time.Duration
@@ -65,6 +69,66 @@ type Service struct {
 	epoch       uint64
 	probedEpoch uint64
 	probed      time.Time
+	retained    map[string]retention
+}
+
+// retention is this process's last Retain of a common git directory.
+type retention struct {
+	at   time.Time
+	more bool
+	err  bool
+}
+
+// A clone's retained refs are reconciled on the first pass that sees it,
+// then once a day, an hour after a failure, and on the next pass while a
+// bound left work.
+const (
+	retainInterval = 24 * time.Hour
+	retainRetry    = time.Hour
+)
+
+func (s *Service) retainDue(r retention) bool {
+	switch {
+	case r.at.IsZero() || r.more:
+		return true
+	case r.err:
+		return s.now().Sub(r.at) >= retainRetry
+	}
+	return s.now().Sub(r.at) >= retainInterval
+}
+
+// retain runs Retain for each common git directory among the clones that is
+// due, in path order.
+func (s *Service) retain(ctx context.Context, groups map[string][]repos.Clone) {
+	if s.Retain == nil {
+		return
+	}
+	clones := map[string]repos.Clone{}
+	for _, group := range groups {
+		for _, clone := range group {
+			if _, ok := clones[clone.CommonDir]; !ok {
+				clones[clone.CommonDir] = clone
+			}
+		}
+	}
+	dirs := make([]string, 0, len(clones))
+	for dir := range clones {
+		dirs = append(dirs, dir)
+	}
+	sort.Strings(dirs)
+	for _, dir := range dirs {
+		if ctx.Err() != nil {
+			return
+		}
+		if !s.retainDue(s.retained[dir]) {
+			continue
+		}
+		more, err := s.Retain(ctx, clones[dir])
+		if s.retained == nil {
+			s.retained = map[string]retention{}
+		}
+		s.retained[dir] = retention{at: s.now(), more: more && err == nil, err: err != nil}
+	}
 }
 
 // ResetIdentity drops credential-dependent backoff without waiting for an old
@@ -470,6 +534,7 @@ func (s *Service) Sync(ctx context.Context) {
 	if len(passed) > 0 && s.Changed != nil {
 		s.Changed()
 	}
+	s.retain(ctx, groups)
 }
 
 // probe asks discovery, at most once per interval, which repositories' open

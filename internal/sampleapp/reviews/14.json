@@ -1,0 +1,264 @@
+{
+  "schema": "baum.review/1",
+  "summary": {
+    "text": "Search ignores accents as well as case: the query and each note are folded through a fixed table of accented Latin letters before they are compared, so \"cafe\" finds \"Café\".",
+    "review_exchange": {
+      "summary": "Riley approved the change and asked for letters outside the table to be tracked separately. Nothing is left open."
+    },
+    "context": {
+      "area": {
+        "text": "`Store.Search` finds the notes whose title or text contains a query. It already ignored case; this makes it ignore accents too.",
+        "refs": [
+          {
+            "path": "search.go",
+            "symbol": "Store.Search"
+          }
+        ]
+      },
+      "reached_by": {
+        "text": "Everything that searches notes calls `Search`, so every search now folds accents.",
+        "refs": [
+          {
+            "path": "search.go",
+            "symbol": "Store.Search"
+          }
+        ]
+      }
+    },
+    "change_kind": "feature",
+    "implements": [],
+    "release_note": "Search matches words with or without accents.",
+    "breaking_change": null,
+    "attention": null,
+    "authorship": {
+      "declared": "ai_assisted",
+      "declared_tools": [
+        "Claude Code"
+      ],
+      "anchors": [
+        {
+          "type": "pr_body"
+        }
+      ]
+    }
+  },
+  "relations": [],
+  "sections": [
+    {
+      "id": "sec_fold",
+      "title": "Search ignores accents",
+      "kind": "logical",
+      "hunks": [
+        "@search.go"
+      ],
+      "summary": {
+        "text": "`fold` lowercases a string and replaces accented Latin letters from a fixed table with plain ones; `Search` folds the query and each note before comparing.",
+        "anchors": [
+          {
+            "type": "hunk",
+            "id": "@search.go"
+          }
+        ]
+      },
+      "attention": null,
+      "assessment": {
+        "level": 2,
+        "factors": [],
+        "reasons": [
+          {
+            "text": "Search finds more notes than before; only letters in the table are folded.",
+            "anchors": [
+              {
+                "type": "hunk",
+                "id": "@search.go"
+              }
+            ]
+          }
+        ]
+      },
+      "risks": [
+        {
+          "id": "rsk_fold_table",
+          "tier": "low",
+          "category": "behavior",
+          "source": "model",
+          "text": "Letters outside the table, such as ø or ł, still have to match exactly, so some accented words are not found without their accents.",
+          "finding": null,
+          "anchors": [
+            {
+              "type": "hunk",
+              "id": "@search.go"
+            }
+          ]
+        }
+      ],
+      "evidence": [
+        {
+          "id": "ev_fold_test",
+          "kind": "test",
+          "claim": "Searching for \"cafe\" finds a note titled \"Café on Main Street\".",
+          "status": "verified",
+          "granularity": "test",
+          "source": "ci",
+          "anchors": [
+            {
+              "type": "check",
+              "id": "check_run:1",
+              "test": "TestSearchIgnoresAccents"
+            },
+            {
+              "type": "hunk",
+              "id": "@search_test.go"
+            }
+          ]
+        },
+        {
+          "id": "ev_case_test",
+          "kind": "test",
+          "claim": "Search still ignores case.",
+          "status": "verified",
+          "granularity": "job",
+          "source": "ci",
+          "anchors": [
+            {
+              "type": "check",
+              "id": "check_run:1"
+            }
+          ]
+        }
+      ],
+      "blocks": [
+        {
+          "kind": "intent",
+          "text": "Searching should find a note however its words were accented.",
+          "anchors": [
+            {
+              "type": "pr_body"
+            }
+          ]
+        },
+        {
+          "kind": "behavior",
+          "steps": [
+            {
+              "id": "beh_fold",
+              "title": "Accents no longer have to match",
+              "before": "\"cafe\" did not find a note that says \"Café\".",
+              "after": "\"cafe\" finds it, and so does \"CAFÉ\".",
+              "question": "Should letters outside the table, such as ø, fold too?",
+              "text": "Search folds the query and each note's title and text before comparing them",
+              "anchors": [
+                {
+                  "type": "hunk",
+                  "id": "@search.go"
+                }
+              ],
+              "evidence": [
+                "ev_fold_test",
+                "ev_case_test"
+              ]
+            }
+          ]
+        },
+        {
+          "kind": "decisions",
+          "items": [
+            {
+              "id": "dec_fixed_table",
+              "by": "human",
+              "title": "A fixed table instead of Unicode normalization",
+              "text": "Accents are folded with a small table of the Latin letters notes use most, rather than full Unicode normalization.",
+              "rationale": "It keeps the library free of dependencies; letters outside the table are a known gap.",
+              "rejected": "golang.org/x/text normalization",
+              "trigger": "request",
+              "anchors": [
+                {
+                  "type": "hunk",
+                  "id": "@search.go"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "kind": "entities",
+          "items": [
+            {
+              "kind": "function",
+              "name": "Store.Search",
+              "path": "search.go",
+              "change": "modified",
+              "hunks": [
+                "@search.go"
+              ]
+            },
+            {
+              "kind": "function",
+              "name": "fold",
+              "path": "search.go",
+              "change": "added",
+              "hunks": [
+                "@search.go"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "sec_fold_tests",
+      "title": "Test",
+      "kind": "logical",
+      "hunks": [
+        "@search_test.go"
+      ],
+      "summary": {
+        "text": "A test searches for \"cafe\" and expects the note titled \"Café on Main Street\".",
+        "anchors": [
+          {
+            "type": "hunk",
+            "id": "@search_test.go"
+          }
+        ]
+      },
+      "attention": null,
+      "assessment": {
+        "level": 1,
+        "factors": [],
+        "reasons": [
+          {
+            "text": "Tests only.",
+            "anchors": [
+              {
+                "type": "hunk",
+                "id": "@search_test.go"
+              }
+            ]
+          }
+        ]
+      },
+      "risks": [],
+      "evidence": [
+        {
+          "id": "ev_fold_ci",
+          "kind": "ci",
+          "claim": "The test and lint jobs passed on the head.",
+          "status": "verified",
+          "granularity": "job",
+          "source": "ci",
+          "anchors": [
+            {
+              "type": "check",
+              "id": "check_run:1"
+            },
+            {
+              "type": "check",
+              "id": "check_run:2"
+            }
+          ]
+        }
+      ],
+      "blocks": []
+    }
+  ]
+}

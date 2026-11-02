@@ -2,6 +2,7 @@ import { SavedStateNotice } from "./ui-state";
 import { PreferencesProvider } from "./preferences";
 import { formatCount } from "@baum/viewer/components/format";
 import { UsageDetails } from "./usage";
+import { JobTiming, jobOrigin, jobTarget, jobType } from "./job-info";
 import { useCallback, useEffect, useRef, useState, type MouseEvent, type ReactNode } from "react";
 import { LogoMark } from "@baum/viewer/components/editorial";
 import { CircleCheckIcon, CircleCrossIcon, CircleDashedIcon } from "@baum/viewer/components/icons";
@@ -13,7 +14,7 @@ import {
   type ViewerLinkProps,
 } from "@baum/viewer/navigation";
 import { CloneActions, type FoundClones } from "./repositories";
-import { GroupMissing, GroupPage, NameDialog } from "./group";
+import { ConfirmDialog, GroupMissing, GroupPage, NameDialog } from "./group";
 import { Inbox, UpdatedAgo } from "./inbox";
 import { ListSection } from "./list";
 import {
@@ -23,16 +24,37 @@ import {
   ManageInboxesPage,
   NewInboxPage,
   newInboxHref,
-  RailLinks,
 } from "./inbox-pages";
 import {
+  freeName,
+  fromQuery,
+  withQuery,
   inboxBadgeCount,
   matches,
+  MAX_INBOXES,
+  newInboxId,
   readInboxes,
   useInboxes,
   type Inbox as SavedInbox,
 } from "./inboxes";
 import { UpNextPage, useUpNext } from "./up-next";
+import {
+  FilterBar,
+  FilterButton,
+  FilterSaveError,
+  SaveButton,
+  type SaveOption,
+} from "./filter-menu";
+import {
+  matchesQuery,
+  MAX_TABS,
+  queryProblem,
+  quote,
+  usePageFilter,
+  useFilterDraft,
+  useSavedTabs,
+  type SavedTab,
+} from "./pr-filter";
 import {
   onBody,
   KeyBar,
@@ -41,7 +63,8 @@ import {
   useCommandKeys,
   useEscapeBlurs,
   useKeyHints,
-  useNoTab,
+  usePointerBlurs,
+  useTabStops,
   useRowFocus,
   useShortcuts,
   VIEW_KEYS,
@@ -49,6 +72,7 @@ import {
   useReadlineArrows,
 } from "./shortcuts";
 import { GoTo, type GoToItem } from "./go-to";
+import { Tour, TOUR_HREF, useTour } from "./tour";
 import { PAGES, type Page } from "./pages";
 import { LocalReview } from "./review";
 import { DecisionsRevision } from "./decisions";
@@ -56,6 +80,7 @@ import { useCodexHookTrust } from "./codex-hooks";
 import { useDiagnosticProblems } from "./diagnostics";
 import { RepositoriesPage, SettingsPage, settingsSection, type ReviewDefaults } from "./settings";
 import { asksYou, SessionsPage, transcriptHref } from "./sessions";
+import { SampleGuard } from "./sample";
 import { ToastProvider } from "./toast";
 import { MenuButton, useActionsKey, useContextMenu, type MenuItem } from "./context-menu";
 import { SessionTranscriptPage } from "./session-transcript";
@@ -88,7 +113,6 @@ import {
   startFix,
   filtered,
   rowKey,
-  automaticLabel,
   jobReasonText,
   parseLive,
   parseAgentRequests,
@@ -117,17 +141,85 @@ import { FixDetails, type FixChat } from "./fix";
 import { JobPage } from "./job-transcript";
 import { useLocation } from "./location";
 import { SMALL } from "./action-classes";
-import { cn } from "@baum/viewer/components/classnames";
 
-/** Pull requests' views, in the order of their tabs and of `h` and `l`. */
+/** A saved tab's name as the daemon keeps it: trimmed as it trims, control
+ *  characters too, at most 40 characters; "" when nothing is left. */
+function tabName(text: string) {
+  return text
+    .replace(/\p{Cc}/gu, " ")
+    .trim()
+    .slice(0, 40)
+    .trim();
+}
+/** A saved tab's name being typed, at the filter menu's foot: Enter or the
+ *  button takes it, trimmed as the daemon keeps it, and Esc leaves it. */
+function TabNameForm({
+  name,
+  action,
+  focus = false,
+  onName,
+  onSubmit,
+  onCancel,
+}: {
+  name: string;
+  action: string;
+  focus?: boolean;
+  onName: (name: string) => void;
+  onSubmit: (name: string) => void;
+  onCancel?: () => void;
+}) {
+  return (
+    <form
+      className="local-tab-name"
+      onSubmit={(event) => {
+        event.preventDefault();
+        const kept = tabName(name);
+        if (kept) onSubmit(kept);
+      }}
+    >
+      <input
+        aria-label="Tab name"
+        className="local-field filter-bar-name"
+        // biome-ignore lint/a11y/noAutofocus: asked for by Create tab
+        autoFocus={focus}
+        maxLength={40}
+        value={name}
+        onChange={(event) => onName(event.target.value)}
+        onKeyDown={(event) => {
+          if (event.key === "Escape" && onCancel) {
+            event.preventDefault();
+            onCancel();
+          }
+        }}
+      />
+      <Button size="tiny" type="submit" disabled={!tabName(name)}>
+        {action}
+      </Button>
+    </form>
+  );
+}
+
+/** Pull requests' own tabs: Open first, Closed last, saved tabs between. */
 const VIEWS = [
-  ["inbox", "For you"],
-  ["requested", "Requested"],
-  ["mine", "Mine"],
-  ["other", "Others"],
-  ["no_review", "Not reviewed"],
-  ["history", "Saved history"],
+  ["open", "Open"],
+  ["history", "Closed"],
 ] as const;
+const PULLS_TAB_KEY = "baum.pulls.tab.v1";
+/** The Pull requests tab last shown in this window's browser, if any. */
+function lastPullsTab(): string | null {
+  try {
+    return localStorage.getItem(PULLS_TAB_KEY);
+  } catch {
+    return null;
+  }
+}
+function rememberPullsTab(tab: string) {
+  try {
+    localStorage.setItem(PULLS_TAB_KEY, tab);
+  } catch {
+    // Without storage the page opens on Open.
+  }
+}
 function LocalLink({ href, onClick, ...props }: ViewerLinkProps) {
   return (
     <a
@@ -187,6 +279,7 @@ function Application() {
   return (
     <UrlStateProvider value={url}>
       <ToastProvider>
+        <SampleGuard />
         <ViewerLinkProvider link={LocalLink}>
           {auth === "ready" ? (
             <Workspace url={url} />
@@ -246,6 +339,7 @@ function Workspace({ url }: { url: UrlState }) {
   );
   const [shortcuts, setShortcuts] = useState(false);
   const [goingTo, setGoingTo] = useState(false);
+  const tour = useTour(url.search.has("tour"), loading ? undefined : snapshot.entries.length > 0);
   const [rates, setRates] = useState<
     {
       repository: string;
@@ -280,6 +374,8 @@ function Workspace({ url }: { url: UrlState }) {
   const inboxes = useInboxes();
   // The inbox just made from a template, whose page says so.
   const [freshInbox, setFreshInbox] = useState<string | null>(null);
+  // An inbox started from a template, not saved until its edit page's Save.
+  const [draftInbox, setDraftInbox] = useState<SavedInbox | null>(null);
   // Deleting an inbox says so on any page, with a way back.
   const [inboxToast, setInboxToast] = useState<{
     id: number;
@@ -452,14 +548,113 @@ function Workspace({ url }: { url: UrlState }) {
     e.clone_id ??
     clones.find((c) => c.repository === e.pull_request.repository && c.available)?.id ??
     "";
-  const filter = url.search.get("filter") ?? "inbox";
-  const repo = url.search.get("repo") ?? "";
+  // Pull requests opens on the tab last shown when the address names none.
+  const filter = url.search.get("filter") ?? lastPullsTab() ?? "open";
+  useEffect(() => {
+    if (url.search.get("page") === "pulls") rememberPullsTab(filter);
+  }, [url.search.get("page"), filter]);
+  const savedTabs = useSavedTabs();
+  // A saved tab (`filter=tab:<id>`) is a view with a query of its own; one
+  // that is gone opens Open.
+  const savedTab = savedTabs.tabs.find((tab) => `tab:${tab.id}` === filter);
+  // The page's filter. On a saved tab it starts as the tab's query, and a
+  // change is a draft that narrows the tab until Update tab saves it (kept
+  // per tab; none kept is the saved query).
+  const pullsFilter = useFilterDraft(
+    savedTab ? `tab:${savedTab.id}` : "pulls",
+    savedTab ? savedTab.query : null,
+  );
+  const viewFilter = usePageFilter("pulls");
+  const pullsQuery = pullsFilter.query;
+  const setPullsQuery = (query: string) => {
+    if (query === pullsQuery || queryProblem(query, false)) return;
+    setSelection(new Set());
+    pullsFilter.set(query);
+  };
+  // A saved tab's name changes while it is edited (Edit in its right-click
+  // menu), at the filter menu's foot; `name` is the draft.
+  const [editingTab, setEditingTab] = useState<{ id: string; name: string } | null>(null);
+  const editing = savedTab && editingTab?.id === savedTab.id ? editingTab : null;
+  const [deletingTab, setDeletingTab] = useState<SavedTab | null>(null);
+  const tabMenu = useContextMenu();
+  const openTab = (key: string) => {
+    setSelection(new Set());
+    setNamingTab(null);
+    setEditingTab(null);
+    url.update((current) => {
+      current.set("filter", key);
+      return current;
+    });
+  };
+  const deleteTab = (tab: SavedTab) => {
+    savedTabs.remove(tab.id);
+    if (savedTab?.id === tab.id) openTab(tab.view);
+  };
+  const tabActions = (tab: SavedTab): MenuItem[] => [
+    {
+      label: "Edit…",
+      onSelect: () => {
+        if (savedTab?.id !== tab.id) openTab(`tab:${tab.id}`);
+        setEditingTab({ id: tab.id, name: tab.name });
+        setOpenPullsMenu(true);
+      },
+    },
+    { label: "Delete…", danger: true, onSelect: () => setDeletingTab(tab) },
+  ];
+  const view = savedTab?.view ?? (VIEWS.some(([value]) => value === filter) ? filter : "open");
+  // Asks the filter menu to open, as a saved tab's Edit does.
+  const [openPullsMenu, setOpenPullsMenu] = useState(false);
+  // The tabs in order, as h and l walk them: Open, the saved ones, Closed.
+  const tabKeys = ["open", ...savedTabs.tabs.map((tab) => `tab:${tab.id}`), "history"];
+  const activeTab = savedTab ? `tab:${savedTab.id}` : view;
+  // Until the saved tabs are read, a tab's filter is not known to edit.
+  const tabsPending = filter.startsWith("tab:") && !savedTabs.ready;
+  const [namingTab, setNamingTab] = useState<string | null>(null);
+  // A link from before the filter names one repository (`repo=`): it becomes
+  // the page's filter once the saved filters are read. Analytics and Timeline
+  // keep their own `repo=`.
+  const linkedRepo = url.search.get("page") === "pulls" ? url.search.get("repo") : null;
+  useEffect(() => {
+    if (!linkedRepo || !pullsFilter.ready) return;
+    setSelection(new Set());
+    pullsFilter.set(`repo=${quote(linkedRepo)}`);
+    url.update((current) => {
+      current.delete("repo");
+      return current;
+    });
+  }, [linkedRepo, pullsFilter.ready]);
   const indexedEntries = snapshot.entries.map((entry) =>
     isActiveJob(reviewJob(entry, jobs)) || starting.has(rowKey(entry))
       ? { ...entry, status: "generating" }
       : entry,
   );
-  const rows = filtered(indexedEntries, filter, repo);
+  const filteredPulls = (view: string, query: string) =>
+    filtered(indexedEntries, view).filter((e) => matchesQuery(query, e));
+  const rows = filteredPulls(view, pullsQuery);
+  // Saving the filter: into the saved tab shown, or as a new tab (named next).
+  const changed = savedTab ? pullsFilter.dirty : pullsQuery !== "";
+  const tabSaves: SaveOption[] =
+    !changed || queryProblem(pullsQuery, false) || editing
+      ? []
+      : [
+          ...(savedTab
+            ? [
+                {
+                  label: "Update tab",
+                  onSelect: () => {
+                    savedTabs.setQuery(savedTab.id, pullsQuery);
+                    pullsFilter.reset();
+                  },
+                },
+              ]
+            : []),
+          ...(savedTab ? [{ label: "Discard changes", onSelect: () => pullsFilter.reset() }] : []),
+          ...(savedTabs.ready && savedTabs.tabs.length < MAX_TABS
+            ? [{ label: "Create tab", onSelect: () => setNamingTab("") }]
+            : []),
+        ];
+  // What the filter's values and counts come from: the view before it.
+  const filterBase = filtered(indexedEntries, view);
   const repositories = Array.from(
     new Set([
       ...picked.map((r) => r.repository),
@@ -529,6 +724,13 @@ function Workspace({ url }: { url: UrlState }) {
   // Undo reads the list as it is then, not as it was at the delete.
   const currentInboxes = useRef(inboxes.inboxes);
   currentInboxes.current = inboxes.inboxes;
+  // An inbox to delete once the person confirms, and what follows it.
+  const [deletingInbox, setDeletingInbox] = useState<{
+    inbox: SavedInbox;
+    after?: () => void;
+  } | null>(null);
+  const askRemoveInbox = (inbox: SavedInbox, after?: () => void) =>
+    setDeletingInbox({ inbox, after });
   const removeInbox = (target: SavedInbox) => {
     const before = inboxes.inboxes;
     const at = before.findIndex((candidate) => candidate.id === target.id);
@@ -554,7 +756,8 @@ function Workspace({ url }: { url: UrlState }) {
   }, [inboxToast?.id]);
   useEffect(() => {
     if (freshInbox && page !== "inbox-edit") setFreshInbox(null);
-  }, [freshInbox, page]);
+    if (draftInbox && page !== "inbox-edit") setDraftInbox(null);
+  }, [freshInbox, draftInbox, page]);
   // The pages that show the diagnostics run them themselves.
   // The diagnostics dialog runs them itself while it is open.
   const diagnostics = useDiagnosticProblems(page !== "diagnostics");
@@ -798,6 +1001,7 @@ function Workspace({ url }: { url: UrlState }) {
         label: item.label,
         href: item.href(),
       })),
+      { id: "tour", kind: "Page" as const, label: "Take the tour", href: TOUR_HREF() },
       ...(inboxes.available
         ? [
             ...inboxes.inboxes.map((one) => ({
@@ -855,9 +1059,26 @@ function Workspace({ url }: { url: UrlState }) {
     go: navigate,
     Link: LocalLink,
   };
+  // The Inbox's filter as an inbox of its own, opened to be named.
+  const saveAsInbox =
+    inboxes.status === "ready" && inboxes.inboxes.length < MAX_INBOXES
+      ? (query: string, base?: SavedInbox) => {
+          // From an inbox: a copy of it, named so no other inbox has the name.
+          const made = base
+            ? withQuery(
+                { ...base, id: newInboxId(), name: freeName(base.name, inboxes.inboxes) },
+                query,
+              )
+            : fromQuery(query, inboxes.inboxes);
+          inboxes.save([...inboxes.inboxes, made]);
+          setFreshInbox(made.id);
+          navigate(editInboxHref(made.id));
+        }
+      : undefined;
   useKeyHints();
   useEscapeBlurs();
-  useNoTab();
+  usePointerBlurs();
+  useTabStops();
   useActionsKey();
   useReadlineArrows();
   useCommandKeys((action) => {
@@ -884,9 +1105,9 @@ function Workspace({ url }: { url: UrlState }) {
         if (shortcuts) return;
         // One view along, stopping at either end, as the tabs read.
         event.preventDefault();
-        const index = VIEWS.findIndex(([value]) => value === filter);
+        const index = tabKeys.indexOf(activeTab);
         const step = VIEW_KEYS.next.includes(event.key) ? 1 : -1;
-        const next = VIEWS[Math.min(VIEWS.length - 1, Math.max(0, index + step))]![0];
+        const next = tabKeys[Math.min(tabKeys.length - 1, Math.max(0, index + step))]!;
         if (next === filter) return;
         setSelection(new Set());
         url.update((current) => {
@@ -949,17 +1170,10 @@ function Workspace({ url }: { url: UrlState }) {
                 ),
                 selected: selectedInbox?.id ?? null,
                 elsewhere: page === "inbox-new" || page === "inboxes",
-                toggleBadge: (target) =>
-                  inboxes.save(
-                    inboxes.inboxes.map((candidate) =>
-                      candidate.id === target.id
-                        ? { ...candidate, badge: !candidate.badge }
-                        : candidate,
-                    ),
-                  ),
-                remove: removeInbox,
+                remove: askRemoveInbox,
                 edit: (target) => navigate(editInboxHref(target.id)),
-                footer: <RailLinks page={page} Link={LocalLink} />,
+                create: () => navigate(newInboxHref()),
+                manage: () => navigate(manageInboxesHref()),
               }
             : undefined
         }
@@ -1040,6 +1254,8 @@ function Workspace({ url }: { url: UrlState }) {
               repositories={picked}
               loading={loading}
               automatic={automatic}
+              entries={snapshot.entries}
+              jobs={jobs}
               changed={reload}
             />
           ) : page === "settings" || page === "diagnostics" ? (
@@ -1128,6 +1344,7 @@ function Workspace({ url }: { url: UrlState }) {
                     </div>
                   ) : null}
                   <SessionsPage
+                    peekKey={url.search.get("peek")}
                     sessions={live}
                     requests={agentRequests}
                     Link={LocalLink}
@@ -1140,6 +1357,10 @@ function Workspace({ url }: { url: UrlState }) {
           ) : page === "jobs" && url.search.get("job") ? (
             <JobPage
               job={jobs.find((j) => j.id === url.search.get("job")) ?? null}
+              title={jobPRTitle(
+                snapshot.entries,
+                jobs.find((j) => j.id === url.search.get("job")),
+              )}
               loading={loading}
               Link={LocalLink}
             />
@@ -1151,19 +1372,27 @@ function Workspace({ url }: { url: UrlState }) {
                 actions={<RefreshButton refresh={(run) => reload({ restart: run.restart })} />}
               />
               <div className="local-page-body local-list-page">
-                <Jobs jobs={jobs} loading={loading} changed={reload} />
+                <Jobs jobs={jobs} entries={snapshot.entries} loading={loading} changed={reload} />
               </div>
             </>
           ) : inboxWaiting ? (
             inboxWaiting
           ) : page === "inbox-new" ? (
-            <NewInboxPage {...inboxPageProps} created={setFreshInbox} />
+            <NewInboxPage
+              {...inboxPageProps}
+              start={(inbox) => {
+                setDraftInbox(inbox);
+                navigate(editInboxHref(inbox.id));
+              }}
+            />
           ) : page === "inbox-edit" ? (
             <EditInboxPage
               {...inboxPageProps}
               id={url.search.get("inbox") ?? ""}
               fresh={freshInbox === url.search.get("inbox")}
-              remove={removeInbox}
+              remove={askRemoveInbox}
+              draft={draftInbox}
+              setDraft={setDraftInbox}
             />
           ) : page === "inboxes" ? (
             <ManageInboxesPage {...inboxPageProps} />
@@ -1178,6 +1407,7 @@ function Workspace({ url }: { url: UrlState }) {
                   jobs={jobs}
                   clones={clones}
                   cloneFor={cloneFor}
+                  live={live}
                   revision={revision}
                   changed={reload}
                   refresh={(press) =>
@@ -1282,17 +1512,7 @@ function Workspace({ url }: { url: UrlState }) {
               inbox={inbox}
               inboxes={inboxes.inboxes}
               selected={selectedInbox}
-              headerAction={
-                selectedInbox ? (
-                  <LocalLink
-                    href={editInboxHref(selectedInbox.id)}
-                    className={cn("inbox-edit-link", SMALL)}
-                  >
-                    Edit
-                  </LocalLink>
-                ) : undefined
-              }
-              login={github?.login}
+              onEdit={selectedInbox ? () => navigate(editInboxHref(selectedInbox.id)) : undefined}
               // Until a read succeeds there is nothing to say an empty inbox about.
               loading={revision === 0}
               hasRepositories={hasRepositories}
@@ -1303,6 +1523,18 @@ function Workspace({ url }: { url: UrlState }) {
               refresh={refresh}
               refreshing={listBusy}
               reviewGroups={groups}
+              saveAsInbox={saveAsInbox}
+              inboxSaves={inboxes.saves}
+              updateInbox={
+                selectedInbox && inboxes.status === "ready"
+                  ? (patch) =>
+                      inboxes.save(
+                        inboxes.inboxes.map((one) =>
+                          one.id === selectedInbox.id ? { ...one, ...patch } : one,
+                        ),
+                      )
+                  : undefined
+              }
               entries={indexedEntries}
               Link={LocalLink}
             />
@@ -1328,49 +1560,114 @@ function Workspace({ url }: { url: UrlState }) {
               />
               <div className="local-filter-bar">
                 <div role="group" aria-label="Show" className="local-tabs">
-                  {VIEWS.map(([value, label]) => {
-                    const count = filtered(indexedEntries, value, repo).length;
-                    return (
+                  {[
+                    {
+                      key: "open",
+                      label: "Open",
+                      count: filteredPulls("open", viewFilter.query).length,
+                    },
+                    ...savedTabs.tabs.map((tab) => ({
+                      key: `tab:${tab.id}`,
+                      label: tab.name,
+                      count: filteredPulls(tab.view, tab.query).length,
+                      tab,
+                    })),
+                    // Closed stays last, after the saved tabs.
+                    {
+                      key: "history",
+                      label: "Closed",
+                      count: filteredPulls("history", viewFilter.query).length,
+                    },
+                  ].map(
+                    ({
+                      key,
+                      label,
+                      count,
+                      tab,
+                    }: {
+                      key: string;
+                      label: string;
+                      count: number;
+                      tab?: SavedTab;
+                    }) => (
                       <button
-                        key={value}
+                        key={key}
                         type="button"
-                        aria-pressed={filter === value}
+                        data-tab={key}
+                        aria-pressed={key === activeTab}
                         className={count === 0 ? "local-tab empty" : "local-tab"}
-                        onClick={() => {
-                          setSelection(new Set());
-                          url.update((current) => {
-                            current.set("filter", value);
-                            return current;
-                          });
-                        }}
+                        onClick={() => openTab(key)}
+                        onContextMenu={
+                          tab
+                            ? (event) => tabMenu.open(event, tabActions(tab), tab.name)
+                            : undefined
+                        }
                       >
                         {label}
                         <span className="local-tab-count">{formatCount(count)}</span>
                       </button>
-                    );
-                  })}
+                    ),
+                  )}
                 </div>
-                {repositories.length > 1 ? (
-                  <label className="local-repo-filter">
-                    <span className="sr-only">Repository</span>
-                    <select
-                      value={repo}
-                      onChange={(e) => {
-                        setSelection(new Set());
-                        url.update((current) => {
-                          if (e.target.value) current.set("repo", e.target.value);
-                          else current.delete("repo");
-                          return current;
-                        });
-                      }}
-                    >
-                      <option value="">All repositories</option>
-                      {repositories.map((name) => (
-                        <option key={name}>{name}</option>
-                      ))}
-                    </select>
-                  </label>
-                ) : null}
+                {tabMenu.menu}
+                {tabsPending ? null : (
+                  <FilterButton
+                    query={pullsQuery}
+                    onChange={setPullsQuery}
+                    entries={filterBase}
+                    active={pullsQuery !== ""}
+                    openRequest={openPullsMenu}
+                    onOpened={() => setOpenPullsMenu(false)}
+                    onClosed={() => {
+                      setEditingTab(null);
+                      setNamingTab(null);
+                    }}
+                    footer={
+                      <>
+                        <FilterBar
+                          key={editing ? `${activeTab}:edit` : activeTab}
+                          query={pullsQuery}
+                          onChange={setPullsQuery}
+                          entries={filterBase}
+                          actions={
+                            editing ? (
+                              <TabNameForm
+                                name={editing.name}
+                                action="Done"
+                                onName={(name) => setEditingTab({ id: savedTab!.id, name })}
+                                onSubmit={(name) => {
+                                  if (name !== savedTab!.name) savedTabs.rename(savedTab!.id, name);
+                                  setEditingTab(null);
+                                }}
+                              />
+                            ) : namingTab !== null ? (
+                              <TabNameForm
+                                name={namingTab}
+                                action="Save"
+                                focus
+                                onName={setNamingTab}
+                                onCancel={() => setNamingTab(null)}
+                                onSubmit={(name) => {
+                                  const id = newInboxId();
+                                  // From a saved tab, the new one holds its query and the filter.
+                                  savedTabs.add(
+                                    { id, name, view: savedTab?.view ?? view, query: pullsQuery },
+                                    savedTab ? `tab:${savedTab.id}` : "pulls",
+                                  );
+                                  setNamingTab(null);
+                                  openTab(`tab:${id}`);
+                                }}
+                              />
+                            ) : (
+                              <SaveButton options={tabSaves} />
+                            )
+                          }
+                        />
+                        <FilterSaveError error={pullsFilter.error} retry={pullsFilter.retry} />
+                      </>
+                    }
+                  />
+                )}
               </div>
               <div className="local-page-body">
                 {/* A cache older than the poll interval is normal; only a failed refresh
@@ -1394,11 +1691,7 @@ function Workspace({ url }: { url: UrlState }) {
                   <LoadingStatus block>Loading local inbox…</LoadingStatus>
                 ) : rows.length === 0 && !(error && revision === 0) ? (
                   <div className="local-empty">
-                    <h2>
-                      {filter === "inbox" && hasRepositories
-                        ? "Nothing is waiting on you"
-                        : "No pull requests here"}
-                    </h2>
+                    <h2>No pull requests here</h2>
                     <p>
                       {!hasRepositories ? (
                         <>
@@ -1406,9 +1699,9 @@ function Workspace({ url }: { url: UrlState }) {
                           <LocalLink href={appURL("?page=repositories")}>Repositories</LocalLink> to
                           get started.
                         </>
-                      ) : filter === "inbox" ? (
-                        "No pull request asks for your review and none of yours is open. Others has the rest of your repositories' pull requests."
-                      ) : filter === "history" ? (
+                      ) : pullsQuery ? (
+                        "Nothing in this view matches the filter."
+                      ) : view === "history" ? (
                         "Reviews saved for pull requests that are closed, merged or no longer listed show here."
                       ) : (
                         "Nothing matches this view. Refresh from GitHub or choose another tab."
@@ -1479,6 +1772,59 @@ function Workspace({ url }: { url: UrlState }) {
               Couldn't start the fix of #{fixError.number}: {fixError.text}
             </Alert>
           ) : null}
+          {deletingTab ? (
+            <ConfirmDialog
+              title={`Delete the ${deletingTab.name} tab?`}
+              action="Delete tab"
+              danger
+              pending={false}
+              close={() => {
+                setDeletingTab(null);
+                // Back to the tab its menu was opened on.
+                const key = `tab:${deletingTab.id}`;
+                setTimeout(() => {
+                  if (document.activeElement !== document.body) return;
+                  document.querySelector<HTMLElement>(`[data-tab="${CSS.escape(key)}"]`)?.focus();
+                });
+              }}
+              confirm={() => {
+                const tab = deletingTab;
+                setDeletingTab(null);
+                deleteTab(tab);
+              }}
+            >
+              Only this tab goes. Its pull requests and their reviews stay, under Open or Closed.
+            </ConfirmDialog>
+          ) : null}
+          {deletingInbox ? (
+            <ConfirmDialog
+              title={`Delete ${deletingInbox.inbox.name}?`}
+              action="Delete inbox"
+              danger
+              pending={false}
+              close={() => {
+                setDeletingInbox(null);
+                // Back where it was asked from, or the inbox's ⋯ when that menu has gone.
+                const name = deletingInbox.inbox.name;
+                setTimeout(() => {
+                  if (document.activeElement !== document.body) return;
+                  document
+                    .querySelector<HTMLElement>(`[aria-label="More for ${CSS.escape(name)}"]`)
+                    ?.focus();
+                });
+              }}
+              confirm={() => {
+                const { inbox: target, after } = deletingInbox;
+                setDeletingInbox(null);
+                removeInbox(target);
+                // After the dialog has handed the focus back, so it lands here.
+                setTimeout(() => after?.());
+              }}
+            >
+              Only this view goes. Its pull requests, reviews and snoozes stay, and they still show
+              in Inbox.
+            </ConfirmDialog>
+          ) : null}
           {inboxToast ? (
             <div role="status" className="upnext-toast inbox-toast">
               <span>{inboxToast.text}</span>
@@ -1500,6 +1846,7 @@ function Workspace({ url }: { url: UrlState }) {
           {goingTo ? (
             <GoTo items={goToItems()} go={navigate} close={() => setGoingTo(false)} />
           ) : null}
+          {tour.open ? <Tour close={tour.close} /> : null}
           {grouping ? (
             <NameDialog
               title="Review these pull requests together"
@@ -1580,10 +1927,14 @@ function ForkConfirmation({
  *  opens the job's pull request or group and `t` its transcript. */
 function Jobs({
   jobs,
+  entries,
   loading,
   changed,
 }: {
   jobs: Job[];
+  /** The pull requests baum knows, for their titles; a job of one it no longer
+   *  lists shows its number alone. */
+  entries: Entry[];
   loading: boolean;
   changed: () => Promise<void>;
 }) {
@@ -1628,19 +1979,14 @@ function Jobs({
   // A job's actions, behind its ⋯ and a right click on it.
   const menu = useContextMenu();
   const actionsFor = (job: Job): MenuItem[] => {
-    const items: MenuItem[] = [];
-    const href = jobTarget(job);
-    if (href)
+    const items: MenuItem[] = [
+      { label: "Open job", hint: "↵", onSelect: () => navigate(jobHref(job)) },
+    ];
+    const target = jobTarget(job);
+    if (target)
       items.push({
         label: job.group ? "Open review group" : "Open pull request",
-        hint: "↵",
-        onSelect: () => navigate(href),
-      });
-    if (job.has_transcript)
-      items.push({
-        label: isActiveJob(job) ? "Watch" : "Transcript",
-        hint: "t",
-        onSelect: () => navigate(jobHref(job)),
+        onSelect: () => navigate(target),
       });
     items.push({
       label: usage.has(job.id) ? "Hide usage" : "Show usage",
@@ -1709,6 +2055,7 @@ function Jobs({
               <JobRow
                 key={job.id}
                 job={job}
+                title={jobPRTitle(entries, job)}
                 focused={rows.focused === job.id}
                 cancelling={cancelling.has(job.id)}
                 usage={usage.has(job.id)}
@@ -1746,15 +2093,14 @@ function JobState({ job }: { job: Job }) {
     </span>
   );
 }
-/** Where a job's row opens: its pull request or review group. A feature
- *  build has neither. */
-function jobTarget(job: Job) {
-  if (job.kind === "feature_build") return null;
-  return appURL(
-    job.group
-      ? `?group=${encodeURIComponent(job.group)}`
-      : `?${job.clone ? `clone=${encodeURIComponent(job.clone)}` : `repository=${encodeURIComponent(job.repository)}`}&pr=${job.pr}`,
-  );
+/** The title of a job's pull request, when baum still lists it. */
+function jobPRTitle(entries: Entry[], job: Job | undefined) {
+  if (!job || job.group || job.kind === "feature_build") return undefined;
+  return entries.find(
+    (entry) =>
+      entry.pull_request.number === job.pr &&
+      entry.pull_request.repository.toLowerCase() === job.repository.toLowerCase(),
+  )?.pull_request.title;
 }
 /** How a job is named to assistive technology and in its menu. */
 function jobLabel(job: Job) {
@@ -1764,12 +2110,15 @@ function jobLabel(job: Job) {
 }
 function JobRow({
   job,
+  title,
   focused,
   cancelling,
   usage,
   actions,
 }: {
   job: Job;
+  /** The pull request's title, when baum knows it. */
+  title?: string;
   focused: boolean;
   cancelling: boolean;
   /** Whether its usage shows under it. */
@@ -1777,11 +2126,8 @@ function JobRow({
   /** The row's ⋯ button. */
   actions: ReactNode;
 }) {
-  const started = automaticLabel(job);
-  const href = jobTarget(job);
-  const calls = `${formatCount(job.calls)} ${job.calls === 1 ? "call" : "calls"}${
-    job.repairs ? ` · ${formatCount(job.repairs)} ${job.repairs === 1 ? "repair" : "repairs"}` : ""
-  }`;
+  const href = jobHref(job);
+  const origin = jobOrigin(job);
   return (
     <li
       id={`job-${job.id}`}
@@ -1791,43 +2137,43 @@ function JobRow({
     >
       <JobState job={job} />
       <div className="min-w-0">
-        {!href ? (
-          <span className="local-job-title">
-            Feature build <span>· {job.repository}</span>
-          </span>
-        ) : (
+        <div className="local-job-heading">
+          <span className="local-job-type">{jobType(job)}</span>
+          {job.kind === "feature_build" ? null : (
+            <span className="local-job-repository">{job.repository}</span>
+          )}
+        </div>
+        {job.kind === "feature_build" ? (
           <LocalLink data-row-link="" href={href} className="local-job-title">
-            {job.group ? (
-              <>
-                Review group: {job.group_name || job.group} <span>{job.repository}</span>
-              </>
-            ) : (
-              <>
-                {job.repository} <span>#{job.pr}</span>
-              </>
-            )}
+            {job.repository}
+          </LocalLink>
+        ) : job.group ? (
+          <LocalLink data-row-link="" href={href} className="local-job-title">
+            {job.group_name || job.group}
+          </LocalLink>
+        ) : (
+          <LocalLink data-row-link="" href={href} className="local-job-title" title={title}>
+            <span>#{job.pr}</span>
+            {title ? ` ${title}` : null}
           </LocalLink>
         )}
         <p className="local-job-meta">
-          {job.kind === "fix" || job.kind === "chat" || job.kind === "details"
-            ? `${jobName(job)} · `
-            : null}
-          {started ?? (job.automatic ? null : "Started by you")}
+          {origin}
+          {job.kind === "fix" && job.commit ? (
+            <>
+              {origin ? " · " : null}Pushed{" "}
+              <a href={job.commit_url} target="_blank" rel="noreferrer">
+                <code>{job.commit.slice(0, 7)}</code>
+              </a>
+              {job.fix?.head_ref ? (
+                <>
+                  {" "}
+                  to <code>{job.fix.head_ref}</code>
+                </>
+              ) : null}
+            </>
+          ) : null}
         </p>
-        {job.kind === "fix" && job.commit ? (
-          <p className="local-job-meta">
-            Pushed{" "}
-            <a href={job.commit_url} target="_blank" rel="noreferrer">
-              <code>{job.commit.slice(0, 7)}</code>
-            </a>
-            {job.fix?.head_ref ? (
-              <>
-                {" "}
-                to <code>{job.fix.head_ref}</code>
-              </>
-            ) : null}
-          </p>
-        ) : null}
         {job.reason ? (
           <p role="status" className="local-job-meta">
             {jobReasonText(job.reason, job.kind)}
@@ -1840,7 +2186,7 @@ function JobRow({
         ) : null}
         {job.kind === "fix" ? <FixDetails job={job} /> : null}
       </div>
-      <span className="local-job-figure">{calls}</span>
+      <JobTiming job={job} />
       <span className="local-job-figure">{formatCount(job.tokens)} tokens</span>
       <div className="local-job-actions">{actions}</div>
       {usage ? (

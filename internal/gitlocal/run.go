@@ -184,6 +184,8 @@ type runSpec struct {
 	// keepOutput returns stdout along with the error of a command that
 	// exits non-zero, for one whose exit status is an answer.
 	keepOutput bool
+	// stdin is the command's standard input; nil is none.
+	stdin []byte
 }
 
 // run executes git without a shell, under a timeout, with stdout and stderr
@@ -205,6 +207,9 @@ func run(ctx context.Context, spec runSpec, args ...string) ([]byte, error) {
 	cmd.Dir = spec.dir
 	cmd.Env = spec.env
 	cmd.WaitDelay = waitDelay
+	if spec.stdin != nil {
+		cmd.Stdin = bytes.NewReader(spec.stdin)
+	}
 	stdout := &limitedWriter{remaining: spec.limit, discard: spec.limit <= 0, cancel: cancel}
 	stderr := &capWriter{max: maxStderrBytes}
 	cmd.Stdout = stdout

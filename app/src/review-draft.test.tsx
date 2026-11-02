@@ -21,7 +21,11 @@ vi.mock("@baum/viewer/components/review-viewer", () => ({
     onRetryDetails,
     contextPending,
   }: ReviewViewerProps) => (
-    <div data-versions={versions?.length ?? 0} data-history={history ? "yes" : "no"}>
+    <div
+      data-versions={versions?.length ?? 0}
+      data-history={history ? "yes" : "no"}
+      data-generation={header?.generation?.state}
+    >
       {header?.beside}
       {notices}
       {document ? (
@@ -190,41 +194,24 @@ it("shows the draft of a pull request without a version once the job has one", a
   expect(node.textContent).toContain("Writing details…");
   expect(node.textContent).toContain("Writing context…");
   expect(node.textContent).toContain("Draft — the review is still being written.");
-  // Nothing of a version: no history, no Ask, no Walk through.
+  // Nothing of a version: no history, no Ask.
   expect(node.querySelector("[data-history=no]")).not.toBeNull();
   expect(button("Ask")).toBeUndefined();
-  expect(button("Walk through")).toBeUndefined();
-  expect(node.textContent).not.toContain("Ask about this section");
   expect(button("Retry")).toBeUndefined();
   // When the job ends the draft goes with it.
   await render(entry, job("completed"), undefined, 1);
   expect(node.textContent).not.toContain("Draft text");
 });
-it("keeps the saved version and toggles to the draft while regenerating", async () => {
+it("keeps the saved version while regenerating, and offers no view of the draft", async () => {
   savedDocument = clone();
   savedDocument.summary.text = "Saved text";
-  await render(saved, job("running"));
-  const toggle = button("View draft")!;
-  expect(toggle.disabled).toBe(true);
   draftValue = draftDocument();
   await render(saved, job("running", { draft: 1 }));
-  expect(toggle.disabled).toBe(false);
-  expect(toggle.getAttribute("aria-pressed")).toBe("false");
   expect(node.textContent).toContain("Saved text");
-  expect(node.textContent).toContain("Generating review");
-  await act(async () => toggle.click());
-  expect(toggle.getAttribute("aria-pressed")).toBe("true");
-  expect(node.textContent).toContain("Draft text");
-  expect(node.textContent).toContain("Draft — the review is still being written.");
-  expect(node.textContent).not.toContain("Ask about this section");
-  expect(button("Ask")).toBeUndefined();
-  expect(node.querySelector("[data-history=no]")).not.toBeNull();
-  await act(async () => toggle.click());
-  expect(node.textContent).toContain("Saved text");
+  expect(node.querySelector('[data-generation="pending"]')).not.toBeNull();
   expect(node.textContent).not.toContain("Draft text");
-  // The toggle goes when the job ends.
-  await render(saved, job("completed"), undefined, 1);
   expect(button("View draft")).toBeUndefined();
+  await render(saved, job("completed"), undefined, 1);
   expect(node.textContent).toContain("Saved text");
 });
 it("says what a published version is missing and retries its details", async () => {

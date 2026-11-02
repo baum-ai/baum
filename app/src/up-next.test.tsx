@@ -182,7 +182,7 @@ it("orders what waits on the person and leaves out what waits on others", () => 
   expect(review!.why).toBe(
     "baum's review is ready, risk 4 of 5. 1 agent session is still working on its branch, so reviewing now catches problems before more commits pile up.",
   );
-  expect(review!.working).toBe(1);
+  expect(review!.working).toEqual([working]);
   expect(review!.minutes).toBe(12);
   // Its group already says a merge is ready.
   expect(merge!.why).toBe("");
@@ -231,6 +231,7 @@ const fixJobOf = (overrides: Partial<Job> = {}): Job => ({
 });
 beforeEach(() => {
   jobsList = [];
+  liveList = [];
   Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
   Object.defineProperty(HTMLDialogElement.prototype, "showModal", {
     configurable: true,
@@ -262,21 +263,23 @@ beforeEach(() => {
             ? repositories
             : path.endsWith("api/repos")
               ? [{ id: "clone", repository: "acme/demo", path: "/c", available: true }]
-              : path.endsWith("api/prs") || path.endsWith("api/background")
-                ? []
-                : path.endsWith("api/jobs")
-                  ? { jobs: jobsList }
-                  : path.includes("api/prs/merge-options")
-                    ? {
-                        methods: ["SQUASH"],
-                        default: "SQUASH",
-                        state: "OPEN",
-                        draft: false,
-                        head_sha: "head",
-                        mergeable: "MERGEABLE",
-                        merge_state_status: "CLEAN",
-                      }
-                    : {},
+              : path.endsWith("api/live-sessions")
+                ? { sessions: liveList }
+                : path.endsWith("api/prs") || path.endsWith("api/background")
+                  ? []
+                  : path.endsWith("api/jobs")
+                    ? { jobs: jobsList }
+                    : path.includes("api/prs/merge-options")
+                      ? {
+                          methods: ["SQUASH"],
+                          default: "SQUASH",
+                          state: "OPEN",
+                          draft: false,
+                          head_sha: "head",
+                          mergeable: "MERGEABLE",
+                          merge_state_status: "CLEAN",
+                        }
+                      : {},
       ),
     ),
   );
@@ -287,6 +290,8 @@ afterEach(async () => {
   vi.unstubAllGlobals();
   forgetLastRows();
 });
+// The agent sessions the daemon says are running.
+let liveList: LiveSession[] = [];
 const render = async () => {
   await act(async () => root.unmount());
   root = createRoot(node);
@@ -1054,4 +1059,32 @@ it("lists a review group as one row that opens to its members", async () => {
   expect(list()).toEqual(["Change 1", "Payments stack", "Change 2", "Change 3", "Change 4"]);
   await press(" ");
   expect(list()).toEqual(["Change 1", "Payments stack", "Change 4"]);
+});
+
+it("links the agent sessions working on the pull request to their cards on Sessions, opened", async () => {
+  liveList = [
+    {
+      agent: "claude-code",
+      session_id: "s1",
+      state: "running",
+      started_at: "",
+      last_activity_at: "",
+      last_event: "tool",
+      repository: "acme/demo",
+      pr: 1,
+    },
+  ];
+  await render();
+  expect(shown()).toBe("Change 1");
+  const link = panel().querySelector<HTMLAnchorElement>(".upnext-agents a")!;
+  expect(link.textContent).toBe("1 agent session working on its branch right now");
+  expect(link.getAttribute("href")).toBe("/s/test-ns/?page=sessions&peek=claude-code%3As1");
+  await act(async () => link.click());
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  });
+  // Sessions shows the list with that session's card open, not its transcript.
+  expect(new URLSearchParams(location.search).get("session")).toBeNull();
+  expect(node.querySelector('[data-row-id="claude-code:s1"]')).not.toBeNull();
+  expect(node.querySelector(".local-feed-peek-row")).not.toBeNull();
 });

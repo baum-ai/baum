@@ -36,8 +36,20 @@ type API struct {
 	Changed func()
 	// Patch reads one file's patch; nil uses a locallink.Patcher.
 	Patch func(context.Context, locallink.PatchRequest) (locallink.PatchResult, error)
+	// File reads one file at a commit; nil uses locallink.ReadFile.
+	File func(context.Context, locallink.FileRequest) (locallink.FileResult, error)
 
 	patches chan struct{}
+	// patcher is the Patcher Handler made when Patch was nil; Close closes it.
+	patcher *locallink.Patcher
+}
+
+// Close closes the clones the API's own Patcher keeps open. A Patch the
+// caller supplied is the caller's to close.
+func (h *API) Close() {
+	if h.patcher != nil {
+		h.patcher.Close()
+	}
 }
 
 // View is a group as the API answers it.
@@ -53,8 +65,11 @@ const maxPatchReads = 4
 func (h *API) Handler() http.Handler {
 	h.patches = make(chan struct{}, maxPatchReads)
 	if h.Patch == nil {
-		patcher := new(locallink.Patcher)
-		h.Patch = patcher.Patch
+		h.patcher = new(locallink.Patcher)
+		h.Patch = h.patcher.Patch
+	}
+	if h.File == nil {
+		h.File = locallink.ReadFile
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/groups", h.list)
@@ -65,6 +80,7 @@ func (h *API) Handler() http.Handler {
 	mux.HandleFunc("GET /api/groups/{id}/versions", h.versions)
 	mux.HandleFunc("GET /api/groups/{id}/document", h.document)
 	mux.HandleFunc("GET /api/groups/{id}/patch", h.patch)
+	mux.HandleFunc("GET /api/groups/{id}/file", h.file)
 	return mux
 }
 
@@ -440,6 +456,72 @@ func (h *API) patch(w http.ResponseWriter, r *http.Request) {
 			answer["patch"] = &result.Patch
 			break
 		}
+	}
+	respond(w, http.StatusOK, answer)
+}
+
+// file serves GET /api/groups/{id}/file?version=<n>&path=<path>: one file the
+// version's document cites (locallink.CitedFiles), as it is at the review's
+// head (its top member's for a stack whose document names none), read from
+// a registered clone, as
+//
+//	{"path":"...","content":"..."|null,"truncated":false}
+//
+// as a pull request's GET /api/file answers. A path the document does not
+// cite is 404 without running git; a directory, a binary file, a path the head
+// lacks or a missing clone answer "content": null.
+func (h *API) file(w http.ResponseWriter, r *http.Request) {
+	g, version, ok := h.version(w, r)
+	if !ok {
+		return
+	}
+	path := r.URL.Query().Get("path")
+	if _, cited := locallink.CitedFiles(version.Document)[path]; path == "" || !cited {
+		http.NotFound(w, r)
+		return
+	}
+	var doc struct {
+		Review struct {
+			Repository string `json:"repository"`
+			Head       string `json:"head"`
+		} `json:"review"`
+		Stack struct {
+			Members []ReviewedMember `json:"members"`
+		} `json:"stack"`
+	}
+	_ = json.Unmarshal(version.Document, &doc)
+	head := doc.Review.Head
+	if head == "" && len(doc.Stack.Members) > 0 {
+		head = doc.Stack.Members[len(doc.Stack.Members)-1].HeadSHA
+	}
+	answer := struct {
+		Path      string  `json:"path"`
+		Content   *string `json:"content"`
+		Truncated bool    `json:"truncated"`
+	}{Path: path}
+	clone := h.clone(r.Context(), g.Repository)
+	if clone == "" || head == "" {
+		respond(w, http.StatusOK, answer)
+		return
+	}
+	select {
+	case h.patches <- struct{}{}:
+		defer func() { <-h.patches }()
+	case <-r.Context().Done():
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
+	defer cancel()
+	result, err := h.File(ctx, locallink.FileRequest{Dir: clone, Repository: doc.Review.Repository, Head: head, Path: path})
+	if err != nil {
+		if r.Context().Err() != nil {
+			return
+		}
+		failure(w, http.StatusInternalServerError, "internal", "cannot read this file")
+		return
+	}
+	if result.Available {
+		answer.Content, answer.Truncated = &result.Content, result.Truncated
 	}
 	respond(w, http.StatusOK, answer)
 }

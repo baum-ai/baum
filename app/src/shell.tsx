@@ -16,9 +16,11 @@ import { ChevronDownIcon, RefreshIcon } from "@baum/viewer/components/icons";
 import { Stumpy } from "@baum/viewer/components/stumpy";
 import type { ViewerLinkProps } from "@baum/viewer/navigation";
 import { appURL } from "./api";
+import { useContextMenu } from "./context-menu";
 import type { Inbox } from "./inboxes";
 import { PAGES, type Page } from "./pages";
 import { PlanUsageRail } from "./plan-usage";
+import { usePreferences } from "./preferences";
 import { NineDots } from "./nine-dots";
 import {
   pageKeyLabel,
@@ -38,13 +40,13 @@ export type RailInboxes = {
   /** A page under Inbox that is not a queue (New inbox, Manage inboxes) is
    *  the current one, so Inbox is only the section. */
   elsewhere?: boolean;
-  toggleBadge: (inbox: Inbox) => void;
-  remove: (inbox: Inbox) => void;
+  /** Deletes the inbox once confirmed, then runs `after`. */
+  remove: (inbox: Inbox, after?: () => void) => void;
   /** Opens the inbox's edit page. */
   edit: (inbox: Inbox) => void;
-  /** More entries at the foot of the nested list: where "New inbox" and
-   *  "Manage inboxes" go. */
-  footer?: ReactNode;
+  /** New inbox and Manage inboxes, in the right-click menu of Inbox. */
+  create: () => void;
+  manage: () => void;
 };
 
 const FOLD_KEY = "baum.inbox.folded.v1";
@@ -86,7 +88,10 @@ export function Sidebar({
   Link: ComponentType<ViewerLinkProps>;
 }) {
   const [fold, setFold] = useState(folded);
-  const nested = inboxes && (inboxes.list.length > 0 || inboxes.footer);
+  const modifier = usePreferences().preferences.page_modifier;
+  const nested = inboxes && inboxes.list.length > 0;
+  // A right click on Inbox makes or manages inboxes.
+  const inboxMenu = useContextMenu();
   const badges: Partial<Record<Page, { badge: ReactNode; tone?: "warn" | "caution" }>> = {
     inbox: { badge: inbox > 0 ? inbox : null },
     sessions: {
@@ -105,15 +110,28 @@ export function Sidebar({
       <Link
         key={target}
         href={href()}
-        title={`${label} (${pageKeyLabel(target)})${target === "settings" && settingsWarning ? ": " + settingsWarning : ""}`}
+        title={`${label} (${pageKeyLabel(target, modifier)})${target === "settings" && settingsWarning ? ": " + settingsWarning : ""}`}
         aria-description={target === "settings" ? (settingsWarning ?? undefined) : undefined}
         aria-current={
           page === target && !(target === "inbox" && (inboxes?.selected || inboxes?.elsewhere))
             ? "page"
             : undefined
         }
-        aria-keyshortcuts={pageKeyShortcut(target)}
+        aria-keyshortcuts={pageKeyShortcut(target, modifier)}
         className="local-rail-link"
+        onContextMenu={
+          target === "inbox" && inboxes
+            ? (event) =>
+                inboxMenu.open(
+                  event,
+                  [
+                    { label: "New inbox…", onSelect: inboxes.create },
+                    { label: "Manage inboxes…", onSelect: inboxes.manage },
+                  ],
+                  "Inbox",
+                )
+            : undefined
+        }
       >
         <Icon size={18} className="local-rail-glyph" />
         <span className="local-rail-label">{label}</span>
@@ -123,13 +141,14 @@ export function Sidebar({
           </span>
         ) : null}
         <kbd aria-hidden="true" className="key-hint local-rail-key">
-          {pageKeyLabel(target)}
+          {pageKeyLabel(target, modifier)}
         </kbd>
       </Link>
     );
   };
   return (
-    <aside className="local-rail">
+    <aside data-tab-region="" className="local-rail">
+      {inboxMenu.menu}
       <Link href={appURL()} className="local-rail-mark" title="Inbox">
         <Stumpy size={28} className="flex-none" />
         <Wordmark size="sidebar" className="local-rail-label" />
@@ -216,9 +235,10 @@ function InboxRows({
       close(!!menu.current?.contains(document.activeElement));
     };
     // Esc is the menu's alone while it is open: taken before the page's keys,
-    // whose Esc would clear the focus just given back to `⋯`.
+    // whose Esc would clear the focus just given back to `⋯`. Tab closes it
+    // the same way, as it does a row's menu.
     const escape = (event: KeyboardEvent) => {
-      if (event.key !== "Escape") return;
+      if (event.key !== "Escape" && event.key !== "Tab") return;
       event.preventDefault();
       event.stopPropagation();
       close(true);
@@ -239,7 +259,7 @@ function InboxRows({
   }, [open]);
   // A deleted row takes its button with it: focus moves to its neighbour, or
   // to Inbox when it was the last.
-  const afterDelete = () => {
+  const neighbour = () => {
     const row = menu.current;
     const inboxRow = (element: Element | null | undefined) =>
       element?.matches(".local-rail-inbox") ? (element as HTMLElement) : null;
@@ -247,7 +267,7 @@ function InboxRows({
     const target = next
       ? next.querySelector<HTMLElement>("a.local-rail-sub")
       : row?.closest("nav")?.querySelector<HTMLElement>("a.local-rail-link");
-    target?.focus();
+    return target;
   };
   return (
     <div className="local-rail-inboxes">
@@ -258,6 +278,11 @@ function InboxRows({
             key={inbox.id}
             ref={open === inbox.id ? menu : undefined}
             className={`local-rail-inbox inbox-${inbox.color}`}
+            // A right click opens the same menu as its ⋯: Edit and Delete.
+            onContextMenu={(event) => {
+              event.preventDefault();
+              setOpen(inbox.id);
+            }}
           >
             <Link
               href={appURL(`?inbox=${encodeURIComponent(inbox.id)}`)}
@@ -301,18 +326,9 @@ function InboxRows({
                 <button
                   type="button"
                   onClick={() => {
-                    close(true);
-                    inboxes.toggleBadge(inbox);
-                  }}
-                >
-                  {inbox.badge ? "Leave out of the Inbox badge" : "Count in the Inbox badge"}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    afterDelete();
+                    const next = neighbour();
                     setOpen(null);
-                    inboxes.remove(inbox);
+                    inboxes.remove(inbox, () => next?.focus());
                   }}
                 >
                   Delete inbox
@@ -322,7 +338,6 @@ function InboxRows({
           </div>
         );
       })}
-      {inboxes.footer}
     </div>
   );
 }

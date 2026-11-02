@@ -23,12 +23,24 @@ export type Agent = {
   agent: string;
   name: string;
   detected: boolean;
+  /** Whether the detected CLI is signed in; absent when baum could not tell. */
+  signed_in?: boolean | null;
   installed: boolean;
   enabled: boolean;
   plugin: string;
   version?: string | null;
-  trust?: CodexHookTrust | null;
+  /** The plugin version the bundled baum shipped with. */
+  latest?: string | null;
+  /** The installed version is older than `latest`. */
+  update_available?: boolean;
+  trust?: CodexHookTrust | ClaudeHookState | null;
   error?: string | null;
+};
+/** What stops Claude Code running an enabled plugin's hooks. It has no
+ *  per-hook approval, so only settings can: `ready` means none of the files
+ *  baum can read does. */
+export type ClaudeHookState = {
+  state: "ready" | "hooks_disabled" | "managed_only" | "unknown";
 };
 export type SetupView = {
   first_run: boolean;
@@ -39,6 +51,8 @@ export type SetupView = {
 export type Outcome = { ok: boolean; lines: string[] };
 type CommandDescription = {
   state: string;
+  /** The installed command's path, which the state names. */
+  path?: string;
   note: string;
   action: string;
   replace?: string;
@@ -69,12 +83,12 @@ export function describeCommand(command: CommandStatus): CommandDescription {
   if (command.installed) {
     const at = command.found?.path ?? command.target;
     const state = command.record
-      ? `baum is installed at ${at}.`
-      : `baum is installed at ${at}. It was installed outside the app, so the app won't update it.`;
+      ? `Installed at ${at}`
+      : `Installed at ${at} outside the app, so the app won't update it.`;
     const shadowed = command.shadowed
       ? `A different baum comes first on your PATH: ${command.shadowed.path} (${version(command.shadowed)}).`
       : "";
-    return { state, note: shadowed, action: "", ok: true };
+    return { state, path: at ?? undefined, note: shadowed, action: "", ok: true };
   }
   // On Windows the plan names a directory to add to the PATH, not a link.
   const linking = /[\\/]baum$/.test(plan.link);
@@ -119,8 +133,49 @@ export function agentConnected(agent: Agent) {
     agent.installed &&
     agent.enabled &&
     !agent.error &&
-    (agent.agent !== "codex" || agent.trust?.state === "trusted")
+    (agent.agent === "codex"
+      ? agent.trust?.state === "trusted"
+      : !agent.trust || agent.trust.state === "ready")
   );
+}
+
+/** Whether Update would change anything: a newer plugin, or Codex hooks
+ *  missing from an installed plugin. */
+export function agentUpdatable(agent: Agent) {
+  return (
+    agent.detected &&
+    !agent.error &&
+    agent.installed &&
+    agent.enabled &&
+    (!!agent.update_available || (agent.agent === "codex" && agent.trust?.state === "missing"))
+  );
+}
+
+/** Whether an installed agent is blocked on something the person can do:
+ *  enable, update, approve or fix its settings. */
+export function agentNeedsAction(agent: Agent) {
+  return agent.installed && !agentConnected(agent);
+}
+
+/** The line under an installed agent: how its hooks come to run, or how to
+ *  unblock them. */
+export function agentHookNote(agent: Agent) {
+  if (agent.agent === "codex") {
+    if (agent.trust?.state === "trusted") return "Codex hooks are approved.";
+    if (agent.trust?.state === "missing" && agentUpdatable(agent))
+      return "Update adds the missing hooks. Then approve them with /hooks in Codex.";
+    return "Review hook trust with /hooks in Codex.";
+  }
+  switch (agent.trust?.state) {
+    case "hooks_disabled":
+      return "disableAllHooks is on in your Claude Code settings. Turn it off, then check again.";
+    case "managed_only":
+      return "Managed settings allow only managed hooks. Ask your administrator to enable baum@baum in them.";
+    case "unknown":
+      return "A Claude Code settings file isn't valid JSON or can't be read. Fix it, then check again.";
+    default:
+      return "Hooks run in folders you trust in Claude Code.";
+  }
 }
 
 export function describeAgent(agent: Agent) {
@@ -136,12 +191,22 @@ export function describeAgent(agent: Agent) {
         case "disabled":
           return "Hooks disabled in Codex";
         case "missing":
-          return "Update Codex hooks";
+          return "Some baum hooks are missing";
         default:
           return "Hook approval could not be verified";
       }
     }
-    return "Connected";
+    if (agent.agent === "claude-code" && !agentConnected(agent)) {
+      switch (agent.trust?.state) {
+        case "hooks_disabled":
+          return "Hooks turned off in Claude Code";
+        case "managed_only":
+          return "Blocked by your organization";
+        default:
+          return "Claude Code settings could not be read";
+      }
+    }
+    return agent.update_available ? "Connected · update available" : "Connected";
   }
   if (!agent.detected)
     return `${agent.name} isn't on your PATH. Install or update it, then check again.`;
@@ -155,7 +220,13 @@ export type ReviewSettings = {
   effort?: string;
   automatic: boolean;
   pull_requests: PullRequests;
-  /** Saved extraction preferences, read only during setup. */
+  /** The fixes' own agent, model and effort; an empty agent follows the
+   *  reviews. */
+  fix_backend?: string;
+  fix_model?: string;
+  fix_effort?: string;
+  /** Extraction preferences. Setup shows the reviews' choice for them and
+   *  saves them only when it changes that choice (`setupSave`). */
   decisions_model?: string;
   decisions_effort?: string;
   /** What the daemon reports, never saved: the data extraction harness
@@ -177,6 +248,19 @@ export const modelPresets: Record<string, string[]> = {
   codex: ["gpt-6-luna", "gpt-6.1-sol", "gpt-6.1-terra", "gpt-6-astra"],
 };
 
+const presetNames: Record<string, string> = {
+  "claude-haiku-5-5": "Claude Haiku 5.5",
+  "claude-sonnet-5-5": "Claude Sonnet 5.5",
+  "claude-opus-5-5": "Claude Opus 5.5",
+  "gpt-6-luna": "GPT-6 Luna",
+  "gpt-6.1-sol": "GPT-6.1 Sol",
+  "gpt-6.1-terra": "GPT-6.1 Terra",
+  "gpt-6-astra": "GPT-6 Astra",
+};
+
+/** A preset's display name; other models show as typed. */
+export const modelName = (model: string) => presetNames[model] ?? model;
+
 /** The cheap model decision capture uses per harness when none is chosen. */
 export const decisionModelDefaults: Record<string, string> = {
   claude: "claude-haiku-5-5",
@@ -192,6 +276,8 @@ export function withModel(settings: ReviewSettings): ReviewSettings {
     ...settings,
     model: settings.model.trim() ? settings.model : (modelPresets[settings.backend]?.[0] ?? ""),
   };
+  if (next.fix_backend && !next.fix_model?.trim())
+    next.fix_model = modelPresets[next.fix_backend]?.[0] ?? "";
   const extraction = extractionHarness(next);
   const defaultDecisionModel = decisionModelDefaults[extraction] ?? "";
   if (next.decisions_model !== undefined && !next.decisions_model.trim())
@@ -211,6 +297,10 @@ export function withEfforts(
   const next = { ...settings };
   if (next.effort !== undefined)
     next.effort = supportedEffort(next.backend, next.model, next.effort);
+  if (next.fix_effort !== undefined)
+    next.fix_effort = next.fix_backend
+      ? supportedEffort(next.fix_backend, next.fix_model ?? "", next.fix_effort)
+      : "";
   if (next.decisions_effort !== undefined) {
     const extraction = extractionHarness(next);
     const decisionModel =
@@ -220,15 +310,46 @@ export function withEfforts(
   return next;
 }
 
-/** Setup saves only its review controls; extraction preferences stay in Settings. */
+/** Setup's review and fix controls as it saves them. */
 export function storedReviews(settings: ReviewSettings): ReviewSettings {
+  const fix = settings.fix_backend ?? "";
   return {
     backend: settings.backend,
     model: settings.model,
     ...(settings.effort !== undefined ? { effort: settings.effort } : {}),
     automatic: settings.automatic,
     pull_requests: settings.pull_requests,
+    fix_backend: fix,
+    fix_model: fix ? (settings.fix_model ?? "") : "",
+    fix_effort: fix ? (settings.fix_effort ?? "") : "",
   };
+}
+
+/** What finishing setup saves, null when nothing changed. Extraction takes
+ *  the reviews' agent, model and effort, but only when setup changes that
+ *  choice, so an untouched setup keeps what Settings chose. The harness's
+ *  default decision model is saved as none, so it follows the harness. */
+export function setupSave(settings: ReviewSettings, saved: ReviewSettings): ReviewSettings | null {
+  const next = storedReviews(settings);
+  const before = storedReviews(saved);
+  if (JSON.stringify(next) === JSON.stringify(before)) return null;
+  if (
+    next.backend === before.backend &&
+    next.model === before.model &&
+    (next.effort ?? "") === (before.effort ?? "")
+  )
+    return next;
+  return {
+    ...next,
+    decisions_model: next.model === decisionModelDefaults[next.backend] ? "" : next.model,
+    decisions_effort: next.effort ?? "",
+  };
+}
+
+/** Fixes follow the reviews again when their saved agent is not installed. */
+export function shownFix(settings: ReviewSettings, available: readonly string[]): ReviewSettings {
+  if (!settings.fix_backend || available.includes(settings.fix_backend)) return settings;
+  return { ...settings, fix_backend: "", fix_model: "", fix_effort: "" };
 }
 
 /** Agent CLIs found on the login shell's PATH, in default preference order. */
@@ -236,6 +357,18 @@ export function detectedHarnesses(agents: readonly Agent[]): string[] {
   return ["claude", "codex"].filter((backend) =>
     agents.some(
       (agent) => agent.agent === (backend === "claude" ? "claude-code" : backend) && agent.detected,
+    ),
+  );
+}
+
+/** Detected agent CLIs that report no sign-in, so their jobs would fail. */
+export function signedOutHarnesses(agents: readonly Agent[]): string[] {
+  return ["claude", "codex"].filter((backend) =>
+    agents.some(
+      (agent) =>
+        agent.agent === (backend === "claude" ? "claude-code" : backend) &&
+        agent.detected &&
+        agent.signed_in === false,
     ),
   );
 }

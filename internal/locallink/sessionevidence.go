@@ -17,8 +17,10 @@ import (
 	"github.com/baum-ai/baum/linkage"
 	"github.com/baum-ai/baum/linkage/sessioncorrelate"
 	"github.com/baum-ai/baum/sessions"
+	"github.com/baum-ai/baum/sessions/codextranscript"
 	"github.com/baum-ai/baum/sessions/collector"
 	"github.com/baum-ai/baum/sessions/session"
+	"github.com/baum-ai/baum/sessions/vendors"
 )
 
 // EvidenceRequest says which pull request commits BuildSessionEvidence links
@@ -264,6 +266,9 @@ func sessionEvidence(s sessions.Session, confidence float64, roots []string, kno
 		item.EndedAt = &ended
 	}
 	item.Prompts = prompts(graph, root.ID, maxPrompts)
+	if item.Title == "" {
+		item.Title = untitled(s, root.ID, item.Prompts)
+	}
 	resolver := sessioncorrelate.NewPathResolver(graph, s.Vendor, sessioncorrelate.WithCloneRoots(roots...))
 	attachTouchedPaths(graph, resolver, item.Prompts)
 	touched := bundle.KnownPaths(touchedPaths(graph, resolver)...)
@@ -271,6 +276,32 @@ func sessionEvidence(s sessions.Session, confidence float64, roots []string, kno
 		return touched(path) || (knownPath != nil && knownPath(path))
 	})
 	return item, true
+}
+
+// maxUntitled bounds a title taken from a session's first prompt.
+const maxUntitled = 120
+
+// untitled names a session its agent gave no title, as the app's live
+// sessions name it: Codex's thread name, from the index beside its rollouts,
+// else the first line of its first prompt.
+func untitled(s sessions.Session, rootID string, prompts []bundle.Prompt) string {
+	if s.Vendor == string(vendors.Codex) && s.Graph != nil {
+		if index := codextranscript.IndexPath(s.Path); index != "" {
+			for _, id := range s.Graph.VendorIDs {
+				if id.OurID != rootID || id.VendorIDKind != "thread_id" {
+					continue
+				}
+				if name, err := codextranscript.ThreadName(index, id.VendorID); err == nil && strings.TrimSpace(name) != "" {
+					return strings.TrimSpace(name)
+				}
+			}
+		}
+	}
+	if len(prompts) == 0 {
+		return ""
+	}
+	line, _, _ := strings.Cut(strings.TrimSpace(prompts[0].Text), "\n")
+	return leadingChars(strings.TrimSpace(line), maxUntitled)
 }
 
 // models are the distinct models the tree's invocations name, sorted.

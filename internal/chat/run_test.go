@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/baum-ai/baum/agent"
+	"github.com/baum-ai/baum/bundle"
 	"github.com/baum-ai/baum/internal/assemble/assembletest"
 	"github.com/baum-ai/baum/internal/chat"
 	"github.com/baum-ai/baum/internal/chat/chattest"
@@ -101,6 +102,52 @@ func TestLaterTurnResumesTheConversationSession(t *testing.T) {
 	}
 	if c := f.Conversation(t, first.Conversation); c.SessionID != chattest.SessionID(101) || len(c.Turns) != 2 || c.Turns[1].State != store.TurnCompleted {
 		t.Errorf("conversation: %+v", c)
+	}
+}
+
+// A seeded session reads the review without the clone's history, so the
+// review.json it gets carries the text of the hunks the store keeps without
+// it, read from the clone and masked, and their derived github_url.
+func TestSeededReviewCarriesTheHunksMaskedText(t *testing.T) {
+	f := chattest.New(t, chattest.Options{NoSession: true, Hunk: true})
+	var seeded []byte
+	f.Agent.Reply = func(r agent.Request, n int) (agent.Result, error) {
+		var err error
+		if seeded, err = os.ReadFile(filepath.Join(r.Directory, "review.json")); err != nil {
+			t.Errorf("review.json not seeded: %v", err)
+		}
+		return f.Agent.Default(r), nil
+	}
+	begun := f.Ask(t, "", "What changed?")
+	if _, err := run(t, f, begun, chat.RunOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	var review struct {
+		Index struct {
+			Hunks []struct {
+				GitHubURL string `json:"github_url"`
+				Diff      struct {
+					Header string `json:"header"`
+					Lines  []struct {
+						Kind string `json:"kind"`
+						Text string `json:"text"`
+					} `json:"lines"`
+				} `json:"diff"`
+			} `json:"hunks"`
+		} `json:"index"`
+	}
+	if err := json.Unmarshal(seeded, &review); err != nil || len(review.Index.Hunks) != 1 {
+		t.Fatalf("review.json %s: %v", seeded, err)
+	}
+	hunk := review.Index.Hunks[0]
+	if hunk.GitHubURL != bundle.HunkDiffURL("config/settings.env", 1) {
+		t.Errorf("github_url %q", hunk.GitHubURL)
+	}
+	if hunk.Diff.Header != "@@ -0,0 +1,2 @@" || len(hunk.Diff.Lines) != 2 || hunk.Diff.Lines[1].Text != "MODE=test" {
+		t.Errorf("diff %+v", hunk.Diff)
+	}
+	if strings.Contains(string(seeded), assembletest.PlantedSecret) || !strings.HasPrefix(hunk.Diff.Lines[0].Text, "HF_TOKEN=") {
+		t.Errorf("the planted secret is not masked: %s", seeded)
 	}
 }
 

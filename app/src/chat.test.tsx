@@ -493,12 +493,8 @@ it("opens the Ask panel with a, keeps it in the URL, and ignores a typed in a te
   expect(node.querySelector(".ask-panel")).not.toBeNull();
 });
 
-it("starts open when the URL says ask=1, and asks about a section from the review", async () => {
+it("starts open when the URL says ask=1", async () => {
   await act(async () => root.render(<Harness search="walk=full&ask=1" />));
   await settle();
   expect(node.querySelector(".ask-panel")).not.toBeNull();
-  await act(async () => button("Ask about this section")!.click());
-  expect(node.querySelector(".ask-focus")!.textContent).toContain("Retry policy and backoff");
-  await act(async () => button("Remove")!.click());
-  expect(node.querySelector(".ask-focus")).toBeNull();
 });

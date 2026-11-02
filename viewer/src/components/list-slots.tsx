@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 
-import { type CommitListState, CommitList } from "./commit-list";
+import { type CommitListState, type CommitLoaders, CommitList } from "./commit-list";
 import { commitLabel, sessionLabel } from "./list-labels";
 import type { ReviewListSlot } from "./review-viewer";
 import { SessionList, type SessionListState, type SessionView } from "./session-list";
@@ -37,8 +37,11 @@ export function sessionsSlot(
 }
 
 /** The Commits group for `ReviewViewer`'s `commits` prop: the rail lists the
- *  commits by subject (else by short id) and the pane is a `CommitList`. */
-export function commitsSlot(state: CommitListState): ReviewListSlot {
+ *  commits by subject (else by short id) and the pane is a `CommitList`. With
+ *  the host's `loadCommit` (and `loadPatch`), a commit opened alone also shows
+ *  its message body, totals and changed files, each file's diff read when it
+ *  is opened. Keep the loaders stable across renders: they key what is read. */
+export function commitsSlot(state: CommitListState, loaders: CommitLoaders = {}): ReviewListSlot {
   return {
     state:
       state.status === "ready"
@@ -48,7 +51,7 @@ export function commitsSlot(state: CommitListState): ReviewListSlot {
           }
         : { status: state.status },
     renderPane: (selected, actions) => (
-      <CommitList state={state} selected={selected} actions={actions} />
+      <CommitList state={state} selected={selected} actions={actions} loaders={loaders} />
     ),
   };
 }

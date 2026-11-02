@@ -10,9 +10,13 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
+	"golang.org/x/mod/semver"
 
+	"github.com/baum-ai/baum/agent/claude"
+	"github.com/baum-ai/baum/agent/codex"
 	"github.com/baum-ai/baum/hosted/agentplugins"
 	"github.com/baum-ai/baum/internal/codexconfig"
+	"github.com/baum-ai/baum/plugins"
 )
 
 func newInstallUserHooksCommand(stdout, stderr io.Writer) *cobra.Command {
@@ -65,15 +69,22 @@ Without --agent, uses ` + defaults + `.`, Args: cobra.NoArgs,
 }
 
 type userHooksStatus struct {
-	Agent     string                  `json:"agent"`
-	Name      string                  `json:"name"`
-	Detected  bool                    `json:"detected"`
-	Plugin    string                  `json:"plugin"`
-	Installed bool                    `json:"installed"`
-	Enabled   bool                    `json:"enabled"`
-	Version   string                  `json:"version,omitempty"`
-	Error     string                  `json:"error,omitempty"`
-	Trust     *agentplugins.HookTrust `json:"trust,omitempty"`
+	Agent    string `json:"agent"`
+	Name     string `json:"name"`
+	Detected bool   `json:"detected"`
+	// SignedIn is whether the detected CLI is signed in, as runs would find
+	// it; nil when it was not asked or could not say.
+	SignedIn  *bool  `json:"signed_in,omitempty"`
+	Plugin    string `json:"plugin"`
+	Installed bool   `json:"installed"`
+	Enabled   bool   `json:"enabled"`
+	Version   string `json:"version,omitempty"`
+	// Latest is the plugin version this baum shipped with; UpdateAvailable
+	// says the installed Version is older than it.
+	Latest          string                  `json:"latest,omitempty"`
+	UpdateAvailable bool                    `json:"update_available,omitempty"`
+	Error           string                  `json:"error,omitempty"`
+	Trust           *agentplugins.HookTrust `json:"trust,omitempty"`
 }
 
 func newUserHooksStatusCommand(stdout io.Writer) *cobra.Command {
@@ -121,9 +132,12 @@ func userHooksStatuses(ctx context.Context) []userHooksStatus {
 	client := agentplugins.New()
 	for _, agent := range agentplugins.Agents() {
 		s := userHooksStatus{Agent: agent, Name: agentDisplayName(agent), Plugin: agentplugins.Plugin}
-		_, err := lookPath(agentplugins.Binary(agent))
+		binary, err := lookPath(agentplugins.Binary(agent))
 		s.Detected = err == nil
 		if s.Detected {
+			if signedIn, known := agentSignedIn(ctx, agent, binary); known {
+				s.SignedIn = &signedIn
+			}
 			status, err := client.Status(ctx, agent)
 			if err != nil {
 				s.Error = err.Error()
@@ -131,8 +145,14 @@ func userHooksStatuses(ctx context.Context) []userHooksStatus {
 				s.Installed = status.Installed
 				s.Enabled = status.Enabled
 				s.Version = status.Version
+				s.Latest = plugins.Version(agent)
+				s.UpdateAvailable = status.Installed && olderVersion(s.Version, s.Latest)
 				if agent == "codex" && status.Installed && status.Enabled {
 					trust := client.HookTrust(ctx, nil)
+					s.Trust = &trust
+				}
+				if agent == "claude-code" && status.Installed && status.Enabled {
+					trust := agentplugins.ClaudeHooks()
 					s.Trust = &trust
 				}
 			}
@@ -140,6 +160,13 @@ func userHooksStatuses(ctx context.Context) []userHooksStatus {
 		statuses = append(statuses, s)
 	}
 	return statuses
+}
+
+// olderVersion reports whether installed is an older plugin version than
+// latest. An unreadable version is never older, so it offers no update.
+func olderVersion(installed, latest string) bool {
+	installed, latest = "v"+strings.TrimPrefix(installed, "v"), "v"+strings.TrimPrefix(latest, "v")
+	return semver.IsValid(installed) && semver.IsValid(latest) && semver.Compare(installed, latest) < 0
 }
 
 func changeUserHooks(ctx context.Context, agents []string, action string, stdout, stderr io.Writer) error {
@@ -259,6 +286,19 @@ func detectedUserHookAgents() []string {
 		}
 	}
 	return agents
+}
+
+// agentSignedIn asks a detected agent CLI whether it is signed in; known is
+// false for an agent baum does not run jobs with or an answer it could not
+// read. A variable, so tests do not run the CLIs.
+var agentSignedIn = func(ctx context.Context, agent, binary string) (signedIn, known bool) {
+	switch agent {
+	case "claude-code":
+		return claude.SignedIn(ctx, binary)
+	case "codex":
+		return codex.SignedIn(ctx, binary)
+	}
+	return false, false
 }
 
 func agentDisplayName(slug string) string {

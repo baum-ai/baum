@@ -25,6 +25,7 @@ type apiFixture struct {
 	changed int
 	heads   map[int]string
 	patches []locallink.PatchRequest
+	files   []locallink.FileRequest
 }
 
 func newAPI(t *testing.T) *apiFixture {
@@ -47,6 +48,10 @@ func newAPI(t *testing.T) *apiFixture {
 				return locallink.PatchResult{Available: true, Patch: "@@ -10,2 +12,3 @@\n a\n+b\n c\n"}, nil
 			}
 			return locallink.PatchResult{Available: true, Patch: "@@ -1,2 +1,3 @@\n a\n+b\n c\n"}, nil
+		},
+		File: func(_ context.Context, request locallink.FileRequest) (locallink.FileResult, error) {
+			f.files = append(f.files, request)
+			return locallink.FileResult{Available: true, Content: "package a\n"}, nil
 		},
 	}
 	f.server = httptest.NewServer(api.Handler())
@@ -160,6 +165,41 @@ func TestGroupLifecycleOverHTTP(t *testing.T) {
 
 // The patch of a file several members change comes from the member whose
 // patch holds the cited hunk's range.
+// A group's file is one its review cites, read at the stack's top head; a
+// path it does not cite is refused without a read.
+func TestFileReadsACitedPathAtTheTopHead(t *testing.T) {
+	f := newAPI(t)
+	g, err := f.store.Create(context.Background(), "acme/demo", "Pair", []int{7, 8})
+	if err != nil {
+		t.Fatal(err)
+	}
+	document, _ := json.Marshal(map[string]any{
+		"review":  map[string]any{"repository": "acme/demo", "pull_request": 7, "version": 1},
+		"stack":   map[string]any{"title": "Pair", "members": []ReviewedMember{{Number: 7, HeadSHA: "aaaaaaa", ReviewVersion: 1}, {Number: 8, HeadSHA: "bbbbbbb", ReviewVersion: 1}}},
+		"summary": map[string]any{"context": map[string]any{"area": map[string]any{"text": "x", "refs": []any{map[string]any{"path": "lib/util.go", "symbol": "Util"}}}}},
+		"index":   map[string]any{"hunks": []any{map[string]any{"id": "h7", "path": "a.go", "new_range": []int{1, 3}}}},
+	})
+	version := groupReview(t, "acme/demo", 1)
+	version.Document = document
+	if err := f.store.Put(context.Background(), g.ID, 0, version); err != nil {
+		t.Fatal(err)
+	}
+	status, raw := f.do(t, "GET", "/api/groups/"+g.ID+"/file?path=lib/util.go", "")
+	if status != http.StatusOK || !strings.Contains(string(raw), `"content":"package a\n"`) {
+		t.Fatalf("cited context file: %d %s", status, raw)
+	}
+	if last := f.files[len(f.files)-1]; last.Head != "bbbbbbb" || last.Dir != "/clone" || last.Path != "lib/util.go" {
+		t.Fatalf("read %+v", last)
+	}
+	if status, _ = f.do(t, "GET", "/api/groups/"+g.ID+"/file?path=a.go", ""); status != http.StatusOK {
+		t.Fatalf("a changed file answered %d", status)
+	}
+	reads := len(f.files)
+	if status, _ = f.do(t, "GET", "/api/groups/"+g.ID+"/file?path=secret.env", ""); status != http.StatusNotFound || len(f.files) != reads {
+		t.Fatalf("an uncited path answered %d after %d reads", status, len(f.files)-reads)
+	}
+}
+
 func TestPatchPicksTheMemberHoldingTheHunk(t *testing.T) {
 	f := newAPI(t)
 	g, err := f.store.Create(context.Background(), "acme/demo", "Pair", []int{7, 8})
@@ -170,9 +210,12 @@ func TestPatchPicksTheMemberHoldingTheHunk(t *testing.T) {
 		"review": map[string]any{"repository": "acme/demo", "pull_request": 7, "version": 1},
 		"stack":  map[string]any{"title": "Pair", "members": []ReviewedMember{{Number: 7, HeadSHA: "aaaaaaa", ReviewVersion: 1}, {Number: 8, HeadSHA: "bbbbbbb", ReviewVersion: 1}}},
 		"index": map[string]any{
-			"hunks": []any{map[string]any{"id": "h7", "path": "a.go", "new_range": []int{1, 3}}, map[string]any{"id": "h8", "path": "a.go", "new_range": []int{12, 3}}},
+			"hunks": []any{
+				map[string]any{"id": "h7", "path": "a.go", "new_range": []int{1, 3}}, map[string]any{"id": "h8", "path": "a.go", "new_range": []int{12, 3}},
+				map[string]any{"id": "hv", "path": "vendor/x.go", "role": "vendored", "new_range": []int{1, 1}},
+			},
 			"file_comparisons": []any{
-				map[string]any{"base_revision": "base7", "changes": []any{map[string]any{"path": "a.go", "change": "modified"}}},
+				map[string]any{"base_revision": "base7", "changes": []any{map[string]any{"path": "a.go", "change": "modified"}, map[string]any{"path": "vendor/x.go", "change": "added"}}},
 				map[string]any{"base_revision": "base8", "changes": []any{map[string]any{"path": "a.go", "change": "modified"}}},
 			},
 		},
@@ -195,5 +238,11 @@ func TestPatchPicksTheMemberHoldingTheHunk(t *testing.T) {
 	}
 	if status, _ = f.do(t, "GET", "/api/groups/"+g.ID+"/patch?path=b.go", ""); status != http.StatusNotFound {
 		t.Fatalf("an uncited path answered %d", status)
+	}
+	// A vendored file is read like any other: the bundle cuts its text only
+	// over budget, and the patch is masked as stored hunks are.
+	reads := len(f.patches)
+	if status, raw = f.do(t, "GET", "/api/groups/"+g.ID+"/patch?path=vendor/x.go&hunk=hv", ""); status != http.StatusOK || !strings.Contains(string(raw), "+1,3") || len(f.patches) != reads+1 {
+		t.Fatalf("a vendored file: %d %s after %d reads", status, raw, len(f.patches)-reads)
 	}
 }

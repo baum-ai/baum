@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -14,8 +15,46 @@ import (
 	"github.com/baum-ai/baum/internal/gitlocal"
 	"github.com/baum-ai/baum/internal/refresh"
 	"github.com/baum-ai/baum/internal/repos"
+	"github.com/baum-ai/baum/internal/reviewrefs"
 	"github.com/baum-ai/baum/internal/store"
 )
+
+// Retention reconciles the refs that keep saved review versions' commits in a
+// clone (reviewrefs.Reconcile, within reviewrefs.DefaultLimits). A clone that
+// cannot be opened or reconciled is skipped with a log line.
+type Retention struct {
+	Log *slog.Logger
+}
+
+func (r Retention) Retain(ctx context.Context, clone repos.Clone) (bool, error) {
+	repo, err := gitlocal.Open(ctx, clone.Path, gitlocal.Options{})
+	if err != nil {
+		r.log(slog.LevelInfo, "retained review refs: clone skipped", clone, "error", err)
+		return false, err
+	}
+	defer func() { _ = repo.Close() }()
+	result, err := reviewrefs.Reconcile(ctx, repo, reviewrefs.DefaultLimits)
+	if err != nil {
+		r.log(slog.LevelWarn, "retained review refs: reconciliation failed", clone, "error", err)
+		return false, err
+	}
+	if result.Written > 0 || result.Deleted > 0 {
+		r.log(slog.LevelInfo, "retained review refs reconciled", clone, "written", result.Written, "deleted", result.Deleted, "missing", result.Missing, "more", result.More)
+	}
+	if result.Symbolic > 0 {
+		r.log(slog.LevelWarn, "retained review refs: symbolic refs left alone", clone, "count", result.Symbolic)
+	}
+	if len(result.Failed) > 0 {
+		r.log(slog.LevelWarn, "retained review refs: refs that could not change", clone, "count", len(result.Failed), "refs", result.Failed[:min(len(result.Failed), 10)])
+	}
+	return result.More, nil
+}
+
+func (r Retention) log(level slog.Level, message string, clone repos.Clone, args ...any) {
+	if r.Log != nil {
+		r.Log.Log(context.Background(), level, message, append([]any{"clone", clone.ID}, args...)...)
+	}
+}
 
 type Local struct {
 	Client assemble.GitHub

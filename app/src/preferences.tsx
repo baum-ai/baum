@@ -1,8 +1,15 @@
 import { createContext, useContext, useEffect, useState, useRef, type ReactNode } from "react";
 import { request } from "./api";
 
-type Preferences = { theme: "system" | "light" | "dark"; key_hints: boolean };
-const defaults: Preferences = { theme: "system", key_hints: true };
+/** The key held with 1 to 8 for the sidebar's pages; "" is the platform's
+ *  command key (⌘ on a Mac, Ctrl elsewhere). */
+export type PageModifier = "" | "meta" | "ctrl" | "alt";
+type Preferences = {
+  theme: "system" | "light" | "dark";
+  key_hints: boolean;
+  page_modifier: PageModifier;
+};
+const defaults: Preferences = { theme: "system", key_hints: true, page_modifier: "" };
 const PreferencesContext = createContext({
   preferences: defaults,
   ready: false,
@@ -16,6 +23,12 @@ function normalize(saved: Partial<Preferences>): Preferences {
   return {
     theme: saved.theme === "light" || saved.theme === "dark" ? saved.theme : "system",
     key_hints: saved.key_hints !== false,
+    page_modifier:
+      saved.page_modifier === "meta" ||
+      saved.page_modifier === "ctrl" ||
+      saved.page_modifier === "alt"
+        ? saved.page_modifier
+        : "",
   };
 }
 

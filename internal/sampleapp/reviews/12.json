@@ -1,0 +1,911 @@
+{
+  "schema": "baum.review/1",
+  "summary": {
+    "text": "Notes gain tags, cleaned once when a note is saved. The store keeps an index of where each tag's notes are, so ByTag reads only those notes instead of scanning the list, and a new notes command lists the notes with a tag. After an automated review, ByTag cleans the tag it is asked for the same way saved tags are cleaned.",
+    "review_exchange": {
+      "summary": "Codex found that `ByTag` lowercased the tag it was asked for but did not trim it, so `ByTag(\" work\")` missed notes saved as `work`; the third commit fixed it and the thread is resolved. Riley asked who keeps the tag index in step with the notes, and Sam pointed to `Add`'s comment: it is the only writer. Nothing is left open."
+    },
+    "context": {
+      "area": {
+        "text": "`notes` is a small library that keeps notes in memory: `Store.Add` saves a note, `List` returns them newest first and `Search` finds them by text. This adds tags to `Note` and a way to list the notes with one.",
+        "refs": [
+          {
+            "path": "store.go",
+            "symbol": "Store"
+          },
+          {
+            "path": "note.go",
+            "symbol": "Note"
+          }
+        ]
+      },
+      "reached_by": {
+        "text": "Every note passes through `Store.Add`, which now cleans its tags and records them in the index. `ByTag` is new, and the `notes` command calls it when given `-tag`.",
+        "refs": [
+          {
+            "path": "store.go",
+            "symbol": "Store.Add"
+          },
+          {
+            "path": "tags.go",
+            "symbol": "Store.ByTag"
+          },
+          {
+            "path": "cmd/notes/main.go",
+            "symbol": "main"
+          }
+        ]
+      },
+      "contracts": {
+        "text": "`Note` is exported, so its new `Tags` field reaches everyone who builds or decodes notes, including the JSON files the command reads. The index holds positions in `notes`, so it stays right only while `Add` is the only code that changes the list.",
+        "refs": [
+          {
+            "path": "note.go",
+            "symbol": "Note"
+          },
+          {
+            "path": "store.go",
+            "symbol": "Store"
+          }
+        ]
+      },
+      "related": {
+        "text": "`Search` and `List` are unchanged; `ByTag` sorts its notes the same way `List` does.",
+        "refs": [
+          {
+            "path": "search.go",
+            "symbol": "Store.Search"
+          },
+          {
+            "path": "store.go",
+            "symbol": "Store.List"
+          }
+        ]
+      }
+    },
+    "change_kind": "feature",
+    "implements": [
+      {
+        "type": "issue",
+        "system": "linear",
+        "key": "NOTES-8"
+      }
+    ],
+    "release_note": "Notes can be tagged, and Store.ByTag and notes -tag list the notes with a tag.",
+    "breaking_change": null,
+    "attention": {
+      "text": "The tag index holds positions in the note list and only Add updates it, so the first change that removes or reorders notes has to update it too.",
+      "refs": [
+        "sec_tags",
+        "rsk_index_positions"
+      ]
+    },
+    "authorship": {
+      "declared": "ai_assisted",
+      "declared_tools": [
+        "Claude Code"
+      ],
+      "anchors": [
+        {
+          "type": "pr_body"
+        }
+      ]
+    }
+  },
+  "relations": [],
+  "sections": [
+    {
+      "id": "sec_tags",
+      "title": "Tags on notes, and the index Add keeps",
+      "kind": "logical",
+      "hunks": [
+        "@note.go",
+        "@store.go"
+      ],
+      "summary": {
+        "text": "`Note` gains `Tags`. `Store.Add` cleans a note's tags before saving it and records the note's position under each of its tags, in a map the store creates on first use.",
+        "anchors": [
+          {
+            "type": "hunk",
+            "id": "@note.go"
+          },
+          {
+            "type": "hunk",
+            "id": "@store.go"
+          }
+        ]
+      },
+      "attention": {
+        "text": "The index stores positions in notes, and only Add updates it: removing or reordering notes later would make ByTag return the wrong notes.",
+        "refs": [
+          "rsk_index_positions"
+        ]
+      },
+      "assessment": {
+        "level": 3,
+        "factors": [
+          "public_api"
+        ],
+        "reasons": [
+          {
+            "text": "Note is exported, so the new field reaches every caller and every saved notes file.",
+            "anchors": [
+              {
+                "type": "hunk",
+                "id": "@note.go"
+              }
+            ]
+          },
+          {
+            "text": "The index is new shared state inside Store, kept correct only by Add.",
+            "anchors": [
+              {
+                "type": "hunk",
+                "id": "@store.go"
+              }
+            ]
+          }
+        ]
+      },
+      "risks": [
+        {
+          "id": "rsk_index_positions",
+          "tier": "medium",
+          "category": "data_integrity",
+          "source": "model",
+          "text": "The index maps each tag to positions in notes. Nothing removes or reorders notes yet, but the first change that does must update the index too, or ByTag returns other notes than the ones tagged.",
+          "finding": null,
+          "anchors": [
+            {
+              "type": "hunk",
+              "id": "@store.go"
+            }
+          ]
+        }
+      ],
+      "evidence": [
+        {
+          "id": "ev_index_tests",
+          "kind": "test",
+          "claim": "Notes added with tags are found through the index, newest first, however the tag was typed.",
+          "status": "verified",
+          "granularity": "test",
+          "source": "ci",
+          "anchors": [
+            {
+              "type": "check",
+              "id": "check_run:1",
+              "test": "TestByTagNewestFirst"
+            },
+            {
+              "type": "hunk",
+              "id": "@tags_test.go"
+            }
+          ]
+        },
+        {
+          "id": "ev_index_removal",
+          "kind": "coverage",
+          "claim": "No test changes the note list other than through Add, since nothing else can yet.",
+          "status": "missing",
+          "source": "model",
+          "anchors": [
+            {
+              "type": "hunk",
+              "id": "@tags_test.go"
+            }
+          ],
+          "expects": "When notes can be removed, a test that removes one and checks that ByTag no longer returns it."
+        }
+      ],
+      "blocks": [
+        {
+          "kind": "intent",
+          "text": "People should be able to group notes by topic and list one topic's notes, without listing slowing down as the notes grow.",
+          "anchors": [
+            {
+              "type": "pr_body"
+            },
+            {
+              "type": "issue",
+              "system": "linear",
+              "key": "NOTES-8"
+            },
+            {
+              "type": "prompt",
+              "session": "5a3c1e70-0000-4000-8000-000000000004",
+              "index": 1
+            }
+          ]
+        },
+        {
+          "kind": "behavior",
+          "steps": [
+            {
+              "id": "beh_clean_on_add",
+              "title": "Tags are cleaned when a note is saved",
+              "before": "Notes had no tags.",
+              "after": "A note saved with \" Work \", \"work\" and \"\" is stored with the one tag \"work\".",
+              "text": "Add trims and lowercases every tag and drops empty and repeated ones before storing the note",
+              "anchors": [
+                {
+                  "type": "hunk",
+                  "id": "@store.go"
+                }
+              ],
+              "evidence": [
+                "ev_index_tests"
+              ]
+            },
+            {
+              "id": "beh_index_on_add",
+              "title": "Add records each tag in the index",
+              "before": "Finding the notes with a property meant reading every note.",
+              "after": "Each saved note's position is listed under each of its tags.",
+              "question": "What keeps the index right if a later change removes a note?",
+              "text": "Add appends the note's position to the index entry of each of its cleaned tags",
+              "anchors": [
+                {
+                  "type": "hunk",
+                  "id": "@store.go"
+                }
+              ],
+              "evidence": [
+                "ev_index_tests",
+                "ev_index_removal"
+              ]
+            }
+          ]
+        },
+        {
+          "kind": "entities",
+          "items": [
+            {
+              "kind": "type",
+              "name": "Note",
+              "path": "note.go",
+              "change": "modified",
+              "hunks": [
+                "@note.go"
+              ]
+            },
+            {
+              "kind": "type",
+              "name": "Store",
+              "path": "store.go",
+              "change": "modified",
+              "hunks": [
+                "@store.go"
+              ]
+            },
+            {
+              "kind": "function",
+              "name": "Store.Add",
+              "path": "store.go",
+              "change": "modified",
+              "hunks": [
+                "@store.go"
+              ]
+            }
+          ]
+        },
+        {
+          "kind": "decisions",
+          "items": [
+            {
+              "id": "dec_clean_once",
+              "by": "human",
+              "title": "Clean tags once, on save",
+              "text": "Tags are cleaned when a note is saved, so every read sees clean tags and nothing cleans them again.",
+              "rationale": "Reads are more frequent than writes, and one place for the rule keeps it consistent.",
+              "rejected": "Cleaning tags on every read",
+              "trigger": "request",
+              "anchors": [
+                {
+                  "type": "hunk",
+                  "id": "@store.go"
+                },
+                {
+                  "type": "pr_body"
+                }
+              ]
+            },
+            {
+              "id": "dec_index",
+              "by": "agent",
+              "title": "Index tags instead of scanning",
+              "text": "The store keeps a map from each tag to its notes' positions, filled by Add, so ByTag reads only the notes it returns.",
+              "rationale": "Scanning every note made ByTag slower as the list grew; the author's benchmark shows 2.9 ms per call at 10,000 notes.",
+              "rejected": "Scanning every note on each call",
+              "trigger": "initiative",
+              "anchors": [
+                {
+                  "type": "hunk",
+                  "id": "@store.go"
+                },
+                {
+                  "type": "hunk",
+                  "id": "@tags.go"
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "tiles": [
+        {
+          "id": "tile_tags_architecture",
+          "kind": "architecture",
+          "anchors": [
+            {
+              "type": "hunk",
+              "id": "@store.go"
+            },
+            {
+              "type": "hunk",
+              "id": "@tags.go"
+            },
+            {
+              "type": "hunk",
+              "id": "@cmd/notes/main.go"
+            }
+          ],
+          "code": [],
+          "data": {
+            "product": "notes",
+            "containers": [
+              {
+                "id": "cli",
+                "kind": "client",
+                "label": "notes command",
+                "change": "add"
+              },
+              {
+                "id": "store",
+                "kind": "service",
+                "label": "Store"
+              },
+              {
+                "id": "list",
+                "kind": "store",
+                "label": "notes"
+              },
+              {
+                "id": "index",
+                "kind": "store",
+                "label": "tag index",
+                "change": "add"
+              }
+            ],
+            "edges": [
+              {
+                "from": "cli",
+                "to": "store",
+                "label": "Add, List, ByTag",
+                "change": "add"
+              },
+              {
+                "from": "store",
+                "to": "list",
+                "label": "appends notes"
+              },
+              {
+                "from": "store",
+                "to": "index",
+                "label": "records positions on Add",
+                "change": "add"
+              }
+            ],
+            "sequences": [
+              {
+                "title": "Listing a tag",
+                "steps": [
+                  {
+                    "from": "cli",
+                    "to": "store",
+                    "message": "ByTag(\" Work\")",
+                    "change": "add"
+                  },
+                  {
+                    "from": "store",
+                    "to": "index",
+                    "message": "positions under \"work\"",
+                    "change": "add"
+                  },
+                  {
+                    "from": "store",
+                    "to": "list",
+                    "message": "read those notes only"
+                  }
+                ]
+              }
+            ],
+            "boundary": "Everything stays inside one Store in memory; the command builds its Store from a JSON file each time it runs.",
+            "runtime": "The index is a plain map with no locking, like the rest of Store, which is not safe for concurrent use.",
+            "failure_path": "If the note list changes other than through Add, the index points at the wrong notes."
+          }
+        }
+      ]
+    },
+    {
+      "id": "sec_bytag",
+      "title": "Cleaning tags and ByTag",
+      "kind": "logical",
+      "hunks": [
+        "@tags.go"
+      ],
+      "summary": {
+        "text": "`CleanTags` holds the cleaning rule, through `cleanTag`. `ByTag` cleans the tag it is asked for with the same `cleanTag`, reads its notes from the index and sorts them newest first.",
+        "anchors": [
+          {
+            "type": "hunk",
+            "id": "@tags.go"
+          }
+        ]
+      },
+      "attention": null,
+      "assessment": {
+        "level": 2,
+        "factors": [
+          "public_api"
+        ],
+        "reasons": [
+          {
+            "text": "CleanTags and ByTag are new exported functions; the cleaning rule they share decides which notes a tag finds.",
+            "anchors": [
+              {
+                "type": "hunk",
+                "id": "@tags.go"
+              }
+            ]
+          }
+        ]
+      },
+      "risks": [
+        {
+          "id": "rsk_query_cleaning",
+          "tier": "low",
+          "category": "behavior",
+          "source": "agent_review",
+          "text": "Before the third commit ByTag lowercased but did not trim the tag it was asked for, so a tag typed with spaces found nothing. Both now go through cleanTag.",
+          "finding": null,
+          "anchors": [
+            {
+              "type": "hunk",
+              "id": "@tags.go"
+            },
+            {
+              "type": "review_thread",
+              "id": "PRRT_sample_query"
+            }
+          ]
+        }
+      ],
+      "evidence": [
+        {
+          "id": "ev_query_test",
+          "kind": "test",
+          "claim": "ByTag(\"  Work \") finds a note tagged work.",
+          "status": "verified",
+          "granularity": "test",
+          "source": "ci",
+          "anchors": [
+            {
+              "type": "check",
+              "id": "check_run:1",
+              "test": "TestByTagCleansTheTag"
+            },
+            {
+              "type": "hunk",
+              "id": "@tags_test.go"
+            }
+          ]
+        },
+        {
+          "id": "ev_query_review",
+          "kind": "review",
+          "claim": "Codex's finding that ByTag did not trim the tag was fixed by the third commit and its thread resolved.",
+          "status": "verified",
+          "source": "agent_review",
+          "anchors": [
+            {
+              "type": "review_thread",
+              "id": "PRRT_sample_query"
+            },
+            {
+              "type": "commit",
+              "sha": "@commit3"
+            }
+          ]
+        },
+        {
+          "id": "ev_bench",
+          "kind": "benchmark",
+          "claim": "ByTag takes 0.03 ms per call with 10,000 notes, down from 2.9 ms when it scanned every note.",
+          "status": "reported",
+          "source": "author_human",
+          "anchors": [
+            {
+              "type": "pr_body"
+            },
+            {
+              "type": "file",
+              "path": "tags_test.go"
+            }
+          ],
+          "detail": "BenchmarkByTag is in the change, but CI does not run benchmarks, so these numbers are the author's."
+        }
+      ],
+      "blocks": [
+        {
+          "kind": "intent",
+          "text": "A tag should find the same notes however it is typed, when saving a note and when asking for its notes.",
+          "anchors": [
+            {
+              "type": "review_thread",
+              "id": "PRRT_sample_query"
+            },
+            {
+              "type": "pr_body"
+            },
+            {
+              "type": "prompt",
+              "session": "5a3c1e70-0000-4000-8000-000000000003",
+              "index": 1
+            }
+          ]
+        },
+        {
+          "kind": "behavior",
+          "steps": [
+            {
+              "id": "beh_query_cleaned",
+              "title": "The tag asked for is cleaned like saved tags",
+              "before": "ByTag(\" Work\") lowercased the tag but kept the space, and found nothing.",
+              "after": "ByTag(\" Work\") finds the notes saved with \"work\".",
+              "text": "ByTag looks up cleanTag(tag), the same rule CleanTags applies when a note is saved",
+              "anchors": [
+                {
+                  "type": "hunk",
+                  "id": "@tags.go"
+                }
+              ],
+              "evidence": [
+                "ev_query_test",
+                "ev_query_review"
+              ]
+            },
+            {
+              "id": "beh_bytag_order",
+              "title": "ByTag lists newest first",
+              "after": "The notes with a tag come back in the same order List uses.",
+              "question": "Is sorting by Created enough when two notes share a timestamp?",
+              "text": "ByTag sorts the notes it reads from the index by Created, newest first",
+              "anchors": [
+                {
+                  "type": "hunk",
+                  "id": "@tags.go"
+                }
+              ],
+              "evidence": [
+                "ev_query_test",
+                "ev_bench"
+              ]
+            }
+          ]
+        },
+        {
+          "kind": "entities",
+          "items": [
+            {
+              "kind": "function",
+              "name": "CleanTags",
+              "path": "tags.go",
+              "change": "added",
+              "hunks": [
+                "@tags.go"
+              ]
+            },
+            {
+              "kind": "function",
+              "name": "cleanTag",
+              "path": "tags.go",
+              "change": "added",
+              "hunks": [
+                "@tags.go"
+              ]
+            },
+            {
+              "kind": "function",
+              "name": "Store.ByTag",
+              "path": "tags.go",
+              "change": "added",
+              "hunks": [
+                "@tags.go"
+              ]
+            }
+          ]
+        },
+        {
+          "kind": "decisions",
+          "items": [
+            {
+              "id": "dec_one_rule",
+              "by": "agent",
+              "title": "One cleaning rule for saving and asking",
+              "text": "cleanTag is the single rule: CleanTags uses it when saving, ByTag when looking a tag up.",
+              "trigger": "finding",
+              "anchors": [
+                {
+                  "type": "hunk",
+                  "id": "@tags.go"
+                },
+                {
+                  "type": "review_thread",
+                  "id": "PRRT_sample_query"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "sec_cli",
+      "title": "List a tag's notes from the command line",
+      "kind": "logical",
+      "hunks": [
+        "@cmd/notes/main.go"
+      ],
+      "summary": {
+        "text": "A new `notes` command reads notes from a JSON file and prints them newest first, or only those with `-tag`. It stops with a message when the file is missing or is not a notes file.",
+        "anchors": [
+          {
+            "type": "hunk",
+            "id": "@cmd/notes/main.go"
+          }
+        ]
+      },
+      "attention": null,
+      "assessment": {
+        "level": 2,
+        "factors": [
+          "untrusted_input"
+        ],
+        "reasons": [
+          {
+            "text": "The command decodes a file given on the command line; a malformed file stops it with an error rather than listing part of it.",
+            "anchors": [
+              {
+                "type": "hunk",
+                "id": "@cmd/notes/main.go"
+              }
+            ]
+          }
+        ]
+      },
+      "risks": [
+        {
+          "id": "rsk_cli_reindex",
+          "tier": "low",
+          "category": "behavior",
+          "source": "model",
+          "text": "The command adds the saved notes to a new Store, which gives them new IDs; it prints only dates and titles, so nothing shows the IDs today.",
+          "finding": null,
+          "anchors": [
+            {
+              "type": "hunk",
+              "id": "@cmd/notes/main.go"
+            }
+          ]
+        }
+      ],
+      "evidence": [
+        {
+          "id": "ev_cli_build",
+          "kind": "ci",
+          "claim": "The command builds and passes lint with the rest of the module.",
+          "status": "verified",
+          "granularity": "job",
+          "source": "ci",
+          "anchors": [
+            {
+              "type": "check",
+              "id": "check_run:2"
+            }
+          ]
+        },
+        {
+          "id": "ev_cli_untested",
+          "kind": "coverage",
+          "claim": "No test runs the command.",
+          "status": "missing",
+          "source": "model",
+          "anchors": [
+            {
+              "type": "hunk",
+              "id": "@cmd/notes/main.go"
+            }
+          ],
+          "expects": "A test that runs the command on a small notes file with and without -tag and checks what it prints."
+        }
+      ],
+      "blocks": [
+        {
+          "kind": "intent",
+          "text": "People who keep notes in a file should be able to list one topic's notes without writing Go.",
+          "anchors": [
+            {
+              "type": "pr_body"
+            }
+          ]
+        },
+        {
+          "kind": "behavior",
+          "steps": [
+            {
+              "id": "beh_cli_tag",
+              "title": "-tag lists only that tag's notes",
+              "after": "notes -tag home prints the date and title of each note tagged home, newest first.",
+              "text": "With -tag the command prints ByTag's notes, otherwise List's",
+              "anchors": [
+                {
+                  "type": "hunk",
+                  "id": "@cmd/notes/main.go"
+                }
+              ],
+              "evidence": [
+                "ev_cli_build",
+                "ev_cli_untested"
+              ]
+            },
+            {
+              "id": "beh_cli_errors",
+              "title": "A missing or broken file stops the command",
+              "after": "The command prints what went wrong and exits with status 1.",
+              "text": "A file that cannot be read or decoded ends the command with a message and status 1",
+              "anchors": [
+                {
+                  "type": "hunk",
+                  "id": "@cmd/notes/main.go"
+                }
+              ],
+              "evidence": [
+                "ev_cli_untested"
+              ]
+            }
+          ]
+        },
+        {
+          "kind": "repro",
+          "steps": [
+            "Save two notes to notes.json, one tagged \"Home\" and one tagged \"work\".",
+            "Run notes -file notes.json -tag home.",
+            "Only the note tagged Home is listed."
+          ],
+          "source": [
+            {
+              "type": "hunk",
+              "id": "@cmd/notes/main.go"
+            }
+          ]
+        },
+        {
+          "kind": "entities",
+          "items": [
+            {
+              "kind": "file",
+              "name": "notes command",
+              "path": "cmd/notes/main.go",
+              "change": "added",
+              "hunks": [
+                "@cmd/notes/main.go"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "sec_tests",
+      "title": "Tests and a benchmark",
+      "kind": "logical",
+      "hunks": [
+        "@tags_test.go"
+      ],
+      "summary": {
+        "text": "Tests cover cleaning, newest-first order and cleaning the tag ByTag is asked for, and a benchmark measures ByTag over 10,000 notes.",
+        "anchors": [
+          {
+            "type": "hunk",
+            "id": "@tags_test.go"
+          }
+        ]
+      },
+      "attention": null,
+      "assessment": {
+        "level": 1,
+        "factors": [],
+        "reasons": [
+          {
+            "text": "Tests only.",
+            "anchors": [
+              {
+                "type": "hunk",
+                "id": "@tags_test.go"
+              }
+            ]
+          }
+        ]
+      },
+      "risks": [],
+      "evidence": [
+        {
+          "id": "ev_tests_pass",
+          "kind": "ci",
+          "claim": "The test job passed on the head.",
+          "status": "verified",
+          "granularity": "job",
+          "source": "ci",
+          "anchors": [
+            {
+              "type": "check",
+              "id": "check_run:1"
+            }
+          ]
+        }
+      ],
+      "blocks": []
+    },
+    {
+      "id": "sec_docs",
+      "title": "README",
+      "kind": "logical",
+      "hunks": [
+        "@README.md"
+      ],
+      "summary": {
+        "text": "The README shows tags in its example, explains how tags are cleaned and shows the command.",
+        "anchors": [
+          {
+            "type": "hunk",
+            "id": "@README.md"
+          }
+        ]
+      },
+      "attention": null,
+      "assessment": {
+        "level": 1,
+        "factors": [],
+        "reasons": [
+          {
+            "text": "Documentation only.",
+            "anchors": [
+              {
+                "type": "hunk",
+                "id": "@README.md"
+              }
+            ]
+          }
+        ]
+      },
+      "risks": [],
+      "evidence": [],
+      "blocks": [
+        {
+          "kind": "groups",
+          "items": [
+            {
+              "id": "grp_readme",
+              "rule": "README changes that describe tags and the command.",
+              "hunks": [
+                "@README.md"
+              ],
+              "count": 0
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

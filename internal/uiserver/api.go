@@ -24,6 +24,7 @@ import (
 	"github.com/baum-ai/baum/internal/repos"
 	"github.com/baum-ai/baum/internal/store"
 	"github.com/baum-ai/baum/internal/viewserver"
+	"github.com/baum-ai/baum/sessions"
 )
 
 // LocalAPI composes the existing local services. It never selects a filesystem
@@ -87,6 +88,9 @@ type LocalAPI struct {
 	// Timeline serves /api/timeline/: the features and decisions of the
 	// local decision log (internal/decisionlog).
 	Timeline http.Handler
+	// Sessions are the session stores a pull request page's linked sessions
+	// are read from; the zero value reads this computer's default stores.
+	Sessions sessions.Options
 	// Facts builds what GET /api/facts answers: a pull request's facts for
 	// its page while it has no saved review (internal/facts). Without it the
 	// route reports the capability unavailable.
@@ -150,6 +154,7 @@ func (h *LocalHandler) InvalidateSessions() { h.documents.invalidateSessions() }
 func (h *LocalHandler) Close() { h.documents.close() }
 func (a LocalAPI) Handler() *LocalHandler {
 	cache := newDocumentCache()
+	cache.sessions = a.Sessions
 	mux := http.NewServeMux()
 	registry := a.Registry.HandlerWith(a.CurrentName)
 	mutate := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -195,6 +200,7 @@ func (a LocalAPI) Handler() *LocalHandler {
 	mux.Handle("POST /api/prs/resolve-thread", update)
 	mux.Handle("GET /api/prs/failing-checks", update)
 	mux.Handle("GET /api/prs/checks", update)
+	mux.Handle("GET /api/prs/description", update)
 	mux.Handle("GET /api/prs/conflicts", update)
 	mux.Handle("POST /api/prs/rerun-job", update)
 	mux.Handle("/api/prs", provider(a.PRs, "discovery_unavailable"))
@@ -490,7 +496,7 @@ func (a LocalAPI) Handler() *LocalHandler {
 		}
 		if r.URL.Path == "/api/document" {
 			w.Header().Set("Content-Type", "application/json")
-			_, _ = w.Write(version.Document)
+			_, _ = w.Write(viewserver.WithHunkURLs(version.Document))
 			return
 		}
 		viewer, release, err := cache.get(c, version.Document)
@@ -499,13 +505,22 @@ func (a LocalAPI) Handler() *LocalHandler {
 			return
 		}
 		defer release()
-		viewer.Mux().ServeHTTP(w, r)
+		// The version asked for is the document the viewer serves, so the
+		// viewer answers it as its own.
+		routed := r.Clone(r.Context())
+		query := routed.URL.Query()
+		query.Del("version")
+		routed.URL.RawQuery = query.Encode()
+		viewer.Mux().ServeHTTP(w, routed)
 	}
 	mux.HandleFunc("GET /api/document", document)
 	mux.HandleFunc("GET /api/sessions", document)
 	mux.HandleFunc("GET /api/sessions/{id}", document)
 	mux.HandleFunc("GET /api/patch", document)
 	mux.HandleFunc("GET /api/commits", document)
+	mux.HandleFunc("GET /api/commit", document)
+	mux.HandleFunc("GET /api/commit-patch", document)
+	mux.HandleFunc("GET /api/file", document)
 	a.factsRoutes(mux, cache)
 	mux.HandleFunc("GET /api/attachments/{id}", func(w http.ResponseWriter, r *http.Request) {
 		c, key, n, ok := a.selector(w, r)

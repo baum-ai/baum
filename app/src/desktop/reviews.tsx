@@ -1,6 +1,6 @@
 import { BrandMark } from "@baum/viewer/components/brand-logo";
-import { useId, useState } from "react";
-import { modelPresets, type PullRequests, type ReviewSettings } from "./setup-model";
+import { type ReactNode, useId, useState } from "react";
+import { modelName, modelPresets, type PullRequests, type ReviewSettings } from "./setup-model";
 import { effortLabels, modelEfforts, supportedEffort } from "../model-effort";
 import "./review-form.css";
 
@@ -24,72 +24,111 @@ const retiredNames: Record<string, string> = {
 export const harnessName = (id: string) =>
   harnesses.find((h) => h.id === id)?.name ?? retiredNames[id] ?? id;
 
+/** How to sign in to each harness from a terminal. */
+export const signIn: Record<string, ReactNode> = {
+  claude: (
+    <>
+      Run <code>claude</code> in a terminal and sign in with <code>/login</code>
+    </>
+  ),
+  codex: (
+    <>
+      Run <code>codex login</code> in a terminal
+    </>
+  ),
+};
+
 /** The harness tiles. With `inherit`, a first tile leaves the choice to the
- *  level above, and `value` is null while it is picked. */
+ *  level above, and `value` is null while it is picked. `compact` tiles show
+ *  only the name, unless the agent is missing or signed out. A chosen agent
+ *  in `signedOut` gets a line saying how to sign in. */
 export function HarnessPicker({
   value,
   onChange,
   disabled,
   inherit,
   legend = "Agent",
+  description,
+  compact = false,
   available,
+  signedOut = [],
   missingLabel = "Not installed",
 }: {
   value: string | null;
   onChange: (next: string | null) => void;
   disabled: boolean;
-  inherit?: { label: string; detail: string };
+  inherit?: { label: string; detail?: string };
   legend?: string;
+  description?: string;
+  compact?: boolean;
   available?: readonly string[];
+  signedOut?: readonly string[];
   missingLabel?: string;
 }) {
   const name = useId();
+  const descriptionId = useId();
   const options = [
     ...(inherit ? [{ id: INHERIT, name: inherit.label, detail: inherit.detail, brand: null }] : []),
     ...harnesses,
   ];
   return (
-    <fieldset className="review-section">
+    <fieldset className="review-section" aria-describedby={description ? descriptionId : undefined}>
       <legend>{legend}</legend>
+      {description ? (
+        <p id={descriptionId} className="review-note harness-description">
+          {description}
+        </p>
+      ) : null}
       <div className={inherit ? "harness-grid with-inherit" : "harness-grid"}>
-        {options.map((harness) => (
-          <label key={harness.id} className="harness-option">
-            <input
-              type="radio"
-              name={name}
-              value={harness.id === INHERIT ? "" : harness.id}
-              checked={(value ?? INHERIT) === harness.id}
-              disabled={
-                disabled ||
-                (available !== undefined &&
-                  harness.id !== INHERIT &&
-                  !available.includes(harness.id))
-              }
-              onChange={() => onChange(harness.id === INHERIT ? null : harness.id)}
-            />
-            <span className="harness-tile">
-              {harness.brand ? (
-                <BrandMark brand={harness.brand} size={20} />
-              ) : (
-                <span className="harness-inherit" aria-hidden="true" />
-              )}
-              <span>
-                {harness.name}
-                <small>
-                  {available !== undefined &&
-                  harness.id !== INHERIT &&
-                  !available.includes(harness.id)
-                    ? missingLabel
-                    : harness.detail}
-                </small>
+        {options.map((harness) => {
+          const missing =
+            available !== undefined && harness.id !== INHERIT && !available.includes(harness.id);
+          const detail = missing
+            ? missingLabel
+            : signedOut.includes(harness.id)
+              ? "Not signed in"
+              : compact
+                ? undefined
+                : harness.detail;
+          return (
+            <label key={harness.id} className="harness-option">
+              <input
+                type="radio"
+                name={name}
+                value={harness.id === INHERIT ? "" : harness.id}
+                checked={(value ?? INHERIT) === harness.id}
+                disabled={disabled || missing}
+                onChange={() => onChange(harness.id === INHERIT ? null : harness.id)}
+              />
+              <span className="harness-tile">
+                {harness.brand ? (
+                  <BrandMark brand={harness.brand} size={20} />
+                ) : (
+                  <span className="harness-inherit" aria-hidden="true" />
+                )}
+                <span>
+                  {harness.name}
+                  {detail ? <small>{detail}</small> : null}
+                </span>
               </span>
-            </span>
-          </label>
-        ))}
+            </label>
+          );
+        })}
       </div>
+      {value && signedOut.includes(value) ? (
+        <p className="review-note harness-signin" role="status">
+          {harnessName(value)} isn't signed in, so its jobs will fail. {signIn[value]}, then choose
+          Check again.
+        </p>
+      ) : null}
     </fieldset>
   );
 }
+
+const effortNames: Record<string, string> = {
+  "review-effort": "Review reasoning effort",
+  "fix-effort": "Fix reasoning effort",
+};
 
 type EffortSelection = {
   value: string;
@@ -116,11 +155,7 @@ function EffortPicker({
           value={supportedEffort(backend, model, value)}
           disabled={disabled || levels.length === 0}
           onChange={(event) => onChange(event.target.value)}
-          aria-label={
-            id === "review-effort"
-              ? "Review reasoning effort"
-              : "Decision extraction reasoning effort"
-          }
+          aria-label={effortNames[id] ?? "Decision extraction reasoning effort"}
         >
           <option value="">Default</option>
           {levels.map((level) => (
@@ -152,7 +187,6 @@ export function ModelPicker({
   label = "Model",
   unused,
   effort,
-  note,
 }: {
   backend: string;
   value: string | null;
@@ -165,7 +199,6 @@ export function ModelPicker({
    *  it shows as chosen and choosing another is a change. */
   unused?: string;
   effort?: EffortSelection & { model?: string };
-  note?: string;
 }) {
   const presets = [...(modelPresets[backend] ?? []), ...(unused ? [unused] : [])];
   const [custom, setCustom] = useState(value !== null && !presets.includes(value));
@@ -191,7 +224,7 @@ export function ModelPicker({
               {inherit ? <option value={INHERIT}>{inherit}</option> : null}
               {presets.map((model) => (
                 <option key={model} value={model}>
-                  {model === unused ? `${model} (not used)` : model}
+                  {model === unused ? `${modelName(model)} (not used)` : modelName(model)}
                 </option>
               ))}
               <option value={CUSTOM}>Custom…</option>
@@ -214,7 +247,7 @@ export function ModelPicker({
       </div>
       {effort ? (
         <EffortPicker
-          id={id === "review-model" ? "review-effort" : "decisions-effort"}
+          id={id.replace(/-model$/, "-effort")}
           backend={backend}
           model={effort.model ?? value ?? ""}
           value={effort.value}
@@ -222,7 +255,6 @@ export function ModelPicker({
           disabled={disabled}
         />
       ) : null}
-      {note ? <p className="review-note">{note}</p> : null}
     </div>
   );
 }
@@ -246,6 +278,7 @@ export function ReviewSettingsForm({
   onChange,
   className = "setup-card",
   available,
+  signedOut,
   detectionError,
 }: {
   settings: ReviewSettings;
@@ -253,18 +286,29 @@ export function ReviewSettingsForm({
   onChange: (next: ReviewSettings) => void;
   className?: string;
   available: readonly string[];
+  signedOut?: readonly string[];
   detectionError?: string | null;
 }) {
   const update = (patch: Partial<ReviewSettings>) => {
     const next = { ...settings, ...patch };
-    onChange({ ...next, effort: supportedEffort(next.backend, next.model, next.effort) });
+    onChange({
+      ...next,
+      effort: supportedEffort(next.backend, next.model, next.effort),
+      fix_effort: next.fix_backend
+        ? supportedEffort(next.fix_backend, next.fix_model ?? "", next.fix_effort)
+        : "",
+    });
   };
+  const fix = settings.fix_backend || null;
   return (
     <div id="review-panel" className={`${className} review-card`}>
       <HarnessPicker
+        legend="Reviews and extraction"
+        description="Reviews pull requests and extracts decisions from your sessions."
         value={available.includes(settings.backend) ? settings.backend : null}
         disabled={disabled}
         available={available}
+        signedOut={signedOut}
         missingLabel={detectionError ? "Not detected" : "Not installed"}
         onChange={(backend) =>
           update({
@@ -307,8 +351,39 @@ export function ReviewSettingsForm({
             disabled={disabled}
             onChange={(model) => update({ model: model ?? "" })}
             effort={{ value: settings.effort ?? "", onChange: (effort) => update({ effort }) }}
-            note="You can customise the agent and model per task in the app settings."
           />
+          <HarnessPicker
+            legend="Fixes"
+            description="Resolves merge conflicts, failing CI and review comments."
+            inherit={{ label: "Same as reviews" }}
+            compact
+            value={fix}
+            disabled={disabled}
+            available={available}
+            signedOut={signedOut}
+            missingLabel={detectionError ? "Not detected" : "Not installed"}
+            onChange={(backend) =>
+              update({
+                fix_backend: backend ?? "",
+                fix_model: backend ? (modelPresets[backend]?.[0] ?? "") : "",
+                fix_effort: backend ? settings.fix_effort : "",
+              })
+            }
+          />
+          {fix ? (
+            <ModelPicker
+              key={fix}
+              id="fix-model"
+              backend={fix}
+              value={settings.fix_model ?? ""}
+              disabled={disabled}
+              onChange={(model) => update({ fix_model: model ?? "" })}
+              effort={{
+                value: settings.fix_effort ?? "",
+                onChange: (fix_effort) => update({ fix_effort }),
+              }}
+            />
+          ) : null}
           <div className="review-section">
             <label className="switch-row">
               <span>
@@ -356,9 +431,6 @@ export function ReviewSettingsForm({
                 </p>
               </fieldset>
             )}
-            <p className="review-note">
-              You can customise this per repository in the repository settings.
-            </p>
           </div>
         </>
       )}

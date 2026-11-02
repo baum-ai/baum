@@ -466,26 +466,32 @@ function TimelineLog({
   settled: () => void;
 }) {
   // A view of one repository has its feature build: its job and its
-  // building version. A build that finishes changes the features, so the
-  // lists are read again.
+  // building version. Every repository shown with a clone can be built, and
+  // a build that finishes changes the features, so the lists are read again.
   const single = scope.length === 1 ? (scope[0] ?? null) : null;
   const several = single === null;
   const clone = single ? cloneOf(single) : null;
   const buildJob = single ? buildJobOf(jobs, single) : undefined;
-  const buildActive = isActiveJob(buildJob);
+  const targets = scope.flatMap((repository) => {
+    const each = cloneOf(repository);
+    return each ? [{ repository, clone: each }] : [];
+  });
+  const running = scope.filter((repository) => isActiveJob(buildJobOf(jobs, repository)));
+  const buildActive = running.length > 0;
   const [buildFinished, setBuildFinished] = useState(0);
-  const wasActive = useRef(buildActive);
+  const wasRunning = useRef(running);
   useEffect(() => {
-    if (wasActive.current && !buildActive) setBuildFinished((n) => n + 1);
-    wasActive.current = buildActive;
-  }, [buildActive]);
+    if (wasRunning.current.some((repository) => !running.includes(repository)))
+      setBuildFinished((n) => n + 1);
+    wasRunning.current = running;
+  }, [running.join("\n")]);
   const revision = logRevision + buildFinished;
   const buildState = useBuildState(
     single,
     `${revision}:${buildJob?.id ?? ""}:${buildJob?.state ?? ""}:${buildJob?.calls ?? 0}`,
   );
   const { building, hasFeatures } = buildState;
-  const build = useFeatureBuildStart(clone, jobsChanged);
+  const build = useFeatureBuildStart(targets, jobsChanged);
   const url = useUrlState();
   const search = url.search;
   const tab: LogTab = search.get("tab") === "all" ? "all" : "features";
@@ -572,9 +578,23 @@ function TimelineLog({
     });
 
   const coverage = decisions.coverage;
-  // Whether the repository has features at all, not whether the filters
-  // leave any.
-  const canRebuild = clone !== null && !buildActive && !building && hasFeatures;
+  // Over several repositories the menu is always there; one repository needs
+  // features at all, not whether the filters leave any, since its empty
+  // state offers the first build.
+  const showMore = several || hasFeatures;
+  const rebuildBlocked = buildActive
+    ? several
+      ? `A feature build is running for ${running.join(", ")}. Rebuild when it finishes.`
+      : "A feature build is running. Rebuild when it finishes."
+    : targets.length === 0
+      ? several
+        ? "None of these repositories has a local clone"
+        : NO_CLONE
+      : "";
+  const rebuildNote =
+    several && targets.length > 0 && targets.length < scope.length
+      ? `For ${targets.length} of ${scope.length} repositories; the others need a local clone`
+      : "";
   return (
     <>
       <PageBar
@@ -612,8 +632,13 @@ function TimelineLog({
                 />
               ) : null}
               {controls}
-              {canRebuild ? (
-                <MoreMenu starting={build.starting} onRebuild={() => void build.start()} />
+              {showMore ? (
+                <MoreMenu
+                  starting={build.starting}
+                  blocked={rebuildBlocked}
+                  note={rebuildNote}
+                  onRebuild={() => void build.start()}
+                />
               ) : null}
             </div>
           )}
@@ -639,7 +664,7 @@ function TimelineLog({
           noFeatures={(showAll) => (
             <>
               {several
-                ? "Features appear here as baum places these repositories' pull requests and agent sessions in them, from now on. Open one repository to build its feature history. The decisions read so far are under All decisions."
+                ? "Features appear here as baum places these repositories' pull requests and agent sessions in them, from now on. Build their feature history from the menu at the end of the filters, or open one repository. The decisions read so far are under All decisions."
                 : "Features appear here as baum places this repository's pull requests and agent sessions in them, from now on. Build its feature history to place the pull requests of the last 180 days too. The decisions read so far are under All decisions."}
               <span className="mt-3 flex flex-wrap justify-center gap-2">
                 {single && !buildActive && !building ? (
@@ -684,8 +709,19 @@ function timelineList<T>(pages: Pages<T>): TimelineList<T> {
 }
 
 /** The filter bar's kebab menu, at its end: the quieter actions, such as
- *  rebuilding the feature history. */
-function MoreMenu({ starting, onRebuild }: { starting: boolean; onRebuild: () => void }) {
+ *  rebuilding the feature history. `blocked` says why it cannot start;
+ *  `note` qualifies what it starts. */
+function MoreMenu({
+  starting,
+  blocked,
+  note,
+  onRebuild,
+}: {
+  starting: boolean;
+  blocked: string;
+  note: string;
+  onRebuild: () => void;
+}) {
   const { detailsProps, close } = useDisclosure();
   return (
     <details {...detailsProps} className="group relative ml-auto">
@@ -705,14 +741,18 @@ function MoreMenu({ starting, onRebuild }: { starting: boolean; onRebuild: () =>
       <div className="absolute right-0 z-20 mt-1 flex w-60 flex-col rounded-(--radius-md) border border-(--border-default) bg-(--surface-card) p-1 shadow-(--shadow-overlay)">
         <button
           type="button"
-          disabled={starting}
-          className="rounded-(--radius-sm) px-2 py-1.5 text-left text-base text-(--text-primary) hover:bg-(--surface-hover) disabled:opacity-50"
+          disabled={starting || blocked !== ""}
+          title={blocked || undefined}
+          className="flex flex-col rounded-(--radius-sm) px-2 py-1.5 text-left text-base text-(--text-primary) hover:bg-(--surface-hover) disabled:opacity-50"
           onClick={() => {
             close();
             onRebuild();
           }}
         >
           {starting ? "Starting…" : "Rebuild feature history"}
+          {blocked || note ? (
+            <span className="text-xs text-(--text-tertiary)">{blocked || note}</span>
+          ) : null}
         </button>
       </div>
     </details>

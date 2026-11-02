@@ -114,7 +114,7 @@ func BuildDiffIndexWithin(comparison Comparison, fetch PatchFetcher, roleFor fun
 				ID: id, Path: path, Change: change, Role: role,
 				StartLine: raw.newStart, LineCount: raw.newCount,
 				Additions: raw.additions, Deletions: raw.deletions,
-				DiffURL: diffURL(path, raw.newStart),
+				DiffURL: HunkDiffURL(path, raw.newStart),
 			}
 			if file.OldPath != "" && file.OldPath != path {
 				hunk.OldPath = file.OldPath
@@ -409,8 +409,11 @@ func hunkID(path, changedLines string) string {
 	return hunkIDFromDigest(digest)
 }
 
-// diffURL follows GitHub's diff fragment shape: diff-<sha256(path)>R<line>.
-func diffURL(path string, line int) string {
+// HunkDiffURL is a hunk's DiffURL: GitHub's diff fragment shape,
+// diff-<sha256(path)>R<line>, for the path and first new line it records. A
+// document's github_url is this value, so a host can derive it from the
+// hunk's path and new_range rather than store it.
+func HunkDiffURL(path string, line int) string {
 	digest := sha256.Sum256([]byte(path))
 	return fmt.Sprintf("diff-%sR%d", hex.EncodeToString(digest[:]), line)
 }

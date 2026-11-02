@@ -554,7 +554,9 @@ paths as a build does.
   place that chooses the version a stage uses (the live stages' current
   one, made when first needed, and a build's building one).
 
-These rows are not pruned.
+These rows are not pruned. Only placement, text, consolidation and a build
+write features, except `SeedSample`, which fills a store of the tour's sample
+project (`internal/sampleapp`) as a build would have left it.
 
 ## Timeline API
 

@@ -20,7 +20,10 @@
 // Only two operations run in the clone itself, with the user's
 // configuration so credentials, URL rewrites and safe.directory work:
 // finding the repository, and fetching a missing pull request commit, which
-// lands under refs/baum/ and runs no hooks. The clone's branches, HEAD,
+// lands under refs/baum/ and runs no hooks. Besides those, the refs that
+// keep saved review versions' commits (RetainPrefix) are listed and written
+// in the clone's common directory with the private repository's
+// environment, no hooks and no reflog (UpdateRetained). The clone's branches, HEAD,
 // index, working tree, configuration and worktree registrations are never
 // changed, except by a Fix: the temporary worktree, refs and push of a fix a
 // person confirmed (see Fix). An export is the hosted mirror's own git archive command run in

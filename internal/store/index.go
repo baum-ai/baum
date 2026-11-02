@@ -2,10 +2,14 @@ package store
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
+	"strings"
 	"time"
 )
 
@@ -106,6 +110,169 @@ type Summary struct {
 	Run           *Run            `json:"run,omitempty"`
 }
 
+// The projection of a latest document, shared by Snapshot's fallback, the
+// write-time maintenance and the backfill so all three agree exactly.
+const (
+	titleSQL   = `COALESCE(json_extract({doc},'$.summary.title'),'')`
+	prStateSQL = `COALESCE(json_extract({doc},'$.review.pr_state'),'')`
+	riskSQL    = `json_extract({doc},'$.summary.risk_score')`
+	minutesSQL = `CASE WHEN json_type({doc},'$.summary.review_minutes') IN ('integer','real') AND json_extract({doc},'$.summary.review_minutes') BETWEEN 1 AND 240 AND CAST(json_extract({doc},'$.summary.review_minutes') AS INTEGER)=json_extract({doc},'$.summary.review_minutes') THEN CAST(json_extract({doc},'$.summary.review_minutes') AS INTEGER) END`
+)
+
+func extract(doc string) string {
+	return strings.NewReplacer("{doc}", doc).Replace(titleSQL + `,` + prStateSQL + `,` + riskSQL + `,` + minutesSQL)
+}
+
+// fromSummary reads a column of a matching summaries row, extracting from the
+// document only for a row without one. SQLite evaluates CASE lazily.
+func fromSummary(column, expr string) string {
+	return `CASE WHEN s.pr IS NULL THEN ` + strings.ReplaceAll(expr, "{doc}", "v.document") + ` ELSE ` + column + ` END`
+}
+
+const summariesSchema = `CREATE TABLE IF NOT EXISTS summaries (repository TEXT NOT NULL, pr INTEGER NOT NULL, version INTEGER NOT NULL, document_length INTEGER NOT NULL, title, pr_state, risk_score, review_minutes INTEGER, PRIMARY KEY(repository,pr)) WITHOUT ROWID`
+
+const summaryColumns = `INSERT OR REPLACE INTO summaries(repository,pr,version,document_length,title,pr_state,risk_score,review_minutes) `
+
+// summaryTriggers keep the projection current for every writer of versions, in
+// the writer's own transaction: older binaries too, once the triggers exist. A
+// document SQLite cannot parse (nested deeper than its limit) drops the row so
+// Snapshot falls back, rather than failing the write.
+//
+// Trigger names carry a hash of every body and of the table, so a binary that
+// changes the extraction finds the old triggers missing and replaces them.
+func summaryTriggers() []trigger {
+	latest := `NEW.version=(SELECT MAX(version) FROM versions WHERE repository=NEW.repository AND pr=NEW.pr)`
+	upsert := summaryColumns + `SELECT NEW.repository,NEW.pr,NEW.version,length(NEW.document),` + extract("NEW.document") + `;`
+	drop := `DELETE FROM summaries WHERE repository=NEW.repository AND pr=NEW.pr;`
+	var out []trigger
+	for _, event := range []struct{ name, on string }{{"insert", "INSERT"}, {"update", "UPDATE OF document"}} {
+		out = append(out,
+			trigger{"summaries_" + event.name, ` AFTER ` + event.on + ` ON versions WHEN ` + latest + ` AND json_valid(NEW.document) BEGIN ` + upsert + ` END`},
+			trigger{"summaries_" + event.name + "_invalid", ` AFTER ` + event.on + ` ON versions WHEN ` + latest + ` AND NOT json_valid(NEW.document) BEGIN ` + drop + ` END`})
+	}
+	out = append(out, trigger{"summaries_delete", ` AFTER DELETE ON versions BEGIN DELETE FROM summaries WHERE repository=OLD.repository AND pr=OLD.pr; ` +
+		summaryColumns + `SELECT v.repository,v.pr,v.version,length(v.document),` + extract("v.document") + ` FROM versions v WHERE v.repository=OLD.repository AND v.pr=OLD.pr AND v.version=(SELECT MAX(version) FROM versions WHERE repository=OLD.repository AND pr=OLD.pr) AND json_valid(v.document); END`})
+	h := sha256.New()
+	h.Write([]byte(summariesSchema))
+	for _, t := range out {
+		h.Write([]byte(t.name + t.body))
+	}
+	suffix := "_" + hex.EncodeToString(h.Sum(nil))[:8]
+	for i := range out {
+		out[i].name += suffix
+	}
+	return out
+}
+
+type trigger struct{ name, body string }
+
+// immediate runs fn in a transaction that takes the writer lock up front.
+func immediate(ctx context.Context, db *sql.DB, fn func(*sql.Conn) error) error {
+	conn, err := db.Conn(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = conn.Close() }()
+	if _, err = conn.ExecContext(ctx, `BEGIN IMMEDIATE`); err != nil {
+		return err
+	}
+	if err = fn(conn); err != nil {
+		_, _ = conn.ExecContext(context.Background(), `ROLLBACK`)
+		return err
+	}
+	_, err = conn.ExecContext(ctx, `COMMIT`)
+	return err
+}
+
+func summaryTriggerNames(ctx context.Context, q interface {
+	QueryContext(context.Context, string, ...any) (*sql.Rows, error)
+}) ([]string, error) {
+	rows, err := q.QueryContext(ctx, `SELECT name FROM sqlite_master WHERE type='trigger' AND substr(name,1,10)='summaries_' ORDER BY name`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var names []string
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return nil, err
+		}
+		names = append(names, name)
+	}
+	return names, rows.Err()
+}
+
+// setupSummaries makes the table and triggers current, and projects stale rows.
+// A store whose triggers are exactly the current ones is only read unless a row
+// is stale. Otherwise one transaction creates the table if missing, replaces
+// the triggers, drops every row (the extraction may have changed) and
+// backfills.
+func setupSummaries(ctx context.Context, db *sql.DB) error {
+	triggers := summaryTriggers()
+	var tables int
+	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='summaries'`).Scan(&tables); err != nil {
+		return err
+	}
+	have, err := summaryTriggerNames(ctx, db)
+	if err != nil {
+		return err
+	}
+	current := tables == 1 && len(have) == len(triggers)
+	for _, t := range triggers {
+		current = current && slices.Contains(have, t.name)
+	}
+	if current {
+		return backfill(ctx, db)
+	}
+	return immediate(ctx, db, func(conn *sql.Conn) error {
+		if _, err := conn.ExecContext(ctx, summariesSchema); err != nil {
+			return err
+		}
+		have, err := summaryTriggerNames(ctx, conn)
+		if err != nil {
+			return err
+		}
+		for _, name := range have {
+			if _, err := conn.ExecContext(ctx, `DROP TRIGGER "`+name+`"`); err != nil {
+				return err
+			}
+		}
+		for _, t := range triggers {
+			if _, err := conn.ExecContext(ctx, `CREATE TRIGGER "`+t.name+`"`+t.body); err != nil {
+				return err
+			}
+		}
+		if _, err := conn.ExecContext(ctx, `DELETE FROM summaries`); err != nil {
+			return err
+		}
+		return projectStale(ctx, conn)
+	})
+}
+
+// staleLatest selects every latest document without a current summary: a store
+// written before summaries existed, or by a binary that does not maintain
+// them. SQLite parses a document only for such a row (CASE is lazy), so a store
+// that is already current costs no document reads.
+const staleLatest = ` FROM versions v JOIN (SELECT repository,pr,MAX(version) latest FROM versions GROUP BY repository,pr) m ON v.repository=m.repository AND v.pr=m.pr AND v.version=m.latest LEFT JOIN summaries s ON s.repository=v.repository AND s.pr=v.pr WHERE CASE WHEN s.pr IS NULL OR s.version<>v.version OR s.document_length<>length(v.document) THEN json_valid(v.document) ELSE 0 END`
+
+var projectStaleSQL = summaryColumns + `SELECT v.repository,v.pr,v.version,length(v.document),` + extract("v.document") + staleLatest
+
+func projectStale(ctx context.Context, conn *sql.Conn) error {
+	_, err := conn.ExecContext(ctx, projectStaleSQL)
+	return err
+}
+
+// backfill projects the stale rows. A read-only check comes first so a store
+// that is already current is not written and its writer lock not taken.
+func backfill(ctx context.Context, db *sql.DB) error {
+	var stale bool
+	if err := db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1`+staleLatest+`)`).Scan(&stale); err != nil || !stale {
+		return err
+	}
+	return immediate(ctx, db, func(conn *sql.Conn) error { return projectStale(ctx, conn) })
+}
+
 func (s *Store) Snapshot(ctx context.Context) ([]Summary, error) {
 	db, err := s.database(false)
 	if errors.Is(err, ErrNotFound) {
@@ -120,7 +287,18 @@ func (s *Store) Snapshot(ctx context.Context) ([]Summary, error) {
 		return nil, err
 	}
 	defer func() { _ = tx.Rollback() }()
-	rows, err := tx.QueryContext(ctx, `SELECT v.repository,v.pr,v.metadata,COALESCE(json_extract(v.document,'$.summary.title'),''),COALESCE(json_extract(v.document,'$.review.pr_state'),''),json_extract(v.document,'$.summary.risk_score'),CASE WHEN json_type(v.document,'$.summary.review_minutes') IN ('integer','real') AND json_extract(v.document,'$.summary.review_minutes') BETWEEN 1 AND 240 AND CAST(json_extract(v.document,'$.summary.review_minutes') AS INTEGER)=json_extract(v.document,'$.summary.review_minutes') THEN CAST(json_extract(v.document,'$.summary.review_minutes') AS INTEGER) END,summary.n FROM versions v JOIN (SELECT repository,pr,MAX(version) latest,COUNT(*) n FROM versions GROUP BY repository,pr) summary ON v.repository=summary.repository AND v.pr=summary.pr AND v.version=summary.latest ORDER BY v.repository,v.pr`)
+	// Read old stores without migrating them: summaries is used where present and current.
+	var projected int
+	if err = tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='summaries'`).Scan(&projected); err != nil {
+		return nil, err
+	}
+	table := `(SELECT NULL repository,NULL pr,NULL version,NULL document_length,NULL title,NULL pr_state,NULL risk_score,NULL review_minutes WHERE 0)`
+	if projected != 0 {
+		table = "summaries"
+	}
+	rows, err := tx.QueryContext(ctx, `SELECT v.repository,v.pr,v.metadata,`+
+		fromSummary("s.title", titleSQL)+`,`+fromSummary("s.pr_state", prStateSQL)+`,`+fromSummary("s.risk_score", riskSQL)+`,`+fromSummary("s.review_minutes", minutesSQL)+
+		`,m.n FROM versions v JOIN (SELECT repository,pr,MAX(version) latest,COUNT(*) n FROM versions GROUP BY repository,pr) m ON v.repository=m.repository AND v.pr=m.pr AND v.version=m.latest LEFT JOIN `+table+` s ON s.repository=v.repository AND s.pr=v.pr AND s.version=v.version AND s.document_length=length(v.document) ORDER BY v.repository,v.pr`)
 	if err != nil {
 		return nil, err
 	}
@@ -161,7 +339,7 @@ func (s *Store) Snapshot(ctx context.Context) ([]Summary, error) {
 	for i := range out {
 		entries[out[i].Key] = &out[i]
 	}
-	// Read old stores without migrating them. Opening for writes creates runs.
+	// Opening for writes creates runs.
 	var exists int
 	if err = tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='runs'`).Scan(&exists); err != nil {
 		return nil, err

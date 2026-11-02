@@ -4,10 +4,13 @@ import { request } from "./api";
 import { LoadingStatus } from "./nine-dots";
 import { SMALL } from "./action-classes";
 import { cn } from "@baum/viewer/components/classnames";
+import { Markdown } from "@baum/viewer/components/markdown";
 
-/** A comment of a review thread. Its body is the reviewer's text, untrusted,
- *  and shown as plain text. */
-export type ThreadComment = { author: string; body: string; url?: string };
+/** A comment of a review thread: the reviewer's text, untrusted. `markdown`
+ *  is rendered as GitHub renders it, raw HTML sanitised (`Markdown`); without
+ *  it (a comment too long to send whole, or an older daemon) `body`, its
+ *  plain text, shows as text. */
+export type ThreadComment = { author: string; body: string; markdown?: string; url?: string };
 
 /** An unresolved review thread, as `api/prs/review-threads` lists it. The
  *  excerpt is its first comment's headline, in plain text; the messages are
@@ -193,7 +196,13 @@ function Thread({
             {messages.map((message, index) => (
               <li key={index}>
                 <span className="upnext-thread-author">{message.author || "Someone"}</span>
-                <p className="upnext-thread-body">{message.body || "(No text)"}</p>
+                {message.markdown ? (
+                  <Markdown className="upnext-thread-markdown upnext-prose">
+                    {message.markdown}
+                  </Markdown>
+                ) : (
+                  <p className="upnext-thread-body">{message.body || "(No text)"}</p>
+                )}
               </li>
             ))}
             {more > 0 ? (

@@ -1,5 +1,6 @@
+import { Avatar } from "@baum/viewer/components/avatar";
 import { BrandMark } from "@baum/viewer/components/brand-logo";
-import { usePreferences } from "./preferences";
+import { usePreferences, type PageModifier } from "./preferences";
 import { PlanUsageSettings } from "./plan-usage-settings";
 import {
   useEffect,
@@ -9,15 +10,25 @@ import {
   type FormEvent,
   type ReactNode,
 } from "react";
-import { Alert, Button, SegmentedControl } from "@baum/viewer/components/ui";
+import { Alert, Badge, Button, LiveDot, SegmentedControl } from "@baum/viewer/components/ui";
+import {
+  formatCount,
+  formatDateTime,
+  formatRelative,
+  githubAvatarURL,
+} from "@baum/viewer/components/format";
 import {
   automaticNotice,
+  isActiveJob,
+  sameRepository,
   parseAgentRequests,
   request,
   saveAgentSettings,
   type Automatic,
   type AutomaticStatus,
   type Clone,
+  type Entry,
+  type Job,
   type GitHubConnection,
   type Repository,
   type DiagnosticReport,
@@ -30,13 +41,15 @@ import {
   useCloneActions,
 } from "./repositories";
 import { MenuButton, useContextMenu, type MenuItem } from "./context-menu";
+import { ListSection } from "./list";
 import { GitHubConnectionSection } from "./github-connection";
 import { messages as githubMessages } from "./github-auth";
 import { CodexHookWarning, type useCodexHookTrust } from "./codex-hooks";
 import { DiagnosticsSection } from "./diagnostics";
 import { invoke } from "./desktop/native";
+import { withCode } from "./desktop/code-terms";
 import { Notice, PageBar, PanelHeader, RefreshButton } from "./shell";
-import { listKeys, onBody, useRowFocus, useShortcuts } from "./shortcuts";
+import { listKeys, MAC, onBody, pageModifier, useRowFocus, useShortcuts } from "./shortcuts";
 import {
   TerminalIcon,
   SessionsIcon,
@@ -45,17 +58,22 @@ import {
   CloseIcon,
   PlusIcon,
 } from "@baum/viewer/components/icons";
-import { DecisionsDisclosure, harnesses, harnessName } from "./desktop/reviews";
+import { DecisionsDisclosure, harnesses, harnessName, signIn } from "./desktop/reviews";
 import { effortLabels } from "./model-effort";
 import {
   describeCommand,
   describeAgent,
   agentConnected,
+  agentUpdatable,
+  agentHookNote,
+  agentNeedsAction,
   displayPath,
   type SetupView,
   type Outcome,
   decisionModelDefaults,
   detectedHarnesses,
+  signedOutHarnesses,
+  modelName,
   modelPresets,
   withModel,
   type PullRequests,
@@ -114,7 +132,7 @@ const SECTION_CONTROLS = [
   "summary",
 ].join(", ");
 
-/** Settings' keys (`SETTINGS_SHORTCUTS`). Tab moves nothing in the app, so
+/** Settings' keys (`SETTINGS_SHORTCUTS`), beside Tab (`useTabStops`):
  *  the section list is the selection, as Up next's list is: j/↓ and k/↑ move
  *  it, 1 to 5 jump to a section, and Enter, l or → goes into the shown
  *  section. There j/↓ and k/↑ step through its controls, Enter or Space
@@ -371,6 +389,7 @@ function AgentSelect({
   options,
   same,
   disabled,
+  signedOut = [],
   onChange,
 }: {
   id: string;
@@ -378,6 +397,8 @@ function AgentSelect({
   options: string[];
   same?: string;
   disabled?: boolean;
+  /** Harnesses the desktop app found signed out, labelled so. */
+  signedOut?: readonly string[];
   onChange: (next: string) => void;
 }) {
   // A saved harness the app no longer offers, such as a retired backend from
@@ -400,9 +421,19 @@ function AgentSelect({
       {options.map((option) => (
         <option key={option} value={option}>
           {harnessName(option)}
+          {signedOut.includes(option) ? " (not signed in)" : ""}
         </option>
       ))}
     </select>
+  );
+}
+
+/** Why `work` will fail while `backend` is signed out, and how to sign in. */
+function SignedOutCaution({ backend, work }: { backend: string; work: string }) {
+  return (
+    <span className="settings-caution">
+      {harnessName(backend)} isn't signed in, so {work} will fail. {signIn[backend]}.
+    </span>
   );
 }
 
@@ -447,7 +478,7 @@ function ModelField({
       >
         {presets.map((model) => (
           <option key={model} value={model}>
-            {model}
+            {modelName(model)}
           </option>
         ))}
         <option value={CUSTOM}>Custom…</option>
@@ -515,12 +546,15 @@ function ReviewsSection({
   defaults,
   changed,
   available,
+  signedOut = [],
 }: {
   automatic: Automatic;
   defaults: ReviewDefaults;
   changed: () => Promise<void>;
   /** The agents found on this computer; undefined when the app cannot tell. */
   available?: readonly string[];
+  /** Harnesses the desktop app found signed out. */
+  signedOut?: readonly string[];
 }) {
   const saved: ReviewSettings & { effort: string } = {
     ...withModel({
@@ -603,12 +637,19 @@ function ReviewsSection({
         <SettingRow
           label="Agent that writes reviews"
           htmlFor="review-agent"
-          detail={harness ? `Uses ${harness.detail.replace(/^Your/, "your")}.` : null}
+          detail={
+            signedOut.includes(draft.backend) ? (
+              <SignedOutCaution backend={draft.backend} work="reviews" />
+            ) : harness ? (
+              `Uses ${harness.detail.replace(/^Your/, "your")}.`
+            ) : null
+          }
         >
           <AgentSelect
             id="review-agent"
             value={draft.backend}
             options={harnesses.map((h) => h.id)}
+            signedOut={signedOut}
             onChange={(backend) => change({ backend, model: modelPresets[backend]?.[0] ?? "" })}
           />
         </SettingRow>
@@ -640,9 +681,12 @@ function ReviewsSection({
 function FixesSection({
   defaults,
   changed,
+  signedOut = [],
 }: {
   defaults: ReviewDefaults;
   changed: () => Promise<void>;
+  /** Harnesses the desktop app found signed out. */
+  signedOut?: readonly string[];
 }) {
   const review = shownBackend(defaults.backend);
   const savedBackend = defaults.fix_backend ?? "";
@@ -681,6 +725,8 @@ function FixesSection({
                 Reviews use {harnessName(review)}, which can't fix pull requests. Choose Claude Code
                 or Codex to fix them.
               </span>
+            ) : signedOut.includes(draft.backend || review) ? (
+              <SignedOutCaution backend={draft.backend || review} work="fixes" />
             ) : (
               <>
                 {draft.backend ? "" : `Now ${reviewAgent}. `}It works with write access to a
@@ -694,6 +740,7 @@ function FixesSection({
             value={draft.backend}
             options={fixHarnesses}
             same="Same as reviews"
+            signedOut={signedOut}
             onChange={(backend) =>
               change({
                 backend,
@@ -786,12 +833,15 @@ function useDesktopSetup(onChanged?: () => Promise<void>) {
 }
 type DesktopSetup = ReturnType<typeof useDesktopSetup>;
 
-function connectedState(label: string, connected: boolean) {
+function connectedState(label: string, connected: boolean, attention = false) {
+  const tone = connected
+    ? "text-(--status-positive)"
+    : attention
+      ? "text-(--status-caution)"
+      : "text-(--text-tertiary)";
   return (
-    <span
-      className={`inline-flex items-center gap-1.5 text-xs ${connected ? "text-(--status-positive)" : "text-(--text-tertiary)"}`}
-    >
-      {connected ? <CheckIcon size={14} /> : null}
+    <span className={`inline-flex items-center gap-1.5 text-xs ${tone}`}>
+      {connected ? <CheckIcon size={14} /> : attention ? <Dot tone="caution" /> : null}
       {label}
     </span>
   );
@@ -808,6 +858,11 @@ function AgentHooksPanel({ setup }: { setup: DesktopSetup }) {
           icon={<SessionsIcon size={20} />}
           title="Agent hooks"
           detail="Connect your coding agents so baum can follow their work."
+          actions={
+            <Button disabled={busy} size="tiny" variant="ghost" onClick={() => void run()}>
+              {doing === "refresh" && busy ? "Checking…" : "Check again"}
+            </Button>
+          }
         />
         {view?.hooks.agents.map((agent) => (
           <div
@@ -823,7 +878,11 @@ function AgentHooksPanel({ setup }: { setup: DesktopSetup }) {
               <div className="min-w-0 space-y-1">
                 <div className="flex flex-wrap items-center gap-3">
                   <h3 className="text-base font-medium">{agent.name}</h3>
-                  {connectedState(describeAgent(agent) || "Not connected", agentConnected(agent))}
+                  {connectedState(
+                    describeAgent(agent) || "Not connected",
+                    agentConnected(agent),
+                    agentNeedsAction(agent),
+                  )}
                   {agent.installed && agent.version ? (
                     <span className="text-xs text-(--text-tertiary)">Plugin {agent.version}</span>
                   ) : null}
@@ -833,11 +892,7 @@ function AgentHooksPanel({ setup }: { setup: DesktopSetup }) {
                 ) : null}
                 {agent.installed ? (
                   <p className="text-xs text-(--text-tertiary)">
-                    {agent.agent === "codex"
-                      ? agent.trust?.state === "trusted"
-                        ? "Codex hooks are approved."
-                        : "Review hook trust with /hooks in Codex."
-                      : "Review plugin trust in Claude Code."}
+                    {withCode(agentHookNote(agent), ["/hooks"])}
                   </p>
                 ) : null}
               </div>
@@ -857,7 +912,7 @@ function AgentHooksPanel({ setup }: { setup: DesktopSetup }) {
                     : `${agent.installed ? "Enable" : "Connect"} ${agent.name}`}
                 </Button>
               ) : null}
-              {agent.detected && !agent.error && agent.installed && agent.enabled ? (
+              {agentUpdatable(agent) ? (
                 <Button
                   disabled={busy}
                   size="compact"
@@ -882,14 +937,6 @@ function AgentHooksPanel({ setup }: { setup: DesktopSetup }) {
             </div>
           </div>
         ))}
-        <footer className="flex flex-wrap items-center justify-between gap-3 border-t border-(--border-subtle) px-5 py-3">
-          <p className="text-xs text-(--text-tertiary)">
-            Installed something new? Refresh to check its status.
-          </p>
-          <Button disabled={busy} size="compact" variant="secondary" onClick={() => void run()}>
-            {doing === "refresh" && busy ? "Checking…" : "Check again"}
-          </Button>
-        </footer>
       </section>
       {view?.hooks.error ? <Alert>{display(view.hooks.error)}</Alert> : null}
     </>
@@ -917,7 +964,9 @@ function CommandLinePanel({ setup }: { setup: DesktopSetup }) {
               : null}
           </div>
           {command ? (
-            <p className="break-all text-xs text-(--text-secondary)">{display(command.state)}</p>
+            <p className="break-all text-xs text-(--text-secondary)">
+              {withCode(display(command.state), [command.path && display(command.path)])}
+            </p>
           ) : (
             <p role="status" className="text-xs text-(--text-secondary)">
               Checking installation…
@@ -1012,6 +1061,8 @@ export function SettingsPage({
   codexTrust?: ReturnType<typeof useCodexHookTrust>;
 }) {
   const setup = useDesktopSetup(codexTrust?.recheck);
+  // Only the desktop app can ask the agent CLIs whether they are signed in.
+  const signedOut = setup.desktop && setup.view ? signedOutHarnesses(setup.view.hooks.agents) : [];
   const gh = githubHealth(github);
   const hooks = setup.desktop ? hooksHealth(setup.view) : null;
   const fix = defaults ? fixSummary(defaults) : null;
@@ -1059,6 +1110,13 @@ export function SettingsPage({
     section,
     setSection,
   );
+  // Set by the Codex warning's button; the panel scrolls into view once shown.
+  const [showHooks, setShowHooks] = useState(false);
+  useEffect(() => {
+    if (!showHooks || section !== "connections") return;
+    document.getElementById("hooks-heading")?.scrollIntoView?.({ block: "start" });
+    setShowHooks(false);
+  }, [showHooks, section]);
   const loading = <LoadingStatus block>Reading your review settings…</LoadingStatus>;
   return (
     <section className="settings-page">
@@ -1106,7 +1164,17 @@ export function SettingsPage({
           ))}
         </nav>
         <div ref={keys.content} className="settings-content" onFocus={keys.onFocus}>
-          <CodexHookWarning check={codexTrust} />
+          <CodexHookWarning
+            check={codexTrust}
+            open={
+              setup.desktop
+                ? () => {
+                    setSection("connections");
+                    setShowHooks(true);
+                  }
+                : undefined
+            }
+          />
           {section === "general" ? (
             <GeneralSection />
           ) : section === "reviews" ? (
@@ -1121,16 +1189,21 @@ export function SettingsPage({
                       ? detectedHarnesses(setup.view.hooks.agents)
                       : undefined
                   }
+                  signedOut={signedOut}
                 />
                 {/* A new review harness changes what capture resolves to. */}
-                <DecisionSettingsSection key={defaults.backend} defaults={defaults} />
+                <DecisionSettingsSection
+                  key={defaults.backend}
+                  defaults={defaults}
+                  signedOut={signedOut}
+                />
               </>
             ) : (
               loading
             )
           ) : section === "fixes" ? (
             defaults ? (
-              <FixesSection defaults={defaults} changed={changed} />
+              <FixesSection defaults={defaults} changed={changed} signedOut={signedOut} />
             ) : (
               loading
             )
@@ -1427,7 +1500,14 @@ function ZoomSection() {
 
 /** Data extraction, decision capture and the feature log: the switch, the
  *  agent and the model, saved as they change like the review settings. */
-function DecisionSettingsSection({ defaults }: { defaults: ReviewDefaults }) {
+function DecisionSettingsSection({
+  defaults,
+  signedOut = [],
+}: {
+  defaults: ReviewDefaults;
+  /** Harnesses the desktop app found signed out. */
+  signedOut?: readonly string[];
+}) {
   const [saved, setSaved] = useState<DecisionSettings | null>(null);
   const [loadError, setLoadError] = useState("");
   const load = () =>
@@ -1511,6 +1591,8 @@ function DecisionSettingsSection({ defaults }: { defaults: ReviewDefaults }) {
                   extraction does not run.
                 </span>
               )
+            ) : signedOut.includes(backend) && !off ? (
+              <SignedOutCaution backend={backend} work="extraction" />
             ) : draft.backend ? null : (
               `Now ${harnessName(backend)}.`
             )
@@ -1521,6 +1603,7 @@ function DecisionSettingsSection({ defaults }: { defaults: ReviewDefaults }) {
             value={draft.backend}
             options={extractionHarnesses}
             same="Same as reviews"
+            signedOut={signedOut}
             disabled={off}
             // A new harness lists other models, so the model starts over.
             onChange={(next) => change({ backend: next, model: "" })}
@@ -1843,12 +1926,19 @@ export function RepositoriesPage({
   repositories,
   loading = false,
   automatic,
+  entries = [],
+  jobs = [],
   changed,
 }: {
   repositories: Repository[];
   /** Whether the first read of the repositories is still running. */
   loading?: boolean;
   automatic: Automatic | null;
+  /** The pull requests the app knows, for each repository's open count and
+   *  latest review. */
+  entries?: Entry[];
+  /** The jobs, for the reviews running in each repository. */
+  jobs?: Job[];
   /** Reads everything again; a refresh pressed again restarts the read. */
   changed: (how?: { restart?: boolean }) => Promise<void>;
 }) {
@@ -1856,9 +1946,15 @@ export function RepositoriesPage({
   const [error, setError] = useState("");
   // The keyboard moves through the repositories as through any list, onto
   // each one's Settings; `a` opens or closes the picker and `/` searches it.
-  const rows = useRowFocus<HTMLUListElement>(
+  // One section per owner, in the order the owners first appear.
+  const owners = new Map<string, Repository[]>();
+  for (const repository of repositories) {
+    const owner = repository.repository.split("/")[0] ?? "";
+    owners.set(owner, [...(owners.get(owner) ?? []), repository]);
+  }
+  const rows = useRowFocus<HTMLDivElement>(
     "settings-repositories",
-    repositories.map((r) => r.repository),
+    [...owners.values()].flat().map((r) => r.repository),
   );
   const page = useRef<HTMLElement>(null);
   const menu = useContextMenu();
@@ -1892,6 +1988,9 @@ export function RepositoriesPage({
           <>
             <Button size="compact" onClick={() => setAdding(!adding)}>
               {adding ? "Done" : "Add repositories"}
+              <kbd aria-hidden="true" className="key-hint">
+                a
+              </kbd>
             </Button>
             <RefreshButton refresh={(run) => changed({ restart: run.restart })} />
           </>
@@ -1921,21 +2020,35 @@ export function RepositoriesPage({
         ) : null}
         {menu.menu}
         {repositories.length > 0 ? (
-          <ul ref={rows.list} className="list">
-            {repositories.map((repository) => (
-              <RepositoryRow
-                key={repository.repository}
-                menu={menu}
-                focused={rows.focused === repository.repository}
-                repository={repository}
-                automatic={automatic}
-                changed={changed}
-                remove={() =>
-                  action(() => request(`api/repositories/${repository.repository}`, {}, "DELETE"))
+          <div ref={rows.list}>
+            {[...owners].map(([owner, owned]) => (
+              <ListSection
+                key={owner}
+                title={owner}
+                count={owned.length}
+                icon={
+                  <Avatar src={githubAvatarURL(owner, 32)} name={owner} size={16} shape="square" />
                 }
-              />
+              >
+                {owned.map((repository) => (
+                  <RepositoryRow
+                    key={repository.repository}
+                    menu={menu}
+                    focused={rows.focused === repository.repository}
+                    repository={repository}
+                    activity={repositoryActivity(repository.repository, entries, jobs)}
+                    automatic={automatic}
+                    changed={changed}
+                    remove={() =>
+                      action(() =>
+                        request(`api/repositories/${repository.repository}`, {}, "DELETE"),
+                      )
+                    }
+                  />
+                ))}
+              </ListSection>
             ))}
-          </ul>
+          </div>
         ) : null}
       </div>
     </section>
@@ -2059,10 +2172,36 @@ function RepositorySettings({
   );
 }
 
+/** What a repository has going on: its open pull requests, when baum last
+ *  reviewed one of them, and how many reviews are running now. */
+type RepositoryActivity = { open: number; reviewed: string | null; running: number };
+
+function repositoryActivity(repository: string, entries: Entry[], jobs: Job[]): RepositoryActivity {
+  const own = entries.filter((e) => sameRepository(e.pull_request.repository, repository));
+  const reviewed = own
+    .map((e) => e.latest?.generated_at)
+    .filter((at): at is string => !!at)
+    .sort()
+    .at(-1);
+  return {
+    // The index lists a pull request once per clone store, so count each
+    // pull request once however many registered clones see it.
+    open: new Set(own.filter((e) => !e.historical).map((e) => e.pull_request.number)).size,
+    reviewed: reviewed ?? null,
+    running: jobs.filter(
+      (job) => !job.kind && isActiveJob(job) && sameRepository(job.repository, repository),
+    ).length,
+  };
+}
+
+/** A clone's path with the home folder written as `~`. */
+const homePath = (path: string) => path.replace(/^\/(?:Users|home)\/[^/]+(?=\/|$)/, "~");
+
 /** One registered repository: what it does at a glance, and its settings in a
  *  dialog. */
 function RepositoryRow({
   repository,
+  activity,
   menu,
   focused,
   automatic,
@@ -2070,6 +2209,7 @@ function RepositoryRow({
   remove,
 }: {
   repository: Repository;
+  activity: RepositoryActivity;
   /** The list's menu, which the row's ⋯ and a right click open. */
   menu: ReturnType<typeof useContextMenu>;
   focused: boolean;
@@ -2090,12 +2230,10 @@ function RepositoryRow({
       available: false,
       settings: repository.settings,
     };
+  const name = clone.repository.split("/").slice(1).join("/");
   const status = automatic?.repositories.find(
     (item) => item.repository === clone.repository.toLowerCase(),
   );
-  const summary = [
-    status ? (status.enabled ? "Automatic reviews on" : "Automatic reviews off") : null,
-  ].filter(Boolean);
   // A repository without a clone is offered one from its menu; what that
   // starts (a path form, a running clone) shows under the row.
   const cloneActions = useCloneActions({ repository: repository.repository, changed });
@@ -2132,12 +2270,12 @@ function RepositoryRow({
             aria-label={`Settings for ${clone.repository}`}
             onClick={() => setOpen(true)}
           >
-            {clone.repository}
+            {name}
           </button>
         </h3>
         {clone.available ? (
           <p className="truncate" title={clone.path}>
-            {clone.path}
+            {homePath(clone.path)}
           </p>
         ) : (
           <p className="local-repo-missing">
@@ -2151,8 +2289,35 @@ function RepositoryRow({
         {clone.available && repository.earlier_names?.length ? (
           <p className="repository-warning">{earlierNamesWarning(repository.earlier_names)}</p>
         ) : null}
-        <p className="local-repo-summary">{summary.join(" · ")}</p>
       </div>
+      <span className="local-repo-state">
+        {activity.running ? (
+          <>
+            <LiveDot className="text-(--status-positive)" />
+            {activity.running === 1 ? "Reviewing" : `Reviewing ${formatCount(activity.running)}`}
+          </>
+        ) : status?.pending ? (
+          `${formatCount(status.pending)} waiting`
+        ) : status && !status.enabled ? (
+          // Only the exception is marked: automatic reviews are on by default.
+          <Badge size="compact">
+            {clone.settings.automatic === false
+              ? "Automatic reviews off"
+              : "Automatic reviews paused"}
+          </Badge>
+        ) : null}
+      </span>
+      <span className="local-repo-figure">
+        {activity.open === 0
+          ? "No open PRs"
+          : `${formatCount(activity.open)} open ${activity.open === 1 ? "PR" : "PRs"}`}
+      </span>
+      <span
+        className="local-repo-figure"
+        title={activity.reviewed ? formatDateTime(activity.reviewed) : undefined}
+      >
+        {activity.reviewed ? `Reviewed ${formatRelative(activity.reviewed)}` : "Not reviewed yet"}
+      </span>
       <div className="local-repo-actions">
         <MenuButton label={clone.repository} items={actions} menu={menu} />
       </div>
@@ -2317,9 +2482,26 @@ function GeneralSection() {
           </select>
         </SettingRow>
         <SettingRow
-          label="Show keyboard shortcuts with Alt/Option"
+          label="Page shortcut modifier"
+          htmlFor="page-modifier"
+          detail="The key held with 1 to 8 to open the sidebar's pages."
+        >
+          <select
+            id="page-modifier"
+            disabled={!ready}
+            className="local-field settings-select"
+            value={pageModifier(preferences.page_modifier)}
+            onChange={(event) => update({ page_modifier: event.target.value as PageModifier })}
+          >
+            {MAC ? <option value="meta">⌘ Command</option> : null}
+            <option value="ctrl">{MAC ? "⌃ Control" : "Ctrl"}</option>
+            <option value="alt">{MAC ? "⌥ Option" : "Alt"}</option>
+          </select>
+        </SettingRow>
+        <SettingRow
+          label={`Show keyboard shortcuts with ${MAC ? "Option" : "Alt"}`}
           htmlFor="keyboard-hints"
-          detail="Hold Alt (Option on Mac) to show shortcut hints."
+          detail={`Hold ${MAC ? "Option" : "Alt"} to show shortcut hints.`}
         >
           <input
             id="keyboard-hints"

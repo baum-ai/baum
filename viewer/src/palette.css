@@ -115,6 +115,10 @@
   --status-info-bg: var(--accent-100);
   --status-neutral: var(--ink-600);
   --status-neutral-bg: var(--ink-100);
+  /* A merged pull request, as GitHub draws one: the keyword purple, which
+     the dark theme lightens. */
+  --status-merged: var(--syntax-token-keyword);
+  --status-merged-bg: color-mix(in srgb, var(--status-merged) 14%, var(--paper-0));
 
   /* Code reuses the status and chart hue families. */
   --syntax-foreground: var(--text-primary);

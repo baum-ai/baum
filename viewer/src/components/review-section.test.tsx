@@ -290,6 +290,49 @@ describe("attention risks", () => {
     expect(other.textContent).not.toContain("Repository names");
   });
 
+  it("leaves out evidence that only restates the attention and shows the code it cites", () => {
+    const document = structuredClone(reviewDocumentFor("acme/widgets", 42)) as ReviewDocument;
+    const section = document.sections[0]!;
+    const hunk = document.index.hunks[0]!;
+    section.evidence = [
+      {
+        id: "ev_missing",
+        kind: "test",
+        claim: "No test covers the fork entry",
+        status: "missing",
+        source: "model",
+        anchors: [{ type: "hunk", id: hunk.id }],
+      },
+      {
+        id: "ev_reported",
+        kind: "test",
+        claim: "The author reports the suite passes",
+        status: "reported",
+        source: "author_human",
+        anchors: [{ type: "hunk", id: hunk.id }],
+      },
+    ] as ReviewDocument["sections"][number]["evidence"];
+    section.attention = {
+      text: "Confirm the fork entry stays unlinked",
+      refs: ["ev_missing", "ev_reported"],
+    };
+    const found = new DOMParser().parseFromString(
+      renderToStaticMarkup(
+        <ReviewSection document={document} section={section} onSelectSection={() => {}} />,
+      ),
+      "text/html",
+    );
+    const attention = found.querySelector('section[aria-label="Attention"]')!;
+    expect(attention.textContent).toContain("Confirm the fork entry stays unlinked");
+    // The missing claim says nothing the attention does not; the reported one stays.
+    expect(attention.textContent).not.toContain("No test covers the fork entry");
+    expect(attention.textContent).toContain("The author reports the suite passes");
+    // The cited code, once, under Where to look.
+    expect(attention.textContent).toContain("Where to look");
+    expect(attention.textContent).toContain(hunk.path);
+    expect(attention.querySelectorAll('[aria-label="Sources"] li')).toHaveLength(1);
+  });
+
   it("omits the bottom risk section when all risks are in attention", () => {
     const found = attentionPage(["rsk_1"], true);
     expect(found.querySelector('section[aria-label="Attention"] [id$="-rsk_1"]')).not.toBeNull();

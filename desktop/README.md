@@ -138,30 +138,44 @@ happen only when the user selects an install or add action. Displayed paths abbr
      actions to the daemon. It cannot provide arbitrary HTTP routes or see a
      GitHub token. Explicit folder attachment may file a fork under its
      upstream repository when a remote matches it.
-2. Select your agent: Claude Code or Codex (initially resolved from automatic
+2. Configure your agents: Claude Code or Codex (initially resolved from automatic
    selection or the installed agents). Missing CLIs are marked Not installed
    and cannot be selected; a saved missing agent falls back to an installed
    one, preferring Claude Code. When neither is detected, official installation
    guides and Check again replace the model controls. Continue and the final
    step in the rail wait for an installed agent; rechecking selects one as
    soon as it is detected. Detection errors show retry guidance.
-   A compact row pairs the review model
-   with its reasoning effort. The review
-   effort also applies to fixes that follow reviews. A model can be a preset or
-   a custom name. Choose whether reviews run automatically and, if so, for which
-   pull requests (authored, requested, both, or all open pull requests). The
-   screen reads them with `baum internal reviews show` and saves changes with
-   `baum internal reviews set` when the user opens baum at the end of setup.
-   They are stored as app preferences in the repository registry, which the
-   daemon rereads for every job. The native bridge forwards the review `effort`
-   CLI flag. Extraction preferences remain in Settings; setup leaves them intact.
+   A compact row pairs the model for reviews and data extraction with its
+   reasoning effort. A line under Reviews and extraction and under Fixes says
+   what each agent does, and a note below the card points to Settings for
+   per-task agents and per-repository automatic reviews. The Fixes tiles show
+   only agent names (or Not installed). A detected agent that reports no
+   sign-in is marked Not signed in but stays selectable (its jobs fail until it
+   signs in); choosing it adds a line on how to sign in (`claude` then
+   `/login`, or `codex login`) and to choose Check again. Fixes start as Same as reviews;
+   choosing Claude Code or Codex for them adds their own model and effort row.
+   A model can be a preset or a custom name. Choose whether reviews run
+   automatically and, if so, for which pull requests (authored, requested,
+   both, or all open pull requests). The screen reads them with `baum internal reviews show` and saves changes
+   with `baum internal reviews set` when the user opens baum at the end of
+   setup. They are stored as app preferences in the repository registry, which
+   the daemon rereads for every job. The native bridge forwards the review,
+   fix and extraction flags. Extraction is saved only when setup changes the
+   review agent, model or effort: it then follows the review agent, with the
+   review model (none when it is the agent's default decision model) and
+   effort. An untouched setup leaves the extraction choice from Settings intact.
 3. Install the CLI and connect agents.
    - Install the bundled `baum` command onto the login shell's `PATH` (below).
      The step states in one line where baum will be installed, or which other
      baum it replaces; PATH and administrator warnings show beneath it.
    - Connect the agents you use, with separate Connect or Enable buttons. The
      Codex marketplace plugin is installed with `baum hooks install --user
-     --agent codex`. The screen explains reviewing trust with `/hooks`. The
+     --agent codex`. Each connected agent shows the same status, plugin
+     version, hook note and Update button as Settings (below). A status names
+     the state and the button the action; an agent that is installed but
+     blocked (disabled, hooks missing, unapproved, or stopped by its settings)
+     shows its status in the caution colour. When Codex reports baum hooks
+     missing, the note says Update adds them before `/hooks` approves them. The
      Claude Code plugin is installed separately with `--agent claude-code`.
      Both use the native agent CLI to fetch the public marketplace.
      Codex status additionally checks its effective hook inventory. Connected
@@ -197,8 +211,9 @@ model through [`model_reasoning_effort`](https://learn.chatgpt.com/docs/config-f
 | GPT-6.1 Sol, GPT-6.1 Terra and GPT-6 Astra | Low, Medium, High, Extra high, Max, Ultra |
 
 Every selector also offers Default, which leaves the effort to the agent.
-Ultra enables Codex's automatic task delegation. Unknown custom models offer
-Default only. Changing a model preserves a supported effort and resets an
+Ultra enables Codex's automatic task delegation. Other models, including
+custom ones, offer Low to Max; the agent handles a level a model lacks (Claude
+Code falls back to the highest supported level). Changing a model preserves a supported effort and resets an
 unsupported one to Default. API-only levels are not offered by the CLI picker.
 
 Open baum uses the app's CLI independently of the command on the user's PATH.
@@ -322,10 +337,13 @@ succeeds for it. Updating the app's own link keeps the backup of the baum it
 replaced, so Remove still puts that back.
 Hooks are removed with the bundled `baum hooks uninstall --user`, which
 removes only the native `baum@baum` plugin and leaves the marketplace and
-other plugins. Settings' Update runs the bundled `baum hooks update --user
+other plugins. Update, in Settings and in setup, runs the bundled `baum hooks update --user
 --agent AGENT`, which refreshes the marketplace and brings the installed
 plugin to its latest version, so new hooks arrive without removing and
-connecting the agent again.
+connecting the agent again. Update shows only when status reports
+`update_available` (a connected agent then reads Connected · update
+available), or when Codex reports baum hooks missing (Some baum hooks are
+missing).
 
 ### Restarts into the app's baum
 
@@ -639,7 +657,7 @@ doing anything (`src/zoom.rs`).
   origin only: `connecting-screen` allows the app's `connection` and
   `reconnect` commands, and `setup-screen` the setup commands
   (`setup_state`, `install_command`, `uninstall_command`, `install_hooks`,
-  `uninstall_hooks`, `choose_repository`, `add_repository`, `review_settings`,
+  `uninstall_hooks`, `update_hooks`, `choose_repository`, `add_repository`, `review_settings`,
   `save_review_settings` and `finish_setup`). Both also allow `step_zoom`
   for the zoom shortcuts. Every change they make runs in the
   Rust side and only when the user requests it in setup or Settings;
